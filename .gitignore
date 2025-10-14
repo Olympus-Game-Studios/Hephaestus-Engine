@@ -1,32 +1,47 @@
-# Prerequisites
-*.d
+# ----------------------------------------------------------------------
+# 1. Broad Ignore Rule (Example)
+#    If you ignore all files/folders in the root, you must explicitly
+#    un-ignore the ones you need.
+# ----------------------------------------------------------------------
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# Example: Ignore everything in the root, forcing explicit un-ignore below
+# *
 
-# Precompiled Headers
-*.gch
-*.pch
+# Example: Ignore all compiled objects or binaries everywhere
+# *.obj
+# *.exe
+# *.dll
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
+# Example: Ignore all editor-generated local user files (e.g., VS, IDE)
+# .vs/
+# *.user
+# *.vcxproj.filters
+# *~
 
-# Fortran module files
-*.mod
-*.smod
+# ----------------------------------------------------------------------
+# 2. Negation (Inclusion) Rules for Your Engine Structure
+#    These lines ensure the specified folders and everything inside them
+#    are NOT ignored, even if a broad rule above might apply.
+# ----------------------------------------------------------------------
 
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
+# Required Folders (Un-ignoring a folder ensures all its contents are tracked)
 
-# Executables
-*.exe
-*.out
-*.app
+!/extern/
+!/tools/
+!/tools/**
+!/engine/
+!/engine/**
+!/editor/
+!/editor/**
+!/shaders/
+!/shaders/**
+!/assets_raw/
+!/assets_raw/**
+!/assets_cooked/
+!/assets_cooked/**
+!/projects/
+!/projects/**
+!/cmake/
+
+# Required Files (Un-ignoring the root CMakeLists.txt)
+!/CMakeLists.txt
