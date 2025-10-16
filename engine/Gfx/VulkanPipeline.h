@@ -4,7 +4,7 @@
 #include <string>
 
 struct Vertex {
-    float pos[2];
+    float pos[3];
     float color[3];
 
     static VkVertexInputBindingDescription getBindingDescription() {
@@ -19,7 +19,7 @@ struct Vertex {
         std::vector<VkVertexInputAttributeDescription> attribs(2);
         attribs[0].binding = 0;
         attribs[0].location = 0;
-        attribs[0].format = VK_FORMAT_R32G32_SFLOAT;
+        attribs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
         attribs[0].offset = offsetof(Vertex, pos);
 
         attribs[1].binding = 0;
@@ -34,6 +34,7 @@ struct VulkanPipeline {
     VkDevice device{};
     VkRenderPass renderPass{};
     VkExtent2D extent{};
+    VkDescriptorSetLayout descriptorSetLayout{};
     VkPipelineLayout layout{};
     VkPipeline pipeline{};
 

@@ -2,6 +2,7 @@
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <vector>
+#include "vk_mem_alloc.h"
 
 struct VulkanSwapchain {
     VkDevice device{};
@@ -15,6 +16,14 @@ struct VulkanSwapchain {
     VkRenderPass renderPass{};
     std::vector<VkFramebuffer> framebuffers;
 
-    void Init(VkPhysicalDevice phys, VkDevice dev, VkSurfaceKHR surf, GLFWwindow* window);
+    // Depth resources
+    VmaAllocator allocator{};
+    VkFormat depthFormat{};
+    VkImage depthImage{};
+    VmaAllocation depthAllocation{};
+    VkImageView depthImageView{};
+
+    void Init(VkPhysicalDevice phys, VkDevice dev, VkSurfaceKHR surf, GLFWwindow* window, VmaAllocator alloc);
+    void Recreate(GLFWwindow* window);
     void Cleanup();
 };

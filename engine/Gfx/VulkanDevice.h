@@ -15,13 +15,14 @@ public:
     VkSurfaceKHR surface{};
     VkCommandPool commandPool{};
     VmaAllocator allocator{}; // ✅ VMA allocator
+    
+    uint32_t graphicsFamily = UINT32_MAX;
+    uint32_t presentFamily  = UINT32_MAX;
 
     void Init(GLFWwindow* window, VkInstance instance);
     void Cleanup();
 
 private:
-    uint32_t graphicsFamily = UINT32_MAX;
-    uint32_t presentFamily  = UINT32_MAX;
 
     void pickPhysicalDevice();
     void findQueueFamilies(VkPhysicalDevice pd);
