@@ -176,6 +176,61 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
     }
 }
 
+// ── Ray Picking ──────────────────────────────────
+// Convert screen coordinates to a ray in world space
+Ray ScreenToWorldRay(double mouseX, double mouseY, int screenWidth, int screenHeight, 
+                     const Mat4& viewMatrix, const Mat4& projMatrix)
+{
+    // Normalize mouse coordinates to [-1, 1]
+    float x = (2.0f * static_cast<float>(mouseX)) / screenWidth - 1.0f;
+    // For Vulkan with Y-flip in projection, screen Y maps directly
+    float y = (2.0f * static_cast<float>(mouseY)) / screenHeight - 1.0f;
+    
+    // Create points at near and far planes in NDC space
+    // For Vulkan, depth is [0, 1]
+    Vec3 rayNearNDC(x, y, 0.0f);  // Near plane
+    Vec3 rayFarNDC(x, y, 1.0f);   // Far plane
+    
+    // Convert to view space
+    Mat4 invProj = Mat4::Invert(projMatrix);
+    Vec3 rayNearView = Mat4::TransformPoint(invProj, rayNearNDC);
+    Vec3 rayFarView = Mat4::TransformPoint(invProj, rayFarNDC);
+    
+    // Convert to world space
+    Mat4 invView = Mat4::Invert(viewMatrix);
+    Vec3 rayNearWorld = Mat4::TransformPoint(invView, rayNearView);
+    Vec3 rayFarWorld = Mat4::TransformPoint(invView, rayFarView);
+    
+    // Ray direction is from near to far
+    Vec3 rayDirection = vnorm(vsub(rayFarWorld, rayNearWorld));
+    
+    return Ray(rayNearWorld, rayDirection);
+}
+
+// Find the closest object hit by a ray
+int FindClosestHitObject(const Ray& ray, const std::vector<SceneObject>& objects, float& outDistance)
+{
+    int closestIndex = -1;
+    float closestDist = 1e30f;
+    
+    for (size_t i = 0; i < objects.size(); ++i) {
+        AABB worldBounds = objects[i].GetWorldBounds();
+        
+        float tMin, tMax;
+        if (worldBounds.IntersectRay(ray, tMin, tMax)) {
+            // Use entry point distance for sorting
+            float hitDist = (tMin > 0) ? tMin : tMax;
+            if (hitDist > 0 && hitDist < closestDist) {
+                closestDist = hitDist;
+                closestIndex = static_cast<int>(i);
+            }
+        }
+    }
+    
+    outDistance = closestDist;
+    return closestIndex;
+}
+
 int main()
 {
     // ── GLFW Window ───────────────────────────────
@@ -329,6 +384,9 @@ int main()
     // ── ImGuizmo State ───────────────────────────
     ImGuizmo::OPERATION currentGizmoOperation = ImGuizmo::TRANSLATE;
     ImGuizmo::MODE currentGizmoMode = ImGuizmo::WORLD;
+    // Whether the gizmo should follow the camera transform. When false, the gizmo will be
+    // rendered in world space independent of the user's camera position/rotation.
+    static bool gizmoFollowCamera = true;
 
     // Per-image uniform buffers and descriptors (tied to swapchain images)
     std::vector<VulkanBuffer> uniformBuffers;
@@ -511,6 +569,53 @@ int main()
         ImGuizmo::BeginFrame();
         ImGuizmo::SetOrthographic(false);
         
+        // Handle mouse click for object selection (only when not using ImGui/ImGuizmo)
+        static bool leftMouseWasPressed = false;
+        bool leftMousePressed = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+        
+        if (leftMousePressed && !leftMouseWasPressed && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver() && !io.WantCaptureMouse) {
+            // Left mouse button just pressed and not over ImGui
+            double mouseX, mouseY;
+            glfwGetCursorPos(window, &mouseX, &mouseY);
+            
+            // Create picking ray
+            UniformBufferObject ubo = camera.makeUBO(swap.extent);
+            Ray pickRay = ScreenToWorldRay(mouseX, mouseY, swap.extent.width, swap.extent.height, ubo.view, ubo.proj);
+            
+            // Debug: print ray info
+            std::cout << "Click at (" << mouseX << ", " << mouseY << ")" << std::endl;
+            std::cout << "Ray origin: (" << pickRay.origin.x << ", " << pickRay.origin.y << ", " << pickRay.origin.z << ")" << std::endl;
+            std::cout << "Ray direction: (" << pickRay.direction.x << ", " << pickRay.direction.y << ", " << pickRay.direction.z << ")" << std::endl;
+            
+            // Find closest hit
+            float hitDist;
+            int hitIndex = FindClosestHitObject(pickRay, sceneObjects, hitDist);
+            
+            std::cout << "Hit index: " << hitIndex << ", Distance: " << hitDist << std::endl;
+            
+            // Debug: print object bounds
+            for (size_t i = 0; i < sceneObjects.size(); ++i) {
+                AABB bounds = sceneObjects[i].GetWorldBounds();
+                std::cout << "Object " << i << " (" << sceneObjects[i].name << "): min(" 
+                          << bounds.min.x << ", " << bounds.min.y << ", " << bounds.min.z 
+                          << ") max(" << bounds.max.x << ", " << bounds.max.y << ", " << bounds.max.z << ")" << std::endl;
+                
+                float tMin, tMax;
+                bool hit = bounds.IntersectRay(pickRay, tMin, tMax);
+                std::cout << "  Hit: " << (hit ? "YES" : "NO") << ", tMin: " << tMin << ", tMax: " << tMax << std::endl;
+            }
+            
+            if (hitIndex >= 0) {
+                // Deselect all and select hit object
+                for (auto& obj : sceneObjects) obj.selected = false;
+                sceneObjects[hitIndex].selected = true;
+            } else {
+                // Clicked on empty space - deselect all
+                for (auto& obj : sceneObjects) obj.selected = false;
+            }
+        }
+        leftMouseWasPressed = leftMousePressed;
+        
         // Input handling (only when not using gizmo)
         if (!ImGuizmo::IsUsing()) {
             camera.handleMouse(window);
@@ -531,23 +636,39 @@ int main()
             ImGui::Text("Camera Position: (%.1f, %.1f, %.1f)", camera.position.x, camera.position.y, camera.position.z);
             ImGui::Text("Camera Speed: %.2f", camera.moveSpeed);
             ImGui::Text("Yaw: %.1f°  Pitch: %.1f°", camera.yawDeg, camera.pitchDeg);
+            ImGui::Separator();
+            ImGui::Text("Object Selection:");
+            ImGui::Text("Left Click - Select object");
+            ImGui::Text("Click empty space - Deselect all");
             ImGui::End();
             
             // Scene Hierarchy Window
             ImGui::Begin("Scene Hierarchy");
             for (size_t i = 0; i < sceneObjects.size(); ++i) {
+                // Highlight selected object
+                bool wasSelected = sceneObjects[i].selected;
+                if (wasSelected) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 1.0f, 0.2f, 1.0f));
+                }
+                
                 if (ImGui::Selectable(sceneObjects[i].name, sceneObjects[i].selected)) {
                     // Deselect all, select this one
                     for (auto& obj : sceneObjects) obj.selected = false;
                     sceneObjects[i].selected = true;
+                }
+                
+                if (wasSelected) {
+                    ImGui::PopStyleColor();
                 }
             }
             ImGui::End();
             
             // Properties Window
             ImGui::Begin("Properties");
+            bool hasSelection = false;
             for (auto& obj : sceneObjects) {
                 if (obj.selected) {
+                    hasSelection = true;
                     ImGui::Text("Object: %s", obj.name);
                     ImGui::Separator();
                     
@@ -590,9 +711,17 @@ int main()
                     ImGui::Text("Debug Info:");
                     ImGui::Text("ImGuizmo IsUsing: %s", ImGuizmo::IsUsing() ? "YES" : "NO");
                     ImGui::Text("ImGuizmo IsOver: %s", ImGuizmo::IsOver() ? "YES" : "NO");
+                    ImGui::Text("Gizmo Rect: (0, 0) to (%.0f, %.0f)", (float)swap.extent.width, (float)swap.extent.height);
+                            ImGui::Separator();
+                            ImGui::Checkbox("Gizmo Follow Camera", &gizmoFollowCamera);
                     
                     break;
                 }
+            }
+            
+            if (!hasSelection) {
+                ImGui::TextDisabled("No object selected");
+                ImGui::Text("Click on an object in the viewport to select it");
             }
             ImGui::End();
         }
@@ -602,16 +731,38 @@ int main()
         if (ImGui::IsKeyPressed(ImGuiKey_R)) currentGizmoOperation = ImGuizmo::ROTATE;
         if (ImGui::IsKeyPressed(ImGuiKey_S) && !ImGui::GetIO().KeyCtrl) currentGizmoOperation = ImGuizmo::SCALE;
         
-        // Build view/proj for ImGuizmo in OpenGL-style clip space
+        // Build view/proj for ImGuizmo
         UniformBufferObject ubo = camera.makeUBO(swap.extent);
-        // For ImGuizmo, use the same view but compute aspect from display size
-        float aspect = io.DisplaySize.x / io.DisplaySize.y;
+        
+        // Setup ImGuizmo - use only the render viewport, not the full window
+        ImGuizmo::SetDrawlist();
+        // Set rect to the full viewport area in ImGui screen coordinates
+        ImGuizmo::SetRect(0, 0, (float)swap.extent.width, (float)swap.extent.height);
+        ImGuizmo::Enable(true);
+        
+        // For ImGuizmo to not move with camera, we need OpenGL-style coordinates
+        // Create projection matrix in OpenGL space (Y-up, Z from -1 to 1)
+        float aspect = swap.extent.width / (float)swap.extent.height;
         Mat4 gizmoProj = Mat4::PerspectiveGL(60.0f * 3.1415926535f / 180.0f, aspect, 0.1f, 100.0f);
         
-        // Setup ImGuizmo rect and drawing - must be done after ImGui::NewFrame()
-        ImGuizmo::SetDrawlist();
-        ImGuizmo::SetRect(0, 0, io.DisplaySize.x, io.DisplaySize.y);
-        ImGuizmo::Enable(true);
+        // Also need to flip Y in the view matrix for OpenGL conventions
+        Mat4 gizmoView;
+        if (gizmoFollowCamera) {
+            // Use camera view but convert to OpenGL convention (flip Y column)
+            gizmoView = ubo.view;
+            gizmoView.m[1] = -gizmoView.m[1];
+            gizmoView.m[5] = -gizmoView.m[5];
+            gizmoView.m[9] = -gizmoView.m[9];
+            gizmoView.m[13] = -gizmoView.m[13];
+        } else {
+            // Use identity view (camera-independent) but still place the gizmo in world space.
+            // Start with identity, then flip Y to match ImGuizmo's expected OpenGL convention.
+            gizmoView = Mat4::Identity();
+            gizmoView.m[1] = -gizmoView.m[1];
+            gizmoView.m[5] = -gizmoView.m[5];
+            gizmoView.m[9] = -gizmoView.m[9];
+            gizmoView.m[13] = -gizmoView.m[13];
+        }
         
         // Render gizmo for selected object (always call Manipulate so it draws)
         for (auto& obj : sceneObjects) {
@@ -619,11 +770,12 @@ int main()
                 Mat4 objectMatrix = obj.transform.GetMatrix();
 
                 ImGuizmo::Manipulate(
-                    ubo.view.m,
+                    gizmoView.m,
                     gizmoProj.m,
                     currentGizmoOperation,
                     currentGizmoMode,
                     objectMatrix.m,
+                    nullptr,
                     nullptr,
                     nullptr);
                 
@@ -755,6 +907,13 @@ int main()
     vkDeviceWaitIdle(vkdev.device);
 
     // ── Cleanup ────────────────────────────────
+    // Cleanup sync objects
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        vkDestroySemaphore(vkdev.device, imageAvailable[i], nullptr);
+        vkDestroySemaphore(vkdev.device, renderFinished[i], nullptr);
+        vkDestroyFence(vkdev.device, inFlight[i], nullptr);
+    }
+    
     // Cleanup ImGui
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();

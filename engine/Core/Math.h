@@ -144,4 +144,139 @@ struct Mat4 {
         r.m[15] = 0.0f;
         return r;
     }
+    
+    // Invert a matrix (simplified for view/projection matrices)
+    static Mat4 Invert(const Mat4& mat) {
+        Mat4 inv;
+        float* m = (float*)mat.m;
+        float* invOut = inv.m;
+        
+        float inv0 = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15]
+                   + m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
+        float inv4 = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15]
+                   - m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
+        float inv8 = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15]
+                   + m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
+        float inv12 = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14]
+                    - m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
+        
+        float det = m[0] * inv0 + m[1] * inv4 + m[2] * inv8 + m[3] * inv12;
+        
+        if (det == 0) return Identity();
+        
+        det = 1.0f / det;
+        
+        invOut[0] = inv0 * det;
+        invOut[4] = inv4 * det;
+        invOut[8] = inv8 * det;
+        invOut[12] = inv12 * det;
+        
+        invOut[1] = (-m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15]
+                   - m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10]) * det;
+        invOut[5] = (m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15]
+                   + m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10]) * det;
+        invOut[9] = (-m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15]
+                   - m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9]) * det;
+        invOut[13] = (m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14]
+                    + m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9]) * det;
+        
+        invOut[2] = (m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15]
+                   + m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6]) * det;
+        invOut[6] = (-m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15]
+                   - m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6]) * det;
+        invOut[10] = (m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15]
+                    + m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5]) * det;
+        invOut[14] = (-m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14]
+                    - m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5]) * det;
+        
+        invOut[3] = (-m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11]
+                   - m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6]) * det;
+        invOut[7] = (m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11]
+                   + m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6]) * det;
+        invOut[11] = (-m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11]
+                    - m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5]) * det;
+        invOut[15] = (m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10]
+                    + m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5]) * det;
+        
+        return inv;
+    }
+    
+    // Transform a point by a matrix (4th component = 1)
+    static Vec3 TransformPoint(const Mat4& mat, const Vec3& v) {
+        float x = mat.m[0] * v.x + mat.m[4] * v.y + mat.m[8] * v.z + mat.m[12];
+        float y = mat.m[1] * v.x + mat.m[5] * v.y + mat.m[9] * v.z + mat.m[13];
+        float z = mat.m[2] * v.x + mat.m[6] * v.y + mat.m[10] * v.z + mat.m[14];
+        float w = mat.m[3] * v.x + mat.m[7] * v.y + mat.m[11] * v.z + mat.m[15];
+        if (w != 0.0f && w != 1.0f) {
+            return Vec3(x / w, y / w, z / w);
+        }
+        return Vec3(x, y, z);
+    }
+    
+    // Transform a direction by a matrix (4th component = 0)
+    static Vec3 TransformDirection(const Mat4& mat, const Vec3& v) {
+        float x = mat.m[0] * v.x + mat.m[4] * v.y + mat.m[8] * v.z;
+        float y = mat.m[1] * v.x + mat.m[5] * v.y + mat.m[9] * v.z;
+        float z = mat.m[2] * v.x + mat.m[6] * v.y + mat.m[10] * v.z;
+        return Vec3(x, y, z);
+    }
+};
+
+// Ray structure for ray casting
+struct Ray {
+    Vec3 origin;
+    Vec3 direction; // normalized
+    
+    Ray() : origin(), direction(0, 0, -1) {}
+    Ray(Vec3 o, Vec3 d) : origin(o), direction(vnorm(d)) {}
+    
+    Vec3 at(float t) const {
+        return vadd(origin, vscale(direction, t));
+    }
+};
+
+// Axis-Aligned Bounding Box
+struct AABB {
+    Vec3 min;
+    Vec3 max;
+    
+    AABB() : min(0, 0, 0), max(0, 0, 0) {}
+    AABB(Vec3 min, Vec3 max) : min(min), max(max) {}
+    
+    // Ray-AABB intersection test
+    // Returns true if ray intersects the box, and sets tMin/tMax to the entry/exit distances
+    bool IntersectRay(const Ray& ray, float& tMin, float& tMax) const {
+        tMin = 0.0f;
+        tMax = 1e30f;
+        
+        for (int i = 0; i < 3; ++i) {
+            float origin_i = (&ray.origin.x)[i];
+            float dir_i = (&ray.direction.x)[i];
+            float min_i = (&min.x)[i];
+            float max_i = (&max.x)[i];
+            
+            if (std::abs(dir_i) < 1e-8f) {
+                // Ray is parallel to slab
+                if (origin_i < min_i || origin_i > max_i) {
+                    return false;
+                }
+            } else {
+                float t1 = (min_i - origin_i) / dir_i;
+                float t2 = (max_i - origin_i) / dir_i;
+                
+                if (t1 > t2) {
+                    float temp = t1;
+                    t1 = t2;
+                    t2 = temp;
+                }
+                
+                if (t1 > tMin) tMin = t1;
+                if (t2 < tMax) tMax = t2;
+                
+                if (tMin > tMax) return false;
+            }
+        }
+        
+        return tMax >= 0.0f;
+    }
 };

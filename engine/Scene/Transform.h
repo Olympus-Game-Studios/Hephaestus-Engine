@@ -63,7 +63,45 @@ struct SceneObject {
     const char* name;
     Transform transform;
     bool selected;
+    AABB localBounds; // Bounding box in local space
     
     SceneObject(const char* n = "Object") 
-        : name(n), transform(), selected(false) {}
+        : name(n), transform(), selected(false), 
+          localBounds(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f)) {}
+    
+    // Get world-space bounding box
+    AABB GetWorldBounds() const {
+        // Transform the 8 corners of the local bounding box
+        Vec3 corners[8] = {
+            Vec3(localBounds.min.x, localBounds.min.y, localBounds.min.z),
+            Vec3(localBounds.max.x, localBounds.min.y, localBounds.min.z),
+            Vec3(localBounds.min.x, localBounds.max.y, localBounds.min.z),
+            Vec3(localBounds.max.x, localBounds.max.y, localBounds.min.z),
+            Vec3(localBounds.min.x, localBounds.min.y, localBounds.max.z),
+            Vec3(localBounds.max.x, localBounds.min.y, localBounds.max.z),
+            Vec3(localBounds.min.x, localBounds.max.y, localBounds.max.z),
+            Vec3(localBounds.max.x, localBounds.max.y, localBounds.max.z),
+        };
+        
+        Mat4 worldMatrix = transform.GetMatrix();
+        
+        // Transform first corner to initialize bounds
+        Vec3 transformed = Mat4::TransformPoint(worldMatrix, corners[0]);
+        AABB worldBounds(transformed, transformed);
+        
+        // Expand bounds to include all corners
+        for (int i = 1; i < 8; ++i) {
+            transformed = Mat4::TransformPoint(worldMatrix, corners[i]);
+            
+            if (transformed.x < worldBounds.min.x) worldBounds.min.x = transformed.x;
+            if (transformed.y < worldBounds.min.y) worldBounds.min.y = transformed.y;
+            if (transformed.z < worldBounds.min.z) worldBounds.min.z = transformed.z;
+            
+            if (transformed.x > worldBounds.max.x) worldBounds.max.x = transformed.x;
+            if (transformed.y > worldBounds.max.y) worldBounds.max.y = transformed.y;
+            if (transformed.z > worldBounds.max.z) worldBounds.max.z = transformed.z;
+        }
+        
+        return worldBounds;
+    }
 };
