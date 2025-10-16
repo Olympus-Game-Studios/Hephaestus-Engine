@@ -1,0 +1,215 @@
+#include "Scene.h"
+#include <algorithm>
+
+Scene::Scene(const std::string& name)
+    : m_Name(name)
+{
+}
+
+Scene::~Scene()
+{
+    Clear();
+}
+
+Entity Scene::CreateEntity(const std::string& name)
+{
+    Entity entity = { m_Registry.create(), this };
+    entity.AddComponent<TagComponent>(name);
+    entity.AddComponent<TransformComponent>();
+    return entity;
+}
+
+Entity Scene::CreateEntityWithID(entt::entity id, const std::string& name)
+{
+    Entity entity = { m_Registry.create(id), this };
+    entity.AddComponent<TagComponent>(name);
+    entity.AddComponent<TransformComponent>();
+    return entity;
+}
+
+void Scene::DestroyEntity(Entity entity)
+{
+    if (!entity)
+        return;
+
+    // Remove from parent's children list
+    if (entity.HasComponent<TransformComponent>()) {
+        auto& transform = entity.GetComponent<TransformComponent>();
+        if (transform.parent != entt::null) {
+            Entity parentEntity = { transform.parent, this };
+            if (parentEntity && parentEntity.HasComponent<TransformComponent>()) {
+                auto& parentTransform = parentEntity.GetComponent<TransformComponent>();
+                auto it = std::find(parentTransform.children.begin(), 
+                                  parentTransform.children.end(), 
+                                  entity.m_EntityHandle);
+                if (it != parentTransform.children.end()) {
+                    parentTransform.children.erase(it);
+                }
+            }
+        }
+
+        // Reparent or destroy children
+        for (auto childHandle : transform.children) {
+            Entity child = { childHandle, this };
+            if (child) {
+                // Option 1: Reparent to world root (remove parent)
+                RemoveParent(child);
+                // Option 2: Recursively destroy children
+                // DestroyEntity(child);
+            }
+        }
+    }
+
+    m_Registry.destroy(entity.m_EntityHandle);
+}
+
+void Scene::SetParent(Entity child, Entity parent)
+{
+    if (!child || !parent || child == parent)
+        return;
+
+    // Prevent circular dependencies
+    Entity current = parent;
+    while (current) {
+        if (current == child)
+            return; // Would create a cycle
+        current = GetParent(current);
+    }
+
+    auto& childTransform = child.GetComponent<TransformComponent>();
+
+    // Remove from old parent
+    if (childTransform.parent != entt::null) {
+        Entity oldParent = { childTransform.parent, this };
+        if (oldParent && oldParent.HasComponent<TransformComponent>()) {
+            auto& oldParentTransform = oldParent.GetComponent<TransformComponent>();
+            auto it = std::find(oldParentTransform.children.begin(),
+                              oldParentTransform.children.end(),
+                              child.m_EntityHandle);
+            if (it != oldParentTransform.children.end()) {
+                oldParentTransform.children.erase(it);
+            }
+        }
+    }
+
+    // Add to new parent
+    childTransform.parent = parent.m_EntityHandle;
+    auto& parentTransform = parent.GetComponent<TransformComponent>();
+    parentTransform.children.push_back(child.m_EntityHandle);
+}
+
+void Scene::RemoveParent(Entity child)
+{
+    if (!child || !child.HasComponent<TransformComponent>())
+        return;
+
+    auto& childTransform = child.GetComponent<TransformComponent>();
+    
+    if (childTransform.parent != entt::null) {
+        Entity parent = { childTransform.parent, this };
+        if (parent && parent.HasComponent<TransformComponent>()) {
+            auto& parentTransform = parent.GetComponent<TransformComponent>();
+            auto it = std::find(parentTransform.children.begin(),
+                              parentTransform.children.end(),
+                              child.m_EntityHandle);
+            if (it != parentTransform.children.end()) {
+                parentTransform.children.erase(it);
+            }
+        }
+        childTransform.parent = entt::null;
+    }
+}
+
+Entity Scene::GetParent(Entity entity)
+{
+    if (!entity || !entity.HasComponent<TransformComponent>())
+        return {};
+
+    auto& transform = entity.GetComponent<TransformComponent>();
+    if (transform.parent != entt::null) {
+        return { transform.parent, this };
+    }
+    return {};
+}
+
+std::vector<Entity> Scene::GetChildren(Entity entity)
+{
+    std::vector<Entity> children;
+    if (!entity || !entity.HasComponent<TransformComponent>())
+        return children;
+
+    auto& transform = entity.GetComponent<TransformComponent>();
+    for (auto childHandle : transform.children) {
+        children.push_back({ childHandle, this });
+    }
+    return children;
+}
+
+Mat4 Scene::GetWorldTransform(Entity entity)
+{
+    if (!entity || !entity.HasComponent<TransformComponent>())
+        return Mat4::Identity();
+
+    auto& transform = entity.GetComponent<TransformComponent>();
+    Mat4 localTransform = transform.GetLocalMatrix();
+
+    if (transform.parent != entt::null) {
+        Entity parent = { transform.parent, this };
+        Mat4 parentTransform = GetWorldTransform(parent);
+        return Mat4::Multiply(parentTransform, localTransform);
+    }
+
+    return localTransform;
+}
+
+Entity Scene::FindEntityByName(const std::string& name)
+{
+    auto view = m_Registry.view<TagComponent>();
+    for (auto entity : view) {
+        auto& tag = view.get<TagComponent>(entity);
+        if (tag.tag == name) {
+            return { entity, this };
+        }
+    }
+    return {};
+}
+
+Entity Scene::GetSelectedEntity()
+{
+    auto view = m_Registry.view<SelectionComponent>();
+    for (auto entity : view) {
+        auto& selection = view.get<SelectionComponent>(entity);
+        if (selection.selected) {
+            return { entity, this };
+        }
+    }
+    return {};
+}
+
+void Scene::SetSelectedEntity(Entity entity)
+{
+    // Clear all selections
+    ClearSelection();
+
+    // Select the new entity
+    if (entity) {
+        if (!entity.HasComponent<SelectionComponent>()) {
+            entity.AddComponent<SelectionComponent>(true);
+        } else {
+            entity.GetComponent<SelectionComponent>().selected = true;
+        }
+    }
+}
+
+void Scene::ClearSelection()
+{
+    auto view = m_Registry.view<SelectionComponent>();
+    for (auto entity : view) {
+        view.get<SelectionComponent>(entity).selected = false;
+    }
+}
+
+void Scene::Clear()
+{
+    m_Registry.clear();
+}

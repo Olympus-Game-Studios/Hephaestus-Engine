@@ -18,6 +18,10 @@
 #include "imgui_impl_vulkan.h"
 #include "ImGuizmo.h"
 
+// Scene Graph / ECS
+#include "../Scene/Scene.h"
+#include "../Scene/Entity.h"
+#include "../Scene/Components.h"
 #include "../Scene/Transform.h"
 
 #ifdef _DEBUG
@@ -207,28 +211,35 @@ Ray ScreenToWorldRay(double mouseX, double mouseY, int screenWidth, int screenHe
     return Ray(rayNearWorld, rayDirection);
 }
 
-// Find the closest object hit by a ray
-int FindClosestHitObject(const Ray& ray, const std::vector<SceneObject>& objects, float& outDistance)
+// Find the closest object hit by a ray (ECS version)
+Entity FindClosestHitEntity(const Ray& ray, Scene& scene, float& outDistance)
 {
-    int closestIndex = -1;
+    Entity closestEntity;
     float closestDist = 1e30f;
     
-    for (size_t i = 0; i < objects.size(); ++i) {
-        AABB worldBounds = objects[i].GetWorldBounds();
+    auto view = scene.GetEntitiesWith<TransformComponent, MeshRendererComponent>();
+    for (auto entityHandle : view) {
+        Entity entity(entityHandle, &scene);
+        auto& transform = entity.GetComponent<TransformComponent>();
+        auto& renderer = entity.GetComponent<MeshRendererComponent>();
+        
+        if (!renderer.visible)
+            continue;
+            
+        AABB worldBounds = renderer.GetWorldBounds(transform);
         
         float tMin, tMax;
         if (worldBounds.IntersectRay(ray, tMin, tMax)) {
-            // Use entry point distance for sorting
             float hitDist = (tMin > 0) ? tMin : tMax;
             if (hitDist > 0 && hitDist < closestDist) {
                 closestDist = hitDist;
-                closestIndex = static_cast<int>(i);
+                closestEntity = entity;
             }
         }
     }
     
     outDistance = closestDist;
-    return closestIndex;
+    return closestEntity;
 }
 
 int main()
@@ -367,19 +378,27 @@ int main()
     // Start with cursor enabled (Unreal-style - hold RMB to look/move)
     g_cameraPtr = &camera; // Set global pointer for scroll callback
 
-    // ── Scene Objects ───────────────────────────
-    std::vector<SceneObject> sceneObjects;
-    sceneObjects.push_back(SceneObject("Cube 1"));
-    sceneObjects[0].transform.position = Vec3(0.0f, 0.0f, 0.0f);
-    sceneObjects[0].selected = true;
+    // ── Scene & Entities (ECS) ───────────────────
+    Scene scene("Main Scene");
     
-    sceneObjects.push_back(SceneObject("Cube 2"));
-    sceneObjects[1].transform.position = Vec3(2.0f, 0.0f, 0.0f);
-    sceneObjects[1].transform.scale = Vec3(0.5f, 0.5f, 0.5f);
+    // Create cube entities using ECS
+    Entity cube1 = scene.CreateEntity("Cube 1");
+    cube1.AddComponent<MeshRendererComponent>();
+    cube1.AddComponent<SelectionComponent>(true); // Start selected
+    auto& cube1Transform = cube1.GetComponent<TransformComponent>();
+    cube1Transform.position = Vec3(0.0f, 0.0f, 0.0f);
     
-    sceneObjects.push_back(SceneObject("Cube 3"));
-    sceneObjects[2].transform.position = Vec3(-2.0f, 0.0f, 0.0f);
-    sceneObjects[2].transform.rotation = Vec3(0.0f, 0.785f, 0.0f); // 45 degrees
+    Entity cube2 = scene.CreateEntity("Cube 2");
+    cube2.AddComponent<MeshRendererComponent>();
+    auto& cube2Transform = cube2.GetComponent<TransformComponent>();
+    cube2Transform.position = Vec3(2.0f, 0.0f, 0.0f);
+    cube2Transform.scale = Vec3(0.5f, 0.5f, 0.5f);
+    
+    Entity cube3 = scene.CreateEntity("Cube 3");
+    cube3.AddComponent<MeshRendererComponent>();
+    auto& cube3Transform = cube3.GetComponent<TransformComponent>();
+    cube3Transform.position = Vec3(-2.0f, 0.0f, 0.0f);
+    cube3Transform.rotation = Vec3(0.0f, 0.785f, 0.0f); // 45 degrees
 
     // ── ImGuizmo State ───────────────────────────
     ImGuizmo::OPERATION currentGizmoOperation = ImGuizmo::TRANSLATE;
@@ -582,36 +601,14 @@ int main()
             UniformBufferObject ubo = camera.makeUBO(swap.extent);
             Ray pickRay = ScreenToWorldRay(mouseX, mouseY, swap.extent.width, swap.extent.height, ubo.view, ubo.proj);
             
-            // Debug: print ray info
-            std::cout << "Click at (" << mouseX << ", " << mouseY << ")" << std::endl;
-            std::cout << "Ray origin: (" << pickRay.origin.x << ", " << pickRay.origin.y << ", " << pickRay.origin.z << ")" << std::endl;
-            std::cout << "Ray direction: (" << pickRay.direction.x << ", " << pickRay.direction.y << ", " << pickRay.direction.z << ")" << std::endl;
-            
             // Find closest hit
             float hitDist;
-            int hitIndex = FindClosestHitObject(pickRay, sceneObjects, hitDist);
+            Entity hitEntity = FindClosestHitEntity(pickRay, scene, hitDist);
             
-            std::cout << "Hit index: " << hitIndex << ", Distance: " << hitDist << std::endl;
-            
-            // Debug: print object bounds
-            for (size_t i = 0; i < sceneObjects.size(); ++i) {
-                AABB bounds = sceneObjects[i].GetWorldBounds();
-                std::cout << "Object " << i << " (" << sceneObjects[i].name << "): min(" 
-                          << bounds.min.x << ", " << bounds.min.y << ", " << bounds.min.z 
-                          << ") max(" << bounds.max.x << ", " << bounds.max.y << ", " << bounds.max.z << ")" << std::endl;
-                
-                float tMin, tMax;
-                bool hit = bounds.IntersectRay(pickRay, tMin, tMax);
-                std::cout << "  Hit: " << (hit ? "YES" : "NO") << ", tMin: " << tMin << ", tMax: " << tMax << std::endl;
-            }
-            
-            if (hitIndex >= 0) {
-                // Deselect all and select hit object
-                for (auto& obj : sceneObjects) obj.selected = false;
-                sceneObjects[hitIndex].selected = true;
+            if (hitEntity) {
+                scene.SetSelectedEntity(hitEntity);
             } else {
-                // Clicked on empty space - deselect all
-                for (auto& obj : sceneObjects) obj.selected = false;
+                scene.ClearSelection();
             }
         }
         leftMouseWasPressed = leftMousePressed;
@@ -644,20 +641,26 @@ int main()
             
             // Scene Hierarchy Window
             ImGui::Begin("Scene Hierarchy");
-            for (size_t i = 0; i < sceneObjects.size(); ++i) {
-                // Highlight selected object
-                bool wasSelected = sceneObjects[i].selected;
-                if (wasSelected) {
+            ImGui::Text("Scene: %s", scene.GetName().c_str());
+            ImGui::Separator();
+            
+            auto view = scene.GetEntitiesWith<TagComponent>();
+            for (auto entityHandle : view) {
+                Entity entity(entityHandle, &scene);
+                auto& tag = entity.GetComponent<TagComponent>();
+                
+                bool isSelected = entity.HasComponent<SelectionComponent>() && 
+                                entity.GetComponent<SelectionComponent>().selected;
+                
+                if (isSelected) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 1.0f, 0.2f, 1.0f));
                 }
                 
-                if (ImGui::Selectable(sceneObjects[i].name, sceneObjects[i].selected)) {
-                    // Deselect all, select this one
-                    for (auto& obj : sceneObjects) obj.selected = false;
-                    sceneObjects[i].selected = true;
+                if (ImGui::Selectable(tag.tag.c_str(), isSelected)) {
+                    scene.SetSelectedEntity(entity);
                 }
                 
-                if (wasSelected) {
+                if (isSelected) {
                     ImGui::PopStyleColor();
                 }
             }
@@ -665,63 +668,55 @@ int main()
             
             // Properties Window
             ImGui::Begin("Properties");
-            bool hasSelection = false;
-            for (auto& obj : sceneObjects) {
-                if (obj.selected) {
-                    hasSelection = true;
-                    ImGui::Text("Object: %s", obj.name);
-                    ImGui::Separator();
-                    
-                    // Gizmo operation selector
-                    ImGui::Text("Gizmo Mode:");
-                    if (ImGui::RadioButton("Translate (T)", currentGizmoOperation == ImGuizmo::TRANSLATE))
-                        currentGizmoOperation = ImGuizmo::TRANSLATE;
-                    ImGui::SameLine();
-                    if (ImGui::RadioButton("Rotate (R)", currentGizmoOperation == ImGuizmo::ROTATE))
-                        currentGizmoOperation = ImGuizmo::ROTATE;
-                    ImGui::SameLine();
-                    if (ImGui::RadioButton("Scale (S)", currentGizmoOperation == ImGuizmo::SCALE))
-                        currentGizmoOperation = ImGuizmo::SCALE;
-                    
-                    ImGui::Separator();
-                    if (ImGui::RadioButton("Local", currentGizmoMode == ImGuizmo::LOCAL))
-                        currentGizmoMode = ImGuizmo::LOCAL;
-                    ImGui::SameLine();
-                    if (ImGui::RadioButton("World", currentGizmoMode == ImGuizmo::WORLD))
-                        currentGizmoMode = ImGuizmo::WORLD;
-                    
-                    ImGui::Separator();
-                    
-                    // Transform editor
-                    ImGui::Text("Transform:");
-                    ImGui::DragFloat3("Position", &obj.transform.position.x, 0.1f);
-                    Vec3 rotDeg = Vec3(
-                        obj.transform.rotation.x * 57.2958f,
-                        obj.transform.rotation.y * 57.2958f,
-                        obj.transform.rotation.z * 57.2958f
-                    );
-                    if (ImGui::DragFloat3("Rotation", &rotDeg.x, 1.0f)) {
-                        obj.transform.rotation.x = rotDeg.x * 0.0174533f;
-                        obj.transform.rotation.y = rotDeg.y * 0.0174533f;
-                        obj.transform.rotation.z = rotDeg.z * 0.0174533f;
-                    }
-                    ImGui::DragFloat3("Scale", &obj.transform.scale.x, 0.01f, 0.01f, 10.0f);
-                    
-                    ImGui::Separator();
-                    ImGui::Text("Debug Info:");
-                    ImGui::Text("ImGuizmo IsUsing: %s", ImGuizmo::IsUsing() ? "YES" : "NO");
-                    ImGui::Text("ImGuizmo IsOver: %s", ImGuizmo::IsOver() ? "YES" : "NO");
-                    ImGui::Text("Gizmo Rect: (0, 0) to (%.0f, %.0f)", (float)swap.extent.width, (float)swap.extent.height);
-                            ImGui::Separator();
-                            ImGui::Checkbox("Gizmo Follow Camera", &gizmoFollowCamera);
-                    
-                    break;
-                }
-            }
+            Entity selectedEntity = scene.GetSelectedEntity();
             
-            if (!hasSelection) {
-                ImGui::TextDisabled("No object selected");
-                ImGui::Text("Click on an object in the viewport to select it");
+            if (selectedEntity) {
+                auto& tag = selectedEntity.GetComponent<TagComponent>();
+                auto& transform = selectedEntity.GetComponent<TransformComponent>();
+                
+                ImGui::Text("Entity: %s", tag.tag.c_str());
+                ImGui::Separator();
+                
+                // Gizmo operation selector
+                ImGui::Text("Gizmo Mode:");
+                if (ImGui::RadioButton("Translate (T)", currentGizmoOperation == ImGuizmo::TRANSLATE))
+                    currentGizmoOperation = ImGuizmo::TRANSLATE;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Rotate (R)", currentGizmoOperation == ImGuizmo::ROTATE))
+                    currentGizmoOperation = ImGuizmo::ROTATE;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Scale (S)", currentGizmoOperation == ImGuizmo::SCALE))
+                    currentGizmoOperation = ImGuizmo::SCALE;
+                
+                ImGui::Separator();
+                if (ImGui::RadioButton("Local", currentGizmoMode == ImGuizmo::LOCAL))
+                    currentGizmoMode = ImGuizmo::LOCAL;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("World", currentGizmoMode == ImGuizmo::WORLD))
+                    currentGizmoMode = ImGuizmo::WORLD;
+                
+                ImGui::Separator();
+                
+                // Transform editor
+                ImGui::Text("Transform:");
+                ImGui::DragFloat3("Position", &transform.position.x, 0.1f);
+                Vec3 rotDeg = transform.GetRotationDegrees();
+                if (ImGui::DragFloat3("Rotation", &rotDeg.x, 1.0f)) {
+                    transform.SetRotationDegrees(rotDeg);
+                }
+                ImGui::DragFloat3("Scale", &transform.scale.x, 0.01f, 0.01f, 10.0f);
+                
+                ImGui::Separator();
+                ImGui::Text("Debug Info:");
+                ImGui::Text("Entity ID: %u", static_cast<uint32_t>(selectedEntity));
+                ImGui::Text("ImGuizmo IsUsing: %s", ImGuizmo::IsUsing() ? "YES" : "NO");
+                ImGui::Text("ImGuizmo IsOver: %s", ImGuizmo::IsOver() ? "YES" : "NO");
+                
+                ImGui::Separator();
+                ImGui::Checkbox("Gizmo Follow Camera", &gizmoFollowCamera);
+            } else {
+                ImGui::TextDisabled("No entity selected");
+                ImGui::Text("Click on an entity in the viewport to select it");
             }
             ImGui::End();
         }
@@ -765,25 +760,24 @@ int main()
         }
         
         // Render gizmo for selected object (always call Manipulate so it draws)
-        for (auto& obj : sceneObjects) {
-            if (obj.selected) {
-                Mat4 objectMatrix = obj.transform.GetMatrix();
+        Entity selectedEntity = scene.GetSelectedEntity();
+        if (selectedEntity) {
+            auto& transform = selectedEntity.GetComponent<TransformComponent>();
+            Mat4 objectMatrix = transform.GetLocalMatrix();
 
-                ImGuizmo::Manipulate(
-                    gizmoView.m,
-                    gizmoProj.m,
-                    currentGizmoOperation,
-                    currentGizmoMode,
-                    objectMatrix.m,
-                    nullptr,
-                    nullptr,
-                    nullptr);
-                
-                // If manipulated, update transform
-                if (ImGuizmo::IsUsing()) {
-                    obj.transform.SetMatrix(objectMatrix);
-                }
-                break;
+            ImGuizmo::Manipulate(
+                gizmoView.m,
+                gizmoProj.m,
+                currentGizmoOperation,
+                currentGizmoMode,
+                objectMatrix.m,
+                nullptr,
+                nullptr,
+                nullptr);
+            
+            // If manipulated, update transform
+            if (ImGuizmo::IsUsing()) {
+                transform.SetFromMatrix(objectMatrix);
             }
         }
         
@@ -854,10 +848,17 @@ int main()
         vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
         vkCmdBindIndexBuffer(cmd, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
         
-        // Draw all scene objects
-        for (const auto& obj : sceneObjects) {
-            Mat4 modelMatrix = obj.transform.GetMatrix();
-            // Push constants for model matrix (we'll need to add this to the pipeline)
+        // Draw all scene objects with MeshRendererComponent
+        auto renderView = scene.GetEntitiesWith<TransformComponent, MeshRendererComponent>();
+        for (auto entityHandle : renderView) {
+            Entity entity(entityHandle, &scene);
+            auto& transform = entity.GetComponent<TransformComponent>();
+            auto& renderer = entity.GetComponent<MeshRendererComponent>();
+            
+            if (!renderer.visible)
+                continue;
+                
+            Mat4 modelMatrix = transform.GetLocalMatrix();
             vkCmdPushConstants(cmd, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), modelMatrix.m);
             vkCmdDrawIndexed(cmd, static_cast<uint32_t>(cubeIndices.size()), 1, 0, 0, 0);
         }
