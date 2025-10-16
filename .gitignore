@@ -45,3 +45,5 @@
 
 # Required Files (Un-ignoring the root CMakeLists.txt)
 !/CMakeLists.txt
+
+build/
