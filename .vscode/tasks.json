@@ -1,0 +1,35 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build HephaestusEngine Release",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--config",
+				"Release"
+			],
+			"problemMatcher": [
+				"$msCompile"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build after vertex flush",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--config",
+				"Release"
+			],
+			"problemMatcher": [
+				"$msCompile"
+			],
+			"group": "build"
+		}
+	]
+}

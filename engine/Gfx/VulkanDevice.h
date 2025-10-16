@@ -2,20 +2,29 @@
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <vector>
+#include <cstdint>
+#include "vk_mem_alloc.h"
 
-struct VulkanDevice {
+class VulkanDevice {
+public:
     VkInstance instance{};
-    VkSurfaceKHR surface{};
     VkPhysicalDevice physicalDevice{};
     VkDevice device{};
     VkQueue graphicsQueue{};
     VkQueue presentQueue{};
-    VkSwapchainKHR swapchain{};
-    std::vector<VkImage> swapchainImages;
-    std::vector<VkImageView> swapchainImageViews;
-    VkFormat swapchainImageFormat{};
-    VkExtent2D swapchainExtent{};
+    VkSurfaceKHR surface{};
+    VkCommandPool commandPool{};
+    VmaAllocator allocator{}; // ✅ VMA allocator
 
     void Init(GLFWwindow* window, VkInstance instance);
-    void Cleanup();                     // <- Make sure this line exists
+    void Cleanup();
+
+private:
+    uint32_t graphicsFamily = UINT32_MAX;
+    uint32_t presentFamily  = UINT32_MAX;
+
+    void pickPhysicalDevice();
+    void findQueueFamilies(VkPhysicalDevice pd);
+    void createLogicalDevice();
+    void createCommandPool();
 };

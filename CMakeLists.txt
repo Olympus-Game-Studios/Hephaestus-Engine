@@ -11,7 +11,13 @@ add_executable(HephaestusEngine
     engine/Core/main.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
+    engine/Gfx/VulkanPipeline.cpp
 )
 
 target_include_directories(HephaestusEngine PRIVATE engine)
 target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw)
+target_include_directories(HephaestusEngine PRIVATE
+    engine
+    extern/VMA
+)
+

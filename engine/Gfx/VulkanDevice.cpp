@@ -1,62 +1,139 @@
-﻿#include "VulkanDevice.h"
+﻿#define VMA_IMPLEMENTATION
+#include "vk_mem_alloc.h"
+#include "VulkanDevice.h"
 #include <stdexcept>
 #include <iostream>
 #include <vector>
+#include <set>
+
 
 void VulkanDevice::Init(GLFWwindow* window, VkInstance inInstance)
 {
     instance = inInstance;
 
+    // Create window surface
     if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS)
         throw std::runtime_error("Failed to create window surface");
 
-    uint32_t deviceCount = 0;
-    vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
-    if (deviceCount == 0)
-        throw std::runtime_error("No Vulkan devices found!");
+    // Select GPU + create queues
+    pickPhysicalDevice();
+    findQueueFamilies(physicalDevice);
+    createLogicalDevice();
+    createCommandPool();
 
-    std::vector<VkPhysicalDevice> devices(deviceCount);
-    vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
-    physicalDevice = devices[0];
+    // ---- Create VMA allocator ----
+    VmaAllocatorCreateInfo allocatorInfo{};
+    allocatorInfo.physicalDevice = physicalDevice;
+    allocatorInfo.device = device;
+    allocatorInfo.instance = instance;
 
-    const std::vector<const char*> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
-
-    float priority = 1.0f;
-    VkDeviceQueueCreateInfo queueCreate{};
-    queueCreate.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queueCreate.queueFamilyIndex = 0;
-    queueCreate.queueCount = 1;
-    queueCreate.pQueuePriorities = &priority;
-
-    VkPhysicalDeviceFeatures features{};
-    VkDeviceCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    createInfo.pQueueCreateInfos = &queueCreate;
-    createInfo.queueCreateInfoCount = 1;
-    createInfo.pEnabledFeatures = &features;
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
-    createInfo.ppEnabledExtensionNames = deviceExtensions.data();
-
-    if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create logical device");
-
-    vkGetDeviceQueue(device, 0, 0, &graphicsQueue);
-    presentQueue = graphicsQueue;
+    if (vmaCreateAllocator(&allocatorInfo, &allocator) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create VMA allocator");
 
     std::cout << "Vulkan device initialized.\n";
 }
 
-// ✅ Add this cleanup function exactly as declared in the header
 void VulkanDevice::Cleanup()
 {
+    if (allocator)
+        vmaDestroyAllocator(allocator);
+
     if (device != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(device);
-        if (swapchain) vkDestroySwapchainKHR(device, swapchain, nullptr);
-        for (auto view : swapchainImageViews)
-            vkDestroyImageView(device, view, nullptr);
+        if (commandPool) vkDestroyCommandPool(device, commandPool, nullptr);
         vkDestroyDevice(device, nullptr);
     }
 
-    if (surface != VK_NULL_HANDLE)
+    if (surface)
         vkDestroySurfaceKHR(instance, surface, nullptr);
+}
+
+// ---------- internals ----------
+
+void VulkanDevice::pickPhysicalDevice()
+{
+    uint32_t count = 0;
+    vkEnumeratePhysicalDevices(instance, &count, nullptr);
+    if (count == 0)
+        throw std::runtime_error("No Vulkan devices found!");
+
+    std::vector<VkPhysicalDevice> devices(count);
+    vkEnumeratePhysicalDevices(instance, &count, devices.data());
+
+    for (auto pd : devices) {
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(pd, &props);
+        physicalDevice = pd;
+        std::cout << "GPU: " << props.deviceName << "\n";
+        return;
+    }
+
+    throw std::runtime_error("Failed to select a physical device");
+}
+
+void VulkanDevice::findQueueFamilies(VkPhysicalDevice pd)
+{
+    uint32_t qCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(pd, &qCount, nullptr);
+    std::vector<VkQueueFamilyProperties> props(qCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(pd, &qCount, props.data());
+
+    for (uint32_t i = 0; i < qCount; ++i) {
+        if ((props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && graphicsFamily == UINT32_MAX)
+            graphicsFamily = i;
+
+        VkBool32 present = VK_FALSE;
+        vkGetPhysicalDeviceSurfaceSupportKHR(pd, i, surface, &present);
+        if (present && presentFamily == UINT32_MAX)
+            presentFamily = i;
+    }
+
+    if (graphicsFamily == UINT32_MAX || presentFamily == UINT32_MAX)
+        throw std::runtime_error("Required queue families not found");
+}
+
+void VulkanDevice::createLogicalDevice()
+{
+    float priority = 1.0f;
+    std::vector<VkDeviceQueueCreateInfo> qInfos;
+    std::set<uint32_t> uniqueFamilies = { graphicsFamily, presentFamily };
+
+    for (uint32_t family : uniqueFamilies) {
+        VkDeviceQueueCreateInfo q{};
+        q.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        q.queueFamilyIndex = family;
+        q.queueCount = 1;
+        q.pQueuePriorities = &priority;
+        qInfos.push_back(q);
+    }
+
+    const std::vector<const char*> deviceExtensions = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    };
+
+    VkPhysicalDeviceFeatures features{};
+    VkDeviceCreateInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    ci.queueCreateInfoCount = static_cast<uint32_t>(qInfos.size());
+    ci.pQueueCreateInfos = qInfos.data();
+    ci.pEnabledFeatures = &features;
+    ci.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+    ci.ppEnabledExtensionNames = deviceExtensions.data();
+
+    if (vkCreateDevice(physicalDevice, &ci, nullptr, &device) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create logical device");
+
+    vkGetDeviceQueue(device, graphicsFamily, 0, &graphicsQueue);
+    vkGetDeviceQueue(device, presentFamily,  0, &presentQueue);
+}
+
+void VulkanDevice::createCommandPool()
+{
+    VkCommandPoolCreateInfo pool{};
+    pool.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pool.queueFamilyIndex = graphicsFamily;
+    pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+
+    if (vkCreateCommandPool(device, &pool, nullptr, &commandPool) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create command pool");
 }
