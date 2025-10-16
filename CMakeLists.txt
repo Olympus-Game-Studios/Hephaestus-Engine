@@ -40,6 +40,18 @@ target_include_directories(imgui PUBLIC
 target_link_libraries(imgui PUBLIC glfw Vulkan::Vulkan)
 target_link_libraries(HephaestusEngine PRIVATE imgui)
 
+# ImGuizmo
+add_library(imguizmo STATIC
+    extern/ImGuizmo/ImGuizmo.cpp
+)
+
+target_include_directories(imguizmo PUBLIC
+    extern/ImGuizmo
+)
+
+target_link_libraries(imguizmo PUBLIC imgui)
+target_link_libraries(HephaestusEngine PRIVATE imguizmo)
+
 
 
 # --- Compile GLSL shaders to SPIR-V if glslc is available ---

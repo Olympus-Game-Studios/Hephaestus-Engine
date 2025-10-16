@@ -5,56 +5,7 @@
 #include <cstring>
 #include <cmath>
 
-// Minimal math utilities for camera
-struct Vec3 { float x, y, z; };
-static inline Vec3 v3(float x, float y, float z) { return Vec3{x,y,z}; }
-static inline Vec3 vadd(Vec3 a, Vec3 b){ return v3(a.x+b.x,a.y+b.y,a.z+b.z);} 
-static inline Vec3 vsub(Vec3 a, Vec3 b){ return v3(a.x-b.x,a.y-b.y,a.z-b.z);} 
-static inline Vec3 vscale(Vec3 a, float s){ return v3(a.x*s,a.y*s,a.z*s);} 
-static inline float vdot(Vec3 a, Vec3 b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
-static inline Vec3 vcross(Vec3 a, Vec3 b){ return v3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x); }
-static inline float vlen(Vec3 a){ return std::sqrt(vdot(a,a)); }
-static inline Vec3 vnorm(Vec3 a){ float l=vlen(a); return l>0? vscale(a, 1.0f/l) : v3(0,0,0); }
-
-// Column-major 4x4 matrix compatible with GLSL std140 mat4
-struct Mat4 { float m[16]; };
-static Mat4 mat4_identity() { Mat4 r{}; r.m[0]=1; r.m[5]=1; r.m[10]=1; r.m[15]=1; return r; }
-
-static Mat4 mat4_lookAt(Vec3 eye, Vec3 center, Vec3 up)
-{
-    Vec3 f = vnorm(vsub(center, eye));
-    Vec3 s = vnorm(vcross(f, up));
-    Vec3 u = vcross(s, f);
-
-    Mat4 r{};
-    // First column
-    r.m[0] = s.x; r.m[1] = u.x; r.m[2] = -f.x; r.m[3] = 0.0f;
-    // Second column
-    r.m[4] = s.y; r.m[5] = u.y; r.m[6] = -f.y; r.m[7] = 0.0f;
-    // Third column
-    r.m[8] = s.z; r.m[9] = u.z; r.m[10] = -f.z; r.m[11] = 0.0f;
-    // Fourth column
-    r.m[12] = -vdot(s, eye);
-    r.m[13] = -vdot(u, eye);
-    r.m[14] = vdot(f, eye);
-    r.m[15] = 1.0f;
-    return r;
-}
-
-// Vulkan-style perspective (depth 0..1)
-static Mat4 mat4_perspective(float fovyRadians, float aspect, float znear, float zfar)
-{
-    float f = 1.0f / std::tan(fovyRadians * 0.5f);
-    Mat4 r{};
-    r.m[0] = f / aspect;
-    // Flip Y for Vulkan NDC to keep winding consistent with CLOCKWISE front-face
-    r.m[5] = -f;
-    r.m[10] = zfar / (zfar - znear);
-    r.m[11] = 1.0f;
-    r.m[14] = -(znear * zfar) / (zfar - znear);
-    // r.m[15] stays 0 by default for perspective
-    return r;
-}
+#include "Math.h"
 
 #include "../Gfx/VulkanDevice.h"
 #include "../Gfx/VulkanSwapchain.h"
@@ -65,6 +16,9 @@ static Mat4 mat4_perspective(float fovyRadians, float aspect, float znear, float
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
+#include "ImGuizmo.h"
+
+#include "../Scene/Transform.h"
 
 #ifdef _DEBUG
 const bool enableValidationLayers = true;
@@ -200,9 +154,9 @@ struct Camera {
             std::sin(yawR) * std::cos(pitchR)));
         Vec3 up = v3(0.0f, 1.0f, 0.0f);
         UniformBufferObject u{};
-        u.view = mat4_lookAt(position, vadd(position, front), up);
+        u.view = Mat4::LookAt(position, vadd(position, front), up);
         float aspect = extent.width / (float)extent.height;
-        u.proj = mat4_perspective(60.0f * 3.1415926535f / 180.0f, aspect, 0.1f, 100.0f);
+        u.proj = Mat4::Perspective(60.0f * 3.1415926535f / 180.0f, aspect, 0.1f, 100.0f);
         return u;
     }
 };
@@ -357,6 +311,24 @@ int main()
     camera.position = {0.0f, 0.0f, 3.0f}; // Position camera to view the cube
     // Start with cursor enabled (Unreal-style - hold RMB to look/move)
     g_cameraPtr = &camera; // Set global pointer for scroll callback
+
+    // ── Scene Objects ───────────────────────────
+    std::vector<SceneObject> sceneObjects;
+    sceneObjects.push_back(SceneObject("Cube 1"));
+    sceneObjects[0].transform.position = Vec3(0.0f, 0.0f, 0.0f);
+    sceneObjects[0].selected = true;
+    
+    sceneObjects.push_back(SceneObject("Cube 2"));
+    sceneObjects[1].transform.position = Vec3(2.0f, 0.0f, 0.0f);
+    sceneObjects[1].transform.scale = Vec3(0.5f, 0.5f, 0.5f);
+    
+    sceneObjects.push_back(SceneObject("Cube 3"));
+    sceneObjects[2].transform.position = Vec3(-2.0f, 0.0f, 0.0f);
+    sceneObjects[2].transform.rotation = Vec3(0.0f, 0.785f, 0.0f); // 45 degrees
+
+    // ── ImGuizmo State ───────────────────────────
+    ImGuizmo::OPERATION currentGizmoOperation = ImGuizmo::TRANSLATE;
+    ImGuizmo::MODE currentGizmoMode = ImGuizmo::WORLD;
 
     // Per-image uniform buffers and descriptors (tied to swapchain images)
     std::vector<VulkanBuffer> uniformBuffers;
@@ -530,14 +502,20 @@ int main()
         float currentTime = static_cast<float>(glfwGetTime());
         float dt = currentTime - lastTime; lastTime = currentTime;
 
-        // Input handling
-        camera.handleMouse(window);
-        camera.handleKeyboard(window, dt);
-
         // Start the Dear ImGui frame
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        
+        // Setup ImGuizmo early to check if it's being used
+        ImGuizmo::BeginFrame();
+        ImGuizmo::SetOrthographic(false);
+        
+        // Input handling (only when not using gizmo)
+        if (!ImGuizmo::IsUsing()) {
+            camera.handleMouse(window);
+            camera.handleKeyboard(window, dt);
+        }
 
         // ImGui UI
         {
@@ -554,8 +532,109 @@ int main()
             ImGui::Text("Camera Speed: %.2f", camera.moveSpeed);
             ImGui::Text("Yaw: %.1f°  Pitch: %.1f°", camera.yawDeg, camera.pitchDeg);
             ImGui::End();
+            
+            // Scene Hierarchy Window
+            ImGui::Begin("Scene Hierarchy");
+            for (size_t i = 0; i < sceneObjects.size(); ++i) {
+                if (ImGui::Selectable(sceneObjects[i].name, sceneObjects[i].selected)) {
+                    // Deselect all, select this one
+                    for (auto& obj : sceneObjects) obj.selected = false;
+                    sceneObjects[i].selected = true;
+                }
+            }
+            ImGui::End();
+            
+            // Properties Window
+            ImGui::Begin("Properties");
+            for (auto& obj : sceneObjects) {
+                if (obj.selected) {
+                    ImGui::Text("Object: %s", obj.name);
+                    ImGui::Separator();
+                    
+                    // Gizmo operation selector
+                    ImGui::Text("Gizmo Mode:");
+                    if (ImGui::RadioButton("Translate (T)", currentGizmoOperation == ImGuizmo::TRANSLATE))
+                        currentGizmoOperation = ImGuizmo::TRANSLATE;
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Rotate (R)", currentGizmoOperation == ImGuizmo::ROTATE))
+                        currentGizmoOperation = ImGuizmo::ROTATE;
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Scale (S)", currentGizmoOperation == ImGuizmo::SCALE))
+                        currentGizmoOperation = ImGuizmo::SCALE;
+                    
+                    ImGui::Separator();
+                    if (ImGui::RadioButton("Local", currentGizmoMode == ImGuizmo::LOCAL))
+                        currentGizmoMode = ImGuizmo::LOCAL;
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("World", currentGizmoMode == ImGuizmo::WORLD))
+                        currentGizmoMode = ImGuizmo::WORLD;
+                    
+                    ImGui::Separator();
+                    
+                    // Transform editor
+                    ImGui::Text("Transform:");
+                    ImGui::DragFloat3("Position", &obj.transform.position.x, 0.1f);
+                    Vec3 rotDeg = Vec3(
+                        obj.transform.rotation.x * 57.2958f,
+                        obj.transform.rotation.y * 57.2958f,
+                        obj.transform.rotation.z * 57.2958f
+                    );
+                    if (ImGui::DragFloat3("Rotation", &rotDeg.x, 1.0f)) {
+                        obj.transform.rotation.x = rotDeg.x * 0.0174533f;
+                        obj.transform.rotation.y = rotDeg.y * 0.0174533f;
+                        obj.transform.rotation.z = rotDeg.z * 0.0174533f;
+                    }
+                    ImGui::DragFloat3("Scale", &obj.transform.scale.x, 0.01f, 0.01f, 10.0f);
+                    
+                    ImGui::Separator();
+                    ImGui::Text("Debug Info:");
+                    ImGui::Text("ImGuizmo IsUsing: %s", ImGuizmo::IsUsing() ? "YES" : "NO");
+                    ImGui::Text("ImGuizmo IsOver: %s", ImGuizmo::IsOver() ? "YES" : "NO");
+                    
+                    break;
+                }
+            }
+            ImGui::End();
         }
+        
+        // ImGuizmo keyboard shortcuts
+        if (ImGui::IsKeyPressed(ImGuiKey_T)) currentGizmoOperation = ImGuizmo::TRANSLATE;
+        if (ImGui::IsKeyPressed(ImGuiKey_R)) currentGizmoOperation = ImGuizmo::ROTATE;
+        if (ImGui::IsKeyPressed(ImGuiKey_S) && !ImGui::GetIO().KeyCtrl) currentGizmoOperation = ImGuizmo::SCALE;
+        
+        // Build view/proj for ImGuizmo in OpenGL-style clip space
+        UniformBufferObject ubo = camera.makeUBO(swap.extent);
+        // For ImGuizmo, use the same view but compute aspect from display size
+        float aspect = io.DisplaySize.x / io.DisplaySize.y;
+        Mat4 gizmoProj = Mat4::PerspectiveGL(60.0f * 3.1415926535f / 180.0f, aspect, 0.1f, 100.0f);
+        
+        // Setup ImGuizmo rect and drawing - must be done after ImGui::NewFrame()
+        ImGuizmo::SetDrawlist();
+        ImGuizmo::SetRect(0, 0, io.DisplaySize.x, io.DisplaySize.y);
+        ImGuizmo::Enable(true);
+        
+        // Render gizmo for selected object (always call Manipulate so it draws)
+        for (auto& obj : sceneObjects) {
+            if (obj.selected) {
+                Mat4 objectMatrix = obj.transform.GetMatrix();
 
+                ImGuizmo::Manipulate(
+                    ubo.view.m,
+                    gizmoProj.m,
+                    currentGizmoOperation,
+                    currentGizmoMode,
+                    objectMatrix.m,
+                    nullptr,
+                    nullptr);
+                
+                // If manipulated, update transform
+                if (ImGuizmo::IsUsing()) {
+                    obj.transform.SetMatrix(objectMatrix);
+                }
+                break;
+            }
+        }
+        
         // Render ImGui
         ImGui::Render();
 
@@ -622,7 +701,14 @@ int main()
         VkDeviceSize offsets[] = { 0 };
         vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
         vkCmdBindIndexBuffer(cmd, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
-        vkCmdDrawIndexed(cmd, static_cast<uint32_t>(cubeIndices.size()), 1, 0, 0, 0);
+        
+        // Draw all scene objects
+        for (const auto& obj : sceneObjects) {
+            Mat4 modelMatrix = obj.transform.GetMatrix();
+            // Push constants for model matrix (we'll need to add this to the pipeline)
+            vkCmdPushConstants(cmd, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), modelMatrix.m);
+            vkCmdDrawIndexed(cmd, static_cast<uint32_t>(cubeIndices.size()), 1, 0, 0, 0);
+        }
 
         // Render ImGui draw data
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);

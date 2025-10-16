@@ -7,10 +7,14 @@ layout(std140, set = 0, binding = 0) uniform UBO {
     mat4 proj;
 } ubo;
 
+layout(push_constant) uniform PushConstants {
+    mat4 model;
+} pc;
+
 layout(location = 0) out vec3 fragColor;
 
 void main() {
-    vec4 worldPos = vec4(inPosition, 1.0);
+    vec4 worldPos = pc.model * vec4(inPosition, 1.0);
     gl_Position = ubo.proj * ubo.view * worldPos;
     fragColor = inColor;
 }
