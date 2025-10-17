@@ -1,6 +1,7 @@
 #pragma once
 #include <vulkan/vulkan.h>
 #include <vector>
+#include <array>
 #include "../Core/Math.h"
 #include "vk_mem_alloc.h"
 
@@ -60,7 +61,7 @@ public:
 
     struct GizmoPushConstants {
         Mat4 model;
-        Vec4 color;  // RGBA color for this gizmo component
+        Vec4 state;  // x = hovered axis, y = active axis, z = gizmo scale, w unused
     };
 
     VulkanGizmo();
@@ -73,28 +74,29 @@ public:
     // Cleanup resources
     void Cleanup(VkDevice device, VmaAllocator allocator);
 
-    // Render the gizmo for a given transform
-    void Render(VkCommandBuffer cmd, VkDescriptorSet cameraDescriptor, 
-                const Mat4& objectTransform, const Mat4& viewMatrix, 
-                const Vec3& cameraPos, Mode mode, Space space);
+    // Prepare gizmo state for the current frame (must be called before interaction/render)
+    void UpdateState(const Mat4& objectTransform, const Mat4& viewMatrix,
+                     const Mat4& projMatrix, const Vec3& cameraPos,
+                     Mode mode, Space space);
 
-    // Check if mouse is hovering over gizmo component
-    // Returns -1 if no hit, or axis index (0=X, 1=Y, 2=Z, 3=View plane)
-    int CheckHover(const Ray& ray, const Mat4& objectTransform, 
-                   const Vec3& cameraPos, Mode mode, Space space);
+    // Render the gizmo using the cached state
+    void Render(VkCommandBuffer cmd, VkDescriptorSet cameraDescriptor);
 
-    // Handle mouse drag interaction
-    // Returns the delta transformation to apply
-    Mat4 HandleDrag(const Ray& currentRay, const Ray& previousRay, 
-                    int activeAxis, const Mat4& objectTransform, 
-                    const Vec3& cameraPos, Mode mode, Space space);
+    // Hover helpers
+    int CheckHover(const Ray& ray) const;
+    void SetHoveredAxis(int axis);
+    int GetHoveredAxis() const { return m_HoveredAxis; }
+    int GetActiveAxis() const { return m_ActiveAxis; }
 
-    void SetMode(Mode mode) { m_Mode = mode; }
-    void SetSpace(Space space) { m_Space = space; }
-    Mode GetMode() const { return m_Mode; }
-    Space GetSpace() const { return m_Space; }
+    // Drag helpers
+    void BeginDrag(const Ray& ray, int axis);
+    Mat4 HandleDrag(const Ray& ray);
+    void EndDrag();
+    bool IsDragging() const { return m_IsDragging; }
 
 private:
+    struct GeometryBuffers;
+
     // Generate geometry for different gizmo types
     void GenerateTranslateGeometry(VkDevice device, VmaAllocator allocator);
     void GenerateRotateGeometry(VkDevice device, VmaAllocator allocator);
@@ -120,10 +122,17 @@ private:
     float CalculateGizmoScale(const Vec3& gizmoPos, const Vec3& cameraPos, 
                              const Mat4& projMatrix) const;
 
+    GeometryBuffers* GetGeometryForMode();
+    const GeometryBuffers* GetGeometryForMode() const;
+    float GetAxisLengthForCurrentMode() const;
+    bool ClosestPointOnAxis(const Ray& ray, const Vec3& origin, const Vec3& axisDir,
+                            float& outAxisParam, float& outDistance, bool clampToAxis) const;
+    bool IntersectRotationRing(const Ray& ray, const Vec3& axisDir,
+                               float& outDistanceFromRing) const;
+
     VkPipeline m_Pipeline = VK_NULL_HANDLE;
     VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
 
-    // Geometry buffers for each mode
     struct GeometryBuffers {
         VulkanBuffer* vertexBuffer = nullptr;
         VulkanBuffer* indexBuffer = nullptr;
@@ -134,11 +143,32 @@ private:
     GeometryBuffers m_RotateGeo;
     GeometryBuffers m_ScaleGeo;
 
+    // Cached state
     Mode m_Mode = Mode::Translate;
     Space m_Space = Space::World;
+    bool m_StateValid = false;
+    Mat4 m_ObjectTransform = Mat4::Identity();
+    Mat4 m_ViewMatrix = Mat4::Identity();
+    Mat4 m_ProjMatrix = Mat4::Identity();
+    Vec3 m_CameraPos = Vec3(0, 0, 0);
+    Vec3 m_GizmoOrigin = Vec3(0, 0, 0);
+    Vec3 m_AxisDirections[3] = { Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1) };
+    float m_CurrentScale = 1.0f;
 
+    // Interaction state
     int m_HoveredAxis = -1;
+    int m_ActiveAxis = -1;
     bool m_IsDragging = false;
-    Vec3 m_DragStartPoint;
-    Mat4 m_DragStartTransform;
+    Mat4 m_DragStartTransform = Mat4::Identity();
+    Vec3 m_DragStartPosition = Vec3(0, 0, 0);
+    Vec3 m_DragAxisDir = Vec3(1, 0, 0);
+    float m_DragStartAxisParam = 0.0f;
+
+    // Tuning constants
+    const float m_TranslateLength = 1.6f;
+    const float m_ScaleLength = 1.5f;
+    const float m_RotateRadius = 1.2f;
+    const float m_AxisThickness = 0.08f;
+    const float m_RotationPickWidth = 0.18f;
+    const float m_ScreenScaleFactor = 0.2f;
 };

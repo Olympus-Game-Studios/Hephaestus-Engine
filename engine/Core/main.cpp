@@ -360,6 +360,8 @@ int main()
     // -- Custom Vulkan Gizmo
     VulkanGizmo vulkanGizmo;
     vulkanGizmo.Init(vkdev.device, swap.renderPass, swap.extent, pipeline.descriptorSetLayout, vkdev.allocator);
+    bool gizmoDragging = false;
+    int gizmoActiveAxis = -1;
 
     // ── Vertex Data ───────────────────────────────────
     // 3D Cube vertices with normals - we need unique vertices per face for proper lighting
@@ -888,7 +890,8 @@ int main()
         static bool leftMouseWasPressed = false;
         bool leftMousePressed = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         
-        if (leftMousePressed && !leftMouseWasPressed && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver() && !io.WantCaptureMouse) {
+        if (leftMousePressed && !leftMouseWasPressed && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver() &&
+            !io.WantCaptureMouse && !gizmoDragging && vulkanGizmo.GetHoveredAxis() == -1) {
             // Left mouse button just pressed and not over ImGui
             double mouseX, mouseY;
             glfwGetCursorPos(window, &mouseX, &mouseY);
@@ -910,7 +913,7 @@ int main()
         leftMouseWasPressed = leftMousePressed;
         
         // Input handling (only when not using gizmo)
-        if (!ImGuizmo::IsUsing()) {
+    if (!ImGuizmo::IsUsing() && !gizmoDragging) {
             camera.handleMouse(window);
             camera.handleKeyboard(window, dt);
         }
@@ -1073,8 +1076,68 @@ int main()
         if (ImGui::IsKeyPressed(ImGuiKey_R)) currentGizmoOperation = ImGuizmo::ROTATE;
         if (ImGui::IsKeyPressed(ImGuiKey_S) && !ImGui::GetIO().KeyCtrl) currentGizmoOperation = ImGuizmo::SCALE;
         
-        // Build view/proj for ImGuizmo
+        // Build view/proj for ImGuizmo and gizmo interactions
         UniformBufferObject ubo = camera.makeUBO(swap.extent);
+
+        // Custom gizmo interaction handling
+        {
+            Entity selectedEntity = scene.GetSelectedEntity();
+            if (selectedEntity) {
+                auto& transform = selectedEntity.GetComponent<TransformComponent>();
+                Mat4 objectMatrix = transform.GetLocalMatrix();
+
+                VulkanGizmo::Mode gizmoMode = VulkanGizmo::Mode::Translate;
+                if (currentGizmoOperation == ImGuizmo::ROTATE) gizmoMode = VulkanGizmo::Mode::Rotate;
+                else if (currentGizmoOperation == ImGuizmo::SCALE) gizmoMode = VulkanGizmo::Mode::Scale;
+
+                VulkanGizmo::Space gizmoSpace = (currentGizmoMode == ImGuizmo::WORLD)
+                    ? VulkanGizmo::Space::World
+                    : VulkanGizmo::Space::Local;
+
+                vulkanGizmo.UpdateState(objectMatrix, ubo.view, ubo.proj, camera.position, gizmoMode, gizmoSpace);
+
+                double mouseX = 0.0;
+                double mouseY = 0.0;
+                glfwGetCursorPos(window, &mouseX, &mouseY);
+                Ray gizmoRay = ScreenToWorldRay(mouseX, mouseY,
+                                                swap.extent.width, swap.extent.height,
+                                                ubo.view, ubo.proj);
+
+                int hoveredAxis = gizmoDragging ? gizmoActiveAxis : vulkanGizmo.CheckHover(gizmoRay);
+                vulkanGizmo.SetHoveredAxis(hoveredAxis);
+
+                bool leftDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+
+                if (!gizmoDragging) {
+                    if (leftDown && hoveredAxis != -1 && !io.WantCaptureMouse) {
+                        gizmoDragging = true;
+                        gizmoActiveAxis = hoveredAxis;
+                        vulkanGizmo.BeginDrag(gizmoRay, hoveredAxis);
+                    }
+                } else {
+                    if (leftDown) {
+                        Mat4 newTransform = vulkanGizmo.HandleDrag(gizmoRay);
+                        if (gizmoMode == VulkanGizmo::Mode::Translate) {
+                            transform.position = Vec3(newTransform.m[12], newTransform.m[13], newTransform.m[14]);
+                            Mat4 updatedMatrix = transform.GetLocalMatrix();
+                            vulkanGizmo.UpdateState(updatedMatrix, ubo.view, ubo.proj, camera.position, gizmoMode, gizmoSpace);
+                            vulkanGizmo.SetHoveredAxis(gizmoActiveAxis);
+                        }
+                    } else {
+                        gizmoDragging = false;
+                        gizmoActiveAxis = -1;
+                        vulkanGizmo.EndDrag();
+                    }
+                }
+            } else {
+                vulkanGizmo.SetHoveredAxis(-1);
+                if (gizmoDragging) {
+                    gizmoDragging = false;
+                    gizmoActiveAxis = -1;
+                    vulkanGizmo.EndDrag();
+                }
+            }
+        }
         
         // Render ImGui
         ImGui::Render();
@@ -1287,7 +1350,7 @@ int main()
 
             VulkanGizmo::Space gizmoSpace = (currentGizmoMode == ImGuizmo::WORLD) ? VulkanGizmo::Space::World : VulkanGizmo::Space::Local;
 
-            vulkanGizmo.Render(cmd, descriptorSets[imageIndex], objectMatrix, ubo.view, camera.position, gizmoMode, gizmoSpace);
+            vulkanGizmo.Render(cmd, descriptorSets[imageIndex]);
         }
 
         // ── Render Light Billboards ───────────────────────────────

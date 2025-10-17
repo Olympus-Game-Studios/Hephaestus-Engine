@@ -10,7 +10,7 @@ layout(binding = 0) uniform CameraUBO {
 
 layout(push_constant) uniform GizmoPushConstants {
     mat4 model;      // Transform to world space
-    vec4 color;      // RGBA color for this gizmo part
+    vec4 state;      // x = hovered axis, y = active axis, z = gizmo scale
 } gizmo;
 
 layout(location = 0) in vec3 inPosition;
@@ -20,6 +20,7 @@ layout(location = 2) in vec3 inColor;
 layout(location = 0) out vec3 fragColor;
 layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec3 fragWorldPos;
+layout(location = 3) flat out vec4 gizmoState;
 
 void main() {
     vec4 worldPos = gizmo.model * vec4(inPosition, 1.0);
@@ -28,4 +29,5 @@ void main() {
     fragColor = inColor; // Use vertex color
     fragNormal = mat3(transpose(inverse(gizmo.model))) * inNormal;
     fragWorldPos = worldPos.xyz;
+    gizmoState = gizmo.state;
 }
