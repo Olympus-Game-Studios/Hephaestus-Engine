@@ -4,6 +4,10 @@
 #include <vector>
 #include <cstring>
 #include <cmath>
+#include <string>
+#include <filesystem>
+#include <algorithm>
+#include <system_error>
 
 #include "Math.h"
 
@@ -287,6 +291,200 @@ Entity FindClosestHitEntity(const Ray& ray, Scene& scene, float& outDistance)
     
     outDistance = closestDist;
     return closestEntity;
+}
+
+// Helper to keep browser navigation within the asset root directory.
+static bool PathInsideRoot(const std::filesystem::path& root, const std::filesystem::path& candidate)
+{
+    std::filesystem::path normalizedRoot = root.lexically_normal();
+    std::filesystem::path normalizedCandidate = candidate.lexically_normal();
+
+    std::string rootStr = normalizedRoot.generic_string();
+    std::string candidateStr = normalizedCandidate.generic_string();
+
+    if (rootStr.empty()) {
+        return true;
+    }
+
+    if (candidateStr.size() < rootStr.size()) {
+        return false;
+    }
+
+    if (candidateStr.compare(0, rootStr.size(), rootStr) != 0) {
+        return false;
+    }
+
+    if (candidateStr.size() == rootStr.size()) {
+        return true;
+    }
+
+    char separator = candidateStr[rootStr.size()];
+    return separator == '/';
+}
+
+static std::filesystem::path ClampToRoot(const std::filesystem::path& candidate, const std::filesystem::path& root)
+{
+    if (PathInsideRoot(root, candidate)) {
+        return candidate.lexically_normal();
+    }
+    return root.lexically_normal();
+}
+
+// ImGui panel that lists files and folders in the asset directory.
+static void DrawAssetBrowserPanel()
+{
+    namespace fs = std::filesystem;
+
+    static bool initialized = false;
+    static fs::path assetRoot;
+    static fs::path currentPath;
+    static fs::path selectedPath;
+
+    if (!initialized) {
+        initialized = true;
+        std::error_code absErr;
+        fs::path absoluteRoot = fs::absolute("assets", absErr);
+        assetRoot = absErr ? fs::path("assets") : absoluteRoot.lexically_normal();
+        currentPath = assetRoot;
+        selectedPath.clear();
+    }
+
+    assetRoot = assetRoot.lexically_normal();
+    currentPath = ClampToRoot(currentPath, assetRoot);
+
+    if (!ImGui::Begin("Asset Browser")) {
+        ImGui::End();
+        return;
+    }
+
+    std::error_code existsErr;
+    bool rootExists = fs::exists(assetRoot, existsErr);
+    if (!rootExists || existsErr) {
+        std::string rootDisplay = assetRoot.generic_string();
+        ImGui::TextDisabled("Asset directory not found: %s", rootDisplay.c_str());
+        ImGui::End();
+        return;
+    }
+
+    if (!fs::exists(currentPath)) {
+        currentPath = assetRoot;
+    }
+
+    if (!selectedPath.empty() && !PathInsideRoot(assetRoot, selectedPath)) {
+        selectedPath.clear();
+    }
+
+    std::error_code relErr;
+    fs::path relativePath = fs::relative(currentPath, assetRoot, relErr);
+    std::string relativeDisplay;
+    if (relErr || relativePath.empty() || relativePath == ".") {
+        relativeDisplay = ".";
+    } else {
+        relativeDisplay = relativePath.generic_string();
+    }
+
+    ImGui::Text("Path: %s", relativeDisplay.c_str());
+
+    if (currentPath != assetRoot) {
+        if (ImGui::Button("Up")) {
+            fs::path parent = currentPath.parent_path();
+            currentPath = parent.empty() ? assetRoot : ClampToRoot(parent, assetRoot);
+            if (!PathInsideRoot(assetRoot, selectedPath)) {
+                selectedPath.clear();
+            }
+        }
+    }
+
+    ImGui::Separator();
+
+    std::error_code iterErr;
+    fs::directory_iterator dirIt(currentPath, iterErr);
+    if (iterErr) {
+        ImGui::TextDisabled("Cannot open directory: %s", iterErr.message().c_str());
+        ImGui::End();
+        return;
+    }
+
+    struct BrowserEntry {
+        std::string label;
+        fs::path path;
+        bool isDirectory;
+    };
+
+    std::vector<BrowserEntry> directories;
+    std::vector<BrowserEntry> files;
+
+    for (auto it = dirIt; it != fs::directory_iterator(); ++it) {
+        const fs::directory_entry& entry = *it;
+        std::string name = entry.path().filename().string();
+        if (name.empty() || name[0] == '.') {
+            continue;
+        }
+
+        BrowserEntry item;
+        item.label = name;
+        item.path = entry.path();
+        item.isDirectory = entry.is_directory();
+
+        if (item.isDirectory) {
+            directories.push_back(item);
+        } else {
+            files.push_back(item);
+        }
+    }
+
+    auto alphabetical = [](const BrowserEntry& a, const BrowserEntry& b) {
+        return a.label < b.label;
+    };
+
+    std::sort(directories.begin(), directories.end(), alphabetical);
+    std::sort(files.begin(), files.end(), alphabetical);
+
+    ImGui::BeginChild("AssetBrowserList", ImVec2(0, 0), false);
+
+    if (directories.empty() && files.empty()) {
+        ImGui::TextDisabled("Folder is empty");
+    }
+
+    for (const BrowserEntry& dirEntry : directories) {
+        bool isSelected = !selectedPath.empty() && selectedPath == dirEntry.path;
+        std::string displayLabel = "[DIR] " + dirEntry.label;
+        if (ImGui::Selectable(displayLabel.c_str(), isSelected)) {
+            selectedPath = ClampToRoot(dirEntry.path, assetRoot);
+        }
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            currentPath = ClampToRoot(dirEntry.path, assetRoot);
+            selectedPath.clear();
+        }
+    }
+
+    for (const BrowserEntry& fileEntry : files) {
+        bool isSelected = !selectedPath.empty() && selectedPath == fileEntry.path;
+        if (ImGui::Selectable(fileEntry.label.c_str(), isSelected)) {
+            selectedPath = ClampToRoot(fileEntry.path, assetRoot);
+        }
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            selectedPath = ClampToRoot(fileEntry.path, assetRoot);
+        }
+    }
+
+    ImGui::EndChild();
+
+    if (!selectedPath.empty()) {
+        std::error_code selectedErr;
+        fs::path selectedRelative = fs::relative(selectedPath, assetRoot, selectedErr);
+        std::string selectedDisplay;
+        if (selectedErr || selectedRelative.empty() || selectedRelative == ".") {
+            selectedDisplay = selectedPath.filename().string();
+        } else {
+            selectedDisplay = selectedRelative.generic_string();
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Selected: %s", selectedDisplay.c_str());
+    }
+
+    ImGui::End();
 }
 
 int main()
@@ -1094,6 +1292,8 @@ int main()
                 ImGui::Text("Click on an entity in the viewport to select it");
             }
             ImGui::End();
+
+            DrawAssetBrowserPanel();
         }
         
         // ImGuizmo keyboard shortcuts
