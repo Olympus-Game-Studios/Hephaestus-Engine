@@ -5,6 +5,7 @@
 
 struct Vertex {
     float pos[3];
+    float normal[3];
     float color[3];
 
     static VkVertexInputBindingDescription getBindingDescription() {
@@ -16,7 +17,7 @@ struct Vertex {
     }
 
     static std::vector<VkVertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<VkVertexInputAttributeDescription> attribs(2);
+        std::vector<VkVertexInputAttributeDescription> attribs(3);
         attribs[0].binding = 0;
         attribs[0].location = 0;
         attribs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -25,7 +26,12 @@ struct Vertex {
         attribs[1].binding = 0;
         attribs[1].location = 1;
         attribs[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attribs[1].offset = offsetof(Vertex, color);
+        attribs[1].offset = offsetof(Vertex, normal);
+
+        attribs[2].binding = 0;
+        attribs[2].location = 2;
+        attribs[2].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attribs[2].offset = offsetof(Vertex, color);
         return attribs;
     }
 };
@@ -39,6 +45,7 @@ struct VulkanPipeline {
     VkPipeline pipeline{};
 
     void Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext);
+    void CreateBillboardPipeline(VkDevice dev, VkRenderPass rp, VkExtent2D ext, VkDescriptorSetLayout descLayout);
     void Cleanup();
 
 private:

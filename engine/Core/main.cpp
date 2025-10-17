@@ -11,6 +11,7 @@
 #include "../Gfx/VulkanSwapchain.h"
 #include "../Gfx/VulkanPipeline.h"
 #include "../Gfx/VulkanBuffer.h"
+#include "../Gfx/VulkanTexture.h"
 
 // Dear ImGui
 #include "imgui.h"
@@ -79,10 +80,53 @@ static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
     g_framebufferResized = true;
 }
 
-// ── Camera ───────────────────────────────────────
+// ── Camera & Uniform Buffers ─────────────────────
 struct UniformBufferObject {
     Mat4 view;
     Mat4 proj;
+    Vec3 viewPos;
+    float padding1;
+};
+
+struct MaterialUBO {
+    Vec3 albedo;
+    float metallic;
+    Vec3 emissive;
+    float roughness;
+    float ao;
+    float emissiveStrength;
+    float padding2;
+    float padding3;
+};
+
+struct LightingUBO {
+    // Directional light
+    Vec3 dirLightDir;
+    float dirLightIntensity;
+    Vec3 dirLightColor;
+    float padding4;
+    
+    // Ambient
+    Vec3 ambientColor;
+    float ambientIntensity;
+    
+    // Point lights (up to 4)
+    struct {
+        float x, y, z, range;
+    } pointLightPositions[4];
+    
+    struct {
+        float r, g, b, intensity;
+    } pointLightColors[4];
+    
+    struct {
+        float constant, linear, quadratic, unused;
+    } pointLightAttenuation[4];
+    
+    int pointLightCount;
+    float padding5;
+    float padding6;
+    float padding7;
 };
 
 struct Camera {
@@ -161,6 +205,8 @@ struct Camera {
         u.view = Mat4::LookAt(position, vadd(position, front), up);
         float aspect = extent.width / (float)extent.height;
         u.proj = Mat4::Perspective(60.0f * 3.1415926535f / 180.0f, aspect, 0.1f, 100.0f);
+        u.viewPos = position;
+        u.padding1 = 0.0f;
         return u;
     }
 };
@@ -310,36 +356,60 @@ int main()
         return -1;
     }
 
-    // ── Vertex Data ───────────────────────────────
-    // 3D Cube vertices - 8 corners of a unit cube centered at origin
+    // ── Vertex Data ───────────────────────────────────
+    // 3D Cube vertices with normals - we need unique vertices per face for proper lighting
     const std::vector<Vertex> cubeVertices = {
-        // Front face (Z = 0.5) - Red tint
-        {{-0.5f, -0.5f,  0.5f}, {1.0f, 0.0f, 0.0f}},  // 0: bottom-left
-        {{ 0.5f, -0.5f,  0.5f}, {1.0f, 0.0f, 0.0f}},  // 1: bottom-right
-        {{ 0.5f,  0.5f,  0.5f}, {1.0f, 0.5f, 0.5f}},  // 2: top-right
-        {{-0.5f,  0.5f,  0.5f}, {1.0f, 0.5f, 0.5f}},  // 3: top-left
+        // Front face (Z+) - all normals point forward (0, 0, 1)
+        {{-0.5f, -0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}},  // 0
+        {{ 0.5f, -0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}},  // 1
+        {{ 0.5f,  0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}},  // 2
+        {{-0.5f,  0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}},  // 3
         
-        // Back face (Z = -0.5) - Blue tint
-        {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}},  // 4: bottom-left
-        {{ 0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}},  // 5: bottom-right
-        {{ 0.5f,  0.5f, -0.5f}, {0.5f, 0.5f, 1.0f}},  // 6: top-right
-        {{-0.5f,  0.5f, -0.5f}, {0.5f, 0.5f, 1.0f}},  // 7: top-left
+        // Back face (Z-) - normals point backward (0, 0, -1)
+        {{ 0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},  // 4
+        {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},  // 5
+        {{-0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},  // 6
+        {{ 0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},  // 7
+        
+        // Right face (X+) - normals point right (1, 0, 0)
+        {{ 0.5f, -0.5f,  0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 8
+        {{ 0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 9
+        {{ 0.5f,  0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 10
+        {{ 0.5f,  0.5f,  0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 11
+        
+        // Left face (X-) - normals point left (-1, 0, 0)
+        {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 12
+        {{-0.5f, -0.5f,  0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 13
+        {{-0.5f,  0.5f,  0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 14
+        {{-0.5f,  0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 15
+        
+        // Top face (Y+) - normals point up (0, 1, 0)
+        {{-0.5f,  0.5f,  0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 16
+        {{ 0.5f,  0.5f,  0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 17
+        {{ 0.5f,  0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 18
+        {{-0.5f,  0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 19
+        
+        // Bottom face (Y-) - normals point down (0, -1, 0)
+        {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 20
+        {{ 0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 21
+        {{ 0.5f, -0.5f,  0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 22
+        {{-0.5f, -0.5f,  0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 23
     };
     
     // Index buffer for cube (12 triangles, 2 per face, 6 faces)
     const std::vector<uint16_t> cubeIndices = {
         // Front face
         0, 1, 2,  2, 3, 0,
-        // Right face
-        1, 5, 6,  6, 2, 1,
         // Back face
-        5, 4, 7,  7, 6, 5,
+        4, 5, 6,  6, 7, 4,
+        // Right face
+        8, 9, 10,  10, 11, 8,
         // Left face
-        4, 0, 3,  3, 7, 4,
+        12, 13, 14,  14, 15, 12,
         // Top face
-        3, 2, 6,  6, 7, 3,
+        16, 17, 18,  18, 19, 16,
         // Bottom face
-        4, 5, 1,  1, 0, 4
+        20, 21, 22,  22, 23, 20
     };
 
 
@@ -381,24 +451,88 @@ int main()
     // ── Scene & Entities (ECS) ───────────────────
     Scene scene("Main Scene");
     
-    // Create cube entities using ECS
-    Entity cube1 = scene.CreateEntity("Cube 1");
+    // Create cube entities with different materials
+    Entity cube1 = scene.CreateEntity("Cube 1 (Metal)");
     cube1.AddComponent<MeshRendererComponent>();
     cube1.AddComponent<SelectionComponent>(true); // Start selected
+    auto& cube1Mat = cube1.AddComponent<MaterialComponent>(Vec3(0.8f, 0.2f, 0.2f)); // Red
+    cube1Mat.metallic = 0.9f;
+    cube1Mat.roughness = 0.2f;
     auto& cube1Transform = cube1.GetComponent<TransformComponent>();
     cube1Transform.position = Vec3(0.0f, 0.0f, 0.0f);
     
-    Entity cube2 = scene.CreateEntity("Cube 2");
+    Entity cube2 = scene.CreateEntity("Cube 2 (Plastic)");
     cube2.AddComponent<MeshRendererComponent>();
+    auto& cube2Mat = cube2.AddComponent<MaterialComponent>(Vec3(0.2f, 0.8f, 0.2f)); // Green
+    cube2Mat.metallic = 0.0f;
+    cube2Mat.roughness = 0.5f;
     auto& cube2Transform = cube2.GetComponent<TransformComponent>();
     cube2Transform.position = Vec3(2.0f, 0.0f, 0.0f);
     cube2Transform.scale = Vec3(0.5f, 0.5f, 0.5f);
     
-    Entity cube3 = scene.CreateEntity("Cube 3");
+    Entity cube3 = scene.CreateEntity("Cube 3 (Rough)");
     cube3.AddComponent<MeshRendererComponent>();
+    auto& cube3Mat = cube3.AddComponent<MaterialComponent>(Vec3(0.2f, 0.4f, 0.8f)); // Blue
+    cube3Mat.metallic = 0.0f;
+    cube3Mat.roughness = 0.9f;
     auto& cube3Transform = cube3.GetComponent<TransformComponent>();
     cube3Transform.position = Vec3(-2.0f, 0.0f, 0.0f);
     cube3Transform.rotation = Vec3(0.0f, 0.785f, 0.0f); // 45 degrees
+    
+    // Create a fourth cube with emissive material
+    Entity cube4 = scene.CreateEntity("Cube 4 (Emissive)");
+    cube4.AddComponent<MeshRendererComponent>();
+    auto& cube4Mat = cube4.AddComponent<MaterialComponent>(Vec3(0.8f, 0.8f, 0.2f)); // Yellow
+    cube4Mat.metallic = 0.0f;
+    cube4Mat.roughness = 0.3f;
+    cube4Mat.emissive = Vec3(1.0f, 0.8f, 0.2f);
+    cube4Mat.emissiveStrength = 2.0f;
+    auto& cube4Transform = cube4.GetComponent<TransformComponent>();
+    cube4Transform.position = Vec3(0.0f, 2.0f, 0.0f);
+    cube4Transform.scale = Vec3(0.3f, 0.3f, 0.3f);
+    
+    // Create lights
+    Entity dirLight = scene.CreateEntity("Directional Light");
+    dirLight.AddComponent<LightComponent>(LightComponent::CreateDirectional(
+        Vec3(0.3f, -1.0f, 0.5f), Vec3(1.0f, 0.95f, 0.9f), 0.8f));
+    
+    Entity pointLight1 = scene.CreateEntity("Point Light 1");
+    auto& pl1Transform = pointLight1.AddComponent<TransformComponent>();
+    pl1Transform.position = Vec3(3.0f, 2.0f, 2.0f);
+    pointLight1.AddComponent<LightComponent>(LightComponent::CreatePoint(
+        Vec3(1.0f, 0.3f, 0.3f), 5.0f, 10.0f)); // Red light
+    
+    Entity pointLight2 = scene.CreateEntity("Point Light 2");
+    auto& pl2Transform = pointLight2.AddComponent<TransformComponent>();
+    pl2Transform.position = Vec3(-3.0f, 2.0f, 2.0f);
+    pointLight2.AddComponent<LightComponent>(LightComponent::CreatePoint(
+        Vec3(0.3f, 0.3f, 1.0f), 5.0f, 10.0f)); // Blue light
+
+    // ── Billboard System for Light Visualization (Resources) ─────────────────────────
+    VulkanTexture lightBulbTexture;
+    VulkanPipeline billboardPipeline;
+    VkDescriptorSetLayout billboardDescriptorLayout = VK_NULL_HANDLE;
+    VkDescriptorPool billboardDescriptorPool = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> billboardDescriptorSets;
+    
+    // Load light bulb texture
+    bool textureLoaded = false;
+    try {
+        if (lightBulbTexture.LoadFromFile(vkdev.allocator, vkdev.device, vkdev.physicalDevice, 
+                                      vkdev.commandPool, vkdev.graphicsQueue, 
+                                      "assets/textures/light_bulb.png")) {
+            if (lightBulbTexture.imageView != VK_NULL_HANDLE && lightBulbTexture.sampler != VK_NULL_HANDLE) {
+                std::cout << "Loaded light bulb texture" << std::endl;
+                textureLoaded = true;
+            } else {
+                std::cerr << "Light bulb texture loaded but imageView or sampler is null" << std::endl;
+            }
+        } else {
+            std::cerr << "Failed to load light bulb texture file" << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to load light bulb texture: " << e.what() << std::endl;
+    }
 
     // ── ImGuizmo State ───────────────────────────
     ImGuizmo::OPERATION currentGizmoOperation = ImGuizmo::TRANSLATE;
@@ -409,13 +543,21 @@ int main()
 
     // Per-image uniform buffers and descriptors (tied to swapchain images)
     std::vector<VulkanBuffer> uniformBuffers;
+    std::vector<VulkanBuffer> materialBuffers;
+    std::vector<VulkanBuffer> lightingBuffers;
     std::vector<VkDescriptorSet> descriptorSets;
     VkDescriptorPool descriptorPool{ VK_NULL_HANDLE };
     VkDeviceSize uboSize = sizeof(UniformBufferObject);
+    VkDeviceSize materialUboSize = sizeof(MaterialUBO);
+    VkDeviceSize lightingUboSize = sizeof(LightingUBO);
 
     auto destroyDescriptors = [&]() {
         for (auto& ub : uniformBuffers) ub.Destroy(vkdev.allocator);
+        for (auto& mb : materialBuffers) mb.Destroy(vkdev.allocator);
+        for (auto& lb : lightingBuffers) lb.Destroy(vkdev.allocator);
         uniformBuffers.clear();
+        materialBuffers.clear();
+        lightingBuffers.clear();
         descriptorSets.clear();
         if (descriptorPool) { vkDestroyDescriptorPool(vkdev.device, descriptorPool, nullptr); descriptorPool = VK_NULL_HANDLE; }
     };
@@ -423,29 +565,34 @@ int main()
     auto createDescriptors = [&]() {
         destroyDescriptors();
 
-        uniformBuffers.resize(swap.framebuffers.size());
-        for (auto& ub : uniformBuffers) {
-            ub.Create(
-                vkdev.allocator,
-                uboSize,
-                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                VMA_MEMORY_USAGE_CPU_TO_GPU
-            );
+        size_t imageCount = swap.framebuffers.size();
+        uniformBuffers.resize(imageCount);
+        materialBuffers.resize(imageCount);
+        lightingBuffers.resize(imageCount);
+        
+        for (size_t i = 0; i < imageCount; ++i) {
+            uniformBuffers[i].Create(vkdev.allocator, uboSize, 
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+            materialBuffers[i].Create(vkdev.allocator, materialUboSize, 
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+            lightingBuffers[i].Create(vkdev.allocator, lightingUboSize, 
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         }
 
+        // Create descriptor pool with 3 uniform buffer descriptors per set
         VkDescriptorPoolSize poolSize{};
         poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSize.descriptorCount = static_cast<uint32_t>(uniformBuffers.size());
+        poolSize.descriptorCount = static_cast<uint32_t>(imageCount * 3); // 3 buffers per set
 
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         poolInfo.poolSizeCount = 1;
         poolInfo.pPoolSizes = &poolSize;
-        poolInfo.maxSets = static_cast<uint32_t>(uniformBuffers.size());
+        poolInfo.maxSets = static_cast<uint32_t>(imageCount);
         if (vkCreateDescriptorPool(vkdev.device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS)
             throw std::runtime_error("Failed to create descriptor pool");
 
-        descriptorSets.resize(uniformBuffers.size());
-        std::vector<VkDescriptorSetLayout> layouts(uniformBuffers.size(), pipeline.descriptorSetLayout);
+        descriptorSets.resize(imageCount);
+        std::vector<VkDescriptorSetLayout> layouts(imageCount, pipeline.descriptorSetLayout);
         VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         allocInfo.descriptorPool = descriptorPool;
         allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
@@ -453,23 +600,165 @@ int main()
         if (vkAllocateDescriptorSets(vkdev.device, &allocInfo, descriptorSets.data()) != VK_SUCCESS)
             throw std::runtime_error("Failed to allocate descriptor sets");
 
-        for (size_t i = 0; i < uniformBuffers.size(); ++i) {
-            VkDescriptorBufferInfo bufInfo{};
-            bufInfo.buffer = uniformBuffers[i].buffer;
-            bufInfo.offset = 0;
-            bufInfo.range = uboSize;
+        // Update descriptor sets with all three buffers
+        for (size_t i = 0; i < imageCount; ++i) {
+            VkDescriptorBufferInfo bufInfos[3] = {};
+            
+            // Binding 0: Camera UBO
+            bufInfos[0].buffer = uniformBuffers[i].buffer;
+            bufInfos[0].offset = 0;
+            bufInfos[0].range = uboSize;
+            
+            // Binding 1: Material UBO
+            bufInfos[1].buffer = materialBuffers[i].buffer;
+            bufInfos[1].offset = 0;
+            bufInfos[1].range = materialUboSize;
+            
+            // Binding 2: Lighting UBO
+            bufInfos[2].buffer = lightingBuffers[i].buffer;
+            bufInfos[2].offset = 0;
+            bufInfos[2].range = lightingUboSize;
 
-            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-            write.dstSet = descriptorSets[i];
-            write.dstBinding = 0;
-            write.dstArrayElement = 0;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            write.descriptorCount = 1;
-            write.pBufferInfo = &bufInfo;
-            vkUpdateDescriptorSets(vkdev.device, 1, &write, 0, nullptr);
+            VkWriteDescriptorSet writes[3] = {};
+            for (int j = 0; j < 3; ++j) {
+                writes[j].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[j].dstSet = descriptorSets[i];
+                writes[j].dstBinding = j;
+                writes[j].dstArrayElement = 0;
+                writes[j].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                writes[j].descriptorCount = 1;
+                writes[j].pBufferInfo = &bufInfos[j];
+            }
+            
+            vkUpdateDescriptorSets(vkdev.device, 3, writes, 0, nullptr);
         }
     };
+    
+    // ── Billboard Lambda Definitions (after uniformBuffers) ───────────────
+    auto createBillboardDescriptors = [&]() {
+        // Clean up existing resources
+        if (!billboardDescriptorSets.empty()) {
+            billboardDescriptorSets.clear();
+        }
+        if (billboardDescriptorPool != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(vkdev.device, billboardDescriptorPool, nullptr);
+            billboardDescriptorPool = VK_NULL_HANDLE;
+        }
+        
+        if (billboardDescriptorLayout == VK_NULL_HANDLE) {
+            // Binding 0: Camera UBO (same as main pipeline)
+            VkDescriptorSetLayoutBinding uboBinding{};
+            uboBinding.binding = 0;
+            uboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            uboBinding.descriptorCount = 1;
+            uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+            
+            // Binding 1: Texture sampler
+            VkDescriptorSetLayoutBinding samplerBinding{};
+            samplerBinding.binding = 1;
+            samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            samplerBinding.descriptorCount = 1;
+            samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            
+            std::vector<VkDescriptorSetLayoutBinding> bindings = {uboBinding, samplerBinding};
+            VkDescriptorSetLayoutCreateInfo layoutInfo{};
+            layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+            layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+            layoutInfo.pBindings = bindings.data();
+            
+            if (vkCreateDescriptorSetLayout(vkdev.device, &layoutInfo, nullptr, &billboardDescriptorLayout) != VK_SUCCESS) {
+                throw std::runtime_error("Failed to create billboard descriptor set layout");
+            }
+        }
+        
+        // Create descriptor pool
+        size_t imageCount = swap.framebuffers.size();
+        std::vector<VkDescriptorPoolSize> poolSizes = {
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount)},
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount)}
+        };
+        
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+        poolInfo.pPoolSizes = poolSizes.data();
+        poolInfo.maxSets = static_cast<uint32_t>(imageCount);
+        
+        if (vkCreateDescriptorPool(vkdev.device, &poolInfo, nullptr, &billboardDescriptorPool) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create billboard descriptor pool");
+        }
+        
+        // Allocate descriptor sets
+        std::vector<VkDescriptorSetLayout> layouts(imageCount, billboardDescriptorLayout);
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = billboardDescriptorPool;
+        allocInfo.descriptorSetCount = static_cast<uint32_t>(imageCount);
+        allocInfo.pSetLayouts = layouts.data();
+        
+        billboardDescriptorSets.resize(imageCount);
+        if (vkAllocateDescriptorSets(vkdev.device, &allocInfo, billboardDescriptorSets.data()) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to allocate billboard descriptor sets");
+        }
+        
+        // Update descriptor sets
+        for (size_t i = 0; i < imageCount; i++) {
+            VkDescriptorBufferInfo bufferInfo{};
+            bufferInfo.buffer = uniformBuffers[i].buffer;
+            bufferInfo.offset = 0;
+            bufferInfo.range = sizeof(UniformBufferObject);
+            
+            VkDescriptorImageInfo imageInfo{};
+            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            imageInfo.imageView = lightBulbTexture.imageView;
+            imageInfo.sampler = lightBulbTexture.sampler;
+            
+            std::vector<VkWriteDescriptorSet> descriptorWrites(2);
+            
+            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[0].dstSet = billboardDescriptorSets[i];
+            descriptorWrites[0].dstBinding = 0;
+            descriptorWrites[0].dstArrayElement = 0;
+            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrites[0].descriptorCount = 1;
+            descriptorWrites[0].pBufferInfo = &bufferInfo;
+            
+            descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[1].dstSet = billboardDescriptorSets[i];
+            descriptorWrites[1].dstBinding = 1;
+            descriptorWrites[1].dstArrayElement = 0;
+            descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            descriptorWrites[1].descriptorCount = 1;
+            descriptorWrites[1].pImageInfo = &imageInfo;
+            
+            vkUpdateDescriptorSets(vkdev.device, static_cast<uint32_t>(descriptorWrites.size()), 
+                                  descriptorWrites.data(), 0, nullptr);
+        }
+    };
+    
+    auto createBillboardPipeline = [&]() {
+        billboardPipeline.Cleanup();
+        billboardPipeline.CreateBillboardPipeline(vkdev.device, swap.renderPass, swap.extent, 
+                                                   billboardDescriptorLayout);
+    };
+    
     createDescriptors();
+    
+    // Create billboard resources only if texture loaded successfully
+    if (textureLoaded) {
+        try {
+            std::cout << "Creating billboard descriptors..." << std::endl;
+            createBillboardDescriptors();
+            std::cout << "Creating billboard pipeline..." << std::endl;
+            createBillboardPipeline();
+            std::cout << "Billboard system initialized" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Billboard initialization error: " << e.what() << std::endl;
+            // Continue without billboards instead of crashing
+        }
+    } else {
+        std::cerr << "Skipping billboard system - texture not loaded" << std::endl;
+    }
 
     // timing
     float lastTime = static_cast<float>(glfwGetTime());
@@ -707,6 +996,59 @@ int main()
                 ImGui::DragFloat3("Scale", &transform.scale.x, 0.01f, 0.01f, 10.0f);
                 
                 ImGui::Separator();
+                
+                // Material editor (if entity has a material)
+                if (selectedEntity.HasComponent<MaterialComponent>()) {
+                    auto& material = selectedEntity.GetComponent<MaterialComponent>();
+                    ImGui::Text("Material:");
+                    ImGui::ColorEdit3("Albedo", &material.albedo.x);
+                    ImGui::SliderFloat("Metallic", &material.metallic, 0.0f, 1.0f);
+                    ImGui::SliderFloat("Roughness", &material.roughness, 0.0f, 1.0f);
+                    ImGui::SliderFloat("AO", &material.ao, 0.0f, 1.0f);
+                    ImGui::ColorEdit3("Emissive", &material.emissive.x);
+                    ImGui::SliderFloat("Emissive Strength", &material.emissiveStrength, 0.0f, 10.0f);
+                    ImGui::Separator();
+                }
+                
+                // Light editor (if entity has a light)
+                if (selectedEntity.HasComponent<LightComponent>()) {
+                    auto& light = selectedEntity.GetComponent<LightComponent>();
+                    ImGui::Text("Light:");
+                    
+                    const char* lightTypes[] = { "Directional", "Point", "Spot" };
+                    int currentType = static_cast<int>(light.type);
+                    if (ImGui::Combo("Type", &currentType, lightTypes, 3)) {
+                        light.type = static_cast<LightType>(currentType);
+                    }
+                    
+                    ImGui::ColorEdit3("Color", &light.color.x);
+                    ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 10.0f);
+                    
+                    if (light.type == LightType::Point || light.type == LightType::Spot) {
+                        ImGui::SliderFloat("Range", &light.range, 0.1f, 50.0f);
+                        ImGui::SliderFloat("Constant", &light.constant, 0.0f, 10.0f);
+                        ImGui::SliderFloat("Linear", &light.linear, 0.0f, 1.0f);
+                        ImGui::SliderFloat("Quadratic", &light.quadratic, 0.0f, 1.0f);
+                    }
+                    
+                    if (light.type == LightType::Directional) {
+                        ImGui::DragFloat3("Direction", &light.direction.x, 0.01f);
+                        light.direction = vnorm(light.direction);
+                    }
+                    
+                    if (light.type == LightType::Spot) {
+                        float innerDeg = light.innerConeAngle * 57.2958f;
+                        float outerDeg = light.outerConeAngle * 57.2958f;
+                        if (ImGui::SliderFloat("Inner Angle", &innerDeg, 0.0f, 90.0f)) {
+                            light.innerConeAngle = innerDeg * 0.0174533f;
+                        }
+                        if (ImGui::SliderFloat("Outer Angle", &outerDeg, 0.0f, 90.0f)) {
+                            light.outerConeAngle = outerDeg * 0.0174533f;
+                        }
+                    }
+                    ImGui::Separator();
+                }
+                
                 ImGui::Text("Debug Info:");
                 ImGui::Text("Entity ID: %u", static_cast<uint32_t>(selectedEntity));
                 ImGui::Text("ImGuizmo IsUsing: %s", ImGuizmo::IsUsing() ? "YES" : "NO");
@@ -788,8 +1130,10 @@ int main()
             vkDeviceWaitIdle(vkdev.device);
             swap.Recreate(window);
             createPipeline();
+            createBillboardPipeline();
             allocateCmdBuffers();
             createDescriptors();
+            createBillboardDescriptors();
             continue;
         } else if (acq != VK_SUCCESS && acq != VK_SUBOPTIMAL_KHR) {
             std::cerr << "Failed to acquire swapchain image: " << acq << "\n";
@@ -804,6 +1148,94 @@ int main()
             std::memcpy(mapped, &ubo, sizeof(ubo));
             vmaFlushAllocation(vkdev.allocator, uniformBuffers[imageIndex].allocation, 0, VK_WHOLE_SIZE);
             vmaUnmapMemory(vkdev.allocator, uniformBuffers[imageIndex].allocation);
+        }
+        
+        // Update Material UBO (we'll use the selected entity's material, or a default)
+        {
+            MaterialUBO matUBO = {};
+            Entity selectedEntity = scene.GetSelectedEntity();
+            if (selectedEntity && selectedEntity.HasComponent<MaterialComponent>()) {
+                auto& mat = selectedEntity.GetComponent<MaterialComponent>();
+                matUBO.albedo = mat.albedo;
+                matUBO.metallic = mat.metallic;
+                matUBO.roughness = mat.roughness;
+                matUBO.ao = mat.ao;
+                matUBO.emissive = mat.emissive;
+                matUBO.emissiveStrength = mat.emissiveStrength;
+            } else {
+                // Default white material
+                matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);
+                matUBO.metallic = 0.0f;
+                matUBO.roughness = 0.5f;
+                matUBO.ao = 1.0f;
+                matUBO.emissive = Vec3(0.0f, 0.0f, 0.0f);
+                matUBO.emissiveStrength = 0.0f;
+            }
+            
+            void* mapped = nullptr;
+            vmaMapMemory(vkdev.allocator, materialBuffers[imageIndex].allocation, &mapped);
+            std::memcpy(mapped, &matUBO, sizeof(matUBO));
+            vmaFlushAllocation(vkdev.allocator, materialBuffers[imageIndex].allocation, 0, VK_WHOLE_SIZE);
+            vmaUnmapMemory(vkdev.allocator, materialBuffers[imageIndex].allocation);
+        }
+        
+        // Update Lighting UBO
+        {
+            LightingUBO lightUBO = {};
+            
+            // Gather directional lights
+            auto dirLightView = scene.GetEntitiesWith<LightComponent>();
+            for (auto entityHandle : dirLightView) {
+                Entity entity(entityHandle, &scene);
+                auto& light = entity.GetComponent<LightComponent>();
+                
+                if (light.type == LightType::Directional) {
+                    lightUBO.dirLightDir = light.direction;
+                    lightUBO.dirLightIntensity = light.intensity;
+                    lightUBO.dirLightColor = light.color;
+                    break; // Only support one directional light for now
+                }
+            }
+            
+            // Gather point lights (up to 4)
+            int pointLightIndex = 0;
+            for (auto entityHandle : dirLightView) {
+                if (pointLightIndex >= 4) break;
+                
+                Entity entity(entityHandle, &scene);
+                auto& light = entity.GetComponent<LightComponent>();
+                
+                if (light.type == LightType::Point && entity.HasComponent<TransformComponent>()) {
+                    auto& transform = entity.GetComponent<TransformComponent>();
+                    
+                    lightUBO.pointLightPositions[pointLightIndex].x = transform.position.x;
+                    lightUBO.pointLightPositions[pointLightIndex].y = transform.position.y;
+                    lightUBO.pointLightPositions[pointLightIndex].z = transform.position.z;
+                    lightUBO.pointLightPositions[pointLightIndex].range = light.range;
+                    
+                    lightUBO.pointLightColors[pointLightIndex].r = light.color.x;
+                    lightUBO.pointLightColors[pointLightIndex].g = light.color.y;
+                    lightUBO.pointLightColors[pointLightIndex].b = light.color.z;
+                    lightUBO.pointLightColors[pointLightIndex].intensity = light.intensity;
+                    
+                    lightUBO.pointLightAttenuation[pointLightIndex].constant = light.constant;
+                    lightUBO.pointLightAttenuation[pointLightIndex].linear = light.linear;
+                    lightUBO.pointLightAttenuation[pointLightIndex].quadratic = light.quadratic;
+                    
+                    pointLightIndex++;
+                }
+            }
+            lightUBO.pointLightCount = pointLightIndex;
+            
+            // Ambient lighting
+            lightUBO.ambientColor = Vec3(0.1f, 0.1f, 0.15f);
+            lightUBO.ambientIntensity = 0.3f;
+            
+            void* mapped = nullptr;
+            vmaMapMemory(vkdev.allocator, lightingBuffers[imageIndex].allocation, &mapped);
+            std::memcpy(mapped, &lightUBO, sizeof(lightUBO));
+            vmaFlushAllocation(vkdev.allocator, lightingBuffers[imageIndex].allocation, 0, VK_WHOLE_SIZE);
+            vmaUnmapMemory(vkdev.allocator, lightingBuffers[imageIndex].allocation);
         }
 
         VkCommandBuffer cmd = cmdBufs[imageIndex];
@@ -857,10 +1289,77 @@ int main()
             
             if (!renderer.visible)
                 continue;
+            
+            // Update material UBO for this specific object
+            MaterialUBO matUBO = {};
+            if (entity.HasComponent<MaterialComponent>()) {
+                auto& mat = entity.GetComponent<MaterialComponent>();
+                matUBO.albedo = mat.albedo;
+                matUBO.metallic = mat.metallic;
+                matUBO.roughness = mat.roughness;
+                matUBO.ao = mat.ao;
+                matUBO.emissive = mat.emissive;
+                matUBO.emissiveStrength = mat.emissiveStrength;
+            } else {
+                // Default white material
+                matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);
+                matUBO.metallic = 0.0f;
+                matUBO.roughness = 0.5f;
+                matUBO.ao = 1.0f;
+                matUBO.emissive = Vec3(0.0f, 0.0f, 0.0f);
+                matUBO.emissiveStrength = 0.0f;
+            }
+            
+            // Update the material buffer
+            void* matMapped = nullptr;
+            vmaMapMemory(vkdev.allocator, materialBuffers[imageIndex].allocation, &matMapped);
+            std::memcpy(matMapped, &matUBO, sizeof(matUBO));
+            vmaFlushAllocation(vkdev.allocator, materialBuffers[imageIndex].allocation, 0, VK_WHOLE_SIZE);
+            vmaUnmapMemory(vkdev.allocator, materialBuffers[imageIndex].allocation);
                 
             Mat4 modelMatrix = transform.GetLocalMatrix();
             vkCmdPushConstants(cmd, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), modelMatrix.m);
             vkCmdDrawIndexed(cmd, static_cast<uint32_t>(cubeIndices.size()), 1, 0, 0, 0);
+        }
+
+        // ── Render Light Billboards ───────────────────────────────
+        if (billboardPipeline.pipeline != VK_NULL_HANDLE && !billboardDescriptorSets.empty()) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, billboardPipeline.pipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, billboardPipeline.layout,
+                                   0, 1, &billboardDescriptorSets[imageIndex], 0, nullptr);
+            
+            // Draw a billboard for each light entity
+            auto lightView = scene.GetEntitiesWith<LightComponent>();
+            for (auto entityHandle : lightView) {
+                Entity entity(entityHandle, &scene);
+                auto& light = entity.GetComponent<LightComponent>();
+                
+                // Only draw billboards for point and spot lights (not directional)
+                if (light.type == LightType::Directional)
+                    continue;
+                
+                // Get light position
+                Vec3 lightPos(0.0f, 0.0f, 0.0f);
+                if (entity.HasComponent<TransformComponent>()) {
+                    auto& transform = entity.GetComponent<TransformComponent>();
+                    lightPos = transform.position;
+                }
+                
+                // Push constants: position (vec3) + size (float)
+                struct BillboardPushConstants {
+                    Vec3 position;
+                    float size;
+                } billboardPC;
+                
+                billboardPC.position = lightPos;
+                billboardPC.size = 0.3f; // Billboard size in world units
+                
+                vkCmdPushConstants(cmd, billboardPipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 
+                                  0, sizeof(BillboardPushConstants), &billboardPC);
+                
+                // Draw 4 vertices (one quad) per billboard
+                vkCmdDraw(cmd, 4, 1, 0, 0);
+            }
         }
 
         // Render ImGui draw data
@@ -895,8 +1394,10 @@ int main()
             vkDeviceWaitIdle(vkdev.device);
             swap.Recreate(window);
             createPipeline();
+            createBillboardPipeline();
             allocateCmdBuffers();
             createDescriptors();
+            createBillboardDescriptors();
         } else if (pres != VK_SUCCESS) {
             std::cerr << "Present failed: " << pres << "\n";
             break;
@@ -924,6 +1425,17 @@ int main()
     vertexBuffer.Destroy(vkdev.allocator);
     indexBuffer.Destroy(vkdev.allocator);
     destroyDescriptors();
+    
+    // Cleanup billboard resources
+    billboardPipeline.Cleanup();
+    lightBulbTexture.Destroy(vkdev.allocator, vkdev.device);
+    if (billboardDescriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(vkdev.device, billboardDescriptorPool, nullptr);
+    }
+    if (billboardDescriptorLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(vkdev.device, billboardDescriptorLayout, nullptr);
+    }
+    
     pipeline.Cleanup();
     swap.Cleanup();
     vkdev.Cleanup();

@@ -12,6 +12,7 @@ add_executable(HephaestusEngine
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
     engine/Gfx/VulkanPipeline.cpp
+    engine/Gfx/VulkanTexture.cpp
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
 )
@@ -20,6 +21,7 @@ target_include_directories(HephaestusEngine PRIVATE engine)
 target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw)
 target_include_directories(HephaestusEngine PRIVATE
     engine
+    extern
     extern/VMA
     extern/entt/single_include
 )
@@ -64,6 +66,8 @@ if (GLSLC_EXECUTABLE)
     set(SHADER_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/billboard.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/billboard.frag
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)

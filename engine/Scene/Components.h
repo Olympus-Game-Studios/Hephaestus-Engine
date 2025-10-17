@@ -191,3 +191,113 @@ struct RelationshipComponent {
 
     RelationshipComponent() = default;
 };
+
+// ═══════════════════════════════════════════════════════════════
+// MATERIAL & LIGHTING COMPONENTS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Material component - defines surface properties for rendering
+ * Uses PBR (Physically Based Rendering) workflow
+ */
+struct MaterialComponent {
+    Vec3 albedo;        // Base color (diffuse color)
+    float metallic;     // 0 = dielectric, 1 = metal
+    float roughness;    // 0 = smooth/glossy, 1 = rough/matte
+    float ao;           // Ambient occlusion (0-1)
+    Vec3 emissive;      // Self-illumination color
+    float emissiveStrength; // Multiplier for emissive
+
+    MaterialComponent()
+        : albedo(1.0f, 1.0f, 1.0f)
+        , metallic(0.0f)
+        , roughness(0.5f)
+        , ao(1.0f)
+        , emissive(0.0f, 0.0f, 0.0f)
+        , emissiveStrength(0.0f)
+    {}
+
+    MaterialComponent(const Vec3& color)
+        : albedo(color)
+        , metallic(0.0f)
+        , roughness(0.5f)
+        , ao(1.0f)
+        , emissive(0.0f, 0.0f, 0.0f)
+        , emissiveStrength(0.0f)
+    {}
+};
+
+/**
+ * Light types supported by the engine
+ */
+enum class LightType {
+    Directional,  // Sunlight, infinite distance
+    Point,        // Omni-directional point source
+    Spot          // Cone-shaped light
+};
+
+/**
+ * Light component - adds illumination to the scene
+ */
+struct LightComponent {
+    LightType type;
+    Vec3 color;
+    float intensity;
+    
+    // Point & Spot light attenuation
+    float range;           // Maximum distance
+    float constant;        // Constant attenuation factor
+    float linear;          // Linear attenuation factor
+    float quadratic;       // Quadratic attenuation factor
+    
+    // Spot light specific
+    float innerConeAngle;  // Inner cone in radians
+    float outerConeAngle;  // Outer cone in radians
+    
+    // Directional light specific
+    Vec3 direction;        // For directional lights (world space)
+
+    LightComponent()
+        : type(LightType::Point)
+        , color(1.0f, 1.0f, 1.0f)
+        , intensity(1.0f)
+        , range(10.0f)
+        , constant(1.0f)
+        , linear(0.09f)
+        , quadratic(0.032f)
+        , innerConeAngle(0.785f)  // 45 degrees
+        , outerConeAngle(0.959f)  // 55 degrees
+        , direction(0.0f, -1.0f, 0.0f)
+    {}
+
+    // Factory methods for common light types
+    static LightComponent CreateDirectional(const Vec3& dir, const Vec3& color = Vec3(1, 1, 1), float intensity = 1.0f) {
+        LightComponent light;
+        light.type = LightType::Directional;
+        light.direction = vnorm(dir);
+        light.color = color;
+        light.intensity = intensity;
+        return light;
+    }
+
+    static LightComponent CreatePoint(const Vec3& color = Vec3(1, 1, 1), float intensity = 1.0f, float range = 10.0f) {
+        LightComponent light;
+        light.type = LightType::Point;
+        light.color = color;
+        light.intensity = intensity;
+        light.range = range;
+        return light;
+    }
+
+    static LightComponent CreateSpot(const Vec3& color = Vec3(1, 1, 1), float intensity = 1.0f, 
+                                     float range = 10.0f, float innerAngle = 0.785f, float outerAngle = 0.959f) {
+        LightComponent light;
+        light.type = LightType::Spot;
+        light.color = color;
+        light.intensity = intensity;
+        light.range = range;
+        light.innerConeAngle = innerAngle;
+        light.outerConeAngle = outerAngle;
+        return light;
+    }
+};
