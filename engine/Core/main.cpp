@@ -553,6 +553,14 @@ int main()
     VkDescriptorPool descriptorPool{ VK_NULL_HANDLE };
     VkDeviceSize uboSize = sizeof(UniformBufferObject);
     VkDeviceSize materialUboSize = sizeof(MaterialUBO);
+    // For dynamic UBO, ensure alignment to minUniformBufferOffsetAlignment
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(vkdev.physicalDevice, &props);
+    VkDeviceSize alignment = props.limits.minUniformBufferOffsetAlignment;
+    VkDeviceSize materialStride = (alignment > 0)
+        ? ((materialUboSize + alignment - 1) & ~(alignment - 1))
+        : materialUboSize;
+    uint32_t maxMaterialsPerFrame = 1024;
     VkDeviceSize lightingUboSize = sizeof(LightingUBO);
 
     auto destroyDescriptors = [&]() {
@@ -577,20 +585,22 @@ int main()
         for (size_t i = 0; i < imageCount; ++i) {
             uniformBuffers[i].Create(vkdev.allocator, uboSize, 
                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-            materialBuffers[i].Create(vkdev.allocator, materialUboSize, 
+            materialBuffers[i].Create(vkdev.allocator, materialStride * maxMaterialsPerFrame, 
                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
             lightingBuffers[i].Create(vkdev.allocator, lightingUboSize, 
                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         }
 
-        // Create descriptor pool with 3 uniform buffer descriptors per set
-        VkDescriptorPoolSize poolSize{};
-        poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSize.descriptorCount = static_cast<uint32_t>(imageCount * 3); // 3 buffers per set
+        // Create descriptor pool: binding 0 and 2 are UNIFORM_BUFFER; binding 1 is UNIFORM_BUFFER_DYNAMIC
+        VkDescriptorPoolSize poolSizes[2] = {};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizes[0].descriptorCount = static_cast<uint32_t>(imageCount * 2); // camera + lighting per set
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        poolSizes[1].descriptorCount = static_cast<uint32_t>(imageCount * 1); // material per set
 
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        poolInfo.poolSizeCount = 1;
-        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.poolSizeCount = 2;
+        poolInfo.pPoolSizes = poolSizes;
         poolInfo.maxSets = static_cast<uint32_t>(imageCount);
         if (vkCreateDescriptorPool(vkdev.device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS)
             throw std::runtime_error("Failed to create descriptor pool");
@@ -613,7 +623,7 @@ int main()
             bufInfos[0].offset = 0;
             bufInfos[0].range = uboSize;
             
-            // Binding 1: Material UBO
+            // Binding 1: Material UBO (dynamic)
             bufInfos[1].buffer = materialBuffers[i].buffer;
             bufInfos[1].offset = 0;
             bufInfos[1].range = materialUboSize;
@@ -624,15 +634,30 @@ int main()
             bufInfos[2].range = lightingUboSize;
 
             VkWriteDescriptorSet writes[3] = {};
-            for (int j = 0; j < 3; ++j) {
-                writes[j].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                writes[j].dstSet = descriptorSets[i];
-                writes[j].dstBinding = j;
-                writes[j].dstArrayElement = 0;
-                writes[j].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-                writes[j].descriptorCount = 1;
-                writes[j].pBufferInfo = &bufInfos[j];
-            }
+            // Binding 0
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = descriptorSets[i];
+            writes[0].dstBinding = 0;
+            writes[0].dstArrayElement = 0;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[0].descriptorCount = 1;
+            writes[0].pBufferInfo = &bufInfos[0];
+            // Binding 1 (dynamic)
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = descriptorSets[i];
+            writes[1].dstBinding = 1;
+            writes[1].dstArrayElement = 0;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+            writes[1].descriptorCount = 1;
+            writes[1].pBufferInfo = &bufInfos[1];
+            // Binding 2
+            writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[2].dstSet = descriptorSets[i];
+            writes[2].dstBinding = 2;
+            writes[2].dstArrayElement = 0;
+            writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[2].descriptorCount = 1;
+            writes[2].pBufferInfo = &bufInfos[2];
             
             vkUpdateDescriptorSets(vkdev.device, 3, writes, 0, nullptr);
         }
@@ -1144,10 +1169,15 @@ int main()
             vkDeviceWaitIdle(vkdev.device);
             swap.Recreate(window);
             createPipeline();
-            createBillboardPipeline();
+            // Only rebuild billboard pipeline/descriptors if the texture actually loaded.
+            if (textureLoaded) {
+                createBillboardPipeline();
+            }
             allocateCmdBuffers();
             createDescriptors();
-            createBillboardDescriptors();
+            if (textureLoaded) {
+                createBillboardDescriptors();
+            }
             continue;
         } else if (acq != VK_SUCCESS && acq != VK_SUBOPTIMAL_KHR) {
             std::cerr << "Failed to acquire swapchain image: " << acq << "\n";
@@ -1164,34 +1194,8 @@ int main()
             vmaUnmapMemory(vkdev.allocator, uniformBuffers[imageIndex].allocation);
         }
         
-        // Update Material UBO (we'll use the selected entity's material, or a default)
-        {
-            MaterialUBO matUBO = {};
-            Entity selectedEntity = scene.GetSelectedEntity();
-            if (selectedEntity && selectedEntity.HasComponent<MaterialComponent>()) {
-                auto& mat = selectedEntity.GetComponent<MaterialComponent>();
-                matUBO.albedo = mat.albedo;
-                matUBO.metallic = mat.metallic;
-                matUBO.roughness = mat.roughness;
-                matUBO.ao = mat.ao;
-                matUBO.emissive = mat.emissive;
-                matUBO.emissiveStrength = mat.emissiveStrength;
-            } else {
-                // Default white material
-                matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);
-                matUBO.metallic = 0.0f;
-                matUBO.roughness = 0.5f;
-                matUBO.ao = 1.0f;
-                matUBO.emissive = Vec3(0.0f, 0.0f, 0.0f);
-                matUBO.emissiveStrength = 0.0f;
-            }
-            
-            void* mapped = nullptr;
-            vmaMapMemory(vkdev.allocator, materialBuffers[imageIndex].allocation, &mapped);
-            std::memcpy(mapped, &matUBO, sizeof(matUBO));
-            vmaFlushAllocation(vkdev.allocator, materialBuffers[imageIndex].allocation, 0, VK_WHOLE_SIZE);
-            vmaUnmapMemory(vkdev.allocator, materialBuffers[imageIndex].allocation);
-        }
+        // Removed redundant per-frame Material UBO write. We update material data per-object
+        // immediately before each draw to reflect that object's MaterialComponent.
         
         // Update Lighting UBO
         {
@@ -1272,9 +1276,6 @@ int main()
         vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
-    // Bind descriptor set with UBO
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout,
-                0, 1, &descriptorSets[imageIndex], 0, nullptr);
 
     // Set dynamic viewport/scissor per current extent
     VkViewport viewport{};
@@ -1296,6 +1297,14 @@ int main()
         
         // Draw all scene objects with MeshRendererComponent
         auto renderView = scene.GetEntitiesWith<TransformComponent, MeshRendererComponent>();
+
+        // Prepare dynamic material buffer mapping
+        void* matMappedBaseVoid = nullptr;
+        vmaMapMemory(vkdev.allocator, materialBuffers[imageIndex].allocation, &matMappedBaseVoid);
+        uint8_t* matMappedBase = reinterpret_cast<uint8_t*>(matMappedBaseVoid);
+        uint32_t matIndex = 0;
+
+        bool materialOverflowLogged = false;
         for (auto entityHandle : renderView) {
             Entity entity(entityHandle, &scene);
             auto& transform = entity.GetComponent<TransformComponent>();
@@ -1303,6 +1312,15 @@ int main()
             
             if (!renderer.visible)
                 continue;
+
+            if (matIndex >= maxMaterialsPerFrame) {
+                if (!materialOverflowLogged) {
+                    std::cerr << "Material dynamic UBO capacity exceeded (" << maxMaterialsPerFrame
+                              << " objects). Additional objects will be skipped this frame.\n";
+                    materialOverflowLogged = true;
+                }
+                continue;
+            }
             
             // Update material UBO for this specific object
             MaterialUBO matUBO = {};
@@ -1324,16 +1342,27 @@ int main()
                 matUBO.emissiveStrength = 0.0f;
             }
             
-            // Update the material buffer
-            void* matMapped = nullptr;
-            vmaMapMemory(vkdev.allocator, materialBuffers[imageIndex].allocation, &matMapped);
-            std::memcpy(matMapped, &matUBO, sizeof(matUBO));
-            vmaFlushAllocation(vkdev.allocator, materialBuffers[imageIndex].allocation, 0, VK_WHOLE_SIZE);
-            vmaUnmapMemory(vkdev.allocator, materialBuffers[imageIndex].allocation);
+            // Write into this object's slot in the dynamic material buffer
+            VkDeviceSize matOffsetBytes = static_cast<VkDeviceSize>(matIndex) * materialStride;
+            std::memcpy(matMappedBase + matOffsetBytes, &matUBO, sizeof(matUBO));
                 
             Mat4 modelMatrix = transform.GetLocalMatrix();
             vkCmdPushConstants(cmd, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), modelMatrix.m);
+            // Bind descriptor set with dynamic offset for this object's material
+            uint32_t dynOffset = static_cast<uint32_t>(matOffsetBytes);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout,
+                                    0, 1, &descriptorSets[imageIndex], 1, &dynOffset);
             vkCmdDrawIndexed(cmd, static_cast<uint32_t>(cubeIndices.size()), 1, 0, 0, 0);
+            matIndex++;
+        }
+
+        // Flush the written range and unmap once per frame
+        if (matMappedBaseVoid) {
+            VkDeviceSize writtenSize = static_cast<VkDeviceSize>(matIndex) * materialStride;
+            if (writtenSize > 0) {
+                vmaFlushAllocation(vkdev.allocator, materialBuffers[imageIndex].allocation, 0, writtenSize);
+            }
+            vmaUnmapMemory(vkdev.allocator, materialBuffers[imageIndex].allocation);
         }
 
         // ── Render Custom Vulkan Gizmo ───────────────────────────
@@ -1423,10 +1452,15 @@ int main()
             vkDeviceWaitIdle(vkdev.device);
             swap.Recreate(window);
             createPipeline();
-            createBillboardPipeline();
+            // Only rebuild billboard pipeline/descriptors if the texture actually loaded.
+            if (textureLoaded) {
+                createBillboardPipeline();
+            }
             allocateCmdBuffers();
             createDescriptors();
-            createBillboardDescriptors();
+            if (textureLoaded) {
+                createBillboardDescriptors();
+            }
         } else if (pres != VK_SUCCESS) {
             std::cerr << "Present failed: " << pres << "\n";
             break;

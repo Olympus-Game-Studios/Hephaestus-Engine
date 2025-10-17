@@ -564,8 +564,9 @@ void VulkanGizmo::Render(VkCommandBuffer cmd, VkDescriptorSet cameraDescriptor) 
     if (!geo || !geo->vertexBuffer || !geo->indexBuffer) return;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Pipeline);
+    uint32_t zeroOffset = 0;
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout,
-                           0, 1, &cameraDescriptor, 0, nullptr);
+                           0, 1, &cameraDescriptor, 1, &zeroOffset);
 
     // Build transform from origin, orientation, and scale
     Mat4 rotation = Mat4::Identity();
