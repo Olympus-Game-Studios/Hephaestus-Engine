@@ -1117,12 +1117,10 @@ int main()
                 } else {
                     if (leftDown) {
                         Mat4 newTransform = vulkanGizmo.HandleDrag(gizmoRay);
-                        if (gizmoMode == VulkanGizmo::Mode::Translate) {
-                            transform.position = Vec3(newTransform.m[12], newTransform.m[13], newTransform.m[14]);
-                            Mat4 updatedMatrix = transform.GetLocalMatrix();
-                            vulkanGizmo.UpdateState(updatedMatrix, ubo.view, ubo.proj, camera.position, gizmoMode, gizmoSpace);
-                            vulkanGizmo.SetHoveredAxis(gizmoActiveAxis);
-                        }
+                        transform.SetFromMatrix(newTransform);
+                        Mat4 updatedMatrix = transform.GetLocalMatrix();
+                        vulkanGizmo.UpdateState(updatedMatrix, ubo.view, ubo.proj, camera.position, gizmoMode, gizmoSpace);
+                        vulkanGizmo.SetHoveredAxis(gizmoActiveAxis);
                     } else {
                         gizmoDragging = false;
                         gizmoActiveAxis = -1;

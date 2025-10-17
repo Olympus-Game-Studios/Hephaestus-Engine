@@ -129,6 +129,7 @@ private:
                             float& outAxisParam, float& outDistance, bool clampToAxis) const;
     bool IntersectRotationRing(const Ray& ray, const Vec3& axisDir,
                                float& outDistanceFromRing) const;
+    bool IntersectPlane(const Ray& ray, const Vec3& planeOrigin, const Vec3& planeNormal, Vec3& outPoint) const;
 
     VkPipeline m_Pipeline = VK_NULL_HANDLE;
     VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
@@ -163,6 +164,9 @@ private:
     Vec3 m_DragStartPosition = Vec3(0, 0, 0);
     Vec3 m_DragAxisDir = Vec3(1, 0, 0);
     float m_DragStartAxisParam = 0.0f;
+    Vec3 m_DragStartScale = Vec3(1, 1, 1);
+    Vec3 m_RotationStartVector = Vec3(1, 0, 0);
+    bool m_RotationStartValid = false;
 
     // Tuning constants
     const float m_TranslateLength = 1.6f;

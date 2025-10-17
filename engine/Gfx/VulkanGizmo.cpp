@@ -236,6 +236,22 @@ bool VulkanGizmo::IntersectRotationRing(const Ray& ray, const Vec3& axisDir,
     return true;
 }
 
+bool VulkanGizmo::IntersectPlane(const Ray& ray, const Vec3& planeOrigin, const Vec3& planeNormal, Vec3& outPoint) const {
+    Vec3 n = vnorm(planeNormal);
+    float denom = vdot(n, ray.direction);
+    if (std::abs(denom) < 1e-6f) {
+        return false;
+    }
+
+    float t = vdot(n, vsub(planeOrigin, ray.origin)) / denom;
+    if (t < 0.0f) {
+        return false;
+    }
+
+    outPoint = vadd(ray.origin, vscale(ray.direction, t));
+    return true;
+}
+
 void VulkanGizmo::AddArrow(std::vector<GizmoVertex>& vertices, std::vector<uint16_t>& indices,
                            const Vec3& direction, float length, float radius, const Vec3& color) {
     // Simple arrow: cylinder shaft + cone tip
@@ -625,12 +641,40 @@ void VulkanGizmo::BeginDrag(const Ray& ray, int axis) {
     m_DragStartPosition = Vec3(m_ObjectTransform.m[12], m_ObjectTransform.m[13], m_ObjectTransform.m[14]);
     m_DragAxisDir = m_AxisDirections[axis];
     m_DragStartAxisParam = 0.0f;
+    m_DragStartScale = Vec3(1, 1, 1);
+    m_RotationStartValid = false;
 
     float axisParam = 0.0f;
     float distance = 0.0f;
     if (m_Mode != Mode::Rotate) {
         if (ClosestPointOnAxis(ray, m_GizmoOrigin, m_DragAxisDir, axisParam, distance, false)) {
             m_DragStartAxisParam = axisParam;
+        }
+    }
+
+    if (m_Mode == Mode::Scale) {
+        // Extract initial scale from transform columns
+        Vec3 basisX(m_DragStartTransform.m[0], m_DragStartTransform.m[1], m_DragStartTransform.m[2]);
+        Vec3 basisY(m_DragStartTransform.m[4], m_DragStartTransform.m[5], m_DragStartTransform.m[6]);
+        Vec3 basisZ(m_DragStartTransform.m[8], m_DragStartTransform.m[9], m_DragStartTransform.m[10]);
+        m_DragStartScale = Vec3(std::max(vlen(basisX), 1e-4f),
+                                std::max(vlen(basisY), 1e-4f),
+                                std::max(vlen(basisZ), 1e-4f));
+
+        if (std::abs(m_DragStartAxisParam) < 0.05f * m_CurrentScale) {
+            m_DragStartAxisParam = (m_DragStartAxisParam >= 0.0f ? 1.0f : -1.0f) * 0.05f * m_CurrentScale;
+        }
+    }
+
+    if (m_Mode == Mode::Rotate) {
+        Vec3 hitPoint;
+        if (IntersectPlane(ray, m_GizmoOrigin, m_DragAxisDir, hitPoint)) {
+            Vec3 fromOrigin = vsub(hitPoint, m_GizmoOrigin);
+            float len = vlen(fromOrigin);
+            if (len > 1e-6f) {
+                m_RotationStartVector = vscale(fromOrigin, 1.0f / len);
+                m_RotationStartValid = true;
+            }
         }
     }
 }
@@ -653,6 +697,66 @@ Mat4 VulkanGizmo::HandleDrag(const Ray& ray) {
             result.m[12] = newPosition.x;
             result.m[13] = newPosition.y;
             result.m[14] = newPosition.z;
+        }
+    } else if (m_ActiveAxis >= 0 && m_ActiveAxis < 3 && m_Mode == Mode::Scale) {
+        float axisParam = 0.0f;
+        float distance = 0.0f;
+        if (ClosestPointOnAxis(ray, m_GizmoOrigin, m_DragAxisDir, axisParam, distance, false) && std::abs(m_DragStartAxisParam) > 1e-4f) {
+            float ratio = axisParam / m_DragStartAxisParam;
+            if (!std::isfinite(ratio)) {
+                ratio = 1.0f;
+            }
+            ratio = std::max(ratio, 0.01f);
+
+            Vec3 translation(m_DragStartTransform.m[12], m_DragStartTransform.m[13], m_DragStartTransform.m[14]);
+            Vec3 basisX(m_DragStartTransform.m[0], m_DragStartTransform.m[1], m_DragStartTransform.m[2]);
+            Vec3 basisY(m_DragStartTransform.m[4], m_DragStartTransform.m[5], m_DragStartTransform.m[6]);
+            Vec3 basisZ(m_DragStartTransform.m[8], m_DragStartTransform.m[9], m_DragStartTransform.m[10]);
+
+            float scaleX = m_DragStartScale.x;
+            float scaleY = m_DragStartScale.y;
+            float scaleZ = m_DragStartScale.z;
+
+            switch (m_ActiveAxis) {
+                case 0: scaleX = std::max(0.01f, m_DragStartScale.x * ratio); break;
+                case 1: scaleY = std::max(0.01f, m_DragStartScale.y * ratio); break;
+                case 2: scaleZ = std::max(0.01f, m_DragStartScale.z * ratio); break;
+            }
+
+            Vec3 normX = vnorm(basisX);
+            Vec3 normY = vnorm(basisY);
+            Vec3 normZ = vnorm(basisZ);
+
+            Mat4 rotation = Mat4::Identity();
+            rotation.m[0] = normX.x; rotation.m[1] = normX.y; rotation.m[2] = normX.z;
+            rotation.m[4] = normY.x; rotation.m[5] = normY.y; rotation.m[6] = normY.z;
+            rotation.m[8] = normZ.x; rotation.m[9] = normZ.y; rotation.m[10] = normZ.z;
+
+            Mat4 translate = Mat4::Translation(translation);
+            Mat4 scale = Mat4::Scale(Vec3(scaleX, scaleY, scaleZ));
+
+            result = Mat4::Multiply(translate, Mat4::Multiply(rotation, scale));
+        }
+    } else if (m_ActiveAxis >= 0 && m_ActiveAxis < 3 && m_Mode == Mode::Rotate) {
+        if (m_RotationStartValid) {
+            Vec3 hitPoint;
+            if (IntersectPlane(ray, m_GizmoOrigin, m_DragAxisDir, hitPoint)) {
+                Vec3 fromOrigin = vsub(hitPoint, m_GizmoOrigin);
+                float len = vlen(fromOrigin);
+                if (len > 1e-6f) {
+                    Vec3 currentVec = vscale(fromOrigin, 1.0f / len);
+                    float dot = std::clamp(vdot(m_RotationStartVector, currentVec), -1.0f, 1.0f);
+                    Vec3 crossVec = vcross(m_RotationStartVector, currentVec);
+                    float sine = vdot(crossVec, m_DragAxisDir);
+                    float angle = std::atan2(sine, dot);
+
+                    Mat4 toOrigin = Mat4::Translation(vscale(m_GizmoOrigin, -1.0f));
+                    Mat4 back = Mat4::Translation(m_GizmoOrigin);
+                    Mat4 rotation = Mat4::RotationAxis(m_DragAxisDir, angle);
+
+                    result = Mat4::Multiply(back, Mat4::Multiply(rotation, Mat4::Multiply(toOrigin, m_DragStartTransform)));
+                }
+            }
         }
     }
 

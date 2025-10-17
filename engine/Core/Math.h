@@ -88,6 +88,28 @@ struct Mat4 {
         r.m[5] = c;
         return r;
     }
+
+    static Mat4 RotationAxis(const Vec3& axis, float angleRadians) {
+        Vec3 n = vnorm(axis);
+        float c = std::cos(angleRadians);
+        float s = std::sin(angleRadians);
+        float t = 1.0f - c;
+
+        Mat4 r = Identity();
+        r.m[0] = t * n.x * n.x + c;
+        r.m[1] = t * n.x * n.y + s * n.z;
+        r.m[2] = t * n.x * n.z - s * n.y;
+
+        r.m[4] = t * n.x * n.y - s * n.z;
+        r.m[5] = t * n.y * n.y + c;
+        r.m[6] = t * n.y * n.z + s * n.x;
+
+        r.m[8] = t * n.x * n.z + s * n.y;
+        r.m[9] = t * n.y * n.z - s * n.x;
+        r.m[10] = t * n.z * n.z + c;
+
+        return r;
+    }
     
     static Mat4 Multiply(const Mat4& a, const Mat4& b) {
         Mat4 result;
