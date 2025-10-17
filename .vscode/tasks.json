@@ -30,6 +30,66 @@
 				"$msCompile"
 			],
 			"group": "build"
+		},
+		{
+			"label": "Build HephaestusEngine Release",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--config",
+				"Release"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build HephaestusEngine Release",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--config",
+				"Release"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build HephaestusEngine Release",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--config",
+				"Release"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build HephaestusEngine Release",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--config",
+				"Release"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build HephaestusEngine Release",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--config",
+				"Release"
+			],
+			"group": "build"
 		}
 	]
 }

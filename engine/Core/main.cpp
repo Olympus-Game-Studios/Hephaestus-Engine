@@ -12,6 +12,7 @@
 #include "../Gfx/VulkanPipeline.h"
 #include "../Gfx/VulkanBuffer.h"
 #include "../Gfx/VulkanTexture.h"
+#include "../Gfx/VulkanGizmo.h"
 
 // Dear ImGui
 #include "imgui.h"
@@ -356,6 +357,10 @@ int main()
         return -1;
     }
 
+    // -- Custom Vulkan Gizmo
+    VulkanGizmo vulkanGizmo;
+    vulkanGizmo.Init(vkdev.device, swap.renderPass, swap.extent, pipeline.descriptorSetLayout, vkdev.allocator);
+
     // ── Vertex Data ───────────────────────────────────
     // 3D Cube vertices with normals - we need unique vertices per face for proper lighting
     const std::vector<Vertex> cubeVertices = {
@@ -537,9 +542,6 @@ int main()
     // ── ImGuizmo State ───────────────────────────
     ImGuizmo::OPERATION currentGizmoOperation = ImGuizmo::TRANSLATE;
     ImGuizmo::MODE currentGizmoMode = ImGuizmo::WORLD;
-    // Whether the gizmo should follow the camera transform. When false, the gizmo will be
-    // rendered in world space independent of the user's camera position/rotation.
-    static bool gizmoFollowCamera = true;
 
     // Per-image uniform buffers and descriptors (tied to swapchain images)
     std::vector<VulkanBuffer> uniformBuffers;
@@ -812,6 +814,8 @@ int main()
     // Initialize ImGui
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    // Ensure ImGuizmo uses the same ImGui context
+    ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -837,6 +841,9 @@ int main()
     init_info.Allocator = nullptr;
     init_info.CheckVkResultFn = nullptr;
     ImGui_ImplVulkan_Init(&init_info);
+
+    // Debug toggle: show ImGuizmo grid
+    static bool g_ShowGizmoGrid = false;
 
     std::vector<VkSemaphore> imageAvailable(MAX_FRAMES_IN_FLIGHT);
     std::vector<VkSemaphore> renderFinished(MAX_FRAMES_IN_FLIGHT);
@@ -923,6 +930,7 @@ int main()
             ImGui::Text("Camera Speed: %.2f", camera.moveSpeed);
             ImGui::Text("Yaw: %.1f°  Pitch: %.1f°", camera.yawDeg, camera.pitchDeg);
             ImGui::Separator();
+            ImGui::Checkbox("Show Gizmo Grid (debug)", &g_ShowGizmoGrid);
             ImGui::Text("Object Selection:");
             ImGui::Text("Left Click - Select object");
             ImGui::Text("Click empty space - Deselect all");
@@ -1053,9 +1061,6 @@ int main()
                 ImGui::Text("Entity ID: %u", static_cast<uint32_t>(selectedEntity));
                 ImGui::Text("ImGuizmo IsUsing: %s", ImGuizmo::IsUsing() ? "YES" : "NO");
                 ImGui::Text("ImGuizmo IsOver: %s", ImGuizmo::IsOver() ? "YES" : "NO");
-                
-                ImGui::Separator();
-                ImGui::Checkbox("Gizmo Follow Camera", &gizmoFollowCamera);
             } else {
                 ImGui::TextDisabled("No entity selected");
                 ImGui::Text("Click on an entity in the viewport to select it");
@@ -1070,58 +1075,6 @@ int main()
         
         // Build view/proj for ImGuizmo
         UniformBufferObject ubo = camera.makeUBO(swap.extent);
-        
-        // Setup ImGuizmo - use only the render viewport, not the full window
-        ImGuizmo::SetDrawlist();
-        // Set rect to the full viewport area in ImGui screen coordinates
-        ImGuizmo::SetRect(0, 0, (float)swap.extent.width, (float)swap.extent.height);
-        ImGuizmo::Enable(true);
-        
-        // For ImGuizmo to not move with camera, we need OpenGL-style coordinates
-        // Create projection matrix in OpenGL space (Y-up, Z from -1 to 1)
-        float aspect = swap.extent.width / (float)swap.extent.height;
-        Mat4 gizmoProj = Mat4::PerspectiveGL(60.0f * 3.1415926535f / 180.0f, aspect, 0.1f, 100.0f);
-        
-        // Also need to flip Y in the view matrix for OpenGL conventions
-        Mat4 gizmoView;
-        if (gizmoFollowCamera) {
-            // Use camera view but convert to OpenGL convention (flip Y column)
-            gizmoView = ubo.view;
-            gizmoView.m[1] = -gizmoView.m[1];
-            gizmoView.m[5] = -gizmoView.m[5];
-            gizmoView.m[9] = -gizmoView.m[9];
-            gizmoView.m[13] = -gizmoView.m[13];
-        } else {
-            // Use identity view (camera-independent) but still place the gizmo in world space.
-            // Start with identity, then flip Y to match ImGuizmo's expected OpenGL convention.
-            gizmoView = Mat4::Identity();
-            gizmoView.m[1] = -gizmoView.m[1];
-            gizmoView.m[5] = -gizmoView.m[5];
-            gizmoView.m[9] = -gizmoView.m[9];
-            gizmoView.m[13] = -gizmoView.m[13];
-        }
-        
-        // Render gizmo for selected object (always call Manipulate so it draws)
-        Entity selectedEntity = scene.GetSelectedEntity();
-        if (selectedEntity) {
-            auto& transform = selectedEntity.GetComponent<TransformComponent>();
-            Mat4 objectMatrix = transform.GetLocalMatrix();
-
-            ImGuizmo::Manipulate(
-                gizmoView.m,
-                gizmoProj.m,
-                currentGizmoOperation,
-                currentGizmoMode,
-                objectMatrix.m,
-                nullptr,
-                nullptr,
-                nullptr);
-            
-            // If manipulated, update transform
-            if (ImGuizmo::IsUsing()) {
-                transform.SetFromMatrix(objectMatrix);
-            }
-        }
         
         // Render ImGui
         ImGui::Render();
@@ -1322,6 +1275,21 @@ int main()
             vkCmdDrawIndexed(cmd, static_cast<uint32_t>(cubeIndices.size()), 1, 0, 0, 0);
         }
 
+        // ── Render Custom Vulkan Gizmo ───────────────────────────
+        Entity selectedEntity = scene.GetSelectedEntity();
+        if (selectedEntity) {
+            auto& transform = selectedEntity.GetComponent<TransformComponent>();
+            Mat4 objectMatrix = transform.GetLocalMatrix();
+            
+            VulkanGizmo::Mode gizmoMode = VulkanGizmo::Mode::Translate;
+            if (currentGizmoOperation == ImGuizmo::ROTATE) gizmoMode = VulkanGizmo::Mode::Rotate;
+            else if (currentGizmoOperation == ImGuizmo::SCALE) gizmoMode = VulkanGizmo::Mode::Scale;
+
+            VulkanGizmo::Space gizmoSpace = (currentGizmoMode == ImGuizmo::WORLD) ? VulkanGizmo::Space::World : VulkanGizmo::Space::Local;
+
+            vulkanGizmo.Render(cmd, descriptorSets[imageIndex], objectMatrix, ubo.view, camera.position, gizmoMode, gizmoSpace);
+        }
+
         // ── Render Light Billboards ───────────────────────────────
         if (billboardPipeline.pipeline != VK_NULL_HANDLE && !billboardDescriptorSets.empty()) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, billboardPipeline.pipeline);
@@ -1422,6 +1390,7 @@ int main()
     ImGui::DestroyContext();
     vkDestroyDescriptorPool(vkdev.device, imguiPool, nullptr);
 
+    vulkanGizmo.Cleanup(vkdev.device, vkdev.allocator);
     vertexBuffer.Destroy(vkdev.allocator);
     indexBuffer.Destroy(vkdev.allocator);
     destroyDescriptors();

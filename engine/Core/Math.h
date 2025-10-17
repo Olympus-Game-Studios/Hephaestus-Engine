@@ -9,6 +9,13 @@ struct Vec3 {
     Vec3(float x, float y, float z) : x(x), y(y), z(z) {}
 };
 
+// Simple 4D vector
+struct Vec4 {
+    float x, y, z, w;
+    Vec4() : x(0), y(0), z(0), w(0) {}
+    Vec4(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
+};
+
 inline Vec3 v3(float x, float y, float z) { return Vec3{x,y,z}; }
 inline Vec3 vadd(Vec3 a, Vec3 b){ return v3(a.x+b.x,a.y+b.y,a.z+b.z);} 
 inline Vec3 vsub(Vec3 a, Vec3 b){ return v3(a.x-b.x,a.y-b.y,a.z-b.z);} 

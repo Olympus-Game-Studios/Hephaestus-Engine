@@ -13,6 +13,7 @@ add_executable(HephaestusEngine
     engine/Gfx/VulkanSwapchain.cpp
     engine/Gfx/VulkanPipeline.cpp
     engine/Gfx/VulkanTexture.cpp
+    engine/Gfx/VulkanGizmo.cpp
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
 )
@@ -68,6 +69,8 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/billboard.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/billboard.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo.frag
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)

@@ -2,6 +2,7 @@
 #include <vulkan/vulkan.h>
 #include "vk_mem_alloc.h"
 #include <stdexcept>
+#include <cstring>
 
 struct VulkanBuffer {
     VkBuffer buffer{};
@@ -9,7 +10,8 @@ struct VulkanBuffer {
 
     void Create(VmaAllocator allocator, VkDeviceSize size,
                 VkBufferUsageFlags usage,
-                VmaMemoryUsage memoryUsage) 
+                VmaMemoryUsage memoryUsage,
+                void* data = nullptr) 
     {
         VkBufferCreateInfo bufferInfo{};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -20,9 +22,16 @@ struct VulkanBuffer {
         VmaAllocationCreateInfo allocInfo{};
         allocInfo.usage = memoryUsage;
 
-        if (vmaCreateBuffer(allocator, &bufferInfo, &allocInfo,
-                            &buffer, &allocation, nullptr) != VK_SUCCESS)
-            throw std::runtime_error("Failed to create buffer");
+        if (vmaCreateBuffer(allocator, &bufferInfo, &allocInfo, &buffer, &allocation, nullptr) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create buffer!");
+        }
+
+        if (data != nullptr) {
+            void* mappedData = nullptr;
+            vmaMapMemory(allocator, allocation, &mappedData);
+            std::memcpy(mappedData, data, static_cast<size_t>(size));
+            vmaUnmapMemory(allocator, allocation);
+        }
     }
 
     void Destroy(VmaAllocator allocator) {
