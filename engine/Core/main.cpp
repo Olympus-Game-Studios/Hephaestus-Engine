@@ -10,6 +10,8 @@
 #include <system_error>
 #include <optional>
 #include <cstdint>
+#include <unordered_map>
+#include <cctype>
 
 #include "Math.h"
 
@@ -933,6 +935,215 @@ static std::filesystem::path ClampToRoot(const std::filesystem::path& candidate,
     return root.lexically_normal();
 }
 
+static std::filesystem::path ResolveProjectRoot()
+{
+    namespace fs = std::filesystem;
+    static fs::path cached;
+    if (!cached.empty()) {
+        return cached;
+    }
+
+    fs::path candidate = fs::current_path();
+    for (int depth = 0; depth < 10; ++depth) {
+        if (fs::exists(candidate / "assets") && fs::exists(candidate / "editor")) {
+            cached = candidate;
+            break;
+        }
+        if (!candidate.has_parent_path()) {
+            break;
+        }
+        candidate = candidate.parent_path();
+    }
+
+    if (cached.empty()) {
+        cached = fs::current_path();
+    }
+    return cached;
+}
+
+struct AssetBrowserIcon {
+    VulkanTexture texture;
+    VkDescriptorSet descriptor = VK_NULL_HANDLE;
+    ImTextureID textureID = ImTextureID_Invalid;
+    ImTextureRef textureRef;
+    ImVec2 originalSize = ImVec2(64.0f, 64.0f);
+
+    AssetBrowserIcon() = default;
+    AssetBrowserIcon(const AssetBrowserIcon&) = delete;
+    AssetBrowserIcon& operator=(const AssetBrowserIcon&) = delete;
+    AssetBrowserIcon(AssetBrowserIcon&&) noexcept = default;
+    AssetBrowserIcon& operator=(AssetBrowserIcon&&) noexcept = default;
+};
+
+static std::unordered_map<std::string, AssetBrowserIcon> g_AssetBrowserIconRegistry;
+static bool g_AssetBrowserIconsReady = false;
+static constexpr const char* kDefaultFileIconKey = "file-cpp";
+
+static std::string ToLowerCopy(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+static AssetBrowserIcon* FindAssetBrowserIcon(const std::string& key)
+{
+    auto it = g_AssetBrowserIconRegistry.find(key);
+    return (it != g_AssetBrowserIconRegistry.end()) ? &it->second : nullptr;
+}
+
+static std::string DetermineAssetIconKey(const std::filesystem::path& path, bool isDirectory)
+{
+    if (isDirectory) {
+        return "folder";
+    }
+
+    std::string ext = ToLowerCopy(path.extension().string());
+    if (ext.empty()) {
+        return kDefaultFileIconKey;
+    }
+
+    static const std::pair<const char*, const char*> kMappings[] = {
+        {".fbx", "file-fbx"},
+        {".obj", "file-obj"},
+        {".gltf", "file-obj"},
+        {".glb", "file-obj"},
+        {".png", "file-png"},
+        {".jpg", "file-jpg"},
+        {".jpeg", "file-jpg"},
+        {".tga", "file-png"},
+        {".bmp", "file-png"},
+        {".svg", "file-svg"},
+        {".mp3", "file-audio"},
+        {".wav", "file-audio"},
+        {".ogg", "file-audio"},
+        {".flac", "file-audio"},
+        {".mp4", "file-video"},
+        {".mov", "file-video"},
+        {".avi", "file-video"},
+        {".cpp", "file-cpp"},
+        {".cc", "file-cpp"},
+        {".cxx", "file-cpp"},
+        {".c", "file-cpp"},
+        {".h", "file-cpp"},
+        {".hpp", "file-cpp"},
+        {".hxx", "file-cpp"},
+        {".txt", "file-cpp"},
+        {".json", "file-cpp"},
+        {".material", "file-cpp"},
+        {".prefab", "file-cpp"}
+    };
+
+    for (const auto& mapping : kMappings) {
+        if (ext == mapping.first) {
+            return mapping.second;
+        }
+    }
+
+    return kDefaultFileIconKey;
+}
+
+static void EnsureAssetBrowserIconsLoaded(VulkanDevice& vkdev)
+{
+    if (g_AssetBrowserIconsReady) {
+        return;
+    }
+    g_AssetBrowserIconsReady = true;
+
+    struct IconDef {
+        const char* key;
+        const char* file;
+    };
+
+    namespace fs = std::filesystem;
+
+    fs::path iconRoot = ResolveProjectRoot() / fs::path("editor") / "Icons";
+    if (!fs::exists(iconRoot)) {
+        std::cerr << "Asset icon directory missing: " << iconRoot << "\n";
+        return;
+    }
+
+    const IconDef iconDefs[] = {
+        {"folder", "folder.png"},
+        {"file-cpp", "file-cpp.png"},
+        {"file-fbx", "file-fbx.png"},
+        {"file-obj", "file-obj.png"},
+        {"file-png", "file-png.png"},
+        {"file-jpg", "file-jpg.png"},
+        {"file-svg", "file-svg.png"},
+        {"file-audio", "file-audio.png"},
+        {"file-video", "file-video.png"}
+    };
+
+    for (const auto& def : iconDefs) {
+        fs::path iconPath = iconRoot / def.file;
+        if (!fs::exists(iconPath)) {
+            std::cerr << "Asset icon missing: " << iconPath << "\n";
+            continue;
+        }
+
+        AssetBrowserIcon icon;
+        bool loaded = false;
+        try {
+            loaded = icon.texture.LoadFromFile(
+                vkdev.allocator,
+                vkdev.device,
+                vkdev.physicalDevice,
+                vkdev.commandPool,
+                vkdev.graphicsQueue,
+                iconPath.string(),
+                false);
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to load asset icon " << iconPath << ": " << e.what() << "\n";
+            loaded = false;
+        }
+
+        if (!loaded) {
+            continue;
+        }
+
+        icon.descriptor = ImGui_ImplVulkan_AddTexture(
+            icon.texture.sampler,
+            icon.texture.imageView,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        if (icon.descriptor == VK_NULL_HANDLE) {
+            std::cerr << "Failed to register ImGui descriptor for icon: " << iconPath << "\n";
+            icon.texture.Destroy(vkdev.allocator, vkdev.device);
+            continue;
+        }
+
+        icon.textureID = static_cast<ImTextureID>(reinterpret_cast<uint64_t>(icon.descriptor));
+        icon.textureRef = ImTextureRef(icon.textureID);
+        icon.originalSize = ImVec2(
+            static_cast<float>(std::max<uint32_t>(icon.texture.width, 1u)),
+            static_cast<float>(std::max<uint32_t>(icon.texture.height, 1u)));
+
+        std::cout << "Loaded asset icon: " << def.key << " -> " << iconPath << " (" << icon.originalSize.x << "x" << icon.originalSize.y << ")\n";
+
+        g_AssetBrowserIconRegistry.emplace(def.key, std::move(icon));
+    }
+}
+
+static void DestroyAssetBrowserIcons(VulkanDevice& vkdev)
+{
+    for (auto& [key, icon] : g_AssetBrowserIconRegistry) {
+        (void)key;
+        if (icon.descriptor != VK_NULL_HANDLE) {
+            ImGui_ImplVulkan_RemoveTexture(icon.descriptor);
+            icon.descriptor = VK_NULL_HANDLE;
+        }
+        icon.textureID = ImTextureID_Invalid;
+        icon.textureRef = ImTextureRef();
+        if (icon.texture.image != VK_NULL_HANDLE) {
+            icon.texture.Destroy(vkdev.allocator, vkdev.device);
+        }
+    }
+    g_AssetBrowserIconRegistry.clear();
+    g_AssetBrowserIconsReady = false;
+}
+
 // ImGui panel that lists files and folders in the asset directory.
 static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& statusMessage)
 {
@@ -947,9 +1158,15 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
 
     if (!initialized) {
         initialized = true;
-        std::error_code absErr;
-        fs::path absoluteRoot = fs::absolute("assets", absErr);
-        assetRoot = absErr ? fs::path("assets") : absoluteRoot.lexically_normal();
+        fs::path projectRoot = ResolveProjectRoot();
+        fs::path absoluteRoot = (projectRoot / "assets").lexically_normal();
+        if (fs::exists(absoluteRoot)) {
+            assetRoot = absoluteRoot;
+        } else {
+            std::error_code absErr;
+            fs::path fallback = fs::absolute("assets", absErr);
+            assetRoot = absErr ? fs::path("assets") : fallback.lexically_normal();
+        }
         currentPath = assetRoot;
         selectedPath.clear();
     }
@@ -1046,36 +1263,127 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
     std::sort(directories.begin(), directories.end(), alphabetical);
     std::sort(files.begin(), files.end(), alphabetical);
 
+    size_t totalEntries = directories.size() + files.size();
+
     ImGui::BeginChild("AssetBrowserList", ImVec2(0, 0), false);
 
     if (directories.empty() && files.empty()) {
         ImGui::TextDisabled("Folder is empty");
-    }
+    } else {
+        ImGui::TextDisabled("%zu items", totalEntries);
+        ImGui::Spacing();
+        const float baseIconSize = 72.0f;
+        const float iconSize = baseIconSize * g_UIScale;
+        const float cellPadding = 14.0f * g_UIScale;
+        const float textPaddingY = 6.0f * g_UIScale;
+        const float minCellWidth = iconSize + cellPadding * 2.0f;
+        const float labelHeight = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
+        const float cellHeight = iconSize + cellPadding * 2.0f + labelHeight + textPaddingY;
 
-    for (const BrowserEntry& dirEntry : directories) {
-        bool isSelected = !selectedPath.empty() && selectedPath == dirEntry.path;
-        std::string displayLabel = "[DIR] " + dirEntry.label;
-        if (ImGui::Selectable(displayLabel.c_str(), isSelected)) {
-            selectedPath = ClampToRoot(dirEntry.path, assetRoot);
-            statusMessage.clear();
+        float availableWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+        int columns = static_cast<int>(availableWidth / minCellWidth);
+        if (columns < 1) {
+            columns = 1;
         }
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-            currentPath = ClampToRoot(dirEntry.path, assetRoot);
-            selectedPath.clear();
-            statusMessage.clear();
-        }
-    }
 
-    for (const BrowserEntry& fileEntry : files) {
-        bool isSelected = !selectedPath.empty() && selectedPath == fileEntry.path;
-        if (ImGui::Selectable(fileEntry.label.c_str(), isSelected)) {
-            selectedPath = ClampToRoot(fileEntry.path, assetRoot);
-            statusMessage.clear();
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(cellPadding * 0.5f, cellPadding * 0.5f));
+        if (ImGui::BeginTable("AssetBrowserGrid", columns, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_NoBordersInBody)) {
+            int cellIndex = 0;
+
+            auto drawEntry = [&](const BrowserEntry& entry) {
+                bool isSelected = !selectedPath.empty() && selectedPath == entry.path;
+                if (cellIndex % columns == 0) {
+                    ImGui::TableNextRow(ImGuiTableRowFlags_None, cellHeight);
+                }
+                ImGui::TableSetColumnIndex(cellIndex % columns);
+
+                ImGui::PushID(entry.path.generic_string().c_str());
+
+                ImVec2 cellSize(minCellWidth, cellHeight);
+                ImVec2 cellPos = ImGui::GetCursorScreenPos();
+                ImGui::InvisibleButton("##AssetCell", cellSize);
+                bool hovered = ImGui::IsItemHovered();
+                bool clicked = ImGui::IsItemClicked();
+                bool doubleClicked = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                const float rounding = std::max(6.0f, 6.0f * g_UIScale);
+                ImU32 bgColor = 0;
+                if (isSelected) {
+                    bgColor = ImGui::GetColorU32(ImVec4(0.26f, 0.54f, 0.99f, 0.30f));
+                } else if (hovered) {
+                    bgColor = ImGui::GetColorU32(ImVec4(0.33f, 0.53f, 0.87f, 0.18f));
+                }
+                if (bgColor != 0) {
+                    ImVec2 cellMax(cellPos.x + cellSize.x, cellPos.y + cellSize.y);
+                    drawList->AddRectFilled(cellPos, cellMax, bgColor, rounding);
+                }
+
+                std::string iconKey = DetermineAssetIconKey(entry.path, entry.isDirectory);
+                AssetBrowserIcon* icon = FindAssetBrowserIcon(iconKey);
+                float finalIconHeight = iconSize;
+                ImVec2 renderSize(iconSize, iconSize);
+
+                if (icon && icon->descriptor != VK_NULL_HANDLE && icon->originalSize.x > 0.0f && icon->originalSize.y > 0.0f) {
+                    float scale = std::min(iconSize / icon->originalSize.x, iconSize / icon->originalSize.y);
+                    renderSize = ImVec2(icon->originalSize.x * scale, icon->originalSize.y * scale);
+                    finalIconHeight = renderSize.y;
+                    ImVec2 iconMin(
+                        cellPos.x + (cellSize.x - renderSize.x) * 0.5f,
+                        cellPos.y + cellPadding);
+                    ImVec2 iconMax(iconMin.x + renderSize.x, iconMin.y + renderSize.y);
+                    drawList->AddImage(icon->textureRef, iconMin, iconMax);
+                } else {
+                    ImVec2 iconMin(
+                        cellPos.x + (cellSize.x - renderSize.x) * 0.5f,
+                        cellPos.y + cellPadding);
+                    ImVec2 iconMax(iconMin.x + renderSize.x, iconMin.y + renderSize.y);
+                    drawList->AddRectFilled(iconMin, iconMax, ImGui::GetColorU32(ImVec4(0.15f, 0.18f, 0.22f, 0.80f)), rounding);
+                    finalIconHeight = renderSize.y;
+                }
+
+                ImRect textRect(
+                    ImVec2(cellPos.x + cellPadding, cellPos.y + cellPadding + finalIconHeight + textPaddingY),
+                    ImVec2(cellPos.x + cellSize.x - cellPadding, cellPos.y + cellSize.y - cellPadding));
+
+                ImGui::PushClipRect(textRect.Min, textRect.Max, true);
+                ImGui::RenderTextClipped(
+                    textRect.Min,
+                    textRect.Max,
+                    entry.label.c_str(),
+                    nullptr,
+                    nullptr,
+                    ImVec2(0.5f, 0.0f));
+                ImGui::PopClipRect();
+
+                if (clicked) {
+                    selectedPath = ClampToRoot(entry.path, assetRoot);
+                    statusMessage.clear();
+                }
+                if (doubleClicked) {
+                    if (entry.isDirectory) {
+                        currentPath = ClampToRoot(entry.path, assetRoot);
+                        selectedPath.clear();
+                    } else {
+                        selectedPath = ClampToRoot(entry.path, assetRoot);
+                    }
+                    statusMessage.clear();
+                }
+
+                ImGui::PopID();
+                ++cellIndex;
+            };
+
+            for (const BrowserEntry& dirEntry : directories) {
+                drawEntry(dirEntry);
+            }
+            for (const BrowserEntry& fileEntry : files) {
+                drawEntry(fileEntry);
+            }
+
+            ImGui::EndTable();
         }
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-            selectedPath = ClampToRoot(fileEntry.path, assetRoot);
-            statusMessage.clear();
-        }
+        ImGui::PopStyleVar();
     }
 
     ImGui::EndChild();
@@ -1808,6 +2116,8 @@ int main()
     init_info.CheckVkResultFn = nullptr;
     ImGui_ImplVulkan_Init(&init_info);
 
+    EnsureAssetBrowserIconsLoaded(vkdev);
+
     // Debug toggle: show ImGuizmo grid
     static bool g_ShowGizmoGrid = false;
 
@@ -2349,6 +2659,7 @@ int main()
     }
     
     // Cleanup ImGui
+    DestroyAssetBrowserIcons(vkdev);
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
