@@ -26,6 +26,7 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
+#include "imgui_internal.h"
 #include "ImGuizmo.h"
 
 // Scene Graph / ECS
@@ -84,6 +85,602 @@ void populateDebugCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& ci)
 static bool g_framebufferResized = false;
 static bool g_DebugSkipImportedMeshes = false;
 static uint64_t g_FrameCounter = 0;
+static float g_UIScale = 1.0f;
+
+constexpr float kReferenceViewportWidth = 1280.0f;
+constexpr float kReferenceViewportHeight = 720.0f;
+
+static float ComputeUIScale(const ImGuiViewport* viewport)
+{
+    if (!viewport || viewport->Size.x <= 0.0f || viewport->Size.y <= 0.0f) {
+        return 1.0f;
+    }
+    float scaleX = viewport->Size.x / kReferenceViewportWidth;
+    float scaleY = viewport->Size.y / kReferenceViewportHeight;
+    float raw = std::min(scaleX, scaleY);
+    if (raw <= 1.0f) {
+        // Downscale modestly for small windows
+        return std::clamp(raw, 0.80f, 1.0f);
+    }
+    // Gentle upscale to avoid crowding; e.g., at 2.0 raw -> 1.3 with slope 0.3, clamped to 1.2
+    float gentle = 1.0f + (raw - 1.0f) * 0.30f;
+    return std::clamp(gentle, 1.0f, 1.20f);
+}
+
+static void ApplyHephaestusEditorStyle(ImGuiIO& io, float scale)
+{
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.ConfigWindowsMoveFromTitleBarOnly = true;
+
+    ImGuiStyle& style = ImGui::GetStyle();
+    style = ImGuiStyle();
+    style.DisabledAlpha = 0.45f;
+    style.WindowPadding = ImVec2(14.0f, 12.0f);
+    style.FramePadding = ImVec2(11.0f, 7.0f);
+    style.CellPadding = ImVec2(9.0f, 7.0f);
+    style.ItemSpacing = ImVec2(11.0f, 9.0f);
+    style.ItemInnerSpacing = ImVec2(7.0f, 5.0f);
+    style.SeparatorTextAlign = ImVec2(0.0f, 0.5f);
+    style.SeparatorTextPadding = ImVec2(18.0f, 6.0f);
+    style.SeparatorTextBorderSize = 1.0f;
+    style.ScrollbarSize = 18.0f;
+    style.ScrollbarRounding = 6.0f;
+    style.GrabMinSize = 12.0f;
+    style.WindowBorderSize = 1.0f;
+    style.ChildBorderSize = 1.0f;
+    style.PopupBorderSize = 1.0f;
+    style.FrameBorderSize = 1.0f;
+    style.TabBorderSize = 1.0f;
+    style.WindowRounding = 10.0f;
+    style.ChildRounding = 8.0f;
+    style.FrameRounding = 6.0f;
+    style.PopupRounding = 6.0f;
+    style.GrabRounding = 4.0f;
+    style.TabRounding = 6.0f;
+    style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
+    style.ColorButtonPosition = ImGuiDir_Left;
+    style.TouchExtraPadding = ImVec2(0.0f, 0.0f);
+    style.LogSliderDeadzone = 0.2f;
+
+    // Palette leans on UE cobalt and Godot teal for a modern editor aesthetic.
+    // Improved contrast for better readability
+    const ImVec4 textPrimary(0.92f, 0.94f, 0.97f, 1.00f);
+    const ImVec4 textMuted(0.65f, 0.68f, 0.74f, 1.00f);
+    const ImVec4 bgUltraDark(0.04f, 0.05f, 0.07f, 1.00f);
+    const ImVec4 bgDark(0.06f, 0.07f, 0.09f, 1.00f);
+    const ImVec4 bgMid(0.11f, 0.12f, 0.15f, 1.00f);
+    const ImVec4 bgLight(0.17f, 0.19f, 0.23f, 1.00f);
+    const ImVec4 surfaceLow(0.19f, 0.21f, 0.25f, 1.00f);
+    const ImVec4 surfaceMid(0.25f, 0.28f, 0.33f, 1.00f);
+    const ImVec4 borderSoft(0.16f, 0.18f, 0.21f, 1.00f);
+    const ImVec4 borderStrong(0.26f, 0.29f, 0.35f, 1.00f);
+    const ImVec4 accentUE(0.15f, 0.58f, 0.98f, 1.00f);
+    const ImVec4 accentUEHover(0.24f, 0.66f, 1.00f, 1.00f);
+    const ImVec4 accentUEActive(0.12f, 0.49f, 0.85f, 1.00f);
+    const ImVec4 accentGodot(0.26f, 0.70f, 0.77f, 1.00f);
+    const ImVec4 accentGodotHover(0.33f, 0.81f, 0.86f, 1.00f);
+    const ImVec4 accentGodotActive(0.18f, 0.57f, 0.62f, 1.00f);
+    const ImVec4 warning(0.93f, 0.67f, 0.32f, 1.00f);
+
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_Text] = textPrimary;
+    colors[ImGuiCol_TextDisabled] = textMuted;
+    colors[ImGuiCol_WindowBg] = bgDark;
+    colors[ImGuiCol_ChildBg] = bgDark;
+    colors[ImGuiCol_PopupBg] = ImVec4(bgUltraDark.x, bgUltraDark.y, bgUltraDark.z, 0.98f);
+    colors[ImGuiCol_Border] = borderSoft;
+    colors[ImGuiCol_BorderShadow] = ImVec4(0, 0, 0, 0);
+    colors[ImGuiCol_FrameBg] = surfaceLow;
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(accentGodotHover.x, accentGodotHover.y, accentGodotHover.z, 0.65f);
+    colors[ImGuiCol_FrameBgActive] = ImVec4(accentGodotActive.x, accentGodotActive.y, accentGodotActive.z, 0.90f);
+    colors[ImGuiCol_TitleBg] = bgDark;
+    colors[ImGuiCol_TitleBgActive] = bgMid;
+    colors[ImGuiCol_TitleBgCollapsed] = bgDark;
+    colors[ImGuiCol_MenuBarBg] = bgUltraDark;
+    colors[ImGuiCol_ScrollbarBg] = ImVec4(bgUltraDark.x, bgUltraDark.y, bgUltraDark.z, 1.00f);
+    colors[ImGuiCol_ScrollbarGrab] = surfaceLow;
+    colors[ImGuiCol_ScrollbarGrabHovered] = surfaceMid;
+    colors[ImGuiCol_ScrollbarGrabActive] = accentGodotActive;
+    colors[ImGuiCol_CheckMark] = accentUE;
+    colors[ImGuiCol_SliderGrab] = accentGodot;
+    colors[ImGuiCol_SliderGrabActive] = accentGodotActive;
+    colors[ImGuiCol_Button] = surfaceLow;
+    colors[ImGuiCol_ButtonHovered] = accentUEHover;
+    colors[ImGuiCol_ButtonActive] = accentUEActive;
+    colors[ImGuiCol_Header] = surfaceLow;
+    colors[ImGuiCol_HeaderHovered] = accentGodotHover;
+    colors[ImGuiCol_HeaderActive] = accentGodotActive;
+    colors[ImGuiCol_Separator] = borderStrong;
+    colors[ImGuiCol_SeparatorHovered] = accentUEHover;
+    colors[ImGuiCol_SeparatorActive] = accentUEActive;
+    colors[ImGuiCol_ResizeGrip] = ImVec4(accentGodot.x, accentGodot.y, accentGodot.z, 0.55f);
+    colors[ImGuiCol_ResizeGripHovered] = accentGodotHover;
+    colors[ImGuiCol_ResizeGripActive] = accentGodotActive;
+    colors[ImGuiCol_InputTextCursor] = accentUE;
+    colors[ImGuiCol_TabHovered] = accentUEHover;
+    colors[ImGuiCol_Tab] = bgMid;
+    colors[ImGuiCol_TabSelected] = accentUEActive;
+    colors[ImGuiCol_TabSelectedOverline] = accentUE;
+    colors[ImGuiCol_TabDimmed] = bgUltraDark;
+    colors[ImGuiCol_TabDimmedSelected] = bgMid;
+    colors[ImGuiCol_TabDimmedSelectedOverline] = accentGodot;
+    colors[ImGuiCol_DockingPreview] = ImVec4(accentUE.x, accentUE.y, accentUE.z, 0.35f);
+    colors[ImGuiCol_DockingEmptyBg] = bgUltraDark;
+    colors[ImGuiCol_PlotLines] = accentGodot;
+    colors[ImGuiCol_PlotLinesHovered] = accentGodotHover;
+    colors[ImGuiCol_PlotHistogram] = accentUE;
+    colors[ImGuiCol_PlotHistogramHovered] = accentUEHover;
+    colors[ImGuiCol_TableHeaderBg] = bgMid;
+    colors[ImGuiCol_TableBorderStrong] = borderStrong;
+    colors[ImGuiCol_TableBorderLight] = borderSoft;
+    colors[ImGuiCol_TableRowBg] = ImVec4(bgLight.x, bgLight.y, bgLight.z, 0.20f);
+    colors[ImGuiCol_TableRowBgAlt] = ImVec4(bgLight.x, bgLight.y, bgLight.z, 0.40f);
+    colors[ImGuiCol_TextLink] = accentUE;
+    colors[ImGuiCol_TextSelectedBg] = ImVec4(accentUE.x, accentUE.y, accentUE.z, 0.40f);
+    colors[ImGuiCol_TreeLines] = ImVec4(borderSoft.x, borderSoft.y, borderSoft.z, 0.50f);
+    colors[ImGuiCol_DragDropTarget] = ImVec4(accentUE.x, accentUE.y, accentUE.z, 0.90f);
+    colors[ImGuiCol_UnsavedMarker] = warning;
+    colors[ImGuiCol_NavCursor] = ImVec4(accentUE.x, accentUE.y, accentUE.z, 0.80f);
+    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(accentUE.x, accentUE.y, accentUE.z, 0.70f);
+    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(bgUltraDark.x, bgUltraDark.y, bgUltraDark.z, 0.60f);
+    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(bgUltraDark.x, bgUltraDark.y, bgUltraDark.z, 0.75f);
+
+    style.ScaleAllSizes(scale);
+}
+
+static bool g_ShowEditorGizmo = true;
+static bool g_DetailsLocked = false;
+
+struct ToolbarActions {
+    bool playClicked = false;
+    bool pauseClicked = false;
+    bool stopClicked = false;
+    bool saveClicked = false;
+    bool buildClicked = false;
+};
+
+static bool DrawPillButton(const char* label, bool active, const ImVec2& size = ImVec2(0.0f, 0.0f))
+{
+    const ImGuiStyle& s = ImGui::GetStyle();
+    const float padX = s.FramePadding.x * 1.2f;
+    const float padY = s.FramePadding.y * 1.2f;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(padX, padY));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, s.FrameRounding * 2.5f);
+    ImVec4 baseColor = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+    ImVec4 hoverColor = ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered);
+    ImVec4 activeColor = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+    if (active) {
+        baseColor = activeColor;
+        hoverColor = activeColor;
+    }
+    ImGui::PushStyleColor(ImGuiCol_Button, baseColor);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoverColor);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, activeColor);
+    bool clicked = ImGui::Button(label, size);
+    ImGui::PopStyleColor(3);
+    ImGui::PopStyleVar(2);
+    return clicked;
+}
+
+static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused)
+{
+    ToolbarActions actions{};
+
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImGuiStyle& s = ImGui::GetStyle();
+    const float height = std::max(50.0f, ImGui::GetFrameHeight() * 2.2f);
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, viewport->Pos.y));
+    ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, height));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking |
+                             ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoBringToFrontOnFocus |
+                             ImGuiWindowFlags_NoNavFocus |
+                             ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoScrollWithMouse;
+    // Flat, non-rounded, integrated toolbar background
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, s.WindowPadding);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_MenuBarBg));
+
+    if (ImGui::Begin("##HephaestusToolbar", nullptr, flags)) {
+        ImGui::BeginGroup();
+        ImGui::TextColored(ImVec4(0.13f, 0.55f, 0.96f, 1.0f), "HE");
+        ImGui::SameLine();
+        ImGui::TextUnformatted("Hephaestus Engine");
+        ImGui::EndGroup();
+
+        ImGui::SameLine();
+        ImGui::Dummy(ImVec2(s.ItemSpacing.x, 0.0f));
+        ImGui::SameLine();
+
+        auto drawTransportButton = [](
+            const char* label, bool active) {
+            const ImGuiStyle& st = ImGui::GetStyle();
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(st.FramePadding.x * 1.4f, st.FramePadding.y * 1.2f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, st.FrameRounding * 1.6f);
+            ImVec4 base = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+            ImVec4 hover = ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered);
+            ImVec4 activeColor = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+            if (active) {
+                base = activeColor;
+                hover = activeColor;
+            }
+            ImGui::PushStyleColor(ImGuiCol_Button, base);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, activeColor);
+            bool clicked = ImGui::Button(label);
+            ImGui::PopStyleColor(3);
+            ImGui::PopStyleVar(2);
+            return clicked;
+        };
+
+        actions.playClicked = drawTransportButton("Play", isPlaying && !isPaused);
+        ImGui::SameLine();
+        actions.pauseClicked = drawTransportButton("Pause", isPaused);
+        ImGui::SameLine();
+        actions.stopClicked = drawTransportButton("Stop", isPlaying || isPaused);
+
+        ImGui::SameLine(0.0f, s.ItemSpacing.x * 2.0f);
+        actions.saveClicked = drawTransportButton("Save", false);
+        ImGui::SameLine();
+        actions.buildClicked = drawTransportButton("Build", false);
+
+        float remaining = ImGui::GetContentRegionAvail().x;
+        if (remaining > 70.0f) {
+            ImGui::SameLine(0.0f, remaining - 60.0f);
+        } else {
+            ImGui::SameLine();
+        }
+        ImGui::TextColored(ImVec4(0.23f, 0.67f, 0.74f, 1.0f), "ONLINE");
+        // Draw a subtle bottom border to separate from content
+        ImVec2 pos = ImGui::GetWindowPos();
+        ImVec2 sz = ImGui::GetWindowSize();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddLine(ImVec2(pos.x, pos.y + sz.y - 1.0f), ImVec2(pos.x + sz.x, pos.y + sz.y - 1.0f), ImGui::GetColorU32(ImGuiCol_Border), 1.0f);
+    }
+    ImGui::End();
+
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+
+    return actions;
+}
+
+static void DrawViewportOverlay(ImGuizmo::OPERATION& operation,
+                                ImGuizmo::MODE& mode,
+                                bool& showGrid,
+                                bool& showGizmo)
+{
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImGuiStyle& s = ImGui::GetStyle();
+    // Scale overlay width with global UI scale to fit buttons
+    float baseW = 560.0f * g_UIScale;
+    float minW = 420.0f * g_UIScale;
+    float margin = s.ItemSpacing.x * 2.0f;
+    float overlayWidth = std::clamp(baseW, minW, viewport->Size.x - margin);
+    // Compute overlay height based on content: title line + spacing + pill buttons + window padding + cell padding
+    const float windowPadY = s.WindowPadding.y * 1.1f; // matches window padding push below
+    const float textH = ImGui::GetTextLineHeight();
+    const float pillPadY = s.FramePadding.y * 1.2f;   // matches pill button padding in DrawPillButton
+    const float btnH = ImGui::GetFontSize() + pillPadY * 2.0f;
+    const float cellPadY = s.CellPadding.y * 2.0f;    // table adds top/bottom cell padding
+    const float safety = std::max(2.0f, s.ItemSpacing.y * 0.4f);
+    float computedH = windowPadY * 2.0f + textH + s.ItemSpacing.y + btnH + cellPadY + safety;
+    const float overlayHeight = std::max(64.0f * g_UIScale, computedH);
+    const float toolbarStrip = std::max(50.0f, ImGui::GetFrameHeight() * 2.2f) + s.WindowPadding.y * 2.0f;
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + (viewport->Size.x - overlayWidth) * 0.5f,
+                                    viewport->Pos.y + toolbarStrip + s.ItemSpacing.y));
+    ImGui::SetNextWindowSize(ImVec2(overlayWidth, overlayHeight));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
+                             ImGuiWindowFlags_NoDocking |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoBringToFrontOnFocus |
+                             ImGuiWindowFlags_NoNavFocus;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, s.WindowRounding);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(s.WindowPadding.x * 1.1f, s.WindowPadding.y * 1.1f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.07f, 0.08f, 0.11f, 0.94f));
+
+    if (ImGui::Begin("##ViewportOverlay", nullptr, flags)) {
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(s.ItemSpacing.x * 1.2f, s.ItemSpacing.y));
+    if (ImGui::BeginTable("ViewportOverlayLayout", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadInnerX | ImGuiTableFlags_NoPadOuterX)) {
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("PERSPECTIVE");
+            ImGui::Spacing();
+
+            const char* opLabels[3] = {"Move", "Rotate", "Scale"};
+            ImGuizmo::OPERATION opValues[3] = {ImGuizmo::TRANSLATE, ImGuizmo::ROTATE, ImGuizmo::SCALE};
+            for (int i = 0; i < 3; ++i) {
+                bool active = (operation == opValues[i]);
+                if (i > 0) {
+                    ImGui::SameLine();
+                }
+                if (DrawPillButton(opLabels[i], active)) {
+                    operation = opValues[i];
+                }
+            }
+
+            ImGui::SameLine();
+            ImGui::Dummy(ImVec2(s.ItemSpacing.x * 1.5f, 0.0f));
+            ImGui::SameLine();
+
+            const char* modeLabels[2] = {"Local", "World"};
+            ImGuizmo::MODE modeValues[2] = {ImGuizmo::LOCAL, ImGuizmo::WORLD};
+            for (int i = 0; i < 2; ++i) {
+                bool active = (mode == modeValues[i]);
+                if (i > 0) {
+                    ImGui::SameLine();
+                }
+                if (DrawPillButton(modeLabels[i], active)) {
+                    mode = modeValues[i];
+                }
+            }
+
+            ImGui::TableNextColumn();
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + s.ItemSpacing.y * 0.5f);
+            if (DrawPillButton("Grid", showGrid)) {
+                showGrid = !showGrid;
+            }
+            ImGui::SameLine();
+            if (DrawPillButton("Gizmo", showGizmo)) {
+                showGizmo = !showGizmo;
+            }
+            ImGui::EndTable();
+        }
+        // Extra bottom spacer to avoid clipping depending on fonts/platform
+        ImGui::Dummy(ImVec2(0.0f, s.ItemSpacing.y * 0.6f + s.FramePadding.y * 0.4f));
+        ImGui::PopStyleVar();
+    }
+    ImGui::End();
+
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+}
+
+static void BeginHephaestusDockspace()
+{
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    // Reserve space at the top for the toolbar to avoid overlap with docked windows
+    const ImGuiStyle& s = ImGui::GetStyle();
+    const float toolbarHeight = std::max(50.0f, ImGui::GetFrameHeight() * 2.2f);
+    const float topOffset = toolbarHeight;
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, viewport->Pos.y + topOffset));
+    ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, std::max(0.0f, viewport->Size.y - topOffset)));
+    ImGui::SetNextWindowViewport(viewport->ID);
+
+    ImGuiWindowFlags hostFlags = ImGuiWindowFlags_NoDocking |
+                                 ImGuiWindowFlags_NoTitleBar |
+                                 ImGuiWindowFlags_NoCollapse |
+                                 ImGuiWindowFlags_NoResize |
+                                 ImGuiWindowFlags_NoMove |
+                                 ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                 ImGuiWindowFlags_NoNavFocus;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
+    ImGui::Begin("##HephaestusDockspaceHost", nullptr, hostFlags);
+    ImGuiID dockspaceID = ImGui::GetID("HephaestusDockspace");
+    ImGuiDockNodeFlags dockFlags = ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode;
+    ImGui::DockSpace(dockspaceID, ImVec2(0.0f, 0.0f), dockFlags);
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+
+    static bool initialized = false;
+    if (!initialized) {
+        initialized = true;
+
+        ImGui::DockBuilderRemoveNode(dockspaceID);
+        ImGui::DockBuilderAddNode(dockspaceID, ImGuiDockNodeFlags_DockSpace | dockFlags);
+    // Initial dock size will be adjusted by host window size; set to current available size
+    ImGui::DockBuilderSetNodeSize(dockspaceID, ImVec2(viewport->Size.x, std::max(0.0f, viewport->Size.y - topOffset)));
+
+        ImGuiID dockMain = dockspaceID;
+        ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.22f, nullptr, &dockMain);
+        ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.26f, nullptr, &dockMain);
+        ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.24f, nullptr, &dockMain);
+
+        ImGui::DockBuilderDockWindow("World Outliner", dockLeft);
+        ImGui::DockBuilderDockWindow("Details", dockRight);
+        ImGui::DockBuilderDockWindow("Asset Browser", dockBottom);
+        ImGui::DockBuilderDockWindow("Log Console", dockBottom);
+        ImGui::DockBuilderFinish(dockspaceID);
+    }
+}
+
+static void DrawWorldOutliner(Scene& scene)
+{
+    if (!ImGui::Begin("World Outliner")) {
+        ImGui::End();
+        return;
+    }
+
+    static ImGuiTextFilter filter;
+
+    float availableWidth = ImGui::GetContentRegionAvail().x;
+    const ImGuiStyle& s = ImGui::GetStyle();
+    float filterWidth = std::max(availableWidth - (s.ItemSpacing.x * 6.0f + 70.0f), 200.0f);
+    ImGui::SetNextItemWidth(filterWidth);
+    filter.Draw("##WorldOutlinerFilter", filterWidth);
+    ImGui::SameLine();
+    DrawPillButton("Filter", false);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    ImGui::TextDisabled("Scene: %s", scene.GetName().c_str());
+    ImGui::Spacing();
+
+    auto view = scene.GetEntitiesWith<TagComponent>();
+
+    if (ImGui::BeginTable("WorldOutlinerTable", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("Entity", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+
+        for (auto entityHandle : view) {
+            Entity entity(entityHandle, &scene);
+            auto& tag = entity.GetComponent<TagComponent>();
+            if (!filter.PassFilter(tag.tag.c_str())) {
+                continue;
+            }
+
+            bool isSelected = entity.HasComponent<SelectionComponent>() &&
+                              entity.GetComponent<SelectionComponent>().selected;
+
+            const char* typeLabel = "ENTITY";
+            if (entity.HasComponent<LightComponent>()) {
+                typeLabel = "LIGHT";
+            } else if (entity.HasComponent<MeshRendererComponent>()) {
+                typeLabel = "MESH";
+            }
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGuiSelectableFlags selFlags = ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick;
+            if (ImGui::Selectable(tag.tag.c_str(), isSelected, selFlags)) {
+                if (!g_DetailsLocked) {
+                    scene.SetSelectedEntity(entity);
+                }
+            }
+
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", typeLabel);
+        }
+
+        ImGui::EndTable();
+    }
+
+    ImGui::End();
+}
+
+static void DrawDetailsPanel(Scene& scene)
+{
+    if (!ImGui::Begin("Details")) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Checkbox("Lock", &g_DetailsLocked);
+    ImGui::Separator();
+
+    Entity selectedEntity = scene.GetSelectedEntity();
+    if (!selectedEntity) {
+        ImGui::TextDisabled("Select an entity to view its properties.");
+        ImGui::End();
+        return;
+    }
+
+    auto& tag = selectedEntity.GetComponent<TagComponent>();
+    auto& transform = selectedEntity.GetComponent<TransformComponent>();
+
+    ImGui::Text("%s", tag.tag.c_str());
+
+    ImGui::SeparatorText("Transform");
+    ImGui::DragFloat3("Position", &transform.position.x, 0.1f);
+    Vec3 rotDeg = transform.GetRotationDegrees();
+    if (ImGui::DragFloat3("Rotation", &rotDeg.x, 1.0f)) {
+        transform.SetRotationDegrees(rotDeg);
+    }
+    ImGui::DragFloat3("Scale", &transform.scale.x, 0.01f, 0.01f, 10.0f);
+
+    if (selectedEntity.HasComponent<MaterialComponent>()) {
+        auto& material = selectedEntity.GetComponent<MaterialComponent>();
+        ImGui::SeparatorText("Material");
+        ImGui::ColorEdit3("Albedo", &material.albedo.x);
+        ImGui::SliderFloat("Metallic", &material.metallic, 0.0f, 1.0f);
+        ImGui::SliderFloat("Roughness", &material.roughness, 0.0f, 1.0f);
+        ImGui::SliderFloat("AO", &material.ao, 0.0f, 1.0f);
+        ImGui::ColorEdit3("Emissive", &material.emissive.x);
+        ImGui::SliderFloat("Emissive Strength", &material.emissiveStrength, 0.0f, 10.0f);
+    }
+
+    if (selectedEntity.HasComponent<LightComponent>()) {
+        auto& light = selectedEntity.GetComponent<LightComponent>();
+        ImGui::SeparatorText("Light");
+
+        const char* lightTypes[] = {"Directional", "Point", "Spot"};
+        int currentType = static_cast<int>(light.type);
+        if (ImGui::Combo("Type", &currentType, lightTypes, 3)) {
+            light.type = static_cast<LightType>(currentType);
+        }
+
+        ImGui::ColorEdit3("Color", &light.color.x);
+        ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 10.0f);
+
+        if (light.type == LightType::Point || light.type == LightType::Spot) {
+            ImGui::SliderFloat("Range", &light.range, 0.1f, 50.0f);
+            ImGui::SliderFloat("Constant", &light.constant, 0.0f, 10.0f);
+            ImGui::SliderFloat("Linear", &light.linear, 0.0f, 1.0f);
+            ImGui::SliderFloat("Quadratic", &light.quadratic, 0.0f, 1.0f);
+        }
+
+        if (light.type == LightType::Directional) {
+            ImGui::DragFloat3("Direction", &light.direction.x, 0.01f);
+            light.direction = vnorm(light.direction);
+        }
+
+        if (light.type == LightType::Spot) {
+            float innerDeg = light.innerConeAngle * 57.2958f;
+            float outerDeg = light.outerConeAngle * 57.2958f;
+            if (ImGui::SliderFloat("Inner Angle", &innerDeg, 0.0f, 90.0f)) {
+                light.innerConeAngle = innerDeg * 0.0174533f;
+            }
+            if (ImGui::SliderFloat("Outer Angle", &outerDeg, 0.0f, 90.0f)) {
+                light.outerConeAngle = outerDeg * 0.0174533f;
+            }
+        }
+    }
+
+    ImGui::SeparatorText("Debug");
+    ImGui::Text("Entity ID: %u", static_cast<uint32_t>(selectedEntity));
+    ImGui::Text("Gizmo Active: %s", g_ShowEditorGizmo ? "YES" : "NO");
+
+    ImGui::End();
+}
+
+static void DrawLogConsole(const ImGuiIO& io, const std::string& statusMessage)
+{
+    if (!ImGui::Begin("Log Console")) {
+        ImGui::End();
+        return;
+    }
+
+    const char* tabLabels[] = {"Log", "Warnings", "Errors"};
+    for (int i = 0; i < 3; ++i) {
+        bool active = (i == 0);
+        if (i > 0) {
+            ImGui::SameLine();
+        }
+        DrawPillButton(tabLabels[i], active, ImVec2(0.0f, 0.0f));
+    }
+
+    ImGui::Separator();
+    if (io.Framerate > 0.0f) {
+        ImGui::Text("FPS: %.1f (%.3f ms)", io.Framerate, 1000.0f / io.Framerate);
+    } else {
+        ImGui::Text("FPS: --");
+    }
+
+    ImGui::Text("Frame Counter: %llu", static_cast<unsigned long long>(g_FrameCounter));
+    ImGui::TextDisabled("(info) Connected to engine Hephaestus-v0.1");
+
+    if (!statusMessage.empty()) {
+        ImGui::TextWrapped("%s", statusMessage.c_str());
+    }
+
+    ImGui::Checkbox("Skip Imported Mesh Rendering", &g_DebugSkipImportedMeshes);
+
+    ImGui::End();
+}
 
 static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
 {
@@ -830,7 +1427,9 @@ int main()
         auto& renderer = entity.AddComponent<MeshRendererComponent>();
         renderer.SetMesh(meshIndex, importedMesh.bounds);
         entity.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
-        scene.SetSelectedEntity(entity);
+        if (!g_DetailsLocked) {
+            scene.SetSelectedEntity(entity);
+        }
 
         size_t triangleCount = importedMesh.indices.size() / 3;
         assetBrowserStatus = "Imported " + entityName + " (" + std::to_string(importedMesh.vertices.size()) +
@@ -1171,8 +1770,24 @@ int main()
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
 
+    // Load custom font
+    const float baseFontSize = 16.0f;
+    std::filesystem::path fontPath = "editor/fonts/JetBrainsMono-VariableFont_wght.ttf";
+    if (std::filesystem::exists(fontPath)) {
+        ImFontConfig fontConfig;
+        fontConfig.OversampleH = 2;
+        fontConfig.OversampleV = 1;
+        fontConfig.PixelSnapH = true;
+        io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), baseFontSize, &fontConfig);
+    } else {
+        std::cerr << "Warning: Font not found at " << fontPath << ", using default font.\n";
+        io.Fonts->AddFontDefault();
+    }
+
     // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
+    g_UIScale = ComputeUIScale(ImGui::GetMainViewport());
+    ApplyHephaestusEditorStyle(io, g_UIScale);
+    io.FontGlobalScale = g_UIScale;
 
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForVulkan(window, true);
@@ -1231,6 +1846,14 @@ int main()
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+
+        const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+        float newScale = ComputeUIScale(mainViewport);
+        if (std::abs(newScale - g_UIScale) > 0.01f) {
+            g_UIScale = newScale;
+            io.FontGlobalScale = g_UIScale;
+            ApplyHephaestusEditorStyle(io, g_UIScale);
+        }
         
         // Setup ImGuizmo early to check if it's being used
         ImGuizmo::BeginFrame();
@@ -1254,10 +1877,12 @@ int main()
             float hitDist;
             Entity hitEntity = FindClosestHitEntity(pickRay, scene, hitDist);
             
-            if (hitEntity) {
-                scene.SetSelectedEntity(hitEntity);
-            } else {
-                scene.ClearSelection();
+            if (!g_DetailsLocked) {
+                if (hitEntity) {
+                    scene.SetSelectedEntity(hitEntity);
+                } else {
+                    scene.ClearSelection();
+                }
             }
         }
         leftMouseWasPressed = leftMousePressed;
@@ -1269,165 +1894,48 @@ int main()
         }
 
         // ImGui UI
-        {
-            ImGui::Begin("Hephaestus Engine");
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-            ImGui::Separator();
-            ImGui::Text("Camera Controls:");
-            ImGui::Text("Hold Right Mouse Button to look around");
-            ImGui::Text("WASD - Move horizontally");
-            ImGui::Text("Q/E - Move up/down");
-            ImGui::Text("Mouse Wheel - Adjust speed");
-            ImGui::Separator();
-            ImGui::Text("Camera Position: (%.1f, %.1f, %.1f)", camera.position.x, camera.position.y, camera.position.z);
-            ImGui::Text("Camera Speed: %.2f", camera.moveSpeed);
-            ImGui::Text("Yaw: %.1f°  Pitch: %.1f°", camera.yawDeg, camera.pitchDeg);
-            ImGui::Separator();
-            ImGui::Text("Frame Counter: %llu", static_cast<unsigned long long>(g_FrameCounter));
-            ImGui::Checkbox("Skip Imported Mesh Rendering (debug)", &g_DebugSkipImportedMeshes);
-            ImGui::Separator();
-            ImGui::Checkbox("Show Gizmo Grid (debug)", &g_ShowGizmoGrid);
-            ImGui::Text("Object Selection:");
-            ImGui::Text("Left Click - Select object");
-            ImGui::Text("Click empty space - Deselect all");
-            ImGui::End();
-            
-            // Scene Hierarchy Window
-            ImGui::Begin("Scene Hierarchy");
-            ImGui::Text("Scene: %s", scene.GetName().c_str());
-            ImGui::Separator();
-            
-            auto view = scene.GetEntitiesWith<TagComponent>();
-            for (auto entityHandle : view) {
-                Entity entity(entityHandle, &scene);
-                auto& tag = entity.GetComponent<TagComponent>();
-                
-                bool isSelected = entity.HasComponent<SelectionComponent>() && 
-                                entity.GetComponent<SelectionComponent>().selected;
-                
-                if (isSelected) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 1.0f, 0.2f, 1.0f));
-                }
-                
-                if (ImGui::Selectable(tag.tag.c_str(), isSelected)) {
-                    scene.SetSelectedEntity(entity);
-                }
-                
-                if (isSelected) {
-                    ImGui::PopStyleColor();
-                }
-            }
-            ImGui::End();
-            
-            // Properties Window
-            ImGui::Begin("Properties");
-            Entity selectedEntity = scene.GetSelectedEntity();
-            
-            if (selectedEntity) {
-                auto& tag = selectedEntity.GetComponent<TagComponent>();
-                auto& transform = selectedEntity.GetComponent<TransformComponent>();
-                
-                ImGui::Text("Entity: %s", tag.tag.c_str());
-                ImGui::Separator();
-                
-                // Gizmo operation selector
-                ImGui::Text("Gizmo Mode:");
-                if (ImGui::RadioButton("Translate (T)", currentGizmoOperation == ImGuizmo::TRANSLATE))
-                    currentGizmoOperation = ImGuizmo::TRANSLATE;
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Rotate (R)", currentGizmoOperation == ImGuizmo::ROTATE))
-                    currentGizmoOperation = ImGuizmo::ROTATE;
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Scale (Y)", currentGizmoOperation == ImGuizmo::SCALE))
-                    currentGizmoOperation = ImGuizmo::SCALE;
-                
-                ImGui::Separator();
-                if (ImGui::RadioButton("Local", currentGizmoMode == ImGuizmo::LOCAL))
-                    currentGizmoMode = ImGuizmo::LOCAL;
-                ImGui::SameLine();
-                if (ImGui::RadioButton("World", currentGizmoMode == ImGuizmo::WORLD))
-                    currentGizmoMode = ImGuizmo::WORLD;
-                
-                ImGui::Separator();
-                
-                // Transform editor
-                ImGui::Text("Transform:");
-                ImGui::DragFloat3("Position", &transform.position.x, 0.1f);
-                Vec3 rotDeg = transform.GetRotationDegrees();
-                if (ImGui::DragFloat3("Rotation", &rotDeg.x, 1.0f)) {
-                    transform.SetRotationDegrees(rotDeg);
-                }
-                ImGui::DragFloat3("Scale", &transform.scale.x, 0.01f, 0.01f, 10.0f);
-                
-                ImGui::Separator();
-                
-                // Material editor (if entity has a material)
-                if (selectedEntity.HasComponent<MaterialComponent>()) {
-                    auto& material = selectedEntity.GetComponent<MaterialComponent>();
-                    ImGui::Text("Material:");
-                    ImGui::ColorEdit3("Albedo", &material.albedo.x);
-                    ImGui::SliderFloat("Metallic", &material.metallic, 0.0f, 1.0f);
-                    ImGui::SliderFloat("Roughness", &material.roughness, 0.0f, 1.0f);
-                    ImGui::SliderFloat("AO", &material.ao, 0.0f, 1.0f);
-                    ImGui::ColorEdit3("Emissive", &material.emissive.x);
-                    ImGui::SliderFloat("Emissive Strength", &material.emissiveStrength, 0.0f, 10.0f);
-                    ImGui::Separator();
-                }
-                
-                // Light editor (if entity has a light)
-                if (selectedEntity.HasComponent<LightComponent>()) {
-                    auto& light = selectedEntity.GetComponent<LightComponent>();
-                    ImGui::Text("Light:");
-                    
-                    const char* lightTypes[] = { "Directional", "Point", "Spot" };
-                    int currentType = static_cast<int>(light.type);
-                    if (ImGui::Combo("Type", &currentType, lightTypes, 3)) {
-                        light.type = static_cast<LightType>(currentType);
-                    }
-                    
-                    ImGui::ColorEdit3("Color", &light.color.x);
-                    ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 10.0f);
-                    
-                    if (light.type == LightType::Point || light.type == LightType::Spot) {
-                        ImGui::SliderFloat("Range", &light.range, 0.1f, 50.0f);
-                        ImGui::SliderFloat("Constant", &light.constant, 0.0f, 10.0f);
-                        ImGui::SliderFloat("Linear", &light.linear, 0.0f, 1.0f);
-                        ImGui::SliderFloat("Quadratic", &light.quadratic, 0.0f, 1.0f);
-                    }
-                    
-                    if (light.type == LightType::Directional) {
-                        ImGui::DragFloat3("Direction", &light.direction.x, 0.01f);
-                        light.direction = vnorm(light.direction);
-                    }
-                    
-                    if (light.type == LightType::Spot) {
-                        float innerDeg = light.innerConeAngle * 57.2958f;
-                        float outerDeg = light.outerConeAngle * 57.2958f;
-                        if (ImGui::SliderFloat("Inner Angle", &innerDeg, 0.0f, 90.0f)) {
-                            light.innerConeAngle = innerDeg * 0.0174533f;
-                        }
-                        if (ImGui::SliderFloat("Outer Angle", &outerDeg, 0.0f, 90.0f)) {
-                            light.outerConeAngle = outerDeg * 0.0174533f;
-                        }
-                    }
-                    ImGui::Separator();
-                }
-                
-                ImGui::Text("Debug Info:");
-                ImGui::Text("Entity ID: %u", static_cast<uint32_t>(selectedEntity));
-                ImGui::Text("ImGuizmo IsUsing: %s", ImGuizmo::IsUsing() ? "YES" : "NO");
-                ImGui::Text("ImGuizmo IsOver: %s", ImGuizmo::IsOver() ? "YES" : "NO");
-            } else {
-                ImGui::TextDisabled("No entity selected");
-                ImGui::Text("Click on an entity in the viewport to select it");
-            }
-            ImGui::End();
+        std::optional<std::filesystem::path> pendingAssetImport;
+        BeginHephaestusDockspace();
 
-            if (auto importRequest = DrawAssetBrowserPanel(assetBrowserStatus)) {
-                Entity imported = importModelFromFile(*importRequest);
-                if (!imported) {
-                    std::cerr << "Model import failed for path: " << importRequest->string() << std::endl;
-                }
+        static bool s_Playing = false;
+        static bool s_Paused = false;
+        // Draw docked panels first
+        DrawWorldOutliner(scene);
+        DrawDetailsPanel(scene);
+        pendingAssetImport = DrawAssetBrowserPanel(assetBrowserStatus);
+        DrawLogConsole(io, assetBrowserStatus);
+
+        // Overlays should be rendered last so they appear above docked windows
+        ToolbarActions toolbarActions = DrawEditorToolbar(s_Playing, s_Paused);
+        if (toolbarActions.playClicked) {
+            s_Playing = true;
+            s_Paused = false;
+            assetBrowserStatus = "Play mode toggle (placeholder).";
+        }
+        if (toolbarActions.pauseClicked && s_Playing) {
+            s_Paused = !s_Paused;
+            assetBrowserStatus = s_Paused ? "Paused simulation (placeholder)." : "Resumed simulation (placeholder).";
+        }
+        if (toolbarActions.stopClicked) {
+            if (s_Playing || s_Paused) {
+                s_Playing = false;
+                s_Paused = false;
+                assetBrowserStatus = "Stopped play mode (placeholder).";
+            }
+        }
+        if (toolbarActions.saveClicked) {
+            assetBrowserStatus = "Save command triggered (placeholder).";
+        }
+        if (toolbarActions.buildClicked) {
+            assetBrowserStatus = "Build command triggered (placeholder).";
+        }
+
+        DrawViewportOverlay(currentGizmoOperation, currentGizmoMode, g_ShowGizmoGrid, g_ShowEditorGizmo);
+        
+        if (pendingAssetImport) {
+            Entity imported = importModelFromFile(*pendingAssetImport);
+            if (!imported) {
+                std::cerr << "Model import failed for path: " << pendingAssetImport->string() << std::endl;
             }
         }
         
@@ -1440,7 +1948,7 @@ int main()
         UniformBufferObject ubo = camera.makeUBO(swap.extent);
 
         // Custom gizmo interaction handling
-        {
+        if (g_ShowEditorGizmo) {
             Entity selectedEntity = scene.GetSelectedEntity();
             if (selectedEntity) {
                 auto& transform = selectedEntity.GetComponent<TransformComponent>();
@@ -1494,6 +2002,13 @@ int main()
                     gizmoActiveAxis = -1;
                     vulkanGizmo.EndDrag();
                 }
+            }
+        } else {
+            vulkanGizmo.SetHoveredAxis(-1);
+            if (gizmoDragging) {
+                gizmoDragging = false;
+                gizmoActiveAxis = -1;
+                vulkanGizmo.EndDrag();
             }
         }
         
