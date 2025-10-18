@@ -203,7 +203,7 @@ See the guides above for complete examples and best practices.
 - **Left Click** - Select entity in viewport
 - **T** - Translate gizmo mode
 - **R** - Rotate gizmo mode
-- **S** - Scale gizmo mode
+- **Y** - Scale gizmo mode
 
 ## Notes & Troubleshooting
 
