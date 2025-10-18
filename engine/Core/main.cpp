@@ -1208,7 +1208,7 @@ int main()
                 if (ImGui::RadioButton("Rotate (R)", currentGizmoOperation == ImGuizmo::ROTATE))
                     currentGizmoOperation = ImGuizmo::ROTATE;
                 ImGui::SameLine();
-                if (ImGui::RadioButton("Scale (S)", currentGizmoOperation == ImGuizmo::SCALE))
+                if (ImGui::RadioButton("Scale (Y)", currentGizmoOperation == ImGuizmo::SCALE))
                     currentGizmoOperation = ImGuizmo::SCALE;
                 
                 ImGui::Separator();
@@ -1299,7 +1299,7 @@ int main()
         // ImGuizmo keyboard shortcuts
         if (ImGui::IsKeyPressed(ImGuiKey_T)) currentGizmoOperation = ImGuizmo::TRANSLATE;
         if (ImGui::IsKeyPressed(ImGuiKey_R)) currentGizmoOperation = ImGuizmo::ROTATE;
-        if (ImGui::IsKeyPressed(ImGuiKey_S) && !ImGui::GetIO().KeyCtrl) currentGizmoOperation = ImGuizmo::SCALE;
+    if (ImGui::IsKeyPressed(ImGuiKey_Y) && !ImGui::GetIO().KeyCtrl) currentGizmoOperation = ImGuizmo::SCALE;
         
         // Build view/proj for ImGuizmo and gizmo interactions
         UniformBufferObject ubo = camera.makeUBO(swap.extent);
