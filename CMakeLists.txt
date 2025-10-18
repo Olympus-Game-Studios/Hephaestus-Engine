@@ -9,6 +9,7 @@ add_subdirectory(extern/glfw)
 
 add_executable(HephaestusEngine
     engine/Core/main.cpp
+    engine/Assets/ModelImporter.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
     engine/Gfx/VulkanPipeline.cpp

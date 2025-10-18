@@ -2,6 +2,7 @@
 #include "../Core/Math.h"
 #include <string>
 #include <vector>
+#include <limits>
 
 // ═══════════════════════════════════════════════════════════════
 // CORE COMPONENTS
@@ -111,12 +112,23 @@ struct TransformComponent {
 struct MeshRendererComponent {
     AABB localBounds; // Bounding box in local space
     bool visible = true;
+    static constexpr size_t InvalidMesh = std::numeric_limits<size_t>::max();
+    size_t meshHandle = InvalidMesh;
 
     MeshRendererComponent() 
         : localBounds(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f)) {}
 
     MeshRendererComponent(const AABB& bounds) 
         : localBounds(bounds) {}
+
+    void SetMesh(size_t handle, const AABB& bounds) {
+        meshHandle = handle;
+        localBounds = bounds;
+    }
+
+    bool HasValidMesh() const {
+        return meshHandle != InvalidMesh;
+    }
 
     // Get world-space bounding box
     AABB GetWorldBounds(const TransformComponent& transform) const {

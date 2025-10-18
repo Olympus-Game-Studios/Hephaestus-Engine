@@ -8,9 +8,13 @@
 #include <filesystem>
 #include <algorithm>
 #include <system_error>
+#include <optional>
+#include <cstdint>
 
 #include "Math.h"
 
+#include "../Assets/MeshAsset.h"
+#include "../Assets/ModelImporter.h"
 #include "../Gfx/VulkanDevice.h"
 #include "../Gfx/VulkanSwapchain.h"
 #include "../Gfx/VulkanPipeline.h"
@@ -78,6 +82,8 @@ void populateDebugCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& ci)
 
 
 static bool g_framebufferResized = false;
+static bool g_DebugSkipImportedMeshes = false;
+static uint64_t g_FrameCounter = 0;
 
 static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
 {
@@ -331,9 +337,11 @@ static std::filesystem::path ClampToRoot(const std::filesystem::path& candidate,
 }
 
 // ImGui panel that lists files and folders in the asset directory.
-static void DrawAssetBrowserPanel()
+static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& statusMessage)
 {
     namespace fs = std::filesystem;
+
+    std::optional<fs::path> importRequest;
 
     static bool initialized = false;
     static fs::path assetRoot;
@@ -354,7 +362,7 @@ static void DrawAssetBrowserPanel()
 
     if (!ImGui::Begin("Asset Browser")) {
         ImGui::End();
-        return;
+        return importRequest;
     }
 
     std::error_code existsErr;
@@ -363,7 +371,7 @@ static void DrawAssetBrowserPanel()
         std::string rootDisplay = assetRoot.generic_string();
         ImGui::TextDisabled("Asset directory not found: %s", rootDisplay.c_str());
         ImGui::End();
-        return;
+        return importRequest;
     }
 
     if (!fs::exists(currentPath)) {
@@ -392,6 +400,7 @@ static void DrawAssetBrowserPanel()
             if (!PathInsideRoot(assetRoot, selectedPath)) {
                 selectedPath.clear();
             }
+            statusMessage.clear();
         }
     }
 
@@ -402,7 +411,7 @@ static void DrawAssetBrowserPanel()
     if (iterErr) {
         ImGui::TextDisabled("Cannot open directory: %s", iterErr.message().c_str());
         ImGui::End();
-        return;
+        return importRequest;
     }
 
     struct BrowserEntry {
@@ -451,10 +460,12 @@ static void DrawAssetBrowserPanel()
         std::string displayLabel = "[DIR] " + dirEntry.label;
         if (ImGui::Selectable(displayLabel.c_str(), isSelected)) {
             selectedPath = ClampToRoot(dirEntry.path, assetRoot);
+            statusMessage.clear();
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             currentPath = ClampToRoot(dirEntry.path, assetRoot);
             selectedPath.clear();
+            statusMessage.clear();
         }
     }
 
@@ -462,9 +473,11 @@ static void DrawAssetBrowserPanel()
         bool isSelected = !selectedPath.empty() && selectedPath == fileEntry.path;
         if (ImGui::Selectable(fileEntry.label.c_str(), isSelected)) {
             selectedPath = ClampToRoot(fileEntry.path, assetRoot);
+            statusMessage.clear();
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             selectedPath = ClampToRoot(fileEntry.path, assetRoot);
+            statusMessage.clear();
         }
     }
 
@@ -484,7 +497,35 @@ static void DrawAssetBrowserPanel()
         ImGui::Text("Selected: %s", selectedDisplay.c_str());
     }
 
+    std::error_code selectedFileErr;
+    bool selectedIsFile = !selectedPath.empty() && fs::is_regular_file(selectedPath, selectedFileErr) && !selectedFileErr;
+    bool supportedFormat = selectedIsFile && ModelImporter::IsSupportedExtension(selectedPath);
+
+    if (ImGui::Button("Import Model")) {
+        if (supportedFormat) {
+            importRequest = selectedPath;
+        } else {
+            if (!selectedIsFile) {
+                statusMessage = "Select a model file to import";
+            } else {
+                statusMessage = "Only .obj files are supported right now";
+            }
+        }
+    }
+
+    if (selectedIsFile && !supportedFormat) {
+        ImGui::TextDisabled("Supported formats: .obj");
+    } else if (!selectedIsFile && !selectedPath.empty()) {
+        ImGui::TextDisabled("Select a file to enable import");
+    }
+
+    if (!statusMessage.empty()) {
+        ImGui::Separator();
+        ImGui::TextWrapped("%s", statusMessage.c_str());
+    }
+
     ImGui::End();
+    return importRequest;
 }
 
 int main()
@@ -532,6 +573,8 @@ int main()
     if (enableValidationLayers) {
         populateDebugCreateInfo(dbgCI);
         CreateDebugUtilsMessengerEXT(instance, &dbgCI, nullptr, &debugMessenger);
+    } else {
+        std::cout << "Validation layers disabled. Build a Debug configuration to enable Vulkan validation output." << std::endl;
     }
 
     // ── Device + Swapchain ───────────────────────
@@ -560,6 +603,53 @@ int main()
     vulkanGizmo.Init(vkdev.device, swap.renderPass, swap.extent, pipeline.descriptorSetLayout, vkdev.allocator);
     bool gizmoDragging = false;
     int gizmoActiveAxis = -1;
+
+    std::vector<MeshGPU> meshLibrary;
+    meshLibrary.reserve(32);
+
+    auto uploadMesh = [&](const std::string& name, const MeshData& data, const std::filesystem::path& sourcePath, bool imported) -> size_t {
+        if (data.vertices.empty() || data.indices.empty()) {
+            throw std::runtime_error("Mesh has no geometry");
+        }
+
+        MeshGPU mesh{};
+        mesh.name = name;
+        mesh.sourcePath = sourcePath;
+        mesh.vertexCount = static_cast<uint32_t>(data.vertices.size());
+        mesh.indexCount = static_cast<uint32_t>(data.indices.size());
+        mesh.bounds = data.bounds;
+    mesh.imported = imported;
+
+        VkDeviceSize vertexBufferSize = sizeof(Vertex) * data.vertices.size();
+        mesh.vertexBuffer.Create(
+            vkdev.allocator,
+            vertexBufferSize,
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            VMA_MEMORY_USAGE_CPU_TO_GPU
+        );
+
+        void* mapped = nullptr;
+        vmaMapMemory(vkdev.allocator, mesh.vertexBuffer.allocation, &mapped);
+        std::memcpy(mapped, data.vertices.data(), static_cast<size_t>(vertexBufferSize));
+        vmaFlushAllocation(vkdev.allocator, mesh.vertexBuffer.allocation, 0, VK_WHOLE_SIZE);
+        vmaUnmapMemory(vkdev.allocator, mesh.vertexBuffer.allocation);
+
+        VkDeviceSize indexBufferSize = sizeof(uint32_t) * data.indices.size();
+        mesh.indexBuffer.Create(
+            vkdev.allocator,
+            indexBufferSize,
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            VMA_MEMORY_USAGE_CPU_TO_GPU
+        );
+
+        vmaMapMemory(vkdev.allocator, mesh.indexBuffer.allocation, &mapped);
+        std::memcpy(mapped, data.indices.data(), static_cast<size_t>(indexBufferSize));
+        vmaFlushAllocation(vkdev.allocator, mesh.indexBuffer.allocation, 0, VK_WHOLE_SIZE);
+        vmaUnmapMemory(vkdev.allocator, mesh.indexBuffer.allocation);
+
+        meshLibrary.push_back(std::move(mesh));
+        return meshLibrary.size() - 1;
+    };
 
     // ── Vertex Data ───────────────────────────────────
     // 3D Cube vertices with normals - we need unique vertices per face for proper lighting
@@ -602,7 +692,7 @@ int main()
     };
     
     // Index buffer for cube (12 triangles, 2 per face, 6 faces)
-    const std::vector<uint16_t> cubeIndices = {
+    const std::vector<uint32_t> cubeIndices = {
         // Front face
         0, 1, 2,  2, 3, 0,
         // Back face
@@ -617,35 +707,18 @@ int main()
         20, 21, 22,  22, 23, 20
     };
 
+    MeshData cubeMeshData;
+    cubeMeshData.vertices = cubeVertices;
+    cubeMeshData.indices = cubeIndices;
+    cubeMeshData.bounds = AABB(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f));
 
-    VulkanBuffer vertexBuffer;
-    vertexBuffer.Create(
-        vkdev.allocator,
-        sizeof(cubeVertices[0]) * cubeVertices.size(),
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VMA_MEMORY_USAGE_CPU_TO_GPU
-    );
-
-    void* data;
-    vmaMapMemory(vkdev.allocator, vertexBuffer.allocation, &data);
-    memcpy(data, cubeVertices.data(), sizeof(cubeVertices[0]) * cubeVertices.size());
-    vmaFlushAllocation(vkdev.allocator, vertexBuffer.allocation, 0, VK_WHOLE_SIZE);
-    vmaUnmapMemory(vkdev.allocator, vertexBuffer.allocation);
-
-    // ── Index Buffer ──────────────────────────────
-    VulkanBuffer indexBuffer;
-    indexBuffer.Create(
-        vkdev.allocator,
-        sizeof(cubeIndices[0]) * cubeIndices.size(),
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        VMA_MEMORY_USAGE_CPU_TO_GPU
-    );
-
-    void* indexData;
-    vmaMapMemory(vkdev.allocator, indexBuffer.allocation, &indexData);
-    memcpy(indexData, cubeIndices.data(), sizeof(cubeIndices[0]) * cubeIndices.size());
-    vmaFlushAllocation(vkdev.allocator, indexBuffer.allocation, 0, VK_WHOLE_SIZE);
-    vmaUnmapMemory(vkdev.allocator, indexBuffer.allocation);
+    size_t cubeMeshIndex = MeshRendererComponent::InvalidMesh;
+    try {
+    cubeMeshIndex = uploadMesh("Default Cube", cubeMeshData, std::filesystem::path("builtin://cube"), false);
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to upload default cube mesh: " << e.what() << std::endl;
+        return -1;
+    }
 
     // ── Camera + UBO ───────────────────────────
     Camera camera;
@@ -658,7 +731,8 @@ int main()
     
     // Create cube entities with different materials
     Entity cube1 = scene.CreateEntity("Cube 1 (Metal)");
-    cube1.AddComponent<MeshRendererComponent>();
+    auto& cube1Renderer = cube1.AddComponent<MeshRendererComponent>();
+    cube1Renderer.SetMesh(cubeMeshIndex, cubeMeshData.bounds);
     cube1.AddComponent<SelectionComponent>(true); // Start selected
     auto& cube1Mat = cube1.AddComponent<MaterialComponent>(Vec3(0.8f, 0.2f, 0.2f)); // Red
     cube1Mat.metallic = 0.9f;
@@ -667,7 +741,8 @@ int main()
     cube1Transform.position = Vec3(0.0f, 0.0f, 0.0f);
     
     Entity cube2 = scene.CreateEntity("Cube 2 (Plastic)");
-    cube2.AddComponent<MeshRendererComponent>();
+    auto& cube2Renderer = cube2.AddComponent<MeshRendererComponent>();
+    cube2Renderer.SetMesh(cubeMeshIndex, cubeMeshData.bounds);
     auto& cube2Mat = cube2.AddComponent<MaterialComponent>(Vec3(0.2f, 0.8f, 0.2f)); // Green
     cube2Mat.metallic = 0.0f;
     cube2Mat.roughness = 0.5f;
@@ -676,7 +751,8 @@ int main()
     cube2Transform.scale = Vec3(0.5f, 0.5f, 0.5f);
     
     Entity cube3 = scene.CreateEntity("Cube 3 (Rough)");
-    cube3.AddComponent<MeshRendererComponent>();
+    auto& cube3Renderer = cube3.AddComponent<MeshRendererComponent>();
+    cube3Renderer.SetMesh(cubeMeshIndex, cubeMeshData.bounds);
     auto& cube3Mat = cube3.AddComponent<MaterialComponent>(Vec3(0.2f, 0.4f, 0.8f)); // Blue
     cube3Mat.metallic = 0.0f;
     cube3Mat.roughness = 0.9f;
@@ -686,7 +762,8 @@ int main()
     
     // Create a fourth cube with emissive material
     Entity cube4 = scene.CreateEntity("Cube 4 (Emissive)");
-    cube4.AddComponent<MeshRendererComponent>();
+    auto& cube4Renderer = cube4.AddComponent<MeshRendererComponent>();
+    cube4Renderer.SetMesh(cubeMeshIndex, cubeMeshData.bounds);
     auto& cube4Mat = cube4.AddComponent<MaterialComponent>(Vec3(0.8f, 0.8f, 0.2f)); // Yellow
     cube4Mat.metallic = 0.0f;
     cube4Mat.roughness = 0.3f;
@@ -712,6 +789,55 @@ int main()
     pl2Transform.position = Vec3(-3.0f, 2.0f, 2.0f);
     pointLight2.AddComponent<LightComponent>(LightComponent::CreatePoint(
         Vec3(0.3f, 0.3f, 1.0f), 5.0f, 10.0f)); // Blue light
+
+    static std::string assetBrowserStatus;
+
+    auto makeUniqueEntityName = [&](const std::string& baseName) {
+        if (!scene.FindEntityByName(baseName)) {
+            return baseName;
+        }
+        int suffix = 1;
+        std::string candidate;
+        do {
+            candidate = baseName + " (" + std::to_string(suffix++) + ")";
+        } while (scene.FindEntityByName(candidate));
+        return candidate;
+    };
+
+    auto importModelFromFile = [&](const std::filesystem::path& modelPath) -> Entity {
+        MeshData importedMesh;
+        std::string error;
+        if (!ModelImporter::LoadOBJ(modelPath, importedMesh, error)) {
+            assetBrowserStatus = "Import failed: " + error;
+            return {};
+        }
+
+        std::string baseName = modelPath.stem().string();
+        if (baseName.empty()) {
+            baseName = "Imported Model";
+        }
+        std::string entityName = makeUniqueEntityName(baseName);
+
+        size_t meshIndex = MeshRendererComponent::InvalidMesh;
+        try {
+            meshIndex = uploadMesh(entityName, importedMesh, modelPath, true);
+        } catch (const std::exception& e) {
+            assetBrowserStatus = std::string("Failed to upload mesh: ") + e.what();
+            return {};
+        }
+
+        Entity entity = scene.CreateEntity(entityName);
+        auto& renderer = entity.AddComponent<MeshRendererComponent>();
+        renderer.SetMesh(meshIndex, importedMesh.bounds);
+        entity.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
+        scene.SetSelectedEntity(entity);
+
+        size_t triangleCount = importedMesh.indices.size() / 3;
+        assetBrowserStatus = "Imported " + entityName + " (" + std::to_string(importedMesh.vertices.size()) +
+            " verts, " + std::to_string(triangleCount) + " tris) from " + modelPath.filename().string();
+        std::cout << assetBrowserStatus << std::endl;
+        return entity;
+    };
 
     // ── Billboard System for Light Visualization (Resources) ─────────────────────────
     VulkanTexture lightBulbTexture;
@@ -1089,6 +1215,7 @@ int main()
     // ── Main Loop ────────────────────────────────
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        ++g_FrameCounter;
 
         vkWaitForFences(vkdev.device, 1, &inFlight[currentFrame], VK_TRUE, UINT64_MAX);
         vkResetFences(vkdev.device, 1, &inFlight[currentFrame]);
@@ -1155,6 +1282,9 @@ int main()
             ImGui::Text("Camera Position: (%.1f, %.1f, %.1f)", camera.position.x, camera.position.y, camera.position.z);
             ImGui::Text("Camera Speed: %.2f", camera.moveSpeed);
             ImGui::Text("Yaw: %.1f°  Pitch: %.1f°", camera.yawDeg, camera.pitchDeg);
+            ImGui::Separator();
+            ImGui::Text("Frame Counter: %llu", static_cast<unsigned long long>(g_FrameCounter));
+            ImGui::Checkbox("Skip Imported Mesh Rendering (debug)", &g_DebugSkipImportedMeshes);
             ImGui::Separator();
             ImGui::Checkbox("Show Gizmo Grid (debug)", &g_ShowGizmoGrid);
             ImGui::Text("Object Selection:");
@@ -1293,7 +1423,12 @@ int main()
             }
             ImGui::End();
 
-            DrawAssetBrowserPanel();
+            if (auto importRequest = DrawAssetBrowserPanel(assetBrowserStatus)) {
+                Entity imported = importModelFromFile(*importRequest);
+                if (!imported) {
+                    std::cerr << "Model import failed for path: " << importRequest->string() << std::endl;
+                }
+            }
         }
         
         // ImGuizmo keyboard shortcuts
@@ -1489,12 +1624,6 @@ int main()
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        // Bind vertex buffer and index buffer, then draw indexed
-        VkBuffer vertexBuffers[] = { vertexBuffer.buffer };
-        VkDeviceSize offsets[] = { 0 };
-        vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
-        vkCmdBindIndexBuffer(cmd, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
-        
         // Draw all scene objects with MeshRendererComponent
         auto renderView = scene.GetEntitiesWith<TransformComponent, MeshRendererComponent>();
 
@@ -1503,6 +1632,9 @@ int main()
         vmaMapMemory(vkdev.allocator, materialBuffers[imageIndex].allocation, &matMappedBaseVoid);
         uint8_t* matMappedBase = reinterpret_cast<uint8_t*>(matMappedBaseVoid);
         uint32_t matIndex = 0;
+
+        VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
+        VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
 
         bool materialOverflowLogged = false;
         for (auto entityHandle : renderView) {
@@ -1513,6 +1645,16 @@ int main()
             if (!renderer.visible)
                 continue;
 
+            if (!renderer.HasValidMesh() || renderer.meshHandle >= meshLibrary.size())
+                continue;
+
+            MeshGPU& mesh = meshLibrary[renderer.meshHandle];
+            if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE || mesh.indexBuffer.buffer == VK_NULL_HANDLE)
+                continue;
+
+            if (g_DebugSkipImportedMeshes && mesh.imported)
+                continue;
+
             if (matIndex >= maxMaterialsPerFrame) {
                 if (!materialOverflowLogged) {
                     std::cerr << "Material dynamic UBO capacity exceeded (" << maxMaterialsPerFrame
@@ -1520,6 +1662,18 @@ int main()
                     materialOverflowLogged = true;
                 }
                 continue;
+            }
+
+            if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
+                VkBuffer vb = mesh.vertexBuffer.buffer;
+                VkDeviceSize vbOffset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
+                currentVertexBuffer = vb;
+            }
+
+            if (mesh.indexBuffer.buffer != currentIndexBuffer) {
+                vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+                currentIndexBuffer = mesh.indexBuffer.buffer;
             }
             
             // Update material UBO for this specific object
@@ -1552,7 +1706,7 @@ int main()
             uint32_t dynOffset = static_cast<uint32_t>(matOffsetBytes);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout,
                                     0, 1, &descriptorSets[imageIndex], 1, &dynOffset);
-            vkCmdDrawIndexed(cmd, static_cast<uint32_t>(cubeIndices.size()), 1, 0, 0, 0);
+            vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
             matIndex++;
         }
 
@@ -1686,8 +1840,9 @@ int main()
     vkDestroyDescriptorPool(vkdev.device, imguiPool, nullptr);
 
     vulkanGizmo.Cleanup(vkdev.device, vkdev.allocator);
-    vertexBuffer.Destroy(vkdev.allocator);
-    indexBuffer.Destroy(vkdev.allocator);
+    for (auto& mesh : meshLibrary) {
+        mesh.Destroy(vkdev.allocator);
+    }
     destroyDescriptors();
     
     // Cleanup billboard resources
