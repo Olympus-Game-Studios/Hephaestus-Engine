@@ -508,13 +508,13 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
             if (!selectedIsFile) {
                 statusMessage = "Select a model file to import";
             } else {
-                statusMessage = "Only .obj files are supported right now";
+                statusMessage = "Supported formats: .obj, .fbx (ASCII)";
             }
         }
     }
 
     if (selectedIsFile && !supportedFormat) {
-        ImGui::TextDisabled("Supported formats: .obj");
+        ImGui::TextDisabled("Supported formats: .obj, .fbx (ASCII)");
     } else if (!selectedIsFile && !selectedPath.empty()) {
         ImGui::TextDisabled("Select a file to enable import");
     }
@@ -807,7 +807,7 @@ int main()
     auto importModelFromFile = [&](const std::filesystem::path& modelPath) -> Entity {
         MeshData importedMesh;
         std::string error;
-        if (!ModelImporter::LoadOBJ(modelPath, importedMesh, error)) {
+        if (!ModelImporter::LoadModel(modelPath, importedMesh, error)) {
             assetBrowserStatus = "Import failed: " + error;
             return {};
         }

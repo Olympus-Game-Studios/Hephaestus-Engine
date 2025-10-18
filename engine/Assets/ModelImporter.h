@@ -7,4 +7,6 @@
 namespace ModelImporter {
     bool IsSupportedExtension(const std::filesystem::path& path);
     bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& errorMessage);
+    bool LoadFBX(const std::filesystem::path& path, MeshData& outMesh, std::string& errorMessage);
+    bool LoadModel(const std::filesystem::path& path, MeshData& outMesh, std::string& errorMessage);
 }
