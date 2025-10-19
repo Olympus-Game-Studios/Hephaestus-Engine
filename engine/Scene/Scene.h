@@ -47,6 +47,7 @@ public:
 
     // Registry access (for advanced usage)
     entt::registry& GetRegistry() { return m_Registry; }
+    const entt::registry& GetRegistry() const { return m_Registry; }
 
 private:
     std::string m_Name;

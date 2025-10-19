@@ -37,6 +37,7 @@
 #include "../Scene/Entity.h"
 #include "../Scene/Components.h"
 #include "../Scene/Transform.h"
+#include "../Scene/SceneSerializer.h"
 
 #ifdef _DEBUG
 const bool enableValidationLayers = true;
@@ -1072,6 +1073,11 @@ static std::unordered_map<std::string, AssetBrowserIcon> g_AssetBrowserIconRegis
 static bool g_AssetBrowserIconsReady = false;
 static constexpr const char* kDefaultFileIconKey = "file-cpp";
 
+struct AssetBrowserResult {
+    std::optional<std::filesystem::path> modelImportRequest;
+    std::optional<std::filesystem::path> sceneOpenRequest;
+};
+
 struct AssetExtensionDescriptor {
     const char* extension;
     const char* iconKey;
@@ -1106,7 +1112,8 @@ static const AssetExtensionDescriptor kAssetExtensionDescriptors[] = {
     {".txt", "file-cpp", "TXT"},
     {".json", "file-cpp", "JSON"},
     {".material", "file-cpp", "MAT"},
-    {".prefab", "file-cpp", "PREF"}
+    {".prefab", "file-cpp", "PREF"},
+    {".hpscene", "file-cpp", "SCN"}
 };
 
 static std::string ToLowerCopy(std::string value)
@@ -1133,6 +1140,41 @@ static std::string TrimCopy(const std::string& value)
     }
     size_t end = value.find_last_not_of(" \t\r\n");
     return value.substr(begin, end - begin + 1);
+}
+
+static std::string SanitizeSceneFilename(const std::string& sceneName)
+{
+    std::string trimmed = TrimCopy(sceneName);
+    if (trimmed.empty()) {
+        trimmed = "Untitled";
+    }
+
+    std::string sanitized;
+    sanitized.reserve(trimmed.size());
+
+    char lastAppended = '\0';
+    for (char ch : trimmed) {
+        unsigned char uc = static_cast<unsigned char>(ch);
+        if (std::isalnum(uc)) {
+            sanitized.push_back(ch);
+            lastAppended = ch;
+        } else if (ch == '-' || ch == '_' || std::isspace(uc) || ch == '.') {
+            if (lastAppended != '_') {
+                sanitized.push_back('_');
+                lastAppended = '_';
+            }
+        }
+    }
+
+    while (!sanitized.empty() && sanitized.back() == '_') {
+        sanitized.pop_back();
+    }
+
+    if (sanitized.empty()) {
+        sanitized = "Scene";
+    }
+
+    return sanitized;
 }
 
 static AssetBrowserIcon* FindAssetBrowserIcon(const std::string& key)
@@ -1224,6 +1266,12 @@ static ImVec4 DetermineAssetBadgeColor(const std::string& iconKey, bool isDirect
     }
 
     return ImVec4(0.32f, 0.34f, 0.40f, 0.90f);
+}
+
+static bool IsSceneFile(const std::filesystem::path& path)
+{
+    std::string ext = ToLowerCopy(path.extension().string());
+    return ext == ".hpscene";
 }
 
 static void EnsureAssetBrowserIconsLoaded(VulkanDevice& vkdev)
@@ -1327,11 +1375,11 @@ static void DestroyAssetBrowserIcons(VulkanDevice& vkdev)
 }
 
 // ImGui panel that lists files and folders in the asset directory.
-static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& statusMessage)
+static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
 {
     namespace fs = std::filesystem;
 
-    std::optional<fs::path> importRequest;
+    AssetBrowserResult result;
 
     static fs::path assetRoot;
     static fs::path currentPath;
@@ -1343,7 +1391,7 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
             ImGui::TextDisabled("Select or create a project to browse assets.");
         }
         ImGui::End();
-        return importRequest;
+        return result;
     }
 
     fs::path desiredRoot = ResolveActiveAssetsRoot();
@@ -1352,7 +1400,7 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
             ImGui::TextDisabled("Active project has no assets directory configured.");
         }
         ImGui::End();
-        return importRequest;
+        return result;
     }
 
     if (g_AssetBrowserNeedsReset || assetRoot != desiredRoot) {
@@ -1372,7 +1420,7 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
             ImGui::TextDisabled("Cannot open project assets: %s", ensureRootErr.message().c_str());
         }
         ImGui::End();
-        return importRequest;
+        return result;
     }
 
     assetRoot = assetRoot.lexically_normal();
@@ -1384,16 +1432,16 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
 
     if (!ImGui::Begin("Asset Browser")) {
         ImGui::End();
-        return importRequest;
+        return result;
     }
 
     std::error_code existsErr;
     bool rootExists = fs::exists(assetRoot, existsErr);
     if (!rootExists || existsErr) {
         std::string rootDisplay = assetRoot.generic_string();
-        ImGui::TextDisabled("Asset directory not found: %s", rootDisplay.c_str());
-        ImGui::End();
-        return importRequest;
+    ImGui::TextDisabled("Asset directory not found: %s", rootDisplay.c_str());
+    ImGui::End();
+    return result;
     }
 
     if (!fs::exists(currentPath)) {
@@ -1431,9 +1479,9 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
     std::error_code iterErr;
     fs::directory_iterator dirIt(currentPath, iterErr);
     if (iterErr) {
-        ImGui::TextDisabled("Cannot open directory: %s", iterErr.message().c_str());
-        ImGui::End();
-        return importRequest;
+    ImGui::TextDisabled("Cannot open directory: %s", iterErr.message().c_str());
+    ImGui::End();
+    return result;
     }
 
     struct BrowserEntry {
@@ -1579,7 +1627,11 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
                         currentPath = ClampToRoot(entry.path, assetRoot);
                         selectedPath.clear();
                     } else {
-                        selectedPath = ClampToRoot(entry.path, assetRoot);
+                        std::filesystem::path clamped = ClampToRoot(entry.path, assetRoot);
+                        selectedPath = clamped;
+                        if (IsSceneFile(entry.path)) {
+                            result.sceneOpenRequest = clamped;
+                        }
                     }
                     statusMessage.clear();
                 }
@@ -1622,7 +1674,7 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
 
     if (ImGui::Button("Import Model")) {
         if (supportedFormat) {
-            importRequest = selectedPath;
+            result.modelImportRequest = selectedPath;
         } else {
             if (!selectedIsFile) {
                 statusMessage = "Select a model file to import";
@@ -1644,7 +1696,7 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
     }
 
     ImGui::End();
-    return importRequest;
+    return result;
 }
 
 static std::optional<std::filesystem::path> DrawProjectBrowser()
@@ -2676,7 +2728,33 @@ int main()
             // Draw docked panels first
             DrawWorldOutliner(scene);
             DrawDetailsPanel(scene);
-            pendingAssetImport = DrawAssetBrowserPanel(assetBrowserStatus);
+            AssetBrowserResult browserResult = DrawAssetBrowserPanel(assetBrowserStatus);
+            if (browserResult.modelImportRequest) {
+                pendingAssetImport = browserResult.modelImportRequest;
+            }
+            if (browserResult.sceneOpenRequest) {
+                namespace fs = std::filesystem;
+                std::string loadError;
+                if (SceneSerializer::Deserialize(scene, *browserResult.sceneOpenRequest, loadError)) {
+                    if (gizmoDragging) {
+                        gizmoDragging = false;
+                        gizmoActiveAxis = -1;
+                        vulkanGizmo.EndDrag();
+                    }
+                    fs::path projectRoot = ResolveActiveProjectRoot();
+                    fs::path relativePath = projectRoot.empty()
+                        ? browserResult.sceneOpenRequest->filename()
+                        : browserResult.sceneOpenRequest->lexically_relative(projectRoot);
+                    std::string friendly = relativePath.empty()
+                        ? browserResult.sceneOpenRequest->filename().generic_string()
+                        : relativePath.generic_string();
+                    assetBrowserStatus = "Scene loaded from " + friendly + ".";
+                    std::cout << assetBrowserStatus << std::endl;
+                } else {
+                    assetBrowserStatus = "Scene load failed: " + loadError;
+                    std::cerr << assetBrowserStatus << std::endl;
+                }
+            }
             DrawLogConsole(io, assetBrowserStatus);
 
             // Overlays should be rendered last so they appear above docked windows
@@ -2698,7 +2776,36 @@ int main()
                 }
             }
             if (toolbarActions.saveClicked) {
-                assetBrowserStatus = "Save command triggered (placeholder).";
+                namespace fs = std::filesystem;
+
+                fs::path projectRoot = ResolveActiveProjectRoot();
+                if (projectRoot.empty()) {
+                    assetBrowserStatus = "Scene save failed: no active project.";
+                } else {
+                    fs::path scenesDir = (projectRoot / "assets" / "scenes").lexically_normal();
+                    std::error_code dirErr;
+                    fs::create_directories(scenesDir, dirErr);
+                    if (dirErr) {
+                        assetBrowserStatus = "Scene save failed: unable to create scenes directory (" + dirErr.message() + ").";
+                        std::cerr << assetBrowserStatus << std::endl;
+                    } else {
+                        std::string fileStem = SanitizeSceneFilename(scene.GetName());
+                        fs::path scenePath = scenesDir / (fileStem + ".hpscene");
+
+                        SceneSerializer serializer(scene);
+                        std::string error;
+                        if (serializer.Serialize(scenePath, error)) {
+                            fs::path relative = scenePath.lexically_relative(projectRoot);
+                            std::string friendly = relative.empty() ? scenePath.filename().generic_string()
+                                                                     : relative.generic_string();
+                            assetBrowserStatus = "Scene saved to " + friendly + ".";
+                            std::cout << assetBrowserStatus << std::endl;
+                        } else {
+                            assetBrowserStatus = "Scene save failed: " + error;
+                            std::cerr << assetBrowserStatus << std::endl;
+                        }
+                    }
+                }
             }
             if (toolbarActions.buildClicked) {
                 assetBrowserStatus = "Build command triggered (placeholder).";

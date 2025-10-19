@@ -17,6 +17,7 @@ add_executable(HephaestusEngine
     engine/Gfx/VulkanGizmo.cpp
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
+    engine/Scene/SceneSerializer.cpp
 )
 
 target_include_directories(HephaestusEngine PRIVATE engine)
