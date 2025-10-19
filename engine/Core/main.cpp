@@ -250,9 +250,16 @@ struct ToolbarActions {
     bool buildClicked = false;
 };
 
+enum class WorldOutlinerSpawnPreset {
+    DefaultCube,
+    DefaultSphere,
+    DirectionalLight
+};
+
 struct WorldOutlinerActions {
     std::optional<std::string> newLevelName;
     std::optional<entt::entity> entityToDelete;
+    std::optional<WorldOutlinerSpawnPreset> spawnRequest;
 };
 
 struct DetailsPanelActions {
@@ -542,6 +549,7 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
     static std::array<char, 128> s_NewLevelNameBuffer{};
     static bool s_FocusNewLevelInput = false;
     constexpr const char* kNewLevelPopupId = "Create New Level###WorldOutlinerNewLevel";
+    constexpr const char* kAddEntityPopupId = "Add Entity###WorldOutlinerAddEntity";
 
     float availableWidth = ImGui::GetContentRegionAvail().x;
     const ImGuiStyle& s = ImGui::GetStyle();
@@ -550,6 +558,25 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
     filter.Draw("##WorldOutlinerFilter", filterWidth);
     ImGui::SameLine();
     DrawPillButton("Filter", false);
+    ImGui::SameLine();
+    if (ImGui::Button("+##WorldOutlinerAddEntity")) {
+        ImGui::OpenPopup(kAddEntityPopupId);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Add a default primitive or light.");
+    }
+    if (ImGui::BeginPopup(kAddEntityPopupId)) {
+        if (ImGui::MenuItem("Default Cube")) {
+            actions.spawnRequest = WorldOutlinerSpawnPreset::DefaultCube;
+        }
+        if (ImGui::MenuItem("Default Sphere")) {
+            actions.spawnRequest = WorldOutlinerSpawnPreset::DefaultSphere;
+        }
+        if (ImGui::MenuItem("Directional Light")) {
+            actions.spawnRequest = WorldOutlinerSpawnPreset::DirectionalLight;
+        }
+        ImGui::EndPopup();
+    }
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -2279,6 +2306,67 @@ int main()
     cubeMeshData.indices = cubeIndices;
     cubeMeshData.bounds = AABB(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f));
 
+    auto generateSphereMesh = [](float radius, uint32_t segments, uint32_t rings) {
+        MeshData data;
+        const float pi = 3.14159265359f;
+        const float twoPi = pi * 2.0f;
+        data.vertices.reserve((segments + 1) * (rings + 1));
+        data.indices.reserve(segments * rings * 6);
+
+        for (uint32_t y = 0; y <= rings; ++y) {
+            float v = static_cast<float>(y) / static_cast<float>(rings);
+            float theta = v * pi;
+            float sinTheta = std::sin(theta);
+            float cosTheta = std::cos(theta);
+
+            for (uint32_t x = 0; x <= segments; ++x) {
+                float u = static_cast<float>(x) / static_cast<float>(segments);
+                float phi = u * twoPi;
+                float sinPhi = std::sin(phi);
+                float cosPhi = std::cos(phi);
+
+                float nx = cosPhi * sinTheta;
+                float ny = cosTheta;
+                float nz = sinPhi * sinTheta;
+
+                Vertex vertex{};
+                vertex.pos[0] = nx * radius;
+                vertex.pos[1] = ny * radius;
+                vertex.pos[2] = nz * radius;
+                vertex.normal[0] = nx;
+                vertex.normal[1] = ny;
+                vertex.normal[2] = nz;
+                vertex.color[0] = 1.0f;
+                vertex.color[1] = 1.0f;
+                vertex.color[2] = 1.0f;
+                data.vertices.push_back(vertex);
+            }
+        }
+
+        uint32_t stride = segments + 1;
+        for (uint32_t y = 0; y < rings; ++y) {
+            for (uint32_t x = 0; x < segments; ++x) {
+                uint32_t i0 = y * stride + x;
+                uint32_t i1 = i0 + 1;
+                uint32_t i2 = i0 + stride;
+                uint32_t i3 = i2 + 1;
+
+                data.indices.push_back(i0);
+                data.indices.push_back(i2);
+                data.indices.push_back(i1);
+
+                data.indices.push_back(i1);
+                data.indices.push_back(i2);
+                data.indices.push_back(i3);
+            }
+        }
+
+        data.bounds = AABB(Vec3(-radius, -radius, -radius), Vec3(radius, radius, radius));
+        return data;
+    };
+
+    MeshData sphereMeshData = generateSphereMesh(0.5f, 24, 16);
+
     size_t cubeMeshIndex = MeshRendererComponent::InvalidMesh;
     try {
         cubeMeshIndex = uploadMesh("Default Cube", cubeMeshData, std::filesystem::path("builtin://cube"), false);
@@ -2287,6 +2375,13 @@ int main()
         return -1;
     }
     const MeshGPU& defaultCubeMesh = meshLibrary[cubeMeshIndex];
+
+    try {
+        uploadMesh("Default Sphere", sphereMeshData, std::filesystem::path("builtin://sphere"), false);
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to upload default sphere mesh: " << e.what() << std::endl;
+        return -1;
+    }
 
     // ── Camera + UBO ───────────────────────────
     Camera camera;
@@ -2370,6 +2465,45 @@ int main()
             candidate = baseName + " (" + std::to_string(suffix++) + ")";
         } while (scene.FindEntityByName(candidate));
         return candidate;
+    };
+
+    auto meshHandleFromKey = [&](const std::string& key) -> std::optional<size_t> {
+        auto it = meshLibraryLookup.find(key);
+        if (it == meshLibraryLookup.end()) {
+            return std::nullopt;
+        }
+        size_t index = it->second;
+        if (index >= meshLibrary.size()) {
+            return std::nullopt;
+        }
+        return index;
+    };
+
+    auto spawnPrimitiveFromMesh = [&](const std::string& baseName, const std::string& meshKey) -> Entity {
+        std::optional<size_t> handle = meshHandleFromKey(meshKey);
+        if (!handle) {
+            return {};
+        }
+        const MeshGPU& mesh = meshLibrary[*handle];
+        Entity entity = scene.CreateEntity(makeUniqueEntityName(baseName));
+        auto& renderer = entity.AddComponent<MeshRendererComponent>();
+        renderer.SetMesh(*handle, mesh.bounds, mesh.sourceKey, mesh.imported);
+        entity.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
+        if (!g_DetailsLocked) {
+            scene.SetSelectedEntity(entity);
+        }
+        return entity;
+    };
+
+    auto spawnDirectionalLightEntity = [&]() -> Entity {
+        Entity light = scene.CreateEntity(makeUniqueEntityName("Directional Light"));
+        light.AddComponent<LightComponent>(LightComponent::CreateDirectional(Vec3(0.3f, -1.0f, 0.5f), Vec3(1.0f, 0.95f, 0.9f), 1.0f));
+        auto& transform = light.GetComponent<TransformComponent>();
+        transform.position = Vec3(0.0f, 3.0f, 0.0f);
+        if (!g_DetailsLocked) {
+            scene.SetSelectedEntity(light);
+        }
+        return light;
     };
 
     auto importModelFromFile = [&](const std::filesystem::path& modelPath) -> Entity {
@@ -3028,6 +3162,46 @@ int main()
 
                 assetBrowserStatus = "Created new level '" + scene.GetName() + "'.";
                 std::cout << assetBrowserStatus << std::endl;
+            }
+            if (outlinerActions.spawnRequest) {
+                auto logFailure = [&](const std::string& message) {
+                    assetBrowserStatus = message;
+                    std::cerr << assetBrowserStatus << std::endl;
+                };
+                auto logSuccess = [&](const std::string& message) {
+                    assetBrowserStatus = message;
+                    std::cout << assetBrowserStatus << std::endl;
+                };
+
+                switch (*outlinerActions.spawnRequest) {
+                    case WorldOutlinerSpawnPreset::DefaultCube: {
+                        Entity created = spawnPrimitiveFromMesh("Cube", "builtin://cube");
+                        if (created) {
+                            logSuccess("Added default cube to scene.");
+                        } else {
+                            logFailure("Failed to add cube: built-in mesh missing.");
+                        }
+                        break;
+                    }
+                    case WorldOutlinerSpawnPreset::DefaultSphere: {
+                        Entity created = spawnPrimitiveFromMesh("Sphere", "builtin://sphere");
+                        if (created) {
+                            logSuccess("Added default sphere to scene.");
+                        } else {
+                            logFailure("Failed to add sphere: built-in mesh missing.");
+                        }
+                        break;
+                    }
+                    case WorldOutlinerSpawnPreset::DirectionalLight: {
+                        Entity created = spawnDirectionalLightEntity();
+                        if (created) {
+                            logSuccess("Added directional light to scene.");
+                        } else {
+                            logFailure("Failed to add directional light.");
+                        }
+                        break;
+                    }
+                }
             }
             DetailsPanelActions detailsActions = DrawDetailsPanel(scene);
 
