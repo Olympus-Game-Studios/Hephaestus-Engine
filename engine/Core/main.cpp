@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <unordered_map>
 #include <cctype>
+#include <array>
 
 #include "Math.h"
 
@@ -88,6 +89,13 @@ static bool g_framebufferResized = false;
 static bool g_DebugSkipImportedMeshes = false;
 static uint64_t g_FrameCounter = 0;
 static float g_UIScale = 1.0f;
+
+static std::filesystem::path g_EngineRoot;
+static std::filesystem::path g_ProjectsRoot;
+static std::filesystem::path g_ActiveProjectRoot;
+static std::string g_ActiveProjectName;
+static bool g_ProjectSelected = false;
+static bool g_AssetBrowserNeedsReset = true;
 
 constexpr float kReferenceViewportWidth = 1280.0f;
 constexpr float kReferenceViewportHeight = 720.0f;
@@ -294,6 +302,10 @@ static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused)
         ImGui::TextColored(ImVec4(0.13f, 0.55f, 0.96f, 1.0f), "HE");
         ImGui::SameLine();
         ImGui::TextUnformatted("Hephaestus Engine");
+        if (!g_ActiveProjectName.empty()) {
+            std::string projectLabel = "Project: " + g_ActiveProjectName;
+            ImGui::TextDisabled("%s", projectLabel.c_str());
+        }
         ImGui::EndGroup();
 
         ImGui::SameLine();
@@ -942,18 +954,20 @@ static std::filesystem::path ClampToRoot(const std::filesystem::path& candidate,
     return root.lexically_normal();
 }
 
-static std::filesystem::path ResolveProjectRoot()
+static std::filesystem::path ResolveEngineRoot()
 {
     namespace fs = std::filesystem;
-    static fs::path cached;
-    if (!cached.empty()) {
-        return cached;
+    if (!g_EngineRoot.empty()) {
+        return g_EngineRoot;
     }
 
     fs::path candidate = fs::current_path();
     for (int depth = 0; depth < 10; ++depth) {
-        if (fs::exists(candidate / "assets") && fs::exists(candidate / "editor")) {
-            cached = candidate;
+        const bool hasAssets = fs::exists(candidate / "assets");
+        const bool hasEditor = fs::exists(candidate / "editor");
+        const bool hasEngine = fs::exists(candidate / "engine");
+        if (hasAssets && hasEditor && hasEngine) {
+            g_EngineRoot = candidate;
             break;
         }
         if (!candidate.has_parent_path()) {
@@ -962,10 +976,82 @@ static std::filesystem::path ResolveProjectRoot()
         candidate = candidate.parent_path();
     }
 
-    if (cached.empty()) {
-        cached = fs::current_path();
+    if (g_EngineRoot.empty()) {
+        g_EngineRoot = fs::current_path();
     }
-    return cached;
+    return g_EngineRoot;
+}
+
+static std::filesystem::path ResolveEnginePath(const std::filesystem::path& relative)
+{
+    return (ResolveEngineRoot() / relative).lexically_normal();
+}
+
+static std::filesystem::path ResolveProjectsRoot()
+{
+    namespace fs = std::filesystem;
+    if (!g_ProjectsRoot.empty()) {
+        return g_ProjectsRoot;
+    }
+
+    fs::path engineRoot = ResolveEngineRoot();
+    const std::array<fs::path, 4> candidates = {
+        engineRoot / "build" / "Release" / "projects",
+        engineRoot / "build" / "Debug" / "projects",
+        engineRoot / "build" / "projects",
+        engineRoot / "projects"
+    };
+
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        fs::create_directories(candidate, ec);
+        if (!ec) {
+            g_ProjectsRoot = candidate.lexically_normal();
+            break;
+        }
+    }
+
+    if (g_ProjectsRoot.empty()) {
+        g_ProjectsRoot = (engineRoot / "projects").lexically_normal();
+        std::error_code fallbackErr;
+        fs::create_directories(g_ProjectsRoot, fallbackErr);
+        if (fallbackErr) {
+            std::cerr << "Warning: unable to create projects root at "
+                      << g_ProjectsRoot << ": " << fallbackErr.message() << "\n";
+        }
+    }
+
+    return g_ProjectsRoot;
+}
+
+static void SetActiveProjectRoot(const std::filesystem::path& projectPath)
+{
+    g_ActiveProjectRoot = projectPath.lexically_normal();
+    if (!g_ActiveProjectRoot.empty()) {
+        std::string name = g_ActiveProjectRoot.filename().string();
+        if (name.empty()) {
+            name = g_ActiveProjectRoot.stem().string();
+        }
+        g_ActiveProjectName = name;
+        g_ProjectSelected = true;
+    } else {
+        g_ActiveProjectName.clear();
+        g_ProjectSelected = false;
+    }
+    g_AssetBrowserNeedsReset = true;
+}
+
+static std::filesystem::path ResolveActiveProjectRoot()
+{
+    return g_ActiveProjectRoot;
+}
+
+static std::filesystem::path ResolveActiveAssetsRoot()
+{
+    if (g_ActiveProjectRoot.empty()) {
+        return {};
+    }
+    return (g_ActiveProjectRoot / "assets").lexically_normal();
 }
 
 struct AssetBrowserIcon {
@@ -1037,6 +1123,16 @@ static std::string ToUpperCopy(std::string value)
         return static_cast<char>(std::toupper(c));
     });
     return value;
+}
+
+static std::string TrimCopy(const std::string& value)
+{
+    size_t begin = value.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return std::string();
+    }
+    size_t end = value.find_last_not_of(" \t\r\n");
+    return value.substr(begin, end - begin + 1);
 }
 
 static AssetBrowserIcon* FindAssetBrowserIcon(const std::string& key)
@@ -1144,7 +1240,7 @@ static void EnsureAssetBrowserIconsLoaded(VulkanDevice& vkdev)
 
     namespace fs = std::filesystem;
 
-    fs::path iconRoot = ResolveProjectRoot() / fs::path("editor") / "Icons";
+    fs::path iconRoot = ResolveEnginePath(fs::path("editor") / "Icons");
     if (!fs::exists(iconRoot)) {
         std::cerr << "Asset icon directory missing: " << iconRoot << "\n";
         return;
@@ -1237,27 +1333,53 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
 
     std::optional<fs::path> importRequest;
 
-    static bool initialized = false;
     static fs::path assetRoot;
     static fs::path currentPath;
     static fs::path selectedPath;
 
-    if (!initialized) {
-        initialized = true;
-        fs::path projectRoot = ResolveProjectRoot();
-        fs::path absoluteRoot = (projectRoot / "assets").lexically_normal();
-        if (fs::exists(absoluteRoot)) {
-            assetRoot = absoluteRoot;
-        } else {
-            std::error_code absErr;
-            fs::path fallback = fs::absolute("assets", absErr);
-            assetRoot = absErr ? fs::path("assets") : fallback.lexically_normal();
+    fs::path projectRoot = ResolveActiveProjectRoot();
+    if (projectRoot.empty()) {
+        if (ImGui::Begin("Asset Browser")) {
+            ImGui::TextDisabled("Select or create a project to browse assets.");
         }
+        ImGui::End();
+        return importRequest;
+    }
+
+    fs::path desiredRoot = ResolveActiveAssetsRoot();
+    if (desiredRoot.empty()) {
+        if (ImGui::Begin("Asset Browser")) {
+            ImGui::TextDisabled("Active project has no assets directory configured.");
+        }
+        ImGui::End();
+        return importRequest;
+    }
+
+    if (g_AssetBrowserNeedsReset || assetRoot != desiredRoot) {
+        assetRoot = desiredRoot;
         currentPath = assetRoot;
         selectedPath.clear();
+        g_AssetBrowserNeedsReset = false;
+    }
+
+    std::error_code ensureRootErr;
+    if (!assetRoot.empty()) {
+        fs::create_directories(assetRoot, ensureRootErr);
+    }
+
+    if (ensureRootErr) {
+        if (ImGui::Begin("Asset Browser")) {
+            ImGui::TextDisabled("Cannot open project assets: %s", ensureRootErr.message().c_str());
+        }
+        ImGui::End();
+        return importRequest;
     }
 
     assetRoot = assetRoot.lexically_normal();
+
+    if (currentPath.empty()) {
+        currentPath = assetRoot;
+    }
     currentPath = ClampToRoot(currentPath, assetRoot);
 
     if (!ImGui::Begin("Asset Browser")) {
@@ -1523,6 +1645,211 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
 
     ImGui::End();
     return importRequest;
+}
+
+static std::optional<std::filesystem::path> DrawProjectBrowser()
+{
+    namespace fs = std::filesystem;
+
+    std::optional<fs::path> selection;
+
+    static std::array<char, 128> s_NewProjectBuffer{};
+    static std::string s_SelectedProjectName;
+    static std::string s_ErrorMessage;
+    static std::string s_StatusMessage;
+
+    fs::path projectsRoot = ResolveProjectsRoot();
+    std::error_code scanErr;
+    std::string enumerationError;
+    std::vector<fs::path> projectPaths;
+    fs::directory_options options = fs::directory_options::skip_permission_denied;
+    for (fs::directory_iterator it(projectsRoot, options, scanErr);
+         !scanErr && it != fs::directory_iterator(); ++it) {
+        if (it->is_directory()) {
+            projectPaths.push_back(it->path().lexically_normal());
+        }
+    }
+    if (scanErr) {
+        enumerationError = "Failed to enumerate projects: " + scanErr.message();
+    }
+
+    std::sort(projectPaths.begin(), projectPaths.end(), [](const fs::path& a, const fs::path& b) {
+        return ToLowerCopy(a.filename().string()) < ToLowerCopy(b.filename().string());
+    });
+
+    int selectedIndex = -1;
+    for (size_t i = 0; i < projectPaths.size(); ++i) {
+        std::string name = projectPaths[i].filename().string();
+        if (!s_SelectedProjectName.empty() && s_SelectedProjectName == name) {
+            selectedIndex = static_cast<int>(i);
+            break;
+        }
+    }
+    if (selectedIndex == -1 && !s_SelectedProjectName.empty()) {
+        s_SelectedProjectName.clear();
+    }
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImVec2 center = viewport->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(640.0f, 420.0f), ImGuiCond_Appearing);
+
+    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse |
+                                   ImGuiWindowFlags_NoResize |
+                                   ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoDocking |
+                                   ImGuiWindowFlags_NoMove;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+
+    if (ImGui::Begin("Project Browser", nullptr, windowFlags)) {
+        ImGui::Text("Select or create a project to continue");
+        std::string rootDisplay = projectsRoot.generic_string();
+        ImGui::TextDisabled("Projects directory: %s", rootDisplay.c_str());
+        if (!enumerationError.empty()) {
+            ImGui::TextColored(ImVec4(0.90f, 0.36f, 0.36f, 1.0f), "%s", enumerationError.c_str());
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+
+        float listHeight = std::max(220.0f, ImGui::GetTextLineHeightWithSpacing() * 8.0f);
+        if (ImGui::BeginChild("##ProjectList", ImVec2(0.0f, listHeight), true, ImGuiWindowFlags_HorizontalScrollbar)) {
+            for (size_t i = 0; i < projectPaths.size(); ++i) {
+                const fs::path& path = projectPaths[i];
+                std::string name = path.filename().string();
+                bool isSelected = static_cast<int>(i) == selectedIndex;
+                ImGuiSelectableFlags flags = ImGuiSelectableFlags_AllowDoubleClick;
+                if (ImGui::Selectable(name.c_str(), isSelected, flags)) {
+                    s_SelectedProjectName = name;
+                    selectedIndex = static_cast<int>(i);
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        selection = path;
+                        s_ErrorMessage.clear();
+                        s_StatusMessage.clear();
+                        break;
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    std::string tooltip = path.generic_string();
+                    ImGui::SetTooltip("%s", tooltip.c_str());
+                }
+            }
+        }
+        ImGui::EndChild();
+
+        if (projectPaths.empty() && s_ErrorMessage.empty()) {
+            ImGui::TextDisabled("No projects found. Create one below.");
+        }
+
+        bool canOpen = selectedIndex >= 0 && selectedIndex < static_cast<int>(projectPaths.size());
+        if (!canOpen) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Button("Open Project", ImVec2(160.0f, 0.0f)) && canOpen) {
+            selection = projectPaths[static_cast<size_t>(selectedIndex)];
+            s_ErrorMessage.clear();
+            s_StatusMessage.clear();
+        }
+        if (!canOpen) {
+            ImGui::EndDisabled();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Double-click a project name to open it");
+
+        ImGui::Separator();
+        ImGui::Text("Create New Project");
+
+        ImGui::PushItemWidth(-140.0f);
+        ImGui::InputTextWithHint("##NewProjectName", "Project name", s_NewProjectBuffer.data(), s_NewProjectBuffer.size());
+        bool enterPressed = ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Enter);
+        ImGui::PopItemWidth();
+
+        ImGui::SameLine();
+        bool createClicked = ImGui::Button("Create", ImVec2(120.0f, 0.0f));
+
+        if (createClicked || enterPressed) {
+            std::string rawName(s_NewProjectBuffer.data());
+            std::string trimmed = TrimCopy(rawName);
+            if (trimmed.empty()) {
+                s_ErrorMessage = "Project name cannot be empty.";
+                s_StatusMessage.clear();
+            } else {
+                std::string sanitized = trimmed;
+                for (char& ch : sanitized) {
+                    unsigned char uc = static_cast<unsigned char>(ch);
+                    if (std::isalnum(uc) || ch == ' ' || ch == '_' || ch == '-') {
+                        continue;
+                    }
+                    ch = '_';
+                }
+                while (!sanitized.empty() && (sanitized.back() == ' ' || sanitized.back() == '.')) {
+                    sanitized.pop_back();
+                }
+                if (sanitized.empty()) {
+                    s_ErrorMessage = "Project name cannot end with spaces or dots.";
+                    s_StatusMessage.clear();
+                } else {
+                    fs::path newProjectPath = (projectsRoot / sanitized).lexically_normal();
+                    if (fs::exists(newProjectPath)) {
+                        s_ErrorMessage = "A project with that name already exists.";
+                        s_StatusMessage.clear();
+                    } else {
+                        std::error_code createErr;
+                        fs::create_directories(newProjectPath, createErr);
+                        if (createErr) {
+                            s_ErrorMessage = "Failed to create project: " + createErr.message();
+                            s_StatusMessage.clear();
+                        } else {
+                            const std::vector<fs::path> subdirs = {
+                                newProjectPath / "assets",
+                                newProjectPath / "assets" / "models",
+                                newProjectPath / "assets" / "textures",
+                                newProjectPath / "assets" / "scripts",
+                                newProjectPath / "assets" / "audio",
+                                newProjectPath / "assets" / "materials",
+                                newProjectPath / "assets" / "prefabs",
+                                newProjectPath / "assets" / "scenes"
+                            };
+                            std::error_code subErr;
+                            bool subdirFailure = false;
+                            for (const auto& dir : subdirs) {
+                                fs::create_directories(dir, subErr);
+                                if (subErr) {
+                                    s_ErrorMessage = "Failed to prepare project folders: " + subErr.message();
+                                    s_StatusMessage.clear();
+                                    subdirFailure = true;
+                                    break;
+                                }
+                            }
+                            if (!subdirFailure) {
+                                s_ErrorMessage.clear();
+                                s_StatusMessage = "Created project '" + sanitized + "'.";
+                                s_SelectedProjectName = sanitized;
+                                std::fill(s_NewProjectBuffer.begin(), s_NewProjectBuffer.end(), 0);
+                                selection = newProjectPath;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!s_ErrorMessage.empty()) {
+            ImGui::TextColored(ImVec4(0.90f, 0.36f, 0.36f, 1.0f), "%s", s_ErrorMessage.c_str());
+        } else if (!s_StatusMessage.empty()) {
+            ImGui::TextColored(ImVec4(0.32f, 0.80f, 0.60f, 1.0f), "%s", s_StatusMessage.c_str());
+        }
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Projects are stored inside: %s", rootDisplay.c_str());
+    }
+    ImGui::End();
+
+    ImGui::PopStyleVar(2);
+
+    return selection;
 }
 
 int main()
@@ -1873,9 +2200,10 @@ int main()
     // Load light bulb texture
     bool textureLoaded = false;
     try {
-        if (lightBulbTexture.LoadFromFile(vkdev.allocator, vkdev.device, vkdev.physicalDevice, 
-                                      vkdev.commandPool, vkdev.graphicsQueue, 
-                                      "assets/textures/light_bulb.png")) {
+    std::filesystem::path lightBulbPath = ResolveEnginePath(std::filesystem::path("assets") / "textures" / "light_bulb.png");
+    if (lightBulbTexture.LoadFromFile(vkdev.allocator, vkdev.device, vkdev.physicalDevice, 
+                      vkdev.commandPool, vkdev.graphicsQueue, 
+                      lightBulbPath.string())) {
             if (lightBulbTexture.imageView != VK_NULL_HANDLE && lightBulbTexture.sampler != VK_NULL_HANDLE) {
                 std::cout << "Loaded light bulb texture" << std::endl;
                 textureLoaded = true;
@@ -2197,7 +2525,7 @@ int main()
 
     // Load custom font
     const float baseFontSize = 16.0f;
-    std::filesystem::path fontPath = "editor/fonts/JetBrainsMono-VariableFont_wght.ttf";
+    std::filesystem::path fontPath = ResolveEnginePath(std::filesystem::path("editor") / "fonts" / "JetBrainsMono-VariableFont_wght.ttf");
     if (std::filesystem::exists(fontPath)) {
         ImFontConfig fontConfig;
         fontConfig.OversampleH = 2;
@@ -2289,8 +2617,9 @@ int main()
         static bool leftMouseWasPressed = false;
         bool leftMousePressed = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         
-        if (leftMousePressed && !leftMouseWasPressed && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver() &&
-            !io.WantCaptureMouse && !gizmoDragging && vulkanGizmo.GetHoveredAxis() == -1) {
+        if (g_ProjectSelected && leftMousePressed && !leftMouseWasPressed &&
+            !ImGuizmo::IsUsing() && !ImGuizmo::IsOver() && !io.WantCaptureMouse &&
+            !gizmoDragging && vulkanGizmo.GetHoveredAxis() == -1) {
             // Left mouse button just pressed and not over ImGui
             double mouseX, mouseY;
             glfwGetCursorPos(window, &mouseX, &mouseY);
@@ -2314,50 +2643,70 @@ int main()
         leftMouseWasPressed = leftMousePressed;
         
         // Input handling (only when not using gizmo)
-    if (!ImGuizmo::IsUsing() && !gizmoDragging) {
+        if (g_ProjectSelected && !ImGuizmo::IsUsing() && !gizmoDragging) {
             camera.handleMouse(window);
             camera.handleKeyboard(window, dt);
         }
 
         // ImGui UI
         std::optional<std::filesystem::path> pendingAssetImport;
-        BeginHephaestusDockspace();
-
         static bool s_Playing = false;
         static bool s_Paused = false;
-        // Draw docked panels first
-        DrawWorldOutliner(scene);
-        DrawDetailsPanel(scene);
-        pendingAssetImport = DrawAssetBrowserPanel(assetBrowserStatus);
-        DrawLogConsole(io, assetBrowserStatus);
 
-        // Overlays should be rendered last so they appear above docked windows
-        ToolbarActions toolbarActions = DrawEditorToolbar(s_Playing, s_Paused);
-        if (toolbarActions.playClicked) {
-            s_Playing = true;
-            s_Paused = false;
-            assetBrowserStatus = "Play mode toggle (placeholder).";
-        }
-        if (toolbarActions.pauseClicked && s_Playing) {
-            s_Paused = !s_Paused;
-            assetBrowserStatus = s_Paused ? "Paused simulation (placeholder)." : "Resumed simulation (placeholder).";
-        }
-        if (toolbarActions.stopClicked) {
-            if (s_Playing || s_Paused) {
-                s_Playing = false;
-                s_Paused = false;
-                assetBrowserStatus = "Stopped play mode (placeholder).";
+        if (!g_ProjectSelected) {
+            if (gizmoDragging) {
+                gizmoDragging = false;
+                gizmoActiveAxis = -1;
+                vulkanGizmo.EndDrag();
             }
-        }
-        if (toolbarActions.saveClicked) {
-            assetBrowserStatus = "Save command triggered (placeholder).";
-        }
-        if (toolbarActions.buildClicked) {
-            assetBrowserStatus = "Build command triggered (placeholder).";
+            vulkanGizmo.SetHoveredAxis(-1);
+
+            std::optional<std::filesystem::path> projectChoice = DrawProjectBrowser();
+            if (projectChoice) {
+                SetActiveProjectRoot(*projectChoice);
+                if (!g_ActiveProjectName.empty()) {
+                    assetBrowserStatus = "Opened project '" + g_ActiveProjectName + "'.";
+                } else {
+                    assetBrowserStatus = "Opened project.";
+                }
+            }
+        } else {
+            BeginHephaestusDockspace();
+
+            // Draw docked panels first
+            DrawWorldOutliner(scene);
+            DrawDetailsPanel(scene);
+            pendingAssetImport = DrawAssetBrowserPanel(assetBrowserStatus);
+            DrawLogConsole(io, assetBrowserStatus);
+
+            // Overlays should be rendered last so they appear above docked windows
+            ToolbarActions toolbarActions = DrawEditorToolbar(s_Playing, s_Paused);
+            if (toolbarActions.playClicked) {
+                s_Playing = true;
+                s_Paused = false;
+                assetBrowserStatus = "Play mode toggle (placeholder).";
+            }
+            if (toolbarActions.pauseClicked && s_Playing) {
+                s_Paused = !s_Paused;
+                assetBrowserStatus = s_Paused ? "Paused simulation (placeholder)." : "Resumed simulation (placeholder).";
+            }
+            if (toolbarActions.stopClicked) {
+                if (s_Playing || s_Paused) {
+                    s_Playing = false;
+                    s_Paused = false;
+                    assetBrowserStatus = "Stopped play mode (placeholder).";
+                }
+            }
+            if (toolbarActions.saveClicked) {
+                assetBrowserStatus = "Save command triggered (placeholder).";
+            }
+            if (toolbarActions.buildClicked) {
+                assetBrowserStatus = "Build command triggered (placeholder).";
+            }
+
+            DrawViewportOverlay(currentGizmoOperation, currentGizmoMode, g_ShowGizmoGrid, g_ShowEditorGizmo);
         }
 
-        DrawViewportOverlay(currentGizmoOperation, currentGizmoMode, g_ShowGizmoGrid, g_ShowEditorGizmo);
-        
         if (pendingAssetImport) {
             Entity imported = importModelFromFile(*pendingAssetImport);
             if (!imported) {
@@ -2366,15 +2715,17 @@ int main()
         }
         
         // ImGuizmo keyboard shortcuts
-        if (ImGui::IsKeyPressed(ImGuiKey_T)) currentGizmoOperation = ImGuizmo::TRANSLATE;
-        if (ImGui::IsKeyPressed(ImGuiKey_R)) currentGizmoOperation = ImGuizmo::ROTATE;
-    if (ImGui::IsKeyPressed(ImGuiKey_Y) && !ImGui::GetIO().KeyCtrl) currentGizmoOperation = ImGuizmo::SCALE;
+        if (g_ProjectSelected) {
+            if (ImGui::IsKeyPressed(ImGuiKey_T)) currentGizmoOperation = ImGuizmo::TRANSLATE;
+            if (ImGui::IsKeyPressed(ImGuiKey_R)) currentGizmoOperation = ImGuizmo::ROTATE;
+            if (ImGui::IsKeyPressed(ImGuiKey_Y) && !ImGui::GetIO().KeyCtrl) currentGizmoOperation = ImGuizmo::SCALE;
+        }
         
         // Build view/proj for ImGuizmo and gizmo interactions
         UniformBufferObject ubo = camera.makeUBO(swap.extent);
 
         // Custom gizmo interaction handling
-        if (g_ShowEditorGizmo) {
+        if (g_ProjectSelected && g_ShowEditorGizmo) {
             Entity selectedEntity = scene.GetSelectedEntity();
             if (selectedEntity) {
                 auto& transform = selectedEntity.GetComponent<TransformComponent>();
@@ -2666,7 +3017,7 @@ int main()
 
         // ── Render Custom Vulkan Gizmo ───────────────────────────
         Entity selectedEntity = scene.GetSelectedEntity();
-        if (selectedEntity) {
+        if (g_ProjectSelected && g_ShowEditorGizmo && selectedEntity) {
             auto& transform = selectedEntity.GetComponent<TransformComponent>();
             Mat4 objectMatrix = transform.GetLocalMatrix();
             

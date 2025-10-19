@@ -12,6 +12,7 @@
         "limits": "cpp",
         "algorithm": "cpp",
         "cstdlib": "cpp",
-        "array": "cpp"
+        "array": "cpp",
+        "cstring": "cpp"
     }
 }
