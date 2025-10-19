@@ -252,6 +252,12 @@ struct ToolbarActions {
 
 struct WorldOutlinerActions {
     std::optional<std::string> newLevelName;
+    std::optional<entt::entity> entityToDelete;
+};
+
+struct DetailsPanelActions {
+    std::optional<entt::entity> entityToDelete;
+    std::optional<entt::entity> meshToClear;
 };
 
 static std::string TrimCopy(const std::string& value);
@@ -629,12 +635,21 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
+            ImGui::PushID(static_cast<int>(entityHandle));
             ImGuiSelectableFlags selFlags = ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick;
             if (ImGui::Selectable(tag.tag.c_str(), isSelected, selFlags)) {
                 if (!g_DetailsLocked) {
                     scene.SetSelectedEntity(entity);
                 }
             }
+
+            if (ImGui::BeginPopupContextItem()) {
+                if (ImGui::MenuItem("Delete", "Del")) {
+                    actions.entityToDelete = entityHandle;
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
 
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", typeLabel);
@@ -643,15 +658,27 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
         ImGui::EndTable();
     }
 
+    if (!actions.entityToDelete &&
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+        ImGui::IsKeyPressed(ImGuiKey_Delete) &&
+        !ImGui::GetIO().WantTextInput) {
+        Entity selected = scene.GetSelectedEntity();
+        if (selected) {
+            actions.entityToDelete = static_cast<entt::entity>(selected);
+        }
+    }
+
     ImGui::End();
     return actions;
 }
 
-static void DrawDetailsPanel(Scene& scene)
+static DetailsPanelActions DrawDetailsPanel(Scene& scene)
 {
+    DetailsPanelActions actions{};
+
     if (!ImGui::Begin("Details")) {
         ImGui::End();
-        return;
+        return actions;
     }
 
     ImGui::Checkbox("Lock", &g_DetailsLocked);
@@ -661,7 +688,7 @@ static void DrawDetailsPanel(Scene& scene)
     if (!selectedEntity) {
         ImGui::TextDisabled("Select an entity to view its properties.");
         ImGui::End();
-        return;
+        return actions;
     }
 
     auto& tag = selectedEntity.GetComponent<TagComponent>();
@@ -676,6 +703,24 @@ static void DrawDetailsPanel(Scene& scene)
         transform.SetRotationDegrees(rotDeg);
     }
     ImGui::DragFloat3("Scale", &transform.scale.x, 0.01f, 0.01f, 10.0f);
+
+    if (selectedEntity.HasComponent<MeshRendererComponent>()) {
+        auto& renderer = selectedEntity.GetComponent<MeshRendererComponent>();
+        ImGui::SeparatorText("Mesh");
+        if (!renderer.meshAssetPath.empty()) {
+            ImGui::TextDisabled("Source: %s", renderer.meshAssetPath.c_str());
+        } else if (renderer.HasValidMesh()) {
+            ImGui::TextDisabled("Source: Built-in mesh");
+        } else {
+            ImGui::TextDisabled("Source: None");
+        }
+        if (ImGui::Button("Remove Mesh Component")) {
+            actions.meshToClear = static_cast<entt::entity>(selectedEntity);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Detach the mesh renderer and material from this entity.");
+        }
+    }
 
     if (selectedEntity.HasComponent<MaterialComponent>()) {
         auto& material = selectedEntity.GetComponent<MaterialComponent>();
@@ -725,11 +770,20 @@ static void DrawDetailsPanel(Scene& scene)
         }
     }
 
+    ImGui::SeparatorText("Actions");
+    if (ImGui::Button("Delete Entity")) {
+        actions.entityToDelete = static_cast<entt::entity>(selectedEntity);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Delete this entity from the scene.");
+    }
+
     ImGui::SeparatorText("Debug");
     ImGui::Text("Entity ID: %u", static_cast<uint32_t>(selectedEntity));
     ImGui::Text("Gizmo Active: %s", g_ShowEditorGizmo ? "YES" : "NO");
 
     ImGui::End();
+    return actions;
 }
 
 static void DrawLogConsole(const ImGuiIO& io, const std::string& statusMessage)
@@ -2975,7 +3029,75 @@ int main()
                 assetBrowserStatus = "Created new level '" + scene.GetName() + "'.";
                 std::cout << assetBrowserStatus << std::endl;
             }
-            DrawDetailsPanel(scene);
+            DetailsPanelActions detailsActions = DrawDetailsPanel(scene);
+
+            std::vector<entt::entity> entityDeletionQueue;
+            auto enqueueDeletion = [&](const std::optional<entt::entity>& candidate) {
+                if (!candidate || *candidate == entt::null) {
+                    return;
+                }
+                if (std::find(entityDeletionQueue.begin(), entityDeletionQueue.end(), *candidate) == entityDeletionQueue.end()) {
+                    entityDeletionQueue.push_back(*candidate);
+                }
+            };
+
+            enqueueDeletion(outlinerActions.entityToDelete);
+            enqueueDeletion(detailsActions.entityToDelete);
+
+            if (!entityDeletionQueue.empty()) {
+                if (gizmoDragging) {
+                    gizmoDragging = false;
+                    gizmoActiveAxis = -1;
+                    vulkanGizmo.EndDrag();
+                }
+                vulkanGizmo.SetHoveredAxis(-1);
+
+                for (entt::entity handle : entityDeletionQueue) {
+                    if (!scene.GetRegistry().valid(handle)) {
+                        continue;
+                    }
+
+                    Entity toDelete(handle, &scene);
+                    std::string entityName = toDelete.HasComponent<TagComponent>()
+                        ? toDelete.GetComponent<TagComponent>().tag
+                        : std::string("Entity");
+
+                    bool wasSelected = false;
+                    if (Entity selected = scene.GetSelectedEntity()) {
+                        wasSelected = static_cast<entt::entity>(selected) == handle;
+                    }
+
+                    scene.DestroyEntity(toDelete);
+                    if (wasSelected) {
+                        scene.ClearSelection();
+                    }
+
+                    assetBrowserStatus = "Deleted '" + entityName + "' from scene.";
+                    std::cout << assetBrowserStatus << std::endl;
+                }
+            }
+
+            if (detailsActions.meshToClear) {
+                entt::entity handle = *detailsActions.meshToClear;
+                bool pendingDeletion = std::find(entityDeletionQueue.begin(), entityDeletionQueue.end(), handle) != entityDeletionQueue.end();
+                if (!pendingDeletion && scene.GetRegistry().valid(handle)) {
+                    Entity target(handle, &scene);
+                    if (target.HasComponent<MeshRendererComponent>()) {
+                        std::string entityName = target.HasComponent<TagComponent>()
+                            ? target.GetComponent<TagComponent>().tag
+                            : std::string("Entity");
+
+                        target.RemoveComponent<MeshRendererComponent>();
+                        if (target.HasComponent<MaterialComponent>()) {
+                            target.RemoveComponent<MaterialComponent>();
+                        }
+
+                        assetBrowserStatus = "Removed mesh component from '" + entityName + "'.";
+                        std::cout << assetBrowserStatus << std::endl;
+                    }
+                }
+            }
+
             AssetBrowserResult browserResult = DrawAssetBrowserPanel(assetBrowserStatus);
             if (browserResult.modelImportRequest) {
                 pendingAssetImport = browserResult.modelImportRequest;
