@@ -250,6 +250,12 @@ struct ToolbarActions {
     bool buildClicked = false;
 };
 
+struct WorldOutlinerActions {
+    std::optional<std::string> newLevelName;
+};
+
+static std::string TrimCopy(const std::string& value);
+
 static bool DrawPillButton(const char* label, bool active, const ImVec2& size = ImVec2(0.0f, 0.0f))
 {
     const ImGuiStyle& s = ImGui::GetStyle();
@@ -517,14 +523,19 @@ static void BeginHephaestusDockspace()
     }
 }
 
-static void DrawWorldOutliner(Scene& scene)
+static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
 {
+    WorldOutlinerActions actions{};
+
     if (!ImGui::Begin("World Outliner")) {
         ImGui::End();
-        return;
+        return actions;
     }
 
     static ImGuiTextFilter filter;
+    static std::array<char, 128> s_NewLevelNameBuffer{};
+    static bool s_FocusNewLevelInput = false;
+    constexpr const char* kNewLevelPopupId = "Create New Level###WorldOutlinerNewLevel";
 
     float availableWidth = ImGui::GetContentRegionAvail().x;
     const ImGuiStyle& s = ImGui::GetStyle();
@@ -538,6 +549,59 @@ static void DrawWorldOutliner(Scene& scene)
     ImGui::Separator();
 
     ImGui::TextDisabled("Scene: %s", scene.GetName().c_str());
+    ImGui::SameLine();
+    if (DrawPillButton("New Level", false)) {
+        s_NewLevelNameBuffer.fill(0);
+        const std::string suggestedName = "New Level";
+        std::strncpy(s_NewLevelNameBuffer.data(), suggestedName.c_str(), s_NewLevelNameBuffer.size() - 1);
+        s_FocusNewLevelInput = true;
+        ImGui::OpenPopup(kNewLevelPopupId);
+    }
+
+    if (ImGui::BeginPopupModal(kNewLevelPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (s_FocusNewLevelInput || ImGui::IsWindowAppearing()) {
+            ImGui::SetKeyboardFocusHere();
+            s_FocusNewLevelInput = false;
+        }
+
+        ImGui::InputText("Level Name", s_NewLevelNameBuffer.data(), s_NewLevelNameBuffer.size(), ImGuiInputTextFlags_AutoSelectAll);
+        bool nameFieldActive = ImGui::IsItemActive();
+
+        std::string trimmedName = TrimCopy(s_NewLevelNameBuffer.data());
+        bool validName = !trimmedName.empty();
+        if (!validName) {
+            ImGui::TextDisabled("Name cannot be blank.");
+        }
+
+        ImGui::Spacing();
+
+        bool createClicked = false;
+        bool submitViaEnter = validName && nameFieldActive && ImGui::IsKeyPressed(ImGuiKey_Enter);
+
+        if (!validName) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Button("Create")) {
+            createClicked = true;
+        }
+        if (!validName) {
+            ImGui::EndDisabled();
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (validName && (createClicked || submitViaEnter)) {
+            actions.newLevelName = trimmedName;
+            filter.Clear();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
     ImGui::Spacing();
 
     auto view = scene.GetEntitiesWith<TagComponent>();
@@ -580,6 +644,7 @@ static void DrawWorldOutliner(Scene& scene)
     }
 
     ImGui::End();
+    return actions;
 }
 
 static void DrawDetailsPanel(Scene& scene)
@@ -2621,6 +2686,7 @@ int main()
     std::vector<VkSemaphore> imageAvailable(MAX_FRAMES_IN_FLIGHT);
     std::vector<VkSemaphore> renderFinished(MAX_FRAMES_IN_FLIGHT);
     std::vector<VkFence> inFlight(MAX_FRAMES_IN_FLIGHT);
+    std::vector<VkFence> imagesInFlight(swap.images.size(), VK_NULL_HANDLE);
 
     VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
@@ -2639,11 +2705,19 @@ int main()
         glfwPollEvents();
         ++g_FrameCounter;
 
-    vkWaitForFences(vkdev.device, 1, &inFlight[currentFrame], VK_TRUE, UINT64_MAX);
+        VkResult waitCurrent = vkWaitForFences(vkdev.device, 1, &inFlight[currentFrame], VK_TRUE, UINT64_MAX);
+        if (waitCurrent == VK_ERROR_DEVICE_LOST) {
+            std::cerr << "Device lost while waiting for in-flight fence (frame " << currentFrame << ")." << std::endl;
+            break;
+        }
+        if (waitCurrent != VK_SUCCESS) {
+            std::cerr << "vkWaitForFences failed for in-flight fence (frame " << currentFrame << ") with code " << waitCurrent << "." << std::endl;
+            continue;
+        }
 
-    uint32_t imageIndex;
-    VkResult acq = vkAcquireNextImageKHR(vkdev.device, swap.swapchain, UINT64_MAX,
-                  imageAvailable[currentFrame], VK_NULL_HANDLE, &imageIndex);
+        uint32_t imageIndex;
+        VkResult acq = vkAcquireNextImageKHR(vkdev.device, swap.swapchain, UINT64_MAX,
+                                            imageAvailable[currentFrame], VK_NULL_HANDLE, &imageIndex);
         // Timing
         float currentTime = static_cast<float>(glfwGetTime());
         float dt = currentTime - lastTime; lastTime = currentTime;
@@ -2726,7 +2800,22 @@ int main()
             BeginHephaestusDockspace();
 
             // Draw docked panels first
-            DrawWorldOutliner(scene);
+            WorldOutlinerActions outlinerActions = DrawWorldOutliner(scene);
+            if (outlinerActions.newLevelName) {
+                if (gizmoDragging) {
+                    gizmoDragging = false;
+                    gizmoActiveAxis = -1;
+                    vulkanGizmo.EndDrag();
+                }
+                vulkanGizmo.SetHoveredAxis(-1);
+
+                scene.Clear();
+                scene.ClearSelection();
+                scene.SetName(*outlinerActions.newLevelName);
+
+                assetBrowserStatus = "Created new level '" + scene.GetName() + "'.";
+                std::cout << assetBrowserStatus << std::endl;
+            }
             DrawDetailsPanel(scene);
             AssetBrowserResult browserResult = DrawAssetBrowserPanel(assetBrowserStatus);
             if (browserResult.modelImportRequest) {
@@ -2913,14 +3002,32 @@ int main()
             if (textureLoaded) {
                 createBillboardDescriptors();
             }
+            imagesInFlight.assign(swap.images.size(), VK_NULL_HANDLE);
             continue;
         } else if (acq != VK_SUCCESS && acq != VK_SUBOPTIMAL_KHR) {
             std::cerr << "Failed to acquire swapchain image: " << acq << "\n";
             break;
         }
 
-    // Reset the fence only when we are actually going to submit work for this frame.
-    vkResetFences(vkdev.device, 1, &inFlight[currentFrame]);
+        if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+            VkResult waitImageFence = vkWaitForFences(vkdev.device, 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+            if (waitImageFence == VK_ERROR_DEVICE_LOST) {
+                std::cerr << "Device lost while waiting for swapchain image fence (image index " << imageIndex << ")." << std::endl;
+                break;
+            }
+            if (waitImageFence != VK_SUCCESS) {
+                std::cerr << "vkWaitForFences failed for swapchain image fence (image index " << imageIndex << ") with code " << waitImageFence << "." << std::endl;
+                continue;
+            }
+        }
+
+        // Reset the fence only when we are actually going to submit work for this frame.
+        VkResult resetResult = vkResetFences(vkdev.device, 1, &inFlight[currentFrame]);
+        if (resetResult != VK_SUCCESS) {
+            std::cerr << "Failed to reset in-flight fence (frame " << currentFrame << ") with code " << resetResult << "." << std::endl;
+            continue;
+        }
+        imagesInFlight[imageIndex] = inFlight[currentFrame];
 
         // Update UBO for this image
         {
@@ -3219,6 +3326,7 @@ int main()
             if (textureLoaded) {
                 createBillboardDescriptors();
             }
+            imagesInFlight.assign(swap.images.size(), VK_NULL_HANDLE);
         } else if (pres != VK_SUCCESS) {
             std::cerr << "Present failed: " << pres << "\n";
             break;

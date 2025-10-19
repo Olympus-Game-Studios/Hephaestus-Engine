@@ -13,6 +13,7 @@
         "algorithm": "cpp",
         "cstdlib": "cpp",
         "array": "cpp",
-        "cstring": "cpp"
+        "cstring": "cpp",
+        "iostream": "cpp"
     }
 }
