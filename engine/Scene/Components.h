@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <limits>
+#include <utility>
 
 // ═══════════════════════════════════════════════════════════════
 // CORE COMPONENTS
@@ -114,6 +115,8 @@ struct MeshRendererComponent {
     bool visible = true;
     static constexpr size_t InvalidMesh = std::numeric_limits<size_t>::max();
     size_t meshHandle = InvalidMesh;
+    std::string meshAssetPath;
+    bool meshImported = false;
 
     MeshRendererComponent() 
         : localBounds(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f)) {}
@@ -121,9 +124,11 @@ struct MeshRendererComponent {
     MeshRendererComponent(const AABB& bounds) 
         : localBounds(bounds) {}
 
-    void SetMesh(size_t handle, const AABB& bounds) {
+    void SetMesh(size_t handle, const AABB& bounds, std::string assetPath = {}, bool imported = false) {
         meshHandle = handle;
         localBounds = bounds;
+        meshAssetPath = std::move(assetPath);
+        meshImported = imported;
     }
 
     bool HasValidMesh() const {

@@ -23,6 +23,7 @@ struct MeshData {
 struct MeshGPU {
     std::string name;
     std::filesystem::path sourcePath;
+    std::string sourceKey;
     VulkanBuffer vertexBuffer;
     VulkanBuffer indexBuffer;
     uint32_t vertexCount = 0;
@@ -36,5 +37,7 @@ struct MeshGPU {
         vertexCount = 0;
         indexCount = 0;
         imported = false;
+        sourceKey.clear();
+        sourcePath.clear();
     }
 };

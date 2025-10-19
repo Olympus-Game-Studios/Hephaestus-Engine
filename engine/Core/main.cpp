@@ -2047,6 +2047,57 @@ int main()
 
     std::vector<MeshGPU> meshLibrary;
     meshLibrary.reserve(32);
+    std::unordered_map<std::string, size_t> meshLibraryLookup;
+    meshLibraryLookup.reserve(64);
+
+    auto makeMeshSourceKey = [&](const std::filesystem::path& sourcePath) -> std::string {
+        if (sourcePath.empty()) {
+            return {};
+        }
+        std::string raw = sourcePath.generic_string();
+        if (raw.rfind("builtin://", 0) == 0) {
+            return raw;
+        }
+        std::filesystem::path normalized = sourcePath.lexically_normal();
+        std::filesystem::path projectRoot = ResolveActiveProjectRoot();
+        if (!projectRoot.empty()) {
+            std::filesystem::path relative = normalized.lexically_relative(projectRoot);
+            std::string relStr = relative.generic_string();
+            if (!relative.empty() && relStr.find("..") == std::string::npos && !relStr.empty()) {
+                return relStr;
+            }
+        }
+        return normalized.generic_string();
+    };
+
+    auto resolveMeshSourceKeyToPath = [&](const std::string& key) -> std::filesystem::path {
+        if (key.empty()) {
+            return {};
+        }
+        if (key.rfind("builtin://", 0) == 0) {
+            return std::filesystem::path(key);
+        }
+        namespace fs = std::filesystem;
+        fs::path stored = fs::path(key).lexically_normal();
+        fs::path projectRoot = ResolveActiveProjectRoot();
+        if (!projectRoot.empty()) {
+            fs::path candidate = (projectRoot / stored).lexically_normal();
+            if (fs::exists(candidate)) {
+                return candidate;
+            }
+            fs::path assetsRoot = ResolveActiveAssetsRoot();
+            if (!assetsRoot.empty()) {
+                candidate = (assetsRoot / stored).lexically_normal();
+                if (fs::exists(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+        if (fs::exists(stored)) {
+            return stored;
+        }
+        return stored;
+    };
 
     auto uploadMesh = [&](const std::string& name, const MeshData& data, const std::filesystem::path& sourcePath, bool imported) -> size_t {
         std::cout << "[uploadMesh] Received mesh '" << name << "' (verts=" << data.vertices.size()
@@ -2063,10 +2114,11 @@ int main()
         MeshGPU mesh{};
         mesh.name = name;
         mesh.sourcePath = sourcePath;
+        mesh.sourceKey = makeMeshSourceKey(sourcePath);
         mesh.vertexCount = static_cast<uint32_t>(data.vertices.size());
         mesh.indexCount = static_cast<uint32_t>(data.indices.size());
         mesh.bounds = data.bounds;
-    mesh.imported = imported;
+        mesh.imported = imported;
 
         VkDeviceSize vertexBufferSize = sizeof(Vertex) * data.vertices.size();
         std::cout << "[uploadMesh] Creating vertex buffer (" << vertexBufferSize << " bytes)" << std::endl;
@@ -2105,6 +2157,9 @@ int main()
 
         meshLibrary.push_back(std::move(mesh));
         size_t handle = meshLibrary.size() - 1;
+        if (!meshLibrary[handle].sourceKey.empty()) {
+            meshLibraryLookup[meshLibrary[handle].sourceKey] = handle;
+        }
         std::cout << "[uploadMesh] Mesh '" << name << "' uploaded to handle " << handle << std::endl;
         return handle;
     };
@@ -2172,11 +2227,12 @@ int main()
 
     size_t cubeMeshIndex = MeshRendererComponent::InvalidMesh;
     try {
-    cubeMeshIndex = uploadMesh("Default Cube", cubeMeshData, std::filesystem::path("builtin://cube"), false);
+        cubeMeshIndex = uploadMesh("Default Cube", cubeMeshData, std::filesystem::path("builtin://cube"), false);
     } catch (const std::exception& e) {
         std::cerr << "Failed to upload default cube mesh: " << e.what() << std::endl;
         return -1;
     }
+    const MeshGPU& defaultCubeMesh = meshLibrary[cubeMeshIndex];
 
     // ── Camera + UBO ───────────────────────────
     Camera camera;
@@ -2190,7 +2246,7 @@ int main()
     // Create cube entities with different materials
     Entity cube1 = scene.CreateEntity("Cube 1 (Metal)");
     auto& cube1Renderer = cube1.AddComponent<MeshRendererComponent>();
-    cube1Renderer.SetMesh(cubeMeshIndex, cubeMeshData.bounds);
+    cube1Renderer.SetMesh(cubeMeshIndex, defaultCubeMesh.bounds, defaultCubeMesh.sourceKey, defaultCubeMesh.imported);
     cube1.AddComponent<SelectionComponent>(true); // Start selected
     auto& cube1Mat = cube1.AddComponent<MaterialComponent>(Vec3(0.8f, 0.2f, 0.2f)); // Red
     cube1Mat.metallic = 0.9f;
@@ -2200,7 +2256,7 @@ int main()
     
     Entity cube2 = scene.CreateEntity("Cube 2 (Plastic)");
     auto& cube2Renderer = cube2.AddComponent<MeshRendererComponent>();
-    cube2Renderer.SetMesh(cubeMeshIndex, cubeMeshData.bounds);
+    cube2Renderer.SetMesh(cubeMeshIndex, defaultCubeMesh.bounds, defaultCubeMesh.sourceKey, defaultCubeMesh.imported);
     auto& cube2Mat = cube2.AddComponent<MaterialComponent>(Vec3(0.2f, 0.8f, 0.2f)); // Green
     cube2Mat.metallic = 0.0f;
     cube2Mat.roughness = 0.5f;
@@ -2210,7 +2266,7 @@ int main()
     
     Entity cube3 = scene.CreateEntity("Cube 3 (Rough)");
     auto& cube3Renderer = cube3.AddComponent<MeshRendererComponent>();
-    cube3Renderer.SetMesh(cubeMeshIndex, cubeMeshData.bounds);
+    cube3Renderer.SetMesh(cubeMeshIndex, defaultCubeMesh.bounds, defaultCubeMesh.sourceKey, defaultCubeMesh.imported);
     auto& cube3Mat = cube3.AddComponent<MaterialComponent>(Vec3(0.2f, 0.4f, 0.8f)); // Blue
     cube3Mat.metallic = 0.0f;
     cube3Mat.roughness = 0.9f;
@@ -2221,7 +2277,7 @@ int main()
     // Create a fourth cube with emissive material
     Entity cube4 = scene.CreateEntity("Cube 4 (Emissive)");
     auto& cube4Renderer = cube4.AddComponent<MeshRendererComponent>();
-    cube4Renderer.SetMesh(cubeMeshIndex, cubeMeshData.bounds);
+    cube4Renderer.SetMesh(cubeMeshIndex, defaultCubeMesh.bounds, defaultCubeMesh.sourceKey, defaultCubeMesh.imported);
     auto& cube4Mat = cube4.AddComponent<MaterialComponent>(Vec3(0.8f, 0.8f, 0.2f)); // Yellow
     cube4Mat.metallic = 0.0f;
     cube4Mat.roughness = 0.3f;
@@ -2292,9 +2348,10 @@ int main()
             return {};
         }
 
-        Entity entity = scene.CreateEntity(entityName);
-        auto& renderer = entity.AddComponent<MeshRendererComponent>();
-        renderer.SetMesh(meshIndex, importedMesh.bounds);
+    Entity entity = scene.CreateEntity(entityName);
+    auto& renderer = entity.AddComponent<MeshRendererComponent>();
+    const MeshGPU& importedMeshGPU = meshLibrary[meshIndex];
+        renderer.SetMesh(meshIndex, importedMeshGPU.bounds, importedMeshGPU.sourceKey, importedMeshGPU.imported);
         entity.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
         if (!g_DetailsLocked) {
             scene.SetSelectedEntity(entity);
@@ -2305,6 +2362,107 @@ int main()
             " verts, " + std::to_string(triangleCount) + " tris) from " + modelPath.filename().string();
         std::cout << assetBrowserStatus << std::endl;
         return entity;
+    };
+
+    auto rebuildSceneMeshesFromComponents = [&](Scene& targetScene) {
+        namespace fs = std::filesystem;
+
+        std::vector<MeshGPU> retained;
+        retained.reserve(meshLibrary.size());
+        for (auto& mesh : meshLibrary) {
+            if (!mesh.imported) {
+                retained.push_back(std::move(mesh));
+            } else {
+                mesh.Destroy(vkdev.allocator);
+            }
+        }
+        meshLibrary = std::move(retained);
+        meshLibraryLookup.clear();
+        for (size_t i = 0; i < meshLibrary.size(); ++i) {
+            if (!meshLibrary[i].sourceKey.empty()) {
+                meshLibraryLookup[meshLibrary[i].sourceKey] = i;
+            }
+        }
+
+        auto renderView = targetScene.GetEntitiesWith<MeshRendererComponent>();
+        for (auto entityHandle : renderView) {
+            Entity entity(entityHandle, &targetScene);
+            auto& renderer = entity.GetComponent<MeshRendererComponent>();
+
+            if (renderer.meshAssetPath.empty()) {
+                if (renderer.HasValidMesh() && renderer.meshHandle < meshLibrary.size()) {
+                    const MeshGPU& gpu = meshLibrary[renderer.meshHandle];
+                    renderer.meshAssetPath = gpu.sourceKey;
+                    renderer.meshImported = gpu.imported;
+                    renderer.localBounds = gpu.bounds;
+                } else {
+                    renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+                    continue;
+                }
+            }
+
+            auto lookupIt = meshLibraryLookup.find(renderer.meshAssetPath);
+            if (lookupIt != meshLibraryLookup.end()) {
+                size_t handle = lookupIt->second;
+                const MeshGPU& gpu = meshLibrary[handle];
+                renderer.SetMesh(handle, gpu.bounds, gpu.sourceKey, gpu.imported);
+                continue;
+            }
+
+            if (renderer.meshAssetPath.rfind("builtin://", 0) == 0) {
+                auto builtinIt = meshLibraryLookup.find(renderer.meshAssetPath);
+                if (builtinIt != meshLibraryLookup.end()) {
+                    size_t handle = builtinIt->second;
+                    const MeshGPU& gpu = meshLibrary[handle];
+                    renderer.SetMesh(handle, gpu.bounds, gpu.sourceKey, gpu.imported);
+                } else {
+                    std::string entityName = entity.HasComponent<TagComponent>()
+                        ? entity.GetComponent<TagComponent>().tag
+                        : std::string("Entity");
+                    std::cerr << "Unknown builtin mesh '" << renderer.meshAssetPath
+                              << "' referenced by entity '" << entityName << "'." << std::endl;
+                    renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+                }
+                continue;
+            }
+
+            fs::path absolute = resolveMeshSourceKeyToPath(renderer.meshAssetPath);
+            if (absolute.empty() || !fs::exists(absolute)) {
+                std::string entityName = entity.HasComponent<TagComponent>()
+                    ? entity.GetComponent<TagComponent>().tag
+                    : std::string("Entity");
+                std::cerr << "Scene references missing mesh asset '" << renderer.meshAssetPath
+                          << "' for entity '" << entityName << "'." << std::endl;
+                renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+                continue;
+            }
+
+            MeshData reimported;
+            std::string error;
+            if (!ModelImporter::LoadModel(absolute, reimported, error)) {
+                std::string entityName = entity.HasComponent<TagComponent>()
+                    ? entity.GetComponent<TagComponent>().tag
+                    : absolute.stem().string();
+                std::cerr << "Failed to reload mesh from '" << absolute << "' for entity '"
+                          << entityName << "': " << error << std::endl;
+                renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+                continue;
+            }
+
+            std::string meshName = entity.HasComponent<TagComponent>()
+                ? entity.GetComponent<TagComponent>().tag
+                : absolute.stem().string();
+
+            try {
+                size_t handle = uploadMesh(meshName, reimported, absolute, true);
+                const MeshGPU& gpu = meshLibrary[handle];
+                renderer.SetMesh(handle, gpu.bounds, gpu.sourceKey, gpu.imported);
+            } catch (const std::exception& e) {
+                std::cerr << "Failed to upload mesh '" << absolute << "' during scene reload: "
+                          << e.what() << std::endl;
+                renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+            }
+        }
     };
 
     // ── Billboard System for Light Visualization (Resources) ─────────────────────────
@@ -2812,6 +2970,7 @@ int main()
                 scene.Clear();
                 scene.ClearSelection();
                 scene.SetName(*outlinerActions.newLevelName);
+                rebuildSceneMeshesFromComponents(scene);
 
                 assetBrowserStatus = "Created new level '" + scene.GetName() + "'.";
                 std::cout << assetBrowserStatus << std::endl;
@@ -2830,6 +2989,7 @@ int main()
                         gizmoActiveAxis = -1;
                         vulkanGizmo.EndDrag();
                     }
+                    rebuildSceneMeshesFromComponents(scene);
                     fs::path projectRoot = ResolveActiveProjectRoot();
                     fs::path relativePath = projectRoot.empty()
                         ? browserResult.sceneOpenRequest->filename()

@@ -583,6 +583,14 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             } else {
                 oss << "null,\n";
             }
+            oss << "          \"meshSource\": ";
+            if (!mesh->meshAssetPath.empty()) {
+                oss << "\"" << EscapeString(mesh->meshAssetPath) << "\"";
+            } else {
+                oss << "null";
+            }
+            oss << ",\n";
+            oss << "          \"meshImported\": " << (mesh->meshImported ? "true" : "false") << ",\n";
             oss << "          \"localBounds\": {\n";
             oss << "            \"min\": " << FormatVec3(mesh->localBounds.min) << ",\n";
             oss << "            \"max\": " << FormatVec3(mesh->localBounds.max) << "\n";
@@ -812,6 +820,18 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     }
                 } else {
                     mesh.meshHandle = MeshRendererComponent::InvalidMesh;
+                }
+            }
+            if (const JsonValue* meshSourceValue = meshObj->Find("meshSource")) {
+                if (meshSourceValue->IsString()) {
+                    mesh.meshAssetPath = meshSourceValue->AsString();
+                }
+            }
+            if (const JsonValue* meshImportedValue = meshObj->Find("meshImported")) {
+                if (meshImportedValue->IsBool()) {
+                    mesh.meshImported = meshImportedValue->AsBool();
+                } else if (meshImportedValue->IsNumber()) {
+                    mesh.meshImported = meshImportedValue->AsNumber() != 0.0;
                 }
             }
             if (const JsonValue* boundsObj = meshObj->Find("localBounds")) {
