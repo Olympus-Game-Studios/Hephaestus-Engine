@@ -361,8 +361,8 @@ static void DrawViewportOverlay(ImGuizmo::OPERATION& operation,
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     const ImGuiStyle& s = ImGui::GetStyle();
     // Scale overlay width with global UI scale to fit buttons
-    float baseW = 560.0f * g_UIScale;
-    float minW = 420.0f * g_UIScale;
+    float baseW = 640.0f * g_UIScale;
+    float minW = 480.0f * g_UIScale;
     float margin = s.ItemSpacing.x * 2.0f;
     float overlayWidth = std::clamp(baseW, minW, viewport->Size.x - margin);
     // Compute overlay height based on content: title line + spacing + pill buttons + window padding + cell padding
@@ -394,6 +394,8 @@ static void DrawViewportOverlay(ImGuizmo::OPERATION& operation,
     if (ImGui::Begin("##ViewportOverlay", nullptr, flags)) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(s.ItemSpacing.x * 1.2f, s.ItemSpacing.y));
     if (ImGui::BeginTable("ViewportOverlayLayout", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadInnerX | ImGuiTableFlags_NoPadOuterX)) {
+        ImGui::TableSetupColumn("##OpMode", ImGuiTableColumnFlags_WidthStretch, 0.72f);
+        ImGui::TableSetupColumn("##Grid", ImGuiTableColumnFlags_WidthStretch, 0.28f);
             ImGui::TableNextColumn();
             ImGui::TextUnformatted("PERSPECTIVE");
             ImGui::Spacing();
@@ -427,7 +429,9 @@ static void DrawViewportOverlay(ImGuizmo::OPERATION& operation,
             }
 
             ImGui::TableNextColumn();
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + s.ItemSpacing.y * 0.5f);
+            ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing())); // Match left column vertical offset
+            ImGui::Dummy(ImVec2(s.ItemSpacing.x * 1.6f, 0.0f));
+            ImGui::SameLine();
             if (DrawPillButton("Grid", showGrid)) {
                 showGrid = !showGrid;
             }
@@ -487,8 +491,8 @@ static void BeginHephaestusDockspace()
     ImGui::DockBuilderSetNodeSize(dockspaceID, ImVec2(viewport->Size.x, std::max(0.0f, viewport->Size.y - topOffset)));
 
         ImGuiID dockMain = dockspaceID;
-        ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.22f, nullptr, &dockMain);
-        ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.26f, nullptr, &dockMain);
+    ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.26f, nullptr, &dockMain);
+    ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.49f, nullptr, &dockMain);
         ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.24f, nullptr, &dockMain);
 
         ImGui::DockBuilderDockWindow("World Outliner", dockLeft);
@@ -813,7 +817,9 @@ struct Camera {
         Vec3 up = v3(0.0f, 1.0f, 0.0f);
         UniformBufferObject u{};
         u.view = Mat4::LookAt(position, vadd(position, front), up);
-        float aspect = extent.width / (float)extent.height;
+        uint32_t safeWidth = std::max(extent.width, 1u);
+        uint32_t safeHeight = std::max(extent.height, 1u);
+        float aspect = static_cast<float>(safeWidth) / static_cast<float>(safeHeight);
         u.proj = Mat4::Perspective(60.0f * 3.1415926535f / 180.0f, aspect, 0.1f, 100.0f);
         u.viewPos = position;
         u.padding1 = 0.0f;
@@ -979,10 +985,55 @@ static std::unordered_map<std::string, AssetBrowserIcon> g_AssetBrowserIconRegis
 static bool g_AssetBrowserIconsReady = false;
 static constexpr const char* kDefaultFileIconKey = "file-cpp";
 
+struct AssetExtensionDescriptor {
+    const char* extension;
+    const char* iconKey;
+    const char* badge;
+};
+
+static const AssetExtensionDescriptor kAssetExtensionDescriptors[] = {
+    {".fbx", "file-fbx", "FBX"},
+    {".obj", "file-obj", "OBJ"},
+    {".gltf", "file-obj", "GLTF"},
+    {".glb", "file-obj", "GLB"},
+    {".png", "file-png", "PNG"},
+    {".jpg", "file-jpg", "JPG"},
+    {".jpeg", "file-jpg", "JPEG"},
+    {".tga", "file-png", "TGA"},
+    {".bmp", "file-png", "BMP"},
+    {".svg", "file-svg", "SVG"},
+    {".mp3", "file-audio", "MP3"},
+    {".wav", "file-audio", "WAV"},
+    {".ogg", "file-audio", "OGG"},
+    {".flac", "file-audio", "FLAC"},
+    {".mp4", "file-video", "MP4"},
+    {".mov", "file-video", "MOV"},
+    {".avi", "file-video", "AVI"},
+    {".cpp", "file-cpp", "CPP"},
+    {".cc", "file-cpp", "CC"},
+    {".cxx", "file-cpp", "CXX"},
+    {".c", "file-cpp", "C"},
+    {".h", "file-cpp", "H"},
+    {".hpp", "file-cpp", "HPP"},
+    {".hxx", "file-cpp", "HXX"},
+    {".txt", "file-cpp", "TXT"},
+    {".json", "file-cpp", "JSON"},
+    {".material", "file-cpp", "MAT"},
+    {".prefab", "file-cpp", "PREF"}
+};
+
 static std::string ToLowerCopy(std::string value)
 {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+static std::string ToUpperCopy(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
     });
     return value;
 }
@@ -1004,44 +1055,78 @@ static std::string DetermineAssetIconKey(const std::filesystem::path& path, bool
         return kDefaultFileIconKey;
     }
 
-    static const std::pair<const char*, const char*> kMappings[] = {
-        {".fbx", "file-fbx"},
-        {".obj", "file-obj"},
-        {".gltf", "file-obj"},
-        {".glb", "file-obj"},
-        {".png", "file-png"},
-        {".jpg", "file-jpg"},
-        {".jpeg", "file-jpg"},
-        {".tga", "file-png"},
-        {".bmp", "file-png"},
-        {".svg", "file-svg"},
-        {".mp3", "file-audio"},
-        {".wav", "file-audio"},
-        {".ogg", "file-audio"},
-        {".flac", "file-audio"},
-        {".mp4", "file-video"},
-        {".mov", "file-video"},
-        {".avi", "file-video"},
-        {".cpp", "file-cpp"},
-        {".cc", "file-cpp"},
-        {".cxx", "file-cpp"},
-        {".c", "file-cpp"},
-        {".h", "file-cpp"},
-        {".hpp", "file-cpp"},
-        {".hxx", "file-cpp"},
-        {".txt", "file-cpp"},
-        {".json", "file-cpp"},
-        {".material", "file-cpp"},
-        {".prefab", "file-cpp"}
-    };
-
-    for (const auto& mapping : kMappings) {
-        if (ext == mapping.first) {
-            return mapping.second;
+    for (const auto& descriptor : kAssetExtensionDescriptors) {
+        if (ext == descriptor.extension) {
+            return descriptor.iconKey;
         }
     }
 
     return kDefaultFileIconKey;
+}
+
+static std::string DetermineAssetBadgeText(const std::filesystem::path& path, bool isDirectory)
+{
+    if (isDirectory) {
+        return "DIR";
+    }
+
+    std::string ext = ToLowerCopy(path.extension().string());
+    if (ext.empty()) {
+        return "FILE";
+    }
+
+    for (const auto& descriptor : kAssetExtensionDescriptors) {
+        if (ext == descriptor.extension) {
+            if (descriptor.badge && descriptor.badge[0] != '\0') {
+                return descriptor.badge;
+            }
+            break;
+        }
+    }
+
+    if (!ext.empty() && ext[0] == '.') {
+        ext.erase(ext.begin());
+    }
+
+    std::string badge = ToUpperCopy(ext);
+    if (badge.empty()) {
+        return "FILE";
+    }
+    if (badge.size() > 4) {
+        badge.resize(4);
+    }
+    return badge;
+}
+
+static ImVec4 DetermineAssetBadgeColor(const std::string& iconKey, bool isDirectory)
+{
+    if (isDirectory) {
+        return ImVec4(0.18f, 0.42f, 0.80f, 0.90f);
+    }
+
+    struct BadgeColorMapping {
+        const char* key;
+        ImVec4 color;
+    };
+
+    static const BadgeColorMapping kBadgeColors[] = {
+        {"file-fbx", ImVec4(0.30f, 0.48f, 0.90f, 0.90f)},
+        {"file-obj", ImVec4(0.30f, 0.48f, 0.90f, 0.90f)},
+        {"file-png", ImVec4(0.20f, 0.66f, 0.62f, 0.90f)},
+        {"file-jpg", ImVec4(0.32f, 0.58f, 0.36f, 0.90f)},
+        {"file-svg", ImVec4(0.46f, 0.60f, 0.92f, 0.90f)},
+        {"file-audio", ImVec4(0.57f, 0.38f, 0.78f, 0.90f)},
+        {"file-video", ImVec4(0.86f, 0.54f, 0.28f, 0.90f)},
+        {"file-cpp", ImVec4(0.46f, 0.50f, 0.64f, 0.90f)}
+    };
+
+    for (const auto& mapping : kBadgeColors) {
+        if (iconKey == mapping.key) {
+            return mapping.color;
+        }
+    }
+
+    return ImVec4(0.32f, 0.34f, 0.40f, 0.90f);
 }
 
 static void EnsureAssetBrowserIconsLoaded(VulkanDevice& vkdev)
@@ -1265,7 +1350,14 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
 
     size_t totalEntries = directories.size() + files.size();
 
-    ImGui::BeginChild("AssetBrowserList", ImVec2(0, 0), false);
+    const ImGuiStyle& style = ImGui::GetStyle();
+    float footerReserve = ImGui::GetFrameHeightWithSpacing() * 2.0f;
+    footerReserve += ImGui::GetTextLineHeightWithSpacing() * 3.0f;
+    footerReserve += style.ItemSpacing.y * 4.0f;
+    footerReserve = std::max(footerReserve, 120.0f * g_UIScale);
+
+    // Leave space for footer controls so the import button stays visible.
+    ImGui::BeginChild("AssetBrowserList", ImVec2(0.0f, -footerReserve), false);
 
     if (directories.empty() && files.empty()) {
         ImGui::TextDisabled("Folder is empty");
@@ -1320,27 +1412,26 @@ static std::optional<std::filesystem::path> DrawAssetBrowserPanel(std::string& s
                 }
 
                 std::string iconKey = DetermineAssetIconKey(entry.path, entry.isDirectory);
-                AssetBrowserIcon* icon = FindAssetBrowserIcon(iconKey);
-                float finalIconHeight = iconSize;
-                ImVec2 renderSize(iconSize, iconSize);
+                std::string badgeText = DetermineAssetBadgeText(entry.path, entry.isDirectory);
+                ImVec4 badgeColor = DetermineAssetBadgeColor(iconKey, entry.isDirectory);
+                const float badgeHeight = iconSize;
+                ImVec2 badgeMin(
+                    cellPos.x + cellPadding,
+                    cellPos.y + cellPadding);
+                ImVec2 badgeMax(
+                    cellPos.x + cellSize.x - cellPadding,
+                    badgeMin.y + badgeHeight);
+                badgeMax.y = std::min(badgeMax.y, cellPos.y + cellSize.y - cellPadding - textPaddingY);
+                drawList->AddRectFilled(badgeMin, badgeMax, ImGui::GetColorU32(badgeColor), rounding);
+                drawList->AddRect(badgeMin, badgeMax, ImGui::GetColorU32(ImVec4(0.05f, 0.05f, 0.07f, badgeColor.w)), rounding, 0, 1.0f);
 
-                if (icon && icon->descriptor != VK_NULL_HANDLE && icon->originalSize.x > 0.0f && icon->originalSize.y > 0.0f) {
-                    float scale = std::min(iconSize / icon->originalSize.x, iconSize / icon->originalSize.y);
-                    renderSize = ImVec2(icon->originalSize.x * scale, icon->originalSize.y * scale);
-                    finalIconHeight = renderSize.y;
-                    ImVec2 iconMin(
-                        cellPos.x + (cellSize.x - renderSize.x) * 0.5f,
-                        cellPos.y + cellPadding);
-                    ImVec2 iconMax(iconMin.x + renderSize.x, iconMin.y + renderSize.y);
-                    drawList->AddImage(icon->textureRef, iconMin, iconMax);
-                } else {
-                    ImVec2 iconMin(
-                        cellPos.x + (cellSize.x - renderSize.x) * 0.5f,
-                        cellPos.y + cellPadding);
-                    ImVec2 iconMax(iconMin.x + renderSize.x, iconMin.y + renderSize.y);
-                    drawList->AddRectFilled(iconMin, iconMax, ImGui::GetColorU32(ImVec4(0.15f, 0.18f, 0.22f, 0.80f)), rounding);
-                    finalIconHeight = renderSize.y;
-                }
+                ImVec2 textSize = ImGui::CalcTextSize(badgeText.c_str());
+                ImVec2 textPos(
+                    badgeMin.x + std::max(0.0f, (badgeMax.x - badgeMin.x - textSize.x) * 0.5f),
+                    badgeMin.y + std::max(0.0f, (badgeMax.y - badgeMin.y - textSize.y) * 0.5f));
+                drawList->AddText(textPos, ImGui::GetColorU32(ImVec4(0.95f, 0.97f, 1.0f, 1.0f)), badgeText.c_str());
+
+                float finalIconHeight = badgeMax.y - badgeMin.y;
 
                 ImRect textRect(
                     ImVec2(cellPos.x + cellPadding, cellPos.y + cellPadding + finalIconHeight + textPaddingY),
@@ -2142,12 +2233,11 @@ int main()
         glfwPollEvents();
         ++g_FrameCounter;
 
-        vkWaitForFences(vkdev.device, 1, &inFlight[currentFrame], VK_TRUE, UINT64_MAX);
-        vkResetFences(vkdev.device, 1, &inFlight[currentFrame]);
+    vkWaitForFences(vkdev.device, 1, &inFlight[currentFrame], VK_TRUE, UINT64_MAX);
 
-        uint32_t imageIndex;
-        VkResult acq = vkAcquireNextImageKHR(vkdev.device, swap.swapchain, UINT64_MAX,
-                              imageAvailable[currentFrame], VK_NULL_HANDLE, &imageIndex);
+    uint32_t imageIndex;
+    VkResult acq = vkAcquireNextImageKHR(vkdev.device, swap.swapchain, UINT64_MAX,
+                  imageAvailable[currentFrame], VK_NULL_HANDLE, &imageIndex);
         // Timing
         float currentTime = static_cast<float>(glfwGetTime());
         float dt = currentTime - lastTime; lastTime = currentTime;
@@ -2329,6 +2419,7 @@ int main()
             vkDeviceWaitIdle(vkdev.device);
             swap.Recreate(window);
             createPipeline();
+            vulkanGizmo.Recreate(vkdev.device, swap.renderPass, swap.extent, pipeline.descriptorSetLayout);
             // Only rebuild billboard pipeline/descriptors if the texture actually loaded.
             if (textureLoaded) {
                 createBillboardPipeline();
@@ -2343,6 +2434,9 @@ int main()
             std::cerr << "Failed to acquire swapchain image: " << acq << "\n";
             break;
         }
+
+    // Reset the fence only when we are actually going to submit work for this frame.
+    vkResetFences(vkdev.device, 1, &inFlight[currentFrame]);
 
         // Update UBO for this image
         {
@@ -2631,6 +2725,7 @@ int main()
             vkDeviceWaitIdle(vkdev.device);
             swap.Recreate(window);
             createPipeline();
+            vulkanGizmo.Recreate(vkdev.device, swap.renderPass, swap.extent, pipeline.descriptorSetLayout);
             // Only rebuild billboard pipeline/descriptors if the texture actually loaded.
             if (textureLoaded) {
                 createBillboardPipeline();

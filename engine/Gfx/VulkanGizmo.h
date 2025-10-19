@@ -70,6 +70,10 @@ public:
     // Initialize the gizmo system
     void Init(VkDevice device, VkRenderPass renderPass, VkExtent2D extent, 
               VkDescriptorSetLayout cameraDescriptorLayout, VmaAllocator allocator);
+
+    // Recreate pipeline resources when swapchain/renderpass changes
+    void Recreate(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
+                  VkDescriptorSetLayout cameraDescriptorLayout);
     
     // Cleanup resources
     void Cleanup(VkDevice device, VmaAllocator allocator);

@@ -12,6 +12,7 @@ struct VulkanPipeline {
     VkDescriptorSetLayout descriptorSetLayout{};
     VkPipelineLayout layout{};
     VkPipeline pipeline{};
+    bool ownsDescriptorSetLayout = true;
 
     void Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext);
     void CreateBillboardPipeline(VkDevice dev, VkRenderPass rp, VkExtent2D ext, VkDescriptorSetLayout descLayout);

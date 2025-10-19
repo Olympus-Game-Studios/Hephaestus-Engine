@@ -4,6 +4,10 @@
         "string": "cpp",
         "system_error": "cpp",
         "optional": "cpp",
-        "cstdint": "cpp"
+        "cstdint": "cpp",
+        "cmath": "cpp",
+        "filesystem": "cpp",
+        "unordered_map": "cpp",
+        "cctype": "cpp"
     }
 }

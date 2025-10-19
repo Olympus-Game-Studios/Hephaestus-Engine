@@ -1,0 +1,23 @@
+{
+    "configurations": [
+        {
+            "name": "Windows",
+            "includePath": [
+                "${workspaceFolder}/engine",
+                "${workspaceFolder}/engine/**",
+                "${workspaceFolder}/extern",
+                "${workspaceFolder}/extern/**",
+                "${env:VULKAN_SDK}/Include"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "intelliSenseMode": "windows-msvc-x64",
+            "cStandard": "c17",
+            "cppStandard": "c++20"
+        }
+    ],
+    "version": 4
+}

@@ -53,6 +53,20 @@ void VulkanGizmo::Init(VkDevice device, VkRenderPass renderPass, VkExtent2D exte
     std::cout << "VulkanGizmo initialized" << std::endl;
 }
 
+void VulkanGizmo::Recreate(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
+                           VkDescriptorSetLayout cameraDescriptorLayout) {
+    if (m_Pipeline) {
+        vkDestroyPipeline(device, m_Pipeline, nullptr);
+        m_Pipeline = VK_NULL_HANDLE;
+    }
+    if (m_PipelineLayout) {
+        vkDestroyPipelineLayout(device, m_PipelineLayout, nullptr);
+        m_PipelineLayout = VK_NULL_HANDLE;
+    }
+
+    CreatePipeline(device, renderPass, extent, cameraDescriptorLayout);
+}
+
 void VulkanGizmo::Cleanup(VkDevice device, VmaAllocator allocator) {
     if (m_Pipeline) vkDestroyPipeline(device, m_Pipeline, nullptr);
     if (m_PipelineLayout) vkDestroyPipelineLayout(device, m_PipelineLayout, nullptr);

@@ -46,6 +46,7 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext)
     device = dev;
     renderPass = rp;
     extent = ext;
+    ownsDescriptorSetLayout = true;
 
     // Create descriptor set layout with 3 bindings:
     // - binding 0: UBO (view/proj matrices + camera position)
@@ -227,9 +228,19 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext)
 
 void VulkanPipeline::Cleanup()
 {
-    if (pipeline) vkDestroyPipeline(device, pipeline, nullptr);
-    if (layout) vkDestroyPipelineLayout(device, layout, nullptr);
-    if (descriptorSetLayout) vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+    if (pipeline) {
+        vkDestroyPipeline(device, pipeline, nullptr);
+        pipeline = VK_NULL_HANDLE;
+    }
+    if (layout) {
+        vkDestroyPipelineLayout(device, layout, nullptr);
+        layout = VK_NULL_HANDLE;
+    }
+    if (ownsDescriptorSetLayout && descriptorSetLayout) {
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+    }
+    descriptorSetLayout = VK_NULL_HANDLE;
+    ownsDescriptorSetLayout = true;
 }
 
 void VulkanPipeline::CreateBillboardPipeline(VkDevice dev, VkRenderPass rp, VkExtent2D ext, VkDescriptorSetLayout descLayout)
@@ -238,6 +249,7 @@ void VulkanPipeline::CreateBillboardPipeline(VkDevice dev, VkRenderPass rp, VkEx
     renderPass = rp;
     extent = ext;
     descriptorSetLayout = descLayout;
+    ownsDescriptorSetLayout = false;
 
     // Load billboard shaders
     auto vertCode = readFile("shaders/billboard.vert.spv");
