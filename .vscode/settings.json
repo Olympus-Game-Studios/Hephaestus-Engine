@@ -8,6 +8,10 @@
         "cmath": "cpp",
         "filesystem": "cpp",
         "unordered_map": "cpp",
-        "cctype": "cpp"
+        "cctype": "cpp",
+        "limits": "cpp",
+        "algorithm": "cpp",
+        "cstdlib": "cpp",
+        "array": "cpp"
     }
 }

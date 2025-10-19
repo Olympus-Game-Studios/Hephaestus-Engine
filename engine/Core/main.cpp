@@ -493,7 +493,8 @@ static void BeginHephaestusDockspace()
         ImGuiID dockMain = dockspaceID;
     ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.26f, nullptr, &dockMain);
     ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.49f, nullptr, &dockMain);
-        ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.24f, nullptr, &dockMain);
+    // Allocate a taller strip along the bottom so the asset browser has room for grid previews.
+    ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.36f, nullptr, &dockMain);
 
         ImGui::DockBuilderDockWindow("World Outliner", dockLeft);
         ImGui::DockBuilderDockWindow("Details", dockRight);
@@ -1604,8 +1605,15 @@ int main()
     meshLibrary.reserve(32);
 
     auto uploadMesh = [&](const std::string& name, const MeshData& data, const std::filesystem::path& sourcePath, bool imported) -> size_t {
+        std::cout << "[uploadMesh] Received mesh '" << name << "' (verts=" << data.vertices.size()
+                  << ", indices=" << data.indices.size() << ") from " << sourcePath.string() << std::endl;
         if (data.vertices.empty() || data.indices.empty()) {
             throw std::runtime_error("Mesh has no geometry");
+        }
+
+        if (data.indices.size() % 3 != 0) {
+            std::cerr << "[uploadMesh] Warning: index count not divisible by 3 (count="
+                      << data.indices.size() << ")" << std::endl;
         }
 
         MeshGPU mesh{};
@@ -1617,6 +1625,7 @@ int main()
     mesh.imported = imported;
 
         VkDeviceSize vertexBufferSize = sizeof(Vertex) * data.vertices.size();
+        std::cout << "[uploadMesh] Creating vertex buffer (" << vertexBufferSize << " bytes)" << std::endl;
         mesh.vertexBuffer.Create(
             vkdev.allocator,
             vertexBufferSize,
@@ -1625,12 +1634,16 @@ int main()
         );
 
         void* mapped = nullptr;
-        vmaMapMemory(vkdev.allocator, mesh.vertexBuffer.allocation, &mapped);
+        VkResult mapResult = vmaMapMemory(vkdev.allocator, mesh.vertexBuffer.allocation, &mapped);
+        if (mapResult != VK_SUCCESS || mapped == nullptr) {
+            throw std::runtime_error("vmaMapMemory failed for vertex buffer");
+        }
         std::memcpy(mapped, data.vertices.data(), static_cast<size_t>(vertexBufferSize));
         vmaFlushAllocation(vkdev.allocator, mesh.vertexBuffer.allocation, 0, VK_WHOLE_SIZE);
         vmaUnmapMemory(vkdev.allocator, mesh.vertexBuffer.allocation);
 
         VkDeviceSize indexBufferSize = sizeof(uint32_t) * data.indices.size();
+        std::cout << "[uploadMesh] Creating index buffer (" << indexBufferSize << " bytes)" << std::endl;
         mesh.indexBuffer.Create(
             vkdev.allocator,
             indexBufferSize,
@@ -1638,13 +1651,18 @@ int main()
             VMA_MEMORY_USAGE_CPU_TO_GPU
         );
 
-        vmaMapMemory(vkdev.allocator, mesh.indexBuffer.allocation, &mapped);
+        mapResult = vmaMapMemory(vkdev.allocator, mesh.indexBuffer.allocation, &mapped);
+        if (mapResult != VK_SUCCESS || mapped == nullptr) {
+            throw std::runtime_error("vmaMapMemory failed for index buffer");
+        }
         std::memcpy(mapped, data.indices.data(), static_cast<size_t>(indexBufferSize));
         vmaFlushAllocation(vkdev.allocator, mesh.indexBuffer.allocation, 0, VK_WHOLE_SIZE);
         vmaUnmapMemory(vkdev.allocator, mesh.indexBuffer.allocation);
 
         meshLibrary.push_back(std::move(mesh));
-        return meshLibrary.size() - 1;
+        size_t handle = meshLibrary.size() - 1;
+        std::cout << "[uploadMesh] Mesh '" << name << "' uploaded to handle " << handle << std::endl;
+        return handle;
     };
 
     // ── Vertex Data ───────────────────────────────────
@@ -1801,12 +1819,17 @@ int main()
     };
 
     auto importModelFromFile = [&](const std::filesystem::path& modelPath) -> Entity {
+        std::cout << "[Import] Attempting to load model from " << modelPath.string() << std::endl;
         MeshData importedMesh;
         std::string error;
         if (!ModelImporter::LoadModel(modelPath, importedMesh, error)) {
             assetBrowserStatus = "Import failed: " + error;
+            std::cerr << "[Import] LoadModel failed: " << error << std::endl;
             return {};
         }
+
+        std::cout << "[Import] Mesh data loaded (verts=" << importedMesh.vertices.size()
+                  << ", indices=" << importedMesh.indices.size() << ")" << std::endl;
 
         std::string baseName = modelPath.stem().string();
         if (baseName.empty()) {
@@ -1816,9 +1839,12 @@ int main()
 
         size_t meshIndex = MeshRendererComponent::InvalidMesh;
         try {
+            std::cout << "[Import] Uploading mesh to GPU as '" << entityName << "'" << std::endl;
             meshIndex = uploadMesh(entityName, importedMesh, modelPath, true);
+            std::cout << "[Import] Upload complete. Handle=" << meshIndex << std::endl;
         } catch (const std::exception& e) {
             assetBrowserStatus = std::string("Failed to upload mesh: ") + e.what();
+            std::cerr << "[Import] Upload failed: " << e.what() << std::endl;
             return {};
         }
 

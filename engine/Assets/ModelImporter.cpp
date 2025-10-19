@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <type_traits>
 #include <array>
+#include <iostream>
 
 namespace ModelImporter {
 namespace {
@@ -194,6 +195,8 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
         return false;
     }
 
+    std::cout << "[ModelImporter] Begin loading OBJ: " << path.string() << std::endl;
+
     std::vector<Vec3> positions;
     std::vector<Vec3> normals;
 
@@ -218,6 +221,7 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
             float z = 0.0f;
             if (!(iss >> x >> y >> z)) {
                 errorMessage = "Invalid vertex definition at line " + std::to_string(lineNumber);
+                std::cerr << "[ModelImporter] " << errorMessage << std::endl;
                 return false;
             }
             positions.emplace_back(x, y, z);
@@ -238,6 +242,7 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
             float z = 0.0f;
             if (!(iss >> x >> y >> z)) {
                 errorMessage = "Invalid normal definition at line " + std::to_string(lineNumber);
+                std::cerr << "[ModelImporter] " << errorMessage << std::endl;
                 return false;
             }
             normals.emplace_back(x, y, z);
@@ -255,11 +260,13 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
                 int nRaw = 0;
                 if (!ParseIndexToken(token, vRaw, tRaw, nRaw)) {
                     errorMessage = "Invalid face index at line " + std::to_string(lineNumber);
+                    std::cerr << "[ModelImporter] " << errorMessage << std::endl;
                     return false;
                 }
                 int vResolved = ResolveIndex(vRaw, positions.size());
                 if (vResolved < 0 || static_cast<size_t>(vResolved) >= positions.size()) {
                     errorMessage = "Vertex index out of range at line " + std::to_string(lineNumber);
+                    std::cerr << "[ModelImporter] " << errorMessage << std::endl;
                     return false;
                 }
                 int nResolved = ResolveIndex(nRaw, normals.size());
@@ -269,6 +276,7 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
 
             if (vIndices.size() < 3) {
                 errorMessage = "Face with fewer than 3 vertices at line " + std::to_string(lineNumber);
+                std::cerr << "[ModelImporter] " << errorMessage << std::endl;
                 return false;
             }
 
@@ -316,6 +324,7 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
 
     if (outMesh.vertices.empty() || outMesh.indices.empty()) {
         errorMessage = "OBJ file contains no mesh data";
+        std::cerr << "[ModelImporter] " << errorMessage << std::endl;
         return false;
     }
 
@@ -324,6 +333,9 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
     } else {
         outMesh.bounds = AABB();
     }
+
+    std::cout << "[ModelImporter] OBJ load complete: verts=" << outMesh.vertices.size()
+              << ", indices=" << outMesh.indices.size() << std::endl;
 
     return true;
 }
