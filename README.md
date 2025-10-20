@@ -59,6 +59,19 @@ Optional but useful:
 
 If you don't have `glslangValidator` available on PATH, use the Vulkan SDK's `bin` folder (for example `%VULKAN_SDK%\Bin\glslangValidator.exe`).
 
+## Prerequisites (macOS)
+
+- macOS 12 or newer (Apple Silicon or Intel) with Metal/Vulkan support.
+- Xcode Command Line Tools (`xcode-select --install`).
+- CMake (>= 3.16). Install with Homebrew: `brew install cmake`.
+- Vulkan SDK for macOS (includes MoltenVK). Run the SDK's `setup-env.sh` or export `VULKAN_SDK` so headers and dylibs resolve.
+- glslangValidator (install via `brew install glslang` or use the SDK build).
+- Git (preinstalled with the command line tools).
+
+Optional but useful:
+- Ninja generator (`brew install ninja`) for faster local builds.
+- PowerShell Core (`brew install powershell`) to reuse the existing setup scripts.
+
 ## Quick Start
 
 ### 1. Setup EnTT (First time only)
@@ -71,7 +84,11 @@ Run the setup script to download EnTT:
 
 This downloads EnTT v3.13.2 and extracts it to `extern/entt/`.
 
-### 2. Build (PowerShell)
+On macOS, run the script with PowerShell Core (`pwsh ./setup_entt.ps1`) or manually copy EnTT into `extern/entt/` if you prefer staying in a POSIX shell.
+
+### 2. Build
+
+#### Windows (PowerShell)
 
 The repository uses an out-of-source CMake build. From a PowerShell prompt run:
 
@@ -89,6 +106,26 @@ If you already have a `build/` folder from earlier runs, you can simply run:
 ```powershell
 cmake --build build --config Release
 ```
+
+#### macOS (Terminal)
+
+Choose your preferred generator (Ninja recommended for command-line workflows, Xcode if you want an IDE project):
+
+```bash
+# from repo root
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+If you generate an Xcode project instead, use `cmake -S . -B build -G "Xcode"` and build with `cmake --build build --config Release` or open `build/HephaestusEngine.xcodeproj`.
+
+If you previously configured `build/`, rerun the single-line build command:
+
+```bash
+cmake --build build
+```
+
+> Note: When launching binaries outside the build tree you may need to export `DYLD_LIBRARY_PATH=$VULKAN_SDK/lib` (or source the Vulkan SDK `setup-env.sh`) so MoltenVK is discoverable.
 
 ## Compile shaders
 
