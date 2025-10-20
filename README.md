@@ -158,11 +158,33 @@ Hephaestus-Engine/
 
 ## Documentation
 
+### Markdown Reference
+
+| File | Summary |
+| --- | --- |
+| [`README.md`](README.md) | Project overview, build instructions, controls, and feature tour. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution workflow, coding standards, and pull request checklist. |
+| [`roadmap.md`](roadmap.md) | Long-term roadmap, milestones, and active developer to-do list. |
+| [`Documentation/CUSTOM_COMPONENTS_GUIDE.md`](Documentation/CUSTOM_COMPONENTS_GUIDE.md) | Step-by-step tutorial for extending the ECS with custom components and systems. |
+| [`Documentation/ECS_ARCHITECTURE_DIAGRAM.md`](Documentation/ECS_ARCHITECTURE_DIAGRAM.md) | ASCII architecture diagram showing scene, entity, component, and system relationships. |
+| [`Documentation/ECS_GUIDE.md`](Documentation/ECS_GUIDE.md) | Comprehensive deep dive into the ECS API, scene management, and usage patterns. |
+| [`Documentation/ECS_IMPLEMENTATION_SUMMARY.md`](Documentation/ECS_IMPLEMENTATION_SUMMARY.md) | Summary of files, features, and integration work added during the ECS migration. |
+| [`Documentation/ECS_SUCCESS.md`](Documentation/ECS_SUCCESS.md) | Release-style recap of ECS deliverables, editor features, and setup steps. |
+| [`Documentation/ICON_INTEGRATION.md`](Documentation/ICON_INTEGRATION.md) | Reserved for icon pipeline documentation (currently a placeholder). |
+| [`Documentation/IMGUIZMO_INTEGRATION.md`](Documentation/IMGUIZMO_INTEGRATION.md) | Notes on integrating ImGuizmo with the editor, including math helpers and UI wiring. |
+| [`Documentation/LIGHTING_AND_MATERIALS_GUIDE.md`](Documentation/LIGHTING_AND_MATERIALS_GUIDE.md) | Overview of the PBR material system, light types, and usage examples. |
+| [`Documentation/LIGHTING_ADVANCED_EXAMPLES.md`](Documentation/LIGHTING_ADVANCED_EXAMPLES.md) | Expanded code examples for advanced materials, presets, and lighting scenarios. |
+| [`Documentation/LIGHTING_VISUAL_GUIDE.md`](Documentation/LIGHTING_VISUAL_GUIDE.md) | Visual reference describing demo scene lighting setups and material appearances. |
+| [`Documentation/RAY_PICKING.md`](Documentation/RAY_PICKING.md) | Detailed explanation of the ray picking implementation and input handling. |
+| [`Documentation/RAY_PICKING_REFERENCE.md`](Documentation/RAY_PICKING_REFERENCE.md) | Quick reference for ray picking code changes and helper APIs. |
+
+Third-party dependencies include their own documentation inside `extern/`; refer to those folders when working with vendor libraries.
+
 ### New ECS System Documentation
 
-- **[ECS_GUIDE.md](ECS_GUIDE.md)** - Complete guide to the Entity-Component System
-- **[ECS_IMPLEMENTATION_SUMMARY.md](ECS_IMPLEMENTATION_SUMMARY.md)** - Implementation details and migration guide
-- **[CUSTOM_COMPONENTS_GUIDE.md](CUSTOM_COMPONENTS_GUIDE.md)** - Examples for creating custom components
+- **[ECS_GUIDE.md](Documentation/ECS_GUIDE.md)** - Complete guide to the Entity-Component System
+- **[ECS_IMPLEMENTATION_SUMMARY.md](Documentation/ECS_IMPLEMENTATION_SUMMARY.md)** - Implementation details and migration guide
+- **[CUSTOM_COMPONENTS_GUIDE.md](Documentation/CUSTOM_COMPONENTS_GUIDE.md)** - Examples for creating custom components
 
 ### Usage Examples
 
@@ -238,8 +260,8 @@ See the guides above for complete examples and best practices.
 
 ## Contributing
 
-Contributions welcome! This is a learning project demonstrating modern engine architecture patterns.
-- Small improvements: CONTRIBUTING.md, issue templates, and automated shader checks.
+Contributions welcome! This is a learning project demonstrating modern engine architecture patterns. Review [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup steps, coding guidelines, and the pull request checklist.
+- Small improvements: documentation edits, issue templates, and automated shader checks are great starting points.
 
 ## References
 
