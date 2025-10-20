@@ -591,6 +591,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             }
             oss << ",\n";
             oss << "          \"meshImported\": " << (mesh->meshImported ? "true" : "false") << ",\n";
+            oss << "          \"backfaceCulling\": " << (mesh->backfaceCulling ? "true" : "false") << ",\n";
             oss << "          \"localBounds\": {\n";
             oss << "            \"min\": " << FormatVec3(mesh->localBounds.min) << ",\n";
             oss << "            \"max\": " << FormatVec3(mesh->localBounds.max) << "\n";
@@ -832,6 +833,13 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     mesh.meshImported = meshImportedValue->AsBool();
                 } else if (meshImportedValue->IsNumber()) {
                     mesh.meshImported = meshImportedValue->AsNumber() != 0.0;
+                }
+            }
+            if (const JsonValue* backfaceValue = meshObj->Find("backfaceCulling")) {
+                if (backfaceValue->IsBool()) {
+                    mesh.backfaceCulling = backfaceValue->AsBool();
+                } else if (backfaceValue->IsNumber()) {
+                    mesh.backfaceCulling = backfaceValue->AsNumber() != 0.0;
                 }
             }
             if (const JsonValue* boundsObj = meshObj->Find("localBounds")) {

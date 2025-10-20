@@ -12,11 +12,14 @@ struct VulkanPipeline {
     VkDescriptorSetLayout descriptorSetLayout{};
     VkPipelineLayout layout{};
     VkPipeline pipeline{};
+    VkPipeline pipelineBackface{};
     bool ownsDescriptorSetLayout = true;
 
     void Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext);
     void CreateBillboardPipeline(VkDevice dev, VkRenderPass rp, VkExtent2D ext, VkDescriptorSetLayout descLayout);
     void Cleanup();
+
+    VkPipeline GetPipeline(bool backfaceCullingEnabled) const;
 
 private:
     VkShaderModule createShaderModule(const std::vector<char>& code);

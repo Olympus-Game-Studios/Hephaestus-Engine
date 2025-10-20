@@ -741,6 +741,10 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
         } else {
             ImGui::TextDisabled("Source: None");
         }
+        ImGui::Checkbox("Backface Culling", &renderer.backfaceCulling);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Enable to hide back faces for this mesh. Keep disabled for double-sided geometry.");
+        }
         if (ImGui::Button("Remove Mesh Component")) {
             actions.meshToClear = static_cast<entt::entity>(selectedEntity);
         }
@@ -3576,7 +3580,10 @@ int main()
 
         vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+    VkPipeline boundPipeline = pipeline.GetPipeline(false);
+    if (boundPipeline != VK_NULL_HANDLE) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipeline);
+    }
 
     // Set dynamic viewport/scissor per current extent
     VkViewport viewport{};
@@ -3628,6 +3635,12 @@ int main()
                     materialOverflowLogged = true;
                 }
                 continue;
+            }
+
+            VkPipeline desiredPipeline = pipeline.GetPipeline(renderer.backfaceCulling);
+            if (desiredPipeline != VK_NULL_HANDLE && desiredPipeline != boundPipeline) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
+                boundPipeline = desiredPipeline;
             }
 
             if (mesh.vertexBuffer.buffer != currentVertexBuffer) {

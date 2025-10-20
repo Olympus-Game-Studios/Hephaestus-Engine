@@ -148,16 +148,16 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext)
     viewportState.scissorCount = 1;
     viewportState.pScissors = nullptr; // dynamic
 
-    VkPipelineRasterizationStateCreateInfo raster{};
-    raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    raster.polygonMode = VK_POLYGON_MODE_FILL;
-    raster.cullMode = VK_CULL_MODE_NONE; // Disable culling to avoid winding issues while using custom projection
+    VkPipelineRasterizationStateCreateInfo rasterBase{};
+    rasterBase.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterBase.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterBase.cullMode = VK_CULL_MODE_NONE;
     // In Vulkan, the Y-axis of the clip space is inverted compared to framebuffer space
     // when using a standard viewport (y=0, positive height). This flips the perceived
     // winding of triangles. Use CLOCKWISE here to keep front faces visible with our
     // vertex order.
-    raster.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    raster.lineWidth = 1.0f;
+    rasterBase.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterBase.lineWidth = 1.0f;
 
     VkPipelineMultisampleStateCreateInfo ms{};
     ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -196,20 +196,19 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext)
     if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &layout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create pipeline layout");
 
-    VkGraphicsPipelineCreateInfo pci{};
-    pci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pci.stageCount = 2;
-    pci.pStages = stages;
-    pci.pVertexInputState = &vertexInput;
-    pci.pInputAssemblyState = &inputAsm;
-    pci.pViewportState = &viewportState;
-    pci.pRasterizationState = &raster;
-    pci.pMultisampleState = &ms;
-    pci.pDepthStencilState = &depth;
-    pci.pColorBlendState = &blend;
-    pci.layout = layout;
-    pci.renderPass = renderPass;
-    pci.subpass = 0;
+    VkGraphicsPipelineCreateInfo basePci{};
+    basePci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    basePci.stageCount = 2;
+    basePci.pStages = stages;
+    basePci.pVertexInputState = &vertexInput;
+    basePci.pInputAssemblyState = &inputAsm;
+    basePci.pViewportState = &viewportState;
+    basePci.pMultisampleState = &ms;
+    basePci.pDepthStencilState = &depth;
+    basePci.pColorBlendState = &blend;
+    basePci.layout = layout;
+    basePci.renderPass = renderPass;
+    basePci.subpass = 0;
 
     // Dynamic states: viewport & scissor
     VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -217,10 +216,24 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext)
     dyn.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dyn.dynamicStateCount = 2;
     dyn.pDynamicStates = dynamics;
-    pci.pDynamicState = &dyn;
+    basePci.pDynamicState = &dyn;
 
-    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &pipeline) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create graphics pipeline");
+    auto buildPipeline = [&](VkCullModeFlags cullMode) -> VkPipeline {
+        VkPipelineRasterizationStateCreateInfo raster = rasterBase;
+        raster.cullMode = cullMode;
+
+        VkGraphicsPipelineCreateInfo pipelineCI = basePci;
+        pipelineCI.pRasterizationState = &raster;
+
+        VkPipeline handle = VK_NULL_HANDLE;
+        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &handle) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create graphics pipeline");
+        }
+        return handle;
+    };
+
+    pipeline = buildPipeline(VK_CULL_MODE_NONE);
+    pipelineBackface = buildPipeline(VK_CULL_MODE_BACK_BIT);
 
     vkDestroyShaderModule(device, vertShader, nullptr);
     vkDestroyShaderModule(device, fragShader, nullptr);
@@ -228,6 +241,10 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext)
 
 void VulkanPipeline::Cleanup()
 {
+    if (pipelineBackface) {
+        vkDestroyPipeline(device, pipelineBackface, nullptr);
+        pipelineBackface = VK_NULL_HANDLE;
+    }
     if (pipeline) {
         vkDestroyPipeline(device, pipeline, nullptr);
         pipeline = VK_NULL_HANDLE;
@@ -241,6 +258,14 @@ void VulkanPipeline::Cleanup()
     }
     descriptorSetLayout = VK_NULL_HANDLE;
     ownsDescriptorSetLayout = true;
+}
+
+VkPipeline VulkanPipeline::GetPipeline(bool backfaceCullingEnabled) const
+{
+    if (backfaceCullingEnabled && pipelineBackface != VK_NULL_HANDLE) {
+        return pipelineBackface;
+    }
+    return pipeline;
 }
 
 void VulkanPipeline::CreateBillboardPipeline(VkDevice dev, VkRenderPass rp, VkExtent2D ext, VkDescriptorSetLayout descLayout)

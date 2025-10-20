@@ -113,6 +113,7 @@ struct TransformComponent {
 struct MeshRendererComponent {
     AABB localBounds; // Bounding box in local space
     bool visible = true;
+    bool backfaceCulling = false;
     static constexpr size_t InvalidMesh = std::numeric_limits<size_t>::max();
     size_t meshHandle = InvalidMesh;
     std::string meshAssetPath;
