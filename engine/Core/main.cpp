@@ -13,6 +13,9 @@
 #include <unordered_map>
 #include <cctype>
 #include <array>
+#include <fstream>
+#include <iomanip>
+#include <cstdio>
 
 #include "Math.h"
 
@@ -32,6 +35,7 @@
 #include "imgui_impl_vulkan.h"
 #include "imgui_internal.h"
 #include "ImGuizmo.h"
+#include "imnodes.h"
 
 // Scene Graph / ECS
 #include "../Scene/Scene.h"
@@ -39,6 +43,7 @@
 #include "../Scene/Components.h"
 #include "../Scene/Transform.h"
 #include "../Scene/SceneSerializer.h"
+#include "../UI/MaterialEditor/MaterialEditorPanel.h"
 
 #ifdef _DEBUG
 const bool enableValidationLayers = true;
@@ -245,6 +250,10 @@ static bool g_DetailsLocked = false;
 static bool g_EnableMeshCollision = true;
 static bool g_SimPlaying = false;
 static bool g_SimPaused = false;
+
+static MaterialEditor::Graph g_MaterialGraph;
+static MaterialEditor::Panel* g_MaterialEditorPanel = nullptr;
+static std::filesystem::path g_ActiveMaterialAssetPath;
 
 struct ToolbarActions {
     bool playClicked = false;
@@ -1284,6 +1293,8 @@ static constexpr const char* kDefaultFileIconKey = "file-cpp";
 struct AssetBrowserResult {
     std::optional<std::filesystem::path> modelImportRequest;
     std::optional<std::filesystem::path> sceneOpenRequest;
+    std::optional<std::filesystem::path> materialOpenRequest;
+    std::optional<std::filesystem::path> materialCreateRequest;
 };
 
 struct AssetExtensionDescriptor {
@@ -1320,6 +1331,7 @@ static const AssetExtensionDescriptor kAssetExtensionDescriptors[] = {
     {".txt", "file-cpp", "TXT"},
     {".json", "file-cpp", "JSON"},
     {".material", "file-cpp", "MAT"},
+    {".hematerial", "file-cpp", "HMAT"},
     {".prefab", "file-cpp", "PREF"},
     {".hpscene", "file-cpp", "SCN"}
 };
@@ -1482,6 +1494,12 @@ static bool IsSceneFile(const std::filesystem::path& path)
     return ext == ".hpscene";
 }
 
+static bool IsMaterialFile(const std::filesystem::path& path)
+{
+    std::string ext = ToLowerCopy(path.extension().string());
+    return ext == ".hematerial";
+}
+
 static void EnsureAssetBrowserIconsLoaded(VulkanDevice& vkdev)
 {
     if (g_AssetBrowserIconsReady) {
@@ -1582,6 +1600,28 @@ static void DestroyAssetBrowserIcons(VulkanDevice& vkdev)
     g_AssetBrowserIconsReady = false;
 }
 
+static void ResetMaterialGraph()
+{
+    g_MaterialGraph.Clear();
+    MaterialEditor::Node& output = g_MaterialGraph.CreateNode(MaterialEditor::NodeType::MaterialOutput);
+    if (g_MaterialEditorPanel) {
+        g_MaterialEditorPanel->QueueNodePlacement(output.id, ImVec2(0.0f, 0.0f));
+    }
+}
+
+static void ActivateMaterialAsset(const std::filesystem::path& path, std::string& statusMessage)
+{
+    g_ActiveMaterialAssetPath = path.lexically_normal();
+    if (g_MaterialEditorPanel) {
+        g_MaterialEditorPanel->SetActiveAsset(g_ActiveMaterialAssetPath);
+        g_MaterialEditorPanel->SetOpen(true);
+    }
+    ResetMaterialGraph();
+
+    std::string friendly = g_ActiveMaterialAssetPath.filename().replace_extension().string();
+    statusMessage = "Editing material '" + friendly + "'.";
+}
+
 // ImGui panel that lists files and folders in the asset directory.
 static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
 {
@@ -1592,6 +1632,9 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
     static fs::path assetRoot;
     static fs::path currentPath;
     static fs::path selectedPath;
+    static bool openMaterialPopup = false;
+    static char materialNameBuffer[128] = "NewMaterial";
+    static std::string materialPopupError;
 
     fs::path projectRoot = ResolveActiveProjectRoot();
     if (projectRoot.empty()) {
@@ -1671,6 +1714,81 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
 
     ImGui::Text("Path: %s", relativeDisplay.c_str());
 
+    auto triggerMaterialCreatePopup = [&]() {
+        std::snprintf(materialNameBuffer, sizeof(materialNameBuffer), "NewMaterial");
+        materialPopupError.clear();
+        openMaterialPopup = true;
+    };
+
+    if (ImGui::BeginPopupContextWindow("AssetBrowserContextMenu", ImGuiPopupFlags_MouseButtonRight)) {
+        if (ImGui::MenuItem("New Material...")) {
+            triggerMaterialCreatePopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (openMaterialPopup) {
+        ImGui::OpenPopup("CreateMaterialPopup");
+        openMaterialPopup = false;
+    }
+
+    if (ImGui::BeginPopupModal("CreateMaterialPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Create material asset");
+        ImGui::Separator();
+        ImGui::TextDisabled("Directory: %s", relativeDisplay.c_str());
+        ImGui::InputText("Name", materialNameBuffer, sizeof(materialNameBuffer));
+        if (!materialPopupError.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.93f, 0.36f, 0.31f, 1.0f), "%s", materialPopupError.c_str());
+        }
+
+        ImGui::Spacing();
+
+        if (ImGui::Button("Create")) {
+            std::string trimmed = TrimCopy(materialNameBuffer);
+            if (trimmed.empty()) {
+                materialPopupError = "Please enter a material name.";
+            } else {
+                std::string sanitized = SanitizeSceneFilename(trimmed);
+                if (sanitized.empty()) {
+                    sanitized = "Material";
+                }
+                std::filesystem::path materialPath = currentPath / (sanitized + ".hematerial");
+                if (std::filesystem::exists(materialPath)) {
+                    materialPopupError = "A material with that name already exists.";
+                } else {
+                    std::error_code writeErr;
+                    std::filesystem::create_directories(materialPath.parent_path(), writeErr);
+                    if (writeErr) {
+                        materialPopupError = "Unable to ensure material directory.";
+                    } else {
+                        std::ofstream out(materialPath, std::ios::trunc);
+                        if (!out) {
+                            materialPopupError = "Failed to create material file.";
+                        } else {
+                            out << "{\n";
+                            out << "  \"name\": \"" << sanitized << "\"\n";
+                            out << "}\n";
+                            out.close();
+                            selectedPath = materialPath;
+                            statusMessage = "Created material '" + sanitized + "'.";
+                            result.materialCreateRequest = materialPath;
+                            ImGui::CloseCurrentPopup();
+                            materialPopupError.clear();
+                        }
+                    }
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            materialPopupError.clear();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
     if (currentPath != assetRoot) {
         if (ImGui::Button("Up")) {
             fs::path parent = currentPath.parent_path();
@@ -1737,6 +1855,13 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
 
     // Leave space for footer controls so the import button stays visible.
     ImGui::BeginChild("AssetBrowserList", ImVec2(0.0f, -footerReserve), false);
+
+    if (ImGui::BeginPopupContextWindow("AssetBrowserListContext", ImGuiPopupFlags_MouseButtonRight)) {
+        if (ImGui::MenuItem("New Material...")) {
+            triggerMaterialCreatePopup();
+        }
+        ImGui::EndPopup();
+    }
 
     if (directories.empty() && files.empty()) {
         ImGui::TextDisabled("Folder is empty");
@@ -1839,6 +1964,8 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
                         selectedPath = clamped;
                         if (IsSceneFile(entry.path)) {
                             result.sceneOpenRequest = clamped;
+                        } else if (IsMaterialFile(entry.path)) {
+                            result.materialOpenRequest = clamped;
                         }
                     }
                     statusMessage.clear();
@@ -3045,9 +3172,17 @@ int main()
     ImGui::CreateContext();
     // Ensure ImGuizmo uses the same ImGui context
     ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    ImNodes::CreateContext();
+    ImNodes::SetImGuiContext(ImGui::GetCurrentContext());
+    ImNodes::StyleColorsDark();
+    ImNodes::GetStyle().GridSpacing = 28.0f;
+    if (!g_MaterialEditorPanel) {
+        g_MaterialEditorPanel = new MaterialEditor::Panel();
+    }
+    ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    ImNodes::GetIO().LinkDetachWithModifierClick.Modifier = &io.KeyCtrl;
 
     // Load custom font
     const float baseFontSize = 16.0f;
@@ -3265,6 +3400,30 @@ int main()
             }
             DetailsPanelActions detailsActions = DrawDetailsPanel(scene);
 
+            if (g_MaterialEditorPanel) {
+                if (g_MaterialEditorPanel->HasActiveAsset() && g_MaterialGraph.GetNodes().empty()) {
+                    ResetMaterialGraph();
+                }
+                std::optional<MaterialEditor::PanelResult> panelResult = g_MaterialEditorPanel->Draw(g_MaterialGraph);
+                if (panelResult) {
+                    Entity selected = scene.GetSelectedEntity();
+                    if (selected) {
+                        std::string entityName = selected.HasComponent<TagComponent>()
+                            ? selected.GetComponent<TagComponent>().tag
+                            : std::string("Entity");
+                        if (!selected.HasComponent<MaterialComponent>()) {
+                            selected.AddComponent<MaterialComponent>();
+                        }
+                        selected.GetComponent<MaterialComponent>() = panelResult->material;
+                        assetBrowserStatus = "Applied material '" + panelResult->name + "' to '" + entityName + "'.";
+                        std::cout << assetBrowserStatus << std::endl;
+                    } else {
+                        assetBrowserStatus = "Material '" + panelResult->name + "' not applied: no entity selected.";
+                        std::cerr << assetBrowserStatus << std::endl;
+                    }
+                }
+            }
+
             std::vector<entt::entity> entityDeletionQueue;
             auto enqueueDeletion = [&](const std::optional<entt::entity>& candidate) {
                 if (!candidate || *candidate == entt::null) {
@@ -3362,6 +3521,12 @@ int main()
                     assetBrowserStatus = "Scene load failed: " + loadError;
                     std::cerr << assetBrowserStatus << std::endl;
                 }
+            }
+            if (browserResult.materialCreateRequest) {
+                ActivateMaterialAsset(*browserResult.materialCreateRequest, assetBrowserStatus);
+            }
+            if (browserResult.materialOpenRequest) {
+                ActivateMaterialAsset(*browserResult.materialOpenRequest, assetBrowserStatus);
             }
             DrawLogConsole(io, assetBrowserStatus);
 
@@ -3879,6 +4044,11 @@ int main()
     
     // Cleanup ImGui
     DestroyAssetBrowserIcons(vkdev);
+    if (g_MaterialEditorPanel) {
+        delete g_MaterialEditorPanel;
+        g_MaterialEditorPanel = nullptr;
+    }
+    ImNodes::DestroyContext();
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

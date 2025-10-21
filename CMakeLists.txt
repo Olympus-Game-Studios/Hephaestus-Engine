@@ -19,6 +19,9 @@ add_executable(HephaestusEngine
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
     engine/Scene/SceneSerializer.cpp
+    engine/UI/MaterialEditor/MaterialGraph.cpp
+    engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
+    engine/UI/MaterialEditor/MaterialEditorPanel.cpp
 )
 
 target_include_directories(HephaestusEngine PRIVATE engine)
@@ -60,6 +63,11 @@ target_include_directories(imguizmo PUBLIC
 
 target_link_libraries(imguizmo PUBLIC imgui)
 target_link_libraries(HephaestusEngine PRIVATE imguizmo)
+
+set(IMNODES_IMGUI_TARGET_NAME imgui)
+set(IMNODES_EXAMPLES OFF CACHE BOOL "Disable ImNodes examples" FORCE)
+add_subdirectory(extern/imnodes)
+target_link_libraries(HephaestusEngine PRIVATE imnodes)
 
 
 

@@ -246,6 +246,8 @@ struct MaterialComponent {
     float ao;           // Ambient occlusion (0-1)
     Vec3 emissive;      // Self-illumination color
     float emissiveStrength; // Multiplier for emissive
+    std::string albedoTexturePath;
+    bool useAlbedoTexture = false;
 
     MaterialComponent()
         : albedo(1.0f, 1.0f, 1.0f)
