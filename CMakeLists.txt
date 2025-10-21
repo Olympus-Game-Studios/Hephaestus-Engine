@@ -15,6 +15,7 @@ add_executable(HephaestusEngine
     engine/Gfx/VulkanPipeline.cpp
     engine/Gfx/VulkanTexture.cpp
     engine/Gfx/VulkanGizmo.cpp
+    engine/Physics/MeshCollisionSystem.cpp
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
     engine/Scene/SceneSerializer.cpp

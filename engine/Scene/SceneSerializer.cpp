@@ -455,6 +455,29 @@ static bool ParseVec3(const JsonValue& value, Vec3& out)
     return true;
 }
 
+static bool ParseBoolLike(const JsonValue& value, bool fallback)
+{
+    if (value.IsBool()) {
+        return value.AsBool();
+    }
+    if (value.IsNumber()) {
+        return value.AsNumber() != 0.0;
+    }
+    if (value.IsString()) {
+        std::string text = value.AsString();
+        for (char& ch : text) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        if (text == "true" || text == "1") {
+            return true;
+        }
+        if (text == "false" || text == "0") {
+            return false;
+        }
+    }
+    return fallback;
+}
+
 static LightType ParseLightType(const JsonValue& value, std::string& errorOut)
 {
     if (!value.IsString()) {
@@ -540,8 +563,9 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         entt::entity handle = entities[entityIndex];
 
         const TagComponent* tag = registry.try_get<TagComponent>(handle);
-        const TransformComponent* transform = registry.try_get<TransformComponent>(handle);
-        const MeshRendererComponent* mesh = registry.try_get<MeshRendererComponent>(handle);
+    const TransformComponent* transform = registry.try_get<TransformComponent>(handle);
+    const MeshRendererComponent* mesh = registry.try_get<MeshRendererComponent>(handle);
+    const MeshColliderComponent* collider = registry.try_get<MeshColliderComponent>(handle);
         const MaterialComponent* material = registry.try_get<MaterialComponent>(handle);
         const LightComponent* light = registry.try_get<LightComponent>(handle);
         const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
@@ -558,8 +582,8 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             stream << "null,\n";
         }
 
-        std::vector<std::string> componentBlocks;
-        componentBlocks.reserve(6);
+    std::vector<std::string> componentBlocks;
+    componentBlocks.reserve(8);
 
         if (transform) {
             std::ostringstream oss;
@@ -596,6 +620,18 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "            \"min\": " << FormatVec3(mesh->localBounds.min) << ",\n";
             oss << "            \"max\": " << FormatVec3(mesh->localBounds.max) << "\n";
             oss << "          }\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (collider) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"MeshCollider\": {\n";
+            oss << "          \"enabled\": " << (collider->enabled ? "true" : "false") << ",\n";
+            oss << "          \"isStatic\": " << (collider->isStatic ? "true" : "false") << ",\n";
+            oss << "          \"isTrigger\": " << (collider->isTrigger ? "true" : "false") << ",\n";
+            oss << "          \"debugDraw\": " << (collider->debugDraw ? "true" : "false") << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -851,6 +887,26 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                         ParseVec3(*maxValue, mesh.localBounds.max);
                     }
                 }
+            }
+        }
+
+        if (const JsonValue* colliderObj = components->Find("MeshCollider")) {
+            if (!colliderObj->IsObject()) {
+                outError = "MeshCollider component is not an object.";
+                return false;
+            }
+            auto& collider = entity.AddComponent<MeshColliderComponent>();
+            if (const JsonValue* enabledValue = colliderObj->Find("enabled")) {
+                collider.enabled = ParseBoolLike(*enabledValue, collider.enabled);
+            }
+            if (const JsonValue* staticValue = colliderObj->Find("isStatic")) {
+                collider.isStatic = ParseBoolLike(*staticValue, collider.isStatic);
+            }
+            if (const JsonValue* triggerValue = colliderObj->Find("isTrigger")) {
+                collider.isTrigger = ParseBoolLike(*triggerValue, collider.isTrigger);
+            }
+            if (const JsonValue* debugValue = colliderObj->Find("debugDraw")) {
+                collider.debugDraw = ParseBoolLike(*debugValue, collider.debugDraw);
             }
         }
 

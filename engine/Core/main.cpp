@@ -24,6 +24,7 @@
 #include "../Gfx/VulkanBuffer.h"
 #include "../Gfx/VulkanTexture.h"
 #include "../Gfx/VulkanGizmo.h"
+#include "../Physics/MeshCollisionSystem.h"
 
 // Dear ImGui
 #include "imgui.h"
@@ -241,6 +242,9 @@ static void ApplyHephaestusEditorStyle(ImGuiIO& io, float scale)
 
 static bool g_ShowEditorGizmo = true;
 static bool g_DetailsLocked = false;
+static bool g_EnableMeshCollision = true;
+static bool g_SimPlaying = false;
+static bool g_SimPaused = false;
 
 struct ToolbarActions {
     bool playClicked = false;
@@ -745,6 +749,56 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Enable to hide back faces for this mesh. Keep disabled for double-sided geometry.");
         }
+
+        bool hasCollider = selectedEntity.HasComponent<MeshColliderComponent>();
+        if (!hasCollider && ImGui::Button("Add Mesh Collider")) {
+            selectedEntity.AddComponent<MeshColliderComponent>();
+            hasCollider = true;
+        }
+
+        bool removeCollider = false;
+        if (hasCollider) {
+            auto& collider = selectedEntity.GetComponent<MeshColliderComponent>();
+            ImGui::SeparatorText("Mesh Collider");
+            ImGui::Checkbox("Collision Enabled", &collider.enabled);
+            ImGui::Checkbox("Static Collider", &collider.isStatic);
+            ImGui::Checkbox("Trigger", &collider.isTrigger);
+            ImGui::Checkbox("Debug Draw Bounds", &collider.debugDraw);
+
+            if (collider.contacts.empty()) {
+                ImGui::TextDisabled("Contacts: none this frame.");
+            } else {
+                ImGui::TextDisabled("Contacts: %zu", collider.contacts.size());
+                for (const MeshColliderContact& contact : collider.contacts) {
+                    Entity other(contact.other, &scene);
+                    std::string otherName;
+                    if (other) {
+                        if (other.HasComponent<TagComponent>()) {
+                            otherName = other.GetComponent<TagComponent>().tag;
+                        } else {
+                            otherName = "Entity";
+                        }
+                    } else {
+                        otherName = "Entity (destroyed)";
+                    }
+                    const char* triggerLabel = contact.trigger ? " [trigger]" : "";
+                    ImGui::BulletText("%s | pen %.3f | n(%.2f, %.2f, %.2f)%s",
+                        otherName.c_str(), contact.penetration,
+                        contact.normal.x, contact.normal.y, contact.normal.z,
+                        triggerLabel);
+                }
+            }
+
+            if (ImGui::Button("Remove Mesh Collider")) {
+                removeCollider = true;
+            }
+        }
+
+        if (removeCollider) {
+            selectedEntity.RemoveComponent<MeshColliderComponent>();
+            hasCollider = false;
+        }
+
         if (ImGui::Button("Remove Mesh Component")) {
             actions.meshToClear = static_cast<entt::entity>(selectedEntity);
         }
@@ -848,6 +902,10 @@ static void DrawLogConsole(const ImGuiIO& io, const std::string& statusMessage)
     }
 
     ImGui::Checkbox("Skip Imported Mesh Rendering", &g_DebugSkipImportedMeshes);
+    ImGui::Checkbox("Enable Mesh Collision", &g_EnableMeshCollision);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Toggle runtime mesh collision detection and simple resolution.");
+    }
 
     ImGui::End();
 }
@@ -2395,6 +2453,7 @@ int main()
 
     // ── Scene & Entities (ECS) ───────────────────
     Scene scene("Main Scene");
+    Physics::MeshCollisionSystem collisionSystem;
     
     // Create cube entities with different materials
     Entity cube1 = scene.CreateEntity("Cube 1 (Metal)");
@@ -3126,9 +3185,6 @@ int main()
 
         // ImGui UI
         std::optional<std::filesystem::path> pendingAssetImport;
-        static bool s_Playing = false;
-        static bool s_Paused = false;
-
         if (!g_ProjectSelected) {
             if (gizmoDragging) {
                 gizmoDragging = false;
@@ -3269,6 +3325,9 @@ int main()
                         if (target.HasComponent<MaterialComponent>()) {
                             target.RemoveComponent<MaterialComponent>();
                         }
+                        if (target.HasComponent<MeshColliderComponent>()) {
+                            target.RemoveComponent<MeshColliderComponent>();
+                        }
 
                         assetBrowserStatus = "Removed mesh component from '" + entityName + "'.";
                         std::cout << assetBrowserStatus << std::endl;
@@ -3307,20 +3366,20 @@ int main()
             DrawLogConsole(io, assetBrowserStatus);
 
             // Overlays should be rendered last so they appear above docked windows
-            ToolbarActions toolbarActions = DrawEditorToolbar(s_Playing, s_Paused);
+            ToolbarActions toolbarActions = DrawEditorToolbar(g_SimPlaying, g_SimPaused);
             if (toolbarActions.playClicked) {
-                s_Playing = true;
-                s_Paused = false;
+                g_SimPlaying = true;
+                g_SimPaused = false;
                 assetBrowserStatus = "Play mode toggle (placeholder).";
             }
-            if (toolbarActions.pauseClicked && s_Playing) {
-                s_Paused = !s_Paused;
-                assetBrowserStatus = s_Paused ? "Paused simulation (placeholder)." : "Resumed simulation (placeholder).";
+            if (toolbarActions.pauseClicked && g_SimPlaying) {
+                g_SimPaused = !g_SimPaused;
+                assetBrowserStatus = g_SimPaused ? "Paused simulation (placeholder)." : "Resumed simulation (placeholder).";
             }
             if (toolbarActions.stopClicked) {
-                if (s_Playing || s_Paused) {
-                    s_Playing = false;
-                    s_Paused = false;
+                if (g_SimPlaying || g_SimPaused) {
+                    g_SimPlaying = false;
+                    g_SimPaused = false;
                     assetBrowserStatus = "Stopped play mode (placeholder).";
                 }
             }
@@ -3369,6 +3428,10 @@ int main()
                 std::cerr << "Model import failed for path: " << pendingAssetImport->string() << std::endl;
             }
         }
+
+        bool collisionsShouldRun = g_EnableMeshCollision && g_SimPlaying && !g_SimPaused;
+        collisionSystem.SetEnabled(collisionsShouldRun);
+        collisionSystem.Update(scene, dt);
         
         // ImGuizmo keyboard shortcuts
         if (g_ProjectSelected) {

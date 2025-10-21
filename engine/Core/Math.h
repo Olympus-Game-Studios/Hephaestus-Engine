@@ -308,4 +308,17 @@ struct AABB {
         
         return tMax >= 0.0f;
     }
+
+    Vec3 Center() const {
+        return vscale(vadd(min, max), 0.5f);
+    }
+
+    Vec3 HalfSize() const {
+        return vscale(vsub(max, min), 0.5f);
+    }
+
+    void Translate(const Vec3& delta) {
+        min = vadd(min, delta);
+        max = vadd(max, delta);
+    }
 };

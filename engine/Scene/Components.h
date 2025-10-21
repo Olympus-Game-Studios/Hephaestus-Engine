@@ -1,5 +1,6 @@
 #pragma once
 #include "../Core/Math.h"
+#include <entt/entt.hpp>
 #include <string>
 #include <vector>
 #include <limits>
@@ -170,6 +171,26 @@ struct MeshRendererComponent {
         }
 
         return worldBounds;
+    }
+};
+
+struct MeshColliderContact {
+    entt::entity other{ entt::null };
+    Vec3 point{ 0.0f, 0.0f, 0.0f };
+    Vec3 normal{ 0.0f, 0.0f, 0.0f };
+    float penetration = 0.0f;
+    bool trigger = false;
+};
+
+struct MeshColliderComponent {
+    bool enabled = true;
+    bool isStatic = false;
+    bool isTrigger = false;
+    bool debugDraw = false;
+    std::vector<MeshColliderContact> contacts;
+
+    void ClearContacts() {
+        contacts.clear();
     }
 };
 

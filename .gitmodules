@@ -7,3 +7,6 @@
 [submodule "extern/ImGuizmo"]
 	path = extern/ImGuizmo
 	url = https://github.com/CedricGuillemet/ImGuizmo
+[submodule "extern/imnodes"]
+	path = extern/imnodes
+	url = https://github.com/Nelarius/imnodes.git
