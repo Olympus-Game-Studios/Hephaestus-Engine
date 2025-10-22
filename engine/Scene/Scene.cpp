@@ -213,3 +213,114 @@ void Scene::Clear()
 {
     m_Registry.clear();
 }
+
+// ---------------- Clipboard (single-entity copy/paste with component preservation) ----------------
+namespace {
+struct ClipboardEntityData {
+    std::string name;
+    std::optional<TransformComponent> transform;
+    std::optional<MeshRendererComponent> meshRenderer;
+    std::optional<MaterialComponent> material;
+    std::optional<LightComponent> light;
+    std::optional<MeshColliderComponent> meshCollider;
+    std::optional<CameraComponent> camera;
+};
+}
+
+static std::optional<ClipboardEntityData> s_EntityClipboard;
+
+void Scene::CopyEntityToClipboard(Entity entity)
+{
+    if (!entity) {
+        s_EntityClipboard.reset();
+        return;
+    }
+
+    ClipboardEntityData data;
+    data.name = entity.HasComponent<TagComponent>() ? entity.GetComponent<TagComponent>().tag : "Entity";
+
+    if (entity.HasComponent<TransformComponent>()) {
+        TransformComponent copy = entity.GetComponent<TransformComponent>();
+        copy.parent = entt::null;
+        copy.children.clear();
+        data.transform = copy;
+    }
+
+    if (entity.HasComponent<MeshRendererComponent>()) {
+        data.meshRenderer = entity.GetComponent<MeshRendererComponent>();
+    }
+
+    if (entity.HasComponent<MaterialComponent>()) {
+        data.material = entity.GetComponent<MaterialComponent>();
+    }
+
+    if (entity.HasComponent<LightComponent>()) {
+        data.light = entity.GetComponent<LightComponent>();
+    }
+
+    if (entity.HasComponent<MeshColliderComponent>()) {
+        MeshColliderComponent copy = entity.GetComponent<MeshColliderComponent>();
+        copy.contacts.clear();
+        data.meshCollider = copy;
+    }
+
+    if (entity.HasComponent<CameraComponent>()) {
+        data.camera = entity.GetComponent<CameraComponent>();
+    }
+
+    s_EntityClipboard = data;
+}
+
+bool Scene::HasClipboardEntity() const
+{
+    return s_EntityClipboard.has_value();
+}
+
+Entity Scene::PasteClipboard()
+{
+    if (!s_EntityClipboard.has_value())
+        return {};
+
+    ClipboardEntityData data = *s_EntityClipboard;
+
+    std::string baseName = data.name.empty() ? "Entity" : data.name;
+    std::string candidate = baseName;
+    int suffix = 1;
+    while (FindEntityByName(candidate)) {
+        candidate = baseName + " (" + std::to_string(suffix++) + ")";
+    }
+
+    Entity e = CreateEntity(candidate);
+    if (!e)
+        return {};
+
+    if (data.transform) {
+        auto& t = e.GetComponent<TransformComponent>();
+        t = *data.transform;
+        t.parent = entt::null;
+        t.children.clear();
+    }
+
+    if (data.meshRenderer) {
+        e.AddComponent<MeshRendererComponent>(*data.meshRenderer);
+    }
+
+    if (data.material) {
+        e.AddComponent<MaterialComponent>(*data.material);
+    }
+
+    if (data.light) {
+        e.AddComponent<LightComponent>(*data.light);
+    }
+
+    if (data.meshCollider) {
+        e.AddComponent<MeshColliderComponent>(*data.meshCollider);
+    }
+
+    if (data.camera) {
+        e.AddComponent<CameraComponent>(*data.camera);
+    }
+
+    SetSelectedEntity(e);
+    return e;
+}

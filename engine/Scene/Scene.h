@@ -2,6 +2,7 @@
 #include <entt/entt.hpp>
 #include <string>
 #include <vector>
+#include <optional>
 #include "Entity.h"
 #include "Components.h"
 
@@ -44,6 +45,12 @@ public:
     Entity GetSelectedEntity();
     void SetSelectedEntity(Entity entity);
     void ClearSelection();
+
+    // Simple in-memory clipboard for editor copy/paste (single-entity)
+    // Copies a shallow snapshot of commonly-used components so users can duplicate objects with Ctrl+C / Ctrl+V
+    void CopyEntityToClipboard(Entity entity);
+    bool HasClipboardEntity() const;
+    Entity PasteClipboard();
 
     // Registry access (for advanced usage)
     entt::registry& GetRegistry() { return m_Registry; }

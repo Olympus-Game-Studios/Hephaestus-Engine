@@ -32,9 +32,9 @@ ImGuizmo has been successfully integrated into the Hephaestus Engine, providing 
 ### 4. Properties Window
 - Shows properties of the selected object
 - **Gizmo Mode Selector**:
-  - Translate (T key)
+  - Translate (E key)
   - Rotate (R key)
-  - Scale (S key)
+  - Scale (T key)
   
 - **Coordinate Space**:
   - Local: Gizmo aligned to object's rotation
@@ -63,9 +63,9 @@ ImGuizmo has been successfully integrated into the Hephaestus Engine, providing 
 - Links ImGuizmo with ImGui and the main application
 
 ## Keyboard Shortcuts
-- **T**: Switch to Translate mode
+- **E**: Switch to Translate mode
 - **R**: Switch to Rotate mode
-- **S**: Switch to Scale mode (not Ctrl+S)
+- **T**: Switch to Scale mode
 - **Right Mouse Button + Drag**: Look around (camera)
 - **WASD**: Move camera (when RMB held)
 - **Q/E**: Move camera up/down (when RMB held)
@@ -74,7 +74,7 @@ ImGuizmo has been successfully integrated into the Hephaestus Engine, providing 
 ## How to Use
 
 1. **Select an Object**: Click on an object in the Scene Hierarchy window
-2. **Choose Gizmo Mode**: Use the radio buttons or keyboard shortcuts (T/R/S)
+2. **Choose Gizmo Mode**: Use the radio buttons or keyboard shortcuts (E/R/T)
 3. **Manipulate**: Click and drag the colored gizmo handles in the viewport
    - **Translate**: Drag arrows to move along axes, or squares to move on planes
    - **Rotate**: Drag circles to rotate around axes

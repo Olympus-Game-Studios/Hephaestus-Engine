@@ -3600,9 +3600,26 @@ int main()
         
         // ImGuizmo keyboard shortcuts
         if (g_ProjectSelected) {
-            if (ImGui::IsKeyPressed(ImGuiKey_T)) currentGizmoOperation = ImGuizmo::TRANSLATE;
+            if (ImGui::IsKeyPressed(ImGuiKey_E)) currentGizmoOperation = ImGuizmo::TRANSLATE;
             if (ImGui::IsKeyPressed(ImGuiKey_R)) currentGizmoOperation = ImGuizmo::ROTATE;
-            if (ImGui::IsKeyPressed(ImGuiKey_Y) && !ImGui::GetIO().KeyCtrl) currentGizmoOperation = ImGuizmo::SCALE;
+            if (ImGui::IsKeyPressed(ImGuiKey_T) && !ImGui::GetIO().KeyCtrl) currentGizmoOperation = ImGuizmo::SCALE;
+            
+            // Editor copy/paste: Ctrl+C, Ctrl+V (single-entity clipboard)
+            ImGuiIO& io = ImGui::GetIO();
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) && !io.WantTextInput) {
+                Entity selected = scene.GetSelectedEntity();
+                if (selected) {
+                    scene.CopyEntityToClipboard(selected);
+                    // optional: feedback can be added later
+                }
+            }
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) && !io.WantTextInput) {
+                // Paste and select
+                Entity pasted = scene.PasteClipboard();
+                if (pasted) {
+                    // Optionally, you could move pasted object slightly to indicate duplication.
+                }
+            }
         }
         
         // Build view/proj for ImGuizmo and gizmo interactions
