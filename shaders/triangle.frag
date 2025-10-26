@@ -1,4 +1,6 @@
 #version 450
+
+#define MAX_TEXTURE_SLOTS 128
 layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec3 fragColor;
@@ -22,8 +24,10 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     float ao;
     float emissiveStrength;
     uint useAlbedoTexture;
-    float padding3;
+    uint albedoTextureIndex;
 } material;
+
+layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOTS];
 
 // Lighting data
 layout(std140, set = 0, binding = 2) uniform LightingUBO {
@@ -109,12 +113,11 @@ void main() {
     // Material properties
     vec3 albedo = material.albedo * fragColor;
     
-    // Note: Texture sampling will be added in a future update
-    // For now, useAlbedoTexture flag is stored for future use
-    // if (material.useAlbedoTexture != 0u) {
-    //     vec4 texColor = texture(albedoTextureSampler, fragTexCoord);
-    //     albedo = texColor.rgb * fragColor;
-    // }
+    if (material.useAlbedoTexture != 0u) {
+        uint index = material.albedoTextureIndex % MAX_TEXTURE_SLOTS;
+        vec4 texColor = texture(materialTextures[index], fragTexCoord);
+        albedo = texColor.rgb * fragColor;
+    }
     
     float metallic = material.metallic;
     float roughness = max(material.roughness, 0.04); // Prevent division by zero

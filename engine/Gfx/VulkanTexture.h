@@ -28,6 +28,15 @@ public:
         const std::string& filepath,
         bool generateMipmaps = false);
 
+    // Create 1x1 solid color texture
+    bool CreateSolidColor(
+        VmaAllocator allocator,
+        VkDevice device,
+        VkPhysicalDevice physicalDevice,
+        VkCommandPool commandPool,
+        VkQueue graphicsQueue,
+        uint32_t rgba);
+
     // Create empty texture
     bool Create(
         VmaAllocator allocator,

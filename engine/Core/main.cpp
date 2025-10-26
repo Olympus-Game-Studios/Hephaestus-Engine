@@ -44,6 +44,7 @@
 #include "../Scene/Transform.h"
 #include "../Scene/SceneSerializer.h"
 #include "../UI/MaterialEditor/MaterialEditorPanel.h"
+#include "../UI/MaterialEditor/TextureDiscovery.h"
 
 #ifdef _DEBUG
 const bool enableValidationLayers = true;
@@ -281,6 +282,8 @@ struct DetailsPanelActions {
 };
 
 static std::string TrimCopy(const std::string& value);
+
+static std::filesystem::path ResolveEngineRoot();
 
 static bool DrawPillButton(const char* label, bool active, const ImVec2& size = ImVec2(0.0f, 0.0f))
 {
@@ -825,6 +828,60 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
         ImGui::SliderFloat("AO", &material.ao, 0.0f, 1.0f);
         ImGui::ColorEdit3("Emissive", &material.emissive.x);
         ImGui::SliderFloat("Emissive Strength", &material.emissiveStrength, 0.0f, 10.0f);
+
+        // Texture selection UI
+        ImGui::Checkbox("Use Texture", &material.useAlbedoTexture);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Enable albedo texture sampling. Requires UVs on the mesh.");
+        }
+
+        if (material.useAlbedoTexture) {
+            // Texture dropdown
+            static std::vector<std::string> discoveredTextures;
+            static bool texturesRefreshed = false;
+
+            if (!texturesRefreshed) {
+                discoveredTextures.clear();
+                discoveredTextures = MaterialEditor::DiscoverProjectTextures(ResolveEngineRoot());
+                texturesRefreshed = true;
+            }
+
+            int currentSelection = -1;
+            for (size_t i = 0; i < discoveredTextures.size(); ++i) {
+                if (discoveredTextures[i] == material.albedoTexturePath) {
+                    currentSelection = static_cast<int>(i);
+                    break;
+                }
+            }
+
+            std::vector<const char*> textureNames;
+            textureNames.reserve(discoveredTextures.size() + 1);
+            textureNames.push_back("(None)");
+            for (const auto& tex : discoveredTextures) {
+                textureNames.push_back(tex.c_str());
+            }
+
+            const char* preview = (currentSelection >= 0) ? discoveredTextures[currentSelection].c_str() : "(None)";
+            if (ImGui::Combo("Albedo Texture##Mat", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
+                if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(discoveredTextures.size())) {
+                    material.albedoTexturePath = discoveredTextures[currentSelection - 1];
+                } else {
+                    material.albedoTexturePath.clear();
+                }
+            }
+
+            // Manual input fallback
+            static char textureBuffer[256] = { 0 };
+            if (preview != nullptr) {
+                std::strncpy(textureBuffer, preview, sizeof(textureBuffer) - 1);
+                textureBuffer[sizeof(textureBuffer) - 1] = '\0';
+            }
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::InputText("##TextureManual", textureBuffer, sizeof(textureBuffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                material.albedoTexturePath = textureBuffer;
+            }
+            ImGui::TextDisabled("Found %zu textures", discoveredTextures.size());
+        }
     }
 
     if (selectedEntity.HasComponent<LightComponent>()) {
@@ -941,8 +998,21 @@ struct MaterialUBO {
     float ao;
     float emissiveStrength;
     uint32_t useAlbedoTexture;  // 0 or 1
-    float padding3;
+    uint32_t albedoTextureIndex; // Index into global texture array
 };
+
+static constexpr uint32_t kMaxMaterialTextureSlots = 128;
+
+struct MaterialTextureSlot {
+    VulkanTexture texture;
+    VkDescriptorImageInfo descriptor{};
+    std::string key;
+    bool valid = false;
+};
+
+static std::vector<MaterialTextureSlot> g_MaterialTextureSlots;
+static std::unordered_map<std::string, uint32_t> g_MaterialTextureLookup;
+static uint32_t g_DefaultMaterialTextureSlot = 0;
 
 struct LightingUBO {
     // Directional light
@@ -1240,6 +1310,24 @@ static std::filesystem::path ResolveProjectsRoot()
     }
 
     return g_ProjectsRoot;
+}
+
+static bool CreateSolidColorTexture(MaterialTextureSlot& slot, VulkanDevice& vkdev, uint32_t rgba)
+{
+    if (!slot.texture.CreateSolidColor(vkdev.allocator,
+                                       vkdev.device,
+                                       vkdev.physicalDevice,
+                                       vkdev.commandPool,
+                                       vkdev.graphicsQueue,
+                                       rgba)) {
+        return false;
+    }
+
+    slot.descriptor.sampler = slot.texture.sampler;
+    slot.descriptor.imageView = slot.texture.imageView;
+    slot.descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    slot.valid = true;
+    return true;
 }
 
 static void SetActiveProjectRoot(const std::filesystem::path& projectPath)
@@ -2920,16 +3008,16 @@ int main()
                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         }
 
-        // Create descriptor pool: binding 0 and 2 are UNIFORM_BUFFER; binding 1 is UNIFORM_BUFFER_DYNAMIC
-        VkDescriptorPoolSize poolSizes[2] = {};
-        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSizes[0].descriptorCount = static_cast<uint32_t>(imageCount * 2); // camera + lighting per set
-        poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-        poolSizes[1].descriptorCount = static_cast<uint32_t>(imageCount * 1); // material per set
+        // Create descriptor pool: camera, material UBO, lighting UBO, and texture samplers
+        std::vector<VkDescriptorPoolSize> poolSizes = {
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount * 2)}, // camera + lighting per set
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, static_cast<uint32_t>(imageCount * 1)}, // material per set
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount * kMaxMaterialTextureSlots)}
+        };
 
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        poolInfo.poolSizeCount = 2;
-        poolInfo.pPoolSizes = poolSizes;
+        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+        poolInfo.pPoolSizes = poolSizes.data();
         poolInfo.maxSets = static_cast<uint32_t>(imageCount);
         if (vkCreateDescriptorPool(vkdev.device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS)
             throw std::runtime_error("Failed to create descriptor pool");
@@ -2943,7 +3031,20 @@ int main()
         if (vkAllocateDescriptorSets(vkdev.device, &allocInfo, descriptorSets.data()) != VK_SUCCESS)
             throw std::runtime_error("Failed to allocate descriptor sets");
 
-        // Update descriptor sets with all three buffers
+        // Ensure default texture slot exists
+        if (g_MaterialTextureSlots.empty()) {
+            g_MaterialTextureSlots.emplace_back();
+            auto& defaultSlot = g_MaterialTextureSlots.back();
+            if (!CreateSolidColorTexture(defaultSlot, vkdev, 0xFFFFFFFFu)) {
+                throw std::runtime_error("Failed to create default material texture");
+            }
+            defaultSlot.key = "__default";
+            g_MaterialTextureLookup.clear();
+            g_MaterialTextureLookup.emplace(defaultSlot.key, 0);
+            g_DefaultMaterialTextureSlot = 0;
+        }
+
+        // Update descriptor sets with buffers and texture array
         for (size_t i = 0; i < imageCount; ++i) {
             VkDescriptorBufferInfo bufInfos[3] = {};
             
@@ -2962,7 +3063,15 @@ int main()
             bufInfos[2].offset = 0;
             bufInfos[2].range = lightingUboSize;
 
-            VkWriteDescriptorSet writes[3] = {};
+            std::vector<VkDescriptorImageInfo> imageInfos(kMaxMaterialTextureSlots,
+                g_MaterialTextureSlots[g_DefaultMaterialTextureSlot].descriptor);
+            for (size_t slot = 0; slot < std::min(g_MaterialTextureSlots.size(), static_cast<size_t>(kMaxMaterialTextureSlots)); ++slot) {
+                if (g_MaterialTextureSlots[slot].valid) {
+                    imageInfos[slot] = g_MaterialTextureSlots[slot].descriptor;
+                }
+            }
+
+            VkWriteDescriptorSet writes[4] = {};
             // Binding 0
             writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[0].dstSet = descriptorSets[i];
@@ -2987,9 +3096,104 @@ int main()
             writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             writes[2].descriptorCount = 1;
             writes[2].pBufferInfo = &bufInfos[2];
+
+            // Binding 3: texture sampler array
+            writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[3].dstSet = descriptorSets[i];
+            writes[3].dstBinding = 3;
+            writes[3].dstArrayElement = 0;
+            writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[3].descriptorCount = kMaxMaterialTextureSlots;
+            writes[3].pImageInfo = imageInfos.data();
             
-            vkUpdateDescriptorSets(vkdev.device, 3, writes, 0, nullptr);
+            vkUpdateDescriptorSets(vkdev.device, 4, writes, 0, nullptr);
         }
+    };
+
+    auto updateTextureSlotInDescriptors = [&](uint32_t slotIndex) {
+        if (slotIndex >= kMaxMaterialTextureSlots) {
+            return;
+        }
+        if (slotIndex >= g_MaterialTextureSlots.size()) {
+            return;
+        }
+        auto& slot = g_MaterialTextureSlots[slotIndex];
+        if (!slot.valid) {
+            return;
+        }
+        for (size_t i = 0; i < descriptorSets.size(); ++i) {
+            VkWriteDescriptorSet write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = descriptorSets[i];
+            write.dstBinding = 3;
+            write.dstArrayElement = slotIndex;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.descriptorCount = 1;
+            write.pImageInfo = &slot.descriptor;
+            vkUpdateDescriptorSets(vkdev.device, 1, &write, 0, nullptr);
+        }
+    };
+
+    auto ensureMaterialTextureSlot = [&](const std::string& rawPath) -> uint32_t {
+        if (rawPath.empty()) {
+            return g_DefaultMaterialTextureSlot;
+        }
+
+        std::filesystem::path relPath = std::filesystem::path(rawPath).lexically_normal();
+        std::string key = relPath.generic_string();
+
+        auto existingIt = g_MaterialTextureLookup.find(key);
+        if (existingIt != g_MaterialTextureLookup.end()) {
+            return existingIt->second;
+        }
+
+        if (g_MaterialTextureSlots.size() >= kMaxMaterialTextureSlots) {
+            std::cerr << "Material texture cache is full (" << kMaxMaterialTextureSlots
+                      << "). Using default texture." << std::endl;
+            return g_DefaultMaterialTextureSlot;
+        }
+
+        std::filesystem::path absolutePath = relPath;
+        if (!absolutePath.is_absolute()) {
+            absolutePath = ResolveEngineRoot() / absolutePath;
+        }
+        absolutePath = absolutePath.lexically_normal();
+
+        if (!std::filesystem::exists(absolutePath)) {
+            std::cerr << "Material texture not found: " << absolutePath << std::endl;
+            return g_DefaultMaterialTextureSlot;
+        }
+
+        MaterialTextureSlot newSlot;
+        try {
+            if (!newSlot.texture.LoadFromFile(
+                    vkdev.allocator,
+                    vkdev.device,
+                    vkdev.physicalDevice,
+                    vkdev.commandPool,
+                    vkdev.graphicsQueue,
+                    absolutePath.string())) {
+                std::cerr << "Failed to load material texture: " << absolutePath << std::endl;
+                return g_DefaultMaterialTextureSlot;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Exception while loading material texture '" << absolutePath
+                      << "': " << e.what() << std::endl;
+            return g_DefaultMaterialTextureSlot;
+        }
+
+        newSlot.descriptor.sampler = newSlot.texture.sampler;
+        newSlot.descriptor.imageView = newSlot.texture.imageView;
+        newSlot.descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        newSlot.key = key;
+        newSlot.valid = true;
+
+        uint32_t slotIndex = static_cast<uint32_t>(g_MaterialTextureSlots.size());
+        g_MaterialTextureSlots.push_back(std::move(newSlot));
+        g_MaterialTextureLookup.emplace(key, slotIndex);
+        updateTextureSlotInDescriptors(slotIndex);
+
+        return slotIndex;
     };
     
     // ── Billboard Lambda Definitions (after uniformBuffers) ───────────────
@@ -3910,7 +4114,19 @@ int main()
                 matUBO.ao = mat.ao;
                 matUBO.emissive = mat.emissive;
                 matUBO.emissiveStrength = mat.emissiveStrength;
-                matUBO.useAlbedoTexture = mat.useAlbedoTexture ? 1u : 0u;
+                uint32_t textureSlot = g_DefaultMaterialTextureSlot;
+                if (mat.useAlbedoTexture && !mat.albedoTexturePath.empty()) {
+                    uint32_t slot = ensureMaterialTextureSlot(mat.albedoTexturePath);
+                    if (slot != g_DefaultMaterialTextureSlot) {
+                        textureSlot = slot;
+                        matUBO.useAlbedoTexture = 1u;
+                    } else {
+                        matUBO.useAlbedoTexture = 0u;
+                    }
+                } else {
+                    matUBO.useAlbedoTexture = 0u;
+                }
+                matUBO.albedoTextureIndex = textureSlot;
             } else {
                 // Default white material
                 matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);
@@ -3920,6 +4136,7 @@ int main()
                 matUBO.emissive = Vec3(0.0f, 0.0f, 0.0f);
                 matUBO.emissiveStrength = 0.0f;
                 matUBO.useAlbedoTexture = 0u;
+                matUBO.albedoTextureIndex = g_DefaultMaterialTextureSlot;
             }
             
             // Write into this object's slot in the dynamic material buffer
@@ -4078,6 +4295,15 @@ int main()
         mesh.Destroy(vkdev.allocator);
     }
     destroyDescriptors();
+
+    // Cleanup material texture slots
+    for (auto& slot : g_MaterialTextureSlots) {
+        if (slot.valid) {
+            slot.texture.Destroy(vkdev.allocator, vkdev.device);
+        }
+    }
+    g_MaterialTextureSlots.clear();
+    g_MaterialTextureLookup.clear();
     
     // Cleanup billboard resources
     billboardPipeline.Cleanup();

@@ -17,6 +17,8 @@
         "iostream": "cpp",
         "cstdio": "cpp",
         "sstream": "cpp",
-        "type_traits": "cpp"
+        "type_traits": "cpp",
+        "fstream": "cpp",
+        "iterator": "cpp"
     }
 }

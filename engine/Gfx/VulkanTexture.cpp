@@ -144,6 +144,92 @@ bool VulkanTexture::LoadFromFile(
     return true;
 }
 
+bool VulkanTexture::CreateSolidColor(
+    VmaAllocator allocator,
+    VkDevice device,
+    VkPhysicalDevice physicalDevice,
+    VkCommandPool commandPool,
+    VkQueue graphicsQueue,
+    uint32_t rgba)
+{
+    Destroy(allocator, device);
+
+    width = 1;
+    height = 1;
+    mipLevels = 1;
+
+    VulkanBuffer staging;
+    try {
+        staging.Create(
+            allocator,
+            sizeof(uint32_t),
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VMA_MEMORY_USAGE_CPU_ONLY,
+            &rgba);
+    } catch (...) {
+        return false;
+    }
+
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = 1;
+    imageInfo.extent.height = 1;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+
+    if (vmaCreateImage(allocator, &imageInfo, &allocInfo, &image, &allocation, nullptr) != VK_SUCCESS) {
+        staging.Destroy(allocator);
+        return false;
+    }
+
+    TransitionImageLayout(
+        device,
+        commandPool,
+        graphicsQueue,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+    CopyBufferToImage(
+        device,
+        commandPool,
+        graphicsQueue,
+        staging.buffer,
+        1,
+        1);
+
+    staging.Destroy(allocator);
+
+    TransitionImageLayout(
+        device,
+        commandPool,
+        graphicsQueue,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    if (!CreateImageView(device, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT)) {
+        Destroy(allocator, device);
+        return false;
+    }
+
+    if (!CreateSampler(device, physicalDevice)) {
+        Destroy(allocator, device);
+        return false;
+    }
+
+    return true;
+}
+
 bool VulkanTexture::CreateImageView(VkDevice device, VkFormat format, VkImageAspectFlags aspectFlags)
 {
     VkImageViewCreateInfo viewInfo{};
