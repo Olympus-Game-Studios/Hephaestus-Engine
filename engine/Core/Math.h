@@ -2,6 +2,13 @@
 #include <cmath>
 #include <cstring>
 
+// Simple 2D vector
+struct Vec2 {
+    float x, y;
+    Vec2() : x(0), y(0) {}
+    Vec2(float x, float y) : x(x), y(y) {}
+};
+
 // Simple 3D vector
 struct Vec3 { 
     float x, y, z; 

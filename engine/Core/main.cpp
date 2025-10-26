@@ -940,7 +940,7 @@ struct MaterialUBO {
     float roughness;
     float ao;
     float emissiveStrength;
-    float padding2;
+    uint32_t useAlbedoTexture;  // 0 or 1
     float padding3;
 };
 
@@ -3910,6 +3910,7 @@ int main()
                 matUBO.ao = mat.ao;
                 matUBO.emissive = mat.emissive;
                 matUBO.emissiveStrength = mat.emissiveStrength;
+                matUBO.useAlbedoTexture = mat.useAlbedoTexture ? 1u : 0u;
             } else {
                 // Default white material
                 matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);
@@ -3918,6 +3919,7 @@ int main()
                 matUBO.ao = 1.0f;
                 matUBO.emissive = Vec3(0.0f, 0.0f, 0.0f);
                 matUBO.emissiveStrength = 0.0f;
+                matUBO.useAlbedoTexture = 0u;
             }
             
             // Write into this object's slot in the dynamic material buffer

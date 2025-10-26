@@ -2,6 +2,7 @@
 layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec3 fragColor;
+layout(location = 3) in vec2 fragTexCoord;
 
 layout(location = 0) out vec4 outColor;
 
@@ -20,7 +21,7 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     float roughness;
     float ao;
     float emissiveStrength;
-    float padding2;
+    uint useAlbedoTexture;
     float padding3;
 } material;
 
@@ -107,6 +108,14 @@ void main() {
     
     // Material properties
     vec3 albedo = material.albedo * fragColor;
+    
+    // Note: Texture sampling will be added in a future update
+    // For now, useAlbedoTexture flag is stored for future use
+    // if (material.useAlbedoTexture != 0u) {
+    //     vec4 texColor = texture(albedoTextureSampler, fragTexCoord);
+    //     albedo = texColor.rgb * fragColor;
+    // }
+    
     float metallic = material.metallic;
     float roughness = max(material.roughness, 0.04); // Prevent division by zero
     float ao = material.ao;

@@ -74,6 +74,14 @@ bool SaveMaterialAssetFile(const std::filesystem::path& path,
 
 } // namespace
 
+void Panel::RefreshTextureCache() {
+    if (m_ProjectRoot.empty()) {
+        m_DiscoveredTextures.clear();
+        return;
+    }
+    m_DiscoveredTextures = DiscoverProjectTextures(m_ProjectRoot);
+}
+
 Panel::Panel() {
     EnsureContext();
 }
@@ -377,8 +385,52 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
             break;
         }
         case NodeType::TextureParameter: {
-            InputText("Texture Path", node->resourcePath);
-            ImGui::TextDisabled("Drag & drop texture paths once asset browser integration lands.");
+            // Create texture dropdown
+            int currentSelection = -1;
+            for (size_t i = 0; i < m_DiscoveredTextures.size(); ++i) {
+                if (m_DiscoveredTextures[i] == node->resourcePath) {
+                    currentSelection = static_cast<int>(i);
+                    break;
+                }
+            }
+
+            std::vector<const char*> textureNames;
+            textureNames.reserve(m_DiscoveredTextures.size() + 1);
+            textureNames.push_back("(None)");
+            for (const auto& tex : m_DiscoveredTextures) {
+                textureNames.push_back(tex.c_str());
+            }
+
+            const char* preview = (currentSelection >= 0) ? m_DiscoveredTextures[currentSelection].c_str() : "(None)";
+            if (ImGui::Combo("##TextureSelection", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
+                if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(m_DiscoveredTextures.size())) {
+                    node->resourcePath = m_DiscoveredTextures[currentSelection - 1];
+                } else {
+                    node->resourcePath.clear();
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted("Texture");
+            
+            // Also allow manual input as fallback
+            static char textureBuffer[256];
+            if (preview != nullptr) {
+                std::strncpy(textureBuffer, preview, sizeof(textureBuffer) - 1);
+                textureBuffer[sizeof(textureBuffer) - 1] = '\0';
+            }
+            
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::InputText("##TextureManual", textureBuffer, sizeof(textureBuffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                node->resourcePath = textureBuffer;
+            }
+            ImGui::TextDisabled("Found %zu textures in project", m_DiscoveredTextures.size());
+            
+            if (!node->resourcePath.empty()) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.7f, 1.0f, 0.7f, 1.0f), "Selected: %s", node->resourcePath.c_str());
+                ImGui::TextDisabled("Note: Texture rendering requires UV coordinates.");
+                ImGui::TextDisabled("Ensure your models have UVs mapped.");
+            }
             break;
         }
         case NodeType::TextureSample:
@@ -422,6 +474,22 @@ void Panel::SetActiveAsset(const std::filesystem::path& path) {
     if (m_CurrentMaterialName.empty()) {
         m_CurrentMaterialName = "Material";
     }
+    
+    // Set project root if not already set (look for engine root)
+    if (m_ProjectRoot.empty()) {
+        std::filesystem::path current = m_CurrentAssetPath.parent_path();
+        while (!current.empty()) {
+            if (std::filesystem::exists(current / "assets")) {
+                m_ProjectRoot = current;
+                break;
+            }
+            current = current.parent_path();
+        }
+    }
+    
+    // Refresh texture cache
+    RefreshTextureCache();
+    
     m_StatusMessage = "Opened material '" + m_CurrentMaterialName + "'.";
     m_LastSelectedNode.reset();
     m_PendingPlacements.clear();

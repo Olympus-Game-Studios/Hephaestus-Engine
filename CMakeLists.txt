@@ -22,6 +22,7 @@ add_executable(HephaestusEngine
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
     engine/UI/MaterialEditor/MaterialEditorPanel.cpp
+    engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
 
 target_include_directories(HephaestusEngine PRIVATE engine)

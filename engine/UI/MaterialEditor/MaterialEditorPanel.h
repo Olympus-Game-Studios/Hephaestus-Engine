@@ -2,6 +2,7 @@
 
 #include "MaterialGraph.h"
 #include "MaterialGraphEvaluator.h"
+#include "TextureDiscovery.h"
 
 #include "imgui.h"
 
@@ -40,6 +41,7 @@ private:
     void DrawToolbar(Graph& graph);
     void DrawNodeCanvas(Graph& graph);
     std::optional<PanelResult> DrawInspector(Graph& graph);
+    void RefreshTextureCache();
 
     bool m_IsOpen = false;
     ImNodesEditorContext* m_EditorContext = nullptr;
@@ -52,6 +54,8 @@ private:
     };
     std::vector<PendingPlacement> m_PendingPlacements;
     std::filesystem::path m_CurrentAssetPath;
+    std::vector<std::string> m_DiscoveredTextures;
+    std::filesystem::path m_ProjectRoot;
 };
 
 } // namespace MaterialEditor

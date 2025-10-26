@@ -199,6 +199,7 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
 
     std::vector<Vec3> positions;
     std::vector<Vec3> normals;
+    std::vector<Vec2> texCoords;
 
     std::string line;
     uint32_t lineNumber = 0;
@@ -235,6 +236,18 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
             continue;
         }
 
+        if (StartsWith(trimmed, "vt ")) {
+            std::istringstream iss(trimmed.substr(2));
+            float texU = 0.0f;
+            float texV = 0.0f;
+            if (!(iss >> texU >> texV)) {
+                // Silently skip malformed texture coordinates
+                continue;
+            }
+            texCoords.emplace_back(texU, texV);
+            continue;
+        }
+
         if (StartsWith(trimmed, "vn")) {
             std::istringstream iss(trimmed.substr(2));
             float x = 0.0f;
@@ -252,6 +265,7 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
         if (StartsWith(trimmed, "f ")) {
             std::istringstream iss(trimmed.substr(1));
             std::vector<int> vIndices;
+            std::vector<int> tIndices;
             std::vector<int> nIndices;
             std::string token;
             while (iss >> token) {
@@ -270,7 +284,9 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
                     return false;
                 }
                 int nResolved = ResolveIndex(nRaw, normals.size());
+                int tResolved = ResolveIndex(tRaw, texCoords.size());
                 vIndices.push_back(vResolved);
+                tIndices.push_back(tResolved);
                 nIndices.push_back(nResolved);
             }
 
@@ -283,6 +299,7 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
             for (size_t i = 1; i + 1 < vIndices.size(); ++i) {
                 int tri[3] = { vIndices[0], vIndices[i], vIndices[i + 1] };
                 int triNormalIdx[3] = { nIndices[0], nIndices[i], nIndices[i + 1] };
+                int triTexIdx[3] = { tIndices[0], tIndices[i], tIndices[i + 1] };
 
                 Vec3 p0 = positions[static_cast<size_t>(tri[0])];
                 Vec3 p1 = positions[static_cast<size_t>(tri[1])];
@@ -313,6 +330,16 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
                     vert.color[0] = 1.0f;
                     vert.color[1] = 1.0f;
                     vert.color[2] = 1.0f;
+
+                    // Load texture coordinates
+                    int texIdx = triTexIdx[corner];
+                    if (texIdx >= 0 && static_cast<size_t>(texIdx) < texCoords.size()) {
+                        vert.texCoord[0] = texCoords[static_cast<size_t>(texIdx)].x;
+                        vert.texCoord[1] = texCoords[static_cast<size_t>(texIdx)].y;
+                    } else {
+                        vert.texCoord[0] = 0.0f;
+                        vert.texCoord[1] = 0.0f;
+                    }
 
                     outMesh.indices.push_back(static_cast<uint32_t>(outMesh.vertices.size()));
                     outMesh.vertices.push_back(vert);
@@ -475,6 +502,10 @@ bool LoadFBX(const std::filesystem::path& path, MeshData& outMesh, std::string& 
             vert.color[0] = 1.0f;
             vert.color[1] = 1.0f;
             vert.color[2] = 1.0f;
+
+            // Default texture coordinates for FBX (no UV data available yet)
+            vert.texCoord[0] = 0.0f;
+            vert.texCoord[1] = 0.0f;
 
             outMesh.indices.push_back(static_cast<uint32_t>(outMesh.vertices.size()));
             outMesh.vertices.push_back(vert);
