@@ -44,7 +44,6 @@
 #include "../Scene/Transform.h"
 #include "../Scene/SceneSerializer.h"
 #include "../UI/MaterialEditor/MaterialEditorPanel.h"
-#include "../UI/MaterialEditor/TextureDiscovery.h"
 
 #ifdef _DEBUG
 const bool enableValidationLayers = true;
@@ -816,71 +815,6 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
         }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Detach the mesh renderer and material from this entity.");
-        }
-    }
-
-    if (selectedEntity.HasComponent<MaterialComponent>()) {
-        auto& material = selectedEntity.GetComponent<MaterialComponent>();
-        ImGui::SeparatorText("Material");
-        ImGui::ColorEdit3("Albedo", &material.albedo.x);
-        ImGui::SliderFloat("Metallic", &material.metallic, 0.0f, 1.0f);
-        ImGui::SliderFloat("Roughness", &material.roughness, 0.0f, 1.0f);
-        ImGui::SliderFloat("AO", &material.ao, 0.0f, 1.0f);
-        ImGui::ColorEdit3("Emissive", &material.emissive.x);
-        ImGui::SliderFloat("Emissive Strength", &material.emissiveStrength, 0.0f, 10.0f);
-
-        // Texture selection UI
-        ImGui::Checkbox("Use Texture", &material.useAlbedoTexture);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Enable albedo texture sampling. Requires UVs on the mesh.");
-        }
-
-        if (material.useAlbedoTexture) {
-            // Texture dropdown
-            static std::vector<std::string> discoveredTextures;
-            static bool texturesRefreshed = false;
-
-            if (!texturesRefreshed) {
-                discoveredTextures.clear();
-                discoveredTextures = MaterialEditor::DiscoverProjectTextures(ResolveEngineRoot());
-                texturesRefreshed = true;
-            }
-
-            int currentSelection = -1;
-            for (size_t i = 0; i < discoveredTextures.size(); ++i) {
-                if (discoveredTextures[i] == material.albedoTexturePath) {
-                    currentSelection = static_cast<int>(i);
-                    break;
-                }
-            }
-
-            std::vector<const char*> textureNames;
-            textureNames.reserve(discoveredTextures.size() + 1);
-            textureNames.push_back("(None)");
-            for (const auto& tex : discoveredTextures) {
-                textureNames.push_back(tex.c_str());
-            }
-
-            const char* preview = (currentSelection >= 0) ? discoveredTextures[currentSelection].c_str() : "(None)";
-            if (ImGui::Combo("Albedo Texture##Mat", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
-                if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(discoveredTextures.size())) {
-                    material.albedoTexturePath = discoveredTextures[currentSelection - 1];
-                } else {
-                    material.albedoTexturePath.clear();
-                }
-            }
-
-            // Manual input fallback
-            static char textureBuffer[256] = { 0 };
-            if (preview != nullptr) {
-                std::strncpy(textureBuffer, preview, sizeof(textureBuffer) - 1);
-                textureBuffer[sizeof(textureBuffer) - 1] = '\0';
-            }
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::InputText("##TextureManual", textureBuffer, sizeof(textureBuffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                material.albedoTexturePath = textureBuffer;
-            }
-            ImGui::TextDisabled("Found %zu textures", discoveredTextures.size());
         }
     }
 
@@ -3160,9 +3094,11 @@ int main()
         absolutePath = absolutePath.lexically_normal();
 
         if (!std::filesystem::exists(absolutePath)) {
-            std::cerr << "Material texture not found: " << absolutePath << std::endl;
+            std::cerr << "Material texture not found. Searched: " << absolutePath << " (from: " << rawPath << ")" << std::endl;
             return g_DefaultMaterialTextureSlot;
         }
+
+        std::cout << "Loading material texture: " << absolutePath << std::endl;
 
         MaterialTextureSlot newSlot;
         try {
@@ -3618,6 +3554,12 @@ int main()
                         if (!selected.HasComponent<MaterialComponent>()) {
                             selected.AddComponent<MaterialComponent>();
                         }
+                        
+                        std::cout << "Applying material to entity. Texture enabled: " 
+                                  << panelResult->material.useAlbedoTexture 
+                                  << ", Texture path: '" 
+                                  << panelResult->material.albedoTexturePath << "'" << std::endl;
+                        
                         selected.GetComponent<MaterialComponent>() = panelResult->material;
                         assetBrowserStatus = "Applied material '" + panelResult->name + "' to '" + entityName + "'.";
                         std::cout << assetBrowserStatus << std::endl;

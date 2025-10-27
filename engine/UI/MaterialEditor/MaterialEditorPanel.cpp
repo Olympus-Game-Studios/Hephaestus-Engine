@@ -40,9 +40,38 @@ std::string EscapeJson(const std::string& value) {
     return escaped;
 }
 
+std::string NodeTypeToString(NodeType type) {
+    switch (type) {
+    case NodeType::MaterialOutput: return "MaterialOutput";
+    case NodeType::ConstantFloat: return "ConstantFloat";
+    case NodeType::ConstantVec3: return "ConstantVec3";
+    case NodeType::ColorParameter: return "ColorParameter";
+    case NodeType::FloatParameter: return "FloatParameter";
+    case NodeType::TextureParameter: return "TextureParameter";
+    case NodeType::TextureSample: return "TextureSample";
+    case NodeType::Add: return "Add";
+    case NodeType::Multiply: return "Multiply";
+    default: return "Unknown";
+    }
+}
+
+NodeType StringToNodeType(const std::string& str) {
+    if (str == "MaterialOutput") return NodeType::MaterialOutput;
+    if (str == "ConstantFloat") return NodeType::ConstantFloat;
+    if (str == "ConstantVec3") return NodeType::ConstantVec3;
+    if (str == "ColorParameter") return NodeType::ColorParameter;
+    if (str == "FloatParameter") return NodeType::FloatParameter;
+    if (str == "TextureParameter") return NodeType::TextureParameter;
+    if (str == "TextureSample") return NodeType::TextureSample;
+    if (str == "Add") return NodeType::Add;
+    if (str == "Multiply") return NodeType::Multiply;
+    return NodeType::MaterialOutput;
+}
+
 bool SaveMaterialAssetFile(const std::filesystem::path& path,
                            const MaterialComponent& material,
                            const std::string& displayName,
+                           const Graph& graph,
                            std::string& outError) {
     std::ofstream out(path, std::ios::trunc);
     if (!out) {
@@ -60,7 +89,44 @@ bool SaveMaterialAssetFile(const std::filesystem::path& path,
     out << "  \"emissive\": [" << material.emissive.x << ", " << material.emissive.y << ", " << material.emissive.z << "],\n";
     out << "  \"emissiveStrength\": " << material.emissiveStrength << ",\n";
     out << "  \"useAlbedoTexture\": " << (material.useAlbedoTexture ? "true" : "false") << ",\n";
-    out << "  \"albedoTexturePath\": \"" << EscapeJson(material.albedoTexturePath) << "\"\n";
+    out << "  \"albedoTexturePath\": \"" << EscapeJson(material.albedoTexturePath) << "\",\n";
+    
+    // Save node graph
+    out << "  \"graph\": {\n";
+    out << "    \"nodes\": [\n";
+    
+    const auto& nodes = graph.GetNodes();
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        const Node& node = nodes[i];
+        out << "      {\n";
+        out << "        \"id\": " << node.id << ",\n";
+        out << "        \"type\": \"" << NodeTypeToString(node.type) << "\",\n";
+        out << "        \"displayName\": \"" << EscapeJson(node.displayName) << "\",\n";
+        out << "        \"scalar\": " << node.scalar << ",\n";
+        out << "        \"color\": [" << node.color.x << ", " << node.color.y << ", " << node.color.z << "],\n";
+        out << "        \"resourcePath\": \"" << EscapeJson(node.resourcePath) << "\"\n";
+        out << "      }";
+        if (i < nodes.size() - 1) out << ",";
+        out << "\n";
+    }
+    
+    out << "    ],\n";
+    out << "    \"links\": [\n";
+    
+    const auto& links = graph.GetLinks();
+    for (size_t i = 0; i < links.size(); ++i) {
+        const Link& link = links[i];
+        out << "      {\n";
+        out << "        \"id\": " << link.id << ",\n";
+        out << "        \"startPin\": " << link.startPin << ",\n";
+        out << "        \"endPin\": " << link.endPin << "\n";
+        out << "      }";
+        if (i < links.size() - 1) out << ",";
+        out << "\n";
+    }
+    
+    out << "    ]\n";
+    out << "  }\n";
     out << "}\n";
 
     if (!out.good()) {
@@ -115,11 +181,6 @@ std::optional<PanelResult> Panel::Draw(Graph& graph) {
         return applyResult;
     }
 
-    EnsureContext();
-    if (!m_EditorContext) {
-        return applyResult;
-    }
-
     ImGui::SetNextWindowSize(ImVec2(760.0f, 560.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Material Editor", &m_IsOpen)) {
         ImGui::End();
@@ -130,28 +191,54 @@ std::optional<PanelResult> Panel::Draw(Graph& graph) {
 
     ImGui::Separator();
 
-    ImVec2 avail = ImGui::GetContentRegionAvail();
-    float inspectorWidth = std::clamp(avail.x * 0.32f, 260.0f, 420.0f);
-
-    float canvasWidth = std::max(100.0f, avail.x - inspectorWidth - ImGui::GetStyle().ItemSpacing.x);
-
+    // Mode tabs
     ImGui::BeginGroup();
-    ImGui::BeginChild("MaterialEditorCanvas", ImVec2(canvasWidth, 0.0f), false, ImGuiWindowFlags_NoMove);
-    DrawNodeCanvas(graph);
-    ImGui::EndChild();
+    if (ImGui::RadioButton("Simple Properties", m_UseSimpleMode)) {
+        m_UseSimpleMode = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Advanced (Graph)", !m_UseSimpleMode)) {
+        m_UseSimpleMode = false;
+    }
     ImGui::EndGroup();
 
-    ImGui::SameLine();
+    ImGui::Separator();
 
-    ImGui::BeginChild("MaterialEditorInspector", ImVec2(0.0f, 0.0f), false);
-    if (auto inspectorResult = DrawInspector(graph)) {
-        applyResult = *inspectorResult;
+    if (m_UseSimpleMode) {
+        // Simple mode: direct material property editing
+        if (auto result = DrawSimpleProperties(graph)) {
+            applyResult = *result;
+        }
+    } else {
+        // Advanced mode: node graph editing
+        EnsureContext();
+        if (!m_EditorContext) {
+            ImGui::End();
+            return applyResult;
+        }
+
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        float inspectorWidth = std::clamp(avail.x * 0.32f, 260.0f, 420.0f);
+        float canvasWidth = std::max(100.0f, avail.x - inspectorWidth - ImGui::GetStyle().ItemSpacing.x);
+
+        ImGui::BeginGroup();
+        ImGui::BeginChild("MaterialEditorCanvas", ImVec2(canvasWidth, 0.0f), false, ImGuiWindowFlags_NoMove);
+        DrawNodeCanvas(graph);
+        ImGui::EndChild();
+        ImGui::EndGroup();
+
+        ImGui::SameLine();
+
+        ImGui::BeginChild("MaterialEditorInspector", ImVec2(0.0f, 0.0f), false);
+        if (auto inspectorResult = DrawInspector(graph)) {
+            applyResult = *inspectorResult;
+        }
+        if (!m_StatusMessage.empty()) {
+            ImGui::Spacing();
+            ImGui::TextWrapped("%s", m_StatusMessage.c_str());
+        }
+        ImGui::EndChild();
     }
-    if (!m_StatusMessage.empty()) {
-        ImGui::Spacing();
-        ImGui::TextWrapped("%s", m_StatusMessage.c_str());
-    }
-    ImGui::EndChild();
 
     ImGui::End();
 
@@ -453,7 +540,7 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
         std::string error;
         if (EvaluateGraph(graph, material, error)) {
             std::string saveError;
-            bool saved = SaveMaterialAssetFile(m_CurrentAssetPath, material, m_CurrentMaterialName, saveError);
+            bool saved = SaveMaterialAssetFile(m_CurrentAssetPath, material, m_CurrentMaterialName, graph, saveError);
             if (!saved) {
                 m_StatusMessage = "Material applied, but save failed: " + saveError;
             } else {
@@ -463,6 +550,96 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
         } else {
             m_StatusMessage = error;
         }
+    }
+
+    return applyResult;
+}
+
+std::optional<PanelResult> Panel::DrawSimpleProperties(Graph& graph) {
+    std::optional<PanelResult> applyResult;
+
+    ImGui::TextUnformatted("Material Properties");
+    ImGui::Separator();
+
+    // Albedo color
+    ImGui::ColorEdit3("Albedo", &m_SimpleMaterialProps.albedo.x);
+
+    // Metallic
+    ImGui::SliderFloat("Metallic", &m_SimpleMaterialProps.metallic, 0.0f, 1.0f);
+
+    // Roughness
+    ImGui::SliderFloat("Roughness", &m_SimpleMaterialProps.roughness, 0.0f, 1.0f);
+
+    // AO
+    ImGui::SliderFloat("Ambient Occlusion", &m_SimpleMaterialProps.ao, 0.0f, 1.0f);
+
+    // Emissive
+    ImGui::ColorEdit3("Emissive", &m_SimpleMaterialProps.emissive.x);
+
+    // Emissive Strength
+    ImGui::SliderFloat("Emissive Strength", &m_SimpleMaterialProps.emissiveStrength, 0.0f, 10.0f);
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Texture Settings");
+
+    // Texture checkbox
+    ImGui::Checkbox("Use Texture##SimpleMode", &m_SimpleMaterialProps.useAlbedoTexture);
+
+    if (m_SimpleMaterialProps.useAlbedoTexture) {
+        // Texture dropdown
+        int currentSelection = -1;
+        for (size_t i = 0; i < m_DiscoveredTextures.size(); ++i) {
+            if (m_DiscoveredTextures[i] == m_SimpleMaterialProps.albedoTexturePath) {
+                currentSelection = static_cast<int>(i);
+                break;
+            }
+        }
+
+        std::vector<const char*> textureNames;
+        textureNames.reserve(m_DiscoveredTextures.size() + 1);
+        textureNames.push_back("(None)");
+        for (const auto& tex : m_DiscoveredTextures) {
+            textureNames.push_back(tex.c_str());
+        }
+
+        const char* preview = (currentSelection >= 0) ? m_DiscoveredTextures[currentSelection].c_str() : "(None)";
+        if (ImGui::Combo("Albedo Texture##Simple", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
+            if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(m_DiscoveredTextures.size())) {
+                m_SimpleMaterialProps.albedoTexturePath = m_DiscoveredTextures[currentSelection - 1];
+            } else {
+                m_SimpleMaterialProps.albedoTexturePath.clear();
+            }
+        }
+
+        // Manual input fallback
+        static char textureBuffer[256] = { 0 };
+        if (preview != nullptr) {
+            std::strncpy(textureBuffer, preview, sizeof(textureBuffer) - 1);
+            textureBuffer[sizeof(textureBuffer) - 1] = '\0';
+        }
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputText("##TextureManualSimple", textureBuffer, sizeof(textureBuffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
+            m_SimpleMaterialProps.albedoTexturePath = textureBuffer;
+        }
+        ImGui::TextDisabled("Found %zu textures", m_DiscoveredTextures.size());
+    }
+
+    ImGui::Separator();
+
+    if (ImGui::Button("Save & Apply Material", ImVec2(-1.0f, 0.0f))) {
+        std::string saveError;
+        bool saved = SaveMaterialAssetFile(m_CurrentAssetPath, m_SimpleMaterialProps, m_CurrentMaterialName, graph, saveError);
+        if (!saved) {
+            m_StatusMessage = "Save failed: " + saveError;
+        } else {
+            m_StatusMessage = "Material saved successfully!";
+            applyResult = PanelResult{m_SimpleMaterialProps, m_CurrentMaterialName, m_CurrentAssetPath};
+        }
+    }
+
+    if (!m_StatusMessage.empty()) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", m_StatusMessage.c_str());
     }
 
     return applyResult;

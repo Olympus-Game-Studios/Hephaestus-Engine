@@ -41,6 +41,7 @@ private:
     void DrawToolbar(Graph& graph);
     void DrawNodeCanvas(Graph& graph);
     std::optional<PanelResult> DrawInspector(Graph& graph);
+    std::optional<PanelResult> DrawSimpleProperties(Graph& graph);
     void RefreshTextureCache();
 
     bool m_IsOpen = false;
@@ -56,6 +57,10 @@ private:
     std::filesystem::path m_CurrentAssetPath;
     std::vector<std::string> m_DiscoveredTextures;
     std::filesystem::path m_ProjectRoot;
+    
+    // Simple material properties (for direct editing without node graph)
+    MaterialComponent m_SimpleMaterialProps;
+    bool m_UseSimpleMode = true;
 };
 
 } // namespace MaterialEditor
