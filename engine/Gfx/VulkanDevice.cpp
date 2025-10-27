@@ -111,7 +111,18 @@ void VulkanDevice::createLogicalDevice()
         VK_KHR_SWAPCHAIN_EXTENSION_NAME
     };
 
+    VkPhysicalDeviceFeatures supportedFeatures{};
+    vkGetPhysicalDeviceFeatures(physicalDevice, &supportedFeatures);
+
+    if (!supportedFeatures.samplerAnisotropy)
+        throw std::runtime_error("Required sampler anisotropy support missing");
+
+    if (!supportedFeatures.shaderSampledImageArrayDynamicIndexing)
+        throw std::runtime_error("Required sampled image array dynamic indexing support missing");
+
     VkPhysicalDeviceFeatures features{};
+    features.samplerAnisotropy = VK_TRUE;
+    features.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
     VkDeviceCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     ci.queueCreateInfoCount = static_cast<uint32_t>(qInfos.size());
