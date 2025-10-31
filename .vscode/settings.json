@@ -19,6 +19,7 @@
         "sstream": "cpp",
         "type_traits": "cpp",
         "fstream": "cpp",
-        "iterator": "cpp"
+        "iterator": "cpp",
+        "iomanip": "cpp"
     }
 }

@@ -116,7 +116,7 @@ void main() {
     if (material.useAlbedoTexture != 0u) {
         uint index = material.albedoTextureIndex % MAX_TEXTURE_SLOTS;
         vec4 texColor = texture(materialTextures[index], fragTexCoord);
-        albedo = texColor.rgb * fragColor;
+        albedo = texColor.rgb * material.albedo * fragColor;
     }
     
     float metallic = material.metallic;

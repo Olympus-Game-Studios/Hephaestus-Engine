@@ -16,6 +16,7 @@
 #include <fstream>
 #include <iomanip>
 #include <cstdio>
+#include <cstddef>
 
 #include "Math.h"
 
@@ -926,14 +927,24 @@ struct UniformBufferObject {
 
 struct MaterialUBO {
     Vec3 albedo;
+    float albedoPadding;          // pad to std140 alignment for vec3
     float metallic;
+    float metallicPadding[3];
     Vec3 emissive;
+    float emissivePadding;
     float roughness;
     float ao;
     float emissiveStrength;
     uint32_t useAlbedoTexture;  // 0 or 1
     uint32_t albedoTextureIndex; // Index into global texture array
+    uint32_t paddingTail[3];
 };
+
+static_assert(offsetof(MaterialUBO, metallic) == 16, "MaterialUBO.metallic misaligned");
+static_assert(offsetof(MaterialUBO, emissive) == 32, "MaterialUBO.emissive misaligned");
+static_assert(offsetof(MaterialUBO, roughness) == 48, "MaterialUBO.roughness misaligned");
+static_assert(offsetof(MaterialUBO, useAlbedoTexture) == 60, "MaterialUBO.useAlbedoTexture misaligned");
+static_assert(sizeof(MaterialUBO) % 16 == 0, "MaterialUBO size must align to 16 bytes");
 
 static constexpr uint32_t kMaxMaterialTextureSlots = 128;
 
@@ -4051,14 +4062,23 @@ int main()
             if (entity.HasComponent<MaterialComponent>()) {
                 auto& mat = entity.GetComponent<MaterialComponent>();
                 matUBO.albedo = mat.albedo;
+                matUBO.albedoPadding = 0.0f;
                 matUBO.metallic = mat.metallic;
+                matUBO.metallicPadding[0] = 0.0f;
+                matUBO.metallicPadding[1] = 0.0f;
+                matUBO.metallicPadding[2] = 0.0f;
+                matUBO.emissive = mat.emissive;
+                matUBO.emissivePadding = 0.0f;
                 matUBO.roughness = mat.roughness;
                 matUBO.ao = mat.ao;
-                matUBO.emissive = mat.emissive;
                 matUBO.emissiveStrength = mat.emissiveStrength;
                 uint32_t textureSlot = g_DefaultMaterialTextureSlot;
                 if (mat.useAlbedoTexture && !mat.albedoTexturePath.empty()) {
                     uint32_t slot = ensureMaterialTextureSlot(mat.albedoTexturePath);
+                    std::cout << "[Material] useAlbedoTexture=" << mat.useAlbedoTexture 
+                              << ", path='" << mat.albedoTexturePath 
+                              << "', slot=" << slot 
+                              << ", default=" << g_DefaultMaterialTextureSlot << std::endl;
                     if (slot != g_DefaultMaterialTextureSlot) {
                         textureSlot = slot;
                         matUBO.useAlbedoTexture = 1u;
@@ -4069,16 +4089,27 @@ int main()
                     matUBO.useAlbedoTexture = 0u;
                 }
                 matUBO.albedoTextureIndex = textureSlot;
+                matUBO.paddingTail[0] = 0;
+                matUBO.paddingTail[1] = 0;
+                matUBO.paddingTail[2] = 0;
             } else {
                 // Default white material
                 matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);
+                matUBO.albedoPadding = 0.0f;
                 matUBO.metallic = 0.0f;
+                matUBO.metallicPadding[0] = 0.0f;
+                matUBO.metallicPadding[1] = 0.0f;
+                matUBO.metallicPadding[2] = 0.0f;
                 matUBO.roughness = 0.5f;
                 matUBO.ao = 1.0f;
                 matUBO.emissive = Vec3(0.0f, 0.0f, 0.0f);
+                matUBO.emissivePadding = 0.0f;
                 matUBO.emissiveStrength = 0.0f;
                 matUBO.useAlbedoTexture = 0u;
                 matUBO.albedoTextureIndex = g_DefaultMaterialTextureSlot;
+                matUBO.paddingTail[0] = 0;
+                matUBO.paddingTail[1] = 0;
+                matUBO.paddingTail[2] = 0;
             }
             
             // Write into this object's slot in the dynamic material buffer
