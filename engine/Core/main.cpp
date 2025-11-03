@@ -2471,40 +2471,40 @@ int main()
     // 3D Cube vertices with normals - we need unique vertices per face for proper lighting
     const std::vector<Vertex> cubeVertices = {
         // Front face (Z+) - all normals point forward (0, 0, 1)
-        {{-0.5f, -0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}},  // 0
-        {{ 0.5f, -0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}},  // 1
-        {{ 0.5f,  0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}},  // 2
-        {{-0.5f,  0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}},  // 3
-        
+        {{-0.5f, -0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},  // 0
+        {{ 0.5f, -0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},  // 1
+        {{ 0.5f,  0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},  // 2
+        {{-0.5f,  0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},  // 3
+
         // Back face (Z-) - normals point backward (0, 0, -1)
-        {{ 0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},  // 4
-        {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},  // 5
-        {{-0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},  // 6
-        {{ 0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},  // 7
-        
+        {{ 0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},  // 4
+        {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},  // 5
+        {{-0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},  // 6
+        {{ 0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},  // 7
+
         // Right face (X+) - normals point right (1, 0, 0)
-        {{ 0.5f, -0.5f,  0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 8
-        {{ 0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 9
-        {{ 0.5f,  0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 10
-        {{ 0.5f,  0.5f,  0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 11
-        
+        {{ 0.5f, -0.5f,  0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},  // 8
+        {{ 0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},  // 9
+        {{ 0.5f,  0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},  // 10
+        {{ 0.5f,  0.5f,  0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},  // 11
+
         // Left face (X-) - normals point left (-1, 0, 0)
-        {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 12
-        {{-0.5f, -0.5f,  0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 13
-        {{-0.5f,  0.5f,  0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 14
-        {{-0.5f,  0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 15
-        
+        {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},  // 12
+        {{-0.5f, -0.5f,  0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},  // 13
+        {{-0.5f,  0.5f,  0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},  // 14
+        {{-0.5f,  0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},  // 15
+
         // Top face (Y+) - normals point up (0, 1, 0)
-        {{-0.5f,  0.5f,  0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 16
-        {{ 0.5f,  0.5f,  0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 17
-        {{ 0.5f,  0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 18
-        {{-0.5f,  0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 19
-        
+        {{-0.5f,  0.5f,  0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},  // 16
+        {{ 0.5f,  0.5f,  0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},  // 17
+        {{ 0.5f,  0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},  // 18
+        {{-0.5f,  0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},  // 19
+
         // Bottom face (Y-) - normals point down (0, -1, 0)
-        {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 20
-        {{ 0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 21
-        {{ 0.5f, -0.5f,  0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 22
-        {{-0.5f, -0.5f,  0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}},  // 23
+        {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},  // 20
+        {{ 0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},  // 21
+        {{ 0.5f, -0.5f,  0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},  // 22
+        {{-0.5f, -0.5f,  0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},  // 23
     };
     
     // Index buffer for cube (12 triangles, 2 per face, 6 faces)
@@ -2561,6 +2561,8 @@ int main()
                 vertex.color[0] = 1.0f;
                 vertex.color[1] = 1.0f;
                 vertex.color[2] = 1.0f;
+                vertex.texCoord[0] = u;
+                vertex.texCoord[1] = 1.0f - v;
                 data.vertices.push_back(vertex);
             }
         }
@@ -3084,8 +3086,9 @@ int main()
             return g_DefaultMaterialTextureSlot;
         }
 
-        std::filesystem::path relPath = std::filesystem::path(rawPath).lexically_normal();
-        std::string key = relPath.generic_string();
+        namespace fs = std::filesystem;
+        fs::path normalizedInput = fs::path(rawPath).lexically_normal();
+        std::string key = normalizedInput.generic_string();
 
         auto existingIt = g_MaterialTextureLookup.find(key);
         if (existingIt != g_MaterialTextureLookup.end()) {
@@ -3098,18 +3101,62 @@ int main()
             return g_DefaultMaterialTextureSlot;
         }
 
-        std::filesystem::path absolutePath = relPath;
-        if (!absolutePath.is_absolute()) {
-            absolutePath = ResolveEngineRoot() / absolutePath;
-        }
-        absolutePath = absolutePath.lexically_normal();
+        std::vector<fs::path> candidatePaths;
+        auto addCandidate = [&](const fs::path& candidate) {
+            if (candidate.empty()) {
+                return;
+            }
+            fs::path normalized = candidate.lexically_normal();
+            if (normalized.empty()) {
+                return;
+            }
+            if (std::find(candidatePaths.begin(), candidatePaths.end(), normalized) == candidatePaths.end()) {
+                candidatePaths.push_back(std::move(normalized));
+            }
+        };
 
-        if (!std::filesystem::exists(absolutePath)) {
-            std::cerr << "Material texture not found. Searched: " << absolutePath << " (from: " << rawPath << ")" << std::endl;
+        addCandidate(normalizedInput);
+
+        fs::path projectRoot = ResolveActiveProjectRoot();
+        if (!projectRoot.empty()) {
+            addCandidate(projectRoot / normalizedInput);
+
+            fs::path assetsRoot = ResolveActiveAssetsRoot();
+            if (!assetsRoot.empty()) {
+                std::string normalizedKey = normalizedInput.generic_string();
+                bool startsWithAssets = false;
+                if (!normalizedKey.empty()) {
+                    if (normalizedKey.rfind("assets/", 0) == 0 || normalizedKey.rfind("assets\\", 0) == 0) {
+                        startsWithAssets = true;
+                    }
+                }
+                if (!startsWithAssets) {
+                    addCandidate(assetsRoot / normalizedInput);
+                }
+            }
+        }
+
+        addCandidate(ResolveEngineRoot() / normalizedInput);
+
+        fs::path resolvedPath;
+        for (const fs::path& candidate : candidatePaths) {
+            std::error_code ec;
+            if (fs::exists(candidate, ec) && fs::is_regular_file(candidate, ec)) {
+                resolvedPath = candidate;
+                break;
+            }
+        }
+
+        if (resolvedPath.empty()) {
+            std::cerr << "Material texture not found. Tried:";
+            for (const auto& candidate : candidatePaths) {
+                std::cerr << "\n  - " << candidate;
+            }
+            std::cerr << "\n(from: " << rawPath << ")" << std::endl;
             return g_DefaultMaterialTextureSlot;
         }
 
-        std::cout << "Loading material texture: " << absolutePath << std::endl;
+        std::cout << "Loading material texture: " << resolvedPath << std::endl;
 
         MaterialTextureSlot newSlot;
         try {
@@ -3119,12 +3166,12 @@ int main()
                     vkdev.physicalDevice,
                     vkdev.commandPool,
                     vkdev.graphicsQueue,
-                    absolutePath.string())) {
-                std::cerr << "Failed to load material texture: " << absolutePath << std::endl;
+                    resolvedPath.string())) {
+                std::cerr << "Failed to load material texture: " << resolvedPath << std::endl;
                 return g_DefaultMaterialTextureSlot;
             }
         } catch (const std::exception& e) {
-            std::cerr << "Exception while loading material texture '" << absolutePath
+            std::cerr << "Exception while loading material texture '" << resolvedPath
                       << "': " << e.what() << std::endl;
             return g_DefaultMaterialTextureSlot;
         }
