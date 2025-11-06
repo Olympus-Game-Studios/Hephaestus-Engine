@@ -47,11 +47,10 @@ std::string NodeTypeToString(NodeType type) {
     case NodeType::ConstantVec3: return "ConstantVec3";
     case NodeType::ColorParameter: return "ColorParameter";
     case NodeType::FloatParameter: return "FloatParameter";
-    case NodeType::TextureParameter: return "TextureParameter";
-    case NodeType::NormalTextureParameter: return "NormalTextureParameter";
-    case NodeType::RoughnessTextureParameter: return "RoughnessTextureParameter";
-    case NodeType::AoTextureParameter: return "AoTextureParameter";
-    case NodeType::TextureSample: return "TextureSample";
+    case NodeType::AlbedoTextureSample: return "AlbedoTextureSample";
+    case NodeType::NormalTextureSample: return "NormalTextureSample";
+    case NodeType::RoughnessTextureSample: return "RoughnessTextureSample";
+    case NodeType::AoTextureSample: return "AoTextureSample";
     case NodeType::Add: return "Add";
     case NodeType::Multiply: return "Multiply";
     default: return "Unknown";
@@ -64,11 +63,10 @@ NodeType StringToNodeType(const std::string& str) {
     if (str == "ConstantVec3") return NodeType::ConstantVec3;
     if (str == "ColorParameter") return NodeType::ColorParameter;
     if (str == "FloatParameter") return NodeType::FloatParameter;
-    if (str == "TextureParameter") return NodeType::TextureParameter;
-    if (str == "NormalTextureParameter") return NodeType::NormalTextureParameter;
-    if (str == "RoughnessTextureParameter") return NodeType::RoughnessTextureParameter;
-    if (str == "AoTextureParameter") return NodeType::AoTextureParameter;
-    if (str == "TextureSample") return NodeType::TextureSample;
+    if (str == "AlbedoTextureSample") return NodeType::AlbedoTextureSample;
+    if (str == "NormalTextureSample") return NodeType::NormalTextureSample;
+    if (str == "RoughnessTextureSample") return NodeType::RoughnessTextureSample;
+    if (str == "AoTextureSample") return NodeType::AoTextureSample;
     if (str == "Add") return NodeType::Add;
     if (str == "Multiply") return NodeType::Multiply;
     return NodeType::MaterialOutput;
@@ -371,20 +369,17 @@ void Panel::DrawNodeCanvas(Graph& graph) {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Textures")) {
-            if (ImGui::MenuItem("Texture Parameter")) {
-                spawnNode(NodeType::TextureParameter);
+            if (ImGui::MenuItem("Albedo Texture")) {
+                spawnNode(NodeType::AlbedoTextureSample);
             }
-            if (ImGui::MenuItem("Normal Texture Parameter")) {
-                spawnNode(NodeType::NormalTextureParameter);
+            if (ImGui::MenuItem("Normal Texture")) {
+                spawnNode(NodeType::NormalTextureSample);
             }
-            if (ImGui::MenuItem("Roughness Texture Parameter")) {
-                spawnNode(NodeType::RoughnessTextureParameter);
+            if (ImGui::MenuItem("Roughness Texture")) {
+                spawnNode(NodeType::RoughnessTextureSample);
             }
-            if (ImGui::MenuItem("AO Texture Parameter")) {
-                spawnNode(NodeType::AoTextureParameter);
-            }
-            if (ImGui::MenuItem("Texture Sample")) {
-                spawnNode(NodeType::TextureSample);
+            if (ImGui::MenuItem("AO Texture")) {
+                spawnNode(NodeType::AoTextureSample);
             }
             ImGui::EndMenu();
         }
@@ -492,7 +487,10 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
             }
             break;
         }
-        case NodeType::TextureParameter: {
+        case NodeType::AlbedoTextureSample:
+        case NodeType::NormalTextureSample:
+        case NodeType::RoughnessTextureSample:
+        case NodeType::AoTextureSample: {
             // Create texture dropdown
             int currentSelection = -1;
             for (size_t i = 0; i < m_DiscoveredTextures.size(); ++i) {
@@ -541,9 +539,6 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
             }
             break;
         }
-        case NodeType::TextureSample:
-            ImGui::TextWrapped("Feeds color from an upstream texture parameter. UV input is reserved for future workflows.");
-            break;
         case NodeType::Add:
         case NodeType::Multiply:
             ImGui::TextDisabled("Combines scalar values. Vector math coming soon.");

@@ -10,11 +10,10 @@ constexpr std::string_view NodeLabel(NodeType type) {
     case NodeType::ConstantVec3: return "Vector3";
     case NodeType::ColorParameter: return "Color";
     case NodeType::FloatParameter: return "Float";
-    case NodeType::TextureParameter: return "Texture";
-    case NodeType::NormalTextureParameter: return "Normal Map";
-    case NodeType::RoughnessTextureParameter: return "Roughness Map";
-    case NodeType::AoTextureParameter: return "AO Map";
-    case NodeType::TextureSample: return "Texture Sample";
+    case NodeType::AlbedoTextureSample: return "Albedo Texture";
+    case NodeType::NormalTextureSample: return "Normal Texture";
+    case NodeType::RoughnessTextureSample: return "Roughness Texture";
+    case NodeType::AoTextureSample: return "AO Texture";
     case NodeType::Add: return "Add";
     case NodeType::Multiply: return "Multiply";
     }
@@ -40,14 +39,8 @@ constexpr std::string_view PinLabel(NodeType ownerType, PinKind kind, int index)
     if ((ownerType == NodeType::ConstantVec3 || ownerType == NodeType::ColorParameter) && kind == PinKind::Output) {
         return "Value";
     }
-    if ((ownerType == NodeType::TextureParameter || ownerType == NodeType::NormalTextureParameter || 
-         ownerType == NodeType::RoughnessTextureParameter || ownerType == NodeType::AoTextureParameter) && kind == PinKind::Output) {
-        return "Texture";
-    }
-    if (ownerType == NodeType::TextureSample) {
-        if (kind == PinKind::Input) {
-            return index == 0 ? "UV" : "Texture";
-        }
+    if ((ownerType == NodeType::AlbedoTextureSample || ownerType == NodeType::NormalTextureSample || 
+         ownerType == NodeType::RoughnessTextureSample || ownerType == NodeType::AoTextureSample) && kind == PinKind::Output) {
         return "Color";
     }
     if ((ownerType == NodeType::Add || ownerType == NodeType::Multiply) && kind == PinKind::Input) {
@@ -72,15 +65,13 @@ constexpr ValueType DefaultPinType(NodeType ownerType, PinKind kind, int index) 
     if (ownerType == NodeType::ConstantVec3 || ownerType == NodeType::ColorParameter) {
         return ValueType::Float3;
     }
-    if (ownerType == NodeType::TextureParameter || ownerType == NodeType::NormalTextureParameter || 
-        ownerType == NodeType::RoughnessTextureParameter || ownerType == NodeType::AoTextureParameter) {
-        return ValueType::Sampler2D;
-    }
-    if (ownerType == NodeType::TextureSample) {
-        if (kind == PinKind::Input) {
-            return index == 0 ? ValueType::Float2 : ValueType::Sampler2D;
+    if (ownerType == NodeType::AlbedoTextureSample || ownerType == NodeType::NormalTextureSample || 
+        ownerType == NodeType::RoughnessTextureSample || ownerType == NodeType::AoTextureSample) {
+        if (kind == PinKind::Output) {
+            return ownerType == NodeType::RoughnessTextureSample || ownerType == NodeType::AoTextureSample 
+                   ? ValueType::Float1 : ValueType::Float3;
         }
-        return ValueType::Float3;
+        return ValueType::Float1;
     }
     if (ownerType == NodeType::Add || ownerType == NodeType::Multiply) {
         return ValueType::Float1;
@@ -109,7 +100,10 @@ Node& Graph::CreateNode(NodeType type, std::string displayName) {
     case NodeType::ColorParameter:
         node.color = Float3{1.0f, 1.0f, 1.0f};
         break;
-    case NodeType::TextureParameter:
+    case NodeType::AlbedoTextureSample:
+    case NodeType::NormalTextureSample:
+    case NodeType::RoughnessTextureSample:
+    case NodeType::AoTextureSample:
         node.resourcePath.clear();
         break;
     default:
@@ -250,14 +244,10 @@ void Graph::AttachDefaultPins(Node& node) {
     case NodeType::FloatParameter:
     case NodeType::ConstantVec3:
     case NodeType::ColorParameter:
-    case NodeType::TextureParameter:
-    case NodeType::NormalTextureParameter:
-    case NodeType::RoughnessTextureParameter:
-    case NodeType::AoTextureParameter:
-        addOutputs(1);
-        break;
-    case NodeType::TextureSample:
-        addInputs(2);
+    case NodeType::AlbedoTextureSample:
+    case NodeType::NormalTextureSample:
+    case NodeType::RoughnessTextureSample:
+    case NodeType::AoTextureSample:
         addOutputs(1);
         break;
     case NodeType::Add:

@@ -124,18 +124,22 @@ bool EvaluateOutputPin(const Graph& graph,
     case NodeType::ColorParameter:
         result.vec = node->color;
         break;
-    case NodeType::TextureParameter:
-        result.type = ValueType::Sampler2D;
-        result.texturePath = node->resourcePath;
+    case NodeType::AlbedoTextureSample:
+    case NodeType::NormalTextureSample:
+    case NodeType::RoughnessTextureSample:
+    case NodeType::AoTextureSample: {
+        // Texture sample nodes combine parameter + sampling
         result.hasTexture = !node->resourcePath.empty();
-        result.vec = Float3{1.0f, 1.0f, 1.0f};
-        break;
-    case NodeType::TextureSample: {
-        Value textureValue = fetchInput(1);
-        result.type = ValueType::Float3;
-        result.vec = Float3{1.0f, 1.0f, 1.0f};
-        result.hasTexture = textureValue.hasTexture || !textureValue.texturePath.empty();
-        result.texturePath = textureValue.texturePath;
+        result.texturePath = node->resourcePath;
+        
+        // Output type depends on the texture type
+        if (node->type == NodeType::RoughnessTextureSample || node->type == NodeType::AoTextureSample) {
+            result.type = ValueType::Float1;
+            result.scalar = 1.0f;
+        } else {
+            result.type = ValueType::Float3;
+            result.vec = Float3{1.0f, 1.0f, 1.0f};
+        }
         break;
     }
     case NodeType::Add: {

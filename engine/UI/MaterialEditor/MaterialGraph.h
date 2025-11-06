@@ -32,11 +32,10 @@ enum class NodeType {
     ConstantVec3,
     ColorParameter,
     FloatParameter,
-    TextureParameter,
-    NormalTextureParameter,
-    RoughnessTextureParameter,
-    AoTextureParameter,
-    TextureSample,
+    AlbedoTextureSample,
+    NormalTextureSample,
+    RoughnessTextureSample,
+    AoTextureSample,
     Add,
     Multiply
 };
