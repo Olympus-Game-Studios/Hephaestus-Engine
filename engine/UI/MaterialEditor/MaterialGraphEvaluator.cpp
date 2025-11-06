@@ -252,6 +252,39 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
             return false;
         }
     }
+    if (outputNode->inputs.size() > 4) {
+        resolveColor(outputNode->inputs[4], Float3{0.5f, 0.5f, 1.0f}, true,
+                     outMaterial.emissive, outMaterial.useNormalTexture, outMaterial.normalTexturePath);
+        if (!outErrorMessage.empty()) {
+            return false;
+        }
+    }
+    if (outputNode->inputs.size() > 5) {
+        outMaterial.roughness = resolveScalar(outputNode->inputs[5], outMaterial.roughness);
+        if (!outErrorMessage.empty()) {
+            return false;
+        }
+        // Check if it's a texture instead
+        bool connected = false;
+        Value texValue = EvaluateInputPin(graph, outputNode->inputs[5], cache, active, outErrorMessage, &connected);
+        if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
+            outMaterial.useRoughnessTexture = true;
+            outMaterial.roughnessTexturePath = texValue.texturePath;
+        }
+    }
+    if (outputNode->inputs.size() > 6) {
+        outMaterial.ao = resolveScalar(outputNode->inputs[6], outMaterial.ao);
+        if (!outErrorMessage.empty()) {
+            return false;
+        }
+        // Check if it's a texture instead
+        bool connected = false;
+        Value texValue = EvaluateInputPin(graph, outputNode->inputs[6], cache, active, outErrorMessage, &connected);
+        if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
+            outMaterial.useAoTexture = true;
+            outMaterial.aoTexturePath = texValue.texturePath;
+        }
+    }
 
     return true;
 }

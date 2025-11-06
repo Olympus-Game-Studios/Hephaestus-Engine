@@ -30,9 +30,18 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     float emissiveStrength;   // offset 56
     uint useAlbedoTexture;    // offset 60
     uint albedoTextureIndex;  // offset 64
-    uint paddingTail0;        // offset 68
-    uint paddingTail1;        // offset 72
-    uint paddingTail2;        // offset 76
+    uint useNormalTexture;    // offset 68
+    uint normalTextureIndex;  // offset 72
+    uint useRoughnessTexture; // offset 76
+    uint roughnessTextureIndex; // offset 80
+    uint useAoTexture;        // offset 84
+    uint aoTextureIndex;      // offset 88
+    uint paddingTail0;        // offset 92
+    uint paddingTail1;        // offset 96
+    uint paddingTail2;        // offset 100
+    uint paddingTail3;        // offset 104
+    uint paddingTail4;        // offset 108
+    uint paddingTail5;        // offset 112
 } material;
 
 layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOTS];
@@ -118,18 +127,49 @@ void main() {
     vec3 N = normalize(fragNormal);
     vec3 V = normalize(ubo.viewPos - fragWorldPos);
     
-    // Material properties
+    // ── Material property sampling ─────────────────────────────────
+    // Albedo (diffuse) texture
     vec3 albedo = material.albedo * fragColor;
-    
     if (material.useAlbedoTexture != 0u) {
         uint index = material.albedoTextureIndex % MAX_TEXTURE_SLOTS;
         vec4 texColor = texture(materialTextures[index], fragTexCoord);
         albedo = texColor.rgb * material.albedo * fragColor;
     }
     
-    float metallic = material.metallic;
-    float roughness = max(material.roughness, 0.04); // Prevent division by zero
+    // Normal map (world space - for now, not using tangent space)
+    // A better implementation would transform from tangent space
+    vec3 normalMapped = N;
+    if (material.useNormalTexture != 0u) {
+        uint index = material.normalTextureIndex % MAX_TEXTURE_SLOTS;
+        vec3 normalTex = texture(materialTextures[index], fragTexCoord).rgb;
+        // Unpack normal from [0,1] to [-1,1]
+        normalMapped = normalize(normalTex * 2.0 - 1.0);
+        // For a world-space approximation, blend with original normal
+        // This is a simplified approach; full implementation would need tangent space
+        normalMapped = normalize(mix(N, normalMapped, 0.7));
+    }
+    N = normalMapped;
+    
+    // Roughness texture
+    float roughness = material.roughness;
+    if (material.useRoughnessTexture != 0u) {
+        uint index = material.roughnessTextureIndex % MAX_TEXTURE_SLOTS;
+        // Roughness is typically in the R or G channel
+        float texRoughness = texture(materialTextures[index], fragTexCoord).r;
+        roughness = texRoughness * material.roughness; // Blend with base value
+    }
+    roughness = max(roughness, 0.04); // Prevent division by zero
+    
+    // Ambient occlusion texture
     float ao = material.ao;
+    if (material.useAoTexture != 0u) {
+        uint index = material.aoTextureIndex % MAX_TEXTURE_SLOTS;
+        // AO is typically stored in R or G channel
+        float texAo = texture(materialTextures[index], fragTexCoord).r;
+        ao = texAo * material.ao; // Blend with base value
+    }
+    
+    float metallic = material.metallic;
     
     // Calculate F0 (base reflectivity)
     // Dielectrics have F0 around 0.04, metals use albedo as F0

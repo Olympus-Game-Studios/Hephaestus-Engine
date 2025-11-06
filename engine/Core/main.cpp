@@ -925,25 +925,36 @@ struct UniformBufferObject {
     float padding1;
 };
 
-struct MaterialUBO {
-    Vec3 albedo;
-    float albedoPadding;          // pad to std140 alignment for vec3
-    float metallic;
-    float metallicPadding[3];
-    Vec3 emissive;
-    float emissivePadding;
-    float roughness;
-    float ao;
-    float emissiveStrength;
-    uint32_t useAlbedoTexture;  // 0 or 1
-    uint32_t albedoTextureIndex; // Index into global texture array
-    uint32_t paddingTail[3];
+struct alignas(16) MaterialUBO {
+    Vec3 albedo;              // offset 0, size 12 (padded to 16 in std140)
+    float albedoPadding;      // offset 12, explicit padding
+    float metallic;           // offset 16
+    float metallicPadding0;   // offset 20
+    float metallicPadding1;   // offset 24
+    float metallicPadding2;   // offset 28
+    Vec3 emissive;            // offset 32, size 12 (padded to 16 in std140)
+    float emissivePadding;    // offset 44, explicit padding
+    float roughness;          // offset 48
+    float ao;                 // offset 52
+    float emissiveStrength;   // offset 56
+    uint32_t useAlbedoTexture;     // offset 60
+    uint32_t albedoTextureIndex;   // offset 64
+    uint32_t useNormalTexture;     // offset 68
+    uint32_t normalTextureIndex;   // offset 72
+    uint32_t useRoughnessTexture;  // offset 76
+    uint32_t roughnessTextureIndex;// offset 80
+    uint32_t useAoTexture;         // offset 84
+    uint32_t aoTextureIndex;       // offset 88
+    uint32_t paddingTail[9];       // offset 92-127 (pad to 16-byte boundary = 128 bytes)
 };
 
 static_assert(offsetof(MaterialUBO, metallic) == 16, "MaterialUBO.metallic misaligned");
 static_assert(offsetof(MaterialUBO, emissive) == 32, "MaterialUBO.emissive misaligned");
 static_assert(offsetof(MaterialUBO, roughness) == 48, "MaterialUBO.roughness misaligned");
 static_assert(offsetof(MaterialUBO, useAlbedoTexture) == 60, "MaterialUBO.useAlbedoTexture misaligned");
+static_assert(offsetof(MaterialUBO, useNormalTexture) == 68, "MaterialUBO.useNormalTexture misaligned");
+static_assert(offsetof(MaterialUBO, useRoughnessTexture) == 76, "MaterialUBO.useRoughnessTexture misaligned");
+static_assert(offsetof(MaterialUBO, useAoTexture) == 84, "MaterialUBO.useAoTexture misaligned");
 static_assert(sizeof(MaterialUBO) % 16 == 0, "MaterialUBO size must align to 16 bytes");
 
 static constexpr uint32_t kMaxMaterialTextureSlots = 128;
@@ -4111,23 +4122,20 @@ int main()
                 matUBO.albedo = mat.albedo;
                 matUBO.albedoPadding = 0.0f;
                 matUBO.metallic = mat.metallic;
-                matUBO.metallicPadding[0] = 0.0f;
-                matUBO.metallicPadding[1] = 0.0f;
-                matUBO.metallicPadding[2] = 0.0f;
+                matUBO.metallicPadding0 = 0.0f;
+                matUBO.metallicPadding1 = 0.0f;
+                matUBO.metallicPadding2 = 0.0f;
                 matUBO.emissive = mat.emissive;
                 matUBO.emissivePadding = 0.0f;
                 matUBO.roughness = mat.roughness;
                 matUBO.ao = mat.ao;
                 matUBO.emissiveStrength = mat.emissiveStrength;
-                uint32_t textureSlot = g_DefaultMaterialTextureSlot;
+                
+                // Albedo texture
+                uint32_t albedoSlot = g_DefaultMaterialTextureSlot;
                 if (mat.useAlbedoTexture && !mat.albedoTexturePath.empty()) {
-                    uint32_t slot = ensureMaterialTextureSlot(mat.albedoTexturePath);
-                    std::cout << "[Material] useAlbedoTexture=" << mat.useAlbedoTexture 
-                              << ", path='" << mat.albedoTexturePath 
-                              << "', slot=" << slot 
-                              << ", default=" << g_DefaultMaterialTextureSlot << std::endl;
-                    if (slot != g_DefaultMaterialTextureSlot) {
-                        textureSlot = slot;
+                    albedoSlot = ensureMaterialTextureSlot(mat.albedoTexturePath);
+                    if (albedoSlot != g_DefaultMaterialTextureSlot) {
                         matUBO.useAlbedoTexture = 1u;
                     } else {
                         matUBO.useAlbedoTexture = 0u;
@@ -4135,18 +4143,64 @@ int main()
                 } else {
                     matUBO.useAlbedoTexture = 0u;
                 }
-                matUBO.albedoTextureIndex = textureSlot;
+                matUBO.albedoTextureIndex = albedoSlot;
+                
+                // Normal map texture
+                uint32_t normalSlot = g_DefaultMaterialTextureSlot;
+                if (mat.useNormalTexture && !mat.normalTexturePath.empty()) {
+                    normalSlot = ensureMaterialTextureSlot(mat.normalTexturePath);
+                    if (normalSlot != g_DefaultMaterialTextureSlot) {
+                        matUBO.useNormalTexture = 1u;
+                    } else {
+                        matUBO.useNormalTexture = 0u;
+                    }
+                } else {
+                    matUBO.useNormalTexture = 0u;
+                }
+                matUBO.normalTextureIndex = normalSlot;
+                
+                // Roughness texture
+                uint32_t roughnessSlot = g_DefaultMaterialTextureSlot;
+                if (mat.useRoughnessTexture && !mat.roughnessTexturePath.empty()) {
+                    roughnessSlot = ensureMaterialTextureSlot(mat.roughnessTexturePath);
+                    if (roughnessSlot != g_DefaultMaterialTextureSlot) {
+                        matUBO.useRoughnessTexture = 1u;
+                    } else {
+                        matUBO.useRoughnessTexture = 0u;
+                    }
+                } else {
+                    matUBO.useRoughnessTexture = 0u;
+                }
+                matUBO.roughnessTextureIndex = roughnessSlot;
+                
+                // AO texture
+                uint32_t aoSlot = g_DefaultMaterialTextureSlot;
+                if (mat.useAoTexture && !mat.aoTexturePath.empty()) {
+                    aoSlot = ensureMaterialTextureSlot(mat.aoTexturePath);
+                    if (aoSlot != g_DefaultMaterialTextureSlot) {
+                        matUBO.useAoTexture = 1u;
+                    } else {
+                        matUBO.useAoTexture = 0u;
+                    }
+                } else {
+                    matUBO.useAoTexture = 0u;
+                }
+                matUBO.aoTextureIndex = aoSlot;
+                
                 matUBO.paddingTail[0] = 0;
                 matUBO.paddingTail[1] = 0;
                 matUBO.paddingTail[2] = 0;
+                matUBO.paddingTail[3] = 0;
+                matUBO.paddingTail[4] = 0;
+                matUBO.paddingTail[5] = 0;
             } else {
                 // Default white material
                 matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);
                 matUBO.albedoPadding = 0.0f;
                 matUBO.metallic = 0.0f;
-                matUBO.metallicPadding[0] = 0.0f;
-                matUBO.metallicPadding[1] = 0.0f;
-                matUBO.metallicPadding[2] = 0.0f;
+                matUBO.metallicPadding0 = 0.0f;
+                matUBO.metallicPadding1 = 0.0f;
+                matUBO.metallicPadding2 = 0.0f;
                 matUBO.roughness = 0.5f;
                 matUBO.ao = 1.0f;
                 matUBO.emissive = Vec3(0.0f, 0.0f, 0.0f);
@@ -4154,9 +4208,18 @@ int main()
                 matUBO.emissiveStrength = 0.0f;
                 matUBO.useAlbedoTexture = 0u;
                 matUBO.albedoTextureIndex = g_DefaultMaterialTextureSlot;
+                matUBO.useNormalTexture = 0u;
+                matUBO.normalTextureIndex = g_DefaultMaterialTextureSlot;
+                matUBO.useRoughnessTexture = 0u;
+                matUBO.roughnessTextureIndex = g_DefaultMaterialTextureSlot;
+                matUBO.useAoTexture = 0u;
+                matUBO.aoTextureIndex = g_DefaultMaterialTextureSlot;
                 matUBO.paddingTail[0] = 0;
                 matUBO.paddingTail[1] = 0;
                 matUBO.paddingTail[2] = 0;
+                matUBO.paddingTail[3] = 0;
+                matUBO.paddingTail[4] = 0;
+                matUBO.paddingTail[5] = 0;
             }
             
             // Write into this object's slot in the dynamic material buffer

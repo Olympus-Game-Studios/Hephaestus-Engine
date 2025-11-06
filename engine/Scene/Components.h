@@ -237,17 +237,32 @@ struct RelationshipComponent {
 
 /**
  * Material component - defines surface properties for rendering
- * Uses PBR (Physically Based Rendering) workflow
+ * Uses PBR (Physically Based Rendering) workflow with full texture support
  */
 struct MaterialComponent {
+    // Base material properties
     Vec3 albedo;        // Base color (diffuse color)
     float metallic;     // 0 = dielectric, 1 = metal
     float roughness;    // 0 = smooth/glossy, 1 = rough/matte
     float ao;           // Ambient occlusion (0-1)
     Vec3 emissive;      // Self-illumination color
     float emissiveStrength; // Multiplier for emissive
+    
+    // Albedo (diffuse) texture
     std::string albedoTexturePath;
     bool useAlbedoTexture = false;
+    
+    // Normal map texture
+    std::string normalTexturePath;
+    bool useNormalTexture = false;
+    
+    // Roughness texture (can be packed in G channel or standalone)
+    std::string roughnessTexturePath;
+    bool useRoughnessTexture = false;
+    
+    // Ambient occlusion texture
+    std::string aoTexturePath;
+    bool useAoTexture = false;
 
     MaterialComponent()
         : albedo(1.0f, 1.0f, 1.0f)

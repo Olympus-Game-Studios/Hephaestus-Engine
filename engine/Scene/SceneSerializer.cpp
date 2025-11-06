@@ -647,7 +647,13 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"emissive\": " << FormatVec3(material->emissive) << ",\n";
             oss << "          \"emissiveStrength\": " << FormatFloat(material->emissiveStrength) << ",\n";
             oss << "          \"useAlbedoTexture\": " << (material->useAlbedoTexture ? "true" : "false") << ",\n";
-            oss << "          \"albedoTexturePath\": \"" << EscapeString(material->albedoTexturePath) << "\"\n";
+            oss << "          \"albedoTexturePath\": \"" << EscapeString(material->albedoTexturePath) << "\",\n";
+            oss << "          \"useNormalTexture\": " << (material->useNormalTexture ? "true" : "false") << ",\n";
+            oss << "          \"normalTexturePath\": \"" << EscapeString(material->normalTexturePath) << "\",\n";
+            oss << "          \"useRoughnessTexture\": " << (material->useRoughnessTexture ? "true" : "false") << ",\n";
+            oss << "          \"roughnessTexturePath\": \"" << EscapeString(material->roughnessTexturePath) << "\",\n";
+            oss << "          \"useAoTexture\": " << (material->useAoTexture ? "true" : "false") << ",\n";
+            oss << "          \"aoTexturePath\": \"" << EscapeString(material->aoTexturePath) << "\"\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -950,6 +956,30 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             if (const JsonValue* texPathValue = materialObj->Find("albedoTexturePath")) {
                 if (texPathValue->IsString()) {
                     material.albedoTexturePath = texPathValue->AsString();
+                }
+            }
+            if (const JsonValue* useNormalValue = materialObj->Find("useNormalTexture")) {
+                material.useNormalTexture = ParseBoolLike(*useNormalValue, material.useNormalTexture);
+            }
+            if (const JsonValue* normalPathValue = materialObj->Find("normalTexturePath")) {
+                if (normalPathValue->IsString()) {
+                    material.normalTexturePath = normalPathValue->AsString();
+                }
+            }
+            if (const JsonValue* useRoughValue = materialObj->Find("useRoughnessTexture")) {
+                material.useRoughnessTexture = ParseBoolLike(*useRoughValue, material.useRoughnessTexture);
+            }
+            if (const JsonValue* roughPathValue = materialObj->Find("roughnessTexturePath")) {
+                if (roughPathValue->IsString()) {
+                    material.roughnessTexturePath = roughPathValue->AsString();
+                }
+            }
+            if (const JsonValue* useAoValue = materialObj->Find("useAoTexture")) {
+                material.useAoTexture = ParseBoolLike(*useAoValue, material.useAoTexture);
+            }
+            if (const JsonValue* aoPathValue = materialObj->Find("aoTexturePath")) {
+                if (aoPathValue->IsString()) {
+                    material.aoTexturePath = aoPathValue->AsString();
                 }
             }
         }

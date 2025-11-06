@@ -11,6 +11,9 @@ constexpr std::string_view NodeLabel(NodeType type) {
     case NodeType::ColorParameter: return "Color";
     case NodeType::FloatParameter: return "Float";
     case NodeType::TextureParameter: return "Texture";
+    case NodeType::NormalTextureParameter: return "Normal Map";
+    case NodeType::RoughnessTextureParameter: return "Roughness Map";
+    case NodeType::AoTextureParameter: return "AO Map";
     case NodeType::TextureSample: return "Texture Sample";
     case NodeType::Add: return "Add";
     case NodeType::Multiply: return "Multiply";
@@ -25,6 +28,9 @@ constexpr std::string_view PinLabel(NodeType ownerType, PinKind kind, int index)
         case 1: return "Metallic";
         case 2: return "Roughness";
         case 3: return "Emissive";
+        case 4: return "Normal Map";
+        case 5: return "Roughness Map";
+        case 6: return "AO Map";
         default: break;
         }
     }
@@ -34,7 +40,8 @@ constexpr std::string_view PinLabel(NodeType ownerType, PinKind kind, int index)
     if ((ownerType == NodeType::ConstantVec3 || ownerType == NodeType::ColorParameter) && kind == PinKind::Output) {
         return "Value";
     }
-    if (ownerType == NodeType::TextureParameter && kind == PinKind::Output) {
+    if ((ownerType == NodeType::TextureParameter || ownerType == NodeType::NormalTextureParameter || 
+         ownerType == NodeType::RoughnessTextureParameter || ownerType == NodeType::AoTextureParameter) && kind == PinKind::Output) {
         return "Texture";
     }
     if (ownerType == NodeType::TextureSample) {
@@ -54,7 +61,7 @@ constexpr std::string_view PinLabel(NodeType ownerType, PinKind kind, int index)
 
 constexpr ValueType DefaultPinType(NodeType ownerType, PinKind kind, int index) {
     if (ownerType == NodeType::MaterialOutput) {
-        if (index == 0 || index == 3) {
+        if (index == 0 || index == 3 || index == 4) {
             return ValueType::Float3;
         }
         return ValueType::Float1;
@@ -65,7 +72,8 @@ constexpr ValueType DefaultPinType(NodeType ownerType, PinKind kind, int index) 
     if (ownerType == NodeType::ConstantVec3 || ownerType == NodeType::ColorParameter) {
         return ValueType::Float3;
     }
-    if (ownerType == NodeType::TextureParameter) {
+    if (ownerType == NodeType::TextureParameter || ownerType == NodeType::NormalTextureParameter || 
+        ownerType == NodeType::RoughnessTextureParameter || ownerType == NodeType::AoTextureParameter) {
         return ValueType::Sampler2D;
     }
     if (ownerType == NodeType::TextureSample) {
@@ -236,13 +244,16 @@ void Graph::AttachDefaultPins(Node& node) {
 
     switch (node.type) {
     case NodeType::MaterialOutput:
-        addInputs(4);
+        addInputs(7);  // Base Color, Metallic, Roughness, Emissive, Normal, RoughnessMap, AO
         break;
     case NodeType::ConstantFloat:
     case NodeType::FloatParameter:
     case NodeType::ConstantVec3:
     case NodeType::ColorParameter:
     case NodeType::TextureParameter:
+    case NodeType::NormalTextureParameter:
+    case NodeType::RoughnessTextureParameter:
+    case NodeType::AoTextureParameter:
         addOutputs(1);
         break;
     case NodeType::TextureSample:

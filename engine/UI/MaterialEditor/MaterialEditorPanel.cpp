@@ -48,6 +48,9 @@ std::string NodeTypeToString(NodeType type) {
     case NodeType::ColorParameter: return "ColorParameter";
     case NodeType::FloatParameter: return "FloatParameter";
     case NodeType::TextureParameter: return "TextureParameter";
+    case NodeType::NormalTextureParameter: return "NormalTextureParameter";
+    case NodeType::RoughnessTextureParameter: return "RoughnessTextureParameter";
+    case NodeType::AoTextureParameter: return "AoTextureParameter";
     case NodeType::TextureSample: return "TextureSample";
     case NodeType::Add: return "Add";
     case NodeType::Multiply: return "Multiply";
@@ -62,6 +65,9 @@ NodeType StringToNodeType(const std::string& str) {
     if (str == "ColorParameter") return NodeType::ColorParameter;
     if (str == "FloatParameter") return NodeType::FloatParameter;
     if (str == "TextureParameter") return NodeType::TextureParameter;
+    if (str == "NormalTextureParameter") return NodeType::NormalTextureParameter;
+    if (str == "RoughnessTextureParameter") return NodeType::RoughnessTextureParameter;
+    if (str == "AoTextureParameter") return NodeType::AoTextureParameter;
     if (str == "TextureSample") return NodeType::TextureSample;
     if (str == "Add") return NodeType::Add;
     if (str == "Multiply") return NodeType::Multiply;
@@ -90,6 +96,12 @@ bool SaveMaterialAssetFile(const std::filesystem::path& path,
     out << "  \"emissiveStrength\": " << material.emissiveStrength << ",\n";
     out << "  \"useAlbedoTexture\": " << (material.useAlbedoTexture ? "true" : "false") << ",\n";
     out << "  \"albedoTexturePath\": \"" << EscapeJson(material.albedoTexturePath) << "\",\n";
+    out << "  \"useNormalTexture\": " << (material.useNormalTexture ? "true" : "false") << ",\n";
+    out << "  \"normalTexturePath\": \"" << EscapeJson(material.normalTexturePath) << "\",\n";
+    out << "  \"useRoughnessTexture\": " << (material.useRoughnessTexture ? "true" : "false") << ",\n";
+    out << "  \"roughnessTexturePath\": \"" << EscapeJson(material.roughnessTexturePath) << "\",\n";
+    out << "  \"useAoTexture\": " << (material.useAoTexture ? "true" : "false") << ",\n";
+    out << "  \"aoTexturePath\": \"" << EscapeJson(material.aoTexturePath) << "\",\n";
     
     // Save node graph
     out << "  \"graph\": {\n";
@@ -362,6 +374,15 @@ void Panel::DrawNodeCanvas(Graph& graph) {
             if (ImGui::MenuItem("Texture Parameter")) {
                 spawnNode(NodeType::TextureParameter);
             }
+            if (ImGui::MenuItem("Normal Texture Parameter")) {
+                spawnNode(NodeType::NormalTextureParameter);
+            }
+            if (ImGui::MenuItem("Roughness Texture Parameter")) {
+                spawnNode(NodeType::RoughnessTextureParameter);
+            }
+            if (ImGui::MenuItem("AO Texture Parameter")) {
+                spawnNode(NodeType::AoTextureParameter);
+            }
             if (ImGui::MenuItem("Texture Sample")) {
                 spawnNode(NodeType::TextureSample);
             }
@@ -582,11 +603,9 @@ std::optional<PanelResult> Panel::DrawSimpleProperties(Graph& graph) {
     ImGui::Separator();
     ImGui::TextUnformatted("Texture Settings");
 
-    // Texture checkbox
-    ImGui::Checkbox("Use Texture##SimpleMode", &m_SimpleMaterialProps.useAlbedoTexture);
-
+    // Albedo texture checkbox
+    ImGui::Checkbox("Use Albedo Texture##SimpleMode", &m_SimpleMaterialProps.useAlbedoTexture);
     if (m_SimpleMaterialProps.useAlbedoTexture) {
-        // Texture dropdown
         int currentSelection = -1;
         for (size_t i = 0; i < m_DiscoveredTextures.size(); ++i) {
             if (m_DiscoveredTextures[i] == m_SimpleMaterialProps.albedoTexturePath) {
@@ -594,14 +613,12 @@ std::optional<PanelResult> Panel::DrawSimpleProperties(Graph& graph) {
                 break;
             }
         }
-
         std::vector<const char*> textureNames;
         textureNames.reserve(m_DiscoveredTextures.size() + 1);
         textureNames.push_back("(None)");
         for (const auto& tex : m_DiscoveredTextures) {
             textureNames.push_back(tex.c_str());
         }
-
         const char* preview = (currentSelection >= 0) ? m_DiscoveredTextures[currentSelection].c_str() : "(None)";
         if (ImGui::Combo("Albedo Texture##Simple", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
             if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(m_DiscoveredTextures.size())) {
@@ -610,18 +627,84 @@ std::optional<PanelResult> Panel::DrawSimpleProperties(Graph& graph) {
                 m_SimpleMaterialProps.albedoTexturePath.clear();
             }
         }
-
-        // Manual input fallback
-        static char textureBuffer[256] = { 0 };
-        if (preview != nullptr) {
-            std::strncpy(textureBuffer, preview, sizeof(textureBuffer) - 1);
-            textureBuffer[sizeof(textureBuffer) - 1] = '\0';
+    }
+    
+    // Normal map texture checkbox
+    ImGui::Checkbox("Use Normal Texture##SimpleMode", &m_SimpleMaterialProps.useNormalTexture);
+    if (m_SimpleMaterialProps.useNormalTexture) {
+        int currentSelection = -1;
+        for (size_t i = 0; i < m_DiscoveredTextures.size(); ++i) {
+            if (m_DiscoveredTextures[i] == m_SimpleMaterialProps.normalTexturePath) {
+                currentSelection = static_cast<int>(i);
+                break;
+            }
         }
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText("##TextureManualSimple", textureBuffer, sizeof(textureBuffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
-            m_SimpleMaterialProps.albedoTexturePath = textureBuffer;
+        std::vector<const char*> textureNames;
+        textureNames.reserve(m_DiscoveredTextures.size() + 1);
+        textureNames.push_back("(None)");
+        for (const auto& tex : m_DiscoveredTextures) {
+            textureNames.push_back(tex.c_str());
         }
-        ImGui::TextDisabled("Found %zu textures", m_DiscoveredTextures.size());
+        const char* preview = (currentSelection >= 0) ? m_DiscoveredTextures[currentSelection].c_str() : "(None)";
+        if (ImGui::Combo("Normal Texture##Simple", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
+            if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(m_DiscoveredTextures.size())) {
+                m_SimpleMaterialProps.normalTexturePath = m_DiscoveredTextures[currentSelection - 1];
+            } else {
+                m_SimpleMaterialProps.normalTexturePath.clear();
+            }
+        }
+    }
+    
+    // Roughness texture checkbox
+    ImGui::Checkbox("Use Roughness Texture##SimpleMode", &m_SimpleMaterialProps.useRoughnessTexture);
+    if (m_SimpleMaterialProps.useRoughnessTexture) {
+        int currentSelection = -1;
+        for (size_t i = 0; i < m_DiscoveredTextures.size(); ++i) {
+            if (m_DiscoveredTextures[i] == m_SimpleMaterialProps.roughnessTexturePath) {
+                currentSelection = static_cast<int>(i);
+                break;
+            }
+        }
+        std::vector<const char*> textureNames;
+        textureNames.reserve(m_DiscoveredTextures.size() + 1);
+        textureNames.push_back("(None)");
+        for (const auto& tex : m_DiscoveredTextures) {
+            textureNames.push_back(tex.c_str());
+        }
+        const char* preview = (currentSelection >= 0) ? m_DiscoveredTextures[currentSelection].c_str() : "(None)";
+        if (ImGui::Combo("Roughness Texture##Simple", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
+            if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(m_DiscoveredTextures.size())) {
+                m_SimpleMaterialProps.roughnessTexturePath = m_DiscoveredTextures[currentSelection - 1];
+            } else {
+                m_SimpleMaterialProps.roughnessTexturePath.clear();
+            }
+        }
+    }
+    
+    // AO texture checkbox
+    ImGui::Checkbox("Use AO Texture##SimpleMode", &m_SimpleMaterialProps.useAoTexture);
+    if (m_SimpleMaterialProps.useAoTexture) {
+        int currentSelection = -1;
+        for (size_t i = 0; i < m_DiscoveredTextures.size(); ++i) {
+            if (m_DiscoveredTextures[i] == m_SimpleMaterialProps.aoTexturePath) {
+                currentSelection = static_cast<int>(i);
+                break;
+            }
+        }
+        std::vector<const char*> textureNames;
+        textureNames.reserve(m_DiscoveredTextures.size() + 1);
+        textureNames.push_back("(None)");
+        for (const auto& tex : m_DiscoveredTextures) {
+            textureNames.push_back(tex.c_str());
+        }
+        const char* preview = (currentSelection >= 0) ? m_DiscoveredTextures[currentSelection].c_str() : "(None)";
+        if (ImGui::Combo("AO Texture##Simple", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
+            if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(m_DiscoveredTextures.size())) {
+                m_SimpleMaterialProps.aoTexturePath = m_DiscoveredTextures[currentSelection - 1];
+            } else {
+                m_SimpleMaterialProps.aoTexturePath.clear();
+            }
+        }
     }
 
     ImGui::Separator();

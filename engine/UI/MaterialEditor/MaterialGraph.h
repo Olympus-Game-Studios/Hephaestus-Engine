@@ -33,6 +33,9 @@ enum class NodeType {
     ColorParameter,
     FloatParameter,
     TextureParameter,
+    NormalTextureParameter,
+    RoughnessTextureParameter,
+    AoTextureParameter,
     TextureSample,
     Add,
     Multiply
