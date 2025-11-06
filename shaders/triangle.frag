@@ -17,14 +17,22 @@ layout(std140, set = 0, binding = 0) uniform UBO {
 
 // Material properties (set via push constants or additional descriptor sets)
 layout(std140, set = 0, binding = 1) uniform MaterialUBO {
-    vec3 albedo;
-    float metallic;
-    vec3 emissive;
-    float roughness;
-    float ao;
-    float emissiveStrength;
-    uint useAlbedoTexture;
-    uint albedoTextureIndex;
+    vec3 albedo;              // offset 0, size 12 (padded to 16 in std140)
+    float albedoPadding;      // offset 12, explicit padding
+    float metallic;           // offset 16
+    float metallicPadding0;   // offset 20
+    float metallicPadding1;   // offset 24
+    float metallicPadding2;   // offset 28
+    vec3 emissive;            // offset 32, size 12 (padded to 16 in std140)
+    float emissivePadding;    // offset 44, explicit padding
+    float roughness;          // offset 48
+    float ao;                 // offset 52
+    float emissiveStrength;   // offset 56
+    uint useAlbedoTexture;    // offset 60
+    uint albedoTextureIndex;  // offset 64
+    uint paddingTail0;        // offset 68
+    uint paddingTail1;        // offset 72
+    uint paddingTail2;        // offset 76
 } material;
 
 layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOTS];
