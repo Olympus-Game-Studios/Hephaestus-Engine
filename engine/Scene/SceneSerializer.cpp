@@ -645,7 +645,9 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"roughness\": " << FormatFloat(material->roughness) << ",\n";
             oss << "          \"ao\": " << FormatFloat(material->ao) << ",\n";
             oss << "          \"emissive\": " << FormatVec3(material->emissive) << ",\n";
-            oss << "          \"emissiveStrength\": " << FormatFloat(material->emissiveStrength) << "\n";
+            oss << "          \"emissiveStrength\": " << FormatFloat(material->emissiveStrength) << ",\n";
+            oss << "          \"useAlbedoTexture\": " << (material->useAlbedoTexture ? "true" : "false") << ",\n";
+            oss << "          \"albedoTexturePath\": \"" << EscapeString(material->albedoTexturePath) << "\"\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -940,6 +942,14 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             if (const JsonValue* emissiveStrengthValue = materialObj->Find("emissiveStrength")) {
                 if (emissiveStrengthValue->IsNumber()) {
                     material.emissiveStrength = static_cast<float>(emissiveStrengthValue->AsNumber());
+                }
+            }
+            if (const JsonValue* useTexValue = materialObj->Find("useAlbedoTexture")) {
+                material.useAlbedoTexture = ParseBoolLike(*useTexValue, material.useAlbedoTexture);
+            }
+            if (const JsonValue* texPathValue = materialObj->Find("albedoTexturePath")) {
+                if (texPathValue->IsString()) {
+                    material.albedoTexturePath = texPathValue->AsString();
                 }
             }
         }
