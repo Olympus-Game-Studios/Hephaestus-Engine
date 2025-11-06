@@ -1,5 +1,8 @@
 Developer To-Do (Current Focus)
 --------------------------------
+- ✅ Complete PBR material system with texture support (Albedo, Normal, Roughness, AO)
+- ✅ Implement node-based material graph editor (ImNodes integration)
+- ✅ Add material asset save/load system with scene serialization
 - Finalize render graph lighting parity and verify HDR output across reference scenes.
 - Complete FBX/GLTF import bridge with validation suite and error surfacing in editor.
 - Implement transform gizmo undo/redo history stack with visual diff preview.
@@ -26,7 +29,11 @@ Guiding Principles
 Milestones
 ----------
 
-### 2025 Q4 – Alpha Foundations
+### 2025 Q4 – Alpha Foundations ✅ (Material System Complete)
+- ✅ **Material System:** Complete PBR workflow with Albedo, Normal, Roughness, and AO texture support
+- ✅ **Material Editor:** Node-based visual material graph editor using ImNodes
+- ✅ **Asset Pipeline:** Material asset save/load system integrated with scene serialization
+- ✅ **Texture Integration:** Dynamic texture loading, caching, and descriptor array management
 - Lock down rendering core: finalize render graph implementation, lighting pass parity with reference scenes, HDR pipeline, and ImGui overlay updates.
 - Ship stable asset ingestion path: mesh/material importers, texture compression presets, hot reload for shaders and materials.
 - Complete editor selection & gizmo tooling round-trip (translation, rotation, scaling) with undo/redo history.
@@ -34,9 +41,9 @@ Milestones
 - Establish automated nightly builds and smoke tests on Windows; capture crash dumps.
 - Publish developer quickstart and ECS overview updates in `Documentation/`.
 - *Feature Highlights:*
-  - Rendering: tile-based light culling, tone mapping pipeline, debug lighting visualizers.
-  - Editor: transform gizmos with axis constraints, selection outline pass, history stack inspector.
-  - Assets: FBX/GLTF import bridge, GPU texture atlas generator, shader reload without editor restart.
+  - Rendering: ✅ PBR material workflow, ✅ texture sampling (4 types), tile-based light culling, tone mapping pipeline, debug lighting visualizers.
+  - Editor: ✅ Material graph editor, transform gizmos with axis constraints, selection outline pass, history stack inspector.
+  - Assets: ✅ Material asset system, FBX/GLTF import bridge, GPU texture atlas generator, shader reload without editor restart.
   - Physics: convex collider authoring, fixed timestep integrator, collision event bus.
 
 ### 2026 Q1 – Beta Content Workflow
@@ -96,9 +103,9 @@ Milestones
 
 Cross-Track Initiatives
 -----------------------
-- **Rendering:** Deferred + forward+ hybrid pipeline, PBR material library, volumetrics, temporal AA upgrades.
-- **Editor UX:** Dockable panels, customizable workspaces, UI theme polish, accessibility compliance.
-- **Content Pipeline:** Continuous import daemons, version control integration (Perforce/Git LFS), dependency audits.
+- **Rendering:** ✅ PBR material system with texture support, Deferred + forward+ hybrid pipeline, volumetrics, temporal AA upgrades.
+- **Editor UX:** ✅ Material graph editor, Dockable panels, customizable workspaces, UI theme polish, accessibility compliance.
+- **Content Pipeline:** ✅ Texture discovery and loading, Continuous import daemons, version control integration (Perforce/Git LFS), dependency audits.
 - **Tooling & Automation:** Deterministic builds via CMake presets, asset validation bots, crash telemetry dashboards.
 - **QA & Testing:** Headless test harness, ECS regression scenarios, graphics screenshot comparisons, performance budget tracking.
 - **Community & Support:** Contributor guidelines, issue triage rotations, roadmap transparency updates each quarter.

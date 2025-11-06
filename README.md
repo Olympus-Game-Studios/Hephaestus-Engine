@@ -18,8 +18,10 @@ Key parts:
   - `Core/` — Application entry point and math utilities
   - `Gfx/` — Vulkan rendering abstraction
   - `Scene/` — **NEW!** ECS system (Entity, Scene, Components)
+  - `UI/` — Editor panels including material graph editor
+  - `Assets/` — Asset loading and management (models, textures)
 - `editor/` — Editor application and widgets
-- `extern/` — Third-party libraries (glfw, imgui, ImGuizmo, EnTT, VMA)
+- `extern/` — Third-party libraries (glfw, imgui, ImGuizmo, ImNodes, EnTT, VMA, stb_image)
 - `shaders/` — GLSL shader sources and compiled SPIR-V
 - `build/` — CMake/Visual Studio generated build files
 
@@ -36,12 +38,21 @@ Key parts:
 - **TagComponent** - Entity naming
 - **TransformComponent** - Position, rotation, scale with hierarchy
 - **MeshRendererComponent** - Rendering data and bounding boxes
+- **MaterialComponent** - Full PBR material properties with texture support
 - **SelectionComponent** - Editor selection state
 - **CameraComponent** - Camera properties
+
+### 🎨 Material System
+- **PBR Workflow** - Physically-based rendering with metallic/roughness workflow
+- **Texture Support** - Albedo, Normal Maps, Roughness Maps, Ambient Occlusion
+- **Node-Based Editor** - Visual material graph editor with real-time preview
+- **Material Assets** - Save and reuse materials across multiple entities
+- **Simple & Advanced Modes** - UI properties editor and visual node graph
 
 ### 🛠️ Editor Tools
 - Scene hierarchy window
 - Entity properties inspector
+- **Material Editor** - Visual node-based material authoring
 - ImGuizmo transform manipulation (Translate/Rotate/Scale)
 - Ray-based object picking
 - Real-time component editing 
@@ -173,7 +184,10 @@ Hephaestus-Engine/
 │   │   ├── Entity.h/cpp     # Entity wrapper
 │   │   ├── Scene.h/cpp      # Scene manager
 │   │   ├── Components.h     # All component definitions
-│   │   └── Transform.h      # Legacy transform (kept for reference)
+│   │   └── SceneSerializer.cpp # Scene save/load
+│   ├── UI/                  # ✨ Editor UI panels
+│   │   └── MaterialEditor/  # Node-based material graph
+│   ├── Assets/              # Asset loading (models, textures)
 │   ├── Physics/             # Physics hooks
 │   └── Platform/            # Platform abstraction
 ├── editor/                  # Editor widgets
@@ -182,6 +196,8 @@ Hephaestus-Engine/
 │   ├── glfw/                # Window & input
 │   ├── imgui/               # UI library
 │   ├── ImGuizmo/            # Transform gizmos
+│   ├── imnodes/             # ✨ Node graph editor (NEW!)
+│   ├── stb_image.h          # Image loading
 │   └── VMA/                 # Vulkan Memory Allocator
 ├── shaders/                 # GLSL shaders and SPIR-V
 ├── build/                   # CMake build output
@@ -189,6 +205,8 @@ Hephaestus-Engine/
     ├── ECS_GUIDE.md                    # ✨ Comprehensive ECS guide
     ├── ECS_IMPLEMENTATION_SUMMARY.md   # ✨ What was added
     ├── CUSTOM_COMPONENTS_GUIDE.md      # ✨ How to extend
+    ├── LIGHTING_AND_MATERIALS_GUIDE.md # ✨ PBR material system
+    ├── TEXTURE_RENDERING_GUIDE.md      # ✨ Texture integration
     ├── RAY_PICKING.md                  # Ray picking documentation
     └── IMGUIZMO_INTEGRATION.md         # ImGuizmo docs
 ```
@@ -212,6 +230,8 @@ Hephaestus-Engine/
 | [`Documentation/LIGHTING_AND_MATERIALS_GUIDE.md`](Documentation/LIGHTING_AND_MATERIALS_GUIDE.md) | Overview of the PBR material system, light types, and usage examples. |
 | [`Documentation/LIGHTING_ADVANCED_EXAMPLES.md`](Documentation/LIGHTING_ADVANCED_EXAMPLES.md) | Expanded code examples for advanced materials, presets, and lighting scenarios. |
 | [`Documentation/LIGHTING_VISUAL_GUIDE.md`](Documentation/LIGHTING_VISUAL_GUIDE.md) | Visual reference describing demo scene lighting setups and material appearances. |
+| [`Documentation/TEXTURE_RENDERING_GUIDE.md`](TEXTURE_RENDERING_GUIDE.md) | Complete guide to texture integration, UBO alignment, and PBR texture workflow. |
+| [`Documentation/TEXTURE_DROPDOWN_FEATURE.md`](Documentation/TEXTURE_DROPDOWN_FEATURE.md) | Implementation details for the texture selection UI in the material editor. |
 | [`Documentation/RAY_PICKING.md`](Documentation/RAY_PICKING.md) | Detailed explanation of the ray picking implementation and input handling. |
 | [`Documentation/RAY_PICKING_REFERENCE.md`](Documentation/RAY_PICKING_REFERENCE.md) | Quick reference for ray picking code changes and helper APIs. |
 
@@ -251,6 +271,32 @@ Entity child = scene.CreateEntity("Child");
 scene.SetParent(child, parent);
 ```
 
+#### Creating Materials
+```cpp
+// Simple material with colors
+Entity cube = scene.CreateEntity("Cube");
+auto& material = cube.AddComponent<MaterialComponent>();
+material.baseColor = {1.0f, 0.0f, 0.0f}; // Red
+material.metallic = 0.0f;
+material.roughness = 0.5f;
+
+// Material with textures
+material.useAlbedoTexture = true;
+material.albedoTexturePath = "assets/textures/brick_albedo.png";
+material.useNormalTexture = true;
+material.normalTexturePath = "assets/textures/brick_normal.png";
+material.useRoughnessTexture = true;
+material.roughnessTexturePath = "assets/textures/brick_roughness.png";
+```
+
+#### Using the Material Graph Editor
+1. Open the Material Editor panel
+2. Right-click in the graph canvas
+3. Add texture nodes: **Textures** → **Albedo/Normal/Roughness/AO Texture**
+4. Select a texture node and choose a texture from the dropdown
+5. Connect texture outputs to the **Material Output** node inputs
+6. Click **Apply To Selected Entity** to assign the material
+
 See the guides above for complete examples and best practices.
 
 ## Controls
@@ -278,22 +324,34 @@ See the guides above for complete examples and best practices.
 - **GLFW** - Window/input management
 - **ImGui** - Editor UI
 - **ImGuizmo** - Transform gizmos
+- **ImNodes** - Node-based graph editor for materials
 - **EnTT** - Entity-Component-System (header-only)
+- **stb_image** - Image loading for textures
 - **VMA** - Vulkan Memory Allocator
 
 ## Next Steps & Roadmap
 
+### Recently Completed ✅
+- [x] Entity-Component-System (EnTT)
+- [x] Scene serialization (Save/Load)
+- [x] Material system with PBR workflow
+- [x] Texture support (Albedo, Normal, Roughness, AO)
+- [x] Node-based material graph editor
+- [x] Material asset save/load system
+
 ### Immediate
-- [ ] Add more component types (RigidBody, Light, Camera)
+- [ ] Add more component types (RigidBody, Light)
 - [ ] Implement system patterns (Physics, Animation)
-- [ ] Scene serialization (Save/Load)
+- [ ] Enhanced asset browser with thumbnails
+- [ ] Material library and presets
 
 ### Future
-- [ ] Asset management system
-- [ ] Material system
-- [ ] Lighting & shadows
+- [ ] Advanced lighting (Point, Spot, Directional lights)
+- [ ] Shadow mapping
+- [ ] Post-processing effects
 - [ ] Scripting integration (Lua/C#)
 - [ ] Multi-threading support
+- [ ] GPU profiling tools
 
 ## Contributing
 
