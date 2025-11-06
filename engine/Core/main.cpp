@@ -1206,12 +1206,15 @@ static std::filesystem::path ResolveEngineRoot()
     }
 
     fs::path candidate = fs::current_path();
+    std::cout << "[ResolveEngineRoot] Starting from: " << candidate << std::endl;
     for (int depth = 0; depth < 10; ++depth) {
         const bool hasAssets = fs::exists(candidate / "assets");
         const bool hasEditor = fs::exists(candidate / "editor");
         const bool hasEngine = fs::exists(candidate / "engine");
+        std::cout << "[ResolveEngineRoot] Depth " << depth << ": " << candidate << " (assets=" << hasAssets << ", editor=" << hasEditor << ", engine=" << hasEngine << ")" << std::endl;
         if (hasAssets && hasEditor && hasEngine) {
             g_EngineRoot = candidate;
+            std::cout << "[ResolveEngineRoot] Found engine root: " << g_EngineRoot << std::endl;
             break;
         }
         if (!candidate.has_parent_path()) {
@@ -1222,6 +1225,7 @@ static std::filesystem::path ResolveEngineRoot()
 
     if (g_EngineRoot.empty()) {
         g_EngineRoot = fs::current_path();
+        std::cout << "[ResolveEngineRoot] Using current path as fallback: " << g_EngineRoot << std::endl;
     }
     return g_EngineRoot;
 }
@@ -2201,6 +2205,7 @@ static std::optional<std::filesystem::path> DrawProjectBrowser()
         bool createClicked = ImGui::Button("Create", ImVec2(120.0f, 0.0f));
 
         if (createClicked || enterPressed) {
+            std::cout << "[ProjectCreation] Create button clicked or Enter pressed" << std::endl;
             std::string rawName(s_NewProjectBuffer.data());
             std::string trimmed = TrimCopy(rawName);
             if (trimmed.empty()) {
@@ -2255,11 +2260,79 @@ static std::optional<std::filesystem::path> DrawProjectBrowser()
                                 }
                             }
                             if (!subdirFailure) {
-                                s_ErrorMessage.clear();
-                                s_StatusMessage = "Created project '" + sanitized + "'.";
-                                s_SelectedProjectName = sanitized;
-                                std::fill(s_NewProjectBuffer.begin(), s_NewProjectBuffer.end(), 0);
-                                selection = newProjectPath;
+                                // Copy engine assets to the new project
+                                fs::path engineRoot = ResolveEngineRoot();
+                                fs::path engineMeshesPath = engineRoot / "assets" / "meshes";
+                                fs::path engineTexturesPath = engineRoot / "assets" / "textures";
+                                fs::path projectModelsPath = newProjectPath / "assets" / "models";
+                                fs::path projectTexturesPath = newProjectPath / "assets" / "textures";
+                                
+                                std::cout << "\n[ProjectCreation] Starting asset copy..." << std::endl;
+                                std::cout << "  Engine root: " << engineRoot << std::endl;
+                                std::cout << "  Engine meshes path: " << engineMeshesPath << " (exists: " << fs::exists(engineMeshesPath) << ")" << std::endl;
+                                std::cout << "  Engine textures path: " << engineTexturesPath << " (exists: " << fs::exists(engineTexturesPath) << ")" << std::endl;
+                                std::cout << "  Project models path: " << projectModelsPath << " (exists: " << fs::exists(projectModelsPath) << ")" << std::endl;
+                                std::cout << "  Project textures path: " << projectTexturesPath << " (exists: " << fs::exists(projectTexturesPath) << ")" << std::endl;
+                                
+                                bool copyFailure = false;
+                                std::error_code copyErr;
+                                int meshesCopied = 0;
+                                int texturesCopied = 0;
+                                
+                                // Copy meshes to models folder
+                                if (fs::exists(engineMeshesPath)) {
+                                    std::cout << "  Copying meshes..." << std::endl;
+                                    for (const auto& entry : fs::directory_iterator(engineMeshesPath)) {
+                                        if (fs::is_regular_file(entry)) {
+                                            fs::copy_file(entry.path(), projectModelsPath / entry.path().filename(), 
+                                                        fs::copy_options::overwrite_existing, copyErr);
+                                            if (copyErr) {
+                                                std::cout << "    ERROR: Failed to copy " << entry.path().filename() << ": " << copyErr.message() << std::endl;
+                                                s_ErrorMessage = "Failed to copy engine meshes: " + copyErr.message();
+                                                s_StatusMessage.clear();
+                                                copyFailure = true;
+                                                break;
+                                            }
+                                            meshesCopied++;
+                                            std::cout << "    Copied: " << entry.path().filename() << std::endl;
+                                        }
+                                    }
+                                } else {
+                                    std::cout << "  Engine meshes path does not exist - skipping mesh copy" << std::endl;
+                                }
+                                
+                                // Copy textures to textures folder
+                                if (!copyFailure && fs::exists(engineTexturesPath)) {
+                                    std::cout << "  Copying textures..." << std::endl;
+                                    for (const auto& entry : fs::directory_iterator(engineTexturesPath)) {
+                                        if (fs::is_regular_file(entry)) {
+                                            fs::copy_file(entry.path(), projectTexturesPath / entry.path().filename(), 
+                                                        fs::copy_options::overwrite_existing, copyErr);
+                                            if (copyErr) {
+                                                std::cout << "    ERROR: Failed to copy " << entry.path().filename() << ": " << copyErr.message() << std::endl;
+                                                s_ErrorMessage = "Failed to copy engine textures: " + copyErr.message();
+                                                s_StatusMessage.clear();
+                                                copyFailure = true;
+                                                break;
+                                            }
+                                            texturesCopied++;
+                                            std::cout << "    Copied: " << entry.path().filename() << std::endl;
+                                        }
+                                    }
+                                } else if (!copyFailure) {
+                                    std::cout << "  Engine textures path does not exist - skipping texture copy" << std::endl;
+                                }
+                                
+                                std::cout << "  Summary: Meshes copied=" << meshesCopied << ", Textures copied=" << texturesCopied << std::endl;
+                                
+                                if (!copyFailure) {
+                                    s_ErrorMessage.clear();
+                                    s_StatusMessage = "Created project '" + sanitized + "'.";
+                                    s_SelectedProjectName = sanitized;
+                                    std::fill(s_NewProjectBuffer.begin(), s_NewProjectBuffer.end(), 0);
+                                    selection = newProjectPath;
+                                    std::cout << "[ProjectCreation] Project created successfully!\n" << std::endl;
+                                }
                             }
                         }
                     }
