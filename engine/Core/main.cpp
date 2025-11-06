@@ -501,6 +501,9 @@ static void DrawViewportOverlay(ImGuizmo::OPERATION& operation,
 
 static void BeginHephaestusDockspace()
 {
+    // Reset mouse state for clean transition from project browser
+    ImGui::ResetMouseDragDelta();
+    
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     // Reserve space at the top for the toolbar to avoid overlap with docked windows
     const ImGuiStyle& s = ImGui::GetStyle();
@@ -1299,6 +1302,12 @@ static void SetActiveProjectRoot(const std::filesystem::path& projectPath)
             name = g_ActiveProjectRoot.stem().string();
         }
         g_ActiveProjectName = name;
+        
+        // Clear ImGui state before transitioning to editor UI
+        ImGuiIO& io = ImGui::GetIO();
+        io.ClearInputKeys();
+        ImGui::ResetMouseDragDelta();
+        
         g_ProjectSelected = true;
     } else {
         g_ActiveProjectName.clear();
@@ -2082,16 +2091,46 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
     return result;
 }
 
+// Template project data structure
+struct ProjectTemplate {
+    std::string name;
+    std::string description;
+    std::string category;
+    std::string icon;
+};
+
 static std::optional<std::filesystem::path> DrawProjectBrowser()
 {
     namespace fs = std::filesystem;
 
     std::optional<fs::path> selection;
 
+    // Early exit if project has been selected and we're transitioning to editor
+    if (g_ProjectSelected) {
+        return selection;
+    }
+
     static std::array<char, 128> s_NewProjectBuffer{};
     static std::string s_SelectedProjectName;
     static std::string s_ErrorMessage;
     static std::string s_StatusMessage;
+    static int s_CurrentView = 0; // 0 = Recent Projects, 1 = Templates
+    static int s_SortMode = 0; // 0 = Last Opened, 1 = A-Z, 2 = Size
+    static std::string s_FilterCategory = "All";
+    static int s_SelectedTemplateIdx = -1;
+
+    // Define template projects
+    static std::vector<ProjectTemplate> s_Templates = {
+        {"First-Person Starter", "Character controller, input, basic shooter HUD.", "First-Person", "first person"},
+        {"Third-Person Template", "Over-the-shoulder camera, locomotion, interact.", "Third-Person", "third person"},
+        {"2D Platformer", "Tilemap, physics, parallax sample scene.", "2D", "2d"},
+        {"Top-Down ARPG", "Click-to-move, ability bar, loot stubs.", "Third-Person", "third person"},
+        {"Blank Project", "Empty level with essential settings.", "All", "blank"},
+        {"UI Tools App", "Docking, panels, persistence utils.", "UI/Tools", "ui"},
+        {"Cinematic Scene", "Sequencer, camera rigs, DOF presets.", "Third-Person", "third person"},
+        {"First-Person (Multiplayer)", "Replication ready, lobby, voice chat stub.", "First-Person", "first person"},
+        {"2D Visual Novel", "Dialogue system, choices, save/load.", "2D", "2d"}
+    };
 
     fs::path projectsRoot = ResolveProjectsRoot();
     std::error_code scanErr;
@@ -2124,234 +2163,554 @@ static std::optional<std::filesystem::path> DrawProjectBrowser()
         s_SelectedProjectName.clear();
     }
 
+    // Fullscreen window setup
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImVec2 center = viewport->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(640.0f, 420.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
 
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse |
                                    ImGuiWindowFlags_NoResize |
                                    ImGuiWindowFlags_NoSavedSettings |
                                    ImGuiWindowFlags_NoDocking |
-                                   ImGuiWindowFlags_NoMove;
+                                   ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_NoTitleBar;
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 
-    if (ImGui::Begin("Project Browser", nullptr, windowFlags)) {
-        ImGui::Text("Select or create a project to continue");
-        std::string rootDisplay = projectsRoot.generic_string();
-        ImGui::TextDisabled("Projects directory: %s", rootDisplay.c_str());
-        if (!enumerationError.empty()) {
-            ImGui::TextColored(ImVec4(0.90f, 0.36f, 0.36f, 1.0f), "%s", enumerationError.c_str());
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-
-        float listHeight = std::max(220.0f, ImGui::GetTextLineHeightWithSpacing() * 8.0f);
-        if (ImGui::BeginChild("##ProjectList", ImVec2(0.0f, listHeight), true, ImGuiWindowFlags_HorizontalScrollbar)) {
-            for (size_t i = 0; i < projectPaths.size(); ++i) {
-                const fs::path& path = projectPaths[i];
-                std::string name = path.filename().string();
-                bool isSelected = static_cast<int>(i) == selectedIndex;
-                ImGuiSelectableFlags flags = ImGuiSelectableFlags_AllowDoubleClick;
-                if (ImGui::Selectable(name.c_str(), isSelected, flags)) {
-                    s_SelectedProjectName = name;
-                    selectedIndex = static_cast<int>(i);
-                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                        selection = path;
-                        s_ErrorMessage.clear();
-                        s_StatusMessage.clear();
-                        break;
-                    }
-                }
-                if (ImGui::IsItemHovered()) {
-                    std::string tooltip = path.generic_string();
-                    ImGui::SetTooltip("%s", tooltip.c_str());
-                }
+    if (ImGui::Begin("Project Manager", nullptr, windowFlags)) {
+        ImVec2 windowSize = ImGui::GetWindowSize();
+        
+        // Left sidebar (250px wide)
+        const float sidebarWidth = 250.0f;
+        ImGui::BeginChild("##Sidebar", ImVec2(sidebarWidth, 0), true, ImGuiWindowFlags_NoScrollbar);
+        {
+            ImGui::Spacing();
+            ImGui::Indent(15.0f);
+            
+            // Hephaestus branding
+            ImGui::PushFont(ImGui::GetFont()); // Use default font for now
+            ImGui::Text("H Hephaestus Engine");
+            ImGui::PopFont();
+            ImGui::TextDisabled("Vulkan | DX12 | Metal");
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            
+            // Navigation buttons
+            ImGui::PushStyleColor(ImGuiCol_Button, s_CurrentView == 0 ? ImVec4(0.26f, 0.59f, 0.98f, 0.40f) : ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+            if (ImGui::Button("Recent Projects", ImVec2(220.0f, 35.0f))) {
+                s_CurrentView = 0;
+                s_ErrorMessage.clear();
+                s_StatusMessage.clear();
             }
+            ImGui::PopStyleColor();
+            
+            ImGui::PushStyleColor(ImGuiCol_Button, s_CurrentView == 1 ? ImVec4(0.26f, 0.59f, 0.98f, 0.40f) : ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+            if (ImGui::Button("Templates", ImVec2(220.0f, 35.0f))) {
+                s_CurrentView = 1;
+                s_ErrorMessage.clear();
+                s_StatusMessage.clear();
+            }
+            ImGui::PopStyleColor();
+            
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            
+            // New Project button
+            if (ImGui::Button("+ New Project", ImVec2(220.0f, 40.0f))) {
+                // Show create project dialog in main area
+                s_CurrentView = 1; // Switch to templates for now
+            }
+            
+            ImGui::Unindent(15.0f);
         }
         ImGui::EndChild();
-
-        if (projectPaths.empty() && s_ErrorMessage.empty()) {
-            ImGui::TextDisabled("No projects found. Create one below.");
-        }
-
-        bool canOpen = selectedIndex >= 0 && selectedIndex < static_cast<int>(projectPaths.size());
-        if (!canOpen) {
-            ImGui::BeginDisabled();
-        }
-        if (ImGui::Button("Open Project", ImVec2(160.0f, 0.0f)) && canOpen) {
-            selection = projectPaths[static_cast<size_t>(selectedIndex)];
-            s_ErrorMessage.clear();
-            s_StatusMessage.clear();
-        }
-        if (!canOpen) {
-            ImGui::EndDisabled();
-        }
+        
         ImGui::SameLine();
-        ImGui::TextDisabled("Double-click a project name to open it");
-
-        ImGui::Separator();
-        ImGui::Text("Create New Project");
-
-        ImGui::PushItemWidth(-140.0f);
-        ImGui::InputTextWithHint("##NewProjectName", "Project name", s_NewProjectBuffer.data(), s_NewProjectBuffer.size());
-        bool enterPressed = ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Enter);
-        ImGui::PopItemWidth();
-
-        ImGui::SameLine();
-        bool createClicked = ImGui::Button("Create", ImVec2(120.0f, 0.0f));
-
-        if (createClicked || enterPressed) {
-            std::cout << "[ProjectCreation] Create button clicked or Enter pressed" << std::endl;
-            std::string rawName(s_NewProjectBuffer.data());
-            std::string trimmed = TrimCopy(rawName);
-            if (trimmed.empty()) {
-                s_ErrorMessage = "Project name cannot be empty.";
-                s_StatusMessage.clear();
-            } else {
-                std::string sanitized = trimmed;
-                for (char& ch : sanitized) {
-                    unsigned char uc = static_cast<unsigned char>(ch);
-                    if (std::isalnum(uc) || ch == ' ' || ch == '_' || ch == '-') {
-                        continue;
+        
+        // Main content area
+        ImGui::BeginChild("##MainContent", ImVec2(0, 0), false);
+        {
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 20.0f));
+            
+            // Recent Projects View
+            if (s_CurrentView == 0) {
+                ImGui::Text("Recent Projects");
+                ImGui::Spacing();
+                
+                // Sort/Filter controls
+                ImGui::Text("Sort:");
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Last Opened", s_SortMode == 0)) s_SortMode = 0;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("A-Z", s_SortMode == 1)) s_SortMode = 1;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Size", s_SortMode == 2)) s_SortMode = 2;
+                
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                
+                if (projectPaths.empty()) {
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("No projects found.");
+                    ImGui::Spacing();
+                    if (ImGui::Button("Start something new", ImVec2(200.0f, 40.0f))) {
+                        s_CurrentView = 1;
                     }
-                    ch = '_';
-                }
-                while (!sanitized.empty() && (sanitized.back() == ' ' || sanitized.back() == '.')) {
-                    sanitized.pop_back();
-                }
-                if (sanitized.empty()) {
-                    s_ErrorMessage = "Project name cannot end with spaces or dots.";
-                    s_StatusMessage.clear();
                 } else {
-                    fs::path newProjectPath = (projectsRoot / sanitized).lexically_normal();
-                    if (fs::exists(newProjectPath)) {
-                        s_ErrorMessage = "A project with that name already exists.";
+                    // Project cards - calculate optimal card size
+                    ImVec2 availableSize = ImGui::GetContentRegionAvail();
+                    availableSize.y -= 60.0f; // Reserve space for status bar
+                    
+                    const float minCardWidth = 300.0f;
+                    const float maxCardWidth = 1200.0f;  // Much larger max to scale with window
+                    const float spacing = 20.0f;
+                    
+                    // Calculate how many columns fit with min width
+                    int columns = std::max(1, static_cast<int>((availableSize.x + spacing) / (minCardWidth + spacing)));
+                    
+                    // Recalculate actual card width to fill available space
+                    float cardWidth = (availableSize.x - (columns - 1) * spacing) / columns;
+                    
+                    // Only clamp to max width if we have a single column
+                    if (columns == 1 && cardWidth > maxCardWidth) {
+                        cardWidth = maxCardWidth;
+                    }
+                    
+                    // Calculate rows needed
+                    int rows = static_cast<int>((projectPaths.size() + columns - 1) / columns);
+                    
+                    // Calculate card height to fit all rows in available space
+                    float cardHeight = (availableSize.y - (rows - 1) * spacing) / rows;
+                    cardHeight = std::max(cardHeight, 80.0f); // Minimum height
+                    cardHeight = std::min(cardHeight, cardWidth * 0.8f); // Max height relative to width
+                    
+                    // Render project cards using ImGuiListClipper for efficient rendering
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+                    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+                    canvasSize.y -= 60.0f;
+                    
+                    int colIdx = 0;
+                    for (size_t i = 0; i < projectPaths.size(); ++i) {
+                        const fs::path& path = projectPaths[i];
+                        std::string name = path.filename().string();
+                        bool isSelected = static_cast<int>(i) == selectedIndex;
+                        
+                        // Calculate card position
+                        int row = i / columns;
+                        int col = i % columns;
+                        ImVec2 cardPos(canvasPos.x + col * (cardWidth + spacing), canvasPos.y + row * (cardHeight + spacing));
+                        ImVec2 cardEnd(cardPos.x + cardWidth, cardPos.y + cardHeight);
+                        
+                        // Draw card background
+                        ImVec4 cardColor = isSelected ? ImVec4(0.26f, 0.59f, 0.98f, 0.20f) : ImVec4(0.15f, 0.15f, 0.15f, 0.50f);
+                        drawList->AddRectFilled(cardPos, cardEnd, ImGui::GetColorU32(cardColor), 4.0f);
+                        drawList->AddRect(cardPos, cardEnd, ImGui::GetColorU32(ImVec4(0.5f, 0.5f, 0.5f, 0.3f)), 4.0f);
+                        
+                        // Check if card is hovered
+                        ImVec2 mousePos = ImGui::GetMousePos();
+                        bool cardHovered = mousePos.x >= cardPos.x && mousePos.x <= cardEnd.x && 
+                                          mousePos.y >= cardPos.y && mousePos.y <= cardEnd.y;
+                        
+                        if (cardHovered) {
+                            drawList->AddRect(cardPos, cardEnd, ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.5f)), 4.0f, 0, 2.0f);
+                        }
+                        
+                        // Handle clicks
+                        if (cardHovered && ImGui::IsMouseClicked(0)) {
+                            s_SelectedProjectName = name;
+                            selectedIndex = static_cast<int>(i);
+                        }
+                        
+                        if (cardHovered && ImGui::IsMouseDoubleClicked(0)) {
+                            selection = path;
+                            s_ErrorMessage.clear();
+                            s_StatusMessage.clear();
+                        }
+                        
+                        // Add invisible button for interaction
+                        ImGui::SetCursorScreenPos(cardPos);
+                        ImGui::InvisibleButton(("##ProjectCard" + std::to_string(i)).c_str(), ImVec2(cardWidth, cardHeight));
+                        
+                        // Push clip rect to prevent text overflow
+                        drawList->PushClipRect(cardPos, cardEnd, true);
+                        
+                        // Render card text with clipping
+                        const ImU32 textColor = ImGui::GetColorU32(ImGuiCol_Text);
+                        const ImU32 disabledTextColor = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                        float textY = cardPos.y + 10.0f;
+                        float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+                        
+                        // Project name
+                        drawList->AddText(ImVec2(cardPos.x + 10.0f, textY), textColor, name.c_str());
+                        textY += lineHeight;
+                        
+                        // Version
+                        drawList->AddText(ImVec2(cardPos.x + 10.0f, textY), disabledTextColor, "0.5.0-beta");
+                        textY += lineHeight;
+                        
+                        // API
+                        drawList->AddText(ImVec2(cardPos.x + 10.0f, textY), disabledTextColor, "Vulkan");
+                        
+                        // Truncate path if needed
+                        std::string pathStr = path.string();
+                        if (pathStr.length() > 35) {
+                            pathStr = "..." + pathStr.substr(pathStr.length() - 32);
+                        }
+                        // Position path with more space from button
+                        drawList->AddText(ImVec2(cardPos.x + 10.0f, cardPos.y + cardHeight - 50.0f), disabledTextColor, pathStr.c_str());
+                        
+                        drawList->PopClipRect();
+                        
+                        // Open button with smaller height to avoid cutoff
+                        ImGui::SetCursorScreenPos(ImVec2(cardPos.x + 10.0f, cardPos.y + cardHeight - 32.0f));
+                        ImGui::PushID(static_cast<int>(i));
+                        if (ImGui::Button("Open Folder", ImVec2(cardWidth - 20.0f, 24.0f))) {
+                            selection = path;
+                            s_ErrorMessage.clear();
+                            s_StatusMessage.clear();
+                        }
+                        ImGui::PopID();
+                    }
+                    
+                    // Move cursor past all cards
+                    ImGui::SetCursorScreenPos(ImVec2(canvasPos.x, canvasPos.y + canvasSize.y));
+                }
+                
+                // Bottom status bar
+                ImGui::Separator();
+                if (!s_ErrorMessage.empty()) {
+                    ImGui::TextColored(ImVec4(0.90f, 0.36f, 0.36f, 1.0f), "%s", s_ErrorMessage.c_str());
+                } else if (!s_StatusMessage.empty()) {
+                    ImGui::TextColored(ImVec4(0.32f, 0.80f, 0.60f, 1.0f), "%s", s_StatusMessage.c_str());
+                } else {
+                    std::string rootDisplay = projectsRoot.generic_string();
+                    ImGui::TextDisabled("Projects directory: %s", rootDisplay.c_str());
+                }
+            }
+            // Templates View
+            else if (s_CurrentView == 1) {
+                ImGui::Text("Templates");
+                ImGui::Spacing();
+                
+                // Category filter
+                ImGui::Text("Filter:");
+                ImGui::SameLine();
+                const char* categories[] = {"All", "First-Person", "Third-Person", "2D", "UI/Tools"};
+                for (const char* cat : categories) {
+                    bool isActive = s_FilterCategory == cat;
+                    if (isActive) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 0.40f));
+                    if (ImGui::Button(cat)) {
+                        s_FilterCategory = cat;
+                    }
+                    if (isActive) ImGui::PopStyleColor();
+                    ImGui::SameLine();
+                }
+                ImGui::NewLine();
+                
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                
+                // Template cards area - calculate optimal card size
+                ImVec2 availableSize = ImGui::GetContentRegionAvail();
+                availableSize.y -= 180.0f; // Reserve space for create project form
+                
+                const float minCardWidth = 280.0f;
+                const float maxCardWidth = 1100.0f;  // Much larger max to scale with window
+                const float spacing = 20.0f;
+                
+                // Count visible templates based on filter
+                int visibleCount = 0;
+                for (const auto& tmpl : s_Templates) {
+                    if (s_FilterCategory == "All" || tmpl.category == s_FilterCategory || tmpl.category == "All") {
+                        visibleCount++;
+                    }
+                }
+                
+                if (visibleCount > 0) {
+                    // Calculate how many columns fit with min width
+                    int columns = std::max(1, static_cast<int>((availableSize.x + spacing) / (minCardWidth + spacing)));
+                    
+                    // Recalculate actual card width to fill available space
+                    float cardWidth = (availableSize.x - (columns - 1) * spacing) / columns;
+                    
+                    // Only clamp to max width if we have a single column
+                    if (columns == 1 && cardWidth > maxCardWidth) {
+                        cardWidth = maxCardWidth;
+                    }
+                    
+                    // Calculate rows needed
+                    int rows = static_cast<int>((visibleCount + columns - 1) / columns);
+                    
+                    // Calculate card height to fit all rows in available space
+                    float cardHeight = (availableSize.y - (rows - 1) * spacing) / rows;
+                    cardHeight = std::max(cardHeight, 100.0f); // Minimum height
+                    cardHeight = std::min(cardHeight, cardWidth * 0.9f); // Max height relative to width
+                    
+                    
+                    // Render template cards using direct drawing
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+                    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+                    canvasSize.y -= 180.0f;
+                    
+                    int displayCount = 0;
+                    for (size_t i = 0; i < s_Templates.size(); ++i) {
+                        const auto& tmpl = s_Templates[i];
+                        
+                        // Filter by category
+                        if (s_FilterCategory != "All" && tmpl.category != s_FilterCategory && tmpl.category != "All") {
+                            continue;
+                        }
+                        
+                        // Calculate card position
+                        int row = displayCount / columns;
+                        int col = displayCount % columns;
+                        ImVec2 cardPos(canvasPos.x + col * (cardWidth + spacing), canvasPos.y + row * (cardHeight + spacing));
+                        ImVec2 cardEnd(cardPos.x + cardWidth, cardPos.y + cardHeight);
+                        
+                        // Draw card background
+                        bool isSelected = static_cast<int>(i) == s_SelectedTemplateIdx;
+                        ImVec4 cardColor = isSelected ? ImVec4(0.26f, 0.59f, 0.98f, 0.20f) : ImVec4(0.15f, 0.15f, 0.15f, 0.50f);
+                        drawList->AddRectFilled(cardPos, cardEnd, ImGui::GetColorU32(cardColor), 4.0f);
+                        drawList->AddRect(cardPos, cardEnd, ImGui::GetColorU32(ImVec4(0.5f, 0.5f, 0.5f, 0.3f)), 4.0f);
+                        
+                        // Check if card is hovered
+                        ImVec2 mousePos = ImGui::GetMousePos();
+                        bool cardHovered = mousePos.x >= cardPos.x && mousePos.x <= cardEnd.x && 
+                                          mousePos.y >= cardPos.y && mousePos.y <= cardEnd.y;
+                        
+                        if (cardHovered) {
+                            drawList->AddRect(cardPos, cardEnd, ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.5f)), 4.0f, 0, 2.0f);
+                        }
+                        
+                        // Handle clicks
+                        if (cardHovered && ImGui::IsMouseClicked(0)) {
+                            s_SelectedTemplateIdx = static_cast<int>(i);
+                        }
+                        
+                        // Add invisible button for interaction
+                        ImGui::SetCursorScreenPos(cardPos);
+                        ImGui::InvisibleButton(("##TemplateCard" + std::to_string(i)).c_str(), ImVec2(cardWidth, cardHeight));
+                        
+                        // Push clip rect to prevent text overflow
+                        drawList->PushClipRect(cardPos, cardEnd, true);
+                        
+                        // Render card text with clipping
+                        const ImU32 textColor = ImGui::GetColorU32(ImGuiCol_Text);
+                        const ImU32 disabledTextColor = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                        
+                        // Template name
+                        drawList->AddText(ImVec2(cardPos.x + 10.0f, cardPos.y + 10.0f), textColor, tmpl.name.c_str());
+                        
+                        // Template description (wrapped)
+                        float descY = cardPos.y + 35.0f;
+                        float maxDescWidth = cardWidth - 20.0f;
+                        ImVec2 descSize = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, maxDescWidth, tmpl.description.c_str());
+                        drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(cardPos.x + 10.0f, descY), disabledTextColor, tmpl.description.c_str(), nullptr, maxDescWidth);
+                        
+                        // Template category/icon
+                        drawList->AddText(ImVec2(cardPos.x + 10.0f, cardPos.y + cardHeight - 45.0f), disabledTextColor, tmpl.icon.c_str());
+                        
+                        drawList->PopClipRect();
+                        
+                        // Use template button with proper spacing
+                        ImGui::SetCursorScreenPos(ImVec2(cardPos.x + 10.0f, cardPos.y + cardHeight - 32.0f));
+                        ImGui::PushID(static_cast<int>(i));
+                        if (ImGui::Button("Use Template", ImVec2(cardWidth - 20.0f, 24.0f))) {
+                            s_SelectedTemplateIdx = static_cast<int>(i);
+                        }
+                        ImGui::PopID();
+                        
+                        displayCount++;
+                    }
+                    
+                    // Move cursor past all cards
+                    ImGui::SetCursorScreenPos(ImVec2(canvasPos.x, canvasPos.y + canvasSize.y));
+                }
+                
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                
+                // Create project form
+                ImGui::Text("Create Project");
+                ImGui::Spacing();
+                
+                if (s_SelectedTemplateIdx >= 0 && s_SelectedTemplateIdx < static_cast<int>(s_Templates.size())) {
+                    ImGui::Text("Template: %s", s_Templates[s_SelectedTemplateIdx].name.c_str());
+                } else {
+                    ImGui::TextDisabled("Pick a template, then \"Create Project\".");
+                }
+                
+                ImGui::Spacing();
+                ImGui::Text("Project Name:");
+                ImGui::SameLine();
+                ImGui::PushItemWidth(300.0f);
+                ImGui::InputTextWithHint("##NewProjectName", "Enter project name", s_NewProjectBuffer.data(), s_NewProjectBuffer.size());
+                bool enterPressed = ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Enter);
+                ImGui::PopItemWidth();
+                
+                ImGui::SameLine();
+                bool createEnabled = s_SelectedTemplateIdx >= 0 && strlen(s_NewProjectBuffer.data()) > 0;
+                if (!createEnabled) ImGui::BeginDisabled();
+                bool createClicked = ImGui::Button("Create Project", ImVec2(150.0f, 0.0f));
+                if (!createEnabled) ImGui::EndDisabled();
+                
+                if ((createClicked || enterPressed) && createEnabled) {
+                    std::cout << "[ProjectCreation] Create button clicked or Enter pressed" << std::endl;
+                    std::string rawName(s_NewProjectBuffer.data());
+                    std::string trimmed = TrimCopy(rawName);
+                    if (trimmed.empty()) {
+                        s_ErrorMessage = "Project name cannot be empty.";
                         s_StatusMessage.clear();
                     } else {
-                        std::error_code createErr;
-                        fs::create_directories(newProjectPath, createErr);
-                        if (createErr) {
-                            s_ErrorMessage = "Failed to create project: " + createErr.message();
+                        std::string sanitized = trimmed;
+                        for (char& ch : sanitized) {
+                            unsigned char uc = static_cast<unsigned char>(ch);
+                            if (std::isalnum(uc) || ch == ' ' || ch == '_' || ch == '-') {
+                                continue;
+                            }
+                            ch = '_';
+                        }
+                        while (!sanitized.empty() && (sanitized.back() == ' ' || sanitized.back() == '.')) {
+                            sanitized.pop_back();
+                        }
+                        if (sanitized.empty()) {
+                            s_ErrorMessage = "Project name cannot end with spaces or dots.";
                             s_StatusMessage.clear();
                         } else {
-                            const std::vector<fs::path> subdirs = {
-                                newProjectPath / "assets",
-                                newProjectPath / "assets" / "models",
-                                newProjectPath / "assets" / "textures",
-                                newProjectPath / "assets" / "scripts",
-                                newProjectPath / "assets" / "audio",
-                                newProjectPath / "assets" / "materials",
-                                newProjectPath / "assets" / "prefabs",
-                                newProjectPath / "assets" / "scenes"
-                            };
-                            std::error_code subErr;
-                            bool subdirFailure = false;
-                            for (const auto& dir : subdirs) {
-                                fs::create_directories(dir, subErr);
-                                if (subErr) {
-                                    s_ErrorMessage = "Failed to prepare project folders: " + subErr.message();
+                            fs::path newProjectPath = (projectsRoot / sanitized).lexically_normal();
+                            if (fs::exists(newProjectPath)) {
+                                s_ErrorMessage = "A project with that name already exists.";
+                                s_StatusMessage.clear();
+                            } else {
+                                std::error_code createErr;
+                                fs::create_directories(newProjectPath, createErr);
+                                if (createErr) {
+                                    s_ErrorMessage = "Failed to create project: " + createErr.message();
                                     s_StatusMessage.clear();
-                                    subdirFailure = true;
-                                    break;
-                                }
-                            }
-                            if (!subdirFailure) {
-                                // Copy engine assets to the new project
-                                fs::path engineRoot = ResolveEngineRoot();
-                                fs::path engineMeshesPath = engineRoot / "assets" / "meshes";
-                                fs::path engineTexturesPath = engineRoot / "assets" / "textures";
-                                fs::path projectModelsPath = newProjectPath / "assets" / "models";
-                                fs::path projectTexturesPath = newProjectPath / "assets" / "textures";
-                                
-                                std::cout << "\n[ProjectCreation] Starting asset copy..." << std::endl;
-                                std::cout << "  Engine root: " << engineRoot << std::endl;
-                                std::cout << "  Engine meshes path: " << engineMeshesPath << " (exists: " << fs::exists(engineMeshesPath) << ")" << std::endl;
-                                std::cout << "  Engine textures path: " << engineTexturesPath << " (exists: " << fs::exists(engineTexturesPath) << ")" << std::endl;
-                                std::cout << "  Project models path: " << projectModelsPath << " (exists: " << fs::exists(projectModelsPath) << ")" << std::endl;
-                                std::cout << "  Project textures path: " << projectTexturesPath << " (exists: " << fs::exists(projectTexturesPath) << ")" << std::endl;
-                                
-                                bool copyFailure = false;
-                                std::error_code copyErr;
-                                int meshesCopied = 0;
-                                int texturesCopied = 0;
-                                
-                                // Copy meshes to models folder
-                                if (fs::exists(engineMeshesPath)) {
-                                    std::cout << "  Copying meshes..." << std::endl;
-                                    for (const auto& entry : fs::directory_iterator(engineMeshesPath)) {
-                                        if (fs::is_regular_file(entry)) {
-                                            fs::copy_file(entry.path(), projectModelsPath / entry.path().filename(), 
-                                                        fs::copy_options::overwrite_existing, copyErr);
-                                            if (copyErr) {
-                                                std::cout << "    ERROR: Failed to copy " << entry.path().filename() << ": " << copyErr.message() << std::endl;
-                                                s_ErrorMessage = "Failed to copy engine meshes: " + copyErr.message();
-                                                s_StatusMessage.clear();
-                                                copyFailure = true;
-                                                break;
-                                            }
-                                            meshesCopied++;
-                                            std::cout << "    Copied: " << entry.path().filename() << std::endl;
-                                        }
-                                    }
                                 } else {
-                                    std::cout << "  Engine meshes path does not exist - skipping mesh copy" << std::endl;
-                                }
-                                
-                                // Copy textures to textures folder
-                                if (!copyFailure && fs::exists(engineTexturesPath)) {
-                                    std::cout << "  Copying textures..." << std::endl;
-                                    for (const auto& entry : fs::directory_iterator(engineTexturesPath)) {
-                                        if (fs::is_regular_file(entry)) {
-                                            fs::copy_file(entry.path(), projectTexturesPath / entry.path().filename(), 
-                                                        fs::copy_options::overwrite_existing, copyErr);
-                                            if (copyErr) {
-                                                std::cout << "    ERROR: Failed to copy " << entry.path().filename() << ": " << copyErr.message() << std::endl;
-                                                s_ErrorMessage = "Failed to copy engine textures: " + copyErr.message();
-                                                s_StatusMessage.clear();
-                                                copyFailure = true;
-                                                break;
-                                            }
-                                            texturesCopied++;
-                                            std::cout << "    Copied: " << entry.path().filename() << std::endl;
+                                    const std::vector<fs::path> subdirs = {
+                                        newProjectPath / "assets",
+                                        newProjectPath / "assets" / "models",
+                                        newProjectPath / "assets" / "textures",
+                                        newProjectPath / "assets" / "scripts",
+                                        newProjectPath / "assets" / "audio",
+                                        newProjectPath / "assets" / "materials",
+                                        newProjectPath / "assets" / "prefabs",
+                                        newProjectPath / "assets" / "scenes"
+                                    };
+                                    std::error_code subErr;
+                                    bool subdirFailure = false;
+                                    for (const auto& dir : subdirs) {
+                                        fs::create_directories(dir, subErr);
+                                        if (subErr) {
+                                            s_ErrorMessage = "Failed to prepare project folders: " + subErr.message();
+                                            s_StatusMessage.clear();
+                                            subdirFailure = true;
+                                            break;
                                         }
                                     }
-                                } else if (!copyFailure) {
-                                    std::cout << "  Engine textures path does not exist - skipping texture copy" << std::endl;
-                                }
-                                
-                                std::cout << "  Summary: Meshes copied=" << meshesCopied << ", Textures copied=" << texturesCopied << std::endl;
-                                
-                                if (!copyFailure) {
-                                    s_ErrorMessage.clear();
-                                    s_StatusMessage = "Created project '" + sanitized + "'.";
-                                    s_SelectedProjectName = sanitized;
-                                    std::fill(s_NewProjectBuffer.begin(), s_NewProjectBuffer.end(), 0);
-                                    selection = newProjectPath;
-                                    std::cout << "[ProjectCreation] Project created successfully!\n" << std::endl;
+                                    if (!subdirFailure) {
+                                        // Copy engine assets to the new project
+                                        fs::path engineRoot = ResolveEngineRoot();
+                                        fs::path engineMeshesPath = engineRoot / "assets" / "meshes";
+                                        fs::path engineTexturesPath = engineRoot / "assets" / "textures";
+                                        fs::path projectModelsPath = newProjectPath / "assets" / "models";
+                                        fs::path projectTexturesPath = newProjectPath / "assets" / "textures";
+                                        
+                                        std::cout << "\n[ProjectCreation] Starting asset copy..." << std::endl;
+                                        std::cout << "  Engine root: " << engineRoot << std::endl;
+                                        std::cout << "  Template: " << s_Templates[s_SelectedTemplateIdx].name << std::endl;
+                                        
+                                        bool copyFailure = false;
+                                        std::error_code copyErr;
+                                        int meshesCopied = 0;
+                                        int texturesCopied = 0;
+                                        
+                                        // Copy meshes to models folder
+                                        if (fs::exists(engineMeshesPath)) {
+                                            std::cout << "  Copying meshes..." << std::endl;
+                                            for (const auto& entry : fs::directory_iterator(engineMeshesPath)) {
+                                                if (fs::is_regular_file(entry)) {
+                                                    fs::copy_file(entry.path(), projectModelsPath / entry.path().filename(), 
+                                                                fs::copy_options::overwrite_existing, copyErr);
+                                                    if (copyErr) {
+                                                        std::cout << "    ERROR: Failed to copy " << entry.path().filename() << ": " << copyErr.message() << std::endl;
+                                                        s_ErrorMessage = "Failed to copy engine meshes: " + copyErr.message();
+                                                        s_StatusMessage.clear();
+                                                        copyFailure = true;
+                                                        break;
+                                                    }
+                                                    meshesCopied++;
+                                                }
+                                            }
+                                        }
+                                        
+                                        // Copy textures to textures folder
+                                        if (!copyFailure && fs::exists(engineTexturesPath)) {
+                                            std::cout << "  Copying textures..." << std::endl;
+                                            for (const auto& entry : fs::directory_iterator(engineTexturesPath)) {
+                                                if (fs::is_regular_file(entry)) {
+                                                    fs::copy_file(entry.path(), projectTexturesPath / entry.path().filename(), 
+                                                                fs::copy_options::overwrite_existing, copyErr);
+                                                    if (copyErr) {
+                                                        std::cout << "    ERROR: Failed to copy " << entry.path().filename() << ": " << copyErr.message() << std::endl;
+                                                        s_ErrorMessage = "Failed to copy engine textures: " + copyErr.message();
+                                                        s_StatusMessage.clear();
+                                                        copyFailure = true;
+                                                        break;
+                                                    }
+                                                    texturesCopied++;
+                                                }
+                                            }
+                                        }
+                                        
+                                        std::cout << "  Summary: Meshes copied=" << meshesCopied << ", Textures copied=" << texturesCopied << std::endl;
+                                        
+                                        if (!copyFailure) {
+                                            s_ErrorMessage.clear();
+                                            s_StatusMessage = "Created project '" + sanitized + "' using " + s_Templates[s_SelectedTemplateIdx].name + " template. Opening...";
+                                            s_SelectedProjectName = sanitized;
+                                            std::fill(s_NewProjectBuffer.begin(), s_NewProjectBuffer.end(), 0);
+                                            selection = newProjectPath;
+                                            std::cout << "[ProjectCreation] Project created successfully!\n" << std::endl;
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                
+                ImGui::Spacing();
+                if (!s_ErrorMessage.empty()) {
+                    ImGui::TextColored(ImVec4(0.90f, 0.36f, 0.36f, 1.0f), "%s", s_ErrorMessage.c_str());
+                } else if (!s_StatusMessage.empty()) {
+                    ImGui::TextColored(ImVec4(0.32f, 0.80f, 0.60f, 1.0f), "%s", s_StatusMessage.c_str());
+                }
             }
+            
+            ImGui::PopStyleVar();
         }
-
-        if (!s_ErrorMessage.empty()) {
-            ImGui::TextColored(ImVec4(0.90f, 0.36f, 0.36f, 1.0f), "%s", s_ErrorMessage.c_str());
-        } else if (!s_StatusMessage.empty()) {
-            ImGui::TextColored(ImVec4(0.32f, 0.80f, 0.60f, 1.0f), "%s", s_StatusMessage.c_str());
-        }
-
-        ImGui::Separator();
-        ImGui::TextDisabled("Projects are stored inside: %s", rootDisplay.c_str());
+        ImGui::EndChild();
     }
     ImGui::End();
 
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(3);
+
+    // Clean up input state for proper transition to editor
+    ImGui::ResetMouseDragDelta();
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    g.NavWindow = nullptr;
 
     return selection;
 }
