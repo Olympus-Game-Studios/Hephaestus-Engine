@@ -19,6 +19,7 @@ add_executable(HephaestusEngine
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
     engine/Scene/SceneSerializer.cpp
+    engine/UI/ProjectManager.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
     engine/UI/MaterialEditor/MaterialEditorPanel.cpp

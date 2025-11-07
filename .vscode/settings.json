@@ -21,6 +21,7 @@
         "fstream": "cpp",
         "iterator": "cpp",
         "iomanip": "cpp",
-        "cstddef": "cpp"
+        "cstddef": "cpp",
+        "utility": "cpp"
     }
 }

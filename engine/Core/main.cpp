@@ -45,6 +45,7 @@
 #include "../Scene/Transform.h"
 #include "../Scene/SceneSerializer.h"
 #include "../UI/MaterialEditor/MaterialEditorPanel.h"
+#include "../UI/ProjectManager.h"
 
 #ifdef _DEBUG
 const bool enableValidationLayers = true;
@@ -104,6 +105,7 @@ static std::filesystem::path g_ActiveProjectRoot;
 static std::string g_ActiveProjectName;
 static bool g_ProjectSelected = false;
 static bool g_AssetBrowserNeedsReset = true;
+static HephaestusEngine::ProjectManager g_ProjectManager;
 
 constexpr float kReferenceViewportWidth = 1280.0f;
 constexpr float kReferenceViewportHeight = 720.0f;
@@ -2432,6 +2434,9 @@ int main()
     bool gizmoDragging = false;
     int gizmoActiveAxis = -1;
 
+    g_ProjectManager.Initialize(&vkdev);
+    g_ProjectManager.SetProjectsRoot(ResolveProjectsRoot());
+
     std::vector<MeshGPU> meshLibrary;
     meshLibrary.reserve(32);
     std::unordered_map<std::string, size_t> meshLibraryLookup;
@@ -3610,7 +3615,7 @@ int main()
             }
             vulkanGizmo.SetHoveredAxis(-1);
 
-            std::optional<std::filesystem::path> projectChoice = DrawProjectBrowser();
+            std::optional<std::filesystem::path> projectChoice = g_ProjectManager.Draw();
             if (projectChoice) {
                 SetActiveProjectRoot(*projectChoice);
                 if (!g_ActiveProjectName.empty()) {
@@ -4427,6 +4432,8 @@ int main()
     vkDeviceWaitIdle(vkdev.device);
 
     // ── Cleanup ────────────────────────────────
+    g_ProjectManager.Shutdown();
+
     // Cleanup sync objects
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
         vkDestroySemaphore(vkdev.device, imageAvailable[i], nullptr);
