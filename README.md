@@ -366,4 +366,4 @@ Contributions welcome! This is a learning project demonstrating modern engine ar
 
 ---
 
-If you'd like, I can also add a short CONTRIBUTING guide, a license file, or example run configurations for VS Code / tasks. What would you like next?
+
