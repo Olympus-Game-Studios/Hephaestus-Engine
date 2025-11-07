@@ -166,8 +166,8 @@ private:
     float m_MessageTimer = 0.0f;
     
     // Grid view settings
-    float m_ThumbnailSize = 180.0f;
-    float m_GridPadding = 16.0f;
+    float m_ThumbnailSize = 260.0f;
+    float m_GridPadding = 20.0f;
     
     // Colors (Godot/Unreal inspired)
     ImVec4 m_ColorAccent = ImVec4(0.26f, 0.59f, 0.98f, 1.0f);      // Blue

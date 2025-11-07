@@ -348,9 +348,9 @@ void ProjectManager::DrawHeader() {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.14f, 0.18f, 1.0f));
     
-    ImGui::BeginChild("##Header", ImVec2(0, 60), true);
+    ImGui::BeginChild("##Header", ImVec2(0, 80), true);
     
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 14);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 20);
     
     // Title
@@ -359,16 +359,16 @@ void ProjectManager::DrawHeader() {
     ImGui::PopFont();
     
     ImGui::SameLine();
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 5);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8);
     ImGui::TextDisabled("Project Manager");
     
-    ImGui::SameLine(ImGui::GetWindowWidth() - 150);
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 5);
+    ImGui::SameLine(ImGui::GetWindowWidth() - 160);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8);
     
     // New Project button
     ImGui::PushStyleColor(ImGuiCol_Button, m_ColorAccent);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, m_ColorAccentHover);
-    if (ImGui::Button("+ New Project", ImVec2(140, 30))) {
+    if (ImGui::Button("+ New Project", ImVec2(150, 40))) {
         m_ShowNewProjectDialog = true;
         m_ErrorMessage.clear();
         m_StatusMessage.clear();
@@ -446,12 +446,12 @@ void ProjectManager::DrawSidebar() {
 }
 
 void ProjectManager::DrawToolbar() {
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8);
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12, 12));
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 12);
     
     // Search box
-    ImGui::SetNextItemWidth(300);
+    ImGui::SetNextItemWidth(320);
     if (ImGui::InputTextWithHint("##Search", "Search projects...", m_SearchBuffer, sizeof(m_SearchBuffer))) {
         ApplyFilterAndSort();
     }
@@ -459,7 +459,7 @@ void ProjectManager::DrawToolbar() {
     ImGui::SameLine();
     
     // Sort dropdown
-    ImGui::SetNextItemWidth(150);
+    ImGui::SetNextItemWidth(170);
     const char* sortModes[] = { "Last Modified", "Name", "Created", "Favorites" };
     int currentSort = static_cast<int>(m_SortMode);
     if (ImGui::Combo("##Sort", &currentSort, sortModes, IM_ARRAYSIZE(sortModes))) {
@@ -471,15 +471,15 @@ void ProjectManager::DrawToolbar() {
     
     // View mode toggle
     ImGui::PushStyleColor(ImGuiCol_Button, m_ViewMode == ProjectViewMode::Grid ? m_ColorAccent : ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
-    if (ImGui::Button("Grid")) {
+    if (ImGui::Button("Grid", ImVec2(60, 0))) {
         m_ViewMode = ProjectViewMode::Grid;
     }
     ImGui::PopStyleColor();
     
-    ImGui::SameLine(0, 2);
+    ImGui::SameLine(0, 4);
     
     ImGui::PushStyleColor(ImGuiCol_Button, m_ViewMode == ProjectViewMode::List ? m_ColorAccent : ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
-    if (ImGui::Button("List")) {
+    if (ImGui::Button("List", ImVec2(60, 0))) {
         m_ViewMode = ProjectViewMode::List;
     }
     ImGui::PopStyleColor();
@@ -549,7 +549,7 @@ void ProjectManager::DrawProjectsView() {
 void ProjectManager::DrawProjectCard(const ProjectInfo& project, bool inGrid) {
     ImGui::BeginGroup();
     
-    ImVec2 cardSize(m_ThumbnailSize, m_ThumbnailSize + 80);
+    ImVec2 cardSize(m_ThumbnailSize, m_ThumbnailSize + 110);
     ImVec2 cursorPos = ImGui::GetCursorScreenPos();
     
     // Background
@@ -585,7 +585,7 @@ void ProjectManager::DrawProjectCard(const ProjectInfo& project, bool inGrid) {
     
     // Draw thumbnail
     ImVec2 thumbnailPos = ImVec2(cursorPos.x + 8, cursorPos.y + 8);
-    ImVec2 thumbnailSize(m_ThumbnailSize - 16, m_ThumbnailSize - 16 - 60);
+    ImVec2 thumbnailSize(m_ThumbnailSize - 16, m_ThumbnailSize - 16 - 90);
     
     if (project.thumbnail) {
         ImGui::GetWindowDrawList()->AddImage(
@@ -604,13 +604,13 @@ void ProjectManager::DrawProjectCard(const ProjectInfo& project, bool inGrid) {
         
         // Draw project icon
         ImVec2 iconPos = ImVec2(
-            thumbnailPos.x + thumbnailSize.x / 2 - 24,
-            thumbnailPos.y + thumbnailSize.y / 2 - 24
+            thumbnailPos.x + thumbnailSize.x / 2 - 32,
+            thumbnailPos.y + thumbnailSize.y / 2 - 32
         );
         
         ImGui::GetWindowDrawList()->AddText(
             ImGui::GetFont(),
-            48.0f,
+            64.0f,
             iconPos,
             IM_COL32(100, 110, 130, 255),
             ""
@@ -619,31 +619,31 @@ void ProjectManager::DrawProjectCard(const ProjectInfo& project, bool inGrid) {
     
     // Favorite icon
     if (project.metadata.isFavorite) {
-        ImVec2 favPos = ImVec2(cursorPos.x + cardSize.x - 30, cursorPos.y + 10);
+        ImVec2 favPos = ImVec2(cursorPos.x + cardSize.x - 32, cursorPos.y + 10);
         ImGui::GetWindowDrawList()->AddText(
             ImGui::GetFont(),
-            20.0f,
+            24.0f,
             favPos,
             IM_COL32(255, 200, 0, 255),
             ""
         );
     }
     
-    // Project name
-    ImVec2 textPos = ImVec2(cursorPos.x + 8, cursorPos.y + m_ThumbnailSize - 60);
+    // Project name with larger font
+    ImVec2 textPos = ImVec2(cursorPos.x + 10, cursorPos.y + m_ThumbnailSize - 85);
     ImGui::SetCursorScreenPos(textPos);
     
     std::string displayName = project.metadata.name;
-    if (displayName.length() > 20) {
-        displayName = displayName.substr(0, 17) + "...";
+    if (displayName.length() > 22) {
+        displayName = displayName.substr(0, 19) + "...";
     }
     
     ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
-    ImGui::Text("%s", displayName.c_str());
+    ImGui::TextWrapped("%s", displayName.c_str());
     ImGui::PopFont();
     
-    // Last modified
-    ImGui::SetCursorScreenPos(ImVec2(textPos.x, textPos.y + 25));
+    // Last modified with better formatting
+    ImGui::SetCursorScreenPos(ImVec2(textPos.x, textPos.y + 35));
     auto time = std::chrono::system_clock::to_time_t(project.metadata.lastModified);
     std::tm tm = *std::localtime(&time);
     char timeStr[32];
@@ -657,7 +657,7 @@ void ProjectManager::DrawProjectListItem(const ProjectInfo& project) {
     bool isSelected = (m_SelectedProject == &project);
     
     if (ImGui::Selectable(("##ListItem" + project.path.string()).c_str(), isSelected, 
-                         ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, 32))) {
+                         ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, 48))) {
         m_SelectedProject = const_cast<ProjectInfo*>(&project);
     }
     
@@ -668,19 +668,21 @@ void ProjectManager::DrawProjectListItem(const ProjectInfo& project) {
     }
     
     ImVec2 pos = ImGui::GetItemRectMin();
-    pos.x += 8;
-    pos.y += 8;
+    pos.x += 12;
+    pos.y += 10;
     
     // Favorite star
     if (project.metadata.isFavorite) {
         ImGui::SetCursorScreenPos(pos);
         ImGui::TextColored(ImVec4(1, 0.8f, 0, 1), "");
-        pos.x += 24;
+        pos.x += 28;
     }
     
     // Name
     ImGui::SetCursorScreenPos(pos);
+    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
     ImGui::Text("%s", project.metadata.name.c_str());
+    ImGui::PopFont();
     
     // Last modified (right-aligned)
     auto time = std::chrono::system_clock::to_time_t(project.metadata.lastModified);
@@ -689,7 +691,7 @@ void ProjectManager::DrawProjectListItem(const ProjectInfo& project) {
     std::strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M", &tm);
     
     ImVec2 timeSize = ImGui::CalcTextSize(timeStr);
-    ImGui::SameLine(ImGui::GetWindowWidth() - timeSize.x - 16);
+    ImGui::SameLine(ImGui::GetWindowWidth() - timeSize.x - 20);
     ImGui::TextDisabled("%s", timeStr);
 }
 
