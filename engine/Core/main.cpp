@@ -1686,6 +1686,15 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
     static char materialNameBuffer[128] = "NewMaterial";
     static std::string materialPopupError;
 
+    static bool openFolderPopup = false;
+    static char folderNameBuffer[128] = "NewFolder";
+    static std::string folderPopupError;
+
+    static bool openDeleteConfirmPopup = false;
+    static fs::path deleteConfirmPath;
+    static bool deleteConfirmIsFolder = false;
+    static std::string deletePopupError;
+
     fs::path projectRoot = ResolveActiveProjectRoot();
     if (projectRoot.empty()) {
         if (ImGui::Begin("Asset Browser")) {
@@ -1770,7 +1779,23 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
         openMaterialPopup = true;
     };
 
+    auto triggerFolderCreatePopup = [&]() {
+        std::snprintf(folderNameBuffer, sizeof(folderNameBuffer), "NewFolder");
+        folderPopupError.clear();
+        openFolderPopup = true;
+    };
+
+    auto triggerDeleteConfirmPopup = [&](const fs::path& path, bool isFolder) {
+        deleteConfirmPath = path;
+        deleteConfirmIsFolder = isFolder;
+        deletePopupError.clear();
+        openDeleteConfirmPopup = true;
+    };
+
     if (ImGui::BeginPopupContextWindow("AssetBrowserContextMenu", ImGuiPopupFlags_MouseButtonRight)) {
+        if (ImGui::MenuItem("New Folder...")) {
+            triggerFolderCreatePopup();
+        }
         if (ImGui::MenuItem("New Material...")) {
             triggerMaterialCreatePopup();
         }
@@ -1833,6 +1858,114 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) {
             materialPopupError.clear();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
+    // Folder creation popup
+    if (openFolderPopup) {
+        ImGui::OpenPopup("CreateFolderPopup");
+        openFolderPopup = false;
+    }
+
+    if (ImGui::BeginPopupModal("CreateFolderPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Create new folder");
+        ImGui::Separator();
+        ImGui::TextDisabled("Location: %s", relativeDisplay.c_str());
+        ImGui::InputText("Folder name##folder", folderNameBuffer, sizeof(folderNameBuffer));
+        if (!folderPopupError.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.93f, 0.36f, 0.31f, 1.0f), "%s", folderPopupError.c_str());
+        }
+
+        ImGui::Spacing();
+
+        if (ImGui::Button("Create##folder")) {
+            std::string trimmed = TrimCopy(folderNameBuffer);
+            if (trimmed.empty()) {
+                folderPopupError = "Please enter a folder name.";
+            } else {
+                std::string sanitized = SanitizeSceneFilename(trimmed);
+                if (sanitized.empty()) {
+                    sanitized = "Folder";
+                }
+                fs::path folderPath = currentPath / sanitized;
+                if (fs::exists(folderPath)) {
+                    folderPopupError = "A folder with that name already exists.";
+                } else {
+                    std::error_code createErr;
+                    fs::create_directories(folderPath, createErr);
+                    if (createErr) {
+                        folderPopupError = "Failed to create folder: " + std::string(createErr.message());
+                    } else {
+                        selectedPath = ClampToRoot(folderPath, assetRoot);
+                        statusMessage = "Created folder '" + sanitized + "'.";
+                        ImGui::CloseCurrentPopup();
+                        folderPopupError.clear();
+                    }
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##folder")) {
+            folderPopupError.clear();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
+    // Delete confirmation popup
+    if (openDeleteConfirmPopup) {
+        ImGui::OpenPopup("DeleteConfirmPopup");
+        openDeleteConfirmPopup = false;
+    }
+
+    if (ImGui::BeginPopupModal("DeleteConfirmPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        std::string itemName = deleteConfirmPath.filename().string();
+        std::string itemType = deleteConfirmIsFolder ? "folder" : "file";
+        
+        ImGui::TextUnformatted("Confirm deletion");
+        ImGui::Separator();
+        ImGui::TextWrapped("Are you sure you want to delete this %s?\n\n\"%s\"\n\nThis action cannot be undone.", 
+            itemType.c_str(), itemName.c_str());
+        
+        if (!deletePopupError.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.93f, 0.36f, 0.31f, 1.0f), "%s", deletePopupError.c_str());
+        }
+
+        ImGui::Spacing();
+
+        if (ImGui::Button("Delete", ImVec2(120, 0))) {
+            std::error_code deleteErr;
+            if (deleteConfirmIsFolder) {
+                size_t removed = fs::remove_all(deleteConfirmPath, deleteErr);
+                if (deleteErr) {
+                    deletePopupError = "Failed to delete folder: " + std::string(deleteErr.message());
+                } else {
+                    statusMessage = "Deleted folder '" + itemName + "' (" + std::to_string(removed) + " items removed).";
+                    selectedPath.clear();
+                    ImGui::CloseCurrentPopup();
+                    deletePopupError.clear();
+                }
+            } else {
+                fs::remove(deleteConfirmPath, deleteErr);
+                if (deleteErr) {
+                    deletePopupError = "Failed to delete file: " + std::string(deleteErr.message());
+                } else {
+                    statusMessage = "Deleted file '" + itemName + "'.";
+                    selectedPath.clear();
+                    ImGui::CloseCurrentPopup();
+                    deletePopupError.clear();
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##delete", ImVec2(120, 0))) {
+            deletePopupError.clear();
             ImGui::CloseCurrentPopup();
         }
 
@@ -1907,6 +2040,9 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
     ImGui::BeginChild("AssetBrowserList", ImVec2(0.0f, -footerReserve), false);
 
     if (ImGui::BeginPopupContextWindow("AssetBrowserListContext", ImGuiPopupFlags_MouseButtonRight)) {
+        if (ImGui::MenuItem("New Folder...")) {
+            triggerFolderCreatePopup();
+        }
         if (ImGui::MenuItem("New Material...")) {
             triggerMaterialCreatePopup();
         }
@@ -2019,6 +2155,20 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
                         }
                     }
                     statusMessage.clear();
+                }
+
+                // Right-click context menu for individual items
+                if (ImGui::BeginPopupContextItem("AssetItemContext")) {
+                    if (entry.isDirectory) {
+                        if (ImGui::MenuItem("Delete Folder")) {
+                            triggerDeleteConfirmPopup(entry.path, true);
+                        }
+                    } else {
+                        if (ImGui::MenuItem("Delete File")) {
+                            triggerDeleteConfirmPopup(entry.path, false);
+                        }
+                    }
+                    ImGui::EndPopup();
                 }
 
                 ImGui::PopID();
