@@ -99,11 +99,13 @@ private:
     void DrawNewProjectDialog();
     void DrawImportProjectDialog();
     void DrawProjectContextMenu(const ProjectInfo& project);
+    void DrawNewScriptDialog();
     void DrawSidebar();
     
     // Project operations
     bool CreateProject(const std::string& name, const std::string& description, 
                       const ProjectTemplate* templatePtr = nullptr);
+    bool CreateCppScript(const std::filesystem::path& projectPath, const std::string& scriptName);
     bool DeleteProject(const std::filesystem::path& projectPath);
     bool ImportProject(const std::filesystem::path& projectPath);
     void OpenProjectLocation(const std::filesystem::path& projectPath);
@@ -151,13 +153,16 @@ private:
     // Selected project
     ProjectInfo* m_SelectedProject = nullptr;
     ProjectInfo* m_ContextMenuProject = nullptr;
+    ProjectInfo* m_ScriptDialogProject = nullptr;
     bool m_RequestProjectOpen = false;
     
     // Dialog states
     bool m_ShowNewProjectDialog = false;
     bool m_ShowImportDialog = false;
+    bool m_ShowNewScriptDialog = false;
     char m_NewProjectNameBuffer[128] = {};
     char m_NewProjectDescBuffer[512] = {};
+    char m_NewScriptNameBuffer[128] = {};
     const ProjectTemplate* m_SelectedTemplate = nullptr;
     
     // Status messages

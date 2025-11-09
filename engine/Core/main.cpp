@@ -1690,6 +1690,10 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
     static char folderNameBuffer[128] = "NewFolder";
     static std::string folderPopupError;
 
+    static bool openScriptPopup = false;
+    static char scriptNameBuffer[128] = "NewScript";
+    static std::string scriptPopupError;
+
     static bool openDeleteConfirmPopup = false;
     static fs::path deleteConfirmPath;
     static bool deleteConfirmIsFolder = false;
@@ -1783,6 +1787,12 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
         std::snprintf(folderNameBuffer, sizeof(folderNameBuffer), "NewFolder");
         folderPopupError.clear();
         openFolderPopup = true;
+    };
+
+    auto triggerScriptCreatePopup = [&]() {
+        std::snprintf(scriptNameBuffer, sizeof(scriptNameBuffer), "NewScript");
+        scriptPopupError.clear();
+        openScriptPopup = true;
     };
 
     auto triggerDeleteConfirmPopup = [&](const fs::path& path, bool isFolder) {
@@ -1917,6 +1927,130 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
         ImGui::EndPopup();
     }
 
+    // Script creation popup
+    if (openScriptPopup) {
+        ImGui::OpenPopup("CreateScriptPopup");
+        openScriptPopup = false;
+    }
+
+    if (ImGui::BeginPopupModal("CreateScriptPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Create C++ Script");
+        ImGui::Separator();
+        ImGui::TextDisabled("Location: %s", relativeDisplay.c_str());
+        ImGui::InputText("Script name##script", scriptNameBuffer, sizeof(scriptNameBuffer));
+        if (!scriptPopupError.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.93f, 0.36f, 0.31f, 1.0f), "%s", scriptPopupError.c_str());
+        }
+
+        ImGui::Spacing();
+
+        if (ImGui::Button("Create##script")) {
+            std::string trimmed = TrimCopy(scriptNameBuffer);
+            if (trimmed.empty()) {
+                scriptPopupError = "Please enter a script name.";
+            } else {
+                std::string sanitized = SanitizeSceneFilename(trimmed);
+                if (sanitized.empty()) {
+                    sanitized = "Script";
+                }
+                
+                // Header file content
+                std::string headerContent = R"(#pragma once
+#include "engine/Scripting/ScriptBase.h"
+
+class )" + sanitized + R"( : public ScriptBase {
+public:
+    )" + sanitized + R"((Entity entity, Scene* scene) {
+        m_Entity = entity;
+        m_Scene = scene;
+    }
+
+    virtual ~)" + sanitized + R"(() = default;
+
+    void OnAwake() override {
+        // Initialize the script
+    }
+
+    void OnUpdate(float deltaTime) override {
+        // Main game logic - called every frame
+        // deltaTime is time elapsed since last frame in seconds
+    }
+
+    void OnLateUpdate(float deltaTime) override {
+        // Called after OnUpdate - useful for camera or post-processing logic
+    }
+
+    void OnEnable() override {
+        // Called when the script is enabled
+    }
+
+    void OnDisable() override {
+        // Called when the script is disabled
+    }
+
+    void OnDestroy() override {
+        // Called when the script is about to be destroyed - cleanup here
+    }
+
+private:
+    // Add your script members here
+};
+)";
+                
+                // Implementation file content
+                std::string implContent = R"(#include ")" + sanitized + R"(.h"
+
+// Add any implementation details here if needed
+// You can use this file for out-of-line method definitions if your header gets complex
+)";
+                
+                fs::path headerPath = currentPath / (sanitized + ".h");
+                fs::path implPath = currentPath / (sanitized + ".cpp");
+                
+                if (fs::exists(headerPath) || fs::exists(implPath)) {
+                    scriptPopupError = "A script with that name already exists.";
+                } else {
+                    std::error_code createErr;
+                    fs::create_directories(currentPath, createErr);
+                    if (createErr) {
+                        scriptPopupError = "Failed to create script directory: " + std::string(createErr.message());
+                    } else {
+                        // Write header file
+                        std::ofstream headerFile(headerPath);
+                        if (!headerFile) {
+                            scriptPopupError = "Failed to create header file.";
+                        } else {
+                            headerFile << headerContent;
+                            headerFile.close();
+                            
+                            // Write implementation file
+                            std::ofstream implFile(implPath);
+                            if (!implFile) {
+                                scriptPopupError = "Failed to create implementation file.";
+                                fs::remove(headerPath);
+                            } else {
+                                implFile << implContent;
+                                implFile.close();
+                                selectedPath = headerPath;
+                                statusMessage = "Created script '" + sanitized + "'.";
+                                ImGui::CloseCurrentPopup();
+                                scriptPopupError.clear();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##script")) {
+            scriptPopupError.clear();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
     // Delete confirmation popup
     if (openDeleteConfirmPopup) {
         ImGui::OpenPopup("DeleteConfirmPopup");
@@ -2045,6 +2179,10 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
         }
         if (ImGui::MenuItem("New Material...")) {
             triggerMaterialCreatePopup();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("New C++ Script...")) {
+            triggerScriptCreatePopup();
         }
         ImGui::EndPopup();
     }

@@ -329,6 +329,10 @@ std::optional<std::filesystem::path> ProjectManager::Draw() {
     if (m_ShowImportDialog) {
         DrawImportProjectDialog();
     }
+
+    if (m_ShowNewScriptDialog) {
+        DrawNewScriptDialog();
+    }
     
     // Check if user selected a project
     if (m_SelectedProject && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -703,6 +707,14 @@ void ProjectManager::DrawProjectContextMenu(const ProjectInfo& project) {
     
     ImGui::Separator();
     
+    if (ImGui::MenuItem("New C++ Script...")) {
+        m_ScriptDialogProject = const_cast<ProjectInfo*>(&project);
+        m_ShowNewScriptDialog = true;
+        memset(m_NewScriptNameBuffer, 0, sizeof(m_NewScriptNameBuffer));
+    }
+    
+    ImGui::Separator();
+    
     bool isFav = project.metadata.isFavorite;
     if (ImGui::MenuItem(isFav ? "Remove from Favorites" : "Add to Favorites")) {
         auto& meta = const_cast<ProjectMetadata&>(project.metadata);
@@ -953,4 +965,148 @@ ImTextureID ProjectManager::GetIcon(const std::string& iconKey) {
     return (ImTextureID)0;
 }
 
+void ProjectManager::DrawNewScriptDialog() {
+    ImGui::SetNextWindowSize(ImVec2(500, 250), ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize;
+    
+    if (ImGui::Begin("Create New C++ Script", &m_ShowNewScriptDialog, flags)) {
+        if (!m_ScriptDialogProject) {
+            ImGui::Text("Error: No project selected");
+            if (ImGui::Button("Close", ImVec2(100, 30))) {
+                m_ShowNewScriptDialog = false;
+            }
+            ImGui::End();
+            return;
+        }
+        
+        ImGui::Text("Project: %s", m_ScriptDialogProject->metadata.name.c_str());
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        ImGui::Text("Script Name:");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputText("##ScriptName", m_NewScriptNameBuffer, sizeof(m_NewScriptNameBuffer));
+        
+        ImGui::Text("(Will be created in project root with .h and .cpp files)");
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        // Buttons
+        ImGui::PushStyleColor(ImGuiCol_Button, m_ColorSuccess);
+        if (ImGui::Button("Create", ImVec2(100, 30))) {
+            std::string scriptName(m_NewScriptNameBuffer);
+            if (!scriptName.empty()) {
+                if (CreateCppScript(m_ScriptDialogProject->path, scriptName)) {
+                    m_StatusMessage = "Script '" + scriptName + "' created successfully!";
+                    m_MessageTimer = 3.0f;
+                    m_ShowNewScriptDialog = false;
+                    memset(m_NewScriptNameBuffer, 0, sizeof(m_NewScriptNameBuffer));
+                    m_ScriptDialogProject = nullptr;
+                } else {
+                    m_ErrorMessage = "Failed to create script '" + scriptName + "'";
+                    m_MessageTimer = 3.0f;
+                }
+            } else {
+                m_ErrorMessage = "Please enter a script name";
+                m_MessageTimer = 2.0f;
+            }
+        }
+        ImGui::PopStyleColor();
+        
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100, 30))) {
+            m_ShowNewScriptDialog = false;
+            memset(m_NewScriptNameBuffer, 0, sizeof(m_NewScriptNameBuffer));
+            m_ScriptDialogProject = nullptr;
+        }
+    }
+    ImGui::End();
+}
+
+bool ProjectManager::CreateCppScript(const std::filesystem::path& projectPath, const std::string& scriptName) {
+    try {
+        // Create scripts directory if it doesn't exist
+        std::filesystem::path scriptsDir = projectPath / "Scripts";
+        std::filesystem::create_directories(scriptsDir);
+        
+        // Header file content
+        std::string headerContent = R"(#pragma once
+#include "engine/Scripting/ScriptBase.h"
+
+class )" + scriptName + R"( : public ScriptBase {
+public:
+    )" + scriptName + R"((Entity entity, Scene* scene) {
+        m_Entity = entity;
+        m_Scene = scene;
+    }
+
+    virtual ~)" + scriptName + R"(() = default;
+
+    void OnAwake() override {
+        // Initialize the script
+    }
+
+    void OnUpdate(float deltaTime) override {
+        // Main game logic - called every frame
+        // deltaTime is time elapsed since last frame in seconds
+    }
+
+    void OnLateUpdate(float deltaTime) override {
+        // Called after OnUpdate - useful for camera or post-processing logic
+    }
+
+    void OnEnable() override {
+        // Called when the script is enabled
+    }
+
+    void OnDisable() override {
+        // Called when the script is disabled
+    }
+
+    void OnDestroy() override {
+        // Called when the script is about to be destroyed - cleanup here
+    }
+
+private:
+    // Add your script members here
+};
+)";
+        
+        // Implementation file content
+        std::string implContent = R"(#include ")" + scriptName + R"(.h"
+
+// Add any implementation details here if needed
+// You can use this file for out-of-line method definitions if your header gets complex
+)";
+        
+        // Write header file
+        std::filesystem::path headerPath = scriptsDir / (scriptName + ".h");
+        std::ofstream headerFile(headerPath);
+        if (!headerFile.is_open()) {
+            return false;
+        }
+        headerFile << headerContent;
+        headerFile.close();
+        
+        // Write implementation file
+        std::filesystem::path implPath = scriptsDir / (scriptName + ".cpp");
+        std::ofstream implFile(implPath);
+        if (!implFile.is_open()) {
+            return false;
+        }
+        implFile << implContent;
+        implFile.close();
+        
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 } // namespace HephaestusEngine
+
