@@ -219,7 +219,7 @@ Hephaestus-Engine/
 | --- | --- |
 | [`README.md`](README.md) | Project overview, build instructions, controls, and feature tour. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution workflow, coding standards, and pull request checklist. |
-| [`roadmap.md`](roadmap.md) | Long-term roadmap, milestones, and active developer to-do list. |
+| [`ROADMAP.md`](ROADMAP.md) | Long-term roadmap, milestones, and active developer to-do list. |
 | [`Documentation/CUSTOM_COMPONENTS_GUIDE.md`](Documentation/CUSTOM_COMPONENTS_GUIDE.md) | Step-by-step tutorial for extending the ECS with custom components and systems. |
 | [`Documentation/ECS_ARCHITECTURE_DIAGRAM.md`](Documentation/ECS_ARCHITECTURE_DIAGRAM.md) | ASCII architecture diagram showing scene, entity, component, and system relationships. |
 | [`Documentation/ECS_GUIDE.md`](Documentation/ECS_GUIDE.md) | Comprehensive deep dive into the ECS API, scene management, and usage patterns. |
