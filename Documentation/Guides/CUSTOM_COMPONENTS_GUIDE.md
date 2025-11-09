@@ -1,3 +1,4 @@
+````markdown
 # Quick Start: Creating Custom Components
 
 This guide shows you how to extend the ECS with your own components and systems.
@@ -492,3 +493,4 @@ When creating a new component, ask:
 ---
 
 Happy coding! 🚀
+````

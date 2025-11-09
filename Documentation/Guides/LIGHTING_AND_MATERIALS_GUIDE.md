@@ -1,3 +1,4 @@
+````markdown
 # Advanced Material & Lighting Examples
 
 ## Preset Materials
@@ -434,3 +435,5 @@ public:
    - Warm lights: More red/orange (sunset, fire, tungsten)
    - Cool lights: More blue (sky, fluorescent, moonlight)
    - Mix warm and cool for visual interest
+
+```

@@ -1,3 +1,4 @@
+````markdown
 # Scene Graph / Entity-Component System (ECS)
 
 ## Overview
@@ -454,3 +455,4 @@ cube.GetComponent<TransformComponent>().position = Vec3(1, 2, 3);
 ---
 
 **Congratulations!** Your engine now has a powerful, modern ECS architecture. 🎉
+````

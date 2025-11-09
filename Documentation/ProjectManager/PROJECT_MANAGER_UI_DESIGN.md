@@ -1,3 +1,4 @@
+````markdown
 # Project Manager - UI Mockup & Features
 
 ## 🎨 Visual Design
@@ -102,7 +103,7 @@ Features:
 
 Features:
 • Fixed width: 250px
-• Dark background (#242933)
+• Dark background: #242933
 • Organized sections
 • Clear visual hierarchy
 ```
@@ -237,7 +238,7 @@ Step 1: Click "New Project" button
 │ └─────────────────────────────────┘│
 │                                     │
 │     [Create Project]  [Cancel]     │
-└─────────────────────────────────────┘
+└────────────────────────────────────┘
 
 Step 2: Fill in details
 Step 3: Select template (optional)
@@ -441,3 +442,5 @@ Body Text:
 ---
 
 This UI design provides a modern, professional experience that rivals commercial game engines while remaining true to Hephaestus Engine's identity! 🎮✨
+
+````

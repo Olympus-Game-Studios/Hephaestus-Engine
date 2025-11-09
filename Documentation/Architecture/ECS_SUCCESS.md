@@ -1,3 +1,4 @@
+````markdown
 # ✨ Scene Graph / ECS Successfully Added! ✨
 
 ## What You Now Have
@@ -257,7 +258,7 @@ Your engine now follows **industry best practices**:
 
 ## 🙏 Thank You!
 
-Your Hephaestus Engine is now equipped with a **modern, production-ready ECS architecture** that's used in AAA game engines!
+Your Hephaestus Engine is now equipped with a **modern, production-ready ECS architecture** that's used in AAA game engines! 
 
 You can now:
 - ✅ Create complex scenes with hierarchies
@@ -303,3 +304,5 @@ Entity s = scene.GetSelectedEntity();
 ---
 
 **Enjoy your new ECS system!** 🎮✨
+
+````

@@ -1,3 +1,4 @@
+```markdown
 # Texture Dropdown Feature Implementation
 
 ## Overview
@@ -67,3 +68,5 @@ Added an automatic texture discovery system that displays all textures found in 
 - Automatic duplicate removal and sorting
 - Thread-safe texture discovery (non-blocking)
 - Project root detection via heuristic search for `assets/` folder
+
+```

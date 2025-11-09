@@ -1,3 +1,4 @@
+````markdown
 # 🎮 Modern Project Manager - README
 
 ## Overview
@@ -108,7 +109,7 @@ g_ProjectManager.Shutdown();
 │ Recent   │ ┌──────┐ ┌──────┐ ┌──────┐      │
 │ Faves ⭐ │ │[IMG] │ │[IMG] │ │[IMG] │      │
 │ All      │ │Game1 │ │Game2 │ │Game3 │      │
-│          │ │⭐2024│ │ 2024 │ │⭐2024│      │
+│          │ │⭐ 2024 │ │ 2024 │ │⭐ 2024 │      │
 │ Import   │ └──────┘ └──────┘ └──────┘      │
 └──────────┴──────────────────────────────────┘
 ```
@@ -156,7 +157,7 @@ g_ProjectManager.Shutdown();
 |--------|-----------------|
 | **Godot** | Clean sidebar, simple search, favorites |
 | **Unreal** | Dark theme, grid/list toggle, context menus |
-| **Unity Hub** | Modern design, version tracking, templates |
+| **Unity Hub** | Modern launcher design, version tracking, templates |
 
 ---
 
@@ -351,3 +352,5 @@ The new system provides:
 
 *Built with ❤️ for Hephaestus Engine*
 *Version 1.0.0 - November 2024*
+
+````

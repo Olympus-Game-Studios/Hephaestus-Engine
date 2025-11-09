@@ -1,3 +1,4 @@
+````markdown
 # Quick Start: Integrating the New Project Manager
 
 ## 🎯 Simple Integration Steps
@@ -106,7 +107,7 @@ auto& templates = const_cast<std::vector<ProjectTemplate>&>(
 );
 
 ProjectTemplate vfxTemplate;
-vfxTemplate.name = "VFX Project";
+vfxTemplate.name = "VFX Template";
 vfxTemplate.description = "Template for visual effects and particles";
 vfxTemplate.include3DDefaults = true;
 vfxTemplate.folders = {
@@ -227,22 +228,18 @@ int main() {
 
 After integration, consider:
 
-1. **Add Thumbnail Generation**
-   - Capture scene viewport
+1. **Add Thumbnail Generation**n   - Capture scene viewport
    - Save to `.hephaestus/thumbnail.png`
    - Auto-update on save
 
-2. **Implement Project Settings**
-   - Edit dialog for metadata
+2. **Implement Project Settings**n   - Edit dialog for metadata
    - Version control integration
    - Custom properties
 
-3. **Add Recent Files**
-   - Track recently opened scenes
+3. **Add Recent Files**n   - Track recently opened scenes
    - Quick access in sidebar
 
-4. **Cloud Features**
-   - Sync metadata
+4. **Cloud Features**n   - Sync metadata
    - Cloud backup status
    - Collaboration indicators
 
@@ -256,3 +253,5 @@ After integration, consider:
 - [ProjectManager.cpp](../engine/UI/ProjectManager.cpp) - Implementation
 
 Happy coding! 🎮✨
+
+````

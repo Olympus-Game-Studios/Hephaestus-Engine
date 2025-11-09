@@ -1,3 +1,4 @@
+````markdown
 # Scene Graph / ECS Implementation Summary
 
 ## What Was Added
@@ -162,42 +163,6 @@ Submit draw call
 
 ---
 
-## Usage Example (Before vs After)
-
-### Before (Old System)
-```cpp
-std::vector<SceneObject> objects;
-objects.push_back(SceneObject("Cube 1"));
-objects[0].transform.position = Vec3(0, 0, 0);
-objects[0].selected = true;
-
-for (auto& obj : objects) {
-    if (obj.selected) {
-        Mat4 m = obj.transform.GetMatrix();
-        // render...
-    }
-}
-```
-
-### After (ECS System)
-```cpp
-Scene scene("Main Scene");
-Entity cube = scene.CreateEntity("Cube 1");
-cube.AddComponent<MeshRendererComponent>();
-cube.AddComponent<SelectionComponent>(true);
-cube.GetComponent<TransformComponent>().position = Vec3(0, 0, 0);
-
-auto view = scene.GetEntitiesWith<TransformComponent, MeshRendererComponent, SelectionComponent>();
-for (auto handle : view) {
-    Entity entity(handle, &scene);
-    auto& transform = entity.GetComponent<TransformComponent>();
-    Mat4 m = transform.GetLocalMatrix();
-    // render...
-}
-```
-
----
-
 ## Migration Path
 
 The old `Transform.h` system still exists for backward compatibility. To fully migrate:
@@ -300,7 +265,7 @@ The architecture is:
 - ✅ Well-documented
 - ✅ Industry-standard (EnTT is used in many commercial games)
 
-You can now build complex game logic by composing entities from reusable components, just like Unity, Unreal, or Godot!
+You can now build complex game logic by composing entities from reusable components, just like Unity, Unreal, or Godot! 
 
 ---
 
@@ -308,3 +273,5 @@ You can now build complex game logic by composing entities from reusable compone
 **Dependencies**: EnTT (header-only, no runtime overhead)
 **Compilation Time Impact**: Minimal (~1-2 seconds on incremental builds)
 **Runtime Performance**: Near-zero overhead compared to manual loops
+
+````
