@@ -220,22 +220,36 @@ Hephaestus-Engine/
 | [`README.md`](README.md) | Project overview, build instructions, controls, and feature tour. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution workflow, coding standards, and pull request checklist. |
 | [`ROADMAP.md`](ROADMAP.md) | Long-term roadmap, milestones, and active developer to-do list. |
-| [`Documentation/CUSTOM_COMPONENTS_GUIDE.md`](Documentation/CUSTOM_COMPONENTS_GUIDE.md) | Step-by-step tutorial for extending the ECS with custom components and systems. |
-| [`Documentation/ECS_ARCHITECTURE_DIAGRAM.md`](Documentation/ECS_ARCHITECTURE_DIAGRAM.md) | ASCII architecture diagram showing scene, entity, component, and system relationships. |
-| [`Documentation/ECS_GUIDE.md`](Documentation/ECS_GUIDE.md) | Comprehensive deep dive into the ECS API, scene management, and usage patterns. |
-| [`Documentation/ECS_IMPLEMENTATION_SUMMARY.md`](Documentation/ECS_IMPLEMENTATION_SUMMARY.md) | Summary of files, features, and integration work added during the ECS migration. |
-| [`Documentation/ECS_SUCCESS.md`](Documentation/ECS_SUCCESS.md) | Release-style recap of ECS deliverables, editor features, and setup steps. |
-| [`Documentation/ICON_INTEGRATION.md`](Documentation/ICON_INTEGRATION.md) | Reserved for icon pipeline documentation (currently a placeholder). |
-| [`Documentation/IMGUIZMO_INTEGRATION.md`](Documentation/IMGUIZMO_INTEGRATION.md) | Notes on integrating ImGuizmo with the editor, including math helpers and UI wiring. |
-| [`Documentation/LIGHTING_AND_MATERIALS_GUIDE.md`](Documentation/LIGHTING_AND_MATERIALS_GUIDE.md) | Overview of the PBR material system, light types, and usage examples. |
-| [`Documentation/LIGHTING_ADVANCED_EXAMPLES.md`](Documentation/LIGHTING_ADVANCED_EXAMPLES.md) | Expanded code examples for advanced materials, presets, and lighting scenarios. |
-| [`Documentation/LIGHTING_VISUAL_GUIDE.md`](Documentation/LIGHTING_VISUAL_GUIDE.md) | Visual reference describing demo scene lighting setups and material appearances. |
-| [`Documentation/TEXTURE_RENDERING_GUIDE.md`](TEXTURE_RENDERING_GUIDE.md) | Complete guide to texture integration, UBO alignment, and PBR texture workflow. |
-| [`Documentation/TEXTURE_DROPDOWN_FEATURE.md`](Documentation/TEXTURE_DROPDOWN_FEATURE.md) | Implementation details for the texture selection UI in the material editor. |
-| [`Documentation/RAY_PICKING.md`](Documentation/RAY_PICKING.md) | Detailed explanation of the ray picking implementation and input handling. |
-| [`Documentation/RAY_PICKING_REFERENCE.md`](Documentation/RAY_PICKING_REFERENCE.md) | Quick reference for ray picking code changes and helper APIs. |
+| [`Documentation/Guides/CUSTOM_COMPONENTS_GUIDE.md`](Documentation/Guides/CUSTOM_COMPONENTS_GUIDE.md) | Step-by-step tutorial for extending the ECS with custom components and systems. |
+| [`Documentation/Architecture/ECS_ARCHITECTURE_DIAGRAM.md`](Documentation/Architecture/ECS_ARCHITECTURE_DIAGRAM.md) | ASCII architecture diagram showing scene, entity, component, and system relationships. |
+| [`Documentation/Guides/ECS_GUIDE.md`](Documentation/Guides/ECS_GUIDE.md) | Comprehensive deep dive into the ECS API, scene management, and usage patterns. |
+| [`Documentation/Architecture/ECS_IMPLEMENTATION_SUMMARY.md`](Documentation/Architecture/ECS_IMPLEMENTATION_SUMMARY.md) | Summary of files, features, and integration work added during the ECS migration. |
+| [`Documentation/Architecture/ECS_SUCCESS.md`](Documentation/Architecture/ECS_SUCCESS.md) | Release-style recap of ECS deliverables, editor features, and setup steps. |
+| [`Documentation/Archive/ICON_INTEGRATION.md`](Documentation/Archive/ICON_INTEGRATION.md) | Reserved for icon pipeline documentation (currently a placeholder). |
+| [`Documentation/Archive/IMGUIZMO_INTEGRATION.md`](Documentation/Archive/IMGUIZMO_INTEGRATION.md) | Notes on integrating ImGuizmo with the editor, including math helpers and UI wiring. |
+| [`Documentation/Guides/LIGHTING_AND_MATERIALS_GUIDE.md`](Documentation/Guides/LIGHTING_AND_MATERIALS_GUIDE.md) | Overview of the PBR material system, light types, and usage examples. |
+| [`Documentation/Lighting/LIGHTING_ADVANCED_EXAMPLES.md`](Documentation/Lighting/LIGHTING_ADVANCED_EXAMPLES.md) | Expanded code examples for advanced materials, presets, and lighting scenarios. |
+| [`Documentation/Lighting/LIGHTING_VISUAL_GUIDE.md`](Documentation/Lighting/LIGHTING_VISUAL_GUIDE.md) | Visual reference describing demo scene lighting setups and material appearances. |
+| [`Documentation/Archive/TEXTURE_DROPDOWN_FEATURE.md`](Documentation/Archive/TEXTURE_DROPDOWN_FEATURE.md) | Implementation details for the texture selection UI in the material editor. |
+| [`Documentation/Archive/RAY_PICKING.md`](Documentation/Archive/RAY_PICKING.md) | Detailed explanation of the ray picking implementation and input handling. |
+| [`Documentation/Archive/RAY_PICKING_REFERENCE.md`](Documentation/Archive/RAY_PICKING_REFERENCE.md) | Quick reference for ray picking code changes and helper APIs. |
+| [`Documentation/Roadmaps/ROADMAP_1-0.md`](Documentation/Roadmaps/ROADMAP_1-0.md) | 1.0 release roadmap, project status checklist, and acceptance criteria. |
+| [`Documentation/Roadmaps/ROADMAP_1-0_issues_plan.md`](Documentation/Roadmaps/ROADMAP_1-0_issues_plan.md) | Suggested 10-week issues plan and schedule for a single developer. |
 
 Third-party dependencies include their own documentation inside `extern/`; refer to those folders when working with vendor libraries.
+
+Issue drafts & helper script
+----------------------------
+We've added a set of draft GitHub issues and a helper script to make converting roadmap items into issues easy. The drafts live under `.github/ISSUE_DRAFTS/` and the script to create issues using the GitHub CLI is at `tools/create_github_issues.ps1`.
+
+To create issues locally (requires GitHub CLI `gh` and repo permissions):
+
+```powershell
+gh auth login
+.\tools\create_github_issues.ps1
+```
+
+The script reads each draft markdown file (skipping `README.md`) and creates an issue with the first markdown heading as the title and the file body as the issue description.
 
 ### New ECS System Documentation
 
