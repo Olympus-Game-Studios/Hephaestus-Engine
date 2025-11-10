@@ -36,6 +36,8 @@
 #include "../Gfx/VulkanTexture.h"
 #include "../Gfx/VulkanGizmo.h"
 #include "../Physics/MeshCollisionSystem.h"
+#include "../Physics/JoltPhysicsEngine.h"
+#include "../Physics/JoltPhysicsSystem.h"
 
 // Dear ImGui
 #include "imgui.h"
@@ -3052,6 +3054,21 @@ int main()
     Scene scene("Main Scene");
     Physics::MeshCollisionSystem collisionSystem;
     
+    // Initialize Jolt Physics Engine
+    Physics::JoltPhysicsEngine joltPhysicsEngine;
+    bool physicsInitialized = false;
+    try {
+        joltPhysicsEngine.Initialize();
+        physicsInitialized = true;
+        std::cout << "Physics engine initialized successfully\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to initialize physics engine: " << e.what() << "\n";
+        // Continue anyway - physics is optional
+    }
+    
+    // Create Jolt Physics System
+    Physics::JoltPhysicsSystem joltPhysicsSystem(joltPhysicsEngine);
+    
     // Create cube entities with different materials
     Entity cube1 = scene.CreateEntity("Cube 1 (Metal)");
     auto& cube1Renderer = cube1.AddComponent<MeshRendererComponent>();
@@ -4236,6 +4253,18 @@ int main()
         bool collisionsShouldRun = g_EnableMeshCollision && g_SimPlaying && !g_SimPaused;
         collisionSystem.SetEnabled(collisionsShouldRun);
         collisionSystem.Update(scene, dt);
+        
+        // Update Jolt Physics (only if initialized)
+        if (physicsInitialized) {
+            bool physicsShouldRun = g_SimPlaying && !g_SimPaused;
+            joltPhysicsSystem.SetEnabled(physicsShouldRun);
+            try {
+                joltPhysicsSystem.Update(scene, dt);
+            } catch (const std::exception& e) {
+                std::cerr << "Physics system update error: " << e.what() << "\n";
+                physicsInitialized = false;  // Disable physics after error
+            }
+        }
         
         // ImGuizmo keyboard shortcuts
         if (g_ProjectSelected) {

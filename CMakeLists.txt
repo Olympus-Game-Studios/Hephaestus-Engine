@@ -7,6 +7,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Vulkan REQUIRED)
 add_subdirectory(extern/glfw)
 
+# Jolt Physics Engine
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build Jolt as static library" FORCE)
+set(JOLT_SANITIZE_UNDEFINED_BEHAVIOR OFF CACHE BOOL "" FORCE)
+set(JOLT_CROSS_PLATFORM_DETERMINISTIC ON CACHE BOOL "Enable deterministic behavior" FORCE)
+# Disable static MSVC runtime to avoid linker conflicts
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "Use dynamic MSVC runtime" FORCE)
+add_subdirectory(extern/JoltPhysics/Build)
+
 add_executable(HephaestusEngine
     engine/Core/main.cpp
     engine/Assets/ModelImporter.cpp
@@ -16,6 +24,8 @@ add_executable(HephaestusEngine
     engine/Gfx/VulkanTexture.cpp
     engine/Gfx/VulkanGizmo.cpp
     engine/Physics/MeshCollisionSystem.cpp
+    engine/Physics/JoltPhysicsEngine.cpp
+    engine/Physics/JoltPhysicsSystem.cpp
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
     engine/Scene/SceneSerializer.cpp
@@ -29,12 +39,21 @@ add_executable(HephaestusEngine
 )
 
 target_include_directories(HephaestusEngine PRIVATE engine)
-target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw)
+target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt)
 target_include_directories(HephaestusEngine PRIVATE
     engine
     extern
     extern/VMA
     extern/entt/single_include
+    extern/JoltPhysics
+    extern/JoltPhysics/Build
+)
+
+# Set output directory for executable
+set_target_properties(HephaestusEngine PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug"
 )
 
 

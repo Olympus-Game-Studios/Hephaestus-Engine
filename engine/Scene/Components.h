@@ -194,6 +194,136 @@ struct MeshColliderComponent {
     }
 };
 
+// ═══════════════════════════════════════════════════════════════
+// PHYSICS COMPONENTS (Jolt Physics)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Physics shape types supported by Jolt
+ */
+enum class PhysicsShapeType {
+    Box,
+    Sphere,
+    Capsule,
+    Cylinder,
+    Mesh
+};
+
+/**
+ * Physics shape component - defines the collision shape for an entity
+ */
+struct PhysicsShapeComponent {
+    PhysicsShapeType type = PhysicsShapeType::Box;
+    
+    // Box
+    Vec3 extents;
+    
+    // Sphere
+    float radius = 0.5f;
+    
+    // Capsule/Cylinder
+    float height = 1.0f;
+    
+    // Offset from entity center
+    Vec3 offset;
+    
+    PhysicsShapeComponent()
+        : extents(0.5f, 0.5f, 0.5f)
+        , offset(0.0f, 0.0f, 0.0f)
+    {
+    }
+    
+    static PhysicsShapeComponent CreateBox(const Vec3& extents, const Vec3& offset = Vec3(0, 0, 0)) {
+        PhysicsShapeComponent shape;
+        shape.type = PhysicsShapeType::Box;
+        shape.extents = extents;
+        shape.offset = offset;
+        return shape;
+    }
+    
+    static PhysicsShapeComponent CreateSphere(float radius, const Vec3& offset = Vec3(0, 0, 0)) {
+        PhysicsShapeComponent shape;
+        shape.type = PhysicsShapeType::Sphere;
+        shape.radius = radius;
+        shape.offset = offset;
+        return shape;
+    }
+    
+    static PhysicsShapeComponent CreateCapsule(float height, float radius, const Vec3& offset = Vec3(0, 0, 0)) {
+        PhysicsShapeComponent shape;
+        shape.type = PhysicsShapeType::Capsule;
+        shape.height = height;
+        shape.radius = radius;
+        shape.offset = offset;
+        return shape;
+    }
+};
+
+/**
+ * Rigid body component - defines physics properties for dynamic/static bodies
+ * Must be paired with a TransformComponent for position/rotation
+ */
+struct RigidBodyComponent {
+    // Physics properties
+    float mass = 1.0f;                    // Body mass (kg), 0 = static
+    bool isStatic = false;                // If true, body is immovable (mass is ignored)
+    bool isTrigger = false;               // If true, body acts as sensor (no physics)
+    bool useGravity = true;               // Apply gravity to this body
+    bool freezeRotation = false;          // Lock rotation
+    
+    // Linear motion
+    Vec3 linearVelocity;
+    Vec3 linearAcceleration;
+    float linearDamping = 0.05f;          // Linear velocity damping
+    
+    // Angular motion
+    Vec3 angularVelocity;
+    Vec3 angularAcceleration;
+    float angularDamping = 0.05f;         // Angular velocity damping
+    
+    // Material properties
+    float friction = 0.3f;                // Friction coefficient
+    float restitution = 0.0f;             // Bounciness/elasticity
+    
+    // Debugging
+    bool debugDraw = false;               // Draw collision shape in debug
+    
+    // Jolt Physics body ID (internal use)
+    uint32_t joltBodyId = 0xFFFFFFFF;     // Invalid ID
+    
+    RigidBodyComponent()
+        : linearVelocity(0, 0, 0)
+        , linearAcceleration(0, 0, 0)
+        , angularVelocity(0, 0, 0)
+        , angularAcceleration(0, 0, 0)
+    {
+    }
+    
+    static RigidBodyComponent CreateDynamic(float mass = 1.0f, float friction = 0.3f) {
+        RigidBodyComponent body;
+        body.mass = mass;
+        body.isStatic = false;
+        body.friction = friction;
+        return body;
+    }
+    
+    static RigidBodyComponent CreateStatic() {
+        RigidBodyComponent body;
+        body.mass = 0.0f;
+        body.isStatic = true;
+        return body;
+    }
+    
+    static RigidBodyComponent CreateKinematic(float mass = 1.0f) {
+        RigidBodyComponent body;
+        body.mass = mass;
+        body.isStatic = false;
+        body.useGravity = false;
+        body.freezeRotation = true;
+        return body;
+    }
+};
+
 /**
  * Selection component - marks entities as selected in the editor
  */
