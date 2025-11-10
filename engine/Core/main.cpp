@@ -117,6 +117,10 @@ static std::filesystem::path g_ActiveProjectRoot;
 static std::string g_ActiveProjectName;
 static bool g_ProjectSelected = false;
 static bool g_AssetBrowserNeedsReset = true;
+static std::string g_SelectedScriptAssetName;
+static bool g_SelectedScriptAssetValid = false;
+static std::string g_ScriptAttachmentMessage;
+static float g_ScriptAttachmentMessageTimer = 0.0f;
 static HephaestusEngine::ProjectManager g_ProjectManager;
 
 constexpr float kReferenceViewportWidth = 1280.0f;
@@ -298,6 +302,9 @@ struct DetailsPanelActions {
 static std::string TrimCopy(const std::string& value);
 
 static std::filesystem::path ResolveEngineRoot();
+
+static void ClearSelectedScriptAsset();
+static void UpdateSelectedScriptAsset(const std::filesystem::path& path);
 
 static bool DrawPillButton(const char* label, bool active, const ImVec2& size = ImVec2(0.0f, 0.0f))
 {
@@ -871,38 +878,105 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
     }
 
     // Script Component Section
+    ScriptComponent* scriptCompPtr = nullptr;
     if (selectedEntity.HasComponent<ScriptComponent>()) {
-        if (ImGui::CollapsingHeader("Scripts", ImGuiTreeNodeFlags_DefaultOpen)) {
-            auto& scriptComp = selectedEntity.GetComponent<ScriptComponent>();
-            
-            // Display attached scripts
-            ImGui::Text("Attached Scripts:");
-            for (size_t i = 0; i < scriptComp.scriptNames.size(); ++i) {
-                ImGui::BulletText("%s", scriptComp.scriptNames[i].c_str());
-            }
-            
-            // Add new script section
+        scriptCompPtr = &selectedEntity.GetComponent<ScriptComponent>();
+    }
+
+    if (ImGui::CollapsingHeader("Scripts", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (scriptCompPtr && !scriptCompPtr->scriptNames.empty()) {
+            ImGui::Text("Attached Scripts: (%zu)", scriptCompPtr->scriptNames.size());
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "[OK] Scripts are attached and active");
             ImGui::Spacing();
-            static char scriptNameBuffer[128] = "";
-            ImGui::Text("Add Script:");
-            ImGui::InputText("##scriptName", scriptNameBuffer, sizeof(scriptNameBuffer));
-            ImGui::SameLine();
-            
-            if (ImGui::Button("Attach##script")) {
-                if (strlen(scriptNameBuffer) > 0) {
-                    if (ScriptRegistry::IsRegistered(scriptNameBuffer)) {
-                        ScriptPtr newScript = ScriptRegistry::CreateScript(scriptNameBuffer, selectedEntity, &scene);
-                        if (newScript) {
-                            scriptComp.AddScript(newScript, scriptNameBuffer);
-                            scriptNameBuffer[0] = '\0';
-                        }
-                    } else {
-                        std::cerr << "Script '" << scriptNameBuffer << "' not found in registry.\n";
+            for (size_t i = 0; i < scriptCompPtr->scriptNames.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::BulletText("%s", scriptCompPtr->scriptNames[i].c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove")) {
+                    if (i < scriptCompPtr->scripts.size() && scriptCompPtr->scripts[i]) {
+                        scriptCompPtr->scripts[i]->OnDestroy();
                     }
+                    scriptCompPtr->RemoveScript(i);
+                    std::cout << "Removed script: " << scriptCompPtr->scriptNames[i] << "\n";
+                    ImGui::PopID();
+                    break;
                 }
+                ImGui::PopID();
             }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Attach a script from the registry (e.g., 'PlayerController', 'RotatingCube')");
+        } else {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No scripts attached to this entity.");
+        }
+
+        ImGui::Spacing();
+        static char scriptNameBuffer[128] = "";
+        ImGui::Text("Add Script:");
+        if (g_SelectedScriptAssetValid) {
+            ImGui::TextDisabled("Asset Browser selection: %s", g_SelectedScriptAssetName.c_str());
+        }
+        ImGui::InputText("##scriptName", scriptNameBuffer, sizeof(scriptNameBuffer));
+        ImGui::SameLine();
+
+        if (ImGui::Button("Attach##script")) {
+            std::string scriptToAttach;
+            if (scriptNameBuffer[0] != '\0') {
+                scriptToAttach = scriptNameBuffer;
+            } else if (g_SelectedScriptAssetValid) {
+                scriptToAttach = g_SelectedScriptAssetName;
+            }
+
+            std::cout << "[Script Attach] Attempting to attach: '" << scriptToAttach << "'\n";
+
+            if (!scriptToAttach.empty()) {
+                std::cout << "[Script Attach] Checking if registered...\n";
+                if (ScriptRegistry::IsRegistered(scriptToAttach)) {
+                    std::cout << "[Script Attach] Script IS registered!\n";
+                    if (!scriptCompPtr) {
+                        std::cout << "[Script Attach] Creating ScriptComponent...\n";
+                        scriptCompPtr = &selectedEntity.AddComponent<ScriptComponent>();
+                    }
+                    if (scriptCompPtr) {
+                        std::cout << "[Script Attach] Creating script instance...\n";
+                        ScriptPtr newScript = ScriptRegistry::CreateScript(scriptToAttach, selectedEntity, &scene);
+                        if (newScript) {
+                            std::cout << "[Script Attach] SUCCESS! Adding script to component...\n";
+                            scriptCompPtr->AddScript(newScript, scriptToAttach);
+                            std::cout << "[Script Attach] Script '" << scriptToAttach << "' attached successfully!\n";
+                            g_ScriptAttachmentMessage = "[OK] Script '" + scriptToAttach + "' attached!";
+                            g_ScriptAttachmentMessageTimer = 3.0f;
+                            scriptNameBuffer[0] = '\0';
+                            ClearSelectedScriptAsset();
+                        } else {
+                            std::cout << "[Script Attach] FAILED: CreateScript returned nullptr\n";
+                        }
+                    }
+                } else {
+                    std::cout << "[Script Attach] Script NOT registered. Available: ";
+                    for (const auto& name : ScriptRegistry::GetRegisteredScripts()) {
+                        std::cout << name << " ";
+                    }
+                    std::cout << "\n";
+                    std::cerr << "Script '" << scriptToAttach << "' not found in registry.\n";
+                }
+            } else {
+                std::cout << "[Script Attach] ERROR: No script specified!\n";
+                std::cerr << "No script specified. Type a script name or select a script asset in the Asset Browser.\n";
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Attach a script from the registry. Leave the field empty to use the script selected in the Asset Browser.");
+        }
+
+        if (!g_ScriptAttachmentMessage.empty() && g_ScriptAttachmentMessageTimer > 0.0f) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%s", g_ScriptAttachmentMessage.c_str());
+        }
+
+        const auto registeredScripts = ScriptRegistry::GetRegisteredScripts();
+        if (!registeredScripts.empty()) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("Registered Scripts:");
+            for (const std::string& name : registeredScripts) {
+                ImGui::BulletText("%s", name.c_str());
             }
         }
     }
@@ -1613,6 +1687,22 @@ static bool IsScriptFile(const std::filesystem::path& path)
     return false;
 }
 
+static void ClearSelectedScriptAsset()
+{
+    g_SelectedScriptAssetName.clear();
+    g_SelectedScriptAssetValid = false;
+}
+
+static void UpdateSelectedScriptAsset(const std::filesystem::path& path)
+{
+    if (!path.empty() && IsScriptFile(path)) {
+        g_SelectedScriptAssetName = path.stem().string();
+        g_SelectedScriptAssetValid = !g_SelectedScriptAssetName.empty();
+    } else {
+        ClearSelectedScriptAsset();
+    }
+}
+
 static void OpenFileInDefaultIDE(const std::filesystem::path& path)
 {
     namespace fs = std::filesystem;
@@ -1799,6 +1889,8 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
             ImGui::TextDisabled("Select or create a project to browse assets.");
         }
         ImGui::End();
+        selectedPath.clear();
+        ClearSelectedScriptAsset();
         return result;
     }
 
@@ -1808,6 +1900,8 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
             ImGui::TextDisabled("Active project has no assets directory configured.");
         }
         ImGui::End();
+        selectedPath.clear();
+        ClearSelectedScriptAsset();
         return result;
     }
 
@@ -1828,6 +1922,8 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
             ImGui::TextDisabled("Cannot open project assets: %s", ensureRootErr.message().c_str());
         }
         ImGui::End();
+        selectedPath.clear();
+        ClearSelectedScriptAsset();
         return result;
     }
 
@@ -1849,6 +1945,8 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
         std::string rootDisplay = assetRoot.generic_string();
     ImGui::TextDisabled("Asset directory not found: %s", rootDisplay.c_str());
     ImGui::End();
+    selectedPath.clear();
+    ClearSelectedScriptAsset();
     return result;
     }
 
@@ -2218,6 +2316,8 @@ private:
     if (iterErr) {
     ImGui::TextDisabled("Cannot open directory: %s", iterErr.message().c_str());
     ImGui::End();
+    selectedPath.clear();
+    ClearSelectedScriptAsset();
     return result;
     }
 
@@ -2467,6 +2567,8 @@ private:
         ImGui::Separator();
         ImGui::TextWrapped("%s", statusMessage.c_str());
     }
+
+    UpdateSelectedScriptAsset(selectedPath);
 
     ImGui::End();
     return result;
@@ -3094,6 +3196,24 @@ int main()
     Scene scene("Main Scene");
     ScriptEngine scriptEngine;
     scriptEngine.Initialize(&scene);
+
+    // Register example scripts
+    ScriptRegistry::Register<RotatingCube>("RotatingCube", 
+        [](Entity entity, Scene* scene) {
+            return std::make_shared<RotatingCube>(entity, scene);
+        }
+    );
+    ScriptRegistry::Register<SimpleMovement>("SimpleMovement",
+        [](Entity entity, Scene* scene) {
+            return std::make_shared<SimpleMovement>(entity, scene);
+        }
+    );
+    // Register user scripts
+    ScriptRegistry::Register<PlayerController>("PlayerController",
+        [](Entity entity, Scene* scene) {
+            return std::make_shared<PlayerController>(entity, scene);
+        }
+    );
     
     Physics::MeshCollisionSystem collisionSystem;
     
@@ -4099,6 +4219,15 @@ int main()
                 }
             }
             DetailsPanelActions detailsActions = DrawDetailsPanel(scene);
+
+            // Decay attachment success message
+            if (g_ScriptAttachmentMessageTimer > 0.0f) {
+                g_ScriptAttachmentMessageTimer -= dt;
+                if (g_ScriptAttachmentMessageTimer <= 0.0f) {
+                    g_ScriptAttachmentMessage.clear();
+                    g_ScriptAttachmentMessageTimer = 0.0f;
+                }
+            }
 
             if (g_MaterialEditorPanel) {
                 if (g_MaterialEditorPanel->HasActiveAsset() && g_MaterialGraph.GetNodes().empty()) {
