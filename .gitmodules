@@ -10,3 +10,6 @@
 [submodule "extern/imnodes"]
 	path = extern/imnodes
 	url = https://github.com/Nelarius/imnodes.git
+[submodule "extern/JoltPhysics"]
+	path = extern/JoltPhysics
+	url = https://github.com/jrouwe/JoltPhysics.git
