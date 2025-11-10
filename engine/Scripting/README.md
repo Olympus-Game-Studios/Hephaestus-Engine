@@ -4,6 +4,13 @@
 
 The scripting layer provides a robust framework for game developers to write C++ scripts that control entity behavior in the Hephaestus Engine. Scripts have a full lifecycle and integrate seamlessly with the ECS system.
 
+## 📚 Documentation
+
+For comprehensive guides on creating and using scripts, see:
+- **[SCRIPT_DEVELOPMENT_GUIDE.md](../../SCRIPT_DEVELOPMENT_GUIDE.md)** - Complete guide with examples
+- Includes PlayerController example implementation
+- Best practices and debugging tips
+
 ## Quick Start
 
 Create a script:

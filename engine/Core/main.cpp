@@ -53,6 +53,9 @@
 #include "../Scene/Components.h"
 #include "../Scene/Transform.h"
 #include "../Scene/SceneSerializer.h"
+#include "../Scripting/ScriptEngine.h"
+#include "../Scripting/ScriptRegistry.h"
+#include "../Game/ExampleScripts.h"
 #include "../UI/MaterialEditor/MaterialEditorPanel.h"
 #include "../UI/ProjectManager.h"
 
@@ -3052,6 +3055,9 @@ int main()
 
     // ── Scene & Entities (ECS) ───────────────────
     Scene scene("Main Scene");
+    ScriptEngine scriptEngine;
+    scriptEngine.Initialize(&scene);
+    
     Physics::MeshCollisionSystem collisionSystem;
     
     // Initialize Jolt Physics Engine
@@ -3916,6 +3922,12 @@ int main()
         float currentTime = static_cast<float>(glfwGetTime());
         float dt = currentTime - lastTime; lastTime = currentTime;
 
+        // Update scripts (before rendering) - only when playing and not paused
+        scriptEngine.AwakeScripts();
+        if (g_SimPlaying && !g_SimPaused) {
+            scriptEngine.UpdateScripts(dt);
+        }
+
         // Start the Dear ImGui frame
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -3962,8 +3974,9 @@ int main()
         }
         leftMouseWasPressed = leftMousePressed;
         
-        // Input handling (only when not using gizmo)
-        if (g_ProjectSelected && !ImGuizmo::IsUsing() && !gizmoDragging) {
+        // Input handling (only when not using gizmo, and not in play mode)
+        // In play mode, the PlayerController handles input instead
+        if (g_ProjectSelected && !ImGuizmo::IsUsing() && !gizmoDragging && !g_SimPlaying) {
             camera.handleMouse(window);
             camera.handleKeyboard(window, dt);
         }
@@ -4191,17 +4204,25 @@ int main()
             if (toolbarActions.playClicked) {
                 g_SimPlaying = true;
                 g_SimPaused = false;
-                assetBrowserStatus = "Play mode toggle (placeholder).";
+                // When entering play mode, ensure player controller is active
+                assetBrowserStatus = "Entered play mode - Use WASD to move, hold Right Mouse Button to look.";
+                std::cout << assetBrowserStatus << std::endl;
             }
             if (toolbarActions.pauseClicked && g_SimPlaying) {
                 g_SimPaused = !g_SimPaused;
-                assetBrowserStatus = g_SimPaused ? "Paused simulation (placeholder)." : "Resumed simulation (placeholder).";
+                if (g_SimPaused) {
+                    assetBrowserStatus = "Simulation paused - scripts and physics frozen.";
+                } else {
+                    assetBrowserStatus = "Simulation resumed - play continues.";
+                }
+                std::cout << assetBrowserStatus << std::endl;
             }
             if (toolbarActions.stopClicked) {
                 if (g_SimPlaying || g_SimPaused) {
                     g_SimPlaying = false;
                     g_SimPaused = false;
-                    assetBrowserStatus = "Stopped play mode (placeholder).";
+                    assetBrowserStatus = "Exited play mode - returned to editor.";
+                    std::cout << assetBrowserStatus << std::endl;
                 }
             }
             if (toolbarActions.saveClicked) {
@@ -4360,6 +4381,11 @@ int main()
         
         // Render ImGui
         ImGui::Render();
+
+        // Late update scripts (after all regular updates) - only when playing and not paused
+        if (g_SimPlaying && !g_SimPaused) {
+            scriptEngine.LateUpdateScripts(dt);
+        }
 
         if (acq == VK_ERROR_OUT_OF_DATE_KHR) {
             vkDeviceWaitIdle(vkdev.device);
@@ -4808,6 +4834,7 @@ int main()
 
     // ── Cleanup ────────────────────────────────
     g_ProjectManager.Shutdown();
+    scriptEngine.Shutdown();
 
     // Cleanup sync objects
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
