@@ -20,6 +20,13 @@
 
 #include "Math.h"
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include "../Assets/MeshAsset.h"
 #include "../Assets/ModelImporter.h"
 #include "../Gfx/VulkanDevice.h"
@@ -1550,6 +1557,51 @@ static bool IsMaterialFile(const std::filesystem::path& path)
     return ext == ".hematerial";
 }
 
+static bool IsScriptFile(const std::filesystem::path& path)
+{
+    std::string ext = ToLowerCopy(path.extension().string());
+    static const std::array<const char*, 9> scriptExtensions = {
+        ".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".hxx", ".txt", ".json"
+    };
+    for (const auto* scriptExt : scriptExtensions) {
+        if (ext == scriptExt) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void OpenFileInDefaultIDE(const std::filesystem::path& path)
+{
+    namespace fs = std::filesystem;
+    
+    if (!fs::exists(path)) {
+        std::cerr << "File does not exist: " << path << "\n";
+        return;
+    }
+
+#ifdef _WIN32
+    std::wstring wPath = path.wstring();
+    intptr_t result = reinterpret_cast<intptr_t>(ShellExecuteW(
+        nullptr,           // hwnd
+        L"open",           // lpOperation
+        wPath.c_str(),     // lpFile
+        nullptr,           // lpParameters
+        nullptr,           // lpDirectory
+        SW_SHOW            // nShowCmd
+    ));
+    
+    if (result <= 32) {
+        std::cerr << "Failed to open file in IDE: " << path << " (Error code: " << result << ")\n";
+    }
+#else
+    // For non-Windows platforms, we could add support using:
+    // - macOS: open command
+    // - Linux: xdg-open command
+    std::cerr << "Opening files in IDE is currently only supported on Windows\n";
+#endif
+}
+
 static void EnsureAssetBrowserIconsLoaded(VulkanDevice& vkdev)
 {
     if (g_AssetBrowserIconsReady) {
@@ -2288,11 +2340,17 @@ private:
                         selectedPath = clamped;
                         if (IsSceneFile(entry.path)) {
                             result.sceneOpenRequest = clamped;
+                            statusMessage.clear();
                         } else if (IsMaterialFile(entry.path)) {
                             result.materialOpenRequest = clamped;
+                            statusMessage.clear();
+                        } else if (IsScriptFile(entry.path)) {
+                            OpenFileInDefaultIDE(clamped);
+                            statusMessage = "Opening '" + clamped.filename().string() + "' in your default IDE...";
+                        } else {
+                            statusMessage.clear();
                         }
                     }
-                    statusMessage.clear();
                 }
 
                 // Right-click context menu for individual items
