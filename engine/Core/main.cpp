@@ -870,6 +870,43 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
         }
     }
 
+    // Script Component Section
+    if (selectedEntity.HasComponent<ScriptComponent>()) {
+        if (ImGui::CollapsingHeader("Scripts", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& scriptComp = selectedEntity.GetComponent<ScriptComponent>();
+            
+            // Display attached scripts
+            ImGui::Text("Attached Scripts:");
+            for (size_t i = 0; i < scriptComp.scriptNames.size(); ++i) {
+                ImGui::BulletText("%s", scriptComp.scriptNames[i].c_str());
+            }
+            
+            // Add new script section
+            ImGui::Spacing();
+            static char scriptNameBuffer[128] = "";
+            ImGui::Text("Add Script:");
+            ImGui::InputText("##scriptName", scriptNameBuffer, sizeof(scriptNameBuffer));
+            ImGui::SameLine();
+            
+            if (ImGui::Button("Attach##script")) {
+                if (strlen(scriptNameBuffer) > 0) {
+                    if (ScriptRegistry::IsRegistered(scriptNameBuffer)) {
+                        ScriptPtr newScript = ScriptRegistry::CreateScript(scriptNameBuffer, selectedEntity, &scene);
+                        if (newScript) {
+                            scriptComp.AddScript(newScript, scriptNameBuffer);
+                            scriptNameBuffer[0] = '\0';
+                        }
+                    } else {
+                        std::cerr << "Script '" << scriptNameBuffer << "' not found in registry.\n";
+                    }
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Attach a script from the registry (e.g., 'PlayerController', 'RotatingCube')");
+            }
+        }
+    }
+
     ImGui::SeparatorText("Actions");
     if (ImGui::Button("Delete Entity")) {
         actions.entityToDelete = static_cast<entt::entity>(selectedEntity);
