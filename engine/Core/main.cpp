@@ -323,6 +323,8 @@ static std::string TrimCopy(const std::string& value);
 
 static std::filesystem::path ResolveEngineRoot();
 static std::filesystem::path ResolveEnginePath(const std::filesystem::path& relative);
+static std::filesystem::path GetExecutableDirectory();
+static std::filesystem::path GetLegacyEditorSettingsPath();
 
 static void LoadEditorSettings();
 static void SaveEditorSettings();
@@ -431,7 +433,7 @@ static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused)
                 SaveEditorSettings();
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                ImGui::SetTooltip("Writes changes to editor/settings.ini");
+                ImGui::SetTooltip("Writes changes beside the executable");
             }
             ImGui::SameLine();
             if (ImGui::Button("Reset Defaults")) {
@@ -1553,6 +1555,25 @@ static std::filesystem::path ResolveEnginePath(const std::filesystem::path& rela
     return (ResolveEngineRoot() / relative).lexically_normal();
 }
 
+static std::filesystem::path GetExecutableDirectory()
+{
+#ifdef _WIN32
+    std::wstring buffer(512, L'\0');
+    while (true) {
+        DWORD result = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (result == 0) {
+            break;
+        }
+        if (result < buffer.size() - 1) {
+            buffer.resize(result);
+            return std::filesystem::path(buffer).parent_path();
+        }
+        buffer.resize(buffer.size() * 2);
+    }
+#endif
+    return std::filesystem::current_path();
+}
+
 static std::filesystem::path ResolveProjectsRoot()
 {
     namespace fs = std::filesystem;
@@ -1755,9 +1776,14 @@ static std::string PreferredIDEToString(PreferredIDE value)
     }
 }
 
-static std::filesystem::path GetEditorSettingsPath()
+static std::filesystem::path GetLegacyEditorSettingsPath()
 {
     return ResolveEnginePath(std::filesystem::path("editor") / "settings.ini");
+}
+
+static std::filesystem::path GetEditorSettingsPath()
+{
+    return (GetExecutableDirectory() / "settings.ini").lexically_normal();
 }
 
 static void LoadEditorSettings()
@@ -1767,9 +1793,18 @@ static void LoadEditorSettings()
     g_PreferredIDE = PreferredIDE::SystemDefault;
 
     fs::path settingsPath = GetEditorSettingsPath();
-    std::error_code existsErr;
-    if (!fs::exists(settingsPath, existsErr) || existsErr) {
-        return;
+    fs::path legacyPath = GetLegacyEditorSettingsPath();
+
+    std::error_code err;
+    bool usingLegacySettings = false;
+    if (!fs::exists(settingsPath, err) || err) {
+        err = {};
+        if (fs::exists(legacyPath, err) && !err) {
+            settingsPath = legacyPath;
+            usingLegacySettings = true;
+        } else {
+            return;
+        }
     }
 
     std::ifstream in(settingsPath);
@@ -1791,6 +1826,10 @@ static void LoadEditorSettings()
         if (key == "preferred_ide") {
             g_PreferredIDE = PreferredIDEFromString(value);
         }
+    }
+
+    if (usingLegacySettings) {
+        SaveEditorSettings();
     }
 }
 
