@@ -57,6 +57,21 @@ Key parts:
 - Ray-based object picking
 - Real-time component editing 
 
+### 📝 Scripting System (Hybrid C++ + Lua)
+- **C++ Scripts** - Compiled, high-performance game code
+  - Full access to engine systems
+  - Template-based registration
+  - Out of the box with no additional setup
+- **Lua Scripts** - Interpreted, rapid iteration
+  - No recompilation needed
+  - Fast prototyping and iteration
+  - Requires Lua installation (optional)
+- **Editor Integration** - Attach scripts via Details Panel
+- **Script Lifecycle** - Unified callbacks (onAwake, onUpdate, onLateUpdate, onDestroy)
+- **Coexistence** - Both C++ and Lua scripts work together on the same entity
+
+**Quick Start**: See `Documentation/Scripting/SCRIPTING_QUICK_START.md` for immediate examples.
+
 ## Prerequisites (Windows)
 
 - Visual Studio 2019 or 2022 with Desktop development for C++ workload.

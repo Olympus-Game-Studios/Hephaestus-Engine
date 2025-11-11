@@ -7,6 +7,55 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Vulkan REQUIRED)
 add_subdirectory(extern/glfw)
 
+# Lua scripting support - try to find it, but make it optional for now
+# Check for vcpkg installation first
+set(VCPKG_ROOT "$ENV{USERPROFILE}/vcpkg" CACHE PATH "Path to vcpkg installation")
+if(EXISTS "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" AND NOT CMAKE_TOOLCHAIN_FILE)
+    message(STATUS "Found vcpkg at ${VCPKG_ROOT}")
+    # Vcpkg is available - it will handle finding Lua
+    # This is particularly useful when building from scratch
+endif()
+
+# Try to find Lua via standard mechanisms (vcpkg, system paths, etc.)
+find_package(Lua QUIET)
+if(NOT Lua_FOUND)
+    message(STATUS "Lua not found via standard search paths")
+    
+    # Try manual search in vcpkg directories
+    set(VCPKG_TRIPLET "x64-windows")
+    set(VCPKG_LUA_PATH "$ENV{USERPROFILE}/vcpkg/installed/${VCPKG_TRIPLET}")
+    
+    if(EXISTS "${VCPKG_LUA_PATH}/include/lua.h")
+        message(STATUS "Found Lua in vcpkg at ${VCPKG_LUA_PATH}")
+        set(LUA_INCLUDE_DIR "${VCPKG_LUA_PATH}/include")
+        set(LUA_FOUND TRUE)
+        
+        # Find Lua library
+        if(EXISTS "${VCPKG_LUA_PATH}/lib/lua.lib")
+            set(LUA_LIBRARIES "${VCPKG_LUA_PATH}/lib/lua.lib")
+        elseif(EXISTS "${VCPKG_LUA_PATH}/lib/lua54.lib")
+            set(LUA_LIBRARIES "${VCPKG_LUA_PATH}/lib/lua54.lib")
+        elseif(EXISTS "${VCPKG_LUA_PATH}/lib/lua53.lib")
+            set(LUA_LIBRARIES "${VCPKG_LUA_PATH}/lib/lua53.lib")
+        else()
+            message(WARNING "Lua include found but library not found in ${VCPKG_LUA_PATH}/lib/")
+            set(LUA_FOUND FALSE)
+        endif()
+    else()
+        message(STATUS "Lua not found in vcpkg either")
+        message(WARNING "Lua not found! Lua scripting will be disabled.")
+        message(STATUS "To enable Lua support:")
+        message(STATUS "  Option 1: vcpkg install lua:x64-windows")
+        message(STATUS "  Option 2: Download from lua.org and install manually")
+        message(STATUS "  Option 3: For CMake to find vcpkg Lua, use: cmake -DCMAKE_TOOLCHAIN_FILE=%USERPROFILE%/vcpkg/scripts/buildsystems/vcpkg.cmake ..")
+        
+        set(LUA_INCLUDE_DIR "")
+        set(LUA_LIBRARIES "")
+    endif()
+else()
+    message(STATUS "Found Lua: ${LUA_LIBRARIES}")
+endif()
+
 # Jolt Physics Engine
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build Jolt as static library" FORCE)
 set(JOLT_SANITIZE_UNDEFINED_BEHAVIOR OFF CACHE BOOL "" FORCE)
@@ -31,6 +80,7 @@ add_executable(HephaestusEngine
     engine/Scene/SceneSerializer.cpp
     engine/Scripting/ScriptBase.cpp
     engine/Scripting/ScriptEngine.cpp
+    engine/Scripting/LuaScriptEngine.cpp
     engine/UI/ProjectManager.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
@@ -39,7 +89,13 @@ add_executable(HephaestusEngine
 )
 
 target_include_directories(HephaestusEngine PRIVATE engine)
-target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt)
+if(Lua_FOUND)
+    target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt Lua::Lua)
+    target_include_directories(HephaestusEngine PRIVATE ${LUA_INCLUDE_DIR})
+else()
+    target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt)
+    # Lua disabled - LuaScriptEngine will be a stub
+endif()
 target_include_directories(HephaestusEngine PRIVATE
     engine
     extern

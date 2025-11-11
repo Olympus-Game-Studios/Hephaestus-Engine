@@ -51,6 +51,12 @@ struct ProjectInfo {
     bool thumbnailLoaded = false;
 };
 
+struct IconResource {
+    VulkanTexture texture;
+    VkDescriptorSet descriptor = VK_NULL_HANDLE;
+    ImTextureID handle = ImTextureID(0);
+};
+
 // View mode for project display
 enum class ProjectViewMode {
     Grid,
@@ -132,7 +138,7 @@ private:
 private:
     // Vulkan resources
     ::VulkanDevice* m_Device = nullptr;
-    std::unordered_map<std::string, VulkanTexture> m_Icons;
+    std::unordered_map<std::string, IconResource> m_IconResources;
     std::unordered_map<std::filesystem::path, VulkanTexture> m_Thumbnails;
     
     // Project data

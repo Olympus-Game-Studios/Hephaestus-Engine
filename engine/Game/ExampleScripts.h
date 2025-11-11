@@ -440,3 +440,46 @@ private:
     }
 };
 
+/**
+ * User script: AndyScript
+ * Template for custom game logic
+ */
+class AndyScript : public ScriptBase {
+public:
+    AndyScript(Entity entity, Scene* scene) {
+        m_Entity = entity;
+        m_Scene = scene;
+    }
+
+    virtual ~AndyScript() = default;
+
+    void OnAwake() override {
+        // Initialize the script
+    }
+
+    void OnUpdate(float deltaTime) override {
+        // Main game logic - called every frame
+        // deltaTime is time elapsed since last frame in seconds
+    }
+
+    void OnLateUpdate(float deltaTime) override {
+        // Called after OnUpdate - useful for camera or post-processing logic
+    }
+
+    void OnEnable() override {
+        // Called when the script is enabled
+    }
+
+    void OnDisable() override {
+        // Called when the script is disabled
+    }
+
+    void OnDestroy() override {
+        // Called when the script is about to be destroyed - cleanup here
+    }
+
+private:
+    // Add your script members here
+};
+
+

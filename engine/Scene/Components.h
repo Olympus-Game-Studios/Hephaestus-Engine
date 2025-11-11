@@ -6,6 +6,9 @@
 #include <limits>
 #include <utility>
 
+// Forward include for Lua scripting
+#include "../Scripting/LuaScriptComponent.h"
+
 // ═══════════════════════════════════════════════════════════════
 // CORE COMPONENTS
 // ═══════════════════════════════════════════════════════════════

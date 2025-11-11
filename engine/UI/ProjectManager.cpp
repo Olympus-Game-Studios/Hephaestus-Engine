@@ -2,11 +2,43 @@
 #include "../Gfx/VulkanDevice.h"
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "imgui_impl_vulkan.h"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
 #include <ctime>
 #include <iomanip>
+#include <iostream>
+
+namespace {
+constexpr const char* kDefaultProjectIconKey = "project-default";
+
+std::filesystem::path FindEditorIconsRoot()
+{
+    namespace fs = std::filesystem;
+    static fs::path cached;
+    if (!cached.empty()) {
+        return cached;
+    }
+
+    fs::path current = fs::current_path();
+    for (int depth = 0; depth < 6 && !current.empty(); ++depth) {
+        fs::path candidate = current / "editor" / "Icons";
+        std::error_code existsErr;
+        if (fs::exists(candidate, existsErr) && !existsErr) {
+            cached = candidate;
+            return cached;
+        }
+        if (!current.has_parent_path()) {
+            break;
+        }
+        current = current.parent_path();
+    }
+
+    cached = fs::current_path() / "editor" / "Icons";
+    return cached;
+}
+}
 
 // Platform-specific includes for opening folders
 #ifdef _WIN32
@@ -131,12 +163,19 @@ void ProjectManager::Initialize(::VulkanDevice* device) {
 }
 
 void ProjectManager::Shutdown() {
-    // Cleanup textures
-    for (auto& [key, texture] : m_Icons) {
-        // VulkanTexture::Destroy needs allocator and device
-        // We'll skip cleanup for now or add proper resource management later
+    // Cleanup icon textures and ImGui descriptors
+    for (auto& [key, icon] : m_IconResources) {
+        (void)key;
+        if (icon.descriptor != VK_NULL_HANDLE) {
+            ImGui_ImplVulkan_RemoveTexture(icon.descriptor);
+            icon.descriptor = VK_NULL_HANDLE;
+            icon.handle = ImTextureID(0);
+        }
+        if (m_Device && icon.texture.image != VK_NULL_HANDLE) {
+            icon.texture.Destroy(m_Device->allocator, m_Device->device);
+        }
     }
-    m_Icons.clear();
+    m_IconResources.clear();
     
     for (auto& [path, texture] : m_Thumbnails) {
         // Same as above
@@ -606,19 +645,26 @@ void ProjectManager::DrawProjectCard(const ProjectInfo& project, bool inGrid) {
             2.0f
         );
         
-        // Draw project icon
-        ImVec2 iconPos = ImVec2(
-            thumbnailPos.x + thumbnailSize.x / 2 - 32,
-            thumbnailPos.y + thumbnailSize.y / 2 - 32
-        );
-        
-        ImGui::GetWindowDrawList()->AddText(
-            ImGui::GetFont(),
-            64.0f,
-            iconPos,
-            IM_COL32(100, 110, 130, 255),
-            ""
-        );
+        ImTextureID iconHandle = GetIcon(kDefaultProjectIconKey);
+        if (iconHandle) {
+            float iconEdge = std::min(thumbnailSize.x, thumbnailSize.y);
+            iconEdge = std::min(iconEdge, 96.0f);
+            ImVec2 iconMin(
+                thumbnailPos.x + (thumbnailSize.x - iconEdge) * 0.5f,
+                thumbnailPos.y + (thumbnailSize.y - iconEdge) * 0.5f);
+            ImVec2 iconMax(iconMin.x + iconEdge, iconMin.y + iconEdge);
+            ImGui::GetWindowDrawList()->AddImage(iconHandle, iconMin, iconMax);
+        } else {
+            ImVec2 textPos = ImVec2(
+                thumbnailPos.x + thumbnailSize.x * 0.5f - 24.0f,
+                thumbnailPos.y + thumbnailSize.y * 0.5f - ImGui::GetTextLineHeight() * 0.5f);
+            ImGui::GetWindowDrawList()->AddText(
+                ImGui::GetFont(),
+                20.0f,
+                textPos,
+                IM_COL32(160, 160, 170, 255),
+                "Project");
+        }
     }
     
     // Favorite icon
@@ -674,6 +720,14 @@ void ProjectManager::DrawProjectListItem(const ProjectInfo& project) {
     ImVec2 pos = ImGui::GetItemRectMin();
     pos.x += 12;
     pos.y += 10;
+
+    ImTextureID listIcon = GetIcon(kDefaultProjectIconKey);
+    if (listIcon) {
+        ImVec2 iconMin = pos;
+        ImVec2 iconMax(pos.x + 28.0f, pos.y + 28.0f);
+        ImGui::GetWindowDrawList()->AddImage(listIcon, iconMin, iconMax);
+        pos.x = iconMax.x + 8.0f;
+    }
     
     // Favorite star
     if (project.metadata.isFavorite) {
@@ -955,14 +1009,81 @@ void ProjectManager::InitializeTemplates() {
 }
 
 void ProjectManager::LoadIcons() {
-    // TODO: Load actual icon textures using VulkanTexture
-    // For now, we'll rely on text-based icons in the UI
+    if (!m_Device) {
+        return;
+    }
+
+    struct IconDef {
+        const char* key;
+        const char* file;
+    };
+
+    static const IconDef kIconDefs[] = {
+        {kDefaultProjectIconKey, "folder.png"}
+    };
+
+    namespace fs = std::filesystem;
+    fs::path iconsRoot = FindEditorIconsRoot();
+    std::error_code rootErr;
+    if (!fs::exists(iconsRoot, rootErr) || rootErr) {
+        std::cerr << "[ProjectManager] Icon directory not found: " << iconsRoot << std::endl;
+        return;
+    }
+
+    for (const auto& def : kIconDefs) {
+        if (m_IconResources.find(def.key) != m_IconResources.end()) {
+            continue;
+        }
+
+        fs::path iconPath = iconsRoot / def.file;
+        std::error_code existsErr;
+        if (!fs::exists(iconPath, existsErr) || existsErr) {
+            std::cerr << "[ProjectManager] Icon missing: " << iconPath << std::endl;
+            continue;
+        }
+
+        IconResource resource;
+        bool loaded = resource.texture.LoadFromFile(
+            m_Device->allocator,
+            m_Device->device,
+            m_Device->physicalDevice,
+            m_Device->commandPool,
+            m_Device->graphicsQueue,
+            iconPath.string(),
+            false);
+        if (!loaded) {
+            std::cerr << "[ProjectManager] Failed to load icon texture: " << iconPath << std::endl;
+            continue;
+        }
+
+        m_IconResources.emplace(def.key, std::move(resource));
+    }
 }
 
 ImTextureID ProjectManager::GetIcon(const std::string& iconKey) {
-    // TODO: Return actual texture ID from m_Icons map
-    (void)iconKey;
-    return (ImTextureID)0;
+    auto it = m_IconResources.find(iconKey);
+    if (it == m_IconResources.end()) {
+        return ImTextureID(0);
+    }
+
+    IconResource& icon = it->second;
+    if (icon.descriptor == VK_NULL_HANDLE) {
+        if (!icon.texture.sampler || !icon.texture.imageView) {
+            return ImTextureID(0);
+        }
+        VkDescriptorSet descriptor = ImGui_ImplVulkan_AddTexture(
+            icon.texture.sampler,
+            icon.texture.imageView,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        if (descriptor == VK_NULL_HANDLE) {
+            std::cerr << "[ProjectManager] Failed to register icon with ImGui." << std::endl;
+            return ImTextureID(0);
+        }
+        icon.descriptor = descriptor;
+        icon.handle = static_cast<ImTextureID>(reinterpret_cast<uint64_t>(descriptor));
+    }
+
+    return icon.handle;
 }
 
 void ProjectManager::DrawNewScriptDialog() {

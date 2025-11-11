@@ -17,6 +17,7 @@
 #include <iomanip>
 #include <cstdio>
 #include <cstddef>
+#include <cwchar>
 
 #include "Math.h"
 
@@ -55,9 +56,13 @@
 #include "../Scene/SceneSerializer.h"
 #include "../Scripting/ScriptEngine.h"
 #include "../Scripting/ScriptRegistry.h"
+#include "../Scripting/LuaScriptEngine.h"
 #include "../Game/ExampleScripts.h"
 #include "../UI/MaterialEditor/MaterialEditorPanel.h"
 #include "../UI/ProjectManager.h"
+
+// Namespace alias for convenience
+namespace fs = std::filesystem;
 
 #ifdef _DEBUG
 const bool enableValidationLayers = true;
@@ -118,10 +123,16 @@ static std::string g_ActiveProjectName;
 static bool g_ProjectSelected = false;
 static bool g_AssetBrowserNeedsReset = true;
 static std::string g_SelectedScriptAssetName;
+static std::string g_SelectedScriptAssetPath;
 static bool g_SelectedScriptAssetValid = false;
 static std::string g_ScriptAttachmentMessage;
 static float g_ScriptAttachmentMessageTimer = 0.0f;
 static HephaestusEngine::ProjectManager g_ProjectManager;
+static LuaScriptEngine* g_LuaScriptEnginePtr = nullptr;  // Pointer to Lua engine for callbacks
+
+// Forward declarations
+static std::filesystem::path ResolveActiveProjectRoot();
+static std::filesystem::path ResolveActiveAssetsRoot();
 
 constexpr float kReferenceViewportWidth = 1280.0f;
 constexpr float kReferenceViewportHeight = 720.0f;
@@ -265,10 +276,19 @@ static void ApplyHephaestusEditorStyle(ImGuiIO& io, float scale)
 }
 
 static bool g_ShowEditorGizmo = true;
+static bool g_ShowGizmoGrid = false;
 static bool g_DetailsLocked = false;
 static bool g_EnableMeshCollision = true;
 static bool g_SimPlaying = false;
 static bool g_SimPaused = false;
+
+enum class PreferredIDE {
+    SystemDefault = 0,
+    VisualStudio,
+    VisualStudioCode
+};
+
+static PreferredIDE g_PreferredIDE = PreferredIDE::SystemDefault;
 
 static MaterialEditor::Graph g_MaterialGraph;
 static MaterialEditor::Panel* g_MaterialEditorPanel = nullptr;
@@ -367,6 +387,55 @@ static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused)
 
         ImGui::SameLine();
         ImGui::Dummy(ImVec2(s.ItemSpacing.x, 0.0f));
+        ImGui::SameLine();
+
+        bool openSettingsPopup = false;
+        if (ImGui::Button("File")) {
+            ImGui::OpenPopup("EditorToolbarFileMenu");
+        }
+
+        if (ImGui::BeginPopup("EditorToolbarFileMenu")) {
+            if (ImGui::MenuItem("Settings...")) {
+                openSettingsPopup = true;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        if (openSettingsPopup) {
+            ImGui::OpenPopup("EditorSettingsPopup");
+        }
+
+        if (ImGui::BeginPopupModal("EditorSettingsPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted("Editor Preferences");
+            ImGui::Separator();
+            const char* ideOptions[] = {"System Default", "Visual Studio", "Visual Studio Code"};
+            int ideIndex = static_cast<int>(g_PreferredIDE);
+            if (ImGui::Combo("Preferred IDE", &ideIndex, ideOptions, IM_ARRAYSIZE(ideOptions))) {
+                g_PreferredIDE = static_cast<PreferredIDE>(ideIndex);
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::SetTooltip("Used when opening scripts from the Asset Browser.");
+            }
+            ImGui::Spacing();
+            ImGui::Checkbox("Show Editor Gizmo", &g_ShowEditorGizmo);
+            ImGui::Checkbox("Show Gizmo Grid", &g_ShowGizmoGrid);
+            ImGui::Checkbox("Enable Mesh Collision", &g_EnableMeshCollision);
+            ImGui::Checkbox("Lock Details Panel Selection", &g_DetailsLocked);
+            ImGui::Spacing();
+            if (ImGui::Button("Reset Defaults")) {
+                g_ShowEditorGizmo = true;
+                g_ShowGizmoGrid = false;
+                g_EnableMeshCollision = true;
+                g_DetailsLocked = false;
+                g_PreferredIDE = PreferredIDE::SystemDefault;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Close")) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
         ImGui::SameLine();
 
         auto drawTransportButton = [](
@@ -910,7 +979,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
         ImGui::Spacing();
         static char scriptNameBuffer[128] = "";
         ImGui::Text("Add Script:");
-        if (g_SelectedScriptAssetValid) {
+        if (g_SelectedScriptAssetValid && g_SelectedScriptAssetPath.empty()) {
             ImGui::TextDisabled("Asset Browser selection: %s", g_SelectedScriptAssetName.c_str());
         }
         ImGui::InputText("##scriptName", scriptNameBuffer, sizeof(scriptNameBuffer));
@@ -920,47 +989,62 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
             std::string scriptToAttach;
             if (scriptNameBuffer[0] != '\0') {
                 scriptToAttach = scriptNameBuffer;
-            } else if (g_SelectedScriptAssetValid) {
+            } else if (g_SelectedScriptAssetValid && g_SelectedScriptAssetPath.empty()) {
                 scriptToAttach = g_SelectedScriptAssetName;
             }
 
-            std::cout << "[Script Attach] Attempting to attach: '" << scriptToAttach << "'\n";
+            std::cout << "\n======== [SCRIPT ATTACH DEBUG] ========\n";
+            std::cout << "Step 1: Script name = '" << scriptToAttach << "'\n";
 
             if (!scriptToAttach.empty()) {
-                std::cout << "[Script Attach] Checking if registered...\n";
+                std::cout << "Step 2: Getting registered scripts list...\n";
+                auto allScripts = ScriptRegistry::GetRegisteredScripts();
+                std::cout << "Step 3: Total registered scripts = " << allScripts.size() << "\n";
+                for (const auto& s : allScripts) {
+                    std::cout << "  - " << s << "\n";
+                }
+                
+                std::cout << "Step 4: Checking if '" << scriptToAttach << "' is registered...\n";
                 if (ScriptRegistry::IsRegistered(scriptToAttach)) {
-                    std::cout << "[Script Attach] Script IS registered!\n";
+                    std::cout << "Step 5: YES - Script IS registered!\n";
+                    
                     if (!scriptCompPtr) {
-                        std::cout << "[Script Attach] Creating ScriptComponent...\n";
+                        std::cout << "Step 6a: No ScriptComponent yet, creating one...\n";
                         scriptCompPtr = &selectedEntity.AddComponent<ScriptComponent>();
+                        std::cout << "Step 6b: ScriptComponent created\n";
+                    } else {
+                        std::cout << "Step 6: ScriptComponent already exists\n";
                     }
+                    
                     if (scriptCompPtr) {
-                        std::cout << "[Script Attach] Creating script instance...\n";
+                        std::cout << "Step 7: Creating script instance via registry...\n";
                         ScriptPtr newScript = ScriptRegistry::CreateScript(scriptToAttach, selectedEntity, &scene);
+                        std::cout << "Step 8: Script instance pointer = " << (newScript ? "VALID" : "NULL") << "\n";
+                        
                         if (newScript) {
-                            std::cout << "[Script Attach] SUCCESS! Adding script to component...\n";
+                            std::cout << "Step 9: Adding script to component...\n";
                             scriptCompPtr->AddScript(newScript, scriptToAttach);
-                            std::cout << "[Script Attach] Script '" << scriptToAttach << "' attached successfully!\n";
+                            std::cout << "Step 10: SUCCESS! Script added. Component now has " << scriptCompPtr->scriptNames.size() << " scripts\n";
+                            std::cout << "Step 11: Setting success message...\n";
                             g_ScriptAttachmentMessage = "[OK] Script '" + scriptToAttach + "' attached!";
                             g_ScriptAttachmentMessageTimer = 3.0f;
                             scriptNameBuffer[0] = '\0';
                             ClearSelectedScriptAsset();
+                            std::cout << "RESULT: ATTACH SUCCESSFUL [YES]\n";
                         } else {
-                            std::cout << "[Script Attach] FAILED: CreateScript returned nullptr\n";
+                            std::cout << "RESULT: FAILED - CreateScript returned nullptr\n";
                         }
+                    } else {
+                        std::cout << "RESULT: FAILED - scriptCompPtr is null after creation\n";
                     }
                 } else {
-                    std::cout << "[Script Attach] Script NOT registered. Available: ";
-                    for (const auto& name : ScriptRegistry::GetRegisteredScripts()) {
-                        std::cout << name << " ";
-                    }
-                    std::cout << "\n";
-                    std::cerr << "Script '" << scriptToAttach << "' not found in registry.\n";
+                    std::cout << "Step 5: NO - Script NOT registered!\n";
+                    std::cout << "RESULT: FAILED - Script not in registry\n";
                 }
             } else {
-                std::cout << "[Script Attach] ERROR: No script specified!\n";
-                std::cerr << "No script specified. Type a script name or select a script asset in the Asset Browser.\n";
+                std::cout << "RESULT: FAILED - No script name specified\n";
             }
+            std::cout << "======== [END DEBUG] ========\n\n";
         }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Attach a script from the registry. Leave the field empty to use the script selected in the Asset Browser.");
@@ -978,6 +1062,102 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
             for (const std::string& name : registeredScripts) {
                 ImGui::BulletText("%s", name.c_str());
             }
+        }
+    }
+
+    // Lua Script Component Section
+    LuaScriptComponent* luaScriptCompPtr = nullptr;
+    if (selectedEntity.HasComponent<LuaScriptComponent>()) {
+        luaScriptCompPtr = &selectedEntity.GetComponent<LuaScriptComponent>();
+    }
+
+    if (ImGui::CollapsingHeader("Lua Scripts", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (luaScriptCompPtr && !luaScriptCompPtr->scriptPath.empty()) {
+            ImGui::Text("Attached Script: %s", luaScriptCompPtr->scriptPath.c_str());
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "[OK] Lua script is attached and active");
+            ImGui::Checkbox("Lua Script Enabled##lua", &luaScriptCompPtr->enabled);
+            ImGui::Spacing();
+            if (ImGui::Button("Remove Lua Script")) {
+                luaScriptCompPtr->scriptPath.clear();
+                luaScriptCompPtr->enabled = true;
+                std::cout << "Removed Lua script from entity\n";
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No Lua scripts attached to this entity.");
+        }
+
+        ImGui::Spacing();
+        static char luaScriptPathBuffer[256] = "";
+        ImGui::Text("Add Lua Script:");
+        if (g_SelectedScriptAssetValid) {
+            const std::string& selectionLabel = g_SelectedScriptAssetPath.empty() ? g_SelectedScriptAssetName : g_SelectedScriptAssetPath;
+            ImGui::TextDisabled("Asset Browser selection: %s", selectionLabel.c_str());
+        }
+        ImGui::InputText("##luaScriptPath", luaScriptPathBuffer, sizeof(luaScriptPathBuffer));
+        ImGui::SameLine();
+
+        if (ImGui::Button("Attach##lua")) {
+            std::string scriptToAttach;
+            if (luaScriptPathBuffer[0] != '\0') {
+                scriptToAttach = luaScriptPathBuffer;
+            } else if (g_SelectedScriptAssetValid) {
+                scriptToAttach = !g_SelectedScriptAssetPath.empty() ? g_SelectedScriptAssetPath : g_SelectedScriptAssetName;
+            }
+
+            std::cout << "\n======== [LUA SCRIPT ATTACH DEBUG] ========\n";
+            std::cout << "Step 1: Lua script path = '" << scriptToAttach << "'\n";
+
+            if (!scriptToAttach.empty()) {
+                std::cout << "Step 2: Checking if file exists...\n";
+                
+                // Try to resolve the path
+                fs::path resolvedPath = scriptToAttach;
+                if (!fs::is_regular_file(resolvedPath)) {
+                    // Try from project root
+                    resolvedPath = ResolveActiveProjectRoot() / scriptToAttach;
+                    if (!fs::is_regular_file(resolvedPath)) {
+                        std::cout << "Step 3: File not found at: " << resolvedPath << "\n";
+                    } else {
+                        std::cout << "Step 3: File found at: " << resolvedPath << "\n";
+                    }
+                } else {
+                    std::cout << "Step 3: File found at: " << resolvedPath << "\n";
+                }
+
+                if (!luaScriptCompPtr) {
+                    std::cout << "Step 4: No LuaScriptComponent yet, creating one...\n";
+                    luaScriptCompPtr = &selectedEntity.AddComponent<LuaScriptComponent>();
+                    std::cout << "Step 5: LuaScriptComponent created\n";
+                } else {
+                    std::cout << "Step 4: LuaScriptComponent already exists\n";
+                }
+                
+                if (luaScriptCompPtr) {
+                    std::cout << "Step 6: Setting script path...\n";
+                    luaScriptCompPtr->scriptPath = scriptToAttach;
+                    luaScriptCompPtr->enabled = true;
+                    std::cout << "Step 7: SUCCESS! Lua script attached\n";
+                    std::cout << "Step 8: Script path = '" << luaScriptCompPtr->scriptPath << "'\n";
+                    g_ScriptAttachmentMessage = "[OK] Lua script '" + scriptToAttach + "' attached!";
+                    g_ScriptAttachmentMessageTimer = 3.0f;
+                    luaScriptPathBuffer[0] = '\0';
+                    ClearSelectedScriptAsset();
+                    std::cout << "RESULT: LUA ATTACH SUCCESSFUL [YES]\n";
+                } else {
+                    std::cout << "RESULT: FAILED - luaScriptCompPtr is null after creation\n";
+                }
+            } else {
+                std::cout << "RESULT: FAILED - No script path specified\n";
+            }
+            std::cout << "======== [END LUA DEBUG] ========\n\n";
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Attach a Lua script file. Example: engine/Game/scripts/my_script.lua\nLeave the field empty to use the script selected in the Asset Browser.");
+        }
+
+        if (!g_ScriptAttachmentMessage.empty() && g_ScriptAttachmentMessageTimer > 0.0f) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%s", g_ScriptAttachmentMessage.c_str());
         }
     }
 
@@ -1676,8 +1856,8 @@ static bool IsMaterialFile(const std::filesystem::path& path)
 static bool IsScriptFile(const std::filesystem::path& path)
 {
     std::string ext = ToLowerCopy(path.extension().string());
-    static const std::array<const char*, 9> scriptExtensions = {
-        ".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".hxx", ".txt", ".json"
+    static const std::array<const char*, 10> scriptExtensions = {
+        ".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".hxx", ".txt", ".json", ".lua"
     };
     for (const auto* scriptExt : scriptExtensions) {
         if (ext == scriptExt) {
@@ -1690,20 +1870,55 @@ static bool IsScriptFile(const std::filesystem::path& path)
 static void ClearSelectedScriptAsset()
 {
     g_SelectedScriptAssetName.clear();
+    g_SelectedScriptAssetPath.clear();
     g_SelectedScriptAssetValid = false;
 }
 
 static void UpdateSelectedScriptAsset(const std::filesystem::path& path)
 {
-    if (!path.empty() && IsScriptFile(path)) {
-        g_SelectedScriptAssetName = path.stem().string();
-        g_SelectedScriptAssetValid = !g_SelectedScriptAssetName.empty();
-    } else {
+    if (path.empty()) {
         ClearSelectedScriptAsset();
+        return;
     }
+
+    std::error_code fileErr;
+    if (!fs::is_regular_file(path, fileErr) || fileErr) {
+        ClearSelectedScriptAsset();
+        return;
+    }
+
+    const std::string ext = ToLowerCopy(path.extension().string());
+
+    if (ext == ".lua") {
+        g_SelectedScriptAssetName = path.filename().string();
+
+        fs::path projectRoot = ResolveActiveProjectRoot();
+        std::error_code relErr;
+        if (!projectRoot.empty()) {
+            fs::path relative = fs::relative(path, projectRoot, relErr);
+            if (!relErr) {
+                g_SelectedScriptAssetPath = relative.generic_string();
+            }
+        }
+        if (g_SelectedScriptAssetPath.empty()) {
+            g_SelectedScriptAssetPath = path.lexically_normal().generic_string();
+        }
+
+        g_SelectedScriptAssetValid = true;
+        return;
+    }
+
+    if (IsScriptFile(path)) {
+        g_SelectedScriptAssetName = path.stem().string();
+        g_SelectedScriptAssetPath.clear();
+        g_SelectedScriptAssetValid = !g_SelectedScriptAssetName.empty();
+        return;
+    }
+
+    ClearSelectedScriptAsset();
 }
 
-static void OpenFileInDefaultIDE(const std::filesystem::path& path)
+static void OpenFileInPreferredIDE(const std::filesystem::path& path)
 {
     namespace fs = std::filesystem;
     
@@ -1714,23 +1929,105 @@ static void OpenFileInDefaultIDE(const std::filesystem::path& path)
 
 #ifdef _WIN32
     std::wstring wPath = path.wstring();
-    intptr_t result = reinterpret_cast<intptr_t>(ShellExecuteW(
-        nullptr,           // hwnd
-        L"open",           // lpOperation
-        wPath.c_str(),     // lpFile
-        nullptr,           // lpParameters
-        nullptr,           // lpDirectory
-        SW_SHOW            // nShowCmd
-    ));
-    
-    if (result <= 32) {
-        std::cerr << "Failed to open file in IDE: " << path << " (Error code: " << result << ")\n";
+    auto shellOpen = [](const wchar_t* file, const wchar_t* parameters) -> bool {
+        intptr_t result = reinterpret_cast<intptr_t>(ShellExecuteW(
+            nullptr,
+            L"open",
+            file,
+            parameters,
+            nullptr,
+            SW_SHOW));
+        if (result <= 32) {
+            std::wcerr << L"ShellExecuteW failed for '" << file << L"' (code " << result << L")" << std::endl;
+            return false;
+        }
+        return true;
+    };
+
+    auto makeQuoted = [](const std::wstring& value) -> std::wstring {
+        if (!value.empty() && value.front() == L'"' && value.back() == L'"') {
+            return value;
+        }
+        std::wstring quoted;
+        quoted.reserve(value.size() + 2);
+        quoted.append(1, L'"');
+        quoted.append(value);
+        quoted.append(1, L'"');
+        return quoted;
+    };
+
+    using LaunchSpec = std::pair<std::wstring, std::wstring>;
+    auto tryPrograms = [&](const std::vector<LaunchSpec>& specs) -> bool {
+        for (const auto& spec : specs) {
+            const wchar_t* params = spec.second.empty() ? nullptr : spec.second.c_str();
+            if (shellOpen(spec.first.c_str(), params)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    bool launched = false;
+    switch (g_PreferredIDE) {
+        case PreferredIDE::SystemDefault:
+            launched = shellOpen(wPath.c_str(), nullptr);
+            break;
+        case PreferredIDE::VisualStudio: {
+            std::vector<LaunchSpec> candidates;
+            std::wstring quotedPath = makeQuoted(wPath);
+            std::wstring editParam = L"/Edit ";
+            editParam += quotedPath;
+
+            candidates.emplace_back(std::wstring(L"devenv.exe"), editParam);
+            if (const wchar_t* vsInstallDir = _wgetenv(L"VSINSTALLDIR")) {
+                std::wstring candidate = vsInstallDir;
+                if (!candidate.empty() && candidate.back() != L'\\' && candidate.back() != L'/') {
+                    candidate += L'\\';
+                }
+                candidate += L"Common7\\IDE\\devenv.exe";
+                candidates.emplace_back(std::move(candidate), editParam);
+            }
+            candidates.emplace_back(std::wstring(L"C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/devenv.exe"), editParam);
+            candidates.emplace_back(std::wstring(L"C:/Program Files/Microsoft Visual Studio/2022/Professional/Common7/IDE/devenv.exe"), editParam);
+            candidates.emplace_back(std::wstring(L"C:/Program Files/Microsoft Visual Studio/2022/Enterprise/Common7/IDE/devenv.exe"), editParam);
+            launched = tryPrograms(candidates);
+            break;
+        }
+        case PreferredIDE::VisualStudioCode: {
+            std::vector<LaunchSpec> candidates;
+            std::wstring quotedPath = makeQuoted(wPath);
+            std::wstring codeParams = L"--reuse-window ";
+            codeParams += quotedPath;
+
+            candidates.emplace_back(std::wstring(L"code"), codeParams);
+            candidates.emplace_back(std::wstring(L"Code.exe"), codeParams);
+            if (const wchar_t* localAppData = _wgetenv(L"LOCALAPPDATA")) {
+                std::wstring candidate = localAppData;
+                if (!candidate.empty() && candidate.back() != L'\\' && candidate.back() != L'/') {
+                    candidate += L'\\';
+                }
+                candidate += L"Programs\\Microsoft VS Code\\Code.exe";
+                candidates.emplace_back(std::move(candidate), codeParams);
+            }
+            candidates.emplace_back(std::wstring(L"C:/Program Files/Microsoft VS Code/Code.exe"), codeParams);
+            launched = tryPrograms(candidates);
+            break;
+        }
+    }
+
+    if (!launched && g_PreferredIDE != PreferredIDE::SystemDefault) {
+        std::cerr << "Preferred IDE launch failed for " << path << ". Falling back to system default." << std::endl;
+        launched = shellOpen(wPath.c_str(), nullptr);
+    }
+
+    if (!launched) {
+        std::cerr << "Failed to open file in any IDE: " << path << "\n";
     }
 #else
     // For non-Windows platforms, we could add support using:
     // - macOS: open command
     // - Linux: xdg-open command
-    std::cerr << "Opening files in IDE is currently only supported on Windows\n";
+    std::cerr << "Opening files in a specific IDE is currently only supported on Windows\n";
 #endif
 }
 
@@ -1878,6 +2175,10 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
     static char scriptNameBuffer[128] = "NewScript";
     static std::string scriptPopupError;
 
+    static bool openLuaScriptPopup = false;
+    static char luaScriptNameBuffer[128] = "NewScript";
+    static std::string luaScriptPopupError;
+
     static bool openDeleteConfirmPopup = false;
     static fs::path deleteConfirmPath;
     static bool deleteConfirmIsFolder = false;
@@ -1987,6 +2288,12 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
         openScriptPopup = true;
     };
 
+    auto triggerLuaScriptCreatePopup = [&]() {
+        std::snprintf(luaScriptNameBuffer, sizeof(luaScriptNameBuffer), "NewScript");
+        luaScriptPopupError.clear();
+        openLuaScriptPopup = true;
+    };
+
     auto triggerDeleteConfirmPopup = [&](const fs::path& path, bool isFolder) {
         deleteConfirmPath = path;
         deleteConfirmIsFolder = isFolder;
@@ -2000,6 +2307,13 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string& statusMessage)
         }
         if (ImGui::MenuItem("New Material...")) {
             triggerMaterialCreatePopup();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("New C++ Script...")) {
+            triggerScriptCreatePopup();
+        }
+        if (ImGui::MenuItem("New Lua Script...")) {
+            triggerLuaScriptCreatePopup();
         }
         ImGui::EndPopup();
     }
@@ -2243,6 +2557,90 @@ private:
         ImGui::EndPopup();
     }
 
+    // Lua Script creation popup
+    if (openLuaScriptPopup) {
+        ImGui::OpenPopup("CreateLuaScriptPopup");
+        openLuaScriptPopup = false;
+    }
+
+    if (ImGui::BeginPopupModal("CreateLuaScriptPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Create Lua Script");
+        ImGui::Separator();
+        ImGui::TextDisabled("Location: %s", relativeDisplay.c_str());
+        ImGui::InputText("Script name##lua", luaScriptNameBuffer, sizeof(luaScriptNameBuffer));
+        if (!luaScriptPopupError.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.93f, 0.36f, 0.31f, 1.0f), "%s", luaScriptPopupError.c_str());
+        }
+
+        ImGui::Spacing();
+
+        if (ImGui::Button("Create##lua")) {
+            std::string trimmed = TrimCopy(luaScriptNameBuffer);
+            if (trimmed.empty()) {
+                luaScriptPopupError = "Please enter a script name.";
+            } else {
+                std::string sanitized = SanitizeSceneFilename(trimmed);
+                if (sanitized.empty()) {
+                    sanitized = "script";
+                }
+                
+                // Lua script content template
+                std::string luaContent = R"(-- )" + sanitized + R"(.lua
+-- Lua script for Hephaestus Engine
+
+function onAwake()
+    print("[)" + sanitized + R"(] Script awakened")
+end
+
+function onUpdate(deltaTime)
+    -- Main game logic - called every frame
+    -- deltaTime is time elapsed since last frame in seconds
+end
+
+function onLateUpdate(deltaTime)
+    -- Called after onUpdate - useful for post-processing logic
+end
+
+function onDestroy()
+    print("[)" + sanitized + R"(] Script destroyed")
+end
+)";
+
+                // Write Lua file next to the user-selected location
+                fs::path scriptPath = currentPath / (sanitized + ".lua");
+                if (fs::exists(scriptPath)) {
+                    luaScriptPopupError = "A Lua script with that name already exists here.";
+                } else {
+                    std::error_code createErr;
+                    fs::create_directories(currentPath, createErr);
+                    if (createErr) {
+                        luaScriptPopupError = "Failed to create destination directory: " + std::string(createErr.message());
+                    } else {
+                        std::ofstream luaFile(scriptPath);
+                        if (!luaFile) {
+                            luaScriptPopupError = "Failed to create Lua file.";
+                        } else {
+                            luaFile << luaContent;
+                            luaFile.close();
+                            selectedPath = scriptPath;
+                            statusMessage = "Created Lua script '" + sanitized + ".lua'.";
+                            ImGui::CloseCurrentPopup();
+                            luaScriptPopupError.clear();
+                        }
+                    }
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##lua")) {
+            luaScriptPopupError.clear();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
     // Delete confirmation popup
     if (openDeleteConfirmPopup) {
         ImGui::OpenPopup("DeleteConfirmPopup");
@@ -2378,6 +2776,9 @@ private:
         if (ImGui::MenuItem("New C++ Script...")) {
             triggerScriptCreatePopup();
         }
+        if (ImGui::MenuItem("New Lua Script...")) {
+            triggerLuaScriptCreatePopup();
+        }
         ImGui::EndPopup();
     }
 
@@ -2487,7 +2888,7 @@ private:
                             result.materialOpenRequest = clamped;
                             statusMessage.clear();
                         } else if (IsScriptFile(entry.path)) {
-                            OpenFileInDefaultIDE(clamped);
+                            OpenFileInPreferredIDE(clamped);
                             statusMessage = "Opening '" + clamped.filename().string() + "' in your default IDE...";
                         } else {
                             statusMessage.clear();
@@ -3196,6 +3597,11 @@ int main()
     Scene scene("Main Scene");
     ScriptEngine scriptEngine;
     scriptEngine.Initialize(&scene);
+    
+    // Initialize Lua script engine
+    LuaScriptEngine luaScriptEngine;
+    luaScriptEngine.Initialize(&scene);
+    g_LuaScriptEnginePtr = &luaScriptEngine;  // Store pointer for access in callbacks
 
     // Register example scripts
     ScriptRegistry::Register<RotatingCube>("RotatingCube", 
@@ -3214,6 +3620,23 @@ int main()
             return std::make_shared<PlayerController>(entity, scene);
         }
     );
+    ScriptRegistry::Register<AndyScript>("AndyScript",
+        [](Entity entity, Scene* scene) {
+            return std::make_shared<AndyScript>(entity, scene);
+        }
+    );
+    
+    // Auto-register user scripts from project
+    // NOTE: For now, only hardcoded user scripts from ExampleScripts.h are available
+    // To add your own scripts:
+    // 1. Create your script class in engine/Game/ExampleScripts.h (or similar)
+    // 2. Register it here using ScriptRegistry::Register<YourScript>("YourScript", ...)
+    // Example:
+    // ScriptRegistry::Register<AndyScript>("AndyScript", 
+    //     [](Entity entity, Scene* scene) {
+    //         return std::make_shared<AndyScript>(entity, scene);
+    //     }
+    // );
     
     Physics::MeshCollisionSystem collisionSystem;
     
@@ -4037,9 +4460,6 @@ int main()
 
     EnsureAssetBrowserIconsLoaded(vkdev);
 
-    // Debug toggle: show ImGuizmo grid
-    static bool g_ShowGizmoGrid = false;
-
     std::vector<VkSemaphore> imageAvailable(MAX_FRAMES_IN_FLIGHT);
     std::vector<VkSemaphore> renderFinished(MAX_FRAMES_IN_FLIGHT);
     std::vector<VkFence> inFlight(MAX_FRAMES_IN_FLIGHT);
@@ -4083,6 +4503,26 @@ int main()
         scriptEngine.AwakeScripts();
         if (g_SimPlaying && !g_SimPaused) {
             scriptEngine.UpdateScripts(dt);
+            
+            // Update Lua scripts
+            if (g_LuaScriptEnginePtr) {
+                for (auto entity : scene.GetRegistry().view<LuaScriptComponent>()) {
+                    Entity e(entity, &scene);
+                    auto& luaComponent = scene.GetRegistry().get<LuaScriptComponent>(entity);
+                    
+                    if (luaComponent.enabled && !luaComponent.scriptPath.empty()) {
+                        // Load script if not already loaded
+                        static std::unordered_map<std::string, bool> loadedScripts;
+                        if (loadedScripts.find(luaComponent.scriptPath) == loadedScripts.end()) {
+                            g_LuaScriptEnginePtr->LoadScript(luaComponent.scriptPath);
+                            loadedScripts[luaComponent.scriptPath] = true;
+                        }
+                        
+                        // Call onUpdate callback
+                        g_LuaScriptEnginePtr->CallEntityFunction("onUpdate", e);
+                    }
+                }
+            }
         }
 
         // Start the Dear ImGui frame
