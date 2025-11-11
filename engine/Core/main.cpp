@@ -322,6 +322,10 @@ struct DetailsPanelActions {
 static std::string TrimCopy(const std::string& value);
 
 static std::filesystem::path ResolveEngineRoot();
+static std::filesystem::path ResolveEnginePath(const std::filesystem::path& relative);
+
+static void LoadEditorSettings();
+static void SaveEditorSettings();
 
 static void ClearSelectedScriptAsset();
 static void UpdateSelectedScriptAsset(const std::filesystem::path& path);
@@ -412,6 +416,7 @@ static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused)
             int ideIndex = static_cast<int>(g_PreferredIDE);
             if (ImGui::Combo("Preferred IDE", &ideIndex, ideOptions, IM_ARRAYSIZE(ideOptions))) {
                 g_PreferredIDE = static_cast<PreferredIDE>(ideIndex);
+                SaveEditorSettings();
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                 ImGui::SetTooltip("Used when opening scripts from the Asset Browser.");
@@ -422,12 +427,20 @@ static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused)
             ImGui::Checkbox("Enable Mesh Collision", &g_EnableMeshCollision);
             ImGui::Checkbox("Lock Details Panel Selection", &g_DetailsLocked);
             ImGui::Spacing();
+            if (ImGui::Button("Save Settings")) {
+                SaveEditorSettings();
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::SetTooltip("Writes changes to editor/settings.ini");
+            }
+            ImGui::SameLine();
             if (ImGui::Button("Reset Defaults")) {
                 g_ShowEditorGizmo = true;
                 g_ShowGizmoGrid = false;
                 g_EnableMeshCollision = true;
                 g_DetailsLocked = false;
                 g_PreferredIDE = PreferredIDE::SystemDefault;
+                SaveEditorSettings();
             }
             ImGui::SameLine();
             if (ImGui::Button("Close")) {
@@ -1713,6 +1726,94 @@ static std::string TrimCopy(const std::string& value)
     }
     size_t end = value.find_last_not_of(" \t\r\n");
     return value.substr(begin, end - begin + 1);
+}
+
+static PreferredIDE PreferredIDEFromString(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+
+    if (value == "visualstudio" || value == "visual_studio" || value == "vs") {
+        return PreferredIDE::VisualStudio;
+    }
+    if (value == "visualstudiocode" || value == "vscode" || value == "visual_studio_code" || value == "code") {
+        return PreferredIDE::VisualStudioCode;
+    }
+    return PreferredIDE::SystemDefault;
+}
+
+static std::string PreferredIDEToString(PreferredIDE value)
+{
+    switch (value) {
+        case PreferredIDE::VisualStudio:
+            return "VisualStudio";
+        case PreferredIDE::VisualStudioCode:
+            return "VisualStudioCode";
+        default:
+            return "SystemDefault";
+    }
+}
+
+static std::filesystem::path GetEditorSettingsPath()
+{
+    return ResolveEnginePath(std::filesystem::path("editor") / "settings.ini");
+}
+
+static void LoadEditorSettings()
+{
+    namespace fs = std::filesystem;
+
+    g_PreferredIDE = PreferredIDE::SystemDefault;
+
+    fs::path settingsPath = GetEditorSettingsPath();
+    std::error_code existsErr;
+    if (!fs::exists(settingsPath, existsErr) || existsErr) {
+        return;
+    }
+
+    std::ifstream in(settingsPath);
+    if (!in) {
+        std::cerr << "Failed to open editor settings file: " << settingsPath << "\n";
+        return;
+    }
+
+    std::string line;
+    while (std::getline(in, line)) {
+        auto pos = line.find('=');
+        if (pos == std::string::npos) {
+            continue;
+        }
+
+        std::string key = TrimCopy(line.substr(0, pos));
+        std::string value = TrimCopy(line.substr(pos + 1));
+
+        if (key == "preferred_ide") {
+            g_PreferredIDE = PreferredIDEFromString(value);
+        }
+    }
+}
+
+static void SaveEditorSettings()
+{
+    namespace fs = std::filesystem;
+
+    fs::path settingsPath = GetEditorSettingsPath();
+    fs::path parent = settingsPath.parent_path();
+    std::error_code dirErr;
+    fs::create_directories(parent, dirErr);
+    if (dirErr) {
+        std::cerr << "Failed to create editor settings directory: " << parent << " (" << dirErr.message() << ")\n";
+        return;
+    }
+
+    std::ofstream out(settingsPath, std::ios::trunc);
+    if (!out) {
+        std::cerr << "Failed to write editor settings: " << settingsPath << "\n";
+        return;
+    }
+
+    out << "preferred_ide=" << PreferredIDEToString(g_PreferredIDE) << '\n';
 }
 
 static std::string SanitizeSceneFilename(const std::string& sceneName)
@@ -3327,6 +3428,8 @@ int main()
 
     g_ProjectManager.Initialize(&vkdev);
     g_ProjectManager.SetProjectsRoot(ResolveProjectsRoot());
+
+    LoadEditorSettings();
 
     std::vector<MeshGPU> meshLibrary;
     meshLibrary.reserve(32);
@@ -5441,6 +5544,7 @@ int main()
     // ── Cleanup ────────────────────────────────
     g_ProjectManager.Shutdown();
     scriptEngine.Shutdown();
+    SaveEditorSettings();
 
     // Cleanup sync objects
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
