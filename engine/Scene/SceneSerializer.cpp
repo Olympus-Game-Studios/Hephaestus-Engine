@@ -569,6 +569,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         const MaterialComponent* material = registry.try_get<MaterialComponent>(handle);
         const LightComponent* light = registry.try_get<LightComponent>(handle);
         const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
+        const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
 
         stream << "    {\n";
@@ -688,6 +689,15 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"near\": " << FormatFloat(camera->nearPlane) << ",\n";
             oss << "          \"far\": " << FormatFloat(camera->farPlane) << ",\n";
             oss << "          \"isPrimary\": " << (camera->isPrimary ? "true" : "false") << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (script) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"LuaScript\": {\n";
+            oss << "          \"scriptPath\": \"" << EscapeString(script->scriptPath) << "\"\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1074,6 +1084,19 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             if (const JsonValue* primaryValue = cameraObj->Find("isPrimary")) {
                 if (primaryValue->IsBool()) {
                     camera.isPrimary = primaryValue->AsBool();
+                }
+            }
+        }
+
+        if (const JsonValue* scriptObj = components->Find("LuaScript")) {
+            if (!scriptObj->IsObject()) {
+                outError = "LuaScript component is not an object.";
+                return false;
+            }
+            auto& script = entity.AddComponent<LuaScriptComponent>();
+            if (const JsonValue* pathValue = scriptObj->Find("scriptPath")) {
+                if (pathValue->IsString()) {
+                    script.scriptPath = pathValue->AsString();
                 }
             }
         }
