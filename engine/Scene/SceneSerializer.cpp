@@ -1118,3 +1118,218 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
 
     return true;
 }
+
+std::string SceneSerializer::SerializeToString() const
+{
+    std::ostringstream stream;
+    stream.imbue(std::locale::classic());
+
+    const entt::registry& registry = m_Scene.GetRegistry();
+    std::vector<entt::entity> entities;
+    auto taggedEntities = registry.view<TagComponent>();
+    for (entt::entity entity : taggedEntities) {
+        entities.push_back(entity);
+    }
+
+    std::sort(entities.begin(), entities.end(), [&](entt::entity a, entt::entity b) {
+        const TagComponent* tagA = registry.try_get<TagComponent>(a);
+        const TagComponent* tagB = registry.try_get<TagComponent>(b);
+
+        std::string nameA = tagA ? tagA->tag : std::string();
+        std::string nameB = tagB ? tagB->tag : std::string();
+        if (nameA == nameB) {
+            return static_cast<uint32_t>(a) < static_cast<uint32_t>(b);
+        }
+        return nameA < nameB;
+    });
+
+    stream << "{\n";
+    stream << "  \"schema\": \"HephaestusScene\",\n";
+    stream << "  \"version\": 1,\n";
+    stream << "  \"name\": \"" << EscapeString(m_Scene.GetName()) << "\",\n";
+    stream << "  \"entityCount\": " << entities.size() << ",\n";
+    stream << "  \"entities\": [\n";
+
+    for (size_t entityIndex = 0; entityIndex < entities.size(); ++entityIndex) {
+        entt::entity handle = entities[entityIndex];
+
+        const TagComponent* tag = registry.try_get<TagComponent>(handle);
+        const TransformComponent* transform = registry.try_get<TransformComponent>(handle);
+        const MeshRendererComponent* mesh = registry.try_get<MeshRendererComponent>(handle);
+        const MeshColliderComponent* collider = registry.try_get<MeshColliderComponent>(handle);
+        const MaterialComponent* material = registry.try_get<MaterialComponent>(handle);
+        const LightComponent* light = registry.try_get<LightComponent>(handle);
+        const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
+        const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
+
+        stream << "    {\n";
+        stream << "      \"id\": " << static_cast<uint32_t>(handle) << ",\n";
+        stream << "      \"name\": \"" << EscapeString(tag ? tag->tag : std::string("Entity")) << "\",\n";
+
+        stream << "      \"parent\": ";
+        if (transform && transform->parent != entt::null) {
+            stream << static_cast<uint32_t>(transform->parent) << ",\n";
+        } else {
+            stream << "null,\n";
+        }
+
+        std::vector<std::string> componentBlocks;
+        componentBlocks.reserve(8);
+
+        if (transform) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"Transform\": {\n";
+            oss << "          \"position\": " << FormatVec3(transform->position) << ",\n";
+            oss << "          \"rotation\": " << FormatVec3(transform->rotation) << ",\n";
+            oss << "          \"scale\": " << FormatVec3(transform->scale) << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (mesh) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"MeshRenderer\": {\n";
+            oss << "          \"visible\": " << (mesh->visible ? "true" : "false") << ",\n";
+            oss << "          \"mesh\": ";
+            if (mesh->HasValidMesh()) {
+                oss << static_cast<uint64_t>(mesh->meshHandle) << ",\n";
+            } else {
+                oss << "null,\n";
+            }
+            oss << "          \"meshSource\": ";
+            if (!mesh->meshAssetPath.empty()) {
+                oss << "\"" << EscapeString(mesh->meshAssetPath) << "\"";
+            } else {
+                oss << "null";
+            }
+            oss << ",\n";
+            oss << "          \"meshImported\": " << (mesh->meshImported ? "true" : "false") << ",\n";
+            oss << "          \"backfaceCulling\": " << (mesh->backfaceCulling ? "true" : "false") << ",\n";
+            oss << "          \"localBounds\": {\n";
+            oss << "            \"min\": " << FormatVec3(mesh->localBounds.min) << ",\n";
+            oss << "            \"max\": " << FormatVec3(mesh->localBounds.max) << "\n";
+            oss << "          }\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (collider) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"MeshCollider\": {\n";
+            oss << "          \"enabled\": " << (collider->enabled ? "true" : "false") << ",\n";
+            oss << "          \"isStatic\": " << (collider->isStatic ? "true" : "false") << ",\n";
+            oss << "          \"isTrigger\": " << (collider->isTrigger ? "true" : "false") << ",\n";
+            oss << "          \"debugDraw\": " << (collider->debugDraw ? "true" : "false") << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (material) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"Material\": {\n";
+            oss << "          \"albedo\": " << FormatVec3(material->albedo) << ",\n";
+            oss << "          \"metallic\": " << FormatFloat(material->metallic) << ",\n";
+            oss << "          \"roughness\": " << FormatFloat(material->roughness) << ",\n";
+            oss << "          \"ao\": " << FormatFloat(material->ao) << ",\n";
+            oss << "          \"emissive\": " << FormatVec3(material->emissive) << ",\n";
+            oss << "          \"emissiveStrength\": " << FormatFloat(material->emissiveStrength) << ",\n";
+            oss << "          \"useAlbedoTexture\": " << (material->useAlbedoTexture ? "true" : "false") << ",\n";
+            oss << "          \"albedoTexturePath\": \"" << EscapeString(material->albedoTexturePath) << "\",\n";
+            oss << "          \"useNormalTexture\": " << (material->useNormalTexture ? "true" : "false") << ",\n";
+            oss << "          \"normalTexturePath\": \"" << EscapeString(material->normalTexturePath) << "\",\n";
+            oss << "          \"useRoughnessTexture\": " << (material->useRoughnessTexture ? "true" : "false") << ",\n";
+            oss << "          \"roughnessTexturePath\": \"" << EscapeString(material->roughnessTexturePath) << "\",\n";
+            oss << "          \"useAoTexture\": " << (material->useAoTexture ? "true" : "false") << ",\n";
+            oss << "          \"aoTexturePath\": \"" << EscapeString(material->aoTexturePath) << "\"\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (light) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"Light\": {\n";
+            oss << "          \"type\": \"" << LightTypeToString(light->type) << "\",\n";
+            oss << "          \"color\": " << FormatVec3(light->color) << ",\n";
+            oss << "          \"intensity\": " << FormatFloat(light->intensity) << ",\n";
+            oss << "          \"range\": " << FormatFloat(light->range) << ",\n";
+            oss << "          \"attenuation\": {\n";
+            oss << "            \"constant\": " << FormatFloat(light->constant) << ",\n";
+            oss << "            \"linear\": " << FormatFloat(light->linear) << ",\n";
+            oss << "            \"quadratic\": " << FormatFloat(light->quadratic) << "\n";
+            oss << "          },\n";
+            oss << "          \"spotAngles\": {\n";
+            oss << "            \"inner\": " << FormatFloat(light->innerConeAngle) << ",\n";
+            oss << "            \"outer\": " << FormatFloat(light->outerConeAngle) << "\n";
+            oss << "          },\n";
+            oss << "          \"direction\": " << FormatVec3(light->direction) << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (camera) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"Camera\": {\n";
+            oss << "          \"fov\": " << FormatFloat(camera->fov) << ",\n";
+            oss << "          \"near\": " << FormatFloat(camera->nearPlane) << ",\n";
+            oss << "          \"far\": " << FormatFloat(camera->farPlane) << ",\n";
+            oss << "          \"isPrimary\": " << (camera->isPrimary ? "true" : "false") << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (script) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"LuaScript\": {\n";
+            oss << "          \"scriptPath\": \"" << EscapeString(script->scriptPath) << "\"\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        stream << "      \"components\": {\n";
+        for (size_t i = 0; i < componentBlocks.size(); ++i) {
+            stream << componentBlocks[i];
+            if (i + 1 < componentBlocks.size()) {
+                stream << ",\n";
+            } else {
+                stream << "\n";
+            }
+        }
+        stream << "      }\n";
+
+        if (entityIndex + 1 < entities.size()) {
+            stream << "    },\n";
+        } else {
+            stream << "    }\n";
+        }
+    }
+
+    stream << "  ]\n";
+    stream << "}\n";
+
+    return stream.str();
+}
+
+bool SceneSerializer::DeserializeFromString(Scene& scene, const std::string& data)
+{
+    // For simplicity, we'll write to a temp file and use the existing deserialize
+    // In production, you'd parse the string directly
+    std::filesystem::path tempPath = std::filesystem::temp_directory_path() / "hephaestus_snapshot.hpscene";
+    std::ofstream tempFile(tempPath, std::ios::binary | std::ios::trunc);
+    if (!tempFile.is_open()) {
+        return false;
+    }
+    tempFile << data;
+    tempFile.close();
+    
+    bool result = Deserialize(scene, tempPath);
+    std::filesystem::remove(tempPath);
+    return result;
+}
+

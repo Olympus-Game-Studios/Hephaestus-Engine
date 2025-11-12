@@ -16,6 +16,10 @@ public:
 
     bool Serialize(const std::filesystem::path& filepath) const;
     bool Serialize(const std::filesystem::path& filepath, std::string& outError) const;
+    
+    // Serialize to/from string (for in-memory snapshots)
+    std::string SerializeToString() const;
+    static bool DeserializeFromString(Scene& scene, const std::string& data);
 
     static bool Deserialize(Scene& scene, const std::filesystem::path& filepath);
     static bool Deserialize(Scene& scene, const std::filesystem::path& filepath, std::string& outError);

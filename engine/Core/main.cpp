@@ -282,6 +282,7 @@ static bool g_EnableMeshCollision = true;
 static bool g_SimPlaying = false;
 static bool g_SimPaused = false;
 static bool g_ShowGizmoBeforePlay = true;
+static std::string g_SceneSnapshotBeforePlay; // Stores scene state before entering play mode
 
 enum class PreferredIDE {
     SystemDefault = 0,
@@ -4951,6 +4952,10 @@ int main()
             // Overlays should be rendered last so they appear above docked windows
             ToolbarActions toolbarActions = DrawEditorToolbar(g_SimPlaying, g_SimPaused);
             if (toolbarActions.playClicked) {
+                // Save scene state before entering play mode
+                SceneSerializer serializer(scene);
+                g_SceneSnapshotBeforePlay = serializer.SerializeToString();
+                
                 g_SimPlaying = true;
                 g_SimPaused = false;
                 g_ShowGizmoBeforePlay = g_ShowEditorGizmo;
@@ -4979,7 +4984,20 @@ int main()
                     g_SimPlaying = false;
                     g_SimPaused = false;
                     g_ShowEditorGizmo = g_ShowGizmoBeforePlay;
-                    assetBrowserStatus = "Exited play mode - returned to editor.";
+                    
+                    // Restore scene state from snapshot
+                    if (!g_SceneSnapshotBeforePlay.empty()) {
+                        scene.Clear();
+                        if (SceneSerializer::DeserializeFromString(scene, g_SceneSnapshotBeforePlay)) {
+                            assetBrowserStatus = "Exited play mode - scene restored to pre-play state.";
+                        } else {
+                            assetBrowserStatus = "Exited play mode - WARNING: failed to restore scene state.";
+                        }
+                        g_SceneSnapshotBeforePlay.clear();
+                    } else {
+                        assetBrowserStatus = "Exited play mode - returned to editor.";
+                    }
+                    
                     std::cout << assetBrowserStatus << std::endl;
                 }
             }
