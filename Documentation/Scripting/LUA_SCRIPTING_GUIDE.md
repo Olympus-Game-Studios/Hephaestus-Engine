@@ -82,6 +82,8 @@ function onTriggerExit(other)
 end
 ```
 
+`onAwake` runs once when the script is first loaded for play; `onEnable` is invoked immediately afterwards and whenever a disabled script is re-enabled. `onDisable` and `onDestroy` fire when play mode stops, the script is detached, or the entity is removed.
+
 ## C++ Bindings
 
 ### Logging
@@ -90,7 +92,7 @@ end
 engine_log("This message appears in console")
 ```
 
-### Transform (Coming Soon)
+### Transform
 
 ```lua
 -- Get entity position
@@ -107,38 +109,62 @@ Transform.rotate(0, 1.5, 0)
 Transform.setScale(1.0, 1.0, 1.0)
 ```
 
-### Entity (Coming Soon)
+Available helpers:
+
+- `Transform.getPosition()` → `{ x, y, z }`
+- `Transform.setPosition(x, y, z)`
+- `Transform.translate(dx, dy, dz)` (relative move)
+- `Transform.getRotation()` / `Transform.setRotation(rx, ry, rz)` (radians)
+- `Transform.rotate(rx, ry, rz)` (relative rotation)
+- `Transform.getScale()` / `Transform.setScale(sx, sy, sz)`
+
+### Entity
 
 ```lua
--- Get component
-local renderer = entity:getComponent("MeshRenderer")
-
--- Add component
-entity:addComponent("Light")
-
--- Remove component
-entity:removeComponent("Physics")
-
--- Check if has component
-if entity:hasComponent("Transform") then
-    -- Do something
+if Entity.isValid() then
+    local name = Entity.getName() or "Entity"
+    Entity.setName(name .. " (Lua)")
 end
 ```
 
-### Input (Coming Soon)
+Available helpers:
+
+- `Entity.isValid()` → `boolean`
+- `Entity.getName()` → `string|nil`
+- `Entity.setName(name)`
+
+### Input
 
 ```lua
 if Input.isKeyPressed("W") then
     engine_log("W key pressed!")
 end
 
-if Input.isMouseButtonDown(0) then
+if Input.isMouseButtonPressed(0) then
     engine_log("Left mouse button down")
 end
 
 -- Get mouse position
-local mouseX, mouseY = Input.getMousePosition()
+local mouse = Input.getMousePosition()
+if mouse then
+    engine_log(string.format("Mouse position: %.0f %.0f", mouse.x, mouse.y))
+end
 ```
+
+Available helpers:
+
+- `Input.isKeyPressed(key)` → `boolean` (string name or key code)
+- `Input.isMouseButtonPressed(button)` → `boolean`
+- `Input.getMousePosition()` → `{ x, y }` (window pixels)
+- `Input.getMousePosition()` → `{ x, y }` (window pixels)
+
+### Time
+
+```lua
+local dt = Time.deltaTime()
+```
+
+Use `Time.deltaTime()` whenever you need the most recent frame delta outside of `onUpdate` parameters (for example inside utility modules).
 
 ### Scene Queries (Coming Soon)
 

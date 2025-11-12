@@ -89,12 +89,30 @@ add_executable(HephaestusEngine
 )
 
 target_include_directories(HephaestusEngine PRIVATE engine)
-if(Lua_FOUND)
-    target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt Lua::Lua)
+if(LUA_FOUND)
+    if(TARGET Lua::Lua)
+        target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt Lua::Lua)
+    else()
+        # Manual vcpkg Lua
+        target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt ${LUA_LIBRARIES})
+    endif()
     target_include_directories(HephaestusEngine PRIVATE ${LUA_INCLUDE_DIR})
+    target_compile_definitions(HephaestusEngine PRIVATE LUA_AVAILABLE=1)
+    
+    # Copy Lua DLL to output directory
+    set(VCPKG_LUA_DLL_PATH "$ENV{USERPROFILE}/vcpkg/installed/x64-windows/bin/lua.dll")
+    if(EXISTS "${VCPKG_LUA_DLL_PATH}")
+        add_custom_command(TARGET HephaestusEngine POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${VCPKG_LUA_DLL_PATH}"
+                "$<TARGET_FILE_DIR:HephaestusEngine>/lua.dll"
+            COMMENT "Copying lua.dll to output directory"
+        )
+    endif()
 else()
     target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt)
     # Lua disabled - LuaScriptEngine will be a stub
+    target_compile_definitions(HephaestusEngine PRIVATE LUA_AVAILABLE=0)
 endif()
 target_include_directories(HephaestusEngine PRIVATE
     engine

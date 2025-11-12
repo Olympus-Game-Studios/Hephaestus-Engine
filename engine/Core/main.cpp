@@ -281,6 +281,7 @@ static bool g_DetailsLocked = false;
 static bool g_EnableMeshCollision = true;
 static bool g_SimPlaying = false;
 static bool g_SimPaused = false;
+static bool g_ShowGizmoBeforePlay = true;
 
 enum class PreferredIDE {
     SystemDefault = 0,
@@ -1644,6 +1645,10 @@ static void SetActiveProjectRoot(const std::filesystem::path& projectPath)
         g_ProjectSelected = false;
     }
     g_AssetBrowserNeedsReset = true;
+
+    if (g_LuaScriptEnginePtr) {
+        g_LuaScriptEnginePtr->SetProjectRoot(g_ActiveProjectRoot);
+    }
 }
 
 static std::filesystem::path ResolveActiveProjectRoot()
@@ -3742,8 +3747,9 @@ int main()
     
     // Initialize Lua script engine
     LuaScriptEngine luaScriptEngine;
-    luaScriptEngine.Initialize(&scene);
     g_LuaScriptEnginePtr = &luaScriptEngine;  // Store pointer for access in callbacks
+    luaScriptEngine.Initialize(&scene, window);
+    luaScriptEngine.SetProjectRoot(ResolveActiveProjectRoot());
 
     // Register example scripts
     ScriptRegistry::Register<RotatingCube>("RotatingCube", 
@@ -4599,6 +4605,9 @@ int main()
     init_info.Allocator = nullptr;
     init_info.CheckVkResultFn = nullptr;
     ImGui_ImplVulkan_Init(&init_info);
+    
+    // Store ImGui IO for later manipulation during play mode
+    ImGuiIO& gImGuiIO = ImGui::GetIO();
 
     EnsureAssetBrowserIconsLoaded(vkdev);
 
@@ -4645,25 +4654,8 @@ int main()
         scriptEngine.AwakeScripts();
         if (g_SimPlaying && !g_SimPaused) {
             scriptEngine.UpdateScripts(dt);
-            
-            // Update Lua scripts
             if (g_LuaScriptEnginePtr) {
-                for (auto entity : scene.GetRegistry().view<LuaScriptComponent>()) {
-                    Entity e(entity, &scene);
-                    auto& luaComponent = scene.GetRegistry().get<LuaScriptComponent>(entity);
-                    
-                    if (luaComponent.enabled && !luaComponent.scriptPath.empty()) {
-                        // Load script if not already loaded
-                        static std::unordered_map<std::string, bool> loadedScripts;
-                        if (loadedScripts.find(luaComponent.scriptPath) == loadedScripts.end()) {
-                            g_LuaScriptEnginePtr->LoadScript(luaComponent.scriptPath);
-                            loadedScripts[luaComponent.scriptPath] = true;
-                        }
-                        
-                        // Call onUpdate callback
-                        g_LuaScriptEnginePtr->CallEntityFunction("onUpdate", e);
-                    }
-                }
+                g_LuaScriptEnginePtr->Update(scene, dt);
             }
         }
 
@@ -4671,6 +4663,13 @@ int main()
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        
+        // During play mode, clear ImGui input capture so raw GLFW input reaches scripts
+        if (g_SimPlaying && !g_SimPaused) {
+            ImGuiIO& io = ImGui::GetIO();
+            io.WantCaptureKeyboard = false;
+            io.WantCaptureMouse = false;
+        }
 
         const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
         float newScale = ComputeUIScale(mainViewport);
@@ -4688,7 +4687,7 @@ int main()
         static bool leftMouseWasPressed = false;
         bool leftMousePressed = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         
-        if (g_ProjectSelected && leftMousePressed && !leftMouseWasPressed &&
+        if (g_ProjectSelected && !g_SimPlaying && leftMousePressed && !leftMouseWasPressed &&
             !ImGuizmo::IsUsing() && !ImGuizmo::IsOver() && !io.WantCaptureMouse &&
             !gizmoDragging && vulkanGizmo.GetHoveredAxis() == -1) {
             // Left mouse button just pressed and not over ImGui
@@ -4713,9 +4712,8 @@ int main()
         }
         leftMouseWasPressed = leftMousePressed;
         
-        // Input handling (only when not using gizmo, and not in play mode)
-        // In play mode, the PlayerController handles input instead
-        if (g_ProjectSelected && !ImGuizmo::IsUsing() && !gizmoDragging && !g_SimPlaying) {
+        // Editor camera input (disabled when ImGuizmo is active)
+        if (g_ProjectSelected && !ImGuizmo::IsUsing() && !gizmoDragging) {
             camera.handleMouse(window);
             camera.handleKeyboard(window, dt);
         }
@@ -4877,6 +4875,9 @@ int main()
                         wasSelected = static_cast<entt::entity>(selected) == handle;
                     }
 
+                    if (g_LuaScriptEnginePtr) {
+                        g_LuaScriptEnginePtr->OnEntityDestroyed(toDelete);
+                    }
                     scene.DestroyEntity(toDelete);
                     if (wasSelected) {
                         scene.ClearSelection();
@@ -4952,6 +4953,11 @@ int main()
             if (toolbarActions.playClicked) {
                 g_SimPlaying = true;
                 g_SimPaused = false;
+                g_ShowGizmoBeforePlay = g_ShowEditorGizmo;
+                g_ShowEditorGizmo = false;
+                if (g_LuaScriptEnginePtr) {
+                    g_LuaScriptEnginePtr->OnSimulationStarted();
+                }
                 // When entering play mode, ensure player controller is active
                 assetBrowserStatus = "Entered play mode - Use WASD to move, hold Right Mouse Button to look.";
                 std::cout << assetBrowserStatus << std::endl;
@@ -4967,8 +4973,12 @@ int main()
             }
             if (toolbarActions.stopClicked) {
                 if (g_SimPlaying || g_SimPaused) {
+                    if (g_LuaScriptEnginePtr) {
+                        g_LuaScriptEnginePtr->OnSimulationStopped();
+                    }
                     g_SimPlaying = false;
                     g_SimPaused = false;
+                    g_ShowEditorGizmo = g_ShowGizmoBeforePlay;
                     assetBrowserStatus = "Exited play mode - returned to editor.";
                     std::cout << assetBrowserStatus << std::endl;
                 }
@@ -5063,7 +5073,7 @@ int main()
         UniformBufferObject ubo = camera.makeUBO(swap.extent);
 
         // Custom gizmo interaction handling
-        if (g_ProjectSelected && g_ShowEditorGizmo) {
+    if (g_ProjectSelected && g_ShowEditorGizmo && (!g_SimPlaying || g_SimPaused)) {
             Entity selectedEntity = scene.GetSelectedEntity();
             if (selectedEntity) {
                 auto& transform = selectedEntity.GetComponent<TransformComponent>();
@@ -5133,6 +5143,9 @@ int main()
         // Late update scripts (after all regular updates) - only when playing and not paused
         if (g_SimPlaying && !g_SimPaused) {
             scriptEngine.LateUpdateScripts(dt);
+            if (g_LuaScriptEnginePtr) {
+                g_LuaScriptEnginePtr->LateUpdate(scene, dt);
+            }
         }
 
         if (acq == VK_ERROR_OUT_OF_DATE_KHR) {
@@ -5474,7 +5487,7 @@ int main()
 
         // ── Render Custom Vulkan Gizmo ───────────────────────────
         Entity selectedEntity = scene.GetSelectedEntity();
-        if (g_ProjectSelected && g_ShowEditorGizmo && selectedEntity) {
+    if (g_ProjectSelected && g_ShowEditorGizmo && (!g_SimPlaying || g_SimPaused) && selectedEntity) {
             auto& transform = selectedEntity.GetComponent<TransformComponent>();
             Mat4 objectMatrix = transform.GetLocalMatrix();
             

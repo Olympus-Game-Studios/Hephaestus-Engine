@@ -12,18 +12,21 @@ This document outlines the remaining steps to complete Lua scripting integration
 - [x] LUA_INSTALLATION_GUIDE.md for end-users
 - [x] LUA_SCRIPTING_GUIDE.md for scripting reference
 - [x] Build succeeds without Lua installed
+- [x] Entity/Transform/Input Lua bindings (first-pass implementation)
+- [x] LuaScriptEngine initialization wired into main.cpp
+- [x] Lua lifecycle hooks hooked into play/update/late-update loops
+- [x] Verified Lua script attachment via Details Panel (example script)
 
 ### In Progress 🟡
-- [ ] Complete Entity/Transform/Input Lua bindings
-- [ ] Integrate LuaScriptEngine into main.cpp initialization
-- [ ] Add Lua lifecycle calls to ScriptEngine update loop
-- [ ] Test Lua script attachment via Details Panel
+- [ ] Expand Entity bindings (component access, add/remove components)
+- [ ] Scene query helpers (find by tag, raycasts)
+- [ ] Hot reload and error UI improvements
 
 ### Implementation Details
 
-## Phase 1: Lua Bindings (Next)
+## Phase 1: Lua Binding Enhancements
 
-The current bindings in LuaScriptEngine.cpp are placeholders. We need to implement:
+Baseline bindings (Transform, Entity naming, Input, Time) are implemented in `LuaScriptEngine.cpp`. Remaining work focuses on richer game-facing APIs:
 
 ### 1. Entity Bindings
 ```cpp
@@ -39,11 +42,10 @@ entity:hasComponent(type)      -- Check if has component
 entity:removeComponent(type)   -- Detach component
 ```
 
-**Implementation Challenge**: 
-- Entity is passed by value in Lua
-- Need userdata wrappers with metatables
-- Must handle entity validity checks
-- Scene registry lookups needed
+**Implementation Challenge**:
+- Map string component names to actual types safely
+- Provide userdata wrappers for richer interactions without exposing raw pointers
+- Gracefully handle invalid entities / missing components
 
 ### 2. Transform Bindings
 ```cpp
@@ -155,19 +157,17 @@ end
 
 ## Files to Modify
 
-1. **engine/Core/main.cpp**
-   - Add g_LuaScriptEngine global
-   - Initialize in startup section
-   - Integrate into update loop
-   - Handle script component attachment UI
+1. **engine/Scripting/LuaScriptEngine.cpp**
+    - Expand Entity/component bindings (userdata/exposed APIs)
+    - Add scene query helpers and hot-reload support
+    - Improve error reporting surfaced to the editor UI
 
-2. **engine/Scripting/LuaScriptEngine.cpp**
-   - Complete Entity bindings with userdata
-   - Implement Transform and Input accessors
-   - Add error handling and logging
+2. **engine/Core/main.cpp**
+    - Hook hot-reload triggers (file watchers) when implemented
+    - Surface Lua errors/warnings in the editor console overlay
 
-3. **engine/Scripting/ScriptEngine.h/cpp**
-   - Optional: Unify C++ and Lua script lifecycle
+3. **Documentation**
+    - README, guides, and troubleshooting sections highlighting Lua workflow
 
 ## Estimated Timeline
 
@@ -180,8 +180,7 @@ end
 
 ## Next Steps
 
-1. Implement proper Entity userdata bindings
-2. Connect Transform and Input to actual engine systems
-3. Integrate LuaScriptEngine into main.cpp
-4. Test with example scripts
-5. Document complete API for users
+1. Broaden Entity/component bindings (userdata helpers, component access)
+2. Add Scene query utilities exposed to Lua
+3. Implement hot-reload + richer error surfacing
+4. Continue expanding documentation and troubleshooting guides
