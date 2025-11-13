@@ -62,10 +62,17 @@ layout(std140, set = 0, binding = 2) uniform LightingUBO {
     vec4 pointLightPositions[4];  // w = range
     vec4 pointLightColors[4];     // w = intensity
     vec4 pointLightAttenuation[4]; // xyz = constant/linear/quadratic, w = unused
+    
+    // Spot lights (up to 4)
+    vec4 spotLightPositions[4];   // w = range
+    vec4 spotLightDirections[4];  // xyz = direction, w = innerAngle
+    vec4 spotLightColors[4];      // w = intensity
+    vec4 spotLightAttenuation[4]; // xyz = constant/linear/quadratic, w = outerAngle
+    
     int pointLightCount;
+    int spotLightCount;
     float padding5;
     float padding6;
-    float padding7;
 } lighting;
 
 const float PI = 3.14159265359;
@@ -117,6 +124,36 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
 // Calculate light attenuation for point lights
 float calculateAttenuation(float distance, vec3 attenuation) {
     return 1.0 / (attenuation.x + attenuation.y * distance + attenuation.z * distance * distance);
+}
+
+// Calculate spotlight cone falloff (smooth transition between inner and outer cone)
+float calculateSpotlightFalloff(vec3 lightDir, vec3 lightToFrag, float innerAngle, float outerAngle) {
+    // Calculate cosine of angle between light direction and direction to fragment
+    float cosTheta = dot(normalize(lightDir), normalize(lightToFrag));
+    
+    // Cone angles are stored as full cone aperture, so we need half-angles for comparison
+    float halfInner = innerAngle * 0.5;
+    float halfOuter = outerAngle * 0.5;
+    
+    // Pre-calculate cosines of cone half-angles for comparison
+    float cosOuter = cos(halfOuter);
+    float cosInner = cos(halfInner);
+    
+    // If outside outer cone, no light
+    // Note: cosine decreases as angle increases, so we check if cosTheta < cosOuter
+    if (cosTheta < cosOuter) {
+        return 0.0;
+    }
+    
+    // If inside inner cone, full intensity
+    if (cosTheta >= cosInner) {
+        return 1.0;
+    }
+    
+    // Smooth falloff between inner and outer cone
+    // Map from [cosOuter, cosInner] to [0, 1]
+    float falloff = (cosTheta - cosOuter) / (cosInner - cosOuter);
+    return smoothstep(0.0, 1.0, falloff);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -222,6 +259,52 @@ void main() {
         
         float atten = calculateAttenuation(distance, attenuation);
         vec3 radiance = lightColor * intensity * atten;
+        
+        // Cook-Torrance BRDF
+        float NDF = DistributionGGX(N, H, roughness);
+        float G = GeometrySmith(N, V, L, roughness);
+        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+        
+        vec3 numerator = NDF * G * F;
+        float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+        vec3 specular = numerator / denominator;
+        
+        vec3 kS = F;
+        vec3 kD = vec3(1.0) - kS;
+        kD *= 1.0 - metallic;
+        
+        float NdotL = max(dot(N, L), 0.0);
+        Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+    }
+    
+    // ── Spot Lights ──────────────────────────────────────────
+    for (int i = 0; i < lighting.spotLightCount && i < 4; ++i) {
+        vec3 lightPos = lighting.spotLightPositions[i].xyz;
+        float range = lighting.spotLightPositions[i].w;
+        vec3 lightDir = lighting.spotLightDirections[i].xyz;
+        float innerAngle = lighting.spotLightDirections[i].w;
+        vec3 lightColor = lighting.spotLightColors[i].rgb;
+        float intensity = lighting.spotLightColors[i].w;
+        vec3 attenuation = lighting.spotLightAttenuation[i].xyz;
+        float outerAngle = lighting.spotLightAttenuation[i].w;
+        
+        vec3 L = lightPos - fragWorldPos;
+        float distance = length(L);
+        
+        // Skip if out of range
+        if (distance > range) continue;
+        
+        L = L / distance; // Normalize (points from fragment to light)
+        
+        // Calculate spotlight cone falloff (need direction from light to fragment)
+        vec3 lightToFrag = -L; // Invert to get direction from light to fragment
+        float spotFalloff = calculateSpotlightFalloff(lightDir, lightToFrag, innerAngle, outerAngle);
+        if (spotFalloff <= 0.0) continue;
+        
+        vec3 H = normalize(V + L);
+        
+        float atten = calculateAttenuation(distance, attenuation);
+        vec3 radiance = lightColor * intensity * atten * spotFalloff;
         
         // Cook-Torrance BRDF
         float NDF = DistributionGGX(N, H, roughness);

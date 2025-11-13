@@ -1427,10 +1427,27 @@ struct LightingUBO {
         float constant, linear, quadratic, unused;
     } pointLightAttenuation[4];
     
+    // Spot lights (up to 4)
+    struct {
+        float x, y, z, range;
+    } spotLightPositions[4];
+    
+    struct {
+        float x, y, z, innerAngle;
+    } spotLightDirections[4];
+    
+    struct {
+        float r, g, b, intensity;
+    } spotLightColors[4];
+    
+    struct {
+        float constant, linear, quadratic, outerAngle;
+    } spotLightAttenuation[4];
+    
     int pointLightCount;
+    int spotLightCount;
     float padding5;
     float padding6;
-    float padding7;
 };
 
 struct Camera {
@@ -1561,6 +1578,106 @@ Ray ScreenToWorldRay(double mouseX, double mouseY, int screenWidth, int screenHe
     Vec3 rayDirection = vnorm(vsub(rayFarWorld, rayNearWorld));
     
     return Ray(rayNearWorld, rayDirection);
+}
+
+// Convert world space point to screen space (returns point in screen pixels)
+static Vec3 WorldToScreenPoint(const Vec3& worldPos, const Mat4& viewMatrix, const Mat4& projMatrix, 
+                               int screenWidth, int screenHeight)
+{
+    // Transform to clip space
+    Vec3 viewPos = Mat4::TransformPoint(viewMatrix, worldPos);
+    Vec3 clipPos = Mat4::TransformPoint(projMatrix, viewPos);
+    
+    // Perspective divide
+    Vec3 ndcPos(clipPos.x / clipPos.z, clipPos.y / clipPos.z, clipPos.z);
+    
+    // Convert from [-1, 1] to screen coordinates
+    float screenX = (ndcPos.x + 1.0f) * 0.5f * screenWidth;
+    float screenY = (ndcPos.y + 1.0f) * 0.5f * screenHeight;
+    
+    return Vec3(screenX, screenY, ndcPos.z);
+}
+
+// Draw a wireframe cone for spotlight visualization
+static void DrawSpotlightConeVisualization(Entity spotEntity, const Scene& scene,
+                                          const Mat4& viewMatrix, const Mat4& projMatrix,
+                                          int screenWidth, int screenHeight)
+{
+    if (!spotEntity || !spotEntity.HasComponent<TransformComponent>() || !spotEntity.HasComponent<LightComponent>()) {
+        return;
+    }
+    
+    auto& transform = spotEntity.GetComponent<TransformComponent>();
+    auto& light = spotEntity.GetComponent<LightComponent>();
+    
+    if (light.type != LightType::Spot) {
+        return;
+    }
+    
+    // Draw cone visualization using ImGui's background draw list (renders behind UI)
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+    
+    const uint32_t coneSegments = 12;
+    const ImU32 coneColor = IM_COL32(0, 200, 255, 100); // Semi-transparent cyan
+    const ImU32 coneColorBright = IM_COL32(100, 255, 255, 180); // Brighter for lines
+    
+    // Calculate cone geometry in world space
+    Vec3 coneOrigin = transform.position;
+    
+    // Get spotlight direction (forward along -Z by default, rotate by entity)
+    Mat4 transformMatrix = transform.GetLocalMatrix();
+    Vec3 coneDir = Mat4::TransformDirection(transformMatrix, Vec3(0, 0, -1));
+    coneDir = vnorm(coneDir);
+    
+    float coneHeight = light.range;
+    float outerRadius = coneHeight * std::tan(light.outerConeAngle * 0.5f);
+    
+    // Project cone tip to screen
+    Vec3 tipScreen = WorldToScreenPoint(coneOrigin, viewMatrix, projMatrix, screenWidth, screenHeight);
+    ImVec2 tipScreenPos(tipScreen.x, tipScreen.y);
+    
+    // Generate cone base points
+    std::vector<Vec3> basePoints;
+    const float pi = 3.14159265359f;
+    for (uint32_t i = 0; i < coneSegments; ++i) {
+        float angle = (float)i / coneSegments * 2.0f * pi;
+        float x = std::cos(angle) * outerRadius;
+        float y = std::sin(angle) * outerRadius;
+        
+        // Create vectors perpendicular to cone direction
+        Vec3 rightDir = vnorm(vcross(coneDir, Vec3(0, 1, 0)));
+        if (vlen(rightDir) < 0.01f) {
+            rightDir = vnorm(vcross(coneDir, Vec3(1, 0, 0)));
+        }
+        Vec3 upDir = vnorm(vcross(rightDir, coneDir));
+        
+        Vec3 basePoint = vadd(coneOrigin, vadd(vscale(coneDir, coneHeight), vadd(vscale(rightDir, x), vscale(upDir, y))));
+        basePoints.push_back(basePoint);
+    }
+    
+    // Project base points to screen and draw lines from tip to base
+    for (uint32_t i = 0; i < coneSegments; ++i) {
+        Vec3 baseScreen = WorldToScreenPoint(basePoints[i], viewMatrix, projMatrix, screenWidth, screenHeight);
+        ImVec2 baseScreenPos(baseScreen.x, baseScreen.y);
+        
+        // Only draw if points are in front of camera
+        if (tipScreen.z > 0 && baseScreen.z > 0) {
+            drawList->AddLine(tipScreenPos, baseScreenPos, coneColorBright, 1.5f);
+        }
+    }
+    
+    // Draw base circle
+    for (uint32_t i = 0; i < coneSegments; ++i) {
+        uint32_t next = (i + 1) % coneSegments;
+        Vec3 currentScreen = WorldToScreenPoint(basePoints[i], viewMatrix, projMatrix, screenWidth, screenHeight);
+        Vec3 nextScreen = WorldToScreenPoint(basePoints[next], viewMatrix, projMatrix, screenWidth, screenHeight);
+        ImVec2 currentPos(currentScreen.x, currentScreen.y);
+        ImVec2 nextPos(nextScreen.x, nextScreen.y);
+        
+        if (currentScreen.z > 0 && nextScreen.z > 0) {
+            drawList->AddLine(currentPos, nextPos, coneColorBright, 1.5f);
+        }
+    }
 }
 
 // Find the closest object hit by a ray (ECS version)
@@ -3767,6 +3884,104 @@ int main()
     cubeMeshData.indices = cubeIndices;
     cubeMeshData.bounds = AABB(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f));
 
+    // Generate cone mesh for spotlight visualization
+    auto generateConeMesh = [](float height, float radius, uint32_t segments) {
+        MeshData data;
+        const float pi = 3.14159265359f;
+        const float twoPi = pi * 2.0f;
+        
+        // Reserve space
+        data.vertices.reserve(segments + 2); // tip + base ring + center
+        data.indices.reserve(segments * 6 + segments * 3); // sides + base
+        
+        // Add cone tip at origin
+        Vertex tipVertex{};
+        tipVertex.pos[0] = 0.0f;
+        tipVertex.pos[1] = 0.0f;
+        tipVertex.pos[2] = 0.0f;
+        tipVertex.normal[0] = 0.0f;
+        tipVertex.normal[1] = 0.0f;
+        tipVertex.normal[2] = 1.0f;
+        tipVertex.color[0] = 0.0f;
+        tipVertex.color[1] = 1.0f;
+        tipVertex.color[2] = 1.0f;
+        tipVertex.texCoord[0] = 0.5f;
+        tipVertex.texCoord[1] = 0.5f;
+        data.vertices.push_back(tipVertex);
+        
+        // Add base ring vertices
+        for (uint32_t i = 0; i < segments; ++i) {
+            float angle = (float)i / segments * twoPi;
+            float x = std::cos(angle) * radius;
+            float z = std::sin(angle) * radius;
+            
+            Vertex v{};
+            v.pos[0] = x;
+            v.pos[1] = height;
+            v.pos[2] = z;
+            v.normal[0] = x;
+            v.normal[1] = 0.0f;
+            v.normal[2] = z;
+            // Normalize normal
+            float len = std::sqrt(v.normal[0]*v.normal[0] + v.normal[2]*v.normal[2]);
+            if (len > 0) {
+                v.normal[0] /= len;
+                v.normal[2] /= len;
+            }
+            v.color[0] = 0.0f;
+            v.color[1] = 1.0f;
+            v.color[2] = 1.0f;
+            v.texCoord[0] = (float)i / segments;
+            v.texCoord[1] = 1.0f;
+            data.vertices.push_back(v);
+        }
+        
+        // Add center of base for capping
+        Vertex centerVertex{};
+        centerVertex.pos[0] = 0.0f;
+        centerVertex.pos[1] = height;
+        centerVertex.pos[2] = 0.0f;
+        centerVertex.normal[0] = 0.0f;
+        centerVertex.normal[1] = 1.0f;
+        centerVertex.normal[2] = 0.0f;
+        centerVertex.color[0] = 0.0f;
+        centerVertex.color[1] = 1.0f;
+        centerVertex.color[2] = 1.0f;
+        centerVertex.texCoord[0] = 0.5f;
+        centerVertex.texCoord[1] = 0.5f;
+        data.vertices.push_back(centerVertex);
+        
+        // Add indices for cone sides
+        uint32_t tipIdx = 0;
+        uint32_t baseStart = 1;
+        uint32_t centerIdx = baseStart + segments;
+        
+        for (uint32_t i = 0; i < segments; ++i) {
+            uint32_t next = (i + 1) % segments;
+            uint32_t i0 = baseStart + i;
+            uint32_t i1 = baseStart + next;
+            
+            // Two triangles for side
+            data.indices.push_back(tipIdx);
+            data.indices.push_back(i0);
+            data.indices.push_back(i1);
+        }
+        
+        // Add indices for base cap
+        for (uint32_t i = 0; i < segments; ++i) {
+            uint32_t next = (i + 1) % segments;
+            uint32_t i0 = baseStart + i;
+            uint32_t i1 = baseStart + next;
+            
+            data.indices.push_back(centerIdx);
+            data.indices.push_back(i1);
+            data.indices.push_back(i0);
+        }
+        
+        data.bounds = AABB(Vec3(-radius, 0, -radius), Vec3(radius, height, radius));
+        return data;
+    };
+
     auto generateSphereMesh = [](float radius, uint32_t segments, uint32_t rings) {
         MeshData data;
         const float pi = 3.14159265359f;
@@ -4206,30 +4421,62 @@ int main()
     };
 
     // ── Billboard System for Light Visualization (Resources) ─────────────────────────
-    VulkanTexture lightBulbTexture;
     VulkanPipeline billboardPipeline;
     VkDescriptorSetLayout billboardDescriptorLayout = VK_NULL_HANDLE;
     VkDescriptorPool billboardDescriptorPool = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> billboardDescriptorSets;
+    std::vector<VkDescriptorSet> billboardDescriptorSets_Point;
+    std::vector<VkDescriptorSet> billboardDescriptorSets_Spot;
+    std::vector<VkDescriptorSet> billboardDescriptorSets_Directional;
     
-    // Load light bulb texture
+    // Load light textures for different light types
+    VulkanTexture pointLightTexture;
+    VulkanTexture spotLightTexture;
+    VulkanTexture directionalLightTexture;
     bool textureLoaded = false;
+    
     try {
-    std::filesystem::path lightBulbPath = ResolveEnginePath(std::filesystem::path("assets") / "textures" / "light_bulb.png");
-    if (lightBulbTexture.LoadFromFile(vkdev.allocator, vkdev.device, vkdev.physicalDevice, 
-                      vkdev.commandPool, vkdev.graphicsQueue, 
-                      lightBulbPath.string())) {
-            if (lightBulbTexture.imageView != VK_NULL_HANDLE && lightBulbTexture.sampler != VK_NULL_HANDLE) {
-                std::cout << "Loaded light bulb texture" << std::endl;
-                textureLoaded = true;
-            } else {
-                std::cerr << "Light bulb texture loaded but imageView or sampler is null" << std::endl;
-            }
+        // Load point light texture (use existing light_bulb.png)
+        std::filesystem::path pointLightPath = ResolveEnginePath(std::filesystem::path("assets") / "textures" / "light_bulb.png");
+        if (!pointLightTexture.LoadFromFile(vkdev.allocator, vkdev.device, vkdev.physicalDevice, 
+                          vkdev.commandPool, vkdev.graphicsQueue, pointLightPath.string())) {
+            std::cerr << "Failed to load point light texture file" << std::endl;
+        } else if (pointLightTexture.imageView == VK_NULL_HANDLE || pointLightTexture.sampler == VK_NULL_HANDLE) {
+            std::cerr << "Point light texture loaded but imageView or sampler is null" << std::endl;
         } else {
-            std::cerr << "Failed to load light bulb texture file" << std::endl;
+            std::cout << "Loaded point light texture" << std::endl;
         }
+        
+        // Load spot light texture (try to load, fall back to point light if not found)
+        std::filesystem::path spotLightPath = ResolveEnginePath(std::filesystem::path("assets") / "textures" / "spotlight.png");
+        if (!spotLightTexture.LoadFromFile(vkdev.allocator, vkdev.device, vkdev.physicalDevice, 
+                          vkdev.commandPool, vkdev.graphicsQueue, spotLightPath.string())) {
+            std::cout << "spotlight.png not found, using point light texture for spotlights" << std::endl;
+            // Use point light texture as fallback
+            spotLightTexture = pointLightTexture;
+        } else if (spotLightTexture.imageView == VK_NULL_HANDLE || spotLightTexture.sampler == VK_NULL_HANDLE) {
+            std::cerr << "Spot light texture loaded but imageView or sampler is null, using fallback" << std::endl;
+            spotLightTexture = pointLightTexture;
+        } else {
+            std::cout << "Loaded spot light texture" << std::endl;
+        }
+        
+        // Load directional light texture (try to load, fall back to point light if not found)
+        std::filesystem::path directionalLightPath = ResolveEnginePath(std::filesystem::path("assets") / "textures" / "sun.png");
+        if (!directionalLightTexture.LoadFromFile(vkdev.allocator, vkdev.device, vkdev.physicalDevice, 
+                          vkdev.commandPool, vkdev.graphicsQueue, directionalLightPath.string())) {
+            std::cout << "sun.png not found, using point light texture for directional lights" << std::endl;
+            // Use point light texture as fallback
+            directionalLightTexture = pointLightTexture;
+        } else if (directionalLightTexture.imageView == VK_NULL_HANDLE || directionalLightTexture.sampler == VK_NULL_HANDLE) {
+            std::cerr << "Directional light texture loaded but imageView or sampler is null, using fallback" << std::endl;
+            directionalLightTexture = pointLightTexture;
+        } else {
+            std::cout << "Loaded directional light texture" << std::endl;
+        }
+        
+        textureLoaded = true;
     } catch (const std::exception& e) {
-        std::cerr << "Failed to load light bulb texture: " << e.what() << std::endl;
+        std::cerr << "Exception while loading light textures: " << e.what() << std::endl;
     }
 
     // ── ImGuizmo State ───────────────────────────
@@ -4520,9 +4767,10 @@ int main()
     // ── Billboard Lambda Definitions (after uniformBuffers) ───────────────
     auto createBillboardDescriptors = [&]() {
         // Clean up existing resources
-        if (!billboardDescriptorSets.empty()) {
-            billboardDescriptorSets.clear();
-        }
+        billboardDescriptorSets_Point.clear();
+        billboardDescriptorSets_Spot.clear();
+        billboardDescriptorSets_Directional.clear();
+        
         if (billboardDescriptorPool != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(vkdev.device, billboardDescriptorPool, nullptr);
             billboardDescriptorPool = VK_NULL_HANDLE;
@@ -4554,69 +4802,77 @@ int main()
             }
         }
         
-        // Create descriptor pool
+        // Create descriptor pool (3x for 3 light types)
         size_t imageCount = swap.framebuffers.size();
         std::vector<VkDescriptorPoolSize> poolSizes = {
-            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount)},
-            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount)}
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount * 3)},
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount * 3)}
         };
         
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
         poolInfo.pPoolSizes = poolSizes.data();
-        poolInfo.maxSets = static_cast<uint32_t>(imageCount);
+        poolInfo.maxSets = static_cast<uint32_t>(imageCount * 3);
         
         if (vkCreateDescriptorPool(vkdev.device, &poolInfo, nullptr, &billboardDescriptorPool) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create billboard descriptor pool");
         }
         
-        // Allocate descriptor sets
-        std::vector<VkDescriptorSetLayout> layouts(imageCount, billboardDescriptorLayout);
-        VkDescriptorSetAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocInfo.descriptorPool = billboardDescriptorPool;
-        allocInfo.descriptorSetCount = static_cast<uint32_t>(imageCount);
-        allocInfo.pSetLayouts = layouts.data();
+        // Lambda to create descriptor sets for a given texture and light type
+        auto createDescriptorSetsForLightType = [&](VulkanTexture& texture, std::vector<VkDescriptorSet>& outSets) {
+            // Allocate descriptor sets
+            std::vector<VkDescriptorSetLayout> layouts(imageCount, billboardDescriptorLayout);
+            VkDescriptorSetAllocateInfo allocInfo{};
+            allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocInfo.descriptorPool = billboardDescriptorPool;
+            allocInfo.descriptorSetCount = static_cast<uint32_t>(imageCount);
+            allocInfo.pSetLayouts = layouts.data();
+            
+            outSets.resize(imageCount);
+            if (vkAllocateDescriptorSets(vkdev.device, &allocInfo, outSets.data()) != VK_SUCCESS) {
+                throw std::runtime_error("Failed to allocate billboard descriptor sets");
+            }
+            
+            // Update descriptor sets
+            for (size_t i = 0; i < imageCount; i++) {
+                VkDescriptorBufferInfo bufferInfo{};
+                bufferInfo.buffer = uniformBuffers[i].buffer;
+                bufferInfo.offset = 0;
+                bufferInfo.range = sizeof(UniformBufferObject);
+                
+                VkDescriptorImageInfo imageInfo{};
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                imageInfo.imageView = texture.imageView;
+                imageInfo.sampler = texture.sampler;
+                
+                std::vector<VkWriteDescriptorSet> descriptorWrites(2);
+                
+                descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[0].dstSet = outSets[i];
+                descriptorWrites[0].dstBinding = 0;
+                descriptorWrites[0].dstArrayElement = 0;
+                descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                descriptorWrites[0].descriptorCount = 1;
+                descriptorWrites[0].pBufferInfo = &bufferInfo;
+                
+                descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[1].dstSet = outSets[i];
+                descriptorWrites[1].dstBinding = 1;
+                descriptorWrites[1].dstArrayElement = 0;
+                descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                descriptorWrites[1].descriptorCount = 1;
+                descriptorWrites[1].pImageInfo = &imageInfo;
+                
+                vkUpdateDescriptorSets(vkdev.device, static_cast<uint32_t>(descriptorWrites.size()), 
+                                      descriptorWrites.data(), 0, nullptr);
+            }
+        };
         
-        billboardDescriptorSets.resize(imageCount);
-        if (vkAllocateDescriptorSets(vkdev.device, &allocInfo, billboardDescriptorSets.data()) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to allocate billboard descriptor sets");
-        }
-        
-        // Update descriptor sets
-        for (size_t i = 0; i < imageCount; i++) {
-            VkDescriptorBufferInfo bufferInfo{};
-            bufferInfo.buffer = uniformBuffers[i].buffer;
-            bufferInfo.offset = 0;
-            bufferInfo.range = sizeof(UniformBufferObject);
-            
-            VkDescriptorImageInfo imageInfo{};
-            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            imageInfo.imageView = lightBulbTexture.imageView;
-            imageInfo.sampler = lightBulbTexture.sampler;
-            
-            std::vector<VkWriteDescriptorSet> descriptorWrites(2);
-            
-            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[0].dstSet = billboardDescriptorSets[i];
-            descriptorWrites[0].dstBinding = 0;
-            descriptorWrites[0].dstArrayElement = 0;
-            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrites[0].descriptorCount = 1;
-            descriptorWrites[0].pBufferInfo = &bufferInfo;
-            
-            descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[1].dstSet = billboardDescriptorSets[i];
-            descriptorWrites[1].dstBinding = 1;
-            descriptorWrites[1].dstArrayElement = 0;
-            descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            descriptorWrites[1].descriptorCount = 1;
-            descriptorWrites[1].pImageInfo = &imageInfo;
-            
-            vkUpdateDescriptorSets(vkdev.device, static_cast<uint32_t>(descriptorWrites.size()), 
-                                  descriptorWrites.data(), 0, nullptr);
-        }
+        // Create descriptor sets for each light type
+        createDescriptorSetsForLightType(pointLightTexture, billboardDescriptorSets_Point);
+        createDescriptorSetsForLightType(spotLightTexture, billboardDescriptorSets_Spot);
+        createDescriptorSetsForLightType(directionalLightTexture, billboardDescriptorSets_Directional);
     };
     
     auto createBillboardPipeline = [&]() {
@@ -5309,6 +5565,18 @@ int main()
             }
         }
         
+        // Draw spotlight cone visualizations
+        if (g_ProjectSelected && g_ShowEditorGizmo && (!g_SimPlaying || g_SimPaused)) {
+            auto spotlightView = scene.GetEntitiesWith<LightComponent>();
+            for (auto entityHandle : spotlightView) {
+                Entity entity(entityHandle, &scene);
+                auto& light = entity.GetComponent<LightComponent>();
+                if (light.type == LightType::Spot) {
+                    DrawSpotlightConeVisualization(entity, scene, ubo.view, ubo.proj, swap.extent.width, swap.extent.height);
+                }
+            }
+        }
+        
         // Render ImGui
         ImGui::Render();
 
@@ -5421,6 +5689,47 @@ int main()
                 }
             }
             lightUBO.pointLightCount = pointLightIndex;
+            
+            // Gather spot lights (up to 4)
+            int spotLightIndex = 0;
+            for (auto entityHandle : dirLightView) {
+                if (spotLightIndex >= 4) break;
+                
+                Entity entity(entityHandle, &scene);
+                auto& light = entity.GetComponent<LightComponent>();
+                
+                if (light.type == LightType::Spot && entity.HasComponent<TransformComponent>()) {
+                    auto& transform = entity.GetComponent<TransformComponent>();
+                    
+                    lightUBO.spotLightPositions[spotLightIndex].x = transform.position.x;
+                    lightUBO.spotLightPositions[spotLightIndex].y = transform.position.y;
+                    lightUBO.spotLightPositions[spotLightIndex].z = transform.position.z;
+                    lightUBO.spotLightPositions[spotLightIndex].range = light.range;
+                    
+                    // Calculate spotlight direction from entity's rotation (same as cone visualization)
+                    Mat4 transformMatrix = transform.GetLocalMatrix();
+                    Vec3 spotDirection = Mat4::TransformDirection(transformMatrix, Vec3(0, 0, -1));
+                    spotDirection = vnorm(spotDirection);
+                    
+                    lightUBO.spotLightDirections[spotLightIndex].x = spotDirection.x;
+                    lightUBO.spotLightDirections[spotLightIndex].y = spotDirection.y;
+                    lightUBO.spotLightDirections[spotLightIndex].z = spotDirection.z;
+                    lightUBO.spotLightDirections[spotLightIndex].innerAngle = light.innerConeAngle;
+                    
+                    lightUBO.spotLightColors[spotLightIndex].r = light.color.x;
+                    lightUBO.spotLightColors[spotLightIndex].g = light.color.y;
+                    lightUBO.spotLightColors[spotLightIndex].b = light.color.z;
+                    lightUBO.spotLightColors[spotLightIndex].intensity = light.intensity;
+                    
+                    lightUBO.spotLightAttenuation[spotLightIndex].constant = light.constant;
+                    lightUBO.spotLightAttenuation[spotLightIndex].linear = light.linear;
+                    lightUBO.spotLightAttenuation[spotLightIndex].quadratic = light.quadratic;
+                    lightUBO.spotLightAttenuation[spotLightIndex].outerAngle = light.outerConeAngle;
+                    
+                    spotLightIndex++;
+                }
+            }
+            lightUBO.spotLightCount = spotLightIndex;
             
             // Ambient lighting
             lightUBO.ambientColor = Vec3(0.1f, 0.1f, 0.15f);
@@ -5673,10 +5982,11 @@ int main()
         }
 
         // ── Render Light Billboards ───────────────────────────────
-        if (billboardPipeline.pipeline != VK_NULL_HANDLE && !billboardDescriptorSets.empty()) {
+        if (billboardPipeline.pipeline != VK_NULL_HANDLE && 
+            !billboardDescriptorSets_Point.empty() && 
+            !billboardDescriptorSets_Spot.empty() && 
+            !billboardDescriptorSets_Directional.empty()) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, billboardPipeline.pipeline);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, billboardPipeline.layout,
-                                   0, 1, &billboardDescriptorSets[imageIndex], 0, nullptr);
             
             // Draw a billboard for each light entity
             auto lightView = scene.GetEntitiesWith<LightComponent>();
@@ -5684,16 +5994,32 @@ int main()
                 Entity entity(entityHandle, &scene);
                 auto& light = entity.GetComponent<LightComponent>();
                 
-                // Only draw billboards for point and spot lights (not directional)
-                if (light.type == LightType::Directional)
-                    continue;
-                
                 // Get light position
                 Vec3 lightPos(0.0f, 0.0f, 0.0f);
-                if (entity.HasComponent<TransformComponent>()) {
-                    auto& transform = entity.GetComponent<TransformComponent>();
-                    lightPos = transform.position;
+                
+                // Select descriptor set based on light type
+                VkDescriptorSet descriptorSet;
+                if (light.type == LightType::Directional) {
+                    // For directional lights, place the billboard at a position offset by the direction
+                    lightPos = vscale(light.direction, 5.0f);
+                    descriptorSet = billboardDescriptorSets_Directional[imageIndex];
+                } else if (light.type == LightType::Spot) {
+                    if (entity.HasComponent<TransformComponent>()) {
+                        auto& transform = entity.GetComponent<TransformComponent>();
+                        lightPos = transform.position;
+                    }
+                    descriptorSet = billboardDescriptorSets_Spot[imageIndex];
+                } else {
+                    // Point light
+                    if (entity.HasComponent<TransformComponent>()) {
+                        auto& transform = entity.GetComponent<TransformComponent>();
+                        lightPos = transform.position;
+                    }
+                    descriptorSet = billboardDescriptorSets_Point[imageIndex];
                 }
+                
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, billboardPipeline.layout,
+                                       0, 1, &descriptorSet, 0, nullptr);
                 
                 // Push constants: position (vec3) + size (float)
                 struct BillboardPushConstants {
@@ -5806,7 +6132,14 @@ int main()
     
     // Cleanup billboard resources
     billboardPipeline.Cleanup();
-    lightBulbTexture.Destroy(vkdev.allocator, vkdev.device);
+    pointLightTexture.Destroy(vkdev.allocator, vkdev.device);
+    // Only destroy spot and directional if they're not copies of point light
+    if (spotLightTexture.imageView != pointLightTexture.imageView) {
+        spotLightTexture.Destroy(vkdev.allocator, vkdev.device);
+    }
+    if (directionalLightTexture.imageView != pointLightTexture.imageView) {
+        directionalLightTexture.Destroy(vkdev.allocator, vkdev.device);
+    }
     if (billboardDescriptorPool != VK_NULL_HANDLE) {
         vkDestroyDescriptorPool(vkdev.device, billboardDescriptorPool, nullptr);
     }
