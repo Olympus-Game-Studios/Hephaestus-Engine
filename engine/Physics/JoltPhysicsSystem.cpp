@@ -247,6 +247,23 @@ JPH::BodyID JoltPhysicsSystem::GetBodyID(entt::entity entity) const {
     return it != m_EntityToBodyMap.end() ? it->second : JPH::BodyID();
 }
 
+void JoltPhysicsSystem::ClearAllBodies() {
+    // Destroy all bodies in the physics engine
+    std::vector<JPH::BodyID> bodiesToDestroy;
+    
+    for (const auto& pair : m_EntityToBodyMap) {
+        bodiesToDestroy.push_back(pair.second);
+    }
+    
+    for (JPH::BodyID bodyId : bodiesToDestroy) {
+        DestroyRigidBody(bodyId);
+    }
+    
+    // Ensure maps are cleared
+    m_EntityToBodyMap.clear();
+    m_BodyToEntityMap.clear();
+}
+
 void JoltPhysicsSystem::SyncTransformToPhysics(Scene& scene, entt::entity entity, JPH::BodyID bodyId, bool activateBody) {
     Entity sceneEntity(entity, &scene);
 

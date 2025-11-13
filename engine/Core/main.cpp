@@ -5125,10 +5125,24 @@ int main()
                     g_SimPaused = false;
                     g_ShowEditorGizmo = g_ShowGizmoBeforePlay;
                     
+                    // Clear all physics bodies BEFORE restoring the scene
+                    if (physicsInitialized) {
+                        joltPhysicsSystem.ClearAllBodies();
+                    }
+                    
                     // Restore scene state from snapshot
                     if (!g_SceneSnapshotBeforePlay.empty()) {
                         scene.Clear();
                         if (SceneSerializer::DeserializeFromString(scene, g_SceneSnapshotBeforePlay)) {
+                            // Reset all physics velocities to ensure clean state
+                            auto rigidBodyView = scene.GetEntitiesWith<RigidBodyComponent>();
+                            for (auto entityHandle : rigidBodyView) {
+                                Entity entity(entityHandle, &scene);
+                                auto& rigidBody = entity.GetComponent<RigidBodyComponent>();
+                                rigidBody.linearVelocity = Vec3(0, 0, 0);
+                                rigidBody.angularVelocity = Vec3(0, 0, 0);
+                                rigidBody.InvalidateBodyHandle();
+                            }
                             assetBrowserStatus = "Exited play mode - scene restored to pre-play state.";
                         } else {
                             assetBrowserStatus = "Exited play mode - WARNING: failed to restore scene state.";

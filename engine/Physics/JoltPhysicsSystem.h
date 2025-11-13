@@ -42,6 +42,9 @@ public:
     void SetEnabled(bool enabled) { m_Enabled = enabled; }
     bool IsEnabled() const { return m_Enabled; }
 
+    // Clear all physics bodies (used when exiting play mode)
+    void ClearAllBodies();
+
 private:
     JoltPhysicsEngine& m_PhysicsEngine;
     std::unordered_map<entt::entity, JPH::BodyID> m_EntityToBodyMap;
