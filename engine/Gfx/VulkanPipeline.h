@@ -13,10 +13,12 @@ struct VulkanPipeline {
     VkPipelineLayout layout{};
     VkPipeline pipeline{};
     VkPipeline pipelineBackface{};
+    VkPipeline outlinePipeline{};
     bool ownsDescriptorSetLayout = true;
 
     void Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext);
     void CreateBillboardPipeline(VkDevice dev, VkRenderPass rp, VkExtent2D ext, VkDescriptorSetLayout descLayout);
+    void CreateOutlinePipeline();
     void Cleanup();
 
     VkPipeline GetPipeline(bool backfaceCullingEnabled) const;

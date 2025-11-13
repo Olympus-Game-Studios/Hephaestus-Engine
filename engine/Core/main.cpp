@@ -3731,6 +3731,7 @@ int main()
     auto createPipeline = [&]() {
         pipeline.Cleanup();
         pipeline.Init(vkdev.device, swap.renderPass, swap.extent);
+        pipeline.CreateOutlinePipeline();
     };
     try {
         createPipeline();
@@ -5825,6 +5826,9 @@ int main()
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
+        // Get selected entity once for both outline and gizmo rendering
+        Entity selectedEntity = scene.GetSelectedEntity();
+
         // Draw all scene objects with MeshRendererComponent
         auto renderView = scene.GetEntitiesWith<TransformComponent, MeshRendererComponent>();
 
@@ -6014,7 +6018,7 @@ int main()
         }
 
         // ── Render Custom Vulkan Gizmo ───────────────────────────
-        Entity selectedEntity = scene.GetSelectedEntity();
+        // selectedEntity already declared above for outline rendering
     if (g_ProjectSelected && g_ShowEditorGizmo && (!g_SimPlaying || g_SimPaused) && selectedEntity) {
             auto& transform = selectedEntity.GetComponent<TransformComponent>();
             Mat4 objectMatrix = transform.GetLocalMatrix();
@@ -6088,6 +6092,44 @@ int main()
                 
                 // Draw 4 vertices (one quad) per billboard
                 vkCmdDraw(cmd, 4, 1, 0, 0);
+            }
+        }
+
+        // ── Render Selection Outline ─────────────────────────────
+        // Render after all normal geometry so outline appears on top
+        if (g_ProjectSelected && selectedEntity && selectedEntity.HasComponent<MeshRendererComponent>() && 
+            selectedEntity.HasComponent<TransformComponent>() && pipeline.outlinePipeline != VK_NULL_HANDLE) {
+            
+            auto& transform = selectedEntity.GetComponent<TransformComponent>();
+            auto& renderer = selectedEntity.GetComponent<MeshRendererComponent>();
+            
+            if (renderer.visible && renderer.HasValidMesh() && renderer.meshHandle < meshLibrary.size()) {
+                MeshGPU& mesh = meshLibrary[renderer.meshHandle];
+                
+                if (mesh.indexCount > 0 && mesh.vertexBuffer.buffer != VK_NULL_HANDLE && 
+                    mesh.indexBuffer.buffer != VK_NULL_HANDLE) {
+                    
+                    // Bind outline pipeline
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.outlinePipeline);
+                    
+                    // Bind vertex and index buffers
+                    VkBuffer vb = mesh.vertexBuffer.buffer;
+                    VkDeviceSize vbOffset = 0;
+                    vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
+                    vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+                    
+                    // Push model matrix
+                    Mat4 modelMatrix = transform.GetLocalMatrix();
+                    vkCmdPushConstants(cmd, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), modelMatrix.m);
+                    
+                    // Bind descriptor set
+                    uint32_t dynOffset = 0;
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout,
+                                          0, 1, &descriptorSets[imageIndex], 1, &dynOffset);
+                    
+                    // Draw the outline
+                    vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+                }
             }
         }
 

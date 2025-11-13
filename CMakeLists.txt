@@ -179,6 +179,8 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/billboard.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/outline.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/outline.frag
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)
