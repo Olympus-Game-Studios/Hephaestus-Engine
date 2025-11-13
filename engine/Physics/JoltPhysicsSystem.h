@@ -49,13 +49,14 @@ private:
     bool m_Enabled = true;
 
     // Sync transform from component to physics body
-    void SyncTransformToPhysics(Scene& scene, entt::entity entity, JPH::BodyID bodyId);
+    void SyncTransformToPhysics(Scene& scene, entt::entity entity, JPH::BodyID bodyId, bool activateBody);
 
     // Sync transform from physics body to component
     void SyncTransformFromPhysics(Scene& scene, entt::entity entity, JPH::BodyID bodyId);
 
     // Update entity bodies in the scene
     void UpdateEntityBodies(Scene& scene);
+    void RemoveStaleBodies(Scene& scene);
 };
 
 } // namespace Physics

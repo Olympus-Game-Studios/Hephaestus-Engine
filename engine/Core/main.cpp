@@ -926,6 +926,117 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
         }
     }
 
+    bool hasRigidBody = selectedEntity.HasComponent<RigidBodyComponent>();
+    bool hasPhysicsShape = selectedEntity.HasComponent<PhysicsShapeComponent>();
+
+    if (!hasRigidBody) {
+        if (ImGui::Button("Add Rigid Body")) {
+            auto& rb = selectedEntity.AddComponent<RigidBodyComponent>();
+            rb = RigidBodyComponent::CreateDynamic();
+            if (!hasPhysicsShape) {
+                auto& shape = selectedEntity.AddComponent<PhysicsShapeComponent>();
+                shape = PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f));
+                hasPhysicsShape = true;
+            }
+            hasRigidBody = true;
+        }
+    } else {
+        auto& rigidBody = selectedEntity.GetComponent<RigidBodyComponent>();
+        ImGui::SeparatorText("Rigid Body");
+
+        ImGui::Checkbox("Static Body", &rigidBody.isStatic);
+        ImGui::Checkbox("Trigger Volume", &rigidBody.isTrigger);
+        ImGui::Checkbox("Use Gravity", &rigidBody.useGravity);
+        ImGui::Checkbox("Freeze Rotation", &rigidBody.freezeRotation);
+
+        if (!rigidBody.isStatic && !rigidBody.isTrigger) {
+            if (ImGui::DragFloat("Mass", &rigidBody.mass, 0.1f, 0.01f, 1000.0f, "%.2f kg")) {
+                rigidBody.mass = std::max(0.0f, rigidBody.mass);
+            }
+        } else {
+            rigidBody.mass = 0.0f;
+            rigidBody.useGravity = false;
+        }
+
+        if (!rigidBody.isStatic && !rigidBody.isTrigger && rigidBody.mass <= 0.0f) {
+            rigidBody.mass = 1.0f;
+        }
+
+        ImGui::DragFloat("Linear Damping", &rigidBody.linearDamping, 0.01f, 0.0f, 10.0f);
+        ImGui::DragFloat("Angular Damping", &rigidBody.angularDamping, 0.01f, 0.0f, 10.0f);
+        ImGui::DragFloat("Friction", &rigidBody.friction, 0.01f, 0.0f, 2.0f);
+        ImGui::DragFloat("Restitution", &rigidBody.restitution, 0.01f, 0.0f, 1.0f);
+        ImGui::DragFloat3("Linear Velocity", &rigidBody.linearVelocity.x, 0.1f);
+        ImGui::DragFloat3("Angular Velocity", &rigidBody.angularVelocity.x, 0.1f);
+        ImGui::Checkbox("Debug Draw Collider", &rigidBody.debugDraw);
+
+        bool removeRigidBody = false;
+        if (ImGui::Button("Remove Rigid Body")) {
+            removeRigidBody = true;
+        }
+
+        if (removeRigidBody) {
+            selectedEntity.RemoveComponent<RigidBodyComponent>();
+            hasRigidBody = false;
+        }
+    }
+
+    if (!hasPhysicsShape) {
+        if (ImGui::Button("Add Physics Shape")) {
+            auto& shape = selectedEntity.AddComponent<PhysicsShapeComponent>();
+            shape = PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f));
+            hasPhysicsShape = true;
+        }
+    } else {
+        auto& shape = selectedEntity.GetComponent<PhysicsShapeComponent>();
+        ImGui::SeparatorText("Physics Shape");
+        const char* shapeLabels[] = {"Box", "Sphere", "Capsule"};
+        int shapeIndex = 0;
+        switch (shape.type) {
+        case PhysicsShapeType::Sphere: shapeIndex = 1; break;
+        case PhysicsShapeType::Capsule: shapeIndex = 2; break;
+        default: shapeIndex = 0; break;
+        }
+        if (ImGui::Combo("Shape Type", &shapeIndex, shapeLabels, 3)) {
+            switch (shapeIndex) {
+            case 1: shape.type = PhysicsShapeType::Sphere; break;
+            case 2: shape.type = PhysicsShapeType::Capsule; break;
+            default: shape.type = PhysicsShapeType::Box; break;
+            }
+        }
+
+        if (shape.type == PhysicsShapeType::Box) {
+            if (ImGui::DragFloat3("Half Extents", &shape.extents.x, 0.01f, 0.01f, 100.0f)) {
+                shape.extents.x = std::max(0.01f, shape.extents.x);
+                shape.extents.y = std::max(0.01f, shape.extents.y);
+                shape.extents.z = std::max(0.01f, shape.extents.z);
+            }
+        } else if (shape.type == PhysicsShapeType::Sphere) {
+            if (ImGui::DragFloat("Radius", &shape.radius, 0.01f, 0.01f, 100.0f)) {
+                shape.radius = std::max(0.01f, shape.radius);
+            }
+        } else if (shape.type == PhysicsShapeType::Capsule) {
+            if (ImGui::DragFloat("Height", &shape.height, 0.01f, 0.01f, 100.0f)) {
+                shape.height = std::max(0.01f, shape.height);
+            }
+            if (ImGui::DragFloat("Radius##Capsule", &shape.radius, 0.01f, 0.01f, 100.0f)) {
+                shape.radius = std::max(0.01f, shape.radius);
+            }
+        }
+
+        ImGui::DragFloat3("Offset", &shape.offset.x, 0.01f);
+
+        bool removeShape = false;
+        if (ImGui::Button("Remove Physics Shape")) {
+            removeShape = true;
+        }
+
+        if (removeShape) {
+            selectedEntity.RemoveComponent<PhysicsShapeComponent>();
+            hasPhysicsShape = false;
+        }
+    }
+
     if (selectedEntity.HasComponent<LightComponent>()) {
         auto& light = selectedEntity.GetComponent<LightComponent>();
         ImGui::SeparatorText("Light");
@@ -3854,16 +3965,45 @@ int main()
         Vec3(0.3f, -1.0f, 0.5f), Vec3(1.0f, 0.95f, 0.9f), 0.8f));
     
     Entity pointLight1 = scene.CreateEntity("Point Light 1");
-    auto& pl1Transform = pointLight1.AddComponent<TransformComponent>();
+    auto& pl1Transform = pointLight1.GetComponent<TransformComponent>();
     pl1Transform.position = Vec3(3.0f, 2.0f, 2.0f);
     pointLight1.AddComponent<LightComponent>(LightComponent::CreatePoint(
         Vec3(1.0f, 0.3f, 0.3f), 5.0f, 10.0f)); // Red light
     
     Entity pointLight2 = scene.CreateEntity("Point Light 2");
-    auto& pl2Transform = pointLight2.AddComponent<TransformComponent>();
+    auto& pl2Transform = pointLight2.GetComponent<TransformComponent>();
     pl2Transform.position = Vec3(-3.0f, 2.0f, 2.0f);
     pointLight2.AddComponent<LightComponent>(LightComponent::CreatePoint(
         Vec3(0.3f, 0.3f, 1.0f), 5.0f, 10.0f)); // Blue light
+
+    // Physics demo: static ground + falling rigid body
+    Entity ground = scene.CreateEntity("Physics Ground");
+    auto& groundTransform = ground.GetComponent<TransformComponent>();
+    groundTransform.position = Vec3(0.0f, -1.0f, 0.0f);
+    groundTransform.scale = Vec3(10.0f, 0.5f, 10.0f);
+    auto& groundRenderer = ground.AddComponent<MeshRendererComponent>();
+    groundRenderer.SetMesh(cubeMeshIndex, defaultCubeMesh.bounds, defaultCubeMesh.sourceKey, defaultCubeMesh.imported);
+    auto& groundMaterial = ground.AddComponent<MaterialComponent>(Vec3(0.4f, 0.4f, 0.4f));
+    groundMaterial.roughness = 0.9f;
+    auto& groundShape = ground.AddComponent<PhysicsShapeComponent>();
+    groundShape = PhysicsShapeComponent::CreateBox(Vec3(5.0f, 0.25f, 5.0f));
+    auto& groundBody = ground.AddComponent<RigidBodyComponent>();
+    groundBody = RigidBodyComponent::CreateStatic();
+    groundBody.friction = 0.9f;
+
+    Entity fallingCube = scene.CreateEntity("Physics Cube");
+    auto& fallingTransform = fallingCube.GetComponent<TransformComponent>();
+    fallingTransform.position = Vec3(0.0f, 4.0f, 0.0f);
+    auto& fallingRenderer = fallingCube.AddComponent<MeshRendererComponent>();
+    fallingRenderer.SetMesh(cubeMeshIndex, defaultCubeMesh.bounds, defaultCubeMesh.sourceKey, defaultCubeMesh.imported);
+    auto& fallingMaterial = fallingCube.AddComponent<MaterialComponent>(Vec3(0.8f, 0.6f, 0.3f));
+    fallingMaterial.roughness = 0.4f;
+    auto& fallingShape = fallingCube.AddComponent<PhysicsShapeComponent>();
+    fallingShape = PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f));
+    auto& fallingBody = fallingCube.AddComponent<RigidBodyComponent>();
+    fallingBody = RigidBodyComponent::CreateDynamic(1.0f);
+    fallingBody.friction = 0.6f;
+    fallingBody.restitution = 0.2f;
 
     static std::string assetBrowserStatus;
 

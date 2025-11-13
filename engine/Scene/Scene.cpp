@@ -223,6 +223,8 @@ struct ClipboardEntityData {
     std::optional<MaterialComponent> material;
     std::optional<LightComponent> light;
     std::optional<MeshColliderComponent> meshCollider;
+    std::optional<PhysicsShapeComponent> physicsShape;
+    std::optional<RigidBodyComponent> rigidBody;
     std::optional<CameraComponent> camera;
 };
 }
@@ -262,6 +264,16 @@ void Scene::CopyEntityToClipboard(Entity entity)
         MeshColliderComponent copy = entity.GetComponent<MeshColliderComponent>();
         copy.contacts.clear();
         data.meshCollider = copy;
+    }
+
+    if (entity.HasComponent<PhysicsShapeComponent>()) {
+        data.physicsShape = entity.GetComponent<PhysicsShapeComponent>();
+    }
+
+    if (entity.HasComponent<RigidBodyComponent>()) {
+        RigidBodyComponent copy = entity.GetComponent<RigidBodyComponent>();
+        copy.InvalidateBodyHandle();
+        data.rigidBody = copy;
     }
 
     if (entity.HasComponent<CameraComponent>()) {
@@ -315,6 +327,16 @@ Entity Scene::PasteClipboard()
 
     if (data.meshCollider) {
         e.AddComponent<MeshColliderComponent>(*data.meshCollider);
+    }
+
+    if (data.physicsShape) {
+        e.AddComponent<PhysicsShapeComponent>(*data.physicsShape);
+    }
+
+    if (data.rigidBody) {
+        RigidBodyComponent rb = *data.rigidBody;
+        rb.InvalidateBodyHandle();
+        e.AddComponent<RigidBodyComponent>(rb);
     }
 
     if (data.camera) {

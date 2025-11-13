@@ -292,7 +292,8 @@ struct RigidBodyComponent {
     bool debugDraw = false;               // Draw collision shape in debug
     
     // Jolt Physics body ID (internal use)
-    uint32_t joltBodyId = 0xFFFFFFFF;     // Invalid ID
+    static constexpr uint32_t InvalidBody = 0xFFFFFFFF;
+    uint32_t joltBodyId = InvalidBody;    // Invalid ID by default
     
     RigidBodyComponent()
         : linearVelocity(0, 0, 0)
@@ -302,6 +303,13 @@ struct RigidBodyComponent {
     {
     }
     
+    bool IsDynamic() const { return !isStatic && !isTrigger && mass > 0.0f; }
+    bool IsStatic() const { return isStatic || mass <= 0.0f; }
+    bool IsSensor() const { return isTrigger; }
+    bool UsesGravity() const { return useGravity && !IsStatic(); }
+    bool HasValidBody() const { return joltBodyId != InvalidBody; }
+    void InvalidateBodyHandle() { joltBodyId = InvalidBody; }
+
     static RigidBodyComponent CreateDynamic(float mass = 1.0f, float friction = 0.3f) {
         RigidBodyComponent body;
         body.mass = mass;
@@ -314,6 +322,7 @@ struct RigidBodyComponent {
         RigidBodyComponent body;
         body.mass = 0.0f;
         body.isStatic = true;
+        body.useGravity = false;
         return body;
     }
     

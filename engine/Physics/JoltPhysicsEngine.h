@@ -49,15 +49,16 @@ public:
     static constexpr uint32_t MAX_BODIES = 65536;
     static constexpr uint32_t NUM_BODY_MUTEXES = 0; // Let Jolt determine
     static constexpr uint32_t MAX_BODY_PAIRS = 65536;
-    static constexpr uint32_t MAX_CONTACT_CONSTRAINTS = 20480;
+    static constexpr uint32_t MAX_CONTACT_CONSTRAINTS = 10240;  // Reduced from 20480
 
     // Get the allocators
-    JPH::TempAllocator* GetTempAllocator() { return nullptr; } // Not used
+    JPH::TempAllocator* GetTempAllocator() { return m_TempAllocator.get(); }
     JPH::JobSystem* GetJobSystem() { return m_JobSystem.get(); }
 
 private:
-    // Allocators - TempAllocator is created on demand, not stored
+    // Allocators
     std::unique_ptr<JPH::JobSystemThreadPool> m_JobSystem;
+    std::unique_ptr<JPH::TempAllocatorImpl> m_TempAllocator;
 
     // Physics system
     std::unique_ptr<JPH::PhysicsSystem> m_PhysicsSystem;

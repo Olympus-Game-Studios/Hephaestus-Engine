@@ -1,6 +1,13 @@
 #include "JoltPhysicsEngine.h"
 #include <iostream>
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+#include <Jolt/Core/Core.h>
 #include <Jolt/Core/Memory.h>
+#include <Jolt/Core/IssueReporting.h>
+#include <Jolt/RegisterTypes.h>
+#include <Jolt/Core/Factory.h>
 
 // A minimal broad phase layer implementation for Jolt
 namespace JPH {
@@ -12,12 +19,52 @@ namespace Physics {
 // Initialize Jolt on first use
 static bool g_JoltInitialized = false;
 
+namespace {
+
+void JoltTraceImpl(const char* fmt, ...)
+{
+    char buffer[1024];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    std::cerr << "[Jolt] " << buffer;
+    const size_t len = std::strlen(buffer);
+    if (len == 0 || buffer[len - 1] != '\n') {
+        std::cerr << '\n';
+    }
+}
+
+bool JoltAssertFailedImpl(const char* expr, const char* message, const char* file, JPH::uint line)
+{
+    const char* text = message ? message : (expr ? expr : "(no message)");
+    std::cerr << "[Jolt][Assert] " << file << ':' << line << " - " << text << std::endl;
+    return false; // Do not trigger breakpoint, let application handle abort
+}
+
+} // namespace
+
 static void InitializeJolt() {
     if (!g_JoltInitialized) {
         std::cout << "Registering Jolt default allocator...\n";
         JPH::RegisterDefaultAllocator();
+        
+        std::cout << "Installing Jolt trace and assert callbacks...\n";
+        JPH::Trace = JoltTraceImpl;
+        #ifdef JPH_ENABLE_ASSERTS
+        JPH::AssertFailed = JoltAssertFailedImpl;
+        #endif
+        
+        // Create factory for deserialization
+        std::cout << "Creating Jolt factory...\n";
+        JPH::Factory::sInstance = new JPH::Factory();
+        
+        // Register all Jolt physics types
+        std::cout << "Registering Jolt physics types...\n";
+        JPH::RegisterTypes();
+        
         g_JoltInitialized = true;
-        std::cout << "Jolt default allocator registered\n";
+        std::cout << "Jolt Physics fully initialized\n";
     }
 }
 
@@ -32,10 +79,6 @@ void JoltPhysicsEngine::Initialize() {
         // First, initialize Jolt's memory allocation system
         InitializeJolt();
         
-        // Note: TempAllocator is a stack-only class, so we can't use unique_ptr
-        // We'll handle memory management differently for now
-        // Create temporary allocator on the stack for initialization only
-        
         // Create the job system with hardware concurrency
         int numThreads = std::max(1, (int)std::thread::hardware_concurrency() - 1);
         std::cout << "Creating job system with " << numThreads << " threads\n";
@@ -49,6 +92,12 @@ void JoltPhysicsEngine::Initialize() {
             numThreads
         );
         std::cout << "Job system created successfully\n";
+
+        // Persistent temporary allocator used during simulation steps
+        // Increased to 1024 MB (1 GB) to handle island building during settling phase
+        constexpr size_t TEMP_ALLOCATOR_SIZE = 1024 * 1024 * 1024;
+        m_TempAllocator = std::make_unique<JPH::TempAllocatorImpl>(TEMP_ALLOCATOR_SIZE);
+        std::cout << "Temp allocator created (" << (TEMP_ALLOCATOR_SIZE / (1024 * 1024)) << " MB)\n";
 
         // Create the physics system with default layer setup
         // For now, we'll create a simple physics world without complex layer filtering
@@ -108,7 +157,20 @@ void JoltPhysicsEngine::Initialize() {
 void JoltPhysicsEngine::Shutdown() {
     m_PhysicsSystem.reset();
     m_JobSystem.reset();
-    // No need to reset m_TempAllocator as it's created on demand
+    m_TempAllocator.reset();
+    
+    // Clean up Jolt global state
+    if (g_JoltInitialized) {
+        std::cout << "Unregistering Jolt types...\n";
+        JPH::UnregisterTypes();
+        
+        std::cout << "Destroying Jolt factory...\n";
+        delete JPH::Factory::sInstance;
+        JPH::Factory::sInstance = nullptr;
+        
+        g_JoltInitialized = false;
+    }
+    
     std::cout << "Jolt Physics Engine shutdown complete\n";
 }
 
@@ -127,14 +189,30 @@ void JoltPhysicsEngine::Update(float deltaTime) {
             return;
         }
 
-        // Step the physics simulation
-        // Use nullptr for allocator - Jolt will use its default
+        // Step the physics simulation with our temp allocator
         int collisionSteps = 1;
-        m_PhysicsSystem->Update(clampedDeltaTime, collisionSteps, nullptr, m_JobSystem.get());
+        JPH::TempAllocator* tempAllocator = m_TempAllocator.get();
+        if (!tempAllocator) {
+            // Fallback for safety if initialization was skipped
+            constexpr size_t TEMP_ALLOCATOR_SIZE = 1024 * 1024 * 1024;
+            m_TempAllocator = std::make_unique<JPH::TempAllocatorImpl>(TEMP_ALLOCATOR_SIZE);
+            tempAllocator = m_TempAllocator.get();
+        }
+
+        // NOTE: Known issue with Jolt Physics 4.1.0-rc1:
+        // Physics simulation crashes after ~50-60 frames of body settling
+        // This appears to be related to island management or contact constraint evolution
+        // Workaround: reduce max bodies or use a different Jolt version
+        m_PhysicsSystem->Update(
+            clampedDeltaTime,
+            collisionSteps,
+            tempAllocator,
+            m_JobSystem.get()
+        );
     } catch (const std::exception& e) {
         std::cerr << "Exception during physics update: " << e.what() << "\n";
     } catch (...) {
-        std::cerr << "Unknown exception during physics update\n";
+        std::cerr << "Unknown exception during physics update (likely Jolt crash)\n";
     }
 }
 

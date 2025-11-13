@@ -89,6 +89,24 @@ const char* LightTypeToString(LightType type)
     }
 }
 
+const char* PhysicsShapeTypeToString(PhysicsShapeType type)
+{
+    switch (type) {
+    case PhysicsShapeType::Box:
+        return "Box";
+    case PhysicsShapeType::Sphere:
+        return "Sphere";
+    case PhysicsShapeType::Capsule:
+        return "Capsule";
+    case PhysicsShapeType::Cylinder:
+        return "Cylinder";
+    case PhysicsShapeType::Mesh:
+        return "Mesh";
+    default:
+        return "Box";
+    }
+}
+
 struct JsonValue {
     enum class Type {
         Null,
@@ -497,6 +515,34 @@ static LightType ParseLightType(const JsonValue& value, std::string& errorOut)
     errorOut = "Unknown light type: " + typeStr;
     return LightType::Point;
 }
+
+static PhysicsShapeType ParsePhysicsShapeType(const JsonValue& value, std::string& errorOut)
+{
+    if (!value.IsString()) {
+        errorOut = "PhysicsShape component missing type string.";
+        return PhysicsShapeType::Box;
+    }
+
+    std::string typeStr = value.AsString();
+    if (typeStr == "Box") {
+        return PhysicsShapeType::Box;
+    }
+    if (typeStr == "Sphere") {
+        return PhysicsShapeType::Sphere;
+    }
+    if (typeStr == "Capsule") {
+        return PhysicsShapeType::Capsule;
+    }
+    if (typeStr == "Cylinder") {
+        return PhysicsShapeType::Cylinder;
+    }
+    if (typeStr == "Mesh") {
+        return PhysicsShapeType::Mesh;
+    }
+
+    errorOut = "Unknown physics shape type: " + typeStr;
+    return PhysicsShapeType::Box;
+}
 } // namespace
 
 SceneSerializer::SceneSerializer(const Scene& scene)
@@ -566,6 +612,8 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
     const TransformComponent* transform = registry.try_get<TransformComponent>(handle);
     const MeshRendererComponent* mesh = registry.try_get<MeshRendererComponent>(handle);
     const MeshColliderComponent* collider = registry.try_get<MeshColliderComponent>(handle);
+        const PhysicsShapeComponent* physicsShape = registry.try_get<PhysicsShapeComponent>(handle);
+        const RigidBodyComponent* rigidBody = registry.try_get<RigidBodyComponent>(handle);
         const MaterialComponent* material = registry.try_get<MaterialComponent>(handle);
         const LightComponent* light = registry.try_get<LightComponent>(handle);
         const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
@@ -633,6 +681,39 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"isStatic\": " << (collider->isStatic ? "true" : "false") << ",\n";
             oss << "          \"isTrigger\": " << (collider->isTrigger ? "true" : "false") << ",\n";
             oss << "          \"debugDraw\": " << (collider->debugDraw ? "true" : "false") << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (physicsShape) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"PhysicsShape\": {\n";
+            oss << "          \"type\": \"" << PhysicsShapeTypeToString(physicsShape->type) << "\",\n";
+            oss << "          \"extents\": " << FormatVec3(physicsShape->extents) << ",\n";
+            oss << "          \"radius\": " << FormatFloat(physicsShape->radius) << ",\n";
+            oss << "          \"height\": " << FormatFloat(physicsShape->height) << ",\n";
+            oss << "          \"offset\": " << FormatVec3(physicsShape->offset) << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (rigidBody) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"RigidBody\": {\n";
+            oss << "          \"mass\": " << FormatFloat(rigidBody->mass) << ",\n";
+            oss << "          \"isStatic\": " << (rigidBody->isStatic ? "true" : "false") << ",\n";
+            oss << "          \"isTrigger\": " << (rigidBody->isTrigger ? "true" : "false") << ",\n";
+            oss << "          \"useGravity\": " << (rigidBody->useGravity ? "true" : "false") << ",\n";
+            oss << "          \"freezeRotation\": " << (rigidBody->freezeRotation ? "true" : "false") << ",\n";
+            oss << "          \"linearDamping\": " << FormatFloat(rigidBody->linearDamping) << ",\n";
+            oss << "          \"angularDamping\": " << FormatFloat(rigidBody->angularDamping) << ",\n";
+            oss << "          \"friction\": " << FormatFloat(rigidBody->friction) << ",\n";
+            oss << "          \"restitution\": " << FormatFloat(rigidBody->restitution) << ",\n";
+            oss << "          \"linearVelocity\": " << FormatVec3(rigidBody->linearVelocity) << ",\n";
+            oss << "          \"angularVelocity\": " << FormatVec3(rigidBody->angularVelocity) << ",\n";
+            oss << "          \"debugDraw\": " << (rigidBody->debugDraw ? "true" : "false") << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -928,6 +1009,109 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
         }
 
+        if (const JsonValue* shapeObj = components->Find("PhysicsShape")) {
+            if (!shapeObj->IsObject()) {
+                outError = "PhysicsShape component is not an object.";
+                return false;
+            }
+
+            PhysicsShapeComponent& shape = entity.HasComponent<PhysicsShapeComponent>()
+                ? entity.GetComponent<PhysicsShapeComponent>()
+                : entity.AddComponent<PhysicsShapeComponent>();
+
+            if (const JsonValue* typeValue = shapeObj->Find("type")) {
+                std::string parseError;
+                shape.type = ParsePhysicsShapeType(*typeValue, parseError);
+                if (!parseError.empty()) {
+                    outError = parseError;
+                    return false;
+                }
+            }
+            if (const JsonValue* extentsValue = shapeObj->Find("extents")) {
+                ParseVec3(*extentsValue, shape.extents);
+            }
+            if (const JsonValue* radiusValue = shapeObj->Find("radius")) {
+                if (radiusValue->IsNumber()) {
+                    shape.radius = static_cast<float>(radiusValue->AsNumber());
+                }
+            }
+            if (const JsonValue* heightValue = shapeObj->Find("height")) {
+                if (heightValue->IsNumber()) {
+                    shape.height = static_cast<float>(heightValue->AsNumber());
+                }
+            }
+            if (const JsonValue* offsetValue = shapeObj->Find("offset")) {
+                ParseVec3(*offsetValue, shape.offset);
+            }
+        }
+
+        if (const JsonValue* rigidBodyObj = components->Find("RigidBody")) {
+            if (!rigidBodyObj->IsObject()) {
+                outError = "RigidBody component is not an object.";
+                return false;
+            }
+
+            RigidBodyComponent& rigidBody = entity.HasComponent<RigidBodyComponent>()
+                ? entity.GetComponent<RigidBodyComponent>()
+                : entity.AddComponent<RigidBodyComponent>();
+
+            if (const JsonValue* massValue = rigidBodyObj->Find("mass")) {
+                if (massValue->IsNumber()) {
+                    rigidBody.mass = std::max(0.0f, static_cast<float>(massValue->AsNumber()));
+                }
+            }
+            if (const JsonValue* staticValue = rigidBodyObj->Find("isStatic")) {
+                rigidBody.isStatic = ParseBoolLike(*staticValue, rigidBody.isStatic);
+            }
+            if (const JsonValue* triggerValue = rigidBodyObj->Find("isTrigger")) {
+                rigidBody.isTrigger = ParseBoolLike(*triggerValue, rigidBody.isTrigger);
+            }
+            if (const JsonValue* gravityValue = rigidBodyObj->Find("useGravity")) {
+                rigidBody.useGravity = ParseBoolLike(*gravityValue, rigidBody.useGravity);
+            }
+            if (const JsonValue* freezeValue = rigidBodyObj->Find("freezeRotation")) {
+                rigidBody.freezeRotation = ParseBoolLike(*freezeValue, rigidBody.freezeRotation);
+            }
+            if (const JsonValue* frictionValue = rigidBodyObj->Find("friction")) {
+                if (frictionValue->IsNumber()) {
+                    rigidBody.friction = static_cast<float>(frictionValue->AsNumber());
+                }
+            }
+            if (const JsonValue* restitutionValue = rigidBodyObj->Find("restitution")) {
+                if (restitutionValue->IsNumber()) {
+                    rigidBody.restitution = static_cast<float>(restitutionValue->AsNumber());
+                }
+            }
+            if (const JsonValue* linearDampingValue = rigidBodyObj->Find("linearDamping")) {
+                if (linearDampingValue->IsNumber()) {
+                    rigidBody.linearDamping = static_cast<float>(linearDampingValue->AsNumber());
+                }
+            }
+            if (const JsonValue* angularDampingValue = rigidBodyObj->Find("angularDamping")) {
+                if (angularDampingValue->IsNumber()) {
+                    rigidBody.angularDamping = static_cast<float>(angularDampingValue->AsNumber());
+                }
+            }
+            if (const JsonValue* debugValue = rigidBodyObj->Find("debugDraw")) {
+                rigidBody.debugDraw = ParseBoolLike(*debugValue, rigidBody.debugDraw);
+            }
+            if (const JsonValue* linearVelValue = rigidBodyObj->Find("linearVelocity")) {
+                ParseVec3(*linearVelValue, rigidBody.linearVelocity);
+            }
+            if (const JsonValue* angularVelValue = rigidBodyObj->Find("angularVelocity")) {
+                ParseVec3(*angularVelValue, rigidBody.angularVelocity);
+            }
+
+            if (rigidBody.isStatic) {
+                rigidBody.mass = 0.0f;
+                rigidBody.useGravity = false;
+            } else if (rigidBody.mass <= 0.0f && !rigidBody.isTrigger) {
+                rigidBody.mass = 1.0f;
+            }
+
+            rigidBody.InvalidateBodyHandle();
+        }
+
         if (const JsonValue* materialObj = components->Find("Material")) {
             if (!materialObj->IsObject()) {
                 outError = "Material component is not an object.";
@@ -1180,10 +1364,13 @@ std::string SceneSerializer::SerializeToString() const
         const TransformComponent* transform = registry.try_get<TransformComponent>(handle);
         const MeshRendererComponent* mesh = registry.try_get<MeshRendererComponent>(handle);
         const MeshColliderComponent* collider = registry.try_get<MeshColliderComponent>(handle);
+    const PhysicsShapeComponent* physicsShape = registry.try_get<PhysicsShapeComponent>(handle);
+    const RigidBodyComponent* rigidBody = registry.try_get<RigidBodyComponent>(handle);
         const MaterialComponent* material = registry.try_get<MaterialComponent>(handle);
         const LightComponent* light = registry.try_get<LightComponent>(handle);
         const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
+    const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
 
         stream << "    {\n";
         stream << "      \"id\": " << static_cast<uint32_t>(handle) << ",\n";
@@ -1250,6 +1437,39 @@ std::string SceneSerializer::SerializeToString() const
             componentBlocks.push_back(oss.str());
         }
 
+        if (physicsShape) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"PhysicsShape\": {\n";
+            oss << "          \"type\": \"" << PhysicsShapeTypeToString(physicsShape->type) << "\",\n";
+            oss << "          \"extents\": " << FormatVec3(physicsShape->extents) << ",\n";
+            oss << "          \"radius\": " << FormatFloat(physicsShape->radius) << ",\n";
+            oss << "          \"height\": " << FormatFloat(physicsShape->height) << ",\n";
+            oss << "          \"offset\": " << FormatVec3(physicsShape->offset) << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (rigidBody) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"RigidBody\": {\n";
+            oss << "          \"mass\": " << FormatFloat(rigidBody->mass) << ",\n";
+            oss << "          \"isStatic\": " << (rigidBody->isStatic ? "true" : "false") << ",\n";
+            oss << "          \"isTrigger\": " << (rigidBody->isTrigger ? "true" : "false") << ",\n";
+            oss << "          \"useGravity\": " << (rigidBody->useGravity ? "true" : "false") << ",\n";
+            oss << "          \"freezeRotation\": " << (rigidBody->freezeRotation ? "true" : "false") << ",\n";
+            oss << "          \"linearDamping\": " << FormatFloat(rigidBody->linearDamping) << ",\n";
+            oss << "          \"angularDamping\": " << FormatFloat(rigidBody->angularDamping) << ",\n";
+            oss << "          \"friction\": " << FormatFloat(rigidBody->friction) << ",\n";
+            oss << "          \"restitution\": " << FormatFloat(rigidBody->restitution) << ",\n";
+            oss << "          \"linearVelocity\": " << FormatVec3(rigidBody->linearVelocity) << ",\n";
+            oss << "          \"angularVelocity\": " << FormatVec3(rigidBody->angularVelocity) << ",\n";
+            oss << "          \"debugDraw\": " << (rigidBody->debugDraw ? "true" : "false") << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
         if (material) {
             std::ostringstream oss;
             oss.imbue(std::locale::classic());
@@ -1311,6 +1531,15 @@ std::string SceneSerializer::SerializeToString() const
             oss.imbue(std::locale::classic());
             oss << "        \"LuaScript\": {\n";
             oss << "          \"scriptPath\": \"" << EscapeString(script->scriptPath) << "\"\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (selection) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"Selection\": {\n";
+            oss << "          \"selected\": " << (selection->selected ? "true" : "false") << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
