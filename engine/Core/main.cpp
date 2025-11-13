@@ -1680,12 +1680,39 @@ static void DrawSpotlightConeVisualization(Entity spotEntity, const Scene& scene
     }
 }
 
+// Helper: Ray-Sphere intersection test for light billboards
+static bool IntersectRaySphere(const Ray& ray, const Vec3& center, float radius, float& outDist)
+{
+    Vec3 oc = vsub(ray.origin, center);
+    float a = vdot(ray.direction, ray.direction);
+    float b = 2.0f * vdot(oc, ray.direction);
+    float c = vdot(oc, oc) - radius * radius;
+    float discriminant = b * b - 4 * a * c;
+    
+    if (discriminant < 0) {
+        return false;
+    }
+    
+    float t = (-b - std::sqrt(discriminant)) / (2.0f * a);
+    if (t < 0) {
+        t = (-b + std::sqrt(discriminant)) / (2.0f * a);
+    }
+    
+    if (t < 0) {
+        return false;
+    }
+    
+    outDist = t;
+    return true;
+}
+
 // Find the closest object hit by a ray (ECS version)
 Entity FindClosestHitEntity(const Ray& ray, Scene& scene, float& outDistance)
 {
     Entity closestEntity;
     float closestDist = 1e30f;
     
+    // Check mesh entities
     auto view = scene.GetEntitiesWith<TransformComponent, MeshRendererComponent>();
     for (auto entityHandle : view) {
         Entity entity(entityHandle, &scene);
@@ -1700,6 +1727,26 @@ Entity FindClosestHitEntity(const Ray& ray, Scene& scene, float& outDistance)
         float tMin, tMax;
         if (worldBounds.IntersectRay(ray, tMin, tMax)) {
             float hitDist = (tMin > 0) ? tMin : tMax;
+            if (hitDist > 0 && hitDist < closestDist) {
+                closestDist = hitDist;
+                closestEntity = entity;
+            }
+        }
+    }
+    
+    // Check light entities (treat as spheres matching billboard size)
+    const float lightBillboardRadius = 0.3f; // Match billboard size from rendering
+    auto lightView = scene.GetEntitiesWith<TransformComponent, LightComponent>();
+    for (auto entityHandle : lightView) {
+        Entity entity(entityHandle, &scene);
+        auto& transform = entity.GetComponent<TransformComponent>();
+        auto& light = entity.GetComponent<LightComponent>();
+        
+        Vec3 lightPos = transform.position;
+        // For directional lights, use the position directly (where the billboard is drawn)
+        
+        float hitDist;
+        if (IntersectRaySphere(ray, lightPos, lightBillboardRadius, hitDist)) {
             if (hitDist > 0 && hitDist < closestDist) {
                 closestDist = hitDist;
                 closestEntity = entity;
@@ -6000,8 +6047,14 @@ int main()
                 // Select descriptor set based on light type
                 VkDescriptorSet descriptorSet;
                 if (light.type == LightType::Directional) {
-                    // For directional lights, place the billboard at a position offset by the direction
-                    lightPos = vscale(light.direction, 5.0f);
+                    // For directional lights, use transform position if available
+                    if (entity.HasComponent<TransformComponent>()) {
+                        auto& transform = entity.GetComponent<TransformComponent>();
+                        lightPos = transform.position;
+                    } else {
+                        // Fallback: place the billboard at a position offset by the direction
+                        lightPos = vscale(light.direction, 5.0f);
+                    }
                     descriptorSet = billboardDescriptorSets_Directional[imageIndex];
                 } else if (light.type == LightType::Spot) {
                     if (entity.HasComponent<TransformComponent>()) {
