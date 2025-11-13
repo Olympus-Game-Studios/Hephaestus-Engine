@@ -88,6 +88,39 @@ add_executable(HephaestusEngine
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
 
+if (WIN32)
+    set(APP_ICON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/editor/Icons/logo")
+    set(APP_ICON_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_app_icon.ps1")
+    set(APP_ICON_OUTPUT "${CMAKE_BINARY_DIR}/HephaestusEngine.ico")
+
+    add_custom_command(
+        OUTPUT ${APP_ICON_OUTPUT}
+        COMMAND powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${APP_ICON_SCRIPT}"
+                -SourceDir "${APP_ICON_SOURCE_DIR}"
+                -OutputIcon "${APP_ICON_OUTPUT}"
+        DEPENDS
+            "${APP_ICON_SCRIPT}"
+            "${APP_ICON_SOURCE_DIR}/256px.png"
+            "${APP_ICON_SOURCE_DIR}/128px.png"
+            "${APP_ICON_SOURCE_DIR}/64px.png"
+            "${APP_ICON_SOURCE_DIR}/48px.png"
+            "${APP_ICON_SOURCE_DIR}/32px.png"
+            "${APP_ICON_SOURCE_DIR}/16px.png"
+        COMMENT "Generating Windows application icon (.ico)"
+        VERBATIM
+    )
+
+    add_custom_target(GenerateAppIcon ALL DEPENDS ${APP_ICON_OUTPUT})
+
+    set(APP_ICON_RC "${CMAKE_BINARY_DIR}/HephaestusEngine_icon.rc")
+    set(APP_ICON_PATH ${APP_ICON_OUTPUT})
+    configure_file(engine/Core/HephaestusEngine.rc.in ${APP_ICON_RC} @ONLY)
+
+    add_dependencies(HephaestusEngine GenerateAppIcon)
+    target_sources(HephaestusEngine PRIVATE ${APP_ICON_RC})
+    set_source_files_properties(${APP_ICON_RC} PROPERTIES GENERATED TRUE)
+endif()
+
 target_include_directories(HephaestusEngine PRIVATE engine)
 if(LUA_FOUND)
     if(TARGET Lua::Lua)

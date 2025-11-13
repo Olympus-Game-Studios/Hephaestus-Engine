@@ -19,6 +19,8 @@
 #include <cstddef>
 #include <cwchar>
 
+#include "../extern/stb_image.h"
+
 #include "Math.h"
 
 #ifdef _WIN32
@@ -3670,6 +3672,71 @@ static std::optional<std::filesystem::path> DrawProjectBrowser()
     return selection;
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Load and set window icon
+// ──────────────────────────────────────────────────────────────────────────────
+static void SetWindowIcon(GLFWwindow* window)
+{
+    namespace fs = std::filesystem;
+
+    struct IconSpec {
+        const char* relativePath;
+    };
+
+    const std::array<IconSpec, 6> iconSpecs = {{
+        {"editor/Icons/logo/256px.png"},
+        {"editor/Icons/logo/128px.png"},
+        {"editor/Icons/logo/64px.png"},
+        {"editor/Icons/logo/48px.png"},
+        {"editor/Icons/logo/32px.png"},
+        {"editor/Icons/logo/16px.png"}
+    }};
+
+    std::vector<GLFWimage> images;
+    std::vector<unsigned char*> allocatedPixels;
+    images.reserve(iconSpecs.size());
+    allocatedPixels.reserve(iconSpecs.size());
+
+    for (const auto& spec : iconSpecs) {
+        fs::path iconPath = ResolveEnginePath(fs::path(spec.relativePath));
+        if (!fs::exists(iconPath)) {
+            std::cout << "[SetWindowIcon] Missing icon file: " << iconPath << std::endl;
+            continue;
+        }
+
+        std::string pathUtf8 = iconPath.string();
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        unsigned char* pixels = stbi_load(pathUtf8.c_str(), &width, &height, &channels, 4);
+        if (!pixels) {
+            std::cout << "[SetWindowIcon] Failed to load icon: " << iconPath << std::endl;
+            continue;
+        }
+
+        GLFWimage image{};
+        image.width = width;
+        image.height = height;
+        image.pixels = pixels;
+        images.push_back(image);
+        allocatedPixels.push_back(pixels);
+
+        std::cout << "[SetWindowIcon] Loaded icon: " << iconPath << " (" << width << "x" << height << ")" << std::endl;
+    }
+
+    if (!images.empty()) {
+        glfwSetWindowIcon(window, static_cast<int>(images.size()), images.data());
+        std::cout << "[SetWindowIcon] Applied " << images.size() << " icon candidate(s)." << std::endl;
+    } else {
+        std::cout << "[SetWindowIcon] No icon images loaded. Using default window icon." << std::endl;
+        std::cout << "[SetWindowIcon] Looking for PNGs in editor/Icons/logo/." << std::endl;
+    }
+
+    for (unsigned char* pixels : allocatedPixels) {
+        stbi_image_free(pixels);
+    }
+}
+
 int main()
 {
     // ── GLFW Window ───────────────────────────────
@@ -3678,6 +3745,9 @@ int main()
     GLFWwindow* window = glfwCreateWindow(1280, 720, "Hephaestus Engine", nullptr, nullptr);
     glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
     glfwSetScrollCallback(window, scrollCallback);
+
+    // Set window icon
+    SetWindowIcon(window);
 
     // ── Vulkan Instance ───────────────────────────
     VkApplicationInfo appInfo{};
