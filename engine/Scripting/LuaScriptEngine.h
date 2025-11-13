@@ -6,10 +6,13 @@
 #include <filesystem>
 #include <limits>
 #include <cstdint>
+#include <functional>
 
 #ifndef LUA_AVAILABLE
     #define LUA_AVAILABLE 0
 #endif
+
+#include "../Core/Math.h"
 
 #if LUA_AVAILABLE
     #include <lua.hpp>
@@ -29,6 +32,16 @@ struct TagComponent;
 namespace entt {
     enum class entity : uint32_t;
 }
+
+struct CameraBinding {
+    std::function<void(bool)> setActive;
+    std::function<bool()> isActive;
+    std::function<void(const Vec3&)> setPosition;
+    std::function<Vec3()> getPosition;
+    std::function<void(const Vec3&)> setRotation;
+    std::function<Vec3()> getRotation;
+    std::function<void(const Vec3&)> translate;
+};
 
 /**
  * Manages Lua scripting for the engine
@@ -117,11 +130,17 @@ public:
      */
     void Shutdown();
 
+    /**
+     * Provide camera control callbacks for Lua bindings
+     */
+    void SetCameraBinding(CameraBinding binding);
+
 private:
     lua_State* m_State = nullptr;
     Scene* m_Scene = nullptr;
     GLFWwindow* m_Window = nullptr;
     std::filesystem::path m_ProjectRoot;
+    CameraBinding m_CameraBinding{};
 
     struct ScriptInstance {
         uint32_t entityId = 0;
@@ -174,6 +193,11 @@ private:
      */
     void RegisterUtilityBindings();
 
+    /**
+     * Register camera bindings
+     */
+    void RegisterCameraBindings();
+
     void RebuildSearchPaths();
     void AddSearchPath(const std::filesystem::path& path);
 
@@ -211,6 +235,14 @@ private:
     static int Lua_Input_getMousePosition(lua_State* L);
 
     static int Lua_Time_deltaTime(lua_State* L);
+
+    static int Lua_Camera_setActive(lua_State* L);
+    static int Lua_Camera_isActive(lua_State* L);
+    static int Lua_Camera_setPosition(lua_State* L);
+    static int Lua_Camera_getPosition(lua_State* L);
+    static int Lua_Camera_setRotation(lua_State* L);
+    static int Lua_Camera_getRotation(lua_State* L);
+    static int Lua_Camera_translate(lua_State* L);
 
     static LuaScriptEngine* GetInstance() { return s_Instance; }
 };

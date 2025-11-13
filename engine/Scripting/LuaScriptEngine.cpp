@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <cctype>
 #include <limits>
+#include <utility>
 
 #include <GLFW/glfw3.h>
 
@@ -345,6 +346,9 @@ void LuaScriptEngine::OnSimulationStarted() {
     for (auto& [_, instance] : m_ScriptInstances) {
         instance.awakeCalled = false;
     }
+    if (m_CameraBinding.setActive) {
+        m_CameraBinding.setActive(false);
+    }
 #endif
 }
 
@@ -352,6 +356,10 @@ void LuaScriptEngine::OnSimulationStopped() {
 #if LUA_AVAILABLE
     if (!m_State) {
         return;
+    }
+
+    if (m_CameraBinding.setActive) {
+        m_CameraBinding.setActive(false);
     }
 
     for (auto& [entityId, instance] : m_ScriptInstances) {
@@ -410,12 +418,17 @@ void LuaScriptEngine::Shutdown() {
     m_ActiveUpdateOrder.clear();
 }
 
+void LuaScriptEngine::SetCameraBinding(CameraBinding binding) {
+    m_CameraBinding = std::move(binding);
+}
+
 void LuaScriptEngine::RegisterBindings() {
 #if LUA_AVAILABLE
     RegisterEntityBindings();
     RegisterTransformBindings();
     RegisterInputBindings();
     RegisterUtilityBindings();
+    RegisterCameraBindings();
 #endif
 }
 
@@ -497,6 +510,35 @@ void LuaScriptEngine::RegisterUtilityBindings() {
     lua_pushcfunction(m_State, Lua_Time_deltaTime);
     lua_setfield(m_State, -2, "deltaTime");
     lua_setglobal(m_State, "Time");
+#endif
+}
+
+void LuaScriptEngine::RegisterCameraBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+
+    lua_pushcfunction(m_State, Lua_Camera_setActive);
+    lua_setfield(m_State, -2, "setActive");
+
+    lua_pushcfunction(m_State, Lua_Camera_isActive);
+    lua_setfield(m_State, -2, "isActive");
+
+    lua_pushcfunction(m_State, Lua_Camera_setPosition);
+    lua_setfield(m_State, -2, "setPosition");
+
+    lua_pushcfunction(m_State, Lua_Camera_getPosition);
+    lua_setfield(m_State, -2, "getPosition");
+
+    lua_pushcfunction(m_State, Lua_Camera_setRotation);
+    lua_setfield(m_State, -2, "setRotation");
+
+    lua_pushcfunction(m_State, Lua_Camera_getRotation);
+    lua_setfield(m_State, -2, "getRotation");
+
+    lua_pushcfunction(m_State, Lua_Camera_translate);
+    lua_setfield(m_State, -2, "translate");
+
+    lua_setglobal(m_State, "Camera");
 #endif
 }
 
@@ -1276,6 +1318,144 @@ int LuaScriptEngine::Lua_Time_deltaTime(lua_State* L) {
     double dt = engine ? static_cast<double>(engine->m_CurrentDeltaTime) : 0.0;
     lua_pushnumber(L, dt);
     return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Camera_setActive(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        return 0;
+    }
+    bool active = lua_toboolean(L, 1) != 0;
+    if (engine->m_CameraBinding.setActive) {
+        engine->m_CameraBinding.setActive(active);
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Camera_isActive(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    bool active = false;
+    if (engine && engine->m_CameraBinding.isActive) {
+        active = engine->m_CameraBinding.isActive();
+    }
+    lua_pushboolean(L, active);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Camera_setPosition(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_CameraBinding.setPosition) {
+        return 0;
+    }
+    float x = static_cast<float>(luaL_checknumber(L, 1));
+    float y = static_cast<float>(luaL_checknumber(L, 2));
+    float z = static_cast<float>(luaL_checknumber(L, 3));
+    engine->m_CameraBinding.setPosition(Vec3(x, y, z));
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Camera_getPosition(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_CameraBinding.getPosition) {
+        lua_pushnil(L);
+        return 1;
+    }
+    Vec3 pos = engine->m_CameraBinding.getPosition();
+    lua_newtable(L);
+    lua_pushnumber(L, pos.x);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, pos.y);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, pos.z);
+    lua_setfield(L, -2, "z");
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Camera_setRotation(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_CameraBinding.setRotation) {
+        return 0;
+    }
+    float rx = static_cast<float>(luaL_checknumber(L, 1));
+    float ry = static_cast<float>(luaL_checknumber(L, 2));
+    float rz = static_cast<float>(luaL_checknumber(L, 3));
+    engine->m_CameraBinding.setRotation(Vec3(rx, ry, rz));
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Camera_getRotation(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_CameraBinding.getRotation) {
+        lua_pushnil(L);
+        return 1;
+    }
+    Vec3 rot = engine->m_CameraBinding.getRotation();
+    lua_newtable(L);
+    lua_pushnumber(L, rot.x);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, rot.y);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, rot.z);
+    lua_setfield(L, -2, "z");
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Camera_translate(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        return 0;
+    }
+
+    float dx = static_cast<float>(luaL_optnumber(L, 1, 0.0));
+    float dy = static_cast<float>(luaL_optnumber(L, 2, 0.0));
+    float dz = static_cast<float>(luaL_optnumber(L, 3, 0.0));
+
+    if (engine->m_CameraBinding.translate) {
+        engine->m_CameraBinding.translate(Vec3(dx, dy, dz));
+        return 0;
+    }
+
+    if (engine->m_CameraBinding.getPosition && engine->m_CameraBinding.setPosition) {
+        Vec3 current = engine->m_CameraBinding.getPosition();
+        Vec3 updated = vadd(current, Vec3(dx, dy, dz));
+        engine->m_CameraBinding.setPosition(updated);
+    }
+    return 0;
 #else
     (void)L;
     return 0;

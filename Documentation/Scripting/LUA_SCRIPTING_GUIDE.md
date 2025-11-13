@@ -158,6 +158,20 @@ Available helpers:
 - `Input.getMousePosition()` → `{ x, y }` (window pixels)
 - `Input.getMousePosition()` → `{ x, y }` (window pixels)
 
+### Camera
+
+```lua
+Camera.setActive(true)
+Camera.setPosition(0.0, 1.6, 0.0)
+Camera.setRotation(math.rad(0.0), math.rad(180.0), 0.0)
+```
+
+- `Camera.setActive(enabled)` → enable manual control from scripts (auto-disabled on stop)
+- `Camera.isActive()` → `boolean`
+- `Camera.setPosition(x, y, z)` / `Camera.getPosition()`
+- `Camera.translate(dx, dy, dz)` → offsets camera in world space
+- `Camera.setRotation(rx, ry, rz)` / `Camera.getRotation()` (radians, pitch/yaw/roll)
+
 ### Time
 
 ```lua

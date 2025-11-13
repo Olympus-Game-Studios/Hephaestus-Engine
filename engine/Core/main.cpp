@@ -7,6 +7,7 @@
 #include <string>
 #include <filesystem>
 #include <algorithm>
+#include <utility>
 #include <system_error>
 #include <optional>
 #include <cstdint>
@@ -1538,6 +1539,107 @@ struct Camera {
 
 // Store camera pointer for scroll callback
 static Camera* g_cameraPtr = nullptr;
+
+struct RuntimeCameraController {
+    Camera* camera = nullptr;
+    bool manualActive = false;
+    Vec3 manualPosition = Vec3(0.0f, 0.0f, 0.0f);
+    Vec3 manualRotation = Vec3(0.0f, 0.0f, 0.0f); // radians (pitch, yaw, roll)
+
+    static float RadToDeg(float value) {
+        return value * 57.2957795f;
+    }
+
+    static float DegToRad(float value) {
+        return value * 0.0174532925f;
+    }
+
+    void syncFromCamera() {
+        if (!camera) {
+            return;
+        }
+        manualPosition = camera->position;
+        manualRotation.x = DegToRad(camera->pitchDeg);
+        manualRotation.y = DegToRad(camera->yawDeg);
+        manualRotation.z = 0.0f;
+    }
+
+    void applyToCamera() {
+        if (!camera) {
+            return;
+        }
+        camera->position = manualPosition;
+        float clampedPitch = std::clamp(RadToDeg(manualRotation.x), -89.0f, 89.0f);
+        camera->pitchDeg = clampedPitch;
+        camera->yawDeg = RadToDeg(manualRotation.y);
+    }
+
+    void setActive(bool active) {
+        if (active) {
+            if (!manualActive) {
+                syncFromCamera();
+                std::cout << "[RuntimeCamera] Activating script camera control" << std::endl;
+            }
+            manualActive = true;
+            applyToCamera();
+            if (camera) {
+                camera->rightMouseDown = false;
+                camera->firstMouse = true;
+            }
+        } else {
+            if (manualActive) {
+                std::cout << "[RuntimeCamera] Deactivating script camera control" << std::endl;
+            }
+            manualActive = false;
+            syncFromCamera();
+        }
+    }
+
+    bool isActive() const {
+        return manualActive;
+    }
+
+    void setPosition(const Vec3& pos) {
+        manualPosition = pos;
+        if (manualActive) {
+            applyToCamera();
+        }
+    }
+
+    Vec3 getPosition() const {
+        if (manualActive) {
+            return manualPosition;
+        }
+        if (!camera) {
+            return Vec3();
+        }
+        return camera->position;
+    }
+
+    void setRotation(const Vec3& rot) {
+        manualRotation = rot;
+        if (manualActive) {
+            applyToCamera();
+        }
+    }
+
+    Vec3 getRotation() const {
+        if (manualActive) {
+            return manualRotation;
+        }
+        if (!camera) {
+            return Vec3();
+        }
+        return Vec3(DegToRad(camera->pitchDeg), DegToRad(camera->yawDeg), 0.0f);
+    }
+
+    void translate(const Vec3& delta) {
+        manualPosition = vadd(manualPosition, delta);
+        if (manualActive) {
+            applyToCamera();
+        }
+    }
+};
 
 static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
 {
@@ -4185,6 +4287,10 @@ int main()
     // Start with cursor enabled (Unreal-style - hold RMB to look/move)
     g_cameraPtr = &camera; // Set global pointer for scroll callback
 
+    RuntimeCameraController cameraController;
+    cameraController.camera = &camera;
+    cameraController.syncFromCamera();
+
     // ── Scene & Entities (ECS) ───────────────────
     Scene scene("Main Scene");
     ScriptEngine scriptEngine;
@@ -4195,6 +4301,30 @@ int main()
     g_LuaScriptEnginePtr = &luaScriptEngine;  // Store pointer for access in callbacks
     luaScriptEngine.Initialize(&scene, window);
     luaScriptEngine.SetProjectRoot(ResolveActiveProjectRoot());
+
+    CameraBinding cameraBinding{};
+    cameraBinding.setActive = [&cameraController](bool active) {
+        cameraController.setActive(active);
+    };
+    cameraBinding.isActive = [&cameraController]() {
+        return cameraController.isActive();
+    };
+    cameraBinding.setPosition = [&cameraController](const Vec3& pos) {
+        cameraController.setPosition(pos);
+    };
+    cameraBinding.getPosition = [&cameraController]() {
+        return cameraController.getPosition();
+    };
+    cameraBinding.setRotation = [&cameraController](const Vec3& rot) {
+        cameraController.setRotation(rot);
+    };
+    cameraBinding.getRotation = [&cameraController]() {
+        return cameraController.getRotation();
+    };
+    cameraBinding.translate = [&cameraController](const Vec3& delta) {
+        cameraController.translate(delta);
+    };
+    luaScriptEngine.SetCameraBinding(std::move(cameraBinding));
 
     // Register example scripts
     ScriptRegistry::Register<RotatingCube>("RotatingCube", 
@@ -5172,7 +5302,15 @@ int main()
             if (g_LuaScriptEnginePtr) {
                 g_LuaScriptEnginePtr->Update(scene, dt);
             }
+            // Apply camera controller changes after scripts have updated
+            if (cameraController.isActive()) {
+                cameraController.applyToCamera();
+            }
         }
+
+        auto makeCameraUBO = [&]() {
+            return camera.makeUBO(swap.extent);
+        };
 
         // Start the Dear ImGui frame
         ImGui_ImplVulkan_NewFrame();
@@ -5210,7 +5348,7 @@ int main()
             glfwGetCursorPos(window, &mouseX, &mouseY);
             
             // Create picking ray
-            UniformBufferObject ubo = camera.makeUBO(swap.extent);
+            UniformBufferObject ubo = makeCameraUBO();
             Ray pickRay = ScreenToWorldRay(mouseX, mouseY, swap.extent.width, swap.extent.height, ubo.view, ubo.proj);
             
             // Find closest hit
@@ -5227,10 +5365,13 @@ int main()
         }
         leftMouseWasPressed = leftMousePressed;
         
-        // Editor camera input (disabled when ImGuizmo is active)
+        // Editor camera input (disabled when ImGuizmo is active or when scripts control camera during play)
         if (g_ProjectSelected && !ImGuizmo::IsUsing() && !gizmoDragging) {
-            camera.handleMouse(window);
-            camera.handleKeyboard(window, dt);
+            bool scriptHasCamera = (g_SimPlaying && !g_SimPaused && cameraController.isActive());
+            if (!scriptHasCamera) {
+                camera.handleMouse(window);
+                camera.handleKeyboard(window, dt);
+            }
         }
 
         // ImGui UI
@@ -5495,6 +5636,7 @@ int main()
                     if (g_LuaScriptEnginePtr) {
                         g_LuaScriptEnginePtr->OnSimulationStopped();
                     }
+                    cameraController.setActive(false);
                     g_SimPlaying = false;
                     g_SimPaused = false;
                     g_ShowEditorGizmo = g_ShowGizmoBeforePlay;
@@ -5616,7 +5758,7 @@ int main()
         }
         
         // Build view/proj for ImGuizmo and gizmo interactions
-        UniformBufferObject ubo = camera.makeUBO(swap.extent);
+        UniformBufferObject ubo = makeCameraUBO();
 
         // Custom gizmo interaction handling
     if (g_ProjectSelected && g_ShowEditorGizmo && (!g_SimPlaying || g_SimPaused)) {
@@ -5749,7 +5891,7 @@ int main()
 
         // Update UBO for this image
         {
-            UniformBufferObject ubo = camera.makeUBO(swap.extent);
+            UniformBufferObject ubo = makeCameraUBO();
             void* mapped = nullptr;
             vmaMapMemory(vkdev.allocator, uniformBuffers[imageIndex].allocation, &mapped);
             std::memcpy(mapped, &ubo, sizeof(ubo));

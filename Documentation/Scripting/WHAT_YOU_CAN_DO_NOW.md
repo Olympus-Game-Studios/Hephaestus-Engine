@@ -120,6 +120,7 @@ end
 ✓ Event handling
 ✓ UI callbacks
 ✓ Rapid prototyping
+✓ Runtime camera control via `Camera` bindings
 
 ### With Both (Most Powerful)
 ✓ Performance-critical systems in C++
