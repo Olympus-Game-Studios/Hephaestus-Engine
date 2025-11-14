@@ -288,6 +288,36 @@ static bool g_ShowGizmoBeforePlay = true;
 static bool g_ViewportOverlayHovered = false;
 static bool g_ViewportOverlayFocused = false;
 static std::string g_SceneSnapshotBeforePlay; // Stores scene state before entering play mode
+static constexpr size_t kSceneUndoLimit = 32;
+static std::vector<std::string> g_SceneUndoStack;
+
+static void PushSceneUndoSnapshot(Scene& scene)
+{
+    SceneSerializer serializer(scene);
+    std::string snapshot = serializer.SerializeToString();
+    if (snapshot.empty()) {
+        return;
+    }
+    if (g_SceneUndoStack.size() >= kSceneUndoLimit) {
+        g_SceneUndoStack.erase(g_SceneUndoStack.begin());
+    }
+    g_SceneUndoStack.push_back(std::move(snapshot));
+}
+
+static std::optional<std::string> PopSceneUndoSnapshot()
+{
+    if (g_SceneUndoStack.empty()) {
+        return std::nullopt;
+    }
+    std::string snapshot = std::move(g_SceneUndoStack.back());
+    g_SceneUndoStack.pop_back();
+    return snapshot;
+}
+
+static void ClearSceneUndoStack()
+{
+    g_SceneUndoStack.clear();
+}
 
 enum class PreferredIDE {
     SystemDefault = 0,
@@ -735,6 +765,7 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
         ImGui::Separator();
         ImGui::BulletText("Shift+Backspace or Delete - Delete selected entity");
         ImGui::BulletText("Ctrl+Shift+D - Duplicate selected entity");
+        ImGui::BulletText("Ctrl+Z - Undo last change");
         ImGui::BulletText("Esc - Deselect");
         ImGui::BulletText("Right-click - Context menu");
         ImGui::EndTooltip();
@@ -859,14 +890,8 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
         // Ctrl+Shift+D - Duplicate selected entity
         if (duplicateShortcut || (ImGui::IsKeyPressed(ImGuiKey_D, false) && ctrlDown && shiftDown)) {
             Entity selected = scene.GetSelectedEntity();
-            if (selected && scene.HasClipboardEntity()) {
-                // Use existing clipboard, but let's trigger a copy then paste
-                scene.CopyEntityToClipboard(selected);
-                Entity duplicated = scene.PasteClipboard();
-                if (duplicated) {
-                    scene.SetSelectedEntity(duplicated);
-                }
-            } else if (selected) {
+            if (selected) {
+                PushSceneUndoSnapshot(scene);
                 scene.CopyEntityToClipboard(selected);
                 Entity duplicated = scene.PasteClipboard();
                 if (duplicated) {
@@ -4744,6 +4769,24 @@ int main()
         }
     };
 
+    auto performSceneUndo = [&](Scene& targetScene) -> bool {
+        auto snapshot = PopSceneUndoSnapshot();
+        if (!snapshot) {
+            assetBrowserStatus = "Nothing to undo.";
+            return false;
+        }
+        if (SceneSerializer::DeserializeFromString(targetScene, *snapshot)) {
+            rebuildSceneMeshesFromComponents(targetScene);
+            targetScene.ClearSelection();
+            assetBrowserStatus = "Undo: Restored previous scene state.";
+            std::cout << assetBrowserStatus << std::endl;
+            return true;
+        }
+        assetBrowserStatus = "Undo failed: unable to restore scene.";
+        std::cerr << assetBrowserStatus << std::endl;
+        return false;
+    };
+
     // ── Billboard System for Light Visualization (Resources) ─────────────────────────
     VulkanPipeline billboardPipeline;
     VkDescriptorSetLayout billboardDescriptorLayout = VK_NULL_HANDLE;
@@ -5486,6 +5529,7 @@ int main()
                 scene.ClearSelection();
                 scene.SetName(*outlinerActions.newLevelName);
                 rebuildSceneMeshesFromComponents(scene);
+                ClearSceneUndoStack();
 
                 assetBrowserStatus = "Created new level '" + scene.GetName() + "'.";
                 std::cout << assetBrowserStatus << std::endl;
@@ -5558,6 +5602,7 @@ int main()
                     if (duplicateShortcut || duplicateFallback) {
                         Entity selected = scene.GetSelectedEntity();
                         if (selected) {
+                            PushSceneUndoSnapshot(scene);
                             scene.CopyEntityToClipboard(selected);
                             Entity duplicated = scene.PasteClipboard();
                             if (duplicated) {
@@ -5622,6 +5667,7 @@ int main()
             enqueueDeletion(viewportDeleteRequest);
 
             if (!entityDeletionQueue.empty()) {
+                PushSceneUndoSnapshot(scene);
                 if (gizmoDragging) {
                     gizmoDragging = false;
                     gizmoActiveAxis = -1;
@@ -5695,6 +5741,7 @@ int main()
                         vulkanGizmo.EndDrag();
                     }
                     rebuildSceneMeshesFromComponents(scene);
+                    ClearSceneUndoStack();
                     fs::path projectRoot = ResolveActiveProjectRoot();
                     fs::path relativePath = projectRoot.empty()
                         ? browserResult.sceneOpenRequest->filename()
@@ -5862,11 +5909,16 @@ int main()
                 }
             }
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) && !io.WantTextInput) {
-                // Paste and select
-                Entity pasted = scene.PasteClipboard();
-                if (pasted) {
-                    // Optionally, you could move pasted object slightly to indicate duplication.
+                if (scene.HasClipboardEntity()) {
+                    PushSceneUndoSnapshot(scene);
+                    Entity pasted = scene.PasteClipboard();
+                    if (pasted) {
+                        scene.SetSelectedEntity(pasted);
+                    }
                 }
+            }
+            if (!g_SimPlaying && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z) && !io.WantTextInput) {
+                performSceneUndo(scene);
             }
         }
         

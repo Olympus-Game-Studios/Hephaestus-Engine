@@ -10,12 +10,14 @@ The World Outliner manages entities in your scene with the following keyboard sh
 |----------|--------|-------------|
 | `Shift+Backspace / Delete` | Delete Entity | Removes the currently selected entity from the scene |
 | `Ctrl+Shift+D` | Duplicate Entity | Creates a copy of the selected entity with all its components |
+| `Ctrl+Z` | Undo Last Change | Restores the scene to its previous state |
 | `Esc` | Deselect | Clears the current entity selection |
 
 ### Usage Notes
 
 - **Shift+Backspace / Delete (Delete)**: Works when the World Outliner window is focused and you're not typing in a text field
 - **Ctrl+Shift+D (Duplicate)**: Uses the scene clipboard system to copy all components from the selected entity
+- **Ctrl+Z (Undo)**: Reverts the most recent entity-level change (delete, duplicate, paste)
 - **Deselect**: Useful for clearing selection before making new selections
 
 ### Entity Context Menu
@@ -70,6 +72,7 @@ These shortcuts work across the entire editor:
 | `Stop` | Exit Play Mode | Stops simulation and restores editor state |
 | `Save` | Save Scene | Saves the current scene to disk |
 | `Build` | Build Project | Compiles project resources |
+| `Ctrl+Z` | Undo Last Change | Restores the previous scene snapshot (available while not simulating) |
 
 ## Viewport Controls
 
