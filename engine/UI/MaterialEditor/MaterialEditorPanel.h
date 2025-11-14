@@ -31,6 +31,7 @@ public:
     bool IsOpen() const { return m_IsOpen; }
     void SetOpen(bool open) { m_IsOpen = open; }
     void SetActiveAsset(const std::filesystem::path& path);
+    void LoadMaterialIntoGraph(Graph& graph);
     void ClearActiveAsset();
     bool HasActiveAsset() const { return !m_CurrentAssetPath.empty(); }
     const std::filesystem::path& GetActiveAssetPath() const { return m_CurrentAssetPath; }
@@ -41,7 +42,6 @@ private:
     void DrawToolbar(Graph& graph);
     void DrawNodeCanvas(Graph& graph);
     std::optional<PanelResult> DrawInspector(Graph& graph);
-    std::optional<PanelResult> DrawSimpleProperties(Graph& graph);
     void RefreshTextureCache();
 
     bool m_IsOpen = false;
@@ -57,10 +57,6 @@ private:
     std::filesystem::path m_CurrentAssetPath;
     std::vector<std::string> m_DiscoveredTextures;
     std::filesystem::path m_ProjectRoot;
-    
-    // Simple material properties (for direct editing without node graph)
-    MaterialComponent m_SimpleMaterialProps;
-    bool m_UseSimpleMode = true;
 };
 
 } // namespace MaterialEditor

@@ -285,6 +285,8 @@ static bool g_EnableMeshCollision = true;
 static bool g_SimPlaying = false;
 static bool g_SimPaused = false;
 static bool g_ShowGizmoBeforePlay = true;
+static bool g_ViewportOverlayHovered = false;
+static bool g_ViewportOverlayFocused = false;
 static std::string g_SceneSnapshotBeforePlay; // Stores scene state before entering play mode
 
 enum class PreferredIDE {
@@ -549,7 +551,12 @@ static void DrawViewportOverlay(ImGuizmo::OPERATION& operation,
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(s.WindowPadding.x * 1.1f, s.WindowPadding.y * 1.1f));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.07f, 0.08f, 0.11f, 0.94f));
 
+    g_ViewportOverlayHovered = false;
+    g_ViewportOverlayFocused = false;
+
     if (ImGui::Begin("##ViewportOverlay", nullptr, flags)) {
+        g_ViewportOverlayHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+        g_ViewportOverlayFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(s.ItemSpacing.x * 1.2f, s.ItemSpacing.y));
     if (ImGui::BeginTable("ViewportOverlayLayout", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadInnerX | ImGuiTableFlags_NoPadOuterX)) {
         ImGui::TableSetupColumn("##OpMode", ImGuiTableColumnFlags_WidthStretch, 0.72f);
@@ -716,6 +723,22 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
         s_FocusNewLevelInput = true;
         ImGui::OpenPopup(kNewLevelPopupId);
     }
+    
+    // Show keyboard shortcuts help
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+    ImGui::TextDisabled("?");
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted("World Outliner Keyboard Shortcuts:");
+        ImGui::Separator();
+        ImGui::BulletText("Shift+Backspace or Delete - Delete selected entity");
+        ImGui::BulletText("Ctrl+Shift+D - Duplicate selected entity");
+        ImGui::BulletText("Esc - Deselect");
+        ImGui::BulletText("Right-click - Context menu");
+        ImGui::EndTooltip();
+    }
 
     if (ImGui::BeginPopupModal(kNewLevelPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (s_FocusNewLevelInput || ImGui::IsWindowAppearing()) {
@@ -797,7 +820,7 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
             }
 
             if (ImGui::BeginPopupContextItem()) {
-                if (ImGui::MenuItem("Delete", "Del")) {
+                if (ImGui::MenuItem("Delete", "Shift+Backspace")) {
                     actions.entityToDelete = entityHandle;
                 }
                 ImGui::EndPopup();
@@ -811,13 +834,50 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
         ImGui::EndTable();
     }
 
-    if (!actions.entityToDelete &&
-        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-        ImGui::IsKeyPressed(ImGuiKey_Delete) &&
+    // Keyboard shortcuts (when window is focused and not typing in text input)
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
         !ImGui::GetIO().WantTextInput) {
-        Entity selected = scene.GetSelectedEntity();
-        if (selected) {
-            actions.entityToDelete = static_cast<entt::entity>(selected);
+
+        const ImGuiIO& io = ImGui::GetIO();
+        const bool ctrlDown = io.KeyCtrl;
+        const bool shiftDown = io.KeyShift;
+        const ImGuiInputFlags shortcutRoute = ImGuiInputFlags_RouteFocused;
+
+        const bool deleteViaChord = ImGui::Shortcut(ImGuiMod_Shift | ImGuiKey_Backspace, shortcutRoute);
+        const bool deleteViaKey = ImGui::Shortcut(ImGuiKey_Delete, shortcutRoute);
+
+        // Shift+Backspace or Delete - Delete selected entity
+        if (!actions.entityToDelete && (deleteViaChord || deleteViaKey ||
+            (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) && shiftDown))) {
+            Entity selected = scene.GetSelectedEntity();
+            if (selected) {
+                actions.entityToDelete = static_cast<entt::entity>(selected);
+            }
+        }
+
+        const bool duplicateShortcut = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_D, shortcutRoute);
+        // Ctrl+Shift+D - Duplicate selected entity
+        if (duplicateShortcut || (ImGui::IsKeyPressed(ImGuiKey_D, false) && ctrlDown && shiftDown)) {
+            Entity selected = scene.GetSelectedEntity();
+            if (selected && scene.HasClipboardEntity()) {
+                // Use existing clipboard, but let's trigger a copy then paste
+                scene.CopyEntityToClipboard(selected);
+                Entity duplicated = scene.PasteClipboard();
+                if (duplicated) {
+                    scene.SetSelectedEntity(duplicated);
+                }
+            } else if (selected) {
+                scene.CopyEntityToClipboard(selected);
+                Entity duplicated = scene.PasteClipboard();
+                if (duplicated) {
+                    scene.SetSelectedEntity(duplicated);
+                }
+            }
+        }
+        
+        // Escape - Deselect current entity
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            scene.ClearSelection();
         }
     }
 
@@ -2668,11 +2728,27 @@ static void ResetMaterialGraph()
 static void ActivateMaterialAsset(const std::filesystem::path& path, std::string& statusMessage)
 {
     g_ActiveMaterialAssetPath = path.lexically_normal();
+    
     if (g_MaterialEditorPanel) {
         g_MaterialEditorPanel->SetActiveAsset(g_ActiveMaterialAssetPath);
         g_MaterialEditorPanel->SetOpen(true);
     }
-    ResetMaterialGraph();
+    
+    // Clear and load the graph
+    g_MaterialGraph.Clear();
+    
+    // Load material data into the graph if the file exists and has graph data
+    if (std::filesystem::exists(g_ActiveMaterialAssetPath) && g_MaterialEditorPanel) {
+        g_MaterialEditorPanel->LoadMaterialIntoGraph(g_MaterialGraph);
+    }
+    
+    // If the graph is empty (new material or failed to load), create default output node
+    if (g_MaterialGraph.GetNodes().empty()) {
+        MaterialEditor::Node& output = g_MaterialGraph.CreateNode(MaterialEditor::NodeType::MaterialOutput);
+        if (g_MaterialEditorPanel) {
+            g_MaterialEditorPanel->QueueNodePlacement(output.id, ImVec2(0.0f, 0.0f));
+        }
+    }
 
     std::string friendly = g_ActiveMaterialAssetPath.filename().replace_extension().string();
     statusMessage = "Editing material '" + friendly + "'.";
@@ -5456,6 +5532,42 @@ int main()
             }
             DetailsPanelActions detailsActions = DrawDetailsPanel(scene);
 
+            std::optional<entt::entity> viewportDeleteRequest;
+            {
+                const ImGuiIO& shortcutIO = ImGui::GetIO();
+                const bool viewportOverlayActive = g_ViewportOverlayHovered || g_ViewportOverlayFocused;
+                const bool viewportInputContext = !shortcutIO.WantTextInput &&
+                                                  (!shortcutIO.WantCaptureKeyboard || viewportOverlayActive);
+
+                if (viewportInputContext) {
+                    const ImGuiInputFlags viewportRoute = ImGuiInputFlags_RouteGlobal | ImGuiInputFlags_RouteOverFocused;
+                    const bool deleteShortcut = ImGui::Shortcut(ImGuiMod_Shift | ImGuiKey_Backspace, viewportRoute) ||
+                                                 ImGui::Shortcut(ImGuiKey_Delete, viewportRoute);
+                    const bool deleteFallback = (shortcutIO.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) ||
+                                                ImGui::IsKeyPressed(ImGuiKey_Delete, false);
+                    if (!viewportDeleteRequest && (deleteShortcut || deleteFallback)) {
+                        Entity selected = scene.GetSelectedEntity();
+                        if (selected) {
+                            viewportDeleteRequest = static_cast<entt::entity>(selected);
+                        }
+                    }
+
+                    const bool duplicateShortcut = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_D, viewportRoute);
+                    const bool duplicateFallback = (shortcutIO.KeyCtrl && shortcutIO.KeyShift &&
+                                                    ImGui::IsKeyPressed(ImGuiKey_D, false));
+                    if (duplicateShortcut || duplicateFallback) {
+                        Entity selected = scene.GetSelectedEntity();
+                        if (selected) {
+                            scene.CopyEntityToClipboard(selected);
+                            Entity duplicated = scene.PasteClipboard();
+                            if (duplicated) {
+                                scene.SetSelectedEntity(duplicated);
+                            }
+                        }
+                    }
+                }
+            }
+
             // Decay attachment success message
             if (g_ScriptAttachmentMessageTimer > 0.0f) {
                 g_ScriptAttachmentMessageTimer -= dt;
@@ -5507,6 +5619,7 @@ int main()
 
             enqueueDeletion(outlinerActions.entityToDelete);
             enqueueDeletion(detailsActions.entityToDelete);
+            enqueueDeletion(viewportDeleteRequest);
 
             if (!entityDeletionQueue.empty()) {
                 if (gizmoDragging) {

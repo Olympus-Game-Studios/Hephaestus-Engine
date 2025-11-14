@@ -7,7 +7,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
+#include <unordered_map>
 #include <vector>
 
 namespace MaterialEditor {
@@ -148,6 +150,315 @@ bool SaveMaterialAssetFile(const std::filesystem::path& path,
     return true;
 }
 
+bool LoadMaterialAssetFile(const std::filesystem::path& path,
+                           MaterialComponent& outMaterial,
+                           std::string& outDisplayName,
+                           Graph& outGraph,
+                           std::string& outError) {
+    std::ifstream in(path);
+    if (!in) {
+        outError = "Unable to open material file for reading.";
+        return false;
+    }
+
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+
+    // Simple JSON parser (reusing pattern from SceneSerializer)
+    struct JsonValue {
+        enum class Type { Null, Bool, Number, String, Array, Object };
+        Type type = Type::Null;
+        bool boolValue = false;
+        double numberValue = 0.0;
+        std::string stringValue;
+        std::vector<JsonValue> arrayValue;
+        std::unordered_map<std::string, JsonValue> objectValue;
+
+        bool IsNull() const { return type == Type::Null; }
+        bool IsBool() const { return type == Type::Bool; }
+        bool IsNumber() const { return type == Type::Number; }
+        bool IsString() const { return type == Type::String; }
+        bool IsArray() const { return type == Type::Array; }
+        bool IsObject() const { return type == Type::Object; }
+
+        bool AsBool(bool fallback = false) const { return IsBool() ? boolValue : fallback; }
+        double AsNumber(double fallback = 0.0) const { return IsNumber() ? numberValue : fallback; }
+        const std::string& AsString() const { return stringValue; }
+        const std::vector<JsonValue>& AsArray() const { return arrayValue; }
+
+        const JsonValue* Find(const std::string& key) const {
+            if (!IsObject()) return nullptr;
+            auto it = objectValue.find(key);
+            return it != objectValue.end() ? &it->second : nullptr;
+        }
+    };
+
+    // Minimal JSON parser
+    auto skipWhitespace = [](const char*& p, const char* end) {
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) ++p;
+    };
+
+    std::function<bool(const char*&, const char*, JsonValue&, std::string&)> parseValue;
+    auto parseString = [&](const char*& p, const char* end, std::string& out) -> bool {
+        if (*p != '"') return false;
+        ++p;
+        out.clear();
+        while (p < end && *p != '"') {
+            if (*p == '\\' && p + 1 < end) {
+                ++p;
+                switch (*p) {
+                    case 'n': out += '\n'; break;
+                    case 'r': out += '\r'; break;
+                    case 't': out += '\t'; break;
+                    case '\\': out += '\\'; break;
+                    case '"': out += '"'; break;
+                    default: out += *p; break;
+                }
+            } else {
+                out += *p;
+            }
+            ++p;
+        }
+        if (p >= end) return false;
+        ++p; // skip closing quote
+        return true;
+    };
+
+    auto parseNumber = [](const char*& p, const char* end, double& out) -> bool {
+        char* parseEnd;
+        out = std::strtod(p, &parseEnd);
+        if (parseEnd == p) return false;
+        p = parseEnd;
+        return true;
+    };
+
+    auto parseArray = [&](const char*& p, const char* end, JsonValue& value, std::string& err) -> bool {
+        if (*p != '[') return false;
+        ++p;
+        value.type = JsonValue::Type::Array;
+        value.arrayValue.clear();
+        skipWhitespace(p, end);
+        if (p < end && *p == ']') { ++p; return true; }
+        while (p < end) {
+            JsonValue elem;
+            if (!parseValue(p, end, elem, err)) return false;
+            value.arrayValue.push_back(elem);
+            skipWhitespace(p, end);
+            if (p < end && *p == ',') { ++p; skipWhitespace(p, end); }
+            else if (p < end && *p == ']') { ++p; return true; }
+            else return false;
+        }
+        return false;
+    };
+
+    auto parseObject = [&](const char*& p, const char* end, JsonValue& value, std::string& err) -> bool {
+        if (*p != '{') return false;
+        ++p;
+        value.type = JsonValue::Type::Object;
+        value.objectValue.clear();
+        skipWhitespace(p, end);
+        if (p < end && *p == '}') { ++p; return true; }
+        while (p < end) {
+            skipWhitespace(p, end);
+            std::string key;
+            if (!parseString(p, end, key)) return false;
+            skipWhitespace(p, end);
+            if (p >= end || *p != ':') return false;
+            ++p;
+            skipWhitespace(p, end);
+            JsonValue val;
+            if (!parseValue(p, end, val, err)) return false;
+            value.objectValue[key] = val;
+            skipWhitespace(p, end);
+            if (p < end && *p == ',') { ++p; }
+            else if (p < end && *p == '}') { ++p; return true; }
+            else return false;
+        }
+        return false;
+    };
+
+    parseValue = [&](const char*& p, const char* end, JsonValue& value, std::string& err) -> bool {
+        skipWhitespace(p, end);
+        if (p >= end) return false;
+        if (*p == '"') {
+            value.type = JsonValue::Type::String;
+            return parseString(p, end, value.stringValue);
+        } else if (*p == '{') {
+            return parseObject(p, end, value, err);
+        } else if (*p == '[') {
+            return parseArray(p, end, value, err);
+        } else if (*p == 't' && p + 3 < end && std::strncmp(p, "true", 4) == 0) {
+            value.type = JsonValue::Type::Bool;
+            value.boolValue = true;
+            p += 4;
+            return true;
+        } else if (*p == 'f' && p + 4 < end && std::strncmp(p, "false", 5) == 0) {
+            value.type = JsonValue::Type::Bool;
+            value.boolValue = false;
+            p += 5;
+            return true;
+        } else if (*p == 'n' && p + 3 < end && std::strncmp(p, "null", 4) == 0) {
+            value.type = JsonValue::Type::Null;
+            p += 4;
+            return true;
+        } else if (*p == '-' || (*p >= '0' && *p <= '9')) {
+            value.type = JsonValue::Type::Number;
+            return parseNumber(p, end, value.numberValue);
+        }
+        return false;
+    };
+
+    JsonValue root;
+    const char* p = content.c_str();
+    const char* end = p + content.size();
+    if (!parseValue(p, end, root, outError)) {
+        outError = "Failed to parse material JSON.";
+        return false;
+    }
+
+    if (!root.IsObject()) {
+        outError = "Material file root must be an object.";
+        return false;
+    }
+
+    // Parse material properties
+    if (const JsonValue* name = root.Find("name")) {
+        if (name->IsString()) {
+            outDisplayName = name->AsString();
+        }
+    }
+
+    auto parseVec3 = [](const JsonValue& val, Vec3& out) {
+        if (val.IsArray() && val.arrayValue.size() >= 3) {
+            if (val.arrayValue[0].IsNumber()) out.x = static_cast<float>(val.arrayValue[0].AsNumber());
+            if (val.arrayValue[1].IsNumber()) out.y = static_cast<float>(val.arrayValue[1].AsNumber());
+            if (val.arrayValue[2].IsNumber()) out.z = static_cast<float>(val.arrayValue[2].AsNumber());
+        }
+    };
+
+    auto parseFloat3 = [](const JsonValue& val, Float3& out) {
+        if (val.IsArray() && val.arrayValue.size() >= 3) {
+            if (val.arrayValue[0].IsNumber()) out.x = static_cast<float>(val.arrayValue[0].AsNumber());
+            if (val.arrayValue[1].IsNumber()) out.y = static_cast<float>(val.arrayValue[1].AsNumber());
+            if (val.arrayValue[2].IsNumber()) out.z = static_cast<float>(val.arrayValue[2].AsNumber());
+        }
+    };
+
+    if (const JsonValue* albedo = root.Find("albedo")) {
+        parseVec3(*albedo, outMaterial.albedo);
+    }
+    if (const JsonValue* metallic = root.Find("metallic")) {
+        if (metallic->IsNumber()) outMaterial.metallic = static_cast<float>(metallic->AsNumber());
+    }
+    if (const JsonValue* roughness = root.Find("roughness")) {
+        if (roughness->IsNumber()) outMaterial.roughness = static_cast<float>(roughness->AsNumber());
+    }
+    if (const JsonValue* ao = root.Find("ao")) {
+        if (ao->IsNumber()) outMaterial.ao = static_cast<float>(ao->AsNumber());
+    }
+    if (const JsonValue* emissive = root.Find("emissive")) {
+        parseVec3(*emissive, outMaterial.emissive);
+    }
+    if (const JsonValue* emissiveStrength = root.Find("emissiveStrength")) {
+        if (emissiveStrength->IsNumber()) outMaterial.emissiveStrength = static_cast<float>(emissiveStrength->AsNumber());
+    }
+    if (const JsonValue* useAlbedoTexture = root.Find("useAlbedoTexture")) {
+        if (useAlbedoTexture->IsBool()) outMaterial.useAlbedoTexture = useAlbedoTexture->AsBool();
+    }
+    if (const JsonValue* albedoTexturePath = root.Find("albedoTexturePath")) {
+        if (albedoTexturePath->IsString()) outMaterial.albedoTexturePath = albedoTexturePath->AsString();
+    }
+    if (const JsonValue* useNormalTexture = root.Find("useNormalTexture")) {
+        if (useNormalTexture->IsBool()) outMaterial.useNormalTexture = useNormalTexture->AsBool();
+    }
+    if (const JsonValue* normalTexturePath = root.Find("normalTexturePath")) {
+        if (normalTexturePath->IsString()) outMaterial.normalTexturePath = normalTexturePath->AsString();
+    }
+    if (const JsonValue* useRoughnessTexture = root.Find("useRoughnessTexture")) {
+        if (useRoughnessTexture->IsBool()) outMaterial.useRoughnessTexture = useRoughnessTexture->AsBool();
+    }
+    if (const JsonValue* roughnessTexturePath = root.Find("roughnessTexturePath")) {
+        if (roughnessTexturePath->IsString()) outMaterial.roughnessTexturePath = roughnessTexturePath->AsString();
+    }
+    if (const JsonValue* useAoTexture = root.Find("useAoTexture")) {
+        if (useAoTexture->IsBool()) outMaterial.useAoTexture = useAoTexture->AsBool();
+    }
+    if (const JsonValue* aoTexturePath = root.Find("aoTexturePath")) {
+        if (aoTexturePath->IsString()) outMaterial.aoTexturePath = aoTexturePath->AsString();
+    }
+
+    // Parse graph
+    if (const JsonValue* graphObj = root.Find("graph")) {
+        if (graphObj->IsObject()) {
+            // Parse nodes
+            if (const JsonValue* nodesArray = graphObj->Find("nodes")) {
+                if (nodesArray->IsArray()) {
+                    for (const auto& nodeVal : nodesArray->arrayValue) {
+                        if (!nodeVal.IsObject()) continue;
+                        
+                        NodeType type = NodeType::MaterialOutput;
+                        if (const JsonValue* typeVal = nodeVal.Find("type")) {
+                            if (typeVal->IsString()) {
+                                type = StringToNodeType(typeVal->AsString());
+                            }
+                        }
+                        
+                        Node& node = outGraph.CreateNode(type);
+                        
+                        if (const JsonValue* idVal = nodeVal.Find("id")) {
+                            if (idVal->IsNumber()) {
+                                node.id = static_cast<NodeID>(idVal->AsNumber());
+                            }
+                        }
+                        if (const JsonValue* nameVal = nodeVal.Find("displayName")) {
+                            if (nameVal->IsString()) {
+                                node.displayName = nameVal->AsString();
+                            }
+                        }
+                        if (const JsonValue* scalarVal = nodeVal.Find("scalar")) {
+                            if (scalarVal->IsNumber()) {
+                                node.scalar = static_cast<float>(scalarVal->AsNumber());
+                            }
+                        }
+                        if (const JsonValue* colorVal = nodeVal.Find("color")) {
+                            parseFloat3(*colorVal, node.color);
+                        }
+                        if (const JsonValue* resourceVal = nodeVal.Find("resourcePath")) {
+                            if (resourceVal->IsString()) {
+                                node.resourcePath = resourceVal->AsString();
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Parse links
+            if (const JsonValue* linksArray = graphObj->Find("links")) {
+                if (linksArray->IsArray()) {
+                    for (const auto& linkVal : linksArray->arrayValue) {
+                        if (!linkVal.IsObject()) continue;
+                        
+                        int startPin = -1, endPin = -1;
+                        if (const JsonValue* startVal = linkVal.Find("startPin")) {
+                            if (startVal->IsNumber()) startPin = static_cast<int>(startVal->AsNumber());
+                        }
+                        if (const JsonValue* endVal = linkVal.Find("endPin")) {
+                            if (endVal->IsNumber()) endPin = static_cast<int>(endVal->AsNumber());
+                        }
+                        
+                        if (startPin >= 0 && endPin >= 0) {
+                            outGraph.CreateLink(startPin, endPin);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    outError.clear();
+    return true;
+}
+
 } // namespace
 
 void Panel::RefreshTextureCache() {
@@ -201,31 +512,12 @@ std::optional<PanelResult> Panel::Draw(Graph& graph) {
 
     ImGui::Separator();
 
-    // Mode tabs
-    ImGui::BeginGroup();
-    if (ImGui::RadioButton("Simple Properties", m_UseSimpleMode)) {
-        m_UseSimpleMode = true;
+    // Node graph editing
+    EnsureContext();
+    if (!m_EditorContext) {
+        ImGui::End();
+        return applyResult;
     }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Advanced (Graph)", !m_UseSimpleMode)) {
-        m_UseSimpleMode = false;
-    }
-    ImGui::EndGroup();
-
-    ImGui::Separator();
-
-    if (m_UseSimpleMode) {
-        // Simple mode: direct material property editing
-        if (auto result = DrawSimpleProperties(graph)) {
-            applyResult = *result;
-        }
-    } else {
-        // Advanced mode: node graph editing
-        EnsureContext();
-        if (!m_EditorContext) {
-            ImGui::End();
-            return applyResult;
-        }
 
         ImVec2 avail = ImGui::GetContentRegionAvail();
         float inspectorWidth = std::clamp(avail.x * 0.32f, 260.0f, 420.0f);
@@ -248,7 +540,6 @@ std::optional<PanelResult> Panel::Draw(Graph& graph) {
             ImGui::TextWrapped("%s", m_StatusMessage.c_str());
         }
         ImGui::EndChild();
-    }
 
     ImGui::End();
 
@@ -269,6 +560,22 @@ void Panel::DrawToolbar(Graph& graph) {
     ImGui::TextDisabled("Asset: %s", assetLabel.c_str());
     if (!m_CurrentAssetPath.empty() && ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", m_CurrentAssetPath.string().c_str());
+    }
+    
+    // Show keyboard shortcuts help
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+    ImGui::TextDisabled("Shortcuts:");
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted("Material Editor Keyboard Shortcuts:");
+        ImGui::Separator();
+        ImGui::BulletText("Ctrl+Shift+D - Delete selected nodes/links");
+        ImGui::BulletText("Esc - Deselect all");
+        ImGui::BulletText("F - Frame selected node");
+        ImGui::BulletText("Right-click - Add node menu");
+        ImGui::EndTooltip();
     }
 
     ImGui::Spacing();
@@ -412,31 +719,63 @@ void Panel::DrawNodeCanvas(Graph& graph) {
         graph.RemoveLink(static_cast<LinkID>(removedLink));
     }
 
+    // Keyboard shortcuts for material graph editor
     const ImGuiIO& io = ImGui::GetIO();
-    if (ImGui::IsKeyPressed(ImGuiKey_Delete) && !io.WantCaptureKeyboard) {
-        std::vector<int> selectedLinks(ImNodes::NumSelectedLinks());
-        if (!selectedLinks.empty()) {
-            ImNodes::GetSelectedLinks(selectedLinks.data());
-            for (int linkId : selectedLinks) {
-                graph.RemoveLink(static_cast<LinkID>(linkId));
-            }
-            ImNodes::ClearLinkSelection();
-        }
+    if (!io.WantTextInput) {
+        const ImGuiInputFlags shortcutRoute = ImGuiInputFlags_RouteFocused;
+        const bool deleteChord = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_D, shortcutRoute);
+        const bool deleteKey = ImGui::Shortcut(ImGuiKey_Delete, shortcutRoute);
 
-        std::vector<int> selectedNodes(ImNodes::NumSelectedNodes());
-        if (!selectedNodes.empty()) {
-            ImNodes::GetSelectedNodes(selectedNodes.data());
-            for (int nodeId : selectedNodes) {
-                Node* node = graph.FindNode(static_cast<NodeID>(nodeId));
-                if (!node) {
-                    continue;
+        // Ctrl+Shift+D or Delete - Delete selected nodes and links
+        if (deleteChord || deleteKey || (ImGui::IsKeyPressed(ImGuiKey_D, false) && io.KeyCtrl && io.KeyShift)) {
+            std::vector<int> selectedLinks(ImNodes::NumSelectedLinks());
+            if (!selectedLinks.empty()) {
+                ImNodes::GetSelectedLinks(selectedLinks.data());
+                for (int linkId : selectedLinks) {
+                    graph.RemoveLink(static_cast<LinkID>(linkId));
                 }
-                if (node->type == NodeType::MaterialOutput) {
-                    continue;
-                }
-                graph.RemoveNode(static_cast<NodeID>(nodeId));
+                ImNodes::ClearLinkSelection();
             }
+
+            std::vector<int> selectedNodes(ImNodes::NumSelectedNodes());
+            if (!selectedNodes.empty()) {
+                ImNodes::GetSelectedNodes(selectedNodes.data());
+                for (int nodeId : selectedNodes) {
+                    Node* node = graph.FindNode(static_cast<NodeID>(nodeId));
+                    if (!node) {
+                        continue;
+                    }
+                    // Prevent deletion of Material Output node
+                    if (node->type == NodeType::MaterialOutput) {
+                        continue;
+                    }
+                    graph.RemoveNode(static_cast<NodeID>(nodeId));
+                }
+                ImNodes::ClearNodeSelection();
+            }
+        }
+        
+        const bool escapeShortcut = ImGui::Shortcut(ImGuiKey_Escape, shortcutRoute);
+        // Escape - Deselect all nodes and links
+        if (escapeShortcut || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             ImNodes::ClearNodeSelection();
+            ImNodes::ClearLinkSelection();
+            m_LastSelectedNode.reset();
+        }
+        
+        const bool frameShortcut = ImGui::Shortcut(ImGuiKey_F, shortcutRoute);
+        // F key - Frame/focus selected nodes
+        if (frameShortcut || ImGui::IsKeyPressed(ImGuiKey_F)) {
+            int selectedCount = ImNodes::NumSelectedNodes();
+            if (selectedCount > 0) {
+                std::vector<int> selectedNodes(selectedCount);
+                ImNodes::GetSelectedNodes(selectedNodes.data());
+                if (!selectedNodes.empty()) {
+                    // Get position of first selected node and navigate to it
+                    ImVec2 nodePos = ImNodes::GetNodeEditorSpacePos(selectedNodes[0]);
+                    ImNodes::EditorContextResetPanning(ImVec2(-nodePos.x, -nodePos.y));
+                }
+            }
         }
     }
 
@@ -571,158 +910,6 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
     return applyResult;
 }
 
-std::optional<PanelResult> Panel::DrawSimpleProperties(Graph& graph) {
-    std::optional<PanelResult> applyResult;
-
-    ImGui::TextUnformatted("Material Properties");
-    ImGui::Separator();
-
-    // Albedo color
-    ImGui::ColorEdit3("Albedo", &m_SimpleMaterialProps.albedo.x);
-
-    // Metallic
-    ImGui::SliderFloat("Metallic", &m_SimpleMaterialProps.metallic, 0.0f, 1.0f);
-
-    // Roughness
-    ImGui::SliderFloat("Roughness", &m_SimpleMaterialProps.roughness, 0.0f, 1.0f);
-
-    // AO
-    ImGui::SliderFloat("Ambient Occlusion", &m_SimpleMaterialProps.ao, 0.0f, 1.0f);
-
-    // Emissive
-    ImGui::ColorEdit3("Emissive", &m_SimpleMaterialProps.emissive.x);
-
-    // Emissive Strength
-    ImGui::SliderFloat("Emissive Strength", &m_SimpleMaterialProps.emissiveStrength, 0.0f, 10.0f);
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("Texture Settings");
-
-    // Albedo texture checkbox
-    ImGui::Checkbox("Use Albedo Texture##SimpleMode", &m_SimpleMaterialProps.useAlbedoTexture);
-    if (m_SimpleMaterialProps.useAlbedoTexture) {
-        int currentSelection = -1;
-        for (size_t i = 0; i < m_DiscoveredTextures.size(); ++i) {
-            if (m_DiscoveredTextures[i] == m_SimpleMaterialProps.albedoTexturePath) {
-                currentSelection = static_cast<int>(i);
-                break;
-            }
-        }
-        std::vector<const char*> textureNames;
-        textureNames.reserve(m_DiscoveredTextures.size() + 1);
-        textureNames.push_back("(None)");
-        for (const auto& tex : m_DiscoveredTextures) {
-            textureNames.push_back(tex.c_str());
-        }
-        const char* preview = (currentSelection >= 0) ? m_DiscoveredTextures[currentSelection].c_str() : "(None)";
-        if (ImGui::Combo("Albedo Texture##Simple", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
-            if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(m_DiscoveredTextures.size())) {
-                m_SimpleMaterialProps.albedoTexturePath = m_DiscoveredTextures[currentSelection - 1];
-            } else {
-                m_SimpleMaterialProps.albedoTexturePath.clear();
-            }
-        }
-    }
-    
-    // Normal map texture checkbox
-    ImGui::Checkbox("Use Normal Texture##SimpleMode", &m_SimpleMaterialProps.useNormalTexture);
-    if (m_SimpleMaterialProps.useNormalTexture) {
-        int currentSelection = -1;
-        for (size_t i = 0; i < m_DiscoveredTextures.size(); ++i) {
-            if (m_DiscoveredTextures[i] == m_SimpleMaterialProps.normalTexturePath) {
-                currentSelection = static_cast<int>(i);
-                break;
-            }
-        }
-        std::vector<const char*> textureNames;
-        textureNames.reserve(m_DiscoveredTextures.size() + 1);
-        textureNames.push_back("(None)");
-        for (const auto& tex : m_DiscoveredTextures) {
-            textureNames.push_back(tex.c_str());
-        }
-        const char* preview = (currentSelection >= 0) ? m_DiscoveredTextures[currentSelection].c_str() : "(None)";
-        if (ImGui::Combo("Normal Texture##Simple", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
-            if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(m_DiscoveredTextures.size())) {
-                m_SimpleMaterialProps.normalTexturePath = m_DiscoveredTextures[currentSelection - 1];
-            } else {
-                m_SimpleMaterialProps.normalTexturePath.clear();
-            }
-        }
-    }
-    
-    // Roughness texture checkbox
-    ImGui::Checkbox("Use Roughness Texture##SimpleMode", &m_SimpleMaterialProps.useRoughnessTexture);
-    if (m_SimpleMaterialProps.useRoughnessTexture) {
-        int currentSelection = -1;
-        for (size_t i = 0; i < m_DiscoveredTextures.size(); ++i) {
-            if (m_DiscoveredTextures[i] == m_SimpleMaterialProps.roughnessTexturePath) {
-                currentSelection = static_cast<int>(i);
-                break;
-            }
-        }
-        std::vector<const char*> textureNames;
-        textureNames.reserve(m_DiscoveredTextures.size() + 1);
-        textureNames.push_back("(None)");
-        for (const auto& tex : m_DiscoveredTextures) {
-            textureNames.push_back(tex.c_str());
-        }
-        const char* preview = (currentSelection >= 0) ? m_DiscoveredTextures[currentSelection].c_str() : "(None)";
-        if (ImGui::Combo("Roughness Texture##Simple", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
-            if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(m_DiscoveredTextures.size())) {
-                m_SimpleMaterialProps.roughnessTexturePath = m_DiscoveredTextures[currentSelection - 1];
-            } else {
-                m_SimpleMaterialProps.roughnessTexturePath.clear();
-            }
-        }
-    }
-    
-    // AO texture checkbox
-    ImGui::Checkbox("Use AO Texture##SimpleMode", &m_SimpleMaterialProps.useAoTexture);
-    if (m_SimpleMaterialProps.useAoTexture) {
-        int currentSelection = -1;
-        for (size_t i = 0; i < m_DiscoveredTextures.size(); ++i) {
-            if (m_DiscoveredTextures[i] == m_SimpleMaterialProps.aoTexturePath) {
-                currentSelection = static_cast<int>(i);
-                break;
-            }
-        }
-        std::vector<const char*> textureNames;
-        textureNames.reserve(m_DiscoveredTextures.size() + 1);
-        textureNames.push_back("(None)");
-        for (const auto& tex : m_DiscoveredTextures) {
-            textureNames.push_back(tex.c_str());
-        }
-        const char* preview = (currentSelection >= 0) ? m_DiscoveredTextures[currentSelection].c_str() : "(None)";
-        if (ImGui::Combo("AO Texture##Simple", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
-            if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(m_DiscoveredTextures.size())) {
-                m_SimpleMaterialProps.aoTexturePath = m_DiscoveredTextures[currentSelection - 1];
-            } else {
-                m_SimpleMaterialProps.aoTexturePath.clear();
-            }
-        }
-    }
-
-    ImGui::Separator();
-
-    if (ImGui::Button("Save & Apply Material", ImVec2(-1.0f, 0.0f))) {
-        std::string saveError;
-        bool saved = SaveMaterialAssetFile(m_CurrentAssetPath, m_SimpleMaterialProps, m_CurrentMaterialName, graph, saveError);
-        if (!saved) {
-            m_StatusMessage = "Save failed: " + saveError;
-        } else {
-            m_StatusMessage = "Material saved successfully!";
-            applyResult = PanelResult{m_SimpleMaterialProps, m_CurrentMaterialName, m_CurrentAssetPath};
-        }
-    }
-
-    if (!m_StatusMessage.empty()) {
-        ImGui::Spacing();
-        ImGui::TextWrapped("%s", m_StatusMessage.c_str());
-    }
-
-    return applyResult;
-}
-
 void Panel::SetActiveAsset(const std::filesystem::path& path) {
     m_CurrentAssetPath = path.lexically_normal();
     m_CurrentMaterialName = m_CurrentAssetPath.stem().string();
@@ -745,7 +932,26 @@ void Panel::SetActiveAsset(const std::filesystem::path& path) {
     // Refresh texture cache
     RefreshTextureCache();
     
-    m_StatusMessage = "Opened material '" + m_CurrentMaterialName + "'.";
+    // Load existing material data if file exists
+    if (std::filesystem::exists(m_CurrentAssetPath)) {
+        MaterialComponent loadedMaterial;
+        std::string loadedName;
+        Graph tempGraph; // Temporary graph, will be loaded via LoadMaterialIntoGraph later
+        std::string loadError;
+        
+        if (LoadMaterialAssetFile(m_CurrentAssetPath, loadedMaterial, loadedName, tempGraph, loadError)) {
+            if (!loadedName.empty()) {
+                m_CurrentMaterialName = loadedName;
+            }
+            m_StatusMessage = "Loaded material '" + m_CurrentMaterialName + "'.";
+        } else {
+            m_StatusMessage = "Opened material '" + m_CurrentMaterialName + "', but failed to load data: " + loadError;
+        }
+    } else {
+        // New material
+        m_StatusMessage = "Created new material '" + m_CurrentMaterialName + "'.";
+    }
+    
     m_LastSelectedNode.reset();
     m_PendingPlacements.clear();
     m_IsOpen = true;
@@ -754,6 +960,27 @@ void Panel::SetActiveAsset(const std::filesystem::path& path) {
         ImNodes::EditorContextSet(m_EditorContext);
         ImNodes::EditorContextResetPanning(ImVec2(0.0f, 0.0f));
         ImNodes::EditorContextSet(nullptr);
+    }
+}
+
+void Panel::LoadMaterialIntoGraph(Graph& graph) {
+    if (!std::filesystem::exists(m_CurrentAssetPath)) {
+        return; // No file to load from
+    }
+    
+    MaterialComponent tempMaterial;
+    std::string tempName;
+    std::string loadError;
+    
+    if (LoadMaterialAssetFile(m_CurrentAssetPath, tempMaterial, tempName, graph, loadError)) {
+        // Graph has been populated
+        // Queue node placements if needed
+        const auto& nodes = graph.GetNodes();
+        for (const auto& node : nodes) {
+            if (node.type == NodeType::MaterialOutput) {
+                QueueNodePlacement(node.id, ImVec2(400.0f, 200.0f));
+            }
+        }
     }
 }
 
