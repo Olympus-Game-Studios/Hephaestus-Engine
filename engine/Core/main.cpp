@@ -29,6 +29,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shlobj.h>
 #endif
 
 #include "../Assets/MeshAsset.h"
@@ -1146,8 +1147,46 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
         }
 
         if (light.type == LightType::Directional) {
-            ImGui::DragFloat3("Direction", &light.direction.x, 0.01f);
-            light.direction = vnorm(light.direction);
+            // Compute current direction from transform rotation
+            Vec3 currentDirection = Vec3(0.0f, -1.0f, 0.0f); // Default
+            if (selectedEntity.HasComponent<TransformComponent>()) {
+                auto& transform = selectedEntity.GetComponent<TransformComponent>();
+                Mat4 rx = Mat4::RotationX(transform.rotation.x);
+                Mat4 ry = Mat4::RotationY(transform.rotation.y);
+                Mat4 rz = Mat4::RotationZ(transform.rotation.z);
+                Mat4 rotMatrix = Mat4::Multiply(rx, Mat4::Multiply(ry, rz));
+                currentDirection = Mat4::TransformDirection(rotMatrix, currentDirection);
+                currentDirection = vnorm(currentDirection);
+            }
+            
+            // Allow user to edit direction, then compute rotation from it
+            Vec3 editDirection = currentDirection;
+            if (ImGui::DragFloat3("Direction", &editDirection.x, 0.01f, -1.0f, 1.0f)) {
+                // Normalize the direction
+                editDirection = vnorm(editDirection);
+                
+                // Compute rotation that would produce this direction
+                // We want to rotate the default direction (0, -1, 0) to match editDirection
+                if (selectedEntity.HasComponent<TransformComponent>()) {
+                    auto& transform = selectedEntity.GetComponent<TransformComponent>();
+                    
+                    // Calculate pitch (rotation around X axis)
+                    // For direction (dx, dy, dz), pitch affects the y and z components
+                    float pitch = std::asin(-editDirection.y);
+                    
+                    // Calculate yaw (rotation around Y axis) 
+                    float yaw = std::atan2(editDirection.x, editDirection.z);
+                    
+                    // Set the rotation (we ignore roll for directional lights)
+                    transform.rotation.x = pitch;
+                    transform.rotation.y = yaw;
+                    // Keep existing roll or set to 0
+                    transform.rotation.z = 0.0f;
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Light direction in world space. You can also use Transform Rotation.");
+            }
         }
 
         if (light.type == LightType::Spot) {
@@ -1869,6 +1908,96 @@ static void DrawSpotlightConeVisualization(Entity spotEntity, const Scene& scene
     }
 }
 
+// Draw a wireframe arrow for directional light visualization
+static void DrawDirectionalLightArrowVisualization(Entity dirLightEntity, const Scene& scene,
+                                                    const Mat4& viewMatrix, const Mat4& projMatrix,
+                                                    int screenWidth, int screenHeight)
+{
+    if (!dirLightEntity || !dirLightEntity.HasComponent<TransformComponent>() || !dirLightEntity.HasComponent<LightComponent>()) {
+        return;
+    }
+    
+    auto& transform = dirLightEntity.GetComponent<TransformComponent>();
+    auto& light = dirLightEntity.GetComponent<LightComponent>();
+    
+    if (light.type != LightType::Directional) {
+        return;
+    }
+    
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+    
+    const ImU32 arrowColor = IM_COL32(255, 220, 100, 200); // Golden/yellow color for sun
+    const float arrowLength = 2.0f;
+    const float arrowHeadLength = 0.4f;
+    const float arrowHeadWidth = 0.3f;
+    
+    // Calculate arrow direction from transform rotation
+    Mat4 rx = Mat4::RotationX(transform.rotation.x);
+    Mat4 ry = Mat4::RotationY(transform.rotation.y);
+    Mat4 rz = Mat4::RotationZ(transform.rotation.z);
+    Mat4 rotMatrix = Mat4::Multiply(rx, Mat4::Multiply(ry, rz));
+    Vec3 direction = Mat4::TransformDirection(rotMatrix, Vec3(0.0f, -1.0f, 0.0f));
+    direction = vnorm(direction);
+    
+    // Arrow starts at the light position
+    Vec3 arrowStart = transform.position;
+    Vec3 arrowEnd = vadd(arrowStart, vscale(direction, arrowLength));
+    
+    // Project to screen space
+    Vec3 startScreen = WorldToScreenPoint(arrowStart, viewMatrix, projMatrix, screenWidth, screenHeight);
+    Vec3 endScreen = WorldToScreenPoint(arrowEnd, viewMatrix, projMatrix, screenWidth, screenHeight);
+    
+    // Draw main arrow shaft
+    if (startScreen.z > 0 && endScreen.z > 0) {
+        drawList->AddLine(ImVec2(startScreen.x, startScreen.y), ImVec2(endScreen.x, endScreen.y), arrowColor, 2.5f);
+        
+        // Create arrowhead at the end
+        // Calculate perpendicular vectors for the arrowhead
+        Vec3 right = vnorm(vcross(direction, Vec3(0, 1, 0)));
+        if (vlen(right) < 0.01f) {
+            right = vnorm(vcross(direction, Vec3(1, 0, 0)));
+        }
+        Vec3 up = vnorm(vcross(right, direction));
+        
+        // Arrowhead base point (slightly back from the tip)
+        Vec3 headBase = vadd(arrowEnd, vscale(direction, -arrowHeadLength));
+        
+        // Create 4 arrowhead points (forming a cone-like shape)
+        Vec3 headPoint1 = vadd(headBase, vscale(right, arrowHeadWidth));
+        Vec3 headPoint2 = vadd(headBase, vscale(right, -arrowHeadWidth));
+        Vec3 headPoint3 = vadd(headBase, vscale(up, arrowHeadWidth));
+        Vec3 headPoint4 = vadd(headBase, vscale(up, -arrowHeadWidth));
+        
+        // Project arrowhead points
+        Vec3 hp1Screen = WorldToScreenPoint(headPoint1, viewMatrix, projMatrix, screenWidth, screenHeight);
+        Vec3 hp2Screen = WorldToScreenPoint(headPoint2, viewMatrix, projMatrix, screenWidth, screenHeight);
+        Vec3 hp3Screen = WorldToScreenPoint(headPoint3, viewMatrix, projMatrix, screenWidth, screenHeight);
+        Vec3 hp4Screen = WorldToScreenPoint(headPoint4, viewMatrix, projMatrix, screenWidth, screenHeight);
+        
+        // Draw arrowhead lines from points to tip
+        if (hp1Screen.z > 0) {
+            drawList->AddLine(ImVec2(endScreen.x, endScreen.y), ImVec2(hp1Screen.x, hp1Screen.y), arrowColor, 2.5f);
+        }
+        if (hp2Screen.z > 0) {
+            drawList->AddLine(ImVec2(endScreen.x, endScreen.y), ImVec2(hp2Screen.x, hp2Screen.y), arrowColor, 2.5f);
+        }
+        if (hp3Screen.z > 0) {
+            drawList->AddLine(ImVec2(endScreen.x, endScreen.y), ImVec2(hp3Screen.x, hp3Screen.y), arrowColor, 2.5f);
+        }
+        if (hp4Screen.z > 0) {
+            drawList->AddLine(ImVec2(endScreen.x, endScreen.y), ImVec2(hp4Screen.x, hp4Screen.y), arrowColor, 2.5f);
+        }
+        
+        // Draw arrowhead base cross
+        if (hp1Screen.z > 0 && hp2Screen.z > 0) {
+            drawList->AddLine(ImVec2(hp1Screen.x, hp1Screen.y), ImVec2(hp2Screen.x, hp2Screen.y), arrowColor, 2.0f);
+        }
+        if (hp3Screen.z > 0 && hp4Screen.z > 0) {
+            drawList->AddLine(ImVec2(hp3Screen.x, hp3Screen.y), ImVec2(hp4Screen.x, hp4Screen.y), arrowColor, 2.0f);
+        }
+    }
+}
+
 // Helper: Ray-Sphere intersection test for light billboards
 static bool IntersectRaySphere(const Ray& ray, const Vec3& center, float radius, float& outDist)
 {
@@ -2039,6 +2168,52 @@ static std::filesystem::path GetExecutableDirectory()
 #endif
     return std::filesystem::current_path();
 }
+
+#ifdef _WIN32
+static int CALLBACK DirectoryPickerCallback(HWND hwnd, UINT uMsg, LPARAM lParam, LPARAM lpData)
+{
+    if (uMsg == BFFM_INITIALIZED && lpData) {
+        SendMessageW(hwnd, BFFM_SETSELECTIONW, TRUE, lpData);
+    }
+    return 0;
+}
+
+static std::optional<std::filesystem::path> PromptDirectoryPicker(const std::filesystem::path& initialPath)
+{
+    BROWSEINFOW bi{};
+    bi.hwndOwner = nullptr;
+    bi.lpszTitle = L"Select project location";
+    bi.ulFlags = BIF_USENEWUI | BIF_RETURNONLYFSDIRS;
+    wchar_t displayName[MAX_PATH] = {};
+    bi.pszDisplayName = displayName;
+    bi.lpfn = DirectoryPickerCallback;
+
+    std::wstring normalized = initialPath.lexically_normal().wstring();
+    if (!normalized.empty()) {
+        bi.lParam = reinterpret_cast<LPARAM>(normalized.c_str());
+    }
+
+    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+    if (!pidl) {
+        return std::nullopt;
+    }
+
+    wchar_t selected[MAX_PATH] = {};
+    bool gotPath = SHGetPathFromIDListW(pidl, selected) == TRUE;
+    CoTaskMemFree(pidl);
+
+    if (!gotPath) {
+        return std::nullopt;
+    }
+
+    return std::filesystem::path(selected);
+}
+#else
+static std::optional<std::filesystem::path> PromptDirectoryPicker(const std::filesystem::path&)
+{
+    return std::nullopt;
+}
+#endif
 
 static std::filesystem::path ResolveProjectsRoot()
 {
@@ -3611,8 +3786,14 @@ static std::optional<std::filesystem::path> DrawProjectBrowser()
     static std::string s_SelectedProjectName;
     static std::string s_ErrorMessage;
     static std::string s_StatusMessage;
+    static std::array<char, 1024> s_ProjectLocationBuffer{};
+    static std::filesystem::path s_LastProjectsRoot;
 
     fs::path projectsRoot = ResolveProjectsRoot();
+    // Track when projects root changes to keep it updated locally
+    if (projectsRoot != s_LastProjectsRoot) {
+        s_LastProjectsRoot = projectsRoot;
+    }
     std::error_code scanErr;
     std::string enumerationError;
     std::vector<fs::path> projectPaths;
@@ -3660,6 +3841,9 @@ static std::optional<std::filesystem::path> DrawProjectBrowser()
     if (ImGui::Begin("Project Browser", nullptr, windowFlags)) {
         ImGui::Text("Select or create a project to continue");
         std::string rootDisplay = projectsRoot.generic_string();
+        std::string locationDisplayInput = TrimCopy(s_ProjectLocationBuffer.data());
+        fs::path locationDisplayRoot = locationDisplayInput.empty() ? projectsRoot : fs::path(locationDisplayInput);
+        locationDisplayRoot = locationDisplayRoot.lexically_normal();
         ImGui::TextDisabled("Projects directory: %s", rootDisplay.c_str());
         if (!enumerationError.empty()) {
             ImGui::TextColored(ImVec4(0.90f, 0.36f, 0.36f, 1.0f), "%s", enumerationError.c_str());
@@ -3713,6 +3897,28 @@ static std::optional<std::filesystem::path> DrawProjectBrowser()
         ImGui::TextDisabled("Double-click a project name to open it");
 
         ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::Text("Project Location:");
+        ImGui::PushItemWidth(-140.0f);
+        ImGui::InputTextWithHint("##NewProjectLocation", "Leave blank to use the default directory", s_ProjectLocationBuffer.data(), s_ProjectLocationBuffer.size());
+        ImGui::PopItemWidth();
+    #ifdef _WIN32
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...", ImVec2(120.0f, 0.0f))) {
+            std::string currentLocation = TrimCopy(s_ProjectLocationBuffer.data());
+            fs::path baseLocation = currentLocation.empty() ? projectsRoot : fs::path(currentLocation);
+            if (auto picked = PromptDirectoryPicker(baseLocation)) {
+            std::string normalized = picked->lexically_normal().generic_string();
+            std::fill(s_ProjectLocationBuffer.begin(), s_ProjectLocationBuffer.end(), 0);
+            std::strncpy(s_ProjectLocationBuffer.data(), normalized.c_str(), s_ProjectLocationBuffer.size() - 1);
+            }
+        }
+    #else
+        ImGui::SameLine();
+        ImGui::TextDisabled("Browse (Windows only)");
+    #endif
+        ImGui::TextDisabled("Current target: %s", locationDisplayRoot.generic_string().c_str());
+        ImGui::Separator();
         ImGui::Text("Create New Project");
 
         ImGui::PushItemWidth(-140.0f);
@@ -3746,7 +3952,10 @@ static std::optional<std::filesystem::path> DrawProjectBrowser()
                     s_ErrorMessage = "Project name cannot end with spaces or dots.";
                     s_StatusMessage.clear();
                 } else {
-                    fs::path newProjectPath = (projectsRoot / sanitized).lexically_normal();
+                    std::string locationOverride = TrimCopy(s_ProjectLocationBuffer.data());
+                    fs::path baseLocation = locationOverride.empty() ? projectsRoot : fs::path(locationOverride);
+                    baseLocation = baseLocation.lexically_normal();
+                    fs::path newProjectPath = (baseLocation / sanitized).lexically_normal();
                     if (fs::exists(newProjectPath)) {
                         s_ErrorMessage = "A project with that name already exists.";
                         s_StatusMessage.clear();
@@ -3867,6 +4076,7 @@ static std::optional<std::filesystem::path> DrawProjectBrowser()
 
         ImGui::Separator();
         ImGui::TextDisabled("Projects are stored inside: %s", rootDisplay.c_str());
+        ImGui::TextDisabled("Current creation target: %s", locationDisplayRoot.generic_string().c_str());
     }
     ImGui::End();
 
@@ -4526,7 +4736,10 @@ int main()
     // Create lights
     Entity dirLight = scene.CreateEntity("Directional Light");
     dirLight.AddComponent<LightComponent>(LightComponent::CreateDirectional(
-        Vec3(0.3f, -1.0f, 0.5f), Vec3(1.0f, 0.95f, 0.9f), 0.8f));
+        Vec3(0.0f, -1.0f, 0.0f), Vec3(1.0f, 0.95f, 0.9f), 0.8f));
+    auto& dirLightTransform = dirLight.GetComponent<TransformComponent>();
+    dirLightTransform.position = Vec3(0.0f, 5.0f, 0.0f); // Position above the scene for visibility
+    dirLightTransform.rotation = Vec3(0.524f, 0.262f, 0.0f); // ~30 deg X, ~15 deg Y for nice angled lighting
     
     Entity pointLight1 = scene.CreateEntity("Point Light 1");
     auto& pl1Transform = pointLight1.GetComponent<TransformComponent>();
@@ -4613,9 +4826,12 @@ int main()
 
     auto spawnDirectionalLightEntity = [&]() -> Entity {
         Entity light = scene.CreateEntity(makeUniqueEntityName("Directional Light"));
-        light.AddComponent<LightComponent>(LightComponent::CreateDirectional(Vec3(0.3f, -1.0f, 0.5f), Vec3(1.0f, 0.95f, 0.9f), 1.0f));
+        light.AddComponent<LightComponent>(LightComponent::CreateDirectional(Vec3(0.0f, -1.0f, 0.0f), Vec3(1.0f, 0.95f, 0.9f), 1.0f));
         auto& transform = light.GetComponent<TransformComponent>();
         transform.position = Vec3(0.0f, 3.0f, 0.0f);
+        // Set rotation to create a nice default direction (angled down and slightly forward)
+        // Rotation of about 30 degrees on X axis and 15 degrees on Y gives a nice angled sunlight
+        transform.rotation = Vec3(0.524f, 0.262f, 0.0f); // ~30 deg X, ~15 deg Y in radians
         if (!g_DetailsLocked) {
             scene.SetSelectedEntity(light);
         }
@@ -5990,14 +6206,20 @@ int main()
             }
         }
         
-        // Draw spotlight cone visualizations
+        // Draw spotlight cone visualizations and directional light arrows
         if (g_ProjectSelected && g_ShowEditorGizmo && (!g_SimPlaying || g_SimPaused)) {
+            Entity selectedEntity = scene.GetSelectedEntity();
             auto spotlightView = scene.GetEntitiesWith<LightComponent>();
             for (auto entityHandle : spotlightView) {
                 Entity entity(entityHandle, &scene);
                 auto& light = entity.GetComponent<LightComponent>();
                 if (light.type == LightType::Spot) {
                     DrawSpotlightConeVisualization(entity, scene, ubo.view, ubo.proj, swap.extent.width, swap.extent.height);
+                } else if (light.type == LightType::Directional) {
+                    // Only draw arrow if this directional light is selected
+                    if (selectedEntity && entity == selectedEntity) {
+                        DrawDirectionalLightArrowVisualization(entity, scene, ubo.view, ubo.proj, swap.extent.width, swap.extent.height);
+                    }
                 }
             }
         }
@@ -6078,7 +6300,20 @@ int main()
                 auto& light = entity.GetComponent<LightComponent>();
                 
                 if (light.type == LightType::Directional) {
-                    lightUBO.dirLightDir = light.direction;
+                    // Compute direction from entity's transform rotation
+                    Vec3 direction = Vec3(0.0f, -1.0f, 0.0f); // Default downward direction
+                    if (entity.HasComponent<TransformComponent>()) {
+                        auto& transform = entity.GetComponent<TransformComponent>();
+                        // Create rotation matrix from transform
+                        Mat4 rx = Mat4::RotationX(transform.rotation.x);
+                        Mat4 ry = Mat4::RotationY(transform.rotation.y);
+                        Mat4 rz = Mat4::RotationZ(transform.rotation.z);
+                        Mat4 rotMatrix = Mat4::Multiply(rx, Mat4::Multiply(ry, rz));
+                        // Transform the default direction by rotation
+                        direction = Mat4::TransformDirection(rotMatrix, direction);
+                        direction = vnorm(direction);
+                    }
+                    lightUBO.dirLightDir = direction;
                     lightUBO.dirLightIntensity = light.intensity;
                     lightUBO.dirLightColor = light.color;
                     break; // Only support one directional light for now
@@ -6433,8 +6668,9 @@ int main()
                         auto& transform = entity.GetComponent<TransformComponent>();
                         lightPos = transform.position;
                     } else {
-                        // Fallback: place the billboard at a position offset by the direction
-                        lightPos = vscale(light.direction, 5.0f);
+                        // Fallback: compute direction from default rotation and offset billboard
+                        Vec3 direction = Vec3(0.0f, -1.0f, 0.0f);
+                        lightPos = vscale(direction, 5.0f);
                     }
                     descriptorSet = billboardDescriptorSets_Directional[imageIndex];
                 } else if (light.type == LightType::Spot) {

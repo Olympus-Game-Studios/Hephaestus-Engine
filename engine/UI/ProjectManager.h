@@ -91,6 +91,9 @@ public:
 
     // Refresh the project list
     void RefreshProjects();
+    
+    // Add a custom project path to track
+    void AddCustomProjectPath(const std::filesystem::path& projectPath);
 
     // Get available templates
     const std::vector<ProjectTemplate>& GetTemplates() const { return m_Templates; }
@@ -134,6 +137,10 @@ private:
     // Icon loading
     void LoadIcons();
     ImTextureID GetIcon(const std::string& iconKey);
+    
+    // Custom paths persistence
+    void SaveCustomPaths();
+    void LoadCustomPaths();
 
 private:
     // Vulkan resources
@@ -143,6 +150,7 @@ private:
     
     // Project data
     std::filesystem::path m_ProjectsRoot;
+    std::vector<std::filesystem::path> m_CustomProjectPaths;  // Individual projects outside the root
     std::vector<ProjectInfo> m_AllProjects;
     std::vector<ProjectInfo*> m_FilteredProjects;  // Pointers to filtered projects
     std::vector<ProjectInfo*> m_RecentProjects;     // Pointers to recent projects
@@ -169,6 +177,7 @@ private:
     char m_NewProjectNameBuffer[128] = {};
     char m_NewProjectDescBuffer[512] = {};
     char m_NewScriptNameBuffer[128] = {};
+    char m_CustomProjectLocationBuffer[1024] = {};
     const ProjectTemplate* m_SelectedTemplate = nullptr;
     
     // Status messages

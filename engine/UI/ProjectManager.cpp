@@ -47,6 +47,7 @@ std::filesystem::path FindEditorIconsRoot()
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #elif defined(__APPLE__)
 #include <stdlib.h>
 #elif defined(__linux__)
@@ -54,6 +55,47 @@ std::filesystem::path FindEditorIconsRoot()
 #endif
 
 namespace HephaestusEngine {
+
+#ifdef _WIN32
+static int CALLBACK BrowseFolderCallback(HWND hwnd, UINT uMsg, LPARAM lParam, LPARAM lpData)
+{
+    if (uMsg == BFFM_INITIALIZED && lpData) {
+        SendMessageW(hwnd, BFFM_SETSELECTIONW, TRUE, lpData);
+    }
+    return 0;
+}
+
+static std::optional<std::filesystem::path> PickFolderDialog(const std::filesystem::path& initialPath)
+{
+    BROWSEINFOW bi{};
+    bi.hwndOwner = nullptr;
+    bi.lpszTitle = L"Select project location";
+    bi.ulFlags = BIF_USENEWUI | BIF_RETURNONLYFSDIRS;
+    wchar_t displayName[MAX_PATH] = {};
+    bi.pszDisplayName = displayName;
+    bi.lpfn = BrowseFolderCallback;
+
+    std::wstring normalized = initialPath.lexically_normal().wstring();
+    if (!normalized.empty()) {
+        bi.lParam = reinterpret_cast<LPARAM>(normalized.c_str());
+    }
+
+    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+    if (!pidl) {
+        return std::nullopt;
+    }
+
+    wchar_t selected[MAX_PATH] = {};
+    bool gotPath = SHGetPathFromIDListW(pidl, selected) == TRUE;
+    CoTaskMemFree(pidl);
+
+    if (!gotPath) {
+        return std::nullopt;
+    }
+
+    return std::filesystem::path(selected);
+}
+#endif
 
 // ============================================================================
 // ProjectMetadata Implementation
@@ -160,6 +202,7 @@ void ProjectManager::Initialize(::VulkanDevice* device) {
     m_Device = device;
     InitializeTemplates();
     LoadIcons();
+    LoadCustomPaths();
 }
 
 void ProjectManager::Shutdown() {
@@ -188,6 +231,18 @@ void ProjectManager::SetProjectsRoot(const std::filesystem::path& root) {
     RefreshProjects();
 }
 
+void ProjectManager::AddCustomProjectPath(const std::filesystem::path& projectPath) {
+    // Avoid duplicates
+    auto normalized = projectPath.lexically_normal();
+    for (const auto& existing : m_CustomProjectPaths) {
+        if (existing.lexically_normal() == normalized) {
+            return;
+        }
+    }
+    m_CustomProjectPaths.push_back(normalized);
+    SaveCustomPaths();
+}
+
 void ProjectManager::RefreshProjects() {
     m_AllProjects.clear();
     m_FilteredProjects.clear();
@@ -196,39 +251,54 @@ void ProjectManager::RefreshProjects() {
     
     if (!std::filesystem::exists(m_ProjectsRoot)) {
         std::filesystem::create_directories(m_ProjectsRoot);
-        return;
     }
     
-    // Scan for projects
+    auto loadProjectInfo = [](const std::filesystem::path& projectPath) -> ProjectInfo {
+        ProjectInfo info;
+        info.path = projectPath;
+        
+        // Try to load metadata
+        info.metadata.LoadFromFile(info.path);
+        
+        // If no metadata exists, create default
+        if (info.metadata.name.empty()) {
+            info.metadata.name = info.path.filename().string();
+            info.metadata.description = "No description available";
+            info.metadata.created = std::chrono::system_clock::now();
+            info.metadata.lastModified = std::chrono::system_clock::now();
+        }
+        
+        // Update last modified from filesystem
+        auto ftime = std::filesystem::last_write_time(info.path);
+        auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+            ftime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now()
+        );
+        info.metadata.lastModified = sctp;
+        
+        return info;
+    };
+    
+    // Scan for projects in the default root
     try {
-        for (const auto& entry : std::filesystem::directory_iterator(m_ProjectsRoot)) {
-            if (!entry.is_directory()) continue;
-            
-            ProjectInfo info;
-            info.path = entry.path();
-            
-            // Try to load metadata
-            info.metadata.LoadFromFile(info.path);
-            
-            // If no metadata exists, create default
-            if (info.metadata.name.empty()) {
-                info.metadata.name = info.path.filename().string();
-                info.metadata.description = "No description available";
-                info.metadata.created = std::chrono::system_clock::now();
-                info.metadata.lastModified = std::chrono::system_clock::now();
+        if (std::filesystem::exists(m_ProjectsRoot)) {
+            for (const auto& entry : std::filesystem::directory_iterator(m_ProjectsRoot)) {
+                if (!entry.is_directory()) continue;
+                m_AllProjects.push_back(loadProjectInfo(entry.path()));
             }
-            
-            // Update last modified from filesystem
-            auto ftime = std::filesystem::last_write_time(info.path);
-            auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-                ftime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now()
-            );
-            info.metadata.lastModified = sctp;
-            
-            m_AllProjects.push_back(info);
         }
     } catch (const std::exception& e) {
         m_ErrorMessage = std::string("Error scanning projects: ") + e.what();
+    }
+    
+    // Scan custom project paths
+    for (const auto& customPath : m_CustomProjectPaths) {
+        try {
+            if (std::filesystem::exists(customPath) && std::filesystem::is_directory(customPath)) {
+                m_AllProjects.push_back(loadProjectInfo(customPath));
+            }
+        } catch (const std::exception& e) {
+            // Skip invalid custom paths
+        }
     }
     
     ApplyFilterAndSort();
@@ -818,6 +888,27 @@ void ProjectManager::DrawNewProjectDialog() {
         ImGui::Separator();
         ImGui::Spacing();
         
+        ImGui::Text("Project Location:");
+        ImGui::SetNextItemWidth(-140.0f);
+        ImGui::InputTextWithHint("##CustomLocation", "Leave blank to use default location", m_CustomProjectLocationBuffer, sizeof(m_CustomProjectLocationBuffer));
+#ifdef _WIN32
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...", ImVec2(120, 0))) {
+            std::string current = m_CustomProjectLocationBuffer;
+            std::filesystem::path baseLocation = current.empty() ? m_ProjectsRoot : std::filesystem::path(current);
+            if (auto picked = PickFolderDialog(baseLocation)) {
+                std::string normalized = picked->lexically_normal().generic_string();
+                std::fill(std::begin(m_CustomProjectLocationBuffer), std::end(m_CustomProjectLocationBuffer), 0);
+                std::strncpy(m_CustomProjectLocationBuffer, normalized.c_str(), sizeof(m_CustomProjectLocationBuffer) - 1);
+            }
+        }
+#endif
+        ImGui::TextDisabled("Default: %s", m_ProjectsRoot.generic_string().c_str());
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
         ImGui::Text("Choose a Template:");
         
         ImGui::BeginChild("##Templates", ImVec2(0, 200), true);
@@ -919,7 +1010,10 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& d
             }
         }
         
-        std::filesystem::path projectPath = m_ProjectsRoot / sanitizedName;
+        std::string customLocation = m_CustomProjectLocationBuffer;
+        std::filesystem::path baseLocation = customLocation.empty() ? m_ProjectsRoot : std::filesystem::path(customLocation);
+        baseLocation = baseLocation.lexically_normal();
+        std::filesystem::path projectPath = baseLocation / sanitizedName;
         
         if (std::filesystem::exists(projectPath)) {
             m_ErrorMessage = "A project with this name already exists";
@@ -964,6 +1058,13 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& d
         }
         
         metadata.SaveToFile(projectPath);
+        
+        // If project was created outside the default root, track it
+        auto normalizedProject = projectPath.lexically_normal();
+        auto normalizedRoot = m_ProjectsRoot.lexically_normal();
+        if (normalizedProject.parent_path() != normalizedRoot) {
+            AddCustomProjectPath(projectPath);
+        }
         
         return true;
     } catch (const std::exception& e) {
@@ -1084,6 +1185,101 @@ ImTextureID ProjectManager::GetIcon(const std::string& iconKey) {
     }
 
     return icon.handle;
+}
+
+void ProjectManager::SaveCustomPaths() {
+    namespace fs = std::filesystem;
+    
+#ifdef _WIN32
+    // Save to AppData/Local on Windows for better persistence
+    wchar_t* localAppData = nullptr;
+    if (SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localAppData) == S_OK) {
+        fs::path configDir = fs::path(localAppData) / "HephaestusEngine";
+        CoTaskMemFree(localAppData);
+        
+        std::error_code ec;
+        fs::create_directories(configDir, ec);
+        if (!ec) {
+            fs::path configPath = configDir / "custom_projects.txt";
+            
+            try {
+                std::ofstream file(configPath);
+                if (file.is_open()) {
+                    for (const auto& path : m_CustomProjectPaths) {
+                        file << path.generic_string() << "\n";
+                    }
+                    return;
+                }
+            } catch (...) {}
+        }
+    }
+#endif
+    
+    // Fallback: save next to executable
+    fs::path exeDir = fs::current_path();
+    fs::path configPath = exeDir / "custom_projects.txt";
+    
+    try {
+        std::ofstream file(configPath);
+        if (!file.is_open()) {
+            return;
+        }
+        
+        for (const auto& path : m_CustomProjectPaths) {
+            file << path.generic_string() << "\n";
+        }
+    } catch (...) {
+        // Silently fail
+    }
+}
+
+void ProjectManager::LoadCustomPaths() {
+    namespace fs = std::filesystem;
+    
+    m_CustomProjectPaths.clear();
+    
+    fs::path configPath;
+    
+#ifdef _WIN32
+    // Try loading from AppData/Local on Windows
+    wchar_t* localAppData = nullptr;
+    if (SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localAppData) == S_OK) {
+        fs::path configDir = fs::path(localAppData) / "HephaestusEngine";
+        CoTaskMemFree(localAppData);
+        configPath = configDir / "custom_projects.txt";
+        
+        if (!fs::exists(configPath)) {
+            configPath.clear();
+        }
+    }
+#endif
+    
+    // Fallback: try loading from executable directory
+    if (configPath.empty()) {
+        configPath = fs::current_path() / "custom_projects.txt";
+        if (!fs::exists(configPath)) {
+            return;
+        }
+    }
+    
+    try {
+        std::ifstream file(configPath);
+        if (!file.is_open()) {
+            return;
+        }
+        
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.empty()) continue;
+            
+            fs::path path(line);
+            if (fs::exists(path) && fs::is_directory(path)) {
+                m_CustomProjectPaths.push_back(path.lexically_normal());
+            }
+        }
+    } catch (...) {
+        // Silently fail
+    }
 }
 
 void ProjectManager::DrawNewScriptDialog() {
