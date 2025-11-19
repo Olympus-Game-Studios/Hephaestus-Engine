@@ -58,6 +58,7 @@
 #include "../Scene/Components.h"
 #include "../Scene/Transform.h"
 #include "../Scene/SceneSerializer.h"
+#include "../Scene/SceneExporter.h"
 #include "../Scripting/ScriptEngine.h"
 #include "../Scripting/ScriptRegistry.h"
 #include "../Scripting/LuaScriptEngine.h"
@@ -133,6 +134,10 @@ static std::string g_ScriptAttachmentMessage;
 static float g_ScriptAttachmentMessageTimer = 0.0f;
 static HephaestusEngine::ProjectManager g_ProjectManager;
 static LuaScriptEngine* g_LuaScriptEnginePtr = nullptr;  // Pointer to Lua engine for callbacks
+
+// Runtime mode flags
+static bool g_RuntimeMode = false;  // If true, runs as standalone runtime without editor UI
+static std::string g_RuntimeScenePath;  // Scene to load in runtime mode
 
 // Forward declarations
 static std::filesystem::path ResolveActiveProjectRoot();
@@ -338,6 +343,7 @@ struct ToolbarActions {
     bool stopClicked = false;
     bool saveClicked = false;
     bool buildClicked = false;
+    bool exportClicked = false;
 };
 
 enum class WorldOutlinerSpawnPreset {
@@ -369,6 +375,30 @@ static void SaveEditorSettings();
 
 static void ClearSelectedScriptAsset();
 static void UpdateSelectedScriptAsset(const std::filesystem::path& path);
+
+static bool DetectRuntimePackage(const std::filesystem::path& probeRoot)
+{
+    namespace fs = std::filesystem;
+    if (probeRoot.empty()) {
+        return false;
+    }
+
+    auto hasMarker = [&](const char* name) {
+        return fs::exists(probeRoot / name);
+    };
+
+    if (hasMarker("export_manifest.txt") || hasMarker("PACKAGE_MANIFEST.txt") || hasMarker("RunGame.bat")) {
+        return true;
+    }
+
+    bool hasAssets = fs::exists(probeRoot / "assets" / "scenes");
+    bool hasEditorFolder = fs::exists(probeRoot / "editor");
+    if (hasAssets && !hasEditorFolder) {
+        return true;
+    }
+
+    return false;
+}
 
 static bool DrawPillButton(const char* label, bool active, const ImVec2& size = ImVec2(0.0f, 0.0f))
 {
@@ -522,6 +552,8 @@ static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused)
         actions.saveClicked = drawTransportButton("Save", false);
         ImGui::SameLine();
         actions.buildClicked = drawTransportButton("Build", false);
+        ImGui::SameLine();
+        actions.exportClicked = drawTransportButton("Export", false);
 
         float remaining = ImGui::GetContentRegionAvail().x;
         if (remaining > 70.0f) {
@@ -911,7 +943,7 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
     return actions;
 }
 
-static DetailsPanelActions DrawDetailsPanel(Scene& scene)
+static DetailsPanelActions DrawDetailsPanel(Scene& scene, ScriptEngine& scriptEngine)
 {
     DetailsPanelActions actions{};
 
@@ -1217,11 +1249,9 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
                 ImGui::BulletText("%s", scriptCompPtr->scriptNames[i].c_str());
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Remove")) {
-                    if (i < scriptCompPtr->scripts.size() && scriptCompPtr->scripts[i]) {
-                        scriptCompPtr->scripts[i]->OnDestroy();
-                    }
-                    scriptCompPtr->RemoveScript(i);
-                    std::cout << "Removed script: " << scriptCompPtr->scriptNames[i] << "\n";
+                    std::string scriptName = scriptCompPtr->scriptNames[i];
+                    scriptEngine.DetachScript(selectedEntity, scriptName);
+                    std::cout << "Removed script: " << scriptName << "\n";
                     ImGui::PopID();
                     break;
                 }
@@ -1261,26 +1291,26 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
                 
                 std::cout << "Step 4: Checking if '" << scriptToAttach << "' is registered...\n";
                 if (ScriptRegistry::IsRegistered(scriptToAttach)) {
-                    std::cout << "Step 5: YES - Script IS registered!\n";
-                    
-                    if (!scriptCompPtr) {
-                        std::cout << "Step 6a: No ScriptComponent yet, creating one...\n";
-                        scriptCompPtr = &selectedEntity.AddComponent<ScriptComponent>();
-                        std::cout << "Step 6b: ScriptComponent created\n";
+                    bool alreadyAttached = scriptCompPtr && scriptCompPtr->GetScriptByName(scriptToAttach) != nullptr;
+                    if (alreadyAttached) {
+                        std::cout << "Step 5: Script already attached, skipping duplicate.\n";
+                        g_ScriptAttachmentMessage = "[WARN] Script '" + scriptToAttach + "' already attached.";
+                        g_ScriptAttachmentMessageTimer = 3.0f;
                     } else {
-                        std::cout << "Step 6: ScriptComponent already exists\n";
-                    }
-                    
-                    if (scriptCompPtr) {
-                        std::cout << "Step 7: Creating script instance via registry...\n";
+                        std::cout << "Step 5: Script is registered and not yet attached.\n";
+                        if (!scriptCompPtr) {
+                            std::cout << "Step 6a: No ScriptComponent yet, creating one...\n";
+                            scriptCompPtr = &selectedEntity.AddComponent<ScriptComponent>();
+                            std::cout << "Step 6b: ScriptComponent created\n";
+                        } else {
+                            std::cout << "Step 6: ScriptComponent already exists\n";
+                        }
+
                         ScriptPtr newScript = ScriptRegistry::CreateScript(scriptToAttach, selectedEntity, &scene);
-                        std::cout << "Step 8: Script instance pointer = " << (newScript ? "VALID" : "NULL") << "\n";
-                        
+                        std::cout << "Step 7: Script instance pointer = " << (newScript ? "VALID" : "NULL") << "\n";
                         if (newScript) {
-                            std::cout << "Step 9: Adding script to component...\n";
-                            scriptCompPtr->AddScript(newScript, scriptToAttach);
-                            std::cout << "Step 10: SUCCESS! Script added. Component now has " << scriptCompPtr->scriptNames.size() << " scripts\n";
-                            std::cout << "Step 11: Setting success message...\n";
+                            scriptEngine.AttachScript(selectedEntity, newScript, scriptToAttach);
+                            std::cout << "Step 8: SUCCESS! Script attached via ScriptEngine.\n";
                             g_ScriptAttachmentMessage = "[OK] Script '" + scriptToAttach + "' attached!";
                             g_ScriptAttachmentMessageTimer = 3.0f;
                             scriptNameBuffer[0] = '\0';
@@ -1289,8 +1319,6 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene)
                         } else {
                             std::cout << "RESULT: FAILED - CreateScript returned nullptr\n";
                         }
-                    } else {
-                        std::cout << "RESULT: FAILED - scriptCompPtr is null after creation\n";
                     }
                 } else {
                     std::cout << "Step 5: NO - Script NOT registered!\n";
@@ -4150,12 +4178,70 @@ static void SetWindowIcon(GLFWwindow* window)
     }
 }
 
-int main()
+int main(int argc, char* argv[])
 {
+    const std::filesystem::path executableDir = GetExecutableDirectory();
+    bool autoRuntime = DetectRuntimePackage(executableDir);
+    bool runtimeRequested = false;
+    bool editorRequested = false;
+
+    // Parse command-line arguments
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--runtime" || arg == "-r") {
+            runtimeRequested = true;
+        } else if (arg == "--editor") {
+            editorRequested = true;
+        } else if (arg == "--scene" || arg == "-s") {
+            if (i + 1 < argc) {
+                g_RuntimeScenePath = argv[++i];
+            }
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "Hephaestus Engine\n";
+            std::cout << "Usage: HephaestusEngine [options]\n";
+            std::cout << "Options:\n";
+            std::cout << "  --runtime, -r          Run in runtime mode (no editor)\n";
+            std::cout << "  --editor               Force editor mode even in runtime packages\n";
+            std::cout << "  --scene <path>, -s     Load specific scene file\n";
+            std::cout << "  --help, -h             Show this help message\n";
+            return 0;
+        }
+    }
+
+    if (editorRequested) {
+        g_RuntimeMode = false;
+    } else if (runtimeRequested) {
+        g_RuntimeMode = true;
+    } else {
+        g_RuntimeMode = autoRuntime;
+    }
+
+    if (g_RuntimeMode) {
+        SetActiveProjectRoot(executableDir);
+        std::cout << "[Runtime] Project root: " << executableDir << std::endl;
+    }
+
+    // In runtime mode, auto-discover scene if not specified
+    if (g_RuntimeMode && g_RuntimeScenePath.empty()) {
+        namespace fs = std::filesystem;
+        fs::path scenesDir = executableDir / "assets" / "scenes";
+        if (fs::exists(scenesDir)) {
+            for (const auto& entry : fs::directory_iterator(scenesDir)) {
+                if (entry.path().extension() == ".hpscene") {
+                    g_RuntimeScenePath = entry.path().string();
+                    std::cout << "[Runtime] Auto-discovered scene: " << g_RuntimeScenePath << std::endl;
+                    break;
+                }
+            }
+        }
+    }
+
     // ── GLFW Window ───────────────────────────────
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Hephaestus Engine", nullptr, nullptr);
+    
+    const char* windowTitle = g_RuntimeMode ? "Hephaestus Runtime" : "Hephaestus Engine";
+    GLFWwindow* window = glfwCreateWindow(1280, 720, windowTitle, nullptr, nullptr);
     glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
     glfwSetScrollCallback(window, scrollCallback);
 
@@ -4985,6 +5071,48 @@ int main()
         }
     };
 
+    auto hydrateScriptsFromComponents = [&](Scene& targetScene) {
+        scriptEngine.DestroyScripts();
+
+        auto view = targetScene.GetRegistry().view<ScriptComponent>();
+        for (auto entityHandle : view) {
+            Entity entity(entityHandle, &targetScene);
+            if (!entity) {
+                continue;
+            }
+
+            auto& scriptComp = entity.GetComponent<ScriptComponent>();
+            if (scriptComp.scriptNames.empty()) {
+                scriptComp.RemoveAllScripts();
+                continue;
+            }
+
+            std::vector<std::string> serializedNames = scriptComp.scriptNames;
+            scriptComp.RemoveAllScripts();
+
+            for (const std::string& scriptName : serializedNames) {
+                if (scriptName.empty()) {
+                    continue;
+                }
+
+                if (!ScriptRegistry::IsRegistered(scriptName)) {
+                    std::cerr << "[ScriptHydration] Script '" << scriptName
+                              << "' is not registered. Skipping." << std::endl;
+                    continue;
+                }
+
+                ScriptPtr recreated = ScriptRegistry::CreateScript(scriptName, entity, &targetScene);
+                if (!recreated) {
+                    std::cerr << "[ScriptHydration] Failed to instantiate script '"
+                              << scriptName << "'." << std::endl;
+                    continue;
+                }
+
+                scriptEngine.AttachScript(entity, recreated, scriptName);
+            }
+        }
+    };
+
     auto performSceneUndo = [&](Scene& targetScene) -> bool {
         auto snapshot = PopSceneUndoSnapshot();
         if (!snapshot) {
@@ -5503,35 +5631,33 @@ int main()
     };
     allocateCmdBuffers();
 
-    // ── ImGui Setup ──────────────────────────────
-    // Create descriptor pool for ImGui
-    VkDescriptorPool imguiPool;
-    {
+    // Initialize ImGui (skip in runtime mode)
+    VkDescriptorPool imguiPool = VK_NULL_HANDLE;
+    if (!g_RuntimeMode) {
+        // ImGui descriptor pool setup
         VkDescriptorPoolSize pool_sizes[] = {
-            { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
-            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
-            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
-            { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
-            { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
-            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
-            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
-            { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+            {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+            {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+            {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
+            {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}
         };
         VkDescriptorPoolCreateInfo pool_info = {};
         pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-        pool_info.maxSets = 1000;
-        pool_info.poolSizeCount = static_cast<uint32_t>(std::size(pool_sizes));
+        pool_info.maxSets = 1000 * IM_ARRAYSIZE(pool_sizes);
+        pool_info.poolSizeCount = static_cast<uint32_t>(IM_ARRAYSIZE(pool_sizes));
         pool_info.pPoolSizes = pool_sizes;
         if (vkCreateDescriptorPool(vkdev.device, &pool_info, nullptr, &imguiPool) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create ImGui descriptor pool");
         }
-    }
 
-    // Initialize ImGui
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     // Ensure ImGuizmo uses the same ImGui context
@@ -5586,10 +5712,35 @@ int main()
     init_info.CheckVkResultFn = nullptr;
     ImGui_ImplVulkan_Init(&init_info);
     
-    // Store ImGui IO for later manipulation during play mode
-    ImGuiIO& gImGuiIO = ImGui::GetIO();
-
     EnsureAssetBrowserIconsLoaded(vkdev);
+    }  // end if (!g_RuntimeMode)
+    
+    // Store ImGui IO for later manipulation during play mode (editor only)
+    ImGuiIO* gImGuiIOPtr = g_RuntimeMode ? nullptr : &ImGui::GetIO();
+
+    // Runtime mode: Load scene and start simulation automatically
+    if (g_RuntimeMode) {
+        if (!g_RuntimeScenePath.empty()) {
+            std::cout << "[Runtime] Loading scene: " << g_RuntimeScenePath << std::endl;
+            std::string loadError;
+            if (SceneSerializer::Deserialize(scene, g_RuntimeScenePath, loadError)) {
+                std::cout << "[Runtime] Scene loaded successfully" << std::endl;
+                rebuildSceneMeshesFromComponents(scene);
+                hydrateScriptsFromComponents(scene);
+                
+                // Start simulation automatically
+                g_SimPlaying = true;
+                g_SimPaused = false;
+                luaScriptEngine.OnSimulationStarted();
+                std::cout << "[Runtime] Simulation started" << std::endl;
+            } else {
+                std::cerr << "[Runtime] Failed to load scene: " << loadError << std::endl;
+            }
+        } else {
+            std::cerr << "[Runtime] No scene specified to load!" << std::endl;
+            std::cerr << "[Runtime] Usage: HephaestusEngine --runtime --scene <path_to_scene.hpscene>" << std::endl;
+        }
+    }
 
     std::vector<VkSemaphore> imageAvailable(MAX_FRAMES_IN_FLIGHT);
     std::vector<VkSemaphore> renderFinished(MAX_FRAMES_IN_FLIGHT);
@@ -5647,36 +5798,41 @@ int main()
             return camera.makeUBO(swap.extent);
         };
 
-        // Start the Dear ImGui frame
-        ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-        
-        // During play mode, clear ImGui input capture so raw GLFW input reaches scripts
-        if (g_SimPlaying && !g_SimPaused) {
-            ImGuiIO& io = ImGui::GetIO();
-            io.WantCaptureKeyboard = false;
-            io.WantCaptureMouse = false;
-        }
+        // Start the Dear ImGui frame (skip in runtime mode)
+        if (!g_RuntimeMode) {
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+            
+            // During play mode, clear ImGui input capture so raw GLFW input reaches scripts
+            if (g_SimPlaying && !g_SimPaused) {
+                ImGuiIO& io = ImGui::GetIO();
+                io.WantCaptureKeyboard = false;
+                io.WantCaptureMouse = false;
+            }
 
-        const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
-        float newScale = ComputeUIScale(mainViewport);
-        if (std::abs(newScale - g_UIScale) > 0.01f) {
-            g_UIScale = newScale;
-            io.FontGlobalScale = g_UIScale;
-            ApplyHephaestusEditorStyle(io, g_UIScale);
+            const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+            float newScale = ComputeUIScale(mainViewport);
+            if (std::abs(newScale - g_UIScale) > 0.01f) {
+                g_UIScale = newScale;
+                ImGuiIO& io = ImGui::GetIO();
+                io.FontGlobalScale = g_UIScale;
+                ApplyHephaestusEditorStyle(io, g_UIScale);
+            }
         }
         
-        // Setup ImGuizmo early to check if it's being used
-        ImGuizmo::BeginFrame();
-        ImGuizmo::SetOrthographic(false);
+        // Setup ImGuizmo early to check if it's being used (editor only)
+        if (!g_RuntimeMode) {
+            ImGuizmo::BeginFrame();
+            ImGuizmo::SetOrthographic(false);
+        }
         
-        // Handle mouse click for object selection (only when not using ImGui/ImGuizmo)
+        // Handle mouse click for object selection (editor only)
         static bool leftMouseWasPressed = false;
         bool leftMousePressed = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         
-        if (g_ProjectSelected && !g_SimPlaying && leftMousePressed && !leftMouseWasPressed &&
-            !ImGuizmo::IsUsing() && !ImGuizmo::IsOver() && !io.WantCaptureMouse &&
+        if (!g_RuntimeMode && g_ProjectSelected && !g_SimPlaying && leftMousePressed && !leftMouseWasPressed &&
+            !ImGuizmo::IsUsing() && !ImGuizmo::IsOver() && !ImGui::GetIO().WantCaptureMouse &&
             !gizmoDragging && vulkanGizmo.GetHoveredAxis() == -1) {
             // Left mouse button just pressed and not over ImGui
             double mouseX, mouseY;
@@ -5709,8 +5865,10 @@ int main()
             }
         }
 
-        // ImGui UI
+        // ImGui UI (skip in runtime mode)
         std::optional<std::filesystem::path> pendingAssetImport;
+        if (!g_RuntimeMode) {
+        ImGuiIO& io = ImGui::GetIO();
         if (!g_ProjectSelected) {
             if (gizmoDragging) {
                 gizmoDragging = false;
@@ -5790,7 +5948,7 @@ int main()
                     }
                 }
             }
-            DetailsPanelActions detailsActions = DrawDetailsPanel(scene);
+            DetailsPanelActions detailsActions = DrawDetailsPanel(scene, scriptEngine);
 
             std::optional<entt::entity> viewportDeleteRequest;
             {
@@ -5957,6 +6115,7 @@ int main()
                         vulkanGizmo.EndDrag();
                     }
                     rebuildSceneMeshesFromComponents(scene);
+                    hydrateScriptsFromComponents(scene);
                     ClearSceneUndoStack();
                     fs::path projectRoot = ResolveActiveProjectRoot();
                     fs::path relativePath = projectRoot.empty()
@@ -6026,6 +6185,7 @@ int main()
                     if (!g_SceneSnapshotBeforePlay.empty()) {
                         scene.Clear();
                         if (SceneSerializer::DeserializeFromString(scene, g_SceneSnapshotBeforePlay)) {
+                            hydrateScriptsFromComponents(scene);
                             // Reset all physics velocities to ensure clean state
                             auto rigidBodyView = scene.GetEntitiesWith<RigidBodyComponent>();
                             for (auto entityHandle : rigidBodyView) {
@@ -6082,11 +6242,48 @@ int main()
             if (toolbarActions.buildClicked) {
                 assetBrowserStatus = "Build command triggered (placeholder).";
             }
+            if (toolbarActions.exportClicked) {
+                namespace fs = std::filesystem;
+
+                fs::path projectRoot = ResolveActiveProjectRoot();
+                if (projectRoot.empty()) {
+                    assetBrowserStatus = "Export failed: no active project.";
+                    std::cerr << assetBrowserStatus << std::endl;
+                } else {
+                    // Create export directory
+                    std::string exportDirName = g_ActiveProjectName.empty() ? "export" : (g_ActiveProjectName + "_export");
+                    fs::path exportDir = projectRoot / "dist" / exportDirName;
+
+                    // Configure export options
+                    SceneExporter::ExportOptions options;
+                    options.outputDirectory = exportDir;
+                    options.projectName = g_ActiveProjectName.empty() ? "HephaestusProject" : g_ActiveProjectName;
+                    options.includeShaders = true;
+                    options.createManifest = true;
+
+                    // Perform export
+                    std::cout << "\n=== Starting Scene Export ===\n";
+                    SceneExporter::ExportResult result = SceneExporter::Export(scene, options);
+
+                    if (result.success) {
+                        assetBrowserStatus = "Export completed! " + std::to_string(result.exportedAssets.size()) + 
+                                           " files exported to dist/" + exportDirName + "/";
+                        std::cout << assetBrowserStatus << "\n";
+                        std::cout << "Manifest: " << result.manifestPath.string() << "\n";
+                        std::cout << "=== Export Complete ===\n\n";
+                    } else {
+                        assetBrowserStatus = "Export failed: " + result.errorMessage;
+                        std::cerr << assetBrowserStatus << "\n";
+                        std::cerr << "=== Export Failed ===\n\n";
+                    }
+                }
+            }
 
             DrawViewportOverlay(currentGizmoOperation, currentGizmoMode, g_ShowGizmoGrid, g_ShowEditorGizmo);
         }
+        }  // end if (!g_RuntimeMode) - close editor UI section
 
-        if (pendingAssetImport) {
+        if (!g_RuntimeMode && pendingAssetImport) {
             Entity imported = importModelFromFile(*pendingAssetImport);
             if (!imported) {
                 std::cerr << "Model import failed for path: " << pendingAssetImport->string() << std::endl;
@@ -6109,8 +6306,8 @@ int main()
             }
         }
         
-        // ImGuizmo keyboard shortcuts
-        if (g_ProjectSelected) {
+        // ImGuizmo keyboard shortcuts (editor only)
+        if (!g_RuntimeMode && g_ProjectSelected) {
             if (ImGui::IsKeyPressed(ImGuiKey_E)) currentGizmoOperation = ImGuizmo::TRANSLATE;
             if (ImGui::IsKeyPressed(ImGuiKey_R)) currentGizmoOperation = ImGuizmo::ROTATE;
             if (ImGui::IsKeyPressed(ImGuiKey_T) && !ImGui::GetIO().KeyCtrl) currentGizmoOperation = ImGuizmo::SCALE;
@@ -6141,8 +6338,8 @@ int main()
         // Build view/proj for ImGuizmo and gizmo interactions
         UniformBufferObject ubo = makeCameraUBO();
 
-        // Custom gizmo interaction handling
-    if (g_ProjectSelected && g_ShowEditorGizmo && (!g_SimPlaying || g_SimPaused)) {
+        // Custom gizmo interaction handling (editor only)
+        if (!g_RuntimeMode && g_ProjectSelected && g_ShowEditorGizmo && (!g_SimPlaying || g_SimPaused)) {
             Entity selectedEntity = scene.GetSelectedEntity();
             if (selectedEntity) {
                 auto& transform = selectedEntity.GetComponent<TransformComponent>();
@@ -6171,7 +6368,7 @@ int main()
                 bool leftDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
 
                 if (!gizmoDragging) {
-                    if (leftDown && hoveredAxis != -1 && !io.WantCaptureMouse) {
+                    if (leftDown && hoveredAxis != -1) {
                         gizmoDragging = true;
                         gizmoActiveAxis = hoveredAxis;
                         vulkanGizmo.BeginDrag(gizmoRay, hoveredAxis);
@@ -6206,8 +6403,8 @@ int main()
             }
         }
         
-        // Draw spotlight cone visualizations and directional light arrows
-        if (g_ProjectSelected && g_ShowEditorGizmo && (!g_SimPlaying || g_SimPaused)) {
+        // Draw spotlight cone visualizations and directional light arrows (editor only)
+        if (!g_RuntimeMode && g_ProjectSelected && g_ShowEditorGizmo && (!g_SimPlaying || g_SimPaused)) {
             Entity selectedEntity = scene.GetSelectedEntity();
             auto spotlightView = scene.GetEntitiesWith<LightComponent>();
             for (auto entityHandle : spotlightView) {
@@ -6224,8 +6421,10 @@ int main()
             }
         }
         
-        // Render ImGui
-        ImGui::Render();
+        // Render ImGui (editor only)
+        if (!g_RuntimeMode) {
+            ImGui::Render();
+        }
 
         // Late update scripts (after all regular updates) - only when playing and not paused
         if (g_SimPlaying && !g_SimPaused) {
@@ -6746,8 +6945,10 @@ int main()
             }
         }
 
-        // Render ImGui draw data
-        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+        // Render ImGui draw data (editor only)
+        if (!g_RuntimeMode) {
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+        }
 
         vkCmdEndRenderPass(cmd);
         vkEndCommandBuffer(cmd);

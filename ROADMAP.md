@@ -64,14 +64,14 @@ Milestones
 - Optimize GPU workload: batching, draw call consolidation, async compute passes, and shader permutation pruning.
 - Deliver VFX pipeline: particle system authoring, curve editors, GPU particles prototype.
 - Finalize audio integration path (spatial audio, mixer, basic DSP effects) and editor tooling.
-- Implement save/load runtime persistence and project packaging workflow.
+- ✅ Implement save/load runtime persistence and project packaging workflow. **(Completed Nov 2025)**
 - Complete localization pipeline: resource tables, font atlas generation, text rendering validation.
 - Conduct performance profiling sessions; document optimization playbook.
 - *Feature Highlights:*
   - Rendering: automatic instancing, GPU-driven occlusion culling, RenderDoc capture integration.
   - VFX: node-based particle graph, curve-driven emitters, flipbook sprite support.
   - Audio: middleware bridge (Wwise/FMOD), spatial attenuation debugger, real-time mixer panel.
-  - Persistence: binary scene snapshotter, patch-based save upgrades, deployment packager CLI.
+  - Persistence: ✅ binary scene snapshotter, ✅ deployment packager CLI, patch-based save upgrades.
   - Localization: string table editor, right-to-left text preview, locale fallback rules.
   - Tooling: frame capture analyzer, performance budget dashboards, automated regression detection.
 

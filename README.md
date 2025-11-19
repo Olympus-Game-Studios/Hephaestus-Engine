@@ -55,7 +55,16 @@ Key parts:
 - **Material Editor** - Visual node-based material authoring
 - ImGuizmo transform manipulation (Translate/Rotate/Scale)
 - Ray-based object picking
-- Real-time component editing 
+- Real-time component editing
+- **Export & Packaging** - One-click scene export with automatic asset collection
+
+### 📦 Export & Distribution
+- **One-Click Export** - Export button in editor toolbar
+- **Asset Collection** - Automatically gathers all referenced assets (meshes, textures, materials, scripts)
+- **Packaging Script** - PowerShell tool for validation and manifest generation
+- **Reproducible Builds** - Create distributable runtime packages
+- **Pure Runtime Binary** - Exported `HephaestusEngine.exe` auto-detects packaged builds, hides the editor UI, and boots straight into gameplay (use `--editor` to override)
+- **See:** `Documentation/Features/EXPORT_PACKAGING.md` for complete guide
 
 ### 📝 Scripting System (Hybrid C++ + Lua)
 - **C++ Scripts** - Compiled, high-performance game code

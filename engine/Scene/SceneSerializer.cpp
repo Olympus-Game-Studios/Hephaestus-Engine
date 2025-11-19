@@ -2,6 +2,8 @@
 
 #include "Scene.h"
 #include "Components.h"
+#include "../Scripting/ScriptComponent.h"
+#include "../Scripting/ScriptRegistry.h"
 
 #include <entt/entt.hpp>
 
@@ -617,6 +619,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         const MaterialComponent* material = registry.try_get<MaterialComponent>(handle);
         const LightComponent* light = registry.try_get<LightComponent>(handle);
         const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
+        const ScriptComponent* scriptComponent = registry.try_get<ScriptComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
 
@@ -770,6 +773,22 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"near\": " << FormatFloat(camera->nearPlane) << ",\n";
             oss << "          \"far\": " << FormatFloat(camera->farPlane) << ",\n";
             oss << "          \"isPrimary\": " << (camera->isPrimary ? "true" : "false") << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (scriptComponent && !scriptComponent->scriptNames.empty()) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"Scripts\": {\n";
+            oss << "          \"names\": [";
+            for (size_t i = 0; i < scriptComponent->scriptNames.size(); ++i) {
+                oss << "\"" << EscapeString(scriptComponent->scriptNames[i]) << "\"";
+                if (i + 1 < scriptComponent->scriptNames.size()) {
+                    oss << ", ";
+                }
+            }
+            oss << "]\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1269,6 +1288,34 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                 if (primaryValue->IsBool()) {
                     camera.isPrimary = primaryValue->AsBool();
                 }
+            }
+        }
+
+        if (const JsonValue* scriptsObj = components->Find("Scripts")) {
+            if (!scriptsObj->IsObject()) {
+                outError = "Scripts component is not an object.";
+                return false;
+            }
+            const JsonValue* namesArray = scriptsObj->Find("names");
+            if (!namesArray || !namesArray->IsArray()) {
+                outError = "Scripts component missing names array.";
+                return false;
+            }
+
+            ScriptComponent& scriptComp = entity.HasComponent<ScriptComponent>()
+                ? entity.GetComponent<ScriptComponent>()
+                : entity.AddComponent<ScriptComponent>();
+            scriptComp.RemoveAllScripts();
+            for (const JsonValue& nameValue : namesArray->AsArray()) {
+                if (!nameValue.IsString()) {
+                    continue;
+                }
+                std::string scriptName = nameValue.AsString();
+                if (scriptName.empty()) {
+                    continue;
+                }
+                scriptComp.scriptNames.push_back(scriptName);
+                scriptComp.scripts.push_back(nullptr);
             }
         }
 

@@ -78,6 +78,7 @@ add_executable(HephaestusEngine
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
     engine/Scene/SceneSerializer.cpp
+    engine/Scene/SceneExporter.cpp
     engine/Scripting/ScriptBase.cpp
     engine/Scripting/ScriptEngine.cpp
     engine/Scripting/LuaScriptEngine.cpp
