@@ -6941,11 +6941,6 @@ int main(int argc, char* argv[])
 
         vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
 
-    VkPipeline boundPipeline = pipeline.GetPipeline(false);
-    if (boundPipeline != VK_NULL_HANDLE) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipeline);
-    }
-
     // Set dynamic viewport/scissor per current extent
     VkViewport viewport{};
     viewport.x = 0.0f;
@@ -6957,6 +6952,17 @@ int main(int argc, char* argv[])
     VkRect2D scissor{{0,0}, swap.extent};
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        // Render skybox first if HDRI is enabled (background layer)
+        if (useHDRI) {
+            skybox.UpdateDescriptorSet(imageIndex, uniformBuffers[imageIndex].buffer);
+            skybox.Draw(cmd, imageIndex);
+        }
+
+    VkPipeline boundPipeline = pipeline.GetPipeline(false);
+    if (boundPipeline != VK_NULL_HANDLE) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipeline);
+    }
 
         // Get selected entity once for both outline and gizmo rendering
         Entity selectedEntity = scene.GetSelectedEntity();
@@ -7264,12 +7270,6 @@ int main(int argc, char* argv[])
                     vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
                 }
             }
-        }
-
-        // Render skybox if HDRI is enabled
-        if (useHDRI) {
-            skybox.UpdateDescriptorSet(imageIndex, uniformBuffers[imageIndex].buffer);
-            skybox.Draw(cmd, imageIndex);
         }
 
         // Render ImGui draw data (editor only)
