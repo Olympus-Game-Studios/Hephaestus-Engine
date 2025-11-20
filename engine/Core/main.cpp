@@ -2148,28 +2148,67 @@ static std::filesystem::path ResolveEngineRoot()
         return g_EngineRoot;
     }
 
-    fs::path candidate = fs::current_path();
-    std::cout << "[ResolveEngineRoot] Starting from: " << candidate << std::endl;
-    for (int depth = 0; depth < 10; ++depth) {
+    auto qualifies = [&](const fs::path& candidate) {
         const bool hasAssets = fs::exists(candidate / "assets");
         const bool hasEditor = fs::exists(candidate / "editor");
         const bool hasEngine = fs::exists(candidate / "engine");
-        std::cout << "[ResolveEngineRoot] Depth " << depth << ": " << candidate << " (assets=" << hasAssets << ", editor=" << hasEditor << ", engine=" << hasEngine << ")" << std::endl;
-        if (hasAssets && hasEditor && hasEngine) {
-            g_EngineRoot = candidate;
-            std::cout << "[ResolveEngineRoot] Found engine root: " << g_EngineRoot << std::endl;
-            break;
+        bool accepted = false;
+        if (g_RuntimeMode) {
+            accepted = hasAssets;
+        } else {
+            accepted = hasAssets && hasEditor && hasEngine;
         }
-        if (!candidate.has_parent_path()) {
-            break;
+        std::cout << "[ResolveEngineRoot] Probe " << candidate << " (assets=" << hasAssets
+                  << ", editor=" << hasEditor << ", engine=" << hasEngine
+                  << ") => " << (accepted ? "accepted" : "rejected") << std::endl;
+        return accepted;
+    };
+
+    auto searchFrom = [&](fs::path start) -> bool {
+        if (start.empty()) {
+            return false;
         }
-        candidate = candidate.parent_path();
+        fs::path candidate = start;
+        for (int depth = 0; depth < 10; ++depth) {
+            if (qualifies(candidate)) {
+                g_EngineRoot = candidate;
+                std::cout << "[ResolveEngineRoot] Found engine root: " << g_EngineRoot << std::endl;
+                return true;
+            }
+            if (!candidate.has_parent_path()) {
+                break;
+            }
+            candidate = candidate.parent_path();
+        }
+        return false;
+    };
+
+    const fs::path exeDir = GetExecutableDirectory();
+    const fs::path currentDir = fs::current_path();
+
+    if (g_RuntimeMode) {
+        // Prefer the executable directory when running as an exported runtime
+        if (searchFrom(exeDir)) {
+            return g_EngineRoot;
+        }
+        if (searchFrom(currentDir)) {
+            return g_EngineRoot;
+        }
+    } else {
+        if (searchFrom(currentDir)) {
+            return g_EngineRoot;
+        }
+        if (searchFrom(exeDir)) {
+            return g_EngineRoot;
+        }
     }
 
-    if (g_EngineRoot.empty()) {
-        g_EngineRoot = fs::current_path();
-        std::cout << "[ResolveEngineRoot] Using current path as fallback: " << g_EngineRoot << std::endl;
+    if (g_RuntimeMode && !exeDir.empty()) {
+        g_EngineRoot = exeDir;
+    } else {
+        g_EngineRoot = currentDir;
     }
+    std::cout << "[ResolveEngineRoot] Using fallback engine root: " << g_EngineRoot << std::endl;
     return g_EngineRoot;
 }
 
@@ -4316,8 +4355,12 @@ int main(int argc, char* argv[])
     bool gizmoDragging = false;
     int gizmoActiveAxis = -1;
 
-    g_ProjectManager.Initialize(&vkdev);
-    g_ProjectManager.SetProjectsRoot(ResolveProjectsRoot());
+    bool projectManagerInitialized = false;
+    if (!g_RuntimeMode) {
+        g_ProjectManager.Initialize(&vkdev);
+        g_ProjectManager.SetProjectsRoot(ResolveProjectsRoot());
+        projectManagerInitialized = true;
+    }
 
     LoadEditorSettings();
 
@@ -6258,6 +6301,8 @@ int main(int argc, char* argv[])
                     SceneExporter::ExportOptions options;
                     options.outputDirectory = exportDir;
                     options.projectName = g_ActiveProjectName.empty() ? "HephaestusProject" : g_ActiveProjectName;
+                    options.projectRootOverride = projectRoot;
+                    options.engineRootOverride = ResolveEngineRoot();
                     options.includeShaders = true;
                     options.createManifest = true;
 
@@ -7001,7 +7046,9 @@ int main(int argc, char* argv[])
     vkDeviceWaitIdle(vkdev.device);
 
     // ── Cleanup ────────────────────────────────
-    g_ProjectManager.Shutdown();
+    if (projectManagerInitialized) {
+        g_ProjectManager.Shutdown();
+    }
     scriptEngine.Shutdown();
     SaveEditorSettings();
 

@@ -238,40 +238,44 @@ SceneExporter::ExportResult SceneExporter::Export(const Scene& scene, const Expo
 
     std::cout << "[SceneExporter] Exporting to: " << options.outputDirectory << std::endl;
 
-    // Determine project root (current working directory or specified)
-    fs::path projectRoot = fs::current_path();
-    if (!options.projectName.empty()) {
-        // Try to find project root
-        fs::path potential = projectRoot / options.projectName;
+    auto normalizePath = [](const fs::path& path) {
+        if (path.empty()) {
+            return path;
+        }
+        std::error_code normEc;
+        fs::path normalized = fs::weakly_canonical(path, normEc);
+        if (normEc) {
+            return path.lexically_normal();
+        }
+        return normalized;
+    };
+
+    fs::path projectRoot = options.projectRootOverride.empty()
+        ? fs::current_path()
+        : options.projectRootOverride;
+    projectRoot = normalizePath(projectRoot);
+
+    if (options.projectRootOverride.empty() && !options.projectName.empty()) {
+        fs::path potential = normalizePath(projectRoot / options.projectName);
         if (fs::exists(potential)) {
             projectRoot = potential;
         }
     }
 
-    // Step 1: Serialize and save the scene
+    fs::path engineRoot = options.engineRootOverride.empty()
+        ? fs::current_path()
+        : options.engineRootOverride;
+    engineRoot = normalizePath(engineRoot);
+
+    std::cout << "[SceneExporter] Project root: " << projectRoot << std::endl;
+    std::cout << "[SceneExporter] Engine root: " << engineRoot << std::endl;
+
+    // Reserve final scene path (will serialize after asset copy to ensure freshest data)
     std::string sceneName = scene.GetName();
     if (sceneName.empty()) {
         sceneName = "ExportedScene";
     }
-    
     fs::path scenePath = options.outputDirectory / "assets" / "scenes" / (sceneName + ".hpscene");
-    fs::create_directories(scenePath.parent_path(), ec);
-    if (ec) {
-        result.errorMessage = "Failed to create scenes directory: " + ec.message();
-        return result;
-    }
-
-    SceneSerializer serializer(scene);
-    std::string serializeError;
-    if (!serializer.Serialize(scenePath, serializeError)) {
-        result.errorMessage = "Failed to serialize scene: " + serializeError;
-        return result;
-    }
-
-    result.exportedAssets.push_back(scenePath);
-    std::cout << "[SceneExporter] Exported scene: " << scenePath << std::endl;
-
-    fs::path relativeScenePath = scenePath.lexically_relative(options.outputDirectory);
 
     // Step 2: Collect all asset references
     std::vector<fs::path> assetPaths = CollectAssetPaths(scene);
@@ -307,14 +311,135 @@ SceneExporter::ExportResult SceneExporter::Export(const Scene& scene, const Expo
         std::cerr << "[SceneExporter] Warning: assets directory not found at " << sourceAssetsDir << std::endl;
     }
     
+    // Step 3b: Copy scripts directory (Lua/runtime scripts) if present
+    fs::path sourceScriptsDir = projectRoot / "scripts";
+    fs::path destScriptsDir = options.outputDirectory / "scripts";
+    if (fs::exists(sourceScriptsDir)) {
+        std::cout << "[SceneExporter] Copying scripts directory: " << sourceScriptsDir << std::endl;
+        for (const auto& entry : fs::recursive_directory_iterator(sourceScriptsDir)) {
+            if (fs::is_regular_file(entry)) {
+                fs::path relative = fs::relative(entry, sourceScriptsDir);
+                fs::path dest = destScriptsDir / relative;
+                fs::create_directories(dest.parent_path(), ec);
+                if (!ec) {
+                    fs::copy_file(entry, dest, fs::copy_options::overwrite_existing, ec);
+                    if (!ec) {
+                        result.exportedAssets.push_back(dest);
+                    } else {
+                        std::cerr << "[SceneExporter] Warning: Failed to copy script "
+                                  << entry.path() << ": " << ec.message() << std::endl;
+                    }
+                } else {
+                    std::cerr << "[SceneExporter] Warning: Failed to create script directory "
+                              << dest.parent_path() << ": " << ec.message() << std::endl;
+                }
+            }
+        }
+    }
+
+    // After copying stock assets/scripts, serialize the up-to-date scene into the package
+    fs::create_directories(scenePath.parent_path(), ec);
+    if (ec) {
+        result.errorMessage = "Failed to create scenes directory: " + ec.message();
+        return result;
+    }
+
+    SceneSerializer serializer(scene);
+    std::string serializeError;
+    if (!serializer.Serialize(scenePath, serializeError)) {
+        result.errorMessage = "Failed to serialize scene: " + serializeError;
+        return result;
+    }
+
+    result.exportedAssets.push_back(scenePath);
+    std::cout << "[SceneExporter] Exported scene: " << scenePath << std::endl;
+
+    fs::path relativeScenePath = scenePath.lexically_relative(options.outputDirectory);
+
     // Also collect and report on explicitly-referenced assets (for logging)
     std::cout << "[SceneExporter] Scene references " << assetPaths.size() << " explicit assets" << std::endl;
 
+    auto copyRequiredAssetIfMissing = [&](const fs::path& relativeAssetPath) {
+        fs::path destPath = destAssetsDir / relativeAssetPath;
+        if (fs::exists(destPath)) {
+            return;
+        }
+        fs::path sourcePath = engineRoot / "assets" / relativeAssetPath;
+        if (!fs::exists(sourcePath)) {
+            std::cerr << "[SceneExporter] Warning: Fallback asset missing: " << sourcePath << std::endl;
+            return;
+        }
+        std::error_code copyEc;
+        fs::create_directories(destPath.parent_path(), copyEc);
+        if (copyEc) {
+            std::cerr << "[SceneExporter] Warning: Failed to create directory for fallback asset "
+                      << destPath.parent_path() << ": " << copyEc.message() << std::endl;
+            return;
+        }
+        fs::copy_file(sourcePath, destPath, fs::copy_options::overwrite_existing, copyEc);
+        if (copyEc) {
+            std::cerr << "[SceneExporter] Warning: Failed to copy fallback asset " << sourcePath
+                      << ": " << copyEc.message() << std::endl;
+            return;
+        }
+        result.exportedAssets.push_back(destPath);
+        std::cout << "[SceneExporter] Added fallback asset: " << destPath << std::endl;
+    };
+
+    const std::vector<fs::path> requiredRuntimeAssets = {
+        fs::path("textures") / "light_bulb.png",
+        fs::path("textures") / "spotlight.png",
+        fs::path("textures") / "sun.png"
+    };
+    for (const auto& rel : requiredRuntimeAssets) {
+        copyRequiredAssetIfMissing(rel);
+    }
+
+    auto copyDirectoryRecursive = [&](const fs::path& sourceDir, const fs::path& destDir, const char* label) {
+        if (!fs::exists(sourceDir)) {
+            return;
+        }
+        std::error_code dirEc;
+        for (const auto& entry : fs::recursive_directory_iterator(sourceDir)) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+            fs::path relative = fs::relative(entry.path(), sourceDir, dirEc);
+            if (dirEc) {
+                std::cerr << "[SceneExporter] Warning: Failed to relativize path in " << label
+                          << ": " << dirEc.message() << std::endl;
+                dirEc.clear();
+                continue;
+            }
+            fs::path destPath = destDir / relative;
+            fs::create_directories(destPath.parent_path(), dirEc);
+            if (dirEc) {
+                std::cerr << "[SceneExporter] Warning: Failed to create directory for " << label
+                          << " asset " << destPath.parent_path() << ": " << dirEc.message() << std::endl;
+                dirEc.clear();
+                continue;
+            }
+            fs::copy_file(entry.path(), destPath, fs::copy_options::overwrite_existing, dirEc);
+            if (dirEc) {
+                std::cerr << "[SceneExporter] Warning: Failed to copy " << label << " asset "
+                          << entry.path() << ": " << dirEc.message() << std::endl;
+                dirEc.clear();
+                continue;
+            }
+            result.exportedAssets.push_back(destPath);
+        }
+        std::cout << "[SceneExporter] Copied " << label << " resources from " << sourceDir << std::endl;
+    };
+
+    copyDirectoryRecursive(engineRoot / "editor" / "Icons",
+                           options.outputDirectory / "editor" / "Icons",
+                           "editor icon");
+
     // Step 4: Copy runtime executable if found
     std::vector<fs::path> exeSearchPaths = {
-        projectRoot / "build" / "Release" / "HephaestusEngine.exe",
-        projectRoot / "build" / "Debug" / "HephaestusEngine.exe",
-        projectRoot / "HephaestusEngine.exe"
+        engineRoot / "build" / "Release" / "HephaestusEngine.exe",
+        engineRoot / "build" / "Debug" / "HephaestusEngine.exe",
+        engineRoot / "HephaestusEngine.exe"
     };
 
     bool exeCopied = false;
@@ -362,14 +487,14 @@ SceneExporter::ExportResult SceneExporter::Export(const Scene& scene, const Expo
     // Step 4b: Copy runtime dependencies (DLLs)
     std::vector<std::pair<std::string, std::vector<fs::path>>> dependencies = {
         {"lua54.dll", {
-            projectRoot / "build" / "Release" / "lua54.dll",
-            projectRoot / "build" / "Debug" / "lua54.dll",
-            projectRoot / "lua54.dll"
+            engineRoot / "build" / "Release" / "lua54.dll",
+            engineRoot / "build" / "Debug" / "lua54.dll",
+            engineRoot / "lua54.dll"
         }},
         {"lua53.dll", {
-            projectRoot / "build" / "Release" / "lua53.dll",
-            projectRoot / "build" / "Debug" / "lua53.dll",
-            projectRoot / "lua53.dll"
+            engineRoot / "build" / "Release" / "lua53.dll",
+            engineRoot / "build" / "Debug" / "lua53.dll",
+            engineRoot / "lua53.dll"
         }}
     };
 
@@ -394,10 +519,26 @@ SceneExporter::ExportResult SceneExporter::Export(const Scene& scene, const Expo
 
     // Step 5: Copy shaders if requested
     if (options.includeShaders) {
-        fs::path shadersSource = projectRoot / "shaders";
+        // Prefer compiled shaders from build output over source shaders
+        std::vector<fs::path> shaderSearchPaths = {
+            engineRoot / "build" / "Release" / "shaders",
+            engineRoot / "build" / "Debug" / "shaders",
+            projectRoot / "shaders",
+            engineRoot / "shaders"
+        };
+
+        fs::path shadersSource;
+        for (const auto& candidate : shaderSearchPaths) {
+            if (fs::exists(candidate)) {
+                shadersSource = candidate;
+                std::cout << "[SceneExporter] Using shaders from: " << shadersSource << std::endl;
+                break;
+            }
+        }
+
         fs::path shadersDest = options.outputDirectory / "shaders";
 
-        if (fs::exists(shadersSource)) {
+        if (!shadersSource.empty() && fs::exists(shadersSource)) {
             fs::create_directories(shadersDest, ec);
             if (!ec) {
                 int shaderCount = 0;
@@ -418,6 +559,9 @@ SceneExporter::ExportResult SceneExporter::Export(const Scene& scene, const Expo
                 }
                 std::cout << "[SceneExporter] Copied " << shaderCount << " shader files" << std::endl;
             }
+        }
+        else {
+            std::cerr << "[SceneExporter] Warning: No shaders directory found to export." << std::endl;
         }
     }
 

@@ -17,6 +17,8 @@ public:
     struct ExportOptions {
         std::filesystem::path outputDirectory;
         std::string projectName;
+        std::filesystem::path projectRootOverride;
+        std::filesystem::path engineRootOverride;
         bool includeShaders = true;
         bool createManifest = true;
         bool compressToArchive = false; // Optional for future enhancement
