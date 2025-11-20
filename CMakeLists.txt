@@ -1,10 +1,21 @@
 cmake_minimum_required(VERSION 3.24)
 project(HephaestusEngine LANGUAGES CXX)
 
+if(APPLE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum OS X deployment version")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Vulkan REQUIRED)
+
+if(APPLE)
+    # On macOS, we might need to link against MoltenVK explicitly if not handled by the loader
+    # But usually Vulkan::Vulkan is enough if the SDK is set up correctly.
+    # We might need to find other libs like ObjC foundation if we do native stuff.
+endif()
+
 add_subdirectory(extern/glfw)
 
 # Lua scripting support - try to find it, but make it optional for now
@@ -121,6 +132,14 @@ if (WIN32)
     add_dependencies(HephaestusEngine GenerateAppIcon)
     target_sources(HephaestusEngine PRIVATE ${APP_ICON_RC})
     set_source_files_properties(${APP_ICON_RC} PROPERTIES GENERATED TRUE)
+elseif(APPLE)
+    # macOS App Bundle setup
+    set_target_properties(HephaestusEngine PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "Hephaestus Engine"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.hephaestus.engine"
+        MACOSX_BUNDLE_INFO_STRING "Hephaestus Engine Editor"
+    )
 endif()
 
 target_include_directories(HephaestusEngine PRIVATE engine)

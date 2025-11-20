@@ -1,0 +1,1118 @@
+[
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++  -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -std=gnu++20 -arch arm64 -o CMakeFiles/imgui.dir/extern/imgui/imgui.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/imgui.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/imgui.cpp",
+  "output": "CMakeFiles/imgui.dir/extern/imgui/imgui.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++  -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -std=gnu++20 -arch arm64 -o CMakeFiles/imgui.dir/extern/imgui/imgui_draw.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/imgui_draw.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/imgui_draw.cpp",
+  "output": "CMakeFiles/imgui.dir/extern/imgui/imgui_draw.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++  -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -std=gnu++20 -arch arm64 -o CMakeFiles/imgui.dir/extern/imgui/imgui_tables.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/imgui_tables.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/imgui_tables.cpp",
+  "output": "CMakeFiles/imgui.dir/extern/imgui/imgui_tables.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++  -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -std=gnu++20 -arch arm64 -o CMakeFiles/imgui.dir/extern/imgui/imgui_widgets.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/imgui_widgets.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/imgui_widgets.cpp",
+  "output": "CMakeFiles/imgui.dir/extern/imgui/imgui_widgets.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++  -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -std=gnu++20 -arch arm64 -o CMakeFiles/imgui.dir/extern/imgui/backends/imgui_impl_glfw.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends/imgui_impl_glfw.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends/imgui_impl_glfw.cpp",
+  "output": "CMakeFiles/imgui.dir/extern/imgui/backends/imgui_impl_glfw.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++  -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -std=gnu++20 -arch arm64 -o CMakeFiles/imgui.dir/extern/imgui/backends/imgui_impl_vulkan.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends/imgui_impl_vulkan.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends/imgui_impl_vulkan.cpp",
+  "output": "CMakeFiles/imgui.dir/extern/imgui/backends/imgui_impl_vulkan.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++  -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -std=gnu++20 -arch arm64 -o CMakeFiles/imguizmo.dir/extern/ImGuizmo/ImGuizmo.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo/ImGuizmo.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo/ImGuizmo.cpp",
+  "output": "CMakeFiles/imguizmo.dir/extern/ImGuizmo/ImGuizmo.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Core/main.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Core/main.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Core/main.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Core/main.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Assets/ModelImporter.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Assets/ModelImporter.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Assets/ModelImporter.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Assets/ModelImporter.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Gfx/VulkanDevice.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Gfx/VulkanDevice.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Gfx/VulkanDevice.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Gfx/VulkanDevice.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Gfx/VulkanSwapchain.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Gfx/VulkanSwapchain.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Gfx/VulkanSwapchain.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Gfx/VulkanSwapchain.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Gfx/VulkanPipeline.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Gfx/VulkanPipeline.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Gfx/VulkanPipeline.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Gfx/VulkanPipeline.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Gfx/VulkanTexture.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Gfx/VulkanTexture.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Gfx/VulkanTexture.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Gfx/VulkanTexture.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Gfx/VulkanGizmo.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Gfx/VulkanGizmo.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Gfx/VulkanGizmo.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Gfx/VulkanGizmo.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Gfx/VulkanSkybox.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Gfx/VulkanSkybox.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Gfx/VulkanSkybox.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Gfx/VulkanSkybox.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Physics/MeshCollisionSystem.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Physics/MeshCollisionSystem.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Physics/MeshCollisionSystem.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Physics/MeshCollisionSystem.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Physics/JoltPhysicsEngine.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Physics/JoltPhysicsEngine.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Physics/JoltPhysicsEngine.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Physics/JoltPhysicsEngine.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Physics/JoltPhysicsSystem.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Physics/JoltPhysicsSystem.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Physics/JoltPhysicsSystem.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Physics/JoltPhysicsSystem.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Scene/Scene.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scene/Scene.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scene/Scene.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Scene/Scene.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Scene/Entity.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scene/Entity.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scene/Entity.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Scene/Entity.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Scene/SceneSerializer.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scene/SceneSerializer.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scene/SceneSerializer.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Scene/SceneSerializer.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Scene/SceneExporter.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scene/SceneExporter.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scene/SceneExporter.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Scene/SceneExporter.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Scripting/ScriptBase.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scripting/ScriptBase.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scripting/ScriptBase.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Scripting/ScriptBase.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Scripting/ScriptEngine.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scripting/ScriptEngine.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scripting/ScriptEngine.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Scripting/ScriptEngine.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/Scripting/LuaScriptEngine.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scripting/LuaScriptEngine.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/Scripting/LuaScriptEngine.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/Scripting/LuaScriptEngine.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/UI/ProjectManager.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/UI/ProjectManager.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/UI/ProjectManager.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/UI/ProjectManager.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/UI/MaterialEditor/MaterialGraph.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/UI/MaterialEditor/MaterialGraph.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/UI/MaterialEditor/MaterialGraph.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/UI/MaterialEditor/MaterialGraph.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/UI/MaterialEditor/MaterialEditorPanel.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/UI/MaterialEditor/MaterialEditorPanel.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/UI/MaterialEditor/MaterialEditorPanel.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/UI/MaterialEditor/MaterialEditorPanel.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -DLUA_AVAILABLE=0 -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/VMA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/entt/single_include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/.. -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/ImGuizmo -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -std=gnu++20 -arch arm64 -pthread -o CMakeFiles/HephaestusEngine.dir/engine/UI/MaterialEditor/TextureDiscovery.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/UI/MaterialEditor/TextureDiscovery.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/engine/UI/MaterialEditor/TextureDiscovery.cpp",
+  "output": "CMakeFiles/HephaestusEngine.dir/engine/UI/MaterialEditor/TextureDiscovery.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/context.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/context.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/context.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/context.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/init.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/init.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/init.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/init.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/input.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/input.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/input.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/input.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/monitor.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/monitor.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/monitor.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/monitor.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/platform.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/platform.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/platform.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/platform.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/vulkan.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/vulkan.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/vulkan.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/vulkan.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/window.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/window.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/window.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/window.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/egl_context.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/egl_context.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/egl_context.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/egl_context.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/osmesa_context.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/osmesa_context.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/osmesa_context.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/osmesa_context.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/null_init.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/null_init.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/null_init.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/null_init.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/null_monitor.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/null_monitor.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/null_monitor.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/null_monitor.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/null_window.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/null_window.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/null_window.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/null_window.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/null_joystick.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/null_joystick.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/null_joystick.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/null_joystick.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/cocoa_time.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/cocoa_time.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/cocoa_time.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/cocoa_time.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/posix_module.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/posix_module.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/posix_module.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/posix_module.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/posix_thread.c.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/posix_thread.c",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/posix_thread.c",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/posix_thread.c.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/cocoa_init.m.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/cocoa_init.m",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/cocoa_init.m",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/cocoa_init.m.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/cocoa_joystick.m.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/cocoa_joystick.m",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/cocoa_joystick.m",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/cocoa_joystick.m.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/cocoa_monitor.m.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/cocoa_monitor.m",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/cocoa_monitor.m",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/cocoa_monitor.m.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/cocoa_window.m.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/cocoa_window.m",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/cocoa_window.m",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/cocoa_window.m.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/glfw/src -std=c99 -arch arm64 -fPIC -Wall -o CMakeFiles/glfw.dir/nsgl_context.m.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/nsgl_context.m",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/src/nsgl_context.m",
+  "output": "extern/glfw/src/CMakeFiles/glfw.dir/nsgl_context.m.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -emit-pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -x c++-header -o CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.cxx",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.cxx",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/AABBTree/AABBTreeBuilder.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/AABBTree/AABBTreeBuilder.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/AABBTree/AABBTreeBuilder.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/AABBTree/AABBTreeBuilder.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/Color.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/Color.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/Color.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/Color.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/Factory.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/Factory.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/Factory.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/Factory.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/IssueReporting.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/IssueReporting.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/IssueReporting.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/IssueReporting.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/JobSystemSingleThreaded.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/JobSystemSingleThreaded.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/JobSystemSingleThreaded.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/JobSystemSingleThreaded.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/JobSystemThreadPool.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/JobSystemThreadPool.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/JobSystemThreadPool.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/JobSystemThreadPool.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/JobSystemWithBarrier.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/JobSystemWithBarrier.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/JobSystemWithBarrier.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/JobSystemWithBarrier.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/LinearCurve.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/LinearCurve.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/LinearCurve.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/LinearCurve.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/Memory.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/Memory.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/Memory.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/Memory.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/Profiler.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/Profiler.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/Profiler.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/Profiler.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/RTTI.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/RTTI.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/RTTI.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/RTTI.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/Semaphore.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/Semaphore.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/Semaphore.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/Semaphore.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/StringTools.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/StringTools.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/StringTools.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/StringTools.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Core/TickCounter.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/TickCounter.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Core/TickCounter.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Core/TickCounter.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Geometry/ConvexHullBuilder.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Geometry/ConvexHullBuilder.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Geometry/ConvexHullBuilder.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Geometry/ConvexHullBuilder.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Geometry/ConvexHullBuilder2D.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Geometry/ConvexHullBuilder2D.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Geometry/ConvexHullBuilder2D.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Geometry/ConvexHullBuilder2D.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Geometry/Indexify.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Geometry/Indexify.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Geometry/Indexify.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Geometry/Indexify.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Geometry/OrientedBox.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Geometry/OrientedBox.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Geometry/OrientedBox.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Geometry/OrientedBox.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Math/Vec3.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Math/Vec3.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Math/Vec3.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Math/Vec3.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/SerializableObject.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/SerializableObject.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/SerializableObject.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/SerializableObject.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Body/Body.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Body/Body.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Body/Body.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Body/Body.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Body/BodyCreationSettings.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Body/BodyCreationSettings.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Body/BodyCreationSettings.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Body/BodyCreationSettings.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Body/BodyInterface.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Body/BodyInterface.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Body/BodyInterface.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Body/BodyInterface.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Body/BodyManager.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Body/BodyManager.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Body/BodyManager.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Body/BodyManager.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Body/MassProperties.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Body/MassProperties.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Body/MassProperties.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Body/MassProperties.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Body/MotionProperties.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Body/MotionProperties.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Body/MotionProperties.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Body/MotionProperties.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Character/Character.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Character/Character.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Character/Character.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Character/Character.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Character/CharacterBase.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Character/CharacterBase.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Character/CharacterBase.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Character/CharacterBase.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Character/CharacterVirtual.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Character/CharacterVirtual.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Character/CharacterVirtual.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Character/CharacterVirtual.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/BroadPhase/BroadPhase.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/BroadPhase/BroadPhase.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/BroadPhase/BroadPhase.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/BroadPhase/BroadPhase.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/BroadPhase/BroadPhaseBruteForce.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/BroadPhase/BroadPhaseBruteForce.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/BroadPhase/BroadPhaseBruteForce.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/BroadPhase/BroadPhaseBruteForce.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/BroadPhase/BroadPhaseQuadTree.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/BroadPhase/BroadPhaseQuadTree.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/BroadPhase/BroadPhaseQuadTree.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/BroadPhase/BroadPhaseQuadTree.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/BroadPhase/QuadTree.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/BroadPhase/QuadTree.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/BroadPhase/QuadTree.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/BroadPhase/QuadTree.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/CastConvexVsTriangles.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/CastConvexVsTriangles.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/CastConvexVsTriangles.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/CastConvexVsTriangles.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/CastSphereVsTriangles.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/CastSphereVsTriangles.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/CastSphereVsTriangles.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/CastSphereVsTriangles.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/CollideConvexVsTriangles.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/CollideConvexVsTriangles.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/CollideConvexVsTriangles.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/CollideConvexVsTriangles.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/CollideSphereVsTriangles.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/CollideSphereVsTriangles.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/CollideSphereVsTriangles.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/CollideSphereVsTriangles.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/CollisionDispatch.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/CollisionDispatch.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/CollisionDispatch.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/CollisionDispatch.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/CollisionGroup.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/CollisionGroup.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/CollisionGroup.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/CollisionGroup.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/EstimateCollisionResponse.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/EstimateCollisionResponse.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/EstimateCollisionResponse.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/EstimateCollisionResponse.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/GroupFilter.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/GroupFilter.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/GroupFilter.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/GroupFilter.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/GroupFilterTable.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/GroupFilterTable.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/GroupFilterTable.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/GroupFilterTable.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/ManifoldBetweenTwoFaces.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/ManifoldBetweenTwoFaces.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/ManifoldBetweenTwoFaces.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/ManifoldBetweenTwoFaces.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/NarrowPhaseQuery.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/NarrowPhaseQuery.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/NarrowPhaseQuery.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/NarrowPhaseQuery.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/NarrowPhaseStats.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/NarrowPhaseStats.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/NarrowPhaseStats.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/NarrowPhaseStats.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/PhysicsMaterial.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/PhysicsMaterial.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/PhysicsMaterial.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/PhysicsMaterial.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/PhysicsMaterialSimple.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/PhysicsMaterialSimple.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/PhysicsMaterialSimple.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/PhysicsMaterialSimple.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/BoxShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/BoxShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/BoxShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/BoxShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/CapsuleShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/CapsuleShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/CapsuleShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/CapsuleShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/CompoundShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/CompoundShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/CompoundShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/CompoundShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/ConvexHullShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/ConvexHullShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/ConvexHullShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/ConvexHullShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/ConvexShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/ConvexShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/ConvexShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/ConvexShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/CylinderShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/CylinderShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/CylinderShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/CylinderShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/DecoratedShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/DecoratedShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/DecoratedShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/DecoratedShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/EmptyShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/EmptyShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/EmptyShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/EmptyShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/HeightFieldShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/HeightFieldShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/HeightFieldShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/HeightFieldShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/MeshShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/MeshShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/MeshShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/MeshShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/MutableCompoundShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/MutableCompoundShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/MutableCompoundShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/MutableCompoundShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/PlaneShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/PlaneShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/PlaneShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/PlaneShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/RotatedTranslatedShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/RotatedTranslatedShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/RotatedTranslatedShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/RotatedTranslatedShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/ScaledShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/ScaledShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/ScaledShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/ScaledShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/Shape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/Shape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/Shape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/Shape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/SphereShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/SphereShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/SphereShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/SphereShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/StaticCompoundShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/StaticCompoundShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/StaticCompoundShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/StaticCompoundShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/TaperedCapsuleShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/TaperedCapsuleShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/TaperedCapsuleShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/TaperedCapsuleShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/TaperedCylinderShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/TaperedCylinderShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/TaperedCylinderShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/TaperedCylinderShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/TriangleShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/TriangleShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/Shape/TriangleShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/Shape/TriangleShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/TransformedShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/TransformedShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Collision/TransformedShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Collision/TransformedShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/ConeConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/ConeConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/ConeConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/ConeConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/Constraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/Constraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/Constraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/Constraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/ConstraintManager.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/ConstraintManager.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/ConstraintManager.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/ConstraintManager.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/ContactConstraintManager.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/ContactConstraintManager.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/ContactConstraintManager.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/ContactConstraintManager.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/DistanceConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/DistanceConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/DistanceConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/DistanceConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/FixedConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/FixedConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/FixedConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/FixedConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/GearConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/GearConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/GearConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/GearConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/HingeConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/HingeConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/HingeConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/HingeConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/MotorSettings.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/MotorSettings.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/MotorSettings.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/MotorSettings.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/PathConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/PathConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/PathConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/PathConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/PathConstraintPath.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/PathConstraintPath.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/PathConstraintPath.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/PathConstraintPath.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/PathConstraintPathHermite.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/PathConstraintPathHermite.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/PathConstraintPathHermite.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/PathConstraintPathHermite.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/PointConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/PointConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/PointConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/PointConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/PulleyConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/PulleyConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/PulleyConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/PulleyConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/RackAndPinionConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/RackAndPinionConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/RackAndPinionConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/RackAndPinionConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/SixDOFConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/SixDOFConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/SixDOFConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/SixDOFConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/SliderConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/SliderConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/SliderConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/SliderConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/SpringSettings.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/SpringSettings.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/SpringSettings.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/SpringSettings.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/SwingTwistConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/SwingTwistConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/SwingTwistConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/SwingTwistConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/TwoBodyConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/TwoBodyConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Constraints/TwoBodyConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Constraints/TwoBodyConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/DeterminismLog.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/DeterminismLog.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/DeterminismLog.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/DeterminismLog.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/IslandBuilder.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/IslandBuilder.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/IslandBuilder.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/IslandBuilder.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/LargeIslandSplitter.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/LargeIslandSplitter.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/LargeIslandSplitter.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/LargeIslandSplitter.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/PhysicsScene.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/PhysicsScene.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/PhysicsScene.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/PhysicsScene.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/PhysicsSystem.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/PhysicsSystem.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/PhysicsSystem.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/PhysicsSystem.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/PhysicsUpdateContext.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/PhysicsUpdateContext.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/PhysicsUpdateContext.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/PhysicsUpdateContext.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Ragdoll/Ragdoll.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Ragdoll/Ragdoll.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Ragdoll/Ragdoll.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Ragdoll/Ragdoll.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/SoftBody/SoftBodyCreationSettings.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/SoftBody/SoftBodyCreationSettings.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/SoftBody/SoftBodyCreationSettings.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/SoftBody/SoftBodyCreationSettings.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/SoftBody/SoftBodyMotionProperties.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/SoftBody/SoftBodyMotionProperties.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/SoftBody/SoftBodyMotionProperties.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/SoftBody/SoftBodyMotionProperties.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/SoftBody/SoftBodyShape.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/SoftBody/SoftBodyShape.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/SoftBody/SoftBodyShape.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/SoftBody/SoftBodyShape.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/SoftBody/SoftBodySharedSettings.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/SoftBody/SoftBodySharedSettings.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/SoftBody/SoftBodySharedSettings.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/SoftBody/SoftBodySharedSettings.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/StateRecorderImpl.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/StateRecorderImpl.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/StateRecorderImpl.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/StateRecorderImpl.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/MotorcycleController.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/MotorcycleController.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/MotorcycleController.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/MotorcycleController.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/TrackedVehicleController.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/TrackedVehicleController.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/TrackedVehicleController.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/TrackedVehicleController.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleAntiRollBar.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleAntiRollBar.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleAntiRollBar.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleAntiRollBar.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleCollisionTester.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleCollisionTester.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleCollisionTester.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleCollisionTester.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleConstraint.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleConstraint.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleConstraint.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleConstraint.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleController.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleController.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleController.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleController.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleDifferential.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleDifferential.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleDifferential.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleDifferential.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleEngine.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleEngine.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleEngine.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleEngine.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleTrack.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleTrack.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleTrack.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleTrack.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleTransmission.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleTransmission.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/VehicleTransmission.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/VehicleTransmission.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/Wheel.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/Wheel.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/Wheel.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/Wheel.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/WheeledVehicleController.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/WheeledVehicleController.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Physics/Vehicle/WheeledVehicleController.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Physics/Vehicle/WheeledVehicleController.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/RegisterTypes.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/RegisterTypes.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/RegisterTypes.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/RegisterTypes.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Renderer/DebugRenderer.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Renderer/DebugRenderer.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Renderer/DebugRenderer.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Renderer/DebugRenderer.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Renderer/DebugRendererPlayback.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Renderer/DebugRendererPlayback.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Renderer/DebugRendererPlayback.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Renderer/DebugRendererPlayback.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Renderer/DebugRendererRecorder.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Renderer/DebugRendererRecorder.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Renderer/DebugRendererRecorder.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Renderer/DebugRendererRecorder.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Renderer/DebugRendererSimple.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Renderer/DebugRendererSimple.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Renderer/DebugRendererSimple.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Renderer/DebugRendererSimple.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Skeleton/SkeletalAnimation.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Skeleton/SkeletalAnimation.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Skeleton/SkeletalAnimation.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Skeleton/SkeletalAnimation.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Skeleton/Skeleton.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Skeleton/Skeleton.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Skeleton/Skeleton.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Skeleton/Skeleton.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Skeleton/SkeletonMapper.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Skeleton/SkeletonMapper.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Skeleton/SkeletonMapper.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Skeleton/SkeletonMapper.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/Skeleton/SkeletonPose.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Skeleton/SkeletonPose.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/Skeleton/SkeletonPose.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/Skeleton/SkeletonPose.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/TriangleSplitter/TriangleSplitter.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/TriangleSplitter/TriangleSplitter.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/TriangleSplitter/TriangleSplitter.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/TriangleSplitter/TriangleSplitter.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/TriangleSplitter/TriangleSplitterBinning.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/TriangleSplitter/TriangleSplitterBinning.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/TriangleSplitter/TriangleSplitterBinning.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/TriangleSplitter/TriangleSplitterBinning.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/TriangleSplitter/TriangleSplitterMean.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/TriangleSplitter/TriangleSplitterMean.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/TriangleSplitter/TriangleSplitterMean.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/TriangleSplitter/TriangleSplitterMean.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStream.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStream.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStream.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStream.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStreamBinaryIn.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStreamBinaryIn.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStreamBinaryIn.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStreamBinaryIn.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStreamBinaryOut.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStreamBinaryOut.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStreamBinaryOut.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStreamBinaryOut.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStreamIn.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStreamIn.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStreamIn.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStreamIn.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStreamOut.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStreamOut.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStreamOut.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStreamOut.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStreamTextIn.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStreamTextIn.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStreamTextIn.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStreamTextIn.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStreamTextOut.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStreamTextOut.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/ObjectStreamTextOut.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/ObjectStreamTextOut.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build",
+  "command": "/usr/bin/c++ -DJPH_OBJECT_STREAM -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Build/..  -Wall -Werror -g -fno-rtti -fno-exceptions -ffp-model=precise -faligned-allocation -std=c++17 -arch arm64 -pthread -Winvalid-pch -Xclang -include-pch -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/cmake_pch.hxx -o CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/TypeDeclarations.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/TypeDeclarations.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/JoltPhysics/Jolt/ObjectStream/TypeDeclarations.cpp",
+  "output": "extern/JoltPhysics/Build/CMakeFiles/Jolt.dir/__/Jolt/ObjectStream/TypeDeclarations.cpp.o"
+},
+{
+  "directory": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/build/extern/imnodes",
+  "command": "/usr/bin/c++  -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imgui/backends -I/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/glfw/include -std=gnu++11 -arch arm64 -Wall -Wextra -Wpedantic -Werror -o CMakeFiles/imnodes.dir/imnodes.cpp.o -c /Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes/imnodes.cpp",
+  "file": "/Users/andrewzambazos/Repositories/Hephaestus-Engine/extern/imnodes/imnodes.cpp",
+  "output": "extern/imnodes/CMakeFiles/imnodes.dir/imnodes.cpp.o"
+}
+]
