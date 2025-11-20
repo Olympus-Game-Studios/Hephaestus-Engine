@@ -144,6 +144,94 @@ bool VulkanTexture::LoadFromFile(
     return true;
 }
 
+bool VulkanTexture::LoadHDRFromFile(
+    VmaAllocator allocator,
+    VkDevice device,
+    VkPhysicalDevice physicalDevice,
+    VkCommandPool commandPool,
+    VkQueue graphicsQueue,
+    const std::string& filepath)
+{
+    // Load HDR image using stbi_loadf (returns float data)
+    int texWidth, texHeight, texChannels;
+    stbi_set_flip_vertically_on_load(true);
+    float* pixels = stbi_loadf(filepath.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    
+    if (!pixels) {
+        stbi_set_flip_vertically_on_load(false);
+        return false;
+    }
+
+    width = static_cast<uint32_t>(texWidth);
+    height = static_cast<uint32_t>(texHeight);
+    mipLevels = 1; // No mipmaps for HDR environment maps typically
+
+    VkDeviceSize imageSize = width * height * 4 * sizeof(float); // RGBA float
+
+    // Create staging buffer
+    VulkanBuffer stagingBuffer;
+    stagingBuffer.Create(
+        allocator,
+        imageSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VMA_MEMORY_USAGE_CPU_ONLY
+    );
+
+    // Copy pixel data to staging buffer
+    void* data;
+    vmaMapMemory(allocator, stagingBuffer.allocation, &data);
+    memcpy(data, pixels, static_cast<size_t>(imageSize));
+    vmaUnmapMemory(allocator, stagingBuffer.allocation);
+
+    stbi_image_free(pixels);
+    stbi_set_flip_vertically_on_load(false);
+
+    // Create image with float format
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = width;
+    imageInfo.extent.height = height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = mipLevels;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = VK_FORMAT_R32G32B32A32_SFLOAT; // Float format for HDR
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+
+    if (vmaCreateImage(allocator, &imageInfo, &allocInfo, &image, &allocation, nullptr) != VK_SUCCESS) {
+        stagingBuffer.Destroy(allocator);
+        return false;
+    }
+
+    // Transition image layout for transfer
+    TransitionImageLayout(device, commandPool, graphicsQueue, 
+        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+    // Copy buffer to image
+    CopyBufferToImage(device, commandPool, graphicsQueue, stagingBuffer.buffer, width, height);
+
+    stagingBuffer.Destroy(allocator);
+
+    // Transition to shader read
+    TransitionImageLayout(device, commandPool, graphicsQueue,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    // Create image view
+    CreateImageView(device, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT);
+
+    // Create sampler
+    CreateSampler(device, physicalDevice);
+
+    return true;
+}
+
 bool VulkanTexture::CreateSolidColor(
     VmaAllocator allocator,
     VkDevice device,

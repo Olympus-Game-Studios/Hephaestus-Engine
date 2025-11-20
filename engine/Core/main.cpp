@@ -40,6 +40,7 @@
 #include "../Gfx/VulkanBuffer.h"
 #include "../Gfx/VulkanTexture.h"
 #include "../Gfx/VulkanGizmo.h"
+#include "../Gfx/VulkanSkybox.h"
 #include "../Physics/MeshCollisionSystem.h"
 #include "../Physics/JoltPhysicsEngine.h"
 #include "../Physics/JoltPhysicsSystem.h"
@@ -425,7 +426,8 @@ static bool DrawPillButton(const char* label, bool active, const ImVec2& size = 
     return clicked;
 }
 
-static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused)
+static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused, Entity& environmentEntity, 
+                                         VulkanSkybox& skybox, VulkanDevice& vkdev)
 {
     ToolbarActions actions{};
 
@@ -498,6 +500,8 @@ static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused)
             ImGui::Checkbox("Show Gizmo Grid", &g_ShowGizmoGrid);
             ImGui::Checkbox("Enable Mesh Collision", &g_EnableMeshCollision);
             ImGui::Checkbox("Lock Details Panel Selection", &g_DetailsLocked);
+            
+            ImGui::Separator();
             ImGui::Spacing();
             if (ImGui::Button("Save Settings")) {
                 SaveEditorSettings();
@@ -959,7 +963,9 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
                                   entity.GetComponent<SelectionComponent>().selected;
 
                 const char* typeLabel = "ENTITY";
-                if (entity.HasComponent<LightComponent>()) {
+                if (entity.HasComponent<EnvironmentComponent>()) {
+                    typeLabel = "ENV";
+                } else if (entity.HasComponent<LightComponent>()) {
                     typeLabel = "LIGHT";
                 } else if (entity.HasComponent<MeshRendererComponent>()) {
                     typeLabel = "MESH";
@@ -1043,7 +1049,7 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
     return actions;
 }
 
-static DetailsPanelActions DrawDetailsPanel(Scene& scene, ScriptEngine& scriptEngine)
+static DetailsPanelActions DrawDetailsPanel(Scene& scene, ScriptEngine& scriptEngine, VulkanSkybox& skybox, VulkanDevice& vkdev)
 {
     DetailsPanelActions actions{};
 
@@ -1074,6 +1080,53 @@ static DetailsPanelActions DrawDetailsPanel(Scene& scene, ScriptEngine& scriptEn
         transform.SetRotationDegrees(rotDeg);
     }
     ImGui::DragFloat3("Scale", &transform.scale.x, 0.01f, 0.01f, 10.0f);
+
+    // Environment Component
+    if (selectedEntity.HasComponent<EnvironmentComponent>()) {
+        auto& env = selectedEntity.GetComponent<EnvironmentComponent>();
+        
+        ImGui::SeparatorText("Environment");
+        
+        const char* bgTypes[] = {"Solid Color", "HDRI"};
+        int bgTypeIdx = static_cast<int>(env.type);
+        if (ImGui::Combo("Background Type", &bgTypeIdx, bgTypes, IM_ARRAYSIZE(bgTypes))) {
+            env.type = static_cast<EnvironmentComponent::BackgroundType>(bgTypeIdx);
+        }
+        
+        if (env.type == EnvironmentComponent::BackgroundType::SolidColor) {
+            float color[3] = {env.solidColor.x, env.solidColor.y, env.solidColor.z};
+            if (ImGui::ColorEdit3("Background Color", color)) {
+                env.solidColor = Vec3(color[0], color[1], color[2]);
+            }
+        } else {
+            static char hdriPathBuffer[512] = "";
+            // Initialize buffer from current path if needed
+            if (hdriPathBuffer[0] == '\0' && !env.hdriPath.empty()) {
+                strncpy(hdriPathBuffer, env.hdriPath.c_str(), sizeof(hdriPathBuffer) - 1);
+                hdriPathBuffer[sizeof(hdriPathBuffer) - 1] = '\0';
+            }
+            
+            if (ImGui::InputText("HDRI Path", hdriPathBuffer, sizeof(hdriPathBuffer))) {
+                env.hdriPath = std::string(hdriPathBuffer);
+            }
+            
+            if (ImGui::Button("Load HDRI")) {
+                if (!env.hdriPath.empty()) {
+                    if (skybox.LoadHDRI(env.hdriPath, vkdev.allocator, vkdev.physicalDevice,
+                                      vkdev.commandPool, vkdev.graphicsQueue)) {
+                        std::cout << "Loaded HDRI: " << env.hdriPath << std::endl;
+                    } else {
+                        std::cerr << "Failed to load HDRI: " << env.hdriPath << std::endl;
+                    }
+                }
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::SetTooltip("Path to .hdr or .exr file");
+            }
+            
+            ImGui::SliderFloat("HDRI Intensity", &env.hdriIntensity, 0.1f, 5.0f);
+        }
+    }
 
     if (selectedEntity.HasComponent<MeshRendererComponent>()) {
         auto& renderer = selectedEntity.GetComponent<MeshRendererComponent>();
@@ -4455,6 +4508,19 @@ int main(int argc, char* argv[])
     bool gizmoDragging = false;
     int gizmoActiveAxis = -1;
 
+    // -- Skybox for HDRI backgrounds
+    VulkanSkybox skybox;
+    try {
+        skybox.Init(vkdev.device, swap.renderPass, swap.extent, vkdev.allocator, 
+                    vkdev.physicalDevice, vkdev.commandPool, vkdev.graphicsQueue,
+                    static_cast<uint32_t>(swap.images.size()),
+                    ResolveEngineRoot().string());
+    } catch (const std::exception& e) {
+        std::cerr << "Skybox initialization error: " << e.what() << std::endl;
+        system("pause");
+        return -1;
+    }
+
     bool projectManagerInitialized = false;
     if (!g_RuntimeMode) {
         g_ProjectManager.Initialize(&vkdev);
@@ -4833,6 +4899,11 @@ int main(int argc, char* argv[])
 
     // ── Scene & Entities (ECS) ───────────────────
     Scene scene("Main Scene");
+    
+    // Create environment entity for scene settings
+    Entity environmentEntity = scene.CreateEntity("Environment");
+    environmentEntity.AddComponent<EnvironmentComponent>();
+    
     ScriptEngine scriptEngine;
     scriptEngine.Initialize(&scene);
     
@@ -6069,6 +6140,11 @@ int main(int argc, char* argv[])
                 scene.Clear();
                 scene.ClearSelection();
                 scene.SetName(*outlinerActions.newLevelName);
+                
+                // Recreate environment entity for new scene
+                environmentEntity = scene.CreateEntity("Environment");
+                environmentEntity.AddComponent<EnvironmentComponent>();
+                
                 rebuildSceneMeshesFromComponents(scene);
                 ClearSceneUndoStack();
 
@@ -6133,7 +6209,7 @@ int main(int argc, char* argv[])
                     }
                 }
             }
-            DetailsPanelActions detailsActions = DrawDetailsPanel(scene, scriptEngine);
+            DetailsPanelActions detailsActions = DrawDetailsPanel(scene, scriptEngine, skybox, vkdev);
 
             std::optional<entt::entity> viewportDeleteRequest;
             {
@@ -6325,7 +6401,7 @@ int main(int argc, char* argv[])
             DrawLogConsole(io, assetBrowserStatus);
 
             // Overlays should be rendered last so they appear above docked windows
-            ToolbarActions toolbarActions = DrawEditorToolbar(g_SimPlaying, g_SimPaused);
+            ToolbarActions toolbarActions = DrawEditorToolbar(g_SimPlaying, g_SimPaused, environmentEntity, skybox, vkdev);
             if (toolbarActions.playClicked) {
                 // Save scene state before entering play mode
                 SceneSerializer serializer(scene);
@@ -6840,9 +6916,21 @@ int main(int argc, char* argv[])
         VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         vkBeginCommandBuffer(cmd, &bi);
 
-    VkClearValue clear[2];
-    clear[0].color = { {0.1f, 0.2f, 0.3f, 1.0f} };
-    clear[1].depthStencil = {1.0f, 0};
+        // Get environment settings
+        Vec3 clearColor(0.1f, 0.2f, 0.3f);
+        bool useHDRI = false;
+        if (environmentEntity && environmentEntity.HasComponent<EnvironmentComponent>()) {
+            auto& env = environmentEntity.GetComponent<EnvironmentComponent>();
+            if (env.type == EnvironmentComponent::BackgroundType::SolidColor) {
+                clearColor = env.solidColor;
+            } else if (env.type == EnvironmentComponent::BackgroundType::HDRI) {
+                useHDRI = skybox.hasHDRI;
+            }
+        }
+
+        VkClearValue clear[2];
+        clear[0].color = { {clearColor.x, clearColor.y, clearColor.z, 1.0f} };
+        clear[1].depthStencil = {1.0f, 0};
         VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         rp.renderPass = swap.renderPass;
         rp.framebuffer = swap.framebuffers[imageIndex];
@@ -7178,6 +7266,12 @@ int main(int argc, char* argv[])
             }
         }
 
+        // Render skybox if HDRI is enabled
+        if (useHDRI) {
+            skybox.UpdateDescriptorSet(imageIndex, uniformBuffers[imageIndex].buffer);
+            skybox.Draw(cmd, imageIndex);
+        }
+
         // Render ImGui draw data (editor only)
         if (!g_RuntimeMode) {
             ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
@@ -7260,6 +7354,7 @@ int main(int argc, char* argv[])
     vkDestroyDescriptorPool(vkdev.device, imguiPool, nullptr);
 
     vulkanGizmo.Cleanup(vkdev.device, vkdev.allocator);
+    skybox.Cleanup(vkdev.allocator);
     for (auto& mesh : meshLibrary) {
         mesh.Destroy(vkdev.allocator);
     }

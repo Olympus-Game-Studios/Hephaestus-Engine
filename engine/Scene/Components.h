@@ -499,3 +499,26 @@ struct LightComponent {
         return light;
     }
 };
+
+/**
+ * Environment component - controls scene background and environment
+ */
+struct EnvironmentComponent {
+    enum class BackgroundType {
+        SolidColor,
+        HDRI
+    };
+
+    BackgroundType type;
+    Vec3 solidColor;           // Used when type == SolidColor
+    std::string hdriPath;      // Path to HDRI/EXR file when type == HDRI
+    float hdriIntensity;       // Brightness multiplier for HDRI
+
+    EnvironmentComponent()
+        : type(BackgroundType::SolidColor)
+        , solidColor(0.1f, 0.2f, 0.3f)
+        , hdriPath("")
+        , hdriIntensity(1.0f)
+    {}
+};
+

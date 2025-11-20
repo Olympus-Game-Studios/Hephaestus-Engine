@@ -28,6 +28,15 @@ public:
         const std::string& filepath,
         bool generateMipmaps = false);
 
+    // Create HDR texture from file (HDRI, EXR)
+    bool LoadHDRFromFile(
+        VmaAllocator allocator,
+        VkDevice device,
+        VkPhysicalDevice physicalDevice,
+        VkCommandPool commandPool,
+        VkQueue graphicsQueue,
+        const std::string& filepath);
+
     // Create 1x1 solid color texture
     bool CreateSolidColor(
         VmaAllocator allocator,

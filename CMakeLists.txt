@@ -72,6 +72,7 @@ add_executable(HephaestusEngine
     engine/Gfx/VulkanPipeline.cpp
     engine/Gfx/VulkanTexture.cpp
     engine/Gfx/VulkanGizmo.cpp
+    engine/Gfx/VulkanSkybox.cpp
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/JoltPhysicsEngine.cpp
     engine/Physics/JoltPhysicsSystem.cpp
