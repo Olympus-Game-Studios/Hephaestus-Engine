@@ -349,7 +349,9 @@ struct ToolbarActions {
 enum class WorldOutlinerSpawnPreset {
     DefaultCube,
     DefaultSphere,
-    DirectionalLight
+    DirectionalLight,
+    PointLight,
+    SpotLight
 };
 
 struct WorldOutlinerActions {
@@ -732,6 +734,68 @@ static void BeginHephaestusDockspace()
     }
 }
 
+static WorldOutlinerActions DrawActorPalette()
+{
+    WorldOutlinerActions actions{};
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
+    if (ImGui::BeginChild("##ActorPaletteChild", ImVec2(0, 0), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        ImGui::TextUnformatted("Place Actors");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Calculate button size and layout
+        float availWidth = ImGui::GetContentRegionAvail().x;
+        const ImGuiStyle& s = ImGui::GetStyle();
+        float buttonSize = 64.0f;
+        float buttonSpacing = s.ItemSpacing.x;
+        int buttonsPerRow = std::max(1, static_cast<int>((availWidth + buttonSpacing) / (buttonSize + buttonSpacing)));
+
+        const struct ActorButton {
+            const char* icon;
+            const char* label;
+            WorldOutlinerSpawnPreset preset;
+        } actors[] = {
+            {"C", "Cube", WorldOutlinerSpawnPreset::DefaultCube},
+            {"S", "Sphere", WorldOutlinerSpawnPreset::DefaultSphere},
+            {"D", "Dir Light", WorldOutlinerSpawnPreset::DirectionalLight},
+            {"P", "Point Light", WorldOutlinerSpawnPreset::PointLight},
+            {"O", "Spot Light", WorldOutlinerSpawnPreset::SpotLight},
+        };
+
+        for (int i = 0; i < sizeof(actors) / sizeof(actors[0]); ++i) {
+            const ActorButton& actor = actors[i];
+            
+            ImGui::BeginGroup();
+            
+            // Draw button with icon
+            if (ImGui::Button(actor.icon, ImVec2(buttonSize, buttonSize))) {
+                actions.spawnRequest = actor.preset;
+            }
+            
+            // Draw label centered below button
+            const char* label = actor.label;
+            float labelWidth = ImGui::CalcTextSize(label).x;
+            float offsetX = (buttonSize - labelWidth) * 0.5f;
+            if (offsetX > 0.0f) {
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
+            }
+            ImGui::TextUnformatted(label);
+            
+            ImGui::EndGroup();
+
+            // Layout buttons in rows
+            if ((i + 1) % buttonsPerRow != 0 && i < (sizeof(actors) / sizeof(actors[0]) - 1)) {
+                ImGui::SameLine();
+            }
+        }
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+
+    return actions;
+}
+
 static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
 {
     WorldOutlinerActions actions{};
@@ -747,196 +811,217 @@ static WorldOutlinerActions DrawWorldOutliner(Scene& scene)
     constexpr const char* kNewLevelPopupId = "Create New Level###WorldOutlinerNewLevel";
     constexpr const char* kAddEntityPopupId = "Add Entity###WorldOutlinerAddEntity";
 
-    float availableWidth = ImGui::GetContentRegionAvail().x;
-    const ImGuiStyle& s = ImGui::GetStyle();
-    float filterWidth = std::max(availableWidth - (s.ItemSpacing.x * 6.0f + 70.0f), 200.0f);
-    ImGui::SetNextItemWidth(filterWidth);
-    filter.Draw("##WorldOutlinerFilter", filterWidth);
-    ImGui::SameLine();
-    DrawPillButton("Filter", false);
-    ImGui::SameLine();
-    if (ImGui::Button("+##WorldOutlinerAddEntity")) {
-        ImGui::OpenPopup(kAddEntityPopupId);
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Add a default primitive or light.");
-    }
-    if (ImGui::BeginPopup(kAddEntityPopupId)) {
-        if (ImGui::MenuItem("Default Cube")) {
-            actions.spawnRequest = WorldOutlinerSpawnPreset::DefaultCube;
-        }
-        if (ImGui::MenuItem("Default Sphere")) {
-            actions.spawnRequest = WorldOutlinerSpawnPreset::DefaultSphere;
-        }
-        if (ImGui::MenuItem("Directional Light")) {
-            actions.spawnRequest = WorldOutlinerSpawnPreset::DirectionalLight;
-        }
-        ImGui::EndPopup();
-    }
+    // Split the window: top half for outliner, bottom half for actor palette
+    float windowHeight = ImGui::GetContentRegionAvail().y;
+    float outlinerHeight = windowHeight * 0.5f;
+    float paletteHeight = windowHeight - outlinerHeight - ImGui::GetStyle().ItemSpacing.y;
 
-    ImGui::Spacing();
-    ImGui::Separator();
+    // === TOP SECTION: World Outliner ===
+    if (ImGui::BeginChild("##WorldOutlinerSection", ImVec2(0, outlinerHeight), false)) {
+        float availableWidth = ImGui::GetContentRegionAvail().x;
+        const ImGuiStyle& s = ImGui::GetStyle();
+        float filterWidth = std::max(availableWidth - (s.ItemSpacing.x * 6.0f + 70.0f), 200.0f);
+        ImGui::SetNextItemWidth(filterWidth);
+        filter.Draw("##WorldOutlinerFilter", filterWidth);
+        ImGui::SameLine();
+        DrawPillButton("Filter", false);
+        ImGui::SameLine();
+        if (ImGui::Button("+##WorldOutlinerAddEntity")) {
+            ImGui::OpenPopup(kAddEntityPopupId);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Add a default primitive or light.");
+        }
+        if (ImGui::BeginPopup(kAddEntityPopupId)) {
+            if (ImGui::MenuItem("Default Cube")) {
+                actions.spawnRequest = WorldOutlinerSpawnPreset::DefaultCube;
+            }
+            if (ImGui::MenuItem("Default Sphere")) {
+                actions.spawnRequest = WorldOutlinerSpawnPreset::DefaultSphere;
+            }
+            if (ImGui::MenuItem("Directional Light")) {
+                actions.spawnRequest = WorldOutlinerSpawnPreset::DirectionalLight;
+            }
+            if (ImGui::MenuItem("Point Light")) {
+                actions.spawnRequest = WorldOutlinerSpawnPreset::PointLight;
+            }
+            if (ImGui::MenuItem("Spot Light")) {
+                actions.spawnRequest = WorldOutlinerSpawnPreset::SpotLight;
+            }
+            ImGui::EndPopup();
+        }
 
-    ImGui::TextDisabled("Scene: %s", scene.GetName().c_str());
-    ImGui::SameLine();
-    if (DrawPillButton("New Level", false)) {
-        s_NewLevelNameBuffer.fill(0);
-        const std::string suggestedName = "New Level";
-        std::strncpy(s_NewLevelNameBuffer.data(), suggestedName.c_str(), s_NewLevelNameBuffer.size() - 1);
-        s_FocusNewLevelInput = true;
-        ImGui::OpenPopup(kNewLevelPopupId);
-    }
-    
-    // Show keyboard shortcuts help
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
-    ImGui::TextDisabled("?");
-    if (ImGui::IsItemHovered()) {
-        ImGui::BeginTooltip();
-        ImGui::TextUnformatted("World Outliner Keyboard Shortcuts:");
+        ImGui::Spacing();
         ImGui::Separator();
-        ImGui::BulletText("Shift+Backspace or Delete - Delete selected entity");
-        ImGui::BulletText("Ctrl+Shift+D - Duplicate selected entity");
-        ImGui::BulletText("Ctrl+Z - Undo last change");
-        ImGui::BulletText("Esc - Deselect");
-        ImGui::BulletText("Right-click - Context menu");
-        ImGui::EndTooltip();
-    }
 
-    if (ImGui::BeginPopupModal(kNewLevelPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (s_FocusNewLevelInput || ImGui::IsWindowAppearing()) {
-            ImGui::SetKeyboardFocusHere();
-            s_FocusNewLevelInput = false;
+        ImGui::TextDisabled("Scene: %s", scene.GetName().c_str());
+        ImGui::SameLine();
+        if (DrawPillButton("New Level", false)) {
+            s_NewLevelNameBuffer.fill(0);
+            const std::string suggestedName = "New Level";
+            std::strncpy(s_NewLevelNameBuffer.data(), suggestedName.c_str(), s_NewLevelNameBuffer.size() - 1);
+            s_FocusNewLevelInput = true;
+            ImGui::OpenPopup(kNewLevelPopupId);
+        }
+        
+        // Show keyboard shortcuts help
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+        ImGui::TextDisabled("?");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("World Outliner Keyboard Shortcuts:");
+            ImGui::Separator();
+            ImGui::BulletText("Shift+Backspace or Delete - Delete selected entity");
+            ImGui::BulletText("Ctrl+Shift+D - Duplicate selected entity");
+            ImGui::BulletText("Ctrl+Z - Undo last change");
+            ImGui::BulletText("Esc - Deselect");
+            ImGui::BulletText("Right-click - Context menu");
+            ImGui::EndTooltip();
         }
 
-        ImGui::InputText("Level Name", s_NewLevelNameBuffer.data(), s_NewLevelNameBuffer.size(), ImGuiInputTextFlags_AutoSelectAll);
-        bool nameFieldActive = ImGui::IsItemActive();
+        if (ImGui::BeginPopupModal(kNewLevelPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (s_FocusNewLevelInput || ImGui::IsWindowAppearing()) {
+                ImGui::SetKeyboardFocusHere();
+                s_FocusNewLevelInput = false;
+            }
 
-        std::string trimmedName = TrimCopy(s_NewLevelNameBuffer.data());
-        bool validName = !trimmedName.empty();
-        if (!validName) {
-            ImGui::TextDisabled("Name cannot be blank.");
+            ImGui::InputText("Level Name", s_NewLevelNameBuffer.data(), s_NewLevelNameBuffer.size(), ImGuiInputTextFlags_AutoSelectAll);
+            bool nameFieldActive = ImGui::IsItemActive();
+
+            std::string trimmedName = TrimCopy(s_NewLevelNameBuffer.data());
+            bool validName = !trimmedName.empty();
+            if (!validName) {
+                ImGui::TextDisabled("Name cannot be blank.");
+            }
+
+            ImGui::Spacing();
+
+            bool createClicked = false;
+            bool submitViaEnter = validName && nameFieldActive && ImGui::IsKeyPressed(ImGuiKey_Enter);
+
+            if (!validName) {
+                ImGui::BeginDisabled();
+            }
+            if (ImGui::Button("Create")) {
+                createClicked = true;
+            }
+            if (!validName) {
+                ImGui::EndDisabled();
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) {
+                ImGui::CloseCurrentPopup();
+            }
+
+            if (validName && (createClicked || submitViaEnter)) {
+                actions.newLevelName = trimmedName;
+                filter.Clear();
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
         }
 
         ImGui::Spacing();
 
-        bool createClicked = false;
-        bool submitViaEnter = validName && nameFieldActive && ImGui::IsKeyPressed(ImGuiKey_Enter);
+        auto view = scene.GetEntitiesWith<TagComponent>();
 
-        if (!validName) {
-            ImGui::BeginDisabled();
-        }
-        if (ImGui::Button("Create")) {
-            createClicked = true;
-        }
-        if (!validName) {
-            ImGui::EndDisabled();
+        if (ImGui::BeginTable("WorldOutlinerTable", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
+            ImGui::TableSetupColumn("Entity", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+
+            for (auto entityHandle : view) {
+                Entity entity(entityHandle, &scene);
+                auto& tag = entity.GetComponent<TagComponent>();
+                if (!filter.PassFilter(tag.tag.c_str())) {
+                    continue;
+                }
+
+                bool isSelected = entity.HasComponent<SelectionComponent>() &&
+                                  entity.GetComponent<SelectionComponent>().selected;
+
+                const char* typeLabel = "ENTITY";
+                if (entity.HasComponent<LightComponent>()) {
+                    typeLabel = "LIGHT";
+                } else if (entity.HasComponent<MeshRendererComponent>()) {
+                    typeLabel = "MESH";
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::PushID(static_cast<int>(entityHandle));
+                ImGuiSelectableFlags selFlags = ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick;
+                if (ImGui::Selectable(tag.tag.c_str(), isSelected, selFlags)) {
+                    if (!g_DetailsLocked) {
+                        scene.SetSelectedEntity(entity);
+                    }
+                }
+
+                if (ImGui::BeginPopupContextItem()) {
+                    if (ImGui::MenuItem("Delete", "Shift+Backspace")) {
+                        actions.entityToDelete = entityHandle;
+                    }
+                    ImGui::EndPopup();
+                }
+                ImGui::PopID();
+
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%s", typeLabel);
+            }
+
+            ImGui::EndTable();
         }
 
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
-            ImGui::CloseCurrentPopup();
-        }
+        // Keyboard shortcuts (when window is focused and not typing in text input)
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            !ImGui::GetIO().WantTextInput) {
 
-        if (validName && (createClicked || submitViaEnter)) {
-            actions.newLevelName = trimmedName;
-            filter.Clear();
-            ImGui::CloseCurrentPopup();
-        }
+            const ImGuiIO& io = ImGui::GetIO();
+            const bool ctrlDown = io.KeyCtrl;
+            const bool shiftDown = io.KeyShift;
+            const ImGuiInputFlags shortcutRoute = ImGuiInputFlags_RouteFocused;
 
-        ImGui::EndPopup();
+            const bool deleteViaChord = ImGui::Shortcut(ImGuiMod_Shift | ImGuiKey_Backspace, shortcutRoute);
+            const bool deleteViaKey = ImGui::Shortcut(ImGuiKey_Delete, shortcutRoute);
+
+            // Shift+Backspace or Delete - Delete selected entity
+            if (!actions.entityToDelete && (deleteViaChord || deleteViaKey ||
+                (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) && shiftDown))) {
+                Entity selected = scene.GetSelectedEntity();
+                if (selected) {
+                    actions.entityToDelete = static_cast<entt::entity>(selected);
+                }
+            }
+
+            const bool duplicateShortcut = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_D, shortcutRoute);
+            // Ctrl+Shift+D - Duplicate selected entity
+            if (duplicateShortcut || (ImGui::IsKeyPressed(ImGuiKey_D, false) && ctrlDown && shiftDown)) {
+                Entity selected = scene.GetSelectedEntity();
+                if (selected) {
+                    PushSceneUndoSnapshot(scene);
+                    scene.CopyEntityToClipboard(selected);
+                    Entity duplicated = scene.PasteClipboard();
+                    if (duplicated) {
+                        scene.SetSelectedEntity(duplicated);
+                    }
+                }
+            }
+            
+            // Escape - Deselect current entity
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                scene.ClearSelection();
+            }
+        }
     }
+    ImGui::EndChild();
 
-    ImGui::Spacing();
-
-    auto view = scene.GetEntitiesWith<TagComponent>();
-
-    if (ImGui::BeginTable("WorldOutlinerTable", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Entity", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-
-        for (auto entityHandle : view) {
-            Entity entity(entityHandle, &scene);
-            auto& tag = entity.GetComponent<TagComponent>();
-            if (!filter.PassFilter(tag.tag.c_str())) {
-                continue;
-            }
-
-            bool isSelected = entity.HasComponent<SelectionComponent>() &&
-                              entity.GetComponent<SelectionComponent>().selected;
-
-            const char* typeLabel = "ENTITY";
-            if (entity.HasComponent<LightComponent>()) {
-                typeLabel = "LIGHT";
-            } else if (entity.HasComponent<MeshRendererComponent>()) {
-                typeLabel = "MESH";
-            }
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::PushID(static_cast<int>(entityHandle));
-            ImGuiSelectableFlags selFlags = ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick;
-            if (ImGui::Selectable(tag.tag.c_str(), isSelected, selFlags)) {
-                if (!g_DetailsLocked) {
-                    scene.SetSelectedEntity(entity);
-                }
-            }
-
-            if (ImGui::BeginPopupContextItem()) {
-                if (ImGui::MenuItem("Delete", "Shift+Backspace")) {
-                    actions.entityToDelete = entityHandle;
-                }
-                ImGui::EndPopup();
-            }
-            ImGui::PopID();
-
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", typeLabel);
-        }
-
-        ImGui::EndTable();
-    }
-
-    // Keyboard shortcuts (when window is focused and not typing in text input)
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-        !ImGui::GetIO().WantTextInput) {
-
-        const ImGuiIO& io = ImGui::GetIO();
-        const bool ctrlDown = io.KeyCtrl;
-        const bool shiftDown = io.KeyShift;
-        const ImGuiInputFlags shortcutRoute = ImGuiInputFlags_RouteFocused;
-
-        const bool deleteViaChord = ImGui::Shortcut(ImGuiMod_Shift | ImGuiKey_Backspace, shortcutRoute);
-        const bool deleteViaKey = ImGui::Shortcut(ImGuiKey_Delete, shortcutRoute);
-
-        // Shift+Backspace or Delete - Delete selected entity
-        if (!actions.entityToDelete && (deleteViaChord || deleteViaKey ||
-            (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) && shiftDown))) {
-            Entity selected = scene.GetSelectedEntity();
-            if (selected) {
-                actions.entityToDelete = static_cast<entt::entity>(selected);
-            }
-        }
-
-        const bool duplicateShortcut = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_D, shortcutRoute);
-        // Ctrl+Shift+D - Duplicate selected entity
-        if (duplicateShortcut || (ImGui::IsKeyPressed(ImGuiKey_D, false) && ctrlDown && shiftDown)) {
-            Entity selected = scene.GetSelectedEntity();
-            if (selected) {
-                PushSceneUndoSnapshot(scene);
-                scene.CopyEntityToClipboard(selected);
-                Entity duplicated = scene.PasteClipboard();
-                if (duplicated) {
-                    scene.SetSelectedEntity(duplicated);
-                }
-            }
-        }
-        
-        // Escape - Deselect current entity
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            scene.ClearSelection();
-        }
+    // === BOTTOM SECTION: Actor Palette ===
+    WorldOutlinerActions paletteActions = DrawActorPalette();
+    if (paletteActions.spawnRequest) {
+        actions.spawnRequest = paletteActions.spawnRequest;
     }
 
     ImGui::End();
@@ -4967,6 +5052,30 @@ int main(int argc, char* argv[])
         return light;
     };
 
+    auto spawnPointLightEntity = [&]() -> Entity {
+        Entity light = scene.CreateEntity(makeUniqueEntityName("Point Light"));
+        light.AddComponent<LightComponent>(LightComponent::CreatePoint(Vec3(1.0f, 1.0f, 1.0f), 5.0f, 10.0f));
+        auto& transform = light.GetComponent<TransformComponent>();
+        transform.position = Vec3(0.0f, 2.0f, 0.0f);
+        if (!g_DetailsLocked) {
+            scene.SetSelectedEntity(light);
+        }
+        return light;
+    };
+
+    auto spawnSpotLightEntity = [&]() -> Entity {
+        Entity light = scene.CreateEntity(makeUniqueEntityName("Spot Light"));
+        light.AddComponent<LightComponent>(LightComponent::CreateSpot(Vec3(1.0f, 1.0f, 1.0f), 5.0f, 10.0f, 0.785f, 0.959f));
+        auto& transform = light.GetComponent<TransformComponent>();
+        transform.position = Vec3(0.0f, 3.0f, 0.0f);
+        // Angle the spotlight downward
+        transform.rotation = Vec3(0.524f, 0.0f, 0.0f); // ~30 deg X in radians
+        if (!g_DetailsLocked) {
+            scene.SetSelectedEntity(light);
+        }
+        return light;
+    };
+
     auto importModelFromFile = [&](const std::filesystem::path& modelPath) -> Entity {
         std::cout << "[Import] Attempting to load model from " << modelPath.string() << std::endl;
         MeshData importedMesh;
@@ -5986,6 +6095,24 @@ int main(int argc, char* argv[])
                             logSuccess("Added directional light to scene.");
                         } else {
                             logFailure("Failed to add directional light.");
+                        }
+                        break;
+                    }
+                    case WorldOutlinerSpawnPreset::PointLight: {
+                        Entity created = spawnPointLightEntity();
+                        if (created) {
+                            logSuccess("Added point light to scene.");
+                        } else {
+                            logFailure("Failed to add point light.");
+                        }
+                        break;
+                    }
+                    case WorldOutlinerSpawnPreset::SpotLight: {
+                        Entity created = spawnSpotLightEntity();
+                        if (created) {
+                            logSuccess("Added spot light to scene.");
+                        } else {
+                            logFailure("Failed to add spot light.");
                         }
                         break;
                     }
