@@ -769,9 +769,24 @@ static WorldOutlinerActions DrawActorPalette()
             ImGui::BeginGroup();
             
             // Draw button with icon
-            if (ImGui::Button(actor.icon, ImVec2(buttonSize, buttonSize))) {
+            ImGui::PushID(i);
+            ImGui::Button(actor.icon, ImVec2(buttonSize, buttonSize));
+            
+            // Check for double-click on the button
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 actions.spawnRequest = actor.preset;
             }
+            
+            // Handle drag-and-drop source
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                // Set payload to carry the actor preset type
+                ImGui::SetDragDropPayload("ACTOR_PALETTE_ITEM", &actor.preset, sizeof(WorldOutlinerSpawnPreset));
+                // Preview text while dragging
+                ImGui::TextUnformatted(actor.label);
+                ImGui::EndDragDropSource();
+            }
+            
+            ImGui::PopID();
             
             // Draw label centered below button
             const char* label = actor.label;
@@ -6452,6 +6467,52 @@ int main(int argc, char* argv[])
             }
 
             DrawViewportOverlay(currentGizmoOperation, currentGizmoMode, g_ShowGizmoGrid, g_ShowEditorGizmo);
+
+            // Handle drag-and-drop to viewport (drop actors into scene)
+            static WorldOutlinerSpawnPreset s_ViewportDroppedPreset = WorldOutlinerSpawnPreset::DefaultCube;
+            static bool s_ViewportHasDroppedItem = false;
+            
+            // Create an invisible window over the central dockspace area to accept drops
+            ImGuiViewport* dropVp = ImGui::GetMainViewport();
+            const ImGuiStyle& dropStyle = ImGui::GetStyle();
+            const float dropToolbarHeight = std::max(50.0f, ImGui::GetFrameHeight() * 2.2f);
+            const float dropTopOffset = dropToolbarHeight;
+            
+            ImGui::SetNextWindowPos(ImVec2(dropVp->Pos.x, dropVp->Pos.y + dropTopOffset));
+            ImGui::SetNextWindowSize(ImVec2(dropVp->Size.x, std::max(0.0f, dropVp->Size.y - dropTopOffset)));
+            ImGui::SetNextWindowBgAlpha(0.0f);
+            
+            ImGuiWindowFlags dropTargetFlags = ImGuiWindowFlags_NoTitleBar |
+                                                ImGuiWindowFlags_NoResize |
+                                                ImGuiWindowFlags_NoMove |
+                                                ImGuiWindowFlags_NoScrollbar |
+                                                ImGuiWindowFlags_NoScrollWithMouse |
+                                                ImGuiWindowFlags_NoCollapse |
+                                                ImGuiWindowFlags_NoSavedSettings |
+                                                ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                                ImGuiWindowFlags_NoFocusOnAppearing |
+                                                ImGuiWindowFlags_NoNavFocus |
+                                                ImGuiWindowFlags_NoNavInputs |
+                                                ImGuiWindowFlags_NoDecoration;
+            
+            ImGui::Begin("##ViewportDropTarget", nullptr, dropTargetFlags);
+            
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ACTOR_PALETTE_ITEM")) {
+                    IM_ASSERT(payload->DataSize == sizeof(WorldOutlinerSpawnPreset));
+                    s_ViewportDroppedPreset = *(const WorldOutlinerSpawnPreset*)payload->Data;
+                    s_ViewportHasDroppedItem = true;
+                }
+                ImGui::EndDragDropTarget();
+            }
+            
+            ImGui::End();
+            
+            // Process the drop - add it to outlinerActions so it gets handled with other spawn requests
+            if (s_ViewportHasDroppedItem) {
+                outlinerActions.spawnRequest = s_ViewportDroppedPreset;
+                s_ViewportHasDroppedItem = false;
+            }
         }
         }  // end if (!g_RuntimeMode) - close editor UI section
 
