@@ -1,4 +1,4 @@
-#include <GLFW/glfw3.h>
+﻿#include <GLFW/glfw3.h>
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -769,7 +769,128 @@ static void BeginHephaestusDockspace() {
   }
 }
 
+// Discover all HDR/EXR files in the assets directory
+// Optionally pass a scene to detect project location from existing HDRI paths
+static std::vector<std::string> DiscoverHDRFiles(Scene* scene = nullptr) {
+  std::vector<std::string> hdrFiles;
+  
+  try {
+    // Get the active project root (or fall back to current working directory)
+    fs::path engineRoot = !g_ActiveProjectRoot.empty() ? g_ActiveProjectRoot : fs::current_path();
+    
+    // Build list of possible asset directories to search
+    std::vector<fs::path> searchPaths;
+    
+    // 1. Project assets directory (or engine assets if no project is active)
+    searchPaths.push_back(engineRoot / "assets");
+    
+    // 2. If scene is provided, check for project location hints from existing HDRI paths
+    if (scene) {
+      auto envView = scene->GetEntitiesWith<EnvironmentComponent>();
+      for (auto entityHandle : envView) {
+        Entity entity(entityHandle, scene);
+        auto& env = entity.GetComponent<EnvironmentComponent>();
+        
+        if (!env.hdriPath.empty()) {
+          fs::path hdriPath(env.hdriPath);
+          // Try to find "assets" directory in the path hierarchy
+          fs::path current = hdriPath.parent_path();
+          while (current.has_parent_path()) {
+            if (current.filename() == "assets") {
+              // Found assets directory, add it if not already present
+              bool alreadyAdded = false;
+              for (const auto& existing : searchPaths) {
+                if (fs::equivalent(existing, current)) {
+                  alreadyAdded = true;
+                  break;
+                }
+              }
+              if (!alreadyAdded) {
+                searchPaths.push_back(current);
+                std::cout << "[HDR Discovery] Detected project assets from HDRI path: " << current << std::endl;
+              }
+              break;
+            }
+            current = current.parent_path();
+          }
+        }
+      }
+    }
+    
+    // 3. Try to find project assets by checking parent directories
+    fs::path probe = engineRoot;
+    for (int i = 0; i < 3; ++i) {
+      fs::path projectAssets = probe / "assets";
+      if (fs::exists(projectAssets) && projectAssets != (engineRoot / "assets")) {
+        bool alreadyAdded = false;
+        for (const auto& existing : searchPaths) {
+          try {
+            if (fs::equivalent(existing, projectAssets)) {
+              alreadyAdded = true;
+              break;
+            }
+          } catch (...) {}
+        }
+        if (!alreadyAdded) {
+          searchPaths.push_back(projectAssets);
+        }
+      }
+      if (probe.has_parent_path()) {
+        probe = probe.parent_path();
+      }
+    }
+    
+    std::cout << "[HDR Discovery] Searching " << searchPaths.size() << " location(s) for HDR files..." << std::endl;
+    
+    // Search all possible asset locations
+    for (const auto& assetsPath : searchPaths) {
+      if (!fs::exists(assetsPath) || !fs::is_directory(assetsPath)) {
+        continue;
+      }
+      
+      std::cout << "[HDR Discovery] Scanning: " << assetsPath << std::endl;
+      
+      try {
+        // Recursively iterate through all files in this assets directory
+        for (const auto& entry : fs::recursive_directory_iterator(assetsPath)) {
+          if (entry.is_regular_file()) {
+            fs::path filepath = entry.path();
+            std::string extension = filepath.extension().string();
+            
+            // Convert extension to lowercase for comparison
+            std::transform(extension.begin(), extension.end(), extension.begin(),
+                          [](unsigned char c) { return std::tolower(c); });
+            
+            // Check if file has .hdr or .exr extension
+            if (extension == ".hdr" || extension == ".exr") {
+              // Store the full path as a string
+              std::string fullPath = filepath.string();
+              hdrFiles.push_back(fullPath);
+            }
+          }
+        }
+      } catch (const fs::filesystem_error& e) {
+        std::cerr << "[HDR Discovery] Error scanning " << assetsPath << ": " << e.what() << std::endl;
+      }
+    }
+    
+    std::cout << "[HDR Discovery] Total HDR files found: " << hdrFiles.size() << std::endl;
+    
+  } catch (const std::exception& e) {
+    std::cerr << "[HDR Discovery] Error: " << e.what() << std::endl;
+  }
+  
+  // Sort files alphabetically for consistent ordering
+  std::sort(hdrFiles.begin(), hdrFiles.end());
+  
+  // Remove duplicates
+  hdrFiles.erase(std::unique(hdrFiles.begin(), hdrFiles.end()), hdrFiles.end());
+  
+  return hdrFiles;
+}
+
 static WorldOutlinerActions DrawActorPalette() {
+
   WorldOutlinerActions actions{};
 
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
@@ -1156,32 +1277,84 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
         env.solidColor = Vec3(color[0], color[1], color[2]);
       }
     } else {
-      static char hdriPathBuffer[512] = "";
-      // Initialize buffer from current path if needed
-      if (hdriPathBuffer[0] == '\0' && !env.hdriPath.empty()) {
-        strncpy(hdriPathBuffer, env.hdriPath.c_str(),
-                sizeof(hdriPathBuffer) - 1);
-        hdriPathBuffer[sizeof(hdriPathBuffer) - 1] = '\0';
+      // Discover available HDR files (cached)
+      static std::vector<std::string> cachedHDRFiles;
+      static bool needsRefresh = true;
+      
+      if (needsRefresh) {
+        cachedHDRFiles = DiscoverHDRFiles(&scene);
+        needsRefresh = false;
       }
-
-      if (ImGui::InputText("HDRI Path", hdriPathBuffer,
-                           sizeof(hdriPathBuffer))) {
-        env.hdriPath = std::string(hdriPathBuffer);
+      
+      // Build display names (filenames only) for the dropdown
+      std::vector<std::string> displayNames;
+      for (const auto& path : cachedHDRFiles) {
+        fs::path p(path);
+        displayNames.push_back(p.filename().string());
       }
-
-      if (ImGui::Button("Load HDRI")) {
+      
+      // Find current selection index
+      int currentIndex = -1;
+      if (!env.hdriPath.empty()) {
+        for (size_t i = 0; i < cachedHDRFiles.size(); ++i) {
+          if (cachedHDRFiles[i] == env.hdriPath) {
+            currentIndex = static_cast<int>(i);
+            break;
+          }
+        }
+      }
+      
+      // Display dropdown or message if no files found
+      if (cachedHDRFiles.empty()) {
+        ImGui::TextDisabled("No HDR files found in assets/");
+        ImGui::TextDisabled("Place .hdr or .exr files in the assets directory");
+      } else {
+        // Prepare combo preview
+        const char* previewValue = (currentIndex >= 0) 
+            ? displayNames[currentIndex].c_str() 
+            : "Select HDRI...";
+        
+        if (ImGui::BeginCombo("HDRI File", previewValue)) {
+          for (size_t i = 0; i < cachedHDRFiles.size(); ++i) {
+            bool isSelected = (currentIndex == static_cast<int>(i));
+            if (ImGui::Selectable(displayNames[i].c_str(), isSelected)) {
+              // Selection changed - update path and auto-load
+              env.hdriPath = cachedHDRFiles[i];
+              
+              // Auto-load the selected HDRI
+              if (skybox.LoadHDRI(env.hdriPath, vkdev.allocator,
+                                  vkdev.physicalDevice, vkdev.commandPool,
+                                  vkdev.graphicsQueue)) {
+                std::cout << "Loaded HDRI: " << env.hdriPath << std::endl;
+              } else {
+                std::cerr << "Failed to load HDRI: " << env.hdriPath << std::endl;
+              }
+            }
+            if (isSelected) {
+              ImGui::SetItemDefaultFocus();
+            }
+          }
+          ImGui::EndCombo();
+        }
+      }
+      
+      // Reload/Refresh button
+      ImGui::SameLine();
+      if (ImGui::Button("Reload")) {
         if (!env.hdriPath.empty()) {
           if (skybox.LoadHDRI(env.hdriPath, vkdev.allocator,
                               vkdev.physicalDevice, vkdev.commandPool,
                               vkdev.graphicsQueue)) {
-            std::cout << "Loaded HDRI: " << env.hdriPath << std::endl;
+            std::cout << "Reloaded HDRI: " << env.hdriPath << std::endl;
           } else {
-            std::cerr << "Failed to load HDRI: " << env.hdriPath << std::endl;
+            std::cerr << "Failed to reload HDRI: " << env.hdriPath << std::endl;
           }
         }
+        // Also refresh the file list
+        needsRefresh = true;
       }
       if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-        ImGui::SetTooltip("Path to .hdr or .exr file");
+        ImGui::SetTooltip("Reload current HDRI and refresh file list");
       }
 
       ImGui::SliderFloat("HDRI Intensity", &env.hdriIntensity, 0.1f, 5.0f);
