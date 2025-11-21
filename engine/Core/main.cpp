@@ -2027,35 +2027,35 @@ struct LightingUBO {
   Vec3 ambientColor;
   float ambientIntensity;
 
-  // Point lights (up to 4)
+  // Point lights (up to 16)
   struct {
     float x, y, z, range;
-  } pointLightPositions[4];
+  } pointLightPositions[16];
 
   struct {
     float r, g, b, intensity;
-  } pointLightColors[4];
+  } pointLightColors[16];
 
   struct {
     float constant, linear, quadratic, unused;
-  } pointLightAttenuation[4];
+  } pointLightAttenuation[16];
 
-  // Spot lights (up to 4)
+  // Spot lights (up to 16)
   struct {
     float x, y, z, range;
-  } spotLightPositions[4];
+  } spotLightPositions[16];
 
   struct {
     float x, y, z, innerAngle;
-  } spotLightDirections[4];
+  } spotLightDirections[16];
 
   struct {
     float r, g, b, intensity;
-  } spotLightColors[4];
+  } spotLightColors[16];
 
   struct {
     float constant, linear, quadratic, outerAngle;
-  } spotLightAttenuation[4];
+  } spotLightAttenuation[16];
 
   int pointLightCount;
   int spotLightCount;
@@ -7609,10 +7609,10 @@ int main(int argc, char *argv[]) {
         }
       }
 
-      // Gather point lights (up to 4)
+      // Gather point lights (up to 16)
       int pointLightIndex = 0;
       for (auto entityHandle : dirLightView) {
-        if (pointLightIndex >= 4)
+        if (pointLightIndex >= 16)
           break;
 
         Entity entity(entityHandle, &scene);
@@ -7647,10 +7647,10 @@ int main(int argc, char *argv[]) {
       }
       lightUBO.pointLightCount = pointLightIndex;
 
-      // Gather spot lights (up to 4)
+      // Gather spot lights (up to 16)
       int spotLightIndex = 0;
       for (auto entityHandle : dirLightView) {
-        if (spotLightIndex >= 4)
+        if (spotLightIndex >= 16)
           break;
 
         Entity entity(entityHandle, &scene);

@@ -58,16 +58,16 @@ layout(std140, set = 0, binding = 2) uniform LightingUBO {
     vec3 ambientColor;
     float ambientIntensity;
     
-    // Point lights (up to 4)
-    vec4 pointLightPositions[4];  // w = range
-    vec4 pointLightColors[4];     // w = intensity
-    vec4 pointLightAttenuation[4]; // xyz = constant/linear/quadratic, w = unused
+    // Point lights (up to 16)
+    vec4 pointLightPositions[16];  // w = range
+    vec4 pointLightColors[16];     // w = intensity
+    vec4 pointLightAttenuation[16]; // xyz = constant/linear/quadratic, w = unused
     
-    // Spot lights (up to 4)
-    vec4 spotLightPositions[4];   // w = range
-    vec4 spotLightDirections[4];  // xyz = direction, w = innerAngle
-    vec4 spotLightColors[4];      // w = intensity
-    vec4 spotLightAttenuation[4]; // xyz = constant/linear/quadratic, w = outerAngle
+    // Spot lights (up to 16)
+    vec4 spotLightPositions[16];   // w = range
+    vec4 spotLightDirections[16];  // xyz = direction, w = innerAngle
+    vec4 spotLightColors[16];      // w = intensity
+    vec4 spotLightAttenuation[16]; // xyz = constant/linear/quadratic, w = outerAngle
     
     int pointLightCount;
     int spotLightCount;
@@ -241,7 +241,7 @@ void main() {
     }
     
     // ── Point Lights ─────────────────────────────────────────
-    for (int i = 0; i < lighting.pointLightCount && i < 4; ++i) {
+    for (int i = 0; i < lighting.pointLightCount && i < 16; ++i) {
         vec3 lightPos = lighting.pointLightPositions[i].xyz;
         float range = lighting.pointLightPositions[i].w;
         vec3 lightColor = lighting.pointLightColors[i].rgb;
@@ -278,7 +278,7 @@ void main() {
     }
     
     // ── Spot Lights ──────────────────────────────────────────
-    for (int i = 0; i < lighting.spotLightCount && i < 4; ++i) {
+    for (int i = 0; i < lighting.spotLightCount && i < 16; ++i) {
         vec3 lightPos = lighting.spotLightPositions[i].xyz;
         float range = lighting.spotLightPositions[i].w;
         vec3 lightDir = lighting.spotLightDirections[i].xyz;
