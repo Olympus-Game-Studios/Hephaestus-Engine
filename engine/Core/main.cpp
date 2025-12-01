@@ -592,7 +592,7 @@ static void DrawViewportOverlay(ImGuizmo::OPERATION &operation,
                                 bool &showGizmo) {
   ImGuiViewport *viewport = ImGui::GetMainViewport();
   const ImGuiStyle &s = ImGui::GetStyle();
-  // Scale overlay width with global UI scale to fit buttons
+    // Scale overlay width with global UI scale to fit buttons
   float baseW = 640.0f * g_UIScale;
   float minW = 480.0f * g_UIScale;
   float margin = s.ItemSpacing.x * 2.0f;
@@ -2017,6 +2017,9 @@ static std::unordered_map<std::string, uint32_t> g_MaterialTextureLookup;
 static uint32_t g_DefaultMaterialTextureSlot = 0;
 
 struct LightingUBO {
+  Mat4 dirLightViewProj;
+  Vec4 dirShadowParams; // x=bias, y=strength, z=texel size, w=enabled flag
+
   // Directional light
   Vec3 dirLightDir;
   float dirLightIntensity;
@@ -2062,6 +2065,397 @@ struct LightingUBO {
   float padding5;
   float padding6;
 };
+
+struct ShadowPushConstants {
+  Mat4 lightViewProj;
+  Mat4 model;
+};
+
+static std::vector<char> ReadBinaryFile(const std::filesystem::path &path) {
+  std::ifstream file(path, std::ios::ate | std::ios::binary);
+  if (!file.is_open()) {
+    std::filesystem::path alt = std::filesystem::path("../") / path;
+    file.open(alt, std::ios::ate | std::ios::binary);
+  }
+  if (!file.is_open()) {
+    throw std::runtime_error("Failed to open file: " + path.string());
+  }
+  size_t size = static_cast<size_t>(file.tellg());
+  std::vector<char> buffer(size);
+  file.seekg(0);
+  file.read(buffer.data(), size);
+  return buffer;
+}
+
+static VkFormat FindSupportedFormat(VkPhysicalDevice phys,
+                                    const std::vector<VkFormat> &candidates,
+                                    VkImageTiling tiling,
+                                    VkFormatFeatureFlags features) {
+  for (VkFormat format : candidates) {
+    VkFormatProperties props{};
+    vkGetPhysicalDeviceFormatProperties(phys, format, &props);
+    if (tiling == VK_IMAGE_TILING_LINEAR &&
+        (props.linearTilingFeatures & features) == features) {
+      return format;
+    }
+    if (tiling == VK_IMAGE_TILING_OPTIMAL &&
+        (props.optimalTilingFeatures & features) == features) {
+      return format;
+    }
+  }
+  throw std::runtime_error("Failed to find supported image format");
+}
+
+struct DirectionalShadowResources {
+  uint32_t resolution = 2048;
+  VkDevice device = VK_NULL_HANDLE;
+  VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+  VmaAllocator allocator = VK_NULL_HANDLE;
+  VkCommandPool commandPool = VK_NULL_HANDLE;
+  VkQueue graphicsQueue = VK_NULL_HANDLE;
+
+  VkImage image = VK_NULL_HANDLE;
+  VmaAllocation allocation = VK_NULL_HANDLE;
+  VkImageView imageView = VK_NULL_HANDLE;
+  VkSampler sampler = VK_NULL_HANDLE;
+  VkRenderPass renderPass = VK_NULL_HANDLE;
+  VkFramebuffer framebuffer = VK_NULL_HANDLE;
+  VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  VkDescriptorImageInfo descriptor{};
+  VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
+
+  bool Create(VulkanDevice &vkdev) {
+    Destroy();
+    device = vkdev.device;
+    physicalDevice = vkdev.physicalDevice;
+    allocator = vkdev.allocator;
+    commandPool = vkdev.commandPool;
+    graphicsQueue = vkdev.graphicsQueue;
+
+    auto fail = [&]() {
+      Destroy();
+      return false;
+    };
+
+    try {
+      depthFormat = FindSupportedFormat(
+          physicalDevice,
+          {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D24_UNORM_S8_UINT,
+           VK_FORMAT_D32_SFLOAT_S8_UINT},
+          VK_IMAGE_TILING_OPTIMAL,
+          VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+    } catch (const std::exception &e) {
+      std::cerr << "[Shadow] " << e.what() << std::endl;
+      return false;
+    }
+
+    VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent = {resolution, resolution, 1};
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = depthFormat;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                      VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    if (vmaCreateImage(allocator, &imageInfo, &allocInfo, &image, &allocation,
+                       nullptr) != VK_SUCCESS) {
+      std::cerr << "[Shadow] Failed to create depth image" << std::endl;
+      return fail();
+    }
+
+    VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    viewInfo.image = image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = depthFormat;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(device, &viewInfo, nullptr, &imageView) !=
+        VK_SUCCESS) {
+      std::cerr << "[Shadow] Failed to create depth image view" << std::endl;
+      return fail();
+    }
+
+    VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    samplerInfo.maxAnisotropy = 1.0f;
+    if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) !=
+        VK_SUCCESS) {
+      std::cerr << "[Shadow] Failed to create sampler" << std::endl;
+      return fail();
+    }
+
+    auto immediateSubmit = [&](auto &&record) {
+      VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+      allocInfo.commandPool = commandPool;
+      allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+      allocInfo.commandBufferCount = 1;
+      VkCommandBuffer cmd = VK_NULL_HANDLE;
+      vkAllocateCommandBuffers(device, &allocInfo, &cmd);
+      VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+      vkBeginCommandBuffer(cmd, &beginInfo);
+      record(cmd);
+      vkEndCommandBuffer(cmd);
+      VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+      submit.commandBufferCount = 1;
+      submit.pCommandBuffers = &cmd;
+      vkQueueSubmit(graphicsQueue, 1, &submit, VK_NULL_HANDLE);
+      vkQueueWaitIdle(graphicsQueue);
+      vkFreeCommandBuffers(device, commandPool, 1, &cmd);
+    };
+
+    immediateSubmit([&](VkCommandBuffer cmd) {
+      VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+      barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      barrier.image = image;
+      barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+      barrier.subresourceRange.levelCount = 1;
+      barrier.subresourceRange.layerCount = 1;
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                           nullptr, 0, nullptr, 1, &barrier);
+    });
+
+    VkAttachmentDescription depthAttachment{};
+    depthAttachment.format = depthFormat;
+    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.initialLayout =
+      VK_IMAGE_LAYOUT_UNDEFINED;
+    depthAttachment.finalLayout =
+      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkAttachmentReference depthRef{};
+    depthRef.attachment = 0;
+    depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.pDepthStencilAttachment = &depthRef;
+
+    VkSubpassDependency dependencies[2] = {};
+    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[0].dstSubpass = 0;
+    dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    dependencies[0].dstAccessMask =
+      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[1].srcSubpass = 0;
+    dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[1].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[1].srcAccessMask =
+      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    VkRenderPassCreateInfo rpInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    rpInfo.attachmentCount = 1;
+    rpInfo.pAttachments = &depthAttachment;
+    rpInfo.subpassCount = 1;
+    rpInfo.pSubpasses = &subpass;
+    rpInfo.dependencyCount = 2;
+    rpInfo.pDependencies = dependencies;
+    if (vkCreateRenderPass(device, &rpInfo, nullptr, &renderPass) !=
+        VK_SUCCESS) {
+      std::cerr << "[Shadow] Failed to create render pass" << std::endl;
+      return fail();
+    }
+
+    VkFramebufferCreateInfo fbInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    fbInfo.renderPass = renderPass;
+    fbInfo.attachmentCount = 1;
+    fbInfo.pAttachments = &imageView;
+    fbInfo.width = resolution;
+    fbInfo.height = resolution;
+    fbInfo.layers = 1;
+    if (vkCreateFramebuffer(device, &fbInfo, nullptr, &framebuffer) !=
+        VK_SUCCESS) {
+      std::cerr << "[Shadow] Failed to create framebuffer" << std::endl;
+      return fail();
+    }
+
+    auto vertCode = ReadBinaryFile("shaders/shadowmap.vert.spv");
+    auto fragCode = ReadBinaryFile("shaders/shadowmap.frag.spv");
+    VkShaderModuleCreateInfo smInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    smInfo.codeSize = vertCode.size();
+    smInfo.pCode = reinterpret_cast<const uint32_t *>(vertCode.data());
+    VkShaderModule vertModule = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(device, &smInfo, nullptr, &vertModule) != VK_SUCCESS)
+      return fail();
+    smInfo.codeSize = fragCode.size();
+    smInfo.pCode = reinterpret_cast<const uint32_t *>(fragCode.data());
+    VkShaderModule fragModule = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(device, &smInfo, nullptr, &fragModule) != VK_SUCCESS) {
+      vkDestroyShaderModule(device, vertModule, nullptr);
+      return fail();
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragModule;
+    stages[1].pName = "main";
+
+    auto bindingDesc = Vertex::getBindingDescription();
+    auto attribs = Vertex::getAttributeDescriptions();
+
+    VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &bindingDesc;
+    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attribs.size());
+    vertexInput.pVertexAttributeDescriptions = attribs.data();
+
+    VkPipelineInputAssemblyStateCreateInfo inputAsm{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    inputAsm.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport{};
+    viewport.width = static_cast<float>(resolution);
+    viewport.height = static_cast<float>(resolution);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkPipelineViewportStateCreateInfo viewportState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.cullMode = VK_CULL_MODE_FRONT_BIT;
+    raster.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    raster.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    depth.depthTestEnable = VK_TRUE;
+    depth.depthWriteEnable = VK_TRUE;
+    depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+    VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    blend.attachmentCount = 0;
+
+    VkDynamicState dynamics[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dyn{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dyn.dynamicStateCount = 2;
+    dyn.pDynamicStates = dynamics;
+
+    VkPushConstantRange pushRange{};
+    pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushRange.size = sizeof(ShadowPushConstants);
+
+    VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pushRange;
+    if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &pipelineLayout) !=
+        VK_SUCCESS) {
+      std::cerr << "[Shadow] Failed to create pipeline layout" << std::endl;
+      vkDestroyShaderModule(device, vertModule, nullptr);
+      vkDestroyShaderModule(device, fragModule, nullptr);
+      return fail();
+    }
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAsm;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &raster;
+    pipelineInfo.pMultisampleState = &ms;
+    pipelineInfo.pDepthStencilState = &depth;
+    pipelineInfo.pColorBlendState = &blend;
+    pipelineInfo.pDynamicState = &dyn;
+    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.renderPass = renderPass;
+
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo,
+                                  nullptr, &pipeline) != VK_SUCCESS) {
+      std::cerr << "[Shadow] Failed to create pipeline" << std::endl;
+      vkDestroyShaderModule(device, vertModule, nullptr);
+      vkDestroyShaderModule(device, fragModule, nullptr);
+      return fail();
+    }
+
+    vkDestroyShaderModule(device, vertModule, nullptr);
+    vkDestroyShaderModule(device, fragModule, nullptr);
+
+    descriptor.sampler = sampler;
+    descriptor.imageView = imageView;
+    descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    return true;
+  }
+
+  void Destroy() {
+    if (device == VK_NULL_HANDLE)
+      return;
+    if (pipeline) {
+      vkDestroyPipeline(device, pipeline, nullptr);
+      pipeline = VK_NULL_HANDLE;
+    }
+    if (pipelineLayout) {
+      vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+      pipelineLayout = VK_NULL_HANDLE;
+    }
+    if (framebuffer) {
+      vkDestroyFramebuffer(device, framebuffer, nullptr);
+      framebuffer = VK_NULL_HANDLE;
+    }
+    if (renderPass) {
+      vkDestroyRenderPass(device, renderPass, nullptr);
+      renderPass = VK_NULL_HANDLE;
+    }
+    if (sampler) {
+      vkDestroySampler(device, sampler, nullptr);
+      sampler = VK_NULL_HANDLE;
+    }
+    if (imageView) {
+      vkDestroyImageView(device, imageView, nullptr);
+      imageView = VK_NULL_HANDLE;
+    }
+    if (image) {
+      vmaDestroyImage(allocator, image, allocation);
+      image = VK_NULL_HANDLE;
+      allocation = VK_NULL_HANDLE;
+    }
+    descriptor = {};
+    device = VK_NULL_HANDLE;
+  }
+
+  bool IsValid() const {
+    return pipeline != VK_NULL_HANDLE && framebuffer != VK_NULL_HANDLE &&
+           descriptor.imageView != VK_NULL_HANDLE;
+  }
+};
+
+static DirectionalShadowResources g_DirectionalShadow;
 
 struct Camera {
   Vec3 position = {0.0f, 0.0f, 5.0f};
@@ -6100,6 +6494,17 @@ int main(int argc, char *argv[]) {
     }
   };
 
+  auto ensureShadowResources = [&]() {
+    if (!g_DirectionalShadow.IsValid()) {
+      if (!g_DirectionalShadow.Create(vkdev)) {
+        std::cerr
+            << "Directional shadow resources failed to initialize. Shadowing "
+               "will be disabled."
+            << std::endl;
+      }
+    }
+  };
+
   auto createDescriptors = [&]() {
     destroyDescriptors();
 
@@ -6123,12 +6528,13 @@ int main(int argc, char *argv[]) {
     // Create descriptor pool: camera, material UBO, lighting UBO, and texture
     // samplers
     std::vector<VkDescriptorPoolSize> poolSizes = {
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-         static_cast<uint32_t>(imageCount * 2)}, // camera + lighting per set
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-         static_cast<uint32_t>(imageCount * 1)}, // material per set
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         static_cast<uint32_t>(imageCount * kMaxMaterialTextureSlots)}};
+      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+       static_cast<uint32_t>(imageCount * 2)}, // camera + lighting per set
+      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+       static_cast<uint32_t>(imageCount * 1)}, // material per set
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+       static_cast<uint32_t>(imageCount *
+                   (kMaxMaterialTextureSlots + 1))}};
 
     VkDescriptorPoolCreateInfo poolInfo{
         VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -6195,7 +6601,15 @@ int main(int argc, char *argv[]) {
         }
       }
 
-      VkWriteDescriptorSet writes[4] = {};
+      VkDescriptorImageInfo shadowImageInfo{};
+      if (g_DirectionalShadow.IsValid()) {
+        shadowImageInfo = g_DirectionalShadow.descriptor;
+      } else {
+        shadowImageInfo =
+            g_MaterialTextureSlots[g_DefaultMaterialTextureSlot].descriptor;
+      }
+
+      VkWriteDescriptorSet writes[5] = {};
       // Binding 0
       writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       writes[0].dstSet = descriptorSets[i];
@@ -6230,7 +6644,16 @@ int main(int argc, char *argv[]) {
       writes[3].descriptorCount = kMaxMaterialTextureSlots;
       writes[3].pImageInfo = imageInfos.data();
 
-      vkUpdateDescriptorSets(vkdev.device, 4, writes, 0, nullptr);
+      // Binding 4: directional shadow map sampler
+      writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writes[4].dstSet = descriptorSets[i];
+      writes[4].dstBinding = 4;
+      writes[4].dstArrayElement = 0;
+      writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      writes[4].descriptorCount = 1;
+      writes[4].pImageInfo = &shadowImageInfo;
+
+      vkUpdateDescriptorSets(vkdev.device, 5, writes, 0, nullptr);
     }
   };
 
@@ -6500,6 +6923,7 @@ int main(int argc, char *argv[]) {
         vkdev.device, swap.renderPass, swap.extent, billboardDescriptorLayout);
   };
 
+  ensureShadowResources();
   createDescriptors();
 
   // Create billboard resources only if texture loaded successfully
@@ -7521,6 +7945,7 @@ int main(int argc, char *argv[]) {
         createBillboardPipeline();
       }
       allocateCmdBuffers();
+      ensureShadowResources();
       createDescriptors();
       if (textureLoaded) {
         createBillboardDescriptors();
@@ -7577,9 +8002,32 @@ int main(int argc, char *argv[]) {
     // per-object immediately before each draw to reflect that object's
     // MaterialComponent.
 
+    Mat4 dirShadowMatrix = Mat4::Identity();
+    bool dirShadowEnabled = false;
+
+    static bool debugLogged = false;
+
     // Update Lighting UBO
     {
       LightingUBO lightUBO = {};
+
+      const float degToRad = 0.0174532925f;
+        float yawR = camera.yawDeg * degToRad;
+        float pitchR = camera.pitchDeg * degToRad;
+        Vec3 cameraForward =
+          vnorm(v3(std::cos(yawR) * std::cos(pitchR), std::sin(pitchR),
+               std::sin(yawR) * std::cos(pitchR)));
+        const float shadowFocusDistance = 10.0f;
+        const float shadowDistance = 40.0f;
+        const float shadowExtent = 25.0f;
+        const float shadowNear = 0.1f;
+        const float shadowFar = shadowDistance * 2.0f;
+        const float shadowBias = 0.0015f;
+        const float shadowStrength = 0.7f;
+        float shadowTexelSize = g_DirectionalShadow.IsValid()
+                      ? 1.0f / static_cast<float>(
+                               g_DirectionalShadow.resolution)
+                      : 0.0f;
 
       // Gather directional lights
       auto dirLightView = scene.GetEntitiesWith<LightComponent>();
@@ -7588,23 +8036,38 @@ int main(int argc, char *argv[]) {
         auto &light = entity.GetComponent<LightComponent>();
 
         if (light.type == LightType::Directional) {
-          // Compute direction from entity's transform rotation
-          Vec3 direction =
-              Vec3(0.0f, -1.0f, 0.0f); // Default downward direction
+          Vec3 direction = light.direction;
           if (entity.HasComponent<TransformComponent>()) {
             auto &transform = entity.GetComponent<TransformComponent>();
-            // Create rotation matrix from transform
-            Mat4 rx = Mat4::RotationX(transform.rotation.x);
-            Mat4 ry = Mat4::RotationY(transform.rotation.y);
-            Mat4 rz = Mat4::RotationZ(transform.rotation.z);
-            Mat4 rotMatrix = Mat4::Multiply(rx, Mat4::Multiply(ry, rz));
-            // Transform the default direction by rotation
-            direction = Mat4::TransformDirection(rotMatrix, direction);
-            direction = vnorm(direction);
+            Mat4 transformMatrix = transform.GetLocalMatrix();
+            direction =
+                Mat4::TransformDirection(transformMatrix, Vec3(0.0f, 0.0f, -1.0f));
           }
+          if (vlen(direction) < 0.0001f) {
+            direction = Vec3(0.0f, -1.0f, 0.0f);
+          }
+          direction = vnorm(direction);
+
           lightUBO.dirLightDir = direction;
           lightUBO.dirLightIntensity = light.intensity;
           lightUBO.dirLightColor = light.color;
+
+          if (g_DirectionalShadow.IsValid()) {
+            Vec3 focusPoint =
+                vadd(camera.position, vscale(cameraForward, shadowFocusDistance));
+            Vec3 lightPos = vsub(focusPoint, vscale(direction, shadowDistance));
+            Vec3 up = v3(0.0f, 1.0f, 0.0f);
+            if (std::abs(vdot(direction, up)) > 0.99f) {
+              up = v3(0.0f, 0.0f, 1.0f);
+            }
+            Mat4 lightView = Mat4::LookAt(lightPos, focusPoint, up);
+            Mat4 lightProj = Mat4::Orthographic(
+                -shadowExtent, shadowExtent, -shadowExtent, shadowExtent,
+                shadowNear, shadowFar);
+            dirShadowMatrix = Mat4::Multiply(lightProj, lightView);
+            dirShadowEnabled = true;
+          }
+
           break; // Only support one directional light for now
         }
       }
@@ -7696,11 +8159,28 @@ int main(int argc, char *argv[]) {
       }
       lightUBO.spotLightCount = spotLightIndex;
 
-      // Ambient lighting
+        // Ambient lighting
       lightUBO.ambientColor = Vec3(0.1f, 0.1f, 0.15f);
       lightUBO.ambientIntensity = 0.3f;
 
-      void *mapped = nullptr;
+      lightUBO.dirLightViewProj = dirShadowMatrix;
+      lightUBO.dirShadowParams =
+          Vec4(shadowBias, shadowStrength, shadowTexelSize,
+               dirShadowEnabled ? 1.0f : 0.0f);
+
+      if (!debugLogged && dirShadowEnabled) {
+        std::cout << "[Shadow] Enabled: " << dirShadowEnabled
+                  << " Valid: " << g_DirectionalShadow.IsValid()
+                  << " Strength: " << shadowStrength
+                  << " TexelSize: " << shadowTexelSize << " Bias: " << shadowBias
+                  << std::endl;
+        debugLogged = true;
+      }
+      
+      if (!debugLogged) {
+        std::cout << "[Shadow] Current frame - dirShadowEnabled=" << dirShadowEnabled
+                  << " IsValid=" << g_DirectionalShadow.IsValid() << std::endl;
+      }      void *mapped = nullptr;
       vmaMapMemory(vkdev.allocator, lightingBuffers[imageIndex].allocation,
                    &mapped);
       std::memcpy(mapped, &lightUBO, sizeof(lightUBO));
@@ -7715,6 +8195,92 @@ int main(int argc, char *argv[]) {
 
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vkBeginCommandBuffer(cmd, &bi);
+
+    auto renderView =
+        scene.GetEntitiesWith<TransformComponent, MeshRendererComponent>();
+
+    if (dirShadowEnabled && g_DirectionalShadow.IsValid()) {
+      VkClearValue depthClear{};
+      depthClear.depthStencil = {1.0f, 0};
+      VkRenderPassBeginInfo shadowBegin{
+          VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+      shadowBegin.renderPass = g_DirectionalShadow.renderPass;
+      shadowBegin.framebuffer = g_DirectionalShadow.framebuffer;
+      shadowBegin.renderArea.offset = {0, 0};
+      shadowBegin.renderArea.extent =
+          {g_DirectionalShadow.resolution, g_DirectionalShadow.resolution};
+      shadowBegin.clearValueCount = 1;
+      shadowBegin.pClearValues = &depthClear;
+
+      vkCmdBeginRenderPass(cmd, &shadowBegin, VK_SUBPASS_CONTENTS_INLINE);
+
+      VkViewport shadowViewport{};
+      shadowViewport.x = 0.0f;
+      shadowViewport.y = 0.0f;
+      shadowViewport.width =
+          static_cast<float>(g_DirectionalShadow.resolution);
+      shadowViewport.height =
+          static_cast<float>(g_DirectionalShadow.resolution);
+      shadowViewport.minDepth = 0.0f;
+      shadowViewport.maxDepth = 1.0f;
+      VkRect2D shadowScissor{{0, 0},
+                             {g_DirectionalShadow.resolution,
+                              g_DirectionalShadow.resolution}};
+      vkCmdSetViewport(cmd, 0, 1, &shadowViewport);
+      vkCmdSetScissor(cmd, 0, 1, &shadowScissor);
+
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        g_DirectionalShadow.pipeline);
+
+      ShadowPushConstants shadowPC{};
+      shadowPC.lightViewProj = dirShadowMatrix;
+
+      VkBuffer shadowVertexBuffer = VK_NULL_HANDLE;
+      VkBuffer shadowIndexBuffer = VK_NULL_HANDLE;
+      for (auto entityHandle : renderView) {
+        Entity entity(entityHandle, &scene);
+        auto &transform = entity.GetComponent<TransformComponent>();
+        auto &renderer = entity.GetComponent<MeshRendererComponent>();
+
+        if (!renderer.visible)
+          continue;
+
+        if (!renderer.HasValidMesh() ||
+            renderer.meshHandle >= meshLibrary.size())
+          continue;
+
+        MeshGPU &mesh = meshLibrary[renderer.meshHandle];
+        if (mesh.indexCount == 0 ||
+            mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
+            mesh.indexBuffer.buffer == VK_NULL_HANDLE)
+          continue;
+
+        if (g_DebugSkipImportedMeshes && mesh.imported)
+          continue;
+
+        if (mesh.vertexBuffer.buffer != shadowVertexBuffer) {
+          VkBuffer vb = mesh.vertexBuffer.buffer;
+          VkDeviceSize vbOffset = 0;
+          vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
+          shadowVertexBuffer = vb;
+        }
+
+        if (mesh.indexBuffer.buffer != shadowIndexBuffer) {
+          vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0,
+                               VK_INDEX_TYPE_UINT32);
+          shadowIndexBuffer = mesh.indexBuffer.buffer;
+        }
+
+        shadowPC.model = transform.GetLocalMatrix();
+        vkCmdPushConstants(cmd, g_DirectionalShadow.pipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT, 0,
+                           sizeof(ShadowPushConstants), &shadowPC);
+        vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+      }
+
+      vkCmdEndRenderPass(cmd);
+
+    }
 
     // Get environment settings
     Vec3 clearColor(0.1f, 0.2f, 0.3f);
@@ -7767,10 +8333,6 @@ int main(int argc, char *argv[]) {
 
     // Get selected entity once for both outline and gizmo rendering
     Entity selectedEntity = scene.GetSelectedEntity();
-
-    // Draw all scene objects with MeshRendererComponent
-    auto renderView =
-        scene.GetEntitiesWith<TransformComponent, MeshRendererComponent>();
 
     // Prepare dynamic material buffer mapping
     void *matMappedBaseVoid = nullptr;
@@ -8148,6 +8710,7 @@ int main(int argc, char *argv[]) {
         createBillboardPipeline();
       }
       allocateCmdBuffers();
+      ensureShadowResources();
       createDescriptors();
       if (textureLoaded) {
         createBillboardDescriptors();
@@ -8223,6 +8786,7 @@ int main(int argc, char *argv[]) {
                                  nullptr);
   }
 
+  g_DirectionalShadow.Destroy();
   pipeline.Cleanup();
   swap.Cleanup();
   vkdev.Cleanup();

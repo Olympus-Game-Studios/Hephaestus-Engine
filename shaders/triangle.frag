@@ -5,6 +5,7 @@ layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec3 fragColor;
 layout(location = 3) in vec2 fragTexCoord;
+layout(location = 4) in vec4 fragLightSpacePos;
 
 layout(location = 0) out vec4 outColor;
 
@@ -48,32 +49,28 @@ layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOT
 
 // Lighting data
 layout(std140, set = 0, binding = 2) uniform LightingUBO {
-    // Directional light (sun)
+    mat4 dirLightViewProj;
+    vec4 dirShadowParams;          // x = bias, y = strength, z = texel size, w = enabled
     vec3 dirLightDir;
     float dirLightIntensity;
     vec3 dirLightColor;
     float padding4;
-    
-    // Ambient lighting
     vec3 ambientColor;
     float ambientIntensity;
-    
-    // Point lights (up to 16)
-    vec4 pointLightPositions[16];  // w = range
-    vec4 pointLightColors[16];     // w = intensity
-    vec4 pointLightAttenuation[16]; // xyz = constant/linear/quadratic, w = unused
-    
-    // Spot lights (up to 16)
-    vec4 spotLightPositions[16];   // w = range
-    vec4 spotLightDirections[16];  // xyz = direction, w = innerAngle
-    vec4 spotLightColors[16];      // w = intensity
-    vec4 spotLightAttenuation[16]; // xyz = constant/linear/quadratic, w = outerAngle
-    
+    vec4 pointLightPositions[16];
+    vec4 pointLightColors[16];
+    vec4 pointLightAttenuation[16];
+    vec4 spotLightPositions[16];
+    vec4 spotLightDirections[16];
+    vec4 spotLightColors[16];
+    vec4 spotLightAttenuation[16];
     int pointLightCount;
     int spotLightCount;
     float padding5;
     float padding6;
 } lighting;
+
+layout(set = 0, binding = 4) uniform sampler2D shadowMap;
 
 const float PI = 3.14159265359;
 
@@ -156,6 +153,28 @@ float calculateSpotlightFalloff(vec3 lightDir, vec3 lightToFrag, float innerAngl
     return smoothstep(0.0, 1.0, falloff);
 }
 
+float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
+    if (lighting.dirShadowParams.w < 0.5) {
+        return 1.0;
+    }
+
+    if (lightSpacePos.w == 0.0) {
+        return 1.0;
+    }
+
+    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
+    vec2 uv = projCoords.xy * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        return 1.0;
+    }
+
+    float currentDepth = clamp(projCoords.z, 0.0, 1.0);
+
+    // HARD SHADOW: single-sample, no bias/PCF for now
+    float closestDepth = texture(shadowMap, uv).r;
+    return (currentDepth > closestDepth) ? 0.0 : 1.0;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // MAIN LIGHTING CALCULATION
 // ═══════════════════════════════════════════════════════════════
@@ -221,7 +240,8 @@ void main() {
         vec3 L = normalize(-lighting.dirLightDir);
         vec3 H = normalize(V + L);
         vec3 radiance = lighting.dirLightColor * lighting.dirLightIntensity;
-        
+        float shadowFactor = sampleDirectionalShadow(fragLightSpacePos, N, L);
+
         // Cook-Torrance BRDF
         float NDF = DistributionGGX(N, H, roughness);
         float G = GeometrySmith(N, V, L, roughness);
@@ -237,7 +257,7 @@ void main() {
         kD *= 1.0 - metallic;
         
         float NdotL = max(dot(N, L), 0.0);
-        Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+        Lo += (kD * albedo / PI + specular) * radiance * NdotL * shadowFactor;
     }
     
     // ── Point Lights ─────────────────────────────────────────

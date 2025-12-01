@@ -15,16 +15,40 @@ layout(push_constant) uniform PushConstants {
     mat4 model;
 } pc;
 
+layout(std140, set = 0, binding = 2) uniform LightingUBO {
+    mat4 dirLightViewProj;
+    vec4 dirShadowParams;
+    vec3 dirLightDir;
+    float dirLightIntensity;
+    vec3 dirLightColor;
+    float padding4;
+    vec3 ambientColor;
+    float ambientIntensity;
+    vec4 pointLightPositions[16];
+    vec4 pointLightColors[16];
+    vec4 pointLightAttenuation[16];
+    vec4 spotLightPositions[16];
+    vec4 spotLightDirections[16];
+    vec4 spotLightColors[16];
+    vec4 spotLightAttenuation[16];
+    int pointLightCount;
+    int spotLightCount;
+    float padding5;
+    float padding6;
+} lighting;
+
 layout(location = 0) out vec3 fragWorldPos;
 layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec3 fragColor;
 layout(location = 3) out vec2 fragTexCoord;
+layout(location = 4) out vec4 fragLightSpacePos;
 
 void main() {
     vec4 worldPos = pc.model * vec4(inPosition, 1.0);
     gl_Position = ubo.proj * ubo.view * worldPos;
     
     fragWorldPos = worldPos.xyz;
+    fragLightSpacePos = lighting.dirLightViewProj * worldPos;
     
     // Transform normal to world space (inverse transpose for non-uniform scaling)
     // For uniform scaling, this simplifies to just the rotation part

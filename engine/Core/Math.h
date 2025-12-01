@@ -167,6 +167,25 @@ struct Mat4 {
         return r;
     }
 
+    static Mat4 Orthographic(float left, float right, float bottom, float top,
+                             float znear, float zfar)
+    {
+        Mat4 r = Identity();
+        float width = right - left;
+        float height = top - bottom;
+        float depth = zfar - znear;
+        if (width == 0.0f || height == 0.0f || depth == 0.0f) {
+            return r;
+        }
+        r.m[0] = 2.0f / width;
+        r.m[5] = -2.0f / height; // Flip Y for Vulkan NDC
+        r.m[10] = 1.0f / depth;
+        r.m[12] = -(right + left) / width;
+        r.m[13] = -(top + bottom) / height;
+        r.m[14] = -znear / depth;
+        return r;
+    }
+
     // OpenGL-style perspective (depth -1..1, no Y-flip) for tools like ImGuizmo
     static Mat4 PerspectiveGL(float fovyRadians, float aspect, float znear, float zfar)
     {
