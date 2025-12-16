@@ -454,6 +454,13 @@ struct LightComponent {
     
     // Directional light specific
     Vec3 direction;        // For directional lights (world space)
+    
+    // Shadow settings (primarily for directional lights)
+    bool castShadows;      // Whether this light casts shadows
+    float shadowBias;      // Bias to prevent shadow acne (0.0001 - 0.01)
+    float shadowStrength;  // How dark shadows are (0.0 = no shadow, 1.0 = full black)
+    float shadowDistance;  // How far shadows extend from camera
+    float shadowExtent;    // Size of orthographic shadow frustum
 
     LightComponent()
         : type(LightType::Point)
@@ -466,15 +473,21 @@ struct LightComponent {
         , innerConeAngle(0.785f)  // 45 degrees
         , outerConeAngle(0.959f)  // 55 degrees
         , direction(0.0f, -1.0f, 0.0f)
+        , castShadows(true)
+        , shadowBias(0.002f)
+        , shadowStrength(0.7f)
+        , shadowDistance(40.0f)
+        , shadowExtent(25.0f)
     {}
 
     // Factory methods for common light types
-    static LightComponent CreateDirectional(const Vec3& dir, const Vec3& color = Vec3(1, 1, 1), float intensity = 1.0f) {
+    static LightComponent CreateDirectional(const Vec3& dir, const Vec3& color = Vec3(1, 1, 1), float intensity = 1.0f, bool castShadows = true) {
         LightComponent light;
         light.type = LightType::Directional;
         light.direction = vnorm(dir);
         light.color = color;
         light.intensity = intensity;
+        light.castShadows = castShadows;
         return light;
     }
 

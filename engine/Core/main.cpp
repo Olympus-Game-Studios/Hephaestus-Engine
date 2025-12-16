@@ -1640,6 +1640,31 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
         light.outerConeAngle = outerDeg * 0.0174533f;
       }
     }
+
+    // Shadow settings (primarily for directional lights)
+    if (light.type == LightType::Directional) {
+      ImGui::Spacing();
+      ImGui::SeparatorText("Shadows");
+      ImGui::Checkbox("Cast Shadows", &light.castShadows);
+      if (light.castShadows) {
+        ImGui::SliderFloat("Shadow Bias", &light.shadowBias, 0.0001f, 0.01f, "%.4f");
+        if (ImGui::IsItemHovered()) {
+          ImGui::SetTooltip("Offset to prevent shadow acne. Increase if you see striped patterns on surfaces.");
+        }
+        ImGui::SliderFloat("Shadow Strength", &light.shadowStrength, 0.0f, 1.0f);
+        if (ImGui::IsItemHovered()) {
+          ImGui::SetTooltip("How dark the shadows are. 0 = no shadow, 1 = full black shadow.");
+        }
+        ImGui::SliderFloat("Shadow Distance", &light.shadowDistance, 10.0f, 200.0f);
+        if (ImGui::IsItemHovered()) {
+          ImGui::SetTooltip("How far shadows are rendered from the camera.");
+        }
+        ImGui::SliderFloat("Shadow Extent", &light.shadowExtent, 5.0f, 100.0f);
+        if (ImGui::IsItemHovered()) {
+          ImGui::SetTooltip("Size of the shadow area. Increase for larger scenes, decrease for sharper shadows.");
+        }
+      }
+    }
   }
 
   // Script Component Section
@@ -2020,15 +2045,10 @@ struct LightingUBO {
   Mat4 dirLightViewProj;
   Vec4 dirShadowParams; // x=bias, y=strength, z=texel size, w=enabled flag
 
-  // Directional light
-  Vec3 dirLightDir;
-  float dirLightIntensity;
-  Vec3 dirLightColor;
-  float padding4;
-
-  // Ambient
-  Vec3 ambientColor;
-  float ambientIntensity;
+  // Directional + Ambient packed as vec4 to match std140 layout
+  Vec4 dirLightDirIntensity;  // xyz = direction, w = intensity
+  Vec4 dirLightColor;         // rgb = color
+  Vec4 ambientColorIntensity; // rgb = ambient color, w = ambient intensity
 
   // Point lights (up to 16)
   struct {
@@ -2185,8 +2205,10 @@ struct DirectionalShadowResources {
     }
 
     VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    // Depth formats are not guaranteed to support linear filtering on all GPUs.
+    // We do manual PCF in the shader, so nearest filtering is preferred.
+    samplerInfo.magFilter = VK_FILTER_NEAREST;
+    samplerInfo.minFilter = VK_FILTER_NEAREST;
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
@@ -2220,6 +2242,9 @@ struct DirectionalShadowResources {
       vkFreeCommandBuffers(device, commandPool, 1, &cmd);
     };
 
+    // Put the image into a known layout that matches the render-pass initialLayout.
+    // The render pass will transition it to DEPTH_STENCIL_ATTACHMENT_OPTIMAL for writes,
+    // then back to SHADER_READ_ONLY_OPTIMAL for sampling.
     immediateSubmit([&](VkCommandBuffer cmd) {
       VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
       barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -2242,8 +2267,11 @@ struct DirectionalShadowResources {
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    // IMPORTANT: this must match the *actual* image layout when the render pass begins.
+    // We keep it in SHADER_READ_ONLY_OPTIMAL between frames (finalLayout), and we also
+    // transition to that layout once on creation (barrier above).
     depthAttachment.initialLayout =
-      VK_IMAGE_LAYOUT_UNDEFINED;
+      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     depthAttachment.finalLayout =
       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
@@ -2347,9 +2375,15 @@ struct DirectionalShadowResources {
 
     VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
     raster.polygonMode = VK_POLYGON_MODE_FILL;
-    raster.cullMode = VK_CULL_MODE_FRONT_BIT;
+    // Be conservative: no culling for the shadow pass to avoid accidentally
+    // culling everything due to winding differences from the light's POV.
+    raster.cullMode = VK_CULL_MODE_NONE;
     raster.frontFace = VK_FRONT_FACE_CLOCKWISE;
     raster.lineWidth = 1.0f;
+    // Helps reduce shadow acne in the shadow map itself (in addition to shader bias).
+    raster.depthBiasEnable = VK_TRUE;
+    raster.depthBiasConstantFactor = 1.25f;
+    raster.depthBiasSlopeFactor = 1.75f;
 
     VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -8004,6 +8038,8 @@ int main(int argc, char *argv[]) {
 
     Mat4 dirShadowMatrix = Mat4::Identity();
     bool dirShadowEnabled = false;
+    float shadowBias = 0.002f;
+    float shadowStrength = 0.7f;
 
     static bool debugLogged = false;
 
@@ -8018,12 +8054,7 @@ int main(int argc, char *argv[]) {
           vnorm(v3(std::cos(yawR) * std::cos(pitchR), std::sin(pitchR),
                std::sin(yawR) * std::cos(pitchR)));
         const float shadowFocusDistance = 10.0f;
-        const float shadowDistance = 40.0f;
-        const float shadowExtent = 25.0f;
         const float shadowNear = 0.1f;
-        const float shadowFar = shadowDistance * 2.0f;
-        const float shadowBias = 0.0015f;
-        const float shadowStrength = 0.7f;
         float shadowTexelSize = g_DirectionalShadow.IsValid()
                       ? 1.0f / static_cast<float>(
                                g_DirectionalShadow.resolution)
@@ -8048,11 +8079,17 @@ int main(int argc, char *argv[]) {
           }
           direction = vnorm(direction);
 
-          lightUBO.dirLightDir = direction;
-          lightUBO.dirLightIntensity = light.intensity;
-          lightUBO.dirLightColor = light.color;
+          lightUBO.dirLightDirIntensity = Vec4(direction.x, direction.y, direction.z, light.intensity);
+          lightUBO.dirLightColor = Vec4(light.color.x, light.color.y, light.color.z, 0.0f);
 
-          if (g_DirectionalShadow.IsValid()) {
+          // Use shadow settings from LightComponent
+          if (light.castShadows && g_DirectionalShadow.IsValid()) {
+            shadowBias = light.shadowBias;
+            shadowStrength = light.shadowStrength;
+            float shadowDistance = light.shadowDistance;
+            float shadowExtent = light.shadowExtent;
+            float shadowFar = shadowDistance * 2.0f;
+
             Vec3 focusPoint =
                 vadd(camera.position, vscale(cameraForward, shadowFocusDistance));
             Vec3 lightPos = vsub(focusPoint, vscale(direction, shadowDistance));
@@ -8160,8 +8197,7 @@ int main(int argc, char *argv[]) {
       lightUBO.spotLightCount = spotLightIndex;
 
         // Ambient lighting
-      lightUBO.ambientColor = Vec3(0.1f, 0.1f, 0.15f);
-      lightUBO.ambientIntensity = 0.3f;
+      lightUBO.ambientColorIntensity = Vec4(0.1f, 0.1f, 0.15f, 0.3f);
 
       lightUBO.dirLightViewProj = dirShadowMatrix;
       lightUBO.dirShadowParams =

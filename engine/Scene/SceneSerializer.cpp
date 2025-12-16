@@ -1260,6 +1260,36 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             if (const JsonValue* directionValue = lightObj->Find("direction")) {
                 ParseVec3(*directionValue, light.direction);
             }
+            // Load shadow settings
+            if (const JsonValue* shadowObj = lightObj->Find("shadow")) {
+                if (shadowObj->IsObject()) {
+                    if (const JsonValue* castValue = shadowObj->Find("castShadows")) {
+                        if (castValue->IsBool()) {
+                            light.castShadows = castValue->AsBool();
+                        }
+                    }
+                    if (const JsonValue* biasValue = shadowObj->Find("bias")) {
+                        if (biasValue->IsNumber()) {
+                            light.shadowBias = static_cast<float>(biasValue->AsNumber());
+                        }
+                    }
+                    if (const JsonValue* strengthValue = shadowObj->Find("strength")) {
+                        if (strengthValue->IsNumber()) {
+                            light.shadowStrength = static_cast<float>(strengthValue->AsNumber());
+                        }
+                    }
+                    if (const JsonValue* distanceValue = shadowObj->Find("distance")) {
+                        if (distanceValue->IsNumber()) {
+                            light.shadowDistance = static_cast<float>(distanceValue->AsNumber());
+                        }
+                    }
+                    if (const JsonValue* extentValue = shadowObj->Find("extent")) {
+                        if (extentValue->IsNumber()) {
+                            light.shadowExtent = static_cast<float>(extentValue->AsNumber());
+                        }
+                    }
+                }
+            }
             entity.AddComponent<LightComponent>(light);
         }
 
@@ -1556,7 +1586,14 @@ std::string SceneSerializer::SerializeToString() const
             oss << "            \"inner\": " << FormatFloat(light->innerConeAngle) << ",\n";
             oss << "            \"outer\": " << FormatFloat(light->outerConeAngle) << "\n";
             oss << "          },\n";
-            oss << "          \"direction\": " << FormatVec3(light->direction) << "\n";
+            oss << "          \"direction\": " << FormatVec3(light->direction) << ",\n";
+            oss << "          \"shadow\": {\n";
+            oss << "            \"castShadows\": " << (light->castShadows ? "true" : "false") << ",\n";
+            oss << "            \"bias\": " << FormatFloat(light->shadowBias) << ",\n";
+            oss << "            \"strength\": " << FormatFloat(light->shadowStrength) << ",\n";
+            oss << "            \"distance\": " << FormatFloat(light->shadowDistance) << ",\n";
+            oss << "            \"extent\": " << FormatFloat(light->shadowExtent) << "\n";
+            oss << "          }\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }

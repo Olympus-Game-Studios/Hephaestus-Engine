@@ -51,12 +51,9 @@ layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOT
 layout(std140, set = 0, binding = 2) uniform LightingUBO {
     mat4 dirLightViewProj;
     vec4 dirShadowParams;          // x = bias, y = strength, z = texel size, w = enabled
-    vec3 dirLightDir;
-    float dirLightIntensity;
-    vec3 dirLightColor;
-    float padding4;
-    vec3 ambientColor;
-    float ambientIntensity;
+    vec4 dirLightDirIntensity;      // xyz = direction, w = intensity
+    vec4 dirLightColor;             // rgb = color, w = unused
+    vec4 ambientColorIntensity;     // rgb = ambient color, w = ambient intensity
     vec4 pointLightPositions[16];
     vec4 pointLightColors[16];
     vec4 pointLightAttenuation[16];
@@ -154,25 +151,60 @@ float calculateSpotlightFalloff(vec3 lightDir, vec3 lightToFrag, float innerAngl
 }
 
 float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
+    // Check if shadows are enabled
     if (lighting.dirShadowParams.w < 0.5) {
         return 1.0;
     }
 
+    // Avoid division by zero
     if (lightSpacePos.w == 0.0) {
         return 1.0;
     }
 
+    // Perspective divide and transform to [0,1] UV space
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
     vec2 uv = projCoords.xy * 0.5 + 0.5;
+    
+    // Outside shadow map bounds - no shadow
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
         return 1.0;
     }
 
+    // Current fragment depth in light space
     float currentDepth = clamp(projCoords.z, 0.0, 1.0);
+    
+    // If beyond the far plane of the shadow map, no shadow
+    if (currentDepth > 1.0) {
+        return 1.0;
+    }
 
-    // HARD SHADOW: single-sample, no bias/PCF for now
-    float closestDepth = texture(shadowMap, uv).r;
-    return (currentDepth > closestDepth) ? 0.0 : 1.0;
+    // Extract shadow parameters
+    float baseBias = lighting.dirShadowParams.x;      // Base bias value
+    float shadowStrength = lighting.dirShadowParams.y; // How dark shadows are
+    float texelSize = lighting.dirShadowParams.z;      // 1.0 / shadowMapResolution
+
+    // Adaptive bias based on surface angle to light (reduces shadow acne)
+    float NdotL = max(dot(normal, lightDir), 0.0);
+    float bias = max(baseBias * (1.0 - NdotL), baseBias * 0.1);
+
+    // PCF (Percentage Closer Filtering) for soft shadows
+    // Sample a 3x3 kernel around the shadow map texel
+    float shadow = 0.0;
+    const int pcfRadius = 2;
+    const float pcfSamples = float((pcfRadius * 2 + 1) * (pcfRadius * 2 + 1));
+    
+    for (int x = -pcfRadius; x <= pcfRadius; ++x) {
+        for (int y = -pcfRadius; y <= pcfRadius; ++y) {
+            vec2 offset = vec2(float(x), float(y)) * texelSize;
+            float closestDepth = texture(shadowMap, uv + offset).r;
+            shadow += (currentDepth - bias > closestDepth) ? 1.0 : 0.0;
+        }
+    }
+    shadow /= pcfSamples;
+
+    // Apply shadow strength (0 = full shadow, 1 = no shadow)
+    // shadowStrength controls how dark the shadow is (0.7 means 30% ambient light in shadow)
+    return 1.0 - (shadow * shadowStrength);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -236,10 +268,10 @@ void main() {
     vec3 Lo = vec3(0.0);
     
     // ── Directional Light ────────────────────────────────────
-    if (lighting.dirLightIntensity > 0.0) {
-        vec3 L = normalize(-lighting.dirLightDir);
+    if (lighting.dirLightDirIntensity.w > 0.0) {
+        vec3 L = normalize(-lighting.dirLightDirIntensity.xyz);
         vec3 H = normalize(V + L);
-        vec3 radiance = lighting.dirLightColor * lighting.dirLightIntensity;
+        vec3 radiance = lighting.dirLightColor.rgb * lighting.dirLightDirIntensity.w;
         float shadowFactor = sampleDirectionalShadow(fragLightSpacePos, N, L);
 
         // Cook-Torrance BRDF
@@ -344,7 +376,7 @@ void main() {
     }
     
     // ── Ambient Lighting ─────────────────────────────────────
-    vec3 ambient = lighting.ambientColor * lighting.ambientIntensity * albedo * ao;
+    vec3 ambient = lighting.ambientColorIntensity.rgb * lighting.ambientColorIntensity.w * albedo * ao;
     vec3 color = ambient + Lo;
     
     // Add emissive

@@ -18,12 +18,9 @@ layout(push_constant) uniform PushConstants {
 layout(std140, set = 0, binding = 2) uniform LightingUBO {
     mat4 dirLightViewProj;
     vec4 dirShadowParams;
-    vec3 dirLightDir;
-    float dirLightIntensity;
-    vec3 dirLightColor;
-    float padding4;
-    vec3 ambientColor;
-    float ambientIntensity;
+    vec4 dirLightDirIntensity;      // xyz = direction, w = intensity
+    vec4 dirLightColor;             // rgb = color, w = unused
+    vec4 ambientColorIntensity;     // rgb = ambient color, w = ambient intensity
     vec4 pointLightPositions[16];
     vec4 pointLightColors[16];
     vec4 pointLightAttenuation[16];
