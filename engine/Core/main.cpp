@@ -2222,6 +2222,8 @@ struct DirectionalShadowResources {
       return fail();
     }
 
+    // Pre-initialize the depth image to a readable layout so the render pass
+    // initialLayout matches reality on the first frame.
     auto immediateSubmit = [&](auto &&record) {
       VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
       allocInfo.commandPool = commandPool;
@@ -2242,21 +2244,19 @@ struct DirectionalShadowResources {
       vkFreeCommandBuffers(device, commandPool, 1, &cmd);
     };
 
-    // Put the image into a known layout that matches the render-pass initialLayout.
-    // The render pass will transition it to DEPTH_STENCIL_ATTACHMENT_OPTIMAL for writes,
-    // then back to SHADER_READ_ONLY_OPTIMAL for sampling.
+    // Initialize to ATTACHMENT_OPTIMAL for the first frame
     immediateSubmit([&](VkCommandBuffer cmd) {
       VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
       barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-      barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
       barrier.image = image;
       barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
       barrier.subresourceRange.levelCount = 1;
       barrier.subresourceRange.layerCount = 1;
       barrier.srcAccessMask = 0;
-      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
       vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0,
                            nullptr, 0, nullptr, 1, &barrier);
     });
 
@@ -2267,13 +2267,8 @@ struct DirectionalShadowResources {
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    // IMPORTANT: this must match the *actual* image layout when the render pass begins.
-    // We keep it in SHADER_READ_ONLY_OPTIMAL between frames (finalLayout), and we also
-    // transition to that layout once on creation (barrier above).
-    depthAttachment.initialLayout =
-      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    depthAttachment.finalLayout =
-      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;  // Ready to write
+    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;  // Ready for shader read
 
     VkAttachmentReference depthRef{};
     depthRef.attachment = 0;
@@ -2443,7 +2438,7 @@ struct DirectionalShadowResources {
 
     descriptor.sampler = sampler;
     descriptor.imageView = imageView;
-    descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    descriptor.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     return true;
   }
 
@@ -8273,6 +8268,7 @@ int main(int argc, char *argv[]) {
 
       VkBuffer shadowVertexBuffer = VK_NULL_HANDLE;
       VkBuffer shadowIndexBuffer = VK_NULL_HANDLE;
+      
       for (auto entityHandle : renderView) {
         Entity entity(entityHandle, &scene);
         auto &transform = entity.GetComponent<TransformComponent>();
@@ -8315,7 +8311,7 @@ int main(int argc, char *argv[]) {
       }
 
       vkCmdEndRenderPass(cmd);
-
+      // Render pass transitions to READ_ONLY_OPTIMAL - shadow map is now ready to sample
     }
 
     // Get environment settings
@@ -8708,6 +8704,23 @@ int main(int argc, char *argv[]) {
     }
 
     vkCmdEndRenderPass(cmd);
+
+    // Transition shadow map back to ATTACHMENT_OPTIMAL for next frame's shadow pass
+    if (dirShadowEnabled && g_DirectionalShadow.IsValid()) {
+      VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+      barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+      barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+      barrier.image = g_DirectionalShadow.image;
+      barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+      barrier.subresourceRange.levelCount = 1;
+      barrier.subresourceRange.layerCount = 1;
+      barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0,
+                           nullptr, 0, nullptr, 1, &barrier);
+    }
+
     vkEndCommandBuffer(cmd);
 
     // Submit
