@@ -2267,8 +2267,9 @@ struct DirectionalShadowResources {
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;  // Ready to write
-    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;  // Ready for shader read
+    // Use UNDEFINED for initialLayout - we'll do explicit transitions
+    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;  // Ready for shader read
 
     VkAttachmentReference depthRef{};
     depthRef.attachment = 0;
@@ -2438,7 +2439,7 @@ struct DirectionalShadowResources {
 
     descriptor.sampler = sampler;
     descriptor.imageView = imageView;
-    descriptor.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     return true;
   }
 
@@ -2866,11 +2867,9 @@ static void DrawDirectionalLightArrowVisualization(
   const float arrowHeadWidth = 0.3f;
 
   // Calculate arrow direction from transform rotation
-  Mat4 rx = Mat4::RotationX(transform.rotation.x);
-  Mat4 ry = Mat4::RotationY(transform.rotation.y);
-  Mat4 rz = Mat4::RotationZ(transform.rotation.z);
-  Mat4 rotMatrix = Mat4::Multiply(rx, Mat4::Multiply(ry, rz));
-  Vec3 direction = Mat4::TransformDirection(rotMatrix, Vec3(0.0f, -1.0f, 0.0f));
+  // Use same convention as lighting: forward is -Z
+  Mat4 transformMatrix = transform.GetLocalMatrix();
+  Vec3 direction = Mat4::TransformDirection(transformMatrix, Vec3(0.0f, 0.0f, -1.0f));
   direction = vnorm(direction);
 
   // Arrow starts at the light position
@@ -8048,8 +8047,7 @@ int main(int argc, char *argv[]) {
         Vec3 cameraForward =
           vnorm(v3(std::cos(yawR) * std::cos(pitchR), std::sin(pitchR),
                std::sin(yawR) * std::cos(pitchR)));
-        const float shadowFocusDistance = 10.0f;
-        const float shadowNear = 0.1f;
+        const float shadowNear = 1.0f;
         float shadowTexelSize = g_DirectionalShadow.IsValid()
                       ? 1.0f / static_cast<float>(
                                g_DirectionalShadow.resolution)
@@ -8083,19 +8081,30 @@ int main(int argc, char *argv[]) {
             shadowStrength = light.shadowStrength;
             float shadowDistance = light.shadowDistance;
             float shadowExtent = light.shadowExtent;
-            float shadowFar = shadowDistance * 2.0f;
-
-            Vec3 focusPoint =
-                vadd(camera.position, vscale(cameraForward, shadowFocusDistance));
-            Vec3 lightPos = vsub(focusPoint, vscale(direction, shadowDistance));
+            
+            // Center the shadow frustum on the scene origin (0,0,0)
+            Vec3 sceneCenter = v3(0.0f, 0.0f, 0.0f);
+            
+            // 'direction' = where light SHINES (e.g., (0,-1,0) = shining down)
+            // In shader, L = -direction = direction TOWARD light
+            // Light SOURCE position = sceneCenter + L * distance = sceneCenter - direction * distance
+            Vec3 towardLight = vscale(direction, -1.0f);
+            Vec3 lightPos = vadd(sceneCenter, vscale(towardLight, shadowDistance));
+            
+            // Compute a stable up vector that isn't parallel to light direction
             Vec3 up = v3(0.0f, 1.0f, 0.0f);
             if (std::abs(vdot(direction, up)) > 0.99f) {
-              up = v3(0.0f, 0.0f, 1.0f);
+              up = v3(1.0f, 0.0f, 0.0f);
             }
-            Mat4 lightView = Mat4::LookAt(lightPos, focusPoint, up);
-            Mat4 lightProj = Mat4::Orthographic(
+            
+            Mat4 lightView = Mat4::LookAt(lightPos, sceneCenter, up);
+            
+            // Orthographic projection for shadow map
+            float shadowFar = shadowDistance * 3.0f;
+            Mat4 lightProj = Mat4::OrthographicShadow(
                 -shadowExtent, shadowExtent, -shadowExtent, shadowExtent,
                 shadowNear, shadowFar);
+            
             dirShadowMatrix = Mat4::Multiply(lightProj, lightView);
             dirShadowEnabled = true;
           }
@@ -8205,6 +8214,15 @@ int main(int argc, char *argv[]) {
                   << " Strength: " << shadowStrength
                   << " TexelSize: " << shadowTexelSize << " Bias: " << shadowBias
                   << std::endl;
+        std::cout << "[Shadow] Light direction: (" 
+                  << lightUBO.dirLightDirIntensity.x << ", "
+                  << lightUBO.dirLightDirIntensity.y << ", "
+                  << lightUBO.dirLightDirIntensity.z << ")" << std::endl;
+        std::cout << "[Shadow] Matrix diagonal: [" 
+                  << dirShadowMatrix.m[0] << ", "
+                  << dirShadowMatrix.m[5] << ", "
+                  << dirShadowMatrix.m[10] << ", "
+                  << dirShadowMatrix.m[15] << "]" << std::endl;
         debugLogged = true;
       }
       
@@ -8231,6 +8249,25 @@ int main(int argc, char *argv[]) {
         scene.GetEntitiesWith<TransformComponent, MeshRendererComponent>();
 
     if (dirShadowEnabled && g_DirectionalShadow.IsValid()) {
+      // Transition shadow map to attachment layout before rendering
+      VkImageMemoryBarrier preBarrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+      preBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;  // Don't care about old contents
+      preBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+      preBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      preBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      preBarrier.image = g_DirectionalShadow.image;
+      preBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+      preBarrier.subresourceRange.baseMipLevel = 0;
+      preBarrier.subresourceRange.levelCount = 1;
+      preBarrier.subresourceRange.baseArrayLayer = 0;
+      preBarrier.subresourceRange.layerCount = 1;
+      preBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      preBarrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+      vkCmdPipelineBarrier(cmd,
+          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+          VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+          0, 0, nullptr, 0, nullptr, 1, &preBarrier);
+
       VkClearValue depthClear{};
       depthClear.depthStencil = {1.0f, 0};
       VkRenderPassBeginInfo shadowBegin{

@@ -131,6 +131,16 @@ struct Mat4 {
         return result;
     }
     
+    // Transform a Vec4 by this matrix
+    static Vec4 TransformVec4(const Mat4& mat, const Vec4& v) {
+        Vec4 result;
+        result.x = mat.m[0] * v.x + mat.m[4] * v.y + mat.m[8]  * v.z + mat.m[12] * v.w;
+        result.y = mat.m[1] * v.x + mat.m[5] * v.y + mat.m[9]  * v.z + mat.m[13] * v.w;
+        result.z = mat.m[2] * v.x + mat.m[6] * v.y + mat.m[10] * v.z + mat.m[14] * v.w;
+        result.w = mat.m[3] * v.x + mat.m[7] * v.y + mat.m[11] * v.z + mat.m[15] * v.w;
+        return result;
+    }
+    
     static Mat4 LookAt(Vec3 eye, Vec3 center, Vec3 up)
     {
         Vec3 f = vnorm(vsub(center, eye));
@@ -148,6 +158,38 @@ struct Mat4 {
         r.m[12] = -vdot(s, eye);
         r.m[13] = -vdot(u, eye);
         r.m[14] = vdot(f, eye);
+        r.m[15] = 1.0f;
+        return r;
+    }
+    
+    // Create a view matrix for shadow mapping given the light direction
+    // lightDir: normalized direction the light is SHINING (from light toward scene)
+    // lightPos: position of the "light" for shadow frustum
+    static Mat4 ShadowViewMatrix(Vec3 lightDir, Vec3 lightPos)
+    {
+        // Forward is the light direction (where light shines)
+        Vec3 f = vnorm(lightDir);
+        
+        // Choose an up vector that's not parallel to forward
+        Vec3 up = v3(0.0f, 1.0f, 0.0f);
+        if (std::abs(vdot(f, up)) > 0.99f) {
+            up = v3(1.0f, 0.0f, 0.0f);
+        }
+        
+        // Right vector
+        Vec3 s = vnorm(vcross(up, f));
+        // Recalculate up to be orthogonal
+        Vec3 u = vcross(f, s);
+
+        Mat4 r;
+        // Build rotation part (transposed because view matrix)
+        r.m[0] = s.x; r.m[1] = u.x; r.m[2] = f.x; r.m[3] = 0.0f;
+        r.m[4] = s.y; r.m[5] = u.y; r.m[6] = f.y; r.m[7] = 0.0f;
+        r.m[8] = s.z; r.m[9] = u.z; r.m[10] = f.z; r.m[11] = 0.0f;
+        // Translation
+        r.m[12] = -vdot(s, lightPos);
+        r.m[13] = -vdot(u, lightPos);
+        r.m[14] = -vdot(f, lightPos);
         r.m[15] = 1.0f;
         return r;
     }
@@ -180,6 +222,27 @@ struct Mat4 {
         r.m[0] = 2.0f / width;
         r.m[5] = -2.0f / height; // Flip Y for Vulkan NDC
         r.m[10] = 1.0f / depth;
+        r.m[12] = -(right + left) / width;
+        r.m[13] = -(top + bottom) / height;
+        r.m[14] = -znear / depth;
+        return r;
+    }
+
+    // Orthographic projection for shadow mapping (Vulkan 0-1 depth)
+    // Matches Vulkan's coordinate system for shadow map rendering
+    static Mat4 OrthographicShadow(float left, float right, float bottom, float top,
+                                   float znear, float zfar)
+    {
+        Mat4 r = Identity();
+        float width = right - left;
+        float height = top - bottom;
+        float depth = zfar - znear;
+        if (width == 0.0f || height == 0.0f || depth == 0.0f) {
+            return r;
+        }
+        r.m[0] = 2.0f / width;
+        r.m[5] = -2.0f / height;  // Negative Y for Vulkan (same as regular ortho)
+        r.m[10] = -1.0f / depth;  // Map depth correctly for Vulkan 0-1 range
         r.m[12] = -(right + left) / width;
         r.m[13] = -(top + bottom) / height;
         r.m[14] = -znear / depth;

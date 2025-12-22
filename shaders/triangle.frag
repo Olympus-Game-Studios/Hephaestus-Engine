@@ -155,40 +155,44 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
         return 1.0;
     }
 
-    float invW = 1.0 / max(lightSpacePos.w, 0.00001);
-    vec3 projCoords = lightSpacePos.xyz * invW;
+    // Perspective divide
+    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
+    
+    // Transform from NDC [-1,1] to texture coordinates [0,1]
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
 
-    if (projCoords.z > 1.0) {
+    // Fragment is outside the shadow map frustum - no shadow
+    float margin = 0.01;
+    if (projCoords.z > 1.0 || projCoords.z < 0.0) {
+        return 1.0;
+    }
+    if (projCoords.x < margin || projCoords.x > (1.0 - margin) || 
+        projCoords.y < margin || projCoords.y > (1.0 - margin)) {
         return 1.0;
     }
 
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) {
-        return 1.0;
-    }
-
-    float bias = lighting.dirShadowParams.x * (1.0 - max(dot(normal, lightDir), 0.0));
-    bias = max(bias, 0.00025);
+    // Calculate slope-scaled bias to reduce shadow acne
+    float NdotL = max(dot(normal, lightDir), 0.0);
+    float slopeBias = lighting.dirShadowParams.x * tan(acos(clamp(NdotL, 0.001, 1.0)));
+    slopeBias = clamp(slopeBias, 0.0, 0.015);
+    float constantBias = 0.003;
+    float bias = constantBias + slopeBias;
+    
     float texelSize = lighting.dirShadowParams.z;
 
+    // PCF (Percentage Closer Filtering) for softer shadows
     float shadow = 0.0;
-    float samples = 0.0;
-    const int pcfRadius = 1;
+    const int pcfRadius = 2;
+    const float pcfSamples = float((pcfRadius * 2 + 1) * (pcfRadius * 2 + 1));
+    
     for (int x = -pcfRadius; x <= pcfRadius; ++x) {
         for (int y = -pcfRadius; y <= pcfRadius; ++y) {
-            vec2 offset = projCoords.xy + vec2(x, y) * texelSize;
-            if (offset.x < 0.0 || offset.x > 1.0 || offset.y < 0.0 || offset.y > 1.0) {
-                continue;
-            }
-            float closestDepth = texture(shadowMap, offset).r;
-            shadow += projCoords.z - bias > closestDepth ? 1.0 : 0.0;
-            samples += 1.0;
+            vec2 sampleCoord = projCoords.xy + vec2(float(x), float(y)) * texelSize;
+            float closestDepth = texture(shadowMap, sampleCoord).r;
+            shadow += (projCoords.z - bias > closestDepth) ? 1.0 : 0.0;
         }
     }
-
-    if (samples > 0.0) {
-        shadow /= samples;
-    }
+    shadow /= pcfSamples;
 
     float strength = lighting.dirShadowParams.y;
     return 1.0 - shadow * strength;
