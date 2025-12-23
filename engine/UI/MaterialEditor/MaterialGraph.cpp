@@ -283,4 +283,113 @@ void Graph::RemoveLinksForPin(PinID id) {
     }), m_Links.end());
 }
 
+Node& Graph::CreateNodeWithID(NodeID id, NodeType type, std::string displayName) {
+    Node node;
+    node.id = id;
+    node.type = type;
+    node.displayName = displayName.empty() ? MakeNodeDisplayName(type) : std::move(displayName);
+    switch (type) {
+    case NodeType::ConstantFloat:
+    case NodeType::FloatParameter:
+        node.scalar = 0.5f;
+        break;
+    case NodeType::ConstantVec3:
+    case NodeType::ColorParameter:
+        node.color = Float3{1.0f, 1.0f, 1.0f};
+        break;
+    case NodeType::AlbedoTextureSample:
+    case NodeType::NormalTextureSample:
+    case NodeType::RoughnessTextureSample:
+    case NodeType::AoTextureSample:
+        node.resourcePath.clear();
+        break;
+    default:
+        break;
+    }
+    m_Nodes.push_back(std::move(node));
+    Node& stored = m_Nodes.back();
+    AttachDefaultPins(stored);
+    return stored;
+}
+
+void Graph::SetPinIDsForNode(NodeID nodeId, const std::vector<PinID>& inputPinIds, const std::vector<PinID>& outputPinIds) {
+    Node* node = FindNode(nodeId);
+    if (!node) return;
+    
+    // Update input pin IDs
+    for (size_t i = 0; i < inputPinIds.size() && i < node->inputs.size(); ++i) {
+        PinID oldId = node->inputs[i];
+        PinID newId = inputPinIds[i];
+        if (Pin* pin = FindPin(oldId)) {
+            pin->id = newId;
+        }
+        node->inputs[i] = newId;
+    }
+    
+    // Update output pin IDs
+    for (size_t i = 0; i < outputPinIds.size() && i < node->outputs.size(); ++i) {
+        PinID oldId = node->outputs[i];
+        PinID newId = outputPinIds[i];
+        if (Pin* pin = FindPin(oldId)) {
+            pin->id = newId;
+        }
+        node->outputs[i] = newId;
+    }
+}
+
+Link* Graph::CreateLinkWithID(LinkID id, PinID from, PinID to) {
+    Pin* startPin = FindPin(from);
+    Pin* endPin = FindPin(to);
+    if (!startPin || !endPin) {
+        return nullptr;
+    }
+    if (startPin->kind != PinKind::Output || endPin->kind != PinKind::Input) {
+        return nullptr;
+    }
+    if (startPin->valueType != endPin->valueType) {
+        return nullptr;
+    }
+
+    // Check for existing link
+    for (const Link& link : m_Links) {
+        if (link.startPin == from && link.endPin == to) {
+            return nullptr;
+        }
+    }
+
+    // Remove any existing link to this input
+    m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(), [to](const Link& link) { return link.endPin == to; }), m_Links.end());
+
+    Link link;
+    link.id = id;
+    link.startPin = from;
+    link.endPin = to;
+    m_Links.push_back(link);
+    return &m_Links.back();
+}
+
+void Graph::UpdateNextIDs() {
+    m_NextNodeID = 1;
+    m_NextPinID = 1;
+    m_NextLinkID = 1;
+    
+    for (const Node& node : m_Nodes) {
+        if (node.id >= m_NextNodeID) {
+            m_NextNodeID = node.id + 1;
+        }
+    }
+    
+    for (const Pin& pin : m_Pins) {
+        if (pin.id >= m_NextPinID) {
+            m_NextPinID = pin.id + 1;
+        }
+    }
+    
+    for (const Link& link : m_Links) {
+        if (link.id >= m_NextLinkID) {
+            m_NextLinkID = link.id + 1;
+        }
+    }
+}
+
 } // namespace MaterialEditor

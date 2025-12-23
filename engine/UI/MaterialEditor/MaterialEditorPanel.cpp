@@ -78,6 +78,7 @@ bool SaveMaterialAssetFile(const std::filesystem::path& path,
                            const MaterialComponent& material,
                            const std::string& displayName,
                            const Graph& graph,
+                           ImNodesEditorContext* editorContext,
                            std::string& outError) {
     std::ofstream out(path, std::ios::trunc);
     if (!out) {
@@ -108,6 +109,13 @@ bool SaveMaterialAssetFile(const std::filesystem::path& path,
     out << "    \"nodes\": [\n";
     
     const auto& nodes = graph.GetNodes();
+    
+    // If we have an editor context, get node positions
+    bool hasPositions = (editorContext != nullptr);
+    if (hasPositions) {
+        ImNodes::EditorContextSet(editorContext);
+    }
+    
     for (size_t i = 0; i < nodes.size(); ++i) {
         const Node& node = nodes[i];
         out << "      {\n";
@@ -116,10 +124,41 @@ bool SaveMaterialAssetFile(const std::filesystem::path& path,
         out << "        \"displayName\": \"" << EscapeJson(node.displayName) << "\",\n";
         out << "        \"scalar\": " << node.scalar << ",\n";
         out << "        \"color\": [" << node.color.x << ", " << node.color.y << ", " << node.color.z << "],\n";
-        out << "        \"resourcePath\": \"" << EscapeJson(node.resourcePath) << "\"\n";
+        out << "        \"resourcePath\": \"" << EscapeJson(node.resourcePath) << "\",\n";
+        
+        // Save node position from ImNodes
+        if (hasPositions) {
+            ImVec2 pos = ImNodes::GetNodeEditorSpacePos(node.id);
+            out << "        \"posX\": " << pos.x << ",\n";
+            out << "        \"posY\": " << pos.y << ",\n";
+        } else {
+            out << "        \"posX\": " << node.posX << ",\n";
+            out << "        \"posY\": " << node.posY << ",\n";
+        }
+        
+        // Save input pin IDs
+        out << "        \"inputPins\": [";
+        for (size_t j = 0; j < node.inputs.size(); ++j) {
+            out << node.inputs[j];
+            if (j < node.inputs.size() - 1) out << ", ";
+        }
+        out << "],\n";
+        
+        // Save output pin IDs
+        out << "        \"outputPins\": [";
+        for (size_t j = 0; j < node.outputs.size(); ++j) {
+            out << node.outputs[j];
+            if (j < node.outputs.size() - 1) out << ", ";
+        }
+        out << "]\n";
+        
         out << "      }";
         if (i < nodes.size() - 1) out << ",";
         out << "\n";
+    }
+    
+    if (hasPositions) {
+        ImNodes::EditorContextSet(nullptr);
     }
     
     out << "    ],\n";
@@ -390,47 +429,119 @@ bool LoadMaterialAssetFile(const std::filesystem::path& path,
     // Parse graph
     if (const JsonValue* graphObj = root.Find("graph")) {
         if (graphObj->IsObject()) {
-            // Parse nodes
+            // First pass: Parse nodes with IDs and pin IDs
+            struct NodeLoadData {
+                NodeID id;
+                NodeType type;
+                std::string displayName;
+                float scalar;
+                Float3 color;
+                std::string resourcePath;
+                float posX;
+                float posY;
+                std::vector<PinID> inputPins;
+                std::vector<PinID> outputPins;
+            };
+            std::vector<NodeLoadData> nodesToLoad;
+            
             if (const JsonValue* nodesArray = graphObj->Find("nodes")) {
                 if (nodesArray->IsArray()) {
                     for (const auto& nodeVal : nodesArray->arrayValue) {
                         if (!nodeVal.IsObject()) continue;
                         
-                        NodeType type = NodeType::MaterialOutput;
+                        NodeLoadData data;
+                        data.id = 1;
+                        data.type = NodeType::MaterialOutput;
+                        data.scalar = 0.5f;
+                        data.color = Float3{1.0f, 1.0f, 1.0f};
+                        data.posX = 0.0f;
+                        data.posY = 0.0f;
+                        
                         if (const JsonValue* typeVal = nodeVal.Find("type")) {
                             if (typeVal->IsString()) {
-                                type = StringToNodeType(typeVal->AsString());
+                                data.type = StringToNodeType(typeVal->AsString());
                             }
                         }
-                        
-                        Node& node = outGraph.CreateNode(type);
-                        
                         if (const JsonValue* idVal = nodeVal.Find("id")) {
                             if (idVal->IsNumber()) {
-                                node.id = static_cast<NodeID>(idVal->AsNumber());
+                                data.id = static_cast<NodeID>(idVal->AsNumber());
                             }
                         }
                         if (const JsonValue* nameVal = nodeVal.Find("displayName")) {
                             if (nameVal->IsString()) {
-                                node.displayName = nameVal->AsString();
+                                data.displayName = nameVal->AsString();
                             }
                         }
                         if (const JsonValue* scalarVal = nodeVal.Find("scalar")) {
                             if (scalarVal->IsNumber()) {
-                                node.scalar = static_cast<float>(scalarVal->AsNumber());
+                                data.scalar = static_cast<float>(scalarVal->AsNumber());
                             }
                         }
                         if (const JsonValue* colorVal = nodeVal.Find("color")) {
-                            parseFloat3(*colorVal, node.color);
+                            parseFloat3(*colorVal, data.color);
                         }
                         if (const JsonValue* resourceVal = nodeVal.Find("resourcePath")) {
                             if (resourceVal->IsString()) {
-                                node.resourcePath = resourceVal->AsString();
+                                data.resourcePath = resourceVal->AsString();
                             }
                         }
+                        
+                        // Load position
+                        if (const JsonValue* posXVal = nodeVal.Find("posX")) {
+                            if (posXVal->IsNumber()) {
+                                data.posX = static_cast<float>(posXVal->AsNumber());
+                            }
+                        }
+                        if (const JsonValue* posYVal = nodeVal.Find("posY")) {
+                            if (posYVal->IsNumber()) {
+                                data.posY = static_cast<float>(posYVal->AsNumber());
+                            }
+                        }
+                        
+                        // Parse input pin IDs
+                        if (const JsonValue* inputPinsVal = nodeVal.Find("inputPins")) {
+                            if (inputPinsVal->IsArray()) {
+                                for (const auto& pinVal : inputPinsVal->arrayValue) {
+                                    if (pinVal.IsNumber()) {
+                                        data.inputPins.push_back(static_cast<PinID>(pinVal.AsNumber()));
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Parse output pin IDs
+                        if (const JsonValue* outputPinsVal = nodeVal.Find("outputPins")) {
+                            if (outputPinsVal->IsArray()) {
+                                for (const auto& pinVal : outputPinsVal->arrayValue) {
+                                    if (pinVal.IsNumber()) {
+                                        data.outputPins.push_back(static_cast<PinID>(pinVal.AsNumber()));
+                                    }
+                                }
+                            }
+                        }
+                        
+                        nodesToLoad.push_back(std::move(data));
                     }
                 }
             }
+            
+            // Create nodes with specific IDs
+            for (const auto& data : nodesToLoad) {
+                Node& node = outGraph.CreateNodeWithID(data.id, data.type, data.displayName);
+                node.scalar = data.scalar;
+                node.color = data.color;
+                node.resourcePath = data.resourcePath;
+                node.posX = data.posX;
+                node.posY = data.posY;
+                
+                // Set pin IDs if provided
+                if (!data.inputPins.empty() || !data.outputPins.empty()) {
+                    outGraph.SetPinIDsForNode(node.id, data.inputPins, data.outputPins);
+                }
+            }
+            
+            // Update next IDs after loading all nodes
+            outGraph.UpdateNextIDs();
             
             // Parse links
             if (const JsonValue* linksArray = graphObj->Find("links")) {
@@ -438,20 +549,32 @@ bool LoadMaterialAssetFile(const std::filesystem::path& path,
                     for (const auto& linkVal : linksArray->arrayValue) {
                         if (!linkVal.IsObject()) continue;
                         
-                        int startPin = -1, endPin = -1;
+                        LinkID linkId = 0;
+                        PinID startPin = -1, endPin = -1;
+                        
+                        if (const JsonValue* idVal = linkVal.Find("id")) {
+                            if (idVal->IsNumber()) linkId = static_cast<LinkID>(idVal->AsNumber());
+                        }
                         if (const JsonValue* startVal = linkVal.Find("startPin")) {
-                            if (startVal->IsNumber()) startPin = static_cast<int>(startVal->AsNumber());
+                            if (startVal->IsNumber()) startPin = static_cast<PinID>(startVal->AsNumber());
                         }
                         if (const JsonValue* endVal = linkVal.Find("endPin")) {
-                            if (endVal->IsNumber()) endPin = static_cast<int>(endVal->AsNumber());
+                            if (endVal->IsNumber()) endPin = static_cast<PinID>(endVal->AsNumber());
                         }
                         
                         if (startPin >= 0 && endPin >= 0) {
-                            outGraph.CreateLink(startPin, endPin);
+                            if (linkId > 0) {
+                                outGraph.CreateLinkWithID(linkId, startPin, endPin);
+                            } else {
+                                outGraph.CreateLink(startPin, endPin);
+                            }
                         }
                     }
                 }
             }
+            
+            // Final update of next IDs after links
+            outGraph.UpdateNextIDs();
         }
     }
 
@@ -890,16 +1013,34 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
         ImGui::Spacing();
     }
 
+    // Save Material button - saves the graph without applying to entity
+    if (ImGui::Button("Save Material")) {
+        MaterialComponent material;
+        std::string error;
+        if (EvaluateGraph(graph, material, error)) {
+            std::string saveError;
+            bool saved = SaveMaterialAssetFile(m_CurrentAssetPath, material, m_CurrentMaterialName, graph, m_EditorContext, saveError);
+            if (!saved) {
+                m_StatusMessage = "Save failed: " + saveError;
+            } else {
+                m_StatusMessage = "Material saved successfully.";
+            }
+        } else {
+            m_StatusMessage = "Cannot save: " + error;
+        }
+    }
+    ImGui::SameLine();
+
     if (ImGui::Button("Apply To Selected Entity")) {
         MaterialComponent material;
         std::string error;
         if (EvaluateGraph(graph, material, error)) {
             std::string saveError;
-            bool saved = SaveMaterialAssetFile(m_CurrentAssetPath, material, m_CurrentMaterialName, graph, saveError);
+            bool saved = SaveMaterialAssetFile(m_CurrentAssetPath, material, m_CurrentMaterialName, graph, m_EditorContext, saveError);
             if (!saved) {
                 m_StatusMessage = "Material applied, but save failed: " + saveError;
             } else {
-                m_StatusMessage = "Material saved.";
+                m_StatusMessage = "Material saved and applied.";
             }
             applyResult = PanelResult{material, m_CurrentMaterialName, m_CurrentAssetPath};
         } else {
@@ -974,12 +1115,15 @@ void Panel::LoadMaterialIntoGraph(Graph& graph) {
     
     if (LoadMaterialAssetFile(m_CurrentAssetPath, tempMaterial, tempName, graph, loadError)) {
         // Graph has been populated
-        // Queue node placements if needed
+        // Queue node placements using loaded positions
         const auto& nodes = graph.GetNodes();
         for (const auto& node : nodes) {
-            if (node.type == NodeType::MaterialOutput) {
-                QueueNodePlacement(node.id, ImVec2(400.0f, 200.0f));
+            // Use the loaded position, or default position for MaterialOutput
+            ImVec2 pos(node.posX, node.posY);
+            if (node.type == NodeType::MaterialOutput && node.posX == 0.0f && node.posY == 0.0f) {
+                pos = ImVec2(400.0f, 200.0f); // Default position for output node
             }
+            QueueNodePlacement(node.id, pos);
         }
     }
 }

@@ -63,6 +63,10 @@ struct Node {
     std::string resourcePath;
     std::vector<PinID> inputs;
     std::vector<PinID> outputs;
+    
+    // Position in editor (for serialization)
+    float posX = 0.0f;
+    float posY = 0.0f;
 };
 
 struct Link {
@@ -94,6 +98,12 @@ public:
     const std::vector<Node>& GetNodes() const { return m_Nodes; }
     const std::vector<Link>& GetLinks() const { return m_Links; }
     const std::vector<Pin>& GetPins() const { return m_Pins; }
+
+    // Serialization support - creates nodes/links with specific IDs for loading saved graphs
+    Node& CreateNodeWithID(NodeID id, NodeType type, std::string displayName = {});
+    void SetPinIDsForNode(NodeID nodeId, const std::vector<PinID>& inputPinIds, const std::vector<PinID>& outputPinIds);
+    Link* CreateLinkWithID(LinkID id, PinID from, PinID to);
+    void UpdateNextIDs(); // Call after loading to ensure new IDs don't conflict
 
 private:
     std::string MakeNodeDisplayName(NodeType type) const;

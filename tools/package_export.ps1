@@ -13,14 +13,14 @@ param(
     [switch]$CreateZip = $false,
     
     [Parameter(Mandatory=$false)]
-    [switch]$Verbose = $false
+    [switch]$ShowDetails = $false
 )
 
 # Color output helpers
-function Write-Success { param([string]$Message) Write-Host "✓ $Message" -ForegroundColor Green }
-function Write-Warning { param([string]$Message) Write-Host "⚠ $Message" -ForegroundColor Yellow }
-function Write-Error { param([string]$Message) Write-Host "✗ $Message" -ForegroundColor Red }
-function Write-Info { param([string]$Message) Write-Host "ℹ $Message" -ForegroundColor Cyan }
+function Write-Success { param([string]$Message) Write-Host "[OK] $Message" -ForegroundColor Green }
+function Write-Warning { param([string]$Message) Write-Host "[WARN] $Message" -ForegroundColor Yellow }
+function Write-Error { param([string]$Message) Write-Host "[ERROR] $Message" -ForegroundColor Red }
+function Write-Info { param([string]$Message) Write-Host "[INFO] $Message" -ForegroundColor Cyan }
 
 # Check if export directory exists
 if (-not (Test-Path $ExportPath)) {
@@ -163,36 +163,36 @@ Status: $(if ($validationPassed) { "PASSED" } else { "WARNINGS" })
 Warnings: $($warnings.Count)
 
 ## Runtime Executable
-$(if ($foundExe) { "✓ " + $foundExe.Name } else { "✗ Missing - copy runtime executable here" })
+$(if ($foundExe) { "[OK] " + $foundExe.Name } else { "[MISSING] - copy runtime executable here" })
 
 ## Required Components
 
 ### Shaders
 $(if (Test-Path $shadersDir) { 
-    "✓ shaders/ directory present`n" + 
+    "[OK] shaders/ directory present`n" + 
     ((Get-ChildItem -Path $shadersDir -File -Recurse | ForEach-Object { "  - " + $_.Name }) -join "`n")
 } else { 
-    "✗ shaders/ directory missing" 
+    "[MISSING] shaders/ directory" 
 })
 
 ### Scenes
 $(if ($sceneFiles.Count -gt 0) {
-    ($sceneFiles | ForEach-Object { "✓ " + $_.Name }) -join "`n"
+    ($sceneFiles | ForEach-Object { "[OK] " + $_.Name }) -join "`n"
 } else {
-    "✗ No scene files found"
+    "[MISSING] No scene files found"
 })
 
 ### Assets
 $(if (Test-Path $assetsDir) {
     $assetFiles = Get-ChildItem -Path $assetsDir -File -Recurse
-    "✓ assets/ directory ($($assetFiles.Count) files)`n" +
+    "[OK] assets/ directory ($($assetFiles.Count) files)`n" +
     ($assetFiles | Select-Object -First 20 | ForEach-Object { 
         $rel = $_.FullName.Substring($ExportPath.Length + 1)
         "  - $rel"
     }) -join "`n"
     if ($assetFiles.Count -gt 20) { "`n  ... and $($assetFiles.Count - 20) more files" }
 } else {
-    "✗ assets/ directory missing"
+    "[MISSING] assets/ directory"
 })
 
 ## Optional Components
@@ -247,7 +247,7 @@ Write-Host "3. Test on a clean system without development tools installed" -Fore
 Write-Host "4. Create an installer or distribute as a ZIP archive" -ForegroundColor Cyan
 Write-Host ""
 
-if ($Verbose) {
+if ($ShowDetails) {
     Write-Info "=== Detailed File Listing ==="
     Get-ChildItem -Path $ExportPath -Recurse | ForEach-Object {
         $indent = "  " * (($_.FullName.Substring($ExportPath.Length) -split '\\').Count - 1)
