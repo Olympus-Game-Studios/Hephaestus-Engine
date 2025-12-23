@@ -6383,6 +6383,45 @@ int main(int argc, char *argv[]) {
     }
   };
 
+  // Helper to reload environment settings (HDRI, solid color) from EnvironmentComponent after scene load
+  auto hydrateEnvironmentFromComponents = [&](Scene &targetScene) {
+    auto envView = targetScene.GetEntitiesWith<EnvironmentComponent>();
+    for (auto entityHandle : envView) {
+      Entity entity(entityHandle, &targetScene);
+      if (!entity.HasComponent<EnvironmentComponent>()) {
+        continue;
+      }
+      auto &env = entity.GetComponent<EnvironmentComponent>();
+      if (env.type == EnvironmentComponent::BackgroundType::HDRI && !env.hdriPath.empty()) {
+        // Load the HDRI specified in the environment component
+        if (skybox.LoadHDRI(env.hdriPath, vkdev.allocator,
+                           vkdev.physicalDevice, vkdev.commandPool,
+                           vkdev.graphicsQueue)) {
+          std::cout << "[Environment] Loaded HDRI from scene: " << env.hdriPath << std::endl;
+        } else {
+          std::cerr << "[Environment] Failed to load HDRI: " << env.hdriPath << std::endl;
+        }
+      }
+      // Only process first environment entity
+      break;
+    }
+  };
+
+  // Helper to find the environment entity in a scene (or create one if missing)
+  auto findOrCreateEnvironmentEntity = [&](Scene &targetScene) -> Entity {
+    auto envView = targetScene.GetEntitiesWith<EnvironmentComponent>();
+    for (auto entityHandle : envView) {
+      Entity entity(entityHandle, &targetScene);
+      if (entity.HasComponent<EnvironmentComponent>()) {
+        return entity;
+      }
+    }
+    // No environment entity found, create one
+    Entity newEnvEntity = targetScene.CreateEntity("Environment");
+    newEnvEntity.AddComponent<EnvironmentComponent>();
+    return newEnvEntity;
+  };
+
   auto performSceneUndo = [&](Scene &targetScene) -> bool {
     auto snapshot = PopSceneUndoSnapshot();
     if (!snapshot) {
@@ -6391,6 +6430,8 @@ int main(int argc, char *argv[]) {
     }
     if (SceneSerializer::DeserializeFromString(targetScene, *snapshot)) {
       rebuildSceneMeshesFromComponents(targetScene);
+      hydrateEnvironmentFromComponents(targetScene);
+      environmentEntity = findOrCreateEnvironmentEntity(targetScene);
       targetScene.ClearSelection();
       assetBrowserStatus = "Undo: Restored previous scene state.";
       std::cout << assetBrowserStatus << std::endl;
@@ -7093,6 +7134,8 @@ int main(int argc, char *argv[]) {
         std::cout << "[Runtime] Scene loaded successfully" << std::endl;
         rebuildSceneMeshesFromComponents(scene);
         hydrateScriptsFromComponents(scene);
+        hydrateEnvironmentFromComponents(scene);
+        environmentEntity = findOrCreateEnvironmentEntity(scene);
 
         // Start simulation automatically
         g_SimPlaying = true;
@@ -7548,6 +7591,8 @@ int main(int argc, char *argv[]) {
             }
             rebuildSceneMeshesFromComponents(scene);
             hydrateScriptsFromComponents(scene);
+            hydrateEnvironmentFromComponents(scene);
+            environmentEntity = findOrCreateEnvironmentEntity(scene);
             ClearSceneUndoStack();
             fs::path projectRoot = ResolveActiveProjectRoot();
             fs::path relativePath =
@@ -7628,6 +7673,8 @@ int main(int argc, char *argv[]) {
               if (SceneSerializer::DeserializeFromString(
                       scene, g_SceneSnapshotBeforePlay)) {
                 hydrateScriptsFromComponents(scene);
+                hydrateEnvironmentFromComponents(scene);
+                environmentEntity = findOrCreateEnvironmentEntity(scene);
                 // Reset all physics velocities to ensure clean state
                 auto rigidBodyView =
                     scene.GetEntitiesWith<RigidBodyComponent>();

@@ -109,6 +109,17 @@ const char* PhysicsShapeTypeToString(PhysicsShapeType type)
     }
 }
 
+const char* BackgroundTypeToString(EnvironmentComponent::BackgroundType type)
+{
+    switch (type) {
+    case EnvironmentComponent::BackgroundType::HDRI:
+        return "HDRI";
+    case EnvironmentComponent::BackgroundType::SolidColor:
+    default:
+        return "SolidColor";
+    }
+}
+
 struct JsonValue {
     enum class Type {
         Null,
@@ -498,6 +509,21 @@ static bool ParseBoolLike(const JsonValue& value, bool fallback)
     return fallback;
 }
 
+static EnvironmentComponent::BackgroundType ParseBackgroundType(const JsonValue& value)
+{
+    if (!value.IsString()) {
+        return EnvironmentComponent::BackgroundType::SolidColor;
+    }
+    std::string typeStr = value.AsString();
+    if (typeStr == "HDRI") {
+        return EnvironmentComponent::BackgroundType::HDRI;
+    }
+    if (typeStr == "SolidColor") {
+        return EnvironmentComponent::BackgroundType::SolidColor;
+    }
+    return EnvironmentComponent::BackgroundType::SolidColor;
+}
+
 static LightType ParseLightType(const JsonValue& value, std::string& errorOut)
 {
     if (!value.IsString()) {
@@ -622,6 +648,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         const ScriptComponent* scriptComponent = registry.try_get<ScriptComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
+        const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
 
         stream << "    {\n";
         stream << "      \"id\": " << static_cast<uint32_t>(handle) << ",\n";
@@ -807,6 +834,18 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss.imbue(std::locale::classic());
             oss << "        \"Selection\": {\n";
             oss << "          \"selected\": " << (selection->selected ? "true" : "false") << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (environment) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"Environment\": {\n";
+            oss << "          \"type\": \"" << BackgroundTypeToString(environment->type) << "\",\n";
+            oss << "          \"solidColor\": " << FormatVec3(environment->solidColor) << ",\n";
+            oss << "          \"hdriPath\": \"" << EscapeString(environment->hdriPath) << "\",\n";
+            oss << "          \"hdriIntensity\": " << FormatFloat(environment->hdriIntensity) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1380,6 +1419,30 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                 selectedHandle = static_cast<entt::entity>(entity);
             }
         }
+
+        if (const JsonValue* envObj = components->Find("Environment")) {
+            if (!envObj->IsObject()) {
+                outError = "Environment component is not an object.";
+                return false;
+            }
+            auto& env = entity.AddComponent<EnvironmentComponent>();
+            if (const JsonValue* typeValue = envObj->Find("type")) {
+                env.type = ParseBackgroundType(*typeValue);
+            }
+            if (const JsonValue* colorValue = envObj->Find("solidColor")) {
+                ParseVec3(*colorValue, env.solidColor);
+            }
+            if (const JsonValue* hdriPathValue = envObj->Find("hdriPath")) {
+                if (hdriPathValue->IsString()) {
+                    env.hdriPath = hdriPathValue->AsString();
+                }
+            }
+            if (const JsonValue* intensityValue = envObj->Find("hdriIntensity")) {
+                if (intensityValue->IsNumber()) {
+                    env.hdriIntensity = static_cast<float>(intensityValue->AsNumber());
+                }
+            }
+        }
     }
 
     for (const auto& link : pendingParents) {
@@ -1448,6 +1511,7 @@ std::string SceneSerializer::SerializeToString() const
         const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
     const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
+        const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
 
         stream << "    {\n";
         stream << "      \"id\": " << static_cast<uint32_t>(handle) << ",\n";
@@ -1624,6 +1688,18 @@ std::string SceneSerializer::SerializeToString() const
             oss.imbue(std::locale::classic());
             oss << "        \"Selection\": {\n";
             oss << "          \"selected\": " << (selection->selected ? "true" : "false") << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (environment) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"Environment\": {\n";
+            oss << "          \"type\": \"" << BackgroundTypeToString(environment->type) << "\",\n";
+            oss << "          \"solidColor\": " << FormatVec3(environment->solidColor) << ",\n";
+            oss << "          \"hdriPath\": \"" << EscapeString(environment->hdriPath) << "\",\n";
+            oss << "          \"hdriIntensity\": " << FormatFloat(environment->hdriIntensity) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
