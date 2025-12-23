@@ -3071,15 +3071,20 @@ static std::filesystem::path ResolveEngineRoot() {
     const bool hasAssets = fs::exists(candidate / "assets");
     const bool hasEditor = fs::exists(candidate / "editor");
     const bool hasEngine = fs::exists(candidate / "engine");
+    const bool hasShaders = fs::exists(candidate / "shaders");
     bool accepted = false;
     if (g_RuntimeMode) {
+      // Runtime mode: just needs assets
       accepted = hasAssets;
     } else {
-      accepted = hasAssets && hasEditor && hasEngine;
+      // Editor mode: needs assets + editor + (engine OR shaders)
+      // - Development environment has engine/ folder with source code
+      // - Portable editor package has shaders/ folder instead
+      accepted = hasAssets && hasEditor && (hasEngine || hasShaders);
     }
     std::cout << "[ResolveEngineRoot] Probe " << candidate
               << " (assets=" << hasAssets << ", editor=" << hasEditor
-              << ", engine=" << hasEngine << ") => "
+              << ", engine=" << hasEngine << ", shaders=" << hasShaders << ") => "
               << (accepted ? "accepted" : "rejected") << std::endl;
     return accepted;
   };

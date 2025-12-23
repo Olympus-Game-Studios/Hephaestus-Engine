@@ -235,6 +235,10 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/outline.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/outline.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/skybox.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/skybox.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap.frag
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)
@@ -261,4 +265,59 @@ if (GLSLC_EXECUTABLE)
 else()
     message(WARNING "glslc not found; expecting precompiled .spv under build/<config>/shaders")
 endif()
+
+# --- Post-build: Copy required assets to build directory ---
+# Copy assets folder
+add_custom_command(TARGET HephaestusEngine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+        "$<TARGET_FILE_DIR:HephaestusEngine>/assets"
+    COMMENT "Copying assets to build directory"
+)
+
+# Copy editor folder (icons, fonts, etc.)
+add_custom_command(TARGET HephaestusEngine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/editor"
+        "$<TARGET_FILE_DIR:HephaestusEngine>/editor"
+    COMMENT "Copying editor assets to build directory"
+)
+
+# --- Install target for distribution packaging ---
+include(GNUInstallDirs)
+
+# Install executable
+install(TARGETS HephaestusEngine
+    RUNTIME DESTINATION .
+    BUNDLE DESTINATION .
+)
+
+# Install shaders
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/shaders/
+    DESTINATION shaders
+    FILES_MATCHING PATTERN "*.spv"
+)
+
+# Install assets
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets/
+    DESTINATION assets
+)
+
+# Install editor resources (icons, fonts)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/editor/
+    DESTINATION editor
+)
+
+# Install Lua DLL if present
+if(EXISTS "$ENV{USERPROFILE}/vcpkg/installed/x64-windows/bin/lua.dll")
+    install(FILES "$ENV{USERPROFILE}/vcpkg/installed/x64-windows/bin/lua.dll"
+        DESTINATION .
+    )
+endif()
+
+# Create a runtime marker file for auto-detection
+install(CODE "
+    file(WRITE \"\${CMAKE_INSTALL_PREFIX}/PACKAGE_MANIFEST.txt\" 
+         \"Hephaestus Engine Runtime Package\\nGenerated: ${CMAKE_CURRENT_TIMESTAMP}\\n\")
+")
 
