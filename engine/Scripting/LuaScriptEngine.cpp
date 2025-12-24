@@ -429,6 +429,7 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterInputBindings();
     RegisterUtilityBindings();
     RegisterCameraBindings();
+    RegisterThisBindings();
 #endif
 }
 
@@ -820,6 +821,9 @@ bool LuaScriptEngine::CallInstanceFunction(ScriptInstance& instance, int functio
     m_CurrentEntityId = instance.entityId;
     m_CurrentDeltaTime = deltaTime;
 
+    // Set up "this" global for OOP-style script access
+    SetupThisForEntity(instance.entityId);
+
     int argumentCount = 0;
     if (includeDelta) {
         lua_pushnumber(m_State, deltaTime);
@@ -872,6 +876,9 @@ bool LuaScriptEngine::CallInstanceFunctionByName(ScriptInstance& instance, const
     float previousDelta = m_CurrentDeltaTime;
     m_CurrentEntityId = instance.entityId;
     m_CurrentDeltaTime = deltaTime;
+
+    // Set up "this" global for OOP-style script access
+    SetupThisForEntity(instance.entityId);
 
     int argumentCount = 0;
     if (includeDelta) {
@@ -1455,6 +1462,466 @@ int LuaScriptEngine::Lua_Camera_translate(lua_State* L) {
         Vec3 updated = vadd(current, Vec3(dx, dy, dz));
         engine->m_CameraBinding.setPosition(updated);
     }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+void LuaScriptEngine::RegisterThisBindings() {
+#if LUA_AVAILABLE
+    // Create the "this" metatable for entity objects
+    luaL_newmetatable(m_State, "HephaestusEntity");
+    
+    lua_pushcfunction(m_State, Lua_This_GetTransform);
+    lua_setfield(m_State, -2, "GetTransform");
+    
+    lua_pushcfunction(m_State, Lua_This_GetName);
+    lua_setfield(m_State, -2, "GetName");
+    
+    lua_pushcfunction(m_State, Lua_This_SetName);
+    lua_setfield(m_State, -2, "SetName");
+    
+    lua_pushcfunction(m_State, Lua_This_IsValid);
+    lua_setfield(m_State, -2, "IsValid");
+    
+    // Set __index to self for method lookup
+    lua_pushvalue(m_State, -1);
+    lua_setfield(m_State, -2, "__index");
+    
+    lua_pop(m_State, 1);
+    
+    // Create the "Transform" metatable for transform objects
+    luaL_newmetatable(m_State, "HephaestusTransform");
+    
+    lua_pushcfunction(m_State, Lua_TransformObj_GetPosition);
+    lua_setfield(m_State, -2, "GetPosition");
+    
+    lua_pushcfunction(m_State, Lua_TransformObj_SetPosition);
+    lua_setfield(m_State, -2, "SetPosition");
+    
+    lua_pushcfunction(m_State, Lua_TransformObj_GetRotation);
+    lua_setfield(m_State, -2, "GetRotation");
+    
+    lua_pushcfunction(m_State, Lua_TransformObj_SetRotation);
+    lua_setfield(m_State, -2, "SetRotation");
+    
+    lua_pushcfunction(m_State, Lua_TransformObj_GetScale);
+    lua_setfield(m_State, -2, "GetScale");
+    
+    lua_pushcfunction(m_State, Lua_TransformObj_SetScale);
+    lua_setfield(m_State, -2, "SetScale");
+    
+    lua_pushcfunction(m_State, Lua_TransformObj_Translate);
+    lua_setfield(m_State, -2, "Translate");
+    
+    lua_pushcfunction(m_State, Lua_TransformObj_Rotate);
+    lua_setfield(m_State, -2, "Rotate");
+    
+    // Set __index to self for method lookup
+    lua_pushvalue(m_State, -1);
+    lua_setfield(m_State, -2, "__index");
+    
+    lua_pop(m_State, 1);
+#endif
+}
+
+void LuaScriptEngine::SetupThisForEntity(uint32_t entityId) {
+#if LUA_AVAILABLE
+    if (!m_State) {
+        return;
+    }
+    
+    // Create a userdata to hold the entity ID
+    uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(m_State, sizeof(uint32_t)));
+    *pEntityId = entityId;
+    
+    // Set its metatable to "HephaestusEntity"
+    luaL_getmetatable(m_State, "HephaestusEntity");
+    lua_setmetatable(m_State, -2);
+    
+    // Set as global "this"
+    lua_setglobal(m_State, "this");
+#else
+    (void)entityId;
+#endif
+}
+
+int LuaScriptEngine::Lua_This_GetTransform(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    // Create transform userdata containing the entity ID
+    uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
+    *pEntityId = engine->m_CurrentEntityId;
+    
+    // Set its metatable to "HephaestusTransform"
+    luaL_getmetatable(L, "HephaestusTransform");
+    lua_setmetatable(L, -2);
+    
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_This_GetName(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    TagComponent* tag = engine->GetTag(engine->m_CurrentEntityId);
+    if (!tag) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, tag->tag.c_str());
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_This_SetName(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid()) {
+        return 0;
+    }
+    const char* name = luaL_checkstring(L, 2); // Index 2 because self is at index 1
+    if (!name) {
+        return 0;
+    }
+    Entity entity = engine->MakeEntity(engine->m_CurrentEntityId);
+    if (!entity) {
+        return 0;
+    }
+    if (!entity.HasComponent<TagComponent>()) {
+        entity.AddComponent<TagComponent>(name);
+    } else {
+        entity.GetComponent<TagComponent>().tag = name;
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_This_IsValid(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    bool valid = engine && engine->CurrentEntityValid();
+    lua_pushboolean(L, valid);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_TransformObj_GetPosition(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    // Get entity ID from userdata (self at index 1)
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    if (!pEntityId) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    TransformComponent* transform = engine->GetTransform(*pEntityId);
+    if (!transform) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+    lua_pushnumber(L, transform->position.x);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, transform->position.y);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, transform->position.z);
+    lua_setfield(L, -2, "z");
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_TransformObj_SetPosition(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        return 0;
+    }
+    
+    // Get entity ID from userdata (self at index 1)
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    if (!pEntityId) {
+        return 0;
+    }
+    
+    TransformComponent* transform = engine->GetTransform(*pEntityId);
+    if (!transform) {
+        return 0;
+    }
+
+    // Check if second argument is a table (position table)
+    if (lua_istable(L, 2)) {
+        lua_getfield(L, 2, "x");
+        float x = static_cast<float>(luaL_optnumber(L, -1, transform->position.x));
+        lua_pop(L, 1);
+        
+        lua_getfield(L, 2, "y");
+        float y = static_cast<float>(luaL_optnumber(L, -1, transform->position.y));
+        lua_pop(L, 1);
+        
+        lua_getfield(L, 2, "z");
+        float z = static_cast<float>(luaL_optnumber(L, -1, transform->position.z));
+        lua_pop(L, 1);
+        
+        transform->position = Vec3(x, y, z);
+    } else {
+        // Three separate number arguments
+        float x = static_cast<float>(luaL_checknumber(L, 2));
+        float y = static_cast<float>(luaL_checknumber(L, 3));
+        float z = static_cast<float>(luaL_checknumber(L, 4));
+        transform->position = Vec3(x, y, z);
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_TransformObj_GetRotation(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    if (!pEntityId) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    TransformComponent* transform = engine->GetTransform(*pEntityId);
+    if (!transform) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+    lua_pushnumber(L, transform->rotation.x);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, transform->rotation.y);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, transform->rotation.z);
+    lua_setfield(L, -2, "z");
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_TransformObj_SetRotation(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        return 0;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    if (!pEntityId) {
+        return 0;
+    }
+    
+    TransformComponent* transform = engine->GetTransform(*pEntityId);
+    if (!transform) {
+        return 0;
+    }
+
+    // Check if second argument is a table (rotation table)
+    if (lua_istable(L, 2)) {
+        lua_getfield(L, 2, "x");
+        float x = static_cast<float>(luaL_optnumber(L, -1, transform->rotation.x));
+        lua_pop(L, 1);
+        
+        lua_getfield(L, 2, "y");
+        float y = static_cast<float>(luaL_optnumber(L, -1, transform->rotation.y));
+        lua_pop(L, 1);
+        
+        lua_getfield(L, 2, "z");
+        float z = static_cast<float>(luaL_optnumber(L, -1, transform->rotation.z));
+        lua_pop(L, 1);
+        
+        transform->rotation = Vec3(x, y, z);
+    } else {
+        float rx = static_cast<float>(luaL_checknumber(L, 2));
+        float ry = static_cast<float>(luaL_checknumber(L, 3));
+        float rz = static_cast<float>(luaL_checknumber(L, 4));
+        transform->rotation = Vec3(rx, ry, rz);
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_TransformObj_GetScale(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    if (!pEntityId) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    TransformComponent* transform = engine->GetTransform(*pEntityId);
+    if (!transform) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+    lua_pushnumber(L, transform->scale.x);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, transform->scale.y);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, transform->scale.z);
+    lua_setfield(L, -2, "z");
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_TransformObj_SetScale(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        return 0;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    if (!pEntityId) {
+        return 0;
+    }
+    
+    TransformComponent* transform = engine->GetTransform(*pEntityId);
+    if (!transform) {
+        return 0;
+    }
+
+    // Check if second argument is a table
+    if (lua_istable(L, 2)) {
+        lua_getfield(L, 2, "x");
+        float x = static_cast<float>(luaL_optnumber(L, -1, transform->scale.x));
+        lua_pop(L, 1);
+        
+        lua_getfield(L, 2, "y");
+        float y = static_cast<float>(luaL_optnumber(L, -1, transform->scale.y));
+        lua_pop(L, 1);
+        
+        lua_getfield(L, 2, "z");
+        float z = static_cast<float>(luaL_optnumber(L, -1, transform->scale.z));
+        lua_pop(L, 1);
+        
+        transform->scale = Vec3(x, y, z);
+    } else {
+        float sx = static_cast<float>(luaL_checknumber(L, 2));
+        float sy = static_cast<float>(luaL_checknumber(L, 3));
+        float sz = static_cast<float>(luaL_checknumber(L, 4));
+        transform->scale = Vec3(sx, sy, sz);
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_TransformObj_Translate(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        return 0;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    if (!pEntityId) {
+        return 0;
+    }
+    
+    TransformComponent* transform = engine->GetTransform(*pEntityId);
+    if (!transform) {
+        return 0;
+    }
+
+    float dx = static_cast<float>(luaL_optnumber(L, 2, 0.0));
+    float dy = static_cast<float>(luaL_optnumber(L, 3, 0.0));
+    float dz = static_cast<float>(luaL_optnumber(L, 4, 0.0));
+    transform->position.x += dx;
+    transform->position.y += dy;
+    transform->position.z += dz;
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_TransformObj_Rotate(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        return 0;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    if (!pEntityId) {
+        return 0;
+    }
+    
+    TransformComponent* transform = engine->GetTransform(*pEntityId);
+    if (!transform) {
+        return 0;
+    }
+
+    float rx = static_cast<float>(luaL_optnumber(L, 2, 0.0));
+    float ry = static_cast<float>(luaL_optnumber(L, 3, 0.0));
+    float rz = static_cast<float>(luaL_optnumber(L, 4, 0.0));
+    transform->rotation.x += rx;
+    transform->rotation.y += ry;
+    transform->rotation.z += rz;
     return 0;
 #else
     (void)L;

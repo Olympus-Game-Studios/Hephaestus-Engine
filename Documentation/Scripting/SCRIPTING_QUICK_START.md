@@ -101,6 +101,11 @@ Create `engine/Game/scripts/my_script.lua`:
 ```lua
 function onAwake()
     print("[Lua] Script awakened!")
+    
+    -- OOP-style: Use 'this' to access entity components
+    local transform = this:GetTransform()
+    local pos = transform:GetPosition()
+    print("[Lua] Starting position: " .. pos.x .. ", " .. pos.y .. ", " .. pos.z)
 end
 
 function onUpdate(deltaTime)
@@ -111,9 +116,13 @@ function onUpdate(deltaTime)
         print("[Lua] W key pressed!")
     end
     
-    -- Access transform
-    local pos = Transform.getPosition()
+    -- OOP-style: Access transform through 'this'
+    local transform = this:GetTransform()
+    local pos = transform:GetPosition()
     print("[Lua] Position: " .. pos.x .. ", " .. pos.y .. ", " .. pos.z)
+    
+    -- Functional style also works:
+    -- local pos = Transform.getPosition()
 end
 
 function onDestroy()
@@ -148,7 +157,15 @@ void OnUpdate(float deltaTime) override {
 }
 ```
 
-**Lua**:
+**Lua (OOP-style)**:
+```lua
+function onUpdate(deltaTime)
+    local transform = this:GetTransform()
+    transform:Translate(5.0 * deltaTime, 0, 0)
+end
+```
+
+**Lua (Functional-style)**:
 ```lua
 function onUpdate(deltaTime)
     Transform.translate(5.0 * deltaTime, 0, 0)
@@ -186,7 +203,15 @@ void OnUpdate(float deltaTime) override {
 }
 ```
 
-**Lua**:
+**Lua (OOP-style)**:
+```lua
+function onUpdate(deltaTime)
+    local transform = this:GetTransform()
+    transform:Rotate(0, 0, 1.0 * deltaTime)
+end
+```
+
+**Lua (Functional-style)**:
 ```lua
 function onUpdate(deltaTime)
     Transform.rotate(0, 0, 1.0 * deltaTime)

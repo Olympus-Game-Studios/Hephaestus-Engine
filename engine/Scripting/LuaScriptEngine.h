@@ -244,5 +244,24 @@ private:
     static int Lua_Camera_getRotation(lua_State* L);
     static int Lua_Camera_translate(lua_State* L);
 
+    // 'this' entity binding methods (OOP-style API)
+    static int Lua_This_GetTransform(lua_State* L);
+    static int Lua_This_GetName(lua_State* L);
+    static int Lua_This_SetName(lua_State* L);
+    static int Lua_This_IsValid(lua_State* L);
+    
+    // Transform object methods (returned by this:GetTransform())
+    static int Lua_TransformObj_GetPosition(lua_State* L);
+    static int Lua_TransformObj_SetPosition(lua_State* L);
+    static int Lua_TransformObj_GetRotation(lua_State* L);
+    static int Lua_TransformObj_SetRotation(lua_State* L);
+    static int Lua_TransformObj_GetScale(lua_State* L);
+    static int Lua_TransformObj_SetScale(lua_State* L);
+    static int Lua_TransformObj_Translate(lua_State* L);
+    static int Lua_TransformObj_Rotate(lua_State* L);
+
+    void RegisterThisBindings();
+    void SetupThisForEntity(uint32_t entityId);
+
     static LuaScriptEngine* GetInstance() { return s_Instance; }
 };

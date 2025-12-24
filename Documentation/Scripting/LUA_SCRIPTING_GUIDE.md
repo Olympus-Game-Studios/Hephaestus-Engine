@@ -86,13 +86,76 @@ end
 
 ## C++ Bindings
 
+Hephaestus supports two API styles for accessing entity data:
+
+1. **OOP-style** (recommended): Use `this` to access the current entity and its components
+2. **Functional-style**: Use global tables like `Transform`, `Entity`, `Input`
+
 ### Logging
 
 ```lua
 engine_log("This message appears in console")
 ```
 
-### Transform
+### OOP-Style API (using `this`)
+
+The `this` global represents the entity the script is attached to:
+
+```lua
+function onAwake()
+    -- Get the transform component
+    local transform = this:GetTransform()
+    
+    -- Get current position
+    local pos = transform:GetPosition()
+    print(pos.x, pos.y, pos.z)
+    
+    -- Set new position (using a table)
+    transform:SetPosition({x = 1.0, y = 2.0, z = 3.0})
+    
+    -- Or set position with individual values
+    transform:SetPosition(1.0, 2.0, 3.0)
+    
+    -- Get entity name
+    local name = this:GetName()
+    this:SetName(name .. " (Lua)")
+end
+
+function onUpdate(deltaTime)
+    local transform = this:GetTransform()
+    
+    -- Rotate over time
+    local rotation = transform:GetRotation()
+    rotation.y = rotation.y + 45.0 * deltaTime
+    transform:SetRotation(rotation)
+    
+    -- Or use relative methods
+    transform:Rotate(0, 45.0 * deltaTime, 0)
+    transform:Translate(0, 0, 5.0 * deltaTime)
+end
+```
+
+**`this` methods:**
+
+- `this:GetTransform()` → returns a transform object
+- `this:GetName()` → `string|nil`
+- `this:SetName(name)`
+- `this:IsValid()` → `boolean`
+
+**Transform object methods:**
+
+- `transform:GetPosition()` → `{ x, y, z }`
+- `transform:SetPosition(pos)` or `transform:SetPosition(x, y, z)`
+- `transform:Translate(dx, dy, dz)` (relative move)
+- `transform:GetRotation()` → `{ x, y, z }` (degrees)
+- `transform:SetRotation(rot)` or `transform:SetRotation(rx, ry, rz)`
+- `transform:Rotate(rx, ry, rz)` (relative rotation)
+- `transform:GetScale()` → `{ x, y, z }`
+- `transform:SetScale(scale)` or `transform:SetScale(sx, sy, sz)`
+
+### Functional-Style API (Global Tables)
+
+Alternatively, use global tables that operate on the current entity:
 
 ```lua
 -- Get entity position
@@ -114,7 +177,7 @@ Available helpers:
 - `Transform.getPosition()` → `{ x, y, z }`
 - `Transform.setPosition(x, y, z)`
 - `Transform.translate(dx, dy, dz)` (relative move)
-- `Transform.getRotation()` / `Transform.setRotation(rx, ry, rz)` (radians)
+- `Transform.getRotation()` / `Transform.setRotation(rx, ry, rz)` (degrees)
 - `Transform.rotate(rx, ry, rz)` (relative rotation)
 - `Transform.getScale()` / `Transform.setScale(sx, sy, sz)`
 
@@ -231,6 +294,62 @@ end
 -- DON'T: Heavy physics calculations every frame
 for i=1,10000 do
     -- Physics calculations
+end
+```
+
+## Complete Script Example
+
+Here's a full example using the OOP-style API to make an entity bob up and down while rotating:
+
+```lua
+-- UpDownRotate.lua
+-- Makes the object bob up and down subtly while rotating
+
+-- Configuration
+local BOB_SPEED = 2.0          -- Speed of bobbing motion (Hz)
+local BOB_HEIGHT = 0.5         -- Height of bob movement (units)
+local ROTATION_SPEED = 45.0    -- Rotation speed (degrees per second)
+
+-- Internal state
+local transform = nil
+local initialPosition = nil
+local elapsedTime = 0
+
+function onAwake()
+    print("[UpDownRotate] Script awakened")
+    -- Get the transform component
+    transform = this:GetTransform()
+    -- Store the initial position
+    local pos = transform:GetPosition()
+    initialPosition = {x = pos.x, y = pos.y, z = pos.z}
+    elapsedTime = 0
+end
+
+function onUpdate(deltaTime)
+    elapsedTime = elapsedTime + deltaTime
+    
+    -- Calculate bobbing motion using sine wave
+    local bobOffset = math.sin(elapsedTime * BOB_SPEED * math.pi * 2) * BOB_HEIGHT
+    
+    -- Calculate rotation
+    local rotationAmount = elapsedTime * ROTATION_SPEED
+    
+    -- Apply new position (bob up and down)
+    local newPosition = {
+        x = initialPosition.x,
+        y = initialPosition.y + bobOffset,
+        z = initialPosition.z
+    }
+    transform:SetPosition(newPosition)
+    
+    -- Apply rotation around Y axis
+    local currentRotation = transform:GetRotation()
+    currentRotation.y = rotationAmount % 360
+    transform:SetRotation(currentRotation)
+end
+
+function onDestroy()
+    print("[UpDownRotate] Script destroyed")
 end
 ```
 
