@@ -1,12 +1,17 @@
-# Hephaestus Engine: Lua + C++ Hybrid Scripting
+# Hephaestus Engine: Lua Scripting Guide
 
 ## Overview
 
-Hephaestus now supports **Lua scripting** alongside C++. This gives you the best of both worlds:
+Hephaestus uses **Lua** as its primary scripting language. Lua provides:
 
-- **Lua Scripts**: Fast iteration, no recompilation, perfect for game logic
-- **C++ Scripts**: Performance-critical code, tight physics loops, rendering
-- **Hybrid**: Mix and match on the same entities
+- **Fast iteration** - Changes take effect instantly, no recompilation
+- **Easy syntax** - Beginner-friendly, similar to Python
+- **Great performance** - Plenty fast for gameplay logic
+- **Rich API** - Access to transform, input, camera, and more
+
+This is the complete guide to scripting in Hephaestus Engine. For a 5-minute quick start, see [SCRIPTING_QUICK_START.md](SCRIPTING_QUICK_START.md).
+
+**Note**: C++ scripting has been removed. C# scripting support is planned for future releases.
 
 ## Quick Start
 
@@ -258,11 +263,11 @@ local hit, distance = scene:raycast(origin, direction, maxDistance)
 
 ## Performance Considerations
 
-- **Lua is slower than C++** but fine for game logic
-- Call C++ for performance-critical operations
-- Avoid tight loops in Lua - do those in C++
-- Use Lua for: AI, events, UI, game flow
-- Use C++ for: physics, graphics, tight loops
+- **Lua is ideal for**: Game logic, UI, AI, event handling, input processing
+- **Lua is not ideal for**: Tight rendering loops, heavy physics calculations
+- **Performance**: ~100x slower than native code, but still very fast for gameplay
+- Call C++ from Lua (planned) for performance-critical operations
+- Avoid tight loops in Lua - keep them simple
 
 ## Best Practices
 
@@ -361,36 +366,24 @@ local speed = 5.0
 
 function onUpdate(dt)
     if Input.isKeyPressed("W") then
-        Player.moveForward(speed * dt)
+        local transform = this:GetTransform()
+        transform:Translate(speed * dt, 0, 0)
     end
 end
 ```
 
-`engine/Game/PlayerPhysics.h` - Physics in C++:
-```cpp
-class PlayerPhysics : public ScriptBase {
-    void moveForward(float distance) {
-        // Tight physics calculations
-        // Collision detection
-        // Animation updates
-    }
-};
-```
+This approach lets you write all gameplay logic in Lua while keeping engine systems in C++.
 
-Both attached to the same entity - Lua handles input/logic, C++ handles physics!
+## Hot-Reload
 
-## Hot-Reload (Planned)
-
-Save a Lua file while game is running → automatically reload without restarting game.
+(Planned) Save a Lua file while game is running → automatically reload without restarting game.
 
 ## Debugging (Planned)
 
-```lua
--- Add breakpoints
--- Set watches
--- Inspect variables
--- Step through code
-```
+- Breakpoints
+- Variable watches
+- Step through code
+- Profiler integration
 
 ## Troubleshooting
 
