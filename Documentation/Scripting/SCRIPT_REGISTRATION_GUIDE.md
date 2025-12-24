@@ -1,18 +1,18 @@
 # Script Registration Guide for End Users
 
 ## The Challenge
-C++ requires compilation to create executable classes. Unlike Godot or Unity which use scripting languages (C# in Unity, GDScript in Godot), Hephaestus currently uses C++.
+C++ requires compilation to create executable classes. Hephaestus uses Lua as the primary scripting language for gameplay; C++ is intended for engine internals and native modules and requires rebuilds.
 
 ## Current Workflow (What We're Fixing)
 
-### Option A: Quick Testing (Current)
-1. Write your script in `engine/Game/ExampleScripts.h`
+### Option A: Quick Testing (Legacy C++ workflow)
+1. Write your native module in `engine/Game/ExampleScripts.h`
 2. Register it in `engine/Core/main.cpp`
 3. Rebuild the engine
 4. Attach via editor
 
-### Option B: Better (Recommended Until Full Solution)
-1. Write your script in `/scripts/YourScript.h`
+### Option B: Better (Legacy - Recommended Until Migration)
+1. Write your native module in `/scripts/YourScript.h`
 2. Include it in `engine/Game/ExampleScripts.h`
 3. Register in `engine/Core/main.cpp` 
 4. Rebuild

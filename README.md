@@ -66,18 +66,14 @@ Key parts:
 - **Pure Runtime Binary** - Exported `HephaestusEngine.exe` auto-detects packaged builds, hides the editor UI, and boots straight into gameplay (use `--editor` to override)
 - **See:** `Documentation/Features/EXPORT_PACKAGING.md` for complete guide
 
-### 📝 Scripting System (Hybrid C++ + Lua)
-- **C++ Scripts** - Compiled, high-performance game code
-  - Full access to engine systems
-  - Template-based registration
-  - Out of the box with no additional setup
-- **Lua Scripts** - Interpreted, rapid iteration
+### 📝 Scripting System (Lua)
+- **Lua Scripts** - Interpreted, rapid iteration and the primary supported scripting language
   - No recompilation needed
   - Fast prototyping and iteration
-  - Requires Lua installation (optional)
-- **Editor Integration** - Attach scripts via Details Panel
-- **Script Lifecycle** - Unified callbacks (onAwake, onUpdate, onLateUpdate, onDestroy)
-- **Coexistence** - Both C++ and Lua scripts work together on the same entity
+  - Attach scripts via the Editor Details Panel
+  - Unified lifecycle callbacks (onAwake, onUpdate, onLateUpdate, onDestroy)
+
+**Note:** C++-based scripting is deprecated in this repository. Use Lua for game scripting; keep C++ for engine internals and performance-critical systems.
 
 **Quick Start**: See `Documentation/Scripting/SCRIPTING_QUICK_START.md` for immediate examples.
 

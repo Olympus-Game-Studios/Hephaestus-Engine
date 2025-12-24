@@ -1,13 +1,8 @@
-# Lua + C++ Hybrid Scripting System - Integration Complete
+# Lua Scripting System - Integration Complete
 
 ## Overview
 
-The Hephaestus Engine now has a fully integrated **hybrid scripting system** combining C++ and Lua:
-
-- **C++ Scripts**: Fast, compiled, for performance-critical code
-- **Lua Scripts**: Rapid iteration, interpreted, for game logic and prototyping
-
-Both systems coexist seamlessly on the same entities.
+The Hephaestus Engine now has a fully integrated **Lua-first scripting system**. Lua is the primary supported language for gameplay scripting and rapid iteration. C++-based gameplay scripting is deprecated — C++ should be used for engine internals and performance-critical modules only.
 
 ## What's Been Implemented
 
@@ -43,7 +38,7 @@ if (g_LuaScriptEnginePtr) {
 - Lua scripts execute only during play mode (conditional on `g_SimPlaying && !g_SimPaused`)
 - Scripts automatically loaded on first entity update
 - Per-entity Lua script component support
-- Coexists with C++ `ScriptComponent` on same entity
+- Legacy C++ `ScriptComponent` may still exist in the codebase, but gameplay scripting should use Lua
 
 ### 3. Editor UI Integration ✓
 
@@ -56,9 +51,8 @@ Via `DrawDetailsPanel()` in `engine/Core/main.cpp` (lines ~872-936):
 - **Asset Tracking**: Global `g_SelectedScriptAssetName` for workflow
 
 **UI Sections**:
-- C++ Scripts list with "Attach Script" button
-- Lua Scripts list (when Lua available)
-- Both script types can be attached to same entity
+- Lua Scripts list (primary)
+- Legacy C++ script entries are no longer the recommended workflow for gameplay
 
 ### 4. Documentation ✓
 
@@ -84,17 +78,13 @@ Via `DrawDetailsPanel()` in `engine/Core/main.cpp` (lines ~872-936):
 
 ### 5. Example Scripts ✓
 
-**C++ Examples** (in `engine/Game/ExampleScripts.h`):
-- `RotatingCube`: Demonstrates transform manipulation
-- `SimpleMovement`: Shows input handling
-- `PlayerController`: Complete player movement and camera control
-- `AndyScript`: User example template
-
 **Lua Examples** (in `engine/Game/scripts/example.lua`):
 - Basic lifecycle hooks
 - Transform access pattern
 - Input polling
 - Debug logging
+
+**Legacy C++ examples** (in `engine/Game/ExampleScripts.h`) remain for reference but are deprecated for gameplay scripting.
 
 ## Architecture
 
@@ -156,7 +146,7 @@ struct LuaScriptComponent {
 - Lua engine initializes (if Lua installed)
 - Scripts can be attached via UI
 - Main loop calls Lua callbacks
-- C++ and Lua scripts coexist
+-- Lua scripts are supported and are the recommended approach for gameplay; C++ gameplay scripting is deprecated
 - Build succeeds without Lua
 
 ### What Needs Completion

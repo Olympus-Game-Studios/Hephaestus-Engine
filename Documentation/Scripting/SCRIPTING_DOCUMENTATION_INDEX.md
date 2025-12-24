@@ -10,12 +10,10 @@ Welcome to the Hephaestus Engine scripting documentation! This index guides you 
 - Side-by-side examples
 - Common tasks explained
 
-### **I want to write C++ scripts immediately**
+### **I want to extend the engine or write native modules (C++)**
 → Read **[SCRIPT_DEVELOPMENT_GUIDE.md](./SCRIPT_DEVELOPMENT_GUIDE.md)**
-- Full C++ scripting reference
-- Template patterns
-- Complete examples
-- No build modifications needed
+- Engine/extension reference (not recommended for gameplay scripts)
+- Use for engine internals and performance-critical modules
 
 ### **I want to write Lua scripts (fast iteration)**
 → First: **[LUA_INSTALLATION_GUIDE.md](./LUA_INSTALLATION_GUIDE.md)**
@@ -33,8 +31,7 @@ Welcome to the Hephaestus Engine scripting documentation! This index guides you 
 
 | Guide | Purpose | Read Time |
 |-------|---------|-----------|
-| [SCRIPTING_QUICK_START.md](./SCRIPTING_QUICK_START.md) | Get started immediately | 5 min |
-| [SCRIPT_DEVELOPMENT_GUIDE.md](./SCRIPT_DEVELOPMENT_GUIDE.md) | C++ scripting | 10 min |
+| [SCRIPTING_QUICK_START.md](./SCRIPTING_QUICK_START.md) | Get started with Lua scripting | 5 min |
 | [LUA_SCRIPTING_GUIDE.md](./LUA_SCRIPTING_GUIDE.md) | Lua scripting | 15 min |
 
 ### Setup & Installation (5-30 minutes)
@@ -56,13 +53,13 @@ Welcome to the Hephaestus Engine scripting documentation! This index guides you 
 ## 🎯 Common Questions
 
 ### "Can I write scripts without modifying the engine?"
-✓ **Yes!** See [SCRIPT_DEVELOPMENT_GUIDE.md](./SCRIPT_DEVELOPMENT_GUIDE.md)
+✓ **Yes!** Use Lua scripts and follow [SCRIPTING_QUICK_START.md](./SCRIPTING_QUICK_START.md)
 
 ### "How do I attach a script to an entity?"
 → [SCRIPTING_QUICK_START.md](./SCRIPTING_QUICK_START.md) - Step 4
 
 ### "Which should I use, C++ or Lua?"
-→ See comparison table in [SCRIPTING_QUICK_START.md](./SCRIPTING_QUICK_START.md)
+→ Use Lua for gameplay scripting (fast iteration). Reserve C++ for engine internals and performance-critical code.
 
 ### "How do I iterate faster?"
 → Use Lua! See [LUA_INSTALLATION_GUIDE.md](./LUA_INSTALLATION_GUIDE.md)
@@ -70,11 +67,11 @@ Welcome to the Hephaestus Engine scripting documentation! This index guides you 
 ### "Is Lua really used in AAA games?"
 ✓ Yes! Roblox, Genshin Impact, World of Warcraft use Lua. See [LUA_SCRIPTING_GUIDE.md](./LUA_SCRIPTING_GUIDE.md)
 
-### "Does my C++ script run during play mode?"
-✓ Yes, automatically. See [SCRIPT_DEVELOPMENT_GUIDE.md](./SCRIPT_DEVELOPMENT_GUIDE.md)
+### "Do native C++ modules run during play mode?"
+✓ Native modules can run during play mode. See [SCRIPT_DEVELOPMENT_GUIDE.md](./SCRIPT_DEVELOPMENT_GUIDE.md) for engine/extension guidance. Note: gameplay scripts should use Lua.
 
-### "Can I have both C++ and Lua scripts on the same entity?"
-✓ Yes! They coexist perfectly. See [LUA_INTEGRATION_SUMMARY.md](./LUA_INTEGRATION_SUMMARY.md)
+### "Can I have both Lua and legacy native modules on the same entity?"
+✓ Legacy native modules may coexist, but gameplay scripting should use Lua. See [LUA_INTEGRATION_SUMMARY.md](./LUA_INTEGRATION_SUMMARY.md) for integration notes.
 
 ### "What's the performance difference?"
 → See performance table in [LUA_SCRIPTING_GUIDE.md](./LUA_SCRIPTING_GUIDE.md)
@@ -85,13 +82,13 @@ Welcome to the Hephaestus Engine scripting documentation! This index guides you 
 
 ### Beginner (0-30 minutes)
 1. Read [SCRIPTING_QUICK_START.md](./SCRIPTING_QUICK_START.md)
-2. Try Example 1: Simple C++ script (5 minutes)
+2. Try Example 1: Simple Lua script (5 minutes)
 3. Try Example 2: Move entity in script (5 minutes)
 
 ### Intermediate (30 minutes - 1 hour)
 1. Complete beginner path
-2. Read [SCRIPT_DEVELOPMENT_GUIDE.md](./SCRIPT_DEVELOPMENT_GUIDE.md)
-3. Write your first game mechanic in C++
+2. Read [LUA_SCRIPTING_GUIDE.md](./LUA_SCRIPTING_GUIDE.md)
+3. Write your first game mechanic in Lua
 4. Test it in play mode
 
 ### Advanced (1-2 hours)
@@ -112,20 +109,12 @@ Welcome to the Hephaestus Engine scripting documentation! This index guides you 
 
 ## 🔧 Quick Command Reference
 
-### Create C++ Script
-```cpp
-// File: engine/Game/ExampleScripts.h
-class MyScript : public ScriptBase {
-    void OnUpdate(float dt) override { /* ... */ }
-};
-```
-
-### Register C++ Script
-```cpp
-// File: engine/Core/main.cpp
-ScriptRegistry::Register<MyScript>("MyScript",
-    [](Entity e, Scene* s) { return std::make_shared<MyScript>(e, s); }
-);
+### Create Lua Script
+```lua
+-- File: engine/Game/scripts/my_script.lua
+function onUpdate(deltaTime)
+    print("Running...")
+end
 ```
 
 ### Create Lua Script
@@ -147,10 +136,10 @@ end
 
 ## 🐛 Troubleshooting
 
-### C++ Script doesn't run
+### Native module doesn't run
 **Solution**: 
-- Check [SCRIPT_DEVELOPMENT_GUIDE.md](./SCRIPT_DEVELOPMENT_GUIDE.md) - Registration section
-- Verify script is registered in main.cpp
+- Check [SCRIPT_DEVELOPMENT_GUIDE.md](./SCRIPT_DEVELOPMENT_GUIDE.md) - Registration/initialization section
+- Verify module is registered and built into the engine
 - Check play mode is enabled
 
 ### Lua script doesn't load

@@ -10,11 +10,9 @@ Lua is used in many AAA games (Roblox, Genshin Impact, World of Warcraft, etc.) 
 - **Easy integration**: Direct C API or wrapper libraries
 - **Performance**: Efficient bytecode compilation
 
-The Hephaestus Engine uses a **hybrid approach**:
-- **C++ scripts**: For performance-critical code
-- **Lua scripts**: For game logic, prototyping, and rapid iteration
-
-Both can run on the same entity simultaneously.
+The Hephaestus Engine uses a **Lua-first approach**:
+- **Lua scripts**: Primary option for game logic, prototyping, and rapid iteration
+- **C++**: Reserved for engine internals and performance-critical modules (C++ gameplay scripting is deprecated)
 
 ## Current Build Status
 
@@ -24,7 +22,7 @@ The Hephaestus Engine currently builds **without** Lua installed. You'll see thi
 Lua not available - scripting disabled. Install Lua to enable.
 ```
 
-This is **not an error**—C++ scripting still works. Installing Lua is optional but recommended for faster development.
+This is **not an error**—the engine runs without Lua installed. Installing Lua is optional but recommended to enable the primary Lua scripting workflow.
 
 ## Installation by Platform
 
@@ -191,7 +189,7 @@ Attach via Details Panel:
 ## Next Steps
 
 - Read [LUA_SCRIPTING_GUIDE.md](./LUA_SCRIPTING_GUIDE.md) for scripting documentation
-- See [SCRIPT_DEVELOPMENT_GUIDE.md](./SCRIPT_DEVELOPMENT_GUIDE.md) for C++ scripts
+-- See [SCRIPT_DEVELOPMENT_GUIDE.md](./SCRIPT_DEVELOPMENT_GUIDE.md) for engine extension / native module guidance (C++ gameplay scripting is deprecated)
 - Check `engine/Game/scripts/example.lua` for example Lua script
 
 ## Additional Resources

@@ -1,16 +1,14 @@
-# Asset Browser - Create C++ Script Feature
+> ARCHIVED: The feature documentation was moved to `Documentation/Archive/C++_scripting_legacy/ASSET_BROWSER_CREATE_SCRIPT.md`.
 
-## Overview
-
-A new context menu option has been added to the asset browser that allows developers to quickly create new C++ script files directly from the project browser. Simply right-click on any project and select "New C++ Script..." to generate template script files.
+Legacy C++-focused asset browser docs were archived. Use the Lua asset workflow docs in `Documentation/Scripting/` for current guidance.
 
 ## Features
 
 ✅ **Right-click context menu** - Access from any project  
-✅ **Automatic file generation** - Creates .h and .cpp files  
-✅ **Template code** - Pre-populated with ScriptBase structure  
+✅ **Automatic file generation** - Creates `.lua` file  
+✅ **Template code** - Pre-populated with lifecycle functions (`onAwake`, `onUpdate`, `onDestroy`)  
 ✅ **Organized storage** - Scripts created in `Scripts/` directory  
-✅ **Ready to use** - Generated scripts inherit from ScriptBase  
+✅ **Ready to use** - Generated scripts follow the engine's Lua conventions  
 ✅ **User feedback** - Success/error messages displayed  
 
 ## How to Use
@@ -25,14 +23,14 @@ In the project browser, right-click on any project:
 └─────────────────────────────┘
 ```
 
-### Step 2: Select "New C++ Script..."
+### Step 2: Select "New Lua Script..."
 A context menu appears with several options:
 
 ```
 ┌─────────────────────────────┐
 │ Open                        │
 ├─────────────────────────────┤
-│ New C++ Script...  ← Click  │
+│ New Lua Script...  ← Click  │
 ├─────────────────────────────┤
 │ Add to Favorites            │
 │ Open Folder                 │
@@ -46,77 +44,40 @@ A dialog opens asking for the script name:
 
 ```
 ┌─────────────────────────────────────┐
-│ Create New C++ Script               │
+│ Create New Lua Script               │
 ├─────────────────────────────────────┤
 │ Project: MyProject                  │
 │                                     │
 │ Script Name:                        │
-│ [PlayerController           ]       │
+│ [player_controller.lua     ]        │
 │                                     │
 │ (Will be created in project root    │
-│  with .h and .cpp files)            │
+│  as a .lua file)                    │
 │                                     │
 │ [Create] [Cancel]                   │
 └─────────────────────────────────────┘
 ```
 
 ### Step 4: Click Create
-The script files are generated and saved to the project's `Scripts/` directory.
+The script file is generated and saved to the project's `Scripts/` directory.
 
-## Generated Files
+## Generated File
 
-When you create a script named "PlayerController", two files are generated:
+When you create a script named "player_controller.lua", a file is generated:
 
-### `Scripts/PlayerController.h`
-```cpp
-#pragma once
-#include "engine/Scripting/ScriptBase.h"
+### `Scripts/player_controller.lua`
+```lua
+function onAwake()
+    -- Initialization code
+end
 
-class PlayerController : public ScriptBase {
-public:
-    PlayerController(Entity entity, Scene* scene) {
-        m_Entity = entity;
-        m_Scene = scene;
-    }
+function onUpdate(deltaTime)
+    -- Main game logic - called every frame
+end
 
-    virtual ~PlayerController() = default;
-
-    void OnAwake() override {
-        // Initialize the script
-    }
-
-    void OnUpdate(float deltaTime) override {
-        // Main game logic - called every frame
-        // deltaTime is time elapsed since last frame in seconds
-    }
-
-    void OnLateUpdate(float deltaTime) override {
-        // Called after OnUpdate - useful for camera or post-processing logic
-    }
-
-    void OnEnable() override {
-        // Called when the script is enabled
-    }
-
-    void OnDisable() override {
-        // Called when the script is disabled
-    }
-
-    void OnDestroy() override {
-        // Called when the script is about to be destroyed - cleanup here
-    }
-
-private:
-    // Add your script members here
-};
-```
-
-### `Scripts/PlayerController.cpp`
-```cpp
-#include "PlayerController.h"
-
-// Add any implementation details here if needed
-// You can use this file for out-of-line method definitions if your header gets complex
+function onDestroy()
+    -- Cleanup code
+end
 ```
 
 ## File Location
@@ -125,49 +86,31 @@ Scripts are automatically created in:
 ```
 MyProject/
 └── Scripts/
-    ├── PlayerController.h
-    └── PlayerController.cpp
+    └── player_controller.lua
 ```
 
 ## Next Steps After Creation
 
-1. **Edit the generated files** in your favorite text editor
-2. **Add your game logic** to the OnUpdate() method
-3. **Register the script** in main.cpp using ScriptRegistry
-4. **Attach to entities** using scriptEngine.AttachScript()
+1. **Edit the generated file** in your favorite text editor
+2. **Add your game logic** to `onUpdate()` and other lifecycle functions
+3. **Attach to entities** using the editor's script attachment UI
 
 ### Example: Using Your New Script
 
-```cpp
-// In main.cpp after creating the script
-
-#include "engine/Game/Scripts/PlayerController.h"
-
-// Register the script
-ScriptRegistry::Register<PlayerController>("PlayerController",
-    [](Entity entity, Scene* scene) {
-        return std::make_shared<PlayerController>(entity, scene);
-    }
-);
-
-// Later, attach to an entity
-Entity player = scene.CreateEntity("Player");
-auto script = ScriptRegistry::CreateScript("PlayerController", player, &scene);
-scriptEngine.AttachScript(player, script, "PlayerController");
-```
+1. Select an entity in the scene
+2. Open the Details Panel → Scripts
+3. Click "Attach Lua Script" and enter `Scripts/player_controller.lua`
+4. Press Play
 
 ## Script Template Structure
 
-All generated scripts include the complete lifecycle:
+All generated scripts include the common lifecycle functions:
 
 | Method | When Called | Purpose |
 |--------|------------|---------|
-| `OnAwake()` | Once at startup | Initialize |
-| `OnUpdate(dt)` | Every frame | Main logic |
-| `OnLateUpdate(dt)` | After update | Post-processing |
-| `OnEnable()` | When enabled | Resume |
-| `OnDisable()` | When disabled | Pause |
-| `OnDestroy()` | Before cleanup | Cleanup |
+| `onAwake()` | Once at startup | Initialize |
+| `onUpdate(dt)` | Every frame | Main logic |
+| `onDestroy()` | Before cleanup | Cleanup |
 
 ## Error Handling
 
@@ -185,8 +128,8 @@ The system provides helpful feedback:
 // Display the new script dialog
 void DrawNewScriptDialog();
 
-// Create script files in the project
-bool CreateCppScript(const std::filesystem::path& projectPath, 
+// Create a Lua script file in the project
+bool CreateLuaScript(const std::filesystem::path& projectPath, 
                      const std::string& scriptName);
 ```
 
@@ -201,7 +144,7 @@ ProjectInfo* m_ScriptDialogProject = nullptr; // Selected project
 ### Modified Methods
 
 **ProjectManager::DrawProjectContextMenu()**
-- Added "New C++ Script..." menu item
+- Added "New Lua Script..." menu item
 - Opens dialog when clicked
 
 **ProjectManager::Draw()**
@@ -210,34 +153,34 @@ ProjectInfo* m_ScriptDialogProject = nullptr; // Selected project
 ## Tips & Best Practices
 
 ### 1. Use Descriptive Names
-✓ `PlayerController` - Clear and descriptive  
-✓ `EnemyAI` - Specific purpose  
-✗ `Script1` - Too generic  
+✓ `player_controller.lua` - Clear and descriptive  
+✓ `enemy_ai.lua` - Specific purpose  
+✗ `script1.lua` - Too generic  
 
 ### 2. Follow Naming Conventions
-Use PascalCase for class names:
-- ✓ PlayerController
-- ✓ CameraFollow
-- ✓ SpawnManager
+Use snake_case for Lua filenames and lower_case function names:
+- ✓ player_controller.lua
+- ✓ camera_follow.lua
+- ✓ spawn_manager.lua
 
 ### 3. Organize in Subdirectories
 Consider organizing complex projects:
 ```
 Scripts/
-├── Gameplay/
-│   ├── PlayerController.h
-│   └── EnemyAI.h
-├── UI/
-│   └── MenuManager.h
-└── Utils/
-    └── AudioManager.h
+├── gameplay/
+│   ├── player_controller.lua
+│   └── enemy_ai.lua
+├── ui/
+│   └── menu_manager.lua
+└── utils/
+    └── audio_manager.lua
 ```
 
 ### 4. Keep Scripts Focused
 One responsibility per script:
-- ✓ PlayerController - handles player input and movement
-- ✓ HealthManager - manages health and damage
-- ✗ MegaScript - tries to do everything
+- ✓ player_controller - handles player input and movement
+- ✓ health_manager - manages health and damage
+- ✗ mega_script - tries to do everything
 
 ## Troubleshooting
 
@@ -262,15 +205,15 @@ One responsibility per script:
 
 ## Summary
 
-The "New C++ Script" feature streamlines script creation by:
+The "New Lua Script" feature streamlines script creation by:
 
 1. ✅ Providing easy right-click access
-2. ✅ Generating complete template files
+2. ✅ Generating a ready-to-edit `.lua` template
 3. ✅ Creating scripts in organized directories
-4. ✅ Pre-populating with ScriptBase inheritance
+4. ✅ Pre-populating lifecycle functions
 5. ✅ Offering user feedback on success/failure
 
-This makes it quick and easy to start creating game logic for your Hephaestus Engine projects!
+This makes it quick and easy to start creating game logic for your Hephaestus Engine projects using Lua.
 
 ---
 

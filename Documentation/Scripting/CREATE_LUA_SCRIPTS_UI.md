@@ -2,7 +2,7 @@
 
 ## What's New
 
-You can now **right-click in the Asset Browser** to create Lua scripts, just like C++ scripts!
+You can now **right-click in the Asset Browser** to create Lua scripts.
 
 ## How to Use
 
@@ -13,12 +13,6 @@ You can now **right-click in the Asset Browser** to create Lua scripts, just lik
 3. Enter a name (e.g., "my_script")
 4. Click **"Create"**
 5. ✅ Done! A `.lua` file is created in `scripts/` subdirectory
-
-### Creating a C++ Script
-
-The menu also now clearly shows:
-- **"New C++ Script..."** - Creates header and implementation files
-- **"New Lua Script..."** - Creates a `.lua` file
 
 ## Directory Structure
 
@@ -33,7 +27,7 @@ assets/
 └── (other assets)
 ```
 
-C++ scripts still go in `engine/Game/ExampleScripts.h` (since they need compilation).
+Note: C++ gameplay scripting is deprecated. Use Lua for gameplay scripts; C++ remains for engine internals.
 
 ## Template Content
 
@@ -73,8 +67,7 @@ end
 Right-click in Asset Browser to see:
 - New Folder...
 - New Material...
-- **New C++ Script...**
-- **New Lua Script...**
+- New Lua Script...
 
 ---
 

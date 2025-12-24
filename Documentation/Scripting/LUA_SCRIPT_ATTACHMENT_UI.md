@@ -102,17 +102,6 @@ RESULT: LUA ATTACH SUCCESSFUL [YES]
 ======== [END LUA DEBUG] ========
 ```
 
-## Comparison: C++ vs Lua Scripts Section
-
-| Feature | C++ Scripts | Lua Scripts |
-|---------|-----------|-----------|
-| **Section Name** | "Scripts" | "Lua Scripts" |
-| **Input** | Registry dropdown | File path text |
-| **Creation** | Manual registration | Right-click create |
-| **Performance** | Fastest | Very fast |
-| **Reload** | Requires rebuild | Instant (restart play) |
-| **Multiple** | Yes | Currently one per entity |
-
 ## Status Indicators
 
 - **[OK]** - Script is attached and ready
@@ -123,4 +112,4 @@ RESULT: LUA ATTACH SUCCESSFUL [YES]
 
 **Lua script attachment is now fully integrated into the Details Panel!** 🎉
 
-You can now attach Lua scripts just like C++ scripts through the editor UI.
+Note: The UI and workflows now focus on Lua as the primary scripting option for gameplay. Legacy C++ scripting for gameplay is deprecated.

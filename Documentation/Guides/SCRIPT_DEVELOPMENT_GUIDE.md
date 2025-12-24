@@ -1,107 +1,11 @@
-# Hephaestus Engine - User Script Development Guide
+> ARCHIVED: This file was moved to `Documentation/Archive/C++_scripting_legacy/SCRIPT_DEVELOPMENT_GUIDE.md`.
 
-## ⭐ Important: No Engine Source Changes Needed!
+The C++ script development guide has been archived because C++ gameplay scripting is deprecated. For current scripting workflows and Lua documentation, see:
 
-**You do NOT need to modify engine source code to create scripts.** All user scripts live in the `/scripts` directory completely separate from the engine.
+- `Documentation/Scripting/LUA_SCRIPTING_GUIDE.md`
+- `Documentation/Scripting/LUA_INTEGRATION_SUMMARY.md`
 
-## 📁 Script Directory Structure
-
-```
-/scripts/                          # USER SCRIPTS (modify freely!)
-├── PlayerController.h             # Example player controller
-├── MyGameScript.h                 # Your custom script
-├── NPCBehavior.h                  # Another example
-└── ...                            # Add more as needed
-
-/engine/                           # ENGINE CORE (read-only)
-├── Scripting/
-│   ├── ScriptBase.h              # Base class (don't modify)
-│   └── ScriptRegistry.h          # Registry (don't modify)
-└── ...
-```
-
-## 🎯 Creating Your First Script
-
-### Step 1: Create a Script File
-
-Create a new file in `/scripts/` directory (e.g., `/scripts/MyScript.h`):
-
-```cpp
-#pragma once
-#include "engine/Scripting/ScriptBase.h"
-#include "engine/Scene/Components.h"
-#include <iostream>
-
-class MyScript : public ScriptBase {
-public:
-    MyScript(Entity entity, Scene* scene) {
-        m_Entity = entity;
-        m_Scene = scene;
-    }
-
-    void OnAwake() override {
-        std::cout << "MyScript initialized!\n";
-    }
-
-    void OnUpdate(float deltaTime) override {
-        // Your game logic here - called every frame
-    }
-
-    void OnDestroy() override {
-        std::cout << "MyScript cleaned up\n";
-    }
-
-private:
-    // Your member variables here
-    float m_Speed = 5.0f;
-};
-```
-
-### Step 2: Attach Script to Entity in Editor
-
-1. Open the editor
-2. Create or select an entity in the World Outliner
-3. In the Details Panel, find the "Script Component" section
-4. Enter your script name: `MyScript`
-5. Done! The script will automatically load
-
-### Step 3: Enter Play Mode and Test
-
-1. Click the **Play** button
-2. Your script's `OnUpdate()` will be called every frame
-3. Use the Log Console to debug with `std::cout`
-
----
-
-## 📚 Script Lifecycle
-
-Every script goes through these phases:
-
-```
-Creation → OnAwake() → OnEnable() → OnUpdate() [every frame]
-         → OnLateUpdate() [after all updates]
-         → OnDisable() → OnDestroy()
-```
-
-### `OnAwake()`
-Called once when the script first initializes. Use for setup.
-
-```cpp
-void OnAwake() override {
-    std::cout << "Script starting up\n";
-    m_StartPosition = m_Entity.GetComponent<TransformComponent>().position;
-}
-```
-
-### `OnUpdate(float deltaTime)`
-Called every frame. This is your main game loop.
-
-```cpp
-void OnUpdate(float deltaTime) override {
-    auto& transform = m_Entity.GetComponent<TransformComponent>();
-    transform.position.x += m_Speed * deltaTime;
-}
-```
+If you need access to the archived C++ materials, they are available in the repository archive folder above.
 
 ### `OnLateUpdate(float deltaTime)`
 Called after all `OnUpdate()` calls. Good for camera updates.

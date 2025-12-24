@@ -85,6 +85,7 @@ Step 5: Use in Your Game
 3. Attach to entities:
    scriptEngine.AttachScript(entity, script, "PlayerController")
 ```
+> DEPRECATED: C++ gameplay scripting features are deprecated. Use Lua scripts and the Asset Browser's "New Lua Script..." workflow. This document is retained for legacy reference only.
 
 ## Generated File Structure
 

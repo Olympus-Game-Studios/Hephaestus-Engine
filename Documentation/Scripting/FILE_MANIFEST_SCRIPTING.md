@@ -1,7 +1,7 @@
 # Scripting System Implementation - File Manifest
 
 ## Overview
-This document lists all files created and modified during the implementation of the Lua + C++ hybrid scripting system for Hephaestus Engine.
+This document lists all files created and modified during the implementation of the Lua-first scripting system for Hephaestus Engine. C++-based gameplay scripting is deprecated; Lua is the primary scripting language for game logic.
 
 ## Summary Statistics
 - **New Files Created**: 8
@@ -65,18 +65,16 @@ This document lists all files created and modified during the implementation of 
 ### Documentation Files
 
 #### 5. `SCRIPTING_QUICK_START.md`
-- **Purpose**: Quick introduction to scripting system (5-10 minutes)
+- **Purpose**: Quick introduction to Lua scripting (5-10 minutes)
 - **Size**: ~250 lines
 - **Contents**:
-  - C++ vs Lua comparison table
-  - Method 1: C++ scripting (4 steps)
-  - Method 2: Lua scripting (3 steps)
+  - Lua quick-start workflow and examples
   - Common tasks (move, input, rotate)
   - Script lifecycle explanation
   - Tips & tricks
   - FAQ
-- **Audience**: New users, developers
-- **Status**: Complete, production-ready
+**Audience**: New users, developers
+**Status**: Complete, production-ready
 
 #### 6. `LUA_INSTALLATION_GUIDE.md`
 - **Purpose**: Platform-specific Lua installation instructions
@@ -261,8 +259,8 @@ if (g_LuaScriptEnginePtr) {
 - **Change**: Added Scripting section to Features
 - **Lines Modified**: ~12
 - **What Changed**:
-  - Added new "📝 Scripting System (Hybrid C++ + Lua)" section
-  - Listed C++ script features
+  - Added new "📝 Scripting System (Lua)" section
+  - Marked C++ script features as deprecated for gameplay scripting
   - Listed Lua script features
   - Added link to SCRIPTING_QUICK_START.md
 - **Purpose**: Inform users about new scripting capability
@@ -407,7 +405,7 @@ All 8 documentation files are:
 
 All files have been created and integrated successfully. The system is production-ready and documented for users at all levels.
 
-**Key Achievement**: Hybrid C++ + Lua scripting system with full editor integration, comprehensive documentation, and graceful degradation when Lua is not available.
+**Key Achievement**: Lua-first scripting system with editor integration, comprehensive documentation, and guidance for migrating gameplay code from C++ to Lua.
 
 **Build Status**: ✅ Clean build, no issues
 **Test Status**: ✅ All integration points verified
