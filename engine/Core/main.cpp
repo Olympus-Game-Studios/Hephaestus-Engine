@@ -302,6 +302,7 @@ static bool g_SimPaused = false;
 static bool g_ShowGizmoBeforePlay = true;
 static bool g_ViewportOverlayHovered = false;
 static bool g_ViewportOverlayFocused = false;
+static bool g_ViewportDropTargetHovered = false; // Track if mouse is in viewport area
 static std::string
     g_SceneSnapshotBeforePlay; // Stores scene state before entering play mode
 static constexpr size_t kSceneUndoLimit = 32;
@@ -7256,9 +7257,9 @@ int main(int argc, char *argv[]) {
 
     if (!g_RuntimeMode && g_ProjectSelected && !g_SimPlaying &&
         leftMousePressed && !leftMouseWasPressed && !ImGuizmo::IsUsing() &&
-        !ImGuizmo::IsOver() && !ImGui::GetIO().WantCaptureMouse &&
+        !ImGuizmo::IsOver() && g_ViewportDropTargetHovered &&
         !gizmoDragging && vulkanGizmo.GetHoveredAxis() == -1) {
-      // Left mouse button just pressed and not over ImGui
+      // Left mouse button just pressed in viewport area
       double mouseX, mouseY;
       glfwGetCursorPos(window, &mouseX, &mouseY);
 
@@ -7821,6 +7822,9 @@ int main(int argc, char *argv[]) {
             ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration;
 
         ImGui::Begin("##ViewportDropTarget", nullptr, dropTargetFlags);
+        
+        // Track if mouse is in the viewport area for selection purposes
+        g_ViewportDropTargetHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
 
         if (ImGui::BeginDragDropTarget()) {
           if (const ImGuiPayload *payload =
