@@ -296,6 +296,20 @@ Entity Scene::PasteClipboard()
     ClipboardEntityData data = *s_EntityClipboard;
 
     std::string baseName = data.name.empty() ? "Entity" : data.name;
+    
+    // Extract base name by removing any existing " (n)" suffix pattern
+    size_t lastParen = baseName.rfind(" (");
+    if (lastParen != std::string::npos) {
+        size_t endParen = baseName.find(")", lastParen);
+        if (endParen != std::string::npos) {
+            // Check if the content between parens is just a number
+            std::string middle = baseName.substr(lastParen + 2, endParen - lastParen - 2);
+            if (!middle.empty() && std::all_of(middle.begin(), middle.end(), ::isdigit)) {
+                baseName = baseName.substr(0, lastParen);
+            }
+        }
+    }
+    
     std::string candidate = baseName;
     int suffix = 1;
     while (FindEntityByName(candidate)) {
