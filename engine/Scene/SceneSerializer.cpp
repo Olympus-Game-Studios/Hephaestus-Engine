@@ -845,7 +845,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"type\": \"" << BackgroundTypeToString(environment->type) << "\",\n";
             oss << "          \"solidColor\": " << FormatVec3(environment->solidColor) << ",\n";
             oss << "          \"hdriPath\": \"" << EscapeString(environment->hdriPath) << "\",\n";
-            oss << "          \"hdriIntensity\": " << FormatFloat(environment->hdriIntensity) << "\n";
+            oss << "          \"hdriIntensity\": " << FormatFloat(environment->hdriIntensity) << ",\n";
+            oss << "          \"enableRenderDistance\": " << (environment->enableRenderDistance ? "true" : "false") << ",\n";
+            oss << "          \"renderDistance\": " << FormatFloat(environment->renderDistance) << ",\n";
+            oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1442,6 +1445,21 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     env.hdriIntensity = static_cast<float>(intensityValue->AsNumber());
                 }
             }
+            if (const JsonValue* enableRenderDistValue = envObj->Find("enableRenderDistance")) {
+                if (enableRenderDistValue->IsBool()) {
+                    env.enableRenderDistance = enableRenderDistValue->AsBool();
+                }
+            }
+            if (const JsonValue* renderDistValue = envObj->Find("renderDistance")) {
+                if (renderDistValue->IsNumber()) {
+                    env.renderDistance = static_cast<float>(renderDistValue->AsNumber());
+                }
+            }
+            if (const JsonValue* infiniteRenderDistValue = envObj->Find("infiniteRenderDistance")) {
+                if (infiniteRenderDistValue->IsBool()) {
+                    env.infiniteRenderDistance = infiniteRenderDistValue->AsBool();
+                }
+            }
         }
     }
 
@@ -1699,7 +1717,10 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"type\": \"" << BackgroundTypeToString(environment->type) << "\",\n";
             oss << "          \"solidColor\": " << FormatVec3(environment->solidColor) << ",\n";
             oss << "          \"hdriPath\": \"" << EscapeString(environment->hdriPath) << "\",\n";
-            oss << "          \"hdriIntensity\": " << FormatFloat(environment->hdriIntensity) << "\n";
+            oss << "          \"hdriIntensity\": " << FormatFloat(environment->hdriIntensity) << ",\n";
+            oss << "          \"enableRenderDistance\": " << (environment->enableRenderDistance ? "true" : "false") << ",\n";
+            oss << "          \"renderDistance\": " << FormatFloat(environment->renderDistance) << ",\n";
+            oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }

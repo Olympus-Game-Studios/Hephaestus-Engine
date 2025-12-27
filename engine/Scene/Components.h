@@ -526,12 +526,20 @@ struct EnvironmentComponent {
     Vec3 solidColor;           // Used when type == SolidColor
     std::string hdriPath;      // Path to HDRI/EXR file when type == HDRI
     float hdriIntensity;       // Brightness multiplier for HDRI
+    
+    // Render distance settings
+    bool enableRenderDistance = false;   // Whether to cull objects beyond render distance
+    float renderDistance = 500.0f;       // Distance in world units; objects beyond this are not rendered
+    bool infiniteRenderDistance = false; // If true, ignores renderDistance and renders all objects
 
     EnvironmentComponent()
         : type(BackgroundType::SolidColor)
         , solidColor(0.1f, 0.2f, 0.3f)
         , hdriPath("")
         , hdriIntensity(1.0f)
+        , enableRenderDistance(false)
+        , renderDistance(500.0f)
+        , infiniteRenderDistance(false)
     {}
 };
 

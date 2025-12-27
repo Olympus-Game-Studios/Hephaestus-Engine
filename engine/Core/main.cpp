@@ -1360,6 +1360,27 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
 
       ImGui::SliderFloat("HDRI Intensity", &env.hdriIntensity, 0.1f, 5.0f);
     }
+
+    // Render Distance Settings
+    ImGui::SeparatorText("Render Distance");
+    ImGui::Checkbox("Enable Render Distance Culling", &env.enableRenderDistance);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+      ImGui::SetTooltip("Cull objects that are beyond the render distance from the camera");
+    }
+
+    if (env.enableRenderDistance) {
+      ImGui::Checkbox("Infinite Render Distance##renderDist", &env.infiniteRenderDistance);
+      if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+        ImGui::SetTooltip("When enabled, all objects are rendered regardless of distance");
+      }
+
+      if (!env.infiniteRenderDistance) {
+        ImGui::SliderFloat("Render Distance##amount", &env.renderDistance, 1.0f, 5000.0f);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+          ImGui::SetTooltip("Objects beyond this distance (in world units) will not be rendered");
+        }
+      }
+    }
   }
 
   if (selectedEntity.HasComponent<MeshRendererComponent>()) {
@@ -2494,6 +2515,8 @@ struct Camera {
   float pitchDeg = 0.0f;
   float moveSpeed = 2.0f;
   float mouseSens = 0.1f;
+  float nearPlane = 0.1f;
+  float farPlane = 10000.0f;  // Large default for distant objects
   bool firstMouse = true;
   double lastX = 0.0, lastY = 0.0;
   bool rightMouseDown = false;
@@ -2581,7 +2604,7 @@ struct Camera {
     float aspect =
         static_cast<float>(safeWidth) / static_cast<float>(safeHeight);
     u.proj =
-        Mat4::Perspective(60.0f * 3.1415926535f / 180.0f, aspect, 0.1f, 100.0f);
+        Mat4::Perspective(60.0f * 3.1415926535f / 180.0f, aspect, nearPlane, farPlane);
     u.viewPos = position;
     u.padding1 = 0.0f;
     return u;
@@ -8477,6 +8500,20 @@ int main(int argc, char *argv[]) {
     // Get selected entity once for both outline and gizmo rendering
     Entity selectedEntity = scene.GetSelectedEntity();
 
+    // Get render distance settings from environment
+    bool enableRenderDistance = false;
+    float renderDistance = 500.0f;
+    bool infiniteRenderDistance = false;
+    auto envView = scene.GetEntitiesWith<EnvironmentComponent>();
+    for (auto envHandle : envView) {
+      Entity envEntity(envHandle, &scene);
+      auto &env = envEntity.GetComponent<EnvironmentComponent>();
+      enableRenderDistance = env.enableRenderDistance;
+      renderDistance = env.renderDistance;
+      infiniteRenderDistance = env.infiniteRenderDistance;
+      break; // Only use first environment component
+    }
+
     // Prepare dynamic material buffer mapping
     void *matMappedBaseVoid = nullptr;
     vmaMapMemory(vkdev.allocator, materialBuffers[imageIndex].allocation,
@@ -8495,6 +8532,15 @@ int main(int argc, char *argv[]) {
 
       if (!renderer.visible)
         continue;
+
+      // Check render distance culling
+      if (enableRenderDistance && !infiniteRenderDistance) {
+        Vec3 entityPos = transform.position;
+        float distanceToCamera = vlen(vsub(entityPos, camera.position));
+        if (distanceToCamera > renderDistance) {
+          continue;
+        }
+      }
 
       if (!renderer.HasValidMesh() || renderer.meshHandle >= meshLibrary.size())
         continue;
