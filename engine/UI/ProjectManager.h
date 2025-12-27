@@ -94,6 +94,13 @@ public:
     
     // Add a custom project path to track
     void AddCustomProjectPath(const std::filesystem::path& projectPath);
+    
+    // Project migration methods (for legacy projects from previous versions)
+    // Finds all legacy projects in the given directory
+    std::vector<std::filesystem::path> FindLegacyProjects(const std::filesystem::path& searchRoot) const;
+    
+    // Migrates a single legacy project to .heproject format
+    bool MigrateProjectToHeproject(const std::filesystem::path& projectPath);
 
     // Get available templates
     const std::vector<ProjectTemplate>& GetTemplates() const { return m_Templates; }
@@ -107,6 +114,7 @@ private:
     void DrawProjectListItem(const ProjectInfo& project);
     void DrawNewProjectDialog();
     void DrawImportProjectDialog();
+    void DrawMigrationDialog();
     void DrawProjectContextMenu(const ProjectInfo& project);
     void DrawNewScriptDialog();
     void DrawSidebar();
@@ -122,6 +130,9 @@ private:
     // Metadata operations
     void SaveProjectMetadata(const std::filesystem::path& projectPath, const ProjectMetadata& metadata);
     ProjectMetadata LoadProjectMetadata(const std::filesystem::path& projectPath);
+    
+    // Migration support for legacy projects (private helper)
+    bool IsLegacyHeProject(const std::filesystem::path& projectPath) const;
     
     // Thumbnail loading
     void LoadProjectThumbnail(ProjectInfo& project);
@@ -174,10 +185,15 @@ private:
     bool m_ShowNewProjectDialog = false;
     bool m_ShowImportDialog = false;
     bool m_ShowNewScriptDialog = false;
+    bool m_ShowMigrationDialog = false;
+    bool m_MigrationInProgress = false;
+    std::vector<std::filesystem::path> m_LegacyProjectsFound;
+    std::vector<bool> m_LegacyProjectsMigrated;
     char m_NewProjectNameBuffer[128] = {};
     char m_NewProjectDescBuffer[512] = {};
     char m_NewScriptNameBuffer[128] = {};
     char m_CustomProjectLocationBuffer[1024] = {};
+    char m_MigrationSearchPathBuffer[1024] = {};
     const ProjectTemplate* m_SelectedTemplate = nullptr;
     
     // Status messages

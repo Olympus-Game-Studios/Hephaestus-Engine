@@ -3248,10 +3248,28 @@ static std::filesystem::path ResolveProjectsRoot() {
   }
 
   fs::path engineRoot = ResolveEngineRoot();
+  
+  // Check if engineRoot is already inside a build directory to avoid duplication
+  // e.g., if engineRoot is "F:/Hephaestus-Engine/build/Release", don't add "build/Release" again
+  bool isInBuildDir = false;
+  fs::path parent = engineRoot;
+  for (int i = 0; i < 3; ++i) {
+    if (parent.filename() == "Release" || parent.filename() == "Debug") {
+      if (parent.parent_path().filename() == "build") {
+        isInBuildDir = true;
+        break;
+      }
+    }
+    if (!parent.has_parent_path()) break;
+    parent = parent.parent_path();
+  }
+  
   const std::array<fs::path, 4> candidates = {
-      engineRoot / "build" / "Release" / "projects",
+      isInBuildDir ? engineRoot / "projects" : engineRoot / "build" / "Release" / "projects",
       engineRoot / "build" / "Debug" / "projects",
-      engineRoot / "build" / "projects", engineRoot / "projects"};
+      engineRoot / "build" / "projects", 
+      engineRoot / "projects"
+  };
 
   for (const auto &candidate : candidates) {
     std::error_code ec;

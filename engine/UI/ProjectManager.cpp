@@ -101,38 +101,129 @@ static std::optional<std::filesystem::path> PickFolderDialog(const std::filesyst
 // ProjectMetadata Implementation
 // ============================================================================
 
+namespace {
+    // Helper function to escape JSON string values
+    std::string EscapeJsonString(const std::string& str) {
+        std::string result;
+        for (char c : str) {
+            switch (c) {
+                case '"': result += "\\\""; break;
+                case '\\': result += "\\\\"; break;
+                case '\b': result += "\\b"; break;
+                case '\f': result += "\\f"; break;
+                case '\n': result += "\\n"; break;
+                case '\r': result += "\\r"; break;
+                case '\t': result += "\\t"; break;
+                default:
+                    if (static_cast<unsigned char>(c) < 0x20) {
+                        char buf[8];
+                        snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
+                        result += buf;
+                    } else {
+                        result += c;
+                    }
+            }
+        }
+        return result;
+    }
+
+    // Helper function to unescape JSON string values
+    std::string UnescapeJsonString(const std::string& str) {
+        std::string result;
+        for (size_t i = 0; i < str.length(); ++i) {
+            if (str[i] == '\\' && i + 1 < str.length()) {
+                switch (str[i + 1]) {
+                    case '"': result += '"'; ++i; break;
+                    case '\\': result += '\\'; ++i; break;
+                    case 'b': result += '\b'; ++i; break;
+                    case 'f': result += '\f'; ++i; break;
+                    case 'n': result += '\n'; ++i; break;
+                    case 'r': result += '\r'; ++i; break;
+                    case 't': result += '\t'; ++i; break;
+                    case 'u': {
+                        if (i + 5 < str.length()) {
+                            std::string hex = str.substr(i + 2, 4);
+                            try {
+                                int codepoint = std::stoi(hex, nullptr, 16);
+                                if (codepoint < 128) {
+                                    result += static_cast<char>(codepoint);
+                                }
+                                i += 5;
+                            } catch (...) {
+                                result += str[i + 1];
+                                ++i;
+                            }
+                        } else {
+                            result += str[i + 1];
+                            ++i;
+                        }
+                        break;
+                    }
+                    default: result += str[i + 1]; ++i;
+                }
+            } else {
+                result += str[i];
+            }
+        }
+        return result;
+    }
+}
+
 bool ProjectMetadata::SaveToFile(const std::filesystem::path& projectRoot) const {
-    std::filesystem::path metadataPath = projectRoot / ".hephaestus" / "project.meta";
+    // Save as .heproject file at root (primary) and metadata file (legacy)
+    std::filesystem::path heprojectPath = projectRoot / "project.heproject";
+    std::filesystem::path legacyMetadataPath = projectRoot / ".hephaestus" / "project.meta";
     
     try {
-        std::filesystem::create_directories(metadataPath.parent_path());
-        
-        std::ofstream file(metadataPath);
-        if (!file.is_open()) {
+        // Write the primary .heproject file
+        std::ofstream heprojectFile(heprojectPath);
+        if (!heprojectFile.is_open()) {
             return false;
         }
         
-        // Simple key-value format
-        file << "name=" << name << "\n";
-        file << "description=" << description << "\n";
-        file << "engineVersion=" << engineVersion << "\n";
-        
         auto lastModTime = std::chrono::system_clock::to_time_t(lastModified);
         auto createdTime = std::chrono::system_clock::to_time_t(created);
-        file << "lastModified=" << lastModTime << "\n";
-        file << "created=" << createdTime << "\n";
         
-        file << "isFavorite=" << (isFavorite ? "1" : "0") << "\n";
-        file << "screenshot=" << screenshotPath << "\n";
+        // Write JSON format
+        heprojectFile << "{\n";
+        heprojectFile << "  \"formatVersion\": 1,\n";
+        heprojectFile << "  \"name\": \"" << EscapeJsonString(name) << "\",\n";
+        heprojectFile << "  \"description\": \"" << EscapeJsonString(description) << "\",\n";
+        heprojectFile << "  \"engineVersion\": \"" << EscapeJsonString(engineVersion) << "\",\n";
+        heprojectFile << "  \"created\": " << createdTime << ",\n";
+        heprojectFile << "  \"lastModified\": " << lastModTime << ",\n";
+        heprojectFile << "  \"isFavorite\": " << (isFavorite ? "true" : "false") << ",\n";
+        heprojectFile << "  \"screenshot\": \"" << EscapeJsonString(screenshotPath) << "\",\n";
+        heprojectFile << "  \"tags\": [";
+        for (size_t i = 0; i < tags.size(); ++i) {
+            heprojectFile << "\"" << EscapeJsonString(tags[i]) << "\"";
+            if (i < tags.size() - 1) heprojectFile << ", ";
+        }
+        heprojectFile << "]\n";
+        heprojectFile << "}\n";
         
-        // Tags
-        if (!tags.empty()) {
-            file << "tags=";
-            for (size_t i = 0; i < tags.size(); ++i) {
-                file << tags[i];
-                if (i < tags.size() - 1) file << ",";
+        heprojectFile.close();
+        
+        // Also write legacy metadata file for backwards compatibility
+        std::filesystem::create_directories(legacyMetadataPath.parent_path());
+        std::ofstream file(legacyMetadataPath);
+        if (file.is_open()) {
+            file << "name=" << name << "\n";
+            file << "description=" << description << "\n";
+            file << "engineVersion=" << engineVersion << "\n";
+            file << "lastModified=" << lastModTime << "\n";
+            file << "created=" << createdTime << "\n";
+            file << "isFavorite=" << (isFavorite ? "1" : "0") << "\n";
+            file << "screenshot=" << screenshotPath << "\n";
+            if (!tags.empty()) {
+                file << "tags=";
+                for (size_t i = 0; i < tags.size(); ++i) {
+                    file << tags[i];
+                    if (i < tags.size() - 1) file << ",";
+                }
+                file << "\n";
             }
-            file << "\n";
+            file.close();
         }
         
         return true;
@@ -142,14 +233,143 @@ bool ProjectMetadata::SaveToFile(const std::filesystem::path& projectRoot) const
 }
 
 bool ProjectMetadata::LoadFromFile(const std::filesystem::path& projectRoot) {
-    std::filesystem::path metadataPath = projectRoot / ".hephaestus" / "project.meta";
+    std::filesystem::path heprojectPath = projectRoot / "project.heproject";
+    std::filesystem::path legacyMetadataPath = projectRoot / ".hephaestus" / "project.meta";
     
-    if (!std::filesystem::exists(metadataPath)) {
+    // Try to load from .heproject first (primary format)
+    if (std::filesystem::exists(heprojectPath)) {
+        try {
+            std::ifstream file(heprojectPath);
+            if (!file.is_open()) {
+                return false;
+            }
+            
+            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            file.close();
+            
+            // Simple JSON parser for our project file format
+            // This is not a full JSON parser, but sufficient for our metadata format
+            
+            auto extractString = [&content](const std::string& key, std::string& out) -> bool {
+                std::string searchKey = "\"" + key + "\": \"";
+                size_t pos = content.find(searchKey);
+                if (pos == std::string::npos) return false;
+                
+                pos += searchKey.length();
+                size_t endPos = pos;
+                while (endPos < content.length()) {
+                    if (content[endPos] == '"' && content[endPos - 1] != '\\') {
+                        break;
+                    }
+                    ++endPos;
+                }
+                
+                if (endPos >= content.length()) return false;
+                out = UnescapeJsonString(content.substr(pos, endPos - pos));
+                return true;
+            };
+            
+            auto extractNumber = [&content](const std::string& key, long long& out) -> bool {
+                std::string searchKey = "\"" + key + "\": ";
+                size_t pos = content.find(searchKey);
+                if (pos == std::string::npos) return false;
+                
+                pos += searchKey.length();
+                size_t endPos = pos;
+                while (endPos < content.length() && std::isdigit(content[endPos])) {
+                    ++endPos;
+                }
+                
+                if (endPos <= pos) return false;
+                try {
+                    out = std::stoll(content.substr(pos, endPos - pos));
+                    return true;
+                } catch (...) {
+                    return false;
+                }
+            };
+            
+            auto extractBool = [&content](const std::string& key, bool& out) -> bool {
+                std::string searchKey = "\"" + key + "\": ";
+                size_t pos = content.find(searchKey);
+                if (pos == std::string::npos) return false;
+                
+                pos += searchKey.length();
+                if (content.substr(pos, 4) == "true") {
+                    out = true;
+                    return true;
+                } else if (content.substr(pos, 5) == "false") {
+                    out = false;
+                    return true;
+                }
+                return false;
+            };
+            
+            auto extractArray = [&content](const std::string& key, std::vector<std::string>& out) -> bool {
+                std::string searchKey = "\"" + key + "\": [";
+                size_t pos = content.find(searchKey);
+                if (pos == std::string::npos) return false;
+                
+                pos += searchKey.length();
+                while (pos < content.length() && content[pos] != ']') {
+                    if (content[pos] == '"') {
+                        ++pos;
+                        size_t endPos = pos;
+                        while (endPos < content.length() && content[endPos] != '"') {
+                            if (content[endPos] == '\\') ++endPos;
+                            ++endPos;
+                        }
+                        if (endPos < content.length()) {
+                            out.push_back(UnescapeJsonString(content.substr(pos, endPos - pos)));
+                            pos = endPos + 1;
+                        }
+                    } else {
+                        ++pos;
+                    }
+                }
+                return true;
+            };
+            
+            // Extract fields
+            std::string nameStr;
+            if (extractString("name", nameStr)) name = nameStr;
+            
+            std::string descStr;
+            if (extractString("description", descStr)) description = descStr;
+            
+            std::string engineVerStr;
+            if (extractString("engineVersion", engineVerStr)) engineVersion = engineVerStr;
+            
+            long long createdTime = 0;
+            if (extractNumber("created", createdTime)) {
+                created = std::chrono::system_clock::from_time_t(static_cast<std::time_t>(createdTime));
+            }
+            
+            long long lastModTime = 0;
+            if (extractNumber("lastModified", lastModTime)) {
+                lastModified = std::chrono::system_clock::from_time_t(static_cast<std::time_t>(lastModTime));
+            }
+            
+            extractBool("isFavorite", isFavorite);
+            
+            std::string screenshotStr;
+            if (extractString("screenshot", screenshotStr)) screenshotPath = screenshotStr;
+            
+            extractArray("tags", tags);
+            
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+    
+    // Fall back to legacy metadata file format
+    if (!std::filesystem::exists(legacyMetadataPath)) {
         return false;
     }
     
     try {
-        std::ifstream file(metadataPath);
+        std::ifstream file(legacyMetadataPath);
         if (!file.is_open()) {
             return false;
         }
@@ -253,6 +473,11 @@ void ProjectManager::RefreshProjects() {
         std::filesystem::create_directories(m_ProjectsRoot);
     }
     
+    auto isValidHeProject = [](const std::filesystem::path& projectPath) -> bool {
+        // A valid Hephaestus project must contain a project.heproject file
+        return std::filesystem::exists(projectPath / "project.heproject");
+    };
+    
     auto loadProjectInfo = [](const std::filesystem::path& projectPath) -> ProjectInfo {
         ProjectInfo info;
         info.path = projectPath;
@@ -283,7 +508,16 @@ void ProjectManager::RefreshProjects() {
         if (std::filesystem::exists(m_ProjectsRoot)) {
             for (const auto& entry : std::filesystem::directory_iterator(m_ProjectsRoot)) {
                 if (!entry.is_directory()) continue;
-                m_AllProjects.push_back(loadProjectInfo(entry.path()));
+                
+                // Try to migrate legacy projects automatically
+                if (IsLegacyHeProject(entry.path())) {
+                    MigrateProjectToHeproject(entry.path());
+                }
+                
+                // Only load valid Hephaestus projects
+                if (isValidHeProject(entry.path())) {
+                    m_AllProjects.push_back(loadProjectInfo(entry.path()));
+                }
             }
         }
     } catch (const std::exception& e) {
@@ -294,7 +528,15 @@ void ProjectManager::RefreshProjects() {
     for (const auto& customPath : m_CustomProjectPaths) {
         try {
             if (std::filesystem::exists(customPath) && std::filesystem::is_directory(customPath)) {
-                m_AllProjects.push_back(loadProjectInfo(customPath));
+                // Try to migrate legacy projects automatically
+                if (IsLegacyHeProject(customPath)) {
+                    MigrateProjectToHeproject(customPath);
+                }
+                
+                // Only load valid Hephaestus projects
+                if (isValidHeProject(customPath)) {
+                    m_AllProjects.push_back(loadProjectInfo(customPath));
+                }
             }
         } catch (const std::exception& e) {
             // Skip invalid custom paths
@@ -302,6 +544,105 @@ void ProjectManager::RefreshProjects() {
     }
     
     ApplyFilterAndSort();
+}
+
+bool ProjectManager::IsLegacyHeProject(const std::filesystem::path& projectPath) const {
+    namespace fs = std::filesystem;
+    
+    // A legacy project doesn't have project.heproject but has signs of being a project
+    if (fs::exists(projectPath / "project.heproject")) {
+        return false;  // Already migrated
+    }
+    
+    // Check for legacy metadata or characteristic folder structure
+    bool hasLegacyMetadata = fs::exists(projectPath / ".hephaestus" / "project.meta");
+    bool hasAssetsFolder = fs::exists(projectPath / "assets");
+    bool hasHephaestusFolder = fs::exists(projectPath / ".hephaestus");
+    
+    // It's a legacy project if:
+    // - Has .hephaestus folder with metadata, OR
+    // - Has standard Hephaestus structure (.hephaestus + assets folders)
+    return hasLegacyMetadata || (hasHephaestusFolder && hasAssetsFolder);
+}
+
+bool ProjectManager::MigrateProjectToHeproject(const std::filesystem::path& projectPath) {
+    try {
+        // Don't migrate if already has .heproject
+        if (std::filesystem::exists(projectPath / "project.heproject")) {
+            return true;
+        }
+        
+        // Don't migrate if not a legacy project
+        if (!IsLegacyHeProject(projectPath)) {
+            return false;
+        }
+        
+        // Try to load existing metadata
+        ProjectMetadata metadata;
+        
+        // Try legacy metadata file first
+        std::filesystem::path legacyMetadataPath = projectPath / ".hephaestus" / "project.meta";
+        if (std::filesystem::exists(legacyMetadataPath)) {
+            metadata.LoadFromFile(projectPath);
+        }
+        
+        // If metadata is still empty, create default
+        if (metadata.name.empty()) {
+            metadata.name = projectPath.filename().string();
+            metadata.description = "Migrated from legacy project format";
+        }
+        
+        // Ensure version is set
+        if (metadata.engineVersion.empty()) {
+            metadata.engineVersion = "1.0.0";
+        }
+        
+        // Set timestamps if not already set
+        if (metadata.created.time_since_epoch().count() == 0) {
+            auto ftime = std::filesystem::last_write_time(projectPath);
+            auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                ftime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now()
+            );
+            metadata.created = sctp;
+        }
+        
+        if (metadata.lastModified.time_since_epoch().count() == 0) {
+            auto ftime = std::filesystem::last_write_time(projectPath);
+            auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                ftime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now()
+            );
+            metadata.lastModified = sctp;
+        }
+        
+        // Save as new .heproject format (this also maintains legacy format)
+        return metadata.SaveToFile(projectPath);
+    } catch (const std::exception& e) {
+        m_ErrorMessage = std::string("Failed to migrate project: ") + e.what();
+        return false;
+    }
+}
+
+std::vector<std::filesystem::path> ProjectManager::FindLegacyProjects(const std::filesystem::path& searchRoot) const {
+    namespace fs = std::filesystem;
+    std::vector<fs::path> legacyProjects;
+    
+    try {
+        if (!fs::exists(searchRoot) || !fs::is_directory(searchRoot)) {
+            return legacyProjects;
+        }
+        
+        for (const auto& entry : fs::directory_iterator(searchRoot)) {
+            if (!entry.is_directory()) continue;
+            
+            if (IsLegacyHeProject(entry.path())) {
+                legacyProjects.push_back(entry.path());
+            }
+        }
+    } catch (const std::exception& e) {
+        // Silent catch - just skip invalid directories
+    }
+    
+    return legacyProjects;
 }
 
 void ProjectManager::ApplyFilterAndSort() {
@@ -438,6 +779,10 @@ std::optional<std::filesystem::path> ProjectManager::Draw() {
     if (m_ShowImportDialog) {
         DrawImportProjectDialog();
     }
+    
+    if (m_ShowMigrationDialog) {
+        DrawMigrationDialog();
+    }
 
     if (m_ShowNewScriptDialog) {
         DrawNewScriptDialog();
@@ -538,6 +883,14 @@ void ProjectManager::DrawSidebar() {
     
     if (ImGui::Selectable("Import Project...")) {
         m_ShowImportDialog = true;
+    }
+    
+    if (ImGui::Selectable("Migrate Projects...")) {
+        // Open migration dialog (user can specify custom path)
+        m_ShowMigrationDialog = true;
+        m_LegacyProjectsFound.clear();
+        m_LegacyProjectsMigrated.clear();
+        memset(m_MigrationSearchPathBuffer, 0, sizeof(m_MigrationSearchPathBuffer));
     }
     
     if (ImGui::Selectable("Open Projects Folder")) {
@@ -994,6 +1347,146 @@ void ProjectManager::DrawImportProjectDialog() {
         ImGui::SameLine();
         if (ImGui::Button("Close", ImVec2(100, 30))) {
             m_ShowImportDialog = false;
+        }
+    }
+    ImGui::End();
+}
+
+void ProjectManager::DrawMigrationDialog() {
+    ImGui::SetNextWindowSize(ImVec2(700, 600), ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
+    
+    if (ImGui::Begin("Migrate Legacy Projects", &m_ShowMigrationDialog, flags)) {
+        ImGui::TextWrapped("Find and migrate projects from previous versions to the new .heproject format.");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        // Search path input
+        ImGui::Text("Search Location:");
+        ImGui::SetNextItemWidth(-140.0f);
+        if (ImGui::InputTextWithHint("##MigrationSearchPath", "Enter path or leave blank for default", 
+                                     m_MigrationSearchPathBuffer, sizeof(m_MigrationSearchPathBuffer))) {
+            // Path changed, clear previous results
+            if (m_MigrationSearchPathBuffer[0] != '\0') {
+                m_LegacyProjectsFound.clear();
+                m_LegacyProjectsMigrated.clear();
+            }
+        }
+        
+#ifdef _WIN32
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...", ImVec2(130, 0))) {
+            std::string current = m_MigrationSearchPathBuffer;
+            std::filesystem::path baseLocation = current.empty() ? m_ProjectsRoot : std::filesystem::path(current);
+            if (auto picked = PickFolderDialog(baseLocation)) {
+                std::string normalized = picked->lexically_normal().generic_string();
+                std::fill(std::begin(m_MigrationSearchPathBuffer), std::end(m_MigrationSearchPathBuffer), 0);
+                std::strncpy(m_MigrationSearchPathBuffer, normalized.c_str(), sizeof(m_MigrationSearchPathBuffer) - 1);
+                m_LegacyProjectsFound.clear();
+                m_LegacyProjectsMigrated.clear();
+            }
+        }
+#endif
+        
+        ImGui::Spacing();
+        
+        // Search button
+        ImGui::PushStyleColor(ImGuiCol_Button, m_ColorAccent);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, m_ColorAccentHover);
+        if (ImGui::Button("Search", ImVec2(150, 30))) {
+            std::string searchPath = m_MigrationSearchPathBuffer;
+            std::filesystem::path searchLocation = searchPath.empty() ? m_ProjectsRoot : std::filesystem::path(searchPath);
+            
+            m_LegacyProjectsFound = FindLegacyProjects(searchLocation);
+            
+            if (m_LegacyProjectsFound.empty()) {
+                m_StatusMessage = "No legacy projects found in: " + searchLocation.string();
+                m_MessageTimer = 3.0f;
+            } else {
+                m_StatusMessage = "Found " + std::to_string(m_LegacyProjectsFound.size()) + " legacy project(s)";
+                m_MessageTimer = 3.0f;
+            }
+            
+            m_LegacyProjectsMigrated.clear();
+        }
+        ImGui::PopStyleColor(2);
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        if (m_LegacyProjectsFound.empty()) {
+            ImGui::TextDisabled("No projects found yet. Enter a search path and click Search.");
+        } else {
+            ImGui::Text("Legacy projects found: %zu", m_LegacyProjectsFound.size());
+            ImGui::Spacing();
+            
+            ImGui::BeginChild("##LegacyProjectsList", ImVec2(0, 220), true);
+            for (size_t i = 0; i < m_LegacyProjectsFound.size(); ++i) {
+                const auto& projectPath = m_LegacyProjectsFound[i];
+                bool migrated = i < m_LegacyProjectsMigrated.size() && m_LegacyProjectsMigrated[i];
+                
+                if (migrated) {
+                    ImGui::TextColored(m_ColorSuccess, "✓ %s", projectPath.filename().string().c_str());
+                } else {
+                    ImGui::TextDisabled("• %s", projectPath.filename().string().c_str());
+                }
+                ImGui::TextDisabled("  %s", projectPath.string().c_str());
+            }
+            ImGui::EndChild();
+        }
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        if (m_MigrationInProgress) {
+            ImGui::TextColored(m_ColorAccent, "Migrating projects...");
+        } else if (m_LegacyProjectsFound.empty()) {
+            if (ImGui::Button("Close", ImVec2(150, 30))) {
+                m_ShowMigrationDialog = false;
+                m_LegacyProjectsFound.clear();
+                m_LegacyProjectsMigrated.clear();
+                memset(m_MigrationSearchPathBuffer, 0, sizeof(m_MigrationSearchPathBuffer));
+            }
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, m_ColorAccent);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, m_ColorAccentHover);
+            if (ImGui::Button("Migrate All", ImVec2(150, 30))) {
+                m_MigrationInProgress = true;
+                m_LegacyProjectsMigrated.clear();
+                m_LegacyProjectsMigrated.resize(m_LegacyProjectsFound.size(), false);
+                
+                for (size_t i = 0; i < m_LegacyProjectsFound.size(); ++i) {
+                    bool success = MigrateProjectToHeproject(m_LegacyProjectsFound[i]);
+                    m_LegacyProjectsMigrated[i] = success;
+                    if (!success) {
+                        m_ErrorMessage = "Failed to migrate: " + m_LegacyProjectsFound[i].filename().string();
+                    }
+                }
+                
+                m_MigrationInProgress = false;
+                
+                // Refresh projects to show the migrated ones
+                RefreshProjects();
+            }
+            ImGui::PopStyleColor(2);
+            
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(100, 30))) {
+                m_ShowMigrationDialog = false;
+                m_LegacyProjectsFound.clear();
+                m_LegacyProjectsMigrated.clear();
+                memset(m_MigrationSearchPathBuffer, 0, sizeof(m_MigrationSearchPathBuffer));
+            }
+        }
+        
+        if (!m_ErrorMessage.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(m_ColorError, "%s", m_ErrorMessage.c_str());
         }
     }
     ImGui::End();
