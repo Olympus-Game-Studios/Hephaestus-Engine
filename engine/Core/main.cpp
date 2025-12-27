@@ -2522,6 +2522,16 @@ struct Camera {
   bool rightMouseDown = false;
 
   void handleMouse(GLFWwindow *window) {
+    // Only process input when viewport is focused - prevent input when in other UI panels
+    if (!g_ViewportOverlayFocused) {
+      // Release right mouse if it was held but we lost focus
+      if (rightMouseDown) {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        rightMouseDown = false;
+      }
+      return;
+    }
+
     // Check if right mouse button is held
     bool rmb =
         glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
@@ -2564,8 +2574,8 @@ struct Camera {
   }
 
   void handleKeyboard(GLFWwindow *window, float dt) {
-    // Only allow keyboard movement when right mouse is held (Unreal-style)
-    if (!rightMouseDown)
+    // Only allow keyboard movement when viewport is focused and right mouse is held
+    if (!g_ViewportOverlayFocused || !rightMouseDown)
       return;
 
     float velocity = moveSpeed * dt;
@@ -7916,15 +7926,20 @@ int main(int argc, char *argv[]) {
 
     // ImGuizmo keyboard shortcuts (editor only)
     if (!g_RuntimeMode && g_ProjectSelected) {
-      if (ImGui::IsKeyPressed(ImGuiKey_E))
-        currentGizmoOperation = ImGuizmo::TRANSLATE;
-      if (ImGui::IsKeyPressed(ImGuiKey_R))
-        currentGizmoOperation = ImGuizmo::ROTATE;
-      if (ImGui::IsKeyPressed(ImGuiKey_T) && !ImGui::GetIO().KeyCtrl)
-        currentGizmoOperation = ImGuizmo::SCALE;
+      ImGuiIO &io = ImGui::GetIO();
+      // Only allow gizmo shortcuts when viewport is focused and no popup/dialog is active
+      bool popupActive = io.WantTextInput || io.WantCaptureMouse || 
+                         ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+      if (g_ViewportOverlayFocused && !popupActive) {
+        if (ImGui::IsKeyPressed(ImGuiKey_E))
+          currentGizmoOperation = ImGuizmo::TRANSLATE;
+        if (ImGui::IsKeyPressed(ImGuiKey_R))
+          currentGizmoOperation = ImGuizmo::ROTATE;
+        if (ImGui::IsKeyPressed(ImGuiKey_T) && !io.KeyCtrl)
+          currentGizmoOperation = ImGuizmo::SCALE;
+      }
 
       // Editor copy/paste: Ctrl+C, Ctrl+V (single-entity clipboard)
-      ImGuiIO &io = ImGui::GetIO();
       if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) && !io.WantTextInput) {
         Entity selected = scene.GetSelectedEntity();
         if (selected) {
@@ -7951,8 +7966,12 @@ int main(int argc, char *argv[]) {
     UniformBufferObject ubo = makeCameraUBO();
 
     // Custom gizmo interaction handling (editor only)
+    // Skip gizmo interaction if ImGui wants mouse input (popup/dialog is active)
+    // Also check if any popup is open to prevent interaction through modal dialogs
+    bool imguiWantsMouse = ImGui::GetIO().WantCaptureMouse;
+    bool anyPopupOpen = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     if (!g_RuntimeMode && g_ProjectSelected && g_ShowEditorGizmo &&
-        (!g_SimPlaying || g_SimPaused)) {
+        (!g_SimPlaying || g_SimPaused) && !imguiWantsMouse && !anyPopupOpen) {
       Entity selectedEntity = scene.GetSelectedEntity();
       if (selectedEntity) {
         auto &transform = selectedEntity.GetComponent<TransformComponent>();
