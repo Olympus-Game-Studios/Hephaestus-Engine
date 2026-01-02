@@ -53,6 +53,7 @@ std::string NodeTypeToString(NodeType type) {
     case NodeType::NormalTextureSample: return "NormalTextureSample";
     case NodeType::RoughnessTextureSample: return "RoughnessTextureSample";
     case NodeType::AoTextureSample: return "AoTextureSample";
+    case NodeType::WorldAlignedTexture: return "WorldAlignedTexture";
     case NodeType::Add: return "Add";
     case NodeType::Multiply: return "Multiply";
     default: return "Unknown";
@@ -69,6 +70,7 @@ NodeType StringToNodeType(const std::string& str) {
     if (str == "NormalTextureSample") return NodeType::NormalTextureSample;
     if (str == "RoughnessTextureSample") return NodeType::RoughnessTextureSample;
     if (str == "AoTextureSample") return NodeType::AoTextureSample;
+    if (str == "WorldAlignedTexture") return NodeType::WorldAlignedTexture;
     if (str == "Add") return NodeType::Add;
     if (str == "Multiply") return NodeType::Multiply;
     return NodeType::MaterialOutput;
@@ -125,6 +127,7 @@ bool SaveMaterialAssetFile(const std::filesystem::path& path,
         out << "        \"scalar\": " << node.scalar << ",\n";
         out << "        \"color\": [" << node.color.x << ", " << node.color.y << ", " << node.color.z << "],\n";
         out << "        \"resourcePath\": \"" << EscapeJson(node.resourcePath) << "\",\n";
+        out << "        \"worldAlignedScale\": " << node.worldAlignedScale << ",\n";
         
         // Save node position from ImNodes
         if (hasPositions) {
@@ -437,6 +440,7 @@ bool LoadMaterialAssetFile(const std::filesystem::path& path,
                 float scalar;
                 Float3 color;
                 std::string resourcePath;
+                float worldAlignedScale;
                 float posX;
                 float posY;
                 std::vector<PinID> inputPins;
@@ -454,6 +458,7 @@ bool LoadMaterialAssetFile(const std::filesystem::path& path,
                         data.type = NodeType::MaterialOutput;
                         data.scalar = 0.5f;
                         data.color = Float3{1.0f, 1.0f, 1.0f};
+                        data.worldAlignedScale = 1.0f;
                         data.posX = 0.0f;
                         data.posY = 0.0f;
                         
@@ -483,6 +488,11 @@ bool LoadMaterialAssetFile(const std::filesystem::path& path,
                         if (const JsonValue* resourceVal = nodeVal.Find("resourcePath")) {
                             if (resourceVal->IsString()) {
                                 data.resourcePath = resourceVal->AsString();
+                            }
+                        }
+                        if (const JsonValue* worldScaleVal = nodeVal.Find("worldAlignedScale")) {
+                            if (worldScaleVal->IsNumber()) {
+                                data.worldAlignedScale = static_cast<float>(worldScaleVal->AsNumber());
                             }
                         }
                         
@@ -531,6 +541,7 @@ bool LoadMaterialAssetFile(const std::filesystem::path& path,
                 node.scalar = data.scalar;
                 node.color = data.color;
                 node.resourcePath = data.resourcePath;
+                node.worldAlignedScale = data.worldAlignedScale;
                 node.posX = data.posX;
                 node.posY = data.posY;
                 
@@ -811,6 +822,9 @@ void Panel::DrawNodeCanvas(Graph& graph) {
             if (ImGui::MenuItem("AO Texture")) {
                 spawnNode(NodeType::AoTextureSample);
             }
+            if (ImGui::MenuItem("World Aligned Texture")) {
+                spawnNode(NodeType::WorldAlignedTexture);
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Math")) {
@@ -999,6 +1013,67 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
                 ImGui::TextDisabled("Note: Texture rendering requires UV coordinates.");
                 ImGui::TextDisabled("Ensure your models have UVs mapped.");
             }
+            break;
+        }
+        case NodeType::WorldAlignedTexture: {
+            // Create texture dropdown
+            int currentSelection = -1;
+            for (size_t i = 0; i < m_DiscoveredTextures.size(); ++i) {
+                if (m_DiscoveredTextures[i] == node->resourcePath) {
+                    currentSelection = static_cast<int>(i);
+                    break;
+                }
+            }
+
+            std::vector<const char*> textureNames;
+            textureNames.reserve(m_DiscoveredTextures.size() + 1);
+            textureNames.push_back("(None)");
+            for (const auto& tex : m_DiscoveredTextures) {
+                textureNames.push_back(tex.c_str());
+            }
+
+            const char* preview = (currentSelection >= 0) ? m_DiscoveredTextures[currentSelection].c_str() : "(None)";
+            if (ImGui::Combo("##TextureSelection", &currentSelection, textureNames.data(), static_cast<int>(textureNames.size()))) {
+                if (currentSelection > 0 && currentSelection - 1 < static_cast<int>(m_DiscoveredTextures.size())) {
+                    node->resourcePath = m_DiscoveredTextures[currentSelection - 1];
+                } else {
+                    node->resourcePath.clear();
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted("Texture");
+            
+            // Also allow manual input as fallback
+            static char textureBuffer[256];
+            if (preview != nullptr) {
+                std::strncpy(textureBuffer, preview, sizeof(textureBuffer) - 1);
+                textureBuffer[sizeof(textureBuffer) - 1] = '\0';
+            }
+            
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::InputText("##TextureManual", textureBuffer, sizeof(textureBuffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                node->resourcePath = textureBuffer;
+            }
+            ImGui::TextDisabled("Found %zu textures in project", m_DiscoveredTextures.size());
+            
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            
+            // World-aligned scale setting
+            ImGui::Text("World Scale");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100);
+            ImGui::DragFloat("##WorldScale", &node->worldAlignedScale, 0.01f, 0.001f, 100.0f, "%.3f");
+            ImGui::TextDisabled("Texture repeats per world unit.");
+            ImGui::TextDisabled("Smaller = larger texture, Larger = more tiling");
+            
+            if (!node->resourcePath.empty()) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.7f, 1.0f, 0.7f, 1.0f), "Selected: %s", node->resourcePath.c_str());
+            }
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Uses world position for UVs - no UV mapping needed!");
             break;
         }
         case NodeType::Add:

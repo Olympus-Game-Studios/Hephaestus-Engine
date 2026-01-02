@@ -37,12 +37,15 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     uint roughnessTextureIndex; // offset 80
     uint useAoTexture;        // offset 84
     uint aoTextureIndex;      // offset 88
-    uint paddingTail0;        // offset 92
-    uint paddingTail1;        // offset 96
-    uint paddingTail2;        // offset 100
-    uint paddingTail3;        // offset 104
-    uint paddingTail4;        // offset 108
-    uint paddingTail5;        // offset 112
+    uint useWorldAlignedTexture; // offset 92
+    float worldTextureScale;  // offset 96
+    uint paddingTail0;        // offset 100
+    uint paddingTail1;        // offset 104
+    uint paddingTail2;        // offset 108
+    uint paddingTail3;        // offset 112
+    uint paddingTail4;        // offset 116
+    uint paddingTail5;        // offset 120
+    uint paddingTail6;        // offset 124
 } material;
 
 layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOTS];
@@ -202,16 +205,43 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
 // MAIN LIGHTING CALCULATION
 // ═══════════════════════════════════════════════════════════════
 
+// Calculate world-aligned UV coordinates using triplanar projection
+vec2 getWorldAlignedUV(vec3 worldPos, vec3 normal, float scale) {
+    // Use triplanar mapping - blend between XY, XZ, and YZ planes based on normal
+    vec3 blendWeights = abs(normal);
+    blendWeights = blendWeights / (blendWeights.x + blendWeights.y + blendWeights.z);
+    
+    // Sample coordinates for each plane
+    vec2 uvXY = worldPos.xy * scale;
+    vec2 uvXZ = worldPos.xz * scale;
+    vec2 uvYZ = worldPos.yz * scale;
+    
+    // For mostly horizontal surfaces (floors/ceilings), use XZ plane
+    // For vertical surfaces, blend between XY and YZ based on normal direction
+    // This gives the most intuitive result for ground textures
+    if (blendWeights.y > 0.7) {
+        return uvXZ;  // Mostly horizontal - use top-down projection
+    }
+    // Blend between the three projections for angled surfaces
+    return uvXY * blendWeights.z + uvXZ * blendWeights.y + uvYZ * blendWeights.x;
+}
+
 void main() {
     vec3 N = normalize(fragNormal);
     vec3 V = normalize(ubo.viewPos - fragWorldPos);
+    
+    // Calculate texture coordinates - either from UV or world position
+    vec2 texCoord = fragTexCoord;
+    if (material.useWorldAlignedTexture != 0u) {
+        texCoord = getWorldAlignedUV(fragWorldPos, N, material.worldTextureScale);
+    }
     
     // ── Material property sampling ─────────────────────────────────
     // Albedo (diffuse) texture
     vec3 albedo = material.albedo * fragColor;
     if (material.useAlbedoTexture != 0u) {
         uint index = material.albedoTextureIndex % MAX_TEXTURE_SLOTS;
-        vec4 texColor = texture(materialTextures[index], fragTexCoord);
+        vec4 texColor = texture(materialTextures[index], texCoord);
         albedo = texColor.rgb * material.albedo * fragColor;
     }
     
@@ -220,7 +250,7 @@ void main() {
     vec3 normalMapped = N;
     if (material.useNormalTexture != 0u) {
         uint index = material.normalTextureIndex % MAX_TEXTURE_SLOTS;
-        vec3 normalTex = texture(materialTextures[index], fragTexCoord).rgb;
+        vec3 normalTex = texture(materialTextures[index], texCoord).rgb;
         // Unpack normal from [0,1] to [-1,1]
         normalMapped = normalize(normalTex * 2.0 - 1.0);
         // For a world-space approximation, blend with original normal
@@ -234,7 +264,7 @@ void main() {
     if (material.useRoughnessTexture != 0u) {
         uint index = material.roughnessTextureIndex % MAX_TEXTURE_SLOTS;
         // Roughness is typically in the R or G channel
-        float texRoughness = texture(materialTextures[index], fragTexCoord).r;
+        float texRoughness = texture(materialTextures[index], texCoord).r;
         roughness = texRoughness * material.roughness; // Blend with base value
     }
     roughness = max(roughness, 0.04); // Prevent division by zero
@@ -244,7 +274,7 @@ void main() {
     if (material.useAoTexture != 0u) {
         uint index = material.aoTextureIndex % MAX_TEXTURE_SLOTS;
         // AO is typically stored in R or G channel
-        float texAo = texture(materialTextures[index], fragTexCoord).r;
+        float texAo = texture(materialTextures[index], texCoord).r;
         ao = texAo * material.ao; // Blend with base value
     }
     

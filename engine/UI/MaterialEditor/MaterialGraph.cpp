@@ -14,6 +14,7 @@ constexpr std::string_view NodeLabel(NodeType type) {
     case NodeType::NormalTextureSample: return "Normal Texture";
     case NodeType::RoughnessTextureSample: return "Roughness Texture";
     case NodeType::AoTextureSample: return "AO Texture";
+    case NodeType::WorldAlignedTexture: return "World Aligned Texture";
     case NodeType::Add: return "Add";
     case NodeType::Multiply: return "Multiply";
     }
@@ -43,6 +44,9 @@ constexpr std::string_view PinLabel(NodeType ownerType, PinKind kind, int index)
          ownerType == NodeType::RoughnessTextureSample || ownerType == NodeType::AoTextureSample) && kind == PinKind::Output) {
         return "Color";
     }
+    if (ownerType == NodeType::WorldAlignedTexture && kind == PinKind::Output) {
+        return index == 0 ? "Color" : "Value";
+    }
     if ((ownerType == NodeType::Add || ownerType == NodeType::Multiply) && kind == PinKind::Input) {
         return index == 0 ? "A" : "B";
     }
@@ -68,8 +72,15 @@ constexpr ValueType DefaultPinType(NodeType ownerType, PinKind kind, int index) 
     if (ownerType == NodeType::AlbedoTextureSample || ownerType == NodeType::NormalTextureSample || 
         ownerType == NodeType::RoughnessTextureSample || ownerType == NodeType::AoTextureSample) {
         if (kind == PinKind::Output) {
-            return ownerType == NodeType::RoughnessTextureSample || ownerType == NodeType::AoTextureSample 
+            return (ownerType == NodeType::RoughnessTextureSample || ownerType == NodeType::AoTextureSample)
                    ? ValueType::Float1 : ValueType::Float3;
+        }
+        return ValueType::Float1;
+    }
+    if (ownerType == NodeType::WorldAlignedTexture) {
+        if (kind == PinKind::Output) {
+            // First output is Color (Float3), second is Value (Float1)
+            return index == 0 ? ValueType::Float3 : ValueType::Float1;
         }
         return ValueType::Float1;
     }
@@ -105,6 +116,10 @@ Node& Graph::CreateNode(NodeType type, std::string displayName) {
     case NodeType::RoughnessTextureSample:
     case NodeType::AoTextureSample:
         node.resourcePath.clear();
+        break;
+    case NodeType::WorldAlignedTexture:
+        node.resourcePath.clear();
+        node.worldAlignedScale = 1.0f;
         break;
     default:
         break;
@@ -250,6 +265,9 @@ void Graph::AttachDefaultPins(Node& node) {
     case NodeType::AoTextureSample:
         addOutputs(1);
         break;
+    case NodeType::WorldAlignedTexture:
+        addOutputs(2);  // Color (Float3) and Value (Float1)
+        break;
     case NodeType::Add:
     case NodeType::Multiply:
         addInputs(2);
@@ -302,6 +320,10 @@ Node& Graph::CreateNodeWithID(NodeID id, NodeType type, std::string displayName)
     case NodeType::RoughnessTextureSample:
     case NodeType::AoTextureSample:
         node.resourcePath.clear();
+        break;
+    case NodeType::WorldAlignedTexture:
+        node.resourcePath.clear();
+        node.worldAlignedScale = 1.0f;
         break;
     default:
         break;

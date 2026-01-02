@@ -406,6 +406,11 @@ struct MaterialComponent {
     std::string aoTexturePath;
     bool useAoTexture = false;
 
+    // World-aligned texture settings
+    // When enabled, textures use world position instead of UV coordinates
+    bool useWorldAlignedTexture = false;
+    float worldTextureScale = 1.0f;  // Scale factor for world-space UV (1.0 = 1 meter per texture repeat)
+
     MaterialComponent()
         : albedo(1.0f, 1.0f, 1.0f)
         , metallic(0.0f)

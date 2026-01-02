@@ -2029,8 +2029,10 @@ struct alignas(16) MaterialUBO {
   uint32_t roughnessTextureIndex; // offset 80
   uint32_t useAoTexture;          // offset 84
   uint32_t aoTextureIndex;        // offset 88
+  uint32_t useWorldAlignedTexture;// offset 92
+  float worldTextureScale;        // offset 96
   uint32_t
-      paddingTail[9]; // offset 92-127 (pad to 16-byte boundary = 128 bytes)
+      paddingTail[7]; // offset 100-127 (pad to 16-byte boundary = 128 bytes)
 };
 
 static_assert(offsetof(MaterialUBO, metallic) == 16,
@@ -8658,12 +8660,17 @@ int main(int argc, char *argv[]) {
         }
         matUBO.aoTextureIndex = aoSlot;
 
+        // World-aligned texture settings
+        matUBO.useWorldAlignedTexture = mat.useWorldAlignedTexture ? 1u : 0u;
+        matUBO.worldTextureScale = mat.worldTextureScale;
+
         matUBO.paddingTail[0] = 0;
         matUBO.paddingTail[1] = 0;
         matUBO.paddingTail[2] = 0;
         matUBO.paddingTail[3] = 0;
         matUBO.paddingTail[4] = 0;
         matUBO.paddingTail[5] = 0;
+        matUBO.paddingTail[6] = 0;
       } else {
         // Default white material
         matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);
@@ -8685,12 +8692,15 @@ int main(int argc, char *argv[]) {
         matUBO.roughnessTextureIndex = g_DefaultMaterialTextureSlot;
         matUBO.useAoTexture = 0u;
         matUBO.aoTextureIndex = g_DefaultMaterialTextureSlot;
+        matUBO.useWorldAlignedTexture = 0u;
+        matUBO.worldTextureScale = 1.0f;
         matUBO.paddingTail[0] = 0;
         matUBO.paddingTail[1] = 0;
         matUBO.paddingTail[2] = 0;
         matUBO.paddingTail[3] = 0;
         matUBO.paddingTail[4] = 0;
         matUBO.paddingTail[5] = 0;
+        matUBO.paddingTail[6] = 0;
       }
 
       // Write into this object's slot in the dynamic material buffer

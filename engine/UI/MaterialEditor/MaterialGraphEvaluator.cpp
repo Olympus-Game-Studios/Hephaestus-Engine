@@ -12,6 +12,8 @@ struct Value {
     Float3 vec{0.0f, 0.0f, 0.0f};
     bool hasTexture = false;
     std::string texturePath;
+    bool isWorldAligned = false;
+    float worldAlignedScale = 1.0f;
 };
 
 Value MakeDefault(ValueType type) {
@@ -142,6 +144,34 @@ bool EvaluateOutputPin(const Graph& graph,
         }
         break;
     }
+    case NodeType::WorldAlignedTexture: {
+        // World-aligned texture node - uses world position for UVs
+        // Has two outputs: Color (Float3) at index 0, Value (Float1) at index 1
+        result.hasTexture = !node->resourcePath.empty();
+        result.texturePath = node->resourcePath;
+        result.isWorldAligned = true;
+        result.worldAlignedScale = node->worldAlignedScale;
+        
+        // Determine which output pin this is
+        int outputIndex = 0;
+        for (size_t i = 0; i < node->outputs.size(); ++i) {
+            if (node->outputs[i] == outputPin) {
+                outputIndex = static_cast<int>(i);
+                break;
+            }
+        }
+        
+        if (outputIndex == 0) {
+            // Color output (Float3)
+            result.type = ValueType::Float3;
+            result.vec = Float3{1.0f, 1.0f, 1.0f};
+        } else {
+            // Value output (Float1) - typically grayscale/single channel
+            result.type = ValueType::Float1;
+            result.scalar = 1.0f;
+        }
+        break;
+    }
     case NodeType::Add: {
         Value a = fetchInput(0);
         Value b = fetchInput(1);
@@ -191,7 +221,7 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
     std::unordered_map<PinID, Value> cache;
     std::unordered_set<PinID> active;
 
-    auto resolveColor = [&](PinID inputPin, const Float3& fallback, bool affectTexture, Vec3& outColor, bool& outUseTexture, std::string& outTexturePath) {
+    auto resolveColor = [&](PinID inputPin, const Float3& fallback, bool affectTexture, Vec3& outColor, bool& outUseTexture, std::string& outTexturePath, bool* outWorldAligned = nullptr, float* outWorldScale = nullptr) {
         bool connected = false;
         Value value = EvaluateInputPin(graph, inputPin, cache, active, outErrorMessage, &connected);
         if (!outErrorMessage.empty()) {
@@ -203,17 +233,24 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
                 outUseTexture = false;
                 outTexturePath.clear();
             }
+            if (outWorldAligned) *outWorldAligned = false;
+            if (outWorldScale) *outWorldScale = 1.0f;
             return;
         }
         if ((value.hasTexture || !value.texturePath.empty()) && affectTexture) {
             outUseTexture = true;
             outTexturePath = value.texturePath;
+            // Handle world-aligned texture
+            if (outWorldAligned) *outWorldAligned = value.isWorldAligned;
+            if (outWorldScale) *outWorldScale = value.worldAlignedScale;
         } else {
             outColor = Vec3(value.vec.x, value.vec.y, value.vec.z);
             if (affectTexture) {
                 outUseTexture = false;
                 outTexturePath.clear();
             }
+            if (outWorldAligned) *outWorldAligned = false;
+            if (outWorldScale) *outWorldScale = 1.0f;
         }
     };
 
@@ -228,9 +265,21 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
 
     outMaterial = MaterialComponent();
 
+    // Track if any texture uses world-aligned mode
+    bool anyWorldAligned = false;
+    float worldScale = 1.0f;
+
     if (!outputNode->inputs.empty()) {
+        bool texWorldAligned = false;
+        float texWorldScale = 1.0f;
         resolveColor(outputNode->inputs[0], Float3{1.0f, 1.0f, 1.0f}, true,
-                     outMaterial.albedo, outMaterial.useAlbedoTexture, outMaterial.albedoTexturePath);
+                     outMaterial.albedo, outMaterial.useAlbedoTexture, outMaterial.albedoTexturePath,
+                     &texWorldAligned, &texWorldScale);
+        // If albedo uses a world-aligned texture, enable world-aligned mode for the whole material
+        if (texWorldAligned && outMaterial.useAlbedoTexture) {
+            anyWorldAligned = true;
+            worldScale = texWorldScale;
+        }
         if (!outErrorMessage.empty()) {
             return false;
         }
@@ -257,8 +306,15 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         }
     }
     if (outputNode->inputs.size() > 4) {
+        bool texWorldAligned = false;
+        float texWorldScale = 1.0f;
         resolveColor(outputNode->inputs[4], Float3{0.5f, 0.5f, 1.0f}, true,
-                     outMaterial.emissive, outMaterial.useNormalTexture, outMaterial.normalTexturePath);
+                     outMaterial.emissive, outMaterial.useNormalTexture, outMaterial.normalTexturePath,
+                     &texWorldAligned, &texWorldScale);
+        if (texWorldAligned && outMaterial.useNormalTexture) {
+            anyWorldAligned = true;
+            worldScale = texWorldScale;
+        }
         if (!outErrorMessage.empty()) {
             return false;
         }
@@ -274,6 +330,10 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
             outMaterial.useRoughnessTexture = true;
             outMaterial.roughnessTexturePath = texValue.texturePath;
+            if (texValue.isWorldAligned) {
+                anyWorldAligned = true;
+                worldScale = texValue.worldAlignedScale;
+            }
         }
     }
     if (outputNode->inputs.size() > 6) {
@@ -287,7 +347,17 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
             outMaterial.useAoTexture = true;
             outMaterial.aoTexturePath = texValue.texturePath;
+            if (texValue.isWorldAligned) {
+                anyWorldAligned = true;
+                worldScale = texValue.worldAlignedScale;
+            }
         }
+    }
+
+    // Apply world-aligned settings if any texture uses it
+    if (anyWorldAligned) {
+        outMaterial.useWorldAlignedTexture = true;
+        outMaterial.worldTextureScale = worldScale;
     }
 
     return true;

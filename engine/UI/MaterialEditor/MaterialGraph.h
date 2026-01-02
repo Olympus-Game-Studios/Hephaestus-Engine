@@ -36,6 +36,7 @@ enum class NodeType {
     NormalTextureSample,
     RoughnessTextureSample,
     AoTextureSample,
+    WorldAlignedTexture,
     Add,
     Multiply
 };
@@ -61,6 +62,7 @@ struct Node {
     float scalar = 0.0f;
     Float3 color;
     std::string resourcePath;
+    float worldAlignedScale = 1.0f;  // Scale for world-aligned textures (units per texture repeat)
     std::vector<PinID> inputs;
     std::vector<PinID> outputs;
     
