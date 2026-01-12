@@ -765,7 +765,9 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"useRoughnessTexture\": " << (material->useRoughnessTexture ? "true" : "false") << ",\n";
             oss << "          \"roughnessTexturePath\": \"" << EscapeString(material->roughnessTexturePath) << "\",\n";
             oss << "          \"useAoTexture\": " << (material->useAoTexture ? "true" : "false") << ",\n";
-            oss << "          \"aoTexturePath\": \"" << EscapeString(material->aoTexturePath) << "\"\n";
+            oss << "          \"aoTexturePath\": \"" << EscapeString(material->aoTexturePath) << "\",\n";
+            oss << "          \"useWorldAlignedTexture\": " << (material->useWorldAlignedTexture ? "true" : "false") << ",\n";
+            oss << "          \"worldTextureScale\": " << FormatFloat(material->worldTextureScale) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1237,6 +1239,14 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     material.aoTexturePath = aoPathValue->AsString();
                 }
             }
+            if (const JsonValue* useWorldAlignedValue = materialObj->Find("useWorldAlignedTexture")) {
+                material.useWorldAlignedTexture = ParseBoolLike(*useWorldAlignedValue, material.useWorldAlignedTexture);
+            }
+            if (const JsonValue* worldScaleValue = materialObj->Find("worldTextureScale")) {
+                if (worldScaleValue->IsNumber()) {
+                    material.worldTextureScale = static_cast<float>(worldScaleValue->AsNumber());
+                }
+            }
         }
 
         if (const JsonValue* lightObj = components->Find("Light")) {
@@ -1646,7 +1656,9 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"useRoughnessTexture\": " << (material->useRoughnessTexture ? "true" : "false") << ",\n";
             oss << "          \"roughnessTexturePath\": \"" << EscapeString(material->roughnessTexturePath) << "\",\n";
             oss << "          \"useAoTexture\": " << (material->useAoTexture ? "true" : "false") << ",\n";
-            oss << "          \"aoTexturePath\": \"" << EscapeString(material->aoTexturePath) << "\"\n";
+            oss << "          \"aoTexturePath\": \"" << EscapeString(material->aoTexturePath) << "\",\n";
+            oss << "          \"useWorldAlignedTexture\": " << (material->useWorldAlignedTexture ? "true" : "false") << ",\n";
+            oss << "          \"worldTextureScale\": " << FormatFloat(material->worldTextureScale) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
