@@ -18,6 +18,13 @@ endif()
 
 add_subdirectory(extern/glfw)
 
+# Ultralight (optional)
+option(HEPHAESTUS_USE_ULTRALIGHT "Enable Ultralight integration" ON)
+if(HEPHAESTUS_USE_ULTRALIGHT)
+    set(ULTRALIGHT_BUILD_SAMPLES OFF CACHE BOOL "Disable Ultralight samples" FORCE)
+    add_subdirectory(extern/Ultralight)
+endif()
+
 # Lua scripting support - try to find it, but make it optional for now
 # Check for vcpkg installation first
 set(VCPKG_ROOT "$ENV{USERPROFILE}/vcpkg" CACHE PATH "Path to vcpkg installation")
