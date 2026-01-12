@@ -55,6 +55,8 @@
 #include "imgui_internal.h"
 #include "imnodes.h"
 
+#include <memory>
+
 // Scene Graph / ECS
 #include "../Game/ExampleScripts.h"
 #include "../Scene/Components.h"
@@ -69,6 +71,10 @@
 #include "../UI/MaterialEditor/MaterialEditorPanel.h"
 #include "../UI/ProjectManager.h"
 
+#if HEPHAESTUS_EDITOR_HTML_UI
+#include "../UI/HtmlUI/HtmlEditorUIHost.h"
+#endif
+
 // Namespace alias for convenience
 namespace fs = std::filesystem;
 
@@ -80,6 +86,10 @@ const bool enableValidationLayers = false;
 
 const std::vector<const char *> validationLayers = {
     "VK_LAYER_KHRONOS_validation"};
+
+#if HEPHAESTUS_EDITOR_HTML_UI
+static std::unique_ptr<Hephaestus::HtmlUI::HtmlEditorUIHost> g_HtmlEditorUIHost;
+#endif
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT /*msgSeverity*/,
@@ -977,6 +987,13 @@ static WorldOutlinerActions DrawActorPalette() {
 static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
   WorldOutlinerActions actions{};
 
+#if HEPHAESTUS_EDITOR_HTML_UI
+  if (g_HtmlEditorUIHost) {
+    g_HtmlEditorUIHost->DrawOutlinerPanel();
+    return actions;
+  }
+#endif
+
   if (!ImGui::Begin("World Outliner")) {
     ImGui::End();
     return actions;
@@ -1230,6 +1247,13 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
                                             VulkanSkybox &skybox,
                                             VulkanDevice &vkdev) {
   DetailsPanelActions actions{};
+
+#if HEPHAESTUS_EDITOR_HTML_UI
+  if (g_HtmlEditorUIHost) {
+    g_HtmlEditorUIHost->DrawDetailsPanel();
+    return actions;
+  }
+#endif
 
   if (!ImGui::Begin("Details")) {
     ImGui::End();
@@ -1954,6 +1978,15 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
 
 static void DrawLogConsole(const ImGuiIO &io,
                            const std::string &statusMessage) {
+#if HEPHAESTUS_EDITOR_HTML_UI
+  if (g_HtmlEditorUIHost) {
+    (void)io;
+    (void)statusMessage;
+    g_HtmlEditorUIHost->DrawLogConsolePanel();
+    return;
+  }
+#endif
+
   if (!ImGui::Begin("Log Console")) {
     ImGui::End();
     return;
@@ -3996,6 +4029,14 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string &statusMessage) {
   namespace fs = std::filesystem;
 
   AssetBrowserResult result;
+
+#if HEPHAESTUS_EDITOR_HTML_UI
+  if (g_HtmlEditorUIHost) {
+    (void)statusMessage;
+    g_HtmlEditorUIHost->DrawAssetBrowserPanel();
+    return result;
+  }
+#endif
 
   static fs::path assetRoot;
   static fs::path currentPath;
@@ -7168,6 +7209,14 @@ int main(int argc, char *argv[]) {
     ImGui_ImplVulkan_Init(&init_info);
 
     EnsureAssetBrowserIconsLoaded(vkdev);
+
+#if HEPHAESTUS_EDITOR_HTML_UI
+    if (!g_HtmlEditorUIHost) {
+      g_HtmlEditorUIHost =
+          std::make_unique<Hephaestus::HtmlUI::HtmlEditorUIHost>();
+      g_HtmlEditorUIHost->Init(&vkdev, imguiPool);
+    }
+#endif
   } // end if (!g_RuntimeMode)
 
   // Store ImGui IO for later manipulation during play mode (editor only)
@@ -7361,6 +7410,15 @@ int main(int argc, char *argv[]) {
         }
       } else {
         BeginHephaestusDockspace();
+
+#if HEPHAESTUS_EDITOR_HTML_UI
+        if (g_HtmlEditorUIHost) {
+          g_HtmlEditorUIHost->SetScene(&scene);
+          g_HtmlEditorUIHost->SetDetailsLockedFlag(&g_DetailsLocked);
+          g_HtmlEditorUIHost->SetAssetsRoot(ResolveActiveAssetsRoot());
+          g_HtmlEditorUIHost->UpdateAndSync(dt);
+        }
+#endif
 
         // Draw docked panels first
         WorldOutlinerActions outlinerActions = DrawWorldOutliner(scene);

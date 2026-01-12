@@ -318,6 +318,53 @@ bool VulkanTexture::CreateSolidColor(
     return true;
 }
 
+bool VulkanTexture::Create(
+    VmaAllocator allocator,
+    VkDevice device,
+    uint32_t texWidth,
+    uint32_t texHeight,
+    VkFormat format,
+    VkImageTiling tiling,
+    VkImageUsageFlags usage,
+    VkMemoryPropertyFlags properties)
+{
+    width = texWidth;
+    height = texHeight;
+    mipLevels = 1;
+
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = width;
+    imageInfo.extent.height = height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = mipLevels;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = format;
+    imageInfo.tiling = tiling;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = usage;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.requiredFlags = properties;
+    if (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
+        allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+    } else {
+        allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    }
+
+    if (vmaCreateImage(allocator, &imageInfo, &allocInfo, &image, &allocation, nullptr) != VK_SUCCESS) {
+        image = VK_NULL_HANDLE;
+        allocation = VK_NULL_HANDLE;
+        return false;
+    }
+
+    (void)device;
+    return true;
+}
+
 bool VulkanTexture::CreateImageView(VkDevice device, VkFormat format, VkImageAspectFlags aspectFlags)
 {
     VkImageViewCreateInfo viewInfo{};

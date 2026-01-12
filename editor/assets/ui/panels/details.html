@@ -1,0 +1,160 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Details</title>
+  <link rel="stylesheet" href="../ui_theme.css" />
+</head>
+<body>
+  <div class="ui-panel">
+    <div class="ui-header">
+      <div class="ui-title">Details</div>
+      <div class="ui-toolbar">
+        <button class="ui-btn ui-icon-btn" id="refreshBtn" title="Refresh">R</button>
+      </div>
+    </div>
+
+    <div class="ui-body">
+      <div class="ui-section">
+        <div class="ui-props">
+          <div class="ui-prop">
+            <div class="ui-prop-label">Name</div>
+            <div class="ui-prop-control">
+              <input class="ui-input" style="width:100%" id="name" value="" placeholder="(none)" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ui-section">
+        <div class="ui-section-hdr" id="transformHdr">
+          <div class="ui-section-title">Transform</div>
+          <div style="color:var(--muted); font-size:12px;" id="entityId">—</div>
+        </div>
+        <div class="ui-props" id="transformBody">
+          <div class="ui-prop">
+            <div class="ui-prop-label">Location</div>
+            <div class="ui-prop-control ui-inline">
+              <span class="axis x">X</span><input class="ui-input ui-num" id="px" />
+              <span class="axis y">Y</span><input class="ui-input ui-num" id="py" />
+              <span class="axis z">Z</span><input class="ui-input ui-num" id="pz" />
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Rotation</div>
+            <div class="ui-prop-control ui-inline">
+              <span class="axis x">X</span><input class="ui-input ui-num" id="rx" />
+              <span class="axis y">Y</span><input class="ui-input ui-num" id="ry" />
+              <span class="axis z">Z</span><input class="ui-input ui-num" id="rz" />
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Scale</div>
+            <div class="ui-prop-control ui-inline">
+              <span class="axis x">X</span><input class="ui-input ui-num" id="sx" />
+              <span class="axis y">Y</span><input class="ui-input ui-num" id="sy" />
+              <span class="axis z">Z</span><input class="ui-input ui-num" id="sz" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ui-status" id="status">Loading…</div>
+  </div>
+
+  <script src="../ui_common.js"></script>
+  <script>
+    let currentId = 0;
+
+    function setStatus(s) {
+      document.getElementById('status').textContent = s;
+    }
+
+    function setField(id, v) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = (v === null || v === undefined) ? '' : String(v);
+    }
+
+    function getNumber(id) {
+      const el = document.getElementById(id);
+      if (!el) return 0;
+      const n = parseFloat(el.value);
+      return isNaN(n) ? 0 : n;
+    }
+
+    function loadSelected() {
+      const res = window.hep.callCpp('entity.get', {});
+      if (!res.ok) {
+        setStatus('Details: ' + (res.error || 'error'));
+        return;
+      }
+      if (!res.entity) {
+        currentId = 0;
+        setField('name', '');
+        ['px','py','pz','rx','ry','rz','sx','sy','sz'].forEach(k => setField(k, ''));
+        document.getElementById('entityId').textContent = '—';
+        setStatus('No selection.');
+        return;
+      }
+
+      currentId = res.entity.id || 0;
+      setField('name', res.entity.name || '');
+      setField('px', res.entity.px);
+      setField('py', res.entity.py);
+      setField('pz', res.entity.pz);
+      setField('rx', res.entity.rx);
+      setField('ry', res.entity.ry);
+      setField('rz', res.entity.rz);
+      setField('sx', res.entity.sx);
+      setField('sy', res.entity.sy);
+      setField('sz', res.entity.sz);
+      document.getElementById('entityId').textContent = '#' + currentId;
+      setStatus('Ready');
+    }
+
+    function pushRename() {
+      if (!currentId) return;
+      const name = document.getElementById('name').value || '';
+      const r = window.hep.callCpp('entity.rename', { id: currentId, name: name });
+      if (!r.ok) setStatus('Rename failed: ' + (r.error || 'error'));
+    }
+
+    function pushTransform() {
+      if (!currentId) return;
+      const payload = {
+        id: currentId,
+        px: getNumber('px'), py: getNumber('py'), pz: getNumber('pz'),
+        rx: getNumber('rx'), ry: getNumber('ry'), rz: getNumber('rz'),
+        sx: getNumber('sx'), sy: getNumber('sy'), sz: getNumber('sz')
+      };
+      const r = window.hep.callCpp('entity.set_transform', payload);
+      if (!r.ok) setStatus('Transform failed: ' + (r.error || 'error'));
+    }
+
+    function wire() {
+      document.getElementById('name').addEventListener('change', () => { pushRename(); loadSelected(); });
+      ['px','py','pz','rx','ry','rz','sx','sy','sz'].forEach(id => {
+        const el = document.getElementById(id);
+        el.addEventListener('change', () => { pushTransform(); loadSelected(); });
+      });
+    }
+
+    window.hepReceive = function(msg) {
+      if (!msg || msg.v !== 1) return;
+      if (msg.name === 'selection.changed') {
+        loadSelected();
+      }
+    };
+
+    window.hep.onReady(() => {
+      window.hep.wireCollapsible(document.getElementById('transformHdr'), document.getElementById('transformBody'), 'details.transform.open');
+      document.getElementById('refreshBtn').onclick = loadSelected;
+      wire();
+      loadSelected();
+    });
+  </script>
+</body>
+</html>

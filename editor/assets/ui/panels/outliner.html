@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>World Outliner</title>
+  <link rel="stylesheet" href="../ui_theme.css" />
+</head>
+<body>
+  <div class="ui-panel">
+    <div class="ui-header">
+      <div class="ui-title">World Outliner</div>
+      <div class="ui-toolbar">
+        <button class="ui-btn ui-icon-btn" id="refreshBtn" title="Refresh">R</button>
+      </div>
+    </div>
+    <div class="ui-pathbar">
+      <input class="ui-input" id="filter" placeholder="Search" />
+      <span style="flex:1"></span>
+      <span class="ui-path" id="sceneName"></span>
+    </div>
+    <div class="ui-body">
+      <div class="ui-list" id="list"></div>
+    </div>
+    <div class="ui-status" id="status">Loading…</div>
+  </div>
+
+  <script src="../ui_common.js"></script>
+
+  <script>
+    function renderList(data) {
+      const list = document.getElementById('list');
+      list.innerHTML = '';
+
+      if (!data || !data.ok) {
+        document.getElementById('status').textContent = 'Outliner: ' + (data ? (data.error || 'error') : 'no data');
+        return;
+      }
+
+      const selectedId = data.selectedId || 0;
+      const filter = (document.getElementById('filter').value || '').toLowerCase();
+      const ents = (data.entities || []).filter(ent => {
+        const n = (ent.name || '').toLowerCase();
+        const t = (ent.type || '').toLowerCase();
+        return !filter || n.includes(filter) || t.includes(filter);
+      });
+
+      ents.forEach(ent => {
+        const row = document.createElement('div');
+        const isSel = ent.selected || (ent.id === selectedId);
+        row.className = 'ui-row' + (isSel ? ' is-selected' : '');
+
+        const left = document.createElement('div');
+        left.className = 'ui-row-left';
+
+        const name = document.createElement('div');
+        name.className = 'ui-row-name';
+        name.textContent = ent.name || '(unnamed)';
+
+        const badge = document.createElement('div');
+        badge.className = 'ui-badge';
+        badge.textContent = ent.type || 'ENTITY';
+
+        left.appendChild(name);
+        left.appendChild(badge);
+        row.appendChild(left);
+
+        row.onclick = () => {
+          const r = window.hep.callCpp('scene.select', { id: ent.id });
+          if (!r.ok) {
+            document.getElementById('status').textContent = 'Select failed: ' + (r.error || 'error');
+            return;
+          }
+          refresh();
+        };
+        list.appendChild(row);
+      });
+
+      document.getElementById('status').textContent = 'Entities: ' + ents.length;
+    }
+
+    function refresh() {
+      const data = window.hep.callCpp('scene.list', {});
+      renderList(data);
+    }
+
+    // Receive events from C++
+    window.hepReceive = function(msg) {
+      if (!msg || msg.v !== 1) return;
+      if (msg.name === 'selection.changed') {
+        refresh();
+      }
+    };
+
+    // Initial refresh + periodic fallback (in case events are missed)
+    window.hep.onReady(() => {
+      document.getElementById('refreshBtn').onclick = refresh;
+      document.getElementById('filter').addEventListener('input', refresh);
+      refresh();
+      setInterval(refresh, 1200);
+    });
+  </script>
+</body>
+</html>

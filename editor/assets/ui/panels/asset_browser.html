@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Asset Browser</title>
+  <link rel="stylesheet" href="../ui_theme.css" />
+</head>
+<body>
+  <div class="ui-panel">
+    <div class="ui-header">
+      <div class="ui-title">Asset Browser</div>
+      <div class="ui-toolbar">
+        <button class="ui-btn ui-icon-btn" id="upBtn" title="Up">..</button>
+        <button class="ui-btn ui-icon-btn" id="refreshBtn" title="Refresh">R</button>
+      </div>
+    </div>
+    <div class="ui-pathbar">
+      <span style="color:var(--muted)">Path</span>
+      <span class="ui-path" id="path">.</span>
+    </div>
+    <div class="ui-body">
+      <div class="ui-list" id="list"></div>
+    </div>
+    <div class="ui-status" id="status">Loading…</div>
+  </div>
+
+  <script src="../ui_common.js"></script>
+  <script>
+    let currentPath = '.';
+    let selectedRel = '';
+
+    function setStatus(s) { document.getElementById('status').textContent = s; }
+
+    function extType(name) {
+      const n = (name || '').toLowerCase();
+      const i = n.lastIndexOf('.');
+      const ext = i >= 0 ? n.slice(i + 1) : '';
+      if (!ext) return 'FILE';
+      if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'tga' || ext === 'hdr' || ext === 'exr') return 'TEXTURE';
+      if (ext === 'glb' || ext === 'gltf' || ext === 'fbx' || ext === 'obj') return 'MESH';
+      if (ext === 'lua') return 'LUA';
+      if (ext === 'cpp' || ext === 'h' || ext === 'hpp') return 'CODE';
+      if (ext === 'spv') return 'SHADER';
+      return ext.toUpperCase();
+    }
+
+    function render(res) {
+      const list = document.getElementById('list');
+      list.innerHTML = '';
+
+      if (!res || !res.ok) {
+        setStatus('Error');
+        document.getElementById('path').textContent = '(no assets root)';
+        const r = document.createElement('div');
+        r.className = 'ui-row';
+        r.innerHTML = '<div class="ui-row-left"><div class="ui-row-name">' + ((res && (res.error || res.raw)) ? (res.error || res.raw) : 'assets.list failed') + '</div></div>';
+        list.appendChild(r);
+        return;
+      }
+
+      currentPath = res.path || '.';
+      document.getElementById('path').textContent = currentPath;
+      setStatus((res.entries ? res.entries.length : 0) + ' items');
+
+      // Up navigation
+      if (currentPath !== '.' && currentPath !== '' && currentPath !== '/') {
+        // (Also wired via toolbar button)
+      }
+
+      (res.entries || []).forEach(e => {
+        const row = document.createElement('div');
+        row.className = 'ui-row' + (e.rel === selectedRel ? ' is-selected' : '');
+
+        const left = document.createElement('div');
+        left.className = 'ui-row-left';
+
+        const name = document.createElement('div');
+        name.className = 'ui-row-name';
+        name.textContent = e.name || '(unnamed)';
+
+        const badge = document.createElement('div');
+        badge.className = 'ui-badge';
+        badge.textContent = e.dir ? 'DIR' : extType(e.name);
+
+        left.appendChild(name);
+        left.appendChild(badge);
+        row.appendChild(left);
+
+        row.onclick = () => {
+          selectedRel = e.rel;
+          if (e.dir) {
+            refresh(e.rel);
+          } else {
+            render(res);
+          }
+        };
+        list.appendChild(row);
+      });
+    }
+
+    function refresh(path) {
+      const res = window.hep.callCpp('assets.list', { path: path || '.' });
+      render(res);
+    }
+
+    window.hepReceive = function(msg) {
+      // No events yet.
+    };
+
+    function goUp() {
+      if (currentPath === '.' || !currentPath) {
+        refresh('.');
+        return;
+      }
+      const parts = currentPath.split('/').filter(Boolean);
+      parts.pop();
+      const parent = parts.length ? parts.join('/') : '.';
+      refresh(parent);
+    }
+
+    window.hep.onReady(() => {
+      document.getElementById('refreshBtn').onclick = () => refresh(currentPath);
+      document.getElementById('upBtn').onclick = goUp;
+      refresh('.');
+    });
+  </script>
+</body>
+</html>
