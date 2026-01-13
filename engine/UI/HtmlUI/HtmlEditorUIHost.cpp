@@ -15,6 +15,8 @@
 #include <system_error>
 #include <vector>
 
+#include "../EditorSpawnPreset.h"
+
 #if defined(_WIN32)
 #include <stdlib.h>
 #endif
@@ -147,6 +149,30 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     }
 
     scene_->SetSelectedEntity(Entity(handle, scene_));
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("actor.spawn_preset", [this](const std::string& payload) -> std::string {
+    auto presetOpt = EditorMessageBridge::ParseIntField(payload, "preset");
+    if (!presetOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_preset\"}");
+    }
+    pendingAddActorsSpawn_ = static_cast<EditorSpawnPreset>(static_cast<uint32_t>(*presetOpt));
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("actor.drag_begin", [this](const std::string& payload) -> std::string {
+    auto presetOpt = EditorMessageBridge::ParseIntField(payload, "preset");
+    if (!presetOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_preset\"}");
+    }
+    pendingAddActorsDrag_ = static_cast<EditorSpawnPreset>(static_cast<uint32_t>(*presetOpt));
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("actor.drag_end", [this](const std::string& payload) -> std::string {
+    (void)payload;
+    pendingAddActorsDrag_.reset();
     return std::string("{\"ok\":true}");
   });
 
@@ -410,6 +436,83 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       assetCreateCallback_(assetPath);
     }
 
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("assets.list_meshes", [this](const std::string& payload) -> std::string {
+    (void)payload;
+    if (assetsRoot_.empty()) {
+      return std::string("{\"ok\":false,\"error\":\"no_assets_root\"}");
+    }
+
+    std::filesystem::path root = assetsRoot_;
+    std::filesystem::path meshesDir = assetsRoot_ / "meshes";
+    std::error_code ec;
+    if (std::filesystem::exists(meshesDir, ec) && !ec &&
+        std::filesystem::is_directory(meshesDir, ec) && !ec) {
+      root = meshesDir;
+    }
+
+    // Common mesh formats.
+    auto isMeshExt = [](const std::string& ext) {
+      std::string e;
+      e.reserve(ext.size());
+      for (char c : ext) e.push_back(static_cast<char>(::tolower(static_cast<unsigned char>(c))));
+      return (e == ".obj" || e == ".fbx" || e == ".gltf" || e == ".glb" || e == ".dae" || e == ".ply");
+    };
+
+    struct MeshEntry { std::string name; std::string rel; };
+    std::vector<MeshEntry> out;
+    out.reserve(128);
+
+    const size_t kMax = 400;
+    for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator(); ++it) {
+      const auto& p = it->path();
+      if (it->is_directory(ec) && !ec) {
+        continue;
+      }
+      if (!it->is_regular_file(ec) || ec) {
+        ec.clear();
+        continue;
+      }
+
+      if (!isMeshExt(p.extension().string())) {
+        continue;
+      }
+
+      std::error_code relEc;
+      auto rp = std::filesystem::relative(p, assetsRoot_, relEc);
+      std::string relStr = relEc ? p.filename().string() : rp.generic_string();
+      out.push_back(MeshEntry{ p.stem().string(), relStr });
+      if (out.size() >= kMax) {
+        break;
+      }
+    }
+
+    std::sort(out.begin(), out.end(), [](const MeshEntry& a, const MeshEntry& b) {
+      if (a.name == b.name) return a.rel < b.rel;
+      return a.name < b.name;
+    });
+
+    std::ostringstream json;
+    json << "{\"ok\":true,\"meshes\":[";
+    bool first = true;
+    for (const auto& m : out) {
+      if (!first) json << ",";
+      first = false;
+      json << "{\"name\":\"" << JsonEscape(m.name) << "\",\"rel\":\"" << JsonEscape(m.rel) << "\"}";
+    }
+    json << "]}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("actor.spawn_mesh", [this](const std::string& payload) -> std::string {
+    auto relOpt = EditorMessageBridge::ParseStringField(payload, "rel");
+    if (!relOpt || relOpt->empty()) {
+      return std::string("{\"ok\":false,\"error\":\"missing_rel\"}");
+    }
+    pendingAddActorsSpawnMeshRel_ = *relOpt;
     return std::string("{\"ok\":true}");
   });
 
@@ -745,6 +848,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
   });
 
   outliner_ = std::make_unique<HtmlPanelView>("World Outliner", &bridge_, vkdev_, imguiDescriptorPool_);
+  addActors_ = std::make_unique<HtmlPanelView>("Add Actors", &bridge_, vkdev_, imguiDescriptorPool_);
   details_ = std::make_unique<HtmlPanelView>("Details", &bridge_, vkdev_, imguiDescriptorPool_);
   assetBrowser_ = std::make_unique<HtmlPanelView>("Asset Browser", &bridge_, vkdev_, imguiDescriptorPool_);
   logConsole_ = std::make_unique<HtmlPanelView>("Log Console", &bridge_, vkdev_, imguiDescriptorPool_);
@@ -752,6 +856,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
   // Initial sizes will be overridden by ImGui window sizes.
   // These paths are resolved relative to the FileSystem base (exeDir).
   outliner_->Create(renderer_, 400, 600, "file:///editor/assets/ui/panels/outliner.html");
+  addActors_->Create(renderer_, 520, 650, "file:///editor/assets/ui/panels/add_actors.html");
   details_->Create(renderer_, 400, 600, "file:///editor/assets/ui/panels/details.html");
   assetBrowser_->Create(renderer_, 800, 300, "file:///editor/assets/ui/panels/asset_browser.html");
   logConsole_->Create(renderer_, 800, 300, "file:///editor/assets/ui/panels/log_console.html");
@@ -760,6 +865,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
   bridge_.SetSendToJs([this](const std::string& jsCall) {
     // Broadcast to all panels (keep them in sync).
     if (outliner_) outliner_->EvaluateScript(jsCall);
+    if (addActors_) addActors_->EvaluateScript(jsCall);
     if (details_) details_->EvaluateScript(jsCall);
     if (assetBrowser_) assetBrowser_->EvaluateScript(jsCall);
     if (logConsole_) logConsole_->EvaluateScript(jsCall);
@@ -834,6 +940,7 @@ void HtmlEditorUIHost::UpdateAndSync(float dt) {
   // Only upload textures for panels that are actually visible. SyncTextureToGpu()
   // currently does CPU-side format conversion plus a synchronous GPU upload.
   if (outliner_ && outlinerVisible_) outliner_->SyncTextureToGpu();
+  if (addActors_ && addActorsVisible_) addActors_->SyncTextureToGpu();
   if (details_ && detailsVisible_) details_->SyncTextureToGpu();
   if (assetBrowser_ && assetBrowserVisible_) assetBrowser_->SyncTextureToGpu();
   if (logConsole_ && logConsoleVisible_) logConsole_->SyncTextureToGpu();
@@ -841,6 +948,7 @@ void HtmlEditorUIHost::UpdateAndSync(float dt) {
 
 void HtmlEditorUIHost::DrawDockedPanels() {
   DrawOutlinerPanel();
+  DrawAddActorsPanel();
   DrawDetailsPanel();
   DrawAssetBrowserPanel();
   DrawLogConsolePanel();
@@ -857,6 +965,36 @@ void HtmlEditorUIHost::DrawOutlinerPanel() {
                       static_cast<uint32_t>(std::max(1.0f, avail.y)));
     outliner_->DrawImGuiImage();
     outliner_->HandleImGuiInput();
+  }
+  ImGui::End();
+}
+
+void HtmlEditorUIHost::DrawAddActorsPanel() {
+  if (!addActors_)
+    return;
+  addActorsVisible_ = false;
+  if (ImGui::Begin("Add Actors")) {
+    addActorsVisible_ = true;
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    addActors_->Resize(static_cast<uint32_t>(std::max(1.0f, avail.x)),
+                       static_cast<uint32_t>(std::max(1.0f, avail.y)));
+    addActors_->DrawImGuiImage();
+
+    // Allow HTML panel items to act as an ImGui drag source by piggy-backing on
+    // the rendered image item.
+    // JS signals the preset via actor.drag_begin/actor.drag_end.
+    if (pendingAddActorsDrag_ && ImGui::IsItemHovered() &&
+        ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+        EditorSpawnPreset preset = *pendingAddActorsDrag_;
+        ImGui::SetDragDropPayload("ACTOR_PALETTE_ITEM", &preset,
+                                  sizeof(EditorSpawnPreset));
+        ImGui::TextUnformatted("Add Actor");
+        ImGui::EndDragDropSource();
+      }
+    }
+
+    addActors_->HandleImGuiInput();
   }
   ImGui::End();
 }
@@ -904,6 +1042,18 @@ void HtmlEditorUIHost::DrawLogConsolePanel() {
     logConsole_->HandleImGuiInput();
   }
   ImGui::End();
+}
+
+std::optional<EditorSpawnPreset> HtmlEditorUIHost::ConsumeAddActorsSpawnRequest() {
+  auto v = pendingAddActorsSpawn_;
+  pendingAddActorsSpawn_.reset();
+  return v;
+}
+
+std::optional<std::string> HtmlEditorUIHost::ConsumeAddActorsSpawnMeshRequest() {
+  auto v = pendingAddActorsSpawnMeshRel_;
+  pendingAddActorsSpawnMeshRel_.reset();
+  return v;
 }
 
 EditorMessageBridge& HtmlEditorUIHost::Bridge() { return bridge_; }

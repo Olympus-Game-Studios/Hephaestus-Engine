@@ -10,6 +10,9 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <optional>
+
+#include "../EditorSpawnPreset.h"
 
 #include <vulkan/vulkan.h>
 
@@ -42,9 +45,14 @@ public:
   // Draw editor panels (transitional: uses ImGui docking windows as host).
   void DrawDockedPanels();
   void DrawOutlinerPanel();
+  void DrawAddActorsPanel();
   void DrawDetailsPanel();
   void DrawAssetBrowserPanel();
   void DrawLogConsolePanel();
+
+  // Consumes a spawn request originating from the HTML Add Actors panel.
+  std::optional<EditorSpawnPreset> ConsumeAddActorsSpawnRequest();
+  std::optional<std::string> ConsumeAddActorsSpawnMeshRequest();
 
   EditorMessageBridge& Bridge();
 
@@ -71,15 +79,22 @@ private:
   EditorMessageBridge bridge_;
 
   std::unique_ptr<HtmlPanelView> outliner_;
+  std::unique_ptr<HtmlPanelView> addActors_;
   std::unique_ptr<HtmlPanelView> details_;
   std::unique_ptr<HtmlPanelView> assetBrowser_;
   std::unique_ptr<HtmlPanelView> logConsole_;
 
   // Tracks whether each host ImGui panel is currently visible (ie. not collapsed).
   bool outlinerVisible_ = false;
+  bool addActorsVisible_ = false;
   bool detailsVisible_ = false;
   bool assetBrowserVisible_ = false;
   bool logConsoleVisible_ = false;
+
+  // State pushed from HTML UI (consumed by the editor loop).
+  std::optional<EditorSpawnPreset> pendingAddActorsSpawn_;
+  std::optional<EditorSpawnPreset> pendingAddActorsDrag_;
+  std::optional<std::string> pendingAddActorsSpawnMeshRel_;
 };
 
 } // namespace Hephaestus::HtmlUI

@@ -361,18 +361,15 @@ struct ToolbarActions {
   bool exportClicked = false;
 };
 
-enum class WorldOutlinerSpawnPreset {
-  DefaultCube,
-  DefaultSphere,
-  DirectionalLight,
-  PointLight,
-  SpotLight
-};
+#include "UI/EditorSpawnPreset.h"
+
+using WorldOutlinerSpawnPreset = EditorSpawnPreset;
 
 struct WorldOutlinerActions {
   std::optional<std::string> newLevelName;
   std::optional<entt::entity> entityToDelete;
   std::optional<WorldOutlinerSpawnPreset> spawnRequest;
+  std::optional<std::string> spawnMeshAssetRel;
 };
 
 struct DetailsPanelActions {
@@ -775,10 +772,9 @@ static void BeginHephaestusDockspace() {
     ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down,
                                                      0.36f, nullptr, &dockMain);
 
-    ImGuiID dockAddActors = ImGui::DockBuilderSplitNode(
-        dockLeft, ImGuiDir_Left, 0.46f, nullptr, &dockLeft);
-
-    ImGui::DockBuilderDockWindow("Add Actors", dockAddActors);
+    // Dock "Add Actors" as a tab next to "World Outliner" (same dock node)
+    // Dock "World Outliner" last so it becomes the selected tab by default.
+    ImGui::DockBuilderDockWindow("Add Actors", dockLeft);
     ImGui::DockBuilderDockWindow("World Outliner", dockLeft);
     ImGui::DockBuilderDockWindow("Details", dockRight);
     ImGui::DockBuilderDockWindow("Asset Browser", dockBottom);
@@ -933,6 +929,7 @@ static WorldOutlinerActions DrawActorPalette() {
       const char *label;
       WorldOutlinerSpawnPreset preset;
     } actors[] = {
+      {"E", "Empty", WorldOutlinerSpawnPreset::EmptyEntity},
         {"C", "Cube", WorldOutlinerSpawnPreset::DefaultCube},
         {"S", "Sphere", WorldOutlinerSpawnPreset::DefaultSphere},
         {"D", "Dir Light", WorldOutlinerSpawnPreset::DirectionalLight},
@@ -994,6 +991,19 @@ static WorldOutlinerActions DrawActorPalette() {
 static WorldOutlinerActions DrawAddActorsPanel() {
   WorldOutlinerActions actions{};
 
+#if HEPHAESTUS_EDITOR_HTML_UI
+  if (g_HtmlEditorUIHost) {
+    g_HtmlEditorUIHost->DrawAddActorsPanel();
+    if (auto preset = g_HtmlEditorUIHost->ConsumeAddActorsSpawnRequest()) {
+      actions.spawnRequest = *preset;
+    }
+    if (auto meshRel = g_HtmlEditorUIHost->ConsumeAddActorsSpawnMeshRequest()) {
+      actions.spawnMeshAssetRel = *meshRel;
+    }
+    return actions;
+  }
+#endif
+
   if (!ImGui::Begin("Add Actors")) {
     ImGui::End();
     return actions;
@@ -1045,6 +1055,9 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
       ImGui::SetTooltip("Add a default primitive or light.");
     }
     if (ImGui::BeginPopup(kAddEntityPopupId)) {
+      if (ImGui::MenuItem("Empty Actor")) {
+        actions.spawnRequest = WorldOutlinerSpawnPreset::EmptyEntity;
+      }
       if (ImGui::MenuItem("Default Cube")) {
         actions.spawnRequest = WorldOutlinerSpawnPreset::DefaultCube;
       }
@@ -7602,6 +7615,35 @@ int main(int argc, char *argv[]) {
           };
 
           switch (*outlinerActions.spawnRequest) {
+          case WorldOutlinerSpawnPreset::EmptyEntity: {
+            PushSceneUndoSnapshot(scene);
+            Entity created = scene.CreateEntity("Empty Actor");
+            if (created) {
+              if (!g_DetailsLocked) {
+                scene.SetSelectedEntity(created);
+              }
+              logSuccess("Added empty actor to scene.");
+            } else {
+              logFailure("Failed to add empty actor.");
+            }
+            break;
+          }
+          case WorldOutlinerSpawnPreset::Camera: {
+            PushSceneUndoSnapshot(scene);
+            Entity created = scene.CreateEntity("Camera");
+            if (created) {
+              created.AddComponent<CameraComponent>();
+              auto &transform = created.GetComponent<TransformComponent>();
+              transform.position = Vec3(0.0f, 1.5f, 3.0f);
+              if (!g_DetailsLocked) {
+                scene.SetSelectedEntity(created);
+              }
+              logSuccess("Added camera to scene.");
+            } else {
+              logFailure("Failed to add camera.");
+            }
+            break;
+          }
           case WorldOutlinerSpawnPreset::DefaultCube: {
             Entity created = spawnPrimitiveFromMesh("Cube", "builtin://cube");
             if (created) {
@@ -7648,6 +7690,41 @@ int main(int argc, char *argv[]) {
             }
             break;
           }
+          }
+        }
+
+        if (outlinerActions.spawnMeshAssetRel) {
+          auto logFailure = [&](const std::string &message) {
+            assetBrowserStatus = message;
+            std::cerr << assetBrowserStatus << std::endl;
+          };
+          auto logSuccess = [&](const std::string &message) {
+            assetBrowserStatus = message;
+            std::cout << assetBrowserStatus << std::endl;
+          };
+
+          PushSceneUndoSnapshot(scene);
+          const std::filesystem::path rel = std::filesystem::path(*outlinerActions.spawnMeshAssetRel);
+          std::string baseName = rel.stem().string();
+          if (baseName.empty()) {
+            baseName = "Mesh";
+          }
+          Entity created = scene.CreateEntity(makeUniqueEntityName(baseName));
+          if (!created) {
+            logFailure("Failed to create mesh actor.");
+          } else {
+            auto &renderer = created.AddComponent<MeshRendererComponent>();
+            renderer.meshAssetPath = rel.generic_string();
+            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+            renderer.meshImported = false;
+            created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
+
+            rebuildSceneMeshesFromComponents(scene);
+
+            if (!g_DetailsLocked) {
+              scene.SetSelectedEntity(created);
+            }
+            logSuccess("Added mesh actor: " + rel.filename().string());
           }
         }
         DetailsPanelActions detailsActions =
