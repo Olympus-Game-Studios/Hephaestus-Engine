@@ -27,6 +27,7 @@
         </div>
       </div>
 
+      <!-- TRANSFORM SECTION -->
       <div class="ui-section">
         <div class="ui-section-hdr" id="transformHdr">
           <div class="ui-section-title">Transform</div>
@@ -59,6 +60,187 @@
           </div>
         </div>
       </div>
+
+      <!-- LIGHT SECTION -->
+      <div class="ui-section" id="lightSection" style="display:none;">
+        <div class="ui-section-hdr" id="lightHdr">
+          <div class="ui-section-title">Light</div>
+        </div>
+        <div class="ui-props" id="lightBody">
+          <div class="ui-prop">
+            <div class="ui-prop-label">Type</div>
+            <div class="ui-prop-control">
+              <select class="ui-input" id="lightType">
+                <option value="0">Directional</option>
+                <option value="1">Point</option>
+                <option value="2">Spot</option>
+              </select>
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Color</div>
+            <div class="ui-prop-control ui-inline">
+              <span class="axis x">R</span><input class="ui-input ui-num" id="lightR" min="0" max="1" step="0.1" />
+              <span class="axis y">G</span><input class="ui-input ui-num" id="lightG" min="0" max="1" step="0.1" />
+              <span class="axis z">B</span><input class="ui-input ui-num" id="lightB" min="0" max="1" step="0.1" />
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Intensity</div>
+            <div class="ui-prop-control">
+              <input class="ui-input ui-num" id="lightIntensity" />
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Range</div>
+            <div class="ui-prop-control">
+              <input class="ui-input ui-num" id="lightRange" />
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Direction</div>
+            <div class="ui-prop-control ui-inline">
+              <span class="axis x">X</span><input class="ui-input ui-num" id="lightDirX" step="0.1" />
+              <span class="axis y">Y</span><input class="ui-input ui-num" id="lightDirY" step="0.1" />
+              <span class="axis z">Z</span><input class="ui-input ui-num" id="lightDirZ" step="0.1" />
+            </div>
+          </div>
+
+          <!-- Shadow Section -->
+          <div style="border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px;">
+            <div class="ui-prop">
+              <div class="ui-prop-label">Cast Shadows</div>
+              <div class="ui-prop-control">
+                <input type="checkbox" id="lightCastShadows" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Shadow Bias</div>
+              <div class="ui-prop-control">
+                <input class="ui-input ui-num" id="lightShadowBias" step="0.0001" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Shadow Strength</div>
+              <div class="ui-prop-control">
+                <input class="ui-input ui-num" id="lightShadowStrength" min="0" max="1" step="0.1" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Shadow Distance</div>
+              <div class="ui-prop-control">
+                <input class="ui-input ui-num" id="lightShadowDistance" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Shadow Extent</div>
+              <div class="ui-prop-control">
+                <input class="ui-input ui-num" id="lightShadowExtent" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ENVIRONMENT SECTION -->
+      <div class="ui-section" id="envSection" style="display:none;">
+        <div class="ui-section-hdr" id="envHdr">
+          <div class="ui-section-title">Environment</div>
+        </div>
+        <div class="ui-props" id="envBody">
+          <div class="ui-prop">
+            <div class="ui-prop-label">Background Type</div>
+            <div class="ui-prop-control">
+              <select class="ui-input" id="envType">
+                <option value="0">Solid Color</option>
+                <option value="1">HDRI</option>
+              </select>
+            </div>
+          </div>
+          <div class="ui-prop" id="envColorProp">
+            <div class="ui-prop-label">Color</div>
+            <div class="ui-prop-control ui-inline">
+              <span class="axis x">R</span><input class="ui-input ui-num" id="envR" min="0" max="1" step="0.1" />
+              <span class="axis y">G</span><input class="ui-input ui-num" id="envG" min="0" max="1" step="0.1" />
+              <span class="axis z">B</span><input class="ui-input ui-num" id="envB" min="0" max="1" step="0.1" />
+            </div>
+          </div>
+          <div class="ui-prop" id="envHdriProp" style="display:none;">
+            <div class="ui-prop-label">HDRI Path</div>
+            <div class="ui-prop-control">
+              <input class="ui-input" style="width:100%" id="envHdriPath" placeholder="path/to/hdri.exr" />
+            </div>
+          </div>
+          <div class="ui-prop" id="envHdriIntensityProp" style="display:none;">
+            <div class="ui-prop-label">HDRI Intensity</div>
+            <div class="ui-prop-control">
+              <input class="ui-input ui-num" id="envHdriIntensity" />
+            </div>
+          </div>
+          <div style="border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px;">
+            <div class="ui-prop">
+              <div class="ui-prop-label">Enable Render Distance</div>
+              <div class="ui-prop-control">
+                <input type="checkbox" id="envEnableRenderDist" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Render Distance</div>
+              <div class="ui-prop-control">
+                <input class="ui-input ui-num" id="envRenderDist" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Infinite Distance</div>
+              <div class="ui-prop-control">
+                <input type="checkbox" id="envInfiniteRenderDist" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MESH SECTION -->
+      <div class="ui-section" id="meshSection" style="display:none;">
+        <div class="ui-section-hdr" id="meshHdr">
+          <div class="ui-section-title">Mesh</div>
+        </div>
+        <div class="ui-props" id="meshBody">
+          <div class="ui-prop">
+            <div class="ui-prop-label">Visible</div>
+            <div class="ui-prop-control">
+              <input type="checkbox" id="meshVisible" checked />
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Backface Culling</div>
+            <div class="ui-prop-control">
+              <input type="checkbox" id="meshBackfaceCulling" />
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Asset Path</div>
+            <div class="ui-prop-control">
+              <input class="ui-input" style="width:100%" id="meshAssetPath" disabled placeholder="(no mesh)" />
+            </div>
+          </div>
+          <div style="border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px;">
+            <div class="ui-prop">
+              <div class="ui-prop-label">Lua Script</div>
+              <div class="ui-prop-control">
+                <div id="meshScriptAssigned" style="margin-bottom:6px; font-size:12px; color: var(--muted2);">
+                  Not assigned
+                </div>
+                <div style="display:flex; gap:5px;">
+                  <input class="ui-input" style="flex:1;" id="meshScriptPath" placeholder="Select a .lua in Asset Browser, or type scripts/MyScript.lua" />
+                  <button class="ui-btn" id="meshAssignScriptBtn" style="width:auto; padding: 0 10px;">Assign</button>
+                  <button class="ui-btn" id="meshRemoveScriptBtn" style="width:auto; padding: 0 10px; display:none;">Remove</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="ui-status" id="status">Loading…</div>
@@ -67,6 +249,7 @@
   <script src="../ui_common.js"></script>
   <script>
     let currentId = 0;
+    let currentEntityType = null; // Will store 'LIGHT', 'ENV', 'MESH', or null
 
     function setStatus(s) {
       document.getElementById('status').textContent = s;
@@ -75,7 +258,12 @@
     function setField(id, v) {
       const el = document.getElementById(id);
       if (!el) return;
-      el.value = (v === null || v === undefined) ? '' : String(v);
+      const val = (v === null || v === undefined) ? '' : String(v);
+      if (el.type === 'checkbox') {
+        el.checked = v ? true : false;
+      } else {
+        el.value = val;
+      }
     }
 
     function getNumber(id) {
@@ -83,6 +271,18 @@
       if (!el) return 0;
       const n = parseFloat(el.value);
       return isNaN(n) ? 0 : n;
+    }
+
+    function getCheckbox(id) {
+      const el = document.getElementById(id);
+      if (!el) return false;
+      return el.checked ? 1 : 0;
+    }
+
+    function showSections(sections) {
+      ['lightSection', 'envSection', 'meshSection'].forEach(s => {
+        document.getElementById(s).style.display = sections.includes(s) ? 'block' : 'none';
+      });
     }
 
     function loadSelected() {
@@ -93,9 +293,11 @@
       }
       if (!res.entity) {
         currentId = 0;
+        currentEntityType = null;
         setField('name', '');
         ['px','py','pz','rx','ry','rz','sx','sy','sz'].forEach(k => setField(k, ''));
         document.getElementById('entityId').textContent = '—';
+        showSections([]);
         setStatus('No selection.');
         return;
       }
@@ -112,7 +314,200 @@
       setField('sy', res.entity.sy);
       setField('sz', res.entity.sz);
       document.getElementById('entityId').textContent = '#' + currentId;
+
+      currentEntityType = res.entity.type;
+      const sections = [];
+      if (currentEntityType === 'LIGHT') {
+        sections.push('lightSection');
+        loadLightProperties();
+      } else if (currentEntityType === 'ENV') {
+        sections.push('envSection');
+        loadEnvironmentProperties();
+      } else if (currentEntityType === 'MESH') {
+        sections.push('meshSection');
+        loadMeshProperties();
+      }
+      showSections(sections);
       setStatus('Ready');
+    }
+
+    function loadLightProperties() {
+      if (!currentId) return;
+      const res = window.hep.callCpp('light.get', { id: currentId });
+      if (!res.ok || !res.light) {
+        setStatus('Failed to load light: ' + (res.error || 'error'));
+        return;
+      }
+      const light = res.light;
+      setField('lightType', light.type);
+      setField('lightR', light.r);
+      setField('lightG', light.g);
+      setField('lightB', light.b);
+      setField('lightIntensity', light.intensity);
+      setField('lightRange', light.range);
+      setField('lightDirX', light.dirX);
+      setField('lightDirY', light.dirY);
+      setField('lightDirZ', light.dirZ);
+      setField('lightCastShadows', light.castShadows);
+      setField('lightShadowBias', light.shadowBias);
+      setField('lightShadowStrength', light.shadowStrength);
+      setField('lightShadowDistance', light.shadowDistance);
+      setField('lightShadowExtent', light.shadowExtent);
+    }
+
+    function pushLightProperties() {
+      if (!currentId) return;
+      const payload = {
+        id: currentId,
+        type: parseInt(document.getElementById('lightType').value),
+        r: getNumber('lightR'),
+        g: getNumber('lightG'),
+        b: getNumber('lightB'),
+        intensity: getNumber('lightIntensity'),
+        range: getNumber('lightRange'),
+        dirX: getNumber('lightDirX'),
+        dirY: getNumber('lightDirY'),
+        dirZ: getNumber('lightDirZ'),
+        castShadows: getCheckbox('lightCastShadows'),
+        shadowBias: getNumber('lightShadowBias'),
+        shadowStrength: getNumber('lightShadowStrength'),
+        shadowDistance: getNumber('lightShadowDistance'),
+        shadowExtent: getNumber('lightShadowExtent')
+      };
+      const r = window.hep.callCpp('light.set', payload);
+      if (!r.ok) setStatus('Light update failed: ' + (r.error || 'error'));
+    }
+
+    function loadEnvironmentProperties() {
+      if (!currentId) return;
+      const res = window.hep.callCpp('environment.get', { id: currentId });
+      if (!res.ok || !res.environment) {
+        setStatus('Failed to load environment: ' + (res.error || 'error'));
+        return;
+      }
+      const env = res.environment;
+      setField('envType', env.type);
+      setField('envR', env.r);
+      setField('envG', env.g);
+      setField('envB', env.b);
+      setField('envHdriPath', env.hdriPath);
+      setField('envHdriIntensity', env.hdriIntensity);
+      setField('envEnableRenderDist', env.enableRenderDistance);
+      setField('envRenderDist', env.renderDistance);
+      setField('envInfiniteRenderDist', env.infiniteRenderDistance);
+      updateEnvDisplay();
+    }
+
+    function updateEnvDisplay() {
+      const type = parseInt(document.getElementById('envType').value);
+      const isSolid = type === 0;
+      document.getElementById('envColorProp').style.display = isSolid ? 'flex' : 'none';
+      document.getElementById('envHdriProp').style.display = isSolid ? 'none' : 'flex';
+      document.getElementById('envHdriIntensityProp').style.display = isSolid ? 'none' : 'flex';
+    }
+
+    function pushEnvironmentProperties() {
+      if (!currentId) return;
+      const payload = {
+        id: currentId,
+        type: parseInt(document.getElementById('envType').value),
+        r: getNumber('envR'),
+        g: getNumber('envG'),
+        b: getNumber('envB'),
+        hdriPath: document.getElementById('envHdriPath').value,
+        hdriIntensity: getNumber('envHdriIntensity'),
+        enableRenderDistance: getCheckbox('envEnableRenderDist'),
+        renderDistance: getNumber('envRenderDist'),
+        infiniteRenderDistance: getCheckbox('envInfiniteRenderDist')
+      };
+      const r = window.hep.callCpp('environment.set', payload);
+      if (!r.ok) setStatus('Environment update failed: ' + (r.error || 'error'));
+    }
+
+    function loadMeshProperties() {
+      if (!currentId) return;
+      const res = window.hep.callCpp('mesh.get', { id: currentId });
+      if (!res.ok || !res.mesh) {
+        setStatus('Failed to load mesh: ' + (res.error || 'error'));
+        return;
+      }
+      const mesh = res.mesh;
+      setField('meshVisible', mesh.visible);
+      setField('meshBackfaceCulling', mesh.backfaceCulling);
+      setField('meshAssetPath', mesh.meshAssetPath);
+
+      const assignedEl = document.getElementById('meshScriptAssigned');
+      const removeBtn = document.getElementById('meshRemoveScriptBtn');
+      const scriptPath = (mesh && mesh.scriptPath) ? String(mesh.scriptPath) : '';
+      const hasScript = !!(mesh && mesh.hasScript);
+
+      if (hasScript && scriptPath) {
+        assignedEl.textContent = 'Assigned: ' + scriptPath;
+        assignedEl.style.color = 'var(--accent)';
+        removeBtn.style.display = '';
+        // Keep the input in sync with what's actually assigned.
+        document.getElementById('meshScriptPath').value = scriptPath;
+      } else {
+        assignedEl.textContent = 'Not assigned';
+        assignedEl.style.color = 'var(--muted2)';
+        removeBtn.style.display = 'none';
+      }
+    }
+
+    function pushMeshProperties() {
+      if (!currentId) return;
+      const payload = {
+        id: currentId,
+        visible: getCheckbox('meshVisible'),
+        backfaceCulling: getCheckbox('meshBackfaceCulling')
+      };
+      const r = window.hep.callCpp('mesh.set', payload);
+      if (!r.ok) setStatus('Mesh update failed: ' + (r.error || 'error'));
+    }
+
+    function assignMeshScript() {
+      if (!currentId) return;
+      let scriptPath = (document.getElementById('meshScriptPath').value || '').trim();
+
+      // If the user hasn't typed anything, fall back to the asset browser selection.
+      if (!scriptPath) {
+        const sel = window.hep.callCpp('assets.get_selected', {});
+        if (sel && sel.ok && sel.path) {
+          scriptPath = String(sel.path || '').trim();
+          if (scriptPath) document.getElementById('meshScriptPath').value = scriptPath;
+        }
+      }
+
+      if (!scriptPath) {
+        setStatus('Select a .lua in Asset Browser, or type a path');
+        return;
+      }
+
+      if (!scriptPath.toLowerCase().endsWith('.lua')) {
+        setStatus('Selected asset is not a .lua script');
+        return;
+      }
+
+      const r = window.hep.callCpp('mesh.assign_script', { id: currentId, scriptPath: scriptPath });
+      if (!r.ok) {
+        setStatus('Script assignment failed: ' + (r.error || 'error'));
+      } else {
+        setStatus('Script assigned');
+        loadMeshProperties();
+      }
+    }
+
+    function removeMeshScript() {
+      if (!currentId) return;
+      const r = window.hep.callCpp('mesh.remove_script', { id: currentId });
+      if (!r.ok) {
+        setStatus('Remove script failed: ' + (r.error || 'error'));
+      } else {
+        setStatus('Script removed');
+        // Clear the input so Assign can re-use asset selection.
+        document.getElementById('meshScriptPath').value = '';
+        loadMeshProperties();
+      }
     }
 
     function pushRename() {
@@ -136,9 +531,105 @@
 
     function wire() {
       document.getElementById('name').addEventListener('change', () => { pushRename(); loadSelected(); });
+      
+      // Transform inputs
       ['px','py','pz','rx','ry','rz','sx','sy','sz'].forEach(id => {
         const el = document.getElementById(id);
         el.addEventListener('change', () => { pushTransform(); loadSelected(); });
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            pushTransform();
+            loadSelected();
+          }
+        });
+      });
+
+      // Light inputs
+      ['lightType', 'lightR', 'lightG', 'lightB', 'lightIntensity', 'lightRange', 
+       'lightDirX', 'lightDirY', 'lightDirZ', 'lightCastShadows', 
+       'lightShadowBias', 'lightShadowStrength', 'lightShadowDistance', 'lightShadowExtent'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', pushLightProperties);
+      });
+
+      // Environment inputs
+      document.getElementById('envType').addEventListener('change', () => {
+        updateEnvDisplay();
+        pushEnvironmentProperties();
+      });
+      ['envR', 'envG', 'envB', 'envHdriPath', 'envHdriIntensity', 
+       'envEnableRenderDist', 'envRenderDist', 'envInfiniteRenderDist'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', pushEnvironmentProperties);
+      });
+
+      // Mesh inputs
+      ['meshVisible', 'meshBackfaceCulling'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', pushMeshProperties);
+      });
+      document.getElementById('meshAssignScriptBtn').addEventListener('click', assignMeshScript);
+      document.getElementById('meshRemoveScriptBtn').addEventListener('click', removeMeshScript);
+
+      // Drag axis labels left/right to adjust values.
+      const axisSpans = document.querySelectorAll('.axis');
+      axisSpans.forEach(span => {
+        span.addEventListener('mousedown', (e) => {
+          if (!currentId) return;
+          e.preventDefault();
+
+          const prevCursor = document.body.style.cursor;
+          document.body.style.cursor = 'ew-resize';
+          const prevUserSelect = document.body.style.userSelect;
+          document.body.style.userSelect = 'none';
+
+          const input = span.nextElementSibling;
+          if (!input || input.tagName.toLowerCase() !== 'input') return;
+
+          const id = input.id || '';
+          let baseSpeed = 0.01;
+          if (id.startsWith('p')) baseSpeed = 0.02;
+          else if (id.startsWith('r')) baseSpeed = 0.2;
+          else if (id.startsWith('s')) baseSpeed = 0.01;
+
+          const startX = e.clientX;
+          const startVal = parseFloat(input.value);
+          const initial = isNaN(startVal) ? 0 : startVal;
+
+          let lastPush = 0;
+          function onMove(ev) {
+            const dx = ev.clientX - startX;
+            let mult = 1.0;
+            if (ev.shiftKey) mult = 0.1;
+            if (ev.ctrlKey) mult = 10.0;
+            const next = initial + (dx * baseSpeed * mult);
+            input.value = String(next);
+
+            const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+            if (now - lastPush > 33) {
+              lastPush = now;
+              if (id.startsWith('p') || id.startsWith('r') || id.startsWith('s')) {
+                pushTransform();
+              }
+            }
+          }
+
+          function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.style.cursor = prevCursor;
+            document.body.style.userSelect = prevUserSelect;
+            if (id.startsWith('p') || id.startsWith('r') || id.startsWith('s')) {
+              pushTransform();
+            }
+          }
+
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
       });
     }
 
@@ -147,10 +638,42 @@
       if (msg.name === 'selection.changed') {
         loadSelected();
       }
+      if (msg.name === 'assets.selected') {
+        const p = msg.payload || {};
+        const path = (p && p.path) ? String(p.path) : '';
+        // Only auto-fill if it's a lua script, and only when the mesh section is visible.
+        if (path && path.toLowerCase().endsWith('.lua')) {
+          const meshSection = document.getElementById('meshSection');
+          if (meshSection && meshSection.style.display !== 'none') {
+            document.getElementById('meshScriptPath').value = path;
+          }
+        }
+      }
+      if (msg.name === 'entity.transform') {
+        const p = msg.payload || {};
+        if (!p.id || p.id !== currentId) return;
+
+        const ae = document.activeElement;
+        const editing = ae && ae.tagName && ae.tagName.toLowerCase() === 'input' && (ae.id === 'name' || ['px','py','pz','rx','ry','rz','sx','sy','sz'].includes(ae.id));
+        if (editing) return;
+
+        setField('px', p.px);
+        setField('py', p.py);
+        setField('pz', p.pz);
+        setField('rx', p.rx);
+        setField('ry', p.ry);
+        setField('rz', p.rz);
+        setField('sx', p.sx);
+        setField('sy', p.sy);
+        setField('sz', p.sz);
+      }
     };
 
     window.hep.onReady(() => {
       window.hep.wireCollapsible(document.getElementById('transformHdr'), document.getElementById('transformBody'), 'details.transform.open');
+      window.hep.wireCollapsible(document.getElementById('lightHdr'), document.getElementById('lightBody'), 'details.light.open');
+      window.hep.wireCollapsible(document.getElementById('envHdr'), document.getElementById('envBody'), 'details.env.open');
+      window.hep.wireCollapsible(document.getElementById('meshHdr'), document.getElementById('meshBody'), 'details.mesh.open');
       document.getElementById('refreshBtn').onclick = loadSelected;
       wire();
       loadSelected();

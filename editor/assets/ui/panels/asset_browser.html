@@ -5,32 +5,476 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Asset Browser</title>
   <link rel="stylesheet" href="../ui_theme.css" />
+  <style>
+    .asset-browser {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .asset-browser-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: linear-gradient(#434b5d, var(--header));
+      border-bottom: 1px solid var(--border);
+    }
+
+    .asset-browser-title {
+      font-weight: 600;
+      font-size: var(--fontSize);
+    }
+
+    .asset-browser-toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .asset-browser-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: var(--panel2);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+
+    .search-box {
+      display: flex;
+      align-items: center;
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 6px 8px;
+      border: 1px solid var(--border2);
+      border-radius: calc(var(--radius) - 2px);
+      background: #242b37;
+      color: var(--text);
+      font-size: var(--fontSizeSmall);
+    }
+
+    .search-box input::placeholder {
+      color: var(--muted2);
+    }
+
+    .search-box input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(26, 163, 255, 0.35);
+    }
+
+    .sort-dropdown {
+      padding: 8px 10px;
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      background: #242b37;
+      color: var(--text);
+      font-size: var(--fontSizeSmall);
+      cursor: pointer;
+    }
+
+    .sort-dropdown:hover {
+      border-color: var(--border);
+    }
+
+    .asset-browser-content {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .asset-sidebar {
+      width: 240px;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      overflow-x: hidden;
+      flex-shrink: 0;
+    }
+
+    .asset-tree-item {
+      padding: 8px 12px;
+      cursor: pointer;
+      user-select: none;
+      font-size: var(--fontSizeSmall);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .asset-tree-item:hover {
+      background: var(--rowHover);
+    }
+
+    .asset-tree-item.is-selected {
+      background: var(--rowSel);
+      color: var(--accent);
+    }
+
+    .asset-tree-toggle {
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 10px;
+      flex-shrink: 0;
+    }
+
+    .asset-tree-toggle.no-children {
+      visibility: hidden;
+    }
+
+    .asset-tree-icon {
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      flex-shrink: 0;
+      color: var(--muted);
+    }
+
+    .asset-tree-name {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .asset-tree-children {
+      display: none;
+    }
+
+    .asset-tree-children.is-open {
+      display: block;
+    }
+
+    .asset-main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .asset-filter-bar {
+      display: flex;
+      gap: 6px;
+      padding: 10px 14px;
+      background: var(--panel2);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      flex-wrap: wrap;
+    }
+
+    .asset-filter-btn {
+      padding: 6px 14px;
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      background: transparent;
+      color: var(--text);
+      font-size: var(--fontSizeSmall);
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .asset-filter-btn:hover {
+      border-color: var(--border);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .asset-filter-btn.is-active {
+      border-color: var(--accent);
+      background: rgba(26, 163, 255, 0.15);
+      color: var(--accent);
+    }
+
+    .asset-grid {
+      flex: 1;
+      overflow: auto;
+      padding: 14px;
+      background: var(--panel);
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 12px;
+      align-content: start;
+    }
+
+    .asset-tile {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 0;
+      cursor: pointer;
+      user-select: none;
+      border-radius: var(--radius);
+      transition: background 0.1s;
+    }
+
+    .asset-tile:hover {
+      background: var(--rowHover);
+    }
+
+    .asset-tile.is-selected {
+      background: var(--rowSel);
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+
+    .asset-tile-thumbnail {
+      width: 100%;
+      aspect-ratio: 1;
+      background: #1a1e27;
+      border: 1px solid var(--border2);
+      border-radius: calc(var(--radius) - 2px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      color: var(--muted2);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .asset-tile-thumbnail img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .asset-tile-info {
+      padding: 0 6px 6px 6px;
+      min-width: 0;
+    }
+
+    .asset-tile-name {
+      font-size: var(--fontSizeTiny);
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .asset-tile-type {
+      font-size: 11px;
+      color: var(--muted2);
+    }
+
+    .asset-empty {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 200px;
+      color: var(--muted);
+      font-size: var(--fontSizeSmall);
+    }
+
+    .breadcrumb-bar {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      background: #262c37;
+      color: var(--muted);
+      font-size: var(--fontSizeSmall);
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .breadcrumb-part {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .breadcrumb-btn {
+      padding: 4px 8px;
+      border: none;
+      border-radius: calc(var(--radius) - 3px);
+      background: transparent;
+      color: var(--accent);
+      font-size: var(--fontSizeSmall);
+      font-family: var(--mono);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+
+    .breadcrumb-btn:hover {
+      background: rgba(26, 163, 255, 0.15);
+      border: none;
+    }
+
+    .breadcrumb-separator {
+      color: var(--muted2);
+      user-select: none;
+    }
+
+    .breadcrumb-path {
+      font-family: var(--mono);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .status-bar {
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+      background: var(--panel2);
+      color: var(--muted);
+      font-size: var(--fontSizeSmall);
+    }
+  </style>
 </head>
 <body>
-  <div class="ui-panel">
-    <div class="ui-header">
-      <div class="ui-title">Asset Browser</div>
-      <div class="ui-toolbar">
-        <button class="ui-btn ui-icon-btn" id="upBtn" title="Up">..</button>
-        <button class="ui-btn ui-icon-btn" id="refreshBtn" title="Refresh">R</button>
+  <div class="asset-browser">
+    <div class="asset-browser-header">
+      <div class="asset-browser-title">Content Browser</div>
+      <div class="asset-browser-toolbar">
+        <button class="ui-btn ui-icon-btn" id="refreshBtn" title="Refresh">🔄</button>
       </div>
     </div>
-    <div class="ui-pathbar">
-      <span style="color:var(--muted)">Path</span>
-      <span class="ui-path" id="path">.</span>
+
+    <div class="asset-browser-controls">
+      <div class="search-box">
+        <input type="text" id="searchInput" placeholder="Search Assets" />
+      </div>
+      <select class="sort-dropdown" id="sortDropdown">
+        <option value="name">Sort by: Name</option>
+        <option value="type">Sort by: Type</option>
+        <option value="date">Sort by: Date</option>
+      </select>
     </div>
-    <div class="ui-body">
-      <div class="ui-list" id="list"></div>
+
+    <div class="asset-browser-content">
+      <div class="asset-sidebar" id="sidebar"></div>
+      
+      <div class="asset-main">
+        <div class="breadcrumb-bar" id="breadcrumbBar">
+          <!-- Dynamically generated breadcrumb buttons -->
+        </div>
+
+        <div class="asset-filter-bar" id="filterBar"></div>
+
+        <div class="asset-grid" id="grid"></div>
+
+        <div class="status-bar" id="status">Loading…</div>
+      </div>
     </div>
-    <div class="ui-status" id="status">Loading…</div>
   </div>
 
   <script src="../ui_common.js"></script>
   <script>
     let currentPath = '.';
     let selectedRel = '';
+    let allEntries = [];
+    const folderNodes = {}; // path -> node
+    const rootNodePath = '.';
 
-    function setStatus(s) { document.getElementById('status').textContent = s; }
+    function normPath(p) {
+      if (!p || p === '/' || p === '') return '.';
+      if (p === '.') return '.';
+      if (p.startsWith('./')) p = p.slice(2);
+      while (p.endsWith('/')) p = p.slice(0, -1);
+      return p || '.';
+    }
+
+    function splitPath(p) {
+      p = normPath(p);
+      if (p === '.') return [];
+      return p.split('/').filter(Boolean);
+    }
+
+    function baseName(p) {
+      const parts = splitPath(p);
+      return parts.length ? parts[parts.length - 1] : 'Root';
+    }
+
+    function ensureFolderNode(path, name) {
+      path = normPath(path);
+      if (folderNodes[path]) {
+        if (name && !folderNodes[path].name) folderNodes[path].name = name;
+        return folderNodes[path];
+      }
+      folderNodes[path] = {
+        path,
+        name: name || baseName(path),
+        isDir: true,
+        expanded: false,
+        childrenLoaded: false,
+        children: [],
+        hasChildren: true,
+      };
+      return folderNodes[path];
+    }
+
+    function loadFolderChildren(node) {
+      if (!node || node.childrenLoaded) return;
+      const res = window.hep.callCpp('assets.list', { path: node.path });
+      if (!res || !res.ok) {
+        node.childrenLoaded = true;
+        node.children = [];
+        node.hasChildren = false;
+        return;
+      }
+
+      const entries = (res.entries || []).filter(e => e && e.rel);
+
+      const dirs = entries
+        .filter(e => e.dir)
+        .map(e => ({ name: e.name || '(unnamed)', path: normPath(e.rel || '.') }))
+        .filter(d => d.path !== '.')
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(d => ensureFolderNode(d.path, d.name));
+
+      const files = entries
+        .filter(e => !e.dir)
+        .map(e => ({
+          name: e.name || '(unnamed)',
+          path: normPath(e.rel || '.'),
+          isDir: false,
+          expanded: false,
+          childrenLoaded: true,
+          children: [],
+          hasChildren: false,
+        }))
+        .filter(f => f.path !== '.')
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      node.children = [...dirs, ...files];
+      node.childrenLoaded = true;
+      node.hasChildren = node.children.length > 0;
+    }
+
+    function setExpanded(path, expanded) {
+      const node = ensureFolderNode(path);
+      node.expanded = !!expanded;
+      if (node.expanded) {
+        loadFolderChildren(node);
+      }
+    }
+
+    function expandToPath(path) {
+      path = normPath(path);
+      setExpanded(rootNodePath, true);
+
+      let built = '.';
+      const parts = splitPath(path);
+      for (const part of parts) {
+        built = (built === '.') ? part : (built + '/' + part);
+        ensureFolderNode(built, part);
+        setExpanded(built, true);
+      }
+    }
 
     function extType(name) {
       const n = (name || '').toLowerCase();
@@ -45,58 +489,225 @@
       return ext.toUpperCase();
     }
 
-    function render(res) {
-      const list = document.getElementById('list');
-      list.innerHTML = '';
+    function getAssetIcon(name, isDir) {
+      if (isDir) return '📁';
+      const type = extType(name);
+      if (type === 'TEXTURE') return '🖼';
+      if (type === 'MESH') return '🔺';
+      if (type === 'SHADER') return '⚡';
+      if (type === 'LUA') return '📜';
+      if (type === 'CODE') return '💻';
+      return '📄';
+    }
 
-      if (!res || !res.ok) {
-        setStatus('Error');
-        document.getElementById('path').textContent = '(no assets root)';
-        const r = document.createElement('div');
-        r.className = 'ui-row';
-        r.innerHTML = '<div class="ui-row-left"><div class="ui-row-name">' + ((res && (res.error || res.raw)) ? (res.error || res.raw) : 'assets.list failed') + '</div></div>';
-        list.appendChild(r);
+    function setStatus(s) { document.getElementById('status').textContent = s; }
+
+    function renderSidebar() {
+      const sidebar = document.getElementById('sidebar');
+      sidebar.innerHTML = '';
+
+      const root = ensureFolderNode(rootNodePath, 'Root');
+      // Ensure the currently viewed path is expanded/visible.
+      expandToPath(currentPath);
+
+      function renderNode(node, depth) {
+        const itemEl = document.createElement('div');
+        const isDir = !!node.isDir;
+        const isSelected = isDir
+          ? (normPath(node.path) === normPath(currentPath))
+          : (normPath(node.path) === normPath(selectedRel));
+        itemEl.className = 'asset-tree-item' + (isSelected ? ' is-selected' : '');
+        itemEl.setAttribute('data-path', node.path);
+        itemEl.style.paddingLeft = (10 + depth * 14) + 'px';
+
+        const toggle = document.createElement('div');
+        toggle.className = 'asset-tree-toggle';
+        // If we've loaded and there are no children, hide the toggle.
+        const canHaveChildren = isDir && (node.hasChildren || !node.childrenLoaded);
+        if (!canHaveChildren) {
+          toggle.classList.add('no-children');
+          toggle.textContent = '';
+        } else {
+          toggle.textContent = node.expanded ? '▼' : '▶';
+        }
+
+        const icon = document.createElement('div');
+        icon.className = 'asset-tree-icon';
+        icon.textContent = getAssetIcon(node.name, isDir);
+
+        const name = document.createElement('div');
+        name.className = 'asset-tree-name';
+        name.textContent = node.name || baseName(node.path);
+
+        itemEl.appendChild(toggle);
+        itemEl.appendChild(icon);
+        itemEl.appendChild(name);
+
+        toggle.onclick = (e) => {
+          e.stopPropagation();
+          if (!canHaveChildren) return;
+          node.expanded = !node.expanded;
+          if (node.expanded) loadFolderChildren(node);
+          renderSidebar();
+        };
+
+        itemEl.onclick = () => {
+          if (isDir) {
+            refresh(node.path);
+          } else {
+            selectedRel = normPath(node.path);
+            window.hep.callCpp('assets.select', { path: selectedRel });
+            document.querySelectorAll('.asset-tile').forEach(t => t.classList.remove('is-selected'));
+            const tile = document.querySelector('.asset-tile[data-rel="' + selectedRel.replace(/"/g, '') + '"]');
+            if (tile) tile.classList.add('is-selected');
+            renderSidebar();
+          }
+        };
+
+        itemEl.ondblclick = () => {
+          if (!isDir) {
+            window.hep.callCpp('assets.open', { path: node.path });
+          }
+        };
+
+        sidebar.appendChild(itemEl);
+
+        if (isDir && node.expanded) {
+          loadFolderChildren(node);
+          for (const child of (node.children || [])) {
+            renderNode(child, depth + 1);
+          }
+        }
+      }
+
+      renderNode(root, 0);
+
+      // Try to keep the current selection visible.
+      requestAnimationFrame(() => {
+        const sel = sidebar.querySelector('.asset-tree-item.is-selected');
+        if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: 'nearest' });
+      });
+    }
+
+    function renderBreadcrumb() {
+      const breadcrumbBar = document.getElementById('breadcrumbBar');
+      breadcrumbBar.innerHTML = '';
+
+      // Root button
+      const rootBtn = document.createElement('button');
+      rootBtn.className = 'breadcrumb-btn';
+      rootBtn.textContent = 'Root';
+      rootBtn.onclick = () => refresh('.');
+      breadcrumbBar.appendChild(rootBtn);
+
+      // Build path parts
+      if (currentPath !== '.' && currentPath !== '') {
+        const parts = splitPath(currentPath);
+        const builtPaths = [];
+        let builtPath = '';
+
+        // First pass: build all paths
+        parts.forEach((part) => {
+          builtPath = builtPath ? (builtPath + '/' + part) : part;
+          builtPaths.push(builtPath);
+        });
+
+        // Second pass: render buttons with captured paths
+        parts.forEach((part, idx) => {
+          const separator = document.createElement('span');
+          separator.className = 'breadcrumb-separator';
+          separator.textContent = '/';
+          breadcrumbBar.appendChild(separator);
+
+          const btn = document.createElement('button');
+          btn.className = 'breadcrumb-btn';
+          btn.textContent = part;
+          const pathForButton = builtPaths[idx]; // Capture in a new variable
+          btn.onclick = () => refresh(pathForButton);
+          breadcrumbBar.appendChild(btn);
+        });
+      }
+    }
+    function renderGrid(entries) {
+      const grid = document.getElementById('grid');
+      grid.innerHTML = '';
+
+      if (!entries || entries.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'asset-empty';
+        empty.textContent = 'No assets found';
+        grid.appendChild(empty);
         return;
       }
 
-      currentPath = res.path || '.';
-      document.getElementById('path').textContent = currentPath;
-      setStatus((res.entries ? res.entries.length : 0) + ' items');
+      entries.forEach(e => {
+        const tile = document.createElement('div');
+        tile.className = 'asset-tile' + (e.rel === selectedRel ? ' is-selected' : '');
+        tile.setAttribute('data-rel', e.rel || '');
 
-      // Up navigation
-      if (currentPath !== '.' && currentPath !== '' && currentPath !== '/') {
-        // (Also wired via toolbar button)
-      }
+        const thumbnail = document.createElement('div');
+        thumbnail.className = 'asset-tile-thumbnail';
+        thumbnail.textContent = getAssetIcon(e.name, e.dir);
 
-      (res.entries || []).forEach(e => {
-        const row = document.createElement('div');
-        row.className = 'ui-row' + (e.rel === selectedRel ? ' is-selected' : '');
+        const info = document.createElement('div');
+        info.className = 'asset-tile-info';
 
-        const left = document.createElement('div');
-        left.className = 'ui-row-left';
+        const tileName = document.createElement('div');
+        tileName.className = 'asset-tile-name';
+        tileName.textContent = e.name;
 
-        const name = document.createElement('div');
-        name.className = 'ui-row-name';
-        name.textContent = e.name || '(unnamed)';
+        const type = document.createElement('div');
+        type.className = 'asset-tile-type';
+        type.textContent = e.dir ? 'Folder' : extType(e.name);
 
-        const badge = document.createElement('div');
-        badge.className = 'ui-badge';
-        badge.textContent = e.dir ? 'DIR' : extType(e.name);
+        info.appendChild(tileName);
+        info.appendChild(type);
 
-        left.appendChild(name);
-        left.appendChild(badge);
-        row.appendChild(left);
+        tile.appendChild(thumbnail);
+        tile.appendChild(info);
 
-        row.onclick = () => {
+        tile.onmousedown = (evt) => { evt.preventDefault(); };
+        tile.ondragstart = () => false;
+
+        tile.onclick = () => {
           selectedRel = e.rel;
+          window.hep.callCpp('assets.select', { path: selectedRel });
+          document.querySelectorAll('.asset-tile').forEach(t => t.classList.remove('is-selected'));
+          tile.classList.add('is-selected');
+        };
+
+        tile.ondblclick = () => {
           if (e.dir) {
             refresh(e.rel);
           } else {
-            render(res);
+            window.hep.callCpp('assets.open', { path: e.rel });
           }
         };
-        list.appendChild(row);
+
+        grid.appendChild(tile);
       });
+    }
+
+    function render(res) {
+      if (!res || !res.ok) {
+        setStatus('Error');
+        const grid = document.getElementById('grid');
+        grid.innerHTML = '<div class="asset-empty">' + ((res && (res.error || res.raw)) ? (res.error || res.raw) : 'assets.list failed') + '</div>';
+        return;
+      }
+
+      currentPath = normPath(res.path || '.');
+      allEntries = res.entries || [];
+
+      // Keep the tree in sync as the user navigates via grid/double-click.
+      ensureFolderNode(currentPath, baseName(currentPath));
+      expandToPath(currentPath);
+
+      renderBreadcrumb();
+      renderSidebar();
+      renderGrid(allEntries);
+
+      setStatus((allEntries.length) + ' items');
     }
 
     function refresh(path) {
@@ -108,20 +719,36 @@
       // No events yet.
     };
 
-    function goUp() {
-      if (currentPath === '.' || !currentPath) {
-        refresh('.');
-        return;
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      const query = e.target.value.toLowerCase();
+      const filtered = allEntries.filter(entry => 
+        entry.name.toLowerCase().includes(query)
+      );
+      renderGrid(filtered);
+      setStatus(filtered.length + ' items');
+    });
+
+    document.getElementById('sortDropdown').addEventListener('change', (e) => {
+      const sortType = e.target.value;
+      let sorted = [...allEntries];
+      
+      if (sortType === 'name') {
+        sorted.sort((a, b) => a.name.localeCompare(b.name));
+      } else if (sortType === 'type') {
+        sorted.sort((a, b) => extType(a.name).localeCompare(extType(b.name)));
+      } else if (sortType === 'date') {
+        // Would need date metadata from backend
       }
-      const parts = currentPath.split('/').filter(Boolean);
-      parts.pop();
-      const parent = parts.length ? parts.join('/') : '.';
-      refresh(parent);
-    }
+      
+      renderGrid(sorted);
+    });
 
     window.hep.onReady(() => {
       document.getElementById('refreshBtn').onclick = () => refresh(currentPath);
-      document.getElementById('upBtn').onclick = goUp;
+      // Seed the tree with root children so the sidebar isn't empty.
+      const root = ensureFolderNode(rootNodePath, 'Root');
+      root.expanded = true;
+      loadFolderChildren(root);
       refresh('.');
     });
   </script>

@@ -8,6 +8,8 @@
 
 #include <memory>
 #include <filesystem>
+#include <functional>
+#include <string>
 
 #include <vulkan/vulkan.h>
 
@@ -29,6 +31,11 @@ public:
   void SetDetailsLockedFlag(bool* detailsLocked);
   void SetAssetsRoot(std::filesystem::path assetsRoot);
 
+  // Callback for when an asset is opened. Called with the asset path.
+  using AssetOpenCallback = std::function<void(const std::filesystem::path&)>;
+  void SetAssetOpenCallback(AssetOpenCallback callback);
+  void SetAssetCreateCallback(AssetOpenCallback callback);
+
   // Update Ultralight and upload panel textures.
   void UpdateAndSync(float dt);
 
@@ -48,7 +55,16 @@ private:
   Scene* scene_ = nullptr;
   bool* detailsLocked_ = nullptr;
   std::filesystem::path assetsRoot_;
+  std::string lastSelectedAssetRel_;
   uint32_t lastSelectedId_ = 0;
+
+  // Last transform pushed to the UI for the current selection.
+  uint32_t lastTransformId_ = 0;
+  float lastTransform_[9] = {0};
+  bool hasLastTransform_ = false;
+
+  AssetOpenCallback assetOpenCallback_;
+  AssetOpenCallback assetCreateCallback_;
 
   ultralight::RefPtr<ultralight::Renderer> renderer_;
 

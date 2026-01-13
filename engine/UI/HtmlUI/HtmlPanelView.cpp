@@ -11,6 +11,7 @@
 
 #include <Ultralight/Bitmap.h>
 #include <Ultralight/MouseEvent.h>
+#include <Ultralight/KeyEvent.h>
 #include <Ultralight/Renderer.h>
 #include <Ultralight/ScrollEvent.h>
 #include <Ultralight/View.h>
@@ -45,6 +46,9 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
 
   // State for mouse button transitions
   bool lastMouseDown = false;
+
+  // Whether this view currently owns keyboard focus
+  bool focused = false;
 
   void EnsureTextureCreated() {
     if (texture)
@@ -108,6 +112,43 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
     evt.y = y;
     evt.button = button;
     view->FireMouseEvent(evt);
+  }
+
+  static unsigned BuildUltralightModifiers(const ImGuiIO& io) {
+    unsigned mods = 0;
+    if (io.KeyAlt)
+      mods |= ultralight::KeyEvent::kMod_AltKey;
+    if (io.KeyCtrl)
+      mods |= ultralight::KeyEvent::kMod_CtrlKey;
+    if (io.KeyShift)
+      mods |= ultralight::KeyEvent::kMod_ShiftKey;
+    if (io.KeySuper)
+      mods |= ultralight::KeyEvent::kMod_MetaKey;
+    return mods;
+  }
+
+  void FireKeyRaw(ultralight::KeyEvent::Type type, int virtualKeyCode, int nativeKeyCode, unsigned modifiers) {
+    if (!view)
+      return;
+    ultralight::KeyEvent evt;
+    evt.type = type;
+    evt.virtual_key_code = virtualKeyCode;
+    evt.native_key_code = nativeKeyCode;
+    evt.modifiers = modifiers;
+    ultralight::GetKeyIdentifierFromVirtualKeyCode(evt.virtual_key_code, evt.key_identifier);
+    evt.is_system_key = false;
+    view->FireKeyEvent(evt);
+  }
+
+  void FireChar(char32_t codepoint) {
+    if (!view)
+      return;
+    ultralight::KeyEvent evt;
+    evt.type = ultralight::KeyEvent::kType_Char;
+    ultralight::String text = ultralight::String32((const char32_t*)&codepoint, 1);
+    evt.text = text;
+    evt.unmodified_text = text;
+    view->FireKeyEvent(evt);
   }
 
   void FireScroll(int x, int y, int dx, int dy) {
@@ -381,7 +422,19 @@ void HtmlPanelView::HandleImGuiInput() {
   bool hovered = (mouse.x >= impl_->lastMin.x && mouse.x <= impl_->lastMax.x &&
                   mouse.y >= impl_->lastMin.y && mouse.y <= impl_->lastMax.y);
 
-  if (!hovered)
+  // Focus management: click inside to focus, click outside to unfocus.
+  if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (hovered) {
+      impl_->focused = true;
+      impl_->view->Focus();
+    } else if (impl_->focused) {
+      impl_->focused = false;
+      impl_->view->Unfocus();
+    }
+  }
+
+  // If not hovered and not focused, do nothing.
+  if (!hovered && !impl_->focused)
     return;
 
   const float w = std::max(1.0f, impl_->lastMax.x - impl_->lastMin.x);
@@ -393,36 +446,89 @@ void HtmlPanelView::HandleImGuiInput() {
   const int localX = static_cast<int>(std::clamp(localXf, 0.0f, static_cast<float>(impl_->width - 1)));
   const int localY = static_cast<int>(std::clamp(localYf, 0.0f, static_cast<float>(impl_->height - 1)));
 
-  // Mouse move
-  impl_->FireMouse(ultralight::MouseEvent::kType_MouseMoved,
-                   localX,
-                   localY,
-                   ultralight::MouseEvent::kButton_None);
+  // Mouse/scroll only when hovered (keyboard can be focused without hover).
+  if (hovered) {
+    // Mouse move
+    impl_->FireMouse(ultralight::MouseEvent::kType_MouseMoved,
+                     localX,
+                     localY,
+                     ultralight::MouseEvent::kButton_None);
 
-  // Left button
-  bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-  if (down && !impl_->lastMouseDown) {
-    impl_->FireMouse(ultralight::MouseEvent::kType_MouseDown,
-                     localX,
-                     localY,
-                     ultralight::MouseEvent::kButton_Left);
-  } else if (!down && impl_->lastMouseDown) {
-    impl_->FireMouse(ultralight::MouseEvent::kType_MouseUp,
-                     localX,
-                     localY,
-                     ultralight::MouseEvent::kButton_Left);
+    // Left button
+    bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    if (down && !impl_->lastMouseDown) {
+      impl_->FireMouse(ultralight::MouseEvent::kType_MouseDown,
+                       localX,
+                       localY,
+                       ultralight::MouseEvent::kButton_Left);
+    } else if (!down && impl_->lastMouseDown) {
+      impl_->FireMouse(ultralight::MouseEvent::kType_MouseUp,
+                       localX,
+                       localY,
+                       ultralight::MouseEvent::kButton_Left);
+    }
+    impl_->lastMouseDown = down;
+
+    // Scroll
+    ImVec2 wheel = ImGui::GetIO().MouseWheelH != 0 || ImGui::GetIO().MouseWheel != 0
+                       ? ImVec2(ImGui::GetIO().MouseWheelH, ImGui::GetIO().MouseWheel)
+                       : ImVec2(0, 0);
+    if (wheel.x != 0.0f || wheel.y != 0.0f) {
+      // ImGui wheel is lines, not pixels; scale a bit.
+      const int dx = static_cast<int>(wheel.x * 60.0f);
+      const int dy = static_cast<int>(wheel.y * 60.0f);
+      impl_->FireScroll(localX, localY, dx, dy);
+    }
   }
-  impl_->lastMouseDown = down;
 
-  // Scroll
-  ImVec2 wheel = ImGui::GetIO().MouseWheelH != 0 || ImGui::GetIO().MouseWheel != 0
-                     ? ImVec2(ImGui::GetIO().MouseWheelH, ImGui::GetIO().MouseWheel)
-                     : ImVec2(0, 0);
-  if (wheel.x != 0.0f || wheel.y != 0.0f) {
-    // ImGui wheel is lines, not pixels; scale a bit.
-    const int dx = static_cast<int>(wheel.x * 60.0f);
-    const int dy = static_cast<int>(wheel.y * 60.0f);
-    impl_->FireScroll(localX, localY, dx, dy);
+  // Keyboard + text input when focused.
+  if (impl_->focused) {
+    ImGuiIO& io = ImGui::GetIO();
+    const unsigned mods = HtmlPanelView::Impl::BuildUltralightModifiers(io);
+
+    auto sendKey = [&](ImGuiKey key, int ulVKey) {
+      if (ImGui::IsKeyPressed(key, true)) {
+        impl_->FireKeyRaw(ultralight::KeyEvent::kType_RawKeyDown, ulVKey, 0, mods);
+
+        // Synthesize Char events for Enter/Tab like Ultralight samples.
+        if (ulVKey == ultralight::KeyCodes::GK_RETURN) {
+          impl_->FireChar(U'\r');
+        } else if (ulVKey == ultralight::KeyCodes::GK_TAB) {
+          impl_->FireChar(U'\t');
+        }
+      }
+      if (ImGui::IsKeyReleased(key)) {
+        impl_->FireKeyRaw(ultralight::KeyEvent::kType_KeyUp, ulVKey, 0, mods);
+      }
+    };
+
+    sendKey(ImGuiKey_Backspace, ultralight::KeyCodes::GK_BACK);
+    sendKey(ImGuiKey_Delete, ultralight::KeyCodes::GK_DELETE);
+    sendKey(ImGuiKey_Enter, ultralight::KeyCodes::GK_RETURN);
+    sendKey(ImGuiKey_KeypadEnter, ultralight::KeyCodes::GK_RETURN);
+    sendKey(ImGuiKey_Tab, ultralight::KeyCodes::GK_TAB);
+    sendKey(ImGuiKey_Escape, ultralight::KeyCodes::GK_ESCAPE);
+    sendKey(ImGuiKey_LeftArrow, ultralight::KeyCodes::GK_LEFT);
+    sendKey(ImGuiKey_RightArrow, ultralight::KeyCodes::GK_RIGHT);
+    sendKey(ImGuiKey_UpArrow, ultralight::KeyCodes::GK_UP);
+    sendKey(ImGuiKey_DownArrow, ultralight::KeyCodes::GK_DOWN);
+    sendKey(ImGuiKey_Home, ultralight::KeyCodes::GK_HOME);
+    sendKey(ImGuiKey_End, ultralight::KeyCodes::GK_END);
+
+    // Basic clipboard accelerators (Ctrl+A/C/V/X)
+    sendKey(ImGuiKey_A, ultralight::KeyCodes::GK_A);
+    sendKey(ImGuiKey_C, ultralight::KeyCodes::GK_C);
+    sendKey(ImGuiKey_V, ultralight::KeyCodes::GK_V);
+    sendKey(ImGuiKey_X, ultralight::KeyCodes::GK_X);
+
+    // Send text input
+    for (int n = 0; n < io.InputQueueCharacters.Size; n++) {
+      ImWchar c = io.InputQueueCharacters[n];
+      if (c == 0)
+        continue;
+      impl_->FireChar(static_cast<char32_t>(c));
+    }
+    io.InputQueueCharacters.resize(0);
   }
 }
 

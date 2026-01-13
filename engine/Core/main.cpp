@@ -89,6 +89,9 @@ const std::vector<const char *> validationLayers = {
 
 #if HEPHAESTUS_EDITOR_HTML_UI
 static std::unique_ptr<Hephaestus::HtmlUI::HtmlEditorUIHost> g_HtmlEditorUIHost;
+
+// When using the HTML UI, asset browser actions are delivered via the bridge.
+static std::optional<std::filesystem::path> g_HtmlPendingAssetOpenRequest;
 #endif
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
@@ -1242,6 +1245,114 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
   return actions;
 }
 
+// Helper function to draw draggable XYZ controls
+static bool DragFloat3XYZ(const char* label, float* values, float speed = 0.1f, float min = -999999.0f, float max = 999999.0f) {
+  bool changed = false;
+  
+  ImGui::PushID(label);
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted(label);
+  ImGui::SameLine();
+  
+  float buttonWidth = 20.0f;
+  float spacing = ImGui::GetStyle().ItemSpacing.x;
+  float availWidth = ImGui::GetContentRegionAvail().x;
+  float inputWidth = (availWidth - (spacing * 2.0f) - (buttonWidth * 3.0f)) / 3.0f;
+
+  struct AxisDragState {
+    ImGuiID id = 0;
+    float startMouseX = 0.0f;
+    float startValue = 0.0f;
+    bool active = false;
+  };
+
+  static AxisDragState s_axisDrag;
+
+  auto dragAxisButton = [&](const char* buttonId, const char* axisText, const ImVec4& baseCol,
+                            const ImVec4& hoverCol, float& axisValue) {
+    ImGui::PushStyleColor(ImGuiCol_Button, baseCol);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoverCol);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, hoverCol);
+    ImGui::Button(buttonId, ImVec2(buttonWidth, 0));
+    ImGui::PopStyleColor(3);
+
+    const ImGuiID itemId = ImGui::GetItemID();
+
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+      ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+      ImGui::SetTooltip("%s: drag left/right to adjust", axisText);
+    }
+
+    const ImGuiIO& io = ImGui::GetIO();
+
+    if (ImGui::IsItemActivated()) {
+      s_axisDrag.id = itemId;
+      s_axisDrag.startMouseX = io.MousePos.x;
+      s_axisDrag.startValue = axisValue;
+      s_axisDrag.active = true;
+    }
+
+    if (ImGui::IsItemDeactivated()) {
+      if (s_axisDrag.id == itemId) {
+        s_axisDrag.active = false;
+      }
+    }
+
+    if (ImGui::IsItemActive() && s_axisDrag.active && s_axisDrag.id == itemId) {
+      float multiplier = 1.0f;
+      if (io.KeyShift) {
+        multiplier = 0.1f;
+      } else if (io.KeyCtrl) {
+        multiplier = 10.0f;
+      }
+
+      const float dx = (io.MousePos.x - s_axisDrag.startMouseX);
+      float newValue = s_axisDrag.startValue + (dx * speed * multiplier);
+      newValue = std::clamp(newValue, min, max);
+
+      if (newValue != axisValue) {
+        axisValue = newValue;
+        changed = true;
+      }
+    }
+  };
+  
+  // X
+  dragAxisButton("X##XButton", "X", ImVec4(0.8f, 0.2f, 0.2f, 0.5f), ImVec4(0.8f, 0.2f, 0.2f, 0.8f), values[0]);
+  
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(inputWidth);
+  if (ImGui::DragFloat("##X", &values[0], speed, min, max, "%.3f")) {
+    changed = true;
+  }
+  
+  ImGui::SameLine();
+  
+  // Y
+  dragAxisButton("Y##YButton", "Y", ImVec4(0.2f, 0.8f, 0.2f, 0.5f), ImVec4(0.2f, 0.8f, 0.2f, 0.8f), values[1]);
+  
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(inputWidth);
+  if (ImGui::DragFloat("##Y", &values[1], speed, min, max, "%.3f")) {
+    changed = true;
+  }
+  
+  ImGui::SameLine();
+  
+  // Z
+  dragAxisButton("Z##ZButton", "Z", ImVec4(0.2f, 0.2f, 0.8f, 0.5f), ImVec4(0.2f, 0.2f, 0.8f, 0.8f), values[2]);
+  
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(inputWidth);
+  if (ImGui::DragFloat("##Z", &values[2], speed, min, max, "%.3f")) {
+    changed = true;
+  }
+  
+  ImGui::PopID();
+  
+  return changed;
+}
+
 static DetailsPanelActions DrawDetailsPanel(Scene &scene,
                                             ScriptEngine &scriptEngine,
                                             VulkanSkybox &skybox,
@@ -1276,12 +1387,16 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
   ImGui::Text("%s", tag.tag.c_str());
 
   ImGui::SeparatorText("Transform");
-  ImGui::DragFloat3("Position", &transform.position.x, 0.1f);
+  if (DragFloat3XYZ("Position", &transform.position.x, 0.1f)) {
+    // Position changed
+  }
   Vec3 rotDeg = transform.GetRotationDegrees();
-  if (ImGui::DragFloat3("Rotation", &rotDeg.x, 1.0f)) {
+  if (DragFloat3XYZ("Rotation", &rotDeg.x, 1.0f)) {
     transform.SetRotationDegrees(rotDeg);
   }
-  ImGui::DragFloat3("Scale", &transform.scale.x, 0.01f, 0.01f, 10.0f);
+  if (DragFloat3XYZ("Scale", &transform.scale.x, 0.01f, 0.01f, 10.0f)) {
+    // Scale changed
+  }
 
   // Environment Component
   if (selectedEntity.HasComponent<EnvironmentComponent>()) {
@@ -7215,6 +7330,13 @@ int main(int argc, char *argv[]) {
       g_HtmlEditorUIHost =
           std::make_unique<Hephaestus::HtmlUI::HtmlEditorUIHost>();
       g_HtmlEditorUIHost->Init(&vkdev, imguiPool);
+
+      // Set up asset callbacks (handled in the main loop so we can reuse the
+      // same scene/material open logic and status messages).
+      g_HtmlEditorUIHost->SetAssetOpenCallback(
+          [](const std::filesystem::path& path) {
+            g_HtmlPendingAssetOpenRequest = path;
+          });
     }
 #endif
   } // end if (!g_RuntimeMode)
@@ -7683,6 +7805,23 @@ int main(int argc, char *argv[]) {
 
         AssetBrowserResult browserResult =
             DrawAssetBrowserPanel(assetBrowserStatus);
+
+#if HEPHAESTUS_EDITOR_HTML_UI
+        if (g_HtmlPendingAssetOpenRequest) {
+          std::filesystem::path openedPath = *g_HtmlPendingAssetOpenRequest;
+          g_HtmlPendingAssetOpenRequest.reset();
+
+          if (IsSceneFile(openedPath)) {
+            browserResult.sceneOpenRequest = openedPath;
+          } else if (IsMaterialFile(openedPath)) {
+            browserResult.materialOpenRequest = openedPath;
+          } else if (IsScriptFile(openedPath)) {
+            OpenFileInPreferredIDE(openedPath);
+            assetBrowserStatus = "Opening '" + openedPath.filename().string() +
+                                "' in your default IDE...";
+          }
+        }
+#endif
         if (browserResult.modelImportRequest) {
           pendingAssetImport = browserResult.modelImportRequest;
         }

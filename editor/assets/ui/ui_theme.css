@@ -257,6 +257,8 @@ body {
   font-size: var(--fontSizeTiny);
   font-weight: 700;
   color: #0b0b0c;
+  cursor: ew-resize;
+  user-select: none;
 }
 
 .axis.x { background: #ff5a5a; }
