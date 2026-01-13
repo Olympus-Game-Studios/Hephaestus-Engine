@@ -775,6 +775,10 @@ static void BeginHephaestusDockspace() {
     ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down,
                                                      0.36f, nullptr, &dockMain);
 
+    ImGuiID dockAddActors = ImGui::DockBuilderSplitNode(
+        dockLeft, ImGuiDir_Left, 0.46f, nullptr, &dockLeft);
+
+    ImGui::DockBuilderDockWindow("Add Actors", dockAddActors);
     ImGui::DockBuilderDockWindow("World Outliner", dockLeft);
     ImGui::DockBuilderDockWindow("Details", dockRight);
     ImGui::DockBuilderDockWindow("Asset Browser", dockBottom);
@@ -987,6 +991,20 @@ static WorldOutlinerActions DrawActorPalette() {
   return actions;
 }
 
+static WorldOutlinerActions DrawAddActorsPanel() {
+  WorldOutlinerActions actions{};
+
+  if (!ImGui::Begin("Add Actors")) {
+    ImGui::End();
+    return actions;
+  }
+
+  actions = DrawActorPalette();
+
+  ImGui::End();
+  return actions;
+}
+
 static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
   WorldOutlinerActions actions{};
 
@@ -1010,15 +1028,7 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
   constexpr const char *kAddEntityPopupId =
       "Add Entity###WorldOutlinerAddEntity";
 
-  // Split the window: top half for outliner, bottom half for actor palette
-  float windowHeight = ImGui::GetContentRegionAvail().y;
-  float outlinerHeight = windowHeight * 0.5f;
-  float paletteHeight =
-      windowHeight - outlinerHeight - ImGui::GetStyle().ItemSpacing.y;
-
-  // === TOP SECTION: World Outliner ===
-  if (ImGui::BeginChild("##WorldOutlinerSection", ImVec2(0, outlinerHeight),
-                        false)) {
+  if (ImGui::BeginChild("##WorldOutlinerSection", ImVec2(0, 0), false)) {
     float availableWidth = ImGui::GetContentRegionAvail().x;
     const ImGuiStyle &s = ImGui::GetStyle();
     float filterWidth =
@@ -1234,12 +1244,6 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
     }
   }
   ImGui::EndChild();
-
-  // === BOTTOM SECTION: Actor Palette ===
-  WorldOutlinerActions paletteActions = DrawActorPalette();
-  if (paletteActions.spawnRequest) {
-    actions.spawnRequest = paletteActions.spawnRequest;
-  }
 
   ImGui::End();
   return actions;
@@ -7267,6 +7271,23 @@ int main(int argc, char *argv[]) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+
+    // Custom Style: Dark Blues and Greys
+    ImGui::StyleColorsDark();
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+    
+    // Customized colors for a dark blue-grey look
+    colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.07f, 0.09f, 1.00f);
+    colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.09f, 0.11f, 0.94f);
+    colors[ImGuiCol_FrameBg] = ImVec4(0.10f, 0.11f, 0.13f, 0.54f);
+    colors[ImGuiCol_TitleBg] = ImVec4(0.04f, 0.05f, 0.06f, 1.00f);
+    colors[ImGuiCol_TitleBgActive] = ImVec4(0.06f, 0.07f, 0.09f, 1.00f);
+    colors[ImGuiCol_MenuBarBg] = ImVec4(0.14f, 0.15f, 0.17f, 1.00f);
+    colors[ImGuiCol_Header] = ImVec4(0.20f, 0.22f, 0.27f, 1.00f);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.25f, 0.28f, 0.33f, 1.00f);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.18f, 0.20f, 0.25f, 1.00f);
+
     // Ensure ImGuizmo uses the same ImGui context
     ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
     ImNodes::CreateContext();
@@ -7544,6 +7565,10 @@ int main(int argc, char *argv[]) {
 
         // Draw docked panels first
         WorldOutlinerActions outlinerActions = DrawWorldOutliner(scene);
+        WorldOutlinerActions addActorsActions = DrawAddActorsPanel();
+        if (!outlinerActions.spawnRequest && addActorsActions.spawnRequest) {
+          outlinerActions.spawnRequest = addActorsActions.spawnRequest;
+        }
         if (outlinerActions.newLevelName) {
           if (gizmoDragging) {
             gizmoDragging = false;

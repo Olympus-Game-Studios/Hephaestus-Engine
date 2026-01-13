@@ -6,23 +6,23 @@
   --fontSizeTiny: 13px;
   --radius: 6px;
 
-  /* Lighter, higher-contrast Slate-ish palette */
-  --bg: #1e222a;
-  --panel: #2a2f39;
-  --panel2: #313744;
-  --header: #3a4150;
-  --border: #414a5c;
-  --border2: #4b566c;
-  --text: #eef2f7;
-  --muted: #b7c2d4;
-  --muted2: #95a3ba;
-  --accent: #1aa3ff;
-  --accent2: #ffb000;
-  --danger: #ff4d4d;
+  /* Deep Blue / Dark Grey Palette */
+  --bg: #101216;
+  --panel: #1b1f27;
+  --panel2: #232833;
+  --header: #2a303d;
+  --border: #333a4a;
+  --border2: #3d4558;
+  --text: #e0e6ed;
+  --muted: #a0acbf;
+  --muted2: #7a8699;
+  --accent: #3b82f6; 
+  --accent2: #f59e0b;
+  --danger: #ef4444;
 
-  --row: #2d3442;
-  --rowHover: #364054;
-  --rowSel: #31465f;
+  --row: #1f232b;
+  --rowHover: #2a303d;
+  --rowSel: #333a4a;
 
   --font: -apple-system, Segoe UI, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;

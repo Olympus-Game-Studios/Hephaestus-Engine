@@ -831,10 +831,12 @@ void HtmlEditorUIHost::UpdateAndSync(float dt) {
   renderer_->Render();
 
   // Sync all panels.
-  if (outliner_) outliner_->SyncTextureToGpu();
-  if (details_) details_->SyncTextureToGpu();
-  if (assetBrowser_) assetBrowser_->SyncTextureToGpu();
-  if (logConsole_) logConsole_->SyncTextureToGpu();
+  // Only upload textures for panels that are actually visible. SyncTextureToGpu()
+  // currently does CPU-side format conversion plus a synchronous GPU upload.
+  if (outliner_ && outlinerVisible_) outliner_->SyncTextureToGpu();
+  if (details_ && detailsVisible_) details_->SyncTextureToGpu();
+  if (assetBrowser_ && assetBrowserVisible_) assetBrowser_->SyncTextureToGpu();
+  if (logConsole_ && logConsoleVisible_) logConsole_->SyncTextureToGpu();
 }
 
 void HtmlEditorUIHost::DrawDockedPanels() {
@@ -847,7 +849,9 @@ void HtmlEditorUIHost::DrawDockedPanels() {
 void HtmlEditorUIHost::DrawOutlinerPanel() {
   if (!outliner_)
     return;
+  outlinerVisible_ = false;
   if (ImGui::Begin("World Outliner")) {
+    outlinerVisible_ = true;
     ImVec2 avail = ImGui::GetContentRegionAvail();
     outliner_->Resize(static_cast<uint32_t>(std::max(1.0f, avail.x)),
                       static_cast<uint32_t>(std::max(1.0f, avail.y)));
@@ -860,7 +864,9 @@ void HtmlEditorUIHost::DrawOutlinerPanel() {
 void HtmlEditorUIHost::DrawDetailsPanel() {
   if (!details_)
     return;
+  detailsVisible_ = false;
   if (ImGui::Begin("Details")) {
+    detailsVisible_ = true;
     ImVec2 avail = ImGui::GetContentRegionAvail();
     details_->Resize(static_cast<uint32_t>(std::max(1.0f, avail.x)),
                      static_cast<uint32_t>(std::max(1.0f, avail.y)));
@@ -873,7 +879,9 @@ void HtmlEditorUIHost::DrawDetailsPanel() {
 void HtmlEditorUIHost::DrawAssetBrowserPanel() {
   if (!assetBrowser_)
     return;
+  assetBrowserVisible_ = false;
   if (ImGui::Begin("Asset Browser")) {
+    assetBrowserVisible_ = true;
     ImVec2 avail = ImGui::GetContentRegionAvail();
     assetBrowser_->Resize(static_cast<uint32_t>(std::max(1.0f, avail.x)),
                           static_cast<uint32_t>(std::max(1.0f, avail.y)));
@@ -886,7 +894,9 @@ void HtmlEditorUIHost::DrawAssetBrowserPanel() {
 void HtmlEditorUIHost::DrawLogConsolePanel() {
   if (!logConsole_)
     return;
+  logConsoleVisible_ = false;
   if (ImGui::Begin("Log Console")) {
+    logConsoleVisible_ = true;
     ImVec2 avail = ImGui::GetContentRegionAvail();
     logConsole_->Resize(static_cast<uint32_t>(std::max(1.0f, avail.x)),
                         static_cast<uint32_t>(std::max(1.0f, avail.y)));

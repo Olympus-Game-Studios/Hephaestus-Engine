@@ -74,6 +74,12 @@ private:
   std::unique_ptr<HtmlPanelView> details_;
   std::unique_ptr<HtmlPanelView> assetBrowser_;
   std::unique_ptr<HtmlPanelView> logConsole_;
+
+  // Tracks whether each host ImGui panel is currently visible (ie. not collapsed).
+  bool outlinerVisible_ = false;
+  bool detailsVisible_ = false;
+  bool assetBrowserVisible_ = false;
+  bool logConsoleVisible_ = false;
 };
 
 } // namespace Hephaestus::HtmlUI

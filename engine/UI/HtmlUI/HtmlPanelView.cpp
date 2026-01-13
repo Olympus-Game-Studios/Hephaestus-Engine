@@ -20,7 +20,9 @@
 #include <AppCore/JSHelpers.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 namespace Hephaestus::HtmlUI {
@@ -37,6 +39,22 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
   std::unique_ptr<VulkanTexture> texture;
   VkDescriptorSet imguiTextureSet = VK_NULL_HANDLE;
 
+  static constexpr uint32_t kUploadSlots = 3;
+  struct UploadSlot {
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    VulkanBuffer staging;
+    VkDeviceSize stagingSize = 0;
+    bool created = false;
+  };
+
+  std::array<UploadSlot, kUploadSlots> uploadSlots{};
+  uint32_t uploadSlotIndex = 0;
+
+  // Track current image layout for correct barriers.
+  VkImageLayout textureLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  VkFormat textureFormat = VK_FORMAT_B8G8R8A8_SRGB;
+
   uint32_t width = 0;
   uint32_t height = 0;
 
@@ -50,10 +68,102 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
   // Whether this view currently owns keyboard focus
   bool focused = false;
 
+  ~Impl() {
+    if (!vkdev || vkdev->device == VK_NULL_HANDLE)
+      return;
+
+    // Ensure no in-flight upload is still using our resources.
+    for (auto& slot : uploadSlots) {
+      if (slot.fence != VK_NULL_HANDLE) {
+        vkWaitForFences(vkdev->device, 1, &slot.fence, VK_TRUE, UINT64_MAX);
+      }
+    }
+
+    for (auto& slot : uploadSlots) {
+      if (slot.created) {
+        slot.staging.Destroy(vkdev->allocator);
+      }
+      if (slot.fence != VK_NULL_HANDLE) {
+        vkDestroyFence(vkdev->device, slot.fence, nullptr);
+        slot.fence = VK_NULL_HANDLE;
+      }
+    }
+
+    // Command buffers were allocated from the shared command pool.
+    // Free them after we're sure they are no longer in use.
+    std::array<VkCommandBuffer, kUploadSlots> bufs{};
+    uint32_t count = 0;
+    for (auto& slot : uploadSlots) {
+      if (slot.cmd != VK_NULL_HANDLE) {
+        bufs[count++] = slot.cmd;
+        slot.cmd = VK_NULL_HANDLE;
+      }
+    }
+    if (count > 0) {
+      vkFreeCommandBuffers(vkdev->device, vkdev->commandPool, count, bufs.data());
+    }
+  }
+
   void EnsureTextureCreated() {
     if (texture)
       return;
     texture = std::make_unique<VulkanTexture>();
+  }
+
+  void EnsureUploadSlotsCreated() {
+    if (!vkdev || vkdev->device == VK_NULL_HANDLE)
+      return;
+
+    bool anyMissing = false;
+    for (auto& slot : uploadSlots) {
+      if (slot.cmd == VK_NULL_HANDLE || slot.fence == VK_NULL_HANDLE) {
+        anyMissing = true;
+        break;
+      }
+    }
+    if (!anyMissing)
+      return;
+
+    // Create fences (signaled initially so first use doesn't block).
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    for (auto& slot : uploadSlots) {
+      if (slot.fence == VK_NULL_HANDLE) {
+        vkCreateFence(vkdev->device, &fenceInfo, nullptr, &slot.fence);
+      }
+    }
+
+    // Allocate command buffers.
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = vkdev->commandPool;
+    allocInfo.commandBufferCount = kUploadSlots;
+
+    std::array<VkCommandBuffer, kUploadSlots> allocated{};
+    if (vkAllocateCommandBuffers(vkdev->device, &allocInfo, allocated.data()) == VK_SUCCESS) {
+      for (uint32_t i = 0; i < kUploadSlots; ++i) {
+        uploadSlots[i].cmd = allocated[i];
+      }
+    }
+  }
+
+  UploadSlot& AcquireUploadSlot() {
+    EnsureUploadSlotsCreated();
+    UploadSlot& slot = uploadSlots[uploadSlotIndex % kUploadSlots];
+    uploadSlotIndex = (uploadSlotIndex + 1) % kUploadSlots;
+
+    if (vkdev && vkdev->device != VK_NULL_HANDLE && slot.fence != VK_NULL_HANDLE) {
+      // Wait only for this slot's previous upload, not the entire queue.
+      vkWaitForFences(vkdev->device, 1, &slot.fence, VK_TRUE, UINT64_MAX);
+      vkResetFences(vkdev->device, 1, &slot.fence);
+    }
+
+    if (vkdev && vkdev->device != VK_NULL_HANDLE && slot.cmd != VK_NULL_HANDLE) {
+      vkResetCommandBuffer(slot.cmd, 0);
+    }
+    return slot;
   }
 
   void EnsureImGuiDescriptor() {
@@ -172,6 +282,11 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
     if (!surface)
       return;
 
+    // Avoid re-uploading when nothing changed.
+    if (surface->dirty_bounds().IsEmpty() && texture && texture->image) {
+      return;
+    }
+
     ultralight::RefPtr<ultralight::Bitmap> bitmap = surface->bitmap();
     if (!bitmap)
       return;
@@ -191,15 +306,17 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
       // Create a texture we can upload to (transfer dst) and sample.
       // We keep it SRGB to match most UI assets.
       if (!texture->Create(vkdev->allocator, vkdev->device, w, h,
-                           VK_FORMAT_R8G8B8A8_SRGB,
+                           textureFormat,
                            VK_IMAGE_TILING_OPTIMAL,
                            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
         return;
       }
 
-      texture->CreateImageView(vkdev->device, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+      texture->CreateImageView(vkdev->device, textureFormat, VK_IMAGE_ASPECT_COLOR_BIT);
       texture->CreateSampler(vkdev->device, vkdev->physicalDevice);
+
+      textureLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
       // Reset descriptor set
       imguiTextureSet = VK_NULL_HANDLE;
@@ -209,47 +326,53 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
     const uint8_t* src = reinterpret_cast<const uint8_t*>(bitmap->raw_pixels());
     const uint32_t rowBytes = bitmap->row_bytes();
 
-    // Ultralight Bitmap is BGRA8 by default on desktop.
-    // Convert to RGBA8 in a tight buffer.
-    std::vector<uint8_t> rgba;
-    rgba.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
+    VkDeviceSize imageSize = static_cast<VkDeviceSize>(w) * h * 4;
 
+    UploadSlot& slot = AcquireUploadSlot();
+
+    // Ensure staging buffer capacity.
+    if (!slot.created || slot.stagingSize < imageSize) {
+      if (slot.created) {
+        slot.staging.Destroy(vkdev->allocator);
+      }
+      slot.staging.Create(vkdev->allocator,
+                          imageSize,
+                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                          VMA_MEMORY_USAGE_CPU_ONLY);
+      slot.stagingSize = imageSize;
+      slot.created = true;
+    }
+
+    // Pack rows tightly into staging buffer (Ultralight often has row padding).
+    void* mapped = nullptr;
+    vmaMapMemory(vkdev->allocator, slot.staging.allocation, &mapped);
+    uint8_t* dst = reinterpret_cast<uint8_t*>(mapped);
+    const size_t tightRowBytes = static_cast<size_t>(w) * 4;
     for (uint32_t y = 0; y < h; ++y) {
       const uint8_t* row = src + static_cast<size_t>(y) * rowBytes;
-      uint8_t* out = rgba.data() + static_cast<size_t>(y) * w * 4;
-      for (uint32_t x = 0; x < w; ++x) {
-        const uint8_t b = row[x * 4 + 0];
-        const uint8_t g = row[x * 4 + 1];
-        const uint8_t r = row[x * 4 + 2];
-        const uint8_t a = row[x * 4 + 3];
-        out[x * 4 + 0] = r;
-        out[x * 4 + 1] = g;
-        out[x * 4 + 2] = b;
-        out[x * 4 + 3] = a;
-      }
+      std::memcpy(dst + static_cast<size_t>(y) * tightRowBytes, row, tightRowBytes);
     }
+    vmaUnmapMemory(vkdev->allocator, slot.staging.allocation);
 
     bitmap->UnlockPixels();
 
-    VkDeviceSize imageSize = static_cast<VkDeviceSize>(w) * h * 4;
+    // We've captured the pixels for this frame; clear the dirty region so we can
+    // skip future uploads until the view changes again.
+    surface->ClearDirtyBounds();
 
-    VulkanBuffer staging;
-    staging.Create(vkdev->allocator,
-                   imageSize,
-                   VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                   VMA_MEMORY_USAGE_CPU_ONLY);
+    // Record transition + copy.
+    VkCommandBuffer cmd = slot.cmd;
+    if (cmd == VK_NULL_HANDLE)
+      return;
 
-    void* data = nullptr;
-    vmaMapMemory(vkdev->allocator, staging.allocation, &data);
-    std::memcpy(data, rgba.data(), static_cast<size_t>(imageSize));
-    vmaUnmapMemory(vkdev->allocator, staging.allocation);
-
-    // Transition and copy.
-    auto cmd = BeginSingleTimeCommands(vkdev->device, vkdev->commandPool);
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
 
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.oldLayout = textureLayout;
     barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -259,11 +382,18 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
     barrier.subresourceRange.levelCount = 1;
     barrier.subresourceRange.baseArrayLayer = 0;
     barrier.subresourceRange.layerCount = 1;
-    barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.srcAccessMask = (textureLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                  ? VK_ACCESS_SHADER_READ_BIT
+                  : 0;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
+    VkPipelineStageFlags srcStage =
+      (textureLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+        : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+
     vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+               srcStage,
                          VK_PIPELINE_STAGE_TRANSFER_BIT,
                          0,
                          0,
@@ -285,7 +415,7 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
     region.imageExtent = {w, h, 1};
 
     vkCmdCopyBufferToImage(cmd,
-                           staging.buffer,
+                           slot.staging.buffer,
                            texture->image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                            1,
@@ -308,43 +438,18 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
                          1,
                          &barrier2);
 
-    EndSingleTimeCommands(vkdev->device, vkdev->commandPool, vkdev->graphicsQueue, cmd);
-
-    staging.Destroy(vkdev->allocator);
-
-    EnsureImGuiDescriptor();
-  }
-
-  static VkCommandBuffer BeginSingleTimeCommands(VkDevice device, VkCommandPool commandPool) {
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool = commandPool;
-    allocInfo.commandBufferCount = 1;
-
-    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
-    return commandBuffer;
-  }
-
-  static void EndSingleTimeCommands(VkDevice device, VkCommandPool commandPool, VkQueue graphicsQueue, VkCommandBuffer commandBuffer) {
-    vkEndCommandBuffer(commandBuffer);
+    vkEndCommandBuffer(cmd);
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
+    submitInfo.pCommandBuffers = &cmd;
 
-    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(graphicsQueue);
+    vkQueueSubmit(vkdev->graphicsQueue, 1, &submitInfo, slot.fence);
 
-    vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+    textureLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    EnsureImGuiDescriptor();
   }
 };
 
@@ -380,8 +485,15 @@ void HtmlPanelView::Create(ultralight::RefPtr<ultralight::Renderer> renderer,
 }
 
 void HtmlPanelView::Resize(uint32_t width, uint32_t height) {
-  impl_->width = std::max(1u, width);
-  impl_->height = std::max(1u, height);
+  const uint32_t clampedW = std::max(1u, width);
+  const uint32_t clampedH = std::max(1u, height);
+
+  if (impl_->width == clampedW && impl_->height == clampedH) {
+    return;
+  }
+
+  impl_->width = clampedW;
+  impl_->height = clampedH;
   if (impl_->view) {
     impl_->view->Resize(impl_->width, impl_->height);
   }
