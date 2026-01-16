@@ -1,28 +1,54 @@
 :root {
-  /* Readability / scale */
-  --uiScale: 1;
-  --fontSize: 16px;
-  --fontSizeSmall: 15px;
-  --fontSizeTiny: 13px;
-  --radius: 6px;
+  /* Readability / scale (HTML-only, independent from ImGui) */
+  --uiScale: 1.25;
+  --fontSize: calc(16px * var(--uiScale));
+  --fontSizeSmall: calc(14px * var(--uiScale));
+  --fontSizeTiny: calc(12px * var(--uiScale));
+  --radius: calc(6px * var(--uiScale));
+  --space-1: calc(6px * var(--uiScale));
+  --space-2: calc(8px * var(--uiScale));
+  --space-3: calc(10px * var(--uiScale));
+  --space-4: calc(12px * var(--uiScale));
+  --space-5: calc(14px * var(--uiScale));
+  --space-6: calc(20px * var(--uiScale));
+  --control: calc(40px * var(--uiScale));
+  --axis: calc(22px * var(--uiScale));
+  --check: calc(16px * var(--uiScale));
 
-  /* Deep Blue / Dark Grey Palette */
-  --bg: #101216;
-  --panel: #1b1f27;
-  --panel2: #232833;
-  --header: #2a303d;
-  --border: #333a4a;
-  --border2: #3d4558;
-  --text: #e0e6ed;
-  --muted: #a0acbf;
-  --muted2: #7a8699;
-  --accent: #3b82f6; 
-  --accent2: #f59e0b;
-  --danger: #ef4444;
+  /* Lighter dark, high-contrast, flat palette */
+  /* Base surfaces (lighter than typical dark UI) */
+  --bg: #1d222b;
+  --panel: #262d38;
+  --panel2: #2c3441;
+  --header: #313b49;
 
-  --row: #1f232b;
-  --rowHover: #2a303d;
-  --rowSel: #333a4a;
+  /* Borders and structure */
+  --border: #424d5f;
+  --border2: #4f5d74;
+
+  /* Text (high readability without glare) */
+  --text: #ffffff;
+  --muted: #c1ccda;
+  --muted2: #9aa9bf;
+
+  /* Primary accent (soft but clear) */
+  --accent: #7aa5ff;
+  --accentHover: #8fb6ff;
+  --accentSoft: #88caff;
+
+  /* Secondary accent (warm but restrained) */
+  --accent2: #f2be6f;
+  --accent2Soft: #5a4525;
+
+  /* Status colors (not neon) */
+  --success: #6ed7a7;
+  --warning: #f2be6f;
+  --danger: #ff7a7a;
+
+  /* Lists and selection */
+  --row: #27303b;
+  --rowHover: #303a48;
+  --rowSel: #3a4b66;
 
   --font: -apple-system, Segoe UI, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
@@ -40,15 +66,6 @@ body {
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
-
-  /*
-    Scales the entire UI with the panel size.
-    NOTE: Width/height compensate so scaled content doesn't get clipped.
-  */
-  transform: scale(var(--uiScale));
-  transform-origin: top left;
-  width: calc(100% / var(--uiScale));
-  height: calc(100% / var(--uiScale));
 }
 
 /* Panel chrome */
@@ -58,7 +75,7 @@ body {
   flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--border);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.20);
+  box-shadow: none;
   box-sizing: border-box;
 }
 
@@ -66,8 +83,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px;
-  background: linear-gradient(#434b5d, var(--header));
+  padding: var(--space-4) var(--space-5);
+  background: var(--header);
   border-bottom: 1px solid var(--border);
   user-select: none;
 }
@@ -81,32 +98,32 @@ body {
 
 .ui-toolbar {
   display: flex;
-  gap: 6px;
+  gap: var(--space-1);
   align-items: center;
 }
 
 .ui-btn {
   font-size: var(--fontSizeSmall);
-  padding: 10px 12px;
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius);
   border: 1px solid var(--border2);
-  background: #262c38;
+  background: #2a3340;
   color: var(--text);
   cursor: pointer;
 }
 
 .ui-btn:hover {
-  background: #2f3848;
-  border-color: #5b6a85;
+  background: #313c4c;
+  border-color: #566781;
 }
 
 .ui-btn:active {
-  background: #212734;
+  background: #27313e;
 }
 
 .ui-icon-btn {
-  width: 40px;
-  height: 40px;
+  width: var(--control);
+  height: var(--control);
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -116,18 +133,88 @@ body {
 
 .ui-input {
   font-size: var(--fontSizeSmall);
-  padding: 10px 12px;
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius);
   border: 1px solid var(--border2);
-  background: #242b37;
+  background: #262f3b;
   color: var(--text);
   outline: none;
-  min-width: 200px;
+  min-width: calc(200px * var(--uiScale));
 }
 
 .ui-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(26, 163, 255, 0.35);
+  box-shadow: 0 0 0 2px rgba(110, 160, 255, 0.25);
+}
+
+/* Custom checkboxes & dropdowns */
+input[type="checkbox"] {
+  appearance: none;
+  width: var(--check);
+  height: var(--check);
+  border-radius: calc(4px * var(--uiScale));
+  border: 1px solid var(--border2);
+  background: #262f3b;
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+}
+
+input[type="checkbox"]::after {
+  content: "";
+  width: calc(8px * var(--uiScale));
+  height: calc(5px * var(--uiScale));
+  border: solid #0b0b0c;
+  border-width: 0 0 calc(2px * var(--uiScale)) calc(2px * var(--uiScale));
+  transform: rotate(-45deg);
+  opacity: 0;
+}
+
+input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+input[type="checkbox"]:checked::after {
+  opacity: 1;
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(110, 160, 255, 0.35);
+}
+
+input[type="checkbox"]:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+select,
+.sort-dropdown {
+  appearance: none;
+  font-size: var(--fontSizeSmall);
+  padding: var(--space-3) calc(var(--space-4) + var(--space-6)) var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--border2);
+  background-color: #262f3b;
+  color: var(--text);
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%23c1ccda' d='M1 1l4 4 4-4'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+}
+
+select:focus,
+.sort-dropdown:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(110, 160, 255, 0.25);
+}
+
+select:disabled,
+.sort-dropdown:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .ui-body {
@@ -137,7 +224,7 @@ body {
 }
 
 .ui-status {
-  padding: 10px 14px;
+  padding: var(--space-3) var(--space-5);
   border-top: 1px solid var(--border);
   background: var(--panel2);
   color: var(--muted);
@@ -154,9 +241,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 12px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid rgba(231, 237, 245, 0.08);
   background: var(--row);
   cursor: pointer;
 }
@@ -167,14 +254,14 @@ body {
 
 .ui-row.is-selected {
   background: var(--rowSel);
-  outline: 1px solid rgba(26, 163, 255, 0.35);
+  outline: 1px solid rgba(110, 160, 255, 0.35);
   outline-offset: -1px;
 }
 
 .ui-row-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -188,26 +275,26 @@ body {
 .ui-badge {
   font-size: var(--fontSizeTiny);
   color: var(--muted);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  border: 1px solid #4b586b;
   border-radius: 999px;
-  padding: 3px 8px;
-  background: rgba(0, 0, 0, 0.18);
+  padding: calc(3px * var(--uiScale)) var(--space-2);
+  background: #2b3442;
   flex: 0 0 auto;
 }
 
 /* Details/property grid */
 .ui-section {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(231, 237, 245, 0.08);
 }
 
 .ui-section-hdr {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px;
-  background: #2b3240;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: var(--space-4) var(--space-5);
+  background: #2d3644;
+  border-top: 1px solid rgba(231, 237, 245, 0.08);
+  border-bottom: 1px solid rgba(231, 237, 245, 0.08);
   user-select: none;
   cursor: pointer;
 }
@@ -219,16 +306,16 @@ body {
 }
 
 .ui-props {
-  padding: 12px 14px;
+  padding: var(--space-4) var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .ui-prop {
   display: grid;
-  grid-template-columns: 140px 1fr;
-  gap: 10px;
+  grid-template-columns: calc(140px * var(--uiScale)) 1fr;
+  gap: var(--space-3);
   align-items: center;
 }
 
@@ -243,14 +330,14 @@ body {
 
 .ui-inline {
   display: flex;
-  gap: 6px;
+  gap: var(--space-1);
   align-items: center;
 }
 
 .axis {
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
+  width: var(--axis);
+  height: var(--axis);
+  border-radius: calc(4px * var(--uiScale));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -273,13 +360,13 @@ body {
 
 /* Breadcrumb/path */
 .ui-pathbar {
-  padding: 11px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  background: #262c37;
+  padding: calc(11px * var(--uiScale)) var(--space-5);
+  border-bottom: 1px solid rgba(231, 237, 245, 0.08);
+  background: #2a3340;
   color: var(--muted);
   font-size: var(--fontSizeSmall);
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
 }
 
@@ -292,5 +379,5 @@ body {
 
 .ui-split {
   height: 1px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(231, 237, 245, 0.08);
 }

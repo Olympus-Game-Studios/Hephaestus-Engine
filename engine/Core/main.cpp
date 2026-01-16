@@ -136,6 +136,8 @@ static bool g_framebufferResized = false;
 static bool g_DebugSkipImportedMeshes = false;
 static uint64_t g_FrameCounter = 0;
 static float g_UIScale = 1.0f;
+static constexpr float kFixedEditorUIScale = 1.0f;
+static bool g_UseFixedEditorUIScale = true;
 
 static std::filesystem::path g_EngineRoot;
 static std::filesystem::path g_ProjectsRoot;
@@ -165,20 +167,18 @@ constexpr float kReferenceViewportWidth = 1280.0f;
 constexpr float kReferenceViewportHeight = 720.0f;
 
 static float ComputeUIScale(const ImGuiViewport *viewport) {
-  if (!viewport || viewport->Size.x <= 0.0f || viewport->Size.y <= 0.0f) {
+  if (g_UseFixedEditorUIScale) {
+    return kFixedEditorUIScale;
+  }
+  if (!viewport) {
     return 1.0f;
   }
-  float scaleX = viewport->Size.x / kReferenceViewportWidth;
-  float scaleY = viewport->Size.y / kReferenceViewportHeight;
-  float raw = std::min(scaleX, scaleY);
-  if (raw <= 1.0f) {
-    // Downscale modestly for small windows
-    return std::clamp(raw, 0.80f, 1.0f);
+  // Keep UI scale fixed relative to DPI only (no scaling with window size).
+  float dpiScale = viewport->DpiScale;
+  if (!(dpiScale > 0.0f)) {
+    dpiScale = 1.0f;
   }
-  // Gentle upscale to avoid crowding; e.g., at 2.0 raw -> 1.3 with slope 0.3,
-  // clamped to 1.2
-  float gentle = 1.0f + (raw - 1.0f) * 0.30f;
-  return std::clamp(gentle, 1.0f, 1.20f);
+  return dpiScale;
 }
 
 static void ApplyHephaestusEditorStyle(ImGuiIO &io, float scale) {

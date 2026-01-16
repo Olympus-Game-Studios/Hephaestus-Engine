@@ -107,6 +107,14 @@
   window.hep.setUiScale = setUiScale;
   window.hep.enableAutoScale = enableAutoScale;
 
-  // Default: enable scaling immediately.
-  enableAutoScale();
+  // Default: fixed scale. Opt-in to auto scale via data-ui-scale-auto="true" on <body>.
+  const d = (document.body && document.body.dataset) ? document.body.dataset : {};
+  if (d.uiScaleFixed) {
+    setUiScale(Number(d.uiScaleFixed));
+  }
+
+  const autoFlag = String(d.uiScaleAuto || '').toLowerCase();
+  if (autoFlag === '1' || autoFlag === 'true' || autoFlag === 'yes') {
+    enableAutoScale();
+  }
 })();

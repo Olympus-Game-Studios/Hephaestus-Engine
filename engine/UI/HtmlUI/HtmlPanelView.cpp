@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <limits>
 #include <vector>
@@ -57,6 +58,15 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
 
   uint32_t width = 0;
   uint32_t height = 0;
+
+  // Resize throttling to avoid GPU stalls during aggressive window drags.
+  uint32_t pendingWidth = 0;
+  uint32_t pendingHeight = 0;
+  uint32_t lastRequestedWidth = 0;
+  uint32_t lastRequestedHeight = 0;
+  bool hasPendingResize = false;
+  std::chrono::steady_clock::time_point lastResizeRequestTime{};
+  std::chrono::steady_clock::time_point lastResizeAppliedTime{};
 
   // Cached ImGui image rect for input routing
   ImVec2 lastMin{0, 0};
@@ -488,12 +498,39 @@ void HtmlPanelView::Resize(uint32_t width, uint32_t height) {
   const uint32_t clampedW = std::max(1u, width);
   const uint32_t clampedH = std::max(1u, height);
 
-  if (impl_->width == clampedW && impl_->height == clampedH) {
+  if (impl_->width == clampedW && impl_->height == clampedH && !impl_->hasPendingResize) {
     return;
   }
 
-  impl_->width = clampedW;
-  impl_->height = clampedH;
+  // Track the most recent request.
+  auto now = std::chrono::steady_clock::now();
+  if (impl_->lastRequestedWidth != clampedW || impl_->lastRequestedHeight != clampedH) {
+    impl_->lastRequestedWidth = clampedW;
+    impl_->lastRequestedHeight = clampedH;
+    impl_->lastResizeRequestTime = now;
+  }
+
+  impl_->pendingWidth = clampedW;
+  impl_->pendingHeight = clampedH;
+  impl_->hasPendingResize = true;
+
+  constexpr auto kResizeMinInterval = std::chrono::milliseconds(50);
+  constexpr auto kResizeDebounce = std::chrono::milliseconds(120);
+
+  const auto sinceApplied = now - impl_->lastResizeAppliedTime;
+  const auto sinceRequest = now - impl_->lastResizeRequestTime;
+  const bool requestStable = sinceRequest >= kResizeDebounce;
+  const bool rateAllowed = sinceApplied >= kResizeMinInterval;
+
+  if (!requestStable && !rateAllowed) {
+    return;
+  }
+
+  impl_->width = impl_->pendingWidth;
+  impl_->height = impl_->pendingHeight;
+  impl_->hasPendingResize = false;
+  impl_->lastResizeAppliedTime = now;
+
   if (impl_->view) {
     impl_->view->Resize(impl_->width, impl_->height);
   }
