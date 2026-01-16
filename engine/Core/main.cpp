@@ -7525,6 +7525,54 @@ int main(int argc, char *argv[]) {
           std::make_unique<Hephaestus::HtmlUI::HtmlEditorUIHost>();
       g_HtmlEditorUIHost->Init(&vkdev, imguiPool);
 
+      // Details panel: expose a small toolbar spec so the HTML UI can mirror
+      // buttons defined in this file (backwards-compatible: HTML falls back if
+      // these commands don't exist).
+      g_HtmlEditorUIHost->Bridge().RegisterHandler(
+          "details.toolbar", [](const std::string& payload) -> std::string {
+            (void)payload;
+
+            // JSON is hand-built; keep labels/tooltips simple.
+            std::ostringstream json;
+            json << "{\"ok\":true,\"items\":[";
+            json << "{\"id\":\"details.lock_selection\",";
+            json << "\"kind\":\"toggle\",";
+            json << "\"label\":\"Lock\",";
+            json << "\"tooltip\":\"Lock Details Panel Selection\",";
+            json << "\"value\":" << (g_DetailsLocked ? "true" : "false") << "}";
+            json << "]}";
+            return json.str();
+          });
+
+      g_HtmlEditorUIHost->Bridge().RegisterHandler(
+          "details.action", [](const std::string& payload) -> std::string {
+            auto idOpt =
+                Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(
+                    payload, "id");
+            if (!idOpt) {
+              return std::string("{\"ok\":false,\"error\":\"missing_id\"}");
+            }
+
+            const std::string& id = *idOpt;
+            if (id == "details.lock_selection") {
+              // Optional value field (0/1). If absent, toggle.
+              if (auto v =
+                      Hephaestus::HtmlUI::EditorMessageBridge::ParseIntField(
+                          payload, "value")) {
+                g_DetailsLocked = (*v != 0);
+              } else {
+                g_DetailsLocked = !g_DetailsLocked;
+              }
+
+              std::ostringstream json;
+              json << "{\"ok\":true,\"state\":{\"detailsLocked\":"
+                   << (g_DetailsLocked ? "true" : "false") << "}}";
+              return json.str();
+            }
+
+            return std::string("{\"ok\":false,\"error\":\"unknown_action\"}");
+          });
+
       // Set up asset callbacks (handled in the main loop so we can reuse the
       // same scene/material open logic and status messages).
       g_HtmlEditorUIHost->SetAssetOpenCallback(
@@ -7730,6 +7778,7 @@ int main(int argc, char *argv[]) {
 #if HEPHAESTUS_EDITOR_HTML_UI
         if (g_HtmlEditorUIHost) {
           g_HtmlEditorUIHost->SetScene(&scene);
+          g_HtmlEditorUIHost->SetScriptEngine(&scriptEngine);
           g_HtmlEditorUIHost->SetDetailsLockedFlag(&g_DetailsLocked);
           g_HtmlEditorUIHost->SetAssetsRoot(ResolveActiveAssetsRoot());
           g_HtmlEditorUIHost->UpdateAndSync(dt);

@@ -5,6 +5,8 @@
 #include "../../Scene/Scene.h"
 #include "../../Scene/Entity.h"
 #include "../../Scene/Components.h"
+#include "../../Scripting/ScriptEngine.h"
+#include "../../Scripting/ScriptRegistry.h"
 
 #include <imgui.h>
 
@@ -61,6 +63,10 @@ void HtmlEditorUIHost::SetDetailsLockedFlag(bool* detailsLocked) { detailsLocked
 
 void HtmlEditorUIHost::SetAssetsRoot(std::filesystem::path assetsRoot) {
   assetsRoot_ = std::move(assetsRoot);
+}
+
+void HtmlEditorUIHost::SetScriptEngine(ScriptEngine* scriptEngine) {
+  scriptEngine_ = scriptEngine;
 }
 
 void HtmlEditorUIHost::SetAssetOpenCallback(AssetOpenCallback callback) {
@@ -843,6 +849,694 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     if (e.HasComponent<LuaScriptComponent>()) {
       e.RemoveComponent<LuaScriptComponent>();
     }
+
+    return std::string("{\"ok\":true}");
+  });
+
+  // Mesh Collider handlers
+  bridge_.RegisterHandler("mesh_collider.get", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    Entity e;
+    if (auto idOpt = EditorMessageBridge::ParseIntField(payload, "id")) {
+      entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+      if (!scene_->GetRegistry().valid(handle)) {
+        return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+      }
+      e = Entity(handle, scene_);
+    } else {
+      e = scene_->GetSelectedEntity();
+    }
+
+    if (!e) {
+      return std::string("{\"ok\":true,\"collider\":null}");
+    }
+
+    if (!e.HasComponent<MeshColliderComponent>()) {
+      return std::string("{\"ok\":true,\"collider\":null}");
+    }
+
+    auto& collider = e.GetComponent<MeshColliderComponent>();
+    std::ostringstream json;
+    json << "{\"ok\":true,\"collider\":{";
+    json << "\"enabled\":" << (collider.enabled ? "true" : "false") << ",";
+    json << "\"isStatic\":" << (collider.isStatic ? "true" : "false") << ",";
+    json << "\"isTrigger\":" << (collider.isTrigger ? "true" : "false") << ",";
+    json << "\"debugDraw\":" << (collider.debugDraw ? "true" : "false") << ",";
+    json << "\"contacts\":[";
+    bool first = true;
+    for (const auto& contact : collider.contacts) {
+      if (!first) json << ",";
+      first = false;
+      std::string otherName = "Entity";
+      Entity other(contact.other, scene_);
+      if (other && other.HasComponent<TagComponent>()) {
+        otherName = other.GetComponent<TagComponent>().tag;
+      } else if (!other) {
+        otherName = "Entity (destroyed)";
+      }
+      json << "{\"other\":\"" << JsonEscape(otherName) << "\",";
+      json << "\"pen\":" << contact.penetration << ",";
+      json << "\"nx\":" << contact.normal.x << ",";
+      json << "\"ny\":" << contact.normal.y << ",";
+      json << "\"nz\":" << contact.normal.z << ",";
+      json << "\"trigger\":" << (contact.trigger ? "true" : "false") << "}";
+    }
+    json << "]}}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("mesh_collider.add", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    if (!idOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_id\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (!e.HasComponent<MeshColliderComponent>()) {
+      e.AddComponent<MeshColliderComponent>();
+    }
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("mesh_collider.remove", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    if (!idOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_id\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (e.HasComponent<MeshColliderComponent>()) {
+      e.RemoveComponent<MeshColliderComponent>();
+    }
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("mesh_collider.set", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    if (!idOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_id\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (!e.HasComponent<MeshColliderComponent>()) {
+      return std::string("{\"ok\":false,\"error\":\"no_mesh_collider\"}");
+    }
+
+    auto& collider = e.GetComponent<MeshColliderComponent>();
+    if (auto v = EditorMessageBridge::ParseIntField(payload, "enabled")) collider.enabled = (*v != 0);
+    if (auto v = EditorMessageBridge::ParseIntField(payload, "isStatic")) collider.isStatic = (*v != 0);
+    if (auto v = EditorMessageBridge::ParseIntField(payload, "isTrigger")) collider.isTrigger = (*v != 0);
+    if (auto v = EditorMessageBridge::ParseIntField(payload, "debugDraw")) collider.debugDraw = (*v != 0);
+    return std::string("{\"ok\":true}");
+  });
+
+  // Physics Shape handlers
+  bridge_.RegisterHandler("physics_shape.get", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    Entity e;
+    if (auto idOpt = EditorMessageBridge::ParseIntField(payload, "id")) {
+      entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+      if (!scene_->GetRegistry().valid(handle)) {
+        return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+      }
+      e = Entity(handle, scene_);
+    } else {
+      e = scene_->GetSelectedEntity();
+    }
+
+    if (!e || !e.HasComponent<PhysicsShapeComponent>()) {
+      return std::string("{\"ok\":true,\"shape\":null}");
+    }
+
+    auto& shape = e.GetComponent<PhysicsShapeComponent>();
+    std::ostringstream json;
+    json << "{\"ok\":true,\"shape\":{";
+    json << "\"type\":" << static_cast<int>(shape.type) << ",";
+    json << "\"extX\":" << shape.extents.x << ",";
+    json << "\"extY\":" << shape.extents.y << ",";
+    json << "\"extZ\":" << shape.extents.z << ",";
+    json << "\"radius\":" << shape.radius << ",";
+    json << "\"height\":" << shape.height << ",";
+    json << "\"offX\":" << shape.offset.x << ",";
+    json << "\"offY\":" << shape.offset.y << ",";
+    json << "\"offZ\":" << shape.offset.z;
+    json << "}}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("physics_shape.add", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    if (!idOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_id\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (!e.HasComponent<PhysicsShapeComponent>()) {
+      auto& shape = e.AddComponent<PhysicsShapeComponent>();
+      shape = PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f));
+    }
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("physics_shape.remove", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    if (!idOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_id\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (e.HasComponent<PhysicsShapeComponent>()) {
+      e.RemoveComponent<PhysicsShapeComponent>();
+    }
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("physics_shape.set", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    if (!idOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_id\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (!e.HasComponent<PhysicsShapeComponent>()) {
+      return std::string("{\"ok\":false,\"error\":\"no_physics_shape\"}");
+    }
+
+    auto& shape = e.GetComponent<PhysicsShapeComponent>();
+    if (auto t = EditorMessageBridge::ParseIntField(payload, "type")) {
+      switch (*t) {
+      case 1:
+        shape.type = PhysicsShapeType::Sphere;
+        break;
+      case 2:
+        shape.type = PhysicsShapeType::Capsule;
+        break;
+      default:
+        shape.type = PhysicsShapeType::Box;
+        break;
+      }
+    }
+
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "extX")) shape.extents.x = std::max(0.01f, *v);
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "extY")) shape.extents.y = std::max(0.01f, *v);
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "extZ")) shape.extents.z = std::max(0.01f, *v);
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "radius")) shape.radius = std::max(0.01f, *v);
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "height")) shape.height = std::max(0.01f, *v);
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "offX")) shape.offset.x = *v;
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "offY")) shape.offset.y = *v;
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "offZ")) shape.offset.z = *v;
+
+    return std::string("{\"ok\":true}");
+  });
+
+  // C++ Script handlers
+  bridge_.RegisterHandler("scripts.get", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    Entity e;
+    if (auto idOpt = EditorMessageBridge::ParseIntField(payload, "id")) {
+      entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+      if (!scene_->GetRegistry().valid(handle)) {
+        return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+      }
+      e = Entity(handle, scene_);
+    } else {
+      e = scene_->GetSelectedEntity();
+    }
+
+    std::ostringstream json;
+    json << "{\"ok\":true,\"attached\":[";
+    bool first = true;
+    if (e && e.HasComponent<ScriptComponent>()) {
+      auto& sc = e.GetComponent<ScriptComponent>();
+      for (const auto& name : sc.scriptNames) {
+        if (!first) json << ",";
+        first = false;
+        json << "\"" << JsonEscape(name) << "\"";
+      }
+    }
+    json << "]}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("scripts.registered", [this](const std::string& payload) -> std::string {
+    (void)payload;
+    auto list = ScriptRegistry::GetRegisteredScripts();
+    std::ostringstream json;
+    json << "{\"ok\":true,\"items\":[";
+    bool first = true;
+    for (const auto& name : list) {
+      if (!first) json << ",";
+      first = false;
+      json << "\"" << JsonEscape(name) << "\"";
+    }
+    json << "]}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("scripts.attach", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+    if (!scriptEngine_) {
+      return std::string("{\"ok\":false,\"error\":\"no_script_engine\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    auto nameOpt = EditorMessageBridge::ParseStringField(payload, "name");
+    if (!idOpt || !nameOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    const std::string scriptName = *nameOpt;
+    if (!ScriptRegistry::IsRegistered(scriptName)) {
+      return std::string("{\"ok\":false,\"error\":\"not_registered\"}");
+    }
+
+    Entity e(handle, scene_);
+    ScriptPtr existing = nullptr;
+    if (e.HasComponent<ScriptComponent>()) {
+      auto& sc = e.GetComponent<ScriptComponent>();
+      existing = sc.GetScriptByName(scriptName);
+    }
+    if (existing) {
+      return std::string("{\"ok\":false,\"error\":\"already_attached\"}");
+    }
+
+    ScriptPtr newScript = ScriptRegistry::CreateScript(scriptName, e, scene_);
+    if (!newScript) {
+      return std::string("{\"ok\":false,\"error\":\"create_failed\"}");
+    }
+    scriptEngine_->AttachScript(e, newScript, scriptName);
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("scripts.detach", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+    if (!scriptEngine_) {
+      return std::string("{\"ok\":false,\"error\":\"no_script_engine\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    auto nameOpt = EditorMessageBridge::ParseStringField(payload, "name");
+    if (!idOpt || !nameOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    scriptEngine_->DetachScript(e, *nameOpt);
+    return std::string("{\"ok\":true}");
+  });
+
+  // Lua Script handlers
+  bridge_.RegisterHandler("lua.get", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    Entity e;
+    if (auto idOpt = EditorMessageBridge::ParseIntField(payload, "id")) {
+      entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+      if (!scene_->GetRegistry().valid(handle)) {
+        return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+      }
+      e = Entity(handle, scene_);
+    } else {
+      e = scene_->GetSelectedEntity();
+    }
+
+    if (!e || !e.HasComponent<LuaScriptComponent>()) {
+      return std::string("{\"ok\":true,\"lua\":null}");
+    }
+
+    auto& lua = e.GetComponent<LuaScriptComponent>();
+    std::ostringstream json;
+    json << "{\"ok\":true,\"lua\":{";
+    json << "\"path\":\"" << JsonEscape(lua.scriptPath) << "\",";
+    json << "\"enabled\":" << (lua.enabled ? "true" : "false");
+    json << "}}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("lua.attach", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    auto pathOpt = EditorMessageBridge::ParseStringField(payload, "path");
+    if (!idOpt || !pathOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (!e.HasComponent<LuaScriptComponent>()) {
+      e.AddComponent<LuaScriptComponent>();
+    }
+
+    auto& lua = e.GetComponent<LuaScriptComponent>();
+    lua.scriptPath = *pathOpt;
+    lua.enabled = true;
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("lua.remove", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    if (!idOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_id\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (e.HasComponent<LuaScriptComponent>()) {
+      auto& lua = e.GetComponent<LuaScriptComponent>();
+      lua.scriptPath.clear();
+      lua.enabled = true;
+    }
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("lua.set_enabled", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    auto enabledOpt = EditorMessageBridge::ParseIntField(payload, "enabled");
+    if (!idOpt || !enabledOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (!e.HasComponent<LuaScriptComponent>()) {
+      return std::string("{\"ok\":false,\"error\":\"no_lua_component\"}");
+    }
+    e.GetComponent<LuaScriptComponent>().enabled = (*enabledOpt != 0);
+    return std::string("{\"ok\":true}");
+  });
+
+  // Rigid body (physics) handlers
+  bridge_.RegisterHandler("rigidbody.get", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    Entity e;
+    if (auto idOpt = EditorMessageBridge::ParseIntField(payload, "id")) {
+      entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+      if (!scene_->GetRegistry().valid(handle)) {
+        return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+      }
+      e = Entity(handle, scene_);
+    } else {
+      e = scene_->GetSelectedEntity();
+    }
+
+    if (!e) {
+      return std::string("{\"ok\":true,\"rigidbody\":null,\"hasPhysicsShape\":false}");
+    }
+
+    const bool hasShape = e.HasComponent<PhysicsShapeComponent>();
+    if (!e.HasComponent<RigidBodyComponent>()) {
+      std::ostringstream json;
+      json << "{\"ok\":true,\"rigidbody\":null,\"hasPhysicsShape\":"
+           << (hasShape ? "true" : "false") << "}";
+      return json.str();
+    }
+
+    auto& rb = e.GetComponent<RigidBodyComponent>();
+    std::ostringstream json;
+    json << "{\"ok\":true,\"hasPhysicsShape\":" << (hasShape ? "true" : "false") << ",\"rigidbody\":{";
+    json << "\"mass\":" << rb.mass << ",";
+    json << "\"isStatic\":" << (rb.isStatic ? "true" : "false") << ",";
+    json << "\"isTrigger\":" << (rb.isTrigger ? "true" : "false") << ",";
+    json << "\"useGravity\":" << (rb.useGravity ? "true" : "false") << ",";
+    json << "\"freezeRotation\":" << (rb.freezeRotation ? "true" : "false") << ",";
+    json << "\"linearDamping\":" << rb.linearDamping << ",";
+    json << "\"angularDamping\":" << rb.angularDamping << ",";
+    json << "\"friction\":" << rb.friction << ",";
+    json << "\"restitution\":" << rb.restitution << ",";
+    json << "\"linVelX\":" << rb.linearVelocity.x << ",";
+    json << "\"linVelY\":" << rb.linearVelocity.y << ",";
+    json << "\"linVelZ\":" << rb.linearVelocity.z << ",";
+    json << "\"angVelX\":" << rb.angularVelocity.x << ",";
+    json << "\"angVelY\":" << rb.angularVelocity.y << ",";
+    json << "\"angVelZ\":" << rb.angularVelocity.z << ",";
+    json << "\"debugDraw\":" << (rb.debugDraw ? "true" : "false");
+    json << "}}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("rigidbody.add", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    if (!idOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_id\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (!e.HasComponent<RigidBodyComponent>()) {
+      auto& rb = e.AddComponent<RigidBodyComponent>();
+      rb = RigidBodyComponent::CreateDynamic();
+    }
+
+    // Mirror legacy editor behavior: ensure a default shape exists.
+    if (!e.HasComponent<PhysicsShapeComponent>()) {
+      auto& shape = e.AddComponent<PhysicsShapeComponent>();
+      shape = PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f));
+    }
+
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("rigidbody.remove", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    if (!idOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_id\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (e.HasComponent<RigidBodyComponent>()) {
+      e.RemoveComponent<RigidBodyComponent>();
+    }
+
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("rigidbody.preset", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    auto presetOpt = EditorMessageBridge::ParseStringField(payload, "preset");
+    if (!idOpt || !presetOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (!e.HasComponent<RigidBodyComponent>()) {
+      auto& rb = e.AddComponent<RigidBodyComponent>();
+      rb = RigidBodyComponent::CreateDynamic();
+    }
+    if (!e.HasComponent<PhysicsShapeComponent>()) {
+      auto& shape = e.AddComponent<PhysicsShapeComponent>();
+      shape = PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f));
+    }
+
+    auto& rb = e.GetComponent<RigidBodyComponent>();
+    const std::string preset = *presetOpt;
+    if (preset == "player") {
+      rb.isStatic = false;
+      rb.isTrigger = false;
+      rb.useGravity = true;
+      rb.freezeRotation = true;
+      rb.mass = 1.0f;
+      rb.friction = 1.0f;
+      rb.restitution = 0.0f;
+      rb.linearDamping = 0.1f;
+      rb.angularDamping = 0.5f;
+    } else if (preset == "ground") {
+      rb.isStatic = true;
+      rb.isTrigger = false;
+      rb.useGravity = false;
+      rb.freezeRotation = false;
+      rb.mass = 0.0f;
+      rb.friction = 0.5f;
+      rb.restitution = 0.0f;
+      rb.linearDamping = 0.0f;
+      rb.angularDamping = 0.0f;
+    } else {
+      return std::string("{\"ok\":false,\"error\":\"unknown_preset\"}");
+    }
+
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("rigidbody.set", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    if (!idOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_id\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (!e.HasComponent<RigidBodyComponent>()) {
+      return std::string("{\"ok\":false,\"error\":\"no_rigidbody_component\"}");
+    }
+
+    auto& rb = e.GetComponent<RigidBodyComponent>();
+
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "mass")) rb.mass = *v;
+    if (auto v = EditorMessageBridge::ParseIntField(payload, "isStatic")) rb.isStatic = (*v != 0);
+    if (auto v = EditorMessageBridge::ParseIntField(payload, "isTrigger")) rb.isTrigger = (*v != 0);
+    if (auto v = EditorMessageBridge::ParseIntField(payload, "useGravity")) rb.useGravity = (*v != 0);
+    if (auto v = EditorMessageBridge::ParseIntField(payload, "freezeRotation")) rb.freezeRotation = (*v != 0);
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "linearDamping")) rb.linearDamping = *v;
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "angularDamping")) rb.angularDamping = *v;
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "friction")) rb.friction = *v;
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "restitution")) rb.restitution = *v;
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "linVelX")) rb.linearVelocity.x = *v;
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "linVelY")) rb.linearVelocity.y = *v;
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "linVelZ")) rb.linearVelocity.z = *v;
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "angVelX")) rb.angularVelocity.x = *v;
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "angVelY")) rb.angularVelocity.y = *v;
+    if (auto v = EditorMessageBridge::ParseFloatField(payload, "angVelZ")) rb.angularVelocity.z = *v;
+    if (auto v = EditorMessageBridge::ParseIntField(payload, "debugDraw")) rb.debugDraw = (*v != 0);
+
+    // Match legacy editor constraints.
+    if (rb.isStatic || rb.isTrigger) {
+      rb.mass = 0.0f;
+      rb.useGravity = false;
+    } else {
+      if (rb.mass <= 0.0f) rb.mass = 1.0f;
+    }
+    if (rb.linearDamping < 0.0f) rb.linearDamping = 0.0f;
+    if (rb.angularDamping < 0.0f) rb.angularDamping = 0.0f;
+    if (rb.friction < 0.0f) rb.friction = 0.0f;
+    if (rb.restitution < 0.0f) rb.restitution = 0.0f;
 
     return std::string("{\"ok\":true}");
   });

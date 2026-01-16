@@ -19,6 +19,7 @@
 class VulkanDevice;
 struct GLFWwindow;
 class Scene;
+class ScriptEngine;
 
 namespace Hephaestus::HtmlUI {
 
@@ -33,6 +34,7 @@ public:
   void SetScene(Scene* scene);
   void SetDetailsLockedFlag(bool* detailsLocked);
   void SetAssetsRoot(std::filesystem::path assetsRoot);
+  void SetScriptEngine(ScriptEngine* scriptEngine);
 
   // Callback for when an asset is opened. Called with the asset path.
   using AssetOpenCallback = std::function<void(const std::filesystem::path&)>;
@@ -61,6 +63,7 @@ private:
   VkDescriptorPool imguiDescriptorPool_ = nullptr;
 
   Scene* scene_ = nullptr;
+  ScriptEngine* scriptEngine_ = nullptr;
   bool* detailsLocked_ = nullptr;
   std::filesystem::path assetsRoot_;
   std::string lastSelectedAssetRel_;

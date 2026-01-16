@@ -12,6 +12,7 @@
       <div class="ui-title">Details</div>
       <div class="ui-toolbar">
         <button class="ui-btn ui-icon-btn" id="refreshBtn" title="Refresh">R</button>
+        <span id="dynamicToolbar" style="display:flex; gap:6px;"></span>
       </div>
     </div>
 
@@ -239,6 +240,281 @@
               </div>
             </div>
           </div>
+
+          <div style="border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px;">
+            <div class="ui-prop">
+              <div class="ui-prop-label">Mesh Collider</div>
+              <div class="ui-prop-control" style="display:flex; gap:6px; align-items:center;">
+                <button class="ui-btn" id="meshColliderAddBtn" style="width:auto; padding: 0 10px;">Add Mesh Collider</button>
+                <button class="ui-btn" id="meshColliderRemoveBtn" style="width:auto; padding: 0 10px; display:none;">Remove Mesh Collider</button>
+              </div>
+            </div>
+            <div id="meshColliderProps" style="display:none;">
+              <div class="ui-prop">
+                <div class="ui-prop-label">Collision Enabled</div>
+                <div class="ui-prop-control">
+                  <input type="checkbox" id="meshColliderEnabled" />
+                </div>
+              </div>
+              <div class="ui-prop">
+                <div class="ui-prop-label">Static Collider</div>
+                <div class="ui-prop-control">
+                  <input type="checkbox" id="meshColliderStatic" />
+                </div>
+              </div>
+              <div class="ui-prop">
+                <div class="ui-prop-label">Trigger</div>
+                <div class="ui-prop-control">
+                  <input type="checkbox" id="meshColliderTrigger" />
+                </div>
+              </div>
+              <div class="ui-prop">
+                <div class="ui-prop-label">Debug Draw Bounds</div>
+                <div class="ui-prop-control">
+                  <input type="checkbox" id="meshColliderDebug" />
+                </div>
+              </div>
+              <div class="ui-prop">
+                <div class="ui-prop-label">Contacts</div>
+                <div class="ui-prop-control">
+                  <div id="meshColliderContacts" style="font-size:12px; color:var(--muted2);">none this frame.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGID BODY SECTION -->
+      <div class="ui-section" id="rigidBodySection" style="display:none;">
+        <div class="ui-section-hdr" id="rigidBodyHdr">
+          <div class="ui-section-title">Rigid Body</div>
+        </div>
+        <div class="ui-props" id="rigidBodyBody">
+          <div id="rigidBodyEmpty" style="display:none;">
+            <div class="ui-prop">
+              <div class="ui-prop-label">Component</div>
+              <div class="ui-prop-control" style="display:flex; gap:6px; align-items:center;">
+                <div style="color:var(--muted2); font-size:12px;">Not present</div>
+                <button class="ui-btn" id="rbAddBtn" style="width:auto; padding:0 10px;">Add Rigid Body</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="rigidBodyProps" style="display:none;">
+            <div class="ui-prop">
+              <div class="ui-prop-label">Presets</div>
+              <div class="ui-prop-control" style="display:flex; gap:6px;">
+                <button class="ui-btn" id="rbPresetPlayerBtn" style="width:auto; padding:0 10px;">Player</button>
+                <button class="ui-btn" id="rbPresetGroundBtn" style="width:auto; padding:0 10px;">Ground/Env</button>
+                <button class="ui-btn" id="rbRemoveBtn" style="width:auto; padding:0 10px; margin-left:auto;">Remove</button>
+              </div>
+            </div>
+
+            <div class="ui-prop">
+              <div class="ui-prop-label">Static Body</div>
+              <div class="ui-prop-control">
+                <input type="checkbox" id="rbIsStatic" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Trigger Volume</div>
+              <div class="ui-prop-control">
+                <input type="checkbox" id="rbIsTrigger" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Use Gravity</div>
+              <div class="ui-prop-control">
+                <input type="checkbox" id="rbUseGravity" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Freeze Rotation</div>
+              <div class="ui-prop-control">
+                <input type="checkbox" id="rbFreezeRotation" />
+              </div>
+            </div>
+
+            <div class="ui-prop">
+              <div class="ui-prop-label">Mass</div>
+              <div class="ui-prop-control">
+                <input class="ui-input ui-num" id="rbMass" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Friction</div>
+              <div class="ui-prop-control">
+                <input class="ui-input ui-num" id="rbFriction" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Restitution</div>
+              <div class="ui-prop-control">
+                <input class="ui-input ui-num" id="rbRestitution" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Linear Damping</div>
+              <div class="ui-prop-control">
+                <input class="ui-input ui-num" id="rbLinearDamping" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Angular Damping</div>
+              <div class="ui-prop-control">
+                <input class="ui-input ui-num" id="rbAngularDamping" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Linear Velocity</div>
+              <div class="ui-prop-control ui-inline">
+                <span class="axis x">X</span><input class="ui-input ui-num" id="rbLinVelX" />
+                <span class="axis y">Y</span><input class="ui-input ui-num" id="rbLinVelY" />
+                <span class="axis z">Z</span><input class="ui-input ui-num" id="rbLinVelZ" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Angular Velocity</div>
+              <div class="ui-prop-control ui-inline">
+                <span class="axis x">X</span><input class="ui-input ui-num" id="rbAngVelX" />
+                <span class="axis y">Y</span><input class="ui-input ui-num" id="rbAngVelY" />
+                <span class="axis z">Z</span><input class="ui-input ui-num" id="rbAngVelZ" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Debug Draw Collider</div>
+              <div class="ui-prop-control">
+                <input type="checkbox" id="rbDebugDraw" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PHYSICS SHAPE SECTION -->
+      <div class="ui-section" id="physicsShapeSection" style="display:none;">
+        <div class="ui-section-hdr" id="physicsShapeHdr">
+          <div class="ui-section-title">Physics Shape</div>
+        </div>
+        <div class="ui-props" id="physicsShapeBody">
+          <div id="physicsShapeEmpty" style="display:none;">
+            <div class="ui-prop">
+              <div class="ui-prop-label">Component</div>
+              <div class="ui-prop-control" style="display:flex; gap:6px; align-items:center;">
+                <div style="color:var(--muted2); font-size:12px;">Not present</div>
+                <button class="ui-btn" id="physicsShapeAddBtn" style="width:auto; padding:0 10px;">Add Physics Shape</button>
+              </div>
+            </div>
+          </div>
+          <div id="physicsShapeProps" style="display:none;">
+            <div class="ui-prop">
+              <div class="ui-prop-label">Shape Type</div>
+              <div class="ui-prop-control">
+                <select class="ui-input" id="physicsShapeType">
+                  <option value="0">Box</option>
+                  <option value="1">Sphere</option>
+                  <option value="2">Capsule</option>
+                </select>
+              </div>
+            </div>
+            <div class="ui-prop" id="physicsShapeExtents">
+              <div class="ui-prop-label">Half Extents</div>
+              <div class="ui-prop-control ui-inline">
+                <span class="axis x">X</span><input class="ui-input ui-num" id="physicsExtX" />
+                <span class="axis y">Y</span><input class="ui-input ui-num" id="physicsExtY" />
+                <span class="axis z">Z</span><input class="ui-input ui-num" id="physicsExtZ" />
+              </div>
+            </div>
+            <div class="ui-prop" id="physicsShapeRadius" style="display:none;">
+              <div class="ui-prop-label">Radius</div>
+              <div class="ui-prop-control">
+                <input class="ui-input ui-num" id="physicsRadius" />
+              </div>
+            </div>
+            <div class="ui-prop" id="physicsShapeHeight" style="display:none;">
+              <div class="ui-prop-label">Height</div>
+              <div class="ui-prop-control">
+                <input class="ui-input ui-num" id="physicsHeight" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Offset</div>
+              <div class="ui-prop-control ui-inline">
+                <span class="axis x">X</span><input class="ui-input ui-num" id="physicsOffX" />
+                <span class="axis y">Y</span><input class="ui-input ui-num" id="physicsOffY" />
+                <span class="axis z">Z</span><input class="ui-input ui-num" id="physicsOffZ" />
+              </div>
+            </div>
+            <div class="ui-prop">
+              <div class="ui-prop-label">Remove</div>
+              <div class="ui-prop-control">
+                <button class="ui-btn" id="physicsShapeRemoveBtn" style="width:auto; padding:0 10px;">Remove Physics Shape</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCRIPTS SECTION -->
+      <div class="ui-section" id="scriptsSection">
+        <div class="ui-section-hdr" id="scriptsHdr">
+          <div class="ui-section-title">Scripts</div>
+        </div>
+        <div class="ui-props" id="scriptsBody">
+          <div class="ui-prop">
+            <div class="ui-prop-label">Attached</div>
+            <div class="ui-prop-control">
+              <div id="scriptsAttached" style="font-size:12px; color:var(--muted2);">No scripts attached to this entity.</div>
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Add Script</div>
+            <div class="ui-prop-control" style="display:flex; gap:6px;">
+              <input class="ui-input" id="scriptNameInput" placeholder="Script name" />
+              <button class="ui-btn" id="scriptAttachBtn" style="width:auto; padding:0 10px;">Attach</button>
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Registered Scripts</div>
+            <div class="ui-prop-control">
+              <div id="scriptsRegistered" style="font-size:12px; color:var(--muted2);"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LUA SCRIPTS SECTION -->
+      <div class="ui-section" id="luaScriptsSection">
+        <div class="ui-section-hdr" id="luaScriptsHdr">
+          <div class="ui-section-title">Lua Scripts</div>
+        </div>
+        <div class="ui-props" id="luaScriptsBody">
+          <div class="ui-prop">
+            <div class="ui-prop-label">Attached Script</div>
+            <div class="ui-prop-control">
+              <div id="luaAttached" style="font-size:12px; color:var(--muted2);">No Lua scripts attached to this entity.</div>
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Lua Script Enabled</div>
+            <div class="ui-prop-control">
+              <input type="checkbox" id="luaEnabled" />
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Manage</div>
+            <div class="ui-prop-control" style="display:flex; gap:6px;">
+              <button class="ui-btn" id="luaRemoveBtn" style="width:auto; padding:0 10px;">Remove Lua Script</button>
+            </div>
+          </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Add Lua Script</div>
+            <div class="ui-prop-control" style="display:flex; gap:6px;">
+              <input class="ui-input" id="luaPathInput" placeholder="Select a .lua in Asset Browser, or type path" />
+              <button class="ui-btn" id="luaAttachBtn" style="width:auto; padding:0 10px;">Attach</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -298,6 +574,10 @@
         ['px','py','pz','rx','ry','rz','sx','sy','sz'].forEach(k => setField(k, ''));
         document.getElementById('entityId').textContent = '—';
         showSections([]);
+        document.getElementById('rigidBodySection').style.display = 'none';
+        document.getElementById('physicsShapeSection').style.display = 'none';
+        document.getElementById('scriptsSection').style.display = 'none';
+        document.getElementById('luaScriptsSection').style.display = 'none';
         setStatus('No selection.');
         return;
       }
@@ -326,9 +606,349 @@
       } else if (currentEntityType === 'MESH') {
         sections.push('meshSection');
         loadMeshProperties();
+        loadMeshColliderProperties();
       }
       showSections(sections);
+
+      // Rigid Body section is independent of entity type.
+      loadRigidBodyProperties();
+      loadPhysicsShapeProperties();
+      loadScriptsSection();
+      loadLuaScriptsSection();
       setStatus('Ready');
+    }
+
+    function loadRigidBodyProperties() {
+      const section = document.getElementById('rigidBodySection');
+      if (!section) return;
+      if (!currentId) {
+        section.style.display = 'none';
+        return;
+      }
+
+      const res = window.hep.callCpp('rigidbody.get', { id: currentId });
+      if (!res || !res.ok) {
+        // Backwards-compatible: older builds won't have these handlers.
+        section.style.display = 'none';
+        return;
+      }
+
+      section.style.display = 'block';
+      const empty = document.getElementById('rigidBodyEmpty');
+      const props = document.getElementById('rigidBodyProps');
+
+      if (!res.rigidbody) {
+        if (empty) empty.style.display = 'block';
+        if (props) props.style.display = 'none';
+        return;
+      }
+
+      if (empty) empty.style.display = 'none';
+      if (props) props.style.display = 'block';
+
+      const rb = res.rigidbody;
+      setField('rbIsStatic', rb.isStatic);
+      setField('rbIsTrigger', rb.isTrigger);
+      setField('rbUseGravity', rb.useGravity);
+      setField('rbFreezeRotation', rb.freezeRotation);
+      setField('rbMass', rb.mass);
+      setField('rbFriction', rb.friction);
+      setField('rbRestitution', rb.restitution);
+      setField('rbLinearDamping', rb.linearDamping);
+      setField('rbAngularDamping', rb.angularDamping);
+      setField('rbLinVelX', rb.linVelX);
+      setField('rbLinVelY', rb.linVelY);
+      setField('rbLinVelZ', rb.linVelZ);
+      setField('rbAngVelX', rb.angVelX);
+      setField('rbAngVelY', rb.angVelY);
+      setField('rbAngVelZ', rb.angVelZ);
+      setField('rbDebugDraw', rb.debugDraw);
+    }
+
+    function pushRigidBodyProperties() {
+      if (!currentId) return;
+      const payload = {
+        id: currentId,
+        isStatic: getCheckbox('rbIsStatic'),
+        isTrigger: getCheckbox('rbIsTrigger'),
+        useGravity: getCheckbox('rbUseGravity'),
+        freezeRotation: getCheckbox('rbFreezeRotation'),
+        mass: getNumber('rbMass'),
+        friction: getNumber('rbFriction'),
+        restitution: getNumber('rbRestitution'),
+        linearDamping: getNumber('rbLinearDamping'),
+        angularDamping: getNumber('rbAngularDamping'),
+        linVelX: getNumber('rbLinVelX'),
+        linVelY: getNumber('rbLinVelY'),
+        linVelZ: getNumber('rbLinVelZ'),
+        angVelX: getNumber('rbAngVelX'),
+        angVelY: getNumber('rbAngVelY'),
+        angVelZ: getNumber('rbAngVelZ'),
+        debugDraw: getCheckbox('rbDebugDraw')
+      };
+      const r = window.hep.callCpp('rigidbody.set', payload);
+      if (!r.ok) {
+        setStatus('RigidBody update failed: ' + (r.error || 'error'));
+      }
+      loadRigidBodyProperties();
+    }
+
+    function addRigidBody() {
+      if (!currentId) return;
+      const r = window.hep.callCpp('rigidbody.add', { id: currentId });
+      if (!r.ok) {
+        setStatus('Add RigidBody failed: ' + (r.error || 'error'));
+      }
+      loadRigidBodyProperties();
+    }
+
+    function removeRigidBody() {
+      if (!currentId) return;
+      const r = window.hep.callCpp('rigidbody.remove', { id: currentId });
+      if (!r.ok) {
+        setStatus('Remove RigidBody failed: ' + (r.error || 'error'));
+      }
+      loadRigidBodyProperties();
+    }
+
+    function applyRigidBodyPreset(preset) {
+      if (!currentId) return;
+      const r = window.hep.callCpp('rigidbody.preset', { id: currentId, preset: String(preset || '') });
+      if (!r.ok) {
+        setStatus('Preset failed: ' + (r.error || 'error'));
+      }
+      loadRigidBodyProperties();
+    }
+
+    function loadPhysicsShapeProperties() {
+      const section = document.getElementById('physicsShapeSection');
+      if (!section) return;
+      if (!currentId) {
+        section.style.display = 'none';
+        return;
+      }
+
+      const res = window.hep.callCpp('physics_shape.get', { id: currentId });
+      if (!res || !res.ok) {
+        section.style.display = 'none';
+        return;
+      }
+
+      section.style.display = 'block';
+      const empty = document.getElementById('physicsShapeEmpty');
+      const props = document.getElementById('physicsShapeProps');
+
+      if (!res.shape) {
+        if (empty) empty.style.display = 'block';
+        if (props) props.style.display = 'none';
+        return;
+      }
+
+      if (empty) empty.style.display = 'none';
+      if (props) props.style.display = 'block';
+
+      const s = res.shape;
+      setField('physicsShapeType', s.type);
+      setField('physicsExtX', s.extX);
+      setField('physicsExtY', s.extY);
+      setField('physicsExtZ', s.extZ);
+      setField('physicsRadius', s.radius);
+      setField('physicsHeight', s.height);
+      setField('physicsOffX', s.offX);
+      setField('physicsOffY', s.offY);
+      setField('physicsOffZ', s.offZ);
+      updatePhysicsShapeDisplay();
+    }
+
+    function updatePhysicsShapeDisplay() {
+      const type = parseInt(document.getElementById('physicsShapeType').value);
+      const ext = document.getElementById('physicsShapeExtents');
+      const rad = document.getElementById('physicsShapeRadius');
+      const hgt = document.getElementById('physicsShapeHeight');
+      if (type === 0) {
+        if (ext) ext.style.display = 'flex';
+        if (rad) rad.style.display = 'none';
+        if (hgt) hgt.style.display = 'none';
+      } else if (type === 1) {
+        if (ext) ext.style.display = 'none';
+        if (rad) rad.style.display = 'flex';
+        if (hgt) hgt.style.display = 'none';
+      } else {
+        if (ext) ext.style.display = 'none';
+        if (rad) rad.style.display = 'flex';
+        if (hgt) hgt.style.display = 'flex';
+      }
+    }
+
+    function pushPhysicsShapeProperties() {
+      if (!currentId) return;
+      const payload = {
+        id: currentId,
+        type: parseInt(document.getElementById('physicsShapeType').value),
+        extX: getNumber('physicsExtX'),
+        extY: getNumber('physicsExtY'),
+        extZ: getNumber('physicsExtZ'),
+        radius: getNumber('physicsRadius'),
+        height: getNumber('physicsHeight'),
+        offX: getNumber('physicsOffX'),
+        offY: getNumber('physicsOffY'),
+        offZ: getNumber('physicsOffZ')
+      };
+      const r = window.hep.callCpp('physics_shape.set', payload);
+      if (!r.ok) setStatus('Physics shape update failed: ' + (r.error || 'error'));
+      loadPhysicsShapeProperties();
+    }
+
+    function addPhysicsShape() {
+      if (!currentId) return;
+      const r = window.hep.callCpp('physics_shape.add', { id: currentId });
+      if (!r.ok) setStatus('Add physics shape failed: ' + (r.error || 'error'));
+      loadPhysicsShapeProperties();
+    }
+
+    function removePhysicsShape() {
+      if (!currentId) return;
+      const r = window.hep.callCpp('physics_shape.remove', { id: currentId });
+      if (!r.ok) setStatus('Remove physics shape failed: ' + (r.error || 'error'));
+      loadPhysicsShapeProperties();
+    }
+
+    function loadScriptsSection() {
+      if (!currentId) return;
+      const section = document.getElementById('scriptsSection');
+      if (section) section.style.display = 'block';
+      const attached = window.hep.callCpp('scripts.get', { id: currentId });
+      const reg = window.hep.callCpp('scripts.registered', {});
+
+      const attachedEl = document.getElementById('scriptsAttached');
+      if (attachedEl) {
+        attachedEl.innerHTML = '';
+        const list = attached && attached.ok && Array.isArray(attached.attached) ? attached.attached : [];
+        if (!list.length) {
+          attachedEl.textContent = 'No scripts attached to this entity.';
+        } else {
+          list.forEach(name => {
+            const row = document.createElement('div');
+            row.style.display = 'flex';
+            row.style.gap = '6px';
+            row.style.alignItems = 'center';
+
+            const label = document.createElement('div');
+            label.textContent = String(name);
+            const btn = document.createElement('button');
+            btn.className = 'ui-btn';
+            btn.textContent = 'Remove';
+            btn.style.width = 'auto';
+            btn.style.padding = '0 10px';
+            btn.onclick = () => {
+              const r = window.hep.callCpp('scripts.detach', { id: currentId, name: String(name) });
+              if (!r.ok) setStatus('Remove script failed: ' + (r.error || 'error'));
+              loadScriptsSection();
+            };
+
+            row.appendChild(label);
+            row.appendChild(btn);
+            attachedEl.appendChild(row);
+          });
+        }
+      }
+
+      const regEl = document.getElementById('scriptsRegistered');
+      if (regEl) {
+        const items = reg && reg.ok && Array.isArray(reg.items) ? reg.items : [];
+        if (!items.length) {
+          regEl.textContent = '';
+        } else {
+          regEl.innerHTML = '';
+          items.forEach(name => {
+            const row = document.createElement('div');
+            row.textContent = String(name);
+            regEl.appendChild(row);
+          });
+        }
+      }
+    }
+
+    function attachScript() {
+      if (!currentId) return;
+      const name = (document.getElementById('scriptNameInput').value || '').trim();
+      if (!name) {
+        setStatus('Enter a script name');
+        return;
+      }
+      const r = window.hep.callCpp('scripts.attach', { id: currentId, name: name });
+      if (!r.ok) {
+        setStatus('Attach script failed: ' + (r.error || 'error'));
+      } else {
+        document.getElementById('scriptNameInput').value = '';
+      }
+      loadScriptsSection();
+    }
+
+    function loadLuaScriptsSection() {
+      if (!currentId) return;
+      const section = document.getElementById('luaScriptsSection');
+      if (section) section.style.display = 'block';
+      const res = window.hep.callCpp('lua.get', { id: currentId });
+      const attachedEl = document.getElementById('luaAttached');
+      const enabledEl = document.getElementById('luaEnabled');
+      const removeBtn = document.getElementById('luaRemoveBtn');
+
+      if (!res || !res.ok) {
+        if (attachedEl) attachedEl.textContent = 'No Lua scripts attached to this entity.';
+        if (enabledEl) enabledEl.checked = false;
+        if (removeBtn) removeBtn.style.display = 'none';
+        return;
+      }
+
+      if (!res.lua) {
+        if (attachedEl) attachedEl.textContent = 'No Lua scripts attached to this entity.';
+        if (enabledEl) enabledEl.checked = false;
+        if (removeBtn) removeBtn.style.display = 'none';
+        return;
+      }
+
+      if (attachedEl) attachedEl.textContent = 'Attached Script: ' + String(res.lua.path || '');
+      if (enabledEl) enabledEl.checked = !!res.lua.enabled;
+      if (removeBtn) removeBtn.style.display = '';
+    }
+
+    function attachLuaScript() {
+      if (!currentId) return;
+      let path = (document.getElementById('luaPathInput').value || '').trim();
+      if (!path) {
+        const sel = window.hep.callCpp('assets.get_selected', {});
+        if (sel && sel.ok && sel.path) {
+          path = String(sel.path || '').trim();
+          if (path) document.getElementById('luaPathInput').value = path;
+        }
+      }
+      if (!path) {
+        setStatus('Select a .lua in Asset Browser, or type a path');
+        return;
+      }
+      if (!path.toLowerCase().endsWith('.lua')) {
+        setStatus('Selected asset is not a .lua script');
+        return;
+      }
+      const r = window.hep.callCpp('lua.attach', { id: currentId, path: path });
+      if (!r.ok) {
+        setStatus('Lua attach failed: ' + (r.error || 'error'));
+      }
+      loadLuaScriptsSection();
+    }
+
+    function removeLuaScript() {
+      if (!currentId) return;
+      const r = window.hep.callCpp('lua.remove', { id: currentId });
+      if (!r.ok) setStatus('Remove Lua script failed: ' + (r.error || 'error'));
+      loadLuaScriptsSection();
+    }
+
+    function setLuaEnabled() {
+      if (!currentId) return;
+      const r = window.hep.callCpp('lua.set_enabled', { id: currentId, enabled: getCheckbox('luaEnabled') });
+      if (!r.ok) setStatus('Lua enable failed: ' + (r.error || 'error'));
     }
 
     function loadLightProperties() {
@@ -454,6 +1074,55 @@
       }
     }
 
+    function loadMeshColliderProperties() {
+      if (!currentId) return;
+      const res = window.hep.callCpp('mesh_collider.get', { id: currentId });
+      if (!res || !res.ok) return;
+
+      const addBtn = document.getElementById('meshColliderAddBtn');
+      const removeBtn = document.getElementById('meshColliderRemoveBtn');
+      const props = document.getElementById('meshColliderProps');
+      const contactsEl = document.getElementById('meshColliderContacts');
+
+      if (!res.collider) {
+        if (addBtn) addBtn.style.display = '';
+        if (removeBtn) removeBtn.style.display = 'none';
+        if (props) props.style.display = 'none';
+        if (contactsEl) contactsEl.textContent = 'none this frame.';
+        return;
+      }
+
+      if (addBtn) addBtn.style.display = 'none';
+      if (removeBtn) removeBtn.style.display = '';
+      if (props) props.style.display = 'block';
+
+      const c = res.collider;
+      setField('meshColliderEnabled', c.enabled);
+      setField('meshColliderStatic', c.isStatic);
+      setField('meshColliderTrigger', c.isTrigger);
+      setField('meshColliderDebug', c.debugDraw);
+
+      if (contactsEl) {
+        const contacts = Array.isArray(c.contacts) ? c.contacts : [];
+        if (!contacts.length) {
+          contactsEl.textContent = 'none this frame.';
+        } else {
+          contactsEl.textContent = '';
+          contacts.forEach(entry => {
+            const line = document.createElement('div');
+            const name = entry.other || 'Entity';
+            const pen = (entry.pen !== undefined) ? Number(entry.pen).toFixed(3) : '0.000';
+            const nx = (entry.nx !== undefined) ? Number(entry.nx).toFixed(2) : '0.00';
+            const ny = (entry.ny !== undefined) ? Number(entry.ny).toFixed(2) : '0.00';
+            const nz = (entry.nz !== undefined) ? Number(entry.nz).toFixed(2) : '0.00';
+            const trig = entry.trigger ? ' [trigger]' : '';
+            line.textContent = name + ' | pen ' + pen + ' | n(' + nx + ', ' + ny + ', ' + nz + ')' + trig;
+            contactsEl.appendChild(line);
+          });
+        }
+      }
+    }
+
     function pushMeshProperties() {
       if (!currentId) return;
       const payload = {
@@ -463,6 +1132,33 @@
       };
       const r = window.hep.callCpp('mesh.set', payload);
       if (!r.ok) setStatus('Mesh update failed: ' + (r.error || 'error'));
+    }
+
+    function pushMeshColliderProperties() {
+      if (!currentId) return;
+      const payload = {
+        id: currentId,
+        enabled: getCheckbox('meshColliderEnabled'),
+        isStatic: getCheckbox('meshColliderStatic'),
+        isTrigger: getCheckbox('meshColliderTrigger'),
+        debugDraw: getCheckbox('meshColliderDebug')
+      };
+      const r = window.hep.callCpp('mesh_collider.set', payload);
+      if (!r.ok) setStatus('Mesh collider update failed: ' + (r.error || 'error'));
+    }
+
+    function addMeshCollider() {
+      if (!currentId) return;
+      const r = window.hep.callCpp('mesh_collider.add', { id: currentId });
+      if (!r.ok) setStatus('Add mesh collider failed: ' + (r.error || 'error'));
+      loadMeshColliderProperties();
+    }
+
+    function removeMeshCollider() {
+      if (!currentId) return;
+      const r = window.hep.callCpp('mesh_collider.remove', { id: currentId });
+      if (!r.ok) setStatus('Remove mesh collider failed: ' + (r.error || 'error'));
+      loadMeshColliderProperties();
     }
 
     function assignMeshScript() {
@@ -574,6 +1270,58 @@
       document.getElementById('meshAssignScriptBtn').addEventListener('click', assignMeshScript);
       document.getElementById('meshRemoveScriptBtn').addEventListener('click', removeMeshScript);
 
+      // Mesh collider
+      const meshColliderAddBtn = document.getElementById('meshColliderAddBtn');
+      if (meshColliderAddBtn) meshColliderAddBtn.addEventListener('click', addMeshCollider);
+      const meshColliderRemoveBtn = document.getElementById('meshColliderRemoveBtn');
+      if (meshColliderRemoveBtn) meshColliderRemoveBtn.addEventListener('click', removeMeshCollider);
+      ['meshColliderEnabled','meshColliderStatic','meshColliderTrigger','meshColliderDebug'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', pushMeshColliderProperties);
+      });
+
+      // Rigid body
+      const rbAddBtn = document.getElementById('rbAddBtn');
+      if (rbAddBtn) rbAddBtn.addEventListener('click', addRigidBody);
+      const rbRemoveBtn = document.getElementById('rbRemoveBtn');
+      if (rbRemoveBtn) rbRemoveBtn.addEventListener('click', removeRigidBody);
+      const rbPresetPlayerBtn = document.getElementById('rbPresetPlayerBtn');
+      if (rbPresetPlayerBtn) rbPresetPlayerBtn.addEventListener('click', () => applyRigidBodyPreset('player'));
+      const rbPresetGroundBtn = document.getElementById('rbPresetGroundBtn');
+      if (rbPresetGroundBtn) rbPresetGroundBtn.addEventListener('click', () => applyRigidBodyPreset('ground'));
+
+      ['rbIsStatic','rbIsTrigger','rbUseGravity','rbFreezeRotation','rbMass','rbFriction','rbRestitution','rbLinearDamping','rbAngularDamping','rbLinVelX','rbLinVelY','rbLinVelZ','rbAngVelX','rbAngVelY','rbAngVelZ','rbDebugDraw'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', pushRigidBodyProperties);
+      });
+
+      // Physics shape
+      const physicsShapeAddBtn = document.getElementById('physicsShapeAddBtn');
+      if (physicsShapeAddBtn) physicsShapeAddBtn.addEventListener('click', addPhysicsShape);
+      const physicsShapeRemoveBtn = document.getElementById('physicsShapeRemoveBtn');
+      if (physicsShapeRemoveBtn) physicsShapeRemoveBtn.addEventListener('click', removePhysicsShape);
+      const physicsShapeType = document.getElementById('physicsShapeType');
+      if (physicsShapeType) physicsShapeType.addEventListener('change', () => { updatePhysicsShapeDisplay(); pushPhysicsShapeProperties(); });
+      ['physicsExtX','physicsExtY','physicsExtZ','physicsRadius','physicsHeight','physicsOffX','physicsOffY','physicsOffZ'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', pushPhysicsShapeProperties);
+      });
+
+      // Scripts
+      const scriptAttachBtn = document.getElementById('scriptAttachBtn');
+      if (scriptAttachBtn) scriptAttachBtn.addEventListener('click', attachScript);
+
+      // Lua scripts
+      const luaAttachBtn = document.getElementById('luaAttachBtn');
+      if (luaAttachBtn) luaAttachBtn.addEventListener('click', attachLuaScript);
+      const luaRemoveBtn = document.getElementById('luaRemoveBtn');
+      if (luaRemoveBtn) luaRemoveBtn.addEventListener('click', removeLuaScript);
+      const luaEnabled = document.getElementById('luaEnabled');
+      if (luaEnabled) luaEnabled.addEventListener('change', setLuaEnabled);
+
       // Drag axis labels left/right to adjust values.
       const axisSpans = document.querySelectorAll('.axis');
       axisSpans.forEach(span => {
@@ -647,6 +1395,10 @@
           if (meshSection && meshSection.style.display !== 'none') {
             document.getElementById('meshScriptPath').value = path;
           }
+          const luaSection = document.getElementById('luaScriptsSection');
+          if (luaSection && luaSection.style.display !== 'none') {
+            document.getElementById('luaPathInput').value = path;
+          }
         }
       }
       if (msg.name === 'entity.transform') {
@@ -674,8 +1426,53 @@
       window.hep.wireCollapsible(document.getElementById('lightHdr'), document.getElementById('lightBody'), 'details.light.open');
       window.hep.wireCollapsible(document.getElementById('envHdr'), document.getElementById('envBody'), 'details.env.open');
       window.hep.wireCollapsible(document.getElementById('meshHdr'), document.getElementById('meshBody'), 'details.mesh.open');
+      window.hep.wireCollapsible(document.getElementById('rigidBodyHdr'), document.getElementById('rigidBodyBody'), 'details.rigidbody.open');
+      window.hep.wireCollapsible(document.getElementById('physicsShapeHdr'), document.getElementById('physicsShapeBody'), 'details.physics_shape.open');
+      window.hep.wireCollapsible(document.getElementById('scriptsHdr'), document.getElementById('scriptsBody'), 'details.scripts.open');
+      window.hep.wireCollapsible(document.getElementById('luaScriptsHdr'), document.getElementById('luaScriptsBody'), 'details.lua_scripts.open');
       document.getElementById('refreshBtn').onclick = loadSelected;
+
+      function renderDynamicToolbar() {
+        const host = document.getElementById('dynamicToolbar');
+        if (!host) return;
+        host.innerHTML = '';
+
+        const res = window.hep.callCpp('details.toolbar', {});
+        if (!res || !res.ok || !Array.isArray(res.items)) {
+          // Backwards-compatible: older builds won't have the handler.
+          return;
+        }
+
+        res.items.forEach(item => {
+          if (!item || !item.id) return;
+          const btn = document.createElement('button');
+          btn.className = 'ui-btn ui-icon-btn';
+          btn.textContent = (item.label ? String(item.label) : String(item.id));
+          if (item.tooltip) btn.title = String(item.tooltip);
+
+          // Visual hint for toggles.
+          if (item.kind === 'toggle' && item.value) {
+            btn.style.background = 'var(--accent2)';
+            btn.style.borderColor = 'var(--accent2)';
+            btn.style.color = '#0b0f14';
+          }
+
+          btn.onclick = () => {
+            const payload = { id: String(item.id) };
+            if (item.kind === 'toggle') payload.value = item.value ? 0 : 1;
+            const r = window.hep.callCpp('details.action', payload);
+            if (!r || !r.ok) {
+              setStatus('Action failed: ' + ((r && r.error) ? r.error : 'error'));
+            }
+            renderDynamicToolbar();
+          };
+
+          host.appendChild(btn);
+        });
+      }
+
       wire();
+      renderDynamicToolbar();
       loadSelected();
     });
   </script>
