@@ -422,6 +422,10 @@ void LuaScriptEngine::SetCameraBinding(CameraBinding binding) {
     m_CameraBinding = std::move(binding);
 }
 
+void LuaScriptEngine::SetPhysicsBinding(PhysicsBinding binding) {
+    m_PhysicsBinding = std::move(binding);
+}
+
 void LuaScriptEngine::RegisterBindings() {
 #if LUA_AVAILABLE
     RegisterEntityBindings();
@@ -429,6 +433,7 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterInputBindings();
     RegisterUtilityBindings();
     RegisterCameraBindings();
+    RegisterPhysicsBindings();
     RegisterThisBindings();
 #endif
 }
@@ -540,6 +545,198 @@ void LuaScriptEngine::RegisterCameraBindings() {
     lua_setfield(m_State, -2, "translate");
 
     lua_setglobal(m_State, "Camera");
+#endif
+}
+
+void LuaScriptEngine::RegisterPhysicsBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+
+    lua_pushcfunction(m_State, Lua_Physics_isAvailable);
+    lua_setfield(m_State, -2, "isAvailable");
+
+    lua_pushcfunction(m_State, Lua_Physics_hasBody);
+    lua_setfield(m_State, -2, "hasBody");
+
+    lua_pushcfunction(m_State, Lua_Physics_getLinearVelocity);
+    lua_setfield(m_State, -2, "getLinearVelocity");
+
+    lua_pushcfunction(m_State, Lua_Physics_setLinearVelocity);
+    lua_setfield(m_State, -2, "setLinearVelocity");
+
+    lua_pushcfunction(m_State, Lua_Physics_setRotation);
+    lua_setfield(m_State, -2, "setRotation");
+
+    lua_pushcfunction(m_State, Lua_Physics_raycast);
+    lua_setfield(m_State, -2, "raycast");
+
+    lua_setglobal(m_State, "Physics");
+#endif
+}
+
+int LuaScriptEngine::Lua_Physics_isAvailable(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    bool available = engine && engine->m_PhysicsBinding.hasBody;
+    lua_pushboolean(L, available);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Physics_hasBody(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_PhysicsBinding.hasBody) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_pushboolean(L, engine->m_PhysicsBinding.hasBody(engine->m_CurrentEntityId));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Physics_getLinearVelocity(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_PhysicsBinding.getLinearVelocity) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    Vec3 velocity{};
+    if (!engine->m_PhysicsBinding.getLinearVelocity(engine->m_CurrentEntityId, velocity)) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+    lua_pushnumber(L, velocity.x);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, velocity.y);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, velocity.z);
+    lua_setfield(L, -2, "z");
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Physics_setLinearVelocity(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_PhysicsBinding.setLinearVelocity) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    float x = static_cast<float>(luaL_checknumber(L, 1));
+    float y = static_cast<float>(luaL_checknumber(L, 2));
+    float z = static_cast<float>(luaL_checknumber(L, 3));
+    bool activate = true;
+    if (lua_gettop(L) >= 4) {
+        activate = lua_toboolean(L, 4) != 0;
+    }
+
+    bool ok = engine->m_PhysicsBinding.setLinearVelocity(engine->m_CurrentEntityId, Vec3(x, y, z), activate);
+    lua_pushboolean(L, ok);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Physics_setRotation(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_PhysicsBinding.setRotation) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    float x = static_cast<float>(luaL_checknumber(L, 1));
+    float y = static_cast<float>(luaL_checknumber(L, 2));
+    float z = static_cast<float>(luaL_checknumber(L, 3));
+    bool activate = true;
+    if (lua_gettop(L) >= 4) {
+        activate = lua_toboolean(L, 4) != 0;
+    }
+
+    bool ok = engine->m_PhysicsBinding.setRotation(engine->m_CurrentEntityId, Vec3(x, y, z), activate);
+    lua_pushboolean(L, ok);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Physics_raycast(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_PhysicsBinding.raycast) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    float ox = static_cast<float>(luaL_checknumber(L, 1));
+    float oy = static_cast<float>(luaL_checknumber(L, 2));
+    float oz = static_cast<float>(luaL_checknumber(L, 3));
+    float dx = static_cast<float>(luaL_checknumber(L, 4));
+    float dy = static_cast<float>(luaL_checknumber(L, 5));
+    float dz = static_cast<float>(luaL_checknumber(L, 6));
+    float maxDistance = static_cast<float>(luaL_checknumber(L, 7));
+
+    PhysicsRaycastHit hit{};
+    bool ok = engine->m_PhysicsBinding.raycast(
+        engine->m_CurrentEntityId,
+        Vec3(ox, oy, oz),
+        Vec3(dx, dy, dz),
+        maxDistance,
+        hit
+    );
+
+    if (!ok || !hit.hit) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+    lua_pushboolean(L, true);
+    lua_setfield(L, -2, "hit");
+    lua_pushnumber(L, hit.distance);
+    lua_setfield(L, -2, "distance");
+
+    lua_newtable(L);
+    lua_pushnumber(L, hit.point.x);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, hit.point.y);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, hit.point.z);
+    lua_setfield(L, -2, "z");
+    lua_setfield(L, -2, "point");
+
+    lua_newtable(L);
+    lua_pushnumber(L, hit.normal.x);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, hit.normal.y);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, hit.normal.z);
+    lua_setfield(L, -2, "z");
+    lua_setfield(L, -2, "normal");
+
+    return 1;
+#else
+    (void)L;
+    return 0;
 #endif
 }
 

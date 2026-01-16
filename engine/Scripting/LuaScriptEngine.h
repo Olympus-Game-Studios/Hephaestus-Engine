@@ -43,6 +43,21 @@ struct CameraBinding {
     std::function<void(const Vec3&)> translate;
 };
 
+struct PhysicsRaycastHit {
+    bool hit = false;
+    float distance = 0.0f;
+    Vec3 point{0.0f, 0.0f, 0.0f};
+    Vec3 normal{0.0f, 1.0f, 0.0f};
+};
+
+struct PhysicsBinding {
+    std::function<bool(uint32_t entityId)> hasBody;
+    std::function<bool(uint32_t entityId, Vec3& outVelocity)> getLinearVelocity;
+    std::function<bool(uint32_t entityId, const Vec3& velocity, bool activate)> setLinearVelocity;
+    std::function<bool(uint32_t entityId, const Vec3& rotationEuler, bool activate)> setRotation;
+    std::function<bool(uint32_t entityId, const Vec3& origin, const Vec3& direction, float maxDistance, PhysicsRaycastHit& outHit)> raycast;
+};
+
 /**
  * Manages Lua scripting for the engine
  * Provides C++ bindings to engine systems
@@ -135,12 +150,18 @@ public:
      */
     void SetCameraBinding(CameraBinding binding);
 
+    /**
+     * Provide physics callbacks (Jolt) for Lua bindings
+     */
+    void SetPhysicsBinding(PhysicsBinding binding);
+
 private:
     lua_State* m_State = nullptr;
     Scene* m_Scene = nullptr;
     GLFWwindow* m_Window = nullptr;
     std::filesystem::path m_ProjectRoot;
     CameraBinding m_CameraBinding{};
+    PhysicsBinding m_PhysicsBinding{};
 
     struct ScriptInstance {
         uint32_t entityId = 0;
@@ -198,6 +219,11 @@ private:
      */
     void RegisterCameraBindings();
 
+    /**
+     * Register physics bindings
+     */
+    void RegisterPhysicsBindings();
+
     void RebuildSearchPaths();
     void AddSearchPath(const std::filesystem::path& path);
 
@@ -243,6 +269,13 @@ private:
     static int Lua_Camera_setRotation(lua_State* L);
     static int Lua_Camera_getRotation(lua_State* L);
     static int Lua_Camera_translate(lua_State* L);
+
+    static int Lua_Physics_isAvailable(lua_State* L);
+    static int Lua_Physics_hasBody(lua_State* L);
+    static int Lua_Physics_getLinearVelocity(lua_State* L);
+    static int Lua_Physics_setLinearVelocity(lua_State* L);
+    static int Lua_Physics_setRotation(lua_State* L);
+    static int Lua_Physics_raycast(lua_State* L);
 
     // 'this' entity binding methods (OOP-style API)
     static int Lua_This_GetTransform(lua_State* L);
