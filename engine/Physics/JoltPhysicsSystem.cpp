@@ -5,6 +5,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -113,35 +114,120 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
 
     JPH::RefConst<JPH::Shape> shape;
 
-    auto buildShape = [&](const PhysicsShapeComponent& shapeComp) -> JPH::RefConst<JPH::Shape> {
+    auto buildBoxFromMeshRenderer = [&](const MeshRendererComponent& renderer, const TransformComponent& transform) -> JPH::RefConst<JPH::Shape> {
+        Vec3 min = renderer.localBounds.min;
+        Vec3 max = renderer.localBounds.max;
+        Vec3 half = Vec3(
+            std::max((max.x - min.x) * 0.5f, 0.001f),
+            std::max((max.y - min.y) * 0.5f, 0.001f),
+            std::max((max.z - min.z) * 0.5f, 0.001f)
+        );
+
+        Vec3 scale = transform.scale;
+        Vec3 halfScaled = Vec3(
+            std::max(std::abs(scale.x) * half.x, 0.001f),
+            std::max(std::abs(scale.y) * half.y, 0.001f),
+            std::max(std::abs(scale.z) * half.z, 0.001f)
+        );
+
+        JPH::BoxShapeSettings boxSettings(JPH::Vec3(halfScaled.x, halfScaled.y, halfScaled.z));
+        auto boxResult = boxSettings.Create();
+        if (boxResult.HasError()) {
+            std::cerr << "Failed to create mesh-bounds box collision shape: " << boxResult.GetError().c_str() << "\n";
+            return {};
+        }
+        JPH::RefConst<JPH::Shape> boxShape = boxResult.Get();
+
+        // If the mesh bounds are not centered, offset the shape accordingly.
+        Vec3 center = Vec3(
+            (min.x + max.x) * 0.5f,
+            (min.y + max.y) * 0.5f,
+            (min.z + max.z) * 0.5f
+        );
+        Vec3 centerScaled = Vec3(center.x * scale.x, center.y * scale.y, center.z * scale.z);
+
+        const float centerLenSq = centerScaled.x * centerScaled.x + centerScaled.y * centerScaled.y + centerScaled.z * centerScaled.z;
+        if (centerLenSq < 1e-6f) {
+            return boxShape;
+        }
+
+        JPH::RotatedTranslatedShapeSettings rtSettings(
+            JPH::Vec3(centerScaled.x, centerScaled.y, centerScaled.z),
+            JPH::Quat::sIdentity(),
+            boxShape
+        );
+        auto rtResult = rtSettings.Create();
+        if (rtResult.HasError()) {
+            std::cerr << "Failed to create rotated/translated collision shape: " << rtResult.GetError().c_str() << "\n";
+            return boxShape;
+        }
+        return rtResult.Get();
+    };
+
+    auto buildShape = [&](const PhysicsShapeComponent& shapeComp, const TransformComponent& transformComp) -> JPH::RefConst<JPH::Shape> {
+        Vec3 scale = transformComp.scale;
+        Vec3 absScale = Vec3(std::abs(scale.x), std::abs(scale.y), std::abs(scale.z));
+
+        auto applyOffset = [&](const JPH::RefConst<JPH::Shape>& baseShape) -> JPH::RefConst<JPH::Shape> {
+            if (!baseShape) {
+                return {};
+            }
+            Vec3 offsetScaled = Vec3(
+                shapeComp.offset.x * scale.x,
+                shapeComp.offset.y * scale.y,
+                shapeComp.offset.z * scale.z
+            );
+            const float offsetLenSq = offsetScaled.x * offsetScaled.x + offsetScaled.y * offsetScaled.y + offsetScaled.z * offsetScaled.z;
+            if (offsetLenSq < 1e-6f) {
+                return baseShape;
+            }
+            JPH::RotatedTranslatedShapeSettings rtSettings(
+                JPH::Vec3(offsetScaled.x, offsetScaled.y, offsetScaled.z),
+                JPH::Quat::sIdentity(),
+                baseShape
+            );
+            auto rtResult = rtSettings.Create();
+            if (rtResult.HasError()) {
+                std::cerr << "Failed to create offset collision shape: " << rtResult.GetError().c_str() << "\n";
+                return baseShape;
+            }
+            return rtResult.Get();
+        };
+
         switch (shapeComp.type) {
             case PhysicsShapeType::Box: {
-                JPH::BoxShapeSettings settings(JPH::Vec3(
-                    std::max(shapeComp.extents.x, 0.001f),
-                    std::max(shapeComp.extents.y, 0.001f),
-                    std::max(shapeComp.extents.z, 0.001f)));
+                Vec3 half = Vec3(
+                    std::max(shapeComp.extents.x * absScale.x, 0.001f),
+                    std::max(shapeComp.extents.y * absScale.y, 0.001f),
+                    std::max(shapeComp.extents.z * absScale.z, 0.001f)
+                );
+                JPH::BoxShapeSettings settings(JPH::Vec3(half.x, half.y, half.z));
                 auto result = settings.Create();
                 if (!result.HasError()) {
-                    return result.Get();
+                    return applyOffset(result.Get());
                 }
                 std::cerr << "Failed to create box collision shape: " << result.GetError().c_str() << "\n";
                 break;
             }
             case PhysicsShapeType::Sphere: {
-                JPH::SphereShapeSettings settings(std::max(shapeComp.radius, 0.001f));
+                float maxAxis = std::max(absScale.x, std::max(absScale.y, absScale.z));
+                float radius = std::max(shapeComp.radius * maxAxis, 0.001f);
+                JPH::SphereShapeSettings settings(radius);
                 auto result = settings.Create();
                 if (!result.HasError()) {
-                    return result.Get();
+                    return applyOffset(result.Get());
                 }
                 std::cerr << "Failed to create sphere collision shape: " << result.GetError().c_str() << "\n";
                 break;
             }
             case PhysicsShapeType::Capsule: {
-                float halfHeight = std::max(shapeComp.height * 0.5f, 0.001f);
-                JPH::CapsuleShapeSettings settings(halfHeight, std::max(shapeComp.radius, 0.001f));
+                float radiusAxis = std::max(absScale.x, absScale.z);
+                float radius = std::max(shapeComp.radius * radiusAxis, 0.001f);
+                float halfHeight = std::max(shapeComp.height * 0.5f * absScale.y, 0.001f);
+                JPH::CapsuleShapeSettings settings(halfHeight, radius);
                 auto result = settings.Create();
                 if (!result.HasError()) {
-                    return result.Get();
+                    return applyOffset(result.Get());
                 }
                 std::cerr << "Failed to create capsule collision shape: " << result.GetError().c_str() << "\n";
                 break;
@@ -153,9 +239,15 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
     };
 
     if (sceneEntity.HasComponent<PhysicsShapeComponent>()) {
-        shape = buildShape(sceneEntity.GetComponent<PhysicsShapeComponent>());
+        shape = buildShape(sceneEntity.GetComponent<PhysicsShapeComponent>(), transform);
     }
 
+    // If no explicit physics shape (or unsupported type), try deriving one from render bounds.
+    if (!shape && sceneEntity.HasComponent<MeshRendererComponent>()) {
+        shape = buildBoxFromMeshRenderer(sceneEntity.GetComponent<MeshRendererComponent>(), transform);
+    }
+
+    // Final fallback
     if (!shape) {
         JPH::BoxShapeSettings fallback(JPH::Vec3(0.5f, 0.5f, 0.5f));
         auto result = fallback.Create();

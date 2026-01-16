@@ -46,6 +46,15 @@
 #include "../Gfx/VulkanTexture.h"
 #include "../Physics/JoltPhysicsEngine.h"
 #include "../Physics/JoltPhysicsSystem.h"
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+
+// Windows headers can define macros that collide with Jolt symbols.
+#ifdef RayCastResult
+  #undef RayCastResult
+#endif
 #include "../Physics/MeshCollisionSystem.h"
 
 // Dear ImGui
@@ -1630,6 +1639,32 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
   } else {
     auto &rigidBody = selectedEntity.GetComponent<RigidBodyComponent>();
     ImGui::SeparatorText("Rigid Body");
+
+    // Preset buttons for quick configuration
+    if (ImGui::Button("Preset: Player", ImVec2(ImGui::GetContentRegionAvail().x * 0.48f, 0))) {
+      rigidBody.isStatic = false;
+      rigidBody.isTrigger = false;
+      rigidBody.useGravity = true;
+      rigidBody.freezeRotation = true;
+      rigidBody.mass = 1.0f;
+      rigidBody.friction = 1.0f;
+      rigidBody.restitution = 0.0f;
+      rigidBody.linearDamping = 0.1f;
+      rigidBody.angularDamping = 0.5f;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Preset: Ground/Env", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+      rigidBody.isStatic = true;
+      rigidBody.isTrigger = false;
+      rigidBody.useGravity = false;
+      rigidBody.freezeRotation = false;
+      rigidBody.mass = 0.0f;
+      rigidBody.friction = 0.5f;
+      rigidBody.restitution = 0.0f;
+      rigidBody.linearDamping = 0.0f;
+      rigidBody.angularDamping = 0.0f;
+    }
+    ImGui::Separator();
 
     ImGui::Checkbox("Static Body", &rigidBody.isStatic);
     ImGui::Checkbox("Trigger Volume", &rigidBody.isTrigger);
@@ -6206,6 +6241,131 @@ int main(int argc, char *argv[]) {
 
   // Create Jolt Physics System
   Physics::JoltPhysicsSystem joltPhysicsSystem(joltPhysicsEngine);
+
+  // Provide Jolt physics callbacks to Lua scripts
+  PhysicsBinding physicsBinding{};
+  physicsBinding.hasBody = [&scene, &joltPhysicsSystem](uint32_t entityId) -> bool {
+    entt::entity handle = static_cast<entt::entity>(entityId);
+    if (!scene.GetRegistry().valid(handle)) {
+      return false;
+    }
+    return !joltPhysicsSystem.GetBodyID(handle).IsInvalid();
+  };
+
+  physicsBinding.getLinearVelocity = [&scene, &joltPhysicsEngine, &joltPhysicsSystem](
+                                        uint32_t entityId, Vec3 &outVelocity) -> bool {
+    entt::entity handle = static_cast<entt::entity>(entityId);
+    if (!scene.GetRegistry().valid(handle)) {
+      return false;
+    }
+    JPH::BodyID bodyId = joltPhysicsSystem.GetBodyID(handle);
+    if (bodyId.IsInvalid()) {
+      return false;
+    }
+    JPH::Vec3 vel = joltPhysicsEngine.GetBodyInterface().GetLinearVelocity(bodyId);
+    outVelocity = Vec3(vel.GetX(), vel.GetY(), vel.GetZ());
+    return true;
+  };
+
+  physicsBinding.setLinearVelocity = [&scene, &joltPhysicsEngine, &joltPhysicsSystem](
+                                        uint32_t entityId, const Vec3 &velocity, bool activate) -> bool {
+    entt::entity handle = static_cast<entt::entity>(entityId);
+    if (!scene.GetRegistry().valid(handle)) {
+      return false;
+    }
+    JPH::BodyID bodyId = joltPhysicsSystem.GetBodyID(handle);
+    if (bodyId.IsInvalid()) {
+      return false;
+    }
+    joltPhysicsEngine.GetBodyInterface().SetLinearVelocity(
+        bodyId, JPH::Vec3(velocity.x, velocity.y, velocity.z));
+    if (activate) {
+      joltPhysicsEngine.GetBodyInterface().ActivateBody(bodyId);
+    }
+    return true;
+  };
+
+  physicsBinding.setRotation = [&scene, &joltPhysicsEngine, &joltPhysicsSystem](
+                                  uint32_t entityId, const Vec3 &rotationEuler, bool activate) -> bool {
+    entt::entity handle = static_cast<entt::entity>(entityId);
+    if (!scene.GetRegistry().valid(handle)) {
+      return false;
+    }
+    JPH::BodyID bodyId = joltPhysicsSystem.GetBodyID(handle);
+    if (bodyId.IsInvalid()) {
+      return false;
+    }
+
+    JPH::Quat qx = JPH::Quat::sRotation(JPH::Vec3::sAxisX(), rotationEuler.x);
+    JPH::Quat qy = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), rotationEuler.y);
+    JPH::Quat qz = JPH::Quat::sRotation(JPH::Vec3::sAxisZ(), rotationEuler.z);
+    JPH::Quat rot = qx * qy * qz;
+
+    JPH::BodyInterface &bi = joltPhysicsEngine.GetBodyInterface();
+    JPH::RVec3 pos = bi.GetCenterOfMassPosition(bodyId);
+    bi.SetPositionAndRotation(bodyId, pos, rot,
+                              activate ? JPH::EActivation::Activate
+                                       : JPH::EActivation::DontActivate);
+    return true;
+  };
+
+  physicsBinding.raycast = [&scene, &joltPhysicsEngine, &joltPhysicsSystem](
+                              uint32_t entityId, const Vec3 &origin, const Vec3 &direction, float maxDistance,
+                              PhysicsRaycastHit &outHit) -> bool {
+    (void)scene;
+
+    entt::entity handle = static_cast<entt::entity>(entityId);
+    JPH::BodyID ignoreBody = joltPhysicsSystem.GetBodyID(handle);
+
+    Vec3 dir = direction;
+    float lenSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
+    if (lenSq < 1e-8f || maxDistance <= 0.0f) {
+      return false;
+    }
+    float invLen = 1.0f / std::sqrt(lenSq);
+    dir.x *= invLen;
+    dir.y *= invLen;
+    dir.z *= invLen;
+
+    JPH::Vec3 start(origin.x, origin.y, origin.z);
+    JPH::Vec3 end(origin.x + dir.x * maxDistance,
+                  origin.y + dir.y * maxDistance,
+                  origin.z + dir.z * maxDistance);
+    JPH::RRayCast ray(JPH::RVec3(start), JPH::Vec3(end - start));
+
+  #ifdef RayCastResult
+    #undef RayCastResult
+  #endif
+
+    JPH::RayCastResult rayCastResult;
+    auto &query = joltPhysicsEngine.GetPhysicsSystem()->GetNarrowPhaseQuery();
+
+    bool hit = false;
+    if (!ignoreBody.IsInvalid()) {
+      JPH::IgnoreSingleBodyFilter filter(ignoreBody);
+      hit = query.CastRay(ray, rayCastResult, {}, {}, filter);
+    } else {
+      hit = query.CastRay(ray, rayCastResult);
+    }
+
+    if (!hit) {
+      outHit.hit = false;
+      return true;
+    }
+
+    outHit.hit = true;
+    outHit.distance = rayCastResult.mFraction * maxDistance;
+    outHit.point = Vec3(origin.x + dir.x * outHit.distance,
+                        origin.y + dir.y * outHit.distance,
+                        origin.z + dir.z * outHit.distance);
+
+    // Normal isn't exposed by the currently used Jolt query wrapper here.
+    // Keep a stable API for Lua by returning an up-vector.
+    outHit.normal = Vec3(0.0f, 1.0f, 0.0f);
+    return true;
+  };
+
+  luaScriptEngine.SetPhysicsBinding(std::move(physicsBinding));
 
   // Create cube entities with different materials
   Entity cube1 = scene.CreateEntity("Cube 1 (Metal)");
