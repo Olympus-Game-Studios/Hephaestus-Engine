@@ -20,6 +20,19 @@ static size_t FindKey(const std::string& s, const char* key) {
   return s.find(needle);
 }
 
+static std::optional<size_t> FindFirstNonSpaceAfterColon(const std::string& s,
+                                                        size_t keyPos) {
+  size_t colon = s.find(':', keyPos);
+  if (colon == std::string::npos)
+    return std::nullopt;
+  size_t i = colon + 1;
+  while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i])))
+    ++i;
+  if (i >= s.size())
+    return std::nullopt;
+  return i;
+}
+
 std::optional<int> EditorMessageBridge::ParseIntField(const std::string& s,
                                                       const char* key) {
   size_t k = FindKey(s, key);
@@ -144,16 +157,57 @@ std::optional<float> EditorMessageBridge::ParseFloatField(const std::string& s,
   return static_cast<float>(value);
 }
 
-static std::optional<size_t> FindFirstNonSpaceAfterColon(const std::string& s, size_t keyPos) {
-  size_t colon = s.find(':', keyPos);
-  if (colon == std::string::npos)
+std::optional<std::vector<int>>
+EditorMessageBridge::ParseIntArrayField(const std::string& s, const char* key) {
+  size_t k = FindKey(s, key);
+  if (k == std::string::npos)
     return std::nullopt;
-  size_t i = colon + 1;
-  while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i])))
-    ++i;
-  if (i >= s.size())
+
+  auto startOpt = FindFirstNonSpaceAfterColon(s, k);
+  if (!startOpt)
     return std::nullopt;
-  return i;
+  size_t i = *startOpt;
+  if (i >= s.size() || s[i] != '[')
+    return std::nullopt;
+
+  ++i; // skip '['
+  std::vector<int> values;
+  while (i < s.size()) {
+    while (i < s.size() && (std::isspace(static_cast<unsigned char>(s[i])) || s[i] == ','))
+      ++i;
+    if (i >= s.size())
+      break;
+    if (s[i] == ']') {
+      return values;
+    }
+
+    bool neg = false;
+    if (s[i] == '-') {
+      neg = true;
+      ++i;
+    }
+
+    bool any = false;
+    int value = 0;
+    while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) {
+      any = true;
+      value = value * 10 + (s[i] - '0');
+      ++i;
+    }
+
+    if (any) {
+      values.push_back(neg ? -value : value);
+      continue;
+    }
+
+    // Skip invalid token until next comma or end bracket.
+    while (i < s.size() && s[i] != ',' && s[i] != ']')
+      ++i;
+    if (i < s.size() && s[i] == ']')
+      return values;
+  }
+
+  return std::nullopt;
 }
 
 std::optional<std::string>

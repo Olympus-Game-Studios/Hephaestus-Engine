@@ -5822,6 +5822,12 @@ int main(int argc, char *argv[]) {
     if (!meshLibrary[handle].sourceKey.empty()) {
       meshLibraryLookup[meshLibrary[handle].sourceKey] = handle;
     }
+    if (!sourcePath.empty()) {
+      std::string absoluteKey = sourcePath.lexically_normal().generic_string();
+      if (!absoluteKey.empty()) {
+        meshLibraryLookup[absoluteKey] = handle;
+      }
+    }
     std::cout << "[uploadMesh] Mesh '" << name << "' uploaded to handle "
               << handle << std::endl;
     return handle;
@@ -6620,13 +6626,63 @@ int main(int argc, char *argv[]) {
   auto rebuildSceneMeshesFromComponents = [&](Scene &targetScene) {
     namespace fs = std::filesystem;
 
+    std::unordered_set<std::string> requiredMeshKeys;
+    requiredMeshKeys.reserve(256);
+
+    auto renderView = targetScene.GetEntitiesWith<MeshRendererComponent>();
+    for (auto entityHandle : renderView) {
+      Entity entity(entityHandle, &targetScene);
+      auto &renderer = entity.GetComponent<MeshRendererComponent>();
+
+      if (renderer.meshAssetPath.empty()) {
+        if (renderer.HasValidMesh() && renderer.meshHandle < meshLibrary.size()) {
+          const MeshGPU &gpu = meshLibrary[renderer.meshHandle];
+          if (!gpu.sourceKey.empty()) {
+            requiredMeshKeys.insert(gpu.sourceKey);
+          }
+          if (!gpu.sourcePath.empty()) {
+            requiredMeshKeys.insert(gpu.sourcePath.lexically_normal().generic_string());
+          }
+        }
+        continue;
+      }
+
+      if (renderer.meshAssetPath.rfind("builtin://", 0) == 0) {
+        requiredMeshKeys.insert(renderer.meshAssetPath);
+        continue;
+      }
+
+      fs::path resolved = resolveMeshSourceKeyToPath(renderer.meshAssetPath);
+      if (!resolved.empty()) {
+        std::string normalizedKey = makeMeshSourceKey(resolved);
+        if (!normalizedKey.empty()) {
+          requiredMeshKeys.insert(normalizedKey);
+        }
+        requiredMeshKeys.insert(resolved.lexically_normal().generic_string());
+      }
+    }
+
     std::vector<MeshGPU> retained;
     retained.reserve(meshLibrary.size());
     for (auto &mesh : meshLibrary) {
       if (!mesh.imported) {
         retained.push_back(std::move(mesh));
       } else {
-        mesh.Destroy(vkdev.allocator);
+        bool keep = false;
+        if (!mesh.sourceKey.empty() && requiredMeshKeys.count(mesh.sourceKey) > 0) {
+          keep = true;
+        }
+        if (!keep && !mesh.sourcePath.empty()) {
+          std::string absKey = mesh.sourcePath.lexically_normal().generic_string();
+          if (!absKey.empty() && requiredMeshKeys.count(absKey) > 0) {
+            keep = true;
+          }
+        }
+        if (keep) {
+          retained.push_back(std::move(mesh));
+        } else {
+          mesh.Destroy(vkdev.allocator);
+        }
       }
     }
     meshLibrary = std::move(retained);
@@ -6635,9 +6691,13 @@ int main(int argc, char *argv[]) {
       if (!meshLibrary[i].sourceKey.empty()) {
         meshLibraryLookup[meshLibrary[i].sourceKey] = i;
       }
+      if (!meshLibrary[i].sourcePath.empty()) {
+        std::string absKey = meshLibrary[i].sourcePath.lexically_normal().generic_string();
+        if (!absKey.empty()) {
+          meshLibraryLookup[absKey] = i;
+        }
+      }
     }
-
-    auto renderView = targetScene.GetEntitiesWith<MeshRendererComponent>();
     for (auto entityHandle : renderView) {
       Entity entity(entityHandle, &targetScene);
       auto &renderer = entity.GetComponent<MeshRendererComponent>();
@@ -6655,7 +6715,19 @@ int main(int argc, char *argv[]) {
         }
       }
 
-      auto lookupIt = meshLibraryLookup.find(renderer.meshAssetPath);
+      std::string lookupKey = renderer.meshAssetPath;
+      if (!lookupKey.empty() && lookupKey.rfind("builtin://", 0) != 0) {
+        fs::path resolved = resolveMeshSourceKeyToPath(lookupKey);
+        if (!resolved.empty()) {
+          std::string normalizedKey = makeMeshSourceKey(resolved);
+          if (!normalizedKey.empty()) {
+            lookupKey = normalizedKey;
+            renderer.meshAssetPath = normalizedKey;
+          }
+        }
+      }
+
+      auto lookupIt = meshLibraryLookup.find(lookupKey);
       if (lookupIt != meshLibraryLookup.end()) {
         size_t handle = lookupIt->second;
         const MeshGPU &gpu = meshLibrary[handle];
@@ -8962,7 +9034,7 @@ int main(int argc, char *argv[]) {
           shadowIndexBuffer = mesh.indexBuffer.buffer;
         }
 
-        shadowPC.model = transform.GetLocalMatrix();
+        shadowPC.model = scene.GetWorldTransform(entity);
         vkCmdPushConstants(cmd, g_DirectionalShadow.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT, 0,
                            sizeof(ShadowPushConstants), &shadowPC);
@@ -9231,7 +9303,7 @@ int main(int argc, char *argv[]) {
           static_cast<VkDeviceSize>(matIndex) * materialStride;
       std::memcpy(matMappedBase + matOffsetBytes, &matUBO, sizeof(matUBO));
 
-      Mat4 modelMatrix = transform.GetLocalMatrix();
+      Mat4 modelMatrix = scene.GetWorldTransform(entity);
       vkCmdPushConstants(cmd, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                          sizeof(Mat4), modelMatrix.m);
       // Bind descriptor set with dynamic offset for this object's material

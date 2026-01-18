@@ -694,6 +694,12 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             }
             oss << ",\n";
             oss << "          \"meshImported\": " << (mesh->meshImported ? "true" : "false") << ",\n";
+            oss << "          \"materialIndices\": [";
+            for (size_t i = 0; i < mesh->materialIndices.size(); ++i) {
+                if (i) oss << ", ";
+                oss << mesh->materialIndices[i];
+            }
+            oss << "],\n";
             oss << "          \"backfaceCulling\": " << (mesh->backfaceCulling ? "true" : "false") << ",\n";
             oss << "          \"localBounds\": {\n";
             oss << "            \"min\": " << FormatVec3(mesh->localBounds.min) << ",\n";
@@ -1031,6 +1037,16 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     mesh.meshImported = meshImportedValue->AsBool();
                 } else if (meshImportedValue->IsNumber()) {
                     mesh.meshImported = meshImportedValue->AsNumber() != 0.0;
+                }
+            }
+            if (const JsonValue* materialIndicesValue = meshObj->Find("materialIndices")) {
+                if (materialIndicesValue->IsArray()) {
+                    mesh.materialIndices.clear();
+                    for (const auto& entry : materialIndicesValue->AsArray()) {
+                        if (entry.IsNumber()) {
+                            mesh.materialIndices.push_back(static_cast<int>(entry.AsNumber()));
+                        }
+                    }
                 }
             }
             if (const JsonValue* backfaceValue = meshObj->Find("backfaceCulling")) {
@@ -1585,6 +1601,12 @@ std::string SceneSerializer::SerializeToString() const
             }
             oss << ",\n";
             oss << "          \"meshImported\": " << (mesh->meshImported ? "true" : "false") << ",\n";
+            oss << "          \"materialIndices\": [";
+            for (size_t i = 0; i < mesh->materialIndices.size(); ++i) {
+                if (i) oss << ", ";
+                oss << mesh->materialIndices[i];
+            }
+            oss << "],\n";
             oss << "          \"backfaceCulling\": " << (mesh->backfaceCulling ? "true" : "false") << ",\n";
             oss << "          \"localBounds\": {\n";
             oss << "            \"min\": " << FormatVec3(mesh->localBounds.min) << ",\n";

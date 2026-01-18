@@ -43,7 +43,10 @@ public:
 
     // Selection management
     Entity GetSelectedEntity();
+    std::vector<Entity> GetSelectedEntities();
     void SetSelectedEntity(Entity entity);
+    void AddSelectedEntity(Entity entity);
+    void ToggleSelectedEntity(Entity entity);
     void ClearSelection();
 
     // Simple in-memory clipboard for editor copy/paste (single-entity)
@@ -59,6 +62,7 @@ public:
 private:
     std::string m_Name;
     entt::registry m_Registry;
+    entt::entity m_PrimarySelected{ entt::null };
 
     friend class Entity;
 };

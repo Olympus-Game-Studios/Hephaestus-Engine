@@ -225,6 +225,12 @@
               <input class="ui-input" style="width:100%" id="meshAssetPath" disabled placeholder="(no mesh)" />
             </div>
           </div>
+          <div class="ui-prop">
+            <div class="ui-prop-label">Materials</div>
+            <div class="ui-prop-control">
+              <div id="meshMaterialSlots" style="display:flex; flex-direction:column; gap:6px;"></div>
+            </div>
+          </div>
           <div style="border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px;">
             <div class="ui-prop">
               <div class="ui-prop-label">Lua Script</div>
@@ -526,6 +532,11 @@
   <script>
     let currentId = 0;
     let currentEntityType = null; // Will store 'LIGHT', 'ENV', 'MESH', or null
+    let selectedIds = [];
+    let selectionCount = 0;
+    let materialCatalog = [];
+    let currentMeshMaterialIndices = [];
+    let currentMeshAppliedMaterialPaths = [];
 
     function setStatus(s) {
       document.getElementById('status').textContent = s;
@@ -555,14 +566,190 @@
       return el.checked ? 1 : 0;
     }
 
+    function loadMaterialCatalog() {
+      const res = window.hep.callCpp('assets.list_materials', {});
+      if (!res || !res.ok || !Array.isArray(res.materials)) {
+        materialCatalog = [];
+        return;
+      }
+      materialCatalog = res.materials
+        .map(e => ({
+          name: String(e.name || e.rel || ''),
+          rel: String(e.rel || e.name || '')
+        }))
+        .sort((a, b) => (a.name === b.name ? a.rel.localeCompare(b.rel) : a.name.localeCompare(b.name)));
+    }
+
+    function renderMaterialSlots() {
+      const host = document.getElementById('meshMaterialSlots');
+      if (!host) return;
+      host.innerHTML = '';
+
+      const indices = Array.isArray(currentMeshMaterialIndices) ? currentMeshMaterialIndices : [];
+      const appliedPaths = Array.isArray(currentMeshAppliedMaterialPaths) ? currentMeshAppliedMaterialPaths : [];
+      const slotCount = Math.max(1, indices.length);
+
+      for (let slotIndex = 0; slotIndex < slotCount; slotIndex++) {
+        const value = indices[slotIndex] !== undefined ? indices[slotIndex] : -1;
+        const appliedPath = appliedPaths[slotIndex] || '';
+        const appliedName = appliedPath ? appliedPath.split('/').pop().replace(/\.[^.]*$/, '') : 'No Material';
+
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.flexDirection = 'column';
+        row.style.gap = '4px';
+
+        const label = document.createElement('div');
+        label.style.display = 'flex';
+        label.style.alignItems = 'center';
+        label.style.gap = '6px';
+        
+        const slotLabel = document.createElement('div');
+        slotLabel.style.minWidth = '64px';
+        slotLabel.style.color = 'var(--muted2)';
+        slotLabel.style.fontSize = '12px';
+        slotLabel.textContent = 'Slot ' + (slotIndex + 1);
+        
+        const appliedLabel = document.createElement('div');
+        appliedLabel.style.color = appliedPath ? 'var(--accent)' : 'var(--muted2)';
+        appliedLabel.style.fontSize = '11px';
+        appliedLabel.style.flex = '1';
+        appliedLabel.style.overflow = 'hidden';
+        appliedLabel.style.textOverflow = 'ellipsis';
+        appliedLabel.textContent = appliedName;
+        appliedLabel.title = appliedPath || 'No material applied';
+        
+        label.appendChild(slotLabel);
+        label.appendChild(appliedLabel);
+
+        const select = document.createElement('select');
+        select.className = 'ui-input';
+        select.style.minWidth = '0';
+        select.style.cursor = 'pointer';
+
+        const noneOpt = document.createElement('option');
+        noneOpt.value = '-1';
+        noneOpt.textContent = '(None)';
+        select.appendChild(noneOpt);
+
+        materialCatalog.forEach((mat, idx) => {
+          const opt = document.createElement('option');
+          opt.value = String(idx);
+          opt.textContent = mat.name || mat.rel || ('Material ' + idx);
+          if (mat.rel) opt.title = mat.rel;
+          select.appendChild(opt);
+        });
+
+        if (value >= 0 && value >= materialCatalog.length) {
+          const opt = document.createElement('option');
+          opt.value = String(value);
+          opt.textContent = 'Unknown (' + value + ')';
+          select.appendChild(opt);
+        }
+
+        // Only show a selected material if one is actually applied.
+        // This avoids defaulting to catalog index 0 when nothing has been applied yet.
+        let effectiveValue = -1;
+        if (appliedPath) {
+          const matchIndex = materialCatalog.findIndex(m => m && m.rel === appliedPath);
+          if (matchIndex >= 0) {
+            effectiveValue = matchIndex;
+          } else if (Number.isFinite(value)) {
+            effectiveValue = value;
+          }
+        }
+        select.value = String(Number.isFinite(effectiveValue) ? effectiveValue : -1);
+        select.addEventListener('change', () => {
+          const next = parseInt(select.value, 10);
+          if (!Array.isArray(currentMeshMaterialIndices)) currentMeshMaterialIndices = [];
+          while (currentMeshMaterialIndices.length <= slotIndex) {
+            currentMeshMaterialIndices.push(-1);
+          }
+          currentMeshMaterialIndices[slotIndex] = Number.isFinite(next) ? next : -1;
+          
+          // Apply the material to the mesh if a valid material is selected
+          if (next >= 0 && next < materialCatalog.length && materialCatalog[next]) {
+            const materialPath = materialCatalog[next].rel;
+            const applyRes = window.hep.callCpp('material.apply_to_mesh', {
+              id: currentId,
+              materialPath: materialPath,
+              slot: slotIndex
+            });
+            if (applyRes && applyRes.ok) {
+              // Update the applied path display
+              currentMeshAppliedMaterialPaths[slotIndex] = materialPath;
+              appliedLabel.textContent = materialCatalog[next].name || materialPath.split('/').pop();
+              appliedLabel.style.color = 'var(--accent)';
+            } else if (applyRes) {
+              console.warn('Failed to apply material:', applyRes.error || 'unknown error');
+            }
+          } else if (next === -1) {
+            // Clear the applied material (persist via backend)
+            const applyRes = window.hep.callCpp('material.apply_to_mesh', {
+              id: currentId,
+              materialPath: '',
+              slot: slotIndex
+            });
+            if (applyRes && applyRes.ok) {
+              currentMeshAppliedMaterialPaths[slotIndex] = '';
+              appliedLabel.textContent = 'No Material';
+              appliedLabel.style.color = 'var(--muted2)';
+            } else if (applyRes) {
+              console.warn('Failed to clear material:', applyRes.error || 'unknown error');
+            }
+          }
+          
+          pushMeshProperties();
+        });
+
+        row.appendChild(label);
+        row.appendChild(select);
+        host.appendChild(row);
+      }
+    }
+
+
+
     function showSections(sections) {
       ['lightSection', 'envSection', 'meshSection'].forEach(s => {
         document.getElementById(s).style.display = sections.includes(s) ? 'block' : 'none';
       });
     }
 
+    function getSelectionState() {
+      const sel = window.hep.callCpp('scene.get_selection', {});
+      if (!sel || !sel.ok) {
+        return { ids: [], primaryId: 0 };
+      }
+      const ids = Array.isArray(sel.ids) ? sel.ids.map(v => Number(v)).filter(v => Number.isFinite(v) && v > 0) : [];
+      const primaryId = Number(sel.primaryId || 0) || 0;
+      return { ids, primaryId };
+    }
+
     function loadSelected() {
-      const res = window.hep.callCpp('entity.get', {});
+      const selState = getSelectionState();
+      selectedIds = selState.ids;
+      selectionCount = selectedIds.length;
+
+      const nameInput = document.getElementById('name');
+      if (nameInput) nameInput.disabled = selectionCount > 1;
+
+      if (selectionCount === 0) {
+        currentId = 0;
+        currentEntityType = null;
+        setField('name', '');
+        ['px','py','pz','rx','ry','rz','sx','sy','sz'].forEach(k => setField(k, ''));
+        document.getElementById('entityId').textContent = '—';
+        showSections([]);
+        document.getElementById('rigidBodySection').style.display = 'none';
+        document.getElementById('physicsShapeSection').style.display = 'none';
+        document.getElementById('scriptsSection').style.display = 'none';
+        document.getElementById('luaScriptsSection').style.display = 'none';
+        setStatus('No selection.');
+        return;
+      }
+
+      const res = window.hep.callCpp('entity.get', { id: selState.primaryId || 0 });
       if (!res.ok) {
         setStatus('Details: ' + (res.error || 'error'));
         return;
@@ -583,7 +770,7 @@
       }
 
       currentId = res.entity.id || 0;
-      setField('name', res.entity.name || '');
+      setField('name', selectionCount > 1 ? '' : (res.entity.name || ''));
       setField('px', res.entity.px);
       setField('py', res.entity.py);
       setField('pz', res.entity.pz);
@@ -593,7 +780,18 @@
       setField('sx', res.entity.sx);
       setField('sy', res.entity.sy);
       setField('sz', res.entity.sz);
-      document.getElementById('entityId').textContent = '#' + currentId;
+      document.getElementById('entityId').textContent = selectionCount > 1 ? ('Multiple (' + selectionCount + ')') : ('#' + currentId);
+
+      if (selectionCount > 1) {
+        currentEntityType = null;
+        showSections([]);
+        document.getElementById('rigidBodySection').style.display = 'none';
+        document.getElementById('physicsShapeSection').style.display = 'none';
+        document.getElementById('scriptsSection').style.display = 'none';
+        document.getElementById('luaScriptsSection').style.display = 'none';
+        setStatus('Multiple selection (' + selectionCount + '). Transform edits apply to all.');
+        return;
+      }
 
       currentEntityType = res.entity.type;
       const sections = [];
@@ -605,6 +803,7 @@
         loadEnvironmentProperties();
       } else if (currentEntityType === 'MESH') {
         sections.push('meshSection');
+        loadMaterialCatalog();
         loadMeshProperties();
         loadMeshColliderProperties();
       }
@@ -1055,6 +1254,11 @@
       setField('meshVisible', mesh.visible);
       setField('meshBackfaceCulling', mesh.backfaceCulling);
       setField('meshAssetPath', mesh.meshAssetPath);
+      currentMeshMaterialIndices = Array.isArray(mesh.materialIndices) && mesh.materialIndices.length > 0 
+        ? mesh.materialIndices.slice() 
+        : [-1];
+      currentMeshAppliedMaterialPaths = Array.isArray(mesh.appliedMaterialPaths) ? mesh.appliedMaterialPaths.slice() : [];
+      renderMaterialSlots();
 
       const assignedEl = document.getElementById('meshScriptAssigned');
       const removeBtn = document.getElementById('meshRemoveScriptBtn');
@@ -1128,7 +1332,8 @@
       const payload = {
         id: currentId,
         visible: getCheckbox('meshVisible'),
-        backfaceCulling: getCheckbox('meshBackfaceCulling')
+        backfaceCulling: getCheckbox('meshBackfaceCulling'),
+        materialIndices: Array.isArray(currentMeshMaterialIndices) ? currentMeshMaterialIndices : []
       };
       const r = window.hep.callCpp('mesh.set', payload);
       if (!r.ok) setStatus('Mesh update failed: ' + (r.error || 'error'));
@@ -1207,6 +1412,10 @@
     }
 
     function pushRename() {
+      if (selectionCount > 1) {
+        setStatus('Multiple selection: renaming is disabled.');
+        return;
+      }
       if (!currentId) return;
       const name = document.getElementById('name').value || '';
       const r = window.hep.callCpp('entity.rename', { id: currentId, name: name });
@@ -1214,14 +1423,22 @@
     }
 
     function pushTransform() {
-      if (!currentId) return;
       const payload = {
-        id: currentId,
         px: getNumber('px'), py: getNumber('py'), pz: getNumber('pz'),
         rx: getNumber('rx'), ry: getNumber('ry'), rz: getNumber('rz'),
         sx: getNumber('sx'), sy: getNumber('sy'), sz: getNumber('sz')
       };
-      const r = window.hep.callCpp('entity.set_transform', payload);
+
+      if (selectionCount > 1) {
+        const ids = selectedIds.filter(v => Number.isFinite(v) && v > 0).join(',');
+        if (!ids) return;
+        const r = window.hep.callCpp('entity.set_transform_multi', Object.assign({ ids: ids }, payload));
+        if (!r.ok) setStatus('Transform failed: ' + (r.error || 'error'));
+        return;
+      }
+
+      if (!currentId) return;
+      const r = window.hep.callCpp('entity.set_transform', Object.assign({ id: currentId }, payload));
       if (!r.ok) setStatus('Transform failed: ' + (r.error || 'error'));
     }
 

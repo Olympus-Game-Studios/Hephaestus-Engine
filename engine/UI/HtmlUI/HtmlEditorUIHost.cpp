@@ -10,6 +10,8 @@
 
 #include <imgui.h>
 
+#include "../MaterialEditor/MaterialGraph.h"
+
 #include <filesystem>
 #include <cstdlib>
 #include <algorithm>
@@ -22,6 +24,18 @@
 #if defined(_WIN32)
 #include <stdlib.h>
 #endif
+
+namespace MaterialEditor {
+  bool LoadMaterialAssetFile(const std::filesystem::path& path,
+                             MaterialComponent& outMaterial,
+                             std::string& outDisplayName,
+                             Graph& outGraph,
+                             std::string& outError);
+
+  bool EvaluateGraph(const Graph& graph,
+                     MaterialComponent& outMaterial,
+                     std::string& outErrorMessage);
+} // namespace MaterialEditor
 
 namespace Hephaestus::HtmlUI {
 
@@ -154,8 +168,41 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
     }
 
-    scene_->SetSelectedEntity(Entity(handle, scene_));
+    const bool toggle = EditorMessageBridge::ParseIntField(payload, "toggle").value_or(0) != 0;
+    const bool add = EditorMessageBridge::ParseIntField(payload, "add").value_or(0) != 0;
+
+    if (toggle) {
+      scene_->ToggleSelectedEntity(Entity(handle, scene_));
+    } else if (add) {
+      scene_->AddSelectedEntity(Entity(handle, scene_));
+    } else {
+      scene_->SetSelectedEntity(Entity(handle, scene_));
+    }
     return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("scene.get_selection", [this](const std::string& payload) -> std::string {
+    (void)payload;
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto selected = scene_->GetSelectedEntities();
+    Entity primary = scene_->GetSelectedEntity();
+    uint32_t primaryId = primary ? static_cast<uint32_t>(static_cast<entt::entity>(primary)) : 0;
+
+    std::ostringstream json;
+    json << "{\"ok\":true,\"primaryId\":" << primaryId << ",\"ids\":[";
+    bool first = true;
+    for (auto& e : selected) {
+      if (!e) continue;
+      uint32_t id = static_cast<uint32_t>(static_cast<entt::entity>(e));
+      if (!first) json << ",";
+      first = false;
+      json << id;
+    }
+    json << "]}";
+    return json.str();
   });
 
   bridge_.RegisterHandler("actor.spawn_preset", [this](const std::string& payload) -> std::string {
@@ -302,6 +349,57 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     }
 
     return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("entity.set_transform_multi", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idsStrOpt = EditorMessageBridge::ParseStringField(payload, "ids");
+    if (!idsStrOpt || idsStrOpt->empty()) {
+      return std::string("{\"ok\":false,\"error\":\"missing_ids\"}");
+    }
+
+    auto px = EditorMessageBridge::ParseFloatField(payload, "px");
+    auto py = EditorMessageBridge::ParseFloatField(payload, "py");
+    auto pz = EditorMessageBridge::ParseFloatField(payload, "pz");
+    auto rx = EditorMessageBridge::ParseFloatField(payload, "rx");
+    auto ry = EditorMessageBridge::ParseFloatField(payload, "ry");
+    auto rz = EditorMessageBridge::ParseFloatField(payload, "rz");
+    auto sx = EditorMessageBridge::ParseFloatField(payload, "sx");
+    auto sy = EditorMessageBridge::ParseFloatField(payload, "sy");
+    auto sz = EditorMessageBridge::ParseFloatField(payload, "sz");
+
+    std::istringstream ss(*idsStrOpt);
+    std::string token;
+    int applied = 0;
+    while (std::getline(ss, token, ',')) {
+      if (token.empty()) continue;
+      uint32_t id = static_cast<uint32_t>(std::strtoul(token.c_str(), nullptr, 10));
+      if (!id) continue;
+      entt::entity handle = static_cast<entt::entity>(id);
+      if (!scene_->GetRegistry().valid(handle)) continue;
+
+      Entity e(handle, scene_);
+      if (!e.HasComponent<TransformComponent>()) continue;
+      auto& t = e.GetComponent<TransformComponent>();
+
+      if (px && py && pz) {
+        t.position = Vec3(*px, *py, *pz);
+      }
+      if (sx && sy && sz) {
+        t.scale = Vec3(*sx, *sy, *sz);
+      }
+      if (rx && ry && rz) {
+        t.SetRotationDegrees(Vec3(*rx, *ry, *rz));
+      }
+      applied++;
+    }
+
+    std::ostringstream json;
+    json << "{\"ok\":true,\"applied\":" << applied << "}";
+    return json.str();
   });
 
   bridge_.RegisterHandler("assets.list", [this](const std::string& payload) -> std::string {
@@ -518,6 +616,68 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
 
     std::ostringstream json;
     json << "{\"ok\":true,\"meshes\":[";
+    bool first = true;
+    for (const auto& m : out) {
+      if (!first) json << ",";
+      first = false;
+      json << "{\"name\":\"" << JsonEscape(m.name) << "\",\"rel\":\"" << JsonEscape(m.rel) << "\"}";
+    }
+    json << "]}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("assets.list_materials", [this](const std::string& payload) -> std::string {
+    (void)payload;
+    if (assetsRoot_.empty()) {
+      return std::string("{\"ok\":false,\"error\":\"no_assets_root\"}");
+    }
+
+    std::filesystem::path root = assetsRoot_;
+    std::error_code ec;
+
+    auto isMaterialExt = [](const std::string& ext) {
+      std::string e;
+      e.reserve(ext.size());
+      for (char c : ext) e.push_back(static_cast<char>(::tolower(static_cast<unsigned char>(c))));
+      return (e == ".hematerial" || e == ".mat" || e == ".material");
+    };
+
+    struct MaterialEntry { std::string name; std::string rel; };
+    std::vector<MaterialEntry> out;
+    out.reserve(128);
+
+    const size_t kMax = 400;
+    for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator(); ++it) {
+      const auto& p = it->path();
+      if (it->is_directory(ec) && !ec) {
+        continue;
+      }
+      if (!it->is_regular_file(ec) || ec) {
+        ec.clear();
+        continue;
+      }
+
+      if (!isMaterialExt(p.extension().string())) {
+        continue;
+      }
+
+      std::error_code relEc;
+      auto rp = std::filesystem::relative(p, assetsRoot_, relEc);
+      std::string relStr = relEc ? p.filename().string() : rp.generic_string();
+      out.push_back(MaterialEntry{ p.stem().string(), relStr });
+      if (out.size() >= kMax) {
+        break;
+      }
+    }
+
+    std::sort(out.begin(), out.end(), [](const MaterialEntry& a, const MaterialEntry& b) {
+      if (a.name == b.name) return a.rel < b.rel;
+      return a.name < b.name;
+    });
+
+    std::ostringstream json;
+    json << "{\"ok\":true,\"materials\":[";
     bool first = true;
     for (const auto& m : out) {
       if (!first) json << ",";
@@ -777,6 +937,18 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     json << "\"visible\":" << (mesh.visible ? "true" : "false") << ",";
     json << "\"backfaceCulling\":" << (mesh.backfaceCulling ? "true" : "false") << ",";
     json << "\"meshAssetPath\":\"" << JsonEscape(mesh.meshAssetPath) << "\",";
+    json << "\"materialIndices\":[";
+    for (size_t i = 0; i < mesh.materialIndices.size(); ++i) {
+      if (i) json << ",";
+      json << mesh.materialIndices[i];
+    }
+    json << "],";
+    json << "\"appliedMaterialPaths\":[";
+    for (size_t i = 0; i < mesh.appliedMaterialPaths.size(); ++i) {
+      if (i) json << ",";
+      json << "\"" << JsonEscape(mesh.appliedMaterialPaths[i]) << "\"";
+    }
+    json << "],";
     json << "\"hasScript\":" << (hasScript ? "true" : "false") << ",";
     json << "\"scriptPath\":\"" << JsonEscape(scriptPath) << "\"";
     json << "}}";
@@ -811,7 +983,93 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     if (auto culling = EditorMessageBridge::ParseIntField(payload, "backfaceCulling")) {
       mesh.backfaceCulling = *culling != 0;
     }
+    if (auto materials = EditorMessageBridge::ParseIntArrayField(payload, "materialIndices")) {
+      mesh.materialIndices = std::move(*materials);
+    }
 
+    return std::string("{\"ok\":true}");
+  });
+
+  // Material application handler
+  bridge_.RegisterHandler("material.apply_to_mesh", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    auto materialPathOpt = EditorMessageBridge::ParseStringField(payload, "materialPath");
+    auto slotOpt = EditorMessageBridge::ParseIntField(payload, "slot");
+    
+    if (!idOpt || !materialPathOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+    }
+
+    int slot = slotOpt ? *slotOpt : 0;
+    if (slot < 0) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_slot\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity e(handle, scene_);
+    if (!e.HasComponent<MeshRendererComponent>()) {
+      return std::string("{\"ok\":false,\"error\":\"no_mesh_component\"}");
+    }
+
+    auto& mesh = e.GetComponent<MeshRendererComponent>();
+
+    // Ensure appliedMaterialPaths is large enough
+    if (mesh.appliedMaterialPaths.size() <= static_cast<size_t>(slot)) {
+      mesh.appliedMaterialPaths.resize(slot + 1, std::string());
+    }
+
+    // Empty materialPath means "clear"
+    if (materialPathOpt->empty()) {
+      mesh.appliedMaterialPaths[slot].clear();
+      if (slot == 0 && e.HasComponent<MaterialComponent>()) {
+        e.RemoveComponent<MaterialComponent>();
+      }
+      return std::string("{\"ok\":true}");
+    }
+
+    // Build absolute path to material
+    std::filesystem::path materialPath = assetsRoot_ / *materialPathOpt;
+    if (!std::filesystem::exists(materialPath)) {
+      return std::string("{\"ok\":false,\"error\":\"material_file_not_found\"}");
+    }
+
+    // Store the material path for this slot
+    mesh.appliedMaterialPaths[slot] = *materialPathOpt;
+    
+    // Also apply to the entity's MaterialComponent (for the first slot)
+    if (slot == 0) {
+      MaterialComponent loadedMaterial;
+      std::string displayName;
+      std::string loadError;
+      MaterialEditor::Graph tempGraph;
+
+      if (!MaterialEditor::LoadMaterialAssetFile(materialPath, loadedMaterial, displayName, tempGraph, loadError)) {
+        return std::string("{\"ok\":false,\"error\":\"material_load_failed\"}");
+      }
+
+      // Evaluate the graph just like the Material Editor's Apply button does
+      // This ensures WorldAlignedTexture nodes are properly handled
+      std::string evalError;
+      if (!MaterialEditor::EvaluateGraph(tempGraph, loadedMaterial, evalError)) {
+        // If evaluation fails, still apply the loaded material (with warnings)
+        std::cerr << "Graph evaluation failed for " << materialPath << ": " << evalError << std::endl;
+      }
+
+      if (e.HasComponent<MaterialComponent>()) {
+        e.GetComponent<MaterialComponent>() = loadedMaterial;
+      } else {
+        e.AddComponent<MaterialComponent>(loadedMaterial);
+      }
+    }
+    
     return std::string("{\"ok\":true}");
   });
 
@@ -1590,10 +1848,21 @@ void HtmlEditorUIHost::UpdateAndSync(float dt) {
   if (scene_) {
     Entity selected = scene_->GetSelectedEntity();
     uint32_t selectedId = selected ? static_cast<uint32_t>(static_cast<entt::entity>(selected)) : 0;
-    if (selectedId != lastSelectedId_) {
+    auto selectedList = scene_->GetSelectedEntities();
+    uint32_t selectionCount = static_cast<uint32_t>(selectedList.size());
+    uint64_t selectionHash = 1469598103934665603ull;
+    for (auto& e : selectedList) {
+      if (!e) continue;
+      uint64_t id = static_cast<uint64_t>(static_cast<uint32_t>(static_cast<entt::entity>(e)));
+      selectionHash ^= id + 0x9e3779b97f4a7c15ull + (selectionHash << 6) + (selectionHash >> 2);
+    }
+
+    if (selectedId != lastSelectedId_ || selectionCount != lastSelectionCount_ || selectionHash != lastSelectionHash_) {
       lastSelectedId_ = selectedId;
+      lastSelectionCount_ = selectionCount;
+      lastSelectionHash_ = selectionHash;
       std::ostringstream payload;
-      payload << "{\"id\":" << selectedId << "}";
+      payload << "{\"id\":" << selectedId << ",\"count\":" << selectionCount << "}";
       bridge_.EmitEvent("selection.changed", payload.str());
 
       // Reset transform cache when selection changes.

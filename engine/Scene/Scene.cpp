@@ -176,14 +176,35 @@ Entity Scene::FindEntityByName(const std::string& name)
 
 Entity Scene::GetSelectedEntity()
 {
+    if (m_PrimarySelected != entt::null && m_Registry.valid(m_PrimarySelected)) {
+        Entity primary = { m_PrimarySelected, this };
+        if (primary.HasComponent<SelectionComponent>() && primary.GetComponent<SelectionComponent>().selected) {
+            return primary;
+        }
+    }
+
     auto view = m_Registry.view<SelectionComponent>();
     for (auto entity : view) {
         auto& selection = view.get<SelectionComponent>(entity);
         if (selection.selected) {
+            m_PrimarySelected = entity;
             return { entity, this };
         }
     }
     return {};
+}
+
+std::vector<Entity> Scene::GetSelectedEntities()
+{
+    std::vector<Entity> out;
+    auto view = m_Registry.view<SelectionComponent>();
+    for (auto entity : view) {
+        auto& selection = view.get<SelectionComponent>(entity);
+        if (selection.selected) {
+            out.emplace_back(entity, this);
+        }
+    }
+    return out;
 }
 
 void Scene::SetSelectedEntity(Entity entity)
@@ -198,6 +219,56 @@ void Scene::SetSelectedEntity(Entity entity)
         } else {
             entity.GetComponent<SelectionComponent>().selected = true;
         }
+        m_PrimarySelected = static_cast<entt::entity>(entity);
+    } else {
+        m_PrimarySelected = entt::null;
+    }
+}
+
+void Scene::AddSelectedEntity(Entity entity)
+{
+    if (!entity)
+        return;
+
+    if (!entity.HasComponent<SelectionComponent>()) {
+        entity.AddComponent<SelectionComponent>(true);
+    } else {
+        entity.GetComponent<SelectionComponent>().selected = true;
+    }
+
+    m_PrimarySelected = static_cast<entt::entity>(entity);
+}
+
+void Scene::ToggleSelectedEntity(Entity entity)
+{
+    if (!entity)
+        return;
+
+    bool nowSelected = true;
+    if (!entity.HasComponent<SelectionComponent>()) {
+        entity.AddComponent<SelectionComponent>(true);
+        nowSelected = true;
+    } else {
+        auto& sel = entity.GetComponent<SelectionComponent>();
+        sel.selected = !sel.selected;
+        nowSelected = sel.selected;
+    }
+
+    if (nowSelected) {
+        m_PrimarySelected = static_cast<entt::entity>(entity);
+        return;
+    }
+
+    if (m_PrimarySelected == static_cast<entt::entity>(entity)) {
+        m_PrimarySelected = entt::null;
+        auto view = m_Registry.view<SelectionComponent>();
+        for (auto ent : view) {
+            auto& selection = view.get<SelectionComponent>(ent);
+            if (selection.selected) {
+                m_PrimarySelected = ent;
+                break;
+            }
+        }
     }
 }
 
@@ -207,6 +278,7 @@ void Scene::ClearSelection()
     for (auto entity : view) {
         view.get<SelectionComponent>(entity).selected = false;
     }
+    m_PrimarySelected = entt::null;
 }
 
 void Scene::Clear()

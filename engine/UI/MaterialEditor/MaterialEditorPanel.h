@@ -15,6 +15,19 @@ struct ImNodesEditorContext;
 
 namespace MaterialEditor {
 
+bool SaveMaterialAssetFile(const std::filesystem::path& path,
+                           const MaterialComponent& material,
+                           const std::string& displayName,
+                           const Graph& graph,
+                           ImNodesEditorContext* editorContext,
+                           std::string& outError);
+
+bool LoadMaterialAssetFile(const std::filesystem::path& path,
+                           MaterialComponent& outMaterial,
+                           std::string& outDisplayName,
+                           Graph& outGraph,
+                           std::string& outError);
+
 struct PanelResult {
     MaterialComponent material;
     std::string name;

@@ -122,6 +122,8 @@ struct MeshRendererComponent {
     size_t meshHandle = InvalidMesh;
     std::string meshAssetPath;
     bool meshImported = false;
+    std::vector<int> materialIndices;
+    std::vector<std::string> appliedMaterialPaths; // Tracks which material file is applied to each slot
 
     MeshRendererComponent() 
         : localBounds(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f)) {}

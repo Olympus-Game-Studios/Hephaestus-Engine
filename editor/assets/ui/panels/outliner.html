@@ -65,10 +65,20 @@
         left.appendChild(badge);
         row.appendChild(left);
 
-        row.onclick = () => {
-          const r = window.hep.callCpp('scene.select', { id: ent.id });
+        row.onclick = (ev) => {
+          const ctrlPressed = (ev && ev.ctrlKey) || (ev && ev.metaKey);
+          const payload = {
+            id: ent.id,
+            toggle: ctrlPressed ? 1 : 0,
+            add: 0
+          };
+          const statusEl = document.getElementById('status');
+          if (ctrlPressed) {
+            statusEl.textContent = 'Multi-select: Ctrl+Click on #' + ent.id;
+          }
+          const r = window.hep.callCpp('scene.select', payload);
           if (!r.ok) {
-            document.getElementById('status').textContent = 'Select failed: ' + (r.error || 'error');
+            statusEl.textContent = 'Select failed: ' + (r.error || 'error');
             return;
           }
           refresh();

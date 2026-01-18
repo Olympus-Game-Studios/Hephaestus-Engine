@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace Hephaestus::HtmlUI {
 
@@ -37,6 +38,8 @@ public:
   // Minimal parsing helpers for handler implementations.
   static std::optional<int> ParseIntField(const std::string& s, const char* key);
   static std::optional<float> ParseFloatField(const std::string& s, const char* key);
+  static std::optional<std::vector<int>> ParseIntArrayField(const std::string& s,
+                                                            const char* key);
   static std::optional<std::string> ParseStringField(const std::string& s,
                                                      const char* key);
   static std::optional<std::string> ParseObjectField(const std::string& s,

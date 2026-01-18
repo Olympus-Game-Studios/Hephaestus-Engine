@@ -76,7 +76,7 @@ NodeType StringToNodeType(const std::string& str) {
     return NodeType::MaterialOutput;
 }
 
-bool SaveMaterialAssetFile(const std::filesystem::path& path,
+bool SaveMaterialAssetFile_Internal(const std::filesystem::path& path,
                            const MaterialComponent& material,
                            const std::string& displayName,
                            const Graph& graph,
@@ -105,6 +105,8 @@ bool SaveMaterialAssetFile(const std::filesystem::path& path,
     out << "  \"roughnessTexturePath\": \"" << EscapeJson(material.roughnessTexturePath) << "\",\n";
     out << "  \"useAoTexture\": " << (material.useAoTexture ? "true" : "false") << ",\n";
     out << "  \"aoTexturePath\": \"" << EscapeJson(material.aoTexturePath) << "\",\n";
+    out << "  \"useWorldAlignedTexture\": " << (material.useWorldAlignedTexture ? "true" : "false") << ",\n";
+    out << "  \"worldTextureScale\": " << material.worldTextureScale << ",\n";
     
     // Save node graph
     out << "  \"graph\": {\n";
@@ -192,7 +194,7 @@ bool SaveMaterialAssetFile(const std::filesystem::path& path,
     return true;
 }
 
-bool LoadMaterialAssetFile(const std::filesystem::path& path,
+bool LoadMaterialAssetFile_Internal(const std::filesystem::path& path,
                            MaterialComponent& outMaterial,
                            std::string& outDisplayName,
                            Graph& outGraph,
@@ -428,6 +430,12 @@ bool LoadMaterialAssetFile(const std::filesystem::path& path,
     if (const JsonValue* aoTexturePath = root.Find("aoTexturePath")) {
         if (aoTexturePath->IsString()) outMaterial.aoTexturePath = aoTexturePath->AsString();
     }
+    if (const JsonValue* useWorldAlignedTexture = root.Find("useWorldAlignedTexture")) {
+        if (useWorldAlignedTexture->IsBool()) outMaterial.useWorldAlignedTexture = useWorldAlignedTexture->AsBool();
+    }
+    if (const JsonValue* worldTextureScale = root.Find("worldTextureScale")) {
+        if (worldTextureScale->IsNumber()) outMaterial.worldTextureScale = static_cast<float>(worldTextureScale->AsNumber());
+    }
 
     // Parse graph
     if (const JsonValue* graphObj = root.Find("graph")) {
@@ -594,6 +602,23 @@ bool LoadMaterialAssetFile(const std::filesystem::path& path,
 }
 
 } // namespace
+
+bool SaveMaterialAssetFile(const std::filesystem::path& path,
+                           const MaterialComponent& material,
+                           const std::string& displayName,
+                           const Graph& graph,
+                           ImNodesEditorContext* editorContext,
+                           std::string& outError) {
+    return SaveMaterialAssetFile_Internal(path, material, displayName, graph, editorContext, outError);
+}
+
+bool LoadMaterialAssetFile(const std::filesystem::path& path,
+                           MaterialComponent& outMaterial,
+                           std::string& outDisplayName,
+                           Graph& outGraph,
+                           std::string& outError) {
+    return LoadMaterialAssetFile_Internal(path, outMaterial, outDisplayName, outGraph, outError);
+}
 
 void Panel::RefreshTextureCache() {
     if (m_ProjectRoot.empty()) {
@@ -1094,7 +1119,7 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
         std::string error;
         if (EvaluateGraph(graph, material, error)) {
             std::string saveError;
-            bool saved = SaveMaterialAssetFile(m_CurrentAssetPath, material, m_CurrentMaterialName, graph, m_EditorContext, saveError);
+            bool saved = SaveMaterialAssetFile_Internal(m_CurrentAssetPath, material, m_CurrentMaterialName, graph, m_EditorContext, saveError);
             if (!saved) {
                 m_StatusMessage = "Save failed: " + saveError;
             } else {
@@ -1111,7 +1136,7 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
         std::string error;
         if (EvaluateGraph(graph, material, error)) {
             std::string saveError;
-            bool saved = SaveMaterialAssetFile(m_CurrentAssetPath, material, m_CurrentMaterialName, graph, m_EditorContext, saveError);
+            bool saved = SaveMaterialAssetFile_Internal(m_CurrentAssetPath, material, m_CurrentMaterialName, graph, m_EditorContext, saveError);
             if (!saved) {
                 m_StatusMessage = "Material applied, but save failed: " + saveError;
             } else {
@@ -1155,7 +1180,7 @@ void Panel::SetActiveAsset(const std::filesystem::path& path) {
         Graph tempGraph; // Temporary graph, will be loaded via LoadMaterialIntoGraph later
         std::string loadError;
         
-        if (LoadMaterialAssetFile(m_CurrentAssetPath, loadedMaterial, loadedName, tempGraph, loadError)) {
+        if (LoadMaterialAssetFile_Internal(m_CurrentAssetPath, loadedMaterial, loadedName, tempGraph, loadError)) {
             if (!loadedName.empty()) {
                 m_CurrentMaterialName = loadedName;
             }
@@ -1188,7 +1213,7 @@ void Panel::LoadMaterialIntoGraph(Graph& graph) {
     std::string tempName;
     std::string loadError;
     
-    if (LoadMaterialAssetFile(m_CurrentAssetPath, tempMaterial, tempName, graph, loadError)) {
+    if (LoadMaterialAssetFile_Internal(m_CurrentAssetPath, tempMaterial, tempName, graph, loadError)) {
         // Graph has been populated
         // Queue node placements using loaded positions
         const auto& nodes = graph.GetNodes();

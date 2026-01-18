@@ -68,6 +68,8 @@ private:
   std::filesystem::path assetsRoot_;
   std::string lastSelectedAssetRel_;
   uint32_t lastSelectedId_ = 0;
+  uint32_t lastSelectionCount_ = 0;
+  uint64_t lastSelectionHash_ = 0;
 
   // Last transform pushed to the UI for the current selection.
   uint32_t lastTransformId_ = 0;
