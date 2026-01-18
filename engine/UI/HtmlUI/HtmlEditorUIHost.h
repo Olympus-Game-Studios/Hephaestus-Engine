@@ -98,6 +98,7 @@ private:
   std::optional<EditorSpawnPreset> pendingAddActorsSpawn_;
   std::optional<EditorSpawnPreset> pendingAddActorsDrag_;
   std::optional<std::string> pendingAddActorsSpawnMeshRel_;
+  std::optional<std::string> pendingAssetDrag_;
 };
 
 } // namespace Hephaestus::HtmlUI

@@ -7791,6 +7791,9 @@ int main(int argc, char *argv[]) {
         if (!outlinerActions.spawnRequest && addActorsActions.spawnRequest) {
           outlinerActions.spawnRequest = addActorsActions.spawnRequest;
         }
+        if (!outlinerActions.spawnMeshAssetRel && addActorsActions.spawnMeshAssetRel) {
+          outlinerActions.spawnMeshAssetRel = addActorsActions.spawnMeshAssetRel;
+        }
         if (outlinerActions.newLevelName) {
           if (gizmoDragging) {
             gizmoDragging = false;
@@ -8348,6 +8351,8 @@ int main(int argc, char *argv[]) {
         static WorldOutlinerSpawnPreset s_ViewportDroppedPreset =
             WorldOutlinerSpawnPreset::DefaultCube;
         static bool s_ViewportHasDroppedItem = false;
+        static std::string s_ViewportDroppedAsset;
+        static bool s_ViewportHasDroppedAsset = false;
 
         // Create an invisible window over the central dockspace area to accept
         // drops
@@ -8385,6 +8390,12 @@ int main(int argc, char *argv[]) {
                 *(const WorldOutlinerSpawnPreset *)payload->Data;
             s_ViewportHasDroppedItem = true;
           }
+          // Accept asset drops from the asset browser
+          if (const ImGuiPayload *payload =
+                  ImGui::AcceptDragDropPayload("ASSET_ITEM")) {
+            s_ViewportDroppedAsset = std::string((const char*)payload->Data);
+            s_ViewportHasDroppedAsset = true;
+          }
           ImGui::EndDragDropTarget();
         }
 
@@ -8395,6 +8406,10 @@ int main(int argc, char *argv[]) {
         if (s_ViewportHasDroppedItem) {
           outlinerActions.spawnRequest = s_ViewportDroppedPreset;
           s_ViewportHasDroppedItem = false;
+        }
+        if (s_ViewportHasDroppedAsset) {
+          outlinerActions.spawnMeshAssetRel = s_ViewportDroppedAsset;
+          s_ViewportHasDroppedAsset = false;
         }
       }
     } // end if (!g_RuntimeMode) - close editor UI section

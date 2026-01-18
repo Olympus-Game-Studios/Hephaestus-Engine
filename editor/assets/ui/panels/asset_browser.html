@@ -502,6 +502,26 @@
 
     function setStatus(s) { document.getElementById('status').textContent = s; }
 
+    function spawnMeshFromAsset(rel, name) {
+      if (!rel) return false;
+      const r = window.hep.callCpp('actor.spawn_mesh', { rel: rel });
+      if (!r || !r.ok) {
+        setStatus('Spawn mesh failed: ' + (r && r.error ? r.error : 'error'));
+        return false;
+      }
+      setStatus('Spawned mesh: ' + (name || rel));
+      return true;
+    }
+
+    function handleAssetOpen(rel, name) {
+      if (!rel) return;
+      if (extType(name) === 'MESH') {
+        spawnMeshFromAsset(rel, name);
+      } else {
+        window.hep.callCpp('assets.open', { path: rel });
+      }
+    }
+
     function renderSidebar(autoExpand = false) {
       const sidebar = document.getElementById('sidebar');
       sidebar.innerHTML = '';
@@ -568,7 +588,7 @@
 
         itemEl.ondblclick = () => {
           if (!isDir) {
-            window.hep.callCpp('assets.open', { path: node.path });
+            handleAssetOpen(node.path, node.name);
           }
         };
 
@@ -671,6 +691,23 @@
         tile.onmousedown = (evt) => { evt.preventDefault(); };
         tile.ondragstart = () => false;
 
+        // Drag support for non-folder assets
+        tile.onpointerdown = (evt) => {
+          if (evt.button !== 0) return;
+          if (e.dir) return; // Don't drag folders
+          window.hep.callCpp('assets.drag_begin', { path: e.rel });
+          try { tile.setPointerCapture(evt.pointerId); } catch (_) {}
+        };
+        tile.onpointerup = () => {
+          if (!e.dir) window.hep.callCpp('assets.drag_end', {});
+        };
+        tile.onpointercancel = () => {
+          if (!e.dir) window.hep.callCpp('assets.drag_end', {});
+        };
+        tile.onlostpointercapture = () => {
+          if (!e.dir) window.hep.callCpp('assets.drag_end', {});
+        };
+
         tile.onclick = () => {
           selectedRel = e.rel;
           window.hep.callCpp('assets.select', { path: selectedRel });
@@ -682,7 +719,7 @@
           if (e.dir) {
             refresh(e.rel);
           } else {
-            window.hep.callCpp('assets.open', { path: e.rel });
+            handleAssetOpen(e.rel, e.name);
           }
         };
 

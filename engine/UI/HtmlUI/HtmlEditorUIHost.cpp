@@ -182,6 +182,21 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     return std::string("{\"ok\":true}");
   });
 
+  bridge_.RegisterHandler("assets.drag_begin", [this](const std::string& payload) -> std::string {
+    auto pathOpt = EditorMessageBridge::ParseStringField(payload, "path");
+    if (!pathOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_path\"}");
+    }
+    pendingAssetDrag_ = *pathOpt;
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("assets.drag_end", [this](const std::string& payload) -> std::string {
+    (void)payload;
+    pendingAssetDrag_.reset();
+    return std::string("{\"ok\":true}");
+  });
+
   bridge_.RegisterHandler("entity.get", [this](const std::string& payload) -> std::string {
     if (!scene_) {
       return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
@@ -1677,8 +1692,7 @@ void HtmlEditorUIHost::DrawAddActorsPanel() {
     // Allow HTML panel items to act as an ImGui drag source by piggy-backing on
     // the rendered image item.
     // JS signals the preset via actor.drag_begin/actor.drag_end.
-    if (pendingAddActorsDrag_ && ImGui::IsItemHovered() &&
-        ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    if (pendingAddActorsDrag_ && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
       if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
         EditorSpawnPreset preset = *pendingAddActorsDrag_;
         ImGui::SetDragDropPayload("ACTOR_PALETTE_ITEM", &preset,
@@ -1718,6 +1732,20 @@ void HtmlEditorUIHost::DrawAssetBrowserPanel() {
     assetBrowser_->Resize(static_cast<uint32_t>(std::max(1.0f, avail.x)),
                           static_cast<uint32_t>(std::max(1.0f, avail.y)));
     assetBrowser_->DrawImGuiImage();
+
+    // Allow HTML panel items to act as an ImGui drag source by piggy-backing on
+    // the rendered image item.
+    // JS signals the asset path via assets.drag_begin/assets.drag_end.
+    if (pendingAssetDrag_ && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+        const std::string& assetPath = *pendingAssetDrag_;
+        ImGui::SetDragDropPayload("ASSET_ITEM", assetPath.c_str(),
+                                  assetPath.size() + 1);
+        ImGui::TextUnformatted(assetPath.c_str());
+        ImGui::EndDragDropSource();
+      }
+    }
+
     assetBrowser_->HandleImGuiInput();
   }
   ImGui::End();

@@ -265,9 +265,17 @@
       window.hep.callCpp('actor.drag_begin', { preset: preset });
     }
 
+    function beginMeshDrag(rel) {
+      window.hep.callCpp('assets.drag_begin', { path: rel });
+    }
+
     function endDrag() {
       dragPreset = null;
       window.hep.callCpp('actor.drag_end', {});
+    }
+
+    function endMeshDrag() {
+      window.hep.callCpp('assets.drag_end', {});
     }
 
     function renderCats() {
@@ -359,15 +367,33 @@
         card.onpointerdown = (ev) => {
           if (ev.button !== 0) return;
           if (typeof it.meshRel === 'string') {
-            setHint('Tip: double-click meshes to spawn (drag coming next).');
-            return;
+            beginMeshDrag(it.meshRel);
+          } else {
+            beginDrag(it.preset);
           }
-          beginDrag(it.preset);
           try { card.setPointerCapture(ev.pointerId); } catch (_) {}
         };
-        card.onpointerup = () => endDrag();
-        card.onpointercancel = () => endDrag();
-        card.onlostpointercapture = () => endDrag();
+        card.onpointerup = () => {
+          if (typeof it.meshRel === 'string') {
+            endMeshDrag();
+          } else {
+            endDrag();
+          }
+        };
+        card.onpointercancel = () => {
+          if (typeof it.meshRel === 'string') {
+            endMeshDrag();
+          } else {
+            endDrag();
+          }
+        };
+        card.onlostpointercapture = () => {
+          if (typeof it.meshRel === 'string') {
+            endMeshDrag();
+          } else {
+            endDrag();
+          }
+        };
 
         grid.appendChild(card);
       });
