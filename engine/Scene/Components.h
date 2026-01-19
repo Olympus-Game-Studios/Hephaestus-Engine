@@ -192,6 +192,7 @@ struct MeshColliderComponent {
     bool isStatic = false;
     bool isTrigger = false;
     bool debugDraw = false;
+    bool useComplexCollision = false;
     std::vector<MeshColliderContact> contacts;
 
     void ClearContacts() {

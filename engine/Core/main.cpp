@@ -153,6 +153,7 @@ static float g_ScriptAttachmentMessageTimer = 0.0f;
 static HephaestusEngine::ProjectManager g_ProjectManager;
 static LuaScriptEngine *g_LuaScriptEnginePtr =
     nullptr; // Pointer to Lua engine for callbacks
+static Physics::JoltPhysicsSystem *g_JoltPhysicsSystemPtr = nullptr; // Pointer to physics system for project root updates
 
 // Runtime mode flags
 static bool g_RuntimeMode =
@@ -1577,6 +1578,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
       ImGui::Checkbox("Collision Enabled", &collider.enabled);
       ImGui::Checkbox("Static Collider", &collider.isStatic);
       ImGui::Checkbox("Trigger", &collider.isTrigger);
+      ImGui::Checkbox("Complex Collision", &collider.useComplexCollision);
       ImGui::Checkbox("Debug Draw Bounds", &collider.debugDraw);
 
       if (collider.contacts.empty()) {
@@ -3550,6 +3552,9 @@ static void SetActiveProjectRoot(const std::filesystem::path &projectPath) {
 
   if (g_LuaScriptEnginePtr) {
     g_LuaScriptEnginePtr->SetProjectRoot(g_ActiveProjectRoot);
+  }
+  if (g_JoltPhysicsSystemPtr) {
+    g_JoltPhysicsSystemPtr->SetProjectRoot(g_ActiveProjectRoot);
   }
 }
 
@@ -6247,6 +6252,8 @@ int main(int argc, char *argv[]) {
 
   // Create Jolt Physics System
   Physics::JoltPhysicsSystem joltPhysicsSystem(joltPhysicsEngine);
+  joltPhysicsSystem.SetProjectRoot(ResolveActiveProjectRoot());
+  g_JoltPhysicsSystemPtr = &joltPhysicsSystem;
 
   // Provide Jolt physics callbacks to Lua scripts
   PhysicsBinding physicsBinding{};
@@ -6284,6 +6291,24 @@ int main(int argc, char *argv[]) {
       return false;
     }
     joltPhysicsEngine.GetBodyInterface().SetLinearVelocity(
+        bodyId, JPH::Vec3(velocity.x, velocity.y, velocity.z));
+    if (activate) {
+      joltPhysicsEngine.GetBodyInterface().ActivateBody(bodyId);
+    }
+    return true;
+  };
+
+  physicsBinding.setAngularVelocity = [&scene, &joltPhysicsEngine, &joltPhysicsSystem](
+                                         uint32_t entityId, const Vec3 &velocity, bool activate) -> bool {
+    entt::entity handle = static_cast<entt::entity>(entityId);
+    if (!scene.GetRegistry().valid(handle)) {
+      return false;
+    }
+    JPH::BodyID bodyId = joltPhysicsSystem.GetBodyID(handle);
+    if (bodyId.IsInvalid()) {
+      return false;
+    }
+    joltPhysicsEngine.GetBodyInterface().SetAngularVelocity(
         bodyId, JPH::Vec3(velocity.x, velocity.y, velocity.z));
     if (activate) {
       joltPhysicsEngine.GetBodyInterface().ActivateBody(bodyId);

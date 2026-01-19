@@ -297,6 +297,9 @@ local function maintainUpright()
 
 	if physicsAvailable() and Physics.setRotation then
 		Physics.setRotation(0.0, state.yaw, 0.0, true)
+		if Physics.setAngularVelocity then
+			Physics.setAngularVelocity(0.0, 0.0, 0.0, true)
+		end
 	else
 		Transform.setRotation(0.0, state.yaw, 0.0)
 	end

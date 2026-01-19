@@ -564,6 +564,9 @@ void LuaScriptEngine::RegisterPhysicsBindings() {
     lua_pushcfunction(m_State, Lua_Physics_setLinearVelocity);
     lua_setfield(m_State, -2, "setLinearVelocity");
 
+    lua_pushcfunction(m_State, Lua_Physics_setAngularVelocity);
+    lua_setfield(m_State, -2, "setAngularVelocity");
+
     lua_pushcfunction(m_State, Lua_Physics_setRotation);
     lua_setfield(m_State, -2, "setRotation");
 
@@ -646,6 +649,31 @@ int LuaScriptEngine::Lua_Physics_setLinearVelocity(lua_State* L) {
     }
 
     bool ok = engine->m_PhysicsBinding.setLinearVelocity(engine->m_CurrentEntityId, Vec3(x, y, z), activate);
+    lua_pushboolean(L, ok);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Physics_setAngularVelocity(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_PhysicsBinding.setAngularVelocity) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    float x = static_cast<float>(luaL_checknumber(L, 1));
+    float y = static_cast<float>(luaL_checknumber(L, 2));
+    float z = static_cast<float>(luaL_checknumber(L, 3));
+    bool activate = true;
+    if (lua_gettop(L) >= 4) {
+        activate = lua_toboolean(L, 4) != 0;
+    }
+
+    bool ok = engine->m_PhysicsBinding.setAngularVelocity(engine->m_CurrentEntityId, Vec3(x, y, z), activate);
     lua_pushboolean(L, ok);
     return 1;
 #else

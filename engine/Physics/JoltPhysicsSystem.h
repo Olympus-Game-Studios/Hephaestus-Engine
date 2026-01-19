@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <unordered_map>
+#include <filesystem>
 #include <Jolt/Jolt.h>
 
 #include "JoltPhysicsEngine.h"
@@ -42,6 +43,10 @@ public:
     void SetEnabled(bool enabled) { m_Enabled = enabled; }
     bool IsEnabled() const { return m_Enabled; }
 
+    // Set the project root for resolving relative mesh paths
+    void SetProjectRoot(const std::filesystem::path& root) { m_ProjectRoot = root; }
+    const std::filesystem::path& GetProjectRoot() const { return m_ProjectRoot; }
+
     // Clear all physics bodies (used when exiting play mode)
     void ClearAllBodies();
 
@@ -49,6 +54,7 @@ private:
     JoltPhysicsEngine& m_PhysicsEngine;
     std::unordered_map<entt::entity, JPH::BodyID> m_EntityToBodyMap;
     std::unordered_map<uint32_t, entt::entity> m_BodyToEntityMap;
+    std::filesystem::path m_ProjectRoot;
     bool m_Enabled = true;
 
     // Sync transform from component to physics body
@@ -60,6 +66,9 @@ private:
     // Update entity bodies in the scene
     void UpdateEntityBodies(Scene& scene);
     void RemoveStaleBodies(Scene& scene);
+
+    // Integrate mesh colliders with dynamic bodies
+    void IntegrateMeshColliders(Scene& scene);
 };
 
 } // namespace Physics

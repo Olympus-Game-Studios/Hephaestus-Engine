@@ -1158,6 +1158,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     json << "\"isStatic\":" << (collider.isStatic ? "true" : "false") << ",";
     json << "\"isTrigger\":" << (collider.isTrigger ? "true" : "false") << ",";
     json << "\"debugDraw\":" << (collider.debugDraw ? "true" : "false") << ",";
+    json << "\"useComplexCollision\":" << (collider.useComplexCollision ? "true" : "false") << ",";
     json << "\"contacts\":[";
     bool first = true;
     for (const auto& contact : collider.contacts) {
@@ -1250,6 +1251,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     if (auto v = EditorMessageBridge::ParseIntField(payload, "isStatic")) collider.isStatic = (*v != 0);
     if (auto v = EditorMessageBridge::ParseIntField(payload, "isTrigger")) collider.isTrigger = (*v != 0);
     if (auto v = EditorMessageBridge::ParseIntField(payload, "debugDraw")) collider.debugDraw = (*v != 0);
+    if (auto v = EditorMessageBridge::ParseIntField(payload, "useComplexCollision")) collider.useComplexCollision = (*v != 0);
     return std::string("{\"ok\":true}");
   });
 

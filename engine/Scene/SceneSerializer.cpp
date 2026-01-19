@@ -716,7 +716,8 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"enabled\": " << (collider->enabled ? "true" : "false") << ",\n";
             oss << "          \"isStatic\": " << (collider->isStatic ? "true" : "false") << ",\n";
             oss << "          \"isTrigger\": " << (collider->isTrigger ? "true" : "false") << ",\n";
-            oss << "          \"debugDraw\": " << (collider->debugDraw ? "true" : "false") << "\n";
+            oss << "          \"debugDraw\": " << (collider->debugDraw ? "true" : "false") << ",\n";
+            oss << "          \"useComplexCollision\": " << (collider->useComplexCollision ? "true" : "false") << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1085,6 +1086,9 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
             if (const JsonValue* debugValue = colliderObj->Find("debugDraw")) {
                 collider.debugDraw = ParseBoolLike(*debugValue, collider.debugDraw);
+            }
+            if (const JsonValue* complexValue = colliderObj->Find("useComplexCollision")) {
+                collider.useComplexCollision = ParseBoolLike(*complexValue, collider.useComplexCollision);
             }
         }
 
@@ -1623,7 +1627,8 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"enabled\": " << (collider->enabled ? "true" : "false") << ",\n";
             oss << "          \"isStatic\": " << (collider->isStatic ? "true" : "false") << ",\n";
             oss << "          \"isTrigger\": " << (collider->isTrigger ? "true" : "false") << ",\n";
-            oss << "          \"debugDraw\": " << (collider->debugDraw ? "true" : "false") << "\n";
+            oss << "          \"debugDraw\": " << (collider->debugDraw ? "true" : "false") << ",\n";
+            oss << "          \"useComplexCollision\": " << (collider->useComplexCollision ? "true" : "false") << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }

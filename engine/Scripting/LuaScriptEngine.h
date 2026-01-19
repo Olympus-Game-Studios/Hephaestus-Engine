@@ -54,6 +54,7 @@ struct PhysicsBinding {
     std::function<bool(uint32_t entityId)> hasBody;
     std::function<bool(uint32_t entityId, Vec3& outVelocity)> getLinearVelocity;
     std::function<bool(uint32_t entityId, const Vec3& velocity, bool activate)> setLinearVelocity;
+    std::function<bool(uint32_t entityId, const Vec3& velocity, bool activate)> setAngularVelocity;
     std::function<bool(uint32_t entityId, const Vec3& rotationEuler, bool activate)> setRotation;
     std::function<bool(uint32_t entityId, const Vec3& origin, const Vec3& direction, float maxDistance, PhysicsRaycastHit& outHit)> raycast;
 };
@@ -274,6 +275,7 @@ private:
     static int Lua_Physics_hasBody(lua_State* L);
     static int Lua_Physics_getLinearVelocity(lua_State* L);
     static int Lua_Physics_setLinearVelocity(lua_State* L);
+    static int Lua_Physics_setAngularVelocity(lua_State* L);
     static int Lua_Physics_setRotation(lua_State* L);
     static int Lua_Physics_raycast(lua_State* L);
 

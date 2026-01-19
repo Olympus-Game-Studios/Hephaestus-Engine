@@ -275,6 +275,12 @@
                 </div>
               </div>
               <div class="ui-prop">
+                <div class="ui-prop-label">Complex Collision</div>
+                <div class="ui-prop-control">
+                  <input type="checkbox" id="meshColliderUseComplex" />
+                </div>
+              </div>
+              <div class="ui-prop">
                 <div class="ui-prop-label">Debug Draw Bounds</div>
                 <div class="ui-prop-control">
                   <input type="checkbox" id="meshColliderDebug" />
@@ -1305,6 +1311,7 @@
       setField('meshColliderStatic', c.isStatic);
       setField('meshColliderTrigger', c.isTrigger);
       setField('meshColliderDebug', c.debugDraw);
+      setField('meshColliderUseComplex', c.useComplexCollision);
 
       if (contactsEl) {
         const contacts = Array.isArray(c.contacts) ? c.contacts : [];
@@ -1346,7 +1353,8 @@
         enabled: getCheckbox('meshColliderEnabled'),
         isStatic: getCheckbox('meshColliderStatic'),
         isTrigger: getCheckbox('meshColliderTrigger'),
-        debugDraw: getCheckbox('meshColliderDebug')
+        debugDraw: getCheckbox('meshColliderDebug'),
+        useComplexCollision: getCheckbox('meshColliderUseComplex')
       };
       const r = window.hep.callCpp('mesh_collider.set', payload);
       if (!r.ok) setStatus('Mesh collider update failed: ' + (r.error || 'error'));
@@ -1492,7 +1500,7 @@
       if (meshColliderAddBtn) meshColliderAddBtn.addEventListener('click', addMeshCollider);
       const meshColliderRemoveBtn = document.getElementById('meshColliderRemoveBtn');
       if (meshColliderRemoveBtn) meshColliderRemoveBtn.addEventListener('click', removeMeshCollider);
-      ['meshColliderEnabled','meshColliderStatic','meshColliderTrigger','meshColliderDebug'].forEach(id => {
+      ['meshColliderEnabled','meshColliderStatic','meshColliderTrigger','meshColliderDebug','meshColliderUseComplex'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener('change', pushMeshColliderProperties);
