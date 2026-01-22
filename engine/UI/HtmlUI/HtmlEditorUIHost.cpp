@@ -243,6 +243,65 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     return json.str();
   });
 
+  bridge_.RegisterHandler("scene.reparent", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto entityIdOpt = EditorMessageBridge::ParseIntField(payload, "entityId");
+    auto newParentIdOpt = EditorMessageBridge::ParseIntField(payload, "newParentId");
+    if (!entityIdOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_entityId\"}");
+    }
+
+    entt::entity entityHandle = static_cast<entt::entity>(static_cast<uint32_t>(*entityIdOpt));
+    if (!scene_->GetRegistry().valid(entityHandle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity entity(entityHandle, scene_);
+
+    // newParentId of 0 means unparent (move to root)
+    uint32_t newParentId = newParentIdOpt.value_or(0);
+    if (newParentId == 0) {
+      // Unparent the entity
+      scene_->RemoveParent(entity);
+      return std::string("{\"ok\":true}");
+    }
+
+    entt::entity parentHandle = static_cast<entt::entity>(newParentId);
+    if (!scene_->GetRegistry().valid(parentHandle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_parent\"}");
+    }
+
+    // Prevent parenting to itself
+    if (entityHandle == parentHandle) {
+      return std::string("{\"ok\":false,\"error\":\"cannot_parent_to_self\"}");
+    }
+
+    Entity parent(parentHandle, scene_);
+
+    // Prevent circular hierarchy - check if parent is a descendant of entity
+    Entity checkParent = parent;
+    while (checkParent) {
+      if (checkParent.HasComponent<TransformComponent>()) {
+        auto& transform = checkParent.GetComponent<TransformComponent>();
+        if (transform.parent == entityHandle) {
+          return std::string("{\"ok\":false,\"error\":\"circular_hierarchy\"}");
+        }
+        if (transform.parent == entt::null) {
+          break;
+        }
+        checkParent = Entity(transform.parent, scene_);
+      } else {
+        break;
+      }
+    }
+
+    scene_->SetParent(entity, parent);
+    return std::string("{\"ok\":true}");
+  });
+
   bridge_.RegisterHandler("actor.spawn_preset", [this](const std::string& payload) -> std::string {
     auto presetOpt = EditorMessageBridge::ParseIntField(payload, "preset");
     if (!presetOpt) {
@@ -279,6 +338,18 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
   bridge_.RegisterHandler("assets.drag_end", [this](const std::string& payload) -> std::string {
     (void)payload;
     pendingAssetDrag_.reset();
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("outliner.drag_begin", [this](const std::string& payload) -> std::string {
+    // Outliner entity drag is handled entirely in JS, this is just for logging/debugging
+    (void)payload;
+    return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("outliner.drag_end", [this](const std::string& payload) -> std::string {
+    // Outliner entity drag is handled entirely in JS, this is just for logging/debugging
+    (void)payload;
     return std::string("{\"ok\":true}");
   });
 

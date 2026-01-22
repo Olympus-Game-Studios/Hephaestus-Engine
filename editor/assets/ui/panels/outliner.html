@@ -44,6 +44,15 @@
       outline: 2px solid var(--accent) !important;
       outline-offset: -1px;
     }
+    .ui-row.is-dragging {
+      opacity: 0.5;
+      background: var(--accent) !important;
+    }
+    .ui-list.is-drag-over {
+      background: rgba(var(--accent-rgb, 66, 133, 244), 0.1);
+      outline: 2px dashed var(--accent, #4285f4);
+      outline-offset: -2px;
+    }
     .outliner-modal {
       position: fixed;
       inset: 0;
@@ -234,55 +243,135 @@
         left.appendChild(badge);
         row.appendChild(left);
 
-        row.onclick = (ev) => {
-          const ctrlPressed = (ev && ev.ctrlKey) || (ev && ev.metaKey);
-          const payload = {
-            id: ent.id,
-            toggle: ctrlPressed ? 1 : 0,
-            add: 0
-          };
-          const statusEl = document.getElementById('status');
-          if (ctrlPressed) {
-            statusEl.textContent = 'Multi-select: Ctrl+Click on #' + ent.id;
-          }
-          const r = window.hep.callCpp('scene.select', payload);
-          if (!r.ok) {
-            statusEl.textContent = 'Select failed: ' + (r.error || 'error');
-            return;
-          }
-          refresh();
-        };
+        // Track pointer state for drag detection
+        let pointerDownTime = 0;
+        let pointerDownPos = { x: 0, y: 0 };
+        let isDragging = false;
 
-        if (ent.isFolder) {
-          row.addEventListener('dragover', (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            row.classList.add('is-drag-over');
-          });
-          row.addEventListener('dragleave', (ev) => {
-            ev.stopPropagation();
-            if (ev.target === row) {
-              row.classList.remove('is-drag-over');
+        row.addEventListener('pointerdown', (ev) => {
+          if (ev.button !== 0) return;
+          // Don't start drag from toggle button
+          if (ev.target.classList.contains('outliner-toggle')) return;
+          
+          pointerDownTime = Date.now();
+          pointerDownPos = { x: ev.clientX, y: ev.clientY };
+          isDragging = false;
+          
+          try { row.setPointerCapture(ev.pointerId); } catch (_) {}
+        });
+
+        row.addEventListener('pointermove', (ev) => {
+          if (pointerDownTime === 0) return;
+          
+          const posDiff = Math.abs(ev.clientX - pointerDownPos.x) + Math.abs(ev.clientY - pointerDownPos.y);
+          
+          // Start drag if moved more than 5 pixels
+          if (!isDragging && posDiff > 5) {
+            isDragging = true;
+            row.classList.add('is-dragging');
+            window.hep.callCpp('outliner.drag_begin', { entityId: ent.id });
+            document.getElementById('status').textContent = 'Dragging: ' + ent.name;
+          }
+          
+          if (isDragging) {
+            // Find what we're hovering over
+            const elemBelow = document.elementFromPoint(ev.clientX, ev.clientY);
+            // Clear previous highlights
+            document.querySelectorAll('.is-drag-over').forEach(el => el.classList.remove('is-drag-over'));
+            
+            if (elemBelow) {
+              const targetRow = elemBelow.closest('.ui-row');
+              if (targetRow && targetRow !== row) {
+                const targetIsFolder = targetRow.dataset.isFolder === '1';
+                if (targetIsFolder) {
+                  targetRow.classList.add('is-drag-over');
+                }
+              }
             }
-          });
-          row.addEventListener('drop', (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            row.classList.remove('is-drag-over');
-            const transferData = ev.dataTransfer.getData('text/plain');
-            if (transferData) {
-              const folderId = Number(row.dataset.entityId || 0);
-              const statusEl = document.getElementById('status');
-              const r = window.hep.callCpp('scene.outliner_drop_asset', { rel: transferData, folderId: folderId });
+          }
+        });
+
+        row.addEventListener('pointerup', (ev) => {
+          if (isDragging) {
+            row.classList.remove('is-dragging');
+            document.querySelectorAll('.is-drag-over').forEach(el => el.classList.remove('is-drag-over'));
+            
+            // Find drop target
+            const elemBelow = document.elementFromPoint(ev.clientX, ev.clientY);
+            let targetFolderId = 0;
+            
+            if (elemBelow) {
+              const targetRow = elemBelow.closest('.ui-row');
+              if (targetRow && targetRow !== row && targetRow.dataset.isFolder === '1') {
+                targetFolderId = Number(targetRow.dataset.entityId || 0);
+              }
+            }
+            
+            // Perform reparent
+            const statusEl = document.getElementById('status');
+            if (targetFolderId > 0 || elemBelow === document.getElementById('list')) {
+              const r = window.hep.callCpp('scene.reparent', { 
+                entityId: ent.id, 
+                newParentId: targetFolderId 
+              });
               if (!r || !r.ok) {
-                if (statusEl) statusEl.textContent = 'Drop failed: ' + (r && r.error ? r.error : 'error');
+                statusEl.textContent = 'Reparent failed: ' + (r && r.error ? r.error : 'error');
               } else {
-                if (statusEl) statusEl.textContent = 'Dropped asset into folder.';
+                statusEl.textContent = targetFolderId ? 'Moved to folder.' : 'Moved to root.';
+                refresh();
+              }
+            } else {
+              statusEl.textContent = 'Drop cancelled.';
+            }
+            
+            window.hep.callCpp('outliner.drag_end', {});
+            isDragging = false;
+          } else {
+            // This was a click, not a drag
+            const timeDiff = Date.now() - pointerDownTime;
+            if (timeDiff < 300) {
+              const ctrlPressed = (ev && ev.ctrlKey) || (ev && ev.metaKey);
+              const payload = {
+                id: ent.id,
+                toggle: ctrlPressed ? 1 : 0,
+                add: 0
+              };
+              const statusEl = document.getElementById('status');
+              if (ctrlPressed) {
+                statusEl.textContent = 'Multi-select: Ctrl+Click on #' + ent.id;
+              }
+              const r = window.hep.callCpp('scene.select', payload);
+              if (!r.ok) {
+                statusEl.textContent = 'Select failed: ' + (r.error || 'error');
+              } else {
                 refresh();
               }
             }
-          });
-        }
+          }
+          
+          pointerDownTime = 0;
+          try { row.releasePointerCapture(ev.pointerId); } catch (_) {}
+        });
+
+        row.addEventListener('pointercancel', (ev) => {
+          if (isDragging) {
+            row.classList.remove('is-dragging');
+            document.querySelectorAll('.is-drag-over').forEach(el => el.classList.remove('is-drag-over'));
+            window.hep.callCpp('outliner.drag_end', {});
+          }
+          isDragging = false;
+          pointerDownTime = 0;
+        });
+
+        row.addEventListener('lostpointercapture', (ev) => {
+          if (isDragging) {
+            row.classList.remove('is-dragging');
+            document.querySelectorAll('.is-drag-over').forEach(el => el.classList.remove('is-drag-over'));
+            window.hep.callCpp('outliner.drag_end', {});
+          }
+          isDragging = false;
+          pointerDownTime = 0;
+        });
 
         list.appendChild(row);
 
