@@ -5,12 +5,85 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>World Outliner</title>
   <link rel="stylesheet" href="../ui_theme.css" />
+  <style>
+    .outliner-indent {
+      display: inline-block;
+      height: 1px;
+      flex: 0 0 auto;
+    }
+    .outliner-toggle {
+      width: calc(18px * var(--uiScale));
+      height: calc(18px * var(--uiScale));
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: var(--fontSizeSmall);
+      cursor: pointer;
+      padding: 0;
+    }
+    .outliner-toggle:hover {
+      color: var(--text);
+      border-color: var(--border2);
+      background: #2b3442;
+    }
+    .outliner-toggle.is-hidden {
+      visibility: hidden;
+    }
+    .outliner-icon {
+      width: calc(18px * var(--uiScale));
+      text-align: center;
+      color: var(--muted);
+      font-size: var(--fontSizeSmall);
+      flex: 0 0 auto;
+    }
+    .ui-row.is-drag-over {
+      background: var(--rowSel) !important;
+      outline: 2px solid var(--accent) !important;
+      outline-offset: -1px;
+    }
+    .outliner-modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 100;
+    }
+    .outliner-modal.is-open {
+      display: flex;
+    }
+    .outliner-modal-card {
+      min-width: calc(260px * var(--uiScale));
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: var(--space-5);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+    }
+    .outliner-modal-title {
+      font-size: var(--fontSizeSmall);
+      font-weight: 600;
+    }
+    .outliner-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: var(--space-2);
+    }
+  </style>
 </head>
 <body>
   <div class="ui-panel">
     <div class="ui-header">
       <div class="ui-title">World Outliner</div>
       <div class="ui-toolbar">
+        <button class="ui-btn ui-icon-btn" id="newFolderBtn" title="New Folder">F</button>
         <button class="ui-btn ui-icon-btn" id="refreshBtn" title="Refresh">R</button>
       </div>
     </div>
@@ -25,10 +98,32 @@
     <div class="ui-status" id="status">Loading…</div>
   </div>
 
+  <div class="outliner-modal" id="folderModal">
+    <div class="outliner-modal-card">
+      <div class="outliner-modal-title">Create Folder</div>
+      <input class="ui-input" id="folderName" placeholder="Folder name" />
+      <div class="outliner-modal-actions">
+        <button class="ui-btn" id="folderCancel">Cancel</button>
+        <button class="ui-btn" id="folderCreate">Create</button>
+      </div>
+    </div>
+  </div>
+
   <script src="../ui_common.js"></script>
 
   <script>
+    let lastData = null;
+    const expandedState = {};
+
+    function isExpanded(id) {
+      if (expandedState[id] === undefined) {
+        expandedState[id] = true;
+      }
+      return expandedState[id];
+    }
+
     function renderList(data) {
+      lastData = data;
       const list = document.getElementById('list');
       list.innerHTML = '';
 
@@ -39,19 +134,90 @@
 
       const selectedId = data.selectedId || 0;
       const filter = (document.getElementById('filter').value || '').toLowerCase();
-      const ents = (data.entities || []).filter(ent => {
-        const n = (ent.name || '').toLowerCase();
-        const t = (ent.type || '').toLowerCase();
-        return !filter || n.includes(filter) || t.includes(filter);
+      const rawEnts = (data.entities || []).map((ent, index) => {
+        const name = ent.name || '(unnamed)';
+        const type = ent.type || 'ENTITY';
+        return {
+          id: ent.id,
+          name,
+          type,
+          parent: ent.parent || 0,
+          isFolder: !!ent.isFolder || type === 'FOLDER',
+          selected: ent.selected || (ent.id === selectedId),
+          order: index,
+          nameLower: name.toLowerCase(),
+          typeLower: type.toLowerCase()
+        };
       });
 
-      ents.forEach(ent => {
+      const byId = new Map();
+      rawEnts.forEach(ent => byId.set(ent.id, ent));
+
+      const childrenById = new Map();
+      rawEnts.forEach(ent => {
+        if (ent.parent && byId.has(ent.parent)) {
+          if (!childrenById.has(ent.parent)) {
+            childrenById.set(ent.parent, []);
+          }
+          childrenById.get(ent.parent).push(ent);
+        }
+      });
+
+      for (const [parentId, children] of childrenById.entries()) {
+        children.sort((a, b) => a.order - b.order);
+      }
+
+      const roots = rawEnts.filter(ent => !ent.parent || !byId.has(ent.parent));
+      roots.sort((a, b) => a.order - b.order);
+
+      function matches(ent) {
+        return !filter || ent.nameLower.includes(filter) || ent.typeLower.includes(filter);
+      }
+
+      function shouldShow(ent) {
+        if (!filter) return true;
+        if (matches(ent)) return true;
+        const children = childrenById.get(ent.id) || [];
+        return children.some(child => shouldShow(child));
+      }
+
+      function renderEntity(ent, depth) {
+        if (!shouldShow(ent)) {
+          return 0;
+        }
+
+        const children = childrenById.get(ent.id) || [];
+        const hasChildren = children.length > 0;
+        const expanded = isExpanded(ent.id);
+
         const row = document.createElement('div');
-        const isSel = ent.selected || (ent.id === selectedId);
-        row.className = 'ui-row' + (isSel ? ' is-selected' : '');
+        row.className = 'ui-row' + (ent.selected ? ' is-selected' : '');
+        row.dataset.entityId = String(ent.id || 0);
+        row.dataset.isFolder = ent.isFolder ? '1' : '0';
 
         const left = document.createElement('div');
         left.className = 'ui-row-left';
+
+        const indent = document.createElement('span');
+        indent.className = 'outliner-indent';
+        indent.style.width = `${depth * 14}px`;
+
+        const toggle = document.createElement('button');
+        toggle.className = 'outliner-toggle' + (hasChildren ? '' : ' is-hidden');
+        toggle.textContent = expanded ? '▾' : '▸';
+        toggle.onclick = (ev) => {
+          ev.stopPropagation();
+          expandedState[ent.id] = !expanded;
+          renderList(lastData);
+        };
+
+        const icon = document.createElement('div');
+        icon.className = 'outliner-icon';
+        if (ent.isFolder) {
+          icon.textContent = hasChildren && expanded ? '📂' : '📁';
+        } else {
+          icon.textContent = '•';
+        }
 
         const name = document.createElement('div');
         name.className = 'ui-row-name';
@@ -61,6 +227,9 @@
         badge.className = 'ui-badge';
         badge.textContent = ent.type || 'ENTITY';
 
+        left.appendChild(indent);
+        left.appendChild(toggle);
+        left.appendChild(icon);
         left.appendChild(name);
         left.appendChild(badge);
         row.appendChild(left);
@@ -83,15 +252,103 @@
           }
           refresh();
         };
+
+        if (ent.isFolder) {
+          row.addEventListener('dragover', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            row.classList.add('is-drag-over');
+          });
+          row.addEventListener('dragleave', (ev) => {
+            ev.stopPropagation();
+            if (ev.target === row) {
+              row.classList.remove('is-drag-over');
+            }
+          });
+          row.addEventListener('drop', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            row.classList.remove('is-drag-over');
+            const transferData = ev.dataTransfer.getData('text/plain');
+            if (transferData) {
+              const folderId = Number(row.dataset.entityId || 0);
+              const statusEl = document.getElementById('status');
+              const r = window.hep.callCpp('scene.outliner_drop_asset', { rel: transferData, folderId: folderId });
+              if (!r || !r.ok) {
+                if (statusEl) statusEl.textContent = 'Drop failed: ' + (r && r.error ? r.error : 'error');
+              } else {
+                if (statusEl) statusEl.textContent = 'Dropped asset into folder.';
+                refresh();
+              }
+            }
+          });
+        }
+
         list.appendChild(row);
+
+        let renderedCount = 1;
+        const renderChildren = hasChildren && (filter || expanded);
+        if (renderChildren) {
+          children.forEach(child => {
+            renderedCount += renderEntity(child, depth + 1);
+          });
+        }
+
+        return renderedCount;
+      }
+
+      let totalVisible = 0;
+      roots.forEach(root => {
+        totalVisible += renderEntity(root, 0);
       });
 
-      document.getElementById('status').textContent = 'Entities: ' + ents.length;
+      document.getElementById('status').textContent = 'Entities: ' + totalVisible;
     }
 
     function refresh() {
       const data = window.hep.callCpp('scene.list', {});
       renderList(data);
+    }
+
+    function createFolderWithName(name) {
+      const finalName = (name || '').trim() || 'Folder';
+      let parentId = 0;
+      if (lastData && lastData.entities && lastData.selectedId) {
+        const selected = lastData.entities.find(ent => ent.id === lastData.selectedId);
+        if (selected && (selected.isFolder || selected.type === 'FOLDER')) {
+          parentId = selected.id;
+        }
+      }
+
+      const r = window.hep.callCpp('scene.create_folder', { name: finalName, parent: parentId });
+      const statusEl = document.getElementById('status');
+      if (!r || !r.ok) {
+        statusEl.textContent = 'Create folder failed: ' + (r && r.error ? r.error : 'error');
+        return;
+      }
+      statusEl.textContent = 'Created folder: ' + finalName;
+      refresh();
+    }
+
+    function openFolderDialog() {
+      const modal = document.getElementById('folderModal');
+      const input = document.getElementById('folderName');
+      if (!modal || !input) return;
+      input.value = 'New Folder';
+      modal.classList.add('is-open');
+      setTimeout(() => input.focus(), 0);
+    }
+
+    function closeFolderDialog() {
+      const modal = document.getElementById('folderModal');
+      if (modal) modal.classList.remove('is-open');
+    }
+
+    function submitFolderDialog() {
+      const input = document.getElementById('folderName');
+      const name = input ? input.value : '';
+      closeFolderDialog();
+      createFolderWithName(name);
     }
 
     // Receive events from C++
@@ -104,6 +361,29 @@
 
     // Initial refresh + periodic fallback (in case events are missed)
     window.hep.onReady(() => {
+      const newFolderBtn = document.getElementById('newFolderBtn');
+      const folderModal = document.getElementById('folderModal');
+      const folderName = document.getElementById('folderName');
+      const folderCreate = document.getElementById('folderCreate');
+      const folderCancel = document.getElementById('folderCancel');
+
+      if (newFolderBtn) newFolderBtn.onclick = openFolderDialog;
+      if (folderCreate) folderCreate.onclick = submitFolderDialog;
+      if (folderCancel) folderCancel.onclick = closeFolderDialog;
+      if (folderModal) {
+        folderModal.addEventListener('click', (ev) => {
+          if (ev.target === folderModal) closeFolderDialog();
+        });
+      }
+      if (folderName) {
+        folderName.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') {
+            submitFolderDialog();
+          } else if (ev.key === 'Escape') {
+            closeFolderDialog();
+          }
+        });
+      }
       document.getElementById('refreshBtn').onclick = refresh;
       document.getElementById('filter').addEventListener('input', refresh);
       refresh();

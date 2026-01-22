@@ -380,6 +380,7 @@ struct WorldOutlinerActions {
   std::optional<entt::entity> entityToDelete;
   std::optional<WorldOutlinerSpawnPreset> spawnRequest;
   std::optional<std::string> spawnMeshAssetRel;
+  std::optional<entt::entity> spawnMeshParent;
 };
 
 struct DetailsPanelActions {
@@ -1031,6 +1032,10 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
 #if HEPHAESTUS_EDITOR_HTML_UI
   if (g_HtmlEditorUIHost) {
     g_HtmlEditorUIHost->DrawOutlinerPanel();
+    if (auto drop = g_HtmlEditorUIHost->ConsumeOutlinerAssetDropRequest()) {
+      actions.spawnMeshAssetRel = drop->first;
+      actions.spawnMeshParent = static_cast<entt::entity>(drop->second);
+    }
     return actions;
   }
 #endif
@@ -3212,6 +3217,8 @@ Entity FindClosestHitEntity(const Ray &ray, Scene &scene, float &outDistance) {
     auto &renderer = entity.GetComponent<MeshRendererComponent>();
 
     if (!renderer.visible)
+      continue;
+    if ((g_RuntimeMode || g_SimPlaying) && renderer.hideInGame)
       continue;
 
     AABB worldBounds = renderer.GetWorldBounds(transform);
@@ -8028,6 +8035,16 @@ int main(int argc, char *argv[]) {
             renderer.meshImported = false;
             created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
 
+            if (outlinerActions.spawnMeshParent) {
+              entt::entity parentHandle = *outlinerActions.spawnMeshParent;
+              if (scene.GetRegistry().valid(parentHandle)) {
+                Entity parent(parentHandle, &scene);
+                if (parent && parent.HasComponent<FolderComponent>()) {
+                  scene.SetParent(created, parent);
+                }
+              }
+            }
+
             rebuildSceneMeshesFromComponents(scene);
 
             if (!g_DetailsLocked) {
@@ -9032,6 +9049,8 @@ int main(int argc, char *argv[]) {
 
         if (!renderer.visible)
           continue;
+        if ((g_RuntimeMode || g_SimPlaying) && renderer.hideInGame)
+          continue;
 
         if (!renderer.HasValidMesh() ||
             renderer.meshHandle >= meshLibrary.size())
@@ -9153,6 +9172,8 @@ int main(int argc, char *argv[]) {
       auto &renderer = entity.GetComponent<MeshRendererComponent>();
 
       if (!renderer.visible)
+        continue;
+      if ((g_RuntimeMode || g_SimPlaying) && renderer.hideInGame)
         continue;
 
       // Check render distance culling
@@ -9451,6 +9472,7 @@ int main(int argc, char *argv[]) {
       auto &renderer = selectedEntity.GetComponent<MeshRendererComponent>();
 
       if (renderer.visible && renderer.HasValidMesh() &&
+          !((g_RuntimeMode || g_SimPlaying) && renderer.hideInGame) &&
           renderer.meshHandle < meshLibrary.size()) {
         MeshGPU &mesh = meshLibrary[renderer.meshHandle];
 

@@ -214,6 +214,12 @@
             </div>
           </div>
           <div class="ui-prop">
+            <div class="ui-prop-label">Hide In Game</div>
+            <div class="ui-prop-control">
+              <input type="checkbox" id="meshHideInGame" />
+            </div>
+          </div>
+          <div class="ui-prop">
             <div class="ui-prop-label">Backface Culling</div>
             <div class="ui-prop-control">
               <input type="checkbox" id="meshBackfaceCulling" />
@@ -1258,6 +1264,7 @@
       }
       const mesh = res.mesh;
       setField('meshVisible', mesh.visible);
+      setField('meshHideInGame', mesh.hideInGame);
       setField('meshBackfaceCulling', mesh.backfaceCulling);
       setField('meshAssetPath', mesh.meshAssetPath);
       currentMeshMaterialIndices = Array.isArray(mesh.materialIndices) && mesh.materialIndices.length > 0 
@@ -1339,6 +1346,7 @@
       const payload = {
         id: currentId,
         visible: getCheckbox('meshVisible'),
+        hideInGame: getCheckbox('meshHideInGame'),
         backfaceCulling: getCheckbox('meshBackfaceCulling'),
         materialIndices: Array.isArray(currentMeshMaterialIndices) ? currentMeshMaterialIndices : []
       };
@@ -1487,7 +1495,7 @@
       });
 
       // Mesh inputs
-      ['meshVisible', 'meshBackfaceCulling'].forEach(id => {
+      ['meshVisible', 'meshHideInGame', 'meshBackfaceCulling'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener('change', pushMeshProperties);

@@ -198,6 +198,44 @@ Vec3 QuatToEulerXYZ(const JPH::Quat& quat)
     return euler;
 }
 
+JPH::RefConst<JPH::Shape> BuildMeshShapeFromMeshData(const MeshData& meshData, const Vec3& scale)
+{
+    if (meshData.vertices.empty() || meshData.indices.size() < 3) {
+        return {};
+    }
+
+    JPH::VertexList vertices;
+    vertices.resize(meshData.vertices.size());
+    for (size_t i = 0; i < meshData.vertices.size(); ++i) {
+        const Vertex& v = meshData.vertices[i];
+        vertices[i] = JPH::Float3(v.pos[0] * scale.x, v.pos[1] * scale.y, v.pos[2] * scale.z);
+    }
+
+    JPH::IndexedTriangleList triangles;
+    triangles.reserve(meshData.indices.size() / 3);
+    for (size_t i = 0; i + 2 < meshData.indices.size(); i += 3) {
+        uint32_t i0 = meshData.indices[i];
+        uint32_t i1 = meshData.indices[i + 1];
+        uint32_t i2 = meshData.indices[i + 2];
+        if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size()) {
+            continue;
+        }
+        triangles.emplace_back(i0, i1, i2, 0);
+    }
+
+    if (triangles.empty()) {
+        return {};
+    }
+
+    JPH::MeshShapeSettings settings(std::move(vertices), std::move(triangles));
+    auto result = settings.Create();
+    if (result.HasError()) {
+        std::cerr << "Failed to create mesh collision shape: " << result.GetError().c_str() << "\n";
+        return {};
+    }
+    return result.Get();
+}
+
 } // namespace
 
 namespace Physics {
@@ -369,41 +407,10 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
         }
 
         const MeshData* meshData = GetMeshDataForPath(renderer.meshAssetPath);
-        if (!meshData || meshData->vertices.empty() || meshData->indices.size() < 3) {
+        if (!meshData) {
             return {};
         }
-
-        JPH::VertexList vertices;
-        vertices.resize(meshData->vertices.size());
-        const Vec3 scale = transform.scale;
-        for (size_t i = 0; i < meshData->vertices.size(); ++i) {
-            const Vertex& v = meshData->vertices[i];
-            vertices[i] = JPH::Float3(v.pos[0] * scale.x, v.pos[1] * scale.y, v.pos[2] * scale.z);
-        }
-
-        JPH::IndexedTriangleList triangles;
-        triangles.reserve(meshData->indices.size() / 3);
-        for (size_t i = 0; i + 2 < meshData->indices.size(); i += 3) {
-            uint32_t i0 = meshData->indices[i];
-            uint32_t i1 = meshData->indices[i + 1];
-            uint32_t i2 = meshData->indices[i + 2];
-            if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size()) {
-                continue;
-            }
-            triangles.emplace_back(i0, i1, i2, 0);
-        }
-
-        if (triangles.empty()) {
-            return {};
-        }
-
-        JPH::MeshShapeSettings settings(std::move(vertices), std::move(triangles));
-        auto result = settings.Create();
-        if (result.HasError()) {
-            std::cerr << "Failed to create mesh collision shape: " << result.GetError().c_str() << "\n";
-            return {};
-        }
-        return result.Get();
+        return BuildMeshShapeFromMeshData(*meshData, transform.scale);
     };
 
     auto buildShape = [&](const PhysicsShapeComponent& shapeComp, const TransformComponent& transformComp) -> JPH::RefConst<JPH::Shape> {
@@ -737,6 +744,72 @@ void JoltPhysicsSystem::UpdateEntityBodies(Scene& scene) {
             }
         }
     }
+
+    // Create static Jolt bodies for mesh colliders (complex collision) without rigid bodies
+    auto meshView = scene.GetEntitiesWith<TransformComponent, MeshRendererComponent, MeshColliderComponent>();
+    for (auto handle : meshView) {
+        entt::entity entity = handle;
+        Entity sceneEntity(entity, &scene);
+
+        // Skip if already handled by rigid body system
+        if (sceneEntity.HasComponent<RigidBodyComponent>()) {
+            continue;
+        }
+
+        auto& collider = sceneEntity.GetComponent<MeshColliderComponent>();
+        if (!collider.enabled || !collider.useComplexCollision) {
+            continue;
+        }
+
+        auto& transform = sceneEntity.GetComponent<TransformComponent>();
+        auto& renderer = sceneEntity.GetComponent<MeshRendererComponent>();
+
+        auto it = m_EntityToBodyMap.find(entity);
+        if (it == m_EntityToBodyMap.end()) {
+            const MeshData* meshData = GetMeshDataForPath(renderer.meshAssetPath, m_ProjectRoot);
+            if (!meshData) {
+                continue;
+            }
+
+            JPH::RefConst<JPH::Shape> shape = BuildMeshShapeFromMeshData(*meshData, transform.scale);
+            if (!shape) {
+                continue;
+            }
+
+            JPH::BodyCreationSettings bodySettings(
+                shape,
+                JPH::RVec3(transform.position.x, transform.position.y, transform.position.z),
+                EulerXYZToQuat(transform.rotation),
+                JPH::EMotionType::Static,
+                0  // Object layer
+            );
+            bodySettings.mIsSensor = collider.isTrigger;
+
+            JPH::BodyInterface& bodyInterface = m_PhysicsEngine.GetBodyInterface();
+            JPH::Body* pBody = bodyInterface.CreateBody(bodySettings);
+            if (!pBody) {
+                std::cerr << "Failed to create Jolt mesh collider body\n";
+                continue;
+            }
+
+            JPH::BodyID bodyId = pBody->GetID();
+            bodyInterface.AddBody(bodyId, JPH::EActivation::DontActivate);
+
+            m_EntityToBodyMap[entity] = bodyId;
+            m_BodyToEntityMap[bodyId.GetIndex()] = entity;
+        } else {
+            // Keep static body in sync if transforms change
+            JPH::BodyInterface& bodyInterface = m_PhysicsEngine.GetBodyInterface();
+            if (bodyInterface.IsAdded(it->second)) {
+                bodyInterface.SetPositionAndRotation(
+                    it->second,
+                    JPH::RVec3(transform.position.x, transform.position.y, transform.position.z),
+                    EulerXYZToQuat(transform.rotation),
+                    JPH::EActivation::DontActivate
+                );
+            }
+        }
+    }
 }
 
 void JoltPhysicsSystem::RemoveStaleBodies(Scene& scene) {
@@ -746,8 +819,14 @@ void JoltPhysicsSystem::RemoveStaleBodies(Scene& scene) {
         entt::entity entity = it->first;
         bool entityValid = registry.valid(entity);
         bool hasRigidBody = entityValid && registry.any_of<RigidBodyComponent>(entity);
+        bool hasMeshCollider = entityValid && registry.all_of<MeshColliderComponent, MeshRendererComponent, TransformComponent>(entity);
+        bool useComplexMeshCollider = false;
+        if (hasMeshCollider) {
+            auto& collider = registry.get<MeshColliderComponent>(entity);
+            useComplexMeshCollider = collider.enabled && collider.useComplexCollision;
+        }
 
-        if (!entityValid || !hasRigidBody) {
+        if (!entityValid || (!hasRigidBody && !useComplexMeshCollider)) {
             JPH::BodyID bodyId = it->second;
             ++it;
             DestroyRigidBody(bodyId);
@@ -757,44 +836,142 @@ void JoltPhysicsSystem::RemoveStaleBodies(Scene& scene) {
     }
 }
 
+namespace {
+
+// Helper: Compute triangle normal from three vertices
+Vec3 ComputeTriangleNormal(const Vec3& p0, const Vec3& p1, const Vec3& p2) {
+    Vec3 edge1 = vsub(p1, p0);
+    Vec3 edge2 = vsub(p2, p0);
+    Vec3 normal = vcross(edge1, edge2);
+    float len = vlen(normal);
+    if (len > 1e-6f) {
+        return vscale(normal, 1.0f / len);
+    }
+    return v3(0.0f, 1.0f, 0.0f); // Degenerate triangle, return up
+}
+
+// Helper: Closest point on triangle to a point
+Vec3 ClosestPointOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
+    // Check if P in vertex region outside A
+    Vec3 ab = vsub(b, a);
+    Vec3 ac = vsub(c, a);
+    Vec3 ap = vsub(p, a);
+    float d1 = vdot(ab, ap);
+    float d2 = vdot(ac, ap);
+    if (d1 <= 0.0f && d2 <= 0.0f) return a; // barycentric coordinates (1,0,0)
+
+    // Check if P in vertex region outside B
+    Vec3 bp = vsub(p, b);
+    float d3 = vdot(ab, bp);
+    float d4 = vdot(ac, bp);
+    if (d3 >= 0.0f && d4 <= d3) return b; // barycentric coordinates (0,1,0)
+
+    // Check if P in edge region of AB, if so return projection of P onto AB
+    float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
+        float v = d1 / (d1 - d3);
+        return vadd(a, vscale(ab, v)); // barycentric coordinates (1-v,v,0)
+    }
+
+    // Check if P in vertex region outside C
+    Vec3 cp = vsub(p, c);
+    float d5 = vdot(ab, cp);
+    float d6 = vdot(ac, cp);
+    if (d6 >= 0.0f && d5 <= d6) return c; // barycentric coordinates (0,0,1)
+
+    // Check if P in edge region of AC, if so return projection of P onto AC
+    float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
+        float w = d2 / (d2 - d6);
+        return vadd(a, vscale(ac, w)); // barycentric coordinates (1-w,0,w)
+    }
+
+    // Check if P in edge region of BC, if so return projection of P onto BC
+    float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
+        float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return vadd(b, vscale(vsub(c, b), w)); // barycentric coordinates (0,1-w,w)
+    }
+
+    // P inside face region. Compute Q through its barycentric coordinates (u,v,w)
+    float denom = 1.0f / (va + vb + vc);
+    float v = vb * denom;
+    float w = vc * denom;
+    return vadd(a, vadd(vscale(ab, v), vscale(ac, w)));
+}
+
+// Helper: Sphere-triangle collision test
+// Returns true if colliding, fills outPenetration and outNormal
+bool SphereTriangleCollision(
+    const Vec3& sphereCenter, float sphereRadius,
+    const Vec3& p0, const Vec3& p1, const Vec3& p2,
+    float& outPenetration, Vec3& outNormal, Vec3& outContactPoint)
+{
+    // Find closest point on triangle to sphere center
+    Vec3 closest = ClosestPointOnTriangle(sphereCenter, p0, p1, p2);
+    
+    // Check distance from closest point to sphere center
+    Vec3 toCenter = vsub(sphereCenter, closest);
+    float distSq = vdot(toCenter, toCenter);
+    float radiusSq = sphereRadius * sphereRadius;
+    
+    if (distSq > radiusSq) {
+        return false; // No collision
+    }
+    
+    float dist = std::sqrt(distSq);
+    outPenetration = sphereRadius - dist;
+    outContactPoint = closest;
+    
+    if (dist > 1e-6f) {
+        outNormal = vscale(toCenter, 1.0f / dist);
+    } else {
+        // Sphere center is exactly on the triangle, use triangle normal
+        outNormal = ComputeTriangleNormal(p0, p1, p2);
+    }
+    
+    return true;
+}
+
+// Store world-space triangle data for collision
+struct WorldTriangle {
+    Vec3 p0, p1, p2;
+    Vec3 normal;
+    AABB bounds;
+};
+
+} // namespace
+
 void JoltPhysicsSystem::IntegrateMeshColliders(Scene& scene) {
     // Iterate over all mesh colliders (may or may not have RigidBodyComponent)
     auto meshColliderView = scene.GetEntitiesWith<TransformComponent, MeshColliderComponent>();
     
-    int meshColliderCount = 0;
     for (auto meshColliderHandle : meshColliderView) {
-        meshColliderCount++;
         Entity meshColliderEntity(meshColliderHandle, &scene);
         
         // Skip if this mesh collider is also a rigid body (it handles collision via Jolt)
         if (meshColliderEntity.HasComponent<RigidBodyComponent>()) {
-            std::cout << "[MeshCollider] Skipping entity (has RigidBody): " << static_cast<uint32_t>(meshColliderHandle) << "\n";
+            continue;
+        }
+
+        // Skip if this mesh collider has a Jolt body (raycasts and collisions are handled by Jolt)
+        if (m_EntityToBodyMap.find(meshColliderHandle) != m_EntityToBodyMap.end()) {
             continue;
         }
         
         auto& meshColliderTransform = meshColliderEntity.GetComponent<TransformComponent>();
         if (!meshColliderEntity.HasComponent<MeshRendererComponent>()) {
-            std::cout << "[MeshCollider] Skipping entity (no MeshRenderer): " << static_cast<uint32_t>(meshColliderHandle) << "\n";
             continue;
         }
 
         const auto& renderer = meshColliderEntity.GetComponent<MeshRendererComponent>();
-        std::cout << "[MeshCollider] Processing entity with mesh path: '" << renderer.meshAssetPath << "' (project root: " << m_ProjectRoot << ")\n";
         
         const MeshData* meshData = GetMeshDataForPath(renderer.meshAssetPath, m_ProjectRoot);
-        if (!meshData) {
-            std::cout << "[MeshCollider] Failed to load mesh data for path: '" << renderer.meshAssetPath << "'\n";
+        if (!meshData || meshData->vertices.empty() || meshData->indices.size() < 3) {
             continue;
         }
-        if (meshData->vertices.empty() || meshData->indices.size() < 3) {
-            std::cout << "[MeshCollider] Mesh data empty or invalid (verts=" << meshData->vertices.size() << ", indices=" << meshData->indices.size() << ")\n";
-            continue;
-        }
-        
-        std::cout << "[MeshCollider] Loaded mesh: " << meshData->vertices.size() << " verts, " << meshData->indices.size() << " indices\n";
 
-        // Build world-space triangle bounds for this mesh collider
-        // Compose TRS matrix manually: Translation * RotationX * RotationY * RotationZ * Scale
+        // Build world-space transformation matrix
         Mat4 scaleMat = Mat4::Scale(meshColliderTransform.scale);
         Mat4 rotX = Mat4::RotationX(meshColliderTransform.rotation.x);
         Mat4 rotY = Mat4::RotationY(meshColliderTransform.rotation.y);
@@ -802,8 +979,13 @@ void JoltPhysicsSystem::IntegrateMeshColliders(Scene& scene) {
         Mat4 rotMat = Mat4::Multiply(Mat4::Multiply(rotX, rotY), rotZ);
         Mat4 meshWorldMat = Mat4::Multiply(Mat4::Multiply(Mat4::Translation(meshColliderTransform.position), rotMat), scaleMat);
 
-        std::vector<AABB> triangleBounds;
-        triangleBounds.reserve(meshData->indices.size() / 3);
+        // Build world-space triangles with normals and bounds
+        std::vector<WorldTriangle> worldTriangles;
+        worldTriangles.reserve(meshData->indices.size() / 3);
+        
+        AABB meshWorldBounds;
+        bool boundsInitialized = false;
+        
         for (size_t i = 0; i + 2 < meshData->indices.size(); i += 3) {
             uint32_t i0 = meshData->indices[i];
             uint32_t i1 = meshData->indices[i + 1];
@@ -815,20 +997,38 @@ void JoltPhysicsSystem::IntegrateMeshColliders(Scene& scene) {
             const Vertex& v0 = meshData->vertices[i0];
             const Vertex& v1 = meshData->vertices[i1];
             const Vertex& v2 = meshData->vertices[i2];
-            Vec3 p0 = Mat4::TransformPoint(meshWorldMat, Vec3(v0.pos[0], v0.pos[1], v0.pos[2]));
-            Vec3 p1 = Mat4::TransformPoint(meshWorldMat, Vec3(v1.pos[0], v1.pos[1], v1.pos[2]));
-            Vec3 p2 = Mat4::TransformPoint(meshWorldMat, Vec3(v2.pos[0], v2.pos[1], v2.pos[2]));
-
-            Vec3 minV(std::min({p0.x, p1.x, p2.x}),
-                      std::min({p0.y, p1.y, p2.y}),
-                      std::min({p0.z, p1.z, p2.z}));
-            Vec3 maxV(std::max({p0.x, p1.x, p2.x}),
-                      std::max({p0.y, p1.y, p2.y}),
-                      std::max({p0.z, p1.z, p2.z}));
-            triangleBounds.emplace_back(minV, maxV);
+            
+            WorldTriangle tri;
+            tri.p0 = Mat4::TransformPoint(meshWorldMat, Vec3(v0.pos[0], v0.pos[1], v0.pos[2]));
+            tri.p1 = Mat4::TransformPoint(meshWorldMat, Vec3(v1.pos[0], v1.pos[1], v1.pos[2]));
+            tri.p2 = Mat4::TransformPoint(meshWorldMat, Vec3(v2.pos[0], v2.pos[1], v2.pos[2]));
+            tri.normal = ComputeTriangleNormal(tri.p0, tri.p1, tri.p2);
+            
+            Vec3 minV(std::min({tri.p0.x, tri.p1.x, tri.p2.x}),
+                      std::min({tri.p0.y, tri.p1.y, tri.p2.y}),
+                      std::min({tri.p0.z, tri.p1.z, tri.p2.z}));
+            Vec3 maxV(std::max({tri.p0.x, tri.p1.x, tri.p2.x}),
+                      std::max({tri.p0.y, tri.p1.y, tri.p2.y}),
+                      std::max({tri.p0.z, tri.p1.z, tri.p2.z}));
+            tri.bounds = AABB(minV, maxV);
+            
+            worldTriangles.push_back(tri);
+            
+            // Expand mesh world bounds
+            if (!boundsInitialized) {
+                meshWorldBounds = tri.bounds;
+                boundsInitialized = true;
+            } else {
+                meshWorldBounds.min.x = std::min(meshWorldBounds.min.x, minV.x);
+                meshWorldBounds.min.y = std::min(meshWorldBounds.min.y, minV.y);
+                meshWorldBounds.min.z = std::min(meshWorldBounds.min.z, minV.z);
+                meshWorldBounds.max.x = std::max(meshWorldBounds.max.x, maxV.x);
+                meshWorldBounds.max.y = std::max(meshWorldBounds.max.y, maxV.y);
+                meshWorldBounds.max.z = std::max(meshWorldBounds.max.z, maxV.z);
+            }
         }
 
-        if (triangleBounds.empty()) {
+        if (worldTriangles.empty()) {
             continue;
         }
 
@@ -851,101 +1051,143 @@ void JoltPhysicsSystem::IntegrateMeshColliders(Scene& scene) {
             JPH::BodyID bodyId = bodyIt->second;
             JPH::BodyInterface& bodyInterface = m_PhysicsEngine.GetBodyInterface();
             
-            // Get current position via BodyInterface
-            JPH::RVec3 currentPos = bodyInterface.GetCenterOfMassPosition(bodyId);
-            AABB bodyBounds;
-            {
-                // Approximate body bounds from its AABB (requires getting position + bounds from shape)
-                // For simplicity, use a reasonable assumption about body extent
-                Vec3 pos(currentPos.GetX(), currentPos.GetY(), currentPos.GetZ());
-                float boxSize = 0.5f;  // Conservative estimate
-                bodyBounds = AABB(
-                    vsub(pos, v3(boxSize, boxSize, boxSize)),
-                    vadd(pos, v3(boxSize, boxSize, boxSize))
-                );
+            if (!bodyInterface.IsAdded(bodyId)) {
+                continue;
             }
-
-            // Quick broad-phase: check mesh collider's overall bounds
-            const AABB& colliderBounds = renderer.localBounds;
-            AABB meshColliderWorldBounds(
-                Mat4::TransformPoint(meshWorldMat, colliderBounds.min),
-                Mat4::TransformPoint(meshWorldMat, colliderBounds.max)
+            
+            // Get body shape bounds for accurate collision radius
+            // Get the shape and compute local bounds, then transform by body position
+            JPH::RefConst<JPH::Shape> bodyShape = bodyInterface.GetShape(bodyId);
+            float collisionRadius = 0.5f; // Default fallback
+            
+            if (bodyShape) {
+                JPH::AABox localBounds = bodyShape->GetLocalBounds();
+                Vec3 localMin(localBounds.mMin.GetX(), localBounds.mMin.GetY(), localBounds.mMin.GetZ());
+                Vec3 localMax(localBounds.mMax.GetX(), localBounds.mMax.GetY(), localBounds.mMax.GetZ());
+                Vec3 localHalfExtent = vscale(vsub(localMax, localMin), 0.5f);
+                // Use a sphere approximation with radius = max half extent
+                collisionRadius = std::max({localHalfExtent.x, localHalfExtent.y, localHalfExtent.z});
+            }
+            // Minimum collision radius to prevent tunneling
+            collisionRadius = std::max(collisionRadius, 0.25f);
+            
+            // Get current position
+            JPH::RVec3 currentJoltPos = bodyInterface.GetCenterOfMassPosition(bodyId);
+            Vec3 bodyCenter(currentJoltPos.GetX(), currentJoltPos.GetY(), currentJoltPos.GetZ());
+            
+            // Build body AABB with collision margin
+            const float collisionMargin = 0.05f;
+            AABB bodyBounds(
+                vsub(bodyCenter, v3(collisionRadius + collisionMargin, collisionRadius + collisionMargin, collisionRadius + collisionMargin)),
+                vadd(bodyCenter, v3(collisionRadius + collisionMargin, collisionRadius + collisionMargin, collisionRadius + collisionMargin))
             );
 
+            // Quick broad-phase: check mesh collider's overall bounds
             auto aabbOverlap = [](const AABB& a, const AABB& b) -> bool {
                 return (a.min.x <= b.max.x && a.max.x >= b.min.x) &&
                        (a.min.y <= b.max.y && a.max.y >= b.min.y) &&
                        (a.min.z <= b.max.z && a.max.z >= b.min.z);
             };
 
-            if (!aabbOverlap(bodyBounds, meshColliderWorldBounds)) {
+            if (!aabbOverlap(bodyBounds, meshWorldBounds)) {
                 continue;
             }
 
-            // Narrow-phase: check body against each triangle
-            bool colliding = false;
-            Vec3 pushDirection;
-            float maxDepth = 0.0f;
+            // Accumulate collision responses from all intersecting triangles
+            Vec3 totalPush = v3(0.0f, 0.0f, 0.0f);
+            int collisionCount = 0;
+            float maxPenetration = 0.0f;
+            
+            // For grounding detection
+            bool isGrounded = false;
+            const float groundNormalThreshold = 0.7f; // cos(45°) - surfaces pointing up enough to stand on
 
-            for (const auto& triBound : triangleBounds) {
-                if (!aabbOverlap(bodyBounds, triBound)) {
+            for (const auto& tri : worldTriangles) {
+                // Expand triangle bounds by collision radius for broad phase
+                AABB expandedTriBounds(
+                    vsub(tri.bounds.min, v3(collisionRadius, collisionRadius, collisionRadius)),
+                    vadd(tri.bounds.max, v3(collisionRadius, collisionRadius, collisionRadius))
+                );
+                
+                if (!aabbOverlap(bodyBounds, expandedTriBounds)) {
                     continue;
                 }
 
-                colliding = true;
+                // Detailed sphere-triangle collision test
+                float penetration;
+                Vec3 normal;
+                Vec3 contactPoint;
                 
-                // Compute push direction as the direction from triangle center to body center
-                Vec3 triCenter = v3(
-                    (triBound.min.x + triBound.max.x) * 0.5f,
-                    (triBound.min.y + triBound.max.y) * 0.5f,
-                    (triBound.min.z + triBound.max.z) * 0.5f
-                );
-                Vec3 bodyCenter = v3(
-                    (bodyBounds.min.x + bodyBounds.max.x) * 0.5f,
-                    (bodyBounds.min.y + bodyBounds.max.y) * 0.5f,
-                    (bodyBounds.min.z + bodyBounds.max.z) * 0.5f
-                );
-                Vec3 pushDir = vsub(bodyCenter, triCenter);
-                float dist = vlen(pushDir);
-                
-                if (dist > 1e-6f) {
-                    pushDir = vnorm(pushDir);
-                    
-                    // Compute overlap depth
-                    float depth = 0.0f;
-                    // Simple heuristic: use the smallest axis of the triangle bound
-                    Vec3 triExtent = v3(
-                        (triBound.max.x - triBound.min.x) * 0.5f,
-                        (triBound.max.y - triBound.min.y) * 0.5f,
-                        (triBound.max.z - triBound.min.z) * 0.5f
-                    );
-                    float minExtent = std::min({triExtent.x, triExtent.y, triExtent.z});
-                    if (minExtent > 1e-6f) {
-                        depth = minExtent + 0.01f; // Add small epsilon
-                    }
-
-                    if (depth > maxDepth) {
-                        maxDepth = depth;
-                        pushDirection = pushDir;
+                if (SphereTriangleCollision(bodyCenter, collisionRadius, tri.p0, tri.p1, tri.p2, 
+                                           penetration, normal, contactPoint)) {
+                    // Only respond if penetration is significant
+                    if (penetration > 0.001f) {
+                        // Check if this surface could be ground (pointing mostly up)
+                        if (normal.y > groundNormalThreshold) {
+                            isGrounded = true;
+                        }
+                        
+                        // Accumulate push direction weighted by penetration
+                        Vec3 push = vscale(normal, penetration);
+                        totalPush = vadd(totalPush, push);
+                        collisionCount++;
+                        
+                        if (penetration > maxPenetration) {
+                            maxPenetration = penetration;
+                        }
                     }
                 }
             }
 
-            if (colliding && maxDepth > 1e-6f) {
-                // Apply impulse to push the body out
-                Vec3 pushVec = vscale(pushDirection, maxDepth);
+            if (collisionCount > 0 && maxPenetration > 0.001f) {
+                // Average the push direction and apply
+                Vec3 averagePush = vscale(totalPush, 1.0f / static_cast<float>(collisionCount));
                 
-                // Move the body
-                JPH::RVec3 currentPos = bodyInterface.GetCenterOfMassPosition(bodyId);
+                // Clamp maximum push to prevent wild teleportation
+                float pushLen = vlen(averagePush);
+                const float maxPushDistance = 0.5f;
+                if (pushLen > maxPushDistance) {
+                    averagePush = vscale(averagePush, maxPushDistance / pushLen);
+                }
+                
+                // Apply position correction
                 JPH::RVec3 newPos(
-                    currentPos.GetX() + pushVec.x,
-                    currentPos.GetY() + pushVec.y,
-                    currentPos.GetZ() + pushVec.z
+                    bodyCenter.x + averagePush.x,
+                    bodyCenter.y + averagePush.y,
+                    bodyCenter.z + averagePush.z
                 );
                 bodyInterface.SetPosition(bodyId, newPos, JPH::EActivation::Activate);
-
-                // Log collision for debugging
-                std::cout << "[MeshCollider] Dynamic body colliding with mesh, pushing out: " << maxDepth << "m\n";
+                
+                // Cancel velocity into the collision surface
+                JPH::Vec3 currentVel = bodyInterface.GetLinearVelocity(bodyId);
+                Vec3 vel(currentVel.GetX(), currentVel.GetY(), currentVel.GetZ());
+                
+                // Normalize push direction for velocity cancellation
+                if (pushLen > 1e-6f) {
+                    Vec3 pushDir = vscale(averagePush, 1.0f / pushLen);
+                    float velIntoSurface = vdot(vel, pushDir);
+                    
+                    // Only cancel velocity if moving into the surface
+                    if (velIntoSurface < 0.0f) {
+                        Vec3 velCancel = vscale(pushDir, -velIntoSurface);
+                        Vec3 newVel = vadd(vel, velCancel);
+                        
+                        // Apply friction on tangent plane if grounded
+                        if (isGrounded) {
+                            const float groundFriction = 0.95f;
+                            // Extract horizontal component and apply friction
+                            newVel.x *= groundFriction;
+                            newVel.z *= groundFriction;
+                            
+                            // Snap small downward velocities to zero when grounded
+                            if (newVel.y < 0.0f && newVel.y > -0.5f) {
+                                newVel.y = 0.0f;
+                            }
+                        }
+                        
+                        bodyInterface.SetLinearVelocity(bodyId, JPH::Vec3(newVel.x, newVel.y, newVel.z));
+                    }
+                }
             }
         }
     }

@@ -648,6 +648,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         const ScriptComponent* scriptComponent = registry.try_get<ScriptComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
+        const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
 
         stream << "    {\n";
@@ -680,6 +681,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss.imbue(std::locale::classic());
             oss << "        \"MeshRenderer\": {\n";
             oss << "          \"visible\": " << (mesh->visible ? "true" : "false") << ",\n";
+            oss << "          \"hideInGame\": " << (mesh->hideInGame ? "true" : "false") << ",\n";
             oss << "          \"mesh\": ";
             if (mesh->HasValidMesh()) {
                 oss << static_cast<uint64_t>(mesh->meshHandle) << ",\n";
@@ -843,6 +845,15 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss.imbue(std::locale::classic());
             oss << "        \"Selection\": {\n";
             oss << "          \"selected\": " << (selection->selected ? "true" : "false") << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (folder) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"Folder\": {\n";
+            oss << "          \"isFolder\": " << (folder->isFolder ? "true" : "false") << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1016,6 +1027,9 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             auto& mesh = entity.AddComponent<MeshRendererComponent>();
             if (const JsonValue* visibleValue = meshObj->Find("visible")) {
                 mesh.visible = visibleValue->IsBool() ? visibleValue->AsBool() : mesh.visible;
+            }
+            if (const JsonValue* hideInGameValue = meshObj->Find("hideInGame")) {
+                mesh.hideInGame = ParseBoolLike(*hideInGameValue, mesh.hideInGame);
             }
             const JsonValue* meshHandleValue = meshObj->Find("mesh");
             if (meshHandleValue) {
@@ -1453,6 +1467,22 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
         }
 
+        if (const JsonValue* folderObj = components->Find("Folder")) {
+            if (!folderObj->IsObject()) {
+                outError = "Folder component is not an object.";
+                return false;
+            }
+            bool isFolder = true;
+            if (const JsonValue* isFolderValue = folderObj->Find("isFolder")) {
+                isFolder = isFolderValue->IsBool() ? isFolderValue->AsBool() : true;
+            }
+            if (!entity.HasComponent<FolderComponent>()) {
+                entity.AddComponent<FolderComponent>(isFolder);
+            } else {
+                entity.GetComponent<FolderComponent>().isFolder = isFolder;
+            }
+        }
+
         if (const JsonValue* envObj = components->Find("Environment")) {
             if (!envObj->IsObject()) {
                 outError = "Environment component is not an object.";
@@ -1559,6 +1589,7 @@ std::string SceneSerializer::SerializeToString() const
         const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
     const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
+        const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
 
         stream << "    {\n";
@@ -1591,6 +1622,7 @@ std::string SceneSerializer::SerializeToString() const
             oss.imbue(std::locale::classic());
             oss << "        \"MeshRenderer\": {\n";
             oss << "          \"visible\": " << (mesh->visible ? "true" : "false") << ",\n";
+            oss << "          \"hideInGame\": " << (mesh->hideInGame ? "true" : "false") << ",\n";
             oss << "          \"mesh\": ";
             if (mesh->HasValidMesh()) {
                 oss << static_cast<uint64_t>(mesh->meshHandle) << ",\n";
@@ -1745,6 +1777,15 @@ std::string SceneSerializer::SerializeToString() const
             oss.imbue(std::locale::classic());
             oss << "        \"Selection\": {\n";
             oss << "          \"selected\": " << (selection->selected ? "true" : "false") << "\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (folder) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"Folder\": {\n";
+            oss << "          \"isFolder\": " << (folder->isFolder ? "true" : "false") << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }

@@ -11,6 +11,7 @@
 #include <functional>
 #include <string>
 #include <optional>
+#include <utility>
 
 #include "../EditorSpawnPreset.h"
 
@@ -55,6 +56,7 @@ public:
   // Consumes a spawn request originating from the HTML Add Actors panel.
   std::optional<EditorSpawnPreset> ConsumeAddActorsSpawnRequest();
   std::optional<std::string> ConsumeAddActorsSpawnMeshRequest();
+  std::optional<std::pair<std::string, uint32_t>> ConsumeOutlinerAssetDropRequest();
 
   EditorMessageBridge& Bridge();
 
@@ -101,6 +103,7 @@ private:
   std::optional<EditorSpawnPreset> pendingAddActorsDrag_;
   std::optional<std::string> pendingAddActorsSpawnMeshRel_;
   std::optional<std::string> pendingAssetDrag_;
+  std::optional<std::pair<std::string, uint32_t>> pendingOutlinerAssetDrop_;
 };
 
 } // namespace Hephaestus::HtmlUI

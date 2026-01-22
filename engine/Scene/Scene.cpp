@@ -1,5 +1,6 @@
 #include "Scene.h"
 #include <algorithm>
+#include <vector>
 
 Scene::Scene(const std::string& name)
     : m_Name(name)
@@ -275,8 +276,12 @@ void Scene::ToggleSelectedEntity(Entity entity)
 void Scene::ClearSelection()
 {
     auto view = m_Registry.view<SelectionComponent>();
+    std::vector<entt::entity> toClear;
     for (auto entity : view) {
-        view.get<SelectionComponent>(entity).selected = false;
+        toClear.push_back(entity);
+    }
+    for (auto entity : toClear) {
+        m_Registry.remove<SelectionComponent>(entity);
     }
     m_PrimarySelected = entt::null;
 }

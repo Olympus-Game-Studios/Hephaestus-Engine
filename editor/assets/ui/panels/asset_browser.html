@@ -688,15 +688,22 @@
         tile.appendChild(thumbnail);
         tile.appendChild(info);
 
-        tile.onmousedown = (evt) => { evt.preventDefault(); };
-        tile.ondragstart = () => false;
-
         // Drag support for non-folder assets
+        tile.draggable = !e.dir;
         tile.onpointerdown = (evt) => {
           if (evt.button !== 0) return;
           if (e.dir) return; // Don't drag folders
           window.hep.callCpp('assets.drag_begin', { path: e.rel });
           try { tile.setPointerCapture(evt.pointerId); } catch (_) {}
+        };
+        tile.ondragstart = (evt) => {
+          if (e.dir) return false;
+          evt.dataTransfer.effectAllowed = 'copy';
+          evt.dataTransfer.setData('text/plain', e.rel);
+          return true;
+        };
+        tile.ondragend = () => {
+          if (!e.dir) window.hep.callCpp('assets.drag_end', {});
         };
         tile.onpointerup = () => {
           if (!e.dir) window.hep.callCpp('assets.drag_end', {});

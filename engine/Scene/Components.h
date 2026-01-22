@@ -117,6 +117,7 @@ struct TransformComponent {
 struct MeshRendererComponent {
     AABB localBounds; // Bounding box in local space
     bool visible = true;
+    bool hideInGame = false;
     bool backfaceCulling = false;
     static constexpr size_t InvalidMesh = std::numeric_limits<size_t>::max();
     size_t meshHandle = InvalidMesh;
@@ -347,6 +348,16 @@ struct SelectionComponent {
 
     SelectionComponent() = default;
     SelectionComponent(bool sel) : selected(sel) {}
+};
+
+/**
+ * Folder component - marks an entity as a World Outliner folder
+ */
+struct FolderComponent {
+    bool isFolder = true;
+
+    FolderComponent() = default;
+    FolderComponent(bool folder) : isFolder(folder) {}
 };
 
 /**

@@ -126,7 +126,9 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       auto& tag = e.GetComponent<TagComponent>();
 
       const char* typeLabel = "ENTITY";
-      if (e.HasComponent<EnvironmentComponent>()) {
+      if (e.HasComponent<FolderComponent>()) {
+        typeLabel = "FOLDER";
+      } else if (e.HasComponent<EnvironmentComponent>()) {
         typeLabel = "ENV";
       } else if (e.HasComponent<LightComponent>()) {
         typeLabel = "LIGHT";
@@ -135,12 +137,21 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       }
 
       bool isSelected = e.HasComponent<SelectionComponent>() && e.GetComponent<SelectionComponent>().selected;
+      uint32_t parentId = 0;
+      if (e.HasComponent<TransformComponent>()) {
+        auto& transform = e.GetComponent<TransformComponent>();
+        if (transform.parent != entt::null) {
+          parentId = static_cast<uint32_t>(transform.parent);
+        }
+      }
 
       if (!first) json << ",";
       first = false;
       json << "{\"id\":" << static_cast<uint32_t>(entityHandle)
            << ",\"name\":\"" << JsonEscape(tag.tag) << "\""
            << ",\"type\":\"" << typeLabel << "\""
+           << ",\"parent\":" << parentId
+           << ",\"isFolder\":" << (e.HasComponent<FolderComponent>() ? "true" : "false")
            << ",\"selected\":" << (isSelected ? "true" : "false")
            << "}";
     }
@@ -179,6 +190,33 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       scene_->SetSelectedEntity(Entity(handle, scene_));
     }
     return std::string("{\"ok\":true}");
+  });
+
+  bridge_.RegisterHandler("scene.create_folder", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    std::string name = "Folder";
+    if (auto nameOpt = EditorMessageBridge::ParseStringField(payload, "name")) {
+      if (!nameOpt->empty()) {
+        name = *nameOpt;
+      }
+    }
+
+    Entity folder = scene_->CreateEntity(name);
+    folder.AddComponent<FolderComponent>();
+
+    if (auto parentOpt = EditorMessageBridge::ParseIntField(payload, "parent")) {
+      entt::entity parentHandle = static_cast<entt::entity>(static_cast<uint32_t>(*parentOpt));
+      if (scene_->GetRegistry().valid(parentHandle) && parentHandle != static_cast<entt::entity>(folder)) {
+        scene_->SetParent(folder, Entity(parentHandle, scene_));
+      }
+    }
+
+    std::ostringstream json;
+    json << "{\"ok\":true,\"id\":" << static_cast<uint32_t>(static_cast<entt::entity>(folder)) << "}";
+    return json.str();
   });
 
   bridge_.RegisterHandler("scene.get_selection", [this](const std::string& payload) -> std::string {
@@ -244,6 +282,16 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     return std::string("{\"ok\":true}");
   });
 
+  bridge_.RegisterHandler("scene.outliner_drop_asset", [this](const std::string& payload) -> std::string {
+    auto relOpt = EditorMessageBridge::ParseStringField(payload, "rel");
+    auto folderOpt = EditorMessageBridge::ParseIntField(payload, "folderId");
+    if (!relOpt || relOpt->empty() || !folderOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+    }
+    pendingOutlinerAssetDrop_ = std::make_pair(*relOpt, static_cast<uint32_t>(*folderOpt));
+    return std::string("{\"ok\":true}");
+  });
+
   bridge_.RegisterHandler("entity.get", [this](const std::string& payload) -> std::string {
     if (!scene_) {
       return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
@@ -269,7 +317,9 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     Vec3 rotDeg = t.GetRotationDegrees();
 
     const char* typeLabel = "ENTITY";
-    if (e.HasComponent<EnvironmentComponent>()) {
+    if (e.HasComponent<FolderComponent>()) {
+      typeLabel = "FOLDER";
+    } else if (e.HasComponent<EnvironmentComponent>()) {
       typeLabel = "ENV";
     } else if (e.HasComponent<LightComponent>()) {
       typeLabel = "LIGHT";
@@ -935,6 +985,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     std::ostringstream json;
     json << "{\"ok\":true,\"mesh\":{";
     json << "\"visible\":" << (mesh.visible ? "true" : "false") << ",";
+    json << "\"hideInGame\":" << (mesh.hideInGame ? "true" : "false") << ",";
     json << "\"backfaceCulling\":" << (mesh.backfaceCulling ? "true" : "false") << ",";
     json << "\"meshAssetPath\":\"" << JsonEscape(mesh.meshAssetPath) << "\",";
     json << "\"materialIndices\":[";
@@ -979,6 +1030,9 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
 
     if (auto visible = EditorMessageBridge::ParseIntField(payload, "visible")) {
       mesh.visible = *visible != 0;
+    }
+    if (auto hideInGame = EditorMessageBridge::ParseIntField(payload, "hideInGame")) {
+      mesh.hideInGame = *hideInGame != 0;
     }
     if (auto culling = EditorMessageBridge::ParseIntField(payload, "backfaceCulling")) {
       mesh.backfaceCulling = *culling != 0;
@@ -2046,6 +2100,12 @@ std::optional<EditorSpawnPreset> HtmlEditorUIHost::ConsumeAddActorsSpawnRequest(
 std::optional<std::string> HtmlEditorUIHost::ConsumeAddActorsSpawnMeshRequest() {
   auto v = pendingAddActorsSpawnMeshRel_;
   pendingAddActorsSpawnMeshRel_.reset();
+  return v;
+}
+
+std::optional<std::pair<std::string, uint32_t>> HtmlEditorUIHost::ConsumeOutlinerAssetDropRequest() {
+  auto v = pendingOutlinerAssetDrop_;
+  pendingOutlinerAssetDrop_.reset();
   return v;
 }
 
