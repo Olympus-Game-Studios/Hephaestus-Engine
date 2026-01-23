@@ -189,51 +189,47 @@ static void ApplyHephaestusEditorStyle(ImGuiIO &io, float scale) {
   ImGuiStyle &style = ImGui::GetStyle();
   style = ImGuiStyle();
   style.DisabledAlpha = 0.45f;
-  style.WindowPadding = ImVec2(14.0f, 12.0f);
-  style.FramePadding = ImVec2(11.0f, 7.0f);
-  style.CellPadding = ImVec2(9.0f, 7.0f);
-  style.ItemSpacing = ImVec2(11.0f, 9.0f);
-  style.ItemInnerSpacing = ImVec2(7.0f, 5.0f);
+  style.WindowPadding = ImVec2(10.0f, 8.0f);
+  style.FramePadding = ImVec2(8.0f, 6.0f);
+  style.CellPadding = ImVec2(8.0f, 6.0f);
+  style.ItemSpacing = ImVec2(9.0f, 8.0f);
+  style.ItemInnerSpacing = ImVec2(6.0f, 4.0f);
   style.SeparatorTextAlign = ImVec2(0.0f, 0.5f);
   style.SeparatorTextPadding = ImVec2(18.0f, 6.0f);
   style.SeparatorTextBorderSize = 1.0f;
-  style.ScrollbarSize = 18.0f;
-  style.ScrollbarRounding = 6.0f;
+  style.ScrollbarSize = 16.0f;
+  style.ScrollbarRounding = 5.0f;
   style.GrabMinSize = 12.0f;
   style.WindowBorderSize = 1.0f;
   style.ChildBorderSize = 1.0f;
   style.PopupBorderSize = 1.0f;
   style.FrameBorderSize = 1.0f;
   style.TabBorderSize = 1.0f;
-  style.WindowRounding = 10.0f;
-  style.ChildRounding = 8.0f;
-  style.FrameRounding = 6.0f;
-  style.PopupRounding = 6.0f;
-  style.GrabRounding = 4.0f;
-  style.TabRounding = 6.0f;
+  style.WindowRounding = 6.0f;
+  style.ChildRounding = 4.0f;
+  style.FrameRounding = 3.0f;
+  style.PopupRounding = 4.0f;
+  style.GrabRounding = 3.0f;
+  style.TabRounding = 4.0f;
   style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
   style.ColorButtonPosition = ImGuiDir_Left;
   style.TouchExtraPadding = ImVec2(0.0f, 0.0f);
   style.LogSliderDeadzone = 0.2f;
 
-  // Palette leans on UE cobalt and Godot teal for a modern editor aesthetic.
-  // Improved contrast for better readability
-  const ImVec4 textPrimary(0.92f, 0.94f, 0.97f, 1.00f);
-  const ImVec4 textMuted(0.65f, 0.68f, 0.74f, 1.00f);
-  const ImVec4 bgUltraDark(0.04f, 0.05f, 0.07f, 1.00f);
-  const ImVec4 bgDark(0.06f, 0.07f, 0.09f, 1.00f);
-  const ImVec4 bgMid(0.11f, 0.12f, 0.15f, 1.00f);
-  const ImVec4 bgLight(0.17f, 0.19f, 0.23f, 1.00f);
-  const ImVec4 surfaceLow(0.19f, 0.21f, 0.25f, 1.00f);
-  const ImVec4 surfaceMid(0.25f, 0.28f, 0.33f, 1.00f);
-  const ImVec4 borderSoft(0.16f, 0.18f, 0.21f, 1.00f);
-  const ImVec4 borderStrong(0.26f, 0.29f, 0.35f, 1.00f);
-  const ImVec4 accentUE(0.15f, 0.58f, 0.98f, 1.00f);
-  const ImVec4 accentUEHover(0.24f, 0.66f, 1.00f, 1.00f);
-  const ImVec4 accentUEActive(0.12f, 0.49f, 0.85f, 1.00f);
-  const ImVec4 accentGodot(0.26f, 0.70f, 0.77f, 1.00f);
-  const ImVec4 accentGodotHover(0.33f, 0.81f, 0.86f, 1.00f);
-  const ImVec4 accentGodotActive(0.18f, 0.57f, 0.62f, 1.00f);
+  // UE5-inspired palette: neutral blue-grey surfaces with cobalt accents.
+  const ImVec4 textPrimary(0.94f, 0.95f, 0.98f, 1.00f);
+  const ImVec4 textMuted(0.62f, 0.66f, 0.72f, 1.00f);
+  const ImVec4 bgUltraDark(0.05f, 0.06f, 0.07f, 1.00f);
+  const ImVec4 bgDark(0.08f, 0.09f, 0.11f, 1.00f);
+  const ImVec4 bgMid(0.12f, 0.14f, 0.17f, 1.00f);
+  const ImVec4 bgLight(0.17f, 0.19f, 0.22f, 1.00f);
+  const ImVec4 surfaceLow(0.14f, 0.16f, 0.19f, 1.00f);
+  const ImVec4 surfaceMid(0.18f, 0.20f, 0.24f, 1.00f);
+  const ImVec4 borderSoft(0.16f, 0.18f, 0.22f, 1.00f);
+  const ImVec4 borderStrong(0.24f, 0.27f, 0.32f, 1.00f);
+  const ImVec4 accentUE(0.18f, 0.55f, 0.98f, 1.00f);
+  const ImVec4 accentUEHover(0.29f, 0.62f, 1.00f, 1.00f);
+  const ImVec4 accentUEActive(0.14f, 0.46f, 0.88f, 1.00f);
   const ImVec4 warning(0.93f, 0.67f, 0.32f, 1.00f);
 
   ImVec4 *colors = style.Colors;
@@ -246,10 +242,10 @@ static void ApplyHephaestusEditorStyle(ImGuiIO &io, float scale) {
   colors[ImGuiCol_Border] = borderSoft;
   colors[ImGuiCol_BorderShadow] = ImVec4(0, 0, 0, 0);
   colors[ImGuiCol_FrameBg] = surfaceLow;
-  colors[ImGuiCol_FrameBgHovered] =
-      ImVec4(accentGodotHover.x, accentGodotHover.y, accentGodotHover.z, 0.65f);
-  colors[ImGuiCol_FrameBgActive] = ImVec4(
-      accentGodotActive.x, accentGodotActive.y, accentGodotActive.z, 0.90f);
+    colors[ImGuiCol_FrameBgHovered] =
+      ImVec4(accentUEHover.x, accentUEHover.y, accentUEHover.z, 0.35f);
+    colors[ImGuiCol_FrameBgActive] =
+      ImVec4(accentUEActive.x, accentUEActive.y, accentUEActive.z, 0.70f);
   colors[ImGuiCol_TitleBg] = bgDark;
   colors[ImGuiCol_TitleBgActive] = bgMid;
   colors[ImGuiCol_TitleBgCollapsed] = bgDark;
@@ -258,36 +254,37 @@ static void ApplyHephaestusEditorStyle(ImGuiIO &io, float scale) {
       ImVec4(bgUltraDark.x, bgUltraDark.y, bgUltraDark.z, 1.00f);
   colors[ImGuiCol_ScrollbarGrab] = surfaceLow;
   colors[ImGuiCol_ScrollbarGrabHovered] = surfaceMid;
-  colors[ImGuiCol_ScrollbarGrabActive] = accentGodotActive;
+  colors[ImGuiCol_ScrollbarGrabActive] = accentUEActive;
   colors[ImGuiCol_CheckMark] = accentUE;
-  colors[ImGuiCol_SliderGrab] = accentGodot;
-  colors[ImGuiCol_SliderGrabActive] = accentGodotActive;
+  colors[ImGuiCol_SliderGrab] = accentUE;
+  colors[ImGuiCol_SliderGrabActive] = accentUEActive;
   colors[ImGuiCol_Button] = surfaceLow;
   colors[ImGuiCol_ButtonHovered] = accentUEHover;
   colors[ImGuiCol_ButtonActive] = accentUEActive;
   colors[ImGuiCol_Header] = surfaceLow;
-  colors[ImGuiCol_HeaderHovered] = accentGodotHover;
-  colors[ImGuiCol_HeaderActive] = accentGodotActive;
+    colors[ImGuiCol_HeaderHovered] =
+      ImVec4(accentUEHover.x, accentUEHover.y, accentUEHover.z, 0.35f);
+    colors[ImGuiCol_HeaderActive] =
+      ImVec4(accentUEActive.x, accentUEActive.y, accentUEActive.z, 0.55f);
   colors[ImGuiCol_Separator] = borderStrong;
   colors[ImGuiCol_SeparatorHovered] = accentUEHover;
   colors[ImGuiCol_SeparatorActive] = accentUEActive;
-  colors[ImGuiCol_ResizeGrip] =
-      ImVec4(accentGodot.x, accentGodot.y, accentGodot.z, 0.55f);
-  colors[ImGuiCol_ResizeGripHovered] = accentGodotHover;
-  colors[ImGuiCol_ResizeGripActive] = accentGodotActive;
+  colors[ImGuiCol_ResizeGrip] = ImVec4(accentUE.x, accentUE.y, accentUE.z, 0.45f);
+  colors[ImGuiCol_ResizeGripHovered] = accentUEHover;
+  colors[ImGuiCol_ResizeGripActive] = accentUEActive;
   colors[ImGuiCol_InputTextCursor] = accentUE;
   colors[ImGuiCol_TabHovered] = accentUEHover;
   colors[ImGuiCol_Tab] = bgMid;
-  colors[ImGuiCol_TabSelected] = accentUEActive;
+  colors[ImGuiCol_TabSelected] = ImVec4(accentUEActive.x, accentUEActive.y, accentUEActive.z, 0.75f);
   colors[ImGuiCol_TabSelectedOverline] = accentUE;
   colors[ImGuiCol_TabDimmed] = bgUltraDark;
   colors[ImGuiCol_TabDimmedSelected] = bgMid;
-  colors[ImGuiCol_TabDimmedSelectedOverline] = accentGodot;
+  colors[ImGuiCol_TabDimmedSelectedOverline] = accentUE;
   colors[ImGuiCol_DockingPreview] =
       ImVec4(accentUE.x, accentUE.y, accentUE.z, 0.35f);
   colors[ImGuiCol_DockingEmptyBg] = bgUltraDark;
-  colors[ImGuiCol_PlotLines] = accentGodot;
-  colors[ImGuiCol_PlotLinesHovered] = accentGodotHover;
+  colors[ImGuiCol_PlotLines] = accentUE;
+  colors[ImGuiCol_PlotLinesHovered] = accentUEHover;
   colors[ImGuiCol_PlotHistogram] = accentUE;
   colors[ImGuiCol_PlotHistogramHovered] = accentUEHover;
   colors[ImGuiCol_TableHeaderBg] = bgMid;
@@ -297,8 +294,8 @@ static void ApplyHephaestusEditorStyle(ImGuiIO &io, float scale) {
   colors[ImGuiCol_TableRowBgAlt] =
       ImVec4(bgLight.x, bgLight.y, bgLight.z, 0.40f);
   colors[ImGuiCol_TextLink] = accentUE;
-  colors[ImGuiCol_TextSelectedBg] =
-      ImVec4(accentUE.x, accentUE.y, accentUE.z, 0.40f);
+    colors[ImGuiCol_TextSelectedBg] =
+      ImVec4(accentUE.x, accentUE.y, accentUE.z, 0.35f);
   colors[ImGuiCol_TreeLines] =
       ImVec4(borderSoft.x, borderSoft.y, borderSoft.z, 0.50f);
   colors[ImGuiCol_DragDropTarget] =

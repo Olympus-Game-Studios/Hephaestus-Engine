@@ -6,38 +6,91 @@
   <title>World Outliner</title>
   <link rel="stylesheet" href="../ui_theme.css" />
   <style>
+    .outliner-panel .ui-body {
+      background: #1a1f28;
+    }
+    .outliner-panel .ui-list {
+      padding: calc(6px * var(--uiScale)) 0;
+    }
+    .outliner-panel .ui-row.outliner-row {
+      padding: calc(6px * var(--uiScale)) calc(8px * var(--uiScale));
+      min-height: calc(28px * var(--uiScale));
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      background: #1e2530;
+      transition: background 120ms ease, outline 120ms ease;
+    }
+    .outliner-panel .ui-row.outliner-row:hover {
+      background: #252d3a;
+    }
+    .outliner-panel .ui-row.outliner-row.is-selected {
+      background: #2e3947;
+      outline: 1px solid rgba(120, 170, 255, 0.6);
+      box-shadow: inset 0 0 0 1px rgba(120, 170, 255, 0.22);
+    }
+    .outliner-panel .ui-row.outliner-row.is-env {
+      background: #212b38;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: calc(13px * var(--uiScale));
+    }
+    .outliner-panel .ui-row.outliner-row.is-env .ui-row-name {
+      font-weight: 600;
+      color: #e8efff;
+      font-size: calc(13px * var(--uiScale));
+    }
     .outliner-indent {
       display: inline-block;
       height: 1px;
       flex: 0 0 auto;
     }
     .outliner-toggle {
-      width: calc(18px * var(--uiScale));
-      height: calc(18px * var(--uiScale));
+      width: calc(20px * var(--uiScale));
+      height: calc(20px * var(--uiScale));
       border: 1px solid transparent;
       background: transparent;
-      color: var(--muted);
+      color: #b8c5d4;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: var(--fontSizeSmall);
+      font-size: calc(12px * var(--uiScale));
       cursor: pointer;
       padding: 0;
+      border-radius: 3px;
     }
     .outliner-toggle:hover {
-      color: var(--text);
-      border-color: var(--border2);
-      background: #2b3442;
+      color: #f0f4f8;
+      border-color: rgba(255, 255, 255, 0.12);
+      background: #2d3644;
     }
     .outliner-toggle.is-hidden {
       visibility: hidden;
     }
     .outliner-icon {
-      width: calc(18px * var(--uiScale));
+      width: calc(24px * var(--uiScale));
       text-align: center;
-      color: var(--muted);
-      font-size: var(--fontSizeSmall);
+      color: #c8d2e0;
+      font-size: calc(15px * var(--uiScale));
       flex: 0 0 auto;
+      opacity: 1;
+    }
+    .outliner-icon.is-env {
+      color: #a5c7ff;
+      filter: brightness(1.1);
+    }
+    .outliner-icon.is-folder {
+      color: #e5b97a;
+      filter: brightness(1.1);
+    }
+    .outliner-type {
+      margin-left: auto;
+      font-size: calc(10px * var(--uiScale));
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      border-color: rgba(255, 255, 255, 0.12);
+      background: rgba(43, 52, 66, 0.95);
+      padding: calc(3px * var(--uiScale)) calc(6px * var(--uiScale));
+    }
+    .ui-row-name {
+      font-size: calc(12.5px * var(--uiScale));
     }
     .ui-row.is-drag-over {
       background: var(--rowSel) !important;
@@ -88,7 +141,7 @@
   </style>
 </head>
 <body>
-  <div class="ui-panel">
+  <div class="ui-panel outliner-panel">
     <div class="ui-header">
       <div class="ui-title">World Outliner</div>
       <div class="ui-toolbar">
@@ -122,6 +175,7 @@
 
   <script>
     let lastData = null;
+    let lastEnvRootId = 0;
     const expandedState = {};
 
     function isExpanded(id) {
@@ -146,12 +200,14 @@
       const rawEnts = (data.entities || []).map((ent, index) => {
         const name = ent.name || '(unnamed)';
         const type = ent.type || 'ENTITY';
+        const isEnvironment = type === 'ENV' || type === 'ENVIRONMENT';
         return {
           id: ent.id,
           name,
           type,
           parent: ent.parent || 0,
-          isFolder: !!ent.isFolder || type === 'FOLDER',
+          isFolder: !!ent.isFolder || type === 'FOLDER' || isEnvironment,
+          isEnvironment,
           selected: ent.selected || (ent.id === selectedId),
           order: index,
           nameLower: name.toLowerCase(),
@@ -172,11 +228,30 @@
         }
       });
 
+      const displayChildrenById = new Map();
       for (const [parentId, children] of childrenById.entries()) {
+        displayChildrenById.set(parentId, children.slice());
+      }
+
+      const envRoot = rawEnts.find(ent => ent.isEnvironment) || null;
+      lastEnvRootId = envRoot ? envRoot.id : 0;
+      if (envRoot) {
+        if (!displayChildrenById.has(envRoot.id)) {
+          displayChildrenById.set(envRoot.id, []);
+        }
+        const rootsToAttach = rawEnts.filter(ent => ent.id !== envRoot.id && (!ent.parent || !byId.has(ent.parent)));
+        rootsToAttach.forEach(ent => {
+          if (ent.parent !== envRoot.id) {
+            displayChildrenById.get(envRoot.id).push(ent);
+          }
+        });
+      }
+
+      for (const [parentId, children] of displayChildrenById.entries()) {
         children.sort((a, b) => a.order - b.order);
       }
 
-      const roots = rawEnts.filter(ent => !ent.parent || !byId.has(ent.parent));
+      const roots = envRoot ? [envRoot] : rawEnts.filter(ent => !ent.parent || !byId.has(ent.parent));
       roots.sort((a, b) => a.order - b.order);
 
       function matches(ent) {
@@ -186,7 +261,7 @@
       function shouldShow(ent) {
         if (!filter) return true;
         if (matches(ent)) return true;
-        const children = childrenById.get(ent.id) || [];
+        const children = displayChildrenById.get(ent.id) || [];
         return children.some(child => shouldShow(child));
       }
 
@@ -195,21 +270,22 @@
           return 0;
         }
 
-        const children = childrenById.get(ent.id) || [];
+        const children = displayChildrenById.get(ent.id) || [];
         const hasChildren = children.length > 0;
         const expanded = isExpanded(ent.id);
 
         const row = document.createElement('div');
-        row.className = 'ui-row' + (ent.selected ? ' is-selected' : '');
+        row.className = 'ui-row outliner-row' + (ent.selected ? ' is-selected' : '') + (ent.isEnvironment ? ' is-env' : '');
         row.dataset.entityId = String(ent.id || 0);
         row.dataset.isFolder = ent.isFolder ? '1' : '0';
+        row.dataset.isEnvironment = ent.isEnvironment ? '1' : '0';
 
         const left = document.createElement('div');
         left.className = 'ui-row-left';
 
         const indent = document.createElement('span');
         indent.className = 'outliner-indent';
-        indent.style.width = `${depth * 14}px`;
+        indent.style.width = `${depth * 18}px`;
 
         const toggle = document.createElement('button');
         toggle.className = 'outliner-toggle' + (hasChildren ? '' : ' is-hidden');
@@ -222,7 +298,11 @@
 
         const icon = document.createElement('div');
         icon.className = 'outliner-icon';
-        if (ent.isFolder) {
+        if (ent.isEnvironment) {
+          icon.classList.add('is-env');
+          icon.textContent = '🌎';
+        } else if (ent.isFolder) {
+          icon.classList.add('is-folder');
           icon.textContent = hasChildren && expanded ? '📂' : '📁';
         } else {
           icon.textContent = '•';
@@ -233,7 +313,7 @@
         name.textContent = ent.name || '(unnamed)';
 
         const badge = document.createElement('div');
-        badge.className = 'ui-badge';
+        badge.className = 'ui-badge outliner-type';
         badge.textContent = ent.type || 'ENTITY';
 
         left.appendChild(indent);
@@ -310,6 +390,9 @@
             // Perform reparent
             const statusEl = document.getElementById('status');
             if (targetFolderId > 0 || elemBelow === document.getElementById('list')) {
+              if (targetFolderId === 0 && lastEnvRootId) {
+                targetFolderId = lastEnvRootId;
+              }
               const r = window.hep.callCpp('scene.reparent', { 
                 entityId: ent.id, 
                 newParentId: targetFolderId 
@@ -401,10 +484,10 @@
 
     function createFolderWithName(name) {
       const finalName = (name || '').trim() || 'Folder';
-      let parentId = 0;
+      let parentId = lastEnvRootId || 0;
       if (lastData && lastData.entities && lastData.selectedId) {
         const selected = lastData.entities.find(ent => ent.id === lastData.selectedId);
-        if (selected && (selected.isFolder || selected.type === 'FOLDER')) {
+        if (selected && (selected.isFolder || selected.type === 'FOLDER' || selected.type === 'ENV')) {
           parentId = selected.id;
         }
       }
