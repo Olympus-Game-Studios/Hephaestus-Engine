@@ -5,9 +5,12 @@
 #include <vector>
 #include <limits>
 #include <utility>
+#include <unordered_map>
+#include <optional>
 
 // Forward include for Lua scripting
 #include "../Scripting/LuaScriptComponent.h"
+#include "../Core/PropertyValue.h"
 
 // ═══════════════════════════════════════════════════════════════
 // CORE COMPONENTS
@@ -560,5 +563,34 @@ struct EnvironmentComponent {
         , renderDistance(500.0f)
         , infiniteRenderDistance(false)
     {}
+};
+
+// ═══════════════════════════════════════════════════════════════
+// BLUEPRINT / PREFAB INSTANCING
+// ═══════════════════════════════════════════════════════════════
+
+struct BlueprintComponentOverride {
+    std::unordered_map<std::string, PropertyValue> properties;
+};
+
+struct BlueprintNodeOverride {
+    bool hasTransform = false;
+    TransformComponent transform;
+    std::unordered_map<std::string, BlueprintComponentOverride> componentOverrides;
+    std::unordered_map<std::string, PropertyValue> scriptVars;
+};
+
+struct BlueprintInstanceComponent {
+    std::string blueprintPath;
+    std::string instanceId;
+    std::string rootNodeId;
+    entt::entity parent = entt::null;
+    std::unordered_map<std::string, BlueprintNodeOverride> overrides;
+};
+
+struct BlueprintNodeComponent {
+    std::string instanceId;
+    std::string nodeId;
+    bool isRoot = false;
 };
 

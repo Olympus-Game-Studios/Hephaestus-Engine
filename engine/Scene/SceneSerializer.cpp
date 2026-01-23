@@ -2,6 +2,9 @@
 
 #include "Scene.h"
 #include "Components.h"
+#include "Json.h"
+#include "BlueprintSerializer.h"
+#include "BlueprintInstantiator.h"
 #include "../Scripting/ScriptComponent.h"
 #include "../Scripting/ScriptRegistry.h"
 
@@ -78,6 +81,102 @@ std::string FormatVec3(const Vec3& v)
     return oss.str();
 }
 
+void WritePropertyValue(std::ostream& stream, const PropertyValue& value)
+{
+    if (value.IsNull()) {
+        stream << "null";
+        return;
+    }
+    if (value.IsBool()) {
+        stream << (*value.AsBool() ? "true" : "false");
+        return;
+    }
+    if (value.IsNumber()) {
+        stream << std::setprecision(10) << *value.AsNumber();
+        return;
+    }
+    if (value.IsString()) {
+        stream << "\"" << EscapeString(*value.AsString()) << "\"";
+        return;
+    }
+    if (value.IsVec2()) {
+        const Vec2& v = *value.AsVec2();
+        stream << "[" << FormatFloat(v.x) << ", " << FormatFloat(v.y) << "]";
+        return;
+    }
+    if (value.IsVec3()) {
+        const Vec3& v = *value.AsVec3();
+        stream << "[" << FormatFloat(v.x) << ", " << FormatFloat(v.y) << ", " << FormatFloat(v.z) << "]";
+        return;
+    }
+    if (value.IsVec4()) {
+        const Vec4& v = *value.AsVec4();
+        stream << "[" << FormatFloat(v.x) << ", " << FormatFloat(v.y) << ", " << FormatFloat(v.z) << ", " << FormatFloat(v.w) << "]";
+        return;
+    }
+    if (value.IsArray()) {
+        stream << "[";
+        const auto& arr = *value.AsArray();
+        for (size_t i = 0; i < arr.size(); ++i) {
+            if (i) stream << ", ";
+            WritePropertyValue(stream, arr[i]);
+        }
+        stream << "]";
+        return;
+    }
+    if (value.IsObject()) {
+        stream << "{";
+        bool first = true;
+        for (const auto& [key, entry] : *value.AsObject()) {
+            if (!first) stream << ", ";
+            stream << "\"" << EscapeString(key) << "\": ";
+            WritePropertyValue(stream, entry);
+            first = false;
+        }
+        stream << "}";
+        return;
+    }
+}
+
+PropertyValue ParsePropertyValue(const JsonValue& value)
+{
+    if (value.IsBool()) {
+        return PropertyValue(value.AsBool());
+    }
+    if (value.IsNumber()) {
+        return PropertyValue(value.AsNumber());
+    }
+    if (value.IsString()) {
+        return PropertyValue(value.AsString());
+    }
+    if (value.IsArray()) {
+        const auto& arr = value.AsArray();
+        if (arr.size() == 2 && arr[0].IsNumber() && arr[1].IsNumber()) {
+            return PropertyValue(Vec2(static_cast<float>(arr[0].AsNumber()), static_cast<float>(arr[1].AsNumber())));
+        }
+        if (arr.size() == 3 && arr[0].IsNumber() && arr[1].IsNumber() && arr[2].IsNumber()) {
+            return PropertyValue(Vec3(static_cast<float>(arr[0].AsNumber()), static_cast<float>(arr[1].AsNumber()), static_cast<float>(arr[2].AsNumber())));
+        }
+        if (arr.size() == 4 && arr[0].IsNumber() && arr[1].IsNumber() && arr[2].IsNumber() && arr[3].IsNumber()) {
+            return PropertyValue(Vec4(static_cast<float>(arr[0].AsNumber()), static_cast<float>(arr[1].AsNumber()), static_cast<float>(arr[2].AsNumber()), static_cast<float>(arr[3].AsNumber())));
+        }
+        PropertyValue::Array arrayOut;
+        arrayOut.reserve(arr.size());
+        for (const auto& entry : arr) {
+            arrayOut.push_back(ParsePropertyValue(entry));
+        }
+        return PropertyValue(std::move(arrayOut));
+    }
+    if (value.IsObject()) {
+        PropertyValue::Object obj;
+        for (const auto& [key, entry] : value.AsObject()) {
+            obj.emplace(key, ParsePropertyValue(entry));
+        }
+        return PropertyValue(std::move(obj));
+    }
+    return PropertyValue();
+}
+
 const char* LightTypeToString(LightType type)
 {
     switch (type) {
@@ -119,357 +218,6 @@ const char* BackgroundTypeToString(EnvironmentComponent::BackgroundType type)
         return "SolidColor";
     }
 }
-
-struct JsonValue {
-    enum class Type {
-        Null,
-        Bool,
-        Number,
-        String,
-        Array,
-        Object
-    };
-
-    Type type = Type::Null;
-    bool boolValue = false;
-    double numberValue = 0.0;
-    std::string stringValue;
-    std::vector<JsonValue> arrayValue;
-    std::unordered_map<std::string, JsonValue> objectValue;
-
-    bool IsNull() const { return type == Type::Null; }
-    bool IsBool() const { return type == Type::Bool; }
-    bool IsNumber() const { return type == Type::Number; }
-    bool IsString() const { return type == Type::String; }
-    bool IsArray() const { return type == Type::Array; }
-    bool IsObject() const { return type == Type::Object; }
-
-    bool AsBool(bool fallback = false) const { return IsBool() ? boolValue : fallback; }
-    double AsNumber(double fallback = 0.0) const { return IsNumber() ? numberValue : fallback; }
-    const std::string& AsString() const { return stringValue; }
-    const std::vector<JsonValue>& AsArray() const { return arrayValue; }
-    const std::unordered_map<std::string, JsonValue>& AsObject() const { return objectValue; }
-
-    const JsonValue* Find(const std::string& key) const {
-        if (!IsObject()) {
-            return nullptr;
-        }
-        auto it = objectValue.find(key);
-        return it != objectValue.end() ? &it->second : nullptr;
-    }
-};
-
-static void AppendUtf8(std::string& out, unsigned int codepoint)
-{
-    if (codepoint <= 0x7F) {
-        out.push_back(static_cast<char>(codepoint));
-    } else if (codepoint <= 0x7FF) {
-        out.push_back(static_cast<char>(0xC0 | ((codepoint >> 6) & 0x1F)));
-        out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
-    } else if (codepoint <= 0xFFFF) {
-        out.push_back(static_cast<char>(0xE0 | ((codepoint >> 12) & 0x0F)));
-        out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
-        out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
-    } else {
-        out.push_back(static_cast<char>(0xF0 | ((codepoint >> 18) & 0x07)));
-        out.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
-        out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
-        out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
-    }
-}
-
-class JsonParser {
-public:
-    explicit JsonParser(const std::string& source)
-        : m_Begin(source.data()), m_Cursor(source.data()), m_End(source.data() + source.size())
-    {
-    }
-
-    bool Parse(JsonValue& outValue, std::string& outError)
-    {
-        outError.clear();
-        SkipWhitespace();
-        if (!ParseValue(outValue)) {
-            outError = m_Error.empty() ? std::string("Malformed scene file.") : m_Error;
-            return false;
-        }
-        SkipWhitespace();
-        if (m_Cursor != m_End) {
-            outError = "Unexpected trailing characters in scene file.";
-            return false;
-        }
-        return true;
-    }
-
-private:
-    bool ParseValue(JsonValue& value)
-    {
-        SkipWhitespace();
-        if (m_Cursor == m_End) {
-            return SetError("Unexpected end of input.");
-        }
-
-        char ch = *m_Cursor;
-        switch (ch) {
-        case '"':
-            return ParseString(value);
-        case '{':
-            return ParseObject(value);
-        case '[':
-            return ParseArray(value);
-        case 't':
-            return ParseLiteral("true", JsonValue::Type::Bool, value, true);
-        case 'f':
-            return ParseLiteral("false", JsonValue::Type::Bool, value, false);
-        case 'n':
-            return ParseLiteral("null", JsonValue::Type::Null, value, false);
-        default:
-            if (ch == '-' || std::isdigit(static_cast<unsigned char>(ch))) {
-                return ParseNumber(value);
-            }
-            break;
-        }
-
-        return SetError("Unexpected token while parsing scene file.");
-    }
-
-    bool ParseString(JsonValue& value)
-    {
-        std::string result;
-        if (!ParseStringInternal(result)) {
-            return false;
-        }
-        value.type = JsonValue::Type::String;
-        value.stringValue = std::move(result);
-        return true;
-    }
-
-    bool ParseStringInternal(std::string& out)
-    {
-        if (*m_Cursor != '"') {
-            return SetError("Expected '\"' at beginning of string.");
-        }
-        ++m_Cursor;
-
-        while (m_Cursor != m_End) {
-            char ch = *m_Cursor++;
-            if (ch == '"') {
-                return true;
-            }
-            if (ch == '\\') {
-                if (m_Cursor == m_End) {
-                    return SetError("Incomplete escape sequence in string.");
-                }
-                char esc = *m_Cursor++;
-                switch (esc) {
-                case '"': out.push_back('"'); break;
-                case '\\': out.push_back('\\'); break;
-                case '/': out.push_back('/'); break;
-                case 'b': out.push_back('\b'); break;
-                case 'f': out.push_back('\f'); break;
-                case 'n': out.push_back('\n'); break;
-                case 'r': out.push_back('\r'); break;
-                case 't': out.push_back('\t'); break;
-                case 'u': {
-                    if (std::distance(m_Cursor, m_End) < 4) {
-                        return SetError("Incomplete unicode escape.");
-                    }
-                    unsigned int codepoint = 0;
-                    for (int i = 0; i < 4; ++i) {
-                        char hex = *m_Cursor++;
-                        codepoint <<= 4;
-                        if (hex >= '0' && hex <= '9') {
-                            codepoint += static_cast<unsigned int>(hex - '0');
-                        } else if (hex >= 'a' && hex <= 'f') {
-                            codepoint += static_cast<unsigned int>(10 + hex - 'a');
-                        } else if (hex >= 'A' && hex <= 'F') {
-                            codepoint += static_cast<unsigned int>(10 + hex - 'A');
-                        } else {
-                            return SetError("Invalid unicode escape sequence.");
-                        }
-                    }
-                    AppendUtf8(out, codepoint);
-                    break;
-                }
-                default:
-                    return SetError("Unknown escape sequence in string.");
-                }
-            } else {
-                if (static_cast<unsigned char>(ch) < 0x20) {
-                    return SetError("Control character in string literal.");
-                }
-                out.push_back(ch);
-            }
-        }
-
-        return SetError("Unterminated string literal.");
-    }
-
-    bool ParseNumber(JsonValue& value)
-    {
-        const char* start = m_Cursor;
-        if (*m_Cursor == '-') {
-            ++m_Cursor;
-        }
-        while (m_Cursor != m_End && std::isdigit(static_cast<unsigned char>(*m_Cursor))) {
-            ++m_Cursor;
-        }
-        if (m_Cursor != m_End && *m_Cursor == '.') {
-            ++m_Cursor;
-            while (m_Cursor != m_End && std::isdigit(static_cast<unsigned char>(*m_Cursor))) {
-                ++m_Cursor;
-            }
-        }
-        if (m_Cursor != m_End && (*m_Cursor == 'e' || *m_Cursor == 'E')) {
-            ++m_Cursor;
-            if (m_Cursor != m_End && (*m_Cursor == '+' || *m_Cursor == '-')) {
-                ++m_Cursor;
-            }
-            while (m_Cursor != m_End && std::isdigit(static_cast<unsigned char>(*m_Cursor))) {
-                ++m_Cursor;
-            }
-        }
-
-        char* parseEnd = nullptr;
-        double parsed = std::strtod(start, &parseEnd);
-        if (parseEnd != m_Cursor) {
-            return SetError("Failed to parse number literal.");
-        }
-
-        value.type = JsonValue::Type::Number;
-        value.numberValue = parsed;
-        return true;
-    }
-
-    bool ParseLiteral(const char* literal, JsonValue::Type type, JsonValue& value, bool boolValue)
-    {
-        size_t len = std::strlen(literal);
-        if (static_cast<size_t>(std::distance(m_Cursor, m_End)) < len) {
-            return SetError("Unexpected end while parsing literal.");
-        }
-        if (std::strncmp(m_Cursor, literal, len) != 0) {
-            return SetError("Invalid literal in scene file.");
-        }
-        m_Cursor += len;
-        value.type = type;
-        value.boolValue = boolValue;
-        value.numberValue = boolValue ? 1.0 : 0.0;
-        return true;
-    }
-
-    bool ParseArray(JsonValue& value)
-    {
-        value.type = JsonValue::Type::Array;
-        value.arrayValue.clear();
-        ++m_Cursor; // skip [
-        SkipWhitespace();
-        if (m_Cursor == m_End) {
-            return SetError("Unexpected end while parsing array.");
-        }
-        if (*m_Cursor == ']') {
-            ++m_Cursor;
-            return true;
-        }
-
-        while (true) {
-            JsonValue element;
-            if (!ParseValue(element)) {
-                return false;
-            }
-            value.arrayValue.push_back(std::move(element));
-            SkipWhitespace();
-            if (m_Cursor == m_End) {
-                return SetError("Unexpected end while parsing array.");
-            }
-            char ch = *m_Cursor;
-            if (ch == ',') {
-                ++m_Cursor;
-                SkipWhitespace();
-                continue;
-            }
-            if (ch == ']') {
-                ++m_Cursor;
-                break;
-            }
-            return SetError("Expected ',' or ']' in array.");
-        }
-        return true;
-    }
-
-    bool ParseObject(JsonValue& value)
-    {
-        value.type = JsonValue::Type::Object;
-        value.objectValue.clear();
-        ++m_Cursor; // skip {
-        SkipWhitespace();
-        if (m_Cursor == m_End) {
-            return SetError("Unexpected end while parsing object.");
-        }
-        if (*m_Cursor == '}') {
-            ++m_Cursor;
-            return true;
-        }
-
-        while (true) {
-            std::string key;
-            if (!ParseStringInternal(key)) {
-                return false;
-            }
-            SkipWhitespace();
-            if (m_Cursor == m_End || *m_Cursor != ':') {
-                return SetError("Expected ':' after object key.");
-            }
-            ++m_Cursor;
-            SkipWhitespace();
-
-            JsonValue memberValue;
-            if (!ParseValue(memberValue)) {
-                return false;
-            }
-            value.objectValue.emplace(std::move(key), std::move(memberValue));
-            SkipWhitespace();
-            if (m_Cursor == m_End) {
-                return SetError("Unexpected end while parsing object.");
-            }
-            char ch = *m_Cursor;
-            if (ch == ',') {
-                ++m_Cursor;
-                SkipWhitespace();
-                continue;
-            }
-            if (ch == '}') {
-                ++m_Cursor;
-                break;
-            }
-            return SetError("Expected ',' or '}' in object.");
-        }
-        return true;
-    }
-
-    void SkipWhitespace()
-    {
-        while (m_Cursor != m_End && std::isspace(static_cast<unsigned char>(*m_Cursor))) {
-            ++m_Cursor;
-        }
-    }
-
-    bool SetError(const char* message)
-    {
-        if (m_Error.empty()) {
-            std::ostringstream oss;
-            oss.imbue(std::locale::classic());
-            size_t position = static_cast<size_t>(std::distance(m_Begin, m_Cursor));
-            oss << message << " (at byte " << position << ")";
-            m_Error = oss.str();
-        }
-        return false;
-    }
-
-    const char* m_Begin = nullptr;
-    const char* m_Cursor = nullptr;
-    const char* m_End = nullptr;
-    std::string m_Error;
-};
 
 static bool ParseVec3(const JsonValue& value, Vec3& out)
 {
@@ -611,6 +359,9 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
     std::vector<entt::entity> entities;
     auto taggedEntities = registry.view<TagComponent>();
     for (entt::entity entity : taggedEntities) {
+        if (registry.any_of<BlueprintNodeComponent>(entity)) {
+            continue;
+        }
         entities.push_back(entity);
     }
 
@@ -631,6 +382,112 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
     stream << "  \"version\": 1,\n";
     stream << "  \"name\": \"" << EscapeString(m_Scene.GetName()) << "\",\n";
     stream << "  \"entityCount\": " << entities.size() << ",\n";
+
+    std::vector<entt::entity> blueprintInstances;
+    auto blueprintView = registry.view<BlueprintInstanceComponent>();
+    for (entt::entity entity : blueprintView) {
+        blueprintInstances.push_back(entity);
+    }
+    std::sort(blueprintInstances.begin(), blueprintInstances.end(), [](entt::entity a, entt::entity b) {
+        return static_cast<uint32_t>(a) < static_cast<uint32_t>(b);
+    });
+
+    stream << "  \"blueprintInstanceCount\": " << blueprintInstances.size() << ",\n";
+    stream << "  \"blueprintInstances\": [\n";
+    for (size_t instanceIndex = 0; instanceIndex < blueprintInstances.size(); ++instanceIndex) {
+        entt::entity handle = blueprintInstances[instanceIndex];
+        const BlueprintInstanceComponent* instance = registry.try_get<BlueprintInstanceComponent>(handle);
+        if (!instance) {
+            continue;
+        }
+
+        stream << "    {\n";
+        stream << "      \"blueprintPath\": \"" << EscapeString(instance->blueprintPath) << "\",\n";
+        stream << "      \"instanceId\": \"" << EscapeString(instance->instanceId) << "\",\n";
+        stream << "      \"rootNodeId\": \"" << EscapeString(instance->rootNodeId) << "\",\n";
+        stream << "      \"parent\": ";
+        if (instance->parent != entt::null) {
+            stream << static_cast<uint32_t>(instance->parent) << ",\n";
+        } else {
+            stream << "null,\n";
+        }
+
+        stream << "      \"overrides\": {\n";
+        size_t nodeIndex = 0;
+        for (const auto& [nodeId, nodeOverride] : instance->overrides) {
+            stream << "        \"" << EscapeString(nodeId) << "\": {\n";
+            bool wroteSection = false;
+
+            if (nodeOverride.hasTransform) {
+                stream << "          \"transform\": {\n";
+                stream << "            \"position\": " << FormatVec3(nodeOverride.transform.position) << ",\n";
+                stream << "            \"rotation\": " << FormatVec3(nodeOverride.transform.rotation) << ",\n";
+                stream << "            \"scale\": " << FormatVec3(nodeOverride.transform.scale) << "\n";
+                stream << "          }";
+                wroteSection = true;
+            }
+
+            if (!nodeOverride.componentOverrides.empty()) {
+                if (wroteSection) {
+                    stream << ",\n";
+                }
+                stream << "          \"components\": {\n";
+                size_t compIndex = 0;
+                for (const auto& [componentType, componentOverride] : nodeOverride.componentOverrides) {
+                    stream << "            \"" << EscapeString(componentType) << "\": {";
+                    size_t propIndex = 0;
+                    for (const auto& [propKey, propValue] : componentOverride.properties) {
+                        if (propIndex++) {
+                            stream << ", ";
+                        }
+                        stream << "\"" << EscapeString(propKey) << "\": ";
+                        WritePropertyValue(stream, propValue);
+                    }
+                    stream << "}";
+                    if (compIndex + 1 < nodeOverride.componentOverrides.size()) {
+                        stream << ",";
+                    }
+                    stream << "\n";
+                    ++compIndex;
+                }
+                stream << "          }";
+                wroteSection = true;
+            }
+
+            if (!nodeOverride.scriptVars.empty()) {
+                if (wroteSection) {
+                    stream << ",\n";
+                }
+                stream << "          \"scriptVars\": {";
+                size_t varIndex = 0;
+                for (const auto& [key, value] : nodeOverride.scriptVars) {
+                    if (varIndex++) {
+                        stream << ", ";
+                    }
+                    stream << "\"" << EscapeString(key) << "\": ";
+                    WritePropertyValue(stream, value);
+                }
+                stream << "}";
+            }
+
+            stream << "\n        }";
+            if (nodeIndex + 1 < instance->overrides.size()) {
+                stream << ",";
+            }
+            stream << "\n";
+            ++nodeIndex;
+        }
+        stream << "      }\n";
+
+        stream << "    }";
+        if (instanceIndex + 1 < blueprintInstances.size()) {
+            stream << ",\n";
+        } else {
+            stream << "\n";
+        }
+    }
+    stream << "  ],\n";
+
     stream << "  \"entities\": [\n";
 
     for (size_t entityIndex = 0; entityIndex < entities.size(); ++entityIndex) {
@@ -1523,6 +1380,122 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
         }
     }
 
+    if (const JsonValue* blueprintInstancesValue = root.Find("blueprintInstances")) {
+        if (!blueprintInstancesValue->IsArray()) {
+            outError = "blueprintInstances is not an array";
+            return false;
+        }
+
+        for (const JsonValue& instanceValue : blueprintInstancesValue->AsArray()) {
+            if (!instanceValue.IsObject()) {
+                outError = "blueprint instance entry must be an object";
+                return false;
+            }
+
+            BlueprintInstanceComponent instanceData;
+            if (const JsonValue* pathValue = instanceValue.Find("blueprintPath")) {
+                if (pathValue->IsString()) {
+                    instanceData.blueprintPath = pathValue->AsString();
+                }
+            }
+            if (instanceData.blueprintPath.empty()) {
+                outError = "blueprint instance missing blueprintPath";
+                return false;
+            }
+            if (const JsonValue* idValue = instanceValue.Find("instanceId")) {
+                if (idValue->IsString()) {
+                    instanceData.instanceId = idValue->AsString();
+                }
+            }
+            if (const JsonValue* rootIdValue = instanceValue.Find("rootNodeId")) {
+                if (rootIdValue->IsString()) {
+                    instanceData.rootNodeId = rootIdValue->AsString();
+                }
+            }
+            if (const JsonValue* parentValue = instanceValue.Find("parent")) {
+                if (parentValue->IsNumber()) {
+                    double rawParent = parentValue->AsNumber();
+                    if (rawParent >= 0.0 && rawParent <= static_cast<double>(std::numeric_limits<uint32_t>::max())) {
+                        uint32_t parentId = static_cast<uint32_t>(rawParent);
+                        auto parentIt = idToEntity.find(parentId);
+                        if (parentIt != idToEntity.end()) {
+                            instanceData.parent = parentIt->second;
+                        }
+                    }
+                }
+            }
+
+            if (const JsonValue* overridesValue = instanceValue.Find("overrides")) {
+                if (!overridesValue->IsObject()) {
+                    outError = "blueprint overrides must be an object";
+                    return false;
+                }
+
+                for (const auto& [nodeId, nodeValue] : overridesValue->AsObject()) {
+                    if (!nodeValue.IsObject()) {
+                        continue;
+                    }
+                    BlueprintNodeOverride nodeOverride;
+
+                    if (const JsonValue* transformValue = nodeValue.Find("transform")) {
+                        if (transformValue->IsObject()) {
+                            if (const JsonValue* posValue = transformValue->Find("position")) {
+                                ParseVec3(*posValue, nodeOverride.transform.position);
+                            }
+                            if (const JsonValue* rotValue = transformValue->Find("rotation")) {
+                                ParseVec3(*rotValue, nodeOverride.transform.rotation);
+                            }
+                            if (const JsonValue* scaleValue = transformValue->Find("scale")) {
+                                ParseVec3(*scaleValue, nodeOverride.transform.scale);
+                            }
+                            nodeOverride.hasTransform = true;
+                        }
+                    }
+
+                    if (const JsonValue* componentsValue = nodeValue.Find("components")) {
+                        if (componentsValue->IsObject()) {
+                            for (const auto& [componentType, componentValue] : componentsValue->AsObject()) {
+                                if (!componentValue.IsObject()) {
+                                    continue;
+                                }
+                                BlueprintComponentOverride componentOverride;
+                                for (const auto& [propKey, propValue] : componentValue.AsObject()) {
+                                    componentOverride.properties.emplace(propKey, ParsePropertyValue(propValue));
+                                }
+                                nodeOverride.componentOverrides.emplace(componentType, std::move(componentOverride));
+                            }
+                        }
+                    }
+
+                    if (const JsonValue* scriptVarsValue = nodeValue.Find("scriptVars")) {
+                        if (scriptVarsValue->IsObject()) {
+                            for (const auto& [varKey, varValue] : scriptVarsValue->AsObject()) {
+                                nodeOverride.scriptVars.emplace(varKey, ParsePropertyValue(varValue));
+                            }
+                        }
+                    }
+
+                    instanceData.overrides.emplace(nodeId, std::move(nodeOverride));
+                }
+            }
+
+            BlueprintAsset asset;
+            std::string blueprintError;
+            if (!BlueprintSerializer::Deserialize(asset, instanceData.blueprintPath, blueprintError)) {
+                outError = "Failed to load blueprint '" + instanceData.blueprintPath + "': " + blueprintError;
+                return false;
+            }
+
+            BlueprintInstantiateOptions options;
+            options.blueprintPath = instanceData.blueprintPath;
+            options.instanceId = instanceData.instanceId;
+            options.parent = instanceData.parent;
+            options.instanceData = &instanceData;
+
+            BlueprintInstantiator::Instantiate(scene, asset, options);
+        }
+    }
+
     for (const auto& link : pendingParents) {
         entt::entity childHandle = link.first;
         uint32_t parentId = link.second;
@@ -1553,6 +1526,9 @@ std::string SceneSerializer::SerializeToString() const
     std::vector<entt::entity> entities;
     auto taggedEntities = registry.view<TagComponent>();
     for (entt::entity entity : taggedEntities) {
+        if (registry.any_of<BlueprintNodeComponent>(entity)) {
+            continue;
+        }
         entities.push_back(entity);
     }
 
@@ -1573,6 +1549,112 @@ std::string SceneSerializer::SerializeToString() const
     stream << "  \"version\": 1,\n";
     stream << "  \"name\": \"" << EscapeString(m_Scene.GetName()) << "\",\n";
     stream << "  \"entityCount\": " << entities.size() << ",\n";
+
+    std::vector<entt::entity> blueprintInstances;
+    auto blueprintView = registry.view<BlueprintInstanceComponent>();
+    for (entt::entity entity : blueprintView) {
+        blueprintInstances.push_back(entity);
+    }
+    std::sort(blueprintInstances.begin(), blueprintInstances.end(), [](entt::entity a, entt::entity b) {
+        return static_cast<uint32_t>(a) < static_cast<uint32_t>(b);
+    });
+
+    stream << "  \"blueprintInstanceCount\": " << blueprintInstances.size() << ",\n";
+    stream << "  \"blueprintInstances\": [\n";
+    for (size_t instanceIndex = 0; instanceIndex < blueprintInstances.size(); ++instanceIndex) {
+        entt::entity handle = blueprintInstances[instanceIndex];
+        const BlueprintInstanceComponent* instance = registry.try_get<BlueprintInstanceComponent>(handle);
+        if (!instance) {
+            continue;
+        }
+
+        stream << "    {\n";
+        stream << "      \"blueprintPath\": \"" << EscapeString(instance->blueprintPath) << "\",\n";
+        stream << "      \"instanceId\": \"" << EscapeString(instance->instanceId) << "\",\n";
+        stream << "      \"rootNodeId\": \"" << EscapeString(instance->rootNodeId) << "\",\n";
+        stream << "      \"parent\": ";
+        if (instance->parent != entt::null) {
+            stream << static_cast<uint32_t>(instance->parent) << ",\n";
+        } else {
+            stream << "null,\n";
+        }
+
+        stream << "      \"overrides\": {\n";
+        size_t nodeIndex = 0;
+        for (const auto& [nodeId, nodeOverride] : instance->overrides) {
+            stream << "        \"" << EscapeString(nodeId) << "\": {\n";
+            bool wroteSection = false;
+
+            if (nodeOverride.hasTransform) {
+                stream << "          \"transform\": {\n";
+                stream << "            \"position\": " << FormatVec3(nodeOverride.transform.position) << ",\n";
+                stream << "            \"rotation\": " << FormatVec3(nodeOverride.transform.rotation) << ",\n";
+                stream << "            \"scale\": " << FormatVec3(nodeOverride.transform.scale) << "\n";
+                stream << "          }";
+                wroteSection = true;
+            }
+
+            if (!nodeOverride.componentOverrides.empty()) {
+                if (wroteSection) {
+                    stream << ",\n";
+                }
+                stream << "          \"components\": {\n";
+                size_t compIndex = 0;
+                for (const auto& [componentType, componentOverride] : nodeOverride.componentOverrides) {
+                    stream << "            \"" << EscapeString(componentType) << "\": {";
+                    size_t propIndex = 0;
+                    for (const auto& [propKey, propValue] : componentOverride.properties) {
+                        if (propIndex++) {
+                            stream << ", ";
+                        }
+                        stream << "\"" << EscapeString(propKey) << "\": ";
+                        WritePropertyValue(stream, propValue);
+                    }
+                    stream << "}";
+                    if (compIndex + 1 < nodeOverride.componentOverrides.size()) {
+                        stream << ",";
+                    }
+                    stream << "\n";
+                    ++compIndex;
+                }
+                stream << "          }";
+                wroteSection = true;
+            }
+
+            if (!nodeOverride.scriptVars.empty()) {
+                if (wroteSection) {
+                    stream << ",\n";
+                }
+                stream << "          \"scriptVars\": {";
+                size_t varIndex = 0;
+                for (const auto& [key, value] : nodeOverride.scriptVars) {
+                    if (varIndex++) {
+                        stream << ", ";
+                    }
+                    stream << "\"" << EscapeString(key) << "\": ";
+                    WritePropertyValue(stream, value);
+                }
+                stream << "}";
+            }
+
+            stream << "\n        }";
+            if (nodeIndex + 1 < instance->overrides.size()) {
+                stream << ",";
+            }
+            stream << "\n";
+            ++nodeIndex;
+        }
+        stream << "      }\n";
+
+        stream << "    }";
+        if (instanceIndex + 1 < blueprintInstances.size()) {
+            stream << ",\n";
+        } else {
+            stream << "\n";
+        }
+    }
+    stream << "  ],\n";
+
     stream << "  \"entities\": [\n";
 
     for (size_t entityIndex = 0; entityIndex < entities.size(); ++entityIndex) {

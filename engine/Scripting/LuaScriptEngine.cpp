@@ -13,6 +13,7 @@
 #include <cctype>
 #include <limits>
 #include <utility>
+#include <functional>
 
 #include <GLFW/glfw3.h>
 
@@ -267,7 +268,7 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
         auto& component = view.get<LuaScriptComponent>(entityHandle);
         uint32_t entityId = static_cast<uint32_t>(entityHandle);
 
-        if (!component.enabled || component.scriptPath.empty()) {
+        if (!component.enabled || (component.scriptPath.empty() && component.scriptSource.empty())) {
             DestroyInstance(entityId, true);
             continue;
         }
@@ -804,12 +805,23 @@ LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene, e
     ScriptInstance& instance = m_ScriptInstances[entityId];
     instance.entityId = entityId;
 
-    std::filesystem::path resolved = ResolveScriptPath(component.scriptPath);
+    if (component.scriptPath.empty() && component.scriptSource.empty()) {
+        return nullptr;
+    }
+
+    bool hasEmbeddedSource = !component.scriptSource.empty();
+    size_t sourceHash = hasEmbeddedSource ? std::hash<std::string>{}(component.scriptSource) : 0;
+
+    std::filesystem::path resolved = component.scriptPath.empty()
+        ? std::filesystem::path("<embedded>")
+        : ResolveScriptPath(component.scriptPath);
     bool pathChanged = instance.userPath != component.scriptPath;
     instance.userPath = component.scriptPath;
     instance.resolvedPath = resolved;
 
-    if (pathChanged && instance.valid) {
+    bool sourceChanged = hasEmbeddedSource && instance.embeddedSourceHash != sourceHash;
+
+    if ((pathChanged || sourceChanged) && instance.valid) {
         Entity entity(entityHandle, &scene);
         CallInstanceFunction(instance, instance.onDisableRef, entity, 0.0f, false);
         CallInstanceFunction(instance, instance.onDestroyRef, entity, 0.0f, false);
@@ -817,6 +829,29 @@ LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene, e
         instance.awakeCalled = false;
         instance.valid = false;
         instance.errorLogged = false;
+    }
+
+    if (hasEmbeddedSource) {
+        bool needsReload = !instance.valid || sourceChanged;
+        if (needsReload) {
+            Entity entity(entityHandle, &scene);
+            if (instance.valid) {
+                CallInstanceFunction(instance, instance.onDisableRef, entity, 0.0f, false);
+                CallInstanceFunction(instance, instance.onDestroyRef, entity, 0.0f, false);
+            }
+            ReleaseInstanceResources(instance);
+            instance.awakeCalled = false;
+            instance.valid = false;
+
+            if (!LoadScriptForInstance(instance, component, entity)) {
+                instance.errorLogged = true;
+                return nullptr;
+            }
+
+            instance.embeddedSourceHash = sourceHash;
+            instance.errorLogged = false;
+        }
+        return &instance;
     }
 
     std::error_code fileError;
@@ -930,15 +965,23 @@ bool LuaScriptEngine::LoadScriptForInstance(ScriptInstance& instance, const LuaS
         return false;
     }
 
-    std::ifstream file(instance.resolvedPath, std::ios::binary);
-    if (!file.is_open()) {
-        std::cerr << "[Lua] Failed to open script: " << instance.resolvedPath << std::endl;
-        return false;
-    }
+    std::string code;
+    std::string debugName;
+    if (!component.scriptSource.empty()) {
+        code = component.scriptSource;
+        debugName = component.scriptPath.empty() ? std::string("<embedded>") : component.scriptPath;
+    } else {
+        std::ifstream file(instance.resolvedPath, std::ios::binary);
+        if (!file.is_open()) {
+            std::cerr << "[Lua] Failed to open script: " << instance.resolvedPath << std::endl;
+            return false;
+        }
 
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    const std::string code = buffer.str();
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        code = buffer.str();
+        debugName = instance.resolvedPath.string();
+    }
 
     lua_newtable(m_State);
     int envIndex = lua_gettop(m_State);
@@ -948,8 +991,8 @@ bool LuaScriptEngine::LoadScriptForInstance(ScriptInstance& instance, const LuaS
     lua_setfield(m_State, -2, "__index");
     lua_setmetatable(m_State, envIndex);
 
-    if (luaL_loadbuffer(m_State, code.c_str(), code.size(), instance.resolvedPath.string().c_str()) != LUA_OK) {
-        LogLuaError("loading " + instance.resolvedPath.string());
+    if (luaL_loadbuffer(m_State, code.c_str(), code.size(), debugName.c_str()) != LUA_OK) {
+        LogLuaError("loading " + debugName);
         lua_pop(m_State, 1);
         return false;
     }
@@ -963,7 +1006,7 @@ bool LuaScriptEngine::LoadScriptForInstance(ScriptInstance& instance, const LuaS
 #endif
 
     if (lua_pcall(m_State, 0, 0, 0) != LUA_OK) {
-        LogLuaError("executing " + instance.resolvedPath.string());
+        LogLuaError("executing " + debugName);
         lua_pop(m_State, 1);
         return false;
     }
@@ -973,6 +1016,8 @@ bool LuaScriptEngine::LoadScriptForInstance(ScriptInstance& instance, const LuaS
         instance.environmentRef = kInvalidRef;
         return false;
     }
+
+    ApplyVariablesToEnvironment(instance, component);
 
     const std::string awakeName = component.functionOnAwake.empty() ? "onAwake" : component.functionOnAwake;
     const std::string updateName = component.functionOnUpdate.empty() ? "onUpdate" : component.functionOnUpdate;
@@ -1024,6 +1069,109 @@ int LuaScriptEngine::FetchFunctionRef(int environmentRef, const std::string& fun
     (void)environmentRef;
     (void)functionName;
     return kInvalidRef;
+#endif
+}
+
+void LuaScriptEngine::ApplyVariablesToEnvironment(ScriptInstance& instance, const LuaScriptComponent& component) {
+#if LUA_AVAILABLE
+    if (!m_State || instance.environmentRef == kInvalidRef) {
+        return;
+    }
+
+    if (component.variables.empty()) {
+        return;
+    }
+
+    lua_rawgeti(m_State, LUA_REGISTRYINDEX, instance.environmentRef);
+    if (!lua_istable(m_State, -1)) {
+        lua_pop(m_State, 1);
+        return;
+    }
+
+    for (const auto& [key, value] : component.variables) {
+        PushPropertyValue(value);
+        lua_setfield(m_State, -2, key.c_str());
+    }
+
+    lua_pop(m_State, 1);
+#else
+    (void)instance;
+    (void)component;
+#endif
+}
+
+void LuaScriptEngine::PushPropertyValue(const PropertyValue& value) {
+#if LUA_AVAILABLE
+    if (value.IsNull()) {
+        lua_pushnil(m_State);
+        return;
+    }
+    if (value.IsBool()) {
+        lua_pushboolean(m_State, *value.AsBool());
+        return;
+    }
+    if (value.IsNumber()) {
+        lua_pushnumber(m_State, *value.AsNumber());
+        return;
+    }
+    if (value.IsString()) {
+        lua_pushstring(m_State, value.AsString()->c_str());
+        return;
+    }
+    if (value.IsVec2()) {
+        const Vec2& v = *value.AsVec2();
+        lua_newtable(m_State);
+        lua_pushnumber(m_State, v.x);
+        lua_setfield(m_State, -2, "x");
+        lua_pushnumber(m_State, v.y);
+        lua_setfield(m_State, -2, "y");
+        return;
+    }
+    if (value.IsVec3()) {
+        const Vec3& v = *value.AsVec3();
+        lua_newtable(m_State);
+        lua_pushnumber(m_State, v.x);
+        lua_setfield(m_State, -2, "x");
+        lua_pushnumber(m_State, v.y);
+        lua_setfield(m_State, -2, "y");
+        lua_pushnumber(m_State, v.z);
+        lua_setfield(m_State, -2, "z");
+        return;
+    }
+    if (value.IsVec4()) {
+        const Vec4& v = *value.AsVec4();
+        lua_newtable(m_State);
+        lua_pushnumber(m_State, v.x);
+        lua_setfield(m_State, -2, "x");
+        lua_pushnumber(m_State, v.y);
+        lua_setfield(m_State, -2, "y");
+        lua_pushnumber(m_State, v.z);
+        lua_setfield(m_State, -2, "z");
+        lua_pushnumber(m_State, v.w);
+        lua_setfield(m_State, -2, "w");
+        return;
+    }
+    if (value.IsArray()) {
+        lua_newtable(m_State);
+        const auto& arr = *value.AsArray();
+        for (size_t i = 0; i < arr.size(); ++i) {
+            PushPropertyValue(arr[i]);
+            lua_seti(m_State, -2, static_cast<lua_Integer>(i + 1));
+        }
+        return;
+    }
+    if (value.IsObject()) {
+        lua_newtable(m_State);
+        const auto& obj = *value.AsObject();
+        for (const auto& [key, entry] : obj) {
+            PushPropertyValue(entry);
+            lua_setfield(m_State, -2, key.c_str());
+        }
+        return;
+    }
+    lua_pushnil(m_State);
+#else
+    (void)value;
 #endif
 }
 

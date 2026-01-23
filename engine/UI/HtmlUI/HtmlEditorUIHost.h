@@ -12,6 +12,9 @@
 #include <string>
 #include <optional>
 #include <utility>
+#include <unordered_map>
+
+#include "../../Scene/Json.h"
 
 #include "../EditorSpawnPreset.h"
 
@@ -51,12 +54,22 @@ public:
   void DrawAddActorsPanel();
   void DrawDetailsPanel();
   void DrawAssetBrowserPanel();
+  void DrawBlueprintEditorPanel();
   void DrawLogConsolePanel();
+
+  // Open (or focus) a blueprint document in the Blueprint Editor panel.
+  void OpenBlueprintEditor(const std::filesystem::path& path);
+
+  // Returns true if there are any open blueprint documents.
+  bool HasOpenBlueprints() const { return !blueprintDocs_.empty(); }
 
   // Consumes a spawn request originating from the HTML Add Actors panel.
   std::optional<EditorSpawnPreset> ConsumeAddActorsSpawnRequest();
   std::optional<std::string> ConsumeAddActorsSpawnMeshRequest();
   std::optional<std::pair<std::string, uint32_t>> ConsumeOutlinerAssetDropRequest();
+
+  // Returns true if the mouse is hovering over any HTML editor panel.
+  bool IsAnyPanelHovered() const;
 
   EditorMessageBridge& Bridge();
 
@@ -89,6 +102,7 @@ private:
   std::unique_ptr<HtmlPanelView> addActors_;
   std::unique_ptr<HtmlPanelView> details_;
   std::unique_ptr<HtmlPanelView> assetBrowser_;
+  std::unique_ptr<HtmlPanelView> blueprintEditor_;
   std::unique_ptr<HtmlPanelView> logConsole_;
 
   // Tracks whether each host ImGui panel is currently visible (ie. not collapsed).
@@ -96,7 +110,18 @@ private:
   bool addActorsVisible_ = false;
   bool detailsVisible_ = false;
   bool assetBrowserVisible_ = false;
+  bool blueprintEditorVisible_ = false;
   bool logConsoleVisible_ = false;
+
+  struct BlueprintDocument {
+    std::filesystem::path path;
+    JsonValue root;
+    bool dirty = false;
+    std::string error;
+  };
+
+  std::unordered_map<std::string, BlueprintDocument> blueprintDocs_;
+  std::vector<std::string> blueprintTabOrder_;
 
   // State pushed from HTML UI (consumed by the editor loop).
   std::optional<EditorSpawnPreset> pendingAddActorsSpawn_;
@@ -104,6 +129,10 @@ private:
   std::optional<std::string> pendingAddActorsSpawnMeshRel_;
   std::optional<std::string> pendingAssetDrag_;
   std::optional<std::pair<std::string, uint32_t>> pendingOutlinerAssetDrop_;
+
+  bool LoadBlueprintDocumentFromDisk(const std::filesystem::path& path,
+                                     BlueprintDocument& outDoc,
+                                     std::string& outError);
 };
 
 } // namespace Hephaestus::HtmlUI

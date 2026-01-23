@@ -18,6 +18,10 @@
 #include <sstream>
 #include <system_error>
 #include <vector>
+#include <fstream>
+#include <ctime>
+#include <iomanip>
+#include <unordered_set>
 
 #include "../EditorSpawnPreset.h"
 
@@ -52,6 +56,415 @@ static std::string JsonEscape(const std::string& s) {
     }
   }
   return out.str();
+}
+
+static std::string JsonEscapeFull(const std::string& s) {
+  std::ostringstream out;
+  for (char c : s) {
+    switch (c) {
+      case '\\': out << "\\\\"; break;
+      case '"': out << "\\\""; break;
+      case '\n': out << "\\n"; break;
+      case '\r': out << "\\r"; break;
+      case '\t': out << "\\t"; break;
+      default: out << c; break;
+    }
+  }
+  return out.str();
+}
+
+static JsonValue MakeNull() {
+  JsonValue v;
+  v.type = JsonValue::Type::Null;
+  return v;
+}
+
+static JsonValue MakeString(const std::string& s) {
+  JsonValue v;
+  v.type = JsonValue::Type::String;
+  v.stringValue = s;
+  return v;
+}
+
+static JsonValue MakeNumber(double d) {
+  JsonValue v;
+  v.type = JsonValue::Type::Number;
+  v.numberValue = d;
+  return v;
+}
+
+static JsonValue MakeObject() {
+  JsonValue v;
+  v.type = JsonValue::Type::Object;
+  return v;
+}
+
+static JsonValue MakeArray() {
+  JsonValue v;
+  v.type = JsonValue::Type::Array;
+  return v;
+}
+
+static JsonValue MakeVec3Array(float x, float y, float z) {
+  JsonValue v = MakeArray();
+  v.arrayValue.push_back(MakeNumber(x));
+  v.arrayValue.push_back(MakeNumber(y));
+  v.arrayValue.push_back(MakeNumber(z));
+  return v;
+}
+
+static JsonValue* EnsureObjectField(JsonValue& obj, const std::string& key) {
+  if (!obj.IsObject()) {
+    obj.type = JsonValue::Type::Object;
+    obj.objectValue.clear();
+  }
+  auto it = obj.objectValue.find(key);
+  if (it == obj.objectValue.end()) {
+    auto [newIt, _] = obj.objectValue.emplace(key, MakeObject());
+    return &newIt->second;
+  }
+  if (!it->second.IsObject()) {
+    it->second = MakeObject();
+  }
+  return &it->second;
+}
+
+static JsonValue* EnsureArrayField(JsonValue& obj, const std::string& key) {
+  if (!obj.IsObject()) {
+    obj.type = JsonValue::Type::Object;
+    obj.objectValue.clear();
+  }
+  auto it = obj.objectValue.find(key);
+  if (it == obj.objectValue.end()) {
+    auto [newIt, _] = obj.objectValue.emplace(key, MakeArray());
+    return &newIt->second;
+  }
+  if (!it->second.IsArray()) {
+    it->second = MakeArray();
+  }
+  return &it->second;
+}
+
+static JsonValue* FindNodeById(JsonValue& root, const std::string& nodeId) {
+  if (!root.IsObject()) return nullptr;
+  JsonValue* nodes = EnsureArrayField(root, "nodes");
+  for (auto& nodeVal : nodes->arrayValue) {
+    if (!nodeVal.IsObject()) continue;
+    const JsonValue* idVal = nodeVal.Find("id");
+    if (idVal && idVal->IsString() && idVal->AsString() == nodeId) {
+      return &nodeVal;
+    }
+  }
+  return nullptr;
+}
+
+static JsonValue* FindRootNode(JsonValue& root) {
+  if (!root.IsObject()) return nullptr;
+  JsonValue* nodes = EnsureArrayField(root, "nodes");
+  for (auto& nodeVal : nodes->arrayValue) {
+    if (!nodeVal.IsObject()) continue;
+    const JsonValue* parentVal = nodeVal.Find("parentId");
+    if (!parentVal || parentVal->IsNull() || (parentVal->IsString() && parentVal->AsString().empty())) {
+      return &nodeVal;
+    }
+  }
+  return nodes->arrayValue.empty() ? nullptr : &nodes->arrayValue.front();
+}
+
+static std::string NormalizeBlueprintKey(const std::filesystem::path& path,
+                                         const std::filesystem::path& root) {
+  std::filesystem::path norm = path.lexically_normal();
+  if (!root.empty()) {
+    std::error_code ec;
+    auto rel = std::filesystem::relative(norm, root, ec);
+    if (!ec) {
+      auto relStr = rel.generic_string();
+      if (!relStr.empty() && relStr.find("..") != 0) {
+        return relStr;
+      }
+    }
+  }
+  return norm.generic_string();
+}
+
+static bool ResolveBlueprintPath(const std::filesystem::path& input,
+                                 const std::filesystem::path& assetsRoot,
+                                 std::filesystem::path& outAbs,
+                                 std::string& outError) {
+  outError.clear();
+  std::filesystem::path candidate = input;
+  if (!candidate.is_absolute()) {
+    if (assetsRoot.empty()) {
+      outError = "no_assets_root";
+      return false;
+    }
+    candidate = assetsRoot / candidate;
+  }
+  outAbs = candidate.lexically_normal();
+
+  if (!assetsRoot.empty()) {
+    auto absStr = outAbs.generic_string();
+    auto rootStr = assetsRoot.lexically_normal().generic_string();
+    if (absStr.size() < rootStr.size() || absStr.compare(0, rootStr.size(), rootStr) != 0) {
+      outError = "path_escape";
+      return false;
+    }
+  }
+  return true;
+}
+
+static std::string ReadFileText(const std::filesystem::path& path, std::string& outError) {
+  std::ifstream in(path);
+  if (!in.is_open()) {
+    outError = "Unable to open blueprint file.";
+    return {};
+  }
+  std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  in.close();
+  return content;
+}
+
+static bool ParseJsonPayload(const std::string& payload, JsonValue& outRoot, std::string& outError) {
+  JsonParser parser(payload);
+  return parser.Parse(outRoot, outError);
+}
+
+static void WriteJsonIndent(std::ostream& out, int indent) {
+  for (int i = 0; i < indent; ++i) out << ' ';
+}
+
+static void WriteJsonValuePretty(std::ostream& out, const JsonValue& value, int indent) {
+  switch (value.type) {
+    case JsonValue::Type::Null:
+      out << "null";
+      return;
+    case JsonValue::Type::Bool:
+      out << (value.boolValue ? "true" : "false");
+      return;
+    case JsonValue::Type::Number:
+      out << std::setprecision(10) << value.numberValue;
+      return;
+    case JsonValue::Type::String:
+      out << "\"" << JsonEscapeFull(value.stringValue) << "\"";
+      return;
+    case JsonValue::Type::Array: {
+      out << "[";
+      for (size_t i = 0; i < value.arrayValue.size(); ++i) {
+        if (i) out << ", ";
+        WriteJsonValuePretty(out, value.arrayValue[i], indent);
+      }
+      out << "]";
+      return;
+    }
+    case JsonValue::Type::Object: {
+      out << "{";
+      bool first = true;
+      for (const auto& [key, entry] : value.objectValue) {
+        if (!first) out << ", ";
+        out << "\"" << JsonEscapeFull(key) << "\": ";
+        WriteJsonValuePretty(out, entry, indent + 2);
+        first = false;
+      }
+      out << "}";
+      return;
+    }
+  }
+}
+
+static void ExtractVec3(const JsonValue* value, float& x, float& y, float& z,
+                         float dx = 0.0f, float dy = 0.0f, float dz = 0.0f) {
+  x = dx; y = dy; z = dz;
+  if (!value || !value->IsArray() || value->AsArray().size() < 3) return;
+  const auto& arr = value->AsArray();
+  if (arr[0].IsNumber()) x = static_cast<float>(arr[0].AsNumber());
+  if (arr[1].IsNumber()) y = static_cast<float>(arr[1].AsNumber());
+  if (arr[2].IsNumber()) z = static_cast<float>(arr[2].AsNumber());
+}
+
+static const std::unordered_set<std::string> kKnownBlueprintComponents = {
+    "MeshRenderer", "Camera", "ScriptComponent", "Light", "RigidBody",
+    "MeshCollider", "PhysicsShape", "Material"
+};
+
+static std::string BuildBlueprintDocJson(const std::string& key, const JsonValue& root, bool dirty) {
+  std::ostringstream json;
+  json << "{\"path\":\"" << JsonEscape(key) << "\",";
+  json << "\"dirty\":" << (dirty ? "true" : "false") << ",\"data\":{";
+
+  std::string name;
+  std::string assetId;
+  int version = 1;
+  if (root.IsObject()) {
+    if (const JsonValue* nameVal = root.Find("name")) {
+      if (nameVal->IsString()) name = nameVal->AsString();
+    }
+    if (const JsonValue* idVal = root.Find("assetId")) {
+      if (idVal->IsString()) assetId = idVal->AsString();
+    }
+    if (const JsonValue* verVal = root.Find("version")) {
+      if (verVal->IsNumber()) version = static_cast<int>(verVal->AsNumber());
+    }
+  }
+
+  json << "\"name\":\"" << JsonEscape(name) << "\",";
+  json << "\"assetId\":\"" << JsonEscape(assetId) << "\",";
+  json << "\"version\":" << version << ",";
+  json << "\"nodes\":[";
+
+  const JsonValue* nodesVal = root.Find("nodes");
+  bool firstNode = true;
+  std::string scriptNodeId;
+  std::string scriptSource;
+  std::string scriptLanguage = "lua";
+  if (nodesVal && nodesVal->IsArray()) {
+    for (const auto& nodeVal : nodesVal->AsArray()) {
+      if (!nodeVal.IsObject()) continue;
+      const JsonValue* idVal = nodeVal.Find("id");
+      std::string id = idVal && idVal->IsString() ? idVal->AsString() : std::string();
+      if (id.empty()) continue;
+      const JsonValue* nameVal = nodeVal.Find("name");
+      std::string nodeName = nameVal && nameVal->IsString() ? nameVal->AsString() : id;
+      const JsonValue* parentVal = nodeVal.Find("parentId");
+      std::string parentId = (parentVal && parentVal->IsString()) ? parentVal->AsString() : std::string();
+
+      float px, py, pz, rx, ry, rz, sx, sy, sz;
+      px = py = pz = rx = ry = rz = 0.0f; sx = sy = sz = 1.0f;
+      if (const JsonValue* transformVal = nodeVal.Find("transform")) {
+        if (transformVal->IsObject()) {
+          ExtractVec3(transformVal->Find("position"), px, py, pz, 0.0f, 0.0f, 0.0f);
+          ExtractVec3(transformVal->Find("rotation"), rx, ry, rz, 0.0f, 0.0f, 0.0f);
+          ExtractVec3(transformVal->Find("scale"), sx, sy, sz, 1.0f, 1.0f, 1.0f);
+        }
+      }
+
+      if (!firstNode) json << ",";
+      firstNode = false;
+      json << "{";
+      json << "\"id\":\"" << JsonEscape(id) << "\",";
+      json << "\"name\":\"" << JsonEscape(nodeName) << "\",";
+      json << "\"parentId\":\"" << JsonEscape(parentId) << "\",";
+      json << "\"transform\":{";
+      json << "\"position\":[" << px << "," << py << "," << pz << "],";
+      json << "\"rotation\":[" << rx << "," << ry << "," << rz << "],";
+      json << "\"scale\":[" << sx << "," << sy << "," << sz << "]";
+      json << "},";
+
+      json << "\"components\":[";
+      bool firstComp = true;
+      if (const JsonValue* compsVal = nodeVal.Find("components")) {
+        if (compsVal->IsObject()) {
+          for (const auto& [key, entry] : compsVal->AsObject()) {
+            if (!firstComp) json << ",";
+            firstComp = false;
+            bool known = kKnownBlueprintComponents.count(key) > 0;
+            size_t fieldCount = entry.IsObject() ? entry.AsObject().size() : 0;
+            std::ostringstream compJson;
+            WriteJsonValuePretty(compJson, entry, 0);
+            json << "{\"type\":\"" << JsonEscape(key) << "\",";
+            json << "\"known\":" << (known ? "true" : "false") << ",";
+            json << "\"fieldCount\":" << fieldCount << ",";
+            json << "\"data\":\"" << JsonEscape(compJson.str()) << "\"}";
+          }
+        }
+      }
+      json << "],";
+
+      if (const JsonValue* scriptVal = nodeVal.Find("script")) {
+        if (scriptVal->IsObject()) {
+          if (scriptNodeId.empty() && (parentVal == nullptr || parentId.empty())) {
+            scriptNodeId = id;
+            if (const JsonValue* langVal = scriptVal->Find("language")) {
+              if (langVal->IsString()) scriptLanguage = langVal->AsString();
+            }
+            if (const JsonValue* srcVal = scriptVal->Find("source")) {
+              if (srcVal->IsString()) scriptSource = srcVal->AsString();
+            }
+          }
+        }
+      }
+
+      json << "\"hasScript\":" << ((nodeVal.Find("script") != nullptr) ? "true" : "false");
+      json << "}";
+    }
+  }
+
+  json << "],";
+  json << "\"scriptNodeId\":\"" << JsonEscape(scriptNodeId) << "\",";
+  json << "\"scriptLanguage\":\"" << JsonEscape(scriptLanguage) << "\",";
+  json << "\"scriptSource\":\"" << JsonEscape(scriptSource) << "\"";
+  json << "}}";
+  return json.str();
+}
+
+bool HtmlEditorUIHost::LoadBlueprintDocumentFromDisk(const std::filesystem::path& path,
+                                                     HtmlEditorUIHost::BlueprintDocument& outDoc,
+                                                     std::string& outError) {
+  outError.clear();
+  std::string content = ReadFileText(path, outError);
+  if (!outError.empty()) {
+    return false;
+  }
+
+  JsonValue root;
+  std::string parseError;
+  JsonParser parser(content);
+  if (!parser.Parse(root, parseError)) {
+    outError = parseError.empty() ? "Invalid json." : parseError;
+    return false;
+  }
+  if (!root.IsObject()) {
+    outError = "Blueprint root must be an object.";
+    return false;
+  }
+
+  outDoc.path = path;
+  outDoc.root = std::move(root);
+  outDoc.dirty = false;
+  outDoc.error.clear();
+  return true;
+}
+
+static std::string SanitizeAssetName(const std::string& value) {
+  std::string trimmed = value;
+  while (!trimmed.empty() && std::isspace(static_cast<unsigned char>(trimmed.front()))) {
+    trimmed.erase(trimmed.begin());
+  }
+  while (!trimmed.empty() && std::isspace(static_cast<unsigned char>(trimmed.back()))) {
+    trimmed.pop_back();
+  }
+  if (trimmed.empty()) {
+    return std::string();
+  }
+
+  std::string sanitized;
+  sanitized.reserve(trimmed.size());
+
+  char lastAppended = '\0';
+  for (char ch : trimmed) {
+    unsigned char uc = static_cast<unsigned char>(ch);
+    if (std::isalnum(uc)) {
+      sanitized.push_back(ch);
+      lastAppended = ch;
+    } else if (ch == '-' || ch == '_' || std::isspace(uc) || ch == '.') {
+      if (lastAppended != '_') {
+        sanitized.push_back('_');
+        lastAppended = '_';
+      }
+    }
+  }
+
+  while (!sanitized.empty() && sanitized.back() == '_') {
+    sanitized.pop_back();
+  }
+
+  return sanitized;
+}
+
+static std::string GenerateBlueprintId() {
+  static uint32_t counter = 0;
+  std::ostringstream oss;
+  oss << std::hex << static_cast<uint64_t>(std::time(nullptr)) << "-" << counter++;
+  return oss.str();
 }
 
 static std::filesystem::path GetExecutableDir() {
@@ -89,6 +502,37 @@ void HtmlEditorUIHost::SetAssetOpenCallback(AssetOpenCallback callback) {
 
 void HtmlEditorUIHost::SetAssetCreateCallback(AssetOpenCallback callback) {
   assetCreateCallback_ = std::move(callback);
+}
+
+void HtmlEditorUIHost::OpenBlueprintEditor(const std::filesystem::path& path) {
+  std::filesystem::path absPath;
+  std::string resolveError;
+  if (!ResolveBlueprintPath(path, assetsRoot_, absPath, resolveError)) {
+    std::ostringstream payload;
+    payload << "{\"error\":\"" << JsonEscape(resolveError) << "\"}";
+    bridge_.EmitEvent("blueprint.open_failed", payload.str());
+    return;
+  }
+
+  std::string key = NormalizeBlueprintKey(absPath, assetsRoot_);
+  auto it = blueprintDocs_.find(key);
+  if (it == blueprintDocs_.end()) {
+    BlueprintDocument doc;
+    std::string loadError;
+    if (!LoadBlueprintDocumentFromDisk(absPath, doc, loadError)) {
+      std::ostringstream payload;
+      payload << "{\"path\":\"" << JsonEscape(key) << "\",\"error\":\"" << JsonEscape(loadError) << "\"}";
+      bridge_.EmitEvent("blueprint.open_failed", payload.str());
+      return;
+    }
+    blueprintDocs_[key] = std::move(doc);
+    blueprintTabOrder_.push_back(key);
+    it = blueprintDocs_.find(key);
+  }
+
+  std::ostringstream payload;
+  payload << BuildBlueprintDocJson(key, it->second.root, it->second.dirty);
+  bridge_.EmitEvent("blueprint.open", payload.str());
 }
 
 void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescriptorPool) {
@@ -658,25 +1102,639 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       return std::string("{\"ok\":false,\"error\":\"no_assets_root\"}");
     }
 
-    std::filesystem::path rel = ".";
-    if (auto p = EditorMessageBridge::ParseStringField(payload, "path")) {
-      rel = std::filesystem::path(*p);
+    // New-style creation: kind + dir + name.
+    auto kindOpt = EditorMessageBridge::ParseStringField(payload, "kind");
+    if (!kindOpt) {
+      // Legacy path-only creation callback.
+      std::filesystem::path rel = ".";
+      if (auto p = EditorMessageBridge::ParseStringField(payload, "path")) {
+        rel = std::filesystem::path(*p);
+      }
+
+      std::filesystem::path assetPath = (assetsRoot_ / rel).lexically_normal();
+      auto pathStr = assetPath.generic_string();
+      auto rootStr = assetsRoot_.lexically_normal().generic_string();
+      if (pathStr.size() < rootStr.size() || pathStr.compare(0, rootStr.size(), rootStr) != 0) {
+        return std::string("{\"ok\":false,\"error\":\"path_escape\"}");
+      }
+
+      if (assetCreateCallback_) {
+        assetCreateCallback_(assetPath);
+      }
+
+      return std::string("{\"ok\":true}");
     }
 
-    std::filesystem::path assetPath = (assetsRoot_ / rel).lexically_normal();
-    
-    // Clamp: if path escapes root, reject
-    auto pathStr = assetPath.generic_string();
+    std::filesystem::path dirRel = ".";
+    if (auto p = EditorMessageBridge::ParseStringField(payload, "dir")) {
+      dirRel = std::filesystem::path(*p);
+    }
+
+    std::filesystem::path dirPath = (assetsRoot_ / dirRel).lexically_normal();
+    auto dirStr = dirPath.generic_string();
     auto rootStr = assetsRoot_.lexically_normal().generic_string();
-    if (pathStr.size() < rootStr.size() || pathStr.compare(0, rootStr.size(), rootStr) != 0) {
+    if (dirStr.size() < rootStr.size() || dirStr.compare(0, rootStr.size(), rootStr) != 0) {
       return std::string("{\"ok\":false,\"error\":\"path_escape\"}");
     }
 
-    if (assetCreateCallback_) {
-      assetCreateCallback_(assetPath);
+    auto nameOpt = EditorMessageBridge::ParseStringField(payload, "name");
+    if (!nameOpt || nameOpt->empty()) {
+      return std::string("{\"ok\":false,\"error\":\"missing_name\"}");
     }
 
-    return std::string("{\"ok\":true}");
+    std::string sanitized = SanitizeAssetName(*nameOpt);
+    if (sanitized.empty()) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_name\"}");
+    }
+
+    const std::string& kind = *kindOpt;
+    std::error_code createErr;
+    std::filesystem::create_directories(dirPath, createErr);
+    if (createErr) {
+      return std::string("{\"ok\":false,\"error\":\"create_directory_failed\"}");
+    }
+
+    auto makeRel = [&](const std::filesystem::path& p) {
+      std::error_code relEc;
+      auto rp = std::filesystem::relative(p, assetsRoot_, relEc);
+      return relEc ? p.filename().string() : rp.generic_string();
+    };
+
+    if (kind == "folder") {
+      std::filesystem::path folderPath = dirPath / sanitized;
+      if (std::filesystem::exists(folderPath)) {
+        return std::string("{\"ok\":false,\"error\":\"already_exists\"}");
+      }
+      std::filesystem::create_directories(folderPath, createErr);
+      if (createErr) {
+        return std::string("{\"ok\":false,\"error\":\"create_folder_failed\"}");
+      }
+      std::ostringstream json;
+      json << "{\"ok\":true,\"path\":\"" << JsonEscape(makeRel(folderPath)) << "\"}";
+      return json.str();
+    }
+
+    if (kind == "material") {
+      std::filesystem::path materialPath = dirPath / (sanitized + ".hematerial");
+      if (std::filesystem::exists(materialPath)) {
+        return std::string("{\"ok\":false,\"error\":\"already_exists\"}");
+      }
+      std::ofstream out(materialPath, std::ios::trunc);
+      if (!out) {
+        return std::string("{\"ok\":false,\"error\":\"write_failed\"}");
+      }
+      out << "{\n";
+      out << "  \"name\": \"" << sanitized << "\"\n";
+      out << "}\n";
+      out.close();
+
+      std::ostringstream json;
+      json << "{\"ok\":true,\"path\":\"" << JsonEscape(makeRel(materialPath)) << "\"}";
+      return json.str();
+    }
+
+    if (kind == "lua_script") {
+      std::filesystem::path scriptPath = dirPath / (sanitized + ".lua");
+      if (std::filesystem::exists(scriptPath)) {
+        return std::string("{\"ok\":false,\"error\":\"already_exists\"}");
+      }
+      std::ofstream out(scriptPath, std::ios::trunc);
+      if (!out) {
+        return std::string("{\"ok\":false,\"error\":\"write_failed\"}");
+      }
+      out << "-- " << sanitized << ".lua\n";
+      out << "-- Lua script for Hephaestus Engine\n\n";
+      out << "function onAwake()\n";
+      out << "    print(\"[" << sanitized << "] Script awakened\")\n";
+      out << "end\n\n";
+      out << "function onUpdate(deltaTime)\n";
+      out << "    -- Main game logic\n";
+      out << "end\n\n";
+      out << "function onDestroy()\n";
+      out << "    print(\"[" << sanitized << "] Script destroyed\")\n";
+      out << "end\n";
+      out.close();
+
+      std::ostringstream json;
+      json << "{\"ok\":true,\"path\":\"" << JsonEscape(makeRel(scriptPath)) << "\"}";
+      return json.str();
+    }
+
+    if (kind == "cpp_script") {
+      std::filesystem::path headerPath = dirPath / (sanitized + ".h");
+      std::filesystem::path implPath = dirPath / (sanitized + ".cpp");
+      if (std::filesystem::exists(headerPath) || std::filesystem::exists(implPath)) {
+        return std::string("{\"ok\":false,\"error\":\"already_exists\"}");
+      }
+      std::ofstream headerFile(headerPath, std::ios::trunc);
+      if (!headerFile) {
+        return std::string("{\"ok\":false,\"error\":\"write_failed\"}");
+      }
+      headerFile << "#pragma once\n";
+      headerFile << "#include \"engine/Scripting/ScriptBase.h\"\n\n";
+      headerFile << "class " << sanitized << " : public ScriptBase {\n";
+      headerFile << "public:\n";
+      headerFile << "    " << sanitized << "(Entity entity, Scene* scene) {\n";
+      headerFile << "        m_Entity = entity;\n";
+      headerFile << "        m_Scene = scene;\n";
+      headerFile << "    }\n\n";
+      headerFile << "    virtual ~" << sanitized << "() = default;\n\n";
+      headerFile << "    void OnAwake() override {}\n";
+      headerFile << "    void OnUpdate(float deltaTime) override {}\n";
+      headerFile << "    void OnLateUpdate(float deltaTime) override {}\n";
+      headerFile << "    void OnEnable() override {}\n";
+      headerFile << "    void OnDisable() override {}\n";
+      headerFile << "    void OnDestroy() override {}\n";
+      headerFile << "};\n";
+      headerFile.close();
+
+      std::ofstream implFile(implPath, std::ios::trunc);
+      if (!implFile) {
+        std::filesystem::remove(headerPath);
+        return std::string("{\"ok\":false,\"error\":\"write_failed\"}");
+      }
+      implFile << "#include \"" << sanitized << ".h\"\n";
+      implFile.close();
+
+      std::ostringstream json;
+      json << "{\"ok\":true,\"path\":\"" << JsonEscape(makeRel(headerPath)) << "\"}";
+      return json.str();
+    }
+
+    if (kind == "blueprint") {
+      std::filesystem::path blueprintPath = dirPath / (sanitized + ".hpblueprint");
+      if (std::filesystem::exists(blueprintPath)) {
+        return std::string("{\"ok\":false,\"error\":\"already_exists\"}");
+      }
+      std::ofstream out(blueprintPath, std::ios::trunc);
+      if (!out) {
+        return std::string("{\"ok\":false,\"error\":\"write_failed\"}");
+      }
+      std::string blueprintId = GenerateBlueprintId();
+      out << "{\n";
+      out << "  \"schema\": \"HephaestusBlueprint\",\n";
+      out << "  \"version\": 1,\n";
+      out << "  \"assetId\": \"" << blueprintId << "\",\n";
+      out << "  \"name\": \"" << sanitized << "\",\n";
+      out << "  \"nodes\": [\n";
+      out << "    {\n";
+      out << "      \"id\": \"node_root\",\n";
+      out << "      \"name\": \"" << sanitized << "\",\n";
+      out << "      \"parentId\": null,\n";
+      out << "      \"components\": {},\n";
+      out << "      \"exposed\": []\n";
+      out << "    }\n";
+      out << "  ]\n";
+      out << "}\n";
+      out.close();
+
+      std::ostringstream json;
+      json << "{\"ok\":true,\"path\":\"" << JsonEscape(makeRel(blueprintPath)) << "\"}";
+      return json.str();
+    }
+
+    return std::string("{\"ok\":false,\"error\":\"unknown_kind\"}");
+  });
+
+  bridge_.RegisterHandler("blueprint.load", [this](const std::string& payload) -> std::string {
+    auto pathOpt = EditorMessageBridge::ParseStringField(payload, "path");
+    if (!pathOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_path\"}");
+    }
+
+    std::filesystem::path absPath;
+    std::string resolveError;
+    if (!ResolveBlueprintPath(std::filesystem::path(*pathOpt), assetsRoot_, absPath, resolveError)) {
+      return std::string("{\"ok\":false,\"error\":\"") + resolveError + "\"}";
+    }
+
+    std::string key = NormalizeBlueprintKey(absPath, assetsRoot_);
+    auto it = blueprintDocs_.find(key);
+    if (it == blueprintDocs_.end()) {
+      BlueprintDocument doc;
+      std::string loadError;
+      if (!LoadBlueprintDocumentFromDisk(absPath, doc, loadError)) {
+        return std::string("{\"ok\":false,\"error\":\"load_failed\",\"detail\":\"") + JsonEscape(loadError) + "\"}";
+      }
+      blueprintDocs_[key] = std::move(doc);
+      blueprintTabOrder_.push_back(key);
+      it = blueprintDocs_.find(key);
+    }
+
+    std::ostringstream json;
+    json << "{\"ok\":true,\"doc\":" << BuildBlueprintDocJson(key, it->second.root, it->second.dirty) << "}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("blueprint.update_node", [this](const std::string& payload) -> std::string {
+    JsonValue req;
+    std::string parseError;
+    if (!ParseJsonPayload(payload, req, parseError) || !req.IsObject()) {
+      return std::string("{\"ok\":false,\"error\":\"bad_payload\"}");
+    }
+
+    const JsonValue* pathVal = req.Find("path");
+    const JsonValue* nodeVal = req.Find("nodeId");
+    const JsonValue* patchVal = req.Find("patch");
+    if (!pathVal || !pathVal->IsString() || !nodeVal || !nodeVal->IsString() || !patchVal || !patchVal->IsObject()) {
+      return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+    }
+
+    std::filesystem::path absPath;
+    std::string resolveError;
+    if (!ResolveBlueprintPath(std::filesystem::path(pathVal->AsString()), assetsRoot_, absPath, resolveError)) {
+      return std::string("{\"ok\":false,\"error\":\"") + resolveError + "\"}";
+    }
+
+    std::string key = NormalizeBlueprintKey(absPath, assetsRoot_);
+    auto it = blueprintDocs_.find(key);
+    if (it == blueprintDocs_.end()) {
+      BlueprintDocument doc;
+      std::string loadError;
+      if (!LoadBlueprintDocumentFromDisk(absPath, doc, loadError)) {
+        return std::string("{\"ok\":false,\"error\":\"load_failed\",\"detail\":\"") + JsonEscape(loadError) + "\"}";
+      }
+      blueprintDocs_[key] = std::move(doc);
+      blueprintTabOrder_.push_back(key);
+      it = blueprintDocs_.find(key);
+    }
+
+    JsonValue& root = it->second.root;
+    JsonValue* nodeObj = FindNodeById(root, nodeVal->AsString());
+    if (!nodeObj || !nodeObj->IsObject()) {
+      return std::string("{\"ok\":false,\"error\":\"node_not_found\"}");
+    }
+
+    if (const JsonValue* nameVal = patchVal->Find("name")) {
+      if (nameVal->IsString()) {
+        nodeObj->objectValue["name"] = MakeString(nameVal->AsString());
+      }
+    }
+    if (const JsonValue* parentVal = patchVal->Find("parentId")) {
+      if (parentVal->IsNull()) {
+        nodeObj->objectValue["parentId"] = MakeNull();
+      } else if (parentVal->IsString()) {
+        nodeObj->objectValue["parentId"] = MakeString(parentVal->AsString());
+      }
+    }
+    if (const JsonValue* transformVal = patchVal->Find("transform")) {
+      if (transformVal->IsObject()) {
+        JsonValue* transformObj = EnsureObjectField(*nodeObj, "transform");
+
+        float x, y, z;
+        if (const JsonValue* posVal = transformVal->Find("position")) {
+          ExtractVec3(posVal, x, y, z, 0.0f, 0.0f, 0.0f);
+          transformObj->objectValue["position"] = MakeVec3Array(x, y, z);
+        }
+        if (const JsonValue* rotVal = transformVal->Find("rotation")) {
+          ExtractVec3(rotVal, x, y, z, 0.0f, 0.0f, 0.0f);
+          transformObj->objectValue["rotation"] = MakeVec3Array(x, y, z);
+        }
+        if (const JsonValue* scaleVal = transformVal->Find("scale")) {
+          ExtractVec3(scaleVal, x, y, z, 1.0f, 1.0f, 1.0f);
+          transformObj->objectValue["scale"] = MakeVec3Array(x, y, z);
+        }
+      }
+    }
+
+    it->second.dirty = true;
+    std::ostringstream json;
+    json << "{\"ok\":true,\"doc\":" << BuildBlueprintDocJson(key, it->second.root, it->second.dirty) << "}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("blueprint.update_script", [this](const std::string& payload) -> std::string {
+    JsonValue req;
+    std::string parseError;
+    if (!ParseJsonPayload(payload, req, parseError) || !req.IsObject()) {
+      return std::string("{\"ok\":false,\"error\":\"bad_payload\"}");
+    }
+
+    const JsonValue* pathVal = req.Find("path");
+    const JsonValue* sourceVal = req.Find("source");
+    const JsonValue* nodeVal = req.Find("nodeId");
+    const JsonValue* langVal = req.Find("language");
+    if (!pathVal || !pathVal->IsString() || !sourceVal || !sourceVal->IsString()) {
+      return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+    }
+
+    std::filesystem::path absPath;
+    std::string resolveError;
+    if (!ResolveBlueprintPath(std::filesystem::path(pathVal->AsString()), assetsRoot_, absPath, resolveError)) {
+      return std::string("{\"ok\":false,\"error\":\"") + resolveError + "\"}";
+    }
+
+    std::string key = NormalizeBlueprintKey(absPath, assetsRoot_);
+    auto it = blueprintDocs_.find(key);
+    if (it == blueprintDocs_.end()) {
+      BlueprintDocument doc;
+      std::string loadError;
+      if (!LoadBlueprintDocumentFromDisk(absPath, doc, loadError)) {
+        return std::string("{\"ok\":false,\"error\":\"load_failed\",\"detail\":\"") + JsonEscape(loadError) + "\"}";
+      }
+      blueprintDocs_[key] = std::move(doc);
+      blueprintTabOrder_.push_back(key);
+      it = blueprintDocs_.find(key);
+    }
+
+    JsonValue* nodeObj = nullptr;
+    if (nodeVal && nodeVal->IsString()) {
+      nodeObj = FindNodeById(it->second.root, nodeVal->AsString());
+    }
+    if (!nodeObj) {
+      nodeObj = FindRootNode(it->second.root);
+    }
+    if (!nodeObj || !nodeObj->IsObject()) {
+      return std::string("{\"ok\":false,\"error\":\"node_not_found\"}");
+    }
+
+    JsonValue* scriptObj = EnsureObjectField(*nodeObj, "script");
+    std::string language = (langVal && langVal->IsString()) ? langVal->AsString() : "lua";
+    scriptObj->objectValue["language"] = MakeString(language);
+    scriptObj->objectValue["source"] = MakeString(sourceVal->AsString());
+
+    it->second.dirty = true;
+    std::ostringstream json;
+    json << "{\"ok\":true,\"doc\":" << BuildBlueprintDocJson(key, it->second.root, it->second.dirty) << "}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("blueprint.add_child", [this](const std::string& payload) -> std::string {
+    JsonValue req;
+    std::string parseError;
+    if (!ParseJsonPayload(payload, req, parseError) || !req.IsObject()) {
+      return std::string("{\"ok\":false,\"error\":\"bad_payload\"}");
+    }
+
+    const JsonValue* pathVal = req.Find("path");
+    const JsonValue* parentVal = req.Find("parentId");
+    if (!pathVal || !pathVal->IsString()) {
+      return std::string("{\"ok\":false,\"error\":\"missing_path\"}");
+    }
+
+    std::filesystem::path absPath;
+    std::string resolveError;
+    if (!ResolveBlueprintPath(std::filesystem::path(pathVal->AsString()), assetsRoot_, absPath, resolveError)) {
+      return std::string("{\"ok\":false,\"error\":\"") + resolveError + "\"}";
+    }
+
+    std::string key = NormalizeBlueprintKey(absPath, assetsRoot_);
+    auto it = blueprintDocs_.find(key);
+    if (it == blueprintDocs_.end()) {
+      BlueprintDocument doc;
+      std::string loadError;
+      if (!LoadBlueprintDocumentFromDisk(absPath, doc, loadError)) {
+        return std::string("{\"ok\":false,\"error\":\"load_failed\",\"detail\":\"") + JsonEscape(loadError) + "\"}";
+      }
+      blueprintDocs_[key] = std::move(doc);
+      blueprintTabOrder_.push_back(key);
+      it = blueprintDocs_.find(key);
+    }
+
+    JsonValue* nodes = EnsureArrayField(it->second.root, "nodes");
+    std::string parentId = (parentVal && parentVal->IsString()) ? parentVal->AsString() : std::string();
+    std::string newId = std::string("node_") + GenerateBlueprintId();
+
+    JsonValue newNode = MakeObject();
+    newNode.objectValue["id"] = MakeString(newId);
+    newNode.objectValue["name"] = MakeString("NewNode");
+    if (parentId.empty()) {
+      newNode.objectValue["parentId"] = MakeNull();
+    } else {
+      newNode.objectValue["parentId"] = MakeString(parentId);
+    }
+    JsonValue transform = MakeObject();
+    transform.objectValue["position"] = MakeVec3Array(0.0f, 0.0f, 0.0f);
+    transform.objectValue["rotation"] = MakeVec3Array(0.0f, 0.0f, 0.0f);
+    transform.objectValue["scale"] = MakeVec3Array(1.0f, 1.0f, 1.0f);
+    newNode.objectValue["transform"] = std::move(transform);
+    newNode.objectValue["components"] = MakeObject();
+    newNode.objectValue["exposed"] = MakeArray();
+
+    nodes->arrayValue.push_back(std::move(newNode));
+    it->second.dirty = true;
+
+    std::ostringstream json;
+    json << "{\"ok\":true,\"doc\":" << BuildBlueprintDocJson(key, it->second.root, it->second.dirty) << "}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("blueprint.add_component", [this](const std::string& payload) -> std::string {
+    JsonValue req;
+    std::string parseError;
+    if (!ParseJsonPayload(payload, req, parseError) || !req.IsObject()) {
+      return std::string("{\"ok\":false,\"error\":\"bad_payload\"}");
+    }
+
+    const JsonValue* pathVal = req.Find("path");
+    const JsonValue* nodeVal = req.Find("nodeId");
+    const JsonValue* compVal = req.Find("componentType");
+    if (!pathVal || !pathVal->IsString() || !nodeVal || !nodeVal->IsString() || !compVal || !compVal->IsString()) {
+      return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+    }
+
+    std::filesystem::path absPath;
+    std::string resolveError;
+    if (!ResolveBlueprintPath(std::filesystem::path(pathVal->AsString()), assetsRoot_, absPath, resolveError)) {
+      return std::string("{\"ok\":false,\"error\":\"") + resolveError + "\"}";
+    }
+
+    std::string key = NormalizeBlueprintKey(absPath, assetsRoot_);
+    auto it = blueprintDocs_.find(key);
+    if (it == blueprintDocs_.end()) {
+      BlueprintDocument doc;
+      std::string loadError;
+      if (!LoadBlueprintDocumentFromDisk(absPath, doc, loadError)) {
+        return std::string("{\"ok\":false,\"error\":\"load_failed\",\"detail\":\"") + JsonEscape(loadError) + "\"}";
+      }
+      blueprintDocs_[key] = std::move(doc);
+      blueprintTabOrder_.push_back(key);
+      it = blueprintDocs_.find(key);
+    }
+
+    JsonValue* nodeObj = FindNodeById(it->second.root, nodeVal->AsString());
+    if (!nodeObj || !nodeObj->IsObject()) {
+      return std::string("{\"ok\":false,\"error\":\"node_not_found\"}");
+    }
+
+    JsonValue* comps = EnsureObjectField(*nodeObj, "components");
+    const std::string compType = compVal->AsString();
+    if (comps->objectValue.find(compType) == comps->objectValue.end()) {
+      comps->objectValue.emplace(compType, MakeObject());
+      it->second.dirty = true;
+    }
+
+    std::ostringstream json;
+    json << "{\"ok\":true,\"doc\":" << BuildBlueprintDocJson(key, it->second.root, it->second.dirty) << "}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("blueprint.update_component", [this](const std::string& payload) -> std::string {
+    JsonValue req;
+    std::string parseError;
+    if (!ParseJsonPayload(payload, req, parseError) || !req.IsObject()) {
+      return std::string("{\"ok\":false,\"error\":\"bad_payload\"}");
+    }
+
+    const JsonValue* pathVal = req.Find("path");
+    const JsonValue* nodeVal = req.Find("nodeId");
+    const JsonValue* compVal = req.Find("componentType");
+    const JsonValue* dataVal = req.Find("data");
+    if (!pathVal || !pathVal->IsString() || !nodeVal || !nodeVal->IsString() || !compVal || !compVal->IsString() || !dataVal) {
+      return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+    }
+
+    std::filesystem::path absPath;
+    std::string resolveError;
+    if (!ResolveBlueprintPath(std::filesystem::path(pathVal->AsString()), assetsRoot_, absPath, resolveError)) {
+      return std::string("{\"ok\":false,\"error\":\"") + resolveError + "\"}";
+    }
+
+    std::string key = NormalizeBlueprintKey(absPath, assetsRoot_);
+    auto it = blueprintDocs_.find(key);
+    if (it == blueprintDocs_.end()) {
+      BlueprintDocument doc;
+      std::string loadError;
+      if (!LoadBlueprintDocumentFromDisk(absPath, doc, loadError)) {
+        return std::string("{\"ok\":false,\"error\":\"load_failed\",\"detail\":\"") + JsonEscape(loadError) + "\"}";
+      }
+      blueprintDocs_[key] = std::move(doc);
+      blueprintTabOrder_.push_back(key);
+      it = blueprintDocs_.find(key);
+    }
+
+    JsonValue* nodeObj = FindNodeById(it->second.root, nodeVal->AsString());
+    if (!nodeObj || !nodeObj->IsObject()) {
+      return std::string("{\"ok\":false,\"error\":\"node_not_found\"}");
+    }
+
+    JsonValue newComponent = MakeObject();
+    if (dataVal->IsString()) {
+      JsonValue parsed;
+      std::string compErr;
+      JsonParser parser(dataVal->AsString());
+      if (!parser.Parse(parsed, compErr)) {
+        return std::string("{\"ok\":false,\"error\":\"component_parse_failed\",\"detail\":\"") + JsonEscape(compErr) + "\"}";
+      }
+      newComponent = std::move(parsed);
+    } else {
+      newComponent = *dataVal;
+    }
+
+    JsonValue* comps = EnsureObjectField(*nodeObj, "components");
+    comps->objectValue[compVal->AsString()] = std::move(newComponent);
+    it->second.dirty = true;
+
+    std::ostringstream json;
+    json << "{\"ok\":true,\"doc\":" << BuildBlueprintDocJson(key, it->second.root, it->second.dirty) << "}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("blueprint.delete_node", [this](const std::string& payload) -> std::string {
+    JsonValue req;
+    std::string parseError;
+    if (!ParseJsonPayload(payload, req, parseError) || !req.IsObject()) {
+      return std::string("{\"ok\":false,\"error\":\"bad_payload\"}");
+    }
+
+    const JsonValue* pathVal = req.Find("path");
+    const JsonValue* nodeVal = req.Find("nodeId");
+    if (!pathVal || !pathVal->IsString() || !nodeVal || !nodeVal->IsString()) {
+      return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+    }
+
+    std::filesystem::path absPath;
+    std::string resolveError;
+    if (!ResolveBlueprintPath(std::filesystem::path(pathVal->AsString()), assetsRoot_, absPath, resolveError)) {
+      return std::string("{\"ok\":false,\"error\":\"") + resolveError + "\"}";
+    }
+
+    std::string key = NormalizeBlueprintKey(absPath, assetsRoot_);
+    auto it = blueprintDocs_.find(key);
+    if (it == blueprintDocs_.end()) {
+      BlueprintDocument doc;
+      std::string loadError;
+      if (!LoadBlueprintDocumentFromDisk(absPath, doc, loadError)) {
+        return std::string("{\"ok\":false,\"error\":\"load_failed\",\"detail\":\"") + JsonEscape(loadError) + "\"}";
+      }
+      blueprintDocs_[key] = std::move(doc);
+      blueprintTabOrder_.push_back(key);
+      it = blueprintDocs_.find(key);
+    }
+
+    JsonValue* nodes = EnsureArrayField(it->second.root, "nodes");
+    const std::string nodeId = nodeVal->AsString();
+
+    // Prevent deleting root node.
+    JsonValue* nodeObj = FindNodeById(it->second.root, nodeId);
+    if (!nodeObj) {
+      return std::string("{\"ok\":false,\"error\":\"node_not_found\"}");
+    }
+    const JsonValue* parentVal = nodeObj->Find("parentId");
+    if (!parentVal || parentVal->IsNull() || (parentVal->IsString() && parentVal->AsString().empty())) {
+      return std::string("{\"ok\":false,\"error\":\"cannot_delete_root\"}");
+    }
+
+    // Reparent children to root.
+    for (auto& n : nodes->arrayValue) {
+      if (!n.IsObject()) continue;
+      const JsonValue* p = n.Find("parentId");
+      if (p && p->IsString() && p->AsString() == nodeId) {
+        n.objectValue["parentId"] = MakeNull();
+      }
+    }
+
+    // Remove the node.
+    nodes->arrayValue.erase(
+        std::remove_if(nodes->arrayValue.begin(), nodes->arrayValue.end(),
+                       [&](const JsonValue& v) {
+                         if (!v.IsObject()) return false;
+                         const JsonValue* idVal = v.Find("id");
+                         return idVal && idVal->IsString() && idVal->AsString() == nodeId;
+                       }),
+        nodes->arrayValue.end());
+
+    it->second.dirty = true;
+    std::ostringstream json;
+    json << "{\"ok\":true,\"doc\":" << BuildBlueprintDocJson(key, it->second.root, it->second.dirty) << "}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("blueprint.save", [this](const std::string& payload) -> std::string {
+    auto pathOpt = EditorMessageBridge::ParseStringField(payload, "path");
+    if (!pathOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_path\"}");
+    }
+
+    std::filesystem::path absPath;
+    std::string resolveError;
+    if (!ResolveBlueprintPath(std::filesystem::path(*pathOpt), assetsRoot_, absPath, resolveError)) {
+      return std::string("{\"ok\":false,\"error\":\"") + resolveError + "\"}";
+    }
+
+    std::string key = NormalizeBlueprintKey(absPath, assetsRoot_);
+    auto it = blueprintDocs_.find(key);
+    if (it == blueprintDocs_.end()) {
+      return std::string("{\"ok\":false,\"error\":\"not_loaded\"}");
+    }
+
+    std::ofstream out(absPath, std::ios::trunc);
+    if (!out) {
+      return std::string("{\"ok\":false,\"error\":\"write_failed\"}");
+    }
+
+    WriteJsonValuePretty(out, it->second.root, 0);
+    out << "\n";
+    out.close();
+
+    if (!out.good()) {
+      return std::string("{\"ok\":false,\"error\":\"write_failed\"}");
+    }
+
+    it->second.dirty = false;
+    std::ostringstream json;
+    json << "{\"ok\":true,\"doc\":" << BuildBlueprintDocJson(key, it->second.root, it->second.dirty) << "}";
+    return json.str();
   });
 
   bridge_.RegisterHandler("assets.list_meshes", [this](const std::string& payload) -> std::string {
@@ -1945,6 +3003,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
   addActors_ = std::make_unique<HtmlPanelView>("Add Actors", &bridge_, vkdev_, imguiDescriptorPool_);
   details_ = std::make_unique<HtmlPanelView>("Details", &bridge_, vkdev_, imguiDescriptorPool_);
   assetBrowser_ = std::make_unique<HtmlPanelView>("Asset Browser", &bridge_, vkdev_, imguiDescriptorPool_);
+  blueprintEditor_ = std::make_unique<HtmlPanelView>("Blueprint Editor", &bridge_, vkdev_, imguiDescriptorPool_);
   logConsole_ = std::make_unique<HtmlPanelView>("Log Console", &bridge_, vkdev_, imguiDescriptorPool_);
 
   // Initial sizes will be overridden by ImGui window sizes.
@@ -1953,6 +3012,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
   addActors_->Create(renderer_, 520, 650, "file:///editor/assets/ui/panels/add_actors.html");
   details_->Create(renderer_, 400, 600, "file:///editor/assets/ui/panels/details.html");
   assetBrowser_->Create(renderer_, 800, 300, "file:///editor/assets/ui/panels/asset_browser.html");
+  blueprintEditor_->Create(renderer_, 1200, 800, "file:///editor/assets/ui/panels/blueprint_editor.html");
   logConsole_->Create(renderer_, 800, 300, "file:///editor/assets/ui/panels/log_console.html");
 
   // Default JS event emitter targets log console view.
@@ -1962,6 +3022,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     if (addActors_) addActors_->EvaluateScript(jsCall);
     if (details_) details_->EvaluateScript(jsCall);
     if (assetBrowser_) assetBrowser_->EvaluateScript(jsCall);
+    if (blueprintEditor_) blueprintEditor_->EvaluateScript(jsCall);
     if (logConsole_) logConsole_->EvaluateScript(jsCall);
   });
 }
@@ -2048,6 +3109,7 @@ void HtmlEditorUIHost::UpdateAndSync(float dt) {
   if (addActors_ && addActorsVisible_) addActors_->SyncTextureToGpu();
   if (details_ && detailsVisible_) details_->SyncTextureToGpu();
   if (assetBrowser_ && assetBrowserVisible_) assetBrowser_->SyncTextureToGpu();
+  if (blueprintEditor_ && blueprintEditorVisible_) blueprintEditor_->SyncTextureToGpu();
   if (logConsole_ && logConsoleVisible_) logConsole_->SyncTextureToGpu();
 }
 
@@ -2056,6 +3118,7 @@ void HtmlEditorUIHost::DrawDockedPanels() {
   DrawAddActorsPanel();
   DrawDetailsPanel();
   DrawAssetBrowserPanel();
+  DrawBlueprintEditorPanel();
   DrawLogConsolePanel();
 }
 
@@ -2147,6 +3210,21 @@ void HtmlEditorUIHost::DrawAssetBrowserPanel() {
   ImGui::End();
 }
 
+void HtmlEditorUIHost::DrawBlueprintEditorPanel() {
+  if (!blueprintEditor_)
+    return;
+  blueprintEditorVisible_ = false;
+  if (ImGui::Begin("Blueprint Editor")) {
+    blueprintEditorVisible_ = true;
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    blueprintEditor_->Resize(static_cast<uint32_t>(std::max(1.0f, avail.x)),
+                             static_cast<uint32_t>(std::max(1.0f, avail.y)));
+    blueprintEditor_->DrawImGuiImage();
+    blueprintEditor_->HandleImGuiInput();
+  }
+  ImGui::End();
+}
+
 void HtmlEditorUIHost::DrawLogConsolePanel() {
   if (!logConsole_)
     return;
@@ -2178,6 +3256,16 @@ std::optional<std::pair<std::string, uint32_t>> HtmlEditorUIHost::ConsumeOutline
   auto v = pendingOutlinerAssetDrop_;
   pendingOutlinerAssetDrop_.reset();
   return v;
+}
+
+bool HtmlEditorUIHost::IsAnyPanelHovered() const {
+  if (outliner_ && outliner_->IsHovered()) return true;
+  if (addActors_ && addActors_->IsHovered()) return true;
+  if (details_ && details_->IsHovered()) return true;
+  if (assetBrowser_ && assetBrowser_->IsHovered()) return true;
+  if (blueprintEditor_ && blueprintEditor_->IsHovered()) return true;
+  if (logConsole_ && logConsole_->IsHovered()) return true;
+  return false;
 }
 
 EditorMessageBridge& HtmlEditorUIHost::Bridge() { return bridge_; }

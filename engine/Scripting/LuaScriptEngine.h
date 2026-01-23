@@ -13,6 +13,7 @@
 #endif
 
 #include "../Core/Math.h"
+#include "../Core/PropertyValue.h"
 
 #if LUA_AVAILABLE
     #include <lua.hpp>
@@ -169,6 +170,7 @@ private:
         std::string userPath;
         std::filesystem::path resolvedPath;
         std::filesystem::file_time_type lastWriteTime{};
+        size_t embeddedSourceHash = 0;
         int environmentRef = -1;
         int onAwakeRef = -1;
         int onEnableRef = -1;
@@ -232,6 +234,8 @@ private:
     void DestroyInstance(uint32_t entityId, bool callOnDestroy);
     void ReleaseInstanceResources(ScriptInstance& instance);
     bool LoadScriptForInstance(ScriptInstance& instance, const LuaScriptComponent& component, Entity entity);
+    void ApplyVariablesToEnvironment(ScriptInstance& instance, const LuaScriptComponent& component);
+    void PushPropertyValue(const PropertyValue& value);
     int FetchFunctionRef(int environmentRef, const std::string& functionName);
     bool CallInstanceFunction(ScriptInstance& instance, int functionRef, Entity entity, float deltaTime, bool includeDelta);
     bool CallInstanceFunctionByName(ScriptInstance& instance, const std::string& functionName, Entity entity, float deltaTime, bool includeDelta);

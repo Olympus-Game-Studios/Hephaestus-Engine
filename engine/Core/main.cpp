@@ -7,12 +7,14 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <unordered_map>
@@ -3620,7 +3622,8 @@ static const AssetExtensionDescriptor kAssetExtensionDescriptors[] = {
     {".hpp", "file-cpp", "HPP"},      {".hxx", "file-cpp", "HXX"},
     {".txt", "file-cpp", "TXT"},      {".json", "file-cpp", "JSON"},
     {".material", "file-cpp", "MAT"}, {".hematerial", "file-cpp", "HMAT"},
-    {".prefab", "file-cpp", "PREF"},  {".hpscene", "file-cpp", "SCN"}};
+    {".prefab", "file-cpp", "PREF"},  {".hpblueprint", "file-cpp", "BP"},
+    {".hpscene", "file-cpp", "SCN"}};
 
 static std::string ToLowerCopy(std::string value) {
   std::transform(
@@ -3879,6 +3882,11 @@ static bool IsSceneFile(const std::filesystem::path &path) {
 static bool IsMaterialFile(const std::filesystem::path &path) {
   std::string ext = ToLowerCopy(path.extension().string());
   return ext == ".hematerial";
+}
+
+static bool IsBlueprintFile(const std::filesystem::path &path) {
+  std::string ext = ToLowerCopy(path.extension().string());
+  return ext == ".hpblueprint";
 }
 
 static bool IsScriptFile(const std::filesystem::path &path) {
@@ -4233,6 +4241,10 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string &statusMessage) {
   static char luaScriptNameBuffer[128] = "NewScript";
   static std::string luaScriptPopupError;
 
+  static bool openBlueprintPopup = false;
+  static char blueprintNameBuffer[128] = "NewBlueprint";
+  static std::string blueprintPopupError;
+
   static bool openDeleteConfirmPopup = false;
   static fs::path deleteConfirmPath;
   static bool deleteConfirmIsFolder = false;
@@ -4351,6 +4363,13 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string &statusMessage) {
     openLuaScriptPopup = true;
   };
 
+  auto triggerBlueprintCreatePopup = [&]() {
+    std::snprintf(blueprintNameBuffer, sizeof(blueprintNameBuffer),
+                  "NewBlueprint");
+    blueprintPopupError.clear();
+    openBlueprintPopup = true;
+  };
+
   auto triggerDeleteConfirmPopup = [&](const fs::path &path, bool isFolder) {
     deleteConfirmPath = path;
     deleteConfirmIsFolder = isFolder;
@@ -4372,6 +4391,10 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string &statusMessage) {
     }
     if (ImGui::MenuItem("New Lua Script...")) {
       triggerLuaScriptCreatePopup();
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("New Blueprint...")) {
+      triggerBlueprintCreatePopup();
     }
     ImGui::EndPopup();
   }
@@ -4716,6 +4739,96 @@ end
     ImGui::EndPopup();
   }
 
+  // Blueprint creation popup
+  if (openBlueprintPopup) {
+    ImGui::OpenPopup("CreateBlueprintPopup");
+    openBlueprintPopup = false;
+  }
+
+  if (ImGui::BeginPopupModal("CreateBlueprintPopup", nullptr,
+                             ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextUnformatted("Create Blueprint");
+    ImGui::Separator();
+    ImGui::TextDisabled("Location: %s", relativeDisplay.c_str());
+    ImGui::InputText("Blueprint name##blueprint", blueprintNameBuffer,
+                     sizeof(blueprintNameBuffer));
+    if (!blueprintPopupError.empty()) {
+      ImGui::Spacing();
+      ImGui::TextColored(ImVec4(0.93f, 0.36f, 0.31f, 1.0f), "%s",
+                         blueprintPopupError.c_str());
+    }
+
+    ImGui::Spacing();
+
+    if (ImGui::Button("Create##blueprint")) {
+      std::string trimmed = TrimCopy(blueprintNameBuffer);
+      if (trimmed.empty()) {
+        blueprintPopupError = "Please enter a blueprint name.";
+      } else {
+        std::string sanitized = SanitizeSceneFilename(trimmed);
+        if (sanitized.empty()) {
+          sanitized = "Blueprint";
+        }
+
+        // Generate a simple UUID-like ID
+        static unsigned int s_BpCounter = 0;
+        std::stringstream idStream;
+        idStream << std::hex << std::time(nullptr) << "-" << s_BpCounter++;
+        std::string blueprintId = idStream.str();
+
+        // Blueprint content template with a simple default node
+        std::ostringstream blueprintContent;
+        blueprintContent << "{\n";
+        blueprintContent << "  \"schema\": \"HephaestusBlueprint\",\n";
+        blueprintContent << "  \"version\": 1,\n";
+        blueprintContent << "  \"assetId\": \"" << blueprintId << "\",\n";
+        blueprintContent << "  \"name\": \"" << sanitized << "\",\n";
+        blueprintContent << "  \"nodes\": [\n";
+        blueprintContent << "    {\n";
+        blueprintContent << "      \"id\": \"node_root\",\n";
+        blueprintContent << "      \"name\": \"" << sanitized << "\",\n";
+        blueprintContent << "      \"parentId\": null,\n";
+        blueprintContent << "      \"components\": {},\n";
+        blueprintContent << "      \"exposed\": []\n";
+        blueprintContent << "    }\n";
+        blueprintContent << "  ]\n";
+        blueprintContent << "}\n";
+
+        fs::path blueprintPath =
+            currentPath / (sanitized + ".hpblueprint");
+        if (fs::exists(blueprintPath)) {
+          blueprintPopupError = "A blueprint with that name already exists.";
+        } else {
+          std::error_code createErr;
+          fs::create_directories(currentPath, createErr);
+          if (createErr) {
+            blueprintPopupError = "Failed to create blueprint directory: " +
+                                  std::string(createErr.message());
+          } else {
+            std::ofstream blueprintFile(blueprintPath);
+            if (!blueprintFile) {
+              blueprintPopupError = "Failed to create blueprint file.";
+            } else {
+              blueprintFile << blueprintContent.str();
+              blueprintFile.close();
+              selectedPath = blueprintPath;
+              statusMessage = "Created blueprint '" + sanitized + "'.";
+              ImGui::CloseCurrentPopup();
+              blueprintPopupError.clear();
+            }
+          }
+        }
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel##blueprint")) {
+      blueprintPopupError.clear();
+      ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+  }
+
   // Delete confirmation popup
   if (openDeleteConfirmPopup) {
     ImGui::OpenPopup("DeleteConfirmPopup");
@@ -4860,6 +4973,10 @@ end
     }
     if (ImGui::MenuItem("New Lua Script...")) {
       triggerLuaScriptCreatePopup();
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("New Blueprint...")) {
+      triggerBlueprintCreatePopup();
     }
     ImGui::EndPopup();
   }
@@ -7839,12 +7956,17 @@ int main(int argc, char *argv[]) {
     }
     leftMouseWasPressed = leftMousePressed;
 
-    // Editor camera input (disabled when ImGuizmo is active or when scripts
-    // control camera during play)
+    // Editor camera input (disabled when ImGuizmo is active, when scripts
+    // control camera during play, or when hovering over HTML UI panels)
     if (g_ProjectSelected && !ImGuizmo::IsUsing() && !gizmoDragging) {
       bool scriptHasCamera =
           (g_SimPlaying && !g_SimPaused && cameraController.isActive());
-      if (!scriptHasCamera) {
+#if HEPHAESTUS_EDITOR_HTML_UI
+      bool htmlPanelHovered = g_HtmlEditorUIHost && g_HtmlEditorUIHost->IsAnyPanelHovered();
+#else
+      bool htmlPanelHovered = false;
+#endif
+      if (!scriptHasCamera && !htmlPanelHovered) {
         camera.handleMouse(window);
         camera.handleKeyboard(window, dt);
       }
@@ -8240,6 +8362,11 @@ int main(int argc, char *argv[]) {
             browserResult.sceneOpenRequest = openedPath;
           } else if (IsMaterialFile(openedPath)) {
             browserResult.materialOpenRequest = openedPath;
+          } else if (IsBlueprintFile(openedPath)) {
+            if (g_HtmlEditorUIHost) {
+              g_HtmlEditorUIHost->OpenBlueprintEditor(openedPath);
+              assetBrowserStatus = "Opened blueprint: " + openedPath.filename().string() + ".";
+            }
           } else if (IsScriptFile(openedPath)) {
             OpenFileInPreferredIDE(openedPath);
             assetBrowserStatus = "Opening '" + openedPath.filename().string() +
@@ -8292,6 +8419,13 @@ int main(int argc, char *argv[]) {
                                 assetBrowserStatus);
         }
         DrawLogConsole(io, assetBrowserStatus);
+        
+        // Draw Blueprint Editor panel only if there are open blueprints
+#if HEPHAESTUS_EDITOR_HTML_UI
+        if (g_HtmlEditorUIHost && g_HtmlEditorUIHost->HasOpenBlueprints()) {
+          g_HtmlEditorUIHost->DrawBlueprintEditorPanel();
+        }
+#endif
 
         // Overlays should be rendered last so they appear above docked windows
         ToolbarActions toolbarActions = DrawEditorToolbar(

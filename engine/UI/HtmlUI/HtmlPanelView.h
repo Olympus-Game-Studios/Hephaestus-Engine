@@ -47,6 +47,9 @@ public:
   // Forward basic mouse input when the ImGui image is hovered.
   void HandleImGuiInput();
 
+  // Returns true if the mouse is currently hovering over this panel's content area.
+  bool IsHovered() const;
+
 private:
   struct Impl;
   std::unique_ptr<Impl> impl_;

@@ -73,7 +73,8 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
   ImVec2 lastMax{0, 0};
 
   // State for mouse button transitions
-  bool lastMouseDown = false;
+  bool lastMouseDown = false;       // Left mouse button
+  bool lastRightMouseDown = false;  // Right mouse button
 
   // Whether this view currently owns keyboard focus
   bool focused = false;
@@ -562,6 +563,12 @@ void HtmlPanelView::DrawImGuiImage() {
   impl_->lastMax = ImGui::GetItemRectMax();
 }
 
+bool HtmlPanelView::IsHovered() const {
+  ImVec2 mouse = ImGui::GetMousePos();
+  return (mouse.x >= impl_->lastMin.x && mouse.x <= impl_->lastMax.x &&
+          mouse.y >= impl_->lastMin.y && mouse.y <= impl_->lastMax.y);
+}
+
 void HtmlPanelView::HandleImGuiInput() {
   if (!impl_->view)
     return;
@@ -572,7 +579,7 @@ void HtmlPanelView::HandleImGuiInput() {
                   mouse.y >= impl_->lastMin.y && mouse.y <= impl_->lastMax.y);
 
   // Focus management: click inside to focus, click outside to unfocus.
-  if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+  if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
     if (hovered) {
       impl_->focused = true;
       impl_->view->Focus();
@@ -617,6 +624,21 @@ void HtmlPanelView::HandleImGuiInput() {
                        ultralight::MouseEvent::kButton_Left);
     }
     impl_->lastMouseDown = down;
+
+    // Right button (for context menu support)
+    bool rightDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+    if (rightDown && !impl_->lastRightMouseDown) {
+      impl_->FireMouse(ultralight::MouseEvent::kType_MouseDown,
+                       localX,
+                       localY,
+                       ultralight::MouseEvent::kButton_Right);
+    } else if (!rightDown && impl_->lastRightMouseDown) {
+      impl_->FireMouse(ultralight::MouseEvent::kType_MouseUp,
+                       localX,
+                       localY,
+                       ultralight::MouseEvent::kButton_Right);
+    }
+    impl_->lastRightMouseDown = rightDown;
 
     // Scroll
     ImVec2 wheel = ImGui::GetIO().MouseWheelH != 0 || ImGui::GetIO().MouseWheel != 0

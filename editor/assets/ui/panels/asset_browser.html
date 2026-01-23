@@ -333,6 +333,112 @@
       color: var(--muted);
       font-size: var(--fontSizeSmall);
     }
+
+    .context-menu {
+      position: fixed;
+      z-index: 1000;
+      min-width: 180px;
+      padding: 6px;
+      background: #1e2430;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      display: none;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .context-menu.is-open {
+      display: flex;
+    }
+
+    .context-menu button {
+      width: 100%;
+      text-align: left;
+      padding: 8px 10px;
+      border: none;
+      border-radius: calc(var(--radius) - 3px);
+      background: transparent;
+      color: var(--text);
+      font-size: var(--fontSizeSmall);
+      cursor: pointer;
+    }
+
+    .context-menu button:hover {
+      background: var(--rowHover);
+    }
+
+    .context-menu .separator {
+      height: 1px;
+      background: var(--border);
+      margin: 2px 0;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1100;
+    }
+
+    .modal-backdrop.is-open {
+      display: flex;
+    }
+
+    .modal-card {
+      min-width: 320px;
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .modal-title {
+      font-weight: 600;
+      font-size: var(--fontSize);
+    }
+
+    .modal-input {
+      padding: 8px 10px;
+      border: 1px solid var(--border2);
+      border-radius: calc(var(--radius) - 2px);
+      background: #242b37;
+      color: var(--text);
+      font-size: var(--fontSizeSmall);
+    }
+
+    .modal-error {
+      color: #ee6b5c;
+      font-size: var(--fontSizeSmall);
+      min-height: 18px;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .modal-actions button {
+      padding: 8px 14px;
+      border: 1px solid var(--border2);
+      border-radius: calc(var(--radius) - 2px);
+      background: #2b3342;
+      color: var(--text);
+      font-size: var(--fontSizeSmall);
+      cursor: pointer;
+    }
+
+    .modal-actions button:hover {
+      border-color: var(--accent);
+    }
   </style>
 </head>
 <body data-ui-scale-fixed="1.35">
@@ -372,6 +478,29 @@
     </div>
   </div>
 
+  <div id="contextMenu" class="context-menu">
+    <button data-action="new-folder">New Folder...</button>
+    <button data-action="new-material">New Material...</button>
+    <div class="separator"></div>
+    <button data-action="new-cpp-script">New C++ Script...</button>
+    <button data-action="new-lua-script">New Lua Script...</button>
+    <div class="separator"></div>
+    <button data-action="new-blueprint">New Blueprint...</button>
+  </div>
+
+  <div id="createModal" class="modal-backdrop">
+    <div class="modal-card">
+      <div class="modal-title" id="createModalTitle">Create Asset</div>
+      <div class="modal-location" id="createModalLocation"></div>
+      <input class="modal-input" id="createNameInput" type="text" placeholder="Name" />
+      <div class="modal-error" id="createModalError"></div>
+      <div class="modal-actions">
+        <button id="createCancelBtn">Cancel</button>
+        <button id="createConfirmBtn">Create</button>
+      </div>
+    </div>
+  </div>
+
   <script src="../ui_common.js"></script>
   <script>
     let currentPath = '.';
@@ -379,6 +508,96 @@
     let allEntries = [];
     const folderNodes = {}; // path -> node
     const rootNodePath = '.';
+    let pendingCreateKind = null;
+    let lastClickTime = 0;
+    let lastClickRel = '';
+
+    const contextMenuEl = document.getElementById('contextMenu');
+    const createModalEl = document.getElementById('createModal');
+    const createModalTitleEl = document.getElementById('createModalTitle');
+    const createModalLocationEl = document.getElementById('createModalLocation');
+    const createNameInputEl = document.getElementById('createNameInput');
+    const createModalErrorEl = document.getElementById('createModalError');
+    const createCancelBtn = document.getElementById('createCancelBtn');
+    const createConfirmBtn = document.getElementById('createConfirmBtn');
+
+    function showContextMenu(x, y) {
+      if (!contextMenuEl) return;
+      contextMenuEl.style.left = x + 'px';
+      contextMenuEl.style.top = y + 'px';
+      contextMenuEl.classList.add('is-open');
+    }
+
+    function hideContextMenu() {
+      if (!contextMenuEl) return;
+      contextMenuEl.classList.remove('is-open');
+    }
+
+    function defaultNameForKind(kind) {
+      switch (kind) {
+        case 'folder': return 'NewFolder';
+        case 'material': return 'NewMaterial';
+        case 'cpp_script': return 'NewScript';
+        case 'lua_script': return 'NewScript';
+        case 'blueprint': return 'NewBlueprint';
+        default: return 'NewAsset';
+      }
+    }
+
+    function titleForKind(kind) {
+      switch (kind) {
+        case 'folder': return 'Create Folder';
+        case 'material': return 'Create Material';
+        case 'cpp_script': return 'Create C++ Script';
+        case 'lua_script': return 'Create Lua Script';
+        case 'blueprint': return 'Create Blueprint';
+        default: return 'Create Asset';
+      }
+    }
+
+    function openCreateModal(kind) {
+      pendingCreateKind = kind;
+      createModalTitleEl.textContent = titleForKind(kind);
+      createModalLocationEl.textContent = 'Location: ' + (currentPath || '.');
+      createNameInputEl.value = defaultNameForKind(kind);
+      createModalErrorEl.textContent = '';
+      createModalEl.classList.add('is-open');
+      setTimeout(() => createNameInputEl.focus(), 0);
+    }
+
+    function closeCreateModal() {
+      createModalEl.classList.remove('is-open');
+      createModalErrorEl.textContent = '';
+      pendingCreateKind = null;
+    }
+
+    function createAssetFromModal() {
+      if (!pendingCreateKind) return;
+      const name = (createNameInputEl.value || '').trim();
+      if (!name) {
+        createModalErrorEl.textContent = 'Please enter a name.';
+        return;
+      }
+
+      const res = window.hep.callCpp('assets.create', {
+        kind: pendingCreateKind,
+        dir: currentPath || '.',
+        name: name,
+      });
+
+      if (!res || !res.ok) {
+        createModalErrorEl.textContent = 'Create failed: ' + (res && res.error ? res.error : 'error');
+        return;
+      }
+
+      if (res.path) {
+        selectedRel = normPath(res.path);
+        window.hep.callCpp('assets.select', { path: selectedRel });
+      }
+
+      closeCreateModal();
+      refresh(currentPath || '.');
+    }
 
     function normPath(p) {
       if (!p || p === '/' || p === '') return '.';
@@ -574,21 +793,30 @@
         };
 
         itemEl.onclick = () => {
+          const now = Date.now();
+          const rel = normPath(node.path);
+          const isDouble = (rel === lastClickRel && (now - lastClickTime) < 350);
+          lastClickRel = rel;
+          lastClickTime = now;
+
+          if (isDouble) {
+            if (isDir) {
+              refresh(node.path);
+            } else {
+              handleAssetOpen(node.path, node.name);
+            }
+            return;
+          }
+
           if (isDir) {
             refresh(node.path);
           } else {
-            selectedRel = normPath(node.path);
+            selectedRel = rel;
             window.hep.callCpp('assets.select', { path: selectedRel });
             document.querySelectorAll('.asset-tile').forEach(t => t.classList.remove('is-selected'));
             const tile = document.querySelector('.asset-tile[data-rel="' + selectedRel.replace(/"/g, '') + '"]');
             if (tile) tile.classList.add('is-selected');
             renderSidebar(false);
-          }
-        };
-
-        itemEl.ondblclick = () => {
-          if (!isDir) {
-            handleAssetOpen(node.path, node.name);
           }
         };
 
@@ -716,18 +944,25 @@
         };
 
         tile.onclick = () => {
+          const now = Date.now();
+          const rel = e.rel;
+          const isDouble = (rel === lastClickRel && (now - lastClickTime) < 350);
+          lastClickRel = rel;
+          lastClickTime = now;
+
+          if (isDouble) {
+            if (e.dir) {
+              refresh(e.rel);
+            } else {
+              handleAssetOpen(e.rel, e.name);
+            }
+            return;
+          }
+
           selectedRel = e.rel;
           window.hep.callCpp('assets.select', { path: selectedRel });
           document.querySelectorAll('.asset-tile').forEach(t => t.classList.remove('is-selected'));
           tile.classList.add('is-selected');
-        };
-
-        tile.ondblclick = () => {
-          if (e.dir) {
-            refresh(e.rel);
-          } else {
-            handleAssetOpen(e.rel, e.name);
-          }
         };
 
         grid.appendChild(tile);
@@ -787,6 +1022,98 @@
       }
       
       renderGrid(sorted);
+    });
+
+    const gridEl = document.getElementById('grid');
+    const sidebarEl = document.getElementById('sidebar');
+    const breadcrumbEl = document.getElementById('breadcrumbBar');
+    const filterBarEl = document.getElementById('filterBar');
+
+    function handleContextMenu(e) {
+      console.log('Context menu event fired at', e.clientX, e.clientY);
+      if (e.target && (e.target.closest('input') || e.target.closest('select') || e.target.closest('textarea'))) {
+        return;
+      }
+      e.preventDefault();
+      hideContextMenu();
+      showContextMenu(e.clientX, e.clientY);
+    }
+
+    function handleMouseDown(e) {
+      if (e.button === 2) { // Right mouse button
+        console.log('Right mouse button down at', e.clientX, e.clientY);
+      }
+    }
+
+    function handleMouseUp(e) {
+      if (e.button === 2) { // Right mouse button
+        console.log('Right mouse button up at', e.clientX, e.clientY);
+        handleContextMenu(e);
+      }
+    }
+
+    [gridEl, sidebarEl, breadcrumbEl, filterBarEl].forEach(el => {
+      if (!el) return;
+      el.addEventListener('contextmenu', handleContextMenu);
+    });
+
+    // Also listen on the document itself for context menu events
+    document.addEventListener('contextmenu', handleContextMenu);
+
+    // Also detect right-click via mousedown/mouseup as fallback
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    document.addEventListener('click', (e) => {
+      if (contextMenuEl && !contextMenuEl.contains(e.target)) {
+        hideContextMenu();
+      }
+    });
+
+    document.addEventListener('scroll', () => hideContextMenu(), true);
+
+    if (contextMenuEl) {
+      contextMenuEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        const action = btn.getAttribute('data-action');
+        hideContextMenu();
+        switch (action) {
+          case 'new-folder':
+            openCreateModal('folder');
+            break;
+          case 'new-material':
+            openCreateModal('material');
+            break;
+          case 'new-cpp-script':
+            openCreateModal('cpp_script');
+            break;
+          case 'new-lua-script':
+            openCreateModal('lua_script');
+            break;
+          case 'new-blueprint':
+            openCreateModal('blueprint');
+            break;
+        }
+      });
+    }
+
+    createCancelBtn.addEventListener('click', () => closeCreateModal());
+    createConfirmBtn.addEventListener('click', () => createAssetFromModal());
+    createModalEl.addEventListener('click', (e) => {
+      if (e.target === createModalEl) {
+        closeCreateModal();
+      }
+    });
+    createNameInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        createAssetFromModal();
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeCreateModal();
+      }
     });
 
     window.hep.onReady(() => {

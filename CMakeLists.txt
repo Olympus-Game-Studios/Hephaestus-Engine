@@ -98,6 +98,9 @@ add_executable(HephaestusEngine
     engine/Physics/JoltPhysicsSystem.cpp
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
+    engine/Scene/Json.cpp
+    engine/Scene/BlueprintSerializer.cpp
+    engine/Scene/BlueprintInstantiator.cpp
     engine/Scene/SceneSerializer.cpp
     engine/Scene/SceneExporter.cpp
     engine/Scripting/ScriptBase.cpp

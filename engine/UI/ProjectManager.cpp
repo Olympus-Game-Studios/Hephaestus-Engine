@@ -1526,6 +1526,7 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& d
             "assets/scripts",
             "assets/audio",
             "assets/prefabs",
+            "assets/blueprints",
             ".hephaestus"
         };
         

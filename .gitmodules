@@ -16,3 +16,4 @@
 [submodule "extern/Ultralight"]
 	path = extern/Ultralight
 	url = https://github.com/Bobbybear007/Ultralight.git
+	branch = master
