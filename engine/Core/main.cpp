@@ -1086,7 +1086,7 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
   BlueprintDocument* blueprintDoc = g_BlueprintDocument.get();
 
 #if HEPHAESTUS_EDITOR_HTML_UI
-  if (g_HtmlEditorUIHost && !isBlueprintMode) {
+  if (g_HtmlEditorUIHost) {
     g_HtmlEditorUIHost->DrawOutlinerPanel();
     if (auto drop = g_HtmlEditorUIHost->ConsumeOutlinerAssetDropRequest()) {
       actions.spawnMeshAssetRel = drop->first;
@@ -1481,7 +1481,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
   BlueprintDocument* blueprintDoc = g_BlueprintDocument.get();
 
 #if HEPHAESTUS_EDITOR_HTML_UI
-  if (g_HtmlEditorUIHost && !isBlueprintMode) {
+  if (g_HtmlEditorUIHost) {
     g_HtmlEditorUIHost->DrawDetailsPanel();
     return actions;
   }
@@ -8279,7 +8279,8 @@ int main(int argc, char *argv[]) {
 
 #if HEPHAESTUS_EDITOR_HTML_UI
         if (g_HtmlEditorUIHost) {
-          g_HtmlEditorUIHost->SetScene(&scene);
+          g_HtmlEditorUIHost->SetScene(viewportScene);
+          g_HtmlEditorUIHost->SetBlueprintMode(IsBlueprintModeActive());
           g_HtmlEditorUIHost->SetScriptEngine(&scriptEngine);
           g_HtmlEditorUIHost->SetDetailsLockedFlag(&g_DetailsLocked);
           g_HtmlEditorUIHost->SetAssetsRoot(ResolveActiveAssetsRoot());
@@ -8288,7 +8289,7 @@ int main(int argc, char *argv[]) {
 #endif
 
         // Draw docked panels first
-        WorldOutlinerActions outlinerActions = DrawWorldOutliner(scene);
+        WorldOutlinerActions outlinerActions = DrawWorldOutliner(*viewportScene);
         WorldOutlinerActions addActorsActions = DrawAddActorsPanel();
         if (!outlinerActions.spawnRequest && addActorsActions.spawnRequest) {
           outlinerActions.spawnRequest = addActorsActions.spawnRequest;
@@ -8679,7 +8680,7 @@ int main(int argc, char *argv[]) {
           }
         }
         DetailsPanelActions detailsActions =
-            DrawDetailsPanel(scene, scriptEngine, skybox, vkdev);
+          DrawDetailsPanel(*viewportScene, scriptEngine, skybox, vkdev);
 
         std::optional<entt::entity> viewportDeleteRequest;
         {

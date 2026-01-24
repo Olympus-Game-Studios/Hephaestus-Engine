@@ -615,6 +615,13 @@ void HtmlEditorUIHost::SetScriptEngine(ScriptEngine* scriptEngine) {
   scriptEngine_ = scriptEngine;
 }
 
+void HtmlEditorUIHost::SetBlueprintMode(bool enabled) {
+  if (blueprintMode_ != enabled) {
+    blueprintMode_ = enabled;
+    themeDirty_ = true;
+  }
+}
+
 void HtmlEditorUIHost::SetAssetOpenCallback(AssetOpenCallback callback) {
   assetOpenCallback_ = std::move(callback);
 }
@@ -686,6 +693,12 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     auto view = scene_->GetEntitiesWith<TagComponent>();
     for (auto entityHandle : view) {
       Entity e(entityHandle, scene_);
+      if (e.HasComponent<EditorOnlyComponent>()) {
+        continue;
+      }
+      if (blueprintMode_ && !e.HasComponent<BlueprintNodeComponent>()) {
+        continue;
+      }
       auto& tag = e.GetComponent<TagComponent>();
 
       const char* typeLabel = "ENTITY";
@@ -3155,10 +3168,52 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
   });
 }
 
+void HtmlEditorUIHost::ApplyThemeToPanels() {
+  if (!themeDirty_) {
+    return;
+  }
+
+  static const char* kSceneThemeScript = R"JS(
+(() => {
+  const root = document.documentElement;
+  root.setAttribute('data-editor-mode', 'scene');
+  root.style.setProperty('--accent', '#2d8cff');
+  root.style.setProperty('--accentHover', '#4a9dff');
+  root.style.setProperty('--accentSoft', '#5ba7ff');
+  root.style.setProperty('--accent2', '#f5b76c');
+  root.style.setProperty('--accent2Soft', '#5a4828');
+})();
+)JS";
+
+  static const char* kBlueprintThemeScript = R"JS(
+(() => {
+  const root = document.documentElement;
+  root.setAttribute('data-editor-mode', 'blueprint');
+  root.style.setProperty('--accent', '#a56bff');
+  root.style.setProperty('--accentHover', '#b984ff');
+  root.style.setProperty('--accentSoft', '#caa6ff');
+  root.style.setProperty('--accent2', '#60d6c5');
+  root.style.setProperty('--accent2Soft', '#204a45');
+})();
+)JS";
+
+  const char* script = blueprintMode_ ? kBlueprintThemeScript : kSceneThemeScript;
+  if (outliner_) outliner_->EvaluateScript(script);
+  if (addActors_) addActors_->EvaluateScript(script);
+  if (details_) details_->EvaluateScript(script);
+  if (assetBrowser_) assetBrowser_->EvaluateScript(script);
+  if (blueprintEditor_) blueprintEditor_->EvaluateScript(script);
+  if (logConsole_) logConsole_->EvaluateScript(script);
+
+  themeDirty_ = false;
+}
+
 void HtmlEditorUIHost::UpdateAndSync(float dt) {
   (void)dt;
   if (!renderer_)
     return;
+
+  ApplyThemeToPanels();
 
   // Emit selection changed event.
   if (scene_) {

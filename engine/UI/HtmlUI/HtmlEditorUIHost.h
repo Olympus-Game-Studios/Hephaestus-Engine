@@ -39,6 +39,7 @@ public:
   void SetDetailsLockedFlag(bool* detailsLocked);
   void SetAssetsRoot(std::filesystem::path assetsRoot);
   void SetScriptEngine(ScriptEngine* scriptEngine);
+  void SetBlueprintMode(bool enabled);
 
   // Callback for when an asset is opened. Called with the asset path.
   using AssetOpenCallback = std::function<void(const std::filesystem::path&)>;
@@ -74,6 +75,7 @@ public:
   EditorMessageBridge& Bridge();
 
 private:
+  void ApplyThemeToPanels();
   VulkanDevice* vkdev_ = nullptr;
   VkDescriptorPool imguiDescriptorPool_ = nullptr;
 
@@ -81,6 +83,8 @@ private:
   ScriptEngine* scriptEngine_ = nullptr;
   bool* detailsLocked_ = nullptr;
   std::filesystem::path assetsRoot_;
+  bool blueprintMode_ = false;
+  bool themeDirty_ = true;
   std::string lastSelectedAssetRel_;
   uint32_t lastSelectedId_ = 0;
   uint32_t lastSelectionCount_ = 0;
