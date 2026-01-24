@@ -334,6 +334,7 @@ static std::string
 static std::unique_ptr<SceneDocument> g_SceneDocument;
 static std::unique_ptr<BlueprintDocument> g_BlueprintDocument;
 static EditorDocument* g_ActiveDocument = nullptr;
+static bool g_RequestBlueprintTabFocus = false;
 
 static bool IsBlueprintModeActive() {
   return g_ActiveDocument && g_ActiveDocument->GetType() == EditorDocumentType::Blueprint;
@@ -500,10 +501,15 @@ static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused,
 
       if (g_BlueprintDocument) {
         bool blueprintOpen = true;
-        if (ImGui::BeginTabItem("Blueprint Mode", &blueprintOpen)) {
+        ImGuiTabItemFlags blueprintTabFlags = 0;
+        if (g_RequestBlueprintTabFocus) {
+          blueprintTabFlags |= ImGuiTabItemFlags_SetSelected;
+        }
+        if (ImGui::BeginTabItem("Blueprint Mode", &blueprintOpen, blueprintTabFlags)) {
           g_ActiveDocument = g_BlueprintDocument.get();
           ImGui::EndTabItem();
         }
+        g_RequestBlueprintTabFocus = false;
         if (!blueprintOpen) {
           g_BlueprintDocument->OnClose();
           g_BlueprintDocument.reset();
@@ -6530,6 +6536,7 @@ int main(int argc, char *argv[]) {
 
   // ── Scene & Entities (ECS) ───────────────────
   Scene scene("Main Scene");
+  Scene blueprintPreviewScene("Blueprint Preview");
 
   if (!g_SceneDocument) {
     g_SceneDocument = std::make_unique<SceneDocument>(&scene);
@@ -8145,6 +8152,12 @@ int main(int argc, char *argv[]) {
     float dt = currentTime - lastTime;
     lastTime = currentTime;
 
+    // Determine which scene to render based on active document
+    Scene* viewportScene = &scene;
+    if (g_ActiveDocument && g_ActiveDocument->GetScene()) {
+      viewportScene = g_ActiveDocument->GetScene();
+    }
+
     // Update scripts (before rendering) - only when playing and not paused
     scriptEngine.AwakeScripts();
     if (g_SimPlaying && !g_SimPaused) {
@@ -8210,13 +8223,13 @@ int main(int argc, char *argv[]) {
 
       // Find closest hit
       float hitDist;
-      Entity hitEntity = FindClosestHitEntity(pickRay, scene, hitDist);
+      Entity hitEntity = FindClosestHitEntity(pickRay, *viewportScene, hitDist);
 
       if (!g_DetailsLocked) {
         if (hitEntity) {
-          scene.SetSelectedEntity(hitEntity);
+          viewportScene->SetSelectedEntity(hitEntity);
         } else {
-          scene.ClearSelection();
+          viewportScene->ClearSelection();
         }
       }
     }
@@ -8928,7 +8941,7 @@ int main(int argc, char *argv[]) {
         if (browserResult.blueprintOpenRequest) {
           std::string loadError;
           if (!g_BlueprintDocument) {
-            g_BlueprintDocument = std::make_unique<BlueprintDocument>(&scene);
+            g_BlueprintDocument = std::make_unique<BlueprintDocument>(&blueprintPreviewScene);
             g_BlueprintDocument->SetPostRebuildCallback([&](Scene& targetScene) {
               rebuildSceneMeshesFromComponents(targetScene);
               hydrateScriptsFromComponents(targetScene);
@@ -8937,6 +8950,7 @@ int main(int argc, char *argv[]) {
           }
           if (g_BlueprintDocument->OnOpen(*browserResult.blueprintOpenRequest, loadError)) {
             g_ActiveDocument = g_BlueprintDocument.get();
+            g_RequestBlueprintTabFocus = true;
             assetBrowserStatus = "Opened blueprint in Blueprint Mode: " + browserResult.blueprintOpenRequest->filename().string() + ".";
             std::cout << assetBrowserStatus << std::endl;
           } else {
@@ -9307,7 +9321,7 @@ int main(int argc, char *argv[]) {
     // Custom gizmo interaction handling (editor only)
     if (!g_RuntimeMode && g_ProjectSelected && g_ShowEditorGizmo &&
         (!g_SimPlaying || g_SimPaused)) {
-      Entity selectedEntity = scene.GetSelectedEntity();
+      Entity selectedEntity = viewportScene->GetSelectedEntity();
       if (selectedEntity) {
         auto &transform = selectedEntity.GetComponent<TransformComponent>();
         Mat4 objectMatrix = transform.GetLocalMatrix();
@@ -9379,13 +9393,13 @@ int main(int argc, char *argv[]) {
     // only)
     if (!g_RuntimeMode && g_ProjectSelected && g_ShowEditorGizmo &&
         (!g_SimPlaying || g_SimPaused)) {
-      Entity selectedEntity = scene.GetSelectedEntity();
-      auto spotlightView = scene.GetEntitiesWith<LightComponent>();
+      Entity selectedEntity = viewportScene->GetSelectedEntity();
+      auto spotlightView = viewportScene->GetEntitiesWith<LightComponent>();
       for (auto entityHandle : spotlightView) {
-        Entity entity(entityHandle, &scene);
+        Entity entity(entityHandle, viewportScene);
         auto &light = entity.GetComponent<LightComponent>();
         if (light.type == LightType::Spot) {
-          DrawSpotlightConeVisualization(entity, scene, ubo.view, ubo.proj,
+          DrawSpotlightConeVisualization(entity, *viewportScene, ubo.view, ubo.proj,
                                          swap.extent.width, swap.extent.height);
         } else if (light.type == LightType::Directional) {
           // Only draw arrow if this directional light is selected
@@ -9505,9 +9519,9 @@ int main(int argc, char *argv[]) {
                       : 0.0f;
 
       // Gather directional lights
-      auto dirLightView = scene.GetEntitiesWith<LightComponent>();
+      auto dirLightView = viewportScene->GetEntitiesWith<LightComponent>();
       for (auto entityHandle : dirLightView) {
-        Entity entity(entityHandle, &scene);
+        Entity entity(entityHandle, viewportScene);
         auto &light = entity.GetComponent<LightComponent>();
 
         if (light.type == LightType::Directional) {
@@ -9570,7 +9584,7 @@ int main(int argc, char *argv[]) {
         if (pointLightIndex >= 16)
           break;
 
-        Entity entity(entityHandle, &scene);
+        Entity entity(entityHandle, viewportScene);
         auto &light = entity.GetComponent<LightComponent>();
 
         if (light.type == LightType::Point &&
@@ -9608,7 +9622,7 @@ int main(int argc, char *argv[]) {
         if (spotLightIndex >= 16)
           break;
 
-        Entity entity(entityHandle, &scene);
+        Entity entity(entityHandle, viewportScene);
         auto &light = entity.GetComponent<LightComponent>();
 
         if (light.type == LightType::Spot &&
@@ -9697,7 +9711,7 @@ int main(int argc, char *argv[]) {
     vkBeginCommandBuffer(cmd, &bi);
 
     auto renderView =
-        scene.GetEntitiesWith<TransformComponent, MeshRendererComponent>();
+        viewportScene->GetEntitiesWith<TransformComponent, MeshRendererComponent>();
 
     if (dirShadowEnabled && g_DirectionalShadow.IsValid()) {
       // Transition shadow map to attachment layout before rendering
@@ -9758,7 +9772,7 @@ int main(int argc, char *argv[]) {
       VkBuffer shadowIndexBuffer = VK_NULL_HANDLE;
       
       for (auto entityHandle : renderView) {
-        Entity entity(entityHandle, &scene);
+        Entity entity(entityHandle, viewportScene);
         auto &transform = entity.GetComponent<TransformComponent>();
         auto &renderer = entity.GetComponent<MeshRendererComponent>();
 
@@ -9793,7 +9807,7 @@ int main(int argc, char *argv[]) {
           shadowIndexBuffer = mesh.indexBuffer.buffer;
         }
 
-        shadowPC.model = scene.GetWorldTransform(entity);
+        shadowPC.model = viewportScene->GetWorldTransform(entity);
         vkCmdPushConstants(cmd, g_DirectionalShadow.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT, 0,
                            sizeof(ShadowPushConstants), &shadowPC);
@@ -9807,9 +9821,15 @@ int main(int argc, char *argv[]) {
     // Get environment settings
     Vec3 clearColor(0.1f, 0.2f, 0.3f);
     bool useHDRI = false;
-    if (environmentEntity &&
-        environmentEntity.HasComponent<EnvironmentComponent>()) {
-      auto &env = environmentEntity.GetComponent<EnvironmentComponent>();
+    Entity viewportEnvironment;
+    auto viewportEnvView = viewportScene->GetEntitiesWith<EnvironmentComponent>();
+    for (auto envHandle : viewportEnvView) {
+      viewportEnvironment = Entity(envHandle, viewportScene);
+      break;
+    }
+    if (viewportEnvironment &&
+        viewportEnvironment.HasComponent<EnvironmentComponent>()) {
+      auto &env = viewportEnvironment.GetComponent<EnvironmentComponent>();
       if (env.type == EnvironmentComponent::BackgroundType::SolidColor) {
         clearColor = env.solidColor;
       } else if (env.type == EnvironmentComponent::BackgroundType::HDRI) {
@@ -9854,15 +9874,15 @@ int main(int argc, char *argv[]) {
     }
 
     // Get selected entity once for both outline and gizmo rendering
-    Entity selectedEntity = scene.GetSelectedEntity();
+    Entity selectedEntity = viewportScene->GetSelectedEntity();
 
     // Get render distance settings from environment
     bool enableRenderDistance = false;
     float renderDistance = 500.0f;
     bool infiniteRenderDistance = false;
-    auto envView = scene.GetEntitiesWith<EnvironmentComponent>();
+    auto envView = viewportScene->GetEntitiesWith<EnvironmentComponent>();
     for (auto envHandle : envView) {
-      Entity envEntity(envHandle, &scene);
+      Entity envEntity(envHandle, viewportScene);
       auto &env = envEntity.GetComponent<EnvironmentComponent>();
       enableRenderDistance = env.enableRenderDistance;
       renderDistance = env.renderDistance;
@@ -9882,7 +9902,7 @@ int main(int argc, char *argv[]) {
 
     bool materialOverflowLogged = false;
     for (auto entityHandle : renderView) {
-      Entity entity(entityHandle, &scene);
+      Entity entity(entityHandle, viewportScene);
       auto &transform = entity.GetComponent<TransformComponent>();
       auto &renderer = entity.GetComponent<MeshRendererComponent>();
 
@@ -10064,7 +10084,7 @@ int main(int argc, char *argv[]) {
           static_cast<VkDeviceSize>(matIndex) * materialStride;
       std::memcpy(matMappedBase + matOffsetBytes, &matUBO, sizeof(matUBO));
 
-      Mat4 modelMatrix = scene.GetWorldTransform(entity);
+      Mat4 modelMatrix = viewportScene->GetWorldTransform(entity);
       vkCmdPushConstants(cmd, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                          sizeof(Mat4), modelMatrix.m);
       // Bind descriptor set with dynamic offset for this object's material
@@ -10117,9 +10137,9 @@ int main(int argc, char *argv[]) {
                         billboardPipeline.pipeline);
 
       // Draw a billboard for each light entity
-      auto lightView = scene.GetEntitiesWith<LightComponent>();
+      auto lightView = viewportScene->GetEntitiesWith<LightComponent>();
       for (auto entityHandle : lightView) {
-        Entity entity(entityHandle, &scene);
+        Entity entity(entityHandle, viewportScene);
         auto &light = entity.GetComponent<LightComponent>();
 
         // Get light position
