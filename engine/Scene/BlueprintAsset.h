@@ -9,25 +9,25 @@
 #include <unordered_map>
 #include <vector>
 
-struct BlueprintScriptData {
-    std::string language;
-    std::string source;
-    PropertyValue::Object defaultVars;
+struct BlueprintComponentEntry {
+    std::string type;
+    bool enabled = true;
+    JsonValue data;
 };
 
 struct BlueprintNode {
     std::string id;
     std::string name;
-    std::string parentId;
+    std::string parentId; // Empty for root
     TransformComponent localTransform;
-    std::unordered_map<std::string, JsonValue> components;
-    std::optional<BlueprintScriptData> script;
+    std::vector<BlueprintComponentEntry> components;
     std::vector<std::string> exposed;
 };
 
 struct BlueprintAsset {
-    int version = 1;
-    std::string assetId;
+    int assetVersion = 1;
+    std::string guid;
+    std::string rootNodeId;
     std::string name;
     std::vector<BlueprintNode> nodes;
 };

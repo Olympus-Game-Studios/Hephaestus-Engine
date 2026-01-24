@@ -403,6 +403,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
 
         stream << "    {\n";
         stream << "      \"blueprintPath\": \"" << EscapeString(instance->blueprintPath) << "\",\n";
+        stream << "      \"blueprintGuid\": \"" << EscapeString(instance->blueprintGuid) << "\",\n";
         stream << "      \"instanceId\": \"" << EscapeString(instance->instanceId) << "\",\n";
         stream << "      \"rootNodeId\": \"" << EscapeString(instance->rootNodeId) << "\",\n";
         stream << "      \"parent\": ";
@@ -1398,6 +1399,11 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     instanceData.blueprintPath = pathValue->AsString();
                 }
             }
+            if (const JsonValue* guidValue = instanceValue.Find("blueprintGuid")) {
+                if (guidValue->IsString()) {
+                    instanceData.blueprintGuid = guidValue->AsString();
+                }
+            }
             if (instanceData.blueprintPath.empty()) {
                 outError = "blueprint instance missing blueprintPath";
                 return false;
@@ -1570,6 +1576,7 @@ std::string SceneSerializer::SerializeToString() const
 
         stream << "    {\n";
         stream << "      \"blueprintPath\": \"" << EscapeString(instance->blueprintPath) << "\",\n";
+        stream << "      \"blueprintGuid\": \"" << EscapeString(instance->blueprintGuid) << "\",\n";
         stream << "      \"instanceId\": \"" << EscapeString(instance->instanceId) << "\",\n";
         stream << "      \"rootNodeId\": \"" << EscapeString(instance->rootNodeId) << "\",\n";
         stream << "      \"parent\": ";

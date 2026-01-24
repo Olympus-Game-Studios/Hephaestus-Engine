@@ -2,6 +2,7 @@
 
 #include "Components.h"
 #include "../Scripting/LuaScriptComponent.h"
+#include "../Scripting/ScriptComponent.h"
 
 #include <atomic>
 #include <unordered_map>
@@ -22,6 +23,44 @@ bool ParseVec3(const JsonValue& value, Vec3& out) {
     out.y = static_cast<float>(arr[1].AsNumber());
     out.z = static_cast<float>(arr[2].AsNumber());
     return true;
+}
+
+PropertyValue ParsePropertyValue(const JsonValue& value) {
+    if (value.IsBool()) {
+        return PropertyValue(value.AsBool());
+    }
+    if (value.IsNumber()) {
+        return PropertyValue(value.AsNumber());
+    }
+    if (value.IsString()) {
+        return PropertyValue(value.AsString());
+    }
+    if (value.IsArray()) {
+        const auto& arr = value.AsArray();
+        if (arr.size() == 2 && arr[0].IsNumber() && arr[1].IsNumber()) {
+            return PropertyValue(Vec2(static_cast<float>(arr[0].AsNumber()), static_cast<float>(arr[1].AsNumber())));
+        }
+        if (arr.size() == 3 && arr[0].IsNumber() && arr[1].IsNumber() && arr[2].IsNumber()) {
+            return PropertyValue(Vec3(static_cast<float>(arr[0].AsNumber()), static_cast<float>(arr[1].AsNumber()), static_cast<float>(arr[2].AsNumber())));
+        }
+        if (arr.size() == 4 && arr[0].IsNumber() && arr[1].IsNumber() && arr[2].IsNumber() && arr[3].IsNumber()) {
+            return PropertyValue(Vec4(static_cast<float>(arr[0].AsNumber()), static_cast<float>(arr[1].AsNumber()), static_cast<float>(arr[2].AsNumber()), static_cast<float>(arr[3].AsNumber())));
+        }
+        PropertyValue::Array arrayOut;
+        arrayOut.reserve(arr.size());
+        for (const auto& entry : arr) {
+            arrayOut.push_back(ParsePropertyValue(entry));
+        }
+        return PropertyValue(std::move(arrayOut));
+    }
+    if (value.IsObject()) {
+        PropertyValue::Object obj;
+        for (const auto& [key, entry] : value.AsObject()) {
+            obj.emplace(key, ParsePropertyValue(entry));
+        }
+        return PropertyValue(std::move(obj));
+    }
+    return PropertyValue();
 }
 
 bool ParseBoolLike(const JsonValue& value, bool fallback) {
@@ -254,7 +293,13 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
         transform.rotation = node.localTransform.rotation;
         transform.scale = node.localTransform.scale;
 
-        if (node.parentId.empty()) {
+        if (!asset.rootNodeId.empty() && node.id == asset.rootNodeId) {
+            rootEntity = entity;
+            rootNodeId = node.id;
+            if (entity.HasComponent<BlueprintNodeComponent>()) {
+                entity.GetComponent<BlueprintNodeComponent>().isRoot = true;
+            }
+        } else if (asset.rootNodeId.empty() && node.parentId.empty()) {
             rootEntity = entity;
             rootNodeId = node.id;
             if (entity.HasComponent<BlueprintNodeComponent>()) {
@@ -262,12 +307,23 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
             }
         }
 
-        for (const auto& [componentName, componentData] : node.components) {
+        for (const auto& componentEntry : node.components) {
+            const std::string& componentName = componentEntry.type;
+            const JsonValue& componentData = componentEntry.data;
+            const bool componentEnabled = componentEntry.enabled;
+
             if (!componentData.IsObject()) {
+                if (!componentName.empty() && componentName == "LuaScript") {
+                    auto& lua = entity.AddComponent<LuaScriptComponent>();
+                    lua.enabled = componentEnabled;
+                }
                 continue;
             }
 
             if (componentName == "MeshRenderer") {
+                if (!componentEnabled) {
+                    continue;
+                }
                 auto& mesh = entity.AddComponent<MeshRendererComponent>();
                 if (const JsonValue* visibleValue = componentData.Find("visible")) {
                     mesh.visible = visibleValue->IsBool() ? visibleValue->AsBool() : mesh.visible;
@@ -298,9 +354,11 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
                 }
             } else if (componentName == "MeshCollider") {
                 auto& collider = entity.AddComponent<MeshColliderComponent>();
-                if (const JsonValue* enabledValue = componentData.Find("enabled")) {
-                    collider.enabled = ParseBoolLike(*enabledValue, collider.enabled);
+                bool enabledValue = componentEnabled;
+                if (const JsonValue* enabledField = componentData.Find("enabled")) {
+                    enabledValue = ParseBoolLike(*enabledField, enabledValue);
                 }
+                collider.enabled = enabledValue;
                 if (const JsonValue* staticValue = componentData.Find("isStatic")) {
                     collider.isStatic = ParseBoolLike(*staticValue, collider.isStatic);
                 }
@@ -314,6 +372,9 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
                     collider.useComplexCollision = ParseBoolLike(*complexValue, collider.useComplexCollision);
                 }
             } else if (componentName == "PhysicsShape") {
+                if (!componentEnabled) {
+                    continue;
+                }
                 auto& shape = entity.AddComponent<PhysicsShapeComponent>();
                 if (const JsonValue* typeValue = componentData.Find("type")) {
                     shape.type = ParsePhysicsShapeType(*typeValue);
@@ -335,6 +396,9 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
                     ParseVec3(*offsetValue, shape.offset);
                 }
             } else if (componentName == "RigidBody") {
+                if (!componentEnabled) {
+                    continue;
+                }
                 auto& body = entity.AddComponent<RigidBodyComponent>();
                 if (const JsonValue* massValue = componentData.Find("mass")) {
                     if (massValue->IsNumber()) {
@@ -383,6 +447,9 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
                     body.debugDraw = ParseBoolLike(*debugValue, body.debugDraw);
                 }
             } else if (componentName == "Material") {
+                if (!componentEnabled) {
+                    continue;
+                }
                 auto& material = entity.AddComponent<MaterialComponent>();
                 if (const JsonValue* albedoValue = componentData.Find("albedo")) {
                     ParseVec3(*albedoValue, material.albedo);
@@ -451,6 +518,9 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
                     }
                 }
             } else if (componentName == "Light") {
+                if (!componentEnabled) {
+                    continue;
+                }
                 auto& light = entity.AddComponent<LightComponent>();
                 if (const JsonValue* typeValue = componentData.Find("type")) {
                     light.type = ParseLightType(*typeValue);
@@ -505,6 +575,9 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
                     }
                 }
             } else if (componentName == "Camera") {
+                if (!componentEnabled) {
+                    continue;
+                }
                 auto& camera = entity.AddComponent<CameraComponent>();
                 if (const JsonValue* fovValue = componentData.Find("fov")) {
                     if (fovValue->IsNumber()) {
@@ -524,13 +597,43 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
                 if (const JsonValue* primaryValue = componentData.Find("isPrimary")) {
                     camera.isPrimary = ParseBoolLike(*primaryValue, camera.isPrimary);
                 }
+            } else if (componentName == "LuaScript") {
+                auto& lua = entity.AddComponent<LuaScriptComponent>();
+                if (const JsonValue* pathValue = componentData.Find("path")) {
+                    if (pathValue->IsString()) {
+                        lua.scriptPath = pathValue->AsString();
+                    }
+                }
+                if (const JsonValue* sourceValue = componentData.Find("source")) {
+                    if (sourceValue->IsString()) {
+                        lua.scriptSource = sourceValue->AsString();
+                    }
+                }
+                lua.enabled = componentEnabled;
+                if (const JsonValue* enabledValue = componentData.Find("enabled")) {
+                    lua.enabled = ParseBoolLike(*enabledValue, lua.enabled);
+                }
+                if (const JsonValue* varsValue = componentData.Find("variables")) {
+                    if (varsValue->IsObject()) {
+                        lua.variables.clear();
+                        for (const auto& [key, entry] : varsValue->AsObject()) {
+                            lua.variables.emplace(key, ParsePropertyValue(entry));
+                        }
+                    }
+                }
+            } else if (componentName == "ScriptComponent") {
+                auto& scriptComp = entity.AddComponent<ScriptComponent>();
+                if (const JsonValue* namesValue = componentData.Find("scriptNames")) {
+                    if (namesValue->IsArray()) {
+                        scriptComp.scriptNames.clear();
+                        for (const auto& entry : namesValue->AsArray()) {
+                            if (entry.IsString()) {
+                                scriptComp.scriptNames.push_back(entry.AsString());
+                            }
+                        }
+                    }
+                }
             }
-        }
-
-        if (node.script.has_value()) {
-            auto& lua = entity.AddComponent<LuaScriptComponent>();
-            lua.scriptSource = node.script->source;
-            lua.variables = node.script->defaultVars;
         }
     }
 
@@ -548,6 +651,7 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
     if (rootEntity && options.instanceData) {
         auto& instanceComp = rootEntity.AddComponent<BlueprintInstanceComponent>();
         instanceComp.blueprintPath = options.instanceData->blueprintPath;
+        instanceComp.blueprintGuid = asset.guid;
         instanceComp.instanceId = options.instanceData->instanceId.empty() ? instanceId : options.instanceData->instanceId;
         instanceComp.rootNodeId = options.instanceData->rootNodeId.empty() ? rootNodeId : options.instanceData->rootNodeId;
         instanceComp.parent = options.instanceData->parent;
@@ -555,6 +659,7 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
     } else if (rootEntity) {
         auto& instanceComp = rootEntity.AddComponent<BlueprintInstanceComponent>();
         instanceComp.blueprintPath = options.blueprintPath;
+        instanceComp.blueprintGuid = asset.guid;
         instanceComp.instanceId = instanceId;
         instanceComp.rootNodeId = rootNodeId;
         instanceComp.parent = options.parent;

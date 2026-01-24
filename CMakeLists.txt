@@ -106,6 +106,7 @@ add_executable(HephaestusEngine
     engine/Scripting/ScriptBase.cpp
     engine/Scripting/ScriptEngine.cpp
     engine/Scripting/LuaScriptEngine.cpp
+    engine/UI/EditorDocument.cpp
     engine/UI/ProjectManager.cpp
     engine/UI/HtmlUI/UltralightPlatformSetup.cpp
     engine/UI/HtmlUI/EditorMessageBridge.cpp

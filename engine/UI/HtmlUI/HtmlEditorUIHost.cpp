@@ -21,8 +21,6 @@
 #include <fstream>
 #include <ctime>
 #include <iomanip>
-#include <unordered_set>
-
 #include "../EditorSpawnPreset.h"
 
 #if defined(_WIN32)
@@ -30,15 +28,15 @@
 #endif
 
 namespace MaterialEditor {
-  bool LoadMaterialAssetFile(const std::filesystem::path& path,
-                             MaterialComponent& outMaterial,
-                             std::string& outDisplayName,
-                             Graph& outGraph,
-                             std::string& outError);
+bool LoadMaterialAssetFile(const std::filesystem::path& path,
+                           MaterialComponent& outMaterial,
+                           std::string& outDisplayName,
+                           Graph& outGraph,
+                           std::string& outError);
 
-  bool EvaluateGraph(const Graph& graph,
-                     MaterialComponent& outMaterial,
-                     std::string& outErrorMessage);
+bool EvaluateGraph(const Graph& graph,
+                   MaterialComponent& outMaterial,
+                   std::string& outErrorMessage);
 } // namespace MaterialEditor
 
 namespace Hephaestus::HtmlUI {
@@ -90,6 +88,13 @@ static JsonValue MakeNumber(double d) {
   JsonValue v;
   v.type = JsonValue::Type::Number;
   v.numberValue = d;
+  return v;
+}
+
+static JsonValue MakeBool(bool value) {
+  JsonValue v;
+  v.type = JsonValue::Type::Bool;
+  v.boolValue = value;
   return v;
 }
 
@@ -145,6 +150,65 @@ static JsonValue* EnsureArrayField(JsonValue& obj, const std::string& key) {
   return &it->second;
 }
 
+static JsonValue* EnsureComponentsArray(JsonValue& node) {
+  if (!node.IsObject()) {
+    node.type = JsonValue::Type::Object;
+    node.objectValue.clear();
+  }
+
+  auto it = node.objectValue.find("components");
+  if (it == node.objectValue.end()) {
+    auto [newIt, _] = node.objectValue.emplace("components", MakeArray());
+    return &newIt->second;
+  }
+
+  if (it->second.IsArray()) {
+    return &it->second;
+  }
+
+  if (it->second.IsObject()) {
+    JsonValue converted = MakeArray();
+    for (const auto& [key, entry] : it->second.objectValue) {
+      JsonValue compEntry = MakeObject();
+      compEntry.objectValue["type"] = MakeString(key);
+      compEntry.objectValue["enabled"] = MakeBool(true);
+      compEntry.objectValue["data"] = entry;
+      converted.arrayValue.push_back(std::move(compEntry));
+    }
+    it->second = std::move(converted);
+    return &it->second;
+  }
+
+  it->second = MakeArray();
+  return &it->second;
+}
+
+static JsonValue* FindComponentEntry(JsonValue& node, const std::string& type) {
+  JsonValue* components = EnsureComponentsArray(node);
+  for (auto& entry : components->arrayValue) {
+    if (!entry.IsObject()) continue;
+    const JsonValue* typeVal = entry.Find("type");
+    if (typeVal && typeVal->IsString() && typeVal->AsString() == type) {
+      return &entry;
+    }
+  }
+  return nullptr;
+}
+
+static JsonValue* EnsureComponentEntry(JsonValue& node, const std::string& type) {
+  if (JsonValue* existing = FindComponentEntry(node, type)) {
+    return existing;
+  }
+
+  JsonValue* components = EnsureComponentsArray(node);
+  JsonValue entry = MakeObject();
+  entry.objectValue["type"] = MakeString(type);
+  entry.objectValue["enabled"] = MakeBool(true);
+  entry.objectValue["data"] = MakeObject();
+  components->arrayValue.push_back(std::move(entry));
+  return &components->arrayValue.back();
+}
+
 static JsonValue* FindNodeById(JsonValue& root, const std::string& nodeId) {
   if (!root.IsObject()) return nullptr;
   JsonValue* nodes = EnsureArrayField(root, "nodes");
@@ -160,6 +224,13 @@ static JsonValue* FindNodeById(JsonValue& root, const std::string& nodeId) {
 
 static JsonValue* FindRootNode(JsonValue& root) {
   if (!root.IsObject()) return nullptr;
+  if (const JsonValue* rootNodeVal = root.Find("rootNodeId")) {
+    if (rootNodeVal->IsString()) {
+      if (JsonValue* rootNode = FindNodeById(root, rootNodeVal->AsString())) {
+        return rootNode;
+      }
+    }
+  }
   JsonValue* nodes = EnsureArrayField(root, "nodes");
   for (auto& nodeVal : nodes->arrayValue) {
     if (!nodeVal.IsObject()) continue;
@@ -292,23 +363,32 @@ static std::string BuildBlueprintDocJson(const std::string& key, const JsonValue
   json << "\"dirty\":" << (dirty ? "true" : "false") << ",\"data\":{";
 
   std::string name;
-  std::string assetId;
-  int version = 1;
+  std::string guid;
+  int assetVersion = 1;
+  std::string rootNodeId;
   if (root.IsObject()) {
     if (const JsonValue* nameVal = root.Find("name")) {
       if (nameVal->IsString()) name = nameVal->AsString();
     }
-    if (const JsonValue* idVal = root.Find("assetId")) {
-      if (idVal->IsString()) assetId = idVal->AsString();
+    if (const JsonValue* guidVal = root.Find("guid")) {
+      if (guidVal->IsString()) guid = guidVal->AsString();
+    } else if (const JsonValue* idVal = root.Find("assetId")) {
+      if (idVal->IsString()) guid = idVal->AsString();
     }
-    if (const JsonValue* verVal = root.Find("version")) {
-      if (verVal->IsNumber()) version = static_cast<int>(verVal->AsNumber());
+    if (const JsonValue* verVal = root.Find("assetVersion")) {
+      if (verVal->IsNumber()) assetVersion = static_cast<int>(verVal->AsNumber());
+    } else if (const JsonValue* legacyVer = root.Find("version")) {
+      if (legacyVer->IsNumber()) assetVersion = static_cast<int>(legacyVer->AsNumber());
+    }
+    if (const JsonValue* rootVal = root.Find("rootNodeId")) {
+      if (rootVal->IsString()) rootNodeId = rootVal->AsString();
     }
   }
 
   json << "\"name\":\"" << JsonEscape(name) << "\",";
-  json << "\"assetId\":\"" << JsonEscape(assetId) << "\",";
-  json << "\"version\":" << version << ",";
+  json << "\"guid\":\"" << JsonEscape(guid) << "\",";
+  json << "\"assetVersion\":" << assetVersion << ",";
+  json << "\"rootNodeId\":\"" << JsonEscape(rootNodeId) << "\",";
   json << "\"nodes\":[";
 
   const JsonValue* nodesVal = root.Find("nodes");
@@ -351,8 +431,46 @@ static std::string BuildBlueprintDocJson(const std::string& key, const JsonValue
 
       json << "\"components\":[";
       bool firstComp = true;
+      bool hasScript = false;
       if (const JsonValue* compsVal = nodeVal.Find("components")) {
-        if (compsVal->IsObject()) {
+        if (compsVal->IsArray()) {
+          for (const auto& compEntry : compsVal->AsArray()) {
+            if (!compEntry.IsObject()) continue;
+            const JsonValue* typeVal = compEntry.Find("type");
+            if (!typeVal || !typeVal->IsString()) continue;
+            const std::string type = typeVal->AsString();
+            const JsonValue* dataVal = compEntry.Find("data");
+            if (!firstComp) json << ",";
+            firstComp = false;
+            bool known = kKnownBlueprintComponents.count(type) > 0;
+            size_t fieldCount = (dataVal && dataVal->IsObject()) ? dataVal->AsObject().size() : 0;
+            std::ostringstream compJson;
+            if (dataVal) {
+              WriteJsonValuePretty(compJson, *dataVal, 0);
+            } else {
+              compJson << "{}";
+            }
+            json << "{\"type\":\"" << JsonEscape(type) << "\",";
+            json << "\"known\":" << (known ? "true" : "false") << ",";
+            json << "\"fieldCount\":" << fieldCount << ",";
+            json << "\"data\":\"" << JsonEscape(compJson.str()) << "\"}";
+
+            if (type == "LuaScript") {
+              hasScript = true;
+              if (scriptNodeId.empty() && (parentVal == nullptr || parentId.empty())) {
+                scriptNodeId = id;
+                if (dataVal && dataVal->IsObject()) {
+                  if (const JsonValue* langVal = dataVal->Find("language")) {
+                    if (langVal->IsString()) scriptLanguage = langVal->AsString();
+                  }
+                  if (const JsonValue* srcVal = dataVal->Find("source")) {
+                    if (srcVal->IsString()) scriptSource = srcVal->AsString();
+                  }
+                }
+              }
+            }
+          }
+        } else if (compsVal->IsObject()) {
           for (const auto& [key, entry] : compsVal->AsObject()) {
             if (!firstComp) json << ",";
             firstComp = false;
@@ -371,6 +489,7 @@ static std::string BuildBlueprintDocJson(const std::string& key, const JsonValue
 
       if (const JsonValue* scriptVal = nodeVal.Find("script")) {
         if (scriptVal->IsObject()) {
+          hasScript = true;
           if (scriptNodeId.empty() && (parentVal == nullptr || parentId.empty())) {
             scriptNodeId = id;
             if (const JsonValue* langVal = scriptVal->Find("language")) {
@@ -383,7 +502,7 @@ static std::string BuildBlueprintDocJson(const std::string& key, const JsonValue
         }
       }
 
-      json << "\"hasScript\":" << ((nodeVal.Find("script") != nullptr) ? "true" : "false");
+      json << "\"hasScript\":" << (hasScript ? "true" : "false");
       json << "}";
     }
   }
@@ -1271,17 +1390,24 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
         return std::string("{\"ok\":false,\"error\":\"write_failed\"}");
       }
       std::string blueprintId = GenerateBlueprintId();
+      std::string rootNodeId = std::string("node_") + blueprintId;
       out << "{\n";
       out << "  \"schema\": \"HephaestusBlueprint\",\n";
-      out << "  \"version\": 1,\n";
-      out << "  \"assetId\": \"" << blueprintId << "\",\n";
+      out << "  \"assetVersion\": 1,\n";
+      out << "  \"guid\": \"" << blueprintId << "\",\n";
       out << "  \"name\": \"" << sanitized << "\",\n";
+      out << "  \"rootNodeId\": \"" << rootNodeId << "\",\n";
       out << "  \"nodes\": [\n";
       out << "    {\n";
-      out << "      \"id\": \"node_root\",\n";
+      out << "      \"id\": \"" << rootNodeId << "\",\n";
       out << "      \"name\": \"" << sanitized << "\",\n";
       out << "      \"parentId\": null,\n";
-      out << "      \"components\": {},\n";
+      out << "      \"transform\": {\n";
+      out << "        \"position\": [0, 0, 0],\n";
+      out << "        \"rotation\": [0, 0, 0],\n";
+      out << "        \"scale\": [1, 1, 1]\n";
+      out << "      },\n";
+      out << "      \"components\": [],\n";
       out << "      \"exposed\": []\n";
       out << "    }\n";
       out << "  ]\n";
@@ -1448,10 +1574,12 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       return std::string("{\"ok\":false,\"error\":\"node_not_found\"}");
     }
 
-    JsonValue* scriptObj = EnsureObjectField(*nodeObj, "script");
+    JsonValue* scriptEntry = EnsureComponentEntry(*nodeObj, "LuaScript");
+    JsonValue* scriptData = EnsureObjectField(*scriptEntry, "data");
     std::string language = (langVal && langVal->IsString()) ? langVal->AsString() : "lua";
-    scriptObj->objectValue["language"] = MakeString(language);
-    scriptObj->objectValue["source"] = MakeString(sourceVal->AsString());
+    scriptData->objectValue["language"] = MakeString(language);
+    scriptData->objectValue["source"] = MakeString(sourceVal->AsString());
+    nodeObj->objectValue.erase("script");
 
     it->second.dirty = true;
     std::ostringstream json;
@@ -1508,7 +1636,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     transform.objectValue["rotation"] = MakeVec3Array(0.0f, 0.0f, 0.0f);
     transform.objectValue["scale"] = MakeVec3Array(1.0f, 1.0f, 1.0f);
     newNode.objectValue["transform"] = std::move(transform);
-    newNode.objectValue["components"] = MakeObject();
+    newNode.objectValue["components"] = MakeArray();
     newNode.objectValue["exposed"] = MakeArray();
 
     nodes->arrayValue.push_back(std::move(newNode));
@@ -1557,10 +1685,9 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       return std::string("{\"ok\":false,\"error\":\"node_not_found\"}");
     }
 
-    JsonValue* comps = EnsureObjectField(*nodeObj, "components");
     const std::string compType = compVal->AsString();
-    if (comps->objectValue.find(compType) == comps->objectValue.end()) {
-      comps->objectValue.emplace(compType, MakeObject());
+    if (!FindComponentEntry(*nodeObj, compType)) {
+      EnsureComponentEntry(*nodeObj, compType);
       it->second.dirty = true;
     }
 
@@ -1621,8 +1748,9 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       newComponent = *dataVal;
     }
 
-    JsonValue* comps = EnsureObjectField(*nodeObj, "components");
-    comps->objectValue[compVal->AsString()] = std::move(newComponent);
+    JsonValue* compEntry = EnsureComponentEntry(*nodeObj, compVal->AsString());
+    compEntry->objectValue["type"] = MakeString(compVal->AsString());
+    compEntry->objectValue["data"] = std::move(newComponent);
     it->second.dirty = true;
 
     std::ostringstream json;

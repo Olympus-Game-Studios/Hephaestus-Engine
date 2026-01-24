@@ -4,6 +4,9 @@
 #include <iomanip>
 #include <locale>
 #include <sstream>
+#include <vector>
+#include <algorithm>
+#include <filesystem>
 
 namespace {
 std::string EscapeString(const std::string& value) {
@@ -125,11 +128,21 @@ void WriteJsonValue(std::ostream& out, const JsonValue& value, int indent) {
         }
         case JsonValue::Type::Object: {
             out << "{";
+            std::vector<std::string> keys;
+            keys.reserve(value.objectValue.size());
+            for (const auto& [key, _] : value.objectValue) {
+                keys.push_back(key);
+            }
+            std::sort(keys.begin(), keys.end());
             bool first = true;
-            for (const auto& [key, entry] : value.objectValue) {
+            for (const auto& key : keys) {
+                const auto it = value.objectValue.find(key);
+                if (it == value.objectValue.end()) {
+                    continue;
+                }
                 if (!first) out << ", ";
                 out << "\"" << EscapeString(key) << "\": ";
-                WriteJsonValue(out, entry, indent);
+                WriteJsonValue(out, it->second, indent);
                 first = false;
             }
             out << "}";
@@ -182,11 +195,21 @@ void WritePropertyValue(std::ostream& out, const PropertyValue& value, int inden
     }
     if (value.IsObject()) {
         out << "{";
+        std::vector<std::string> keys;
+        keys.reserve(value.AsObject()->size());
+        for (const auto& [key, _] : *value.AsObject()) {
+            keys.push_back(key);
+        }
+        std::sort(keys.begin(), keys.end());
         bool first = true;
-        for (const auto& [key, entry] : *value.AsObject()) {
+        for (const auto& key : keys) {
+            const auto it = value.AsObject()->find(key);
+            if (it == value.AsObject()->end()) {
+                continue;
+            }
             if (!first) out << ", ";
             out << "\"" << EscapeString(key) << "\": ";
-            WritePropertyValue(out, entry, indent);
+            WritePropertyValue(out, it->second, indent);
             first = false;
         }
         out << "}";
@@ -205,7 +228,20 @@ bool BlueprintSerializer::Deserialize(BlueprintAsset& asset, const std::filesyst
     std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     in.close();
 
-    JsonParser parser(content);
+    if (!DeserializeFromString(asset, content, outError)) {
+        return false;
+    }
+
+    if (asset.name.empty()) {
+        asset.name = filepath.stem().string();
+    }
+
+    outError.clear();
+    return true;
+}
+
+bool BlueprintSerializer::DeserializeFromString(BlueprintAsset& asset, const std::string& data, std::string& outError) {
+    JsonParser parser(data);
     JsonValue root;
     if (!parser.Parse(root, outError)) {
         return false;
@@ -217,24 +253,36 @@ bool BlueprintSerializer::Deserialize(BlueprintAsset& asset, const std::filesyst
 
     asset = BlueprintAsset{};
 
-    if (const JsonValue* versionValue = root.Find("version")) {
+    if (const JsonValue* versionValue = root.Find("assetVersion")) {
         if (versionValue->IsNumber()) {
-            asset.version = static_cast<int>(versionValue->AsNumber());
+            asset.assetVersion = static_cast<int>(versionValue->AsNumber());
+        }
+    } else if (const JsonValue* legacyVersionValue = root.Find("version")) {
+        if (legacyVersionValue->IsNumber()) {
+            asset.assetVersion = static_cast<int>(legacyVersionValue->AsNumber());
         }
     }
-    if (const JsonValue* idValue = root.Find("assetId")) {
-        if (idValue->IsString()) {
-            asset.assetId = idValue->AsString();
+
+    if (const JsonValue* guidValue = root.Find("guid")) {
+        if (guidValue->IsString()) {
+            asset.guid = guidValue->AsString();
+        }
+    } else if (const JsonValue* legacyId = root.Find("assetId")) {
+        if (legacyId->IsString()) {
+            asset.guid = legacyId->AsString();
         }
     }
+
     if (const JsonValue* nameValue = root.Find("name")) {
         if (nameValue->IsString()) {
             asset.name = nameValue->AsString();
-        } else {
-            asset.name = filepath.stem().string();
         }
-    } else {
-        asset.name = filepath.stem().string();
+    }
+
+    if (const JsonValue* rootNodeValue = root.Find("rootNodeId")) {
+        if (rootNodeValue->IsString()) {
+            asset.rootNodeId = rootNodeValue->AsString();
+        }
     }
 
     const JsonValue* nodesValue = root.Find("nodes");
@@ -272,6 +320,8 @@ bool BlueprintSerializer::Deserialize(BlueprintAsset& asset, const std::filesyst
         if (const JsonValue* parentValue = nodeValue.Find("parentId")) {
             if (parentValue->IsString()) {
                 node.parentId = parentValue->AsString();
+            } else if (parentValue->IsNull()) {
+                node.parentId.clear();
             }
         }
 
@@ -290,35 +340,58 @@ bool BlueprintSerializer::Deserialize(BlueprintAsset& asset, const std::filesyst
         }
 
         if (const JsonValue* componentsValue = nodeValue.Find("components")) {
-            if (componentsValue->IsObject()) {
-                node.components = componentsValue->AsObject();
+            if (componentsValue->IsArray()) {
+                for (const auto& compEntry : componentsValue->AsArray()) {
+                    if (!compEntry.IsObject()) {
+                        continue;
+                    }
+                    BlueprintComponentEntry entry;
+                    if (const JsonValue* typeValue = compEntry.Find("type")) {
+                        if (typeValue->IsString()) {
+                            entry.type = typeValue->AsString();
+                        }
+                    }
+                    if (const JsonValue* enabledValue = compEntry.Find("enabled")) {
+                        if (enabledValue->IsBool()) {
+                            entry.enabled = enabledValue->AsBool();
+                        } else if (enabledValue->IsNumber()) {
+                            entry.enabled = (enabledValue->AsNumber() != 0.0);
+                        }
+                    }
+                    if (const JsonValue* dataValue = compEntry.Find("data")) {
+                        entry.data = *dataValue;
+                    }
+                    if (!entry.type.empty()) {
+                        node.components.push_back(std::move(entry));
+                    }
+                }
+            } else if (componentsValue->IsObject()) {
+                for (const auto& [key, entryValue] : componentsValue->AsObject()) {
+                    BlueprintComponentEntry entry;
+                    entry.type = key;
+                    entry.enabled = true;
+                    entry.data = entryValue;
+                    node.components.push_back(std::move(entry));
+                }
             }
         }
 
         if (const JsonValue* scriptValue = nodeValue.Find("script")) {
             if (scriptValue->IsObject()) {
-                BlueprintScriptData script;
+                BlueprintComponentEntry entry;
+                entry.type = "LuaScript";
+                entry.enabled = true;
+                entry.data.type = JsonValue::Type::Object;
                 if (const JsonValue* langValue = scriptValue->Find("language")) {
-                    if (langValue->IsString()) {
-                        script.language = langValue->AsString();
-                    }
-                }
-                if (script.language.empty()) {
-                    script.language = "lua";
+                    entry.data.objectValue["language"] = *langValue;
                 }
                 if (const JsonValue* sourceValue = scriptValue->Find("source")) {
-                    if (sourceValue->IsString()) {
-                        script.source = sourceValue->AsString();
-                    }
+                    entry.data.objectValue["source"] = *sourceValue;
                 }
                 if (const JsonValue* varsValue = scriptValue->Find("defaultVars")) {
-                    if (varsValue->IsObject()) {
-                        for (const auto& [key, entry] : varsValue->AsObject()) {
-                            script.defaultVars.emplace(key, ParsePropertyValue(entry));
-                        }
-                    }
+                    entry.data.objectValue["variables"] = *varsValue;
                 }
-                node.script = std::move(script);
+                node.components.push_back(std::move(entry));
             }
         }
 
@@ -341,22 +414,31 @@ bool BlueprintSerializer::Deserialize(BlueprintAsset& asset, const std::filesyst
         asset.nodes.push_back(std::move(node));
     }
 
-    outError.clear();
-    return true;
-}
+    if (asset.rootNodeId.empty()) {
+        for (const auto& node : asset.nodes) {
+            if (node.parentId.empty()) {
+                asset.rootNodeId = node.id;
+                break;
+            }
+        }
+    }
 
-bool BlueprintSerializer::Serialize(const BlueprintAsset& asset, const std::filesystem::path& filepath, std::string& outError) {
-    std::ofstream out(filepath);
-    if (!out.is_open()) {
-        outError = "Unable to open blueprint file for writing.";
+    if (asset.rootNodeId.empty()) {
+        outError = "Blueprint missing root node.";
         return false;
     }
 
+    return true;
+}
+
+std::string BlueprintSerializer::SerializeToString(const BlueprintAsset& asset) {
+    std::ostringstream out;
     out << "{\n";
     out << "  \"schema\": \"HephaestusBlueprint\",\n";
-    out << "  \"version\": " << asset.version << ",\n";
-    out << "  \"assetId\": \"" << EscapeString(asset.assetId) << "\",\n";
+    out << "  \"assetVersion\": " << asset.assetVersion << ",\n";
+    out << "  \"guid\": \"" << EscapeString(asset.guid) << "\",\n";
     out << "  \"name\": \"" << EscapeString(asset.name) << "\",\n";
+    out << "  \"rootNodeId\": \"" << EscapeString(asset.rootNodeId) << "\",\n";
     out << "  \"nodes\": [\n";
 
     for (size_t i = 0; i < asset.nodes.size(); ++i) {
@@ -375,52 +457,74 @@ bool BlueprintSerializer::Serialize(const BlueprintAsset& asset, const std::file
         out << "        \"scale\": " << FormatVec3(node.localTransform.scale) << "\n";
         out << "      },\n";
 
-        out << "      \"components\": ";
-        JsonValue componentsValue;
-        componentsValue.type = JsonValue::Type::Object;
-        componentsValue.objectValue = node.components;
-        WriteJsonValue(out, componentsValue, 6);
-        out << ",\n";
-
-        if (node.script.has_value()) {
-            out << "      \"script\": {\n";
-            out << "        \"language\": \"" << EscapeString(node.script->language) << "\",\n";
-            out << "        \"source\": \"" << EscapeString(node.script->source) << "\",\n";
-            out << "        \"defaultVars\": {";
-            bool first = true;
-            for (const auto& [key, value] : node.script->defaultVars) {
-                if (!first) out << ", ";
-                out << "\"" << EscapeString(key) << "\": ";
-                WritePropertyValue(out, value, 8);
-                first = false;
+        out << "      \"components\": [\n";
+        for (size_t c = 0; c < node.components.size(); ++c) {
+            const BlueprintComponentEntry& comp = node.components[c];
+            out << "        {\n";
+            out << "          \"type\": \"" << EscapeString(comp.type) << "\",\n";
+            out << "          \"enabled\": " << (comp.enabled ? "true" : "false") << ",\n";
+            out << "          \"data\": ";
+            WriteJsonValue(out, comp.data, 10);
+            out << "\n";
+            out << "        }";
+            if (c + 1 < node.components.size()) {
+                out << ",";
             }
-            out << "}\n";
-            out << "      },\n";
+            out << "\n";
         }
+        out << "      ],\n";
 
-        if (!node.exposed.empty()) {
-            out << "      \"exposed\": [";
-            for (size_t e = 0; e < node.exposed.size(); ++e) {
-                if (e) out << ", ";
-                out << "\"" << EscapeString(node.exposed[e]) << "\"";
-            }
-            out << "]\n";
-        } else {
-            out << "      \"exposed\": []\n";
+        out << "      \"exposed\": [";
+        for (size_t ex = 0; ex < node.exposed.size(); ++ex) {
+            if (ex) out << ", ";
+            out << "\"" << EscapeString(node.exposed[ex]) << "\"";
         }
-
+        out << "]\n";
         out << "    }";
         if (i + 1 < asset.nodes.size()) {
-            out << ",";
+            out << ",\n";
+        } else {
+            out << "\n";
         }
-        out << "\n";
     }
 
     out << "  ]\n";
     out << "}\n";
+    return out.str();
+}
 
-    if (!out.good()) {
-        outError = "Failed to write blueprint data.";
+bool BlueprintSerializer::Serialize(const BlueprintAsset& asset, const std::filesystem::path& filepath, std::string& outError) {
+    namespace fs = std::filesystem;
+    const std::string content = SerializeToString(asset);
+    if (content.empty()) {
+        outError = "Unable to serialize blueprint.";
+        return false;
+    }
+
+    std::error_code dirErr;
+    fs::create_directories(filepath.parent_path(), dirErr);
+    if (dirErr) {
+        outError = "Unable to create blueprint directory: " + dirErr.message();
+        return false;
+    }
+
+    fs::path tempPath = filepath;
+    tempPath += ".tmp";
+
+    std::ofstream out(tempPath, std::ios::trunc);
+    if (!out.is_open()) {
+        outError = "Unable to open blueprint file for writing.";
+        return false;
+    }
+    out << content;
+    out.close();
+
+    std::error_code replaceErr;
+    fs::remove(filepath, replaceErr);
+    replaceErr.clear();
+    fs::rename(tempPath, filepath, replaceErr);
+    if (replaceErr) {
+        outError = "Failed to replace blueprint file: " + replaceErr.message();
         return false;
     }
 

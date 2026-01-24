@@ -72,6 +72,9 @@
 #include "../Game/ExampleScripts.h"
 #include "../Scene/Components.h"
 #include "../Scene/Entity.h"
+#include "../Scene/BlueprintAsset.h"
+#include "../Scene/BlueprintSerializer.h"
+#include "../Scene/BlueprintInstantiator.h"
 #include "../Scene/Scene.h"
 #include "../Scene/SceneExporter.h"
 #include "../Scene/SceneSerializer.h"
@@ -80,6 +83,7 @@
 #include "../Scripting/ScriptEngine.h"
 #include "../Scripting/ScriptRegistry.h"
 #include "../UI/MaterialEditor/MaterialEditorPanel.h"
+#include "../UI/EditorDocument.h"
 #include "../UI/ProjectManager.h"
 
 #if HEPHAESTUS_EDITOR_HTML_UI
@@ -327,31 +331,26 @@ static bool g_ViewportOverlayFocused = false;
 static bool g_ViewportDropTargetHovered = false; // Track if mouse is in viewport area
 static std::string
     g_SceneSnapshotBeforePlay; // Stores scene state before entering play mode
-static constexpr size_t kSceneUndoLimit = 32;
-static std::vector<std::string> g_SceneUndoStack;
+static std::unique_ptr<SceneDocument> g_SceneDocument;
+static std::unique_ptr<BlueprintDocument> g_BlueprintDocument;
+static EditorDocument* g_ActiveDocument = nullptr;
+
+static bool IsBlueprintModeActive() {
+  return g_ActiveDocument && g_ActiveDocument->GetType() == EditorDocumentType::Blueprint;
+}
 
 static void PushSceneUndoSnapshot(Scene &scene) {
-  SceneSerializer serializer(scene);
-  std::string snapshot = serializer.SerializeToString();
-  if (snapshot.empty()) {
-    return;
+  (void)scene;
+  if (g_ActiveDocument) {
+    g_ActiveDocument->PushUndoSnapshot();
   }
-  if (g_SceneUndoStack.size() >= kSceneUndoLimit) {
-    g_SceneUndoStack.erase(g_SceneUndoStack.begin());
-  }
-  g_SceneUndoStack.push_back(std::move(snapshot));
 }
 
-static std::optional<std::string> PopSceneUndoSnapshot() {
-  if (g_SceneUndoStack.empty()) {
-    return std::nullopt;
+static void ClearSceneUndoStack() {
+  if (g_ActiveDocument) {
+    g_ActiveDocument->ClearUndo();
   }
-  std::string snapshot = std::move(g_SceneUndoStack.back());
-  g_SceneUndoStack.pop_back();
-  return snapshot;
 }
-
-static void ClearSceneUndoStack() { g_SceneUndoStack.clear(); }
 
 enum class PreferredIDE { SystemDefault = 0, VisualStudio, VisualStudioCode };
 
@@ -368,6 +367,8 @@ struct ToolbarActions {
   bool saveClicked = false;
   bool buildClicked = false;
   bool exportClicked = false;
+  bool addChildClicked = false;
+  bool deleteNodeClicked = false;
 };
 
 #include "UI/EditorSpawnPreset.h"
@@ -453,6 +454,7 @@ static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused,
                                         VulkanSkybox &skybox,
                                         VulkanDevice &vkdev) {
   ToolbarActions actions{};
+  const bool isBlueprintMode = IsBlueprintModeActive();
 
   ImGuiViewport *viewport = ImGui::GetMainViewport();
   const ImGuiStyle &s = ImGui::GetStyle();
@@ -485,6 +487,35 @@ static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused,
 
     ImGui::SameLine();
     ImGui::Dummy(ImVec2(s.ItemSpacing.x, 0.0f));
+    ImGui::SameLine();
+
+    if (ImGui::BeginTabBar("EditorDocuments", ImGuiTabBarFlags_NoCloseWithMiddleMouseButton)) {
+      bool sceneOpen = true;
+      if (ImGui::BeginTabItem("Scene", &sceneOpen)) {
+        if (g_SceneDocument) {
+          g_ActiveDocument = g_SceneDocument.get();
+        }
+        ImGui::EndTabItem();
+      }
+
+      if (g_BlueprintDocument) {
+        bool blueprintOpen = true;
+        if (ImGui::BeginTabItem("Blueprint Mode", &blueprintOpen)) {
+          g_ActiveDocument = g_BlueprintDocument.get();
+          ImGui::EndTabItem();
+        }
+        if (!blueprintOpen) {
+          g_BlueprintDocument->OnClose();
+          g_BlueprintDocument.reset();
+          if (g_SceneDocument) {
+            g_ActiveDocument = g_SceneDocument.get();
+          }
+        }
+      }
+
+      ImGui::EndTabBar();
+    }
+
     ImGui::SameLine();
 
     bool openSettingsPopup = false;
@@ -572,18 +603,36 @@ static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused,
       return clicked;
     };
 
+    if (isBlueprintMode) {
+      ImGui::BeginDisabled();
+    }
     actions.playClicked = drawTransportButton("Play", isPlaying && !isPaused);
     ImGui::SameLine();
     actions.pauseClicked = drawTransportButton("Pause", isPaused);
     ImGui::SameLine();
     actions.stopClicked = drawTransportButton("Stop", isPlaying || isPaused);
+    if (isBlueprintMode) {
+      ImGui::EndDisabled();
+    }
 
     ImGui::SameLine(0.0f, s.ItemSpacing.x * 2.0f);
     actions.saveClicked = drawTransportButton("Save", false);
     ImGui::SameLine();
-    actions.buildClicked = drawTransportButton("Build", false);
-    ImGui::SameLine();
-    actions.exportClicked = drawTransportButton("Export", false);
+    if (isBlueprintMode) {
+      actions.addChildClicked = drawTransportButton("Add Child", false);
+      ImGui::SameLine();
+      actions.deleteNodeClicked = drawTransportButton("Delete Node", false);
+      ImGui::SameLine();
+      ImGui::BeginDisabled();
+      actions.buildClicked = drawTransportButton("Build", false);
+      ImGui::SameLine();
+      actions.exportClicked = drawTransportButton("Export", false);
+      ImGui::EndDisabled();
+    } else {
+      actions.buildClicked = drawTransportButton("Build", false);
+      ImGui::SameLine();
+      actions.exportClicked = drawTransportButton("Export", false);
+    }
 
     float remaining = ImGui::GetContentRegionAvail().x;
     if (remaining > 70.0f) {
@@ -1027,9 +1076,11 @@ static WorldOutlinerActions DrawAddActorsPanel() {
 
 static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
   WorldOutlinerActions actions{};
+  const bool isBlueprintMode = IsBlueprintModeActive();
+  BlueprintDocument* blueprintDoc = g_BlueprintDocument.get();
 
 #if HEPHAESTUS_EDITOR_HTML_UI
-  if (g_HtmlEditorUIHost) {
+  if (g_HtmlEditorUIHost && !isBlueprintMode) {
     g_HtmlEditorUIHost->DrawOutlinerPanel();
     if (auto drop = g_HtmlEditorUIHost->ConsumeOutlinerAssetDropRequest()) {
       actions.spawnMeshAssetRel = drop->first;
@@ -1061,47 +1112,53 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
     filter.Draw("##WorldOutlinerFilter", filterWidth);
     ImGui::SameLine();
     DrawPillButton("Filter", false);
-    ImGui::SameLine();
-    if (ImGui::Button("+##WorldOutlinerAddEntity")) {
-      ImGui::OpenPopup(kAddEntityPopupId);
-    }
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("Add a default primitive or light.");
-    }
-    if (ImGui::BeginPopup(kAddEntityPopupId)) {
-      if (ImGui::MenuItem("Empty Actor")) {
-        actions.spawnRequest = WorldOutlinerSpawnPreset::EmptyEntity;
+    if (!isBlueprintMode) {
+      ImGui::SameLine();
+      if (ImGui::Button("+##WorldOutlinerAddEntity")) {
+        ImGui::OpenPopup(kAddEntityPopupId);
       }
-      if (ImGui::MenuItem("Default Cube")) {
-        actions.spawnRequest = WorldOutlinerSpawnPreset::DefaultCube;
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Add a default primitive or light.");
       }
-      if (ImGui::MenuItem("Default Sphere")) {
-        actions.spawnRequest = WorldOutlinerSpawnPreset::DefaultSphere;
+      if (ImGui::BeginPopup(kAddEntityPopupId)) {
+        if (ImGui::MenuItem("Empty Actor")) {
+          actions.spawnRequest = WorldOutlinerSpawnPreset::EmptyEntity;
+        }
+        if (ImGui::MenuItem("Default Cube")) {
+          actions.spawnRequest = WorldOutlinerSpawnPreset::DefaultCube;
+        }
+        if (ImGui::MenuItem("Default Sphere")) {
+          actions.spawnRequest = WorldOutlinerSpawnPreset::DefaultSphere;
+        }
+        if (ImGui::MenuItem("Directional Light")) {
+          actions.spawnRequest = WorldOutlinerSpawnPreset::DirectionalLight;
+        }
+        if (ImGui::MenuItem("Point Light")) {
+          actions.spawnRequest = WorldOutlinerSpawnPreset::PointLight;
+        }
+        if (ImGui::MenuItem("Spot Light")) {
+          actions.spawnRequest = WorldOutlinerSpawnPreset::SpotLight;
+        }
+        ImGui::EndPopup();
       }
-      if (ImGui::MenuItem("Directional Light")) {
-        actions.spawnRequest = WorldOutlinerSpawnPreset::DirectionalLight;
-      }
-      if (ImGui::MenuItem("Point Light")) {
-        actions.spawnRequest = WorldOutlinerSpawnPreset::PointLight;
-      }
-      if (ImGui::MenuItem("Spot Light")) {
-        actions.spawnRequest = WorldOutlinerSpawnPreset::SpotLight;
-      }
-      ImGui::EndPopup();
     }
 
     ImGui::Spacing();
     ImGui::Separator();
 
-    ImGui::TextDisabled("Scene: %s", scene.GetName().c_str());
-    ImGui::SameLine();
-    if (DrawPillButton("New Level", false)) {
-      s_NewLevelNameBuffer.fill(0);
-      const std::string suggestedName = "New Level";
-      std::strncpy(s_NewLevelNameBuffer.data(), suggestedName.c_str(),
-                   s_NewLevelNameBuffer.size() - 1);
-      s_FocusNewLevelInput = true;
-      ImGui::OpenPopup(kNewLevelPopupId);
+    if (isBlueprintMode && blueprintDoc) {
+      ImGui::TextDisabled("Blueprint: %s", blueprintDoc->GetAsset().name.c_str());
+    } else {
+      ImGui::TextDisabled("Scene: %s", scene.GetName().c_str());
+      ImGui::SameLine();
+      if (DrawPillButton("New Level", false)) {
+        s_NewLevelNameBuffer.fill(0);
+        const std::string suggestedName = "New Level";
+        std::strncpy(s_NewLevelNameBuffer.data(), suggestedName.c_str(),
+                     s_NewLevelNameBuffer.size() - 1);
+        s_FocusNewLevelInput = true;
+        ImGui::OpenPopup(kNewLevelPopupId);
+      }
     }
 
     // Show keyboard shortcuts help
@@ -1183,6 +1240,12 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
       for (auto entityHandle : view) {
         Entity entity(entityHandle, &scene);
         auto &tag = entity.GetComponent<TagComponent>();
+        if (entity.HasComponent<EditorOnlyComponent>()) {
+          continue;
+        }
+        if (isBlueprintMode && !entity.HasComponent<BlueprintNodeComponent>()) {
+          continue;
+        }
         if (!filter.PassFilter(tag.tag.c_str())) {
           continue;
         }
@@ -1211,8 +1274,17 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
         }
 
         if (ImGui::BeginPopupContextItem()) {
-          if (ImGui::MenuItem("Delete", "Shift+Backspace")) {
-            actions.entityToDelete = entityHandle;
+          bool allowDelete = true;
+          if (isBlueprintMode && blueprintDoc && entity.HasComponent<BlueprintNodeComponent>()) {
+            const auto& nodeComp = entity.GetComponent<BlueprintNodeComponent>();
+            if (blueprintDoc->IsRootNode(nodeComp.nodeId)) {
+              allowDelete = false;
+            }
+          }
+          if (allowDelete) {
+            if (ImGui::MenuItem("Delete", "Shift+Backspace")) {
+              actions.entityToDelete = entityHandle;
+            }
           }
           ImGui::EndPopup();
         }
@@ -1244,15 +1316,25 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
            (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) && shiftDown))) {
         Entity selected = scene.GetSelectedEntity();
         if (selected) {
-          actions.entityToDelete = static_cast<entt::entity>(selected);
+          bool allowDelete = true;
+          if (isBlueprintMode && blueprintDoc && selected.HasComponent<BlueprintNodeComponent>()) {
+            const auto& nodeComp = selected.GetComponent<BlueprintNodeComponent>();
+            if (blueprintDoc->IsRootNode(nodeComp.nodeId)) {
+              allowDelete = false;
+            }
+          }
+          if (allowDelete) {
+            actions.entityToDelete = static_cast<entt::entity>(selected);
+          }
         }
       }
 
       const bool duplicateShortcut = ImGui::Shortcut(
           ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_D, shortcutRoute);
-      // Ctrl+Shift+D - Duplicate selected entity
-      if (duplicateShortcut ||
-          (ImGui::IsKeyPressed(ImGuiKey_D, false) && ctrlDown && shiftDown)) {
+      // Ctrl+Shift+D - Duplicate selected entity (scene only)
+      if (!isBlueprintMode &&
+          (duplicateShortcut ||
+           (ImGui::IsKeyPressed(ImGuiKey_D, false) && ctrlDown && shiftDown))) {
         Entity selected = scene.GetSelectedEntity();
         if (selected) {
           PushSceneUndoSnapshot(scene);
@@ -1389,9 +1471,11 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
                                             VulkanSkybox &skybox,
                                             VulkanDevice &vkdev) {
   DetailsPanelActions actions{};
+  const bool isBlueprintMode = IsBlueprintModeActive();
+  BlueprintDocument* blueprintDoc = g_BlueprintDocument.get();
 
 #if HEPHAESTUS_EDITOR_HTML_UI
-  if (g_HtmlEditorUIHost) {
+  if (g_HtmlEditorUIHost && !isBlueprintMode) {
     g_HtmlEditorUIHost->DrawDetailsPanel();
     return actions;
   }
@@ -1412,25 +1496,102 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
     return actions;
   }
 
+  if (selectedEntity.HasComponent<EditorOnlyComponent>()) {
+    ImGui::TextDisabled("Select a blueprint node to view its properties.");
+    ImGui::End();
+    return actions;
+  }
+
+  if (isBlueprintMode && !selectedEntity.HasComponent<BlueprintNodeComponent>()) {
+    ImGui::TextDisabled("Select a blueprint node to view its properties.");
+    ImGui::End();
+    return actions;
+  }
+
   auto &tag = selectedEntity.GetComponent<TagComponent>();
   auto &transform = selectedEntity.GetComponent<TransformComponent>();
 
-  ImGui::Text("%s", tag.tag.c_str());
+  bool entityChanged = false;
+  if (isBlueprintMode) {
+    static entt::entity s_LastEntity = entt::null;
+    static std::array<char, 256> s_NameBuffer{};
+    if (static_cast<entt::entity>(selectedEntity) != s_LastEntity) {
+      s_NameBuffer.fill(0);
+      std::strncpy(s_NameBuffer.data(), tag.tag.c_str(), s_NameBuffer.size() - 1);
+      s_LastEntity = static_cast<entt::entity>(selectedEntity);
+    }
+    if (ImGui::InputText("Name", s_NameBuffer.data(), s_NameBuffer.size())) {
+      tag.tag = s_NameBuffer.data();
+      entityChanged = true;
+    }
+  } else {
+    ImGui::Text("%s", tag.tag.c_str());
+  }
 
   ImGui::SeparatorText("Transform");
   if (DragFloat3XYZ("Position", &transform.position.x, 0.1f)) {
-    // Position changed
+    entityChanged = true;
   }
   Vec3 rotDeg = transform.GetRotationDegrees();
   if (DragFloat3XYZ("Rotation", &rotDeg.x, 1.0f)) {
     transform.SetRotationDegrees(rotDeg);
+    entityChanged = true;
   }
   if (DragFloat3XYZ("Scale", &transform.scale.x, 0.01f, 0.01f, 10.0f)) {
-    // Scale changed
+    entityChanged = true;
+  }
+
+  if (isBlueprintMode && blueprintDoc && selectedEntity.HasComponent<BlueprintNodeComponent>()) {
+    const auto& nodeComp = selectedEntity.GetComponent<BlueprintNodeComponent>();
+    if (!blueprintDoc->IsRootNode(nodeComp.nodeId)) {
+      std::vector<std::string> parentOptions;
+      std::vector<std::string> parentIds;
+      parentOptions.emplace_back("<Root>");
+      parentIds.emplace_back(blueprintDoc->GetAsset().rootNodeId);
+      for (const auto& nodeId : blueprintDoc->GetNodeIds()) {
+        if (nodeId == nodeComp.nodeId) {
+          continue;
+        }
+        parentOptions.push_back(nodeId);
+        parentIds.push_back(nodeId);
+      }
+
+      std::string currentParentId;
+      if (transform.parent != entt::null) {
+        Entity parent(transform.parent, &scene);
+        if (parent && parent.HasComponent<BlueprintNodeComponent>()) {
+          currentParentId = parent.GetComponent<BlueprintNodeComponent>().nodeId;
+        }
+      }
+      if (currentParentId.empty()) {
+        currentParentId = blueprintDoc->GetAsset().rootNodeId;
+      }
+
+      int currentIndex = 0;
+      for (size_t i = 0; i < parentIds.size(); ++i) {
+        if (parentIds[i] == currentParentId) {
+          currentIndex = static_cast<int>(i);
+          break;
+        }
+      }
+
+      std::vector<const char*> optionLabels;
+      optionLabels.reserve(parentOptions.size());
+      for (const auto& label : parentOptions) {
+        optionLabels.push_back(label.c_str());
+      }
+
+      if (ImGui::Combo("Parent", &currentIndex, optionLabels.data(), static_cast<int>(optionLabels.size()))) {
+        blueprintDoc->ReparentNode(nodeComp.nodeId, parentIds[currentIndex]);
+        entityChanged = true;
+      }
+    } else {
+      ImGui::TextDisabled("Root node (parent locked)");
+    }
   }
 
   // Environment Component
-  if (selectedEntity.HasComponent<EnvironmentComponent>()) {
+  if (!isBlueprintMode && selectedEntity.HasComponent<EnvironmentComponent>()) {
     auto &env = selectedEntity.GetComponent<EnvironmentComponent>();
 
     ImGui::SeparatorText("Environment");
@@ -1564,6 +1725,9 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
       ImGui::TextDisabled("Source: None");
     }
     ImGui::Checkbox("Backface Culling", &renderer.backfaceCulling);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      entityChanged = true;
+    }
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("Enable to hide back faces for this mesh. Keep "
                         "disabled for double-sided geometry.");
@@ -1573,6 +1737,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
     if (!hasCollider && ImGui::Button("Add Mesh Collider")) {
       selectedEntity.AddComponent<MeshColliderComponent>();
       hasCollider = true;
+      entityChanged = true;
     }
 
     bool removeCollider = false;
@@ -1580,10 +1745,15 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
       auto &collider = selectedEntity.GetComponent<MeshColliderComponent>();
       ImGui::SeparatorText("Mesh Collider");
       ImGui::Checkbox("Collision Enabled", &collider.enabled);
+      if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
       ImGui::Checkbox("Static Collider", &collider.isStatic);
+      if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
       ImGui::Checkbox("Trigger", &collider.isTrigger);
+      if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
       ImGui::Checkbox("Complex Collision", &collider.useComplexCollision);
+      if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
       ImGui::Checkbox("Debug Draw Bounds", &collider.debugDraw);
+      if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
 
       if (collider.contacts.empty()) {
         ImGui::TextDisabled("Contacts: none this frame.");
@@ -1611,16 +1781,19 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
 
       if (ImGui::Button("Remove Mesh Collider")) {
         removeCollider = true;
+        entityChanged = true;
       }
     }
 
     if (removeCollider) {
       selectedEntity.RemoveComponent<MeshColliderComponent>();
       hasCollider = false;
+      entityChanged = true;
     }
 
     if (ImGui::Button("Remove Mesh Component")) {
       actions.meshToClear = static_cast<entt::entity>(selectedEntity);
+      entityChanged = true;
     }
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(
@@ -1641,6 +1814,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
         hasPhysicsShape = true;
       }
       hasRigidBody = true;
+      entityChanged = true;
     }
   } else {
     auto &rigidBody = selectedEntity.GetComponent<RigidBodyComponent>();
@@ -1657,6 +1831,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
       rigidBody.restitution = 0.0f;
       rigidBody.linearDamping = 0.1f;
       rigidBody.angularDamping = 0.5f;
+      entityChanged = true;
     }
     ImGui::SameLine();
     if (ImGui::Button("Preset: Ground/Env", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
@@ -1669,18 +1844,24 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
       rigidBody.restitution = 0.0f;
       rigidBody.linearDamping = 0.0f;
       rigidBody.angularDamping = 0.0f;
+      entityChanged = true;
     }
     ImGui::Separator();
 
     ImGui::Checkbox("Static Body", &rigidBody.isStatic);
+    if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
     ImGui::Checkbox("Trigger Volume", &rigidBody.isTrigger);
+    if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
     ImGui::Checkbox("Use Gravity", &rigidBody.useGravity);
+    if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
     ImGui::Checkbox("Freeze Rotation", &rigidBody.freezeRotation);
+    if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
 
     if (!rigidBody.isStatic && !rigidBody.isTrigger) {
       if (ImGui::DragFloat("Mass", &rigidBody.mass, 0.1f, 0.01f, 1000.0f,
                            "%.2f kg")) {
         rigidBody.mass = std::max(0.0f, rigidBody.mass);
+        entityChanged = true;
       }
     } else {
       rigidBody.mass = 0.0f;
@@ -1693,22 +1874,31 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
 
     ImGui::DragFloat("Linear Damping", &rigidBody.linearDamping, 0.01f, 0.0f,
                      10.0f);
+    if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
     ImGui::DragFloat("Angular Damping", &rigidBody.angularDamping, 0.01f, 0.0f,
                      10.0f);
+    if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
     ImGui::DragFloat("Friction", &rigidBody.friction, 0.01f, 0.0f, 2.0f);
+    if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
     ImGui::DragFloat("Restitution", &rigidBody.restitution, 0.01f, 0.0f, 1.0f);
+    if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
     ImGui::DragFloat3("Linear Velocity", &rigidBody.linearVelocity.x, 0.1f);
+    if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
     ImGui::DragFloat3("Angular Velocity", &rigidBody.angularVelocity.x, 0.1f);
+    if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
     ImGui::Checkbox("Debug Draw Collider", &rigidBody.debugDraw);
+    if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
 
     bool removeRigidBody = false;
     if (ImGui::Button("Remove Rigid Body")) {
       removeRigidBody = true;
+      entityChanged = true;
     }
 
     if (removeRigidBody) {
       selectedEntity.RemoveComponent<RigidBodyComponent>();
       hasRigidBody = false;
+      entityChanged = true;
     }
   }
 
@@ -1717,6 +1907,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
       auto &shape = selectedEntity.AddComponent<PhysicsShapeComponent>();
       shape = PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f));
       hasPhysicsShape = true;
+      entityChanged = true;
     }
   } else {
     auto &shape = selectedEntity.GetComponent<PhysicsShapeComponent>();
@@ -1746,6 +1937,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
         shape.type = PhysicsShapeType::Box;
         break;
       }
+      entityChanged = true;
     }
 
     if (shape.type == PhysicsShapeType::Box) {
@@ -1754,31 +1946,38 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
         shape.extents.x = std::max(0.01f, shape.extents.x);
         shape.extents.y = std::max(0.01f, shape.extents.y);
         shape.extents.z = std::max(0.01f, shape.extents.z);
+        entityChanged = true;
       }
     } else if (shape.type == PhysicsShapeType::Sphere) {
       if (ImGui::DragFloat("Radius", &shape.radius, 0.01f, 0.01f, 100.0f)) {
         shape.radius = std::max(0.01f, shape.radius);
+        entityChanged = true;
       }
     } else if (shape.type == PhysicsShapeType::Capsule) {
       if (ImGui::DragFloat("Height", &shape.height, 0.01f, 0.01f, 100.0f)) {
         shape.height = std::max(0.01f, shape.height);
+        entityChanged = true;
       }
       if (ImGui::DragFloat("Radius##Capsule", &shape.radius, 0.01f, 0.01f,
                            100.0f)) {
         shape.radius = std::max(0.01f, shape.radius);
+        entityChanged = true;
       }
     }
 
     ImGui::DragFloat3("Offset", &shape.offset.x, 0.01f);
+    if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
 
     bool removeShape = false;
     if (ImGui::Button("Remove Physics Shape")) {
       removeShape = true;
+      entityChanged = true;
     }
 
     if (removeShape) {
       selectedEntity.RemoveComponent<PhysicsShapeComponent>();
       hasPhysicsShape = false;
+      entityChanged = true;
     }
   }
 
@@ -1790,16 +1989,22 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
     int currentType = static_cast<int>(light.type);
     if (ImGui::Combo("Type", &currentType, lightTypes, 3)) {
       light.type = static_cast<LightType>(currentType);
+      entityChanged = true;
     }
 
-    ImGui::ColorEdit3("Color", &light.color.x);
-    ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 10.0f);
+    if (ImGui::ColorEdit3("Color", &light.color.x)) {
+      entityChanged = true;
+    }
+    if (ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 10.0f)) {
+      entityChanged = true;
+    }
 
     if (light.type == LightType::Point || light.type == LightType::Spot) {
       ImGui::SliderFloat("Range", &light.range, 0.1f, 50.0f);
       ImGui::SliderFloat("Constant", &light.constant, 0.0f, 10.0f);
       ImGui::SliderFloat("Linear", &light.linear, 0.0f, 1.0f);
       ImGui::SliderFloat("Quadratic", &light.quadratic, 0.0f, 1.0f);
+      if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
     }
 
     if (light.type == LightType::Directional) {
@@ -1841,6 +2046,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
           transform.rotation.y = yaw;
           // Keep existing roll or set to 0
           transform.rotation.z = 0.0f;
+          entityChanged = true;
         }
       }
       if (ImGui::IsItemHovered()) {
@@ -1854,9 +2060,11 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
       float outerDeg = light.outerConeAngle * 57.2958f;
       if (ImGui::SliderFloat("Inner Angle", &innerDeg, 0.0f, 90.0f)) {
         light.innerConeAngle = innerDeg * 0.0174533f;
+        entityChanged = true;
       }
       if (ImGui::SliderFloat("Outer Angle", &outerDeg, 0.0f, 90.0f)) {
         light.outerConeAngle = outerDeg * 0.0174533f;
+        entityChanged = true;
       }
     }
 
@@ -1865,20 +2073,29 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
       ImGui::Spacing();
       ImGui::SeparatorText("Shadows");
       ImGui::Checkbox("Cast Shadows", &light.castShadows);
+      if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
       if (light.castShadows) {
-        ImGui::SliderFloat("Shadow Bias", &light.shadowBias, 0.0001f, 0.01f, "%.4f");
+        if (ImGui::SliderFloat("Shadow Bias", &light.shadowBias, 0.0001f, 0.01f, "%.4f")) {
+          entityChanged = true;
+        }
         if (ImGui::IsItemHovered()) {
           ImGui::SetTooltip("Offset to prevent shadow acne. Increase if you see striped patterns on surfaces.");
         }
-        ImGui::SliderFloat("Shadow Strength", &light.shadowStrength, 0.0f, 1.0f);
+        if (ImGui::SliderFloat("Shadow Strength", &light.shadowStrength, 0.0f, 1.0f)) {
+          entityChanged = true;
+        }
         if (ImGui::IsItemHovered()) {
           ImGui::SetTooltip("How dark the shadows are. 0 = no shadow, 1 = full black shadow.");
         }
-        ImGui::SliderFloat("Shadow Distance", &light.shadowDistance, 10.0f, 200.0f);
+        if (ImGui::SliderFloat("Shadow Distance", &light.shadowDistance, 10.0f, 200.0f)) {
+          entityChanged = true;
+        }
         if (ImGui::IsItemHovered()) {
           ImGui::SetTooltip("How far shadows are rendered from the camera.");
         }
-        ImGui::SliderFloat("Shadow Extent", &light.shadowExtent, 5.0f, 100.0f);
+        if (ImGui::SliderFloat("Shadow Extent", &light.shadowExtent, 5.0f, 100.0f)) {
+          entityChanged = true;
+        }
         if (ImGui::IsItemHovered()) {
           ImGui::SetTooltip("Size of the shadow area. Increase for larger scenes, decrease for sharper shadows.");
         }
@@ -1906,6 +2123,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
           std::string scriptName = scriptCompPtr->scriptNames[i];
           scriptEngine.DetachScript(selectedEntity, scriptName);
           std::cout << "Removed script: " << scriptName << "\n";
+          entityChanged = true;
           ImGui::PopID();
           break;
         }
@@ -1985,6 +2203,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
               scriptNameBuffer[0] = '\0';
               ClearSelectedScriptAsset();
               std::cout << "RESULT: ATTACH SUCCESSFUL [YES]\n";
+              entityChanged = true;
             } else {
               std::cout << "RESULT: FAILED - CreateScript returned nullptr\n";
             }
@@ -2033,11 +2252,13 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
       ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
                          "[OK] Lua script is attached and active");
       ImGui::Checkbox("Lua Script Enabled##lua", &luaScriptCompPtr->enabled);
+      if (ImGui::IsItemDeactivatedAfterEdit()) entityChanged = true;
       ImGui::Spacing();
       if (ImGui::Button("Remove Lua Script")) {
         luaScriptCompPtr->scriptPath.clear();
         luaScriptCompPtr->enabled = true;
         std::cout << "Removed Lua script from entity\n";
+        entityChanged = true;
       }
     } else {
       ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
@@ -2109,6 +2330,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
           luaScriptPathBuffer[0] = '\0';
           ClearSelectedScriptAsset();
           std::cout << "RESULT: LUA ATTACH SUCCESSFUL [YES]\n";
+          entityChanged = true;
         } else {
           std::cout
               << "RESULT: FAILED - luaScriptCompPtr is null after creation\n";
@@ -2125,6 +2347,10 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
           "script selected in the Asset Browser.");
     }
 
+
+  if (isBlueprintMode && entityChanged && blueprintDoc) {
+    blueprintDoc->SyncNodeFromEntity(selectedEntity);
+  }
     if (!g_ScriptAttachmentMessage.empty() &&
         g_ScriptAttachmentMessageTimer > 0.0f) {
       ImGui::Spacing();
@@ -3212,6 +3438,9 @@ Entity FindClosestHitEntity(const Ray &ray, Scene &scene, float &outDistance) {
       scene.GetEntitiesWith<TransformComponent, MeshRendererComponent>();
   for (auto entityHandle : view) {
     Entity entity(entityHandle, &scene);
+    if (entity.HasComponent<EditorOnlyComponent>()) {
+      continue;
+    }
     auto &transform = entity.GetComponent<TransformComponent>();
     auto &renderer = entity.GetComponent<MeshRendererComponent>();
 
@@ -3238,6 +3467,9 @@ Entity FindClosestHitEntity(const Ray &ray, Scene &scene, float &outDistance) {
   auto lightView = scene.GetEntitiesWith<TransformComponent, LightComponent>();
   for (auto entityHandle : lightView) {
     Entity entity(entityHandle, &scene);
+    if (entity.HasComponent<EditorOnlyComponent>()) {
+      continue;
+    }
     auto &transform = entity.GetComponent<TransformComponent>();
     auto &light = entity.GetComponent<LightComponent>();
 
@@ -3599,6 +3831,7 @@ struct AssetBrowserResult {
   std::optional<std::filesystem::path> sceneOpenRequest;
   std::optional<std::filesystem::path> materialOpenRequest;
   std::optional<std::filesystem::path> materialCreateRequest;
+  std::optional<std::filesystem::path> blueprintOpenRequest;
 };
 
 struct AssetExtensionDescriptor {
@@ -4777,18 +5010,25 @@ end
         std::string blueprintId = idStream.str();
 
         // Blueprint content template with a simple default node
+        std::string rootNodeId = std::string("node_") + blueprintId;
         std::ostringstream blueprintContent;
         blueprintContent << "{\n";
         blueprintContent << "  \"schema\": \"HephaestusBlueprint\",\n";
-        blueprintContent << "  \"version\": 1,\n";
-        blueprintContent << "  \"assetId\": \"" << blueprintId << "\",\n";
+        blueprintContent << "  \"assetVersion\": 1,\n";
+        blueprintContent << "  \"guid\": \"" << blueprintId << "\",\n";
         blueprintContent << "  \"name\": \"" << sanitized << "\",\n";
+        blueprintContent << "  \"rootNodeId\": \"" << rootNodeId << "\",\n";
         blueprintContent << "  \"nodes\": [\n";
         blueprintContent << "    {\n";
-        blueprintContent << "      \"id\": \"node_root\",\n";
+        blueprintContent << "      \"id\": \"" << rootNodeId << "\",\n";
         blueprintContent << "      \"name\": \"" << sanitized << "\",\n";
         blueprintContent << "      \"parentId\": null,\n";
-        blueprintContent << "      \"components\": {},\n";
+        blueprintContent << "      \"transform\": {\n";
+        blueprintContent << "        \"position\": [0, 0, 0],\n";
+        blueprintContent << "        \"rotation\": [0, 0, 0],\n";
+        blueprintContent << "        \"scale\": [1, 1, 1]\n";
+        blueprintContent << "      },\n";
+        blueprintContent << "      \"components\": [],\n";
         blueprintContent << "      \"exposed\": []\n";
         blueprintContent << "    }\n";
         blueprintContent << "  ]\n";
@@ -5098,6 +5338,9 @@ end
               statusMessage.clear();
             } else if (IsMaterialFile(entry.path)) {
               result.materialOpenRequest = clamped;
+              statusMessage.clear();
+            } else if (IsBlueprintFile(entry.path)) {
+              result.blueprintOpenRequest = clamped;
               statusMessage.clear();
             } else if (IsScriptFile(entry.path)) {
               OpenFileInPreferredIDE(clamped);
@@ -6288,6 +6531,11 @@ int main(int argc, char *argv[]) {
   // ── Scene & Entities (ECS) ───────────────────
   Scene scene("Main Scene");
 
+  if (!g_SceneDocument) {
+    g_SceneDocument = std::make_unique<SceneDocument>(&scene);
+    g_ActiveDocument = g_SceneDocument.get();
+  }
+
   // Create environment entity for scene settings
   Entity environmentEntity = scene.CreateEntity("Environment");
   environmentEntity.AddComponent<EnvironmentComponent>();
@@ -7022,24 +7270,42 @@ int main(int argc, char *argv[]) {
     return newEnvEntity;
   };
 
-  auto performSceneUndo = [&](Scene &targetScene) -> bool {
-    auto snapshot = PopSceneUndoSnapshot();
-    if (!snapshot) {
-      assetBrowserStatus = "Nothing to undo.";
-      return false;
-    }
-    if (SceneSerializer::DeserializeFromString(targetScene, *snapshot)) {
+  if (g_SceneDocument) {
+    g_SceneDocument->SetProjectRoot(ResolveActiveProjectRoot());
+    g_SceneDocument->SetPostLoadCallback([&](Scene &targetScene) {
       rebuildSceneMeshesFromComponents(targetScene);
+      hydrateScriptsFromComponents(targetScene);
+      hydrateEnvironmentFromComponents(targetScene);
+      environmentEntity = findOrCreateEnvironmentEntity(targetScene);
+    });
+    g_SceneDocument->SetPostUndoCallback([&](Scene &targetScene) {
+      rebuildSceneMeshesFromComponents(targetScene);
+      hydrateScriptsFromComponents(targetScene);
       hydrateEnvironmentFromComponents(targetScene);
       environmentEntity = findOrCreateEnvironmentEntity(targetScene);
       targetScene.ClearSelection();
-      assetBrowserStatus = "Undo: Restored previous scene state.";
-      std::cout << assetBrowserStatus << std::endl;
-      return true;
+    });
+  }
+
+  auto performSceneUndo = [&](Scene &targetScene) -> bool {
+    (void)targetScene;
+    if (!g_ActiveDocument) {
+      assetBrowserStatus = "Nothing to undo.";
+      return false;
     }
-    assetBrowserStatus = "Undo failed: unable to restore scene.";
-    std::cerr << assetBrowserStatus << std::endl;
-    return false;
+    std::string error;
+    if (!g_ActiveDocument->Undo(error)) {
+      assetBrowserStatus = error.empty() ? "Undo failed." : error;
+      std::cerr << assetBrowserStatus << std::endl;
+      return false;
+    }
+    if (IsBlueprintModeActive()) {
+      assetBrowserStatus = "Undo: Restored previous blueprint state.";
+    } else {
+      assetBrowserStatus = "Undo: Restored previous scene state.";
+    }
+    std::cout << assetBrowserStatus << std::endl;
+    return true;
   };
 
   // ── Billboard System for Light Visualization (Resources)
@@ -8048,80 +8314,243 @@ int main(int argc, char *argv[]) {
             assetBrowserStatus = message;
             std::cout << assetBrowserStatus << std::endl;
           };
+          BlueprintDocument* blueprintDoc = g_BlueprintDocument.get();
+          const bool hasBlueprintOpen = (blueprintDoc != nullptr);
+          const auto getBlueprintParentId = [&]() -> std::string {
+            if (!blueprintDoc) {
+              return {};
+            }
+            std::string parentId = blueprintDoc->GetAsset().rootNodeId;
+            Entity selected = scene.GetSelectedEntity();
+            if (selected && selected.HasComponent<BlueprintNodeComponent>()) {
+              parentId = selected.GetComponent<BlueprintNodeComponent>().nodeId;
+            }
+            return parentId;
+          };
+          const auto createBlueprintNode = [&](const std::string& name, Entity& outEntity) -> bool {
+            if (!blueprintDoc) {
+              return false;
+            }
+            std::string parentId = getBlueprintParentId();
+            if (!blueprintDoc->AddChildNode(parentId, name, &outEntity)) {
+              return false;
+            }
+            return true;
+          };
 
           switch (*outlinerActions.spawnRequest) {
           case WorldOutlinerSpawnPreset::EmptyEntity: {
-            PushSceneUndoSnapshot(scene);
-            Entity created = scene.CreateEntity("Empty Actor");
-            if (created) {
-              if (!g_DetailsLocked) {
-                scene.SetSelectedEntity(created);
+            if (hasBlueprintOpen) {
+              blueprintDoc->PushUndoSnapshot();
+              Entity created;
+              if (createBlueprintNode("Empty Actor", created)) {
+                blueprintDoc->SyncNodeFromEntity(created);
+                rebuildSceneMeshesFromComponents(scene);
+                if (!g_DetailsLocked) {
+                  scene.SetSelectedEntity(created);
+                }
+                logSuccess("Added empty actor to blueprint.");
+              } else {
+                logFailure("Failed to add empty actor.");
               }
-              logSuccess("Added empty actor to scene.");
             } else {
-              logFailure("Failed to add empty actor.");
+              PushSceneUndoSnapshot(scene);
+              Entity created = scene.CreateEntity("Empty Actor");
+              if (created) {
+                if (!g_DetailsLocked) {
+                  scene.SetSelectedEntity(created);
+                }
+                logSuccess("Added empty actor to scene.");
+              } else {
+                logFailure("Failed to add empty actor.");
+              }
             }
             break;
           }
           case WorldOutlinerSpawnPreset::Camera: {
-            PushSceneUndoSnapshot(scene);
-            Entity created = scene.CreateEntity("Camera");
-            if (created) {
-              created.AddComponent<CameraComponent>();
-              auto &transform = created.GetComponent<TransformComponent>();
-              transform.position = Vec3(0.0f, 1.5f, 3.0f);
-              if (!g_DetailsLocked) {
-                scene.SetSelectedEntity(created);
+            if (hasBlueprintOpen) {
+              blueprintDoc->PushUndoSnapshot();
+              Entity created;
+              if (createBlueprintNode("Camera", created)) {
+                created.AddComponent<CameraComponent>();
+                auto &transform = created.GetComponent<TransformComponent>();
+                transform.position = Vec3(0.0f, 1.5f, 3.0f);
+                blueprintDoc->SyncNodeFromEntity(created);
+                rebuildSceneMeshesFromComponents(scene);
+                if (!g_DetailsLocked) {
+                  scene.SetSelectedEntity(created);
+                }
+                logSuccess("Added camera to blueprint.");
+              } else {
+                logFailure("Failed to add camera.");
               }
-              logSuccess("Added camera to scene.");
             } else {
-              logFailure("Failed to add camera.");
+              PushSceneUndoSnapshot(scene);
+              Entity created = scene.CreateEntity("Camera");
+              if (created) {
+                created.AddComponent<CameraComponent>();
+                auto &transform = created.GetComponent<TransformComponent>();
+                transform.position = Vec3(0.0f, 1.5f, 3.0f);
+                if (!g_DetailsLocked) {
+                  scene.SetSelectedEntity(created);
+                }
+                logSuccess("Added camera to scene.");
+              } else {
+                logFailure("Failed to add camera.");
+              }
             }
             break;
           }
           case WorldOutlinerSpawnPreset::DefaultCube: {
-            Entity created = spawnPrimitiveFromMesh("Cube", "builtin://cube");
-            if (created) {
-              logSuccess("Added default cube to scene.");
+            if (hasBlueprintOpen) {
+              blueprintDoc->PushUndoSnapshot();
+              Entity created;
+              std::optional<size_t> handle = meshHandleFromKey("builtin://cube");
+              if (!handle) {
+                logFailure("Failed to add cube: built-in mesh missing.");
+                break;
+              }
+              if (createBlueprintNode("Cube", created)) {
+                const MeshGPU &mesh = meshLibrary[*handle];
+                auto &renderer = created.AddComponent<MeshRendererComponent>();
+                renderer.SetMesh(*handle, mesh.bounds, mesh.sourceKey, mesh.imported);
+                created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
+                blueprintDoc->SyncNodeFromEntity(created);
+                rebuildSceneMeshesFromComponents(scene);
+                if (!g_DetailsLocked) {
+                  scene.SetSelectedEntity(created);
+                }
+                logSuccess("Added default cube to blueprint.");
+              } else {
+                logFailure("Failed to add cube.");
+              }
             } else {
-              logFailure("Failed to add cube: built-in mesh missing.");
+              Entity created = spawnPrimitiveFromMesh("Cube", "builtin://cube");
+              if (created) {
+                logSuccess("Added default cube to scene.");
+              } else {
+                logFailure("Failed to add cube: built-in mesh missing.");
+              }
             }
             break;
           }
           case WorldOutlinerSpawnPreset::DefaultSphere: {
-            Entity created =
-                spawnPrimitiveFromMesh("Sphere", "builtin://sphere");
-            if (created) {
-              logSuccess("Added default sphere to scene.");
+            if (hasBlueprintOpen) {
+              blueprintDoc->PushUndoSnapshot();
+              Entity created;
+              std::optional<size_t> handle = meshHandleFromKey("builtin://sphere");
+              if (!handle) {
+                logFailure("Failed to add sphere: built-in mesh missing.");
+                break;
+              }
+              if (createBlueprintNode("Sphere", created)) {
+                const MeshGPU &mesh = meshLibrary[*handle];
+                auto &renderer = created.AddComponent<MeshRendererComponent>();
+                renderer.SetMesh(*handle, mesh.bounds, mesh.sourceKey, mesh.imported);
+                created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
+                blueprintDoc->SyncNodeFromEntity(created);
+                rebuildSceneMeshesFromComponents(scene);
+                if (!g_DetailsLocked) {
+                  scene.SetSelectedEntity(created);
+                }
+                logSuccess("Added default sphere to blueprint.");
+              } else {
+                logFailure("Failed to add sphere.");
+              }
             } else {
-              logFailure("Failed to add sphere: built-in mesh missing.");
+              Entity created =
+                  spawnPrimitiveFromMesh("Sphere", "builtin://sphere");
+              if (created) {
+                logSuccess("Added default sphere to scene.");
+              } else {
+                logFailure("Failed to add sphere: built-in mesh missing.");
+              }
             }
             break;
           }
           case WorldOutlinerSpawnPreset::DirectionalLight: {
-            Entity created = spawnDirectionalLightEntity();
-            if (created) {
-              logSuccess("Added directional light to scene.");
+            if (hasBlueprintOpen) {
+              blueprintDoc->PushUndoSnapshot();
+              Entity created;
+              if (createBlueprintNode("Directional Light", created)) {
+                created.AddComponent<LightComponent>(LightComponent::CreateDirectional(
+                    Vec3(0.0f, -1.0f, 0.0f), Vec3(1.0f, 0.95f, 0.9f), 1.0f));
+                auto &transform = created.GetComponent<TransformComponent>();
+                transform.position = Vec3(0.0f, 3.0f, 0.0f);
+                transform.rotation = Vec3(0.524f, 0.262f, 0.0f);
+                blueprintDoc->SyncNodeFromEntity(created);
+                rebuildSceneMeshesFromComponents(scene);
+                if (!g_DetailsLocked) {
+                  scene.SetSelectedEntity(created);
+                }
+                logSuccess("Added directional light to blueprint.");
+              } else {
+                logFailure("Failed to add directional light.");
+              }
             } else {
-              logFailure("Failed to add directional light.");
+              Entity created = spawnDirectionalLightEntity();
+              if (created) {
+                logSuccess("Added directional light to scene.");
+              } else {
+                logFailure("Failed to add directional light.");
+              }
             }
             break;
           }
           case WorldOutlinerSpawnPreset::PointLight: {
-            Entity created = spawnPointLightEntity();
-            if (created) {
-              logSuccess("Added point light to scene.");
+            if (hasBlueprintOpen) {
+              blueprintDoc->PushUndoSnapshot();
+              Entity created;
+              if (createBlueprintNode("Point Light", created)) {
+                created.AddComponent<LightComponent>(
+                    LightComponent::CreatePoint(Vec3(1.0f, 1.0f, 1.0f), 5.0f, 10.0f));
+                auto &transform = created.GetComponent<TransformComponent>();
+                transform.position = Vec3(0.0f, 2.0f, 0.0f);
+                blueprintDoc->SyncNodeFromEntity(created);
+                rebuildSceneMeshesFromComponents(scene);
+                if (!g_DetailsLocked) {
+                  scene.SetSelectedEntity(created);
+                }
+                logSuccess("Added point light to blueprint.");
+              } else {
+                logFailure("Failed to add point light.");
+              }
             } else {
-              logFailure("Failed to add point light.");
+              Entity created = spawnPointLightEntity();
+              if (created) {
+                logSuccess("Added point light to scene.");
+              } else {
+                logFailure("Failed to add point light.");
+              }
             }
             break;
           }
           case WorldOutlinerSpawnPreset::SpotLight: {
-            Entity created = spawnSpotLightEntity();
-            if (created) {
-              logSuccess("Added spot light to scene.");
+            if (hasBlueprintOpen) {
+              blueprintDoc->PushUndoSnapshot();
+              Entity created;
+              if (createBlueprintNode("Spot Light", created)) {
+                created.AddComponent<LightComponent>(LightComponent::CreateSpot(
+                    Vec3(1.0f, 1.0f, 1.0f), 5.0f, 10.0f, 0.785f, 0.959f));
+                auto &transform = created.GetComponent<TransformComponent>();
+                transform.position = Vec3(0.0f, 3.0f, 0.0f);
+                transform.rotation = Vec3(0.524f, 0.0f, 0.0f);
+                blueprintDoc->SyncNodeFromEntity(created);
+                rebuildSceneMeshesFromComponents(scene);
+                if (!g_DetailsLocked) {
+                  scene.SetSelectedEntity(created);
+                }
+                logSuccess("Added spot light to blueprint.");
+              } else {
+                logFailure("Failed to add spot light.");
+              }
             } else {
-              logFailure("Failed to add spot light.");
+              Entity created = spawnSpotLightEntity();
+              if (created) {
+                logSuccess("Added spot light to scene.");
+              } else {
+                logFailure("Failed to add spot light.");
+              }
             }
             break;
           }
@@ -8137,39 +8566,103 @@ int main(int argc, char *argv[]) {
             assetBrowserStatus = message;
             std::cout << assetBrowserStatus << std::endl;
           };
-
-          PushSceneUndoSnapshot(scene);
-          const std::filesystem::path rel = std::filesystem::path(*outlinerActions.spawnMeshAssetRel);
-          std::string baseName = rel.stem().string();
-          if (baseName.empty()) {
-            baseName = "Mesh";
-          }
-          Entity created = scene.CreateEntity(makeUniqueEntityName(baseName));
-          if (!created) {
-            logFailure("Failed to create mesh actor.");
+          BlueprintDocument* blueprintDoc = g_BlueprintDocument.get();
+          const bool hasBlueprintOpen = (blueprintDoc != nullptr);
+          if (!hasBlueprintOpen) {
+            PushSceneUndoSnapshot(scene);
           } else {
-            auto &renderer = created.AddComponent<MeshRendererComponent>();
-            renderer.meshAssetPath = rel.generic_string();
-            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
-            renderer.meshImported = false;
-            created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
-
-            if (outlinerActions.spawnMeshParent) {
-              entt::entity parentHandle = *outlinerActions.spawnMeshParent;
-              if (scene.GetRegistry().valid(parentHandle)) {
-                Entity parent(parentHandle, &scene);
-                if (parent && parent.HasComponent<FolderComponent>()) {
-                  scene.SetParent(created, parent);
+            blueprintDoc->PushUndoSnapshot();
+          }
+          const std::filesystem::path rel = std::filesystem::path(*outlinerActions.spawnMeshAssetRel);
+          if (IsBlueprintFile(rel)) {
+            if (hasBlueprintOpen) {
+              logFailure("Cannot instantiate a blueprint inside blueprint editing.");
+            } else {
+              fs::path projectRoot = ResolveActiveProjectRoot();
+              fs::path absPath = projectRoot.empty() ? rel : (projectRoot / rel).lexically_normal();
+              BlueprintAsset asset;
+              std::string loadError;
+              if (!BlueprintSerializer::Deserialize(asset, absPath, loadError)) {
+                logFailure("Failed to load blueprint: " + loadError);
+              } else {
+                BlueprintInstantiateOptions options;
+                options.blueprintPath = rel.generic_string();
+                if (outlinerActions.spawnMeshParent && scene.GetRegistry().valid(*outlinerActions.spawnMeshParent)) {
+                  options.parent = *outlinerActions.spawnMeshParent;
+                }
+                Entity root = BlueprintInstantiator::Instantiate(scene, asset, options);
+                if (root) {
+                  rebuildSceneMeshesFromComponents(scene);
+                  if (!g_DetailsLocked) {
+                    scene.SetSelectedEntity(root);
+                  }
+                  logSuccess("Instantiated blueprint: " + rel.filename().string());
+                } else {
+                  logFailure("Failed to instantiate blueprint.");
                 }
               }
             }
-
-            rebuildSceneMeshesFromComponents(scene);
-
-            if (!g_DetailsLocked) {
-              scene.SetSelectedEntity(created);
+          } else {
+            std::string baseName = rel.stem().string();
+            if (baseName.empty()) {
+              baseName = "Mesh";
             }
-            logSuccess("Added mesh actor: " + rel.filename().string());
+
+            if (hasBlueprintOpen) {
+              std::string parentId = blueprintDoc->GetAsset().rootNodeId;
+              if (outlinerActions.spawnMeshParent && scene.GetRegistry().valid(*outlinerActions.spawnMeshParent)) {
+                Entity parent(*outlinerActions.spawnMeshParent, &scene);
+                if (parent && parent.HasComponent<BlueprintNodeComponent>()) {
+                  parentId = parent.GetComponent<BlueprintNodeComponent>().nodeId;
+                }
+              }
+              Entity created;
+              if (blueprintDoc->AddChildNode(parentId, baseName, &created)) {
+                auto &renderer = created.AddComponent<MeshRendererComponent>();
+                renderer.meshAssetPath = rel.generic_string();
+                renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+                renderer.meshImported = false;
+                created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
+
+                blueprintDoc->SyncNodeFromEntity(created);
+                rebuildSceneMeshesFromComponents(scene);
+
+                if (!g_DetailsLocked) {
+                  scene.SetSelectedEntity(created);
+                }
+                logSuccess("Added mesh actor to blueprint: " + rel.filename().string());
+              } else {
+                logFailure("Failed to create mesh actor.");
+              }
+            } else {
+              Entity created = scene.CreateEntity(makeUniqueEntityName(baseName));
+              if (!created) {
+                logFailure("Failed to create mesh actor.");
+              } else {
+                auto &renderer = created.AddComponent<MeshRendererComponent>();
+                renderer.meshAssetPath = rel.generic_string();
+                renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+                renderer.meshImported = false;
+                created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
+
+                if (outlinerActions.spawnMeshParent) {
+                  entt::entity parentHandle = *outlinerActions.spawnMeshParent;
+                  if (scene.GetRegistry().valid(parentHandle)) {
+                    Entity parent(parentHandle, &scene);
+                    if (parent && parent.HasComponent<FolderComponent>()) {
+                      scene.SetParent(created, parent);
+                    }
+                  }
+                }
+
+                rebuildSceneMeshesFromComponents(scene);
+
+                if (!g_DetailsLocked) {
+                  scene.SetSelectedEntity(created);
+                }
+                logSuccess("Added mesh actor: " + rel.filename().string());
+              }
+            }
           }
         }
         DetailsPanelActions detailsActions =
@@ -8285,40 +8778,61 @@ int main(int argc, char *argv[]) {
         enqueueDeletion(viewportDeleteRequest);
 
         if (!entityDeletionQueue.empty()) {
-          PushSceneUndoSnapshot(scene);
-          if (gizmoDragging) {
-            gizmoDragging = false;
-            gizmoActiveAxis = -1;
-            vulkanGizmo.EndDrag();
-          }
-          vulkanGizmo.SetHoveredAxis(-1);
-
-          for (entt::entity handle : entityDeletionQueue) {
-            if (!scene.GetRegistry().valid(handle)) {
-              continue;
+          if (IsBlueprintModeActive() && g_BlueprintDocument) {
+            PushSceneUndoSnapshot(scene);
+            for (entt::entity handle : entityDeletionQueue) {
+              if (!scene.GetRegistry().valid(handle)) {
+                continue;
+              }
+              Entity toDelete(handle, &scene);
+              if (!toDelete.HasComponent<BlueprintNodeComponent>()) {
+                continue;
+              }
+              const auto& nodeComp = toDelete.GetComponent<BlueprintNodeComponent>();
+              if (g_BlueprintDocument->IsRootNode(nodeComp.nodeId)) {
+                continue;
+              }
+              if (g_BlueprintDocument->DeleteNode(nodeComp.nodeId)) {
+                assetBrowserStatus = "Deleted blueprint node.";
+                std::cout << assetBrowserStatus << std::endl;
+              }
             }
-
-            Entity toDelete(handle, &scene);
-            std::string entityName =
-                toDelete.HasComponent<TagComponent>()
-                    ? toDelete.GetComponent<TagComponent>().tag
-                    : std::string("Entity");
-
-            bool wasSelected = false;
-            if (Entity selected = scene.GetSelectedEntity()) {
-              wasSelected = static_cast<entt::entity>(selected) == handle;
+          } else {
+            PushSceneUndoSnapshot(scene);
+            if (gizmoDragging) {
+              gizmoDragging = false;
+              gizmoActiveAxis = -1;
+              vulkanGizmo.EndDrag();
             }
+            vulkanGizmo.SetHoveredAxis(-1);
 
-            if (g_LuaScriptEnginePtr) {
-              g_LuaScriptEnginePtr->OnEntityDestroyed(toDelete);
-            }
-            scene.DestroyEntity(toDelete);
-            if (wasSelected) {
-              scene.ClearSelection();
-            }
+            for (entt::entity handle : entityDeletionQueue) {
+              if (!scene.GetRegistry().valid(handle)) {
+                continue;
+              }
 
-            assetBrowserStatus = "Deleted '" + entityName + "' from scene.";
-            std::cout << assetBrowserStatus << std::endl;
+              Entity toDelete(handle, &scene);
+              std::string entityName =
+                  toDelete.HasComponent<TagComponent>()
+                      ? toDelete.GetComponent<TagComponent>().tag
+                      : std::string("Entity");
+
+              bool wasSelected = false;
+              if (Entity selected = scene.GetSelectedEntity()) {
+                wasSelected = static_cast<entt::entity>(selected) == handle;
+              }
+
+              if (g_LuaScriptEnginePtr) {
+                g_LuaScriptEnginePtr->OnEntityDestroyed(toDelete);
+              }
+              scene.DestroyEntity(toDelete);
+              if (wasSelected) {
+                scene.ClearSelection();
+              }
+
+              assetBrowserStatus = "Deleted '" + entityName + "' from scene.";
+              std::cout << assetBrowserStatus << std::endl;
+            }
           }
         }
 
@@ -8343,6 +8857,10 @@ int main(int argc, char *argv[]) {
                 target.RemoveComponent<MeshColliderComponent>();
               }
 
+              if (IsBlueprintModeActive() && g_BlueprintDocument) {
+                g_BlueprintDocument->SyncNodeFromEntity(target);
+              }
+
               assetBrowserStatus =
                   "Removed mesh component from '" + entityName + "'.";
               std::cout << assetBrowserStatus << std::endl;
@@ -8363,10 +8881,7 @@ int main(int argc, char *argv[]) {
           } else if (IsMaterialFile(openedPath)) {
             browserResult.materialOpenRequest = openedPath;
           } else if (IsBlueprintFile(openedPath)) {
-            if (g_HtmlEditorUIHost) {
-              g_HtmlEditorUIHost->OpenBlueprintEditor(openedPath);
-              assetBrowserStatus = "Opened blueprint: " + openedPath.filename().string() + ".";
-            }
+            browserResult.blueprintOpenRequest = openedPath;
           } else if (IsScriptFile(openedPath)) {
             OpenFileInPreferredIDE(openedPath);
             assetBrowserStatus = "Opening '" + openedPath.filename().string() +
@@ -8410,6 +8925,25 @@ int main(int argc, char *argv[]) {
             std::cerr << assetBrowserStatus << std::endl;
           }
         }
+        if (browserResult.blueprintOpenRequest) {
+          std::string loadError;
+          if (!g_BlueprintDocument) {
+            g_BlueprintDocument = std::make_unique<BlueprintDocument>(&scene);
+            g_BlueprintDocument->SetPostRebuildCallback([&](Scene& targetScene) {
+              rebuildSceneMeshesFromComponents(targetScene);
+              hydrateScriptsFromComponents(targetScene);
+              hydrateEnvironmentFromComponents(targetScene);
+            });
+          }
+          if (g_BlueprintDocument->OnOpen(*browserResult.blueprintOpenRequest, loadError)) {
+            g_ActiveDocument = g_BlueprintDocument.get();
+            assetBrowserStatus = "Opened blueprint in Blueprint Mode: " + browserResult.blueprintOpenRequest->filename().string() + ".";
+            std::cout << assetBrowserStatus << std::endl;
+          } else {
+            assetBrowserStatus = "Blueprint open failed: " + loadError;
+            std::cerr << assetBrowserStatus << std::endl;
+          }
+        }
         if (browserResult.materialCreateRequest) {
           ActivateMaterialAsset(*browserResult.materialCreateRequest,
                                 assetBrowserStatus);
@@ -8420,17 +8954,43 @@ int main(int argc, char *argv[]) {
         }
         DrawLogConsole(io, assetBrowserStatus);
         
-        // Draw Blueprint Editor panel only if there are open blueprints
-#if HEPHAESTUS_EDITOR_HTML_UI
-        if (g_HtmlEditorUIHost && g_HtmlEditorUIHost->HasOpenBlueprints()) {
-          g_HtmlEditorUIHost->DrawBlueprintEditorPanel();
-        }
-#endif
-
         // Overlays should be rendered last so they appear above docked windows
         ToolbarActions toolbarActions = DrawEditorToolbar(
             g_SimPlaying, g_SimPaused, environmentEntity, skybox, vkdev);
-        if (toolbarActions.playClicked) {
+        const bool blueprintMode = IsBlueprintModeActive();
+
+        if (toolbarActions.addChildClicked && blueprintMode && g_BlueprintDocument) {
+          std::string parentId = g_BlueprintDocument->GetAsset().rootNodeId;
+          Entity selected = scene.GetSelectedEntity();
+          if (selected && selected.HasComponent<BlueprintNodeComponent>()) {
+            parentId = selected.GetComponent<BlueprintNodeComponent>().nodeId;
+          }
+          PushSceneUndoSnapshot(scene);
+          Entity created;
+          if (g_BlueprintDocument->AddChildNode(parentId, "New Node", &created)) {
+            if (!g_DetailsLocked && created) {
+              scene.SetSelectedEntity(created);
+            }
+            assetBrowserStatus = "Added blueprint child node.";
+            std::cout << assetBrowserStatus << std::endl;
+          }
+        }
+
+        if (toolbarActions.deleteNodeClicked && blueprintMode && g_BlueprintDocument) {
+          Entity selected = scene.GetSelectedEntity();
+          if (selected && selected.HasComponent<BlueprintNodeComponent>()) {
+            const auto& nodeComp = selected.GetComponent<BlueprintNodeComponent>();
+            if (!g_BlueprintDocument->IsRootNode(nodeComp.nodeId)) {
+              PushSceneUndoSnapshot(scene);
+              if (g_BlueprintDocument->DeleteNode(nodeComp.nodeId)) {
+                assetBrowserStatus = "Deleted blueprint node.";
+                std::cout << assetBrowserStatus << std::endl;
+              }
+            }
+          }
+        }
+
+        if (toolbarActions.playClicked && !blueprintMode) {
           // Save scene state before entering play mode
           SceneSerializer serializer(scene);
           g_SceneSnapshotBeforePlay = serializer.SerializeToString();
@@ -8447,7 +9007,7 @@ int main(int argc, char *argv[]) {
                                "Right Mouse Button to look.";
           std::cout << assetBrowserStatus << std::endl;
         }
-        if (toolbarActions.pauseClicked && g_SimPlaying) {
+        if (toolbarActions.pauseClicked && g_SimPlaying && !blueprintMode) {
           g_SimPaused = !g_SimPaused;
           if (g_SimPaused) {
             assetBrowserStatus =
@@ -8457,7 +9017,7 @@ int main(int argc, char *argv[]) {
           }
           std::cout << assetBrowserStatus << std::endl;
         }
-        if (toolbarActions.stopClicked) {
+        if (toolbarActions.stopClicked && !blueprintMode) {
           if (g_SimPlaying || g_SimPaused) {
             if (g_LuaScriptEnginePtr) {
               g_LuaScriptEnginePtr->OnSimulationStopped();
@@ -8507,43 +9067,67 @@ int main(int argc, char *argv[]) {
         if (toolbarActions.saveClicked) {
           namespace fs = std::filesystem;
 
-          fs::path projectRoot = ResolveActiveProjectRoot();
-          if (projectRoot.empty()) {
-            assetBrowserStatus = "Scene save failed: no active project.";
-          } else {
-            fs::path scenesDir =
-                (projectRoot / "assets" / "scenes").lexically_normal();
-            std::error_code dirErr;
-            fs::create_directories(scenesDir, dirErr);
-            if (dirErr) {
-              assetBrowserStatus =
-                  "Scene save failed: unable to create scenes directory (" +
-                  dirErr.message() + ").";
-              std::cerr << assetBrowserStatus << std::endl;
-            } else {
-              std::string fileStem = SanitizeSceneFilename(scene.GetName());
-              fs::path scenePath = scenesDir / (fileStem + ".hpscene");
+          bool savedBlueprint = false;
+          bool savedScene = false;
 
-              SceneSerializer serializer(scene);
-              std::string error;
-              if (serializer.Serialize(scenePath, error)) {
-                fs::path relative = scenePath.lexically_relative(projectRoot);
-                std::string friendly =
-                    relative.empty() ? scenePath.filename().generic_string()
-                                     : relative.generic_string();
-                assetBrowserStatus = "Scene saved to " + friendly + ".";
-                std::cout << assetBrowserStatus << std::endl;
-              } else {
-                assetBrowserStatus = "Scene save failed: " + error;
+          if (g_BlueprintDocument && (blueprintMode || g_BlueprintDocument->IsDirty())) {
+            std::string error;
+            if (g_BlueprintDocument->OnSave(error)) {
+              savedBlueprint = true;
+              fs::path friendly = g_BlueprintDocument->GetPath().filename();
+              assetBrowserStatus = "Blueprint saved to " + friendly.generic_string() + ".";
+              std::cout << assetBrowserStatus << std::endl;
+            } else {
+              assetBrowserStatus = "Blueprint save failed: " + error;
+              std::cerr << assetBrowserStatus << std::endl;
+            }
+          }
+
+          if (!blueprintMode) {
+            fs::path projectRoot = ResolveActiveProjectRoot();
+            if (projectRoot.empty()) {
+              assetBrowserStatus = "Scene save failed: no active project.";
+            } else {
+              fs::path scenesDir =
+                  (projectRoot / "assets" / "scenes").lexically_normal();
+              std::error_code dirErr;
+              fs::create_directories(scenesDir, dirErr);
+              if (dirErr) {
+                assetBrowserStatus =
+                    "Scene save failed: unable to create scenes directory (" +
+                    dirErr.message() + ").";
                 std::cerr << assetBrowserStatus << std::endl;
+              } else {
+                std::string fileStem = SanitizeSceneFilename(scene.GetName());
+                fs::path scenePath = scenesDir / (fileStem + ".hpscene");
+
+                SceneSerializer serializer(scene);
+                std::string error;
+                if (serializer.Serialize(scenePath, error)) {
+                  savedScene = true;
+                  fs::path relative = scenePath.lexically_relative(projectRoot);
+                  std::string friendly =
+                      relative.empty() ? scenePath.filename().generic_string()
+                                       : relative.generic_string();
+                  assetBrowserStatus = "Scene saved to " + friendly + ".";
+                  std::cout << assetBrowserStatus << std::endl;
+                } else {
+                  assetBrowserStatus = "Scene save failed: " + error;
+                  std::cerr << assetBrowserStatus << std::endl;
+                }
               }
             }
           }
+
+          if (savedBlueprint && savedScene) {
+            assetBrowserStatus = "Blueprint and scene saved.";
+            std::cout << assetBrowserStatus << std::endl;
+          }
         }
-        if (toolbarActions.buildClicked) {
+        if (toolbarActions.buildClicked && !blueprintMode) {
           assetBrowserStatus = "Build command triggered (placeholder).";
         }
-        if (toolbarActions.exportClicked) {
+        if (toolbarActions.exportClicked && !blueprintMode) {
           namespace fs = std::filesystem;
 
           fs::path projectRoot = ResolveActiveProjectRoot();

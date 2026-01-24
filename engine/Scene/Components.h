@@ -582,6 +582,7 @@ struct BlueprintNodeOverride {
 
 struct BlueprintInstanceComponent {
     std::string blueprintPath;
+    std::string blueprintGuid;
     std::string instanceId;
     std::string rootNodeId;
     entt::entity parent = entt::null;
@@ -592,5 +593,10 @@ struct BlueprintNodeComponent {
     std::string instanceId;
     std::string nodeId;
     bool isRoot = false;
+};
+
+// Editor-only marker to hide helper entities from hierarchy/selection.
+struct EditorOnlyComponent {
+    bool hidden = true;
 };
 
