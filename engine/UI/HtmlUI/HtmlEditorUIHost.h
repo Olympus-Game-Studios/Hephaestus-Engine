@@ -51,6 +51,7 @@ public:
 
   // Draw editor panels (transitional: uses ImGui docking windows as host).
   void DrawDockedPanels();
+  void DrawProjectManagerPanel();
   void DrawOutlinerPanel();
   void DrawAddActorsPanel();
   void DrawDetailsPanel();
@@ -108,6 +109,7 @@ private:
   std::unique_ptr<HtmlPanelView> assetBrowser_;
   std::unique_ptr<HtmlPanelView> blueprintEditor_;
   std::unique_ptr<HtmlPanelView> logConsole_;
+  std::unique_ptr<HtmlPanelView> projectManager_;
 
   // Tracks whether each host ImGui panel is currently visible (ie. not collapsed).
   bool outlinerVisible_ = false;
@@ -116,6 +118,7 @@ private:
   bool assetBrowserVisible_ = false;
   bool blueprintEditorVisible_ = false;
   bool logConsoleVisible_ = false;
+  bool projectManagerVisible_ = false;
 
   struct BlueprintDocument {
     std::filesystem::path path;

@@ -105,6 +105,15 @@ public:
     // Get available templates
     const std::vector<ProjectTemplate>& GetTemplates() const { return m_Templates; }
 
+    // HTML project manager support
+    std::string BuildProjectManagerPayloadJson() const;
+    bool CreateProjectFromTemplate(const std::string& name, const std::string& description,
+                                   int templateIndex, const std::string& customLocation);
+    bool SetProjectFavorite(const std::filesystem::path& projectPath, bool isFavorite);
+    std::optional<std::filesystem::path> PickProjectFolder(const std::filesystem::path& initialPath) const;
+    void OpenProjectLocationExternal(const std::filesystem::path& projectPath);
+    std::string GetLastErrorMessage() const { return m_ErrorMessage; }
+
 private:
     // UI Drawing functions
     void DrawHeader();

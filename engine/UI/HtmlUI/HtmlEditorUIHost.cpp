@@ -3165,6 +3165,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
   assetBrowser_ = std::make_unique<HtmlPanelView>("Asset Browser", &bridge_, vkdev_, imguiDescriptorPool_);
   blueprintEditor_ = std::make_unique<HtmlPanelView>("Blueprint Editor", &bridge_, vkdev_, imguiDescriptorPool_);
   logConsole_ = std::make_unique<HtmlPanelView>("Log Console", &bridge_, vkdev_, imguiDescriptorPool_);
+  projectManager_ = std::make_unique<HtmlPanelView>("Project Manager", &bridge_, vkdev_, imguiDescriptorPool_);
 
   // Initial sizes will be overridden by ImGui window sizes.
   // These paths are resolved relative to the FileSystem base (exeDir).
@@ -3174,6 +3175,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
   assetBrowser_->Create(renderer_, 800, 300, "file:///editor/assets/ui/panels/asset_browser.html");
   blueprintEditor_->Create(renderer_, 1200, 800, "file:///editor/assets/ui/panels/blueprint_editor.html");
   logConsole_->Create(renderer_, 800, 300, "file:///editor/assets/ui/panels/log_console.html");
+  projectManager_->Create(renderer_, 1280, 720, "file:///editor/assets/ui/panels/project_manager.html");
 
   // Default JS event emitter targets log console view.
   bridge_.SetSendToJs([this](const std::string& jsCall) {
@@ -3223,6 +3225,7 @@ void HtmlEditorUIHost::ApplyThemeToPanels() {
   if (assetBrowser_) assetBrowser_->EvaluateScript(script);
   if (blueprintEditor_) blueprintEditor_->EvaluateScript(script);
   if (logConsole_) logConsole_->EvaluateScript(script);
+  if (projectManager_) projectManager_->EvaluateScript(script);
 
   themeDirty_ = false;
 }
@@ -3313,6 +3316,7 @@ void HtmlEditorUIHost::UpdateAndSync(float dt) {
   if (assetBrowser_ && assetBrowserVisible_) assetBrowser_->SyncTextureToGpu();
   if (blueprintEditor_ && blueprintEditorVisible_) blueprintEditor_->SyncTextureToGpu();
   if (logConsole_ && logConsoleVisible_) logConsole_->SyncTextureToGpu();
+  if (projectManager_ && projectManagerVisible_) projectManager_->SyncTextureToGpu();
 }
 
 void HtmlEditorUIHost::DrawDockedPanels() {
@@ -3322,6 +3326,33 @@ void HtmlEditorUIHost::DrawDockedPanels() {
   DrawAssetBrowserPanel();
   DrawBlueprintEditorPanel();
   DrawLogConsolePanel();
+}
+
+void HtmlEditorUIHost::DrawProjectManagerPanel() {
+  if (!projectManager_)
+    return;
+
+  projectManagerVisible_ = false;
+
+  ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(viewport->Pos);
+  ImGui::SetNextWindowSize(viewport->Size);
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                          ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings |
+                          ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  if (ImGui::Begin("Project Manager", nullptr, flags)) {
+    projectManagerVisible_ = true;
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    projectManager_->Resize(static_cast<uint32_t>(std::max(1.0f, avail.x)),
+                            static_cast<uint32_t>(std::max(1.0f, avail.y)));
+    projectManager_->DrawImGuiImage();
+    projectManager_->HandleImGuiInput();
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(2);
 }
 
 void HtmlEditorUIHost::DrawOutlinerPanel() {
@@ -3467,6 +3498,7 @@ bool HtmlEditorUIHost::IsAnyPanelHovered() const {
   if (assetBrowser_ && assetBrowser_->IsHovered()) return true;
   if (blueprintEditor_ && blueprintEditor_->IsHovered()) return true;
   if (logConsole_ && logConsole_->IsHovered()) return true;
+  if (projectManager_ && projectManager_->IsHovered()) return true;
   return false;
 }
 

@@ -1,0 +1,673 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Project Manager</title>
+  <link rel="stylesheet" href="../ui_theme.css" />
+  <style>
+    :root {
+      --pm-card: #1b202b;
+      --pm-card-hover: #222a38;
+      --pm-card-border: #2b3342;
+      --pm-soft: rgba(255, 255, 255, 0.05);
+      --pm-shadow: rgba(0, 0, 0, 0.35);
+    }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      background: var(--panel);
+      color: var(--text);
+      font-family: var(--font);
+    }
+
+    .pm-root {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .pm-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      background: linear-gradient(180deg, rgba(45, 140, 255, 0.15), rgba(0, 0, 0, 0))
+        , var(--header);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .pm-brand {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .pm-title {
+      font-size: calc(18px * var(--uiScale));
+      font-weight: 700;
+      letter-spacing: 0.4px;
+    }
+
+    .pm-subtitle {
+      font-size: var(--fontSizeSmall);
+      color: var(--muted2);
+    }
+
+    .pm-header-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .pm-btn {
+      padding: 8px 14px;
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      background: var(--panel2);
+      color: var(--text);
+      font-size: var(--fontSizeSmall);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .pm-btn:hover {
+      border-color: var(--border);
+      background: var(--pm-soft);
+    }
+
+    .pm-btn.primary {
+      background: rgba(26, 163, 255, 0.18);
+      border-color: rgba(26, 163, 255, 0.6);
+      color: var(--accent);
+    }
+
+    .pm-controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 12px 20px;
+      background: var(--panel2);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+
+    .pm-search {
+      flex: 1;
+      min-width: 240px;
+    }
+
+    .pm-search input {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border2);
+      background: #242b37;
+      color: var(--text);
+      font-size: var(--fontSizeSmall);
+    }
+
+    .pm-search input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(26, 163, 255, 0.35);
+    }
+
+    .pm-select {
+      padding: 8px 10px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border2);
+      background: #242b37;
+      color: var(--text);
+      font-size: var(--fontSizeSmall);
+    }
+
+    .pm-view-toggle {
+      display: inline-flex;
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .pm-view-toggle button {
+      padding: 6px 10px;
+      background: transparent;
+      color: var(--text);
+      border: none;
+      cursor: pointer;
+      font-size: var(--fontSizeSmall);
+    }
+
+    .pm-view-toggle button.is-active {
+      background: rgba(26, 163, 255, 0.2);
+      color: var(--accent);
+    }
+
+    .pm-content {
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .pm-scroll {
+      flex: 1;
+      overflow: auto;
+      padding: 18px 20px 30px;
+    }
+
+    .projects-grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    }
+
+    .projects-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .project-card {
+      border: 1px solid var(--pm-card-border);
+      border-radius: 12px;
+      background: var(--pm-card);
+      padding: 14px;
+      box-shadow: 0 8px 24px var(--pm-shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      position: relative;
+    }
+
+    .project-card:hover {
+      background: var(--pm-card-hover);
+      transform: translateY(-2px);
+      border-color: var(--accent);
+    }
+
+    .project-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .project-title {
+      font-weight: 600;
+      font-size: var(--fontSize);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .project-fav {
+      border: none;
+      background: transparent;
+      color: var(--muted2);
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .project-fav.is-active {
+      color: var(--accent2);
+    }
+
+    .project-desc {
+      font-size: var(--fontSizeSmall);
+      color: var(--muted2);
+      line-height: 1.4;
+      min-height: 34px;
+    }
+
+    .project-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: var(--fontSizeSmall);
+      color: var(--muted2);
+    }
+
+    .project-tag {
+      border: 1px solid var(--border2);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .project-footer {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .projects-empty {
+      border: 1px dashed var(--border2);
+      border-radius: 12px;
+      padding: 30px;
+      text-align: center;
+      color: var(--muted2);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .pm-status {
+      padding: 8px 20px;
+      font-size: var(--fontSizeSmall);
+      color: var(--muted2);
+      border-top: 1px solid var(--border);
+      background: var(--panel2);
+    }
+
+    .pm-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+
+    .pm-modal.is-open {
+      display: flex;
+    }
+
+    .pm-modal-card {
+      width: min(520px, 92vw);
+      background: var(--panel);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .pm-modal-card h3 {
+      margin: 0;
+      font-size: var(--fontSize);
+    }
+
+    .pm-field label {
+      display: block;
+      font-size: var(--fontSizeSmall);
+      color: var(--muted2);
+      margin-bottom: 6px;
+    }
+
+    .pm-field input,
+    .pm-field textarea,
+    .pm-field select {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border2);
+      background: #242b37;
+      color: var(--text);
+      font-size: var(--fontSizeSmall);
+    }
+
+    .pm-field textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    .pm-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .pm-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .pm-row input {
+      flex: 1;
+    }
+  </style>
+</head>
+<body data-ui-scale-auto="true">
+  <div class="pm-root">
+    <header class="pm-header">
+      <div class="pm-brand">
+        <div class="pm-title">Hephaestus Engine</div>
+        <div class="pm-subtitle" id="projectsRootLabel">Projects: </div>
+      </div>
+      <div class="pm-header-actions">
+        <button class="pm-btn primary" id="newProjectBtn">+ New Project</button>
+        <button class="pm-btn" id="refreshBtn">Refresh</button>
+        <button class="pm-btn" id="openRootBtn">Open Folder</button>
+      </div>
+    </header>
+
+    <div class="pm-controls">
+      <div class="pm-search">
+        <input id="searchInput" placeholder="Search projects, tags..." />
+      </div>
+      <select id="sortSelect" class="pm-select">
+        <option value="lastModified">Last Modified</option>
+        <option value="name">Name</option>
+        <option value="created">Created</option>
+        <option value="favorites">Favorites</option>
+      </select>
+      <div class="pm-view-toggle" id="viewToggle">
+        <button data-view="grid" class="is-active">Grid</button>
+        <button data-view="list">List</button>
+      </div>
+    </div>
+
+    <div class="pm-content">
+      <div class="pm-scroll">
+        <div id="projectsContainer" class="projects-grid"></div>
+        <div id="emptyState" class="projects-empty" style="display:none;">
+          No projects found. Create a new project to get started.
+        </div>
+      </div>
+      <div class="pm-status" id="statusText">Ready.</div>
+    </div>
+  </div>
+
+  <div class="pm-modal" id="newProjectModal">
+    <div class="pm-modal-card">
+      <h3>Create New Project</h3>
+      <div class="pm-field">
+        <label for="projectName">Project Name</label>
+        <input id="projectName" placeholder="My Awesome Game" />
+      </div>
+      <div class="pm-field">
+        <label for="projectDesc">Description</label>
+        <textarea id="projectDesc" placeholder="Short description..."></textarea>
+      </div>
+      <div class="pm-field">
+        <label for="projectTemplate">Template</label>
+        <select id="projectTemplate"></select>
+      </div>
+      <div class="pm-field">
+        <label for="projectLocation">Location (optional)</label>
+        <div class="pm-row">
+          <input id="projectLocation" placeholder="Default projects folder" />
+          <button class="pm-btn" id="browseLocationBtn">Browse</button>
+        </div>
+      </div>
+      <div class="pm-modal-actions">
+        <button class="pm-btn" id="cancelCreateBtn">Cancel</button>
+        <button class="pm-btn primary" id="createProjectBtn">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../ui_common.js"></script>
+  <script>
+    const state = {
+      projects: [],
+      templates: [],
+      root: '',
+      view: 'grid',
+      sort: 'lastModified',
+      search: ''
+    };
+
+    const el = (id) => document.getElementById(id);
+    const statusText = el('statusText');
+    const projectsContainer = el('projectsContainer');
+    const emptyState = el('emptyState');
+    const projectsRootLabel = el('projectsRootLabel');
+    const newProjectModal = el('newProjectModal');
+
+    function setStatus(text) {
+      statusText.textContent = text || 'Ready.';
+    }
+
+    function formatDate(ts) {
+      if (!ts) return '';
+      const d = new Date(ts * 1000);
+      if (Number.isNaN(d.getTime())) return '';
+      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+    }
+
+    function compareProjects(a, b) {
+      switch (state.sort) {
+        case 'name':
+          return a.name.localeCompare(b.name);
+        case 'created':
+          return (b.created || 0) - (a.created || 0);
+        case 'favorites':
+          if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
+          return (b.lastModified || 0) - (a.lastModified || 0);
+        default:
+          return (b.lastModified || 0) - (a.lastModified || 0);
+      }
+    }
+
+    function filterProjects(list) {
+      const q = state.search.trim().toLowerCase();
+      if (!q) return list;
+      return list.filter((p) => {
+        const hay = [p.name, p.description, ...(p.tags || [])].join(' ').toLowerCase();
+        return hay.includes(q);
+      });
+    }
+
+    function renderProjects() {
+      const filtered = filterProjects(state.projects).sort(compareProjects);
+      projectsContainer.className = state.view === 'grid' ? 'projects-grid' : 'projects-list';
+      projectsContainer.innerHTML = '';
+      if (!filtered.length) {
+        emptyState.style.display = 'block';
+        return;
+      }
+      emptyState.style.display = 'none';
+
+      filtered.forEach((project) => {
+        const card = document.createElement('div');
+        card.className = 'project-card';
+        card.addEventListener('dblclick', () => openProject(project.path));
+        card.addEventListener('click', () => {
+          setStatus('Selected: ' + project.name);
+        });
+
+        const header = document.createElement('div');
+        header.className = 'project-header';
+
+        const title = document.createElement('div');
+        title.className = 'project-title';
+        title.textContent = project.name || 'Untitled Project';
+
+        const fav = document.createElement('button');
+        fav.className = 'project-fav' + (project.favorite ? ' is-active' : '');
+        fav.textContent = project.favorite ? '★' : '☆';
+        fav.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleFavorite(project);
+        });
+
+        header.appendChild(title);
+        header.appendChild(fav);
+
+        const desc = document.createElement('div');
+        desc.className = 'project-desc';
+        desc.textContent = project.description || 'No description';
+
+        const tags = document.createElement('div');
+        tags.className = 'project-meta';
+        (project.tags || []).forEach((tag) => {
+          const chip = document.createElement('span');
+          chip.className = 'project-tag';
+          chip.textContent = tag;
+          tags.appendChild(chip);
+        });
+
+        const footer = document.createElement('div');
+        footer.className = 'project-footer';
+        const left = document.createElement('span');
+        left.textContent = project.engineVersion ? `Engine ${project.engineVersion}` : '';
+        const right = document.createElement('span');
+        right.textContent = formatDate(project.lastModified);
+        footer.appendChild(left);
+        footer.appendChild(right);
+
+        card.appendChild(header);
+        card.appendChild(desc);
+        if ((project.tags || []).length) {
+          card.appendChild(tags);
+        }
+        card.appendChild(footer);
+
+        card.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            openProject(project.path);
+          }
+        });
+        projectsContainer.appendChild(card);
+      });
+    }
+
+    function populateTemplates() {
+      const select = el('projectTemplate');
+      select.innerHTML = '';
+      state.templates.forEach((tpl) => {
+        const opt = document.createElement('option');
+        opt.value = String(tpl.index);
+        opt.textContent = tpl.name;
+        select.appendChild(opt);
+      });
+    }
+
+    function refreshProjects() {
+      const resp = window.hep.callCpp('project.list');
+      if (!resp || !resp.ok) {
+        setStatus('Failed to load projects.');
+        return;
+      }
+      state.projects = resp.projects || [];
+      state.templates = resp.templates || [];
+      state.root = resp.root || '';
+      projectsRootLabel.textContent = state.root ? `Projects: ${state.root}` : 'Projects';
+      populateTemplates();
+      renderProjects();
+      setStatus(`Loaded ${state.projects.length} project(s).`);
+    }
+
+    function openProject(path) {
+      if (!path) return;
+      const resp = window.hep.callCpp('project.open', { path });
+      if (resp && resp.ok) {
+        setStatus('Opening project...');
+      } else {
+        setStatus('Failed to open project.');
+      }
+    }
+
+    function toggleFavorite(project) {
+      const resp = window.hep.callCpp('project.favorite', {
+        path: project.path,
+        value: project.favorite ? 0 : 1
+      });
+      if (resp && resp.ok) {
+        project.favorite = !project.favorite;
+        renderProjects();
+      }
+    }
+
+    function openModal() {
+      newProjectModal.classList.add('is-open');
+      el('projectName').focus();
+    }
+
+    function closeModal() {
+      newProjectModal.classList.remove('is-open');
+    }
+
+    function createProject() {
+      const name = el('projectName').value.trim();
+      const description = el('projectDesc').value.trim();
+      const templateIndex = parseInt(el('projectTemplate').value, 10);
+      const location = el('projectLocation').value.trim();
+      if (!name) {
+        setStatus('Project name is required.');
+        return;
+      }
+      const resp = window.hep.callCpp('project.create', {
+        name,
+        description,
+        templateIndex: Number.isFinite(templateIndex) ? templateIndex : -1,
+        location
+      });
+      if (resp && resp.ok) {
+        closeModal();
+        el('projectName').value = '';
+        el('projectDesc').value = '';
+        el('projectLocation').value = '';
+        refreshProjects();
+        setStatus('Project created.');
+      } else {
+        setStatus((resp && resp.error) || 'Failed to create project.');
+      }
+    }
+
+    function browseLocation() {
+      const base = el('projectLocation').value.trim() || state.root || '';
+      const resp = window.hep.callCpp('project.pick_folder', { path: base });
+      if (resp && resp.ok && resp.path) {
+        el('projectLocation').value = resp.path;
+      }
+    }
+
+    window.hep.onReady(() => {
+      refreshProjects();
+
+      el('refreshBtn').addEventListener('click', () => {
+        window.hep.callCpp('project.refresh');
+        refreshProjects();
+      });
+
+      el('openRootBtn').addEventListener('click', () => {
+        window.hep.callCpp('project.open_root');
+      });
+
+      el('newProjectBtn').addEventListener('click', openModal);
+      el('cancelCreateBtn').addEventListener('click', closeModal);
+      el('createProjectBtn').addEventListener('click', createProject);
+      el('browseLocationBtn').addEventListener('click', browseLocation);
+
+      el('searchInput').addEventListener('input', (e) => {
+        state.search = e.target.value || '';
+        renderProjects();
+      });
+
+      el('sortSelect').addEventListener('change', (e) => {
+        state.sort = e.target.value;
+        renderProjects();
+      });
+
+      el('viewToggle').addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        const view = btn.dataset.view;
+        if (!view) return;
+        state.view = view;
+        el('viewToggle').querySelectorAll('button').forEach((b) => {
+          b.classList.toggle('is-active', b.dataset.view === view);
+        });
+        renderProjects();
+      });
+
+      newProjectModal.addEventListener('click', (e) => {
+        if (e.target === newProjectModal) closeModal();
+      });
+    });
+  </script>
+</body>
+</html>

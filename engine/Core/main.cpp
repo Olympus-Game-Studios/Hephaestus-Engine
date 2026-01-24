@@ -157,6 +157,7 @@ static bool g_SelectedScriptAssetValid = false;
 static std::string g_ScriptAttachmentMessage;
 static float g_ScriptAttachmentMessageTimer = 0.0f;
 static HephaestusEngine::ProjectManager g_ProjectManager;
+static std::optional<std::filesystem::path> g_HtmlProjectManagerOpenRequest;
 static LuaScriptEngine *g_LuaScriptEnginePtr =
     nullptr; // Pointer to Lua engine for callbacks
 static Physics::JoltPhysicsSystem *g_JoltPhysicsSystemPtr = nullptr; // Pointer to physics system for project root updates
@@ -8105,6 +8106,91 @@ int main(int argc, char *argv[]) {
           [](const std::filesystem::path& path) {
             g_HtmlPendingAssetOpenRequest = path;
           });
+
+      // Project manager HTML handlers
+      g_HtmlEditorUIHost->Bridge().RegisterHandler(
+          "project.list", [](const std::string& payload) -> std::string {
+            (void)payload;
+            std::ostringstream json;
+          json << "{\"ok\":true," << g_ProjectManager.BuildProjectManagerPayloadJson()
+            << "}";
+            return json.str();
+          });
+
+      g_HtmlEditorUIHost->Bridge().RegisterHandler(
+          "project.refresh", [](const std::string& payload) -> std::string {
+            (void)payload;
+            g_ProjectManager.RefreshProjects();
+            return std::string("{\"ok\":true}");
+          });
+
+      g_HtmlEditorUIHost->Bridge().RegisterHandler(
+          "project.open", [](const std::string& payload) -> std::string {
+            auto pathOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(payload, "path");
+            if (!pathOpt) {
+              return std::string("{\"ok\":false,\"error\":\"missing_path\"}");
+            }
+            std::filesystem::path path = std::filesystem::path(*pathOpt);
+            if (!std::filesystem::exists(path) || !std::filesystem::is_directory(path)) {
+              return std::string("{\"ok\":false,\"error\":\"invalid_path\"}");
+            }
+            g_HtmlProjectManagerOpenRequest = path;
+            return std::string("{\"ok\":true}");
+          });
+
+      g_HtmlEditorUIHost->Bridge().RegisterHandler(
+          "project.create", [](const std::string& payload) -> std::string {
+            auto nameOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(payload, "name");
+            if (!nameOpt || nameOpt->empty()) {
+              return std::string("{\"ok\":false,\"error\":\"missing_name\"}");
+            }
+            auto descOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(payload, "description");
+            auto templateOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseIntField(payload, "templateIndex");
+            auto locationOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(payload, "location");
+
+            const std::string desc = descOpt ? *descOpt : "";
+            const int templateIndex = templateOpt ? *templateOpt : -1;
+            const std::string location = locationOpt ? *locationOpt : "";
+
+            bool ok = g_ProjectManager.CreateProjectFromTemplate(*nameOpt, desc, templateIndex, location);
+            if (!ok) {
+              return std::string("{\"ok\":false,\"error\":\"create_failed\"}");
+            }
+            return std::string("{\"ok\":true}");
+          });
+
+      g_HtmlEditorUIHost->Bridge().RegisterHandler(
+          "project.favorite", [](const std::string& payload) -> std::string {
+            auto pathOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(payload, "path");
+            auto valueOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseIntField(payload, "value");
+            if (!pathOpt || !valueOpt) {
+              return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+            }
+            bool ok = g_ProjectManager.SetProjectFavorite(*pathOpt, (*valueOpt != 0));
+            return ok ? std::string("{\"ok\":true}")
+                      : std::string("{\"ok\":false,\"error\":\"not_found\"}");
+          });
+
+      g_HtmlEditorUIHost->Bridge().RegisterHandler(
+          "project.open_root", [](const std::string& payload) -> std::string {
+            (void)payload;
+            g_ProjectManager.OpenProjectLocationExternal(g_ProjectManager.GetProjectsRoot());
+            return std::string("{\"ok\":true}");
+          });
+
+      g_HtmlEditorUIHost->Bridge().RegisterHandler(
+          "project.pick_folder", [](const std::string& payload) -> std::string {
+            auto pathOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(payload, "path");
+            std::filesystem::path base = pathOpt ? std::filesystem::path(*pathOpt)
+                                                 : g_ProjectManager.GetProjectsRoot();
+            auto picked = g_ProjectManager.PickProjectFolder(base);
+            if (!picked) {
+              return std::string("{\"ok\":false}");
+            }
+            std::ostringstream json;
+            json << "{\"ok\":true,\"path\":\"" << picked->generic_string() << "\"}";
+            return json.str();
+          });
     }
 #endif
   } // end if (!g_RuntimeMode)
@@ -8297,16 +8383,34 @@ int main(int argc, char *argv[]) {
           vulkanGizmo.EndDrag();
         }
         vulkanGizmo.SetHoveredAxis(-1);
+  #if HEPHAESTUS_EDITOR_HTML_UI
+        if (g_HtmlEditorUIHost) {
+          g_HtmlEditorUIHost->UpdateAndSync(dt);
+          g_HtmlEditorUIHost->DrawProjectManagerPanel();
 
-        std::optional<std::filesystem::path> projectChoice =
-            g_ProjectManager.Draw();
-        if (projectChoice) {
-          SetActiveProjectRoot(*projectChoice);
-          if (!g_ActiveProjectName.empty()) {
-            assetBrowserStatus =
-                "Opened project '" + g_ActiveProjectName + "'.";
-          } else {
-            assetBrowserStatus = "Opened project.";
+          if (g_HtmlProjectManagerOpenRequest) {
+            SetActiveProjectRoot(*g_HtmlProjectManagerOpenRequest);
+            g_HtmlProjectManagerOpenRequest.reset();
+            if (!g_ActiveProjectName.empty()) {
+              assetBrowserStatus =
+                  "Opened project '" + g_ActiveProjectName + "'.";
+            } else {
+              assetBrowserStatus = "Opened project.";
+            }
+          }
+        } else
+  #endif
+        {
+          std::optional<std::filesystem::path> projectChoice =
+              g_ProjectManager.Draw();
+          if (projectChoice) {
+            SetActiveProjectRoot(*projectChoice);
+            if (!g_ActiveProjectName.empty()) {
+              assetBrowserStatus =
+                  "Opened project '" + g_ActiveProjectName + "'.";
+            } else {
+              assetBrowserStatus = "Opened project.";
+            }
           }
         }
       } else {

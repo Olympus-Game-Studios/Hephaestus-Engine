@@ -546,6 +546,101 @@ void ProjectManager::RefreshProjects() {
     ApplyFilterAndSort();
 }
 
+std::string ProjectManager::BuildProjectManagerPayloadJson() const {
+    std::ostringstream json;
+    json << "\"root\":\"" << EscapeJsonString(m_ProjectsRoot.generic_string()) << "\",";
+
+    json << "\"projects\":[";
+    for (size_t i = 0; i < m_AllProjects.size(); ++i) {
+        const ProjectInfo& project = m_AllProjects[i];
+        const ProjectMetadata& meta = project.metadata;
+        const std::string name = meta.name.empty() ? project.path.filename().string() : meta.name;
+        const std::string description = meta.description.empty() ? "No description" : meta.description;
+
+        auto createdTime = std::chrono::system_clock::to_time_t(meta.created);
+        auto modifiedTime = std::chrono::system_clock::to_time_t(meta.lastModified);
+
+        json << "{";
+        json << "\"name\":\"" << EscapeJsonString(name) << "\",";
+        json << "\"path\":\"" << EscapeJsonString(project.path.generic_string()) << "\",";
+        json << "\"description\":\"" << EscapeJsonString(description) << "\",";
+        json << "\"engineVersion\":\"" << EscapeJsonString(meta.engineVersion) << "\",";
+        json << "\"created\":" << static_cast<long long>(createdTime) << ",";
+        json << "\"lastModified\":" << static_cast<long long>(modifiedTime) << ",";
+        json << "\"favorite\":" << (meta.isFavorite ? "true" : "false") << ",";
+        json << "\"valid\":" << (project.isValid ? "true" : "false") << ",";
+        json << "\"error\":\"" << EscapeJsonString(project.errorMessage) << "\",";
+        json << "\"screenshot\":\"" << EscapeJsonString(meta.screenshotPath) << "\",";
+        json << "\"tags\":[";
+        for (size_t t = 0; t < meta.tags.size(); ++t) {
+            json << "\"" << EscapeJsonString(meta.tags[t]) << "\"";
+            if (t + 1 < meta.tags.size()) json << ",";
+        }
+        json << "]";
+        json << "}";
+        if (i + 1 < m_AllProjects.size()) json << ",";
+    }
+    json << "],";
+
+    json << "\"templates\":[";
+    for (size_t i = 0; i < m_Templates.size(); ++i) {
+        const ProjectTemplate& tpl = m_Templates[i];
+        json << "{";
+        json << "\"index\":" << static_cast<int>(i) << ",";
+        json << "\"name\":\"" << EscapeJsonString(tpl.name) << "\",";
+        json << "\"description\":\"" << EscapeJsonString(tpl.description) << "\"";
+        json << "}";
+        if (i + 1 < m_Templates.size()) json << ",";
+    }
+    json << "]";
+    return json.str();
+}
+
+bool ProjectManager::CreateProjectFromTemplate(const std::string& name, const std::string& description,
+                                              int templateIndex, const std::string& customLocation) {
+    std::fill(std::begin(m_CustomProjectLocationBuffer), std::end(m_CustomProjectLocationBuffer), 0);
+    if (!customLocation.empty()) {
+        std::strncpy(m_CustomProjectLocationBuffer, customLocation.c_str(),
+                     sizeof(m_CustomProjectLocationBuffer) - 1);
+    }
+
+    const ProjectTemplate* tpl = nullptr;
+    if (templateIndex >= 0 && templateIndex < static_cast<int>(m_Templates.size())) {
+        tpl = &m_Templates[static_cast<size_t>(templateIndex)];
+    }
+
+    bool ok = CreateProject(name, description, tpl);
+    if (ok) {
+        RefreshProjects();
+    }
+    return ok;
+}
+
+bool ProjectManager::SetProjectFavorite(const std::filesystem::path& projectPath, bool isFavorite) {
+    for (auto& project : m_AllProjects) {
+        if (project.path.lexically_normal() == projectPath.lexically_normal()) {
+            project.metadata.isFavorite = isFavorite;
+            project.metadata.SaveToFile(project.path);
+            ApplyFilterAndSort();
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<std::filesystem::path> ProjectManager::PickProjectFolder(const std::filesystem::path& initialPath) const {
+#ifdef _WIN32
+    return PickFolderDialog(initialPath);
+#else
+    (void)initialPath;
+    return std::nullopt;
+#endif
+}
+
+void ProjectManager::OpenProjectLocationExternal(const std::filesystem::path& projectPath) {
+    OpenProjectLocation(projectPath);
+}
+
 bool ProjectManager::IsLegacyHeProject(const std::filesystem::path& projectPath) const {
     namespace fs = std::filesystem;
     
