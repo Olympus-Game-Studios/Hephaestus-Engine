@@ -3,6 +3,7 @@
 #include "UltralightPlatformSetup.h"
 
 #include "../../Scene/Scene.h"
+#include "../../Scene/SceneSerializer.h"
 #include "../../Scene/Entity.h"
 #include "../../Scene/Components.h"
 #include "../../Scripting/ScriptEngine.h"
@@ -1429,6 +1430,24 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
 
       std::ostringstream json;
       json << "{\"ok\":true,\"path\":\"" << JsonEscape(makeRel(blueprintPath)) << "\"}";
+      return json.str();
+    }
+
+    if (kind == "scene") {
+      std::filesystem::path scenePath = dirPath / (sanitized + ".hpscene");
+      if (std::filesystem::exists(scenePath)) {
+        return std::string("{\"ok\":false,\"error\":\"already_exists\"}");
+      }
+
+      Scene scene(sanitized);
+      SceneSerializer serializer(scene);
+      std::string serializeError;
+      if (!serializer.Serialize(scenePath, serializeError)) {
+        return std::string("{\"ok\":false,\"error\":\"write_failed\",\"detail\":\"") + JsonEscape(serializeError) + "\"}";
+      }
+
+      std::ostringstream json;
+      json << "{\"ok\":true,\"path\":\"" << JsonEscape(makeRel(scenePath)) << "\"}";
       return json.str();
     }
 

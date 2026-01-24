@@ -482,10 +482,11 @@
     <button data-action="new-folder">New Folder...</button>
     <button data-action="new-material">New Material...</button>
     <div class="separator"></div>
-    <button data-action="new-cpp-script">New C++ Script...</button>
+    
     <button data-action="new-lua-script">New Lua Script...</button>
     <div class="separator"></div>
     <button data-action="new-blueprint">New Blueprint...</button>
+    <button data-action="new-scene">New Scene...</button>
   </div>
 
   <div id="createModal" class="modal-backdrop">
@@ -540,6 +541,7 @@
         case 'cpp_script': return 'NewScript';
         case 'lua_script': return 'NewScript';
         case 'blueprint': return 'NewBlueprint';
+        case 'scene': return 'NewScene';
         default: return 'NewAsset';
       }
     }
@@ -551,6 +553,7 @@
         case 'cpp_script': return 'Create C++ Script';
         case 'lua_script': return 'Create Lua Script';
         case 'blueprint': return 'Create Blueprint';
+        case 'scene': return 'Create Scene';
         default: return 'Create Asset';
       }
     }
@@ -1093,6 +1096,9 @@
             break;
           case 'new-blueprint':
             openCreateModal('blueprint');
+            break;
+          case 'new-scene':
+            openCreateModal('scene');
             break;
         }
       });

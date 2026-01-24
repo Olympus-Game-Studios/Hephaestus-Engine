@@ -1235,6 +1235,25 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
     ImGui::Spacing();
 
     auto view = scene.GetEntitiesWith<TagComponent>();
+    
+    // Debug: Print entity list to console
+    static bool debugPrinted = false;
+    if (!debugPrinted) {
+      debugPrinted = true;
+      int count = 0;
+      for (auto _ : view) { ++count; }
+      std::cout << "[OutlinerDebug] Scene pointer: " << &scene << " has " << count << " TagComponent entities" << std::endl;
+      std::cout << "[OutlinerDebug] Entity list:" << std::endl;
+      for (auto entityHandle : view) {
+        Entity entity(entityHandle, &scene);
+        auto &tag = entity.GetComponent<TagComponent>();
+        bool hasEditorOnly = entity.HasComponent<EditorOnlyComponent>();
+        bool isInBlueprintFilter = isBlueprintMode && !entity.HasComponent<BlueprintNodeComponent>();
+        std::cout << "  - " << tag.tag 
+                  << " | EditorOnly: " << (hasEditorOnly ? "YES" : "NO")
+                  << " | BlueprintFiltered: " << (isInBlueprintFilter ? "YES" : "NO") << std::endl;
+      }
+    }
 
     if (ImGui::BeginTable("WorldOutlinerTable", 2,
                           ImGuiTableFlags_SizingStretchProp |
@@ -6541,11 +6560,16 @@ int main(int argc, char *argv[]) {
   if (!g_SceneDocument) {
     g_SceneDocument = std::make_unique<SceneDocument>(&scene);
     g_ActiveDocument = g_SceneDocument.get();
+    std::cout << "[InitScene] Created SceneDocument for scene at " << &scene << std::endl;
   }
 
   // Create environment entity for scene settings
   Entity environmentEntity = scene.CreateEntity("Environment");
   environmentEntity.AddComponent<EnvironmentComponent>();
+  auto tagView = scene.GetEntitiesWith<TagComponent>();
+  int tagCount = 0;
+  for (auto _ : tagView) { ++tagCount; }
+  std::cout << "[InitScene] Created Environment entity, TagComponent entities: " << tagCount << std::endl;
 
   ScriptEngine scriptEngine;
   scriptEngine.Initialize(&scene);
@@ -6880,6 +6904,17 @@ int main(int argc, char *argv[]) {
   fallingBody = RigidBodyComponent::CreateDynamic(1.0f);
   fallingBody.friction = 0.6f;
   fallingBody.restitution = 0.2f;
+
+  auto finalTagView = scene.GetEntitiesWith<TagComponent>();
+  int finalTagCount = 0;
+  for (auto _ : finalTagView) { ++finalTagCount; }
+  std::cout << "[InitScene] Finished creating default entities. Total TagComponent entities: " << finalTagCount << std::endl;
+  std::cout << "[InitScene] Listing all default scene entities:" << std::endl;
+  for (auto entityHandle : finalTagView) {
+    Entity entity(entityHandle, &scene);
+    auto &tag = entity.GetComponent<TagComponent>();
+    std::cout << "  - " << tag.tag << std::endl;
+  }
 
   static std::string assetBrowserStatus;
 
