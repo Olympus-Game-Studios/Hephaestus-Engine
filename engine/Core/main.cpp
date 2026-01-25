@@ -8815,8 +8815,8 @@ int main(int argc, char *argv[]) {
             if (hasBlueprintOpen) {
               logFailure("Cannot instantiate a blueprint inside blueprint editing.");
             } else {
-              fs::path projectRoot = ResolveActiveProjectRoot();
-              fs::path absPath = projectRoot.empty() ? rel : (projectRoot / rel).lexically_normal();
+              fs::path assetsRoot = ResolveActiveAssetsRoot();
+              fs::path absPath = assetsRoot.empty() ? rel : (assetsRoot / rel).lexically_normal();
               BlueprintAsset asset;
               std::string loadError;
               if (!BlueprintSerializer::Deserialize(asset, absPath, loadError)) {
