@@ -7059,8 +7059,11 @@ int main(int argc, char *argv[]) {
     return entity;
   };
 
-  auto rebuildSceneMeshesFromComponents = [&](Scene &targetScene) {
+  auto rebuildSceneMeshesFromComponents = [&](Scene &targetScene, bool destroyUnusedMeshes = true) {
     namespace fs = std::filesystem;
+    
+    std::cout << "[rebuildSceneMeshes] Called for scene: " << targetScene.GetName() 
+              << " (destroyUnusedMeshes=" << (destroyUnusedMeshes ? "true" : "false") << ")" << std::endl;
 
     std::unordered_set<std::string> requiredMeshKeys;
     requiredMeshKeys.reserve(256);
@@ -7069,6 +7072,14 @@ int main(int argc, char *argv[]) {
     for (auto entityHandle : renderView) {
       Entity entity(entityHandle, &targetScene);
       auto &renderer = entity.GetComponent<MeshRendererComponent>();
+      
+      std::string entityName = entity.HasComponent<TagComponent>()
+                                   ? entity.GetComponent<TagComponent>().tag
+                                   : std::string("Entity");
+      std::cout << "[rebuildSceneMeshes] Entity '" << entityName 
+                << "' meshAssetPath='" << renderer.meshAssetPath 
+                << "' handle=" << renderer.meshHandle 
+                << " imported=" << renderer.meshImported << std::endl;
 
       if (renderer.meshAssetPath.empty()) {
         if (renderer.HasValidMesh() && renderer.meshHandle < meshLibrary.size()) {
@@ -7098,30 +7109,33 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    std::vector<MeshGPU> retained;
-    retained.reserve(meshLibrary.size());
-    for (auto &mesh : meshLibrary) {
-      if (!mesh.imported) {
-        retained.push_back(std::move(mesh));
-      } else {
-        bool keep = false;
-        if (!mesh.sourceKey.empty() && requiredMeshKeys.count(mesh.sourceKey) > 0) {
-          keep = true;
-        }
-        if (!keep && !mesh.sourcePath.empty()) {
-          std::string absKey = mesh.sourcePath.lexically_normal().generic_string();
-          if (!absKey.empty() && requiredMeshKeys.count(absKey) > 0) {
-            keep = true;
-          }
-        }
-        if (keep) {
+    // Only destroy unused meshes if explicitly requested (not during blueprint editing)
+    if (destroyUnusedMeshes) {
+      std::vector<MeshGPU> retained;
+      retained.reserve(meshLibrary.size());
+      for (auto &mesh : meshLibrary) {
+        if (!mesh.imported) {
           retained.push_back(std::move(mesh));
         } else {
-          mesh.Destroy(vkdev.allocator);
+          bool keep = false;
+          if (!mesh.sourceKey.empty() && requiredMeshKeys.count(mesh.sourceKey) > 0) {
+            keep = true;
+          }
+          if (!keep && !mesh.sourcePath.empty()) {
+            std::string absKey = mesh.sourcePath.lexically_normal().generic_string();
+            if (!absKey.empty() && requiredMeshKeys.count(absKey) > 0) {
+              keep = true;
+            }
+          }
+          if (keep) {
+            retained.push_back(std::move(mesh));
+          } else {
+            mesh.Destroy(vkdev.allocator);
+          }
         }
       }
+      meshLibrary = std::move(retained);
     }
-    meshLibrary = std::move(retained);
     meshLibraryLookup.clear();
     for (size_t i = 0; i < meshLibrary.size(); ++i) {
       if (!meshLibrary[i].sourceKey.empty()) {
@@ -7190,6 +7204,8 @@ int main(int argc, char *argv[]) {
       }
 
       fs::path absolute = resolveMeshSourceKeyToPath(renderer.meshAssetPath);
+      std::cout << "[rebuildSceneMeshes] Resolved '" << renderer.meshAssetPath 
+                << "' to '" << absolute.string() << "'" << std::endl;
       if (absolute.empty() || !fs::exists(absolute)) {
         std::string entityName = entity.HasComponent<TagComponent>()
                                      ? entity.GetComponent<TagComponent>().tag
@@ -7222,6 +7238,8 @@ int main(int argc, char *argv[]) {
         size_t handle = uploadMesh(meshName, reimported, absolute, true);
         const MeshGPU &gpu = meshLibrary[handle];
         renderer.SetMesh(handle, gpu.bounds, gpu.sourceKey, gpu.imported);
+        std::cout << "[rebuildSceneMeshes] Successfully reimported mesh for entity '" 
+                  << meshName << "' new handle=" << handle << std::endl;
       } catch (const std::exception &e) {
         std::cerr << "Failed to upload mesh '" << absolute
                   << "' during scene reload: " << e.what() << std::endl;
@@ -8979,9 +8997,19 @@ int main(int argc, char *argv[]) {
           if (!g_BlueprintDocument) {
             g_BlueprintDocument = std::make_unique<BlueprintDocument>(&blueprintPreviewScene);
             g_BlueprintDocument->SetPostRebuildCallback([&](Scene& targetScene) {
-              rebuildSceneMeshesFromComponents(targetScene);
+              // Don't destroy meshes from the library - just hydrate blueprint's meshes
+              rebuildSceneMeshesFromComponents(targetScene, false);
               hydrateScriptsFromComponents(targetScene);
               hydrateEnvironmentFromComponents(targetScene);
+            });
+            // When closing blueprint mode, rebuild the main scene's meshes since
+            // they may have been removed from the mesh library during blueprint editing
+            g_BlueprintDocument->SetPostCloseCallback([&](Scene& /*previewScene*/) {
+              std::cout << "[BlueprintClose] Rebuilding main scene meshes after exiting blueprint mode" << std::endl;
+              // Don't destroy meshes here either - just re-hydrate the main scene
+              rebuildSceneMeshesFromComponents(scene, false);
+              hydrateScriptsFromComponents(scene);
+              hydrateEnvironmentFromComponents(scene);
             });
           }
           if (g_BlueprintDocument->OnOpen(*browserResult.blueprintOpenRequest, loadError)) {

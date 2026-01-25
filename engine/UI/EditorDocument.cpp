@@ -268,12 +268,19 @@ bool BlueprintDocument::OnSave(std::string& outError) {
 }
 
 void BlueprintDocument::OnClose() {
-    if (!scene_ || sceneSnapshotBeforeOpen_.empty()) {
-        return;
+    // Restore the preview scene from snapshot if we have one
+    if (scene_ && !sceneSnapshotBeforeOpen_.empty()) {
+        scene_->Clear();
+        SceneSerializer::DeserializeFromString(*scene_, sceneSnapshotBeforeOpen_);
+        sceneSnapshotBeforeOpen_.clear();
     }
-    scene_->Clear();
-    SceneSerializer::DeserializeFromString(*scene_, sceneSnapshotBeforeOpen_);
-    sceneSnapshotBeforeOpen_.clear();
+    
+    // Always invoke callback to rebuild mesh handles and other resources for the main scene
+    // This is needed because rebuildSceneMeshesFromComponents may have removed meshes
+    // used by the main scene when it was called for the blueprint preview scene
+    if (postCloseCallback_ && scene_) {
+        postCloseCallback_(*scene_);
+    }
 }
 
 std::string BlueprintDocument::SerializeForUndo() {

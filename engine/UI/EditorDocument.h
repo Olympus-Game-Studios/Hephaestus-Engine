@@ -96,6 +96,7 @@ public:
     std::vector<std::string> GetNodeIds() const;
 
     void SetPostRebuildCallback(std::function<void(Scene&)> callback) { postRebuildCallback_ = std::move(callback); }
+    void SetPostCloseCallback(std::function<void(Scene&)> callback) { postCloseCallback_ = std::move(callback); }
 
 protected:
     std::string SerializeForUndo() override;
@@ -112,4 +113,5 @@ private:
     entt::entity rootEntity_ = entt::null;
     std::string sceneSnapshotBeforeOpen_;
     std::function<void(Scene&)> postRebuildCallback_;
+    std::function<void(Scene&)> postCloseCallback_;
 };
