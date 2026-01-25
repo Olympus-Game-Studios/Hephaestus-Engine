@@ -206,6 +206,7 @@ static std::filesystem::path g_ActiveProjectRoot;
 static std::string g_ActiveProjectName;
 static bool g_ProjectSelected = false;
 static bool g_AssetBrowserNeedsReset = true;
+static bool g_AssetBrowserDirCacheInvalid = true; // Set true to refresh directory listing
 static std::string g_SelectedScriptAssetName;
 static std::string g_SelectedScriptAssetPath;
 static bool g_SelectedScriptAssetValid = false;
@@ -3973,6 +3974,7 @@ static void SetActiveProjectRoot(const std::filesystem::path &projectPath) {
     g_ProjectSelected = false;
   }
   g_AssetBrowserNeedsReset = true;
+  g_AssetBrowserDirCacheInvalid = true;
 
   if (g_LuaScriptEnginePtr) {
     g_LuaScriptEnginePtr->SetProjectRoot(g_ActiveProjectRoot);
@@ -4887,6 +4889,7 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string &statusMessage) {
               selectedPath = materialPath;
               statusMessage = "Created material '" + sanitized + "'.";
               result.materialCreateRequest = materialPath;
+              g_AssetBrowserDirCacheInvalid = true;
               ImGui::CloseCurrentPopup();
               materialPopupError.clear();
             }
@@ -4945,6 +4948,7 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string &statusMessage) {
           } else {
             selectedPath = ClampToRoot(folderPath, assetRoot);
             statusMessage = "Created folder '" + sanitized + "'.";
+            g_AssetBrowserDirCacheInvalid = true;
             ImGui::CloseCurrentPopup();
             folderPopupError.clear();
           }
@@ -5071,6 +5075,7 @@ private:
                 implFile.close();
                 selectedPath = headerPath;
                 statusMessage = "Created script '" + sanitized + "'.";
+                g_AssetBrowserDirCacheInvalid = true;
                 ImGui::CloseCurrentPopup();
                 scriptPopupError.clear();
               }
@@ -5161,6 +5166,7 @@ end
               luaFile.close();
               selectedPath = scriptPath;
               statusMessage = "Created Lua script '" + sanitized + ".lua'.";
+              g_AssetBrowserDirCacheInvalid = true;
               ImGui::CloseCurrentPopup();
               luaScriptPopupError.clear();
             }
@@ -5258,6 +5264,7 @@ end
               blueprintFile.close();
               selectedPath = blueprintPath;
               statusMessage = "Created blueprint '" + sanitized + "'.";
+              g_AssetBrowserDirCacheInvalid = true;
               ImGui::CloseCurrentPopup();
               blueprintPopupError.clear();
             }
@@ -5310,6 +5317,7 @@ end
           statusMessage = "Deleted folder '" + itemName + "' (" +
                           std::to_string(removed) + " items removed).";
           selectedPath.clear();
+          g_AssetBrowserDirCacheInvalid = true;
           ImGui::CloseCurrentPopup();
           deletePopupError.clear();
         }
@@ -5321,6 +5329,7 @@ end
         } else {
           statusMessage = "Deleted file '" + itemName + "'.";
           selectedPath.clear();
+          g_AssetBrowserDirCacheInvalid = true;
           ImGui::CloseCurrentPopup();
           deletePopupError.clear();
         }
@@ -5343,20 +5352,11 @@ end
         selectedPath.clear();
       }
       statusMessage.clear();
+      g_AssetBrowserDirCacheInvalid = true;
     }
   }
 
   ImGui::Separator();
-
-  std::error_code iterErr;
-  fs::directory_iterator dirIt(currentPath, iterErr);
-  if (iterErr) {
-    ImGui::TextDisabled("Cannot open directory: %s", iterErr.message().c_str());
-    ImGui::End();
-    selectedPath.clear();
-    ClearSelectedScriptAsset();
-    return result;
-  }
 
   struct BrowserEntry {
     std::string label;
@@ -5364,34 +5364,58 @@ end
     bool isDirectory;
   };
 
-  std::vector<BrowserEntry> directories;
-  std::vector<BrowserEntry> files;
+  // Cache directory contents to avoid filesystem iteration every frame
+  static std::vector<BrowserEntry> cachedDirectories;
+  static std::vector<BrowserEntry> cachedFiles;
+  static fs::path cachedPath;
 
-  for (auto it = dirIt; it != fs::directory_iterator(); ++it) {
-    const fs::directory_entry &entry = *it;
-    std::string name = entry.path().filename().string();
-    if (name.empty() || name[0] == '.') {
-      continue;
+  // Refresh cache when path changes or cache is invalidated
+  if (g_AssetBrowserDirCacheInvalid || cachedPath != currentPath) {
+    cachedDirectories.clear();
+    cachedFiles.clear();
+    cachedPath = currentPath;
+    g_AssetBrowserDirCacheInvalid = false;
+
+    std::error_code iterErr;
+    fs::directory_iterator dirIt(currentPath, iterErr);
+    if (iterErr) {
+      ImGui::TextDisabled("Cannot open directory: %s", iterErr.message().c_str());
+      ImGui::End();
+      selectedPath.clear();
+      ClearSelectedScriptAsset();
+      return result;
     }
 
-    BrowserEntry item;
-    item.label = name;
-    item.path = entry.path();
-    item.isDirectory = entry.is_directory();
+    for (auto it = dirIt; it != fs::directory_iterator(); ++it) {
+      const fs::directory_entry &entry = *it;
+      std::string name = entry.path().filename().string();
+      if (name.empty() || name[0] == '.') {
+        continue;
+      }
 
-    if (item.isDirectory) {
-      directories.push_back(item);
-    } else {
-      files.push_back(item);
+      BrowserEntry item;
+      item.label = name;
+      item.path = entry.path();
+      item.isDirectory = entry.is_directory();
+
+      if (item.isDirectory) {
+        cachedDirectories.push_back(item);
+      } else {
+        cachedFiles.push_back(item);
+      }
     }
+
+    auto alphabetical = [](const BrowserEntry &a, const BrowserEntry &b) {
+      return a.label < b.label;
+    };
+
+    std::sort(cachedDirectories.begin(), cachedDirectories.end(), alphabetical);
+    std::sort(cachedFiles.begin(), cachedFiles.end(), alphabetical);
   }
 
-  auto alphabetical = [](const BrowserEntry &a, const BrowserEntry &b) {
-    return a.label < b.label;
-  };
-
-  std::sort(directories.begin(), directories.end(), alphabetical);
-  std::sort(files.begin(), files.end(), alphabetical);
+  // Use cached references
+  std::vector<BrowserEntry> &directories = cachedDirectories;
+  std::vector<BrowserEntry> &files = cachedFiles;
 
   size_t totalEntries = directories.size() + files.size();
 
@@ -5535,6 +5559,7 @@ end
           if (entry.isDirectory) {
             currentPath = ClampToRoot(entry.path, assetRoot);
             selectedPath.clear();
+            g_AssetBrowserDirCacheInvalid = true;
           } else {
             std::filesystem::path clamped = ClampToRoot(entry.path, assetRoot);
             selectedPath = clamped;

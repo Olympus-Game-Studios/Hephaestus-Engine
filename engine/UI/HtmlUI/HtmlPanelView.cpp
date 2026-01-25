@@ -75,6 +75,8 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
   // State for mouse button transitions
   bool lastMouseDown = false;       // Left mouse button
   bool lastRightMouseDown = false;  // Right mouse button
+  int lastMouseX = -1;              // Last mouse X position (for move deduplication)
+  int lastMouseY = -1;              // Last mouse Y position (for move deduplication)
 
   // Whether this view currently owns keyboard focus
   bool focused = false;
@@ -293,11 +295,6 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
     if (!surface)
       return;
 
-    // Avoid re-uploading when nothing changed.
-    if (surface->dirty_bounds().IsEmpty() && texture && texture->image) {
-      return;
-    }
-
     ultralight::RefPtr<ultralight::Bitmap> bitmap = surface->bitmap();
     if (!bitmap)
       return;
@@ -310,8 +307,16 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
     if (w == 0 || h == 0)
       return;
 
+    ultralight::IntRect dirty = surface->dirty_bounds();
+    const bool needsRecreate = (!texture || !texture->image || texture->width != w || texture->height != h);
+
+    // Avoid re-uploading when nothing changed, unless we need to (re)create the texture.
+    if (dirty.IsEmpty() && !needsRecreate) {
+      return;
+    }
+
     // (Re)create GPU texture if needed.
-    if (!texture->image || texture->width != w || texture->height != h) {
+    if (needsRecreate) {
       texture->Destroy(vkdev->allocator, vkdev->device);
 
       // Create a texture we can upload to (transfer dst) and sample.
@@ -331,13 +336,31 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
 
       // Reset descriptor set
       imguiTextureSet = VK_NULL_HANDLE;
+
+      // Force a full upload after recreation.
+      dirty = ultralight::IntRect{0, 0, static_cast<int>(w), static_cast<int>(h)};
     }
 
     bitmap->LockPixels();
     const uint8_t* src = reinterpret_cast<const uint8_t*>(bitmap->raw_pixels());
     const uint32_t rowBytes = bitmap->row_bytes();
 
-    VkDeviceSize imageSize = static_cast<VkDeviceSize>(w) * h * 4;
+    // Clamp dirty rect to texture bounds.
+    int dx = std::max(0, dirty.x());
+    int dy = std::max(0, dirty.y());
+    int dw = std::min(static_cast<int>(w) - dx, dirty.width());
+    int dh = std::min(static_cast<int>(h) - dy, dirty.height());
+
+    if (dw <= 0 || dh <= 0) {
+      bitmap->UnlockPixels();
+      surface->ClearDirtyBounds();
+      return;
+    }
+
+    const uint32_t copyW = static_cast<uint32_t>(dw);
+    const uint32_t copyH = static_cast<uint32_t>(dh);
+
+    VkDeviceSize imageSize = static_cast<VkDeviceSize>(copyW) * copyH * 4;
 
     UploadSlot& slot = AcquireUploadSlot();
 
@@ -358,9 +381,10 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
     void* mapped = nullptr;
     vmaMapMemory(vkdev->allocator, slot.staging.allocation, &mapped);
     uint8_t* dst = reinterpret_cast<uint8_t*>(mapped);
-    const size_t tightRowBytes = static_cast<size_t>(w) * 4;
-    for (uint32_t y = 0; y < h; ++y) {
-      const uint8_t* row = src + static_cast<size_t>(y) * rowBytes;
+    const size_t tightRowBytes = static_cast<size_t>(copyW) * 4;
+    for (uint32_t y = 0; y < copyH; ++y) {
+      const uint8_t* row = src + static_cast<size_t>(y + static_cast<uint32_t>(dy)) * rowBytes
+                                      + static_cast<size_t>(dx) * 4;
       std::memcpy(dst + static_cast<size_t>(y) * tightRowBytes, row, tightRowBytes);
     }
     vmaUnmapMemory(vkdev->allocator, slot.staging.allocation);
@@ -422,8 +446,8 @@ struct HtmlPanelView::Impl : public ultralight::LoadListener {
     region.imageSubresource.mipLevel = 0;
     region.imageSubresource.baseArrayLayer = 0;
     region.imageSubresource.layerCount = 1;
-    region.imageOffset = {0, 0, 0};
-    region.imageExtent = {w, h, 1};
+    region.imageOffset = {dx, dy, 0};
+    region.imageExtent = {copyW, copyH, 1};
 
     vkCmdCopyBufferToImage(cmd,
                            slot.staging.buffer,
@@ -604,11 +628,15 @@ void HtmlPanelView::HandleImGuiInput() {
 
   // Mouse/scroll only when hovered (keyboard can be focused without hover).
   if (hovered) {
-    // Mouse move
-    impl_->FireMouse(ultralight::MouseEvent::kType_MouseMoved,
-                     localX,
-                     localY,
-                     ultralight::MouseEvent::kButton_None);
+    // Mouse move - only fire if position actually changed
+    if (localX != impl_->lastMouseX || localY != impl_->lastMouseY) {
+      impl_->FireMouse(ultralight::MouseEvent::kType_MouseMoved,
+                       localX,
+                       localY,
+                       ultralight::MouseEvent::kButton_None);
+      impl_->lastMouseX = localX;
+      impl_->lastMouseY = localY;
+    }
 
     // Left button
     bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);

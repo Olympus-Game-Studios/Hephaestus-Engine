@@ -1,4 +1,12 @@
 (function () {
+  function isDebug() {
+    return !!(window.hep && window.hep.debug);
+  }
+
+  let warnedNoTransport = false;
+  let warnedNativeCallCpp = false;
+  let warnedHepSendFound = false;
+
   function clamp(v, lo, hi) {
     return Math.max(lo, Math.min(hi, v));
   }
@@ -44,11 +52,8 @@
     if (window.hepSend) {
       const msg = { v: 1, name: name, payload: payload || {} };
       const msgStr = JSON.stringify(msg);
-      console.warn('[callCppSync] Calling hepSend with:', msgStr.substring(0, 100));
       const respStr = window.hepSend(msgStr);
-      console.warn('[callCppSync] hepSend returned type:', typeof respStr, 'value:', String(respStr).substring(0, 100));
       const obj = safeJsonParse(respStr);
-      console.warn('[callCppSync] Parsed result:', obj ? 'ok' : 'null', obj ? (obj.ok ? 'response ok' : 'response not ok') : '');
       return obj || { ok: false, error: 'bad_json', raw: respStr };
     }
     return { ok: false, error: 'hepSend_not_available' };
@@ -73,7 +78,7 @@
             return;
           }
         } catch (e) {
-          console.warn('parent.hepSend fallback failed:', e);
+          if (isDebug()) console.warn('parent.hepSend fallback failed:', e);
         }
         // If in iframe, use postMessage
         const id = ++callId;
@@ -129,7 +134,10 @@
       attempts++;
       let ready = false;
       if (window.hepSend) {
-        console.warn('[onReady] hepSend found after', attempts, 'attempts');
+        if (!warnedHepSendFound && isDebug()) {
+          console.warn('[onReady] hepSend found after', attempts, 'attempts');
+          warnedHepSendFound = true;
+        }
         ready = true;
       } else if (isInIframe()) {
         try {
@@ -233,24 +241,30 @@
   // Store our callCpp that handles JSON parsing properly
   // This is called at runtime, so hepSend should be available by then
   window.hep.callCpp = function(name, payload) {
-    console.warn('[hep.callCpp] name:', name, 'hepSend available:', !!window.hepSend);
+    if (isDebug()) console.warn('[hep.callCpp] name:', name, 'hepSend available:', !!window.hepSend);
     // If hepSend available, use it (parses JSON)
     if (window.hepSend) {
       return callCppSync(name, payload);
     }
     // Check for native C++ callCpp (set by OnDOMReady)
     if (window.hep && window.hep._nativeCallCpp) {
-      console.warn('[hep.callCpp] Using _nativeCallCpp fallback');
+      if (!warnedNativeCallCpp && isDebug()) {
+        console.warn('[hep.callCpp] Using _nativeCallCpp fallback');
+        warnedNativeCallCpp = true;
+      }
       const result = window.hep._nativeCallCpp(name, payload);
       // Native returns string, parse it
       if (typeof result === 'string') {
         const parsed = safeJsonParse(result);
-        console.warn('[hep.callCpp] Parsed native result:', parsed ? 'ok' : 'null');
+        if (isDebug()) console.warn('[hep.callCpp] Parsed native result:', parsed ? 'ok' : 'null');
         return parsed || { ok: false, error: 'bad_json', raw: result };
       }
       return result;
     }
-    console.warn('[hep.callCpp] No transport available, using async');
+    if (!warnedNoTransport) {
+      if (isDebug()) console.warn('[hep.callCpp] No transport available, using async');
+      warnedNoTransport = true;
+    }
     // Otherwise try async
     return callCppAsync(name, payload);
   };

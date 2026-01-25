@@ -610,6 +610,7 @@ void HtmlEditorUIHost::SetDetailsLockedFlag(bool* detailsLocked) { detailsLocked
 
 void HtmlEditorUIHost::SetAssetsRoot(std::filesystem::path assetsRoot) {
   assetsRoot_ = std::move(assetsRoot);
+  assetsListCacheValid_ = false; // Invalidate cache when assets root changes
 }
 
 void HtmlEditorUIHost::SetScriptEngine(ScriptEngine* scriptEngine) {
@@ -1129,6 +1130,13 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       rel = ".";
     }
 
+    std::string pathKey = dir.generic_string();
+
+    // Return cached result if available and path matches
+    if (assetsListCacheValid_ && assetsListCachePath_ == pathKey) {
+      return assetsListCacheJson_;
+    }
+
     struct Entry { std::string name; bool isDir; std::string relPath; };
     std::vector<Entry> dirs;
     std::vector<Entry> files;
@@ -1162,7 +1170,13 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     for (const auto& d : dirs) emit(d);
     for (const auto& f : files) emit(f);
     json << "]}";
-    return json.str();
+
+    // Cache the result
+    assetsListCachePath_ = pathKey;
+    assetsListCacheJson_ = json.str();
+    assetsListCacheValid_ = true;
+
+    return assetsListCacheJson_;
   });
 
   bridge_.RegisterHandler("assets.select", [this](const std::string& payload) -> std::string {

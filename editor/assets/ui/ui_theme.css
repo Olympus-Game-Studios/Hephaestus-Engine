@@ -399,3 +399,9 @@ select:disabled,
   height: 1px;
   background: rgba(231, 237, 245, 0.08);
 }
+
+/* Disable all CSS transitions/animations to reduce GPU repaints in Ultralight */
+*, *::before, *::after {
+  transition: none !important;
+  animation: none !important;
+}

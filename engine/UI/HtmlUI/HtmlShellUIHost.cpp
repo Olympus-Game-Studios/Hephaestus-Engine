@@ -1007,6 +1007,12 @@ void HtmlShellUIHost::Init(VulkanDevice* vkdev,
     std::filesystem::path path = pathOpt ? (base / *pathOpt) : base;
     std::error_code ec;
     std::filesystem::path rel = pathOpt ? std::filesystem::path(*pathOpt) : std::filesystem::path(".");
+    std::string pathKey = path.generic_string();
+
+    // Return cached result if available and path matches
+    if (assetsListCacheValid_ && assetsListCachePath_ == pathKey) {
+      return assetsListCacheJson_;
+    }
 
     if (!std::filesystem::exists(path, ec)) {
       return std::string("{\"ok\":false,\"error\":\"path_not_found\"}");
@@ -1026,8 +1032,14 @@ void HtmlShellUIHost::Init(VulkanDevice* vkdev,
            << "\"dir\":" << (entry.is_directory() ? "true" : "false") << "}";
     }
     json << "]}";
-    bridge_.EmitEvent("assetsUpdated", json.str());
-    return json.str();
+
+    // Cache the result
+    assetsListCachePath_ = pathKey;
+    assetsListCacheJson_ = json.str();
+    assetsListCacheValid_ = true;
+
+    bridge_.EmitEvent("assetsUpdated", assetsListCacheJson_);
+    return assetsListCacheJson_;
   });
 
   bridge_.RegisterHandler("assets.select", [this, jsonEscape](const std::string& payload) -> std::string {
@@ -1049,6 +1061,9 @@ void HtmlShellUIHost::Init(VulkanDevice* vkdev,
   });
 
   bridge_.RegisterHandler("assets.create", [this, jsonEscape](const std::string& payload) -> std::string {
+    // Invalidate cache since we're about to create new files
+    assetsListCacheValid_ = false;
+
     if (assetsRoot_.empty()) return std::string("{\"ok\":false,\"error\":\"no_assets_root\"}");
 
     auto kindOpt = EditorMessageBridge::ParseStringField(payload, "kind");
@@ -1787,7 +1802,10 @@ void HtmlShellUIHost::Draw(VkCommandBuffer cmd, VkExtent2D extent) {
 EditorMessageBridge& HtmlShellUIHost::Bridge() { return bridge_; }
 
 void HtmlShellUIHost::SetScene(Scene* scenePtr) { scene_ = scenePtr; }
-void HtmlShellUIHost::SetAssetsRoot(std::filesystem::path assetsRoot) { assetsRoot_ = std::move(assetsRoot); }
+void HtmlShellUIHost::SetAssetsRoot(std::filesystem::path assetsRoot) {
+  assetsRoot_ = std::move(assetsRoot);
+  assetsListCacheValid_ = false; // Invalidate cache when assets root changes
+}
 void HtmlShellUIHost::SetViewportRect(int x, int y, int w, int h) {
   viewportRect_.x = x;
   viewportRect_.y = y;
@@ -1809,7 +1827,13 @@ bool HtmlShellUIHost::IsPointInViewport(double x, double y) const {
 void HtmlShellUIHost::OnMouseMove(double x, double y) {
   if (!shell_) return;
   if (IsPointInViewport(x, y)) return; // allow native viewport input
-  shell_->FireMouseMove(static_cast<int>(x), static_cast<int>(y));
+  int ix = static_cast<int>(x);
+  int iy = static_cast<int>(y);
+  // Only fire if position actually changed
+  if (ix == lastMouseX_ && iy == lastMouseY_) return;
+  lastMouseX_ = ix;
+  lastMouseY_ = iy;
+  shell_->FireMouseMove(ix, iy);
 }
 
 void HtmlShellUIHost::OnMouseButton(int button, int action, int mods, double x, double y) {

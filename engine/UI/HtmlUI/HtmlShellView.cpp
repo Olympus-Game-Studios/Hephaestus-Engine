@@ -84,18 +84,14 @@ struct ShellLoadListener : public ultralight::LoadListener {
     // Legacy hepSend (takes full message JSON)
     global["hepSend"] = JSCallbackWithRetval([this](const JSObject&, const JSArgs& args) -> JSValue {
       if (args.size() < 1) {
-        std::cerr << "[hepSend] Missing argument" << std::endl;
         return JSValue("{\"ok\":false,\"error\":\"missing_arg\"}");
       }
       ultralight::String msgUL = args[0].ToString();
       std::string msg = msgUL.utf8().data();
-      std::cerr << "[hepSend] Received: " << msg.substr(0, 100) << "..." << std::endl;
       auto resp = owner->Bridge() ? owner->Bridge()->HandleFromJs(msg) : std::optional<std::string>{};
       if (!resp) {
-        std::cerr << "[hepSend] No response from bridge" << std::endl;
         return JSValue("{\"ok\":false,\"error\":\"no_response\"}");
       }
-      std::cerr << "[hepSend] Returning: " << resp->substr(0, 100) << "..." << std::endl;
       return JSValue(resp->c_str());
     });
 

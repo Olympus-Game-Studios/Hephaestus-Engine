@@ -83,6 +83,15 @@ private:
   Scene* scene_ = nullptr;
   std::string lastSelectedAssetRel_;
 
+  // Cache for assets.list to avoid frequent filesystem access
+  mutable std::string assetsListCachePath_;
+  mutable std::string assetsListCacheJson_;
+  mutable bool assetsListCacheValid_ = false;
+
+  // Cache last mouse position to avoid firing redundant mouse move events
+  int lastMouseX_ = -1;
+  int lastMouseY_ = -1;
+
   std::unordered_map<std::string, BlueprintDocument> blueprintDocs_;
   std::vector<std::string> blueprintTabOrder_;
 
