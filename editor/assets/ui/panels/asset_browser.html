@@ -503,6 +503,7 @@
   </div>
 
   <script src="../ui_common.js"></script>
+  <script src="../editor_api.js"></script>
   <script>
     let currentPath = '.';
     let selectedRel = '';
@@ -703,6 +704,7 @@
       const i = n.lastIndexOf('.');
       const ext = i >= 0 ? n.slice(i + 1) : '';
       if (!ext) return 'FILE';
+      if (ext === 'hpblueprint' || ext === 'blueprint') return 'BLUEPRINT';
       if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'tga' || ext === 'hdr' || ext === 'exr') return 'TEXTURE';
       if (ext === 'glb' || ext === 'gltf' || ext === 'fbx' || ext === 'obj') return 'MESH';
       if (ext === 'lua') return 'LUA';
@@ -737,8 +739,15 @@
 
     function handleAssetOpen(rel, name) {
       if (!rel) return;
-      if (extType(name) === 'MESH') {
+      const type = extType(name);
+      if (type === 'MESH') {
         spawnMeshFromAsset(rel, name);
+      } else if (type === 'BLUEPRINT') {
+        if (window.EditorAPI && window.EditorAPI.openBlueprint) {
+          window.EditorAPI.openBlueprint(rel);
+        } else {
+          window.hep.callCpp('blueprint.open', { path: rel, assetId: rel });
+        }
       } else {
         window.hep.callCpp('assets.open', { path: rel });
       }
@@ -995,7 +1004,12 @@
     }
 
     function refresh(path) {
-      const res = window.hep.callCpp('assets.list', { path: path || '.' });
+      let res = null;
+      if (window.EditorAPI && window.EditorAPI.requestAssets) {
+        res = window.EditorAPI.requestAssets({ path: path || '.' });
+      } else {
+        res = window.hep.callCpp('assets.list', { path: path || '.' });
+      }
       render(res);
     }
 
@@ -1130,6 +1144,24 @@
       loadFolderChildren(root);
       refresh('.');
     });
+
+    window.PanelController = {
+      init(panelId, api) {
+        this.panelId = panelId;
+        this.api = api;
+        if (!api || !api.on) return;
+        api.on('assetsUpdated', (assetsJson) => {
+          render(assetsJson);
+        });
+        if (api.requestAssets) {
+          render(api.requestAssets({ path: '.' }));
+        }
+      },
+      onFocus() {},
+      onBlur() {},
+      onResize() {},
+      onStateUpdate() {}
+    };
   </script>
 </body>
 </html>

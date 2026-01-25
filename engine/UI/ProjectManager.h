@@ -7,7 +7,28 @@
 #include <chrono>
 #include <unordered_map>
 #include "../Gfx/VulkanTexture.h"
+#if HEPHAESTUS_EDITOR_IMGUI
 #include "imgui.h"
+#else
+#ifndef HEPHAESTUS_IMGUI_TYPES_DEFINED
+#define HEPHAESTUS_IMGUI_TYPES_DEFINED
+using ImTextureID = void*;
+struct ImVec2 {
+    float x = 0.0f;
+    float y = 0.0f;
+    ImVec2() = default;
+    ImVec2(float _x, float _y) : x(_x), y(_y) {}
+};
+struct ImVec4 {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float w = 0.0f;
+    ImVec4() = default;
+    ImVec4(float _x, float _y, float _z, float _w) : x(_x), y(_y), z(_z), w(_w) {}
+};
+#endif
+#endif
 
 class VulkanDevice;
 

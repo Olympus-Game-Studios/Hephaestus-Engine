@@ -4,7 +4,20 @@
 #include "MaterialGraphEvaluator.h"
 #include "TextureDiscovery.h"
 
+#if HEPHAESTUS_EDITOR_IMGUI
 #include "imgui.h"
+#else
+#ifndef HEPHAESTUS_IMGUI_TYPES_DEFINED
+#define HEPHAESTUS_IMGUI_TYPES_DEFINED
+struct ImVec2 {
+    float x = 0.0f;
+    float y = 0.0f;
+    ImVec2() = default;
+    ImVec2(float _x, float _y) : x(_x), y(_y) {}
+};
+using ImTextureID = void*;
+#endif
+#endif
 
 #include <filesystem>
 #include <optional>

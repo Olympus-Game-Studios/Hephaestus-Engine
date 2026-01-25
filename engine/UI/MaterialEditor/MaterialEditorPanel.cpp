@@ -1,3 +1,4 @@
+#if HEPHAESTUS_EDITOR_IMGUI
 #include "MaterialEditorPanel.h"
 
 #include "imgui.h"
@@ -1242,3 +1243,42 @@ void Panel::QueueNodePlacement(NodeID id, ImVec2 screenPos) {
 }
 
 } // namespace MaterialEditor
+
+#else
+
+#include "MaterialEditorPanel.h"
+
+namespace MaterialEditor {
+
+Panel::Panel() = default;
+Panel::~Panel() = default;
+
+std::optional<PanelResult> Panel::Draw(Graph& /*graph*/) {
+    return std::nullopt;
+}
+
+void Panel::SetActiveAsset(const std::filesystem::path& path) {
+    m_CurrentAssetPath = path;
+}
+
+void Panel::LoadMaterialIntoGraph(Graph& /*graph*/) {}
+
+void Panel::ClearActiveAsset() {
+    m_CurrentAssetPath.clear();
+}
+
+void Panel::QueueNodePlacement(NodeID /*id*/, ImVec2 /*screenPos*/) {}
+
+void Panel::EnsureContext() {}
+void Panel::DrawToolbar(Graph& /*graph*/) {}
+void Panel::DrawNodeCanvas(Graph& /*graph*/) {}
+
+std::optional<PanelResult> Panel::DrawInspector(Graph& /*graph*/) {
+    return std::nullopt;
+}
+
+void Panel::RefreshTextureCache() {}
+
+} // namespace MaterialEditor
+
+#endif

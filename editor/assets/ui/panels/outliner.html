@@ -172,6 +172,7 @@
   </div>
 
   <script src="../ui_common.js"></script>
+  <script src="../editor_api.js"></script>
 
   <script>
     let lastData = null;
@@ -423,8 +424,13 @@
               if (ctrlPressed) {
                 statusEl.textContent = 'Multi-select: Ctrl+Click on #' + ent.id;
               }
-              const r = window.hep.callCpp('scene.select', payload);
-              if (!r.ok) {
+              let r = null;
+              if (!ctrlPressed && window.EditorAPI && window.EditorAPI.selectEntity) {
+                r = window.EditorAPI.selectEntity(ent.id);
+              } else {
+                r = window.hep.callCpp('scene.select', payload);
+              }
+              if (!r || !r.ok) {
                 statusEl.textContent = 'Select failed: ' + (r.error || 'error');
               } else {
                 refresh();
@@ -478,7 +484,12 @@
     }
 
     function refresh() {
-      const data = window.hep.callCpp('scene.list', {});
+      let data = null;
+      if (window.EditorAPI && window.EditorAPI.requestSceneTree) {
+        data = window.EditorAPI.requestSceneTree();
+      } else {
+        data = window.hep.callCpp('scene.list', {});
+      }
       renderList(data);
     }
 
@@ -561,6 +572,32 @@
       refresh();
       setInterval(refresh, 1200);
     });
+
+    window.PanelController = {
+      init(panelId, api) {
+        this.panelId = panelId;
+        this.api = api;
+        if (!api || !api.on) return;
+        api.on('sceneTreeUpdated', (tree) => {
+          renderList(tree);
+        });
+        api.on('selectionChanged', (entityId) => {
+          if (lastData) {
+            lastData.selectedId = Number(entityId || 0);
+            renderList(lastData);
+          } else if (api.requestSceneTree) {
+            renderList(api.requestSceneTree());
+          }
+        });
+        if (api.requestSceneTree) {
+          renderList(api.requestSceneTree());
+        }
+      },
+      onFocus() {},
+      onBlur() {},
+      onResize() {},
+      onStateUpdate() {}
+    };
   </script>
 </body>
 </html>

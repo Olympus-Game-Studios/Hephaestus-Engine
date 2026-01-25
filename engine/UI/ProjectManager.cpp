@@ -1,3 +1,4 @@
+#if HEPHAESTUS_EDITOR_IMGUI
 #include "ProjectManager.h"
 #include "../Gfx/VulkanDevice.h"
 #include "imgui.h"
@@ -38,7 +39,8 @@ std::filesystem::path FindEditorIconsRoot()
     cached = fs::current_path() / "editor" / "Icons";
     return cached;
 }
-}
+
+
 
 // Platform-specific includes for opening folders
 #ifdef _WIN32
@@ -2015,4 +2017,394 @@ private:
 }
 
 } // namespace HephaestusEngine
+
+#else
+
+#include "ProjectManager.h"
+#include <fstream>
+#include <sstream>
+#include <iostream>
+#include <algorithm>
+#include <ctime>
+#include <iomanip>
+
+namespace {
+    std::string EscapeJsonString(const std::string& str) {
+        std::ostringstream escaped;
+        for (char ch : str) {
+            switch (ch) {
+                case '"': escaped << "\\\""; break;
+                case '\\': escaped << "\\\\"; break;
+                case '\b': escaped << "\\b"; break;
+                case '\f': escaped << "\\f"; break;
+                case '\n': escaped << "\\n"; break;
+                case '\r': escaped << "\\r"; break;
+                case '\t': escaped << "\\t"; break;
+                default:
+                    if (static_cast<unsigned char>(ch) < 0x20) {
+                        escaped << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)ch;
+                    } else {
+                        escaped << ch;
+                    }
+            }
+        }
+        return escaped.str();
+    }
+
+    std::string UnescapeJsonString(const std::string& str) {
+        std::ostringstream out;
+        for (size_t i = 0; i < str.size(); ++i) {
+            if (str[i] == '\\' && i + 1 < str.size()) {
+                char next = str[i + 1];
+                switch (next) {
+                    case '"': out << '"'; ++i; break;
+                    case '\\': out << '\\'; ++i; break;
+                    case 'b': out << '\b'; ++i; break;
+                    case 'f': out << '\f'; ++i; break;
+                    case 'n': out << '\n'; ++i; break;
+                    case 'r': out << '\r'; ++i; break;
+                    case 't': out << '\t'; ++i; break;
+                    default: out << str[i];
+                }
+            } else {
+                out << str[i];
+            }
+        }
+        return out.str();
+    }
+
+    bool FindJsonStringValue(const std::string& content, const std::string& key, std::string& out) {
+        std::string pattern = "\"" + key + "\"";
+        size_t keyPos = content.find(pattern);
+        if (keyPos == std::string::npos) return false;
+        size_t colonPos = content.find(':', keyPos + pattern.size());
+        if (colonPos == std::string::npos) return false;
+        size_t quoteStart = content.find('"', colonPos + 1);
+        if (quoteStart == std::string::npos) return false;
+        size_t pos = quoteStart + 1;
+        size_t endPos = pos;
+        while (endPos < content.size()) {
+            if (content[endPos] == '"' && content[endPos - 1] != '\\') break;
+            ++endPos;
+        }
+        if (endPos >= content.size()) return false;
+        out = UnescapeJsonString(content.substr(pos, endPos - pos));
+        return true;
+    }
+
+    bool FindJsonBoolValue(const std::string& content, const std::string& key, bool& out) {
+        std::string pattern = "\"" + key + "\"";
+        size_t keyPos = content.find(pattern);
+        if (keyPos == std::string::npos) return false;
+        size_t colonPos = content.find(':', keyPos + pattern.size());
+        if (colonPos == std::string::npos) return false;
+        size_t valueStart = content.find_first_not_of(" \t\n\r", colonPos + 1);
+        if (valueStart == std::string::npos) return false;
+        if (content.substr(valueStart, 4) == "true") { out = true; return true; }
+        if (content.substr(valueStart, 5) == "false") { out = false; return true; }
+        return false;
+    }
+}
+
+namespace HephaestusEngine {
+
+void ProjectManager::Initialize(::VulkanDevice* device) {
+    m_Device = device;
+    // Initialize templates
+    m_Templates.clear();
+    m_Templates.push_back({ "Empty Project", "A blank project with no content" });
+    m_Templates.push_back({ "First Person", "A first-person template with basic controls" });
+    m_Templates.push_back({ "Third Person", "A third-person template with camera setup" });
+    
+    // Load custom paths
+    std::filesystem::path configPath = std::filesystem::current_path() / "editor" / "settings.ini";
+    if (std::filesystem::exists(configPath)) {
+        std::ifstream file(configPath);
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.rfind("custom_path=", 0) == 0) {
+                std::filesystem::path customPath = line.substr(12);
+                if (!customPath.empty()) {
+                    m_CustomProjectPaths.push_back(customPath);
+                }
+            }
+        }
+    }
+}
+
+void ProjectManager::Shutdown() {}
+
+std::optional<std::filesystem::path> ProjectManager::Draw() {
+    return std::nullopt;
+}
+
+void ProjectManager::SetProjectsRoot(const std::filesystem::path& root) {
+    m_ProjectsRoot = root;
+    RefreshProjects();
+}
+
+void ProjectManager::RefreshProjects() {
+    m_AllProjects.clear();
+    m_FilteredProjects.clear();
+    
+    std::cerr << "[DEBUG] RefreshProjects: m_ProjectsRoot = " << m_ProjectsRoot.string() << std::endl;
+    
+    if (!std::filesystem::exists(m_ProjectsRoot)) {
+        std::cerr << "[DEBUG] Projects root does not exist, creating..." << std::endl;
+        try {
+            std::filesystem::create_directories(m_ProjectsRoot);
+        } catch (...) {}
+    }
+    
+    auto isValidHeProject = [](const std::filesystem::path& projectPath) -> bool {
+        return std::filesystem::exists(projectPath / "project.heproject");
+    };
+    
+    auto loadProjectInfo = [](const std::filesystem::path& projectPath) -> ProjectInfo {
+        ProjectInfo info;
+        info.path = projectPath;
+        info.isValid = true;
+        
+        // Try to load metadata from project.heproject
+        std::filesystem::path metaPath = projectPath / "project.heproject";
+        if (std::filesystem::exists(metaPath)) {
+            std::ifstream file(metaPath);
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            std::string content = buffer.str();
+            
+            FindJsonStringValue(content, "name", info.metadata.name);
+            FindJsonStringValue(content, "description", info.metadata.description);
+            FindJsonStringValue(content, "engineVersion", info.metadata.engineVersion);
+            FindJsonStringValue(content, "screenshot", info.metadata.screenshotPath);
+            FindJsonBoolValue(content, "favorite", info.metadata.isFavorite);
+        }
+        
+        // Default values
+        if (info.metadata.name.empty()) {
+            info.metadata.name = projectPath.filename().string();
+        }
+        if (info.metadata.description.empty()) {
+            info.metadata.description = "No description available";
+        }
+        
+        // Get file timestamps
+        try {
+            auto ftime = std::filesystem::last_write_time(projectPath);
+            auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                ftime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now()
+            );
+            info.metadata.lastModified = sctp;
+            info.metadata.created = sctp; // Use same for created if not available
+        } catch (...) {
+            info.metadata.lastModified = std::chrono::system_clock::now();
+            info.metadata.created = std::chrono::system_clock::now();
+        }
+        
+        return info;
+    };
+    
+    // Scan for projects in the default root
+    try {
+        if (std::filesystem::exists(m_ProjectsRoot)) {
+            std::cerr << "[DEBUG] Scanning projects root: " << m_ProjectsRoot << std::endl;
+            for (const auto& entry : std::filesystem::directory_iterator(m_ProjectsRoot)) {
+                if (!entry.is_directory()) continue;
+                std::cerr << "[DEBUG]   Found directory: " << entry.path().filename().string();
+                if (isValidHeProject(entry.path())) {
+                    std::cerr << " (valid project)" << std::endl;
+                    m_AllProjects.push_back(loadProjectInfo(entry.path()));
+                } else {
+                    std::cerr << " (not a valid project)" << std::endl;
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[DEBUG] Exception scanning projects: " << e.what() << std::endl;
+    }
+    
+    std::cerr << "[DEBUG] RefreshProjects: Found " << m_AllProjects.size() << " projects" << std::endl;
+    
+    // Scan custom project paths
+    for (const auto& customPath : m_CustomProjectPaths) {
+        try {
+            if (std::filesystem::exists(customPath) && std::filesystem::is_directory(customPath)) {
+                if (isValidHeProject(customPath)) {
+                    // Check if already added
+                    bool found = false;
+                    for (const auto& proj : m_AllProjects) {
+                        if (proj.path == customPath) { found = true; break; }
+                    }
+                    if (!found) {
+                        m_AllProjects.push_back(loadProjectInfo(customPath));
+                    }
+                }
+            }
+        } catch (...) {}
+    }
+    
+    // Rebuild filtered pointers (no filtering for now)
+    m_FilteredProjects.clear();
+    for (auto& proj : m_AllProjects) {
+        m_FilteredProjects.push_back(&proj);
+    }
+}
+
+void ProjectManager::AddCustomProjectPath(const std::filesystem::path& projectPath) {
+    m_CustomProjectPaths.push_back(projectPath);
+}
+
+std::vector<std::filesystem::path> ProjectManager::FindLegacyProjects(const std::filesystem::path& /*searchRoot*/) const {
+    return {};
+}
+
+bool ProjectManager::MigrateProjectToHeproject(const std::filesystem::path& /*projectPath*/) {
+    return false;
+}
+
+std::string ProjectManager::BuildProjectManagerPayloadJson() const {
+    std::ostringstream json;
+    json << "\"root\":\"" << EscapeJsonString(m_ProjectsRoot.generic_string()) << "\",";
+
+    json << "\"projects\":[";
+    for (size_t i = 0; i < m_AllProjects.size(); ++i) {
+        const ProjectInfo& project = m_AllProjects[i];
+        const ProjectMetadata& meta = project.metadata;
+        const std::string name = meta.name.empty() ? project.path.filename().string() : meta.name;
+        const std::string description = meta.description.empty() ? "No description" : meta.description;
+
+        auto createdTime = std::chrono::system_clock::to_time_t(meta.created);
+        auto modifiedTime = std::chrono::system_clock::to_time_t(meta.lastModified);
+
+        json << "{";
+        json << "\"name\":\"" << EscapeJsonString(name) << "\",";
+        json << "\"path\":\"" << EscapeJsonString(project.path.generic_string()) << "\",";
+        json << "\"description\":\"" << EscapeJsonString(description) << "\",";
+        json << "\"engineVersion\":\"" << EscapeJsonString(meta.engineVersion) << "\",";
+        json << "\"created\":" << static_cast<long long>(createdTime) << ",";
+        json << "\"lastModified\":" << static_cast<long long>(modifiedTime) << ",";
+        json << "\"favorite\":" << (meta.isFavorite ? "true" : "false") << ",";
+        json << "\"valid\":" << (project.isValid ? "true" : "false") << ",";
+        json << "\"error\":\"" << EscapeJsonString(project.errorMessage) << "\",";
+        json << "\"screenshot\":\"" << EscapeJsonString(meta.screenshotPath) << "\",";
+        json << "\"tags\":[";
+        for (size_t t = 0; t < meta.tags.size(); ++t) {
+            json << "\"" << EscapeJsonString(meta.tags[t]) << "\"";
+            if (t + 1 < meta.tags.size()) json << ",";
+        }
+        json << "]";
+        json << "}";
+        if (i + 1 < m_AllProjects.size()) json << ",";
+    }
+    json << "],";
+
+    json << "\"templates\":[";
+    for (size_t i = 0; i < m_Templates.size(); ++i) {
+        const ProjectTemplate& tpl = m_Templates[i];
+        json << "{";
+        json << "\"index\":" << static_cast<int>(i) << ",";
+        json << "\"name\":\"" << EscapeJsonString(tpl.name) << "\",";
+        json << "\"description\":\"" << EscapeJsonString(tpl.description) << "\"";
+        json << "}";
+        if (i + 1 < m_Templates.size()) json << ",";
+    }
+    json << "]";
+    return json.str();
+}
+
+bool ProjectManager::CreateProjectFromTemplate(const std::string& name, const std::string& description,
+                                               int /*templateIndex*/, const std::string& customLocation) {
+    std::filesystem::path projectDir;
+    if (customLocation.empty()) {
+        projectDir = m_ProjectsRoot / name;
+    } else {
+        projectDir = std::filesystem::path(customLocation) / name;
+    }
+    
+    try {
+        if (std::filesystem::exists(projectDir)) {
+            return false; // Project already exists
+        }
+        std::filesystem::create_directories(projectDir);
+        
+        // Create project.heproject
+        std::filesystem::path projectFile = projectDir / "project.heproject";
+        std::ofstream file(projectFile);
+        file << "{\n";
+        file << "  \"name\": \"" << EscapeJsonString(name) << "\",\n";
+        file << "  \"description\": \"" << EscapeJsonString(description) << "\",\n";
+        file << "  \"engineVersion\": \"1.0.0\",\n";
+        file << "  \"favorite\": false,\n";
+        file << "  \"screenshot\": \"\",\n";
+        file << "  \"tags\": []\n";
+        file << "}\n";
+        file.close();
+        
+        // Create basic folder structure
+        std::filesystem::create_directories(projectDir / "assets");
+        std::filesystem::create_directories(projectDir / "assets" / "meshes");
+        std::filesystem::create_directories(projectDir / "assets" / "textures");
+        std::filesystem::create_directories(projectDir / "assets" / "blueprints");
+        std::filesystem::create_directories(projectDir / "scripts");
+        
+        RefreshProjects();
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ProjectManager::SetProjectFavorite(const std::filesystem::path& projectPath, bool isFavorite) {
+    std::filesystem::path projectFile = projectPath / "project.heproject";
+    if (!std::filesystem::exists(projectFile)) {
+        return false;
+    }
+    
+    try {
+        // Read existing content
+        std::ifstream inFile(projectFile);
+        std::stringstream buffer;
+        buffer << inFile.rdbuf();
+        std::string content = buffer.str();
+        inFile.close();
+        
+        // Simple replacement of favorite value
+        size_t pos = content.find("\"favorite\"");
+        if (pos != std::string::npos) {
+            size_t colonPos = content.find(':', pos);
+            if (colonPos != std::string::npos) {
+                size_t valueStart = content.find_first_not_of(" \t", colonPos + 1);
+                size_t valueEnd = content.find_first_of(",}\n", valueStart);
+                std::string newContent = content.substr(0, valueStart) + 
+                    (isFavorite ? "true" : "false") + content.substr(valueEnd);
+                
+                std::ofstream outFile(projectFile);
+                outFile << newContent;
+                outFile.close();
+            }
+        }
+        
+        // Update in-memory state
+        for (auto& proj : m_AllProjects) {
+            if (proj.path == projectPath) {
+                proj.metadata.isFavorite = isFavorite;
+                break;
+            }
+        }
+        
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::optional<std::filesystem::path> ProjectManager::PickProjectFolder(const std::filesystem::path& /*initialPath*/) const {
+    return std::nullopt;
+}
+
+void ProjectManager::OpenProjectLocationExternal(const std::filesystem::path& /*projectPath*/) {}
+
+} // namespace HephaestusEngine
+
+#endif
 

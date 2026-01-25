@@ -23,7 +23,9 @@
 #include <vulkan/vulkan.h>
 
 #include "../extern/stb_image.h"
+#if HEPHAESTUS_EDITOR_IMGUI
 #include "imgui.h"
+#endif
 
 #include "Math.h"
 
@@ -60,11 +62,48 @@
 #include "../Physics/MeshCollisionSystem.h"
 
 // Dear ImGui
+#if HEPHAESTUS_EDITOR_IMGUI
 #include "ImGuizmo.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
 #include "imgui_internal.h"
 #include "imnodes.h"
+#endif
+
+#if !HEPHAESTUS_EDITOR_IMGUI
+namespace ImGuizmo {
+  enum OPERATION { TRANSLATE = 0, ROTATE = 1, SCALE = 2 };
+  enum MODE { LOCAL = 0, WORLD = 1 };
+}
+
+#ifndef HEPHAESTUS_IMGUI_TYPES_DEFINED
+#define HEPHAESTUS_IMGUI_TYPES_DEFINED
+using ImTextureID = void*;
+constexpr ImTextureID ImTextureID_Invalid = nullptr;
+
+struct ImTextureRef {
+  ImTextureRef() = default;
+  explicit ImTextureRef(ImTextureID /*tex_id*/) {}
+};
+
+struct ImVec2 {
+  float x = 0.0f;
+  float y = 0.0f;
+  constexpr ImVec2(float xIn = 0.0f, float yIn = 0.0f) : x(xIn), y(yIn) {}
+};
+
+struct ImVec4 {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+  float w = 0.0f;
+  constexpr ImVec4(float xIn = 0.0f, float yIn = 0.0f, float zIn = 0.0f, float wIn = 0.0f)
+      : x(xIn), y(yIn), z(zIn), w(wIn) {}
+};
+#endif
+
+struct ImGuiIO {};
+#endif
 
 #include <memory>
 
@@ -87,7 +126,11 @@
 #include "../UI/ProjectManager.h"
 
 #if HEPHAESTUS_EDITOR_HTML_UI
+#if HEPHAESTUS_EDITOR_IMGUI
 #include "../UI/HtmlUI/HtmlEditorUIHost.h"
+#else
+#include "../UI/HtmlUI/HtmlShellUIHost.h"
+#endif
 #endif
 
 // Namespace alias for convenience
@@ -103,10 +146,22 @@ const std::vector<const char *> validationLayers = {
     "VK_LAYER_KHRONOS_validation"};
 
 #if HEPHAESTUS_EDITOR_HTML_UI
+#if HEPHAESTUS_EDITOR_IMGUI
 static std::unique_ptr<Hephaestus::HtmlUI::HtmlEditorUIHost> g_HtmlEditorUIHost;
+#else
+static std::unique_ptr<Hephaestus::HtmlUI::HtmlShellUIHost> g_HtmlShellUIHost;
+#endif
 
 // When using the HTML UI, asset browser actions are delivered via the bridge.
 static std::optional<std::filesystem::path> g_HtmlPendingAssetOpenRequest;
+
+struct HtmlViewportRect {
+  int x = 0;
+  int y = 0;
+  int w = 0;
+  int h = 0;
+};
+static HtmlViewportRect g_HtmlViewportRect;
 #endif
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
@@ -174,6 +229,7 @@ static std::filesystem::path ResolveActiveAssetsRoot();
 constexpr float kReferenceViewportWidth = 1280.0f;
 constexpr float kReferenceViewportHeight = 720.0f;
 
+#if HEPHAESTUS_EDITOR_IMGUI
 static float ComputeUIScale(const ImGuiViewport *viewport) {
   if (g_UseFixedEditorUIScale) {
     return kFixedEditorUIScale;
@@ -319,6 +375,10 @@ static void ApplyHephaestusEditorStyle(ImGuiIO &io, float scale) {
 
   style.ScaleAllSizes(scale);
 }
+#else
+static float ComputeUIScale(const void * /*viewport*/) { return 1.0f; }
+static void ApplyHephaestusEditorStyle(void * /*io*/, float /*scale*/) {}
+#endif
 
 static bool g_ShowEditorGizmo = true;
 static bool g_ShowGizmoGrid = false;
@@ -428,6 +488,7 @@ static bool DetectRuntimePackage(const std::filesystem::path &probeRoot) {
   return false;
 }
 
+#if HEPHAESTUS_EDITOR_IMGUI
 static bool DrawPillButton(const char *label, bool active,
                            const ImVec2 &size = ImVec2(0.0f, 0.0f)) {
   const ImGuiStyle &s = ImGui::GetStyle();
@@ -848,6 +909,25 @@ static void BeginHephaestusDockspace() {
     ImGui::DockBuilderFinish(dockspaceID);
   }
 }
+#else
+static bool DrawPillButton(const char * /*label*/, bool /*active*/,
+                           float /*size*/ = 0.0f) {
+  return false;
+}
+
+static ToolbarActions DrawEditorToolbar(bool /*isPlaying*/, bool /*isPaused*/,
+                                        Entity & /*environmentEntity*/,
+                                        VulkanSkybox & /*skybox*/,
+                                        VulkanDevice & /*vkdev*/) {
+  return ToolbarActions{};
+}
+
+static void DrawViewportOverlay(ImGuizmo::OPERATION & /*operation*/,
+                                ImGuizmo::MODE & /*mode*/, bool & /*showGrid*/,
+                                bool & /*showGizmo*/) {}
+
+static void BeginHephaestusDockspace() {}
+#endif
 
 // Discover all HDR/EXR files in the assets directory
 // Optionally pass a scene to detect project location from existing HDRI paths
@@ -970,7 +1050,10 @@ static std::vector<std::string> DiscoverHDRFiles(Scene* scene = nullptr) {
 }
 
 static WorldOutlinerActions DrawActorPalette() {
-
+#if !HEPHAESTUS_EDITOR_IMGUI
+  WorldOutlinerActions actions{};
+  return actions;
+#else
   WorldOutlinerActions actions{};
 
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
@@ -1052,10 +1135,14 @@ static WorldOutlinerActions DrawActorPalette() {
   ImGui::PopStyleVar();
 
   return actions;
+#endif
 }
 
 static WorldOutlinerActions DrawAddActorsPanel() {
   WorldOutlinerActions actions{};
+#if !HEPHAESTUS_EDITOR_IMGUI
+  return actions;
+#else
 
 #if HEPHAESTUS_EDITOR_HTML_UI
   if (g_HtmlEditorUIHost) {
@@ -1079,10 +1166,15 @@ static WorldOutlinerActions DrawAddActorsPanel() {
 
   ImGui::End();
   return actions;
+#endif
 }
 
 static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
   WorldOutlinerActions actions{};
+#if !HEPHAESTUS_EDITOR_IMGUI
+  (void)scene;
+  return actions;
+#else
   const bool isBlueprintMode = IsBlueprintModeActive();
   BlueprintDocument* blueprintDoc = g_BlueprintDocument.get();
 
@@ -1382,8 +1474,10 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
 
   ImGui::End();
   return actions;
+#endif
 }
 
+#if HEPHAESTUS_EDITOR_IMGUI
 // Helper function to draw draggable XYZ controls
 static bool DragFloat3XYZ(const char* label, float* values, float speed = 0.1f, float min = -999999.0f, float max = 999999.0f) {
   bool changed = false;
@@ -1491,12 +1585,20 @@ static bool DragFloat3XYZ(const char* label, float* values, float speed = 0.1f, 
   
   return changed;
 }
+#endif // HEPHAESTUS_EDITOR_IMGUI
 
 static DetailsPanelActions DrawDetailsPanel(Scene &scene,
                                             ScriptEngine &scriptEngine,
                                             VulkanSkybox &skybox,
                                             VulkanDevice &vkdev) {
   DetailsPanelActions actions{};
+#if !HEPHAESTUS_EDITOR_IMGUI
+  (void)scene;
+  (void)scriptEngine;
+  (void)skybox;
+  (void)vkdev;
+  return actions;
+#else
   const bool isBlueprintMode = IsBlueprintModeActive();
   BlueprintDocument* blueprintDoc = g_BlueprintDocument.get();
 
@@ -2373,6 +2475,7 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
           "script selected in the Asset Browser.");
     }
 
+  }
 
   if (isBlueprintMode && entityChanged && blueprintDoc) {
     blueprintDoc->SyncNodeFromEntity(selectedEntity);
@@ -2399,10 +2502,16 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
 
   ImGui::End();
   return actions;
+#endif
 }
 
 static void DrawLogConsole(const ImGuiIO &io,
                            const std::string &statusMessage) {
+#if !HEPHAESTUS_EDITOR_IMGUI
+  (void)io;
+  (void)statusMessage;
+  return;
+#else
 #if HEPHAESTUS_EDITOR_HTML_UI
   if (g_HtmlEditorUIHost) {
     (void)io;
@@ -2449,6 +2558,7 @@ static void DrawLogConsole(const ImGuiIO &io,
   }
 
   ImGui::End();
+#endif
 }
 
 static void framebufferResizeCallback(GLFWwindow *window, int width,
@@ -3174,6 +3284,13 @@ struct RuntimeCameraController {
 static void scrollCallback(GLFWwindow *window, double xoffset, double yoffset) {
   (void)window;
   (void)xoffset;
+#if HEPHAESTUS_EDITOR_HTML_UI && !HEPHAESTUS_EDITOR_IMGUI
+  double mx = 0.0, my = 0.0;
+  glfwGetCursorPos(window, &mx, &my);
+  if (g_HtmlShellUIHost) {
+    g_HtmlShellUIHost->OnScroll(mx, my, xoffset, yoffset);
+  }
+#endif
   if (g_cameraPtr) {
     // Increase/decrease speed by 10% per scroll tick
     g_cameraPtr->moveSpeed *= (yoffset > 0) ? 1.1f : 0.9f;
@@ -3184,6 +3301,37 @@ static void scrollCallback(GLFWwindow *window, double xoffset, double yoffset) {
       g_cameraPtr->moveSpeed = 50.0f;
   }
 }
+
+#if HEPHAESTUS_EDITOR_HTML_UI && !HEPHAESTUS_EDITOR_IMGUI
+static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
+  if (g_HtmlShellUIHost) {
+    g_HtmlShellUIHost->OnMouseMove(xpos, ypos);
+  }
+  (void)window;
+}
+
+static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+  if (g_HtmlShellUIHost) {
+    double mx = 0.0, my = 0.0;
+    glfwGetCursorPos(window, &mx, &my);
+    g_HtmlShellUIHost->OnMouseButton(button, action, mods, mx, my);
+  }
+}
+
+static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+  if (g_HtmlShellUIHost) {
+    g_HtmlShellUIHost->OnKey(key, scancode, action, mods);
+  }
+  (void)window;
+}
+
+static void charCallback(GLFWwindow* window, unsigned int codepoint) {
+  if (g_HtmlShellUIHost) {
+    g_HtmlShellUIHost->OnChar(codepoint);
+  }
+  (void)window;
+}
+#endif
 
 // ── Ray Picking ──────────────────────────────────
 // Convert screen coordinates to a ray in world space
@@ -3234,6 +3382,7 @@ static Vec3 WorldToScreenPoint(const Vec3 &worldPos, const Mat4 &viewMatrix,
   return Vec3(screenX, screenY, ndcPos.z);
 }
 
+#if HEPHAESTUS_EDITOR_IMGUI
 // Draw a wireframe cone for spotlight visualization
 static void DrawSpotlightConeVisualization(Entity spotEntity,
                                            const Scene &scene,
@@ -3328,8 +3477,8 @@ static void DrawSpotlightConeVisualization(Entity spotEntity,
 
 // Draw a wireframe arrow for directional light visualization
 static void DrawDirectionalLightArrowVisualization(
-    Entity dirLightEntity, const Scene &scene, const Mat4 &viewMatrix,
-    const Mat4 &projMatrix, int screenWidth, int screenHeight) {
+  Entity dirLightEntity, const Scene &scene, const Mat4 &viewMatrix,
+  const Mat4 &projMatrix, int screenWidth, int screenHeight) {
   if (!dirLightEntity || !dirLightEntity.HasComponent<TransformComponent>() ||
       !dirLightEntity.HasComponent<LightComponent>()) {
     return;
@@ -3427,6 +3576,17 @@ static void DrawDirectionalLightArrowVisualization(
     }
   }
 }
+#else
+static void DrawSpotlightConeVisualization(Entity /*spotEntity*/,
+                                           const Scene & /*scene*/,
+                                           const Mat4 & /*viewMatrix*/,
+                                           const Mat4 & /*projMatrix*/,
+                                           int /*screenWidth*/, int /*screenHeight*/) {}
+
+static void DrawDirectionalLightArrowVisualization(
+    Entity /*dirLightEntity*/, const Scene & /*scene*/, const Mat4 & /*viewMatrix*/,
+    const Mat4 & /*projMatrix*/, int /*screenWidth*/, int /*screenHeight*/) {}
+#endif
 
 // Helper: Ray-Sphere intersection test for light billboards
 static bool IntersectRaySphere(const Ray &ray, const Vec3 &center, float radius,
@@ -3833,6 +3993,15 @@ static std::filesystem::path ResolveActiveAssetsRoot() {
   return (g_ActiveProjectRoot / "assets").lexically_normal();
 }
 
+struct AssetBrowserResult {
+  std::optional<std::filesystem::path> modelImportRequest;
+  std::optional<std::filesystem::path> sceneOpenRequest;
+  std::optional<std::filesystem::path> materialOpenRequest;
+  std::optional<std::filesystem::path> materialCreateRequest;
+  std::optional<std::filesystem::path> blueprintOpenRequest;
+};
+
+#if HEPHAESTUS_EDITOR_IMGUI
 struct AssetBrowserIcon {
   VulkanTexture texture;
   VkDescriptorSet descriptor = VK_NULL_HANDLE;
@@ -3851,14 +4020,6 @@ static std::unordered_map<std::string, AssetBrowserIcon>
     g_AssetBrowserIconRegistry;
 static bool g_AssetBrowserIconsReady = false;
 static constexpr const char *kDefaultFileIconKey = "file-cpp";
-
-struct AssetBrowserResult {
-  std::optional<std::filesystem::path> modelImportRequest;
-  std::optional<std::filesystem::path> sceneOpenRequest;
-  std::optional<std::filesystem::path> materialOpenRequest;
-  std::optional<std::filesystem::path> materialCreateRequest;
-  std::optional<std::filesystem::path> blueprintOpenRequest;
-};
 
 struct AssetExtensionDescriptor {
   const char *extension;
@@ -3897,6 +4058,8 @@ static std::string ToUpperCopy(std::string value) {
       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
   return value;
 }
+
+#endif // HEPHAESTUS_EDITOR_IMGUI
 
 static std::string TrimCopy(const std::string &value) {
   size_t begin = value.find_first_not_of(" \t\r\n");
@@ -4044,6 +4207,7 @@ static std::string SanitizeSceneFilename(const std::string &sceneName) {
   return sanitized;
 }
 
+#if HEPHAESTUS_EDITOR_IMGUI
 static AssetBrowserIcon *FindAssetBrowserIcon(const std::string &key) {
   auto it = g_AssetBrowserIconRegistry.find(key);
   return (it != g_AssetBrowserIconRegistry.end()) ? &it->second : nullptr;
@@ -4467,11 +4631,26 @@ static void ActivateMaterialAsset(const std::filesystem::path &path,
   statusMessage = "Editing material '" + friendly + "'.";
 }
 
+#else
+
+static void DestroyAssetBrowserIcons(VulkanDevice & /*vkdev*/) {}
+
+static void ResetMaterialGraph() {}
+
+static void ActivateMaterialAsset(const std::filesystem::path & /*path*/,
+                                  std::string & /*statusMessage*/) {}
+
+#endif
+
 // ImGui panel that lists files and folders in the asset directory.
 static AssetBrowserResult DrawAssetBrowserPanel(std::string &statusMessage) {
   namespace fs = std::filesystem;
 
   AssetBrowserResult result;
+#if !HEPHAESTUS_EDITOR_IMGUI
+  (void)statusMessage;
+  return result;
+#else
 
 #if HEPHAESTUS_EDITOR_HTML_UI
   if (g_HtmlEditorUIHost) {
@@ -5459,9 +5638,13 @@ end
 
   ImGui::End();
   return result;
+#endif
 }
 
 static std::optional<std::filesystem::path> DrawProjectBrowser() {
+#if !HEPHAESTUS_EDITOR_IMGUI
+  return std::nullopt;
+#else
   namespace fs = std::filesystem;
 
   std::optional<fs::path> selection;
@@ -5828,6 +6011,7 @@ static std::optional<std::filesystem::path> DrawProjectBrowser() {
   ImGui::PopStyleVar(2);
 
   return selection;
+#endif
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -5976,6 +6160,12 @@ int main(int argc, char *argv[]) {
       glfwCreateWindow(1280, 720, windowTitle, nullptr, nullptr);
   glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
   glfwSetScrollCallback(window, scrollCallback);
+#if HEPHAESTUS_EDITOR_HTML_UI && !HEPHAESTUS_EDITOR_IMGUI
+  glfwSetCursorPosCallback(window, cursorPosCallback);
+  glfwSetMouseButtonCallback(window, mouseButtonCallback);
+  glfwSetKeyCallback(window, keyCallback);
+  glfwSetCharCallback(window, charCallback);
+#endif
 
   // Set window icon
   SetWindowIcon(window);
@@ -7942,8 +8132,9 @@ int main(int argc, char *argv[]) {
   };
   allocateCmdBuffers();
 
-  // Initialize ImGui (skip in runtime mode)
+  // Initialize UI (ImGui or HTML shell)
   VkDescriptorPool imguiPool = VK_NULL_HANDLE;
+#if HEPHAESTUS_EDITOR_IMGUI
   if (!g_RuntimeMode) {
     // ImGui descriptor pool setup
     VkDescriptorPoolSize pool_sizes[] = {
@@ -7972,12 +8163,9 @@ int main(int argc, char *argv[]) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
 
-    // Custom Style: Dark Blues and Greys
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
-    
-    // Customized colors for a dark blue-grey look
     colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.07f, 0.09f, 1.00f);
     colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.09f, 0.11f, 0.94f);
     colors[ImGuiCol_FrameBg] = ImVec4(0.10f, 0.11f, 0.13f, 0.54f);
@@ -7988,7 +8176,6 @@ int main(int argc, char *argv[]) {
     colors[ImGuiCol_HeaderHovered] = ImVec4(0.25f, 0.28f, 0.33f, 1.00f);
     colors[ImGuiCol_HeaderActive] = ImVec4(0.18f, 0.20f, 0.25f, 1.00f);
 
-    // Ensure ImGuizmo uses the same ImGui context
     ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
     ImNodes::CreateContext();
     ImNodes::SetImGuiContext(ImGui::GetCurrentContext());
@@ -8002,7 +8189,6 @@ int main(int argc, char *argv[]) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     ImNodes::GetIO().LinkDetachWithModifierClick.Modifier = &io.KeyCtrl;
 
-    // Load custom font
     const float baseFontSize = 16.0f;
     std::filesystem::path fontPath =
         ResolveEnginePath(std::filesystem::path("editor") / "fonts" /
@@ -8020,12 +8206,10 @@ int main(int argc, char *argv[]) {
       io.Fonts->AddFontDefault();
     }
 
-    // Setup Dear ImGui style
     g_UIScale = ComputeUIScale(ImGui::GetMainViewport());
     ApplyHephaestusEditorStyle(io, g_UIScale);
     io.FontGlobalScale = g_UIScale;
 
-    // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForVulkan(window, true);
     ImGui_ImplVulkan_InitInfo init_info = {};
     init_info.Instance = instance;
@@ -8191,12 +8375,134 @@ int main(int argc, char *argv[]) {
             json << "{\"ok\":true,\"path\":\"" << picked->generic_string() << "\"}";
             return json.str();
           });
+
+      g_HtmlEditorUIHost->Bridge().RegisterHandler(
+          "project.is_selected", [](const std::string& payload) -> std::string {
+            (void)payload;
+            std::ostringstream json;
+            json << "{\"ok\":true,\"selected\":" << (g_ProjectSelected ? "true" : "false")
+                 << ",\"name\":\"" << g_ActiveProjectName << "\""
+                 << ",\"root\":\"" << g_ActiveProjectRoot.generic_string() << "\"}";
+            return json.str();
+          });
     }
 #endif
   } // end if (!g_RuntimeMode)
+#else
+  if (!g_RuntimeMode) {
+#if HEPHAESTUS_EDITOR_HTML_UI
+    if (!g_HtmlShellUIHost) {
+      g_HtmlShellUIHost =
+          std::make_unique<Hephaestus::HtmlUI::HtmlShellUIHost>();
+      g_HtmlShellUIHost->Init(&vkdev, swap.renderPass, swap.extent, GetExecutableDirectory());
+      auto& shellBridge = g_HtmlShellUIHost->Bridge();
+
+      shellBridge.RegisterHandler(
+          "project.list", [](const std::string& payload) -> std::string {
+            (void)payload;
+            std::string projectJson = g_ProjectManager.BuildProjectManagerPayloadJson();
+            std::cerr << "[DEBUG] project.list handler called. Projects JSON length: " << projectJson.length() << std::endl;
+            std::cerr << "[DEBUG] project.list JSON: " << projectJson.substr(0, 200) << "..." << std::endl;
+            std::ostringstream json;
+            json << "{\"ok\":true," << projectJson << "}";
+            return json.str();
+          });
+
+      shellBridge.RegisterHandler(
+          "project.refresh", [](const std::string& payload) -> std::string {
+            (void)payload;
+            g_ProjectManager.RefreshProjects();
+            return std::string("{\"ok\":true}");
+          });
+
+      shellBridge.RegisterHandler(
+          "project.open", [](const std::string& payload) -> std::string {
+            auto pathOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(payload, "path");
+            if (!pathOpt) {
+              return std::string("{\"ok\":false,\"error\":\"missing_path\"}");
+            }
+            std::filesystem::path path = std::filesystem::path(*pathOpt);
+            if (!std::filesystem::exists(path) || !std::filesystem::is_directory(path)) {
+              return std::string("{\"ok\":false,\"error\":\"invalid_path\"}");
+            }
+            g_HtmlProjectManagerOpenRequest = path;
+            return std::string("{\"ok\":true}");
+          });
+
+      shellBridge.RegisterHandler(
+          "project.create", [](const std::string& payload) -> std::string {
+            auto nameOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(payload, "name");
+            if (!nameOpt || nameOpt->empty()) {
+              return std::string("{\"ok\":false,\"error\":\"missing_name\"}");
+            }
+            auto descOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(payload, "description");
+            auto templateOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseIntField(payload, "templateIndex");
+            auto locationOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(payload, "location");
+
+            const std::string desc = descOpt ? *descOpt : "";
+            const int templateIndex = templateOpt ? *templateOpt : -1;
+            const std::string location = locationOpt ? *locationOpt : "";
+
+            bool ok = g_ProjectManager.CreateProjectFromTemplate(*nameOpt, desc, templateIndex, location);
+            if (!ok) {
+              return std::string("{\"ok\":false,\"error\":\"create_failed\"}");
+            }
+            return std::string("{\"ok\":true}");
+          });
+
+      shellBridge.RegisterHandler(
+          "project.favorite", [](const std::string& payload) -> std::string {
+            auto pathOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(payload, "path");
+            auto valueOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseIntField(payload, "value");
+            if (!pathOpt || !valueOpt) {
+              return std::string("{\"ok\":false,\"error\":\"missing_fields\"}");
+            }
+            bool ok = g_ProjectManager.SetProjectFavorite(*pathOpt, (*valueOpt != 0));
+            return ok ? std::string("{\"ok\":true}")
+                      : std::string("{\"ok\":false,\"error\":\"not_found\"}");
+          });
+
+      shellBridge.RegisterHandler(
+          "project.open_root", [](const std::string& payload) -> std::string {
+            (void)payload;
+            g_ProjectManager.OpenProjectLocationExternal(g_ProjectManager.GetProjectsRoot());
+            return std::string("{\"ok\":true}");
+          });
+
+      shellBridge.RegisterHandler(
+          "project.pick_folder", [](const std::string& payload) -> std::string {
+            auto pathOpt = Hephaestus::HtmlUI::EditorMessageBridge::ParseStringField(payload, "path");
+            std::filesystem::path base = pathOpt ? std::filesystem::path(*pathOpt)
+                                                 : g_ProjectManager.GetProjectsRoot();
+            auto picked = g_ProjectManager.PickProjectFolder(base);
+            if (!picked) {
+              return std::string("{\"ok\":false}");
+            }
+            std::ostringstream json;
+            json << "{\"ok\":true,\"path\":\"" << picked->generic_string() << "\"}";
+            return json.str();
+          });
+
+      shellBridge.RegisterHandler(
+          "project.is_selected", [](const std::string& payload) -> std::string {
+            (void)payload;
+            std::ostringstream json;
+            json << "{\"ok\":true,\"selected\":" << (g_ProjectSelected ? "true" : "false")
+                 << ",\"name\":\"" << g_ActiveProjectName << "\""
+                 << ",\"root\":\"" << g_ActiveProjectRoot.generic_string() << "\"}";
+            return json.str();
+          });
+    }
+#endif
+  }
+#endif
 
   // Store ImGui IO for later manipulation during play mode (editor only)
+#if HEPHAESTUS_EDITOR_IMGUI
   ImGuiIO *gImGuiIOPtr = g_RuntimeMode ? nullptr : &ImGui::GetIO();
+#else
+  ImGuiIO *gImGuiIOPtr = nullptr;
+#endif
 
   // Runtime mode: Load scene and start simulation automatically
   if (g_RuntimeMode) {
@@ -8245,6 +8551,9 @@ int main(int argc, char *argv[]) {
 
   uint32_t currentFrame = 0;
 
+  std::cout << "[main] Entering main loop..." << std::endl;
+  std::cout.flush();
+  
   // ── Main Loop ────────────────────────────────
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
@@ -8292,9 +8601,20 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    auto makeCameraUBO = [&]() { return camera.makeUBO(swap.extent); };
+    auto makeCameraUBO = [&]() {
+      VkExtent2D viewExtent = swap.extent;
+#if HEPHAESTUS_EDITOR_HTML_UI && !HEPHAESTUS_EDITOR_IMGUI
+      // Use viewport rect dimensions for correct aspect ratio when HTML UI is active
+      if (g_HtmlViewportRect.w > 0 && g_HtmlViewportRect.h > 0) {
+        viewExtent.width = static_cast<uint32_t>(g_HtmlViewportRect.w);
+        viewExtent.height = static_cast<uint32_t>(g_HtmlViewportRect.h);
+      }
+#endif
+      return camera.makeUBO(viewExtent);
+    };
 
     // Start the Dear ImGui frame (skip in runtime mode)
+#if HEPHAESTUS_EDITOR_IMGUI
     if (!g_RuntimeMode) {
       ImGui_ImplVulkan_NewFrame();
       ImGui_ImplGlfw_NewFrame();
@@ -8323,24 +8643,40 @@ int main(int argc, char *argv[]) {
       ImGuizmo::BeginFrame();
       ImGuizmo::SetOrthographic(false);
     }
+#endif
 
     // Handle mouse click for object selection (editor only)
     static bool leftMouseWasPressed = false;
     bool leftMousePressed =
         glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
 
+    bool guizmoBlocked = false;
+  #if HEPHAESTUS_EDITOR_IMGUI
+    guizmoBlocked = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
+  #endif
     if (!g_RuntimeMode && g_ProjectSelected && !g_SimPlaying &&
-        leftMousePressed && !leftMouseWasPressed && !ImGuizmo::IsUsing() &&
-        !ImGuizmo::IsOver() && g_ViewportDropTargetHovered &&
-        !gizmoDragging && vulkanGizmo.GetHoveredAxis() == -1) {
+      leftMousePressed && !leftMouseWasPressed && !guizmoBlocked &&
+      g_ViewportDropTargetHovered && !gizmoDragging &&
+      vulkanGizmo.GetHoveredAxis() == -1) {
       // Left mouse button just pressed in viewport area
       double mouseX, mouseY;
       glfwGetCursorPos(window, &mouseX, &mouseY);
 
+      int vpW = static_cast<int>(swap.extent.width);
+      int vpH = static_cast<int>(swap.extent.height);
+    #if HEPHAESTUS_EDITOR_HTML_UI && !HEPHAESTUS_EDITOR_IMGUI
+      if (g_HtmlViewportRect.w > 0 && g_HtmlViewportRect.h > 0) {
+        mouseX -= g_HtmlViewportRect.x;
+        mouseY -= g_HtmlViewportRect.y;
+        vpW = g_HtmlViewportRect.w;
+        vpH = g_HtmlViewportRect.h;
+      }
+    #endif
+
       // Create picking ray
       UniformBufferObject ubo = makeCameraUBO();
-      Ray pickRay = ScreenToWorldRay(mouseX, mouseY, swap.extent.width,
-                                     swap.extent.height, ubo.view, ubo.proj);
+      Ray pickRay = ScreenToWorldRay(mouseX, mouseY, vpW,
+                 vpH, ubo.view, ubo.proj);
 
       // Find closest hit
       float hitDist;
@@ -8358,13 +8694,23 @@ int main(int argc, char *argv[]) {
 
     // Editor camera input (disabled when ImGuizmo is active, when scripts
     // control camera during play, or when hovering over HTML UI panels)
-    if (g_ProjectSelected && !ImGuizmo::IsUsing() && !gizmoDragging) {
+    bool gizmoActive = false;
+  #if HEPHAESTUS_EDITOR_IMGUI
+    gizmoActive = ImGuizmo::IsUsing();
+  #endif
+    if (g_ProjectSelected && !gizmoActive && !gizmoDragging) {
       bool scriptHasCamera =
           (g_SimPlaying && !g_SimPaused && cameraController.isActive());
 #if HEPHAESTUS_EDITOR_HTML_UI
-      bool htmlPanelHovered = g_HtmlEditorUIHost && g_HtmlEditorUIHost->IsAnyPanelHovered();
+#if HEPHAESTUS_EDITOR_IMGUI
+  bool htmlPanelHovered = g_HtmlEditorUIHost && g_HtmlEditorUIHost->IsAnyPanelHovered();
 #else
-      bool htmlPanelHovered = false;
+  double mx = 0.0, my = 0.0;
+  glfwGetCursorPos(window, &mx, &my);
+  bool htmlPanelHovered = g_HtmlShellUIHost && !g_HtmlShellUIHost->IsPointInViewport(mx, my);
+#endif
+#else
+  bool htmlPanelHovered = false;
 #endif
       if (!scriptHasCamera && !htmlPanelHovered) {
         camera.handleMouse(window);
@@ -8372,6 +8718,7 @@ int main(int argc, char *argv[]) {
       }
     }
 
+#if HEPHAESTUS_EDITOR_IMGUI
     // ImGui UI (skip in runtime mode)
     std::optional<std::filesystem::path> pendingAssetImport;
     if (!g_RuntimeMode) {
@@ -8384,6 +8731,7 @@ int main(int argc, char *argv[]) {
         }
         vulkanGizmo.SetHoveredAxis(-1);
   #if HEPHAESTUS_EDITOR_HTML_UI
+#if HEPHAESTUS_EDITOR_IMGUI
         if (g_HtmlEditorUIHost) {
           g_HtmlEditorUIHost->UpdateAndSync(dt);
           g_HtmlEditorUIHost->DrawProjectManagerPanel();
@@ -8399,6 +8747,14 @@ int main(int argc, char *argv[]) {
             }
           }
         } else
+#else
+        if (g_HtmlShellUIHost) {
+          g_HtmlShellUIHost->SetScene(&scene);
+          g_HtmlShellUIHost->UpdateAndSync(dt);
+          auto rect = g_HtmlShellUIHost->GetViewportRect();
+          g_HtmlViewportRect = {rect.x, rect.y, rect.w, rect.h};
+        } else
+#endif
   #endif
         {
           std::optional<std::filesystem::path> projectChoice =
@@ -8414,9 +8770,12 @@ int main(int argc, char *argv[]) {
           }
         }
       } else {
+        #if HEPHAESTUS_EDITOR_IMGUI
         BeginHephaestusDockspace();
+        #endif
 
 #if HEPHAESTUS_EDITOR_HTML_UI
+#if HEPHAESTUS_EDITOR_IMGUI
         if (g_HtmlEditorUIHost) {
           g_HtmlEditorUIHost->SetScene(viewportScene);
           g_HtmlEditorUIHost->SetBlueprintMode(IsBlueprintModeActive());
@@ -8425,11 +8784,24 @@ int main(int argc, char *argv[]) {
           g_HtmlEditorUIHost->SetAssetsRoot(ResolveActiveAssetsRoot());
           g_HtmlEditorUIHost->UpdateAndSync(dt);
         }
+#else
+        if (g_HtmlShellUIHost) {
+          g_HtmlShellUIHost->SetScene(viewportScene);
+          g_HtmlShellUIHost->SetAssetsRoot(ResolveActiveAssetsRoot());
+          g_HtmlShellUIHost->UpdateAndSync(dt);
+          auto rect = g_HtmlShellUIHost->GetViewportRect();
+          g_HtmlViewportRect = {rect.x, rect.y, rect.w, rect.h};
+        }
+#endif
 #endif
 
         // Draw docked panels first
-        WorldOutlinerActions outlinerActions = DrawWorldOutliner(*viewportScene);
-        WorldOutlinerActions addActorsActions = DrawAddActorsPanel();
+        WorldOutlinerActions outlinerActions{};
+        WorldOutlinerActions addActorsActions{};
+        #if HEPHAESTUS_EDITOR_IMGUI
+        outlinerActions = DrawWorldOutliner(*viewportScene);
+        addActorsActions = DrawAddActorsPanel();
+        #endif
         if (!outlinerActions.spawnRequest && addActorsActions.spawnRequest) {
           outlinerActions.spawnRequest = addActorsActions.spawnRequest;
         }
@@ -8819,7 +9191,9 @@ int main(int argc, char *argv[]) {
           }
         }
         DetailsPanelActions detailsActions =
+          #if HEPHAESTUS_EDITOR_IMGUI
           DrawDetailsPanel(*viewportScene, scriptEngine, skybox, vkdev);
+          #endif
 
         std::optional<entt::entity> viewportDeleteRequest;
         {
@@ -9022,7 +9396,9 @@ int main(int argc, char *argv[]) {
         }
 
         AssetBrowserResult browserResult =
+            #if HEPHAESTUS_EDITOR_IMGUI
             DrawAssetBrowserPanel(assetBrowserStatus);
+            #endif
 
 #if HEPHAESTUS_EDITOR_HTML_UI
         if (g_HtmlPendingAssetOpenRequest) {
@@ -9106,7 +9482,9 @@ int main(int argc, char *argv[]) {
           ActivateMaterialAsset(*browserResult.materialOpenRequest,
                                 assetBrowserStatus);
         }
+        #if HEPHAESTUS_EDITOR_IMGUI
         DrawLogConsole(io, assetBrowserStatus);
+        #endif
         
         // Overlays should be rendered last so they appear above docked windows
         ToolbarActions toolbarActions = DrawEditorToolbar(
@@ -9327,6 +9705,7 @@ int main(int argc, char *argv[]) {
           }
         }
 
+#if HEPHAESTUS_EDITOR_IMGUI
         DrawViewportOverlay(currentGizmoOperation, currentGizmoMode,
                             g_ShowGizmoGrid, g_ShowEditorGizmo);
 
@@ -9394,9 +9773,20 @@ int main(int argc, char *argv[]) {
           outlinerActions.spawnMeshAssetRel = s_ViewportDroppedAsset;
           s_ViewportHasDroppedAsset = false;
         }
+      #else
+        if (g_HtmlViewportRect.w > 0 && g_HtmlViewportRect.h > 0) {
+          double mx = 0.0, my = 0.0;
+          glfwGetCursorPos(window, &mx, &my);
+          g_ViewportDropTargetHovered =
+              (mx >= g_HtmlViewportRect.x && my >= g_HtmlViewportRect.y &&
+               mx <= (g_HtmlViewportRect.x + g_HtmlViewportRect.w) &&
+               my <= (g_HtmlViewportRect.y + g_HtmlViewportRect.h));
+        }
+#endif
       }
     } // end if (!g_RuntimeMode) - close editor UI section
 
+    std::optional<std::filesystem::path> pendingAssetImport;
     if (!g_RuntimeMode && pendingAssetImport) {
       Entity imported = importModelFromFile(*pendingAssetImport);
       if (!imported) {
@@ -9552,10 +9942,31 @@ int main(int argc, char *argv[]) {
       }
     }
 
+  #else
+    // Non-ImGui UI path - use HtmlShellUIHost for all editor panels
+#if HEPHAESTUS_EDITOR_HTML_UI
+    if (!g_RuntimeMode && g_HtmlShellUIHost) {
+      g_HtmlShellUIHost->SetScene(&scene);
+      g_HtmlShellUIHost->SetAssetsRoot(ResolveActiveAssetsRoot());
+      g_HtmlShellUIHost->UpdateAndSync(dt);
+      auto rect = g_HtmlShellUIHost->GetViewportRect();
+      g_HtmlViewportRect = {rect.x, rect.y, rect.w, rect.h};
+
+      // Handle project open requests from HTML UI
+      if (g_HtmlProjectManagerOpenRequest) {
+        SetActiveProjectRoot(*g_HtmlProjectManagerOpenRequest);
+        g_HtmlProjectManagerOpenRequest.reset();
+      }
+    }
+#endif
+  #endif // HEPHAESTUS_EDITOR_IMGUI
+
     // Render ImGui (editor only)
+#if HEPHAESTUS_EDITOR_IMGUI
     if (!g_RuntimeMode) {
       ImGui::Render();
     }
+#endif
 
     // Late update scripts (after all regular updates) - only when playing and
     // not paused
@@ -9583,6 +9994,11 @@ int main(int argc, char *argv[]) {
       if (textureLoaded) {
         createBillboardDescriptors();
       }
+#if HEPHAESTUS_EDITOR_HTML_UI && !HEPHAESTUS_EDITOR_IMGUI
+      if (g_HtmlShellUIHost) {
+        g_HtmlShellUIHost->OnSwapchainRecreated(swap.renderPass, swap.extent);
+      }
+#endif
       imagesInFlight.assign(swap.images.size(), VK_NULL_HANDLE);
       continue;
     } else if (acq != VK_SUCCESS && acq != VK_SUBOPTIMAL_KHR) {
@@ -9992,13 +10408,35 @@ int main(int argc, char *argv[]) {
 
     // Set dynamic viewport/scissor per current extent
     VkViewport viewport{};
+    VkRect2D scissor{{0, 0}, swap.extent};
+  #if HEPHAESTUS_EDITOR_HTML_UI && !HEPHAESTUS_EDITOR_IMGUI
+    if (g_HtmlViewportRect.w > 0 && g_HtmlViewportRect.h > 0) {
+      viewport.x = static_cast<float>(g_HtmlViewportRect.x);
+      viewport.y = static_cast<float>(g_HtmlViewportRect.y);
+      viewport.width = static_cast<float>(g_HtmlViewportRect.w);
+      viewport.height = static_cast<float>(g_HtmlViewportRect.h);
+      viewport.minDepth = 0.0f;
+      viewport.maxDepth = 1.0f;
+
+      scissor.offset = { g_HtmlViewportRect.x, g_HtmlViewportRect.y };
+      scissor.extent = { static_cast<uint32_t>(g_HtmlViewportRect.w),
+               static_cast<uint32_t>(g_HtmlViewportRect.h) };
+    } else {
+      viewport.x = 0.0f;
+      viewport.y = 0.0f;
+      viewport.width = (float)swap.extent.width;
+      viewport.height = (float)swap.extent.height;
+      viewport.minDepth = 0.0f;
+      viewport.maxDepth = 1.0f;
+    }
+  #else
     viewport.x = 0.0f;
     viewport.y = 0.0f;
     viewport.width = (float)swap.extent.width;
     viewport.height = (float)swap.extent.height;
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
-    VkRect2D scissor{{0, 0}, swap.extent};
+  #endif
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
@@ -10382,10 +10820,18 @@ int main(int argc, char *argv[]) {
       }
     }
 
+#if HEPHAESTUS_EDITOR_HTML_UI && !HEPHAESTUS_EDITOR_IMGUI
+    if (!g_RuntimeMode && g_HtmlShellUIHost) {
+      g_HtmlShellUIHost->Draw(cmd, swap.extent);
+    }
+#endif
+
     // Render ImGui draw data (editor only)
+#if HEPHAESTUS_EDITOR_IMGUI
     if (!g_RuntimeMode) {
       ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     }
+#endif
 
     vkCmdEndRenderPass(cmd);
 
@@ -10448,6 +10894,11 @@ int main(int argc, char *argv[]) {
       if (textureLoaded) {
         createBillboardDescriptors();
       }
+#if HEPHAESTUS_EDITOR_HTML_UI && !HEPHAESTUS_EDITOR_IMGUI
+      if (g_HtmlShellUIHost) {
+        g_HtmlShellUIHost->OnSwapchainRecreated(swap.renderPass, swap.extent);
+      }
+#endif
       imagesInFlight.assign(swap.images.size(), VK_NULL_HANDLE);
     } else if (pres != VK_SUCCESS) {
       std::cerr << "Present failed: " << pres << "\n";
@@ -10474,6 +10925,7 @@ int main(int argc, char *argv[]) {
   }
 
   // Cleanup ImGui
+#if HEPHAESTUS_EDITOR_IMGUI
   DestroyAssetBrowserIcons(vkdev);
   if (g_MaterialEditorPanel) {
     delete g_MaterialEditorPanel;
@@ -10484,6 +10936,7 @@ int main(int argc, char *argv[]) {
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
   vkDestroyDescriptorPool(vkdev.device, imguiPool, nullptr);
+#endif
 
   vulkanGizmo.Cleanup(vkdev.device, vkdev.allocator);
   skybox.Cleanup(vkdev.allocator);

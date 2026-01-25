@@ -201,6 +201,7 @@
   </div>
 
   <script src="../ui_common.js"></script>
+  <script src="../editor_api.js"></script>
   <script>
     // Must match EditorSpawnPreset (engine/UI/EditorSpawnPreset.h)
     const Preset = {
@@ -242,12 +243,33 @@
       if (el) el.textContent = text;
     }
 
+    function presetToType(preset) {
+      switch (preset) {
+        case Preset.EmptyEntity: return 'Empty';
+        case Preset.Camera: return 'Camera';
+        case Preset.DirectionalLight: return 'LightDirectional';
+        case Preset.PointLight: return 'LightPoint';
+        case Preset.SpotLight: return 'LightSpot';
+        case Preset.DefaultCube: return 'MeshCube';
+        case Preset.DefaultSphere: return 'MeshSphere';
+        default: return 'Empty';
+      }
+    }
+
     function spawn(preset) {
-      const r = window.hep.callCpp('actor.spawn_preset', { preset: preset });
+      let r = null;
+      if (window.EditorAPI && window.EditorAPI.createEntity) {
+        r = window.EditorAPI.createEntity(presetToType(preset), 0, null);
+      } else {
+        r = window.hep.callCpp('actor.spawn_preset', { preset: preset });
+      }
       if (!r || !r.ok) {
         setHint('Spawn failed: ' + (r && r.error ? r.error : 'error'));
       } else {
         setHint('Spawned actor.');
+        if (window.EditorAPI && window.EditorAPI.requestSceneTree) {
+          window.EditorAPI.requestSceneTree();
+        }
       }
     }
 
@@ -257,6 +279,9 @@
         setHint('Spawn mesh failed: ' + (r && r.error ? r.error : 'error'));
       } else {
         setHint('Spawned mesh actor.');
+        if (window.EditorAPI && window.EditorAPI.requestSceneTree) {
+          window.EditorAPI.requestSceneTree();
+        }
       }
     }
 
@@ -476,6 +501,17 @@
         boot();
       });
     }
+
+    window.PanelController = {
+      init(panelId, api) {
+        this.panelId = panelId;
+        this.api = api;
+      },
+      onFocus() {},
+      onBlur() {},
+      onResize() {},
+      onStateUpdate() {}
+    };
   </script>
 </body>
 </html>

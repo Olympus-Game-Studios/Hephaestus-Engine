@@ -541,6 +541,7 @@
   </div>
 
   <script src="../ui_common.js"></script>
+  <script src="../editor_api.js"></script>
   <script>
     let currentId = 0;
     let currentEntityType = null; // Will store 'LIGHT', 'ENV', 'MESH', or null
@@ -822,6 +823,69 @@
       showSections(sections);
 
       // Rigid Body section is independent of entity type.
+      loadRigidBodyProperties();
+      loadPhysicsShapeProperties();
+      loadScriptsSection();
+      loadLuaScriptsSection();
+      setStatus('Ready');
+    }
+
+    function clearSelectionUi() {
+      currentId = 0;
+      currentEntityType = null;
+      setField('name', '');
+      ['px','py','pz','rx','ry','rz','sx','sy','sz'].forEach(k => setField(k, ''));
+      document.getElementById('entityId').textContent = '—';
+      showSections([]);
+      document.getElementById('rigidBodySection').style.display = 'none';
+      document.getElementById('physicsShapeSection').style.display = 'none';
+      document.getElementById('scriptsSection').style.display = 'none';
+      document.getElementById('luaScriptsSection').style.display = 'none';
+      setStatus('No selection.');
+    }
+
+    function applyEntityDetailsFromApi(res) {
+      if (!res || !res.ok || !res.entity) {
+        selectedIds = [];
+        selectionCount = 0;
+        clearSelectionUi();
+        return;
+      }
+
+      currentId = res.entity.id || 0;
+      selectedIds = currentId ? [currentId] : [];
+      selectionCount = selectedIds.length;
+
+      const nameInput = document.getElementById('name');
+      if (nameInput) nameInput.disabled = false;
+
+      setField('name', res.entity.name || '');
+      setField('px', res.entity.px);
+      setField('py', res.entity.py);
+      setField('pz', res.entity.pz);
+      setField('rx', res.entity.rx);
+      setField('ry', res.entity.ry);
+      setField('rz', res.entity.rz);
+      setField('sx', res.entity.sx);
+      setField('sy', res.entity.sy);
+      setField('sz', res.entity.sz);
+      document.getElementById('entityId').textContent = currentId ? ('#' + currentId) : '—';
+
+      currentEntityType = res.entity.type;
+      const sections = [];
+      if (currentEntityType === 'LIGHT') {
+        sections.push('lightSection');
+        loadLightProperties();
+      } else if (currentEntityType === 'ENV') {
+        sections.push('envSection');
+        loadEnvironmentProperties();
+      } else if (currentEntityType === 'MESH') {
+        sections.push('meshSection');
+        loadMaterialCatalog();
+        loadMeshProperties();
+        loadMeshColliderProperties();
+      }
+      showSections(sections);
       loadRigidBodyProperties();
       loadPhysicsShapeProperties();
       loadScriptsSection();
@@ -1708,6 +1772,26 @@
       renderDynamicToolbar();
       loadSelected();
     });
+
+    window.PanelController = {
+      init(panelId, api) {
+        this.panelId = panelId;
+        this.api = api;
+        if (!api || !api.on) return;
+        api.on('selectionChanged', (entityId) => {
+          if (api.requestEntityDetails) {
+            applyEntityDetailsFromApi(api.requestEntityDetails(entityId));
+          }
+        });
+        api.on('entityDetailsUpdated', (detailsJson) => {
+          applyEntityDetailsFromApi(detailsJson);
+        });
+      },
+      onFocus() {},
+      onBlur() {},
+      onResize() {},
+      onStateUpdate() {}
+    };
   </script>
 </body>
 </html>

@@ -184,6 +184,12 @@
       cursor: pointer;
       transition: all 0.15s ease;
       position: relative;
+      z-index: 1;
+    }
+
+    .project-card.is-selected {
+      border-color: var(--accent);
+      box-shadow: 0 10px 30px rgba(20, 120, 255, 0.25);
     }
 
     .project-card:hover {
@@ -416,7 +422,8 @@
       root: '',
       view: 'grid',
       sort: 'lastModified',
-      search: ''
+      search: '',
+      selectedPath: ''
     };
 
     const el = (id) => document.getElementById(id);
@@ -473,9 +480,18 @@
       filtered.forEach((project) => {
         const card = document.createElement('div');
         card.className = 'project-card';
+        if (state.selectedPath && state.selectedPath === project.path) {
+          card.classList.add('is-selected');
+        }
+        card.setAttribute('tabindex', '0');
+        card.setAttribute('role', 'button');
         card.addEventListener('dblclick', () => openProject(project.path));
         card.addEventListener('click', () => {
           setStatus('Selected: ' + project.name);
+          state.selectedPath = project.path;
+          const selectedCards = projectsContainer.querySelectorAll('.project-card.is-selected');
+          selectedCards.forEach((el) => el.classList.remove('is-selected'));
+          card.classList.add('is-selected');
         });
 
         const header = document.createElement('div');
@@ -545,39 +561,67 @@
       });
     }
 
-    function refreshProjects() {
-      const resp = window.hep.callCpp('project.list');
-      if (!resp || !resp.ok) {
-        setStatus('Failed to load projects.');
-        return;
-      }
-      state.projects = resp.projects || [];
-      state.templates = resp.templates || [];
-      state.root = resp.root || '';
-      projectsRootLabel.textContent = state.root ? `Projects: ${state.root}` : 'Projects';
-      populateTemplates();
-      renderProjects();
-      setStatus(`Loaded ${state.projects.length} project(s).`);
+    function isThenable(obj) {
+      return !!obj && (typeof obj === 'object' || typeof obj === 'function') && typeof obj.then === 'function';
     }
 
-    function openProject(path) {
-      if (!path) return;
-      const resp = window.hep.callCpp('project.open', { path });
-      if (resp && resp.ok) {
-        setStatus('Opening project...');
-      } else {
-        setStatus('Failed to open project.');
-      }
-    }
-
-    function toggleFavorite(project) {
-      const resp = window.hep.callCpp('project.favorite', {
-        path: project.path,
-        value: project.favorite ? 0 : 1
-      });
-      if (resp && resp.ok) {
-        project.favorite = !project.favorite;
+    async function refreshProjects() {
+      setStatus('Loading projects...');
+      try {
+        const callResult = window.hep.callCpp('project.list');
+        // If it's a promise, await it; otherwise use it directly
+        const resp = isThenable(callResult) ? await callResult : callResult;
+        console.warn('[DEBUG] refreshProjects response:', resp);
+        if (!resp || !resp.ok) {
+          setStatus('Failed to load projects.' + (resp && resp.error ? ' (' + resp.error + ')' : ''));
+          console.error('[DEBUG] Response not ok:', resp);
+          return;
+        }
+        state.projects = resp.projects || [];
+        state.templates = resp.templates || [];
+        state.root = resp.root || '';
+        console.warn('[DEBUG] Loaded', state.projects.length, 'projects, root:', state.root);
+        projectsRootLabel.textContent = state.root ? `Projects: ${state.root}` : 'Projects';
+        populateTemplates();
         renderProjects();
+        setStatus(`Loaded ${state.projects.length} project(s).`);
+      } catch (e) {
+        console.error('[DEBUG] Exception in refreshProjects:', e);
+        setStatus('Failed to load projects: ' + e);
+      }
+    }
+
+    async function openProject(path) {
+      if (!path) return;
+      try {
+        const callResult = window.hep.callCpp('project.open', { path });
+        const resp = isThenable(callResult) ? await callResult : callResult;
+        if (resp && resp.ok) {
+          setStatus('Opening project...');
+          if (window.parent) {
+            window.parent.postMessage({ type: 'hep_project_opened', path }, '*');
+          }
+        } else {
+          setStatus('Failed to open project.');
+        }
+      } catch (e) {
+        setStatus('Failed to open project: ' + e);
+      }
+    }
+
+    async function toggleFavorite(project) {
+      try {
+        const callResult = window.hep.callCpp('project.favorite', {
+          path: project.path,
+          value: project.favorite ? 0 : 1
+        });
+        const resp = isThenable(callResult) ? await callResult : callResult;
+        if (resp && resp.ok) {
+          project.favorite = !project.favorite;
+          renderProjects();
+        }
+      } catch (e) {
+        console.warn('toggleFavorite failed:', e);
       }
     }
 
@@ -590,7 +634,7 @@
       newProjectModal.classList.remove('is-open');
     }
 
-    function createProject() {
+    async function createProject() {
       const name = el('projectName').value.trim();
       const description = el('projectDesc').value.trim();
       const templateIndex = parseInt(el('projectTemplate').value, 10);
@@ -599,38 +643,49 @@
         setStatus('Project name is required.');
         return;
       }
-      const resp = window.hep.callCpp('project.create', {
-        name,
-        description,
-        templateIndex: Number.isFinite(templateIndex) ? templateIndex : -1,
-        location
-      });
-      if (resp && resp.ok) {
-        closeModal();
-        el('projectName').value = '';
-        el('projectDesc').value = '';
-        el('projectLocation').value = '';
-        refreshProjects();
-        setStatus('Project created.');
-      } else {
-        setStatus((resp && resp.error) || 'Failed to create project.');
+      try {
+        const callResult = window.hep.callCpp('project.create', {
+          name,
+          description,
+          templateIndex: Number.isFinite(templateIndex) ? templateIndex : -1,
+          location
+        });
+        const resp = isThenable(callResult) ? await callResult : callResult;
+        if (resp && resp.ok) {
+          closeModal();
+          el('projectName').value = '';
+          el('projectDesc').value = '';
+          el('projectLocation').value = '';
+          await refreshProjects();
+          setStatus('Project created.');
+        } else {
+          setStatus((resp && resp.error) || 'Failed to create project.');
+        }
+      } catch (e) {
+        setStatus('Failed to create project: ' + e);
       }
     }
 
-    function browseLocation() {
+    async function browseLocation() {
       const base = el('projectLocation').value.trim() || state.root || '';
-      const resp = window.hep.callCpp('project.pick_folder', { path: base });
-      if (resp && resp.ok && resp.path) {
-        el('projectLocation').value = resp.path;
+      try {
+        const callResult = window.hep.callCpp('project.pick_folder', { path: base });
+        const resp = isThenable(callResult) ? await callResult : callResult;
+        if (resp && resp.ok && resp.path) {
+          el('projectLocation').value = resp.path;
+        }
+      } catch (e) {
+        console.warn('browseLocation failed:', e);
       }
     }
 
-    window.hep.onReady(() => {
-      refreshProjects();
+    window.hep.onReady(async () => {
+      await refreshProjects();
 
-      el('refreshBtn').addEventListener('click', () => {
-        window.hep.callCpp('project.refresh');
-        refreshProjects();
+      el('refreshBtn').addEventListener('click', async () => {
+        const callResult = window.hep.callCpp('project.refresh');
+        if (isThenable(callResult)) await callResult;
+        await refreshProjects();
       });
 
       el('openRootBtn').addEventListener('click', () => {

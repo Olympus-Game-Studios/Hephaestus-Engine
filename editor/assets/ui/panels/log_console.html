@@ -15,6 +15,7 @@
   <div class="hdr">Log Console (HTML)</div>
   <div id="log"></div>
 
+  <script src="../editor_api.js"></script>
   <script>
     function append(line) {
       const el = document.getElementById('log');
@@ -29,6 +30,21 @@
     };
 
     append('Log panel ready.');
+
+    window.PanelController = {
+      init(panelId, api) {
+        this.panelId = panelId;
+        this.api = api;
+        if (!api || !api.on) return;
+        api.on('logAppended', (entryJson) => {
+          append('[log] ' + JSON.stringify(entryJson));
+        });
+      },
+      onFocus() {},
+      onBlur() {},
+      onResize() {},
+      onStateUpdate() {}
+    };
   </script>
 </body>
 </html>

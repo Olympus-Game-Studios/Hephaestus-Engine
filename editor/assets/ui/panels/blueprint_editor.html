@@ -303,6 +303,7 @@
   </div>
 
   <script src="../ui_common.js"></script>
+  <script src="../editor_api.js"></script>
   <script>
     const state = {
       docs: {},
@@ -640,6 +641,37 @@
       document.getElementById('nodeName').addEventListener('change', sendUpdateNode);
       render();
     });
+
+    function openBlueprintById(assetId) {
+      if (!assetId) return;
+      if (window.EditorAPI && window.EditorAPI.openBlueprint) {
+        const res = window.EditorAPI.openBlueprint(assetId);
+        if (res && res.doc) {
+          applyDoc(res.doc);
+        }
+      } else {
+        window.hep.callCpp('blueprint.open', { path: assetId, assetId: assetId });
+      }
+    }
+
+    window.PanelController = {
+      init(panelId, api) {
+        this.panelId = panelId;
+        this.api = api;
+        if (!api || !api.on) return;
+        api.on('openBlueprint', (payload) => {
+          if (payload && payload.assetId) openBlueprintById(payload.assetId);
+        });
+      },
+      onFocus() {},
+      onBlur() {},
+      onResize() {},
+      onStateUpdate(stateDiff) {
+        if (stateDiff && stateDiff.activeBlueprintId) {
+          openBlueprintById(stateDiff.activeBlueprintId);
+        }
+      }
+    };
   </script>
 </body>
 </html>

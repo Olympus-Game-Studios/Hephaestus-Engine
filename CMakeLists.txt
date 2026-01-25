@@ -20,6 +20,7 @@ add_subdirectory(extern/glfw)
 
 # Ultralight (optional)
 option(HEPHAESTUS_USE_ULTRALIGHT "Enable Ultralight integration" ON)
+option(HEPHAESTUS_EDITOR_IMGUI "Enable ImGui editor UI (not for HTML shell)" OFF)
 if(HEPHAESTUS_USE_ULTRALIGHT)
     set(ULTRALIGHT_BUILD_SAMPLES OFF CACHE BOOL "Disable Ultralight samples" FORCE)
     add_subdirectory(extern/Ultralight)
@@ -110,13 +111,25 @@ add_executable(HephaestusEngine
     engine/UI/ProjectManager.cpp
     engine/UI/HtmlUI/UltralightPlatformSetup.cpp
     engine/UI/HtmlUI/EditorMessageBridge.cpp
-    engine/UI/HtmlUI/HtmlPanelView.cpp
-    engine/UI/HtmlUI/HtmlEditorUIHost.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
     engine/UI/MaterialEditor/MaterialEditorPanel.cpp
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
+
+if(HEPHAESTUS_EDITOR_IMGUI)
+    target_sources(HephaestusEngine PRIVATE
+        engine/UI/HtmlUI/HtmlPanelView.cpp
+        engine/UI/HtmlUI/HtmlEditorUIHost.cpp
+    )
+    target_compile_definitions(HephaestusEngine PRIVATE HEPHAESTUS_EDITOR_IMGUI=1)
+else()
+    target_sources(HephaestusEngine PRIVATE
+        engine/UI/HtmlUI/HtmlShellView.cpp
+        engine/UI/HtmlUI/HtmlShellUIHost.cpp
+    )
+    target_compile_definitions(HephaestusEngine PRIVATE HEPHAESTUS_EDITOR_IMGUI=0)
+endif()
 
 if (WIN32)
     set(APP_ICON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/editor/Icons/logo")
@@ -252,40 +265,42 @@ set_target_properties(HephaestusEngine PROPERTIES
 )
 
 
-# Dear ImGui
-add_library(imgui STATIC
-    extern/imgui/imgui.cpp
-    extern/imgui/imgui_draw.cpp
-    extern/imgui/imgui_tables.cpp
-    extern/imgui/imgui_widgets.cpp
-    extern/imgui/backends/imgui_impl_glfw.cpp
-    extern/imgui/backends/imgui_impl_vulkan.cpp
-)
+if(HEPHAESTUS_EDITOR_IMGUI)
+    # Dear ImGui
+    add_library(imgui STATIC
+        extern/imgui/imgui.cpp
+        extern/imgui/imgui_draw.cpp
+        extern/imgui/imgui_tables.cpp
+        extern/imgui/imgui_widgets.cpp
+        extern/imgui/backends/imgui_impl_glfw.cpp
+        extern/imgui/backends/imgui_impl_vulkan.cpp
+    )
 
-target_include_directories(imgui PUBLIC
-    extern/imgui
-    extern/imgui/backends
-)
+    target_include_directories(imgui PUBLIC
+        extern/imgui
+        extern/imgui/backends
+    )
 
-target_link_libraries(imgui PUBLIC glfw Vulkan::Vulkan)
-target_link_libraries(HephaestusEngine PRIVATE imgui)
+    target_link_libraries(imgui PUBLIC glfw Vulkan::Vulkan)
+    target_link_libraries(HephaestusEngine PRIVATE imgui)
 
-# ImGuizmo
-add_library(imguizmo STATIC
-    extern/ImGuizmo/ImGuizmo.cpp
-)
+    # ImGuizmo
+    add_library(imguizmo STATIC
+        extern/ImGuizmo/ImGuizmo.cpp
+    )
 
-target_include_directories(imguizmo PUBLIC
-    extern/ImGuizmo
-)
+    target_include_directories(imguizmo PUBLIC
+        extern/ImGuizmo
+    )
 
-target_link_libraries(imguizmo PUBLIC imgui)
-target_link_libraries(HephaestusEngine PRIVATE imguizmo)
+    target_link_libraries(imguizmo PUBLIC imgui)
+    target_link_libraries(HephaestusEngine PRIVATE imguizmo)
 
-set(IMNODES_IMGUI_TARGET_NAME imgui)
-set(IMNODES_EXAMPLES OFF CACHE BOOL "Disable ImNodes examples" FORCE)
-add_subdirectory(extern/imnodes)
-target_link_libraries(HephaestusEngine PRIVATE imnodes)
+    set(IMNODES_IMGUI_TARGET_NAME imgui)
+    set(IMNODES_EXAMPLES OFF CACHE BOOL "Disable ImNodes examples" FORCE)
+    add_subdirectory(extern/imnodes)
+    target_link_libraries(HephaestusEngine PRIVATE imnodes)
+endif()
 
 
 
@@ -296,6 +311,8 @@ if (GLSLC_EXECUTABLE)
     set(SHADER_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/ui_fullscreen.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/ui_fullscreen.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/billboard.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/billboard.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo.vert
