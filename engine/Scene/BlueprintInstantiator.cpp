@@ -256,8 +256,18 @@ void ApplyPropertyOverridesCamera(CameraComponent& camera, const BlueprintCompon
             camera.nearPlane = static_cast<float>(*value.AsNumber());
         } else if (key == "farPlane" && value.IsNumber()) {
             camera.farPlane = static_cast<float>(*value.AsNumber());
+        } else if (key == "projection" && value.IsString()) {
+            if (*value.AsString() == "Orthographic") {
+                camera.projection = CameraProjection::Orthographic;
+            } else {
+                camera.projection = CameraProjection::Perspective;
+            }
+        } else if (key == "isActive" && value.IsBool()) {
+            camera.isActive = *value.AsBool();
         } else if (key == "isPrimary" && value.IsBool()) {
             camera.isPrimary = *value.AsBool();
+        } else if (key == "showEditorMesh" && value.IsBool()) {
+            camera.showEditorMesh = *value.AsBool();
         }
     }
 }
@@ -594,8 +604,28 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
                         camera.farPlane = static_cast<float>(farValue->AsNumber());
                     }
                 }
+                if (const JsonValue* projectionValue = componentData.Find("projection")) {
+                    if (projectionValue->IsString()) {
+                        std::string projStr = projectionValue->AsString();
+                        if (projStr == "Orthographic") {
+                            camera.projection = CameraProjection::Orthographic;
+                        } else {
+                            camera.projection = CameraProjection::Perspective;
+                        }
+                    }
+                }
+                if (const JsonValue* activeValue = componentData.Find("isActive")) {
+                    camera.isActive = ParseBoolLike(*activeValue, camera.isActive);
+                }
                 if (const JsonValue* primaryValue = componentData.Find("isPrimary")) {
                     camera.isPrimary = ParseBoolLike(*primaryValue, camera.isPrimary);
+                    // Backward compat: isPrimary maps to isActive
+                    if (!componentData.Find("isActive") && camera.isPrimary) {
+                        camera.isActive = true;
+                    }
+                }
+                if (const JsonValue* showMeshValue = componentData.Find("showEditorMesh")) {
+                    camera.showEditorMesh = ParseBoolLike(*showMeshValue, camera.showEditorMesh);
                 }
             } else if (componentName == "LuaScript") {
                 auto& lua = entity.AddComponent<LuaScriptComponent>();

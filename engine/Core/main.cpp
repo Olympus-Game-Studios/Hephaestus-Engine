@@ -6546,6 +6546,29 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
+  size_t cameraPreviewMeshIndex = MeshRendererComponent::InvalidMesh;
+  {
+    namespace fs = std::filesystem;
+    fs::path cameraMeshPath = ResolveEngineRoot() / "assets" / "meshes" / "Camera.glb";
+    if (fs::exists(cameraMeshPath)) {
+      MeshData cameraMeshData;
+      std::string error;
+      if (ModelImporter::LoadModel(cameraMeshPath, cameraMeshData, error)) {
+        try {
+          cameraPreviewMeshIndex = uploadMesh("Camera Preview", cameraMeshData,
+                                              fs::path("builtin://camera"), false);
+        } catch (const std::exception &e) {
+          std::cerr << "Failed to upload camera preview mesh: " << e.what() << std::endl;
+        }
+      } else {
+        std::cerr << "Failed to load camera preview mesh from '" << cameraMeshPath.string()
+                  << "': " << error << std::endl;
+      }
+    } else {
+      std::cerr << "Camera preview mesh not found at '" << cameraMeshPath.string() << "'." << std::endl;
+    }
+  }
+
   // ── Camera + UBO ───────────────────────────
   Camera camera;
   camera.position = {0.0f, 0.0f, 3.0f}; // Position camera to view the cube
@@ -6964,6 +6987,50 @@ int main(int argc, char *argv[]) {
     return entity;
   };
 
+  auto attachCameraPreviewMesh = [&](Entity entity) {
+    if (!entity || !entity.HasComponent<CameraComponent>()) {
+      return;
+    }
+    if (cameraPreviewMeshIndex == MeshRendererComponent::InvalidMesh ||
+        cameraPreviewMeshIndex >= meshLibrary.size()) {
+      return;
+    }
+
+    auto &cameraComp = entity.GetComponent<CameraComponent>();
+    if (!cameraComp.showEditorMesh) {
+      if (entity.HasComponent<MeshRendererComponent>()) {
+        auto &renderer = entity.GetComponent<MeshRendererComponent>();
+        if (renderer.meshAssetPath == "builtin://camera") {
+          renderer.visible = false;
+          renderer.hideInGame = true;
+        }
+      }
+      return;
+    }
+
+    if (entity.HasComponent<MeshRendererComponent>()) {
+      auto &renderer = entity.GetComponent<MeshRendererComponent>();
+      if (renderer.meshAssetPath == "builtin://camera") {
+        renderer.visible = true;
+        renderer.hideInGame = true;
+      }
+      return;
+    }
+
+    const MeshGPU &mesh = meshLibrary[cameraPreviewMeshIndex];
+    auto &renderer = entity.AddComponent<MeshRendererComponent>();
+    int subCount = mesh.submeshes.empty() ? 1 : static_cast<int>(mesh.submeshes.size());
+    renderer.SetMesh(cameraPreviewMeshIndex, mesh.bounds, mesh.sourceKey, mesh.imported, subCount);
+    renderer.hideInGame = true;
+    renderer.backfaceCulling = true;
+    renderer.visible = true;
+
+    if (!entity.HasComponent<MaterialComponent>()) {
+      auto &mat = entity.AddComponent<MaterialComponent>(Vec3(0.35f, 0.75f, 1.0f));
+      mat.roughness = 0.6f;
+    }
+  };
+
   auto spawnDirectionalLightEntity = [&]() -> Entity {
     Entity light =
         scene.CreateEntity(makeUniqueEntityName("Directional Light"));
@@ -7069,6 +7136,48 @@ int main(int argc, char *argv[]) {
     
     std::cout << "[rebuildSceneMeshes] Called for scene: " << targetScene.GetName() 
               << " (destroyUnusedMeshes=" << (destroyUnusedMeshes ? "true" : "false") << ")" << std::endl;
+
+    if (cameraPreviewMeshIndex != MeshRendererComponent::InvalidMesh) {
+      auto cameraView = targetScene.GetEntitiesWith<CameraComponent>();
+      for (auto entityHandle : cameraView) {
+        Entity entity(entityHandle, &targetScene);
+        if (!entity || !entity.HasComponent<CameraComponent>()) {
+          continue;
+        }
+
+        auto &cameraComp = entity.GetComponent<CameraComponent>();
+        if (!cameraComp.showEditorMesh) {
+          if (entity.HasComponent<MeshRendererComponent>()) {
+            auto &renderer = entity.GetComponent<MeshRendererComponent>();
+            if (renderer.meshAssetPath == "builtin://camera") {
+              renderer.visible = false;
+              renderer.hideInGame = true;
+            }
+          }
+          continue;
+        }
+
+        if (!entity.HasComponent<MeshRendererComponent>()) {
+          const MeshGPU &mesh = meshLibrary[cameraPreviewMeshIndex];
+          auto &renderer = entity.AddComponent<MeshRendererComponent>();
+          int subCount = mesh.submeshes.empty() ? 1 : static_cast<int>(mesh.submeshes.size());
+          renderer.SetMesh(cameraPreviewMeshIndex, mesh.bounds, mesh.sourceKey, mesh.imported, subCount);
+          renderer.hideInGame = true;
+          renderer.backfaceCulling = true;
+          renderer.visible = true;
+          if (!entity.HasComponent<MaterialComponent>()) {
+            auto &mat = entity.AddComponent<MaterialComponent>(Vec3(0.35f, 0.75f, 1.0f));
+            mat.roughness = 0.6f;
+          }
+        } else {
+          auto &renderer = entity.GetComponent<MeshRendererComponent>();
+          if (renderer.meshAssetPath == "builtin://camera") {
+            renderer.visible = true;
+            renderer.hideInGame = true;
+          }
+        }
+      }
+    }
 
     std::unordered_set<std::string> requiredMeshKeys;
     requiredMeshKeys.reserve(256);
@@ -8420,7 +8529,10 @@ int main(int argc, char *argv[]) {
               Entity created;
               if (createBlueprintNode("Empty Actor", created)) {
                 blueprintDoc->SyncNodeFromEntity(created);
-                rebuildSceneMeshesFromComponents(scene);
+                Scene* previewScene = blueprintDoc ? blueprintDoc->GetScene() : nullptr;
+                if (previewScene) {
+                  rebuildSceneMeshesFromComponents(*previewScene, false);
+                }
                 if (!g_DetailsLocked) {
                   scene.SetSelectedEntity(created);
                 }
@@ -8443,15 +8555,32 @@ int main(int argc, char *argv[]) {
             break;
           }
           case WorldOutlinerSpawnPreset::Camera: {
+            // Helper to check if this is the first camera in a scene
+            auto isFirstCameraInScene = [](Scene& targetScene) -> bool {
+              auto cameraView = targetScene.GetEntitiesWith<CameraComponent>();
+              for (auto _ : cameraView) {
+                (void)_;
+                return false; // Found at least one camera
+              }
+              return true;
+            };
+            
             if (hasBlueprintOpen) {
               blueprintDoc->PushUndoSnapshot();
               Entity created;
               if (createBlueprintNode("Camera", created)) {
-                created.AddComponent<CameraComponent>();
+                auto& cam = created.AddComponent<CameraComponent>();
+                cam.isActive = isFirstCameraInScene(scene); // First camera is active
                 auto &transform = created.GetComponent<TransformComponent>();
-                transform.position = Vec3(0.0f, 1.5f, 3.0f);
+                transform.position = camera.position; // Place at editor camera position
+                transform.rotation.x = camera.pitchDeg * 0.0174533f;
+                transform.rotation.y = camera.yawDeg * 0.0174533f;
+                attachCameraPreviewMesh(created);
                 blueprintDoc->SyncNodeFromEntity(created);
-                rebuildSceneMeshesFromComponents(scene);
+                Scene* previewScene = blueprintDoc ? blueprintDoc->GetScene() : nullptr;
+                if (previewScene) {
+                  rebuildSceneMeshesFromComponents(*previewScene, false);
+                }
                 if (!g_DetailsLocked) {
                   scene.SetSelectedEntity(created);
                 }
@@ -8461,15 +8590,20 @@ int main(int argc, char *argv[]) {
               }
             } else {
               PushSceneUndoSnapshot(scene);
-              Entity created = scene.CreateEntity("Camera");
+              bool firstCamera = isFirstCameraInScene(scene);
+              Entity created = scene.CreateEntity(makeUniqueEntityName("Camera"));
               if (created) {
-                created.AddComponent<CameraComponent>();
+                auto& cam = created.AddComponent<CameraComponent>();
+                cam.isActive = firstCamera; // First camera is active
                 auto &transform = created.GetComponent<TransformComponent>();
-                transform.position = Vec3(0.0f, 1.5f, 3.0f);
+                transform.position = camera.position; // Place at editor camera position
+                transform.rotation.x = camera.pitchDeg * 0.0174533f;
+                transform.rotation.y = camera.yawDeg * 0.0174533f;
+                attachCameraPreviewMesh(created);
                 if (!g_DetailsLocked) {
                   scene.SetSelectedEntity(created);
                 }
-                logSuccess("Added camera to scene.");
+                logSuccess("Added camera to scene" + std::string(firstCamera ? " (set as active)." : "."));
               } else {
                 logFailure("Failed to add camera.");
               }
@@ -8491,7 +8625,10 @@ int main(int argc, char *argv[]) {
                 renderer.SetMesh(*handle, mesh.bounds, mesh.sourceKey, mesh.imported);
                 created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
                 blueprintDoc->SyncNodeFromEntity(created);
-                rebuildSceneMeshesFromComponents(scene);
+                Scene* previewScene = blueprintDoc ? blueprintDoc->GetScene() : nullptr;
+                if (previewScene) {
+                  rebuildSceneMeshesFromComponents(*previewScene, false);
+                }
                 if (!g_DetailsLocked) {
                   scene.SetSelectedEntity(created);
                 }
@@ -8524,7 +8661,10 @@ int main(int argc, char *argv[]) {
                 renderer.SetMesh(*handle, mesh.bounds, mesh.sourceKey, mesh.imported);
                 created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
                 blueprintDoc->SyncNodeFromEntity(created);
-                rebuildSceneMeshesFromComponents(scene);
+                Scene* previewScene = blueprintDoc ? blueprintDoc->GetScene() : nullptr;
+                if (previewScene) {
+                  rebuildSceneMeshesFromComponents(*previewScene, false);
+                }
                 if (!g_DetailsLocked) {
                   scene.SetSelectedEntity(created);
                 }
@@ -8554,7 +8694,10 @@ int main(int argc, char *argv[]) {
                 transform.position = Vec3(0.0f, 3.0f, 0.0f);
                 transform.rotation = Vec3(0.524f, 0.262f, 0.0f);
                 blueprintDoc->SyncNodeFromEntity(created);
-                rebuildSceneMeshesFromComponents(scene);
+                Scene* previewScene = blueprintDoc ? blueprintDoc->GetScene() : nullptr;
+                if (previewScene) {
+                  rebuildSceneMeshesFromComponents(*previewScene, false);
+                }
                 if (!g_DetailsLocked) {
                   scene.SetSelectedEntity(created);
                 }
@@ -8582,7 +8725,10 @@ int main(int argc, char *argv[]) {
                 auto &transform = created.GetComponent<TransformComponent>();
                 transform.position = Vec3(0.0f, 2.0f, 0.0f);
                 blueprintDoc->SyncNodeFromEntity(created);
-                rebuildSceneMeshesFromComponents(scene);
+                Scene* previewScene = blueprintDoc ? blueprintDoc->GetScene() : nullptr;
+                if (previewScene) {
+                  rebuildSceneMeshesFromComponents(*previewScene, false);
+                }
                 if (!g_DetailsLocked) {
                   scene.SetSelectedEntity(created);
                 }
@@ -8611,7 +8757,10 @@ int main(int argc, char *argv[]) {
                 transform.position = Vec3(0.0f, 3.0f, 0.0f);
                 transform.rotation = Vec3(0.524f, 0.0f, 0.0f);
                 blueprintDoc->SyncNodeFromEntity(created);
-                rebuildSceneMeshesFromComponents(scene);
+                Scene* previewScene = blueprintDoc ? blueprintDoc->GetScene() : nullptr;
+                if (previewScene) {
+                  rebuildSceneMeshesFromComponents(*previewScene, false);
+                }
                 if (!g_DetailsLocked) {
                   scene.SetSelectedEntity(created);
                 }
@@ -8700,7 +8849,10 @@ int main(int argc, char *argv[]) {
                 created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
 
                 blueprintDoc->SyncNodeFromEntity(created);
-                rebuildSceneMeshesFromComponents(scene);
+                Scene* previewScene = blueprintDoc ? blueprintDoc->GetScene() : nullptr;
+                if (previewScene) {
+                  rebuildSceneMeshesFromComponents(*previewScene, false);
+                }
 
                 if (!g_DetailsLocked) {
                   scene.SetSelectedEntity(created);
@@ -9088,9 +9240,53 @@ int main(int argc, char *argv[]) {
           if (g_LuaScriptEnginePtr) {
             g_LuaScriptEnginePtr->OnSimulationStarted();
           }
-          // When entering play mode, ensure player controller is active
-          assetBrowserStatus = "Entered play mode - Use WASD to move, hold "
-                               "Right Mouse Button to look.";
+          
+          // ═══════════════════════════════════════════════════════════════
+          // PLAY MODE CAMERA SELECTION
+          // Find and activate the appropriate camera for runtime:
+          //   1) First camera with isActive=true (by scene hierarchy order)
+          //   2) If none active, first camera found
+          //   3) If no cameras exist, fallback to editor camera
+          // ═══════════════════════════════════════════════════════════════
+          Entity activeCameraEntity;
+          Entity firstCameraEntity;
+          auto cameraView = scene.GetEntitiesWith<CameraComponent, TransformComponent>();
+          for (auto entityHandle : cameraView) {
+            Entity entity(entityHandle, &scene);
+            auto& cam = entity.GetComponent<CameraComponent>();
+            if (!firstCameraEntity) {
+              firstCameraEntity = entity;
+            }
+            if (cam.isActive) {
+              activeCameraEntity = entity;
+              break;
+            }
+          }
+          
+          // Use active camera, or fallback to first camera
+          Entity runtimeCamera = activeCameraEntity ? activeCameraEntity : firstCameraEntity;
+          if (runtimeCamera) {
+            auto& camComp = runtimeCamera.GetComponent<CameraComponent>();
+            auto& camTransform = runtimeCamera.GetComponent<TransformComponent>();
+            
+            // Apply camera settings to the runtime camera controller
+            camera.nearPlane = camComp.nearPlane;
+            camera.farPlane = camComp.farPlane;
+            camera.position = camTransform.position;
+            camera.pitchDeg = camTransform.rotation.x * 57.2958f; // rad to deg
+            camera.yawDeg = camTransform.rotation.y * 57.2958f;
+            
+            cameraController.setActive(true);
+            cameraController.syncFromCamera();
+            
+            std::string camName = runtimeCamera.HasComponent<TagComponent>()
+                                    ? runtimeCamera.GetComponent<TagComponent>().tag
+                                    : "Camera";
+            assetBrowserStatus = "Entered play mode - Using camera: " + camName;
+          } else {
+            // No camera in scene - use editor camera position
+            assetBrowserStatus = "Entered play mode - No CameraActor found, using editor camera.";
+          }
           std::cout << assetBrowserStatus << std::endl;
         }
         if (toolbarActions.pauseClicked && g_SimPlaying && !blueprintMode) {

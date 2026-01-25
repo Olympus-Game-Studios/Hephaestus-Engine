@@ -191,6 +191,7 @@ private:
     float m_CurrentDeltaTime = 0.0f;
 
     static LuaScriptEngine* s_Instance;
+    static LuaScriptEngine* GetInstance();
 
     /**
      * Register all C++ bindings with Lua
@@ -246,6 +247,9 @@ private:
     bool CurrentEntityValid() const;
 
     void LogLuaError(const std::string& context);
+    
+    // Setup the "this" global for OOP-style script access
+    void SetupThisForEntity(uint32_t entityId);
 
     // Lua callback helpers
     static int Lua_Transform_getPosition(lua_State* L);
@@ -288,6 +292,7 @@ private:
     static int Lua_This_GetName(lua_State* L);
     static int Lua_This_SetName(lua_State* L);
     static int Lua_This_IsValid(lua_State* L);
+    static int Lua_This_GetCamera(lua_State* L);
     
     // Transform object methods (returned by this:GetTransform())
     static int Lua_TransformObj_GetPosition(lua_State* L);
@@ -299,8 +304,22 @@ private:
     static int Lua_TransformObj_Translate(lua_State* L);
     static int Lua_TransformObj_Rotate(lua_State* L);
 
-    void RegisterThisBindings();
-    void SetupThisForEntity(uint32_t entityId);
+    // Camera object methods (returned by this:GetCamera())
+    static int Lua_CameraObj_GetFov(lua_State* L);
+    static int Lua_CameraObj_SetFov(lua_State* L);
+    static int Lua_CameraObj_GetNear(lua_State* L);
+    static int Lua_CameraObj_SetNear(lua_State* L);
+    static int Lua_CameraObj_GetFar(lua_State* L);
+    static int Lua_CameraObj_SetFar(lua_State* L);
+    static int Lua_CameraObj_IsActive(lua_State* L);
+    static int Lua_CameraObj_SetActive(lua_State* L);
 
-    static LuaScriptEngine* GetInstance() { return s_Instance; }
+    // Scene camera queries
+    static int Lua_Scene_FindFirstCamera(lua_State* L);
+    static int Lua_Scene_FindCameras(lua_State* L);
+    static int Lua_Scene_SetActiveCamera(lua_State* L);
+    static int Lua_Scene_GetActiveCamera(lua_State* L);
+
+    void RegisterThisBindings();
+    void RegisterSceneBindings();
 };

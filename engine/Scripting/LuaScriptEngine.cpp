@@ -112,6 +112,10 @@ namespace {
 
 LuaScriptEngine* LuaScriptEngine::s_Instance = nullptr;
 
+LuaScriptEngine* LuaScriptEngine::GetInstance() {
+    return s_Instance;
+}
+
 LuaScriptEngine::LuaScriptEngine() {
     s_Instance = this;
 #if LUA_AVAILABLE
@@ -436,6 +440,7 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterCameraBindings();
     RegisterPhysicsBindings();
     RegisterThisBindings();
+    RegisterSceneBindings();
 #endif
 }
 
@@ -1859,6 +1864,9 @@ void LuaScriptEngine::RegisterThisBindings() {
     lua_pushcfunction(m_State, Lua_This_IsValid);
     lua_setfield(m_State, -2, "IsValid");
     
+    lua_pushcfunction(m_State, Lua_This_GetCamera);
+    lua_setfield(m_State, -2, "GetCamera");
+    
     // Set __index to self for method lookup
     lua_pushvalue(m_State, -1);
     lua_setfield(m_State, -2, "__index");
@@ -2299,5 +2307,464 @@ int LuaScriptEngine::Lua_TransformObj_Rotate(lua_State* L) {
 #else
     (void)L;
     return 0;
+#endif
+}
+// ═══════════════════════════════════════════════════════════════
+// Camera Component Bindings (for CameraActor support)
+// ═══════════════════════════════════════════════════════════════
+
+int LuaScriptEngine::Lua_This_GetCamera(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    Entity entity = engine->MakeEntity(engine->m_CurrentEntityId);
+    if (!entity || !entity.HasComponent<CameraComponent>()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    // Create camera userdata containing the entity ID
+    uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
+    *pEntityId = engine->m_CurrentEntityId;
+    
+    // Set its metatable to "HephaestusCamera"
+    luaL_getmetatable(L, "HephaestusCamera");
+    lua_setmetatable(L, -2);
+    
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_CameraObj_GetFov(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    if (!pEntityId) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    Entity entity = engine->MakeEntity(*pEntityId);
+    if (!entity || !entity.HasComponent<CameraComponent>()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    auto& camera = entity.GetComponent<CameraComponent>();
+    lua_pushnumber(L, camera.fov);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_CameraObj_SetFov(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        return 0;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    if (!pEntityId) {
+        return 0;
+    }
+    
+    Entity entity = engine->MakeEntity(*pEntityId);
+    if (!entity || !entity.HasComponent<CameraComponent>()) {
+        return 0;
+    }
+    
+    float fov = static_cast<float>(luaL_checknumber(L, 2));
+    auto& camera = entity.GetComponent<CameraComponent>();
+    camera.fov = fov;
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_CameraObj_GetNear(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    if (!pEntityId) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    Entity entity = engine->MakeEntity(*pEntityId);
+    if (!entity || !entity.HasComponent<CameraComponent>()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    auto& camera = entity.GetComponent<CameraComponent>();
+    lua_pushnumber(L, camera.nearPlane);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_CameraObj_SetNear(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        return 0;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    if (!pEntityId) {
+        return 0;
+    }
+    
+    Entity entity = engine->MakeEntity(*pEntityId);
+    if (!entity || !entity.HasComponent<CameraComponent>()) {
+        return 0;
+    }
+    
+    float nearClip = static_cast<float>(luaL_checknumber(L, 2));
+    auto& camera = entity.GetComponent<CameraComponent>();
+    camera.nearPlane = nearClip;
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_CameraObj_GetFar(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    if (!pEntityId) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    Entity entity = engine->MakeEntity(*pEntityId);
+    if (!entity || !entity.HasComponent<CameraComponent>()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    auto& camera = entity.GetComponent<CameraComponent>();
+    lua_pushnumber(L, camera.farPlane);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_CameraObj_SetFar(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        return 0;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    if (!pEntityId) {
+        return 0;
+    }
+    
+    Entity entity = engine->MakeEntity(*pEntityId);
+    if (!entity || !entity.HasComponent<CameraComponent>()) {
+        return 0;
+    }
+    
+    float farClip = static_cast<float>(luaL_checknumber(L, 2));
+    auto& camera = entity.GetComponent<CameraComponent>();
+    camera.farPlane = farClip;
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_CameraObj_IsActive(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    if (!pEntityId) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    
+    Entity entity = engine->MakeEntity(*pEntityId);
+    if (!entity || !entity.HasComponent<CameraComponent>()) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    
+    auto& camera = entity.GetComponent<CameraComponent>();
+    lua_pushboolean(L, camera.isActive);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_CameraObj_SetActive(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_Scene) {
+        return 0;
+    }
+    
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    if (!pEntityId) {
+        return 0;
+    }
+    
+    Entity entity = engine->MakeEntity(*pEntityId);
+    if (!entity || !entity.HasComponent<CameraComponent>()) {
+        return 0;
+    }
+    
+    bool active = lua_toboolean(L, 2) != 0;
+    
+    // If setting to active, deactivate all other cameras first
+    if (active) {
+        auto cameraView = engine->m_Scene->GetEntitiesWith<CameraComponent>();
+        for (auto otherHandle : cameraView) {
+            Entity other(otherHandle, engine->m_Scene);
+            if (other != entity && other.HasComponent<CameraComponent>()) {
+                other.GetComponent<CameraComponent>().isActive = false;
+            }
+        }
+    }
+    
+    auto& camera = entity.GetComponent<CameraComponent>();
+    camera.isActive = active;
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Scene Camera Query Bindings
+// ═══════════════════════════════════════════════════════════════
+
+int LuaScriptEngine::Lua_Scene_FindFirstCamera(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_Scene) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    auto cameraView = engine->m_Scene->GetEntitiesWith<CameraComponent>();
+    for (auto entityHandle : cameraView) {
+        // Return first camera found
+        uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
+        *pEntityId = static_cast<uint32_t>(entityHandle);
+        luaL_getmetatable(L, "HephaestusEntity");
+        lua_setmetatable(L, -2);
+        return 1;
+    }
+    
+    lua_pushnil(L);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Scene_FindCameras(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_Scene) {
+        lua_newtable(L);
+        return 1;
+    }
+    
+    lua_newtable(L);
+    int index = 1;
+    
+    auto cameraView = engine->m_Scene->GetEntitiesWith<CameraComponent>();
+    for (auto entityHandle : cameraView) {
+        uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
+        *pEntityId = static_cast<uint32_t>(entityHandle);
+        luaL_getmetatable(L, "HephaestusEntity");
+        lua_setmetatable(L, -2);
+        lua_rawseti(L, -2, index++);
+    }
+    
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Scene_GetActiveCamera(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_Scene) {
+        lua_pushnil(L);
+        return 1;
+    }
+    
+    auto cameraView = engine->m_Scene->GetEntitiesWith<CameraComponent>();
+    
+    // First pass: find camera with isActive=true
+    for (auto entityHandle : cameraView) {
+        Entity entity(entityHandle, engine->m_Scene);
+        auto& camera = entity.GetComponent<CameraComponent>();
+        if (camera.isActive) {
+            uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
+            *pEntityId = static_cast<uint32_t>(entityHandle);
+            luaL_getmetatable(L, "HephaestusEntity");
+            lua_setmetatable(L, -2);
+            return 1;
+        }
+    }
+    
+    // Second pass: return first camera if none active
+    for (auto entityHandle : cameraView) {
+        uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
+        *pEntityId = static_cast<uint32_t>(entityHandle);
+        luaL_getmetatable(L, "HephaestusEntity");
+        lua_setmetatable(L, -2);
+        return 1;
+    }
+    
+    lua_pushnil(L);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Scene_SetActiveCamera(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_Scene) {
+        return 0;
+    }
+    
+    // Accept entity ID as number or userdata
+    uint32_t targetEntityId = 0;
+    if (lua_isnumber(L, 1)) {
+        targetEntityId = static_cast<uint32_t>(lua_tonumber(L, 1));
+    } else if (lua_isuserdata(L, 1)) {
+        uint32_t* pEntityId = static_cast<uint32_t*>(lua_touserdata(L, 1));
+        if (pEntityId) {
+            targetEntityId = *pEntityId;
+        }
+    } else {
+        return 0;
+    }
+    
+    Entity targetEntity = engine->MakeEntity(targetEntityId);
+    if (!targetEntity || !targetEntity.HasComponent<CameraComponent>()) {
+        return 0;
+    }
+    
+    // Deactivate all cameras, then activate the target
+    auto cameraView = engine->m_Scene->GetEntitiesWith<CameraComponent>();
+    for (auto entityHandle : cameraView) {
+        Entity entity(entityHandle, engine->m_Scene);
+        auto& camera = entity.GetComponent<CameraComponent>();
+        camera.isActive = (entityHandle == static_cast<entt::entity>(targetEntity));
+    }
+    
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+void LuaScriptEngine::RegisterSceneBindings() {
+#if LUA_AVAILABLE
+    // Create Scene global table with camera query functions
+    lua_newtable(m_State);
+    
+    lua_pushcfunction(m_State, Lua_Scene_FindFirstCamera);
+    lua_setfield(m_State, -2, "FindFirstCamera");
+    
+    lua_pushcfunction(m_State, Lua_Scene_FindCameras);
+    lua_setfield(m_State, -2, "FindCameras");
+    
+    lua_pushcfunction(m_State, Lua_Scene_GetActiveCamera);
+    lua_setfield(m_State, -2, "GetActiveCamera");
+    
+    lua_pushcfunction(m_State, Lua_Scene_SetActiveCamera);
+    lua_setfield(m_State, -2, "SetActiveCamera");
+    
+    lua_setglobal(m_State, "Scene");
+    
+    // Create the "Camera" metatable for camera component objects
+    luaL_newmetatable(m_State, "HephaestusCamera");
+    
+    lua_pushcfunction(m_State, Lua_CameraObj_GetFov);
+    lua_setfield(m_State, -2, "GetFov");
+    
+    lua_pushcfunction(m_State, Lua_CameraObj_SetFov);
+    lua_setfield(m_State, -2, "SetFov");
+    
+    lua_pushcfunction(m_State, Lua_CameraObj_GetNear);
+    lua_setfield(m_State, -2, "GetNear");
+    
+    lua_pushcfunction(m_State, Lua_CameraObj_SetNear);
+    lua_setfield(m_State, -2, "SetNear");
+    
+    lua_pushcfunction(m_State, Lua_CameraObj_GetFar);
+    lua_setfield(m_State, -2, "GetFar");
+    
+    lua_pushcfunction(m_State, Lua_CameraObj_SetFar);
+    lua_setfield(m_State, -2, "SetFar");
+    
+    lua_pushcfunction(m_State, Lua_CameraObj_IsActive);
+    lua_setfield(m_State, -2, "IsActive");
+    
+    lua_pushcfunction(m_State, Lua_CameraObj_SetActive);
+    lua_setfield(m_State, -2, "SetActive");
+    
+    // Set __index to self for method lookup
+    lua_pushvalue(m_State, -1);
+    lua_setfield(m_State, -2, "__index");
+    
+    lua_pop(m_State, 1);
 #endif
 }

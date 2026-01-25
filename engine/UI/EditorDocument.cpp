@@ -516,7 +516,10 @@ bool BlueprintDocument::SyncNodeFromEntity(Entity entity) {
         data.objectValue["fov"] = MakeNumber(camera.fov);
         data.objectValue["nearPlane"] = MakeNumber(camera.nearPlane);
         data.objectValue["farPlane"] = MakeNumber(camera.farPlane);
-        data.objectValue["isPrimary"] = MakeBool(camera.isPrimary);
+        data.objectValue["projection"] = MakeString(camera.projection == CameraProjection::Orthographic ? "Orthographic" : "Perspective");
+        data.objectValue["isActive"] = MakeBool(camera.isActive);
+        data.objectValue["isPrimary"] = MakeBool(camera.isPrimary || camera.isActive);
+        data.objectValue["showEditorMesh"] = MakeBool(camera.showEditorMesh);
         addComponentEntry("Camera", true, std::move(data));
     }
 

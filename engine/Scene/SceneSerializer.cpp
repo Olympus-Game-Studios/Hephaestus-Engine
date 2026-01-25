@@ -675,7 +675,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"fov\": " << FormatFloat(camera->fov) << ",\n";
             oss << "          \"near\": " << FormatFloat(camera->nearPlane) << ",\n";
             oss << "          \"far\": " << FormatFloat(camera->farPlane) << ",\n";
-            oss << "          \"isPrimary\": " << (camera->isPrimary ? "true" : "false") << "\n";
+            oss << "          \"projection\": \"" << (camera->projection == CameraProjection::Orthographic ? "Orthographic" : "Perspective") << "\",\n";
+            oss << "          \"isActive\": " << (camera->isActive ? "true" : "false") << ",\n";
+            oss << "          \"isPrimary\": " << (camera->isPrimary || camera->isActive ? "true" : "false") << ",\n";
+            oss << "          \"showEditorMesh\": " << (camera->showEditorMesh ? "true" : "false") << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1280,10 +1283,28 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     camera.farPlane = static_cast<float>(farValue->AsNumber());
                 }
             }
-            if (const JsonValue* primaryValue = cameraObj->Find("isPrimary")) {
-                if (primaryValue->IsBool()) {
-                    camera.isPrimary = primaryValue->AsBool();
+            if (const JsonValue* projectionValue = cameraObj->Find("projection")) {
+                if (projectionValue->IsString()) {
+                    std::string projStr = projectionValue->AsString();
+                    if (projStr == "Orthographic") {
+                        camera.projection = CameraProjection::Orthographic;
+                    } else {
+                        camera.projection = CameraProjection::Perspective;
+                    }
                 }
+            }
+            if (const JsonValue* activeValue = cameraObj->Find("isActive")) {
+                camera.isActive = ParseBoolLike(*activeValue, camera.isActive);
+            }
+            if (const JsonValue* primaryValue = cameraObj->Find("isPrimary")) {
+                camera.isPrimary = ParseBoolLike(*primaryValue, camera.isPrimary);
+                // Backward compatibility: isPrimary maps to isActive if isActive not specified
+                if (!cameraObj->Find("isActive") && camera.isPrimary) {
+                    camera.isActive = true;
+                }
+            }
+            if (const JsonValue* showMeshValue = cameraObj->Find("showEditorMesh")) {
+                camera.showEditorMesh = ParseBoolLike(*showMeshValue, camera.showEditorMesh);
             }
         }
 
@@ -1876,7 +1897,10 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"fov\": " << FormatFloat(camera->fov) << ",\n";
             oss << "          \"near\": " << FormatFloat(camera->nearPlane) << ",\n";
             oss << "          \"far\": " << FormatFloat(camera->farPlane) << ",\n";
-            oss << "          \"isPrimary\": " << (camera->isPrimary ? "true" : "false") << "\n";
+            oss << "          \"projection\": \"" << (camera->projection == CameraProjection::Orthographic ? "Orthographic" : "Perspective") << "\",\n";
+            oss << "          \"isActive\": " << (camera->isActive ? "true" : "false") << ",\n";
+            oss << "          \"isPrimary\": " << (camera->isPrimary || camera->isActive ? "true" : "false") << ",\n";
+            oss << "          \"showEditorMesh\": " << (camera->showEditorMesh ? "true" : "false") << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }

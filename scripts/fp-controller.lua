@@ -1,10 +1,7 @@
--- fp-controller.lua
--- First-person player controller (Lua) for Hephaestus Engine.
---
--- Notes / limitations:
--- - The current Lua runtime bindings expose Transform/Entity/Input/Time/Camera.
--- - There is no physics/raycast API exposed to Lua yet, so "gravity" here is
---   simulated and resolved against a configurable ground plane (groundY).
+-- fp-controller-blueprint.lua
+-- First-person controller intended for a Blueprint that includes:
+--  - Capsule mesh (this entity)
+--  - Separate Camera actor (Scene camera entity)
 --
 -- Controls:
 -- - WASD: move
@@ -22,22 +19,25 @@ local config = {
 	-- Use Jolt physics via Lua bindings when available.
 	usePhysics = true,
 
-	-- Camera
-	cameraOffsetY = 1,
+	-- Camera follow settings
+	cameraOffsetY = 1.2,
+	cameraOffsetZ = 0.0,
+
+	-- Optional: target a specific camera by name (leave empty to use first camera)
+	cameraName = "",
 
 	-- Gravity / jump
-	gravity = -30.0,        -- units/s^2
-	jumpSpeed = 1.5,        -- units/s
-	maxFallSpeed = -55.0,   -- clamp terminal velocity
+	gravity = -30.0,
+	jumpSpeed = 1.5,
+	maxFallSpeed = -55.0,
 
-	-- Ground plane (until physics binding exists)
+	-- Ground plane (fallback if physics isn't available)
 	groundY = 0.0,
 	groundSnapEpsilon = 0.02,
 
 	-- Physics grounding probe
-	groundProbeStartOffsetY = 0.15, -- start ray slightly above body origin
-	groundProbeDistance = 0.6,      -- how far down to test for ground
-	groundedDistance = 0.2,         -- considered grounded within this distance
+	groundProbeDistance = 0.6,
+	groundedDistance = 0.2,
 
 	-- Physics movement tuning
 	groundStickVelocity = -1.5,
@@ -58,6 +58,7 @@ local state = {
 	jumpWasDown = false,
 
 	cameraActive = false,
+	cameraEntity = nil,
 }
 
 local function physicsAvailable()
@@ -131,13 +132,12 @@ local function applyMouseLook()
 	end
 end
 
-local function computeHorizontalVelocity(deltaTime)
+local function computeHorizontalVelocity()
 	local x, z, speed = getMoveInput()
 	if x == 0.0 and z == 0.0 then
 		return 0.0, 0.0
 	end
 
-	-- Match the sample controller convention:
 	-- yaw=0 -> forward is +X, right is +Z.
 	local forwardX = math.cos(state.yaw)
 	local forwardZ = math.sin(state.yaw)
@@ -150,11 +150,10 @@ local function computeHorizontalVelocity(deltaTime)
 end
 
 local function moveHorizontal(deltaTime)
-	local velX, velZ = computeHorizontalVelocity(deltaTime)
+	local velX, velZ = computeHorizontalVelocity()
 	if physicsAvailable() and Physics.getLinearVelocity and Physics.setLinearVelocity then
 		local vel = Physics.getLinearVelocity()
 		if vel then
-			-- Set horizontal velocity directly, preserve vertical
 			local newY = vel.y
 			if state.grounded and newY < config.groundStickVelocity then
 				newY = config.groundStickVelocity
@@ -168,7 +167,6 @@ local function moveHorizontal(deltaTime)
 		return
 	end
 
-	-- Fallback: direct transform movement
 	Transform.translate(velX * deltaTime, 0.0, velZ * deltaTime)
 end
 
@@ -183,7 +181,6 @@ local function updateGroundedPhysics()
 		return false
 	end
 
-	-- Raycast from below body center downward
 	local startY = pos.y - 0.5
 	local hit = Physics.raycast(pos.x, startY, pos.z, 0.0, -1.0, 0.0, config.groundProbeDistance)
 	if not hit or not hit.hit then
@@ -260,17 +257,47 @@ local function updateGravityAndJump(deltaTime)
 		pos.y = pos.y + state.verticalVelocity * deltaTime
 		Transform.setPosition(pos.x, pos.y, pos.z)
 
-		-- Re-resolve in case we landed this frame
 		pos = Transform.getPosition()
 		pos = resolveGround(pos)
 		if pos then
 			Transform.setPosition(pos.x, pos.y, pos.z)
 		end
 	else
-		-- Keep feet on the ground plane (helps prevent tiny float drift)
 		if pos.y ~= config.groundY then
 			Transform.setPosition(pos.x, config.groundY, pos.z)
 		end
+	end
+end
+
+local function pickCameraEntity()
+	state.cameraEntity = nil
+	if not Scene or not Scene.FindCameras then
+		return
+	end
+
+	local cameras = Scene.FindCameras()
+	if not cameras or #cameras == 0 then
+		return
+	end
+
+	if config.cameraName ~= "" then
+		for _, camEntity in ipairs(cameras) do
+			if camEntity and camEntity.GetName then
+				local name = camEntity:GetName()
+				if name == config.cameraName then
+					state.cameraEntity = camEntity
+					break
+				end
+			end
+		end
+	end
+
+	if not state.cameraEntity then
+		state.cameraEntity = cameras[1]
+	end
+
+	if state.cameraEntity and Scene.SetActiveCamera then
+		Scene.SetActiveCamera(state.cameraEntity)
 	end
 end
 
@@ -284,7 +311,10 @@ local function updateCamera()
 		return
 	end
 
-	Camera.setPosition(pos.x, pos.y + config.cameraOffsetY, pos.z)
+	local camX = pos.x
+	local camY = pos.y + config.cameraOffsetY
+	local camZ = pos.z + config.cameraOffsetZ
+	Camera.setPosition(camX, camY, camZ)
 	if Camera.setRotation then
 		Camera.setRotation(state.pitch, state.yaw, 0.0)
 	end
@@ -312,7 +342,6 @@ function onAwake()
 		state.yaw = rot.y or 0.0
 	end
 
-	-- Apply initial yaw-only to body
 	Transform.setRotation(0.0, state.yaw, 0.0)
 	if physicsAvailable() and Physics.setRotation then
 		Physics.setRotation(0.0, state.yaw, 0.0, true)
@@ -327,9 +356,10 @@ function onAwake()
 	end
 
 	local name = Entity.getName() or "Player"
-	Entity.setName(name .. " [FP Lua]")
-	engine_log("[fp-controller.lua] Ready - WASD move, Space jump, hold RMB to look")
+	Entity.setName(name .. " [FP Blueprint]")
+	engine_log("[fp-controller] Ready - WASD move, Space jump, hold RMB to look")
 
+	pickCameraEntity()
 	if Camera and Camera.setActive then
 		Camera.setActive(true)
 		state.cameraActive = true
@@ -340,6 +370,7 @@ end
 function onEnable()
 	state.lastMouseX = nil
 	state.lastMouseY = nil
+	pickCameraEntity()
 	if Camera and Camera.setActive then
 		Camera.setActive(true)
 		state.cameraActive = true

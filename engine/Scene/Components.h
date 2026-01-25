@@ -366,17 +366,39 @@ struct FolderComponent {
 };
 
 /**
+ * Projection type for cameras
+ */
+enum class CameraProjection {
+    Perspective,
+    Orthographic
+};
+
+/**
  * Camera component - defines a viewpoint in the scene
+ * When Play Mode starts, the engine selects an active camera based on:
+ *   1) First camera with isActive=true (by scene hierarchy order)
+ *   2) If none active, first camera found
+ *   3) If no cameras exist, fallback to editor camera behavior
  */
 struct CameraComponent {
-    float fov = 60.0f; // Field of view in degrees
+    float fov = 60.0f;           // Field of view in degrees (perspective only)
     float nearPlane = 0.1f;
-    float farPlane = 100.0f;
-    bool isPrimary = false; // Is this the main camera?
+    float farPlane = 1000.0f;    // Increased default for larger scenes
+    CameraProjection projection = CameraProjection::Perspective;
+    bool isActive = false;       // If true, this camera is the active runtime camera
+    bool isPrimary = false;      // Legacy/compat: maps to isActive
+    bool showEditorMesh = true;  // Show the Camera.glb preview mesh in editor
 
     CameraComponent() = default;
-    CameraComponent(float fov, float near, float far) 
-        : fov(fov), nearPlane(near), farPlane(far) {}
+    CameraComponent(float fovVal, float nearVal, float farVal) 
+        : fov(fovVal), nearPlane(nearVal), farPlane(farVal) {}
+
+    // Factory method to create an active camera
+    static CameraComponent CreateActive(float fovVal = 60.0f, float nearVal = 0.1f, float farVal = 1000.0f) {
+        CameraComponent cam(fovVal, nearVal, farVal);
+        cam.isActive = true;
+        return cam;
+    }
 };
 
 /**
