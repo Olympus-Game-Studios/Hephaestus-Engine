@@ -909,11 +909,18 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       return std::string("{\"ok\":false,\"error\":\"missing_path\"}");
     }
     pendingAssetDrag_ = *pathOpt;
+    lastAssetDragPath_ = *pathOpt;
+    assetDragEndFrameCountdown_ = 0;  // Reset countdown when new drag starts
     return std::string("{\"ok\":true}");
   });
 
   bridge_.RegisterHandler("assets.drag_end", [this](const std::string& payload) -> std::string {
     (void)payload;
+    // Don't immediately clear lastAssetDragPath_ - set countdown to persist for a few frames
+    // This ensures ImGui has time to process the drop target
+    if (pendingAssetDrag_) {
+      assetDragEndFrameCountdown_ = 3;  // Keep drag source active for 3 more frames
+    }
     pendingAssetDrag_.reset();
     return std::string("{\"ok\":true}");
   });
@@ -3398,13 +3405,28 @@ void HtmlEditorUIHost::DrawAssetBrowserPanel() {
     // Allow HTML panel items to act as an ImGui drag source by piggy-backing on
     // the rendered image item.
     // JS signals the asset path via assets.drag_begin/assets.drag_end.
-    if (pendingAssetDrag_ && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-      if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-        const std::string& assetPath = *pendingAssetDrag_;
+    // Use lastAssetDragPath_ with countdown to ensure drag persists long enough for drop processing.
+    // Use SourceExtern flag to create an external drag source that doesn't require hovering an ImGui item.
+    bool hasDragPath = pendingAssetDrag_.has_value() ||
+               (assetDragEndFrameCountdown_ > 0 && !lastAssetDragPath_.empty());
+    bool mouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    bool panelHovered = assetBrowser_->IsHovered();
+    
+    if (hasDragPath && mouseDown && panelHovered) {
+      if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceExtern)) {
+        const std::string& assetPath = pendingAssetDrag_.has_value() ? *pendingAssetDrag_ : lastAssetDragPath_;
         ImGui::SetDragDropPayload("ASSET_ITEM", assetPath.c_str(),
                                   assetPath.size() + 1);
         ImGui::TextUnformatted(assetPath.c_str());
         ImGui::EndDragDropSource();
+      }
+    }
+    
+    // Decrement countdown and clear when expired
+    if (assetDragEndFrameCountdown_ > 0) {
+      assetDragEndFrameCountdown_--;
+      if (assetDragEndFrameCountdown_ == 0) {
+        lastAssetDragPath_.clear();
       }
     }
 

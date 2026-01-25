@@ -705,6 +705,8 @@
       if (!ext) return 'FILE';
       if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'tga' || ext === 'hdr' || ext === 'exr') return 'TEXTURE';
       if (ext === 'glb' || ext === 'gltf' || ext === 'fbx' || ext === 'obj') return 'MESH';
+      if (ext === 'hpblueprint') return 'BLUEPRINT';
+      if (ext === 'hpscene') return 'SCENE';
       if (ext === 'lua') return 'LUA';
       if (ext === 'cpp' || ext === 'h' || ext === 'hpp') return 'CODE';
       if (ext === 'spv') return 'SHADER';
@@ -716,6 +718,8 @@
       const type = extType(name);
       if (type === 'TEXTURE') return '🖼';
       if (type === 'MESH') return '🔺';
+      if (type === 'BLUEPRINT') return '📋';
+      if (type === 'SCENE') return '🎬';
       if (type === 'SHADER') return '⚡';
       if (type === 'LUA') return '📜';
       if (type === 'CODE') return '💻';
@@ -920,6 +924,7 @@
         tile.appendChild(info);
 
         // Drag support for non-folder assets
+        // Note: drag_end is delayed to give ImGui time to process the drop in the next frame
         tile.draggable = !e.dir;
         tile.onpointerdown = (evt) => {
           if (evt.button !== 0) return;
@@ -934,16 +939,18 @@
           return true;
         };
         tile.ondragend = () => {
-          if (!e.dir) window.hep.callCpp('assets.drag_end', {});
+          // Delay drag_end to allow ImGui to process the drop
+          if (!e.dir) setTimeout(() => window.hep.callCpp('assets.drag_end', {}), 50);
         };
         tile.onpointerup = () => {
-          if (!e.dir) window.hep.callCpp('assets.drag_end', {});
+          // Delay drag_end to allow ImGui to process the drop in the next frame
+          if (!e.dir) setTimeout(() => window.hep.callCpp('assets.drag_end', {}), 50);
         };
         tile.onpointercancel = () => {
-          if (!e.dir) window.hep.callCpp('assets.drag_end', {});
+          if (!e.dir) setTimeout(() => window.hep.callCpp('assets.drag_end', {}), 50);
         };
         tile.onlostpointercapture = () => {
-          if (!e.dir) window.hep.callCpp('assets.drag_end', {});
+          if (!e.dir) setTimeout(() => window.hep.callCpp('assets.drag_end', {}), 50);
         };
 
         tile.onclick = () => {

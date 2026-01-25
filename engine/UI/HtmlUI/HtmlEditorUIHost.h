@@ -132,6 +132,8 @@ private:
   std::optional<EditorSpawnPreset> pendingAddActorsDrag_;
   std::optional<std::string> pendingAddActorsSpawnMeshRel_;
   std::optional<std::string> pendingAssetDrag_;
+  std::string lastAssetDragPath_;  // Persists after drag_end for one frame to ensure drop is processed
+  int assetDragEndFrameCountdown_ = 0;  // Countdown frames after drag_end before clearing
   std::optional<std::pair<std::string, uint32_t>> pendingOutlinerAssetDrop_;
 
   bool LoadBlueprintDocumentFromDisk(const std::filesystem::path& path,

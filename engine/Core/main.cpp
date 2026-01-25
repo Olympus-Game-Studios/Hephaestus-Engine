@@ -386,6 +386,9 @@ struct WorldOutlinerActions {
   std::optional<entt::entity> spawnMeshParent;
 };
 
+static std::optional<WorldOutlinerSpawnPreset> g_PendingViewportDropPreset;
+static std::optional<std::string> g_PendingViewportDropAsset;
+
 struct DetailsPanelActions {
   std::optional<entt::entity> entityToDelete;
   std::optional<entt::entity> meshToClear;
@@ -8461,6 +8464,16 @@ int main(int argc, char *argv[]) {
         // Draw docked panels first
         WorldOutlinerActions outlinerActions = DrawWorldOutliner(*viewportScene);
         WorldOutlinerActions addActorsActions = DrawAddActorsPanel();
+
+        if (!outlinerActions.spawnRequest && g_PendingViewportDropPreset) {
+          outlinerActions.spawnRequest = *g_PendingViewportDropPreset;
+          g_PendingViewportDropPreset.reset();
+        }
+        if (!outlinerActions.spawnMeshAssetRel && g_PendingViewportDropAsset) {
+          outlinerActions.spawnMeshAssetRel = *g_PendingViewportDropAsset;
+          g_PendingViewportDropAsset.reset();
+        }
+
         if (!outlinerActions.spawnRequest && addActorsActions.spawnRequest) {
           outlinerActions.spawnRequest = addActorsActions.spawnRequest;
         }
@@ -9486,40 +9499,55 @@ int main(int argc, char *argv[]) {
             ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_NoBringToFrontOnFocus |
             ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNavFocus |
-            ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration;
+            ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration |
+            ImGuiWindowFlags_NoInputs;
 
         ImGui::Begin("##ViewportDropTarget", nullptr, dropTargetFlags);
         
         // Track if mouse is in the viewport area for selection purposes
-        g_ViewportDropTargetHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
-
-        if (ImGui::BeginDragDropTarget()) {
-          if (const ImGuiPayload *payload =
-                  ImGui::AcceptDragDropPayload("ACTOR_PALETTE_ITEM")) {
-            IM_ASSERT(payload->DataSize == sizeof(WorldOutlinerSpawnPreset));
-            s_ViewportDroppedPreset =
-                *(const WorldOutlinerSpawnPreset *)payload->Data;
-            s_ViewportHasDroppedItem = true;
-          }
-          // Accept asset drops from the asset browser
-          if (const ImGuiPayload *payload =
-                  ImGui::AcceptDragDropPayload("ASSET_ITEM")) {
-            s_ViewportDroppedAsset = std::string((const char*)payload->Data);
-            s_ViewportHasDroppedAsset = true;
-          }
-          ImGui::EndDragDropTarget();
-        }
+        g_ViewportDropTargetHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 
         ImGui::End();
 
-        // Process the drop - add it to outlinerActions so it gets handled with
-        // other spawn requests
+        // Check for active drag payload and accept it if mouse is released in viewport area
+        // Use a static to track if we already processed this drop (to avoid double-firing)
+        static bool s_WasMouseDownLastFrame = false;
+        bool mouseDownNow = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        bool mouseJustReleased = s_WasMouseDownLastFrame && !mouseDownNow;
+        s_WasMouseDownLastFrame = mouseDownNow;
+        
+        const ImGuiPayload* dragPayload = ImGui::GetDragDropPayload();
+        if (dragPayload && mouseJustReleased) {
+          // Mouse was just released - check if we're in the viewport area
+          ImVec2 mousePos = ImGui::GetMousePos();
+          float dropTopOffset = std::max(50.0f, ImGui::GetFrameHeight() * 2.2f);
+          bool inViewport = mousePos.x >= dropVp->Pos.x && 
+                            mousePos.x <= dropVp->Pos.x + dropVp->Size.x &&
+                            mousePos.y >= dropVp->Pos.y + dropTopOffset &&
+                            mousePos.y <= dropVp->Pos.y + dropVp->Size.y;
+          
+          if (inViewport) {
+            if (dragPayload->IsDataType("ACTOR_PALETTE_ITEM") &&
+                dragPayload->DataSize == sizeof(WorldOutlinerSpawnPreset)) {
+              s_ViewportDroppedPreset = *(const WorldOutlinerSpawnPreset*)dragPayload->Data;
+              s_ViewportHasDroppedItem = true;
+            }
+            if (dragPayload->IsDataType("ASSET_ITEM")) {
+              s_ViewportDroppedAsset = std::string((const char*)dragPayload->Data);
+              s_ViewportHasDroppedAsset = true;
+            }
+            // Clear the drag payload by calling ImGui::ClearDragDrop
+            ImGui::ClearDragDrop();
+          }
+        }
+
+        // Queue the drop so it gets handled at the next outliner action pass
         if (s_ViewportHasDroppedItem) {
-          outlinerActions.spawnRequest = s_ViewportDroppedPreset;
+          g_PendingViewportDropPreset = s_ViewportDroppedPreset;
           s_ViewportHasDroppedItem = false;
         }
         if (s_ViewportHasDroppedAsset) {
-          outlinerActions.spawnMeshAssetRel = s_ViewportDroppedAsset;
+          g_PendingViewportDropAsset = s_ViewportDroppedAsset;
           s_ViewportHasDroppedAsset = false;
         }
       }
