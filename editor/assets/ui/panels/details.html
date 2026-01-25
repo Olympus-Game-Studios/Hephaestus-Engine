@@ -549,6 +549,7 @@
     let materialCatalog = [];
     let currentMeshMaterialIndices = [];
     let currentMeshAppliedMaterialPaths = [];
+    let currentSubmeshCount = 1; // Number of material slots from mesh submeshes
 
     function setStatus(s) {
       document.getElementById('status').textContent = s;
@@ -599,7 +600,8 @@
 
       const indices = Array.isArray(currentMeshMaterialIndices) ? currentMeshMaterialIndices : [];
       const appliedPaths = Array.isArray(currentMeshAppliedMaterialPaths) ? currentMeshAppliedMaterialPaths : [];
-      const slotCount = Math.max(1, indices.length);
+      // Use submeshCount to determine how many slots, falling back to indices length or 1
+      const slotCount = Math.max(1, currentSubmeshCount, indices.length, appliedPaths.length);
 
       for (let slotIndex = 0; slotIndex < slotCount; slotIndex++) {
         const value = indices[slotIndex] !== undefined ? indices[slotIndex] : -1;
@@ -1267,9 +1269,10 @@
       setField('meshHideInGame', mesh.hideInGame);
       setField('meshBackfaceCulling', mesh.backfaceCulling);
       setField('meshAssetPath', mesh.meshAssetPath);
+      currentSubmeshCount = (typeof mesh.submeshCount === 'number' && mesh.submeshCount > 0) ? mesh.submeshCount : 1;
       currentMeshMaterialIndices = Array.isArray(mesh.materialIndices) && mesh.materialIndices.length > 0 
         ? mesh.materialIndices.slice() 
-        : [-1];
+        : [];
       currentMeshAppliedMaterialPaths = Array.isArray(mesh.appliedMaterialPaths) ? mesh.appliedMaterialPaths.slice() : [];
       renderMaterialSlots();
 

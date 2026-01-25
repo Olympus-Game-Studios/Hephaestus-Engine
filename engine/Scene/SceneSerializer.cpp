@@ -554,10 +554,17 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             }
             oss << ",\n";
             oss << "          \"meshImported\": " << (mesh->meshImported ? "true" : "false") << ",\n";
+            oss << "          \"submeshCount\": " << mesh->submeshCount << ",\n";
             oss << "          \"materialIndices\": [";
             for (size_t i = 0; i < mesh->materialIndices.size(); ++i) {
                 if (i) oss << ", ";
                 oss << mesh->materialIndices[i];
+            }
+            oss << "],\n";
+            oss << "          \"appliedMaterialPaths\": [";
+            for (size_t i = 0; i < mesh->appliedMaterialPaths.size(); ++i) {
+                if (i) oss << ", ";
+                oss << "\"" << EscapeString(mesh->appliedMaterialPaths[i]) << "\"";
             }
             oss << "],\n";
             oss << "          \"backfaceCulling\": " << (mesh->backfaceCulling ? "true" : "false") << ",\n";
@@ -918,6 +925,21 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     for (const auto& entry : materialIndicesValue->AsArray()) {
                         if (entry.IsNumber()) {
                             mesh.materialIndices.push_back(static_cast<int>(entry.AsNumber()));
+                        }
+                    }
+                }
+            }
+            if (const JsonValue* submeshCountValue = meshObj->Find("submeshCount")) {
+                if (submeshCountValue->IsNumber()) {
+                    mesh.submeshCount = static_cast<int>(submeshCountValue->AsNumber());
+                }
+            }
+            if (const JsonValue* appliedPathsValue = meshObj->Find("appliedMaterialPaths")) {
+                if (appliedPathsValue->IsArray()) {
+                    mesh.appliedMaterialPaths.clear();
+                    for (const auto& entry : appliedPathsValue->AsArray()) {
+                        if (entry.IsString()) {
+                            mesh.appliedMaterialPaths.push_back(entry.AsString());
                         }
                     }
                 }
@@ -1726,10 +1748,17 @@ std::string SceneSerializer::SerializeToString() const
             }
             oss << ",\n";
             oss << "          \"meshImported\": " << (mesh->meshImported ? "true" : "false") << ",\n";
+            oss << "          \"submeshCount\": " << mesh->submeshCount << ",\n";
             oss << "          \"materialIndices\": [";
             for (size_t i = 0; i < mesh->materialIndices.size(); ++i) {
                 if (i) oss << ", ";
                 oss << mesh->materialIndices[i];
+            }
+            oss << "],\n";
+            oss << "          \"appliedMaterialPaths\": [";
+            for (size_t i = 0; i < mesh->appliedMaterialPaths.size(); ++i) {
+                if (i) oss << ", ";
+                oss << "\"" << EscapeString(mesh->appliedMaterialPaths[i]) << "\"";
             }
             oss << "],\n";
             oss << "          \"backfaceCulling\": " << (mesh->backfaceCulling ? "true" : "false") << ",\n";

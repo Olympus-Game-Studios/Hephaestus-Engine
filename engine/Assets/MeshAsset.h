@@ -11,11 +11,20 @@
 struct MeshData {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    struct Submesh {
+        uint32_t indexOffset = 0;
+        uint32_t indexCount = 0;
+        int materialSlot = 0;
+        std::string name;
+        AABB bounds{};
+    };
+    std::vector<Submesh> submeshes;
     AABB bounds{};
 
     void Clear() {
         vertices.clear();
         indices.clear();
+        submeshes.clear();
         bounds = AABB();
     }
 };
@@ -28,6 +37,7 @@ struct MeshGPU {
     VulkanBuffer indexBuffer;
     uint32_t vertexCount = 0;
     uint32_t indexCount = 0;
+    std::vector<MeshData::Submesh> submeshes;
     AABB bounds{};
     bool imported = false;
 
@@ -36,6 +46,7 @@ struct MeshGPU {
         indexBuffer.Destroy(allocator);
         vertexCount = 0;
         indexCount = 0;
+        submeshes.clear();
         imported = false;
         sourceKey.clear();
         sourcePath.clear();

@@ -360,6 +360,8 @@ static PreferredIDE g_PreferredIDE = PreferredIDE::SystemDefault;
 static MaterialEditor::Graph g_MaterialGraph;
 static MaterialEditor::Panel *g_MaterialEditorPanel = nullptr;
 static std::filesystem::path g_ActiveMaterialAssetPath;
+static std::unordered_map<std::string, MaterialComponent> g_MaterialAssetCache;
+static std::unordered_set<std::string> g_MaterialAssetCacheFailed;
 
 struct ToolbarActions {
   bool playClicked = false;
@@ -6171,6 +6173,7 @@ int main(int argc, char *argv[]) {
     mesh.sourceKey = makeMeshSourceKey(sourcePath);
     mesh.vertexCount = static_cast<uint32_t>(data.vertices.size());
     mesh.indexCount = static_cast<uint32_t>(data.indices.size());
+    mesh.submeshes = data.submeshes;
     mesh.bounds = data.bounds;
     mesh.imported = imported;
 
@@ -6952,7 +6955,8 @@ int main(int argc, char *argv[]) {
     const MeshGPU &mesh = meshLibrary[*handle];
     Entity entity = scene.CreateEntity(makeUniqueEntityName(baseName));
     auto &renderer = entity.AddComponent<MeshRendererComponent>();
-    renderer.SetMesh(*handle, mesh.bounds, mesh.sourceKey, mesh.imported);
+    int subCount = mesh.submeshes.empty() ? 1 : static_cast<int>(mesh.submeshes.size());
+    renderer.SetMesh(*handle, mesh.bounds, mesh.sourceKey, mesh.imported, subCount);
     entity.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
     if (!g_DetailsLocked) {
       scene.SetSelectedEntity(entity);
@@ -7043,8 +7047,9 @@ int main(int argc, char *argv[]) {
     Entity entity = scene.CreateEntity(entityName);
     auto &renderer = entity.AddComponent<MeshRendererComponent>();
     const MeshGPU &importedMeshGPU = meshLibrary[meshIndex];
+    int subCount = importedMeshGPU.submeshes.empty() ? 1 : static_cast<int>(importedMeshGPU.submeshes.size());
     renderer.SetMesh(meshIndex, importedMeshGPU.bounds,
-                     importedMeshGPU.sourceKey, importedMeshGPU.imported);
+                     importedMeshGPU.sourceKey, importedMeshGPU.imported, subCount);
     entity.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
     if (!g_DetailsLocked) {
       scene.SetSelectedEntity(entity);
@@ -7181,7 +7186,8 @@ int main(int argc, char *argv[]) {
       if (lookupIt != meshLibraryLookup.end()) {
         size_t handle = lookupIt->second;
         const MeshGPU &gpu = meshLibrary[handle];
-        renderer.SetMesh(handle, gpu.bounds, gpu.sourceKey, gpu.imported);
+        int subCount = gpu.submeshes.empty() ? 1 : static_cast<int>(gpu.submeshes.size());
+        renderer.SetMesh(handle, gpu.bounds, gpu.sourceKey, gpu.imported, subCount);
         continue;
       }
 
@@ -7190,7 +7196,8 @@ int main(int argc, char *argv[]) {
         if (builtinIt != meshLibraryLookup.end()) {
           size_t handle = builtinIt->second;
           const MeshGPU &gpu = meshLibrary[handle];
-          renderer.SetMesh(handle, gpu.bounds, gpu.sourceKey, gpu.imported);
+          int subCount = gpu.submeshes.empty() ? 1 : static_cast<int>(gpu.submeshes.size());
+          renderer.SetMesh(handle, gpu.bounds, gpu.sourceKey, gpu.imported, subCount);
         } else {
           std::string entityName = entity.HasComponent<TagComponent>()
                                        ? entity.GetComponent<TagComponent>().tag
@@ -7237,7 +7244,8 @@ int main(int argc, char *argv[]) {
       try {
         size_t handle = uploadMesh(meshName, reimported, absolute, true);
         const MeshGPU &gpu = meshLibrary[handle];
-        renderer.SetMesh(handle, gpu.bounds, gpu.sourceKey, gpu.imported);
+        int subCount = gpu.submeshes.empty() ? 1 : static_cast<int>(gpu.submeshes.size());
+        renderer.SetMesh(handle, gpu.bounds, gpu.sourceKey, gpu.imported, subCount);
         std::cout << "[rebuildSceneMeshes] Successfully reimported mesh for entity '" 
                   << meshName << "' new handle=" << handle << std::endl;
       } catch (const std::exception &e) {
@@ -9961,77 +9969,57 @@ int main(int argc, char *argv[]) {
     uint8_t *matMappedBase = reinterpret_cast<uint8_t *>(matMappedBaseVoid);
     uint32_t matIndex = 0;
 
-    VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
-    VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
-
-    bool materialOverflowLogged = false;
-    for (auto entityHandle : renderView) {
-      Entity entity(entityHandle, viewportScene);
-      auto &transform = entity.GetComponent<TransformComponent>();
-      auto &renderer = entity.GetComponent<MeshRendererComponent>();
-
-      if (!renderer.visible)
-        continue;
-      if ((g_RuntimeMode || g_SimPlaying) && renderer.hideInGame)
-        continue;
-
-      // Check render distance culling
-      if (enableRenderDistance && !infiniteRenderDistance) {
-        Vec3 entityPos = transform.position;
-        float distanceToCamera = vlen(vsub(entityPos, camera.position));
-        if (distanceToCamera > renderDistance) {
-          continue;
+    auto resolveMaterialFromPath = [&](const std::string &materialPath)
+        -> const MaterialComponent * {
+      if (materialPath.empty()) {
+        return nullptr;
+      }
+      fs::path resolvedPath = fs::path(materialPath);
+      if (!resolvedPath.is_absolute()) {
+        fs::path assetsRoot = ResolveActiveAssetsRoot();
+        if (!assetsRoot.empty()) {
+          resolvedPath = (assetsRoot / resolvedPath).lexically_normal();
         }
+      } else {
+        resolvedPath = resolvedPath.lexically_normal();
       }
 
-      if (!renderer.HasValidMesh() || renderer.meshHandle >= meshLibrary.size())
-        continue;
-
-      MeshGPU &mesh = meshLibrary[renderer.meshHandle];
-      if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
-          mesh.indexBuffer.buffer == VK_NULL_HANDLE)
-        continue;
-
-      if (g_DebugSkipImportedMeshes && mesh.imported)
-        continue;
-
-      if (matIndex >= maxMaterialsPerFrame) {
-        if (!materialOverflowLogged) {
-          std::cerr
-              << "Material dynamic UBO capacity exceeded ("
-              << maxMaterialsPerFrame
-              << " objects). Additional objects will be skipped this frame.\n";
-          materialOverflowLogged = true;
-        }
-        continue;
+      std::string cacheKey = resolvedPath.generic_string();
+      auto cached = g_MaterialAssetCache.find(cacheKey);
+      if (cached != g_MaterialAssetCache.end()) {
+        return &cached->second;
+      }
+      if (g_MaterialAssetCacheFailed.count(cacheKey) > 0) {
+        return nullptr;
       }
 
-      VkPipeline desiredPipeline =
-          pipeline.GetPipeline(renderer.backfaceCulling);
-      if (desiredPipeline != VK_NULL_HANDLE &&
-          desiredPipeline != boundPipeline) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          desiredPipeline);
-        boundPipeline = desiredPipeline;
+      MaterialComponent loadedMaterial;
+      std::string displayName;
+      std::string loadError;
+      MaterialEditor::Graph tempGraph;
+      if (!MaterialEditor::LoadMaterialAssetFile(resolvedPath, loadedMaterial,
+                                                  displayName, tempGraph,
+                                                  loadError)) {
+        std::cerr << "[Material] Failed to load material '" << cacheKey
+                  << "': " << loadError << std::endl;
+        g_MaterialAssetCacheFailed.insert(cacheKey);
+        return nullptr;
       }
 
-      if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
-        VkBuffer vb = mesh.vertexBuffer.buffer;
-        VkDeviceSize vbOffset = 0;
-        vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
-        currentVertexBuffer = vb;
+      std::string evalError;
+      if (!MaterialEditor::EvaluateGraph(tempGraph, loadedMaterial, evalError)) {
+        std::cerr << "[Material] Graph evaluation failed for '" << cacheKey
+                  << "': " << evalError << std::endl;
       }
 
-      if (mesh.indexBuffer.buffer != currentIndexBuffer) {
-        vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0,
-                             VK_INDEX_TYPE_UINT32);
-        currentIndexBuffer = mesh.indexBuffer.buffer;
-      }
+      auto insertResult = g_MaterialAssetCache.emplace(cacheKey, loadedMaterial);
+      return &insertResult.first->second;
+    };
 
-      // Update material UBO for this specific object
-      MaterialUBO matUBO = {};
-      if (entity.HasComponent<MaterialComponent>()) {
-        auto &mat = entity.GetComponent<MaterialComponent>();
+    auto buildMaterialUBO = [&](const MaterialComponent *material,
+                                MaterialUBO &matUBO) {
+      if (material) {
+        const auto &mat = *material;
         matUBO.albedo = mat.albedo;
         matUBO.albedoPadding = 0.0f;
         matUBO.metallic = mat.metallic;
@@ -10142,22 +10130,126 @@ int main(int argc, char *argv[]) {
         matUBO.paddingTail[5] = 0;
         matUBO.paddingTail[6] = 0;
       }
+    };
 
-      // Write into this object's slot in the dynamic material buffer
-      VkDeviceSize matOffsetBytes =
-          static_cast<VkDeviceSize>(matIndex) * materialStride;
-      std::memcpy(matMappedBase + matOffsetBytes, &matUBO, sizeof(matUBO));
+    VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
+    VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
+
+    bool materialOverflowLogged = false;
+    for (auto entityHandle : renderView) {
+      Entity entity(entityHandle, viewportScene);
+      auto &transform = entity.GetComponent<TransformComponent>();
+      auto &renderer = entity.GetComponent<MeshRendererComponent>();
+
+      if (!renderer.visible)
+        continue;
+      if ((g_RuntimeMode || g_SimPlaying) && renderer.hideInGame)
+        continue;
+
+      // Check render distance culling
+      if (enableRenderDistance && !infiniteRenderDistance) {
+        Vec3 entityPos = transform.position;
+        float distanceToCamera = vlen(vsub(entityPos, camera.position));
+        if (distanceToCamera > renderDistance) {
+          continue;
+        }
+      }
+
+      if (!renderer.HasValidMesh() || renderer.meshHandle >= meshLibrary.size())
+        continue;
+
+      MeshGPU &mesh = meshLibrary[renderer.meshHandle];
+      if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
+          mesh.indexBuffer.buffer == VK_NULL_HANDLE)
+        continue;
+
+      if (g_DebugSkipImportedMeshes && mesh.imported)
+        continue;
+
+      VkPipeline desiredPipeline =
+          pipeline.GetPipeline(renderer.backfaceCulling);
+      if (desiredPipeline != VK_NULL_HANDLE &&
+          desiredPipeline != boundPipeline) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          desiredPipeline);
+        boundPipeline = desiredPipeline;
+      }
+
+      if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
+        VkBuffer vb = mesh.vertexBuffer.buffer;
+        VkDeviceSize vbOffset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
+        currentVertexBuffer = vb;
+      }
+
+      if (mesh.indexBuffer.buffer != currentIndexBuffer) {
+        vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0,
+                             VK_INDEX_TYPE_UINT32);
+        currentIndexBuffer = mesh.indexBuffer.buffer;
+      }
+
+      auto resolveMaterialForSlot = [&](int slot) -> const MaterialComponent * {
+        if (slot < 0) {
+          slot = 0;
+        }
+        if (static_cast<size_t>(slot) < renderer.appliedMaterialPaths.size()) {
+          const std::string &slotPath = renderer.appliedMaterialPaths[slot];
+          if (!slotPath.empty()) {
+            if (const MaterialComponent *material = resolveMaterialFromPath(slotPath)) {
+              return material;
+            }
+          }
+        }
+        if (entity.HasComponent<MaterialComponent>()) {
+          return &entity.GetComponent<MaterialComponent>();
+        }
+        return nullptr;
+      };
+
+      auto drawWithMaterial = [&](const MaterialComponent *material,
+                                  uint32_t indexOffset,
+                                  uint32_t indexCount) {
+        if (matIndex >= maxMaterialsPerFrame) {
+          if (!materialOverflowLogged) {
+            std::cerr
+                << "Material dynamic UBO capacity exceeded ("
+                << maxMaterialsPerFrame
+                << " objects). Additional objects will be skipped this frame.\n";
+            materialOverflowLogged = true;
+          }
+          return;
+        }
+
+        MaterialUBO matUBO = {};
+        buildMaterialUBO(material, matUBO);
+
+        VkDeviceSize matOffsetBytes =
+            static_cast<VkDeviceSize>(matIndex) * materialStride;
+        std::memcpy(matMappedBase + matOffsetBytes, &matUBO, sizeof(matUBO));
+
+        uint32_t dynOffset = static_cast<uint32_t>(matOffsetBytes);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipeline.layout, 0, 1,
+                                &descriptorSets[imageIndex], 1, &dynOffset);
+        vkCmdDrawIndexed(cmd, indexCount, 1, indexOffset, 0, 0);
+        matIndex++;
+      };
 
       Mat4 modelMatrix = viewportScene->GetWorldTransform(entity);
       vkCmdPushConstants(cmd, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                          sizeof(Mat4), modelMatrix.m);
-      // Bind descriptor set with dynamic offset for this object's material
-      uint32_t dynOffset = static_cast<uint32_t>(matOffsetBytes);
-      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              pipeline.layout, 0, 1,
-                              &descriptorSets[imageIndex], 1, &dynOffset);
-      vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
-      matIndex++;
+
+      if (mesh.submeshes.empty()) {
+        drawWithMaterial(resolveMaterialForSlot(0), 0, mesh.indexCount);
+      } else {
+        for (const auto &submesh : mesh.submeshes) {
+          if (submesh.indexCount == 0) {
+            continue;
+          }
+          drawWithMaterial(resolveMaterialForSlot(submesh.materialSlot),
+                           submesh.indexOffset, submesh.indexCount);
+        }
+      }
     }
 
     // Flush the written range and unmap once per frame

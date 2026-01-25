@@ -23,6 +23,13 @@ namespace {
         std::vector<int> indices;
     };
 
+    struct GLTFPrimitiveResult {
+        uint32_t indexOffset = 0;
+        uint32_t indexCount = 0;
+        int materialSlot = 0;
+        std::string name;
+    };
+
     bool ParseIndexToken(const std::string& token, int& vOut, int& tOut, int& nOut) {
         vOut = 0;
         tOut = 0;
@@ -178,6 +185,206 @@ namespace {
             return false;
         }
 
+        return true;
+    }
+
+    bool AppendGLTFPrimitive(const json& primitive,
+                             const json& accessors,
+                             const json& bufferViews,
+                             const std::vector<uint8_t>& binaryData,
+                             MeshData& outMesh,
+                             Vec3& minBounds,
+                             Vec3& maxBounds,
+                             bool& boundsInitialized,
+                             std::string& errorMessage,
+                             GLTFPrimitiveResult& outResult) {
+        if (!primitive.contains("attributes") || !primitive["attributes"].contains("POSITION")) {
+            errorMessage = "Mesh primitive has no POSITION attribute";
+            return false;
+        }
+
+        int posAccessorIdx = primitive["attributes"]["POSITION"];
+        if (posAccessorIdx < 0 || posAccessorIdx >= static_cast<int>(accessors.size())) {
+            errorMessage = "Invalid position accessor index";
+            return false;
+        }
+
+        const auto& posAccessor = accessors[posAccessorIdx];
+        int posBufferViewIdx = posAccessor["bufferView"];
+        int posByteOffset = posAccessor.value("byteOffset", 0);
+        int posCount = posAccessor["count"];
+
+        if (posBufferViewIdx < 0 || posBufferViewIdx >= static_cast<int>(bufferViews.size())) {
+            errorMessage = "Invalid position buffer view index";
+            return false;
+        }
+
+        const auto& posBufferView = bufferViews[posBufferViewIdx];
+        int posBufferViewOffset = posBufferView.value("byteOffset", 0);
+
+        if (posBufferViewOffset < 0 || posByteOffset < 0) {
+            errorMessage = "Invalid negative byte offset in position data";
+            return false;
+        }
+
+        size_t posDataStart = static_cast<size_t>(posBufferViewOffset) + static_cast<size_t>(posByteOffset);
+        size_t posDataSize = static_cast<size_t>(posCount) * 3 * sizeof(float);
+        if (posDataStart + posDataSize > binaryData.size()) {
+            errorMessage = "Position data exceeds binary buffer size";
+            return false;
+        }
+
+        std::vector<Vec3> positions;
+        positions.reserve(posCount);
+        const float* posData = reinterpret_cast<const float*>(binaryData.data() + posDataStart);
+        for (int i = 0; i < posCount; ++i) {
+            Vec3 pos(posData[i * 3], posData[i * 3 + 1], posData[i * 3 + 2]);
+            positions.push_back(pos);
+            if (!boundsInitialized) {
+                minBounds = pos;
+                maxBounds = pos;
+                boundsInitialized = true;
+            } else {
+                minBounds.x = std::min(minBounds.x, pos.x);
+                minBounds.y = std::min(minBounds.y, pos.y);
+                minBounds.z = std::min(minBounds.z, pos.z);
+                maxBounds.x = std::max(maxBounds.x, pos.x);
+                maxBounds.y = std::max(maxBounds.y, pos.y);
+                maxBounds.z = std::max(maxBounds.z, pos.z);
+            }
+        }
+
+        std::vector<uint32_t> indices;
+        if (primitive.contains("indices")) {
+            int indAccessorIdx = primitive["indices"];
+            if (indAccessorIdx < 0 || indAccessorIdx >= static_cast<int>(accessors.size())) {
+                errorMessage = "Invalid index accessor index";
+                return false;
+            }
+            const auto& indAccessor = accessors[indAccessorIdx];
+            int indBufferViewIdx = indAccessor["bufferView"];
+            int indByteOffset = indAccessor.value("byteOffset", 0);
+            int indCount = indAccessor["count"];
+
+            if (indBufferViewIdx < 0 || indBufferViewIdx >= static_cast<int>(bufferViews.size())) {
+                errorMessage = "Invalid index buffer view index";
+                return false;
+            }
+
+            const auto& indBufferView = bufferViews[indBufferViewIdx];
+            int indBufferViewOffset = indBufferView.value("byteOffset", 0);
+            if (indBufferViewOffset < 0 || indByteOffset < 0) {
+                errorMessage = "Invalid negative byte offset in index data";
+                return false;
+            }
+
+            indices.reserve(indCount);
+            size_t indDataStart = static_cast<size_t>(indBufferViewOffset) + static_cast<size_t>(indByteOffset);
+            int indComponentType = indAccessor["componentType"];
+            if (indComponentType == 5125) { // UNSIGNED_INT
+                size_t indDataSize = static_cast<size_t>(indCount) * sizeof(uint32_t);
+                if (indDataStart + indDataSize > binaryData.size()) {
+                    errorMessage = "Index data exceeds binary buffer size";
+                    return false;
+                }
+                const uint32_t* indData = reinterpret_cast<const uint32_t*>(binaryData.data() + indDataStart);
+                for (int i = 0; i < indCount; ++i) {
+                    indices.push_back(indData[i]);
+                }
+            } else if (indComponentType == 5123) { // UNSIGNED_SHORT
+                size_t indDataSize = static_cast<size_t>(indCount) * sizeof(uint16_t);
+                if (indDataStart + indDataSize > binaryData.size()) {
+                    errorMessage = "Index data exceeds binary buffer size";
+                    return false;
+                }
+                const uint16_t* indData = reinterpret_cast<const uint16_t*>(binaryData.data() + indDataStart);
+                for (int i = 0; i < indCount; ++i) {
+                    indices.push_back(indData[i]);
+                }
+            } else {
+                errorMessage = "Unsupported index component type";
+                return false;
+            }
+        } else {
+            indices.reserve(positions.size());
+            for (uint32_t i = 0; i < positions.size(); ++i) {
+                indices.push_back(i);
+            }
+        }
+
+        std::vector<Vec3> normals;
+        if (primitive["attributes"].contains("NORMAL")) {
+            int normAccessorIdx = primitive["attributes"]["NORMAL"];
+            if (normAccessorIdx >= 0 && normAccessorIdx < static_cast<int>(accessors.size())) {
+                const auto& normAccessor = accessors[normAccessorIdx];
+                int normBufferViewIdx = normAccessor["bufferView"];
+                int normByteOffset = normAccessor.value("byteOffset", 0);
+                int normCount = normAccessor["count"];
+
+                if (normBufferViewIdx >= 0 && normBufferViewIdx < static_cast<int>(bufferViews.size())) {
+                    const auto& normBufferView = bufferViews[normBufferViewIdx];
+                    int normBufferViewOffset = normBufferView.value("byteOffset", 0);
+                    if (normBufferViewOffset >= 0 && normByteOffset >= 0) {
+                        size_t normDataStart = static_cast<size_t>(normBufferViewOffset) + static_cast<size_t>(normByteOffset);
+                        size_t normDataSize = static_cast<size_t>(normCount) * 3 * sizeof(float);
+                        if (normDataStart + normDataSize <= binaryData.size()) {
+                            const float* normData = reinterpret_cast<const float*>(binaryData.data() + normDataStart);
+                            normals.reserve(normCount);
+                            for (int i = 0; i < normCount; ++i) {
+                                Vec3 normal(normData[i * 3], normData[i * 3 + 1], normData[i * 3 + 2]);
+                                normals.push_back(normal);
+                            }
+                        } else {
+                            std::cout << "[ModelImporter] Warning: Normal data exceeds buffer size, skipping normals" << std::endl;
+                        }
+                    }
+                }
+            }
+        }
+
+        uint32_t startIndex = static_cast<uint32_t>(outMesh.indices.size());
+        for (uint32_t idx : indices) {
+            if (idx >= positions.size()) {
+                errorMessage = "Index out of range";
+                return false;
+            }
+
+            Vertex vert{};
+            Vec3 pos = positions[idx];
+            vert.pos[0] = pos.x;
+            vert.pos[1] = pos.y;
+            vert.pos[2] = pos.z;
+
+            if (idx < normals.size()) {
+                Vec3 normal = normals[idx];
+                vert.normal[0] = normal.x;
+                vert.normal[1] = normal.y;
+                vert.normal[2] = normal.z;
+            } else {
+                vert.normal[0] = 0.0f;
+                vert.normal[1] = 1.0f;
+                vert.normal[2] = 0.0f;
+            }
+
+            vert.color[0] = 1.0f;
+            vert.color[1] = 1.0f;
+            vert.color[2] = 1.0f;
+            vert.texCoord[0] = 0.0f;
+            vert.texCoord[1] = 0.0f;
+
+            outMesh.vertices.push_back(vert);
+            outMesh.indices.push_back(static_cast<uint32_t>(outMesh.vertices.size() - 1));
+        }
+
+        outResult.indexOffset = startIndex;
+        outResult.indexCount = static_cast<uint32_t>(outMesh.indices.size() - startIndex);
+        outResult.materialSlot = 0;
+        if (primitive.contains("material") && primitive["material"].is_number_integer()) {
+            outResult.materialSlot = primitive["material"].get<int>();
+        }
+        if (primitive.contains("name") && primitive["name"].is_string()) {
+            outResult.name = primitive["name"].get<std::string>();
+        }
         return true;
     }
 }
@@ -598,7 +805,6 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
                 return false;
             }
 
-            const auto& primitive = mesh["primitives"][0];
             if (!root.contains("accessors")) {
                 errorMessage = "No accessors found in glTF file";
                 return false;
@@ -607,193 +813,43 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
             const auto& accessors = root["accessors"];
             const auto& bufferViews = root.value("bufferViews", json::array());
 
-            // Get position data
-            if (!primitive.contains("attributes") || !primitive["attributes"].contains("POSITION")) {
-                errorMessage = "Mesh has no POSITION attribute";
-                return false;
-            }
+            bool useSubmeshes = mesh["primitives"].size() > 1;
+            Vec3 minBounds{};
+            Vec3 maxBounds{};
+            bool boundsInitialized = false;
+            outMesh.submeshes.clear();
 
-            int posAccessorIdx = primitive["attributes"]["POSITION"];
-            const auto& posAccessor = accessors[posAccessorIdx];
-            int posBufferViewIdx = posAccessor["bufferView"];
-            int posByteOffset = posAccessor.value("byteOffset", 0);
-            int posCount = posAccessor["count"];
-
-            if (posBufferViewIdx < 0 || posBufferViewIdx >= static_cast<int>(bufferViews.size())) {
-                errorMessage = "Invalid position buffer view index";
-                return false;
-            }
-
-            const auto& posBufferView = bufferViews[posBufferViewIdx];
-            int posBufferViewOffset = posBufferView.value("byteOffset", 0);
-
-            // Validate offsets are non-negative
-            if (posBufferViewOffset < 0 || posByteOffset < 0) {
-                errorMessage = "Invalid negative byte offset in position data";
-                return false;
-            }
-
-            std::vector<Vec3> positions;
-            positions.reserve(posCount);
-            
-            // Bounds check: ensure we have enough data for position data
-            size_t posDataStart = static_cast<size_t>(posBufferViewOffset) + static_cast<size_t>(posByteOffset);
-            size_t posDataSize = static_cast<size_t>(posCount) * 3 * sizeof(float);
-            if (posDataStart + posDataSize > binaryData.size()) {
-                errorMessage = "Position data exceeds binary buffer size (GLB overflow)";
-                return false;
-            }
-            
-            const float* posData = reinterpret_cast<const float*>(binaryData.data() + posDataStart);
-            const float maxFloat = std::numeric_limits<float>::max();
-            Vec3 minBounds(maxFloat, maxFloat, maxFloat);
-            Vec3 maxBounds(-maxFloat, -maxFloat, -maxFloat);
-
-            for (int i = 0; i < posCount; ++i) {
-                Vec3 pos(posData[i * 3], posData[i * 3 + 1], posData[i * 3 + 2]);
-                positions.push_back(pos);
-                minBounds.x = std::min(minBounds.x, pos.x);
-                minBounds.y = std::min(minBounds.y, pos.y);
-                minBounds.z = std::min(minBounds.z, pos.z);
-                maxBounds.x = std::max(maxBounds.x, pos.x);
-                maxBounds.y = std::max(maxBounds.y, pos.y);
-                maxBounds.z = std::max(maxBounds.z, pos.z);
-            }
-
-            outMesh.bounds = AABB(minBounds, maxBounds);
-
-            // Get indices
-            std::vector<uint32_t> indices;
-            if (primitive.contains("indices")) {
-                int indAccessorIdx = primitive["indices"];
-                const auto& indAccessor = accessors[indAccessorIdx];
-                int indBufferViewIdx = indAccessor["bufferView"];
-                int indByteOffset = indAccessor.value("byteOffset", 0);
-                int indCount = indAccessor["count"];
-
-                if (indBufferViewIdx < 0 || indBufferViewIdx >= static_cast<int>(bufferViews.size())) {
-                    errorMessage = "Invalid index buffer view index";
+            for (const auto& primitive : mesh["primitives"]) {
+                GLTFPrimitiveResult primResult{};
+                if (!AppendGLTFPrimitive(primitive, accessors, bufferViews, binaryData,
+                                         outMesh, minBounds, maxBounds,
+                                         boundsInitialized, errorMessage, primResult)) {
                     return false;
                 }
-
-                const auto& indBufferView = bufferViews[indBufferViewIdx];
-                int indBufferViewOffset = indBufferView.value("byteOffset", 0);
-                indices.reserve(indCount);
-
-                // Validate offsets are non-negative
-                if (indBufferViewOffset < 0 || indByteOffset < 0) {
-                    errorMessage = "Invalid negative byte offset in index data";
-                    return false;
+                if (useSubmeshes && primResult.indexCount > 0) {
+                    MeshData::Submesh submesh{};
+                    submesh.indexOffset = primResult.indexOffset;
+                    submesh.indexCount = primResult.indexCount;
+                    submesh.materialSlot = primResult.materialSlot;
+                    submesh.name = primResult.name;
+                    outMesh.submeshes.push_back(std::move(submesh));
                 }
+            }
 
-                // Bounds checking for index data
-                size_t indDataStart = static_cast<size_t>(indBufferViewOffset) + static_cast<size_t>(indByteOffset);
-                int indComponentType = indAccessor["componentType"];
-                
-                if (indComponentType == 5125) { // UNSIGNED_INT
-                    size_t indDataSize = static_cast<size_t>(indCount) * sizeof(uint32_t);
-                    if (indDataStart + indDataSize > binaryData.size()) {
-                        errorMessage = "Index data exceeds binary buffer size (GLB overflow)";
-                        return false;
-                    }
-                    const uint32_t* indData = reinterpret_cast<const uint32_t*>(
-                        binaryData.data() + indDataStart);
-                    for (int i = 0; i < indCount; ++i) {
-                        indices.push_back(indData[i]);
-                    }
-                } else if (indComponentType == 5123) { // UNSIGNED_SHORT
-                    size_t indDataSize = static_cast<size_t>(indCount) * sizeof(uint16_t);
-                    if (indDataStart + indDataSize > binaryData.size()) {
-                        errorMessage = "Index data exceeds binary buffer size (GLB overflow)";
-                        return false;
-                    }
-                    const uint16_t* indData = reinterpret_cast<const uint16_t*>(
-                        binaryData.data() + indDataStart);
-                    for (int i = 0; i < indCount; ++i) {
-                        indices.push_back(indData[i]);
-                    }
-                } else {
-                    errorMessage = "Unsupported index component type";
-                    return false;
-                }
+            if (boundsInitialized) {
+                outMesh.bounds = AABB(minBounds, maxBounds);
             } else {
-                // No indices, generate from positions
-                indices.reserve(posCount);
-                for (int i = 0; i < posCount; ++i) {
-                    indices.push_back(i);
-                }
-            }
-
-            // Get normals if available
-            std::vector<Vec3> normals;
-            if (primitive["attributes"].contains("NORMAL")) {
-                int normAccessorIdx = primitive["attributes"]["NORMAL"];
-                const auto& normAccessor = accessors[normAccessorIdx];
-                int normBufferViewIdx = normAccessor["bufferView"];
-                int normByteOffset = normAccessor.value("byteOffset", 0);
-                int normCount = normAccessor["count"];
-
-                if (normBufferViewIdx >= 0 && normBufferViewIdx < static_cast<int>(bufferViews.size())) {
-                    const auto& normBufferView = bufferViews[normBufferViewIdx];
-                    int normBufferViewOffset = normBufferView.value("byteOffset", 0);
-                    
-                    // Validate offsets are non-negative
-                    if (normBufferViewOffset >= 0 && normByteOffset >= 0) {
-                        size_t normDataStart = static_cast<size_t>(normBufferViewOffset) + static_cast<size_t>(normByteOffset);
-                        size_t normDataSize = static_cast<size_t>(normCount) * 3 * sizeof(float);
-                        if (normDataStart + normDataSize <= binaryData.size()) {
-                            const float* normData = reinterpret_cast<const float*>(
-                                binaryData.data() + normDataStart);
-                            
-                            normals.reserve(normCount);
-                            for (int i = 0; i < normCount; ++i) {
-                                Vec3 normal(normData[i * 3], normData[i * 3 + 1], normData[i * 3 + 2]);
-                                normals.push_back(normal);
-                            }
-                        } else {
-                            // Skip normals if they exceed buffer bounds
-                            std::cout << "[ModelImporter] Warning: Normal data exceeds buffer size, skipping normals" << std::endl;
-                        }
-                    }
-                }
-            }
-
-            // Convert to Vertex format
-            for (uint32_t idx : indices) {
-                if (idx >= positions.size()) {
-                    errorMessage = "Index out of range";
-                    return false;
-                }
-
-                Vertex vert{};
-                Vec3 pos = positions[idx];
-                vert.pos[0] = pos.x;
-                vert.pos[1] = pos.y;
-                vert.pos[2] = pos.z;
-
-                if (idx < normals.size()) {
-                    Vec3 normal = normals[idx];
-                    vert.normal[0] = normal.x;
-                    vert.normal[1] = normal.y;
-                    vert.normal[2] = normal.z;
-                } else {
-                    vert.normal[0] = 0.0f;
-                    vert.normal[1] = 1.0f;
-                    vert.normal[2] = 0.0f;
-                }
-
-                vert.color[0] = 1.0f;
-                vert.color[1] = 1.0f;
-                vert.color[2] = 1.0f;
-                vert.texCoord[0] = 0.0f;
-                vert.texCoord[1] = 0.0f;
-
-                outMesh.vertices.push_back(vert);
-                outMesh.indices.push_back(static_cast<uint32_t>(outMesh.vertices.size() - 1));
+                outMesh.bounds = AABB();
             }
 
             std::cout << "[ModelImporter] glTF load complete: verts=" << outMesh.vertices.size()
-                      << ", indices=" << outMesh.indices.size() << std::endl;
+                      << ", indices=" << outMesh.indices.size()
+                      << ", submeshes=" << outMesh.submeshes.size() << std::endl;
+            for (size_t i = 0; i < outMesh.submeshes.size(); ++i) {
+                const auto& sub = outMesh.submeshes[i];
+                std::cout << "[ModelImporter]   submesh[" << i << "]: slot=" << sub.materialSlot
+                          << " offset=" << sub.indexOffset << " count=" << sub.indexCount << std::endl;
+            }
 
             return true;
         }
@@ -844,7 +900,6 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
                     return false;
                 }
 
-                const auto& primitive = mesh["primitives"][0];
                 if (!root.contains("accessors")) {
                     errorMessage = "No accessors found in glTF file";
                     return false;
@@ -853,171 +908,33 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
                 const auto& accessors = root["accessors"];
                 const auto& bufferViews = root.value("bufferViews", json::array());
 
-                if (!primitive.contains("attributes") || !primitive["attributes"].contains("POSITION")) {
-                    errorMessage = "Mesh has no POSITION attribute";
-                    return false;
-                }
+                bool useSubmeshes = mesh["primitives"].size() > 1;
+                Vec3 minBounds{};
+                Vec3 maxBounds{};
+                bool boundsInitialized = false;
+                outMesh.submeshes.clear();
 
-                int posAccessorIdx = primitive["attributes"]["POSITION"];
-                const auto& posAccessor = accessors[posAccessorIdx];
-                int posBufferViewIdx = posAccessor["bufferView"];
-                int posByteOffset = posAccessor.value("byteOffset", 0);
-                int posCount = posAccessor["count"];
-
-                if (posBufferViewIdx < 0 || posBufferViewIdx >= static_cast<int>(bufferViews.size())) {
-                    errorMessage = "Invalid position buffer view index";
-                    return false;
-                }
-
-                const auto& posBufferView = bufferViews[posBufferViewIdx];
-                int posBufferViewOffset = posBufferView.value("byteOffset", 0);
-
-                std::vector<Vec3> positions;
-                positions.reserve(posCount);
-                
-                // Validate offsets are non-negative
-                if (posBufferViewOffset < 0 || posByteOffset < 0) {
-                    errorMessage = "Invalid negative byte offset in position data";
-                    return false;
-                }
-                
-                // Bounds check: ensure we have enough data for position data
-                size_t posDataStart = static_cast<size_t>(posBufferViewOffset) + static_cast<size_t>(posByteOffset);
-                size_t posDataSize = static_cast<size_t>(posCount) * 3 * sizeof(float);
-                if (posDataStart + posDataSize > binaryData.size()) {
-                    errorMessage = "Position data exceeds binary buffer size (glTF overflow)";
-                    return false;
-                }
-                
-                const float* posData = reinterpret_cast<const float*>(binaryData.data() + posDataStart);
-                const float maxFloat = std::numeric_limits<float>::max();
-                Vec3 minBounds(maxFloat, maxFloat, maxFloat);
-                Vec3 maxBounds(-maxFloat, -maxFloat, -maxFloat);
-
-                for (int i = 0; i < posCount; ++i) {
-                    Vec3 pos(posData[i * 3], posData[i * 3 + 1], posData[i * 3 + 2]);
-                    positions.push_back(pos);
-                    minBounds.x = std::min(minBounds.x, pos.x);
-                    minBounds.y = std::min(minBounds.y, pos.y);
-                    minBounds.z = std::min(minBounds.z, pos.z);
-                    maxBounds.x = std::max(maxBounds.x, pos.x);
-                    maxBounds.y = std::max(maxBounds.y, pos.y);
-                    maxBounds.z = std::max(maxBounds.z, pos.z);
-                }
-
-                outMesh.bounds = AABB(minBounds, maxBounds);
-
-                // Get indices
-                std::vector<uint32_t> indices;
-                if (primitive.contains("indices")) {
-                    int indAccessorIdx = primitive["indices"];
-                    const auto& indAccessor = accessors[indAccessorIdx];
-                    int indBufferViewIdx = indAccessor["bufferView"];
-                    int indByteOffset = indAccessor.value("byteOffset", 0);
-                    int indCount = indAccessor["count"];
-
-                    if (indBufferViewIdx < 0 || indBufferViewIdx >= static_cast<int>(bufferViews.size())) {
-                        errorMessage = "Invalid index buffer view index";
+                for (const auto& primitive : mesh["primitives"]) {
+                    GLTFPrimitiveResult primResult{};
+                    if (!AppendGLTFPrimitive(primitive, accessors, bufferViews, binaryData,
+                                             outMesh, minBounds, maxBounds,
+                                             boundsInitialized, errorMessage, primResult)) {
                         return false;
                     }
-
-                    const auto& indBufferView = bufferViews[indBufferViewIdx];
-                    int indBufferViewOffset = indBufferView.value("byteOffset", 0);
-                    indices.reserve(indCount);
-
-                    // Validate offsets are non-negative
-                    if (indBufferViewOffset < 0 || indByteOffset < 0) {
-                        errorMessage = "Invalid negative byte offset in index data";
-                        return false;
+                    if (useSubmeshes && primResult.indexCount > 0) {
+                        MeshData::Submesh submesh{};
+                        submesh.indexOffset = primResult.indexOffset;
+                        submesh.indexCount = primResult.indexCount;
+                        submesh.materialSlot = primResult.materialSlot;
+                        submesh.name = primResult.name;
+                        outMesh.submeshes.push_back(std::move(submesh));
                     }
+                }
 
-                    int indComponentType = indAccessor["componentType"];
-                    if (indComponentType == 5125) {
-                        const uint32_t* indData = reinterpret_cast<const uint32_t*>(
-                            binaryData.data() + indBufferViewOffset + indByteOffset);
-                        for (int i = 0; i < indCount; ++i) {
-                            indices.push_back(indData[i]);
-                        }
-                    } else if (indComponentType == 5123) {
-                        const uint16_t* indData = reinterpret_cast<const uint16_t*>(
-                            binaryData.data() + indBufferViewOffset + indByteOffset);
-                        for (int i = 0; i < indCount; ++i) {
-                            indices.push_back(indData[i]);
-                        }
-                    }
+                if (boundsInitialized) {
+                    outMesh.bounds = AABB(minBounds, maxBounds);
                 } else {
-                    // No indices, generate from positions
-                    indices.reserve(posCount);
-                    for (int i = 0; i < posCount; ++i) {
-                        indices.push_back(i);
-                    }
-                }
-
-                std::vector<Vec3> normals;
-                if (primitive["attributes"].contains("NORMAL")) {
-                    int normAccessorIdx = primitive["attributes"]["NORMAL"];
-                    const auto& normAccessor = accessors[normAccessorIdx];
-                    int normBufferViewIdx = normAccessor["bufferView"];
-                    int normByteOffset = normAccessor.value("byteOffset", 0);
-                    int normCount = normAccessor["count"];
-
-                    if (normBufferViewIdx >= 0 && normBufferViewIdx < static_cast<int>(bufferViews.size())) {
-                        const auto& normBufferView = bufferViews[normBufferViewIdx];
-                        int normBufferViewOffset = normBufferView.value("byteOffset", 0);
-                        
-                        // Validate offsets are non-negative
-                        if (normBufferViewOffset >= 0 && normByteOffset >= 0) {
-                            size_t normDataStart = static_cast<size_t>(normBufferViewOffset) + static_cast<size_t>(normByteOffset);
-                            size_t normDataSize = static_cast<size_t>(normCount) * 3 * sizeof(float);
-                            if (normDataStart + normDataSize <= binaryData.size()) {
-                                const float* normData = reinterpret_cast<const float*>(
-                                    binaryData.data() + normDataStart);
-                                
-                                normals.reserve(normCount);
-                                for (int i = 0; i < normCount; ++i) {
-                                    Vec3 normal(normData[i * 3], normData[i * 3 + 1], normData[i * 3 + 2]);
-                                    normals.push_back(normal);
-                                }
-                            } else {
-                                // Skip normals if they exceed buffer bounds
-                                std::cout << "[ModelImporter] Warning: Normal data exceeds buffer size, skipping normals" << std::endl;
-                            }
-                        }
-                    }
-                }
-
-                // Convert to Vertex format
-                for (uint32_t idx : indices) {
-                    if (idx >= positions.size()) {
-                        errorMessage = "Index out of range";
-                        return false;
-                    }
-
-                    Vertex vert{};
-                    Vec3 pos = positions[idx];
-                    vert.pos[0] = pos.x;
-                    vert.pos[1] = pos.y;
-                    vert.pos[2] = pos.z;
-
-                    if (idx < normals.size()) {
-                        Vec3 normal = normals[idx];
-                        vert.normal[0] = normal.x;
-                        vert.normal[1] = normal.y;
-                        vert.normal[2] = normal.z;
-                    } else {
-                        vert.normal[0] = 0.0f;
-                        vert.normal[1] = 1.0f;
-                        vert.normal[2] = 0.0f;
-                    }
-
-                    vert.color[0] = 1.0f;
-                    vert.color[1] = 1.0f;
-                    vert.color[2] = 1.0f;
-                    vert.texCoord[0] = 0.0f;
-                    vert.texCoord[1] = 0.0f;
-
-                    outMesh.vertices.push_back(vert);
-                    outMesh.indices.push_back(static_cast<uint32_t>(outMesh.vertices.size() - 1));
+                    outMesh.bounds = AABB();
                 }
 
                 return true;

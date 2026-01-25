@@ -2283,6 +2283,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       json << mesh.materialIndices[i];
     }
     json << "],";
+    json << "\"submeshCount\":" << mesh.submeshCount << ",";
     json << "\"appliedMaterialPaths\":[";
     for (size_t i = 0; i < mesh.appliedMaterialPaths.size(); ++i) {
       if (i) json << ",";

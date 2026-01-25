@@ -128,6 +128,7 @@ struct MeshRendererComponent {
     bool meshImported = false;
     std::vector<int> materialIndices;
     std::vector<std::string> appliedMaterialPaths; // Tracks which material file is applied to each slot
+    int submeshCount = 0; // Number of submeshes (material slots) in the imported mesh
 
     MeshRendererComponent() 
         : localBounds(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f)) {}
@@ -135,11 +136,12 @@ struct MeshRendererComponent {
     MeshRendererComponent(const AABB& bounds) 
         : localBounds(bounds) {}
 
-    void SetMesh(size_t handle, const AABB& bounds, std::string assetPath = {}, bool imported = false) {
+    void SetMesh(size_t handle, const AABB& bounds, std::string assetPath = {}, bool imported = false, int submeshes = 0) {
         meshHandle = handle;
         localBounds = bounds;
         meshAssetPath = std::move(assetPath);
         meshImported = imported;
+        submeshCount = submeshes;
     }
 
     bool HasValidMesh() const {
