@@ -9503,9 +9503,14 @@ int main(int argc, char *argv[]) {
             ImGuiWindowFlags_NoInputs;
 
         ImGui::Begin("##ViewportDropTarget", nullptr, dropTargetFlags);
-        
-        // Track if mouse is in the viewport area for selection purposes
-        g_ViewportDropTargetHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+
+        // Track if mouse is in the viewport area for selection purposes.
+        // With NoInputs, window hover won't be reported, so use a rect test.
+        ImVec2 viewportMin = ImVec2(dropVp->Pos.x, dropVp->Pos.y + dropTopOffset);
+        ImVec2 viewportMax = ImVec2(dropVp->Pos.x + dropVp->Size.x,
+                      dropVp->Pos.y + dropVp->Size.y);
+        g_ViewportDropTargetHovered = ImGui::IsMouseHoveringRect(
+          viewportMin, viewportMax, true);
 
         ImGui::End();
 
@@ -9622,6 +9627,41 @@ int main(int argc, char *argv[]) {
         auto &transform = selectedEntity.GetComponent<TransformComponent>();
         Mat4 objectMatrix = transform.GetLocalMatrix();
 
+        auto applyBlueprintInstanceDelta = [&](Entity rootEntity,
+                                              const Mat4& newTransform,
+                                              const Mat4& oldTransform) -> bool {
+          if (!rootEntity.HasComponent<BlueprintInstanceComponent>() ||
+              !rootEntity.HasComponent<BlueprintNodeComponent>()) {
+            return false;
+          }
+
+          auto& instance = rootEntity.GetComponent<BlueprintInstanceComponent>();
+          const std::string& instanceId = instance.instanceId;
+          Mat4 delta = Mat4::Multiply(newTransform, Mat4::Invert(oldTransform));
+
+          auto view = viewportScene->GetEntitiesWith<BlueprintNodeComponent, TransformComponent>();
+          for (auto entityHandle : view) {
+            Entity node(entityHandle, viewportScene);
+            const auto& nodeComp = node.GetComponent<BlueprintNodeComponent>();
+            if (nodeComp.instanceId != instanceId) {
+              continue;
+            }
+
+            auto& nodeTransform = node.GetComponent<TransformComponent>();
+            Mat4 nodeMatrix = nodeTransform.GetLocalMatrix();
+            Mat4 updatedMatrix = Mat4::Multiply(delta, nodeMatrix);
+            nodeTransform.SetFromMatrix(updatedMatrix);
+
+            auto& overrideEntry = instance.overrides[nodeComp.nodeId];
+            overrideEntry.hasTransform = true;
+            overrideEntry.transform.position = nodeTransform.position;
+            overrideEntry.transform.rotation = nodeTransform.rotation;
+            overrideEntry.transform.scale = nodeTransform.scale;
+          }
+
+          return true;
+        };
+
         VulkanGizmo::Mode gizmoMode = VulkanGizmo::Mode::Translate;
         if (currentGizmoOperation == ImGuizmo::ROTATE)
           gizmoMode = VulkanGizmo::Mode::Rotate;
@@ -9656,8 +9696,12 @@ int main(int argc, char *argv[]) {
           }
         } else {
           if (leftDown) {
+            Mat4 oldTransform = transform.GetLocalMatrix();
             Mat4 newTransform = vulkanGizmo.HandleDrag(gizmoRay);
-            transform.SetFromMatrix(newTransform);
+            bool appliedBlueprintDelta = applyBlueprintInstanceDelta(selectedEntity, newTransform, oldTransform);
+            if (!appliedBlueprintDelta) {
+              transform.SetFromMatrix(newTransform);
+            }
             Mat4 updatedMatrix = transform.GetLocalMatrix();
             vulkanGizmo.UpdateState(updatedMatrix, ubo.view, ubo.proj,
                                     camera.position, gizmoMode, gizmoSpace);

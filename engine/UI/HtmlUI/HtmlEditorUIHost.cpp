@@ -22,6 +22,7 @@
 #include <fstream>
 #include <ctime>
 #include <iomanip>
+#include <unordered_set>
 #include "../EditorSpawnPreset.h"
 
 #if defined(_WIN32)
@@ -1032,6 +1033,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     }
 
     auto& t = e.GetComponent<TransformComponent>();
+    TransformComponent updated = t;
 
     auto px = EditorMessageBridge::ParseFloatField(payload, "px");
     auto py = EditorMessageBridge::ParseFloatField(payload, "py");
@@ -1044,13 +1046,43 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     auto sz = EditorMessageBridge::ParseFloatField(payload, "sz");
 
     if (px && py && pz) {
-      t.position = Vec3(*px, *py, *pz);
+      updated.position = Vec3(*px, *py, *pz);
     }
     if (sx && sy && sz) {
-      t.scale = Vec3(*sx, *sy, *sz);
+      updated.scale = Vec3(*sx, *sy, *sz);
     }
     if (rx && ry && rz) {
-      t.SetRotationDegrees(Vec3(*rx, *ry, *rz));
+      updated.SetRotationDegrees(Vec3(*rx, *ry, *rz));
+    }
+
+    const bool isBlueprintInstance = e.HasComponent<BlueprintInstanceComponent>() && e.HasComponent<BlueprintNodeComponent>();
+    if (isBlueprintInstance) {
+      auto& instance = e.GetComponent<BlueprintInstanceComponent>();
+      const std::string& instanceId = instance.instanceId;
+      Mat4 oldMatrix = t.GetLocalMatrix();
+      Mat4 newMatrix = updated.GetLocalMatrix();
+      Mat4 delta = Mat4::Multiply(newMatrix, Mat4::Invert(oldMatrix));
+
+      auto view = scene_->GetRegistry().view<BlueprintNodeComponent, TransformComponent>();
+      for (auto entityHandle : view) {
+        Entity node(entityHandle, scene_);
+        const auto& nodeComp = node.GetComponent<BlueprintNodeComponent>();
+        if (nodeComp.instanceId != instanceId) {
+          continue;
+        }
+        auto& nodeTransform = node.GetComponent<TransformComponent>();
+        Mat4 nodeMatrix = nodeTransform.GetLocalMatrix();
+        Mat4 updatedMatrix = Mat4::Multiply(delta, nodeMatrix);
+        nodeTransform.SetFromMatrix(updatedMatrix);
+
+        auto& overrideEntry = instance.overrides[nodeComp.nodeId];
+        overrideEntry.hasTransform = true;
+        overrideEntry.transform.position = nodeTransform.position;
+        overrideEntry.transform.rotation = nodeTransform.rotation;
+        overrideEntry.transform.scale = nodeTransform.scale;
+      }
+    } else {
+      t = updated;
     }
 
     return std::string("{\"ok\":true}");
@@ -1079,6 +1111,7 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     std::istringstream ss(*idsStrOpt);
     std::string token;
     int applied = 0;
+    std::unordered_set<std::string> updatedInstances;
     while (std::getline(ss, token, ',')) {
       if (token.empty()) continue;
       uint32_t id = static_cast<uint32_t>(std::strtoul(token.c_str(), nullptr, 10));
@@ -1089,6 +1122,50 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       Entity e(handle, scene_);
       if (!e.HasComponent<TransformComponent>()) continue;
       auto& t = e.GetComponent<TransformComponent>();
+
+      if (e.HasComponent<BlueprintInstanceComponent>() && e.HasComponent<BlueprintNodeComponent>()) {
+        auto& instance = e.GetComponent<BlueprintInstanceComponent>();
+        const std::string& instanceId = instance.instanceId;
+        if (!updatedInstances.insert(instanceId).second) {
+          continue;
+        }
+
+        TransformComponent updated = t;
+        if (px && py && pz) {
+          updated.position = Vec3(*px, *py, *pz);
+        }
+        if (sx && sy && sz) {
+          updated.scale = Vec3(*sx, *sy, *sz);
+        }
+        if (rx && ry && rz) {
+          updated.SetRotationDegrees(Vec3(*rx, *ry, *rz));
+        }
+
+        Mat4 oldMatrix = t.GetLocalMatrix();
+        Mat4 newMatrix = updated.GetLocalMatrix();
+        Mat4 delta = Mat4::Multiply(newMatrix, Mat4::Invert(oldMatrix));
+
+        auto view = scene_->GetRegistry().view<BlueprintNodeComponent, TransformComponent>();
+        for (auto entityHandle : view) {
+          Entity node(entityHandle, scene_);
+          const auto& nodeComp = node.GetComponent<BlueprintNodeComponent>();
+          if (nodeComp.instanceId != instanceId) {
+            continue;
+          }
+          auto& nodeTransform = node.GetComponent<TransformComponent>();
+          Mat4 nodeMatrix = nodeTransform.GetLocalMatrix();
+          Mat4 updatedMatrix = Mat4::Multiply(delta, nodeMatrix);
+          nodeTransform.SetFromMatrix(updatedMatrix);
+
+          auto& overrideEntry = instance.overrides[nodeComp.nodeId];
+          overrideEntry.hasTransform = true;
+          overrideEntry.transform.position = nodeTransform.position;
+          overrideEntry.transform.rotation = nodeTransform.rotation;
+          overrideEntry.transform.scale = nodeTransform.scale;
+        }
+        applied++;
+        continue;
+      }
 
       if (px && py && pz) {
         t.position = Vec3(*px, *py, *pz);
