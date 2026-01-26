@@ -1276,6 +1276,12 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
         if (isBlueprintMode && !entity.HasComponent<BlueprintNodeComponent>()) {
           continue;
         }
+        if (!isBlueprintMode && entity.HasComponent<BlueprintNodeComponent>()) {
+          const auto& nodeComp = entity.GetComponent<BlueprintNodeComponent>();
+          if (!nodeComp.isRoot) {
+            continue;
+          }
+        }
         if (!filter.PassFilter(tag.tag.c_str())) {
           continue;
         }
@@ -3518,6 +3524,25 @@ Entity FindClosestHitEntity(const Ray &ray, Scene &scene, float &outDistance) {
 
   outDistance = closestDist;
   return closestEntity;
+}
+
+static Entity ResolveBlueprintRootEntity(Scene& scene, Entity entity) {
+  if (!entity || !entity.HasComponent<BlueprintNodeComponent>()) {
+    return entity;
+  }
+  const auto& nodeComp = entity.GetComponent<BlueprintNodeComponent>();
+  if (nodeComp.isRoot) {
+    return entity;
+  }
+  auto view = scene.GetRegistry().view<BlueprintNodeComponent>();
+  for (auto handle : view) {
+    Entity candidate(handle, &scene);
+    const auto& candidateComp = candidate.GetComponent<BlueprintNodeComponent>();
+    if (candidateComp.instanceId == nodeComp.instanceId && candidateComp.isRoot) {
+      return candidate;
+    }
+  }
+  return entity;
 }
 
 // Helper to keep browser navigation within the asset root directory.
@@ -8397,6 +8422,10 @@ int main(int argc, char *argv[]) {
       // Find closest hit
       float hitDist;
       Entity hitEntity = FindClosestHitEntity(pickRay, *viewportScene, hitDist);
+
+      if (hitEntity && !IsBlueprintModeActive()) {
+        hitEntity = ResolveBlueprintRootEntity(*viewportScene, hitEntity);
+      }
 
       if (!g_DetailsLocked) {
         if (hitEntity) {

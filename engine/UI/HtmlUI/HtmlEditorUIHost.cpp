@@ -701,6 +701,12 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       if (blueprintMode_ && !e.HasComponent<BlueprintNodeComponent>()) {
         continue;
       }
+      if (!blueprintMode_ && e.HasComponent<BlueprintNodeComponent>()) {
+        const auto& nodeComp = e.GetComponent<BlueprintNodeComponent>();
+        if (!nodeComp.isRoot) {
+          continue;
+        }
+      }
       auto& tag = e.GetComponent<TagComponent>();
 
       const char* typeLabel = "ENTITY";
