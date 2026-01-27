@@ -95,6 +95,11 @@ std::vector<fs::path> SceneExporter::CollectAssetPaths(const Scene& scene)
         if (!mesh.meshAssetPath.empty()) {
             uniquePaths.insert(mesh.meshAssetPath);
         }
+        for (const auto& materialPath : mesh.appliedMaterialPaths) {
+            if (!materialPath.empty()) {
+                uniquePaths.insert(materialPath);
+            }
+        }
     }
 
     // Collect texture and material paths

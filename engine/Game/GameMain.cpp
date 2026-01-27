@@ -675,7 +675,17 @@ static std::string NormalizeAssetPath(const std::string& path) {
     }
     fs::path resolved = fs::path(path);
     if (resolved.is_relative()) {
-        resolved = g_RuntimeRoot / resolved;
+        fs::path runtimeCandidate = (g_RuntimeRoot / resolved).lexically_normal();
+        if (fs::exists(runtimeCandidate)) {
+            return runtimeCandidate.string();
+        }
+
+        fs::path assetsCandidate = (g_RuntimeRoot / "assets" / resolved).lexically_normal();
+        if (fs::exists(assetsCandidate)) {
+            return assetsCandidate.string();
+        }
+
+        return runtimeCandidate.string();
     }
     return resolved.lexically_normal().string();
 }
@@ -1667,6 +1677,7 @@ int main(int argc, char* argv[]) {
         for (auto entityHandle : meshView) {
             Entity entity(entityHandle, &scene);
             auto& renderer = entity.GetComponent<MeshRendererComponent>();
+            
             for (const auto& slotPath : renderer.appliedMaterialPaths) {
                 if (slotPath.empty()) {
                     continue;
@@ -1998,8 +2009,19 @@ int main(int argc, char* argv[]) {
                 
                 // Check if already loaded
                 if (g_MeshLookup.count(meshKey) > 0) {
-                    renderer.meshHandle = g_MeshLookup[meshKey];
-                    HP_LOG(Info, "    Reusing cached mesh");
+                    size_t cachedIdx = g_MeshLookup[meshKey];
+                    renderer.meshHandle = cachedIdx;
+                    
+                    // Sync submesh count from cached mesh
+                    const MeshGPU& cachedMesh = g_MeshLibrary[cachedIdx];
+                    int cachedSubmeshCount = cachedMesh.submeshes.empty() ? 1 : static_cast<int>(cachedMesh.submeshes.size());
+                    if (renderer.submeshCount != cachedSubmeshCount) {
+                        HP_LOG(Info, "    Syncing submeshCount from cached mesh: " + std::to_string(renderer.submeshCount) + " -> " + std::to_string(cachedSubmeshCount));
+                        renderer.submeshCount = cachedSubmeshCount;
+                    }
+                    
+                    HP_LOG(Info, "    Reusing cached mesh (submeshes=" + std::to_string(cachedMesh.submeshes.size()) + 
+                        ", materialSlots=" + std::to_string(renderer.appliedMaterialPaths.size()) + ")");
                     loadedCount++;
                     continue;
                 }
@@ -2025,7 +2047,27 @@ int main(int argc, char* argv[]) {
                         vkdev.device, vkdev.commandPool, vkdev.graphicsQueue);
                     if (idx != SIZE_MAX) {
                         renderer.meshHandle = idx;
-                        HP_LOG(Info, "    Loaded mesh: " + meshKey);
+                        
+                        // Update submesh count from the loaded mesh data
+                        const MeshGPU& loadedMesh = g_MeshLibrary[idx];
+                        int newSubmeshCount = loadedMesh.submeshes.empty() ? 1 : static_cast<int>(loadedMesh.submeshes.size());
+                        if (renderer.submeshCount != newSubmeshCount) {
+                            HP_LOG(Info, "    Updating submeshCount: " + std::to_string(renderer.submeshCount) + " -> " + std::to_string(newSubmeshCount));
+                            renderer.submeshCount = newSubmeshCount;
+                        }
+                        
+                        // Log submesh/material debug info
+                        HP_LOG(Info, "    Loaded mesh: " + meshKey + " (submeshes=" + std::to_string(loadedMesh.submeshes.size()) + 
+                            ", materialSlots=" + std::to_string(renderer.appliedMaterialPaths.size()) + ")");
+                        
+                        // Warn if submesh count doesn't match material slot count
+                        if (!loadedMesh.submeshes.empty() && 
+                            renderer.appliedMaterialPaths.size() != loadedMesh.submeshes.size()) {
+                            HP_LOG(Warning, "    Mesh '" + meshKey + "' has " + std::to_string(loadedMesh.submeshes.size()) + 
+                                " submeshes but " + std::to_string(renderer.appliedMaterialPaths.size()) + 
+                                " material paths assigned. Some sections may use fallback materials.");
+                        }
+                        
                         loadedCount++;
                     } else {
                         HP_LOG(Warning, "    GPU upload failed for: " + meshKey);
@@ -2094,6 +2136,74 @@ int main(int argc, char* argv[]) {
     Bootstrap::BeginStage(InitStage::Ready);
     HP_LOG(Info, "Game runtime ready!");
     Bootstrap::EndStage(InitStage::Ready, true);
+
+    // ── Debug: Multi-Material Mesh Validation ─────
+#ifdef _DEBUG
+    HP_LOG(Info, "=== Multi-Material Mesh Debug Info ===");
+    {
+        auto debugMeshView = scene.GetEntitiesWith<MeshRendererComponent>();
+        for (auto entityHandle : debugMeshView) {
+            Entity entity(entityHandle, &scene);
+            auto& renderer = entity.GetComponent<MeshRendererComponent>();
+            
+            if (!renderer.HasValidMesh() || renderer.meshHandle >= g_MeshLibrary.size()) {
+                continue;
+            }
+            
+            std::string entityName = "Entity";
+            if (entity.HasComponent<TagComponent>()) {
+                entityName = entity.GetComponent<TagComponent>().tag;
+            }
+            
+            const MeshGPU& mesh = g_MeshLibrary[renderer.meshHandle];
+            size_t submeshCount = mesh.submeshes.empty() ? 1 : mesh.submeshes.size();
+            size_t materialSlotCount = renderer.appliedMaterialPaths.size();
+            
+            HP_LOG(Info, "Entity: " + entityName);
+            HP_LOG(Info, "  Mesh: " + mesh.name + " (handle=" + std::to_string(renderer.meshHandle) + ")");
+            HP_LOG(Info, "  Submeshes: " + std::to_string(submeshCount) + ", Material slots: " + std::to_string(materialSlotCount));
+            
+            // Log each submesh and its material binding
+            if (mesh.submeshes.empty()) {
+                std::string matPath = materialSlotCount > 0 ? renderer.appliedMaterialPaths[0] : "";
+                std::string matStatus = "none";
+                if (!matPath.empty()) {
+                    std::string key = NormalizeAssetPath(matPath);
+                    matStatus = g_MaterialLibrary.count(key) > 0 ? "loaded" : "NOT FOUND";
+                }
+                HP_LOG(Info, "  [Single mesh] Material: " + (matPath.empty() ? "(default)" : matPath) + " [" + matStatus + "]");
+            } else {
+                for (size_t i = 0; i < mesh.submeshes.size(); ++i) {
+                    const auto& sub = mesh.submeshes[i];
+                    std::string matPath = "";
+                    std::string matStatus = "default";
+                    
+                    if (static_cast<size_t>(sub.materialSlot) < materialSlotCount) {
+                        matPath = renderer.appliedMaterialPaths[sub.materialSlot];
+                        if (!matPath.empty()) {
+                            std::string key = NormalizeAssetPath(matPath);
+                            matStatus = g_MaterialLibrary.count(key) > 0 ? "loaded" : "NOT FOUND";
+                        }
+                    } else {
+                        matStatus = "slot missing";
+                    }
+                    
+                    HP_LOG(Info, "  Submesh[" + std::to_string(i) + "] slot=" + std::to_string(sub.materialSlot) + 
+                        ", indices=" + std::to_string(sub.indexOffset) + "-" + std::to_string(sub.indexOffset + sub.indexCount) +
+                        ", material=" + (matPath.empty() ? "(default)" : matPath) + " [" + matStatus + "]");
+                }
+            }
+            
+            // Warn about mismatches
+            if (submeshCount > materialSlotCount && materialSlotCount > 0) {
+                HP_LOG(Warning, "  WARNING: More submeshes (" + std::to_string(submeshCount) + 
+                    ") than material slots (" + std::to_string(materialSlotCount) + 
+                    "). Some sections will use fallback material.");
+            }
+        }
+    }
+    HP_LOG(Info, "=== End Multi-Material Debug Info ===");
+#endif
 
     // ── Sync Objects ──────────────────────────────
     HP_LOG(Info, "Creating sync objects...");
@@ -2208,13 +2318,28 @@ int main(int argc, char* argv[]) {
                 ? lightEntity.GetComponent<TagComponent>().tag : "Unnamed";
             
             if (light.type == LightType::Directional) {
-                HP_LOG(Info, "Found directional light: " + lightName + " intensity=" + std::to_string(light.intensity));
-                Vec3 dir = vnorm(light.direction);
+                HP_LOG(Info, "Found directional light: " + lightName + 
+                    " intensity=" + std::to_string(light.intensity) +
+                    " castShadows=" + std::to_string(light.castShadows) +
+                    " shadowBias=" + std::to_string(light.shadowBias) +
+                    " shadowStrength=" + std::to_string(light.shadowStrength) +
+                    " shadowDistance=" + std::to_string(light.shadowDistance) +
+                    " shadowExtent=" + std::to_string(light.shadowExtent));
+                
+                // Transform direction by entity rotation (light points in local -Z)
+                Mat4 transformMatrix = lightTransform.GetLocalMatrix();
+                Vec3 dir = Mat4::TransformDirection(transformMatrix, v3(0.0f, 0.0f, -1.0f));
+                if (vlen(dir) < 0.0001f) {
+                    dir = v3(0.0f, -1.0f, 0.0f);
+                }
+                dir = vnorm(dir);
+                
                 lightingUBO.dirLightDirIntensity = Vec4(dir.x, dir.y, dir.z, light.intensity);
                 lightingUBO.dirLightColor = Vec4(light.color.x, light.color.y, light.color.z, 1.0f);
                 
                 // Shadow mapping setup
                 if (light.castShadows && g_DirectionalShadow.IsValid()) {
+                    HP_LOG(Info, "Shadow mapping enabled for directional light");
                     float shadowDistance = light.shadowDistance;
                     float shadowExtent = light.shadowExtent;
                     
@@ -2453,6 +2578,8 @@ int main(int argc, char* argv[]) {
                 if (slot < 0) {
                     slot = 0;
                 }
+                
+                // Try to get material from appliedMaterialPaths
                 if (static_cast<size_t>(slot) < renderer.appliedMaterialPaths.size()) {
                     const std::string& slotPath = renderer.appliedMaterialPaths[slot];
                     if (!slotPath.empty()) {
@@ -2463,7 +2590,9 @@ int main(int argc, char* argv[]) {
                         }
                     }
                 }
-                if (entity.HasComponent<MaterialComponent>()) {
+                
+                // Fallback to entity's MaterialComponent (slot 0 only)
+                if (slot == 0 && entity.HasComponent<MaterialComponent>()) {
                     return &entity.GetComponent<MaterialComponent>();
                 }
                 return nullptr;
