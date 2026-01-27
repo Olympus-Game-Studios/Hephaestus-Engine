@@ -329,6 +329,8 @@ static bool g_ShowGizmoBeforePlay = true;
 static bool g_ViewportOverlayHovered = false;
 static bool g_ViewportOverlayFocused = false;
 static bool g_ViewportDropTargetHovered = false; // Track if mouse is in viewport area
+static bool g_ViewportHasFocus = false;
+static bool g_EditorPanelHovered = false;
 static std::string
     g_SceneSnapshotBeforePlay; // Stores scene state before entering play mode
 static std::unique_ptr<SceneDocument> g_SceneDocument;
@@ -338,6 +340,38 @@ static bool g_RequestBlueprintTabFocus = false;
 
 static bool IsBlueprintModeActive() {
   return g_ActiveDocument && g_ActiveDocument->GetType() == EditorDocumentType::Blueprint;
+}
+
+static void GetEditorViewportRect(ImVec2& outMin, ImVec2& outMax) {
+  ImGuiViewport* viewport = ImGui::GetMainViewport();
+  const float toolbarHeight = std::max(50.0f, ImGui::GetFrameHeight() * 2.2f);
+  outMin = ImVec2(viewport->Pos.x, viewport->Pos.y + toolbarHeight);
+  outMax = ImVec2(viewport->Pos.x + viewport->Size.x,
+                  viewport->Pos.y + viewport->Size.y);
+}
+
+static void UpdateViewportHoverState() {
+  ImVec2 viewportMin;
+  ImVec2 viewportMax;
+  GetEditorViewportRect(viewportMin, viewportMax);
+  g_ViewportDropTargetHovered =
+      ImGui::IsMouseHoveringRect(viewportMin, viewportMax, true);
+  // Reset panel hover tracking - will be updated when panels are drawn this frame
+  g_EditorPanelHovered = false;
+}
+
+static bool IsViewportInputAllowed() {
+#if HEPHAESTUS_EDITOR_HTML_UI
+  // Only block if an HTML UI panel is being hovered
+  if (g_HtmlEditorUIHost && g_HtmlEditorUIHost->IsAnyPanelHovered()) {
+    static int frameCounter = 0;
+    if (frameCounter++ % 60 == 0) { // Log once per second at 60fps
+      printf("[DEBUG] IsViewportInputAllowed: Blocked by HTML panel hover\n");
+    }
+    return false;
+  }
+#endif
+  return true;
 }
 
 static void PushSceneUndoSnapshot(Scene &scene) {
@@ -1079,6 +1113,10 @@ static WorldOutlinerActions DrawAddActorsPanel() {
     return actions;
   }
 
+  g_EditorPanelHovered = g_EditorPanelHovered ||
+    ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows |
+                           ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+
   actions = DrawActorPalette();
 
   ImGui::End();
@@ -1105,6 +1143,10 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
     ImGui::End();
     return actions;
   }
+
+  g_EditorPanelHovered = g_EditorPanelHovered ||
+    ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows |
+                           ImGuiHoveredFlags_AllowWhenBlockedByPopup);
 
   static ImGuiTextFilter filter;
   static std::array<char, 128> s_NewLevelNameBuffer{};
@@ -1521,6 +1563,10 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
     ImGui::End();
     return actions;
   }
+
+  g_EditorPanelHovered = g_EditorPanelHovered ||
+    ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows |
+                           ImGuiHoveredFlags_AllowWhenBlockedByPopup);
 
   ImGui::Checkbox("Lock", &g_DetailsLocked);
   ImGui::Separator();
@@ -2426,6 +2472,10 @@ static void DrawLogConsole(const ImGuiIO &io,
     ImGui::End();
     return;
   }
+
+  g_EditorPanelHovered = g_EditorPanelHovered ||
+    ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows |
+                           ImGuiHoveredFlags_AllowWhenBlockedByPopup);
 
   const char *tabLabels[] = {"Log", "Warnings", "Errors"};
   for (int i = 0; i < 3; ++i) {
@@ -4541,6 +4591,9 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string &statusMessage) {
   fs::path projectRoot = ResolveActiveProjectRoot();
   if (projectRoot.empty()) {
     if (ImGui::Begin("Asset Browser")) {
+      g_EditorPanelHovered = g_EditorPanelHovered ||
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows |
+                               ImGuiHoveredFlags_AllowWhenBlockedByPopup);
       ImGui::TextDisabled("Select or create a project to browse assets.");
     }
     ImGui::End();
@@ -4552,6 +4605,9 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string &statusMessage) {
   fs::path desiredRoot = ResolveActiveAssetsRoot();
   if (desiredRoot.empty()) {
     if (ImGui::Begin("Asset Browser")) {
+      g_EditorPanelHovered = g_EditorPanelHovered ||
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows |
+                               ImGuiHoveredFlags_AllowWhenBlockedByPopup);
       ImGui::TextDisabled("Active project has no assets directory configured.");
     }
     ImGui::End();
@@ -4574,6 +4630,9 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string &statusMessage) {
 
   if (ensureRootErr) {
     if (ImGui::Begin("Asset Browser")) {
+      g_EditorPanelHovered = g_EditorPanelHovered ||
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows |
+                               ImGuiHoveredFlags_AllowWhenBlockedByPopup);
       ImGui::TextDisabled("Cannot open project assets: %s",
                           ensureRootErr.message().c_str());
     }
@@ -4594,6 +4653,10 @@ static AssetBrowserResult DrawAssetBrowserPanel(std::string &statusMessage) {
     ImGui::End();
     return result;
   }
+
+  g_EditorPanelHovered = g_EditorPanelHovered ||
+    ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows |
+                           ImGuiHoveredFlags_AllowWhenBlockedByPopup);
 
   std::error_code existsErr;
   bool rootExists = fs::exists(assetRoot, existsErr);
@@ -8401,15 +8464,19 @@ int main(int argc, char *argv[]) {
       ImGuizmo::SetOrthographic(false);
     }
 
+    UpdateViewportHoverState();
+    const bool viewportHasFocus = IsViewportInputAllowed();
+    g_ViewportHasFocus = viewportHasFocus;
+
     // Handle mouse click for object selection (editor only)
     static bool leftMouseWasPressed = false;
     bool leftMousePressed =
         glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
 
     if (!g_RuntimeMode && g_ProjectSelected && !g_SimPlaying &&
-        leftMousePressed && !leftMouseWasPressed && !ImGuizmo::IsUsing() &&
-        !ImGuizmo::IsOver() && g_ViewportDropTargetHovered &&
-        !gizmoDragging && vulkanGizmo.GetHoveredAxis() == -1) {
+      leftMousePressed && !leftMouseWasPressed && !ImGuizmo::IsUsing() &&
+      !ImGuizmo::IsOver() && viewportHasFocus && !gizmoDragging &&
+      vulkanGizmo.GetHoveredAxis() == -1) {
       // Left mouse button just pressed in viewport area
       double mouseX, mouseY;
       glfwGetCursorPos(window, &mouseX, &mouseY);
@@ -8442,12 +8509,7 @@ int main(int argc, char *argv[]) {
     if (g_ProjectSelected && !ImGuizmo::IsUsing() && !gizmoDragging) {
       bool scriptHasCamera =
           (g_SimPlaying && !g_SimPaused && cameraController.isActive());
-#if HEPHAESTUS_EDITOR_HTML_UI
-      bool htmlPanelHovered = g_HtmlEditorUIHost && g_HtmlEditorUIHost->IsAnyPanelHovered();
-#else
-      bool htmlPanelHovered = false;
-#endif
-      if (!scriptHasCamera && !htmlPanelHovered) {
+      if (!scriptHasCamera && viewportHasFocus) {
         camera.handleMouse(window);
         camera.handleKeyboard(window, dt);
       }
@@ -8478,6 +8540,8 @@ int main(int argc, char *argv[]) {
         }
       } else {
         BeginHephaestusDockspace();
+
+        g_EditorPanelHovered = false;
 
 #if HEPHAESTUS_EDITOR_HTML_UI
         if (g_HtmlEditorUIHost) {
@@ -9540,11 +9604,11 @@ int main(int argc, char *argv[]) {
 
         // Track if mouse is in the viewport area for selection purposes.
         // With NoInputs, window hover won't be reported, so use a rect test.
-        ImVec2 viewportMin = ImVec2(dropVp->Pos.x, dropVp->Pos.y + dropTopOffset);
-        ImVec2 viewportMax = ImVec2(dropVp->Pos.x + dropVp->Size.x,
-                      dropVp->Pos.y + dropVp->Size.y);
-        g_ViewportDropTargetHovered = ImGui::IsMouseHoveringRect(
-          viewportMin, viewportMax, true);
+        ImVec2 viewportMin;
+        ImVec2 viewportMax;
+        GetEditorViewportRect(viewportMin, viewportMax);
+        g_ViewportDropTargetHovered =
+            ImGui::IsMouseHoveringRect(viewportMin, viewportMax, true);
 
         ImGui::End();
 
@@ -9559,11 +9623,10 @@ int main(int argc, char *argv[]) {
         if (dragPayload && mouseJustReleased) {
           // Mouse was just released - check if we're in the viewport area
           ImVec2 mousePos = ImGui::GetMousePos();
-          float dropTopOffset = std::max(50.0f, ImGui::GetFrameHeight() * 2.2f);
-          bool inViewport = mousePos.x >= dropVp->Pos.x && 
-                            mousePos.x <= dropVp->Pos.x + dropVp->Size.x &&
-                            mousePos.y >= dropVp->Pos.y + dropTopOffset &&
-                            mousePos.y <= dropVp->Pos.y + dropVp->Size.y;
+          bool inViewport = mousePos.x >= viewportMin.x &&
+                            mousePos.x <= viewportMax.x &&
+                            mousePos.y >= viewportMin.y &&
+                            mousePos.y <= viewportMax.y;
           
           if (inViewport) {
             if (dragPayload->IsDataType("ACTOR_PALETTE_ITEM") &&
@@ -9655,7 +9718,7 @@ int main(int argc, char *argv[]) {
 
     // Custom gizmo interaction handling (editor only)
     if (!g_RuntimeMode && g_ProjectSelected && g_ShowEditorGizmo &&
-        (!g_SimPlaying || g_SimPaused)) {
+      g_ViewportHasFocus && (!g_SimPlaying || g_SimPaused)) {
       Entity selectedEntity = viewportScene->GetSelectedEntity();
       if (selectedEntity) {
         auto &transform = selectedEntity.GetComponent<TransformComponent>();
