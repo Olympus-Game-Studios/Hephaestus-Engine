@@ -66,8 +66,6 @@ local function physicsAvailable()
 		and Physics
 		and Physics.isAvailable
 		and Physics.isAvailable()
-		and Physics.hasBody
-		and Physics.hasBody()
 end
 
 local function normalize2(x, z)

@@ -77,6 +77,15 @@ else()
 endif()
 
 # Jolt Physics Engine
+# ─────────────────────────────────────────────────────────────────────────────
+# Build Configuration Options
+# ─────────────────────────────────────────────────────────────────────────────
+option(HEPHAESTUS_BUILD_EDITOR "Build the editor (HephaestusEngine.exe)" ON)
+option(HEPHAESTUS_BUILD_GAME "Build the standalone game runtime (HephaestusGame.exe)" ON)
+option(HEPHAESTUS_GAME_SCRIPTING "Enable Lua scripting in game runtime" ON)
+option(HEPHAESTUS_GAME_USE_ULTRALIGHT "Enable Ultralight UI in game runtime (off by default)" OFF)
+
+# Jolt Physics Engine
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build Jolt as static library" FORCE)
 set(JOLT_SANITIZE_UNDEFINED_BEHAVIOR OFF CACHE BOOL "" FORCE)
 set(JOLT_CROSS_PLATFORM_DETERMINISTIC ON CACHE BOOL "Enable deterministic behavior" FORCE)
@@ -84,6 +93,57 @@ set(JOLT_CROSS_PLATFORM_DETERMINISTIC ON CACHE BOOL "Enable deterministic behavi
 set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "Use dynamic MSVC runtime" FORCE)
 add_subdirectory(extern/JoltPhysics/Build)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared Engine Sources (used by both Editor and Game)
+# ─────────────────────────────────────────────────────────────────────────────
+set(ENGINE_CORE_SOURCES
+    engine/Assets/ModelImporter.cpp
+    engine/Gfx/VulkanDevice.cpp
+    engine/Gfx/VulkanSwapchain.cpp
+    engine/Gfx/VulkanPipeline.cpp
+    engine/Gfx/VulkanTexture.cpp
+    engine/Gfx/VulkanSkybox.cpp
+    engine/Physics/MeshCollisionSystem.cpp
+    engine/Physics/JoltPhysicsEngine.cpp
+    engine/Physics/JoltPhysicsSystem.cpp
+    engine/Scene/Scene.cpp
+    engine/Scene/Entity.cpp
+    engine/Scene/Json.cpp
+    engine/Scene/BlueprintSerializer.cpp
+    engine/Scene/BlueprintInstantiator.cpp
+    engine/Scene/SceneSerializer.cpp
+    engine/Scripting/ScriptBase.cpp
+    engine/Scripting/ScriptEngine.cpp
+    engine/Scripting/LuaScriptEngine.cpp
+)
+
+# Editor-only sources
+set(EDITOR_ONLY_SOURCES
+    engine/Core/main.cpp
+    engine/Gfx/VulkanGizmo.cpp
+    engine/Scene/SceneExporter.cpp
+    engine/UI/EditorDocument.cpp
+    engine/UI/ProjectManager.cpp
+    engine/UI/HtmlUI/UltralightPlatformSetup.cpp
+    engine/UI/HtmlUI/EditorMessageBridge.cpp
+    engine/UI/HtmlUI/HtmlPanelView.cpp
+    engine/UI/HtmlUI/HtmlEditorUIHost.cpp
+    engine/UI/MaterialEditor/MaterialGraph.cpp
+    engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
+    engine/UI/MaterialEditor/MaterialEditorPanel.cpp
+    engine/UI/MaterialEditor/TextureDiscovery.cpp
+)
+
+# Game runtime-only sources
+set(GAME_RUNTIME_SOURCES
+    engine/Game/GameMain.cpp
+    engine/Core/RuntimeBootstrap.cpp
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HephaestusEngine (Editor) Target
+# ─────────────────────────────────────────────────────────────────────────────
+if(HEPHAESTUS_BUILD_EDITOR)
 add_executable(HephaestusEngine
     engine/Core/main.cpp
     engine/Assets/ModelImporter.cpp
@@ -287,9 +347,147 @@ set(IMNODES_EXAMPLES OFF CACHE BOOL "Disable ImNodes examples" FORCE)
 add_subdirectory(extern/imnodes)
 target_link_libraries(HephaestusEngine PRIVATE imnodes)
 
+endif() # End HEPHAESTUS_BUILD_EDITOR
 
+# ─────────────────────────────────────────────────────────────────────────────
+# HephaestusGame (Standalone Game Runtime) Target
+# ─────────────────────────────────────────────────────────────────────────────
+if(HEPHAESTUS_BUILD_GAME)
 
-# --- Compile GLSL shaders to SPIR-V if glslc is available ---
+add_executable(HephaestusGame
+    ${ENGINE_CORE_SOURCES}
+    ${GAME_RUNTIME_SOURCES}
+)
+
+# Game runtime compile definitions
+target_compile_definitions(HephaestusGame PRIVATE
+    HEPHAESTUS_GAME_RUNTIME=1
+    HEPHAESTUS_EDITOR_HTML_UI=0
+)
+
+if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND)
+    target_compile_definitions(HephaestusGame PRIVATE 
+        HEPHAESTUS_GAME_SCRIPTING=1
+        LUA_AVAILABLE=1
+    )
+else()
+    target_compile_definitions(HephaestusGame PRIVATE 
+        HEPHAESTUS_GAME_SCRIPTING=0
+        LUA_AVAILABLE=0
+    )
+endif()
+
+target_include_directories(HephaestusGame PRIVATE
+    engine
+    extern
+    extern/VMA
+    extern/entt/single_include
+    extern/JoltPhysics
+    extern/JoltPhysics/Build
+)
+
+# Link libraries for game runtime
+set(GAME_LINK_LIBS Vulkan::Vulkan glfw Jolt)
+
+if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND)
+    if(TARGET Lua::Lua)
+        list(APPEND GAME_LINK_LIBS Lua::Lua)
+    else()
+        list(APPEND GAME_LINK_LIBS ${LUA_LIBRARIES})
+        target_include_directories(HephaestusGame PRIVATE ${LUA_INCLUDE_DIR})
+    endif()
+endif()
+
+# Ultralight for game (optional, off by default)
+if(HEPHAESTUS_GAME_USE_ULTRALIGHT AND HEPHAESTUS_USE_ULTRALIGHT)
+    target_include_directories(HephaestusGame PRIVATE
+        extern/Ultralight/SDK/include
+    )
+    target_link_libraries(HephaestusGame PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/lib/AppCore.lib"
+        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/lib/Ultralight.lib"
+        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/lib/UltralightCore.lib"
+        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/lib/WebCore.lib"
+    )
+    target_compile_definitions(HephaestusGame PRIVATE HEPHAESTUS_GAME_USE_ULTRALIGHT=1)
+    
+    if(WIN32)
+        add_custom_command(TARGET HephaestusGame POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/bin/AppCore.dll"
+                "$<TARGET_FILE_DIR:HephaestusGame>/AppCore.dll"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/bin/Ultralight.dll"
+                "$<TARGET_FILE_DIR:HephaestusGame>/Ultralight.dll"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/bin/UltralightCore.dll"
+                "$<TARGET_FILE_DIR:HephaestusGame>/UltralightCore.dll"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/bin/WebCore.dll"
+                "$<TARGET_FILE_DIR:HephaestusGame>/WebCore.dll"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/resources"
+                "$<TARGET_FILE_DIR:HephaestusGame>/resources"
+            COMMENT "Copying Ultralight SDK DLLs to game runtime"
+        )
+    endif()
+else()
+    target_compile_definitions(HephaestusGame PRIVATE HEPHAESTUS_GAME_USE_ULTRALIGHT=0)
+endif()
+
+target_link_libraries(HephaestusGame PRIVATE ${GAME_LINK_LIBS})
+
+# Windows: link dbghelp for crash handler
+if(WIN32)
+    target_link_libraries(HephaestusGame PRIVATE dbghelp)
+endif()
+
+# Set output directory for game executable
+set_target_properties(HephaestusGame PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug"
+)
+
+# Copy Lua DLL to game output directory if using scripting
+if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND AND WIN32)
+    set(VCPKG_LUA_DLL_PATH "$ENV{USERPROFILE}/vcpkg/installed/x64-windows/bin/lua.dll")
+    if(EXISTS "${VCPKG_LUA_DLL_PATH}")
+        add_custom_command(TARGET HephaestusGame POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${VCPKG_LUA_DLL_PATH}"
+                "$<TARGET_FILE_DIR:HephaestusGame>/lua.dll"
+            COMMENT "Copying lua.dll to game output directory"
+        )
+    endif()
+endif()
+
+# Copy assets to game output directory (for development)
+add_custom_command(TARGET HephaestusGame POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+        "$<TARGET_FILE_DIR:HephaestusGame>/assets"
+    COMMENT "Copying assets to game build directory"
+)
+
+# Copy scripts to game output directory
+add_custom_command(TARGET HephaestusGame POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts"
+        "$<TARGET_FILE_DIR:HephaestusGame>/scripts"
+    COMMENT "Copying scripts to game build directory"
+)
+
+# Depend on shaders
+if(TARGET Shaders)
+    add_dependencies(HephaestusGame Shaders)
+endif()
+
+endif() # End HEPHAESTUS_BUILD_GAME
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shader Compilation (shared by Editor and Game)
+# ─────────────────────────────────────────────────────────────────────────────
 find_program(GLSLC_EXECUTABLE NAMES glslc HINTS ENV VULKAN_SDK PATH_SUFFIXES Bin)
 if (GLSLC_EXECUTABLE)
     message(STATUS "Found glslc: ${GLSLC_EXECUTABLE}")
@@ -328,36 +526,64 @@ if (GLSLC_EXECUTABLE)
     endforeach()
 
     add_custom_target(Shaders ALL DEPENDS ${SHADER_OUTPUTS})
-    add_dependencies(HephaestusEngine Shaders)
+    
+    # Add shader dependency to both targets
+    if(TARGET HephaestusEngine)
+        add_dependencies(HephaestusEngine Shaders)
+    endif()
+    if(TARGET HephaestusGame)
+        add_dependencies(HephaestusGame Shaders)
+    endif()
 else()
     message(WARNING "glslc not found; expecting precompiled .spv under build/<config>/shaders")
 endif()
 
-# --- Post-build: Copy required assets to build directory ---
-# Copy assets folder
-add_custom_command(TARGET HephaestusEngine POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-        "$<TARGET_FILE_DIR:HephaestusEngine>/assets"
-    COMMENT "Copying assets to build directory"
-)
+# ─────────────────────────────────────────────────────────────────────────────
+# Editor Post-Build: Copy assets and editor resources
+# ─────────────────────────────────────────────────────────────────────────────
+if(TARGET HephaestusEngine)
+    add_custom_command(TARGET HephaestusEngine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+            "$<TARGET_FILE_DIR:HephaestusEngine>/assets"
+        COMMENT "Copying assets to editor build directory"
+    )
 
-# Copy editor folder (icons, fonts, etc.)
-add_custom_command(TARGET HephaestusEngine POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/editor"
-        "$<TARGET_FILE_DIR:HephaestusEngine>/editor"
-    COMMENT "Copying editor assets to build directory"
-)
+    add_custom_command(TARGET HephaestusEngine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/editor"
+            "$<TARGET_FILE_DIR:HephaestusEngine>/editor"
+        COMMENT "Copying editor assets to build directory"
+    )
+    
+    add_custom_command(TARGET HephaestusEngine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts"
+            "$<TARGET_FILE_DIR:HephaestusEngine>/scripts"
+        COMMENT "Copying scripts to editor build directory"
+    )
+endif()
 
-# --- Install target for distribution packaging ---
+# ─────────────────────────────────────────────────────────────────────────────
+# Install Targets for Distribution
+# ─────────────────────────────────────────────────────────────────────────────
 include(GNUInstallDirs)
 
-# Install executable
-install(TARGETS HephaestusEngine
-    RUNTIME DESTINATION .
-    BUNDLE DESTINATION .
-)
+# Install editor
+if(TARGET HephaestusEngine)
+    install(TARGETS HephaestusEngine
+        RUNTIME DESTINATION .
+        BUNDLE DESTINATION .
+    )
+endif()
+
+# Install game runtime
+if(TARGET HephaestusGame)
+    install(TARGETS HephaestusGame
+        RUNTIME DESTINATION .
+        BUNDLE DESTINATION .
+    )
+endif()
 
 # Install shaders
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/shaders/
@@ -370,10 +596,18 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets/
     DESTINATION assets
 )
 
-# Install editor resources (icons, fonts)
-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/editor/
-    DESTINATION editor
+# Install scripts
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/scripts/
+    DESTINATION scripts
+    FILES_MATCHING PATTERN "*.lua"
 )
+
+# Install editor resources (icons, fonts) - editor only
+if(TARGET HephaestusEngine)
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/editor/
+        DESTINATION editor
+    )
+endif()
 
 # Install Lua DLL if present
 if(EXISTS "$ENV{USERPROFILE}/vcpkg/installed/x64-windows/bin/lua.dll")

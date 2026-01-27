@@ -6,6 +6,7 @@
 #include <entt/entt.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -436,20 +437,31 @@ SceneExporter::ExportResult SceneExporter::Export(const Scene& scene, const Expo
                            "editor icon");
 
     // Step 4: Copy runtime executable if found
+    // Prefer HephaestusGame.exe (standalone game runtime) over HephaestusEngine.exe
     std::vector<fs::path> exeSearchPaths = {
+        engineRoot / "build" / "Release" / "HephaestusGame.exe",
+        engineRoot / "build" / "Debug" / "HephaestusGame.exe",
+        engineRoot / "HephaestusGame.exe",
         engineRoot / "build" / "Release" / "HephaestusEngine.exe",
         engineRoot / "build" / "Debug" / "HephaestusEngine.exe",
         engineRoot / "HephaestusEngine.exe"
     };
 
     bool exeCopied = false;
+    std::string copiedExeName;
     for (const auto& exePath : exeSearchPaths) {
         if (fs::exists(exePath)) {
-            fs::path destExe = options.outputDirectory / exePath.filename();
+            // Rename to project name for cleaner distribution
+            std::string targetName = options.projectName.empty() ? 
+                exePath.filename().string() : 
+                (options.projectName + ".exe");
+            fs::path destExe = options.outputDirectory / targetName;
             fs::copy_file(exePath, destExe, fs::copy_options::overwrite_existing, ec);
             if (!ec) {
                 result.exportedAssets.push_back(destExe);
-                std::cout << "[SceneExporter] Copied runtime executable: " << exePath.filename() << std::endl;
+                copiedExeName = targetName;
+                std::cout << "[SceneExporter] Copied runtime executable: " << exePath.filename() 
+                          << " as " << targetName << std::endl;
                 exeCopied = true;
                 
                 // Create runtime launcher batch script
@@ -457,22 +469,48 @@ SceneExporter::ExportResult SceneExporter::Export(const Scene& scene, const Expo
                 std::ofstream launcher(launcherPath);
                 if (launcher) {
                     launcher << "@echo off\n";
+                    launcher << "title " << options.projectName << "\n";
                     launcher << "echo Starting " << options.projectName << "...\n";
                     launcher << "setlocal\n";
-                    launcher << "cd /d %~dp0\n";
-                    launcher << "HephaestusEngine.exe --runtime";
+                    launcher << "cd /d \"%~dp0\"\n";
+                    launcher << "\"" << copiedExeName << "\"";
                     if (!relativeScenePath.empty()) {
                         launcher << " --scene \"" << relativeScenePath.generic_string() << "\"";
                     }
                     launcher << "\n";
                     launcher << "if %ERRORLEVEL% NEQ 0 (\n";
                     launcher << "    echo.\n";
-                    launcher << "    echo Game exited with error code %ERRORLEVEL%\n";
+                    launcher << "    echo ================================================================\n";
+                    launcher << "    echo  Game exited with error code %ERRORLEVEL%\n";
+                    launcher << "    echo  Check logs/runtime.log for details.\n";
+                    launcher << "    echo ================================================================\n";
                     launcher << "    pause\n";
                     launcher << ")\n";
                     launcher.close();
                     result.exportedAssets.push_back(launcherPath);
                     std::cout << "[SceneExporter] Created launcher script: RunGame.bat" << std::endl;
+                }
+
+                // Create game.ini configuration file
+                fs::path gameIniPath = options.outputDirectory / "game.ini";
+                std::ofstream gameIni(gameIniPath);
+                if (gameIni) {
+                    gameIni << "# Hephaestus Game Configuration\n";
+                    gameIni << "# Auto-generated during export\n\n";
+                    gameIni << "[Game]\n";
+                    gameIni << "project_name = " << options.projectName << "\n";
+                    gameIni << "window_title = " << options.projectName << "\n";
+                    if (!relativeScenePath.empty()) {
+                        gameIni << "scene = " << relativeScenePath.generic_string() << "\n";
+                    }
+                    gameIni << "\n[Display]\n";
+                    gameIni << "window_width = 1280\n";
+                    gameIni << "window_height = 720\n";
+                    gameIni << "fullscreen = false\n";
+                    gameIni << "vsync = true\n";
+                    gameIni.close();
+                    result.exportedAssets.push_back(gameIniPath);
+                    std::cout << "[SceneExporter] Created game.ini configuration" << std::endl;
                 }
                 
                 break;
@@ -485,7 +523,13 @@ SceneExporter::ExportResult SceneExporter::Export(const Scene& scene, const Expo
     }
 
     // Step 4b: Copy runtime dependencies (DLLs)
+    // Lua DLLs
     std::vector<std::pair<std::string, std::vector<fs::path>>> dependencies = {
+        {"lua.dll", {
+            engineRoot / "build" / "Release" / "lua.dll",
+            engineRoot / "build" / "Debug" / "lua.dll",
+            engineRoot / "lua.dll"
+        }},
         {"lua54.dll", {
             engineRoot / "build" / "Release" / "lua54.dll",
             engineRoot / "build" / "Debug" / "lua54.dll",
@@ -497,6 +541,15 @@ SceneExporter::ExportResult SceneExporter::Export(const Scene& scene, const Expo
             engineRoot / "lua53.dll"
         }}
     };
+    
+    // Also check vcpkg paths
+    const char* userProfile = std::getenv("USERPROFILE");
+    if (userProfile) {
+        fs::path vcpkgBin = fs::path(userProfile) / "vcpkg" / "installed" / "x64-windows" / "bin";
+        if (fs::exists(vcpkgBin / "lua.dll")) {
+            dependencies.insert(dependencies.begin(), {"lua.dll", {vcpkgBin / "lua.dll"}});
+        }
+    }
 
     for (const auto& [dllName, searchPaths] : dependencies) {
         bool found = false;
