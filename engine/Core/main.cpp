@@ -8606,6 +8606,13 @@ int main(int argc, char *argv[]) {
               }
               return true;
             };
+
+            // New cameras are editor-only markers; avoid inheriting editor viewport rotation
+            // so their default orientation is deterministic in the editor.
+            auto initializeNewCameraTransform = [&](TransformComponent& transform) {
+              // Default upright orientation for editor camera markers (Z = -90 degrees).
+              transform.rotation = {0.0f, 0.0f, -1.570796f};
+            };
             
             if (hasBlueprintOpen) {
               blueprintDoc->PushUndoSnapshot();
@@ -8615,8 +8622,7 @@ int main(int argc, char *argv[]) {
                 cam.isActive = isFirstCameraInScene(scene); // First camera is active
                 auto &transform = created.GetComponent<TransformComponent>();
                 transform.position = camera.position; // Place at editor camera position
-                transform.rotation.x = camera.pitchDeg * 0.0174533f;
-                transform.rotation.y = camera.yawDeg * 0.0174533f;
+                initializeNewCameraTransform(transform);
                 attachCameraPreviewMesh(created);
                 blueprintDoc->SyncNodeFromEntity(created);
                 Scene* previewScene = blueprintDoc ? blueprintDoc->GetScene() : nullptr;
@@ -8639,8 +8645,7 @@ int main(int argc, char *argv[]) {
                 cam.isActive = firstCamera; // First camera is active
                 auto &transform = created.GetComponent<TransformComponent>();
                 transform.position = camera.position; // Place at editor camera position
-                transform.rotation.x = camera.pitchDeg * 0.0174533f;
-                transform.rotation.y = camera.yawDeg * 0.0174533f;
+                initializeNewCameraTransform(transform);
                 attachCameraPreviewMesh(created);
                 if (!g_DetailsLocked) {
                   scene.SetSelectedEntity(created);
