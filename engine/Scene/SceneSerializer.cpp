@@ -663,7 +663,14 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "            \"inner\": " << FormatFloat(light->innerConeAngle) << ",\n";
             oss << "            \"outer\": " << FormatFloat(light->outerConeAngle) << "\n";
             oss << "          },\n";
-            oss << "          \"direction\": " << FormatVec3(light->direction) << "\n";
+            oss << "          \"direction\": " << FormatVec3(light->direction) << ",\n";
+            oss << "          \"shadow\": {\n";
+            oss << "            \"castShadows\": " << (light->castShadows ? "true" : "false") << ",\n";
+            oss << "            \"bias\": " << FormatFloat(light->shadowBias) << ",\n";
+            oss << "            \"strength\": " << FormatFloat(light->shadowStrength) << ",\n";
+            oss << "            \"distance\": " << FormatFloat(light->shadowDistance) << ",\n";
+            oss << "            \"extent\": " << FormatFloat(light->shadowExtent) << "\n";
+            oss << "          }\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1260,6 +1267,10 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                 }
             }
             entity.AddComponent<LightComponent>(light);
+            std::cout << "[SceneSerializer] Loaded Light component on entity: " 
+                << (entity.HasComponent<TagComponent>() ? entity.GetComponent<TagComponent>().tag : "Unknown")
+                << " type=" << static_cast<int>(light.type)
+                << " intensity=" << light.intensity << std::endl;
         }
 
         if (const JsonValue* cameraObj = components->Find("Camera")) {
