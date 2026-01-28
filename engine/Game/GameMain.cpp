@@ -863,6 +863,50 @@ static bool LoadMaterialAsset(const std::string& rawPath, MaterialComponent& out
     if (const JsonValue* useWorldAlignedTexture = root.Find("useWorldAlignedTexture")) if (useWorldAlignedTexture->IsBool()) material.useWorldAlignedTexture = useWorldAlignedTexture->AsBool();
     if (const JsonValue* worldTextureScale = root.Find("worldTextureScale")) if (worldTextureScale->IsNumber()) material.worldTextureScale = static_cast<float>(worldTextureScale->AsNumber());
 
+    // Minimal runtime graph evaluation for WorldAlignedTexture nodes.
+    // Use graph data to fill missing texture or WA settings without overwriting valid root values.
+    const bool needsTextureFromGraph = (!material.useAlbedoTexture || material.albedoTexturePath.empty());
+    const bool needsWorldAlignedFlag = !material.useWorldAlignedTexture;
+    if (needsTextureFromGraph || needsWorldAlignedFlag) {
+        if (const JsonValue* graph = root.Find("graph")) {
+            if (graph->IsObject()) {
+                if (const JsonValue* nodes = graph->Find("nodes")) {
+                    if (nodes->IsArray()) {
+                        for (const auto& nodeValue : nodes->AsArray()) {
+                            if (!nodeValue.IsObject()) {
+                                continue;
+                            }
+                            const JsonValue* typeValue = nodeValue.Find("type");
+                            if (!typeValue || !typeValue->IsString()) {
+                                continue;
+                            }
+                            if (typeValue->AsString() != "WorldAlignedTexture") {
+                                continue;
+                            }
+
+                            const JsonValue* resourceValue = nodeValue.Find("resourcePath");
+                            if (resourceValue && resourceValue->IsString() && !resourceValue->AsString().empty()) {
+                                if (needsTextureFromGraph) {
+                                    material.useAlbedoTexture = true;
+                                    material.albedoTexturePath = resourceValue->AsString();
+                                }
+                                if (needsWorldAlignedFlag) {
+                                    material.useWorldAlignedTexture = true;
+                                }
+                                if (needsWorldAlignedFlag || needsTextureFromGraph) {
+                                    const JsonValue* scaleValue = nodeValue.Find("worldAlignedScale");
+                                    if (scaleValue && scaleValue->IsNumber()) {
+                                        material.worldTextureScale = static_cast<float>(scaleValue->AsNumber());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     outMaterial = std::move(material);
     return true;
 }

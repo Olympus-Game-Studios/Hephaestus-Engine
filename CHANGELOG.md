@@ -49,6 +49,11 @@ in the editor.
        (`MeshRendererComponent::appliedMaterialPaths`), ensuring they are copied
        into the runtime `assets/` folder.
 
+5. **GameMain.cpp - World-Aligned Material Graph Support (Runtime)**:
+    - Runtime material loader now detects `WorldAlignedTexture` nodes in the
+       material graph and enables world-aligned UVs, texture binding, and
+       world texture scale without requiring the editor-side graph evaluator.
+
 3. **Test Scene**:
    - Added `assets/scenes/MultiMaterialRuntimeTest.hpscene` to test:
      - Single material meshes (should render normally)
