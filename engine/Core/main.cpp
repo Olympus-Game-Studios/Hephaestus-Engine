@@ -394,8 +394,15 @@ static PreferredIDE g_PreferredIDE = PreferredIDE::SystemDefault;
 static MaterialEditor::Graph g_MaterialGraph;
 static MaterialEditor::Panel *g_MaterialEditorPanel = nullptr;
 static std::filesystem::path g_ActiveMaterialAssetPath;
-static std::unordered_map<std::string, MaterialComponent> g_MaterialAssetCache;
-static std::unordered_set<std::string> g_MaterialAssetCacheFailed;
+
+struct MaterialCacheEntry {
+  MaterialComponent material;
+  std::filesystem::file_time_type lastWriteTime{};
+};
+
+static std::unordered_map<std::string, MaterialCacheEntry> g_MaterialAssetCache;
+static std::unordered_map<std::string, std::filesystem::file_time_type>
+    g_MaterialAssetCacheFailed;
 
 struct ToolbarActions {
   bool playClicked = false;
@@ -10350,12 +10357,30 @@ int main(int argc, char *argv[]) {
       }
 
       std::string cacheKey = resolvedPath.generic_string();
+
+      std::error_code timeError;
+      auto timestamp = fs::exists(resolvedPath, timeError)
+          ? fs::last_write_time(resolvedPath, timeError)
+          : fs::file_time_type{};
+      if (timeError) {
+        std::cerr << "[Material] Unable to read material timestamp for '"
+                  << cacheKey << "': " << timeError.message() << std::endl;
+        return nullptr;
+      }
+
       auto cached = g_MaterialAssetCache.find(cacheKey);
       if (cached != g_MaterialAssetCache.end()) {
-        return &cached->second;
+        if (cached->second.lastWriteTime == timestamp) {
+          return &cached->second.material;
+        }
       }
-      if (g_MaterialAssetCacheFailed.count(cacheKey) > 0) {
-        return nullptr;
+
+      auto failed = g_MaterialAssetCacheFailed.find(cacheKey);
+      if (failed != g_MaterialAssetCacheFailed.end()) {
+        if (failed->second == timestamp) {
+          return nullptr;
+        }
+        g_MaterialAssetCacheFailed.erase(failed);
       }
 
       MaterialComponent loadedMaterial;
@@ -10367,7 +10392,7 @@ int main(int argc, char *argv[]) {
                                                   loadError)) {
         std::cerr << "[Material] Failed to load material '" << cacheKey
                   << "': " << loadError << std::endl;
-        g_MaterialAssetCacheFailed.insert(cacheKey);
+        g_MaterialAssetCacheFailed[cacheKey] = timestamp;
         return nullptr;
       }
 
@@ -10377,8 +10402,17 @@ int main(int argc, char *argv[]) {
                   << "': " << evalError << std::endl;
       }
 
-      auto insertResult = g_MaterialAssetCache.emplace(cacheKey, loadedMaterial);
-      return &insertResult.first->second;
+      if (cached != g_MaterialAssetCache.end()) {
+        cached->second.material = loadedMaterial;
+        cached->second.lastWriteTime = timestamp;
+        return &cached->second.material;
+      }
+
+      MaterialCacheEntry entry;
+      entry.material = loadedMaterial;
+      entry.lastWriteTime = timestamp;
+      auto insertResult = g_MaterialAssetCache.emplace(cacheKey, std::move(entry));
+      return &insertResult.first->second.material;
     };
 
     auto buildMaterialUBO = [&](const MaterialComponent *material,
