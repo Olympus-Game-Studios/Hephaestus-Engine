@@ -98,6 +98,11 @@ add_subdirectory(extern/JoltPhysics/Build)
 # ─────────────────────────────────────────────────────────────────────────────
 set(ENGINE_CORE_SOURCES
     engine/Assets/ModelImporter.cpp
+    engine/Assets/AssetDatabase.cpp
+    engine/Assets/AssetImporters.cpp
+    engine/Assets/DerivedDataCache.cpp
+    engine/Assets/FileWatcher.cpp
+    engine/Assets/ReimportManager.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
     engine/Gfx/VulkanPipeline.cpp
@@ -147,6 +152,11 @@ if(HEPHAESTUS_BUILD_EDITOR)
 add_executable(HephaestusEngine
     engine/Core/main.cpp
     engine/Assets/ModelImporter.cpp
+    engine/Assets/AssetDatabase.cpp
+    engine/Assets/AssetImporters.cpp
+    engine/Assets/DerivedDataCache.cpp
+    engine/Assets/FileWatcher.cpp
+    engine/Assets/ReimportManager.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
     engine/Gfx/VulkanPipeline.cpp

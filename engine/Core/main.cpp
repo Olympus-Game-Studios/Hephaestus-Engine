@@ -39,6 +39,10 @@
 
 #include "../Assets/MeshAsset.h"
 #include "../Assets/ModelImporter.h"
+#include "../Assets/AssetDatabase.h"
+#include "../Assets/AssetImporters.h"
+#include "../Assets/DerivedDataCache.h"
+#include "../Assets/ReimportManager.h"
 #include "../Gfx/VulkanBuffer.h"
 #include "../Gfx/VulkanDevice.h"
 #include "../Gfx/VulkanGizmo.h"
@@ -156,10 +160,14 @@ static std::string g_SelectedScriptAssetPath;
 static bool g_SelectedScriptAssetValid = false;
 static std::string g_ScriptAttachmentMessage;
 static float g_ScriptAttachmentMessageTimer = 0.0f;
+static std::string g_AssetBrowserStatus;
 static HephaestusEngine::ProjectManager g_ProjectManager;
 static LuaScriptEngine *g_LuaScriptEnginePtr =
     nullptr; // Pointer to Lua engine for callbacks
 static Physics::JoltPhysicsSystem *g_JoltPhysicsSystemPtr = nullptr; // Pointer to physics system for project root updates
+static std::unique_ptr<AssetDatabase> g_AssetDatabase;
+static std::unique_ptr<DerivedDataCache> g_DerivedDataCache;
+static std::unique_ptr<ReimportManager> g_ReimportManager;
 
 // Runtime mode flags
 static bool g_RuntimeMode =
@@ -578,6 +586,14 @@ static ToolbarActions DrawEditorToolbar(bool isPlaying, bool isPaused,
     if (ImGui::BeginPopup("EditorToolbarFileMenu")) {
       if (ImGui::MenuItem("Settings...")) {
         openSettingsPopup = true;
+        ImGui::CloseCurrentPopup();
+      }
+      if (ImGui::MenuItem("Reimport All Changed")) {
+        if (g_ReimportManager) {
+          ReimportResult reimportResult = g_ReimportManager->ReimportAllChanged();
+          g_AssetBrowserStatus = reimportResult.message;
+          std::cout << g_AssetBrowserStatus << std::endl;
+        }
         ImGui::CloseCurrentPopup();
       }
       ImGui::EndPopup();
@@ -3906,6 +3922,9 @@ static void SetActiveProjectRoot(const std::filesystem::path &projectPath) {
   if (g_JoltPhysicsSystemPtr) {
     g_JoltPhysicsSystemPtr->SetProjectRoot(g_ActiveProjectRoot);
   }
+  if (g_ReimportManager && g_DerivedDataCache) {
+    g_ReimportManager->SetProjectRoot(g_ActiveProjectRoot);
+  }
 }
 
 static std::filesystem::path ResolveActiveProjectRoot() {
@@ -5374,6 +5393,24 @@ end
                               ImGuiTableFlags_NoBordersInBody)) {
       int cellIndex = 0;
 
+      auto canReimportPath = [](const std::filesystem::path &path) -> bool {
+        if (!path.has_extension()) {
+          return false;
+        }
+        std::string ext = ToLowerCopy(path.extension().string());
+        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" ||
+            ext == ".exr") {
+          return true;
+        }
+        if (ext == ".fbx" || ext == ".gltf" || ext == ".glb" || ext == ".obj") {
+          return true;
+        }
+        if (ext == ".wav" || ext == ".ogg") {
+          return true;
+        }
+        return false;
+      };
+
       auto drawEntry = [&](const BrowserEntry &entry) {
         bool isSelected = !selectedPath.empty() && selectedPath == entry.path;
         if (cellIndex % columns == 0) {
@@ -5484,6 +5521,18 @@ end
               triggerDeleteConfirmPopup(entry.path, true);
             }
           } else {
+            bool canReimport = canReimportPath(entry.path);
+            if (canReimport && ImGui::MenuItem("Reimport")) {
+              if (g_ReimportManager) {
+                ReimportResult result =
+                    g_ReimportManager->RequestReimportByPath(entry.path,
+                                                            ReimportPolicy::Manual);
+                statusMessage = result.message;
+              }
+            }
+            if (canReimport) {
+              ImGui::Separator();
+            }
             if (ImGui::MenuItem("Delete File")) {
               triggerDeleteConfirmPopup(entry.path, false);
             }
@@ -5540,6 +5589,14 @@ end
       } else {
         statusMessage = "Supported formats: .obj, .fbx (ASCII)";
       }
+    }
+  }
+
+  ImGui::SameLine();
+  if (ImGui::Button("Reimport All Changed")) {
+    if (g_ReimportManager) {
+      ReimportResult reimportResult = g_ReimportManager->ReimportAllChanged();
+      statusMessage = reimportResult.message;
     }
   }
 
@@ -6042,6 +6099,9 @@ int main(int argc, char *argv[]) {
     std::cout << "[Runtime] Project root: " << executableDir << std::endl;
   }
 
+  std::string &assetBrowserStatus = g_AssetBrowserStatus;
+
+
   // In runtime mode, auto-discover scene if not specified
   if (g_RuntimeMode && g_RuntimeScenePath.empty()) {
     namespace fs = std::filesystem;
@@ -6190,6 +6250,16 @@ int main(int argc, char *argv[]) {
 
   LoadEditorSettings();
 
+  g_AssetDatabase = std::make_unique<AssetDatabase>();
+  g_DerivedDataCache = std::make_unique<DerivedDataCache>();
+  g_ReimportManager = std::make_unique<ReimportManager>(*g_AssetDatabase, *g_DerivedDataCache);
+  g_ReimportManager->RegisterImporter(std::make_unique<TextureImporter>());
+  g_ReimportManager->RegisterImporter(std::make_unique<StaticMeshImporter>());
+  g_ReimportManager->RegisterImporter(std::make_unique<AudioImporter>());
+  if (!ResolveActiveProjectRoot().empty()) {
+    g_ReimportManager->SetProjectRoot(ResolveActiveProjectRoot());
+  }
+
   std::vector<MeshGPU> meshLibrary;
   meshLibrary.reserve(32);
   std::unordered_map<std::string, size_t> meshLibraryLookup;
@@ -6323,9 +6393,69 @@ int main(int argc, char *argv[]) {
         meshLibraryLookup[absoluteKey] = handle;
       }
     }
+
+    if (imported && g_ReimportManager) {
+      std::string key = sourcePath.generic_string();
+      if (key.rfind("builtin://", 0) != 0) {
+        g_ReimportManager->RegisterSourceIfMissing(sourcePath, AssetType::StaticMesh);
+      }
+    }
     std::cout << "[uploadMesh] Mesh '" << name << "' uploaded to handle "
               << handle << std::endl;
     return handle;
+  };
+
+  auto buildMeshGPU = [&](const std::string &name, const MeshData &data,
+                          const std::filesystem::path &sourcePath,
+                          bool imported) -> MeshGPU {
+    if (data.vertices.empty() || data.indices.empty()) {
+      throw std::runtime_error("Mesh has no geometry");
+    }
+
+    MeshGPU mesh{};
+    mesh.name = name;
+    mesh.sourcePath = sourcePath;
+    mesh.sourceKey = makeMeshSourceKey(sourcePath);
+    mesh.vertexCount = static_cast<uint32_t>(data.vertices.size());
+    mesh.indexCount = static_cast<uint32_t>(data.indices.size());
+    mesh.submeshes = data.submeshes;
+    mesh.bounds = data.bounds;
+    mesh.imported = imported;
+
+    VkDeviceSize vertexBufferSize = sizeof(Vertex) * data.vertices.size();
+    mesh.vertexBuffer.Create(vkdev.allocator, vertexBufferSize,
+                             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                             VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+    void *mapped = nullptr;
+    VkResult mapResult =
+        vmaMapMemory(vkdev.allocator, mesh.vertexBuffer.allocation, &mapped);
+    if (mapResult != VK_SUCCESS || mapped == nullptr) {
+      throw std::runtime_error("vmaMapMemory failed for vertex buffer");
+    }
+    std::memcpy(mapped, data.vertices.data(),
+                static_cast<size_t>(vertexBufferSize));
+    vmaFlushAllocation(vkdev.allocator, mesh.vertexBuffer.allocation, 0,
+                       VK_WHOLE_SIZE);
+    vmaUnmapMemory(vkdev.allocator, mesh.vertexBuffer.allocation);
+
+    VkDeviceSize indexBufferSize = sizeof(uint32_t) * data.indices.size();
+    mesh.indexBuffer.Create(vkdev.allocator, indexBufferSize,
+                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                            VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+    mapResult =
+        vmaMapMemory(vkdev.allocator, mesh.indexBuffer.allocation, &mapped);
+    if (mapResult != VK_SUCCESS || mapped == nullptr) {
+      throw std::runtime_error("vmaMapMemory failed for index buffer");
+    }
+    std::memcpy(mapped, data.indices.data(),
+                static_cast<size_t>(indexBufferSize));
+    vmaFlushAllocation(vkdev.allocator, mesh.indexBuffer.allocation, 0,
+                       VK_WHOLE_SIZE);
+    vmaUnmapMemory(vkdev.allocator, mesh.indexBuffer.allocation);
+
+    return mesh;
   };
 
   // ── Vertex Data ───────────────────────────────────
@@ -7039,8 +7169,6 @@ int main(int argc, char *argv[]) {
     auto &tag = entity.GetComponent<TagComponent>();
     std::cout << "  - " << tag.tag << std::endl;
   }
-
-  static std::string assetBrowserStatus;
 
   auto makeUniqueEntityName = [&](const std::string &baseName) {
     if (!scene.FindEntityByName(baseName)) {
@@ -7997,7 +8125,83 @@ int main(int argc, char *argv[]) {
     g_MaterialTextureLookup.emplace(key, slotIndex);
     updateTextureSlotInDescriptors(slotIndex);
 
+    if (g_ReimportManager) {
+      g_ReimportManager->RegisterSourceIfMissing(resolvedPath, AssetType::Texture);
+    }
+
     return slotIndex;
+  };
+
+  auto reloadMaterialTextureSlot = [&](const std::filesystem::path &sourcePath) {
+    if (sourcePath.empty()) {
+      return false;
+    }
+
+    namespace fs = std::filesystem;
+    fs::path normalized = sourcePath.lexically_normal();
+    std::vector<std::string> keys;
+    keys.push_back(normalized.generic_string());
+
+    fs::path projectRoot = ResolveActiveProjectRoot();
+    if (!projectRoot.empty()) {
+      std::error_code relErr;
+      fs::path rel = fs::relative(normalized, projectRoot, relErr);
+      if (!relErr && !rel.empty() && rel.generic_string().find("..") == std::string::npos) {
+        keys.push_back(rel.generic_string());
+      }
+      fs::path assetsRoot = ResolveActiveAssetsRoot();
+      if (!assetsRoot.empty()) {
+        fs::path assetsRel = fs::relative(normalized, assetsRoot, relErr);
+        if (!relErr && !assetsRel.empty() && assetsRel.generic_string().find("..") == std::string::npos) {
+          keys.push_back(assetsRel.generic_string());
+        }
+      }
+    }
+
+    for (const auto &key : keys) {
+      auto it = g_MaterialTextureLookup.find(key);
+      if (it == g_MaterialTextureLookup.end()) {
+        continue;
+      }
+
+      uint32_t slotIndex = it->second;
+      if (slotIndex >= g_MaterialTextureSlots.size()) {
+        continue;
+      }
+
+      auto &slot = g_MaterialTextureSlots[slotIndex];
+      slot.texture.Destroy(vkdev.allocator, vkdev.device);
+
+      std::string ext = ToLowerCopy(normalized.extension().string());
+      bool loaded = false;
+      if (ext == ".exr" || ext == ".hdr") {
+        loaded = slot.texture.LoadHDRFromFile(vkdev.allocator, vkdev.device,
+                                              vkdev.physicalDevice,
+                                              vkdev.commandPool,
+                                              vkdev.graphicsQueue,
+                                              normalized.string());
+      } else {
+        loaded = slot.texture.LoadFromFile(vkdev.allocator, vkdev.device,
+                                           vkdev.physicalDevice,
+                                           vkdev.commandPool,
+                                           vkdev.graphicsQueue,
+                                           normalized.string());
+      }
+
+      if (!loaded) {
+        std::cerr << "Failed to reload texture: " << normalized << std::endl;
+        return false;
+      }
+
+      slot.descriptor.sampler = slot.texture.sampler;
+      slot.descriptor.imageView = slot.texture.imageView;
+      slot.descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      slot.valid = true;
+      updateTextureSlotInDescriptors(slotIndex);
+      return true;
+    }
+
+    return false;
   };
 
   // ── Billboard Lambda Definitions (after uniformBuffers) ───────────────
@@ -9215,6 +9419,158 @@ int main(int argc, char *argv[]) {
 
         AssetBrowserResult browserResult =
             DrawAssetBrowserPanel(assetBrowserStatus);
+
+        if (g_ReimportManager) {
+          auto completed = g_ReimportManager->DrainCompleted();
+          for (const auto &entry : completed) {
+            if (!entry.result.success) {
+              assetBrowserStatus =
+                  "Reimport failed: " + entry.result.message;
+              std::cerr << assetBrowserStatus << std::endl;
+              continue;
+            }
+
+            std::filesystem::path sourcePath = entry.sourcePath;
+            if (!sourcePath.empty() && sourcePath.is_relative()) {
+              std::filesystem::path projectRoot = ResolveActiveProjectRoot();
+              if (!projectRoot.empty()) {
+                sourcePath = (projectRoot / sourcePath).lexically_normal();
+              }
+            }
+
+            if (entry.assetType == AssetType::StaticMesh && entry.meshData) {
+              std::string lookupKey = makeMeshSourceKey(sourcePath);
+              auto lookupIt = meshLibraryLookup.find(lookupKey);
+              if (lookupIt == meshLibraryLookup.end()) {
+                std::string absKey = sourcePath.lexically_normal().generic_string();
+                lookupIt = meshLibraryLookup.find(absKey);
+              }
+
+              if (lookupIt == meshLibraryLookup.end()) {
+                assetBrowserStatus = "Reimport completed but mesh not loaded: " + sourcePath.string();
+                std::cerr << assetBrowserStatus << std::endl;
+                continue;
+              }
+
+              size_t handle = lookupIt->second;
+              MeshGPU oldMesh = std::move(meshLibrary[handle]);
+
+              try {
+                std::string meshName = oldMesh.name.empty() ? sourcePath.stem().string() : oldMesh.name;
+                MeshGPU newMesh = buildMeshGPU(meshName, *entry.meshData, sourcePath, true);
+
+                std::unordered_map<std::string, size_t> oldSlotByName;
+                for (size_t i = 0; i < oldMesh.submeshes.size(); ++i) {
+                  if (!oldMesh.submeshes[i].name.empty()) {
+                    oldSlotByName[oldMesh.submeshes[i].name] = i;
+                  }
+                }
+
+                meshLibrary[handle] = std::move(newMesh);
+                MeshGPU &currentMesh = meshLibrary[handle];
+                if (!currentMesh.sourceKey.empty()) {
+                  meshLibraryLookup[currentMesh.sourceKey] = handle;
+                }
+                if (!sourcePath.empty()) {
+                  std::string absoluteKey = sourcePath.lexically_normal().generic_string();
+                  if (!absoluteKey.empty()) {
+                    meshLibraryLookup[absoluteKey] = handle;
+                  }
+                }
+
+                int newSubmeshCount = currentMesh.submeshes.empty()
+                                          ? 1
+                                          : static_cast<int>(currentMesh.submeshes.size());
+                int oldSubmeshCount = oldMesh.submeshes.empty()
+                                          ? 1
+                                          : static_cast<int>(oldMesh.submeshes.size());
+
+                auto renderView = scene.GetEntitiesWith<MeshRendererComponent>();
+                for (auto entityHandle : renderView) {
+                  Entity entity(entityHandle, &scene);
+                  auto &renderer = entity.GetComponent<MeshRendererComponent>();
+                  bool matches = renderer.meshHandle == handle;
+                  if (!matches && !oldMesh.sourceKey.empty()) {
+                    matches = renderer.meshAssetPath == oldMesh.sourceKey;
+                  }
+                  if (!matches && !sourcePath.empty()) {
+                    matches = renderer.meshAssetPath ==
+                              sourcePath.lexically_normal().generic_string();
+                  }
+                  if (!matches) {
+                    continue;
+                  }
+
+                  std::vector<std::string> newApplied;
+                  std::vector<int> newIndices;
+                  newApplied.resize(static_cast<size_t>(newSubmeshCount));
+                  newIndices.resize(static_cast<size_t>(newSubmeshCount), -1);
+
+                  for (int i = 0; i < newSubmeshCount; ++i) {
+                    size_t oldIndex = static_cast<size_t>(i);
+                    if (!currentMesh.submeshes.empty()) {
+                      const auto &sub = currentMesh.submeshes[static_cast<size_t>(i)];
+                      auto it = oldSlotByName.find(sub.name);
+                      if (it != oldSlotByName.end()) {
+                        oldIndex = it->second;
+                      }
+                    }
+
+                    if (oldIndex < renderer.appliedMaterialPaths.size()) {
+                      newApplied[static_cast<size_t>(i)] =
+                          renderer.appliedMaterialPaths[oldIndex];
+                    }
+                    if (oldIndex < renderer.materialIndices.size()) {
+                      newIndices[static_cast<size_t>(i)] =
+                          renderer.materialIndices[oldIndex];
+                    }
+                  }
+
+                  renderer.appliedMaterialPaths = std::move(newApplied);
+                  renderer.materialIndices = std::move(newIndices);
+                  renderer.submeshCount = newSubmeshCount;
+                  renderer.SetMesh(handle, currentMesh.bounds,
+                                   currentMesh.sourceKey, currentMesh.imported,
+                                   newSubmeshCount);
+
+                  if (oldSubmeshCount != newSubmeshCount) {
+                    std::cout << "[Reimport] Material slots changed: "
+                              << oldSubmeshCount << " -> " << newSubmeshCount
+                              << std::endl;
+                  }
+                }
+
+                oldMesh.Destroy(vkdev.allocator);
+                assetBrowserStatus = "Reimported mesh: " + sourcePath.filename().string();
+                std::cout << assetBrowserStatus << std::endl;
+                if (g_ReimportManager) {
+                  g_ReimportManager->NotifyAssetReimported(entry);
+                }
+              } catch (const std::exception &e) {
+                meshLibrary[handle] = std::move(oldMesh);
+                assetBrowserStatus = std::string("Mesh reimport failed: ") + e.what();
+                std::cerr << assetBrowserStatus << std::endl;
+              }
+            } else if (entry.assetType == AssetType::Texture) {
+              if (reloadMaterialTextureSlot(sourcePath)) {
+                assetBrowserStatus = "Reimported texture: " + sourcePath.filename().string();
+                std::cout << assetBrowserStatus << std::endl;
+                if (g_ReimportManager) {
+                  g_ReimportManager->NotifyAssetReimported(entry);
+                }
+              } else {
+                assetBrowserStatus = "Texture reimport queued (not cached): " + sourcePath.filename().string();
+                std::cout << assetBrowserStatus << std::endl;
+              }
+            } else if (entry.assetType == AssetType::Audio) {
+              assetBrowserStatus = "Reimported audio metadata: " + sourcePath.filename().string();
+              std::cout << assetBrowserStatus << std::endl;
+              if (g_ReimportManager) {
+                g_ReimportManager->NotifyAssetReimported(entry);
+              }
+            }
+          }
+        }
 
 #if HEPHAESTUS_EDITOR_HTML_UI
         if (g_HtmlPendingAssetOpenRequest) {
