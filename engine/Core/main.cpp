@@ -1370,7 +1370,14 @@ static WorldOutlinerActions DrawWorldOutliner(Scene &scene) {
                                         ImGuiSelectableFlags_AllowDoubleClick;
         if (ImGui::Selectable(tag.tag.c_str(), isSelected, selFlags)) {
           if (!g_DetailsLocked) {
-            scene.SetSelectedEntity(entity);
+            const ImGuiIO& io = ImGui::GetIO();
+            if (io.KeyCtrl) {
+              // Ctrl+Click: Toggle selection (add/remove from multi-selection)
+              scene.ToggleSelectedEntity(entity);
+            } else {
+              // Normal click: Single selection
+              scene.SetSelectedEntity(entity);
+            }
           }
         }
 
@@ -4251,6 +4258,11 @@ static bool IsMaterialFile(const std::filesystem::path &path) {
 static bool IsBlueprintFile(const std::filesystem::path &path) {
   std::string ext = ToLowerCopy(path.extension().string());
   return ext == ".hpblueprint";
+}
+
+static bool IsMeshFile(const std::filesystem::path &path) {
+  std::string ext = ToLowerCopy(path.extension().string());
+  return ext == ".fbx" || ext == ".gltf" || ext == ".glb" || ext == ".obj";
 }
 
 static bool IsScriptFile(const std::filesystem::path &path) {
@@ -8706,10 +8718,25 @@ int main(int argc, char *argv[]) {
       }
 
       if (!g_DetailsLocked) {
+        // Check for Ctrl/Cmd modifier for multi-selection
+        const bool ctrlPressed = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+                                 glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS ||
+                                 glfwGetKey(window, GLFW_KEY_LEFT_SUPER) == GLFW_PRESS ||
+                                 glfwGetKey(window, GLFW_KEY_RIGHT_SUPER) == GLFW_PRESS;
+
         if (hitEntity) {
-          viewportScene->SetSelectedEntity(hitEntity);
+          if (ctrlPressed) {
+            // Toggle selection (add/remove from multi-selection)
+            viewportScene->ToggleSelectedEntity(hitEntity);
+          } else {
+            // Single selection (replaces current selection)
+            viewportScene->SetSelectedEntity(hitEntity);
+          }
         } else {
-          viewportScene->ClearSelection();
+          // Clicked on empty space - clear selection only if not using Ctrl
+          if (!ctrlPressed) {
+            viewportScene->ClearSelection();
+          }
         }
       }
     }
@@ -9148,7 +9175,7 @@ int main(int argc, char *argv[]) {
                 }
               }
             }
-          } else {
+          } else if (IsMeshFile(rel)) {
             std::string baseName = rel.stem().string();
             if (baseName.empty()) {
               baseName = "Mesh";
@@ -9212,6 +9239,9 @@ int main(int argc, char *argv[]) {
                 logSuccess("Added mesh actor: " + rel.filename().string());
               }
             }
+          } else {
+            // Not a mesh file - ignore silently or log
+            logFailure("Cannot spawn '" + rel.filename().string() + "' as mesh actor: unsupported file type.");
           }
         }
         DetailsPanelActions detailsActions =
@@ -10158,10 +10188,29 @@ int main(int argc, char *argv[]) {
           if (leftDown) {
             Mat4 oldTransform = transform.GetLocalMatrix();
             Mat4 newTransform = vulkanGizmo.HandleDrag(gizmoRay);
-            bool appliedBlueprintDelta = applyBlueprintInstanceDelta(selectedEntity, newTransform, oldTransform);
-            if (!appliedBlueprintDelta) {
-              transform.SetFromMatrix(newTransform);
+            
+            // Calculate the delta transformation
+            Mat4 deltaTransform = Mat4::Multiply(newTransform, Mat4::Invert(oldTransform));
+            
+            // Apply to all selected entities
+            auto selectedEntities = viewportScene->GetSelectedEntities();
+            for (auto& entity : selectedEntities) {
+              if (!entity || !entity.HasComponent<TransformComponent>()) continue;
+              
+              auto& entityTransform = entity.GetComponent<TransformComponent>();
+              Mat4 entityOldMatrix = entityTransform.GetLocalMatrix();
+              
+              bool appliedBlueprintDelta = applyBlueprintInstanceDelta(entity, 
+                  Mat4::Multiply(deltaTransform, entityOldMatrix), entityOldMatrix);
+              
+              if (!appliedBlueprintDelta) {
+                // Apply the same delta to this entity
+                Mat4 entityNewMatrix = Mat4::Multiply(deltaTransform, entityOldMatrix);
+                entityTransform.SetFromMatrix(entityNewMatrix);
+              }
             }
+            
+            // Update gizmo state with the primary entity's new transform
             Mat4 updatedMatrix = transform.GetLocalMatrix();
             vulkanGizmo.UpdateState(updatedMatrix, ubo.view, ubo.proj,
                                     camera.position, gizmoMode, gizmoSpace);
@@ -10630,6 +10679,48 @@ int main(int argc, char *argv[]) {
     if (viewportEnvironment &&
         viewportEnvironment.HasComponent<EnvironmentComponent>()) {
       auto &env = viewportEnvironment.GetComponent<EnvironmentComponent>();
+      static EnvironmentComponent::BackgroundType lastEnvType = EnvironmentComponent::BackgroundType::SolidColor;
+      static std::string lastHdriPath;
+
+      const bool envTypeChanged = (env.type != lastEnvType);
+      const bool envPathChanged = (env.hdriPath != lastHdriPath);
+      if (env.type == EnvironmentComponent::BackgroundType::HDRI) {
+        if (envTypeChanged || envPathChanged) {
+          if (env.hdriPath.empty()) {
+            skybox.hasHDRI = false;
+          } else {
+            fs::path resolvedPath = fs::path(env.hdriPath);
+            if (resolvedPath.is_relative()) {
+              fs::path assetsRoot = ResolveActiveAssetsRoot();
+              if (!assetsRoot.empty()) {
+                resolvedPath = (assetsRoot / resolvedPath).lexically_normal();
+              } else {
+                resolvedPath = (fs::current_path() / resolvedPath).lexically_normal();
+              }
+            }
+
+            if (fs::exists(resolvedPath)) {
+              if (skybox.LoadHDRI(resolvedPath.string(), vkdev.allocator,
+                                  vkdev.physicalDevice, vkdev.commandPool,
+                                  vkdev.graphicsQueue)) {
+                std::cout << "[Environment] Loaded HDRI: " << resolvedPath.string() << std::endl;
+              } else {
+                std::cerr << "[Environment] Failed to load HDRI: " << resolvedPath.string() << std::endl;
+              }
+            } else {
+              std::cerr << "[Environment] HDRI file not found: " << resolvedPath.string() << std::endl;
+              skybox.hasHDRI = false;
+            }
+          }
+        }
+      } else if (envTypeChanged) {
+        // If switching away from HDRI, ensure skybox is disabled.
+        skybox.hasHDRI = false;
+      }
+
+      lastEnvType = env.type;
+      lastHdriPath = env.hdriPath;
+
       if (env.type == EnvironmentComponent::BackgroundType::SolidColor) {
         clearColor = env.solidColor;
       } else if (env.type == EnvironmentComponent::BackgroundType::HDRI) {
@@ -11109,46 +11200,53 @@ int main(int argc, char *argv[]) {
 
     // ── Render Selection Outline ─────────────────────────────
     // Render after all normal geometry so outline appears on top
-    if (g_ProjectSelected && selectedEntity &&
-        selectedEntity.HasComponent<MeshRendererComponent>() &&
-        selectedEntity.HasComponent<TransformComponent>() &&
-        pipeline.outlinePipeline != VK_NULL_HANDLE) {
+    // Now supports multi-selection - render outline for all selected entities
+    if (g_ProjectSelected && pipeline.outlinePipeline != VK_NULL_HANDLE) {
+      auto selectedEntities = viewportScene->GetSelectedEntities();
+      
+      for (auto& selectedEntity : selectedEntities) {
+        if (!selectedEntity || 
+            !selectedEntity.HasComponent<MeshRendererComponent>() ||
+            !selectedEntity.HasComponent<TransformComponent>()) {
+          continue;
+        }
 
-      auto &transform = selectedEntity.GetComponent<TransformComponent>();
-      auto &renderer = selectedEntity.GetComponent<MeshRendererComponent>();
+        auto &transform = selectedEntity.GetComponent<TransformComponent>();
+        auto &renderer = selectedEntity.GetComponent<MeshRendererComponent>();
 
-      if (renderer.visible && renderer.HasValidMesh() &&
-          !((g_RuntimeMode || g_SimPlaying) && renderer.hideInGame) &&
-          renderer.meshHandle < meshLibrary.size()) {
-        MeshGPU &mesh = meshLibrary[renderer.meshHandle];
+        if (renderer.visible && renderer.HasValidMesh() &&
+            !((g_RuntimeMode || g_SimPlaying) && renderer.hideInGame) &&
+            renderer.meshHandle < meshLibrary.size()) {
+          MeshGPU &mesh = meshLibrary[renderer.meshHandle];
 
-        if (mesh.indexCount > 0 && mesh.vertexBuffer.buffer != VK_NULL_HANDLE &&
-            mesh.indexBuffer.buffer != VK_NULL_HANDLE) {
+          if (mesh.indexCount > 0 && mesh.vertexBuffer.buffer != VK_NULL_HANDLE &&
+              mesh.indexBuffer.buffer != VK_NULL_HANDLE) {
 
-          // Bind outline pipeline
-          vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            pipeline.outlinePipeline);
+            // Bind outline pipeline
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              pipeline.outlinePipeline);
 
-          // Bind vertex and index buffers
-          VkBuffer vb = mesh.vertexBuffer.buffer;
-          VkDeviceSize vbOffset = 0;
-          vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
-          vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0,
-                               VK_INDEX_TYPE_UINT32);
+            // Bind vertex and index buffers
+            VkBuffer vb = mesh.vertexBuffer.buffer;
+            VkDeviceSize vbOffset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
+            vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0,
+                                 VK_INDEX_TYPE_UINT32);
 
-          // Push model matrix
-          Mat4 modelMatrix = transform.GetLocalMatrix();
-          vkCmdPushConstants(cmd, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT,
-                             0, sizeof(Mat4), modelMatrix.m);
+            // Push model matrix
+            Mat4 modelMatrix = transform.GetLocalMatrix();
+            vkCmdPushConstants(cmd, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT,
+                               0, sizeof(Mat4), modelMatrix.m);
 
-          // Bind descriptor set
-          uint32_t dynOffset = 0;
-          vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                  pipeline.layout, 0, 1,
-                                  &descriptorSets[imageIndex], 1, &dynOffset);
+            // Bind descriptor set
+            uint32_t dynOffset = 0;
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipeline.layout, 0, 1,
+                                    &descriptorSets[imageIndex], 1, &dynOffset);
 
-          // Draw the outline
-          vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+            // Draw the outline
+            vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+          }
         }
       }
     }

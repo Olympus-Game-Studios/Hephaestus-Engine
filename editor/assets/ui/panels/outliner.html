@@ -177,6 +177,11 @@
     let lastData = null;
     let lastEnvRootId = 0;
     const expandedState = {};
+    
+    // Track last clicked entity ID for Shift+Click range selection
+    let lastClickedId = null;
+    // Track the flat list of visible entity IDs in render order
+    let visibleEntityOrder = [];
 
     function isExpanded(id) {
       if (expandedState[id] === undefined) {
@@ -189,6 +194,9 @@
       lastData = data;
       const list = document.getElementById('list');
       list.innerHTML = '';
+      
+      // Reset visible entity order for range selection
+      visibleEntityOrder = [];
 
       if (!data || !data.ok) {
         document.getElementById('status').textContent = 'Outliner: ' + (data ? (data.error || 'error') : 'no data');
@@ -269,6 +277,9 @@
         if (!shouldShow(ent)) {
           return 0;
         }
+        
+        // Track this entity in the visible order for range selection
+        visibleEntityOrder.push(ent.id);
 
         const children = displayChildrenById.get(ent.id) || [];
         const hasChildren = children.length > 0;
@@ -414,20 +425,63 @@
             const timeDiff = Date.now() - pointerDownTime;
             if (timeDiff < 300) {
               const ctrlPressed = (ev && ev.ctrlKey) || (ev && ev.metaKey);
-              const payload = {
-                id: ent.id,
-                toggle: ctrlPressed ? 1 : 0,
-                add: 0
-              };
+              const shiftPressed = ev && ev.shiftKey;
               const statusEl = document.getElementById('status');
-              if (ctrlPressed) {
+              
+              if (shiftPressed && lastClickedId !== null) {
+                // Shift+Click: Range selection
+                const startIdx = visibleEntityOrder.indexOf(lastClickedId);
+                const endIdx = visibleEntityOrder.indexOf(ent.id);
+                
+                if (startIdx !== -1 && endIdx !== -1) {
+                  const minIdx = Math.min(startIdx, endIdx);
+                  const maxIdx = Math.max(startIdx, endIdx);
+                  const rangeIds = visibleEntityOrder.slice(minIdx, maxIdx + 1);
+                  
+                  const r = window.hep.callCpp('scene.range_select', {
+                    ids: rangeIds.join(',')
+                  });
+                  
+                  if (!r.ok) {
+                    statusEl.textContent = 'Range select failed: ' + (r.error || 'error');
+                  } else {
+                    statusEl.textContent = 'Range selected ' + rangeIds.length + ' items';
+                    refresh();
+                  }
+                } else {
+                  // Fallback to normal selection if indices not found
+                  const r = window.hep.callCpp('scene.select', { id: ent.id, toggle: 0, add: 0 });
+                  if (!r.ok) {
+                    statusEl.textContent = 'Select failed: ' + (r.error || 'error');
+                  } else {
+                    lastClickedId = ent.id;
+                    refresh();
+                  }
+                }
+              } else if (ctrlPressed) {
+                // Ctrl+Click: Toggle selection
+                const payload = {
+                  id: ent.id,
+                  toggle: 1,
+                  add: 0
+                };
                 statusEl.textContent = 'Multi-select: Ctrl+Click on #' + ent.id;
-              }
-              const r = window.hep.callCpp('scene.select', payload);
-              if (!r.ok) {
-                statusEl.textContent = 'Select failed: ' + (r.error || 'error');
+                const r = window.hep.callCpp('scene.select', payload);
+                if (!r.ok) {
+                  statusEl.textContent = 'Select failed: ' + (r.error || 'error');
+                } else {
+                  lastClickedId = ent.id;
+                  refresh();
+                }
               } else {
-                refresh();
+                // Normal click: Single selection
+                const r = window.hep.callCpp('scene.select', { id: ent.id, toggle: 0, add: 0 });
+                if (!r.ok) {
+                  statusEl.textContent = 'Select failed: ' + (r.error || 'error');
+                } else {
+                  lastClickedId = ent.id;
+                  refresh();
+                }
               }
             }
           }

@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+#### Multi-Selection Support in Outliner (2026-01-29)
+
+**Feature**: Users can now select multiple actors in the World Outliner and viewport using 
+standard multi-selection controls. This enables batch operations on multiple entities.
+
+**Key Features**:
+
+1. **Ctrl+Click (Cmd+Click on macOS)**: Toggle individual selection - add or remove an 
+   entity from the current selection without affecting other selected entities.
+
+2. **Shift+Click**: Range selection in the Outliner - select all entities between the 
+   last clicked entity and the current entity in the visible tree order.
+
+3. **Viewport Multi-Selection**: Ctrl+Click on objects in the 3D viewport to add/remove 
+   them from the selection.
+
+4. **Synchronized Selection**: Selection state is synchronized between the Outliner, 
+   viewport, and Details panel. All selected entities show selection outlines.
+
+5. **Multi-Entity Transform Editing**: When multiple entities are selected, transform 
+   changes in the Details panel (position, rotation, scale) apply to all selected entities.
+
+6. **Gizmo Multi-Transform**: Using the viewport gizmo to move/rotate/scale affects all 
+   selected entities simultaneously, maintaining their relative positions.
+
+**Changes Made**:
+
+1. **HtmlEditorUIHost.cpp**:
+   - Added `scene.range_select` handler for Shift+Click range selection
+   - Handles comma-separated entity IDs for batch selection
+
+2. **outliner.html**:
+   - Added tracking of visible entity order for range selection
+   - Implemented Shift+Click range selection logic
+   - Enhanced Ctrl+Click to properly toggle selection
+   - Updated status bar to show selection feedback
+
+3. **main.cpp**:
+   - Viewport picking now supports Ctrl+Click for multi-selection toggle
+   - Gizmo transformations apply to all selected entities using delta transformation
+   - Selection outline rendering updated to draw outlines for all selected entities
+   - ImGui WorldOutliner updated with Ctrl+Click support
+
+4. **Scene.cpp** (existing infrastructure):
+   - `GetSelectedEntities()` returns all selected entities
+   - `AddSelectedEntity()` adds to multi-selection
+   - `ToggleSelectedEntity()` toggles individual selection
+   - `ClearSelection()` clears all selections
+
+**Backward Compatibility**: Single-selection behavior remains unchanged. Clicking without 
+modifiers still replaces the current selection with the clicked entity.
+
 ### Fixed
 
 #### Multi-Material Mesh Rendering in Game Runtime (2026-01-28)

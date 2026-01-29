@@ -776,6 +776,47 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     return std::string("{\"ok\":true}");
   });
 
+  // Range selection handler for Shift+Click in Outliner
+  bridge_.RegisterHandler("scene.range_select", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    if (detailsLocked_ && *detailsLocked_) {
+      return std::string("{\"ok\":false,\"error\":\"details_locked\"}");
+    }
+
+    // Parse the comma-separated list of IDs for range selection
+    auto idsStrOpt = EditorMessageBridge::ParseStringField(payload, "ids");
+    if (!idsStrOpt || idsStrOpt->empty()) {
+      return std::string("{\"ok\":false,\"error\":\"missing_ids\"}");
+    }
+
+    // Clear current selection and select all entities in the range
+    scene_->ClearSelection();
+
+    std::istringstream ss(*idsStrOpt);
+    std::string token;
+    int selected = 0;
+    Entity lastValidEntity;
+    while (std::getline(ss, token, ',')) {
+      if (token.empty()) continue;
+      uint32_t id = static_cast<uint32_t>(std::strtoul(token.c_str(), nullptr, 10));
+      if (!id) continue;
+      entt::entity handle = static_cast<entt::entity>(id);
+      if (!scene_->GetRegistry().valid(handle)) continue;
+
+      Entity e(handle, scene_);
+      scene_->AddSelectedEntity(e);
+      lastValidEntity = e;
+      selected++;
+    }
+
+    std::ostringstream json;
+    json << "{\"ok\":true,\"selected\":" << selected << "}";
+    return json.str();
+  });
+
   bridge_.RegisterHandler("scene.create_folder", [this](const std::string& payload) -> std::string {
     if (!scene_) {
       return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
@@ -2112,6 +2153,68 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
       if (!first) json << ",";
       first = false;
       json << "{\"name\":\"" << JsonEscape(m.name) << "\",\"rel\":\"" << JsonEscape(m.rel) << "\"}";
+    }
+    json << "]}";
+    return json.str();
+  });
+
+  bridge_.RegisterHandler("assets.list_hdri", [this](const std::string& payload) -> std::string {
+    (void)payload;
+    if (assetsRoot_.empty()) {
+      return std::string("{\"ok\":false,\"error\":\"no_assets_root\"}");
+    }
+
+    std::filesystem::path root = assetsRoot_;
+    std::error_code ec;
+
+    auto isHdriExt = [](const std::string& ext) {
+      std::string e;
+      e.reserve(ext.size());
+      for (char c : ext) e.push_back(static_cast<char>(::tolower(static_cast<unsigned char>(c))));
+      return (e == ".hdr" || e == ".exr");
+    };
+
+    struct HdriEntry { std::string name; std::string rel; };
+    std::vector<HdriEntry> out;
+    out.reserve(128);
+
+    const size_t kMax = 400;
+    for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator(); ++it) {
+      const auto& p = it->path();
+      if (it->is_directory(ec) && !ec) {
+        continue;
+      }
+      if (!it->is_regular_file(ec) || ec) {
+        ec.clear();
+        continue;
+      }
+
+      if (!isHdriExt(p.extension().string())) {
+        continue;
+      }
+
+      std::error_code relEc;
+      auto rp = std::filesystem::relative(p, assetsRoot_, relEc);
+      std::string relStr = relEc ? p.filename().string() : rp.generic_string();
+      out.push_back(HdriEntry{ p.stem().string(), relStr });
+      if (out.size() >= kMax) {
+        break;
+      }
+    }
+
+    std::sort(out.begin(), out.end(), [](const HdriEntry& a, const HdriEntry& b) {
+      if (a.name == b.name) return a.rel < b.rel;
+      return a.name < b.name;
+    });
+
+    std::ostringstream json;
+    json << "{\"ok\":true,\"hdris\":[";
+    bool first = true;
+    for (const auto& h : out) {
+      if (!first) json << ",";
+      first = false;
+      json << "{\"name\":\"" << JsonEscape(h.name) << "\",\"rel\":\"" << JsonEscape(h.rel) << "\"}";
     }
     json << "]}";
     return json.str();

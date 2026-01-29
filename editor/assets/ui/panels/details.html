@@ -169,7 +169,7 @@
           <div class="ui-prop" id="envHdriProp" style="display:none;">
             <div class="ui-prop-label">HDRI Path</div>
             <div class="ui-prop-control">
-              <input class="ui-input" style="width:100%" id="envHdriPath" placeholder="path/to/hdri.exr" />
+              <select class="ui-input" style="width:100%" id="envHdriPath"></select>
             </div>
           </div>
           <div class="ui-prop" id="envHdriIntensityProp" style="display:none;">
@@ -547,6 +547,7 @@
     let selectedIds = [];
     let selectionCount = 0;
     let materialCatalog = [];
+    let hdriCatalog = [];
     let currentMeshMaterialIndices = [];
     let currentMeshAppliedMaterialPaths = [];
     let currentSubmeshCount = 1; // Number of material slots from mesh submeshes
@@ -591,6 +592,53 @@
           rel: String(e.rel || e.name || '')
         }))
         .sort((a, b) => (a.name === b.name ? a.rel.localeCompare(b.rel) : a.name.localeCompare(b.name)));
+    }
+
+    function loadHdriCatalog() {
+      const res = window.hep.callCpp('assets.list_hdri', {});
+      if (!res || !res.ok || !Array.isArray(res.hdris)) {
+        hdriCatalog = [];
+        renderHdriOptions();
+        return;
+      }
+      hdriCatalog = res.hdris
+        .map(e => ({
+          name: String(e.name || e.rel || ''),
+          rel: String(e.rel || e.name || '')
+        }))
+        .sort((a, b) => (a.name === b.name ? a.rel.localeCompare(b.rel) : a.name.localeCompare(b.name)));
+      renderHdriOptions();
+    }
+
+    function renderHdriOptions(forceValue) {
+      const select = document.getElementById('envHdriPath');
+      if (!select) return;
+
+      const currentValue = (forceValue !== undefined) ? String(forceValue || '') : String(select.value || '');
+      select.innerHTML = '';
+
+      const noneOpt = document.createElement('option');
+      noneOpt.value = '';
+      noneOpt.textContent = '(None)';
+      select.appendChild(noneOpt);
+
+      hdriCatalog.forEach((h) => {
+        const opt = document.createElement('option');
+        opt.value = h.rel;
+        opt.textContent = h.name || h.rel;
+        opt.title = h.rel;
+        select.appendChild(opt);
+      });
+
+      if (currentValue && !hdriCatalog.some(h => h.rel === currentValue)) {
+        const opt = document.createElement('option');
+        opt.value = currentValue;
+        opt.textContent = 'Custom: ' + currentValue;
+        opt.title = currentValue;
+        select.appendChild(opt);
+      }
+
+      select.value = currentValue;
     }
 
     function renderMaterialSlots() {
@@ -814,6 +862,7 @@
         loadLightProperties();
       } else if (currentEntityType === 'ENV') {
         sections.push('envSection');
+        loadHdriCatalog();
         loadEnvironmentProperties();
       } else if (currentEntityType === 'MESH') {
         sections.push('meshSection');
@@ -1224,6 +1273,7 @@
       setField('envG', env.g);
       setField('envB', env.b);
       setField('envHdriPath', env.hdriPath);
+      renderHdriOptions(env.hdriPath);
       setField('envHdriIntensity', env.hdriIntensity);
       setField('envEnableRenderDist', env.enableRenderDistance);
       setField('envRenderDist', env.renderDistance);
@@ -1490,12 +1540,27 @@
         updateEnvDisplay();
         pushEnvironmentProperties();
       });
-      ['envR', 'envG', 'envB', 'envHdriPath', 'envHdriIntensity', 
+      ['envR', 'envG', 'envB', 'envHdriIntensity', 
        'envEnableRenderDist', 'envRenderDist', 'envInfiniteRenderDist'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener('change', pushEnvironmentProperties);
       });
+
+      const envHdriPathEl = document.getElementById('envHdriPath');
+      if (envHdriPathEl) {
+        envHdriPathEl.addEventListener('change', () => {
+          const val = String(envHdriPathEl.value || '');
+          if (val) {
+            const typeEl = document.getElementById('envType');
+            if (typeEl && String(typeEl.value) !== '1') {
+              typeEl.value = '1';
+              updateEnvDisplay();
+            }
+          }
+          pushEnvironmentProperties();
+        });
+      }
 
       // Mesh inputs
       ['meshVisible', 'meshHideInGame', 'meshBackfaceCulling'].forEach(id => {
