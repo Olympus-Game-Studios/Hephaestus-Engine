@@ -94,6 +94,10 @@
 #include "../UI/HtmlUI/HtmlEditorUIHost.h"
 #endif
 
+#if HEPHAESTUS_EDITOR_QT_UI
+#include "../UI/QtEditor/EditorQtApp.h"
+#endif
+
 // Namespace alias for convenience
 namespace fs = std::filesystem;
 
@@ -6072,15 +6076,20 @@ int main(int argc, char *argv[]) {
   const std::filesystem::path executableDir = GetExecutableDirectory();
   bool autoRuntime = DetectRuntimePackage(executableDir);
   bool runtimeRequested = false;
-  bool editorRequested = false;
+  bool legacyEditorRequested = false;
+  bool qtEditorRequested = false;
 
   // Parse command-line arguments
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--runtime" || arg == "-r") {
       runtimeRequested = true;
-    } else if (arg == "--editor") {
-      editorRequested = true;
+    } else if (arg == "--editor" || arg == "--qt") {
+      // Qt editor mode (new UI-only Qt path) - explicit request
+      qtEditorRequested = true;
+    } else if (arg == "--editor-legacy" || arg == "--legacy" || arg == "--imgui") {
+      // Legacy ImGui editor mode (existing path)
+      legacyEditorRequested = true;
     } else if (arg == "--scene" || arg == "-s") {
       if (i + 1 < argc) {
         g_RuntimeScenePath = argv[++i];
@@ -6090,20 +6099,51 @@ int main(int argc, char *argv[]) {
       std::cout << "Usage: HephaestusEngine [options]\n";
       std::cout << "Options:\n";
       std::cout << "  --runtime, -r          Run in runtime mode (no editor)\n";
-      std::cout << "  --editor               Force editor mode even in runtime "
-                   "packages\n";
+      std::cout << "  --legacy, --imgui      Force legacy ImGui editor mode\n";
+      std::cout << "  --editor, --qt         Force Qt editor mode (default)\n";
       std::cout << "  --scene <path>, -s     Load specific scene file\n";
       std::cout << "  --help, -h             Show this help message\n";
       return 0;
     }
   }
 
-  if (editorRequested) {
+  // ─────────────────────────────────────────────────────────────────────────
+  // Qt Editor Mode: Default when not in runtime and not legacy requested
+  // ─────────────────────────────────────────────────────────────────────────
+#if HEPHAESTUS_EDITOR_QT_UI
+  if (!runtimeRequested && !legacyEditorRequested && !autoRuntime) {
+    // Default to Qt editor when no specific mode requested
+    std::cout << "Starting Hephaestus Qt Editor (use --legacy for ImGui editor)\n";
+    return RunQtEditor(argc, argv);
+  }
+  if (qtEditorRequested) {
+    // Explicit --editor flag
+    return RunQtEditor(argc, argv);
+  }
+#else
+  if (qtEditorRequested) {
+    std::cerr << "[Error] Qt editor mode requested but HEPHAESTUS_EDITOR_QT_UI is not enabled.\n";
+    std::cerr << "        Build with Qt6 support to use --editor flag.\n";
+    std::cerr << "        Falling back to legacy editor mode.\n";
+  }
+#endif
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Runtime / Legacy Editor Mode Selection
+  // ─────────────────────────────────────────────────────────────────────────
+  if (legacyEditorRequested) {
     g_RuntimeMode = false;
+    std::cout << "Starting Hephaestus in Legacy Editor Mode (ImGui)" << std::endl;
   } else if (runtimeRequested) {
     g_RuntimeMode = true;
+    std::cout << "Starting Hephaestus in Runtime Mode" << std::endl;
   } else {
     g_RuntimeMode = autoRuntime;
+    if (g_RuntimeMode) {
+      std::cout << "Starting Hephaestus in Runtime Mode" << std::endl;
+    } else {
+      std::cout << "Starting Hephaestus in Legacy Editor Mode (ImGui)" << std::endl;
+    }
   }
 
   if (g_RuntimeMode) {

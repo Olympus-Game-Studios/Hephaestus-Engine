@@ -84,6 +84,53 @@ option(HEPHAESTUS_BUILD_EDITOR "Build the editor (HephaestusEngine.exe)" ON)
 option(HEPHAESTUS_BUILD_GAME "Build the standalone game runtime (HephaestusGame.exe)" ON)
 option(HEPHAESTUS_GAME_SCRIPTING "Enable Lua scripting in game runtime" ON)
 option(HEPHAESTUS_GAME_USE_ULTRALIGHT "Enable Ultralight UI in game runtime (off by default)" OFF)
+option(HEPHAESTUS_USE_QT "Enable Qt-based editor UI" ON)
+
+# Qt (Windows) - use C:\Qt as a hint for discovery
+set(HEPHAESTUS_QT_ROOT "C:/Qt" CACHE PATH "Root path to Qt installation")
+if(HEPHAESTUS_USE_QT)
+    # Try to auto-locate Qt6Config.cmake under common Qt layout
+    # IMPORTANT: Must use MSVC builds when compiling with Visual Studio
+    if(EXISTS "${HEPHAESTUS_QT_ROOT}" AND NOT Qt6_DIR)
+        # First try to find MSVC builds specifically
+        file(GLOB _qt6_msvc_candidates
+            "${HEPHAESTUS_QT_ROOT}/6.*/msvc*/lib/cmake/Qt6/Qt6Config.cmake"
+        )
+        list(LENGTH _qt6_msvc_candidates _qt6_msvc_count)
+        if(_qt6_msvc_count GREATER 0)
+            # Sort to get the latest version and prefer newer MSVC
+            list(SORT _qt6_msvc_candidates)
+            list(GET _qt6_msvc_candidates -1 _qt6_config)
+            get_filename_component(Qt6_DIR "${_qt6_config}" DIRECTORY)
+            message(STATUS "Auto-detected Qt6 (MSVC): ${Qt6_DIR}")
+        else()
+            # Check if only MinGW builds exist (incompatible with MSVC)
+            file(GLOB _qt6_mingw_candidates
+                "${HEPHAESTUS_QT_ROOT}/6.*/mingw*/lib/cmake/Qt6/Qt6Config.cmake"
+            )
+            list(LENGTH _qt6_mingw_candidates _qt6_mingw_count)
+            if(_qt6_mingw_count GREATER 0 AND MSVC)
+                message(WARNING "Found Qt6 MinGW builds but building with MSVC. These are incompatible!")
+                message(WARNING "Please install Qt6 MSVC 64-bit using Qt Online Installer.")
+                message(WARNING "Qt editor UI will be disabled for this build.")
+                set(HEPHAESTUS_USE_QT OFF)
+            endif()
+        endif()
+    endif()
+
+    if(HEPHAESTUS_USE_QT AND Qt6_DIR)
+        set(Qt6_DIR "${Qt6_DIR}" CACHE PATH "Path to Qt6Config.cmake directory" FORCE)
+    endif()
+
+    if(HEPHAESTUS_USE_QT)
+        find_package(Qt6 COMPONENTS Widgets QUIET)
+    endif()
+
+    # MSVC requires /Zc:__cplusplus for Qt to detect C++ standard correctly
+    if(Qt6_FOUND AND MSVC)
+        add_compile_options(/Zc:__cplusplus)
+    endif()
+endif()
 
 # Jolt Physics Engine
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build Jolt as static library" FORCE)
@@ -103,11 +150,14 @@ set(ENGINE_CORE_SOURCES
     engine/Assets/DerivedDataCache.cpp
     engine/Assets/FileWatcher.cpp
     engine/Assets/ReimportManager.cpp
+    engine/Core/EditorContext.cpp
+    engine/Core/ProjectContext.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
     engine/Gfx/VulkanPipeline.cpp
     engine/Gfx/VulkanTexture.cpp
     engine/Gfx/VulkanSkybox.cpp
+    engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/JoltPhysicsEngine.cpp
     engine/Physics/JoltPhysicsSystem.cpp
@@ -151,6 +201,8 @@ set(GAME_RUNTIME_SOURCES
 if(HEPHAESTUS_BUILD_EDITOR)
 add_executable(HephaestusEngine
     engine/Core/main.cpp
+    engine/Core/EditorContext.cpp
+    engine/Core/ProjectContext.cpp
     engine/Assets/ModelImporter.cpp
     engine/Assets/AssetDatabase.cpp
     engine/Assets/AssetImporters.cpp
@@ -163,6 +215,7 @@ add_executable(HephaestusEngine
     engine/Gfx/VulkanTexture.cpp
     engine/Gfx/VulkanGizmo.cpp
     engine/Gfx/VulkanSkybox.cpp
+    engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/JoltPhysicsEngine.cpp
     engine/Physics/JoltPhysicsSystem.cpp
@@ -312,6 +365,70 @@ if(HEPHAESTUS_USE_ULTRALIGHT)
     endif()
 else()
     target_compile_definitions(HephaestusEngine PRIVATE HEPHAESTUS_EDITOR_HTML_UI=0)
+endif()
+
+# Qt editor UI (optional)
+if(HEPHAESTUS_USE_QT)
+    if(Qt6_FOUND)
+        # Enable Qt auto-processing for moc, uic, rcc
+        set_target_properties(HephaestusEngine PROPERTIES
+            AUTOMOC ON
+            AUTOUIC ON
+            AUTORCC ON
+        )
+
+        # Add Qt editor source files
+        target_sources(HephaestusEngine PRIVATE
+            engine/UI/QtEditor/EditorQtApp.cpp
+            engine/UI/QtEditor/EditorQtApp.h
+            engine/UI/QtEditor/EditorMainWindow.cpp
+            engine/UI/QtEditor/EditorMainWindow.h
+            engine/UI/QtEditor/QtViewportWindow.cpp
+            engine/UI/QtEditor/QtViewportWindow.h
+            engine/UI/QtEditor/QtEditorEngine.cpp
+            engine/UI/QtEditor/QtEditorEngine.h
+        )
+
+        target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets)
+        target_compile_definitions(HephaestusEngine PRIVATE HEPHAESTUS_EDITOR_QT_UI=1)
+
+        # Copy Qt DLLs to output directory (Windows)
+        if(WIN32)
+            # Get Qt binary directory
+            get_target_property(_qt6_widgets_location Qt6::Widgets LOCATION)
+            get_filename_component(_qt6_bin_dir "${_qt6_widgets_location}" DIRECTORY)
+
+            add_custom_command(TARGET HephaestusEngine POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_qt6_bin_dir}/Qt6Core.dll"
+                    "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Core.dll"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_qt6_bin_dir}/Qt6Gui.dll"
+                    "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Gui.dll"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_qt6_bin_dir}/Qt6Widgets.dll"
+                    "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Widgets.dll"
+                COMMENT "Copying Qt6 DLLs to output directory"
+            )
+
+            # Copy Qt platform plugin (required for Qt apps to run)
+            add_custom_command(TARGET HephaestusEngine POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "$<TARGET_FILE_DIR:HephaestusEngine>/platforms"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_qt6_bin_dir}/../plugins/platforms/qwindows.dll"
+                    "$<TARGET_FILE_DIR:HephaestusEngine>/platforms/qwindows.dll"
+                COMMENT "Copying Qt6 platform plugin"
+            )
+        endif()
+
+        message(STATUS "Qt6 editor UI enabled. Qt sources added to HephaestusEngine.")
+    else()
+        message(WARNING "Qt6 Widgets not found. Set Qt6_DIR or adjust HEPHAESTUS_QT_ROOT to your Qt install.")
+        target_compile_definitions(HephaestusEngine PRIVATE HEPHAESTUS_EDITOR_QT_UI=0)
+    endif()
+else()
+    target_compile_definitions(HephaestusEngine PRIVATE HEPHAESTUS_EDITOR_QT_UI=0)
 endif()
 
 # Set output directory for executable

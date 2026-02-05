@@ -1,0 +1,193 @@
+#pragma once
+
+/**
+ * @file QtEditorEngine.h
+ * @brief Engine integration for Qt-based editor.
+ *
+ * This class manages the engine lifecycle within the Qt editor:
+ * - Initializes Vulkan without GLFW
+ * - Attaches renderer to Qt viewport's native surface
+ * - Runs QTimer-driven tick loop
+ * - Forwards input from Qt viewport to engine
+ * - Handles clean shutdown
+ */
+
+#if HEPHAESTUS_EDITOR_QT_UI
+
+#include <QObject>
+#include <QTimer>
+#include <QElapsedTimer>
+#include <memory>
+#include <vulkan/vulkan.h>
+
+#include "QtViewportWindow.h"
+#include "../../Gfx/NativeSurface.h"
+#include "../../Gfx/EngineFrameRenderer.h"
+#include "../../Core/EditorContext.h"
+
+// Forward declarations (avoid including heavy engine headers)
+class VulkanDevice;
+struct VulkanSwapchain;
+class VulkanPipeline;
+class Scene;
+
+namespace Hephaestus {
+namespace QtEditor {
+
+/**
+ * @brief State of the editor engine.
+ */
+enum class EngineState {
+    Uninitialized,
+    InitializingVulkan,
+    WaitingForViewport,
+    CreatingSwapchain,
+    Running,
+    ShuttingDown,
+    Shutdown
+};
+
+/**
+ * @brief Engine integration for Qt editor.
+ *
+ * This is the bridge between the Qt UI and the engine renderer.
+ * It manages the Vulkan lifecycle and frame ticking independently
+ * of GLFW, using only native Qt window handles.
+ */
+class QtEditorEngine : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit QtEditorEngine(QObject* parent = nullptr);
+    ~QtEditorEngine() override;
+
+    /**
+     * @brief Initialize Vulkan instance and device (no surface yet).
+     * @return true on success.
+     */
+    bool InitializeVulkan();
+
+    /**
+     * @brief Attach to a Qt viewport window for rendering.
+     * 
+     * This creates the Vulkan surface and swapchain from the native handle.
+     * Should be called when the viewport emits viewportReady().
+     * 
+     * @param viewport The Qt viewport window to render into.
+     * @return true on success.
+     */
+    bool AttachToViewport(QtViewportWindow* viewport);
+
+    /**
+     * @brief Start the render loop timer.
+     * 
+     * Call this after AttachToViewport() succeeds.
+     */
+    void StartRenderLoop();
+
+    /**
+     * @brief Stop the render loop and shutdown the engine.
+     */
+    void Shutdown();
+
+    /**
+     * @brief Handle viewport resize.
+     * @param width New width in pixels.
+     * @param height New height in pixels.
+     */
+    void OnViewportResized(uint32_t width, uint32_t height);
+
+    /**
+     * @brief Handle input from the viewport.
+     * @param event The input event from QtViewportWindow.
+     */
+    void OnViewportInput(const InputEvent& event);
+
+    /**
+     * @brief Get the current engine state.
+     */
+    EngineState GetState() const { return m_state; }
+
+    /**
+     * @brief Check if the engine is ready to render.
+     */
+    bool IsReadyToRender() const { return m_state == EngineState::Running; }
+
+    /**
+     * @brief Get the editor context (shared state for scene, selection, etc.)
+     */
+    Hephaestus::EditorContext* GetEditorContext() { return &m_editorContext; }
+    const Hephaestus::EditorContext* GetEditorContext() const { return &m_editorContext; }
+
+signals:
+    /**
+     * @brief Emitted when engine initialization completes.
+     * @param success true if initialization succeeded.
+     */
+    void engineInitialized(bool success);
+
+    /**
+     * @brief Emitted when a frame has been rendered.
+     * @param dt Delta time since last frame in seconds.
+     */
+    void frameRendered(float dt);
+
+    /**
+     * @brief Emitted when an error occurs.
+     * @param message Error description.
+     */
+    void engineError(const QString& message);
+
+private slots:
+    /**
+     * @brief Called by QTimer to tick the engine.
+     */
+    void onTick();
+
+private:
+    bool createVulkanInstance();
+    bool initializeVulkanDevice();
+    bool createSwapchain();
+    void renderFrame();
+    void createTestMesh();
+    void cleanupVulkanResources();
+
+    EngineState m_state = EngineState::Uninitialized;
+
+    // Vulkan resources (owned by main.cpp in legacy mode, but we need our own here)
+    VkInstance m_instance = VK_NULL_HANDLE;
+    VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
+    std::unique_ptr<VulkanDevice> m_device;
+    std::unique_ptr<VulkanSwapchain> m_swapchain;
+    
+    // Shared frame renderer
+    std::unique_ptr<Hephaestus::EngineFrameRenderer> m_frameRenderer;
+    
+    // Editor context - single source of truth for scene, selection, etc.
+    Hephaestus::EditorContext m_editorContext;
+    
+    // Camera state (mirrors EditorContext camera for RenderFrame)
+    Hephaestus::RenderCamera m_camera;
+    Hephaestus::FrameRenderConfig m_renderConfig;
+
+    // Viewport connection
+    QtViewportWindow* m_viewport = nullptr;
+    NativeSurface m_currentSurface;
+
+    // Render loop
+    QTimer m_renderTimer;
+    QElapsedTimer m_frameTimer;
+    float m_lastFrameTime = 0.0f;
+    bool m_renderInProgress = false;
+
+    // Swapchain state
+    bool m_swapchainNeedsRecreation = false;
+    uint32_t m_pendingWidth = 0;
+    uint32_t m_pendingHeight = 0;
+};
+
+} // namespace QtEditor
+} // namespace Hephaestus
+
+#endif // HEPHAESTUS_EDITOR_QT_UI

@@ -78,6 +78,28 @@ void VulkanSwapchain::Init(VkPhysicalDevice phys, VkDevice dev, VkSurfaceKHR sur
     surface = surf;
     allocator = alloc;
 
+    // ── Choose extent (window size) from GLFW ────────────────────────────────────
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+    
+    initInternal(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+}
+
+void VulkanSwapchain::InitFromNativeSurface(VkPhysicalDevice phys, VkDevice dev, VkSurfaceKHR surf, 
+                                             uint32_t width, uint32_t height, VmaAllocator alloc)
+{
+    physicalDevice = phys;
+    device = dev;
+    surface = surf;
+    allocator = alloc;
+    
+    initInternal(width, height);
+}
+
+void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
+{
+    extent = { width, height };
+
     // ── Choose surface format and present mode ─────────────────────────
     uint32_t formatCount;
     vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr);
@@ -90,11 +112,6 @@ void VulkanSwapchain::Init(VkPhysicalDevice phys, VkDevice dev, VkSurfaceKHR sur
     std::vector<VkPresentModeKHR> presentModes(presentModeCount);
     vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, presentModes.data());
     VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR; // guaranteed available
-
-    // ── Choose extent (window size) ────────────────────────────────────
-    int width, height;
-    glfwGetFramebufferSize(window, &width, &height);
-    extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) };
 
     // ── Create swapchain ───────────────────────────────────────────────
     VkSwapchainCreateInfoKHR swapInfo{};
@@ -251,4 +268,17 @@ void VulkanSwapchain::Recreate(GLFWwindow* window)
     Cleanup();
     // Re-init with same device/surface/allocator
     Init(physicalDevice, device, surface, window, allocator);
+}
+
+void VulkanSwapchain::RecreateFromNativeSurface(uint32_t width, uint32_t height)
+{
+    // Skip recreation if zero size (minimized window)
+    if (width == 0 || height == 0) {
+        std::cout << "[Swapchain] Skipping recreation for zero-size surface\n";
+        return;
+    }
+
+    Cleanup();
+    // Re-init with same device/surface/allocator but new dimensions
+    initInternal(width, height);
 }

@@ -1,0 +1,182 @@
+/**
+ * @file EditorContext.h
+ * @brief Shared editor state - single source of truth for editor mode.
+ *
+ * This class holds editor-wide state including:
+ * - Active scene pointer
+ * - Current entity selection
+ * - Scene file path
+ * - Dirty flag
+ * 
+ * Used by both Qt editor and legacy ImGui editor to ensure consistent state.
+ */
+
+#pragma once
+
+#include <string>
+#include <memory>
+#include <functional>
+#include <entt/entt.hpp>
+
+// Forward declarations
+class Scene;
+
+namespace Hephaestus {
+
+/**
+ * @brief Editor camera data - position, orientation, projection settings.
+ */
+struct EditorCamera {
+    float positionX = 0.0f;
+    float positionY = 2.0f;
+    float positionZ = 5.0f;
+    float yawDeg = -90.0f;
+    float pitchDeg = -15.0f;
+    float nearPlane = 0.1f;
+    float farPlane = 10000.0f;
+    float fovDeg = 60.0f;
+    float moveSpeed = 5.0f;
+    float lookSensitivity = 0.1f;
+};
+
+/**
+ * @brief Callback types for editor state changes.
+ */
+using SceneChangedCallback = std::function<void()>;
+using SelectionChangedCallback = std::function<void(entt::entity)>;
+using DirtyChangedCallback = std::function<void(bool)>;
+
+/**
+ * @brief Single source of truth for editor state.
+ *
+ * EditorContext owns the active scene and tracks selection, file path,
+ * and dirty state. All editor UI should read/write through this context.
+ */
+class EditorContext {
+public:
+    EditorContext();
+    ~EditorContext();
+
+    // Non-copyable
+    EditorContext(const EditorContext&) = delete;
+    EditorContext& operator=(const EditorContext&) = delete;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Scene Management
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    /**
+     * @brief Create a new empty scene.
+     * @param name Name for the new scene (default: "New Scene")
+     */
+    void NewScene(const std::string& name = "New Scene");
+
+    /**
+     * @brief Load a scene from file.
+     * @param filepath Path to the scene file (.hpscene)
+     * @return true if loading succeeded
+     */
+    bool LoadScene(const std::string& filepath);
+
+    /**
+     * @brief Save the active scene to its current path.
+     * @return true if saving succeeded (false if no path set)
+     */
+    bool SaveScene();
+
+    /**
+     * @brief Save the active scene to a new path.
+     * @param filepath Destination path
+     * @return true if saving succeeded
+     */
+    bool SaveSceneAs(const std::string& filepath);
+
+    /**
+     * @brief Get the active scene (may be null).
+     */
+    Scene* GetActiveScene() { return m_activeScene.get(); }
+    const Scene* GetActiveScene() const { return m_activeScene.get(); }
+
+    /**
+     * @brief Check if there is an active scene.
+     */
+    bool HasActiveScene() const { return m_activeScene != nullptr; }
+
+    /**
+     * @brief Get the current scene file path (empty if new/unsaved).
+     */
+    const std::string& GetScenePath() const { return m_scenePath; }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Selection Management
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    /**
+     * @brief Select an entity (clears previous selection).
+     * @param entity Entity to select (entt::null to clear)
+     */
+    void SelectEntity(entt::entity entity);
+
+    /**
+     * @brief Clear the current selection.
+     */
+    void ClearSelection();
+
+    /**
+     * @brief Get the currently selected entity.
+     */
+    entt::entity GetSelectedEntity() const { return m_selectedEntity; }
+
+    /**
+     * @brief Check if an entity is selected.
+     */
+    bool HasSelection() const { return m_selectedEntity != entt::null; }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Dirty Flag
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    /**
+     * @brief Mark the scene as modified.
+     */
+    void MarkDirty();
+
+    /**
+     * @brief Clear the dirty flag (typically after save).
+     */
+    void ClearDirty();
+
+    /**
+     * @brief Check if the scene has unsaved changes.
+     */
+    bool IsDirty() const { return m_isDirty; }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Editor Camera
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    EditorCamera& GetCamera() { return m_camera; }
+    const EditorCamera& GetCamera() const { return m_camera; }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Callbacks (for UI updates)
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    void SetSceneChangedCallback(SceneChangedCallback cb) { m_onSceneChanged = std::move(cb); }
+    void SetSelectionChangedCallback(SelectionChangedCallback cb) { m_onSelectionChanged = std::move(cb); }
+    void SetDirtyChangedCallback(DirtyChangedCallback cb) { m_onDirtyChanged = std::move(cb); }
+
+private:
+    std::unique_ptr<Scene> m_activeScene;
+    std::string m_scenePath;
+    entt::entity m_selectedEntity = entt::null;
+    bool m_isDirty = false;
+    EditorCamera m_camera;
+
+    // Callbacks
+    SceneChangedCallback m_onSceneChanged;
+    SelectionChangedCallback m_onSelectionChanged;
+    DirtyChangedCallback m_onDirtyChanged;
+};
+
+} // namespace Hephaestus

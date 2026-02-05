@@ -1,0 +1,11 @@
+{
+  "formatVersion": 1,
+  "name": "TestProject",
+  "description": "A test project for Hephaestus Engine",
+  "engineVersion": "1.0.0",
+  "created": 1763281099,
+  "lastModified": 1763281099,
+  "isFavorite": false,
+  "screenshot": "",
+  "tags": ["test"]
+}

@@ -6,6 +6,14 @@
 #include <stdexcept>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <vulkan/vulkan_win32.h>
+#endif
+
 void VulkanDevice::Init(GLFWwindow *window, VkInstance inInstance) {
   instance = inInstance;
 
@@ -32,19 +40,145 @@ void VulkanDevice::Init(GLFWwindow *window, VkInstance inInstance) {
   std::cout << "Vulkan device initialized.\n";
 }
 
-void VulkanDevice::Cleanup() {
-  if (allocator)
-    vmaDestroyAllocator(allocator);
+void VulkanDevice::InitWithoutSurface(VkInstance inInstance) {
+  instance = inInstance;
+  surface = VK_NULL_HANDLE; // No surface yet
 
-  if (device != VK_NULL_HANDLE) {
-    vkDeviceWaitIdle(device);
-    if (commandPool)
-      vkDestroyCommandPool(device, commandPool, nullptr);
-    vkDestroyDevice(device, nullptr);
+  // Select GPU
+  pickPhysicalDevice();
+  
+  // Find queue families without surface (graphics-only for now)
+  // Present family will be validated when AttachToSurface is called
+  uint32_t qCount = 0;
+  vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qCount, nullptr);
+  std::vector<VkQueueFamilyProperties> props(qCount);
+  vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qCount, props.data());
+
+  for (uint32_t i = 0; i < qCount; ++i) {
+    if ((props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && graphicsFamily == UINT32_MAX) {
+      graphicsFamily = i;
+      // Assume same family can present (validated later in AttachToSurface)
+      presentFamily = i;
+      break;
+    }
+  }
+  
+  if (graphicsFamily == UINT32_MAX) {
+    throw std::runtime_error("No graphics queue family found");
+  }
+  
+  createLogicalDevice();
+  createCommandPool();
+
+  // ---- Create VMA allocator ----
+  VmaAllocatorCreateInfo allocatorInfo{};
+  allocatorInfo.physicalDevice = physicalDevice;
+  allocatorInfo.device = device;
+  allocatorInfo.instance = instance;
+
+  if (vmaCreateAllocator(&allocatorInfo, &allocator) != VK_SUCCESS)
+    throw std::runtime_error("Failed to create VMA allocator");
+
+  std::cout << "Vulkan device initialized (without surface).\n";
+}
+
+bool VulkanDevice::AttachToSurface(const Hephaestus::NativeSurface& nativeSurface) {
+  if (!nativeSurface.IsValid()) {
+    std::cerr << "[VulkanDevice] AttachToSurface: Invalid native surface\n";
+    return false;
   }
 
-  if (surface)
+  // Destroy existing surface if any
+  DestroySurface();
+
+#ifdef _WIN32
+  if (!createWin32Surface(nativeSurface.windowHandle)) {
+    std::cerr << "[VulkanDevice] Failed to create Win32 surface\n";
+    return false;
+  }
+#else
+  std::cerr << "[VulkanDevice] AttachToSurface: Platform not supported yet\n";
+  return false;
+#endif
+
+  // Validate that our queue family supports present on this surface
+  VkBool32 presentSupport = VK_FALSE;
+  vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, presentFamily, surface, &presentSupport);
+  if (!presentSupport) {
+    std::cerr << "[VulkanDevice] Warning: Current queue family doesn't support present on this surface\n";
+    // Try to find another queue family that supports present
+    uint32_t qCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qCount, nullptr);
+    for (uint32_t i = 0; i < qCount; ++i) {
+      vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
+      if (presentSupport) {
+        presentFamily = i;
+        std::cout << "[VulkanDevice] Found alternative present queue family: " << i << "\n";
+        break;
+      }
+    }
+    if (!presentSupport) {
+      std::cerr << "[VulkanDevice] No queue family supports present on this surface!\n";
+      DestroySurface();
+      return false;
+    }
+  }
+
+  std::cout << "[VulkanDevice] Attached to native surface (" 
+            << nativeSurface.width << "x" << nativeSurface.height << ")\n";
+  return true;
+}
+
+bool VulkanDevice::createWin32Surface(void* hwnd) {
+#ifdef _WIN32
+  VkWin32SurfaceCreateInfoKHR createInfo{};
+  createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+  createInfo.hwnd = static_cast<HWND>(hwnd);
+  createInfo.hinstance = GetModuleHandle(nullptr);
+  
+  if (vkCreateWin32SurfaceKHR(instance, &createInfo, nullptr, &surface) != VK_SUCCESS) {
+    return false;
+  }
+  return true;
+#else
+  (void)hwnd;
+  return false;
+#endif
+}
+
+void VulkanDevice::DestroySurface() {
+  if (surface != VK_NULL_HANDLE) {
+    // Note: Caller should ensure device is idle before calling this
     vkDestroySurfaceKHR(instance, surface, nullptr);
+    surface = VK_NULL_HANDLE;
+    std::cout << "[VulkanDevice] Surface destroyed\n";
+  }
+}
+
+void VulkanDevice::Cleanup() {
+  // First wait for GPU to be idle (if device exists)
+  if (device != VK_NULL_HANDLE) {
+    vkDeviceWaitIdle(device);
+  }
+  
+  // Destroy surface before device
+  DestroySurface();
+  
+  // Destroy allocator (uses device)
+  if (allocator) {
+    vmaDestroyAllocator(allocator);
+    allocator = nullptr;
+  }
+
+  // Finally destroy device
+  if (device != VK_NULL_HANDLE) {
+    if (commandPool) {
+      vkDestroyCommandPool(device, commandPool, nullptr);
+      commandPool = VK_NULL_HANDLE;
+    }
+    vkDestroyDevice(device, nullptr);
+    device = VK_NULL_HANDLE;
+  }
 }
 
 // ---------- internals ----------
