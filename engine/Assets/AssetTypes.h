@@ -1,12 +1,21 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 
 enum class AssetType {
     Unknown = 0,
+    Folder,
+    Scene,
     Texture,
     StaticMesh,
-    Audio
+    Material,
+    Script,
+    Audio,
+    Blueprint,
+    Shader,
+    Font,
+    Text
 };
 
 struct AssetFingerprint {
@@ -17,16 +26,114 @@ struct AssetFingerprint {
 
 inline const char* ToString(AssetType type) {
     switch (type) {
+        case AssetType::Folder: return "Folder";
+        case AssetType::Scene: return "Scene";
         case AssetType::Texture: return "Texture";
         case AssetType::StaticMesh: return "StaticMesh";
+        case AssetType::Material: return "Material";
+        case AssetType::Script: return "Script";
         case AssetType::Audio: return "Audio";
+        case AssetType::Blueprint: return "Blueprint";
+        case AssetType::Shader: return "Shader";
+        case AssetType::Font: return "Font";
+        case AssetType::Text: return "Text";
         default: return "Unknown";
     }
 }
 
 inline AssetType AssetTypeFromString(const std::string& value) {
+    if (value == "Folder") return AssetType::Folder;
+    if (value == "Scene") return AssetType::Scene;
     if (value == "Texture") return AssetType::Texture;
     if (value == "StaticMesh") return AssetType::StaticMesh;
+    if (value == "Material") return AssetType::Material;
+    if (value == "Script") return AssetType::Script;
     if (value == "Audio") return AssetType::Audio;
+    if (value == "Blueprint") return AssetType::Blueprint;
+    if (value == "Shader") return AssetType::Shader;
+    if (value == "Font") return AssetType::Font;
+    if (value == "Text") return AssetType::Text;
     return AssetType::Unknown;
+}
+
+/**
+ * @brief Determine asset type from file extension.
+ */
+inline AssetType AssetTypeFromExtension(const std::string& extension) {
+    static const std::unordered_map<std::string, AssetType> extensionMap = {
+        // Scenes
+        {".hpscene", AssetType::Scene},
+        {".hescene", AssetType::Scene},
+        {".scene", AssetType::Scene},
+        
+        // Meshes
+        {".fbx", AssetType::StaticMesh},
+        {".obj", AssetType::StaticMesh},
+        {".gltf", AssetType::StaticMesh},
+        {".glb", AssetType::StaticMesh},
+        {".dae", AssetType::StaticMesh},
+        
+        // Textures
+        {".png", AssetType::Texture},
+        {".jpg", AssetType::Texture},
+        {".jpeg", AssetType::Texture},
+        {".tga", AssetType::Texture},
+        {".dds", AssetType::Texture},
+        {".hdr", AssetType::Texture},
+        {".bmp", AssetType::Texture},
+        {".exr", AssetType::Texture},
+        
+        // Materials
+        {".hpmat", AssetType::Material},
+        {".material", AssetType::Material},
+        {".mat", AssetType::Material},
+        
+        // Scripts
+        {".lua", AssetType::Script},
+        {".py", AssetType::Script},
+        {".cs", AssetType::Script},
+        {".cpp", AssetType::Script},
+        {".h", AssetType::Script},
+        {".hpp", AssetType::Script},
+        
+        // Audio
+        {".wav", AssetType::Audio},
+        {".ogg", AssetType::Audio},
+        {".mp3", AssetType::Audio},
+        {".flac", AssetType::Audio},
+        
+        // Blueprints
+        {".hpblueprint", AssetType::Blueprint},
+        {".blueprint", AssetType::Blueprint},
+        
+        // Shaders
+        {".vert", AssetType::Shader},
+        {".frag", AssetType::Shader},
+        {".glsl", AssetType::Shader},
+        {".hlsl", AssetType::Shader},
+        {".spv", AssetType::Shader},
+        
+        // Fonts
+        {".ttf", AssetType::Font},
+        {".otf", AssetType::Font},
+        
+        // Text
+        {".txt", AssetType::Text},
+        {".md", AssetType::Text},
+        {".json", AssetType::Text},
+        {".xml", AssetType::Text},
+        {".yaml", AssetType::Text},
+        {".yml", AssetType::Text},
+        {".ini", AssetType::Text},
+        {".cfg", AssetType::Text}
+    };
+    
+    // Convert to lowercase for comparison
+    std::string ext = extension;
+    for (auto& c : ext) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    
+    auto it = extensionMap.find(ext);
+    return (it != extensionMap.end()) ? it->second : AssetType::Unknown;
 }

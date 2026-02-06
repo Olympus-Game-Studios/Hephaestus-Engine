@@ -147,6 +147,7 @@ set(ENGINE_CORE_SOURCES
     engine/Assets/ModelImporter.cpp
     engine/Assets/AssetDatabase.cpp
     engine/Assets/AssetImporters.cpp
+    engine/Assets/AssetManager.cpp
     engine/Assets/DerivedDataCache.cpp
     engine/Assets/FileWatcher.cpp
     engine/Assets/ReimportManager.cpp
@@ -206,6 +207,7 @@ add_executable(HephaestusEngine
     engine/Assets/ModelImporter.cpp
     engine/Assets/AssetDatabase.cpp
     engine/Assets/AssetImporters.cpp
+    engine/Assets/AssetManager.cpp
     engine/Assets/DerivedDataCache.cpp
     engine/Assets/FileWatcher.cpp
     engine/Assets/ReimportManager.cpp
@@ -387,6 +389,10 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/QtViewportWindow.h
             engine/UI/QtEditor/QtEditorEngine.cpp
             engine/UI/QtEditor/QtEditorEngine.h
+            engine/UI/QtEditor/AssetBrowserWidget.cpp
+            engine/UI/QtEditor/AssetBrowserWidget.h
+            engine/UI/QtEditor/EditorAssetActions.cpp
+            engine/UI/QtEditor/EditorAssetActions.h
         )
 
         target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets)

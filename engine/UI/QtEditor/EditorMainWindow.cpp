@@ -8,9 +8,12 @@
 #include "EditorMainWindow.h"
 #include "QtViewportWindow.h"
 #include "QtEditorEngine.h"
+#include "AssetBrowserWidget.h"
+#include "EditorAssetActions.h"
 
 #include "../../Core/EditorContext.h"
 #include "../../Core/ProjectContext.h"
+#include "../../Assets/AssetManager.h"
 #include "../../Scene/Scene.h"
 #include "../../Scene/Components.h"
 #include "../../Scene/Entity.h"
@@ -276,16 +279,19 @@ void EditorMainWindow::setupDockWidgets()
     m_assetBrowserDock->setObjectName("AssetBrowserDock");
     m_assetBrowserDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
 
-    m_assetBrowserList = new QListWidget(m_assetBrowserDock);
-    m_assetBrowserList->setViewMode(QListView::IconMode);
-    m_assetBrowserList->setIconSize(QSize(64, 64));
-    m_assetBrowserList->setSpacing(10);
-    m_assetBrowserList->addItem(tr("📁 assets"));
-    m_assetBrowserList->addItem(tr("📁 meshes"));
-    m_assetBrowserList->addItem(tr("📁 textures"));
-    m_assetBrowserList->addItem(tr("📁 scenes"));
-    m_assetBrowserList->addItem(tr("📁 blueprints"));
-    m_assetBrowserDock->setWidget(m_assetBrowserList);
+    // Create the new asset browser widget
+    m_assetBrowser = new AssetBrowserWidget(this, m_assetBrowserDock);
+    m_assetBrowserDock->setWidget(m_assetBrowser);
+    m_assetBrowserDock->setMinimumHeight(200);
+
+    // Create asset actions handler
+    m_assetActions = std::make_unique<EditorAssetActions>(this);
+
+    // Connect asset browser to actions
+    connect(m_assetBrowser, &AssetBrowserWidget::assetOpenRequested,
+            this, [this](const QString& relativePath) {
+                m_assetActions->Open(relativePath);
+            });
 
     addDockWidget(Qt::BottomDockWidgetArea, m_assetBrowserDock);
 
@@ -822,6 +828,8 @@ void EditorMainWindow::onOpenLevel()
     if (filepath.isEmpty()) return;
     
     if (ctx->LoadScene(filepath.toStdString())) {
+        // Rebuild mesh library for the new scene
+        m_engine->RebuildSceneMeshes();
         statusBar()->showMessage(tr("Level loaded: %1").arg(filepath), 3000);
     } else {
         QMessageBox::warning(this, tr("Open Level Failed"),
@@ -1103,41 +1111,13 @@ void EditorMainWindow::rebuildRecentProjectsMenu()
 
 void EditorMainWindow::refreshAssetBrowser()
 {
-    if (!m_assetBrowserList) return;
+    if (!m_assetBrowser) return;
 
-    m_assetBrowserList->clear();
-
-    if (m_projectContext && m_projectContext->HasProject()) {
-        // Show project asset folder structure
-        std::filesystem::path assetRoot = m_projectContext->GetAssetRootDir();
-        
-        if (std::filesystem::exists(assetRoot)) {
-            std::error_code ec;
-            for (const auto& entry : std::filesystem::directory_iterator(assetRoot, ec)) {
-                QString name = QString::fromStdString(entry.path().filename().string());
-                if (entry.is_directory()) {
-                    m_assetBrowserList->addItem(QString::fromUtf8("📁 ") + name);
-                }
-            }
-            
-            // Add files in root
-            for (const auto& entry : std::filesystem::directory_iterator(assetRoot, ec)) {
-                QString name = QString::fromStdString(entry.path().filename().string());
-                if (entry.is_regular_file()) {
-                    m_assetBrowserList->addItem(QString::fromUtf8("📄 ") + name);
-                }
-            }
-        } else {
-            m_assetBrowserList->addItem(tr("(Asset folder not found)"));
-        }
-    } else {
-        // No project - show default placeholder
-        m_assetBrowserList->addItem(tr("📁 assets"));
-        m_assetBrowserList->addItem(tr("📁 meshes"));
-        m_assetBrowserList->addItem(tr("📁 textures"));
-        m_assetBrowserList->addItem(tr("📁 scenes"));
-        m_assetBrowserList->addItem(tr("📁 blueprints"));
-    }
+    // Update the project context reference
+    m_assetBrowser->SetProjectContext(m_projectContext.get());
+    
+    // Refresh the browser (will update from AssetManager)
+    m_assetBrowser->Refresh();
 }
 
 void EditorMainWindow::setupProjectCallbacks()
@@ -1148,6 +1128,43 @@ void EditorMainWindow::setupProjectCallbacks()
         updateWindowTitle();
         refreshAssetBrowser();
     });
+
+    // Set up scene loading callback for asset actions
+    if (m_assetActions) {
+        m_assetActions->SetLoadSceneCallback([this](const QString& absolutePath) -> bool {
+            if (!m_engine) return false;
+            
+            auto* ctx = m_engine->GetEditorContext();
+            if (!ctx) return false;
+
+            // Check for unsaved changes
+            if (ctx->IsDirty()) {
+                auto result = QMessageBox::question(this, tr("Unsaved Changes"),
+                    tr("The current scene has unsaved changes. Save before loading new scene?"),
+                    QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+                    QMessageBox::Save);
+
+                if (result == QMessageBox::Save) {
+                    onSaveLevel();
+                    if (ctx->IsDirty()) return false; // Save cancelled
+                } else if (result == QMessageBox::Cancel) {
+                    return false;
+                }
+            }
+
+            // Load the scene
+            if (ctx->LoadScene(absolutePath.toStdString())) {
+                // Rebuild mesh library for the new scene
+                m_engine->RebuildSceneMeshes();
+                statusBar()->showMessage(tr("Scene loaded: %1").arg(absolutePath), 3000);
+                return true;
+            } else {
+                QMessageBox::warning(this, tr("Load Failed"),
+                    tr("Failed to load scene: %1").arg(absolutePath));
+                return false;
+            }
+        });
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

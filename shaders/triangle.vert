@@ -47,8 +47,7 @@ void main() {
     fragWorldPos = worldPos.xyz;
     fragLightSpacePos = lighting.dirLightViewProj * worldPos;
     
-    // Transform normal to world space (inverse transpose for non-uniform scaling)
-    // For uniform scaling, this simplifies to just the rotation part
+    // Transform normal to world space
     mat3 normalMatrix = mat3(transpose(inverse(mat3(pc.model))));
     fragNormal = normalize(normalMatrix * inNormal);
     

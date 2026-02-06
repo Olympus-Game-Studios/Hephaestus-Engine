@@ -5,6 +5,7 @@
 
 #include "ProjectContext.h"
 #include "../Scene/Json.h"
+#include "../Assets/AssetManager.h"
 
 #include <fstream>
 #include <sstream>
@@ -78,6 +79,12 @@ bool ProjectContext::LoadProject(const std::string& projectFilePath, std::string
     std::cout << "[ProjectContext] Project root: " << m_projectRootDir << "\n";
     std::cout << "[ProjectContext] Asset root: " << m_assetRootDir << "\n";
 
+    // Update AssetManager with project roots
+    auto& assetMgr = Hephaestus::AssetManager::GetInstance();
+    assetMgr.SetProjectRoot(m_projectRootDir);
+    assetMgr.SetAssetRoot(m_assetRootDir);
+    assetMgr.Refresh();
+
     // Notify listeners
     if (m_onProjectChanged) {
         m_onProjectChanged();
@@ -99,6 +106,9 @@ void ProjectContext::CloseProject()
     m_projectRootDir.clear();
     m_assetRootDir.clear();
     m_projectData = ProjectData();
+
+    // Clear AssetManager
+    Hephaestus::AssetManager::GetInstance().Clear();
 
     // Notify listeners
     if (m_onProjectChanged) {

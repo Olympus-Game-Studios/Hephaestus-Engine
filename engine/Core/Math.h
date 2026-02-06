@@ -149,15 +149,15 @@ struct Mat4 {
 
         Mat4 r;
         // First column
-        r.m[0] = s.x; r.m[1] = u.x; r.m[2] = -f.x; r.m[3] = 0.0f;
+        r.m[0] = s.x; r.m[1] = u.x; r.m[2] = f.x; r.m[3] = 0.0f;
         // Second column
-        r.m[4] = s.y; r.m[5] = u.y; r.m[6] = -f.y; r.m[7] = 0.0f;
+        r.m[4] = s.y; r.m[5] = u.y; r.m[6] = f.y; r.m[7] = 0.0f;
         // Third column
-        r.m[8] = s.z; r.m[9] = u.z; r.m[10] = -f.z; r.m[11] = 0.0f;
-        // Fourth column
+        r.m[8] = s.z; r.m[9] = u.z; r.m[10] = f.z; r.m[11] = 0.0f;
+        // Fourth column (Vulkan: +f means objects in front have positive viewZ)
         r.m[12] = -vdot(s, eye);
         r.m[13] = -vdot(u, eye);
-        r.m[14] = vdot(f, eye);
+        r.m[14] = -vdot(f, eye);
         r.m[15] = 1.0f;
         return r;
     }

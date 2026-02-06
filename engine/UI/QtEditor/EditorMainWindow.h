@@ -36,6 +36,8 @@ namespace QtEditor {
 // Forward declarations
 class QtViewportWindow;
 class QtEditorEngine;
+class AssetBrowserWidget;
+class EditorAssetActions;
 
 /**
  * @brief Main editor window with dockable panels.
@@ -142,8 +144,9 @@ private:
     QDoubleSpinBox* m_scaleZ = nullptr;
     QGroupBox* m_transformGroup = nullptr;
 
-    // Asset browser
-    QListWidget* m_assetBrowserList = nullptr;
+    // Asset browser (new widget-based)
+    AssetBrowserWidget* m_assetBrowser = nullptr;
+    std::unique_ptr<EditorAssetActions> m_assetActions;
 
     // Viewport (real 3D rendering)
     QtViewportWindow* m_viewportWindow = nullptr;

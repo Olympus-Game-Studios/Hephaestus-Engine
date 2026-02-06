@@ -231,6 +231,9 @@ private:
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_descriptorSets;
 
+    // Dummy texture for unbound slots
+    VulkanTexture m_dummyTexture;
+
     // Mesh library
     std::vector<MeshGPU> m_meshLibrary;
     std::unordered_map<std::string, size_t> m_meshLibraryLookup;

@@ -135,6 +135,14 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
         return false;
     }
     
+    // Create dummy texture for unbound texture slots (1x1 white pixel)
+    if (!m_dummyTexture.CreateSolidColor(m_device->allocator, m_device->device,
+                                          m_device->physicalDevice, m_device->commandPool,
+                                          m_device->graphicsQueue, 0xFFFFFFFF)) {
+        std::cerr << "[EngineFrameRenderer] Failed to create dummy texture\n";
+        return false;
+    }
+    
     if (!createDescriptorSets()) {
         std::cerr << "[EngineFrameRenderer] Failed to create descriptor sets\n";
         return false;
@@ -380,6 +388,38 @@ bool EngineFrameRenderer::createUniformBuffers()
         buffer.Create(m_device->allocator, totalMaterialSize,
                       VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                       VMA_MEMORY_USAGE_CPU_TO_GPU);
+        
+        // Initialize with a sensible default material (white, rough, non-metallic)
+        MaterialUBO defaultMaterial{};
+        defaultMaterial.albedo = Vec3(1.0f, 1.0f, 1.0f);  // White
+        defaultMaterial.albedoPadding = 0.0f;
+        defaultMaterial.metallic = 0.0f;
+        defaultMaterial.metallicPadding0 = 0.0f;
+        defaultMaterial.metallicPadding1 = 0.0f;
+        defaultMaterial.metallicPadding2 = 0.0f;
+        defaultMaterial.emissive = Vec3(0.0f, 0.0f, 0.0f);
+        defaultMaterial.emissivePadding = 0.0f;
+        defaultMaterial.roughness = 0.5f;
+        defaultMaterial.ao = 1.0f;
+        defaultMaterial.emissiveStrength = 0.0f;
+        defaultMaterial.useAlbedoTexture = 0;
+        defaultMaterial.albedoTextureIndex = 0;
+        defaultMaterial.useNormalTexture = 0;
+        defaultMaterial.normalTextureIndex = 0;
+        defaultMaterial.useRoughnessTexture = 0;
+        defaultMaterial.roughnessTextureIndex = 0;
+        defaultMaterial.useAoTexture = 0;
+        defaultMaterial.aoTextureIndex = 0;
+        defaultMaterial.useWorldAlignedTexture = 0;
+        defaultMaterial.worldTextureScale = 1.0f;
+        
+        void* mapped = nullptr;
+        if (vmaMapMemory(m_device->allocator, buffer.allocation, &mapped) == VK_SUCCESS) {
+            // Fill first material slot with defaults
+            std::memcpy(mapped, &defaultMaterial, sizeof(defaultMaterial));
+            vmaFlushAllocation(m_device->allocator, buffer.allocation, 0, sizeof(defaultMaterial));
+            vmaUnmapMemory(m_device->allocator, buffer.allocation);
+        }
     }
     
     return true;
@@ -425,9 +465,8 @@ bool EngineFrameRenderer::createDescriptorSets()
     
     // Create a dummy texture for the texture array (1x1 white pixel)
     // This is needed because descriptor sets must be valid even if not used
-    // For now, we'll skip texture binding and just use uniform colors
     
-    // Update descriptor sets with buffer bindings only
+    // Update descriptor sets with buffer bindings AND texture bindings
     for (size_t i = 0; i < imageCount; ++i) {
         VkDescriptorBufferInfo cameraBufferInfo{};
         cameraBufferInfo.buffer = m_uniformBuffers[i].buffer;
@@ -444,7 +483,21 @@ bool EngineFrameRenderer::createDescriptorSets()
         lightingBufferInfo.offset = 0;
         lightingBufferInfo.range = sizeof(LightingUBO);
         
-        VkWriteDescriptorSet descriptorWrites[3] = {};
+        // Create image info array for texture array binding (128 slots all pointing to dummy)
+        std::vector<VkDescriptorImageInfo> textureArrayInfos(kTextureArraySize);
+        for (uint32_t t = 0; t < kTextureArraySize; ++t) {
+            textureArrayInfos[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            textureArrayInfos[t].imageView = m_dummyTexture.imageView;
+            textureArrayInfos[t].sampler = m_dummyTexture.sampler;
+        }
+        
+        // Shadow map (also use dummy texture for now)
+        VkDescriptorImageInfo shadowMapInfo{};
+        shadowMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        shadowMapInfo.imageView = m_dummyTexture.imageView;
+        shadowMapInfo.sampler = m_dummyTexture.sampler;
+        
+        VkWriteDescriptorSet descriptorWrites[5] = {};
         
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = m_descriptorSets[i];
@@ -470,7 +523,25 @@ bool EngineFrameRenderer::createDescriptorSets()
         descriptorWrites[2].descriptorCount = 1;
         descriptorWrites[2].pBufferInfo = &lightingBufferInfo;
         
-        vkUpdateDescriptorSets(m_device->device, 3, descriptorWrites, 0, nullptr);
+        // Binding 3: Texture array
+        descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[3].dstSet = m_descriptorSets[i];
+        descriptorWrites[3].dstBinding = 3;
+        descriptorWrites[3].dstArrayElement = 0;
+        descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[3].descriptorCount = kTextureArraySize;
+        descriptorWrites[3].pImageInfo = textureArrayInfos.data();
+        
+        // Binding 4: Shadow map
+        descriptorWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[4].dstSet = m_descriptorSets[i];
+        descriptorWrites[4].dstBinding = 4;
+        descriptorWrites[4].dstArrayElement = 0;
+        descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[4].descriptorCount = 1;
+        descriptorWrites[4].pImageInfo = &shadowMapInfo;
+        
+        vkUpdateDescriptorSets(m_device->device, 5, descriptorWrites, 0, nullptr);
     }
     
     return true;
@@ -624,8 +695,21 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     }
     
     // Render scene meshes if we have a scene
+    static std::string lastSceneName;
+    bool debugPrint = false;
+    if (scene) {
+        std::string sceneName = scene->GetName();
+        if (sceneName != lastSceneName) {
+            debugPrint = true;
+            lastSceneName = sceneName;
+        }
+    }
+    
     if (scene && !m_meshLibrary.empty()) {
         auto renderView = scene->GetEntitiesWith<TransformComponent, MeshRendererComponent>();
+        
+        int drawnCount = 0;
+        int skippedCount = 0;
         
         VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
         VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
@@ -635,12 +719,26 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             auto& transform = entity.GetComponent<TransformComponent>();
             auto& renderer = entity.GetComponent<MeshRendererComponent>();
             
-            if (!renderer.visible) continue;
-            if (!renderer.HasValidMesh() || renderer.meshHandle >= m_meshLibrary.size()) continue;
+            if (!renderer.visible) {
+                skippedCount++;
+                continue;
+            }
+            if (!renderer.HasValidMesh() || renderer.meshHandle >= m_meshLibrary.size()) {
+                skippedCount++;
+                continue;
+            }
             
             MeshGPU& mesh = m_meshLibrary[renderer.meshHandle];
             if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
-                mesh.indexBuffer.buffer == VK_NULL_HANDLE) continue;
+                mesh.indexBuffer.buffer == VK_NULL_HANDLE) {
+                if (debugPrint) {
+                    std::cout << "[EngineFrameRenderer] Skipping mesh: indexCount=" << mesh.indexCount 
+                              << " vertexBuffer=" << (void*)mesh.vertexBuffer.buffer 
+                              << " indexBuffer=" << (void*)mesh.indexBuffer.buffer << "\n";
+                }
+                skippedCount++;
+                continue;
+            }
             
             // Bind vertex buffer if different
             if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
@@ -668,7 +766,15 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             
             // Draw
             vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+            drawnCount++;
         }
+        
+        if (debugPrint) {
+            std::cout << "[EngineFrameRenderer] Drew " << drawnCount << " meshes, skipped " << skippedCount << "\n";
+        }
+    } else if (debugPrint) {
+        std::cout << "[EngineFrameRenderer] No scene or empty mesh library: scene=" << (void*)scene 
+                  << " meshLibrary.size=" << m_meshLibrary.size() << "\n";
     }
     
     vkCmdEndRenderPass(cmd);
@@ -737,6 +843,9 @@ void EngineFrameRenderer::destroyAllResources()
     m_uniformBuffers.clear();
     m_lightingBuffers.clear();
     m_materialBuffers.clear();
+    
+    // Cleanup dummy texture
+    m_dummyTexture.Destroy(m_device->allocator, m_device->device);
     
     // Cleanup descriptor pool
     if (m_descriptorPool != VK_NULL_HANDLE) {

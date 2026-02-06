@@ -14,12 +14,19 @@
 #include "../../Gfx/VulkanSwapchain.h"
 #include "../../Gfx/VulkanPipeline.h"
 #include "../../Gfx/EngineFrameRenderer.h"
+#include "../../Gfx/Vertex.h"
 #include "../../Scene/Scene.h"
+#include "../../Scene/Components.h"
+#include "../../Scene/Entity.h"
 #include "../../Assets/MeshAsset.h"
+#include "../../Assets/ModelImporter.h"
+#include "../../Core/ProjectContext.h"
 
 #include <iostream>
 #include <vector>
 #include <stdexcept>
+#include <filesystem>
+#include <cmath>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -402,8 +409,21 @@ void QtEditorEngine::onTick()
 
 void QtEditorEngine::renderFrame()
 {
-    if (!m_frameRenderer || !m_editorContext.HasActiveScene()) {
+    static std::string lastSceneName;
+    
+    if (!m_frameRenderer) {
         return;
+    }
+    if (!m_editorContext.HasActiveScene()) {
+        return;
+    }
+    
+    Scene* scene = m_editorContext.GetActiveScene();
+    std::string sceneName = scene->GetName();
+    if (sceneName != lastSceneName) {
+        std::cout << "[QtEditorEngine::renderFrame] NEW scene: " << sceneName 
+                  << " meshLibrary.size=" << m_frameRenderer->GetMeshCount() << "\n";
+        lastSceneName = sceneName;
     }
     
     // Calculate delta time for this frame
@@ -432,6 +452,422 @@ void QtEditorEngine::createTestMesh()
     // For now, the scene will be empty but renderable
     // Scene content will come from proper asset loading later
     std::cout << "[QtEditorEngine] Test scene initialized\n";
+}
+
+// ============================================================================
+// Mesh Loading
+// ============================================================================
+
+void QtEditorEngine::createBuiltinMeshes()
+{
+    if (m_builtinMeshesCreated || !m_frameRenderer || !m_device) {
+        return;
+    }
+
+    std::cout << "[QtEditorEngine] Creating builtin meshes...\n";
+
+    // Create a simple cube mesh
+    MeshData cubeMesh;
+    
+    // Cube vertices (24 vertices for proper normals)
+    // Vertex format: {pos[3], normal[3], color[3], texCoord[2]}
+    float s = 0.5f;
+    // Front face
+    cubeMesh.vertices.push_back({{-s, -s,  s}, { 0,  0,  1}, {1, 1, 1}, {0, 0}});
+    cubeMesh.vertices.push_back({{ s, -s,  s}, { 0,  0,  1}, {1, 1, 1}, {1, 0}});
+    cubeMesh.vertices.push_back({{ s,  s,  s}, { 0,  0,  1}, {1, 1, 1}, {1, 1}});
+    cubeMesh.vertices.push_back({{-s,  s,  s}, { 0,  0,  1}, {1, 1, 1}, {0, 1}});
+    // Back face
+    cubeMesh.vertices.push_back({{ s, -s, -s}, { 0,  0, -1}, {1, 1, 1}, {0, 0}});
+    cubeMesh.vertices.push_back({{-s, -s, -s}, { 0,  0, -1}, {1, 1, 1}, {1, 0}});
+    cubeMesh.vertices.push_back({{-s,  s, -s}, { 0,  0, -1}, {1, 1, 1}, {1, 1}});
+    cubeMesh.vertices.push_back({{ s,  s, -s}, { 0,  0, -1}, {1, 1, 1}, {0, 1}});
+    // Top face
+    cubeMesh.vertices.push_back({{-s,  s,  s}, { 0,  1,  0}, {1, 1, 1}, {0, 0}});
+    cubeMesh.vertices.push_back({{ s,  s,  s}, { 0,  1,  0}, {1, 1, 1}, {1, 0}});
+    cubeMesh.vertices.push_back({{ s,  s, -s}, { 0,  1,  0}, {1, 1, 1}, {1, 1}});
+    cubeMesh.vertices.push_back({{-s,  s, -s}, { 0,  1,  0}, {1, 1, 1}, {0, 1}});
+    // Bottom face
+    cubeMesh.vertices.push_back({{-s, -s, -s}, { 0, -1,  0}, {1, 1, 1}, {0, 0}});
+    cubeMesh.vertices.push_back({{ s, -s, -s}, { 0, -1,  0}, {1, 1, 1}, {1, 0}});
+    cubeMesh.vertices.push_back({{ s, -s,  s}, { 0, -1,  0}, {1, 1, 1}, {1, 1}});
+    cubeMesh.vertices.push_back({{-s, -s,  s}, { 0, -1,  0}, {1, 1, 1}, {0, 1}});
+    // Right face
+    cubeMesh.vertices.push_back({{ s, -s,  s}, { 1,  0,  0}, {1, 1, 1}, {0, 0}});
+    cubeMesh.vertices.push_back({{ s, -s, -s}, { 1,  0,  0}, {1, 1, 1}, {1, 0}});
+    cubeMesh.vertices.push_back({{ s,  s, -s}, { 1,  0,  0}, {1, 1, 1}, {1, 1}});
+    cubeMesh.vertices.push_back({{ s,  s,  s}, { 1,  0,  0}, {1, 1, 1}, {0, 1}});
+    // Left face
+    cubeMesh.vertices.push_back({{-s, -s, -s}, {-1,  0,  0}, {1, 1, 1}, {0, 0}});
+    cubeMesh.vertices.push_back({{-s, -s,  s}, {-1,  0,  0}, {1, 1, 1}, {1, 0}});
+    cubeMesh.vertices.push_back({{-s,  s,  s}, {-1,  0,  0}, {1, 1, 1}, {1, 1}});
+    cubeMesh.vertices.push_back({{-s,  s, -s}, {-1,  0,  0}, {1, 1, 1}, {0, 1}});
+
+    // Cube indices
+    for (int face = 0; face < 6; ++face) {
+        uint32_t base = face * 4;
+        cubeMesh.indices.push_back(base + 0);
+        cubeMesh.indices.push_back(base + 1);
+        cubeMesh.indices.push_back(base + 2);
+        cubeMesh.indices.push_back(base + 0);
+        cubeMesh.indices.push_back(base + 2);
+        cubeMesh.indices.push_back(base + 3);
+    }
+    cubeMesh.bounds = AABB(Vec3(-s, -s, -s), Vec3(s, s, s));
+
+    uploadMeshToGPU("Default Cube", cubeMesh, std::filesystem::path("builtin://cube"), false);
+
+    // Create a simple sphere mesh
+    MeshData sphereMesh;
+    const int stacks = 16;
+    const int slices = 32;
+    const float radius = 0.5f;
+
+    // Generate vertices
+    for (int i = 0; i <= stacks; ++i) {
+        float phi = static_cast<float>(i) / stacks * 3.14159265f;
+        for (int j = 0; j <= slices; ++j) {
+            float theta = static_cast<float>(j) / slices * 2.0f * 3.14159265f;
+            float x = radius * sinf(phi) * cosf(theta);
+            float y = radius * cosf(phi);
+            float z = radius * sinf(phi) * sinf(theta);
+            Vec3 normal = vnorm(Vec3(x, y, z));
+            float u = static_cast<float>(j) / slices;
+            float v = static_cast<float>(i) / stacks;
+            sphereMesh.vertices.push_back({{x, y, z}, {normal.x, normal.y, normal.z}, {1, 1, 1}, {u, v}});
+        }
+    }
+
+    // Generate indices
+    for (int i = 0; i < stacks; ++i) {
+        for (int j = 0; j < slices; ++j) {
+            uint32_t first = i * (slices + 1) + j;
+            uint32_t second = first + slices + 1;
+            sphereMesh.indices.push_back(first);
+            sphereMesh.indices.push_back(second);
+            sphereMesh.indices.push_back(first + 1);
+            sphereMesh.indices.push_back(second);
+            sphereMesh.indices.push_back(second + 1);
+            sphereMesh.indices.push_back(first + 1);
+        }
+    }
+    sphereMesh.bounds = AABB(Vec3(-radius, -radius, -radius), Vec3(radius, radius, radius));
+
+    uploadMeshToGPU("Default Sphere", sphereMesh, std::filesystem::path("builtin://sphere"), false);
+
+    m_builtinMeshesCreated = true;
+    std::cout << "[QtEditorEngine] Builtin meshes created\n";
+}
+
+size_t QtEditorEngine::uploadMeshToGPU(const std::string& name, const MeshData& data,
+                                        const std::filesystem::path& sourcePath, bool imported)
+{
+    if (!m_frameRenderer || !m_device) {
+        std::cerr << "[QtEditorEngine] Cannot upload mesh - renderer not initialized\n";
+        return MeshRendererComponent::InvalidMesh;
+    }
+
+    if (data.vertices.empty() || data.indices.empty()) {
+        std::cerr << "[QtEditorEngine] Cannot upload mesh - no geometry\n";
+        return MeshRendererComponent::InvalidMesh;
+    }
+
+    MeshGPU mesh{};
+    mesh.name = name;
+    mesh.sourcePath = sourcePath;
+    mesh.sourceKey = sourcePath.generic_string();
+    mesh.vertexCount = static_cast<uint32_t>(data.vertices.size());
+    mesh.indexCount = static_cast<uint32_t>(data.indices.size());
+    mesh.submeshes = data.submeshes;
+    mesh.bounds = data.bounds;
+    mesh.imported = imported;
+
+    // Create vertex buffer
+    VkDeviceSize vertexBufferSize = sizeof(Vertex) * data.vertices.size();
+    mesh.vertexBuffer.Create(m_device->allocator, vertexBufferSize,
+                             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                             VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+    void* mapped = nullptr;
+    if (vmaMapMemory(m_device->allocator, mesh.vertexBuffer.allocation, &mapped) == VK_SUCCESS) {
+        std::memcpy(mapped, data.vertices.data(), static_cast<size_t>(vertexBufferSize));
+        vmaFlushAllocation(m_device->allocator, mesh.vertexBuffer.allocation, 0, VK_WHOLE_SIZE);
+        vmaUnmapMemory(m_device->allocator, mesh.vertexBuffer.allocation);
+    }
+
+    // Create index buffer
+    VkDeviceSize indexBufferSize = sizeof(uint32_t) * data.indices.size();
+    mesh.indexBuffer.Create(m_device->allocator, indexBufferSize,
+                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                            VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+    if (vmaMapMemory(m_device->allocator, mesh.indexBuffer.allocation, &mapped) == VK_SUCCESS) {
+        std::memcpy(mapped, data.indices.data(), static_cast<size_t>(indexBufferSize));
+        vmaFlushAllocation(m_device->allocator, mesh.indexBuffer.allocation, 0, VK_WHOLE_SIZE);
+        vmaUnmapMemory(m_device->allocator, mesh.indexBuffer.allocation);
+    }
+
+    size_t handle = m_frameRenderer->AddMesh(std::move(mesh));
+    std::cout << "[QtEditorEngine] Uploaded mesh '" << name << "' as handle " << handle << "\n";
+    return handle;
+}
+
+std::string QtEditorEngine::normalizeAssetPath(const std::string& assetPath) const
+{
+    namespace fs = std::filesystem;
+    
+    if (assetPath.empty()) return "";
+    
+    // Builtin paths stay as-is
+    if (assetPath.rfind("builtin://", 0) == 0) {
+        return assetPath;
+    }
+    
+    // Normalize to forward slashes
+    fs::path p(assetPath);
+    return p.lexically_normal().generic_string();
+}
+
+void QtEditorEngine::RebuildSceneMeshes()
+{
+    if (!m_frameRenderer || !m_device || !m_editorContext.HasActiveScene()) {
+        std::cout << "[QtEditorEngine] RebuildSceneMeshes: nothing to rebuild\n";
+        return;
+    }
+
+    // Ensure builtin meshes exist
+    createBuiltinMeshes();
+
+    Scene* scene = m_editorContext.GetActiveScene();
+    std::cout << "[QtEditorEngine] Rebuilding meshes for scene: " << scene->GetName() << "\n";
+
+    namespace fs = std::filesystem;
+
+    // Get project root for resolving relative paths
+    // We need to access this from somewhere - for now use a simple heuristic
+    fs::path projectRoot;
+    fs::path assetRoot;
+    
+    // Try to get paths from scene path if available
+    std::string scenePath = m_editorContext.GetScenePath();
+    if (!scenePath.empty()) {
+        fs::path sp(scenePath);
+        // Walk up to find project root (look for .heproject)
+        fs::path search = sp.parent_path();
+        for (int i = 0; i < 10 && !search.empty(); ++i) {
+            for (const auto& entry : fs::directory_iterator(search, fs::directory_options::skip_permission_denied)) {
+                if (entry.path().extension() == ".heproject") {
+                    projectRoot = search;
+                    assetRoot = projectRoot / "assets";
+                    break;
+                }
+            }
+            if (!projectRoot.empty()) break;
+            search = search.parent_path();
+        }
+    }
+
+    std::cout << "[QtEditorEngine] Project root: " << projectRoot << "\n";
+    std::cout << "[QtEditorEngine] Asset root: " << assetRoot << "\n";
+
+    // Iterate all entities with MeshRendererComponent
+    auto renderView = scene->GetEntitiesWith<MeshRendererComponent>();
+    
+    int meshEntityCount = 0;
+    for (auto entityHandle : renderView) {
+        meshEntityCount++;
+    }
+    std::cout << "[QtEditorEngine] Found " << meshEntityCount << " entities with MeshRendererComponent\n";
+    
+    for (auto entityHandle : renderView) {
+        Entity entity(entityHandle, scene);
+        auto& renderer = entity.GetComponent<MeshRendererComponent>();
+
+        std::string entityName = entity.HasComponent<TagComponent>()
+                                     ? entity.GetComponent<TagComponent>().tag
+                                     : std::string("Entity");
+
+        std::cout << "[QtEditorEngine] Entity '" << entityName 
+                  << "' meshAssetPath='" << renderer.meshAssetPath << "'\n";
+
+        if (renderer.meshAssetPath.empty()) {
+            continue;
+        }
+
+        std::string lookupKey = normalizeAssetPath(renderer.meshAssetPath);
+
+        // Check if mesh already in library
+        size_t existingHandle = m_frameRenderer->GetMeshHandle(lookupKey);
+        if (existingHandle != SIZE_MAX) {
+            MeshGPU* mesh = m_frameRenderer->GetMesh(existingHandle);
+            if (mesh) {
+                int subCount = mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size());
+                renderer.SetMesh(existingHandle, mesh->bounds, mesh->sourceKey, mesh->imported, subCount);
+                std::cout << "[QtEditorEngine]   -> Found in library: handle " << existingHandle << "\n";
+                continue;
+            }
+        }
+
+        // Handle builtin meshes
+        if (renderer.meshAssetPath.rfind("builtin://", 0) == 0) {
+            size_t handle = m_frameRenderer->GetMeshHandle(renderer.meshAssetPath);
+            if (handle != SIZE_MAX) {
+                MeshGPU* mesh = m_frameRenderer->GetMesh(handle);
+                if (mesh) {
+                    int subCount = mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size());
+                    renderer.SetMesh(handle, mesh->bounds, mesh->sourceKey, mesh->imported, subCount);
+                    std::cout << "[QtEditorEngine]   -> Builtin mesh: handle " << handle << "\n";
+                }
+            } else {
+                std::cerr << "[QtEditorEngine]   -> Unknown builtin: " << renderer.meshAssetPath << "\n";
+                renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+            }
+            continue;
+        }
+
+        // Try to load mesh from file
+        fs::path meshPath;
+        
+        // If path is relative, resolve against asset root
+        fs::path assetP(renderer.meshAssetPath);
+        if (assetP.is_relative() && !assetRoot.empty()) {
+            std::string rel = assetP.generic_string();
+            if (rel.rfind("assets/", 0) == 0) {
+                rel = rel.substr(std::string("assets/").size());
+                meshPath = assetRoot / fs::path(rel);
+            } else {
+                meshPath = assetRoot / assetP;
+            }
+        } else if (assetP.is_relative() && !projectRoot.empty()) {
+            meshPath = projectRoot / renderer.meshAssetPath;
+        } else {
+            meshPath = assetP;
+        }
+
+        // Normalize
+        if (!meshPath.empty()) {
+            meshPath = fs::weakly_canonical(meshPath);
+        }
+
+        std::cout << "[QtEditorEngine]   -> Resolved path: " << meshPath << "\n";
+
+        if (!fs::exists(meshPath)) {
+            std::cerr << "[QtEditorEngine]   -> File not found: " << meshPath << "\n";
+            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+            continue;
+        }
+
+        // Load mesh
+        MeshData meshData;
+        std::string loadError;
+        if (!ModelImporter::LoadModel(meshPath, meshData, loadError)) {
+            std::cerr << "[QtEditorEngine]   -> Load failed: " << loadError << "\n";
+            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+            continue;
+        }
+
+        // Upload to GPU
+        std::string meshName = meshPath.stem().string();
+        size_t handle = uploadMeshToGPU(meshName, meshData, meshPath, true);
+        
+        if (handle != MeshRendererComponent::InvalidMesh) {
+            MeshGPU* mesh = m_frameRenderer->GetMesh(handle);
+            int subCount = mesh ? (mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size())) : 1;
+            renderer.SetMesh(handle, meshData.bounds, lookupKey, true, subCount);
+            std::cout << "[QtEditorEngine]   -> Uploaded: handle " << handle << "\n";
+        }
+    }
+
+    std::cout << "[QtEditorEngine] Mesh rebuild complete. Library size: " 
+              << m_frameRenderer->GetMeshCount() << "\n";
+
+    // Debug: list all meshes in library
+    std::cout << "[QtEditorEngine] === Mesh Library Contents ===\n";
+    for (size_t i = 0; i < m_frameRenderer->GetMeshCount(); i++) {
+        MeshGPU* mesh = m_frameRenderer->GetMesh(i);
+        if (mesh) {
+            std::cout << "  [" << i << "] " << mesh->sourceKey << " - vertices=" << mesh->vertexCount 
+                      << " indices=" << mesh->indexCount << "\n";
+        }
+    }
+
+    // Debug: check what mesh handles entities have
+    std::cout << "[QtEditorEngine] === Entity Mesh Assignments ===\n";
+    auto debugView = scene->GetEntitiesWith<MeshRendererComponent>();
+    for (auto entityHandle : debugView) {
+        Entity entity(entityHandle, scene);
+        auto& renderer = entity.GetComponent<MeshRendererComponent>();
+        std::string entityName = entity.HasComponent<TagComponent>()
+                                     ? entity.GetComponent<TagComponent>().tag
+                                     : std::string("Entity");
+        std::cout << "  " << entityName << " - meshHandle=" << renderer.meshHandle 
+                  << " visible=" << renderer.visible << "\n";
+    }
+
+    // Auto-frame the camera to the scene bounds so the loaded scene is visible.
+    bool hasBounds = false;
+    AABB sceneBounds;
+    auto boundsView = scene->GetEntitiesWith<TransformComponent, MeshRendererComponent>();
+    for (auto entityHandle : boundsView) {
+        Entity entity(entityHandle, scene);
+        auto& transform = entity.GetComponent<TransformComponent>();
+        auto& renderer = entity.GetComponent<MeshRendererComponent>();
+        if (!renderer.visible || !renderer.HasValidMesh()) {
+            continue;
+        }
+        AABB worldBounds = renderer.GetWorldBounds(transform);
+        if (!hasBounds) {
+            sceneBounds = worldBounds;
+            hasBounds = true;
+        } else {
+            sceneBounds.min.x = std::min(sceneBounds.min.x, worldBounds.min.x);
+            sceneBounds.min.y = std::min(sceneBounds.min.y, worldBounds.min.y);
+            sceneBounds.min.z = std::min(sceneBounds.min.z, worldBounds.min.z);
+            sceneBounds.max.x = std::max(sceneBounds.max.x, worldBounds.max.x);
+            sceneBounds.max.y = std::max(sceneBounds.max.y, worldBounds.max.y);
+            sceneBounds.max.z = std::max(sceneBounds.max.z, worldBounds.max.z);
+        }
+    }
+
+    if (hasBounds) {
+        Vec3 center = vscale(vadd(sceneBounds.min, sceneBounds.max), 0.5f);
+        Vec3 extents = vscale(vsub(sceneBounds.max, sceneBounds.min), 0.5f);
+        float radius = vlen(extents);
+        if (radius < 0.1f) {
+            radius = 0.1f;
+        }
+
+        constexpr float DEG_TO_RAD = 3.1415926535f / 180.0f;
+        float fovRad = 60.0f * DEG_TO_RAD;
+        float distance = radius / std::tan(fovRad * 0.5f);
+        distance *= 1.5f;
+
+        Vec3 offsetDir = vnorm(Vec3(1.0f, 0.35f, 1.0f));
+        Vec3 cameraPos = vadd(center, vscale(offsetDir, distance));
+        Vec3 lookDir = vnorm(vsub(center, cameraPos));
+
+        float yawRad = std::atan2(lookDir.z, lookDir.x);
+        float pitchRad = std::asin(lookDir.y);
+
+        float yawDeg = yawRad / DEG_TO_RAD;
+        float pitchDeg = pitchRad / DEG_TO_RAD;
+
+        m_camera.positionX = cameraPos.x;
+        m_camera.positionY = cameraPos.y;
+        m_camera.positionZ = cameraPos.z;
+        m_camera.yawDeg = yawDeg;
+        m_camera.pitchDeg = pitchDeg;
+
+        auto& editorCam = m_editorContext.GetCamera();
+        editorCam.positionX = m_camera.positionX;
+        editorCam.positionY = m_camera.positionY;
+        editorCam.positionZ = m_camera.positionZ;
+        editorCam.yawDeg = m_camera.yawDeg;
+        editorCam.pitchDeg = m_camera.pitchDeg;
+
+        std::cout << "[QtEditorEngine] Framed scene: center(" << center.x << ", "
+                  << center.y << ", " << center.z << ") radius=" << radius << "\n";
+    }
 }
 
 } // namespace QtEditor

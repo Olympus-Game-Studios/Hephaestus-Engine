@@ -120,6 +120,19 @@ public:
     Hephaestus::EditorContext* GetEditorContext() { return &m_editorContext; }
     const Hephaestus::EditorContext* GetEditorContext() const { return &m_editorContext; }
 
+    /**
+     * @brief Rebuild meshes in the renderer for the current scene.
+     * 
+     * Call this after loading a scene to ensure all meshes are uploaded
+     * to the GPU and entity handles are set correctly.
+     */
+    void RebuildSceneMeshes();
+
+    /**
+     * @brief Get the frame renderer (for direct mesh library access if needed).
+     */
+    Hephaestus::EngineFrameRenderer* GetFrameRenderer() { return m_frameRenderer.get(); }
+
 signals:
     /**
      * @brief Emitted when engine initialization completes.
@@ -152,8 +165,13 @@ private:
     void renderFrame();
     void createTestMesh();
     void cleanupVulkanResources();
+    void createBuiltinMeshes();
+    size_t uploadMeshToGPU(const std::string& name, const MeshData& data,
+                           const std::filesystem::path& sourcePath, bool imported);
+    std::string normalizeAssetPath(const std::string& assetPath) const;
 
     EngineState m_state = EngineState::Uninitialized;
+    bool m_builtinMeshesCreated = false;
 
     // Vulkan resources (owned by main.cpp in legacy mode, but we need our own here)
     VkInstance m_instance = VK_NULL_HANDLE;
