@@ -34,6 +34,9 @@ QtViewportWindow::QtViewportWindow(QWindow* parent)
     // Set initial size
     resize(800, 600);
     
+    // Enable strong focus so we can receive keyboard input
+    // Note: QWindow doesn't have setFocusPolicy; handled by requestActivate on click
+    
     std::cout << "[QtViewport] Window created\n";
 }
 
@@ -268,6 +271,68 @@ bool QtViewportWindow::event(QEvent* event)
     default:
         return QWindow::event(event);
     }
+}
+
+void QtViewportWindow::CaptureCursor()
+{
+    if (m_cursorCaptured) {
+        return;
+    }
+    
+#ifdef _WIN32
+    // Save current cursor position
+    POINT cursorPos;
+    GetCursorPos(&cursorPos);
+    m_savedCursorX = cursorPos.x;
+    m_savedCursorY = cursorPos.y;
+    
+    // Hide cursor
+    ShowCursor(FALSE);
+    
+    // Confine cursor to window
+    HWND hwnd = reinterpret_cast<HWND>(winId());
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+    POINT topLeft = { rect.left, rect.top };
+    POINT bottomRight = { rect.right, rect.bottom };
+    ClientToScreen(hwnd, &topLeft);
+    ClientToScreen(hwnd, &bottomRight);
+    rect.left = topLeft.x;
+    rect.top = topLeft.y;
+    rect.right = bottomRight.x;
+    rect.bottom = bottomRight.y;
+    ClipCursor(&rect);
+#endif
+    
+    setMouseGrabEnabled(true);
+    m_cursorCaptured = true;
+    
+    std::cout << "[QtViewport] Cursor captured\n";
+}
+
+void QtViewportWindow::ReleaseCursor()
+{
+    if (!m_cursorCaptured) {
+        return;
+    }
+    
+    setMouseGrabEnabled(false);
+    
+#ifdef _WIN32
+    // Release cursor confinement
+    ClipCursor(nullptr);
+    
+    // Show cursor
+    ShowCursor(TRUE);
+    
+    // Restore cursor position
+    SetCursorPos(m_savedCursorX, m_savedCursorY);
+#endif
+    
+    m_cursorCaptured = false;
+    m_ignoreNextMouseMove = true; // Ignore the move caused by restoring position
+    
+    std::cout << "[QtViewport] Cursor released\n";
 }
 
 } // namespace QtEditor

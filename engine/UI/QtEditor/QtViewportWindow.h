@@ -111,6 +111,38 @@ public:
      */
     bool ShouldForwardInput() const;
 
+    /**
+     * @brief Capture the mouse cursor for camera control.
+     * 
+     * Stores the current cursor position, hides the cursor, and grabs mouse input.
+     * Used when entering fly mode (RMB held).
+     */
+    void CaptureCursor();
+
+    /**
+     * @brief Release the mouse cursor.
+     * 
+     * Shows the cursor and releases mouse grab. Restores cursor to saved position.
+     */
+    void ReleaseCursor();
+
+    /**
+     * @brief Check if the cursor is currently captured.
+     */
+    bool IsCursorCaptured() const { return m_cursorCaptured; }
+
+    /**
+     * @brief Set whether warp-generated mouse moves should be ignored.
+     * 
+     * When warping cursor to center, we need to ignore the resulting move event.
+     */
+    void SetIgnoreNextMouseMove(bool ignore) { m_ignoreNextMouseMove = ignore; }
+
+    /**
+     * @brief Check if next mouse move should be ignored.
+     */
+    bool ShouldIgnoreNextMouseMove() const { return m_ignoreNextMouseMove; }
+
 signals:
     /**
      * @brief Emitted when the viewport becomes ready for rendering.
@@ -152,6 +184,12 @@ private:
     bool m_exposed = false;
     bool m_mouseInside = false;
     bool m_readySent = false;
+    
+    // Cursor capture state
+    bool m_cursorCaptured = false;
+    bool m_ignoreNextMouseMove = false;
+    int m_savedCursorX = 0;
+    int m_savedCursorY = 0;
 };
 
 } // namespace QtEditor

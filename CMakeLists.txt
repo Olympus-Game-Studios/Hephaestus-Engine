@@ -152,6 +152,7 @@ set(ENGINE_CORE_SOURCES
     engine/Assets/FileWatcher.cpp
     engine/Assets/ReimportManager.cpp
     engine/Core/EditorContext.cpp
+    engine/Core/EditorCameraController.cpp
     engine/Core/ProjectContext.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
@@ -203,6 +204,7 @@ if(HEPHAESTUS_BUILD_EDITOR)
 add_executable(HephaestusEngine
     engine/Core/main.cpp
     engine/Core/EditorContext.cpp
+    engine/Core/EditorCameraController.cpp
     engine/Core/ProjectContext.cpp
     engine/Assets/ModelImporter.cpp
     engine/Assets/AssetDatabase.cpp

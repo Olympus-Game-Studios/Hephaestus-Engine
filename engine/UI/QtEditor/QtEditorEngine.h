@@ -24,6 +24,7 @@
 #include "../../Gfx/NativeSurface.h"
 #include "../../Gfx/EngineFrameRenderer.h"
 #include "../../Core/EditorContext.h"
+#include "../../Core/EditorCameraController.h"
 
 // Forward declarations (avoid including heavy engine headers)
 class VulkanDevice;
@@ -129,6 +130,19 @@ public:
     void RebuildSceneMeshes();
 
     /**
+     * @brief Focus the camera on the currently selected entity.
+     * 
+     * If no entity is selected, focuses on the world origin.
+     * Computes bounds if mesh is present, otherwise uses entity position.
+     */
+    void FocusOnSelection();
+
+    /**
+     * @brief Get the camera controller for external configuration.
+     */
+    Hephaestus::EditorCameraController* GetCameraController() { return &m_cameraController; }
+
+    /**
      * @brief Get the frame renderer (for direct mesh library access if needed).
      */
     Hephaestus::EngineFrameRenderer* GetFrameRenderer() { return m_frameRenderer.get(); }
@@ -169,6 +183,10 @@ private:
     size_t uploadMeshToGPU(const std::string& name, const MeshData& data,
                            const std::filesystem::path& sourcePath, bool imported);
     std::string normalizeAssetPath(const std::string& assetPath) const;
+    
+    // Input helper methods
+    void updateKeyState(int key, bool pressed);
+    void resetInputState();
 
     EngineState m_state = EngineState::Uninitialized;
     bool m_builtinMeshesCreated = false;
@@ -185,9 +203,18 @@ private:
     // Editor context - single source of truth for scene, selection, etc.
     Hephaestus::EditorContext m_editorContext;
     
-    // Camera state (mirrors EditorContext camera for RenderFrame)
+    // Camera controller - UE5-style navigation
+    Hephaestus::EditorCameraController m_cameraController;
+    
+    // Camera state for rendering
     Hephaestus::RenderCamera m_camera;
     Hephaestus::FrameRenderConfig m_renderConfig;
+    
+    // Input state tracking
+    Hephaestus::CameraInputState m_inputState;
+    float m_lastMouseX = 0.0f;
+    float m_lastMouseY = 0.0f;
+    bool m_hasLastMousePos = false;
 
     // Viewport connection
     QtViewportWindow* m_viewport = nullptr;

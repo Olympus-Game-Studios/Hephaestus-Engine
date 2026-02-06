@@ -349,27 +349,219 @@ void QtEditorEngine::OnViewportResized(uint32_t width, uint32_t height)
 
 void QtEditorEngine::OnViewportInput(const InputEvent& event)
 {
-    // TODO: Forward to engine input system
-    // For now, just log the events
+    // Handle ignore flag for cursor warp
+    if (event.type == InputEvent::Type::MouseMove && m_viewport && m_viewport->ShouldIgnoreNextMouseMove()) {
+        m_viewport->SetIgnoreNextMouseMove(false);
+        m_lastMouseX = event.x;
+        m_lastMouseY = event.y;
+        return;
+    }
+    
+    // Update input state based on event type
     switch (event.type) {
     case InputEvent::Type::MousePress:
-        // std::cout << "[QtEditorEngine] Mouse press: " << event.button << " at " << event.x << "," << event.y << "\n";
+        // Update button state
+        if (event.button == 1) m_inputState.lmbDown = true;       // Qt::LeftButton
+        else if (event.button == 2) m_inputState.rmbDown = true;  // Qt::RightButton
+        else if (event.button == 4) m_inputState.mmbDown = true;  // Qt::MiddleButton
+        
+        // Update modifiers
+        m_inputState.altDown = (event.modifiers & 0x08000000) != 0;   // Qt::AltModifier
+        m_inputState.shiftDown = (event.modifiers & 0x02000000) != 0; // Qt::ShiftModifier
+        m_inputState.ctrlDown = (event.modifiers & 0x04000000) != 0;  // Qt::ControlModifier
+        
+        // Update mouse position
+        m_inputState.mouseX = event.x;
+        m_inputState.mouseY = event.y;
+        
+        // Notify camera controller
+        m_cameraController.OnMousePress(event.button, m_inputState);
+        
+        // Handle cursor capture for fly mode
+        if (m_cameraController.ShouldCaptureCursor() && m_viewport) {
+            m_viewport->CaptureCursor();
+        }
+        
+        m_lastMouseX = event.x;
+        m_lastMouseY = event.y;
+        m_hasLastMousePos = true;
         break;
+        
     case InputEvent::Type::MouseRelease:
+        // Update button state
+        if (event.button == 1) m_inputState.lmbDown = false;
+        else if (event.button == 2) m_inputState.rmbDown = false;
+        else if (event.button == 4) m_inputState.mmbDown = false;
+        
+        // Notify camera controller
+        m_cameraController.OnMouseRelease(event.button, m_inputState);
+        
+        // Release cursor if no longer in fly mode
+        if (!m_cameraController.ShouldCaptureCursor() && m_viewport) {
+            m_viewport->ReleaseCursor();
+        }
         break;
+        
     case InputEvent::Type::MouseMove:
+        {
+            // Calculate mouse delta
+            float deltaX = 0.0f;
+            float deltaY = 0.0f;
+            if (m_hasLastMousePos) {
+                deltaX = event.x - m_lastMouseX;
+                deltaY = event.y - m_lastMouseY;
+            }
+            
+            m_inputState.mouseX = event.x;
+            m_inputState.mouseY = event.y;
+            m_inputState.mouseDeltaX = deltaX;
+            m_inputState.mouseDeltaY = deltaY;
+            
+            // Notify camera controller if any navigation mode is active
+            if (m_cameraController.IsFlyModeActive() || 
+                m_cameraController.IsOrbitModeActive() ||
+                m_cameraController.IsPanModeActive() ||
+                m_cameraController.IsDollyModeActive()) {
+                m_cameraController.OnMouseMove(deltaX, deltaY, m_inputState);
+            }
+            
+            m_lastMouseX = event.x;
+            m_lastMouseY = event.y;
+            m_hasLastMousePos = true;
+        }
         break;
+        
     case InputEvent::Type::MouseWheel:
-        // std::cout << "[QtEditorEngine] Mouse wheel: " << event.wheelDelta << "\n";
+        m_inputState.wheelDelta = event.wheelDelta;
+        m_cameraController.OnMouseWheel(event.wheelDelta, m_inputState);
         break;
+        
     case InputEvent::Type::KeyPress:
-        // std::cout << "[QtEditorEngine] Key press: " << event.key << "\n";
+        // Update key states
+        updateKeyState(event.key, true);
+        
+        // Update modifiers
+        m_inputState.altDown = (event.modifiers & 0x08000000) != 0;
+        m_inputState.shiftDown = (event.modifiers & 0x02000000) != 0;
+        m_inputState.ctrlDown = (event.modifiers & 0x04000000) != 0;
+        
+        // Handle F key for focus
+        if (event.key == 0x46) { // Qt::Key_F
+            FocusOnSelection();
+        }
         break;
+        
     case InputEvent::Type::KeyRelease:
+        updateKeyState(event.key, false);
+        
+        // Update modifiers
+        m_inputState.altDown = (event.modifiers & 0x08000000) != 0;
+        m_inputState.shiftDown = (event.modifiers & 0x02000000) != 0;
+        m_inputState.ctrlDown = (event.modifiers & 0x04000000) != 0;
         break;
-    default:
+        
+    case InputEvent::Type::FocusIn:
+        m_inputState.viewportFocused = true;
+        break;
+        
+    case InputEvent::Type::FocusOut:
+        m_inputState.viewportFocused = false;
+        // Release cursor and reset input state when losing focus
+        if (m_viewport && m_viewport->IsCursorCaptured()) {
+            m_viewport->ReleaseCursor();
+        }
+        resetInputState();
+        break;
+        
+    case InputEvent::Type::Enter:
+        m_inputState.mouseInViewport = true;
+        break;
+        
+    case InputEvent::Type::Leave:
+        m_inputState.mouseInViewport = false;
+        m_hasLastMousePos = false;
         break;
     }
+}
+
+void QtEditorEngine::updateKeyState(int key, bool pressed)
+{
+    // Qt key codes
+    switch (key) {
+    case 0x57: m_inputState.wDown = pressed; break; // Qt::Key_W
+    case 0x41: m_inputState.aDown = pressed; break; // Qt::Key_A
+    case 0x53: m_inputState.sDown = pressed; break; // Qt::Key_S
+    case 0x44: m_inputState.dDown = pressed; break; // Qt::Key_D
+    case 0x51: m_inputState.qDown = pressed; break; // Qt::Key_Q
+    case 0x45: m_inputState.eDown = pressed; break; // Qt::Key_E
+    default: break;
+    }
+}
+
+void QtEditorEngine::resetInputState()
+{
+    m_inputState.lmbDown = false;
+    m_inputState.mmbDown = false;
+    m_inputState.rmbDown = false;
+    m_inputState.wDown = false;
+    m_inputState.aDown = false;
+    m_inputState.sDown = false;
+    m_inputState.dDown = false;
+    m_inputState.qDown = false;
+    m_inputState.eDown = false;
+    m_inputState.shiftDown = false;
+    m_inputState.ctrlDown = false;
+    m_inputState.altDown = false;
+    m_inputState.wheelDelta = 0.0f;
+    m_inputState.mouseDeltaX = 0.0f;
+    m_inputState.mouseDeltaY = 0.0f;
+}
+
+void QtEditorEngine::FocusOnSelection()
+{
+    if (!m_editorContext.HasActiveScene()) {
+        return;
+    }
+    
+    Scene* scene = m_editorContext.GetActiveScene();
+    entt::entity selected = m_editorContext.GetSelectedEntity();
+    
+    float focusX = 0.0f;
+    float focusY = 0.0f;
+    float focusZ = 0.0f;
+    float focusRadius = 5.0f;
+    
+    if (selected != entt::null && scene->GetRegistry().valid(selected)) {
+        // Get entity transform
+        auto* transform = scene->GetRegistry().try_get<TransformComponent>(selected);
+        if (transform) {
+            focusX = transform->position.x;
+            focusY = transform->position.y;
+            focusZ = transform->position.z;
+        }
+        
+        // Try to get bounds from mesh
+        auto* meshRenderer = scene->GetRegistry().try_get<MeshRendererComponent>(selected);
+        if (meshRenderer && transform) {
+            AABB bounds = meshRenderer->GetWorldBounds(*transform);
+            // Calculate center and radius
+            focusX = (bounds.min.x + bounds.max.x) * 0.5f;
+            focusY = (bounds.min.y + bounds.max.y) * 0.5f;
+            focusZ = (bounds.min.z + bounds.max.z) * 0.5f;
+            
+            float dx = bounds.max.x - bounds.min.x;
+            float dy = bounds.max.y - bounds.min.y;
+            float dz = bounds.max.z - bounds.min.z;
+            focusRadius = std::sqrt(dx*dx + dy*dy + dz*dz) * 0.5f;
+            if (focusRadius < 0.5f) {
+                focusRadius = 2.0f;
+            }
+        }
+    }
+    
+    m_cameraController.FocusOnPoint(focusX, focusY, focusZ, focusRadius);
+    std::cout << "[QtEditorEngine] Focused on point (" << focusX << ", " << focusY << ", " << focusZ 
+              << ") radius=" << focusRadius << "\n";
 }
 
 void QtEditorEngine::onTick()
@@ -400,6 +592,12 @@ void QtEditorEngine::onTick()
         m_renderInProgress = false;
         return;
     }
+    
+    // Update camera controller
+    m_cameraController.Update(m_inputState, dt);
+    
+    // Build render camera from controller
+    m_cameraController.BuildRenderCamera(m_camera);
     
     renderFrame();
     
