@@ -195,9 +195,9 @@ void EditorCameraController::GetRight(float& x, float& y, float& z) const
     // Right is perpendicular to forward on the XZ plane
     // To get left, negate the perpendicular: forward is (cos, sin), perpendicular is (-sin, cos) or (sin, -cos)
     // We want right to be to the right when looking in forward direction
-    x = std::sin(yawRad);
+    x = -std::sin(yawRad);
     y = 0.0f;
-    z = -std::cos(yawRad);
+    z = std::cos(yawRad);
 }
 
 void EditorCameraController::GetUp(float& x, float& y, float& z) const

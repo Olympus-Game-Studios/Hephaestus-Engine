@@ -27,6 +27,7 @@
 #include <stdexcept>
 #include <filesystem>
 #include <cmath>
+#include <algorithm>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -433,6 +434,21 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         
     case InputEvent::Type::MouseWheel:
         m_inputState.wheelDelta = event.wheelDelta;
+        // Check if RMB is held (Qt::RightButton = 2) via event.button or tracked state
+        {
+            bool rmbHeld = (event.button & 2) != 0 || m_inputState.rmbDown;
+            if (rmbHeld && m_cameraController.IsFlyModeActive()) {
+                // Adjust fly mode speed instead of zooming
+                const float minMoveSpeed = 0.1f;
+                const float maxMoveSpeed = 50.0f;
+                const float speedStep = 1.1f;
+                float speedScale = std::pow(speedStep, event.wheelDelta);
+                float newSpeed = std::clamp(m_cameraController.baseMoveSpeed * speedScale, minMoveSpeed, maxMoveSpeed);
+                m_cameraController.baseMoveSpeed = newSpeed;
+                m_editorContext.GetCamera().moveSpeed = newSpeed;
+                break;
+            }
+        }
         m_cameraController.OnMouseWheel(event.wheelDelta, m_inputState);
         break;
         

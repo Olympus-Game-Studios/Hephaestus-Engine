@@ -187,6 +187,7 @@ void QtViewportWindow::wheelEvent(QWheelEvent* event)
     if (ShouldForwardInput()) {
         InputEvent ie;
         ie.type = InputEvent::Type::MouseWheel;
+        ie.button = static_cast<int>(event->buttons());  // Pass held buttons
         ie.modifiers = static_cast<int>(event->modifiers());
         ie.x = static_cast<float>(event->position().x());
         ie.y = static_cast<float>(event->position().y());
