@@ -25,6 +25,9 @@
 
 #include "VulkanBuffer.h"
 #include "VulkanTexture.h"
+#ifndef HEPHAESTUS_GAME_RUNTIME
+#include "VulkanGizmo.h"
+#endif
 #include "../Assets/MeshAsset.h"
 
 // Forward declarations
@@ -67,6 +70,7 @@ struct FrameRenderConfig {
     bool renderGizmo = true;
     bool renderBillboards = true;
     bool renderOutlines = true;
+    bool renderGrid = true;         // World grid overlay
     bool isEditorMode = true;
     bool isPlaying = false;
     bool isPaused = false;
@@ -75,6 +79,15 @@ struct FrameRenderConfig {
     float clearColorR = 0.1f;
     float clearColorG = 0.2f;
     float clearColorB = 0.3f;
+    
+    // Selection for outline rendering (entt::entity as uint32_t)
+    uint32_t selectedEntity = static_cast<uint32_t>(-1); // entt::null
+    
+    // Gizmo configuration (read from EditorContext)
+    int gizmoMode = 1;      // 0=None, 1=Translate, 2=Rotate, 3=Scale
+    int gizmoSpace = 0;     // 0=World, 1=Local
+    bool enableSnap = false;
+    float snapValue = 1.0f; // Current snap value based on mode
 };
 
 /**
@@ -166,6 +179,67 @@ public:
     std::vector<MeshGPU>& GetMeshLibrary() { return m_meshLibrary; }
     const std::vector<MeshGPU>& GetMeshLibrary() const { return m_meshLibrary; }
 
+    // --- Entity ID Picking ---
+
+    /**
+     * @brief Pick an entity at the given screen coordinates.
+     * @param screenX X coordinate in viewport pixels
+     * @param screenY Y coordinate in viewport pixels
+     * @return Entity ID or UINT32_MAX if no entity at that location
+     * 
+     * Note: This requires the ID buffer to have been rendered this frame.
+     * The pick is performed as a GPU readback which may have 1-frame latency.
+     */
+    uint32_t PickEntityAt(uint32_t screenX, uint32_t screenY);
+
+    /**
+     * @brief Check if ID picking is available.
+     */
+    bool IsPickingAvailable() const { return m_idPicker.initialized; }
+
+#ifndef HEPHAESTUS_GAME_RUNTIME
+    // --- Transform Gizmo (Editor only) ---
+
+    /**
+     * @brief Get the transform gizmo for direct manipulation.
+     */
+    VulkanGizmo* GetGizmo() { return &m_gizmo; }
+    
+    /**
+     * @brief Check if gizmo is available.
+     */
+    bool IsGizmoAvailable() const { return m_gizmoInitialized; }
+
+    /**
+     * @brief Update gizmo state for rendering.
+     * @param selectedEntity Entity handle to manipulate (entt::null if none)
+     * @param transform Transform of the selected entity
+     * @param viewMatrix Current view matrix
+     * @param projMatrix Current projection matrix
+     * @param cameraPos Camera position
+     * @param mode Gizmo mode (translate/rotate/scale)
+     * @param space Coordinate space (world/local)
+     */
+    void UpdateGizmoState(uint32_t selectedEntity, const Mat4& transform,
+                          const Mat4& viewMatrix, const Mat4& projMatrix,
+                          const Vec3& cameraPos, int mode, int space);
+
+    /**
+     * @brief Check if gizmo is being hovered at screen coordinates.
+     * @param screenX X coordinate in viewport pixels
+     * @param screenY Y coordinate in viewport pixels  
+     * @param outAxis Output: hovered axis (-1 if none)
+     * @return true if hovering over gizmo
+     */
+    bool CheckGizmoHover(float screenX, float screenY, const Mat4& viewMatrix, 
+                         const Mat4& projMatrix, int& outAxis);
+#else
+    // Stubs for game runtime
+    bool IsGizmoAvailable() const { return false; }
+    void UpdateGizmoState(uint32_t, const Mat4&, const Mat4&, const Mat4&, const Vec3&, int, int) {}
+    bool CheckGizmoHover(float, float, const Mat4&, const Mat4&, int& outAxis) { outAxis = -1; return false; }
+#endif
+
     // --- Accessors ---
 
     VulkanDevice* GetDevice() const { return m_device; }
@@ -190,7 +264,23 @@ private:
                         const FrameRenderConfig& config);
     void recordGizmo(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene);
     void recordBillboards(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene);
-    void recordOutlines(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene);
+    void recordOutlines(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, 
+                        const FrameRenderConfig& config);
+    void recordGrid(VkCommandBuffer cmd, uint32_t imageIndex, const FrameRenderConfig& config);
+    bool createGridResources();
+    bool createOutlineResources();
+    void cleanupOutlineResources();
+    
+    // ID picking helpers
+    bool createIdPickerResources();
+    void recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene);
+    void cleanupIdPickerResources();
+    
+#ifndef HEPHAESTUS_GAME_RUNTIME
+    // Gizmo helpers (Editor only)
+    bool createGizmoResources();
+    void cleanupGizmoResources();
+#endif
 
     // Cleanup helpers
     void cleanupSwapchainResources();
@@ -299,6 +389,107 @@ private:
         void Cleanup(VmaAllocator allocator);
     };
     Skybox m_skybox;
+
+    // Editor grid
+    struct EditorGrid {
+        bool initialized = false;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+        VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
+        VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+        std::vector<VkDescriptorSet> descriptorSets;
+        
+        struct GridPushConstants {
+            float gridSize = 100.0f;      // Size of grid in world units
+            float cellSize = 1.0f;        // Size of each cell
+            float fadeDistance = 50.0f;   // Distance to start fading
+            float lineWidth = 1.0f;       // Line width in pixels
+        };
+
+        void Init(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
+                  VkDescriptorSetLayout cameraDescLayout, VmaAllocator allocator);
+        void Recreate(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
+                      VkDescriptorSetLayout cameraDescLayout);
+        void Draw(VkCommandBuffer cmd, VkDescriptorSet cameraDescSet, const GridPushConstants& pc);
+        void Cleanup(VkDevice device);
+    };
+    EditorGrid m_editorGrid;
+
+    // Entity ID picker for viewport selection
+    struct IdPicker {
+        bool initialized = false;
+        
+        // Offscreen ID buffer
+        VkImage colorImage = VK_NULL_HANDLE;
+        VkImageView colorImageView = VK_NULL_HANDLE;
+        VmaAllocation colorAllocation = VK_NULL_HANDLE;
+        VkImage depthImage = VK_NULL_HANDLE;
+        VkImageView depthImageView = VK_NULL_HANDLE;
+        VmaAllocation depthAllocation = VK_NULL_HANDLE;
+        
+        // Render pass and framebuffer
+        VkRenderPass renderPass = VK_NULL_HANDLE;
+        VkFramebuffer framebuffer = VK_NULL_HANDLE;
+        
+        // Pipeline for rendering entity IDs
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+        
+        // Readback staging buffer
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VmaAllocation stagingAllocation = VK_NULL_HANDLE;
+        void* mappedStagingBuffer = nullptr;
+        
+        // Current dimensions
+        uint32_t width = 0;
+        uint32_t height = 0;
+        
+        // Pending pick request
+        bool pickPending = false;
+        uint32_t pickX = 0;
+        uint32_t pickY = 0;
+        uint32_t lastPickedEntity = UINT32_MAX;
+        
+        struct IdPushConstants {
+            Mat4 model;
+            uint32_t entityId;
+            uint32_t padding[3];
+        };
+    };
+    IdPicker m_idPicker;
+
+    // Selection outline
+    struct OutlineRenderer {
+        bool initialized = false;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+        
+        // Uses the same descriptor set layout as the main pipeline (camera UBO)
+        struct OutlinePushConstants {
+            Mat4 model;
+        };
+        
+        void Init(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
+                  VkDescriptorSetLayout cameraDescLayout, VmaAllocator allocator);
+        void Recreate(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
+                      VkDescriptorSetLayout cameraDescLayout);
+        void Draw(VkCommandBuffer cmd, VkDescriptorSet cameraDescSet, 
+                  VkBuffer vertexBuffer, VkBuffer indexBuffer, uint32_t indexCount,
+                  const Mat4& modelMatrix);
+        void Cleanup(VkDevice device);
+    };
+    OutlineRenderer m_outlineRenderer;
+
+#ifndef HEPHAESTUS_GAME_RUNTIME
+    // Transform gizmo (editor-only)
+    VulkanGizmo m_gizmo;
+    bool m_gizmoInitialized = false;
+    uint32_t m_gizmoTargetEntity = UINT32_MAX;
+    Mat4 m_gizmoTargetTransform = Mat4::Identity();
+    Mat4 m_gizmoViewMatrix = Mat4::Identity();
+    Mat4 m_gizmoProjectionMatrix = Mat4::Identity();
+    Vec3 m_gizmoCameraPos = Vec3(0, 0, 0);
+#endif
 };
 
 } // namespace Hephaestus

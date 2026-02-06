@@ -14,6 +14,7 @@
 #include <iostream>
 #include <cstring>
 #include <cmath>
+#include <fstream>
 
 namespace Hephaestus {
 
@@ -148,6 +149,28 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
         return false;
     }
     
+    // Create editor grid resources (optional, failure doesn't prevent init)
+    if (!createGridResources()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create grid resources (grid will be disabled)\n";
+    }
+    
+    // Create outline resources (optional, failure doesn't prevent init)
+    if (!createOutlineResources()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create outline resources (outlines will be disabled)\n";
+    }
+    
+    // Create ID picker resources (optional, failure doesn't prevent init)
+    if (!createIdPickerResources()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create ID picker resources (picking will be disabled)\n";
+    }
+    
+#ifndef HEPHAESTUS_GAME_RUNTIME
+    // Create gizmo resources (optional, failure doesn't prevent init)
+    if (!createGizmoResources()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create gizmo resources (gizmo will be disabled)\n";
+    }
+#endif
+    
     m_initialized = true;
     std::cout << "[EngineFrameRenderer] Initialized successfully\n";
     return true;
@@ -176,6 +199,15 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     
     // Wait for previous frame
     vkWaitForFences(m_device->device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+    
+    // Process pending pick request (read from previous frame's copy)
+    if (m_idPicker.pickPending && m_idPicker.mappedStagingBuffer) {
+        const uint8_t* pixelData = static_cast<const uint8_t*>(m_idPicker.mappedStagingBuffer);
+        uint32_t entityId = pixelData[0] | (pixelData[1] << 8) | 
+                            (pixelData[2] << 16) | (pixelData[3] << 24);
+        m_idPicker.lastPickedEntity = entityId;
+        m_idPicker.pickPending = false;
+    }
     
     // Acquire next image
     uint32_t imageIndex;
@@ -211,6 +243,37 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cmd, &beginInfo);
+    
+    // Record ID pass for entity picking (editor only)
+    if (config.isEditorMode && m_idPicker.initialized) {
+        recordIdPass(cmd, imageIndex, scene);
+        
+        // If there's a pending pick request, copy the pixel to staging buffer
+        if (m_idPicker.pickPending && m_idPicker.pickX < m_idPicker.width && 
+            m_idPicker.pickY < m_idPicker.height) {
+            
+            VkBufferImageCopy region{};
+            region.bufferOffset = 0;
+            region.bufferRowLength = 0;
+            region.bufferImageHeight = 0;
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.mipLevel = 0;
+            region.imageSubresource.baseArrayLayer = 0;
+            region.imageSubresource.layerCount = 1;
+            region.imageOffset = {static_cast<int32_t>(m_idPicker.pickX), 
+                                  static_cast<int32_t>(m_idPicker.pickY), 0};
+            region.imageExtent = {1, 1, 1};
+            
+            vkCmdCopyImageToBuffer(cmd, m_idPicker.colorImage, 
+                                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                   m_idPicker.stagingBuffer, 1, &region);
+        }
+    }
+    
+    // Record shadow pass (before main pass)
+    if (config.renderShadows && m_directionalShadow.IsValid()) {
+        recordShadowPass(cmd, scene);
+    }
     
     // Record main render pass
     recordMainPass(cmd, imageIndex, scene, config);
@@ -491,11 +554,16 @@ bool EngineFrameRenderer::createDescriptorSets()
             textureArrayInfos[t].sampler = m_dummyTexture.sampler;
         }
         
-        // Shadow map (also use dummy texture for now)
+        // Shadow map - use actual shadow map if valid, otherwise dummy texture
         VkDescriptorImageInfo shadowMapInfo{};
         shadowMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        shadowMapInfo.imageView = m_dummyTexture.imageView;
-        shadowMapInfo.sampler = m_dummyTexture.sampler;
+        if (m_directionalShadow.IsValid()) {
+            shadowMapInfo.imageView = m_directionalShadow.imageView;
+            shadowMapInfo.sampler = m_directionalShadow.sampler;
+        } else {
+            shadowMapInfo.imageView = m_dummyTexture.imageView;
+            shadowMapInfo.sampler = m_dummyTexture.sampler;
+        }
         
         VkWriteDescriptorSet descriptorWrites[5] = {};
         
@@ -549,7 +617,291 @@ bool EngineFrameRenderer::createDescriptorSets()
 
 bool EngineFrameRenderer::createShadowResources()
 {
-    // TODO: Implement shadow map creation
+    if (!m_device || !m_swapchain || !m_pipeline) return false;
+    
+    VkDevice device = m_device->device;
+    VmaAllocator allocator = m_device->allocator;
+    uint32_t resolution = m_directionalShadow.resolution;
+    
+    // Create depth image for shadow map
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = VK_FORMAT_D32_SFLOAT;
+    imageInfo.extent = {resolution, resolution, 1};
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    
+    if (vmaCreateImage(allocator, &imageInfo, &allocInfo, &m_directionalShadow.image,
+                       &m_directionalShadow.allocation, nullptr) != VK_SUCCESS) {
+        std::cerr << "[ShadowMap] Failed to create depth image\n";
+        return false;
+    }
+    
+    // Create image view
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = m_directionalShadow.image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_D32_SFLOAT;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+    
+    if (vkCreateImageView(device, &viewInfo, nullptr, &m_directionalShadow.imageView) != VK_SUCCESS) {
+        std::cerr << "[ShadowMap] Failed to create image view\n";
+        return false;
+    }
+    
+    // Create sampler with comparison function for PCF
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE; // Far plane = 1.0
+    samplerInfo.compareEnable = VK_FALSE; // We'll sample and compare in shader
+    samplerInfo.maxAnisotropy = 1.0f;
+    
+    if (vkCreateSampler(device, &samplerInfo, nullptr, &m_directionalShadow.sampler) != VK_SUCCESS) {
+        std::cerr << "[ShadowMap] Failed to create sampler\n";
+        return false;
+    }
+    
+    // Create render pass for shadow map
+    VkAttachmentDescription depthAttachment{};
+    depthAttachment.format = VK_FORMAT_D32_SFLOAT;
+    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    
+    VkAttachmentReference depthAttachmentRef{};
+    depthAttachmentRef.attachment = 0;
+    depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 0;
+    subpass.pDepthStencilAttachment = &depthAttachmentRef;
+    
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    dependency.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+    
+    VkRenderPassCreateInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassInfo.attachmentCount = 1;
+    renderPassInfo.pAttachments = &depthAttachment;
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpass;
+    renderPassInfo.dependencyCount = 1;
+    renderPassInfo.pDependencies = &dependency;
+    
+    if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &m_directionalShadow.renderPass) != VK_SUCCESS) {
+        std::cerr << "[ShadowMap] Failed to create render pass\n";
+        return false;
+    }
+    
+    // Create framebuffer
+    VkFramebufferCreateInfo fbInfo{};
+    fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fbInfo.renderPass = m_directionalShadow.renderPass;
+    fbInfo.attachmentCount = 1;
+    fbInfo.pAttachments = &m_directionalShadow.imageView;
+    fbInfo.width = resolution;
+    fbInfo.height = resolution;
+    fbInfo.layers = 1;
+    
+    if (vkCreateFramebuffer(device, &fbInfo, nullptr, &m_directionalShadow.framebuffer) != VK_SUCCESS) {
+        std::cerr << "[ShadowMap] Failed to create framebuffer\n";
+        return false;
+    }
+    
+    // Create pipeline layout with push constants
+    struct ShadowPushConstants {
+        Mat4 lightViewProj;
+        Mat4 model;
+    };
+    
+    VkPushConstantRange pushRange{};
+    pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushRange.offset = 0;
+    pushRange.size = sizeof(ShadowPushConstants);
+    
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushRange;
+    
+    if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &m_directionalShadow.pipelineLayout) != VK_SUCCESS) {
+        std::cerr << "[ShadowMap] Failed to create pipeline layout\n";
+        return false;
+    }
+    
+    // Load shadow shaders
+    auto loadShader = [device](const std::string& path) -> VkShaderModule {
+        std::ifstream file(path, std::ios::ate | std::ios::binary);
+        if (!file.is_open()) return VK_NULL_HANDLE;
+        size_t fileSize = static_cast<size_t>(file.tellg());
+        std::vector<char> code(fileSize);
+        file.seekg(0);
+        file.read(code.data(), fileSize);
+        file.close();
+        
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.size();
+        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+        
+        VkShaderModule shaderModule;
+        if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+            return VK_NULL_HANDLE;
+        }
+        return shaderModule;
+    };
+    
+    VkShaderModule vertShader = loadShader("../shaders/shadowmap.vert.spv");
+    VkShaderModule fragShader = loadShader("../shaders/shadowmap.frag.spv");
+    
+    if (vertShader == VK_NULL_HANDLE || fragShader == VK_NULL_HANDLE) {
+        std::cerr << "[ShadowMap] Failed to load shadow shaders\n";
+        if (vertShader) vkDestroyShaderModule(device, vertShader, nullptr);
+        if (fragShader) vkDestroyShaderModule(device, fragShader, nullptr);
+        return false;
+    }
+    
+    VkPipelineShaderStageCreateInfo shaderStages[2]{};
+    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStages[0].module = vertShader;
+    shaderStages[0].pName = "main";
+    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStages[1].module = fragShader;
+    shaderStages[1].pName = "main";
+    
+    // Vertex input - only position needed
+    VkVertexInputBindingDescription bindingDescription{};
+    bindingDescription.binding = 0;
+    bindingDescription.stride = sizeof(float) * 11; // Same vertex format as main mesh
+    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    
+    VkVertexInputAttributeDescription attributeDescription{};
+    attributeDescription.binding = 0;
+    attributeDescription.location = 0;
+    attributeDescription.format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescription.offset = 0;
+    
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = 1;
+    vertexInputInfo.pVertexAttributeDescriptions = &attributeDescription;
+    
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+    
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(resolution);
+    viewport.height = static_cast<float>(resolution);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = {resolution, resolution};
+    
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+    
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = 1.5f;
+    rasterizer.depthBiasSlopeFactor = 1.5f;
+    
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+    
+    // No color blending - depth only
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.attachmentCount = 0;
+    
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = nullptr;
+    pipelineInfo.layout = m_directionalShadow.pipelineLayout;
+    pipelineInfo.renderPass = m_directionalShadow.renderPass;
+    pipelineInfo.subpass = 0;
+    
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_directionalShadow.pipeline) != VK_SUCCESS) {
+        std::cerr << "[ShadowMap] Failed to create graphics pipeline\n";
+        vkDestroyShaderModule(device, vertShader, nullptr);
+        vkDestroyShaderModule(device, fragShader, nullptr);
+        return false;
+    }
+    
+    vkDestroyShaderModule(device, vertShader, nullptr);
+    vkDestroyShaderModule(device, fragShader, nullptr);
+    
+    std::cout << "[ShadowMap] Created directional shadow map (" << resolution << "x" << resolution << ")\n";
     return true;
 }
 
@@ -607,6 +959,10 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene)
     lightUBO.dirLightDirIntensity = Vec4(0.0f, -1.0f, 0.0f, 0.5f);
     lightUBO.dirLightColor = Vec4(1.0f, 1.0f, 1.0f, 1.0f);
     
+    // Default shadow parameters - disabled
+    lightUBO.dirShadowParams = Vec4(0.005f, 0.5f, 1.0f / m_directionalShadow.resolution, 0.0f);
+    lightUBO.dirLightViewProj = Mat4::Identity();
+    
     lightUBO.pointLightCount = 0;
     lightUBO.spotLightCount = 0;
     
@@ -626,12 +982,37 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene)
             if (entity.HasComponent<TransformComponent>()) {
                 auto& transform = entity.GetComponent<TransformComponent>();
                 lightPos = transform.position;
+                
+                // Compute light direction from rotation for directional lights
+                if (light.type == LightType::Directional) {
+                    Mat4 rotation = Mat4::RotationZ(transform.rotation.z);
+                    rotation = Mat4::Multiply(Mat4::RotationY(transform.rotation.y), rotation);
+                    rotation = Mat4::Multiply(Mat4::RotationX(transform.rotation.x), rotation);
+                    lightDir = Mat4::TransformDirection(rotation, Vec3(0, 0, -1));
+                    lightDir = vnorm(lightDir);
+                }
             }
             
             if (light.type == LightType::Directional) {
-                lightUBO.dirLightDirIntensity = Vec4(light.direction.x, light.direction.y, 
-                                                     light.direction.z, light.intensity);
+                lightUBO.dirLightDirIntensity = Vec4(lightDir.x, lightDir.y, 
+                                                     lightDir.z, light.intensity);
                 lightUBO.dirLightColor = Vec4(light.color.x, light.color.y, light.color.z, 1.0f);
+                
+                // Set up shadow matrix
+                if (m_directionalShadow.IsValid() && light.castShadows) {
+                    float shadowSize = 50.0f;  // Size of shadow frustum
+                    float nearPlane = 0.1f;
+                    float farPlane = 100.0f;
+                    
+                    Vec3 lightPosForShadow = vscale(lightDir, -30.0f);
+                    Mat4 lightView = Mat4::LookAt(lightPosForShadow, Vec3(0, 0, 0), Vec3(0, 1, 0));
+                    Mat4 lightProj = Mat4::OrthographicShadow(-shadowSize, shadowSize, -shadowSize, shadowSize, nearPlane, farPlane);
+                    lightUBO.dirLightViewProj = Mat4::Multiply(lightProj, lightView);
+                    
+                    // Enable shadows - bias, strength, texel size, enabled
+                    lightUBO.dirShadowParams = Vec4(light.shadowBias, light.shadowStrength, 
+                                                    1.0f / m_directionalShadow.resolution, 1.0f);
+                }
             } else if (light.type == LightType::Point && pointLightIndex < 16) {
                 lightUBO.pointLightPositions[pointLightIndex] = {lightPos.x, lightPos.y, lightPos.z, light.range};
                 lightUBO.pointLightColors[pointLightIndex] = {light.color.x, light.color.y, light.color.z, light.intensity};
@@ -656,6 +1037,107 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene)
     std::memcpy(mapped, &lightUBO, sizeof(lightUBO));
     vmaFlushAllocation(m_device->allocator, m_lightingBuffers[imageIndex].allocation, 0, VK_WHOLE_SIZE);
     vmaUnmapMemory(m_device->allocator, m_lightingBuffers[imageIndex].allocation);
+}
+
+void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene)
+{
+    if (!m_directionalShadow.IsValid() || !scene) return;
+    
+    // Find directional light in scene
+    auto& registry = scene->GetRegistry();
+    Mat4 lightViewProj = Mat4::Identity();
+    bool hasDirectionalLight = false;
+    
+    auto lightView = registry.view<TransformComponent, LightComponent>();
+    for (auto entity : lightView) {
+        auto& light = lightView.get<LightComponent>(entity);
+        if (light.type == LightType::Directional) {
+            auto& transform = lightView.get<TransformComponent>(entity);
+            
+            // Compute light direction from rotation
+            Mat4 rotation = Mat4::RotationZ(transform.rotation.z);
+            rotation = Mat4::Multiply(Mat4::RotationY(transform.rotation.y), rotation);
+            rotation = Mat4::Multiply(Mat4::RotationX(transform.rotation.x), rotation);
+            Vec3 lightDir = Mat4::TransformDirection(rotation, Vec3(0, 0, -1));
+            lightDir = vnorm(lightDir);
+            
+            // Orthographic projection for directional light
+            float shadowSize = 50.0f;  // Size of shadow frustum
+            float nearPlane = 0.1f;
+            float farPlane = 100.0f;
+            
+            // Look at origin from light direction
+            Vec3 lightPos = vscale(lightDir, -30.0f); // Position light "behind" the scene
+            Mat4 lightView = Mat4::LookAt(lightPos, Vec3(0, 0, 0), Vec3(0, 1, 0));
+            Mat4 lightProj = Mat4::OrthographicShadow(-shadowSize, shadowSize, -shadowSize, shadowSize, nearPlane, farPlane);
+            lightViewProj = Mat4::Multiply(lightProj, lightView);
+            hasDirectionalLight = true;
+            break;
+        }
+    }
+    
+    if (!hasDirectionalLight) return;
+    
+    // Begin shadow render pass
+    VkClearValue clearValue{};
+    clearValue.depthStencil = {1.0f, 0};
+    
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = m_directionalShadow.renderPass;
+    renderPassInfo.framebuffer = m_directionalShadow.framebuffer;
+    renderPassInfo.renderArea.offset = {0, 0};
+    renderPassInfo.renderArea.extent = {m_directionalShadow.resolution, m_directionalShadow.resolution};
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearValue;
+    
+    vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_directionalShadow.pipeline);
+    
+    // Render all mesh entities
+    auto meshView = registry.view<TransformComponent, MeshRendererComponent>();
+    VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
+    VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
+    
+    struct ShadowPushConstants {
+        Mat4 lightViewProj;
+        Mat4 model;
+    };
+    
+    for (auto entity : meshView) {
+        auto& meshComp = meshView.get<MeshRendererComponent>(entity);
+        if (!meshComp.HasValidMesh() || !meshComp.visible) continue;
+        
+        // Find mesh in library
+        auto it = m_meshLibraryLookup.find(meshComp.meshAssetPath);
+        if (it == m_meshLibraryLookup.end()) continue;
+        
+        const MeshGPU& mesh = m_meshLibrary[it->second];
+        
+        // Bind buffers if changed
+        if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, &offset);
+            currentVertexBuffer = mesh.vertexBuffer.buffer;
+        }
+        if (mesh.indexBuffer.buffer != currentIndexBuffer) {
+            vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+            currentIndexBuffer = mesh.indexBuffer.buffer;
+        }
+        
+        // Push constants
+        auto& transform = meshView.get<TransformComponent>(entity);
+        ShadowPushConstants pc;
+        pc.lightViewProj = lightViewProj;
+        pc.model = transform.GetLocalMatrix();
+        vkCmdPushConstants(cmd, m_directionalShadow.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                          0, sizeof(pc), &pc);
+        
+        vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+    }
+    
+    vkCmdEndRenderPass(cmd);
 }
 
 void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageIndex, 
@@ -777,12 +1259,31 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                   << " meshLibrary.size=" << m_meshLibrary.size() << "\n";
     }
     
+    // Render editor grid (after opaque meshes, before transparent)
+    if (config.isEditorMode && config.renderGrid) {
+        recordGrid(cmd, imageIndex, config);
+    }
+    
+    // Render selection outlines (in editor mode)
+    if (config.isEditorMode && config.renderOutlines && config.selectedEntity != UINT32_MAX) {
+        recordOutlines(cmd, imageIndex, scene, config);
+    }
+    
+#ifndef HEPHAESTUS_GAME_RUNTIME
+    // Render gizmo on selected entity
+    if (config.isEditorMode && config.renderGizmo && m_gizmoInitialized && 
+        m_gizmoTargetEntity != UINT32_MAX) {
+        m_gizmo.Render(cmd, m_descriptorSets[imageIndex]);
+    }
+#endif
+
     vkCmdEndRenderPass(cmd);
 }
 
 void EngineFrameRenderer::recordGizmo(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene)
 {
-    // TODO: Implement gizmo rendering
+    // Gizmo is rendered directly in recordMainPass when target entity is set
+    // This method is kept for future use if separate pass is needed
 }
 
 void EngineFrameRenderer::recordBillboards(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene)
@@ -790,10 +1291,131 @@ void EngineFrameRenderer::recordBillboards(VkCommandBuffer cmd, uint32_t imageIn
     // TODO: Implement billboard rendering
 }
 
-void EngineFrameRenderer::recordOutlines(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene)
+void EngineFrameRenderer::recordOutlines(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene,
+                                          const FrameRenderConfig& config)
 {
-    // TODO: Implement outline rendering
+    if (!m_outlineRenderer.initialized || !scene) return;
+    if (config.selectedEntity == UINT32_MAX) return;
+    
+    // Find the selected entity's mesh/transform
+    auto& registry = scene->GetRegistry();
+    entt::entity selectedEnt = static_cast<entt::entity>(config.selectedEntity);
+    
+    if (!registry.valid(selectedEnt)) return;
+    
+    // Get transform component
+    auto* transformComp = registry.try_get<TransformComponent>(selectedEnt);
+    if (!transformComp) return;
+    
+    // Get mesh renderer component
+    auto* meshComp = registry.try_get<MeshRendererComponent>(selectedEnt);
+    if (!meshComp || !meshComp->HasValidMesh()) return;
+    
+    // Find the mesh in our library
+    auto it = m_meshLibraryLookup.find(meshComp->meshAssetPath);
+    if (it == m_meshLibraryLookup.end()) return;
+    
+    size_t meshIdx = it->second;
+    const MeshGPU& mesh = m_meshLibrary[meshIdx];
+    
+    Mat4 modelMatrix = transformComp->GetLocalMatrix();
+    
+    // Draw the outline
+    m_outlineRenderer.Draw(cmd, m_descriptorSets[imageIndex], 
+                           mesh.vertexBuffer.buffer, mesh.indexBuffer.buffer,
+                           mesh.indexCount, modelMatrix);
 }
+
+// ============================================================================
+// Gizmo Integration (Editor-only)
+// ============================================================================
+
+#ifndef HEPHAESTUS_GAME_RUNTIME
+
+bool EngineFrameRenderer::createGizmoResources()
+{
+    if (!m_device || !m_swapchain || !m_pipeline) return false;
+    
+    try {
+        m_gizmo.Init(m_device->device, m_swapchain->renderPass, m_swapchain->extent,
+                     m_pipeline->descriptorSetLayout, m_device->allocator);
+        m_gizmoInitialized = true;
+        std::cout << "[EngineFrameRenderer] Gizmo initialized\n";
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "[EngineFrameRenderer] Failed to initialize gizmo: " << e.what() << "\n";
+        return false;
+    }
+}
+
+void EngineFrameRenderer::cleanupGizmoResources()
+{
+    if (m_gizmoInitialized && m_device) {
+        m_gizmo.Cleanup(m_device->device, m_device->allocator);
+        m_gizmoInitialized = false;
+    }
+}
+
+void EngineFrameRenderer::UpdateGizmoState(uint32_t selectedEntity, const Mat4& transform,
+                                            const Mat4& viewMatrix, const Mat4& projMatrix,
+                                            const Vec3& cameraPos, int mode, int space)
+{
+    if (!m_gizmoInitialized) return;
+    
+    m_gizmoTargetEntity = selectedEntity;
+    m_gizmoTargetTransform = transform;
+    m_gizmoViewMatrix = viewMatrix;
+    m_gizmoProjectionMatrix = projMatrix;
+    m_gizmoCameraPos = cameraPos;
+    
+    if (selectedEntity != UINT32_MAX) {
+        VulkanGizmo::Mode gizmoMode = VulkanGizmo::Mode::Translate;
+        switch (mode) {
+            case 1: gizmoMode = VulkanGizmo::Mode::Translate; break;
+            case 2: gizmoMode = VulkanGizmo::Mode::Rotate; break;
+            case 3: gizmoMode = VulkanGizmo::Mode::Scale; break;
+        }
+        
+        VulkanGizmo::Space gizmoSpace = (space == 0) ? VulkanGizmo::Space::World : VulkanGizmo::Space::Local;
+        
+        m_gizmo.UpdateState(transform, viewMatrix, projMatrix, cameraPos, gizmoMode, gizmoSpace);
+    }
+}
+
+bool EngineFrameRenderer::CheckGizmoHover(float screenX, float screenY, const Mat4& viewMatrix, 
+                                          const Mat4& projMatrix, int& outAxis)
+{
+    if (!m_gizmoInitialized || m_gizmoTargetEntity == UINT32_MAX) {
+        outAxis = -1;
+        return false;
+    }
+    
+    // Create ray from screen position
+    float x = (2.0f * screenX) / m_swapchain->extent.width - 1.0f;
+    float y = (2.0f * screenY) / m_swapchain->extent.height - 1.0f;
+    
+    Mat4 invProj = Mat4::Invert(projMatrix);
+    Mat4 invView = Mat4::Invert(viewMatrix);
+    
+    Vec3 rayNearNDC(x, y, 0.0f);
+    Vec3 rayFarNDC(x, y, 1.0f);
+    
+    Vec3 rayNearView = Mat4::TransformPoint(invProj, rayNearNDC);
+    Vec3 rayFarView = Mat4::TransformPoint(invProj, rayFarNDC);
+    
+    Vec3 rayNearWorld = Mat4::TransformPoint(invView, rayNearView);
+    Vec3 rayFarWorld = Mat4::TransformPoint(invView, rayFarView);
+    
+    Vec3 rayDir = vnorm(vsub(rayFarWorld, rayNearWorld));
+    
+    Ray ray(rayNearWorld, rayDir);
+    outAxis = m_gizmo.CheckHover(ray);
+    m_gizmo.SetHoveredAxis(outAxis);
+    
+    return outAxis >= 0;
+}
+
+#endif // HEPHAESTUS_GAME_RUNTIME
 
 // ============================================================================
 // Private: Cleanup
@@ -861,6 +1483,51 @@ void EngineFrameRenderer::destroyAllResources()
     m_meshLibrary.clear();
     m_meshLibraryLookup.clear();
     
+    // Cleanup editor grid
+    m_editorGrid.Cleanup(m_device->device);
+    
+    // Cleanup outline renderer
+    cleanupOutlineResources();
+    
+    // Cleanup ID picker
+    cleanupIdPickerResources();
+    
+#ifndef HEPHAESTUS_GAME_RUNTIME
+    // Cleanup gizmo
+    cleanupGizmoResources();
+#endif
+
+    // Cleanup shadow map resources
+    if (m_directionalShadow.pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(m_device->device, m_directionalShadow.pipeline, nullptr);
+        m_directionalShadow.pipeline = VK_NULL_HANDLE;
+    }
+    if (m_directionalShadow.pipelineLayout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(m_device->device, m_directionalShadow.pipelineLayout, nullptr);
+        m_directionalShadow.pipelineLayout = VK_NULL_HANDLE;
+    }
+    if (m_directionalShadow.framebuffer != VK_NULL_HANDLE) {
+        vkDestroyFramebuffer(m_device->device, m_directionalShadow.framebuffer, nullptr);
+        m_directionalShadow.framebuffer = VK_NULL_HANDLE;
+    }
+    if (m_directionalShadow.renderPass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(m_device->device, m_directionalShadow.renderPass, nullptr);
+        m_directionalShadow.renderPass = VK_NULL_HANDLE;
+    }
+    if (m_directionalShadow.sampler != VK_NULL_HANDLE) {
+        vkDestroySampler(m_device->device, m_directionalShadow.sampler, nullptr);
+        m_directionalShadow.sampler = VK_NULL_HANDLE;
+    }
+    if (m_directionalShadow.imageView != VK_NULL_HANDLE) {
+        vkDestroyImageView(m_device->device, m_directionalShadow.imageView, nullptr);
+        m_directionalShadow.imageView = VK_NULL_HANDLE;
+    }
+    if (m_directionalShadow.image != VK_NULL_HANDLE) {
+        vmaDestroyImage(m_device->allocator, m_directionalShadow.image, m_directionalShadow.allocation);
+        m_directionalShadow.image = VK_NULL_HANDLE;
+        m_directionalShadow.allocation = VK_NULL_HANDLE;
+    }
+
     // Cleanup pipeline
     if (m_pipeline) {
         m_pipeline->Cleanup();
@@ -877,7 +1544,8 @@ void EngineFrameRenderer::destroyAllResources()
 
 void EngineFrameRenderer::ShadowMap::Destroy()
 {
-    // TODO: Implement shadow map cleanup
+    // Note: This needs device/allocator passed - called from destroyAllResources
+    // which handles the cleanup directly
 }
 
 void EngineFrameRenderer::BillboardPipeline::Cleanup()
@@ -905,6 +1573,1055 @@ void EngineFrameRenderer::Skybox::Draw(VkCommandBuffer cmd, uint32_t imageIndex)
 void EngineFrameRenderer::Skybox::Cleanup(VmaAllocator allocator)
 {
     // TODO: Implement skybox cleanup
+}
+
+// ============================================================================
+// Editor Grid Implementation
+// ============================================================================
+
+void EngineFrameRenderer::EditorGrid::Init(VkDevice device, VkRenderPass renderPass, 
+                                            VkExtent2D extent, VkDescriptorSetLayout cameraDescLayout,
+                                            VmaAllocator allocator)
+{
+    if (initialized) return;
+    
+    // Create pipeline layout with push constants
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(GridPushConstants);
+    
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &cameraDescLayout;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+    
+    if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+        std::cerr << "[EditorGrid] Failed to create pipeline layout\n";
+        return;
+    }
+    
+    // Load shaders
+    auto loadShader = [device](const std::string& path) -> VkShaderModule {
+        std::ifstream file(path, std::ios::ate | std::ios::binary);
+        if (!file.is_open()) {
+            std::cerr << "[EditorGrid] Failed to open shader: " << path << "\n";
+            return VK_NULL_HANDLE;
+        }
+        size_t fileSize = static_cast<size_t>(file.tellg());
+        std::vector<char> code(fileSize);
+        file.seekg(0);
+        file.read(code.data(), fileSize);
+        file.close();
+        
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.size();
+        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+        
+        VkShaderModule shaderModule;
+        if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+            return VK_NULL_HANDLE;
+        }
+        return shaderModule;
+    };
+    
+    VkShaderModule vertShader = loadShader("../shaders/grid.vert.spv");
+    VkShaderModule fragShader = loadShader("../shaders/grid.frag.spv");
+    
+    if (vertShader == VK_NULL_HANDLE || fragShader == VK_NULL_HANDLE) {
+        std::cerr << "[EditorGrid] Failed to load grid shaders\n";
+        if (vertShader) vkDestroyShaderModule(device, vertShader, nullptr);
+        if (fragShader) vkDestroyShaderModule(device, fragShader, nullptr);
+        return;
+    }
+    
+    VkPipelineShaderStageCreateInfo shaderStages[2]{};
+    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStages[0].module = vertShader;
+    shaderStages[0].pName = "main";
+    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStages[1].module = fragShader;
+    shaderStages[1].pName = "main";
+    
+    // No vertex input - we generate fullscreen quad in shader
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 0;
+    vertexInputInfo.vertexAttributeDescriptionCount = 0;
+    
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+    
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(extent.width);
+    viewport.height = static_cast<float>(extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = extent;
+    
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+    
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+    
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+    
+    // Alpha blending
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_TRUE;
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+    
+    VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates = dynamicStates;
+    
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+    
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS) {
+        std::cerr << "[EditorGrid] Failed to create graphics pipeline\n";
+    }
+    
+    vkDestroyShaderModule(device, vertShader, nullptr);
+    vkDestroyShaderModule(device, fragShader, nullptr);
+    
+    initialized = true;
+    std::cout << "[EditorGrid] Initialized successfully\n";
+}
+
+void EngineFrameRenderer::EditorGrid::Recreate(VkDevice device, VkRenderPass renderPass, 
+                                                VkExtent2D extent, VkDescriptorSetLayout cameraDescLayout)
+{
+    Cleanup(device);
+    // Re-init with new render pass/extent
+    // Note: Init needs allocator which we don't have here, so this is limited
+    // For now, just recreate the pipeline
+}
+
+void EngineFrameRenderer::EditorGrid::Draw(VkCommandBuffer cmd, VkDescriptorSet cameraDescSet, 
+                                            const GridPushConstants& pc)
+{
+    if (!initialized || pipeline == VK_NULL_HANDLE) return;
+    
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 
+                            0, 1, &cameraDescSet, 0, nullptr);
+    vkCmdPushConstants(cmd, pipelineLayout, 
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 
+                       0, sizeof(GridPushConstants), &pc);
+    
+    // Draw fullscreen quad (6 vertices)
+    vkCmdDraw(cmd, 6, 1, 0, 0);
+}
+
+void EngineFrameRenderer::EditorGrid::Cleanup(VkDevice device)
+{
+    if (pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, pipeline, nullptr);
+        pipeline = VK_NULL_HANDLE;
+    }
+    if (pipelineLayout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+        pipelineLayout = VK_NULL_HANDLE;
+    }
+    if (descriptorLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+        descriptorLayout = VK_NULL_HANDLE;
+    }
+    if (descriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+        descriptorPool = VK_NULL_HANDLE;
+    }
+    descriptorSets.clear();
+    initialized = false;
+}
+
+void EngineFrameRenderer::recordGrid(VkCommandBuffer cmd, uint32_t imageIndex, 
+                                      const FrameRenderConfig& config)
+{
+    if (!config.renderGrid || !config.isEditorMode) return;
+    
+    EditorGrid::GridPushConstants pc;
+    pc.gridSize = 10.0f;     // Major grid lines every 10 units
+    pc.cellSize = 1.0f;      // Minor grid lines every 1 unit
+    pc.fadeDistance = 100.0f; // Fade out at 100 units
+    pc.lineWidth = 1.0f;
+    
+    // Grid uses same camera descriptor set as main pipeline
+    m_editorGrid.Draw(cmd, m_descriptorSets[imageIndex], pc);
+}
+
+bool EngineFrameRenderer::createGridResources()
+{
+    if (!m_device || !m_swapchain) return false;
+    
+    // Get camera descriptor set layout from main pipeline
+    VkDescriptorSetLayout cameraDescLayout = m_pipeline ? m_pipeline->descriptorSetLayout : VK_NULL_HANDLE;
+    if (cameraDescLayout == VK_NULL_HANDLE) {
+        std::cerr << "[EngineFrameRenderer] Cannot create grid - no camera descriptor layout\n";
+        return false;
+    }
+    
+    m_editorGrid.Init(m_device->device, m_swapchain->renderPass, m_swapchain->extent,
+                      cameraDescLayout, m_device->allocator);
+    
+    return m_editorGrid.initialized;
+}
+
+// ============================================================================
+// Selection Outline Renderer Implementation
+// ============================================================================
+
+void EngineFrameRenderer::OutlineRenderer::Init(VkDevice device, VkRenderPass renderPass,
+                                                 VkExtent2D extent, VkDescriptorSetLayout cameraDescLayout,
+                                                 VmaAllocator allocator)
+{
+    if (initialized) return;
+    
+    // Create pipeline layout with push constants (same layout as main shader)
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(OutlinePushConstants);
+    
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &cameraDescLayout;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+    
+    if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+        std::cerr << "[OutlineRenderer] Failed to create pipeline layout\n";
+        return;
+    }
+    
+    // Load shaders
+    auto loadShader = [device](const std::string& path) -> VkShaderModule {
+        std::ifstream file(path, std::ios::ate | std::ios::binary);
+        if (!file.is_open()) {
+            std::cerr << "[OutlineRenderer] Failed to open shader: " << path << "\n";
+            return VK_NULL_HANDLE;
+        }
+        size_t fileSize = static_cast<size_t>(file.tellg());
+        std::vector<char> code(fileSize);
+        file.seekg(0);
+        file.read(code.data(), fileSize);
+        file.close();
+        
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.size();
+        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+        
+        VkShaderModule shaderModule;
+        if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+            return VK_NULL_HANDLE;
+        }
+        return shaderModule;
+    };
+    
+    VkShaderModule vertShader = loadShader("../shaders/outline.vert.spv");
+    VkShaderModule fragShader = loadShader("../shaders/outline.frag.spv");
+    
+    if (vertShader == VK_NULL_HANDLE || fragShader == VK_NULL_HANDLE) {
+        std::cerr << "[OutlineRenderer] Failed to load outline shaders\n";
+        if (vertShader) vkDestroyShaderModule(device, vertShader, nullptr);
+        if (fragShader) vkDestroyShaderModule(device, fragShader, nullptr);
+        return;
+    }
+    
+    VkPipelineShaderStageCreateInfo shaderStages[2]{};
+    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStages[0].module = vertShader;
+    shaderStages[0].pName = "main";
+    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStages[1].module = fragShader;
+    shaderStages[1].pName = "main";
+    
+    // Vertex input - same as main pipeline (position, normal, color, texcoord)
+    VkVertexInputBindingDescription bindingDescription{};
+    bindingDescription.binding = 0;
+    bindingDescription.stride = sizeof(float) * 11; // pos(3) + normal(3) + color(3) + texcoord(2)
+    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    
+    std::array<VkVertexInputAttributeDescription, 4> attributeDescriptions{};
+    attributeDescriptions[0].binding = 0;
+    attributeDescriptions[0].location = 0;
+    attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[0].offset = 0;
+    
+    attributeDescriptions[1].binding = 0;
+    attributeDescriptions[1].location = 1;
+    attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[1].offset = sizeof(float) * 3;
+    
+    attributeDescriptions[2].binding = 0;
+    attributeDescriptions[2].location = 2;
+    attributeDescriptions[2].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[2].offset = sizeof(float) * 6;
+    
+    attributeDescriptions[3].binding = 0;
+    attributeDescriptions[3].location = 3;
+    attributeDescriptions[3].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[3].offset = sizeof(float) * 9;
+    
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+    
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+    
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(extent.width);
+    viewport.height = static_cast<float>(extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = extent;
+    
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+    
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    // Cull front faces - we draw expanding back faces behind the object
+    rasterizer.cullMode = VK_CULL_MODE_FRONT_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+    
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE;  // Don't write to depth buffer
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+    
+    // Opaque blending for outline
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+    
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+    
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = nullptr;
+    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+    
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS) {
+        std::cerr << "[OutlineRenderer] Failed to create graphics pipeline\n";
+        vkDestroyShaderModule(device, vertShader, nullptr);
+        vkDestroyShaderModule(device, fragShader, nullptr);
+        return;
+    }
+    
+    vkDestroyShaderModule(device, vertShader, nullptr);
+    vkDestroyShaderModule(device, fragShader, nullptr);
+    
+    initialized = true;
+    std::cout << "[OutlineRenderer] Initialized\n";
+}
+
+void EngineFrameRenderer::OutlineRenderer::Recreate(VkDevice device, VkRenderPass renderPass,
+                                                     VkExtent2D extent, VkDescriptorSetLayout cameraDescLayout)
+{
+    // Cleanup old pipeline
+    if (pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, pipeline, nullptr);
+        pipeline = VK_NULL_HANDLE;
+    }
+    
+    // Recreate with new extent - reinit
+    VmaAllocator dummyAllocator = VK_NULL_HANDLE; // Not used in Init for OutlineRenderer
+    initialized = false;
+    Init(device, renderPass, extent, cameraDescLayout, dummyAllocator);
+}
+
+void EngineFrameRenderer::OutlineRenderer::Draw(VkCommandBuffer cmd, VkDescriptorSet cameraDescSet,
+                                                 VkBuffer vertexBuffer, VkBuffer indexBuffer,
+                                                 uint32_t indexCount, const Mat4& modelMatrix)
+{
+    if (!initialized || pipeline == VK_NULL_HANDLE) return;
+    
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &cameraDescSet, 0, nullptr);
+    
+    OutlinePushConstants pc;
+    pc.model = modelMatrix;
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+    
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer, offsets);
+    vkCmdBindIndexBuffer(cmd, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+    
+    vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0);
+}
+
+void EngineFrameRenderer::OutlineRenderer::Cleanup(VkDevice device)
+{
+    if (pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, pipeline, nullptr);
+        pipeline = VK_NULL_HANDLE;
+    }
+    if (pipelineLayout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+        pipelineLayout = VK_NULL_HANDLE;
+    }
+    initialized = false;
+}
+
+bool EngineFrameRenderer::createOutlineResources()
+{
+    if (!m_device || !m_swapchain) return false;
+    
+    VkDescriptorSetLayout cameraDescLayout = m_pipeline ? m_pipeline->descriptorSetLayout : VK_NULL_HANDLE;
+    if (cameraDescLayout == VK_NULL_HANDLE) {
+        std::cerr << "[EngineFrameRenderer] Cannot create outline - no camera descriptor layout\n";
+        return false;
+    }
+    
+    m_outlineRenderer.Init(m_device->device, m_swapchain->renderPass, m_swapchain->extent,
+                           cameraDescLayout, m_device->allocator);
+    
+    return m_outlineRenderer.initialized;
+}
+
+void EngineFrameRenderer::cleanupOutlineResources()
+{
+    if (m_device) {
+        m_outlineRenderer.Cleanup(m_device->device);
+    }
+}
+
+// ============================================================================
+// Entity ID Picker Implementation
+// ============================================================================
+
+bool EngineFrameRenderer::createIdPickerResources()
+{
+    if (!m_device || !m_swapchain) return false;
+    
+    VkDevice device = m_device->device;
+    VmaAllocator allocator = m_device->allocator;
+    uint32_t width = m_swapchain->extent.width;
+    uint32_t height = m_swapchain->extent.height;
+    
+    if (width == 0 || height == 0) return false;
+    
+    m_idPicker.width = width;
+    m_idPicker.height = height;
+    
+    // Create color image (RGBA8 for entity ID encoding)
+    VkImageCreateInfo colorImageInfo{};
+    colorImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    colorImageInfo.imageType = VK_IMAGE_TYPE_2D;
+    colorImageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    colorImageInfo.extent = {width, height, 1};
+    colorImageInfo.mipLevels = 1;
+    colorImageInfo.arrayLayers = 1;
+    colorImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    colorImageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    colorImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    colorImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    
+    if (vmaCreateImage(allocator, &colorImageInfo, &allocInfo, 
+                       &m_idPicker.colorImage, &m_idPicker.colorAllocation, nullptr) != VK_SUCCESS) {
+        std::cerr << "[IdPicker] Failed to create color image\n";
+        return false;
+    }
+    
+    // Create color image view
+    VkImageViewCreateInfo colorViewInfo{};
+    colorViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    colorViewInfo.image = m_idPicker.colorImage;
+    colorViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    colorViewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    colorViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    colorViewInfo.subresourceRange.baseMipLevel = 0;
+    colorViewInfo.subresourceRange.levelCount = 1;
+    colorViewInfo.subresourceRange.baseArrayLayer = 0;
+    colorViewInfo.subresourceRange.layerCount = 1;
+    
+    if (vkCreateImageView(device, &colorViewInfo, nullptr, &m_idPicker.colorImageView) != VK_SUCCESS) {
+        std::cerr << "[IdPicker] Failed to create color image view\n";
+        return false;
+    }
+    
+    // Create depth image
+    VkImageCreateInfo depthImageInfo{};
+    depthImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    depthImageInfo.imageType = VK_IMAGE_TYPE_2D;
+    depthImageInfo.format = VK_FORMAT_D32_SFLOAT;
+    depthImageInfo.extent = {width, height, 1};
+    depthImageInfo.mipLevels = 1;
+    depthImageInfo.arrayLayers = 1;
+    depthImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    depthImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    depthImageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    depthImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    depthImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    
+    if (vmaCreateImage(allocator, &depthImageInfo, &allocInfo, 
+                       &m_idPicker.depthImage, &m_idPicker.depthAllocation, nullptr) != VK_SUCCESS) {
+        std::cerr << "[IdPicker] Failed to create depth image\n";
+        return false;
+    }
+    
+    // Create depth image view
+    VkImageViewCreateInfo depthViewInfo{};
+    depthViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    depthViewInfo.image = m_idPicker.depthImage;
+    depthViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    depthViewInfo.format = VK_FORMAT_D32_SFLOAT;
+    depthViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    depthViewInfo.subresourceRange.baseMipLevel = 0;
+    depthViewInfo.subresourceRange.levelCount = 1;
+    depthViewInfo.subresourceRange.baseArrayLayer = 0;
+    depthViewInfo.subresourceRange.layerCount = 1;
+    
+    if (vkCreateImageView(device, &depthViewInfo, nullptr, &m_idPicker.depthImageView) != VK_SUCCESS) {
+        std::cerr << "[IdPicker] Failed to create depth image view\n";
+        return false;
+    }
+    
+    // Create render pass
+    VkAttachmentDescription colorAttachment{};
+    colorAttachment.format = VK_FORMAT_R8G8B8A8_UNORM;
+    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    
+    VkAttachmentDescription depthAttachment{};
+    depthAttachment.format = VK_FORMAT_D32_SFLOAT;
+    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    
+    VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference depthRef{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorRef;
+    subpass.pDepthStencilAttachment = &depthRef;
+    
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    
+    VkAttachmentDescription attachments[] = {colorAttachment, depthAttachment};
+    
+    VkRenderPassCreateInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassInfo.attachmentCount = 2;
+    renderPassInfo.pAttachments = attachments;
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpass;
+    renderPassInfo.dependencyCount = 1;
+    renderPassInfo.pDependencies = &dependency;
+    
+    if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &m_idPicker.renderPass) != VK_SUCCESS) {
+        std::cerr << "[IdPicker] Failed to create render pass\n";
+        return false;
+    }
+    
+    // Create framebuffer
+    VkImageView fbAttachments[] = {m_idPicker.colorImageView, m_idPicker.depthImageView};
+    
+    VkFramebufferCreateInfo fbInfo{};
+    fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fbInfo.renderPass = m_idPicker.renderPass;
+    fbInfo.attachmentCount = 2;
+    fbInfo.pAttachments = fbAttachments;
+    fbInfo.width = width;
+    fbInfo.height = height;
+    fbInfo.layers = 1;
+    
+    if (vkCreateFramebuffer(device, &fbInfo, nullptr, &m_idPicker.framebuffer) != VK_SUCCESS) {
+        std::cerr << "[IdPicker] Failed to create framebuffer\n";
+        return false;
+    }
+    
+    // Create pipeline layout
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(IdPicker::IdPushConstants);
+    
+    VkDescriptorSetLayout cameraDescLayout = m_pipeline ? m_pipeline->descriptorSetLayout : VK_NULL_HANDLE;
+    if (cameraDescLayout == VK_NULL_HANDLE) {
+        std::cerr << "[IdPicker] No camera descriptor layout available\n";
+        return false;
+    }
+    
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &cameraDescLayout;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pushConstantRange;
+    
+    if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &m_idPicker.pipelineLayout) != VK_SUCCESS) {
+        std::cerr << "[IdPicker] Failed to create pipeline layout\n";
+        return false;
+    }
+    
+    // Load shaders
+    auto loadShader = [device](const std::string& path) -> VkShaderModule {
+        std::ifstream file(path, std::ios::ate | std::ios::binary);
+        if (!file.is_open()) {
+            std::cerr << "[IdPicker] Failed to open shader: " << path << "\n";
+            return VK_NULL_HANDLE;
+        }
+        size_t fileSize = static_cast<size_t>(file.tellg());
+        std::vector<char> code(fileSize);
+        file.seekg(0);
+        file.read(code.data(), fileSize);
+        file.close();
+        
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.size();
+        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+        
+        VkShaderModule shaderModule;
+        if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+            return VK_NULL_HANDLE;
+        }
+        return shaderModule;
+    };
+    
+    VkShaderModule vertShader = loadShader("../shaders/entityid.vert.spv");
+    VkShaderModule fragShader = loadShader("../shaders/entityid.frag.spv");
+    
+    if (vertShader == VK_NULL_HANDLE || fragShader == VK_NULL_HANDLE) {
+        std::cerr << "[IdPicker] Failed to load entity ID shaders\n";
+        if (vertShader) vkDestroyShaderModule(device, vertShader, nullptr);
+        if (fragShader) vkDestroyShaderModule(device, fragShader, nullptr);
+        return false;
+    }
+    
+    VkPipelineShaderStageCreateInfo shaderStages[2]{};
+    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStages[0].module = vertShader;
+    shaderStages[0].pName = "main";
+    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStages[1].module = fragShader;
+    shaderStages[1].pName = "main";
+    
+    // Vertex input - same as main pipeline
+    VkVertexInputBindingDescription bindingDesc{};
+    bindingDesc.binding = 0;
+    bindingDesc.stride = sizeof(float) * 8; // pos(3) + normal(3) + uv(2)
+    bindingDesc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    
+    VkVertexInputAttributeDescription attribDescs[3]{};
+    attribDescs[0].binding = 0;
+    attribDescs[0].location = 0;
+    attribDescs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attribDescs[0].offset = 0;
+    attribDescs[1].binding = 0;
+    attribDescs[1].location = 1;
+    attribDescs[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attribDescs[1].offset = sizeof(float) * 3;
+    attribDescs[2].binding = 0;
+    attribDescs[2].location = 2;
+    attribDescs[2].format = VK_FORMAT_R32G32_SFLOAT;
+    attribDescs[2].offset = sizeof(float) * 6;
+    
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDesc;
+    vertexInputInfo.vertexAttributeDescriptionCount = 3;
+    vertexInputInfo.pVertexAttributeDescriptions = attribDescs;
+    
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+    
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+    
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+    
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+    
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+    
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+    
+    VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates = dynamicStates;
+    
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = m_idPicker.pipelineLayout;
+    pipelineInfo.renderPass = m_idPicker.renderPass;
+    pipelineInfo.subpass = 0;
+    
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, 
+                                  &m_idPicker.pipeline) != VK_SUCCESS) {
+        std::cerr << "[IdPicker] Failed to create graphics pipeline\n";
+        vkDestroyShaderModule(device, vertShader, nullptr);
+        vkDestroyShaderModule(device, fragShader, nullptr);
+        return false;
+    }
+    
+    vkDestroyShaderModule(device, vertShader, nullptr);
+    vkDestroyShaderModule(device, fragShader, nullptr);
+    
+    // Create staging buffer for readback (small, just needs a few pixels)
+    VkBufferCreateInfo stagingBufInfo{};
+    stagingBufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    stagingBufInfo.size = 4; // 4 bytes for one RGBA8 pixel
+    stagingBufInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    stagingBufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    
+    VmaAllocationCreateInfo stagingAllocInfo{};
+    stagingAllocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+    stagingAllocInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    
+    VmaAllocationInfo allocInfoResult;
+    if (vmaCreateBuffer(allocator, &stagingBufInfo, &stagingAllocInfo,
+                        &m_idPicker.stagingBuffer, &m_idPicker.stagingAllocation, 
+                        &allocInfoResult) != VK_SUCCESS) {
+        std::cerr << "[IdPicker] Failed to create staging buffer\n";
+        return false;
+    }
+    m_idPicker.mappedStagingBuffer = allocInfoResult.pMappedData;
+    
+    m_idPicker.initialized = true;
+    std::cout << "[IdPicker] Initialized successfully (" << width << "x" << height << ")\n";
+    return true;
+}
+
+void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene)
+{
+    if (!m_idPicker.initialized || !scene) return;
+    
+    VkClearValue clearValues[2];
+    clearValues[0].color = {{1.0f, 1.0f, 1.0f, 1.0f}}; // Clear to max entity ID (no entity)
+    clearValues[1].depthStencil = {1.0f, 0};
+    
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = m_idPicker.renderPass;
+    renderPassInfo.framebuffer = m_idPicker.framebuffer;
+    renderPassInfo.renderArea.offset = {0, 0};
+    renderPassInfo.renderArea.extent = {m_idPicker.width, m_idPicker.height};
+    renderPassInfo.clearValueCount = 2;
+    renderPassInfo.pClearValues = clearValues;
+    
+    vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(m_idPicker.width);
+    viewport.height = static_cast<float>(m_idPicker.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    VkRect2D scissor{{0, 0}, {m_idPicker.width, m_idPicker.height}};
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_idPicker.pipeline);
+    
+    // Bind camera descriptor set
+    uint32_t dynOffset = 0;
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_idPicker.pipelineLayout,
+                            0, 1, &m_descriptorSets[imageIndex], 1, &dynOffset);
+    
+    // Render all entities with their IDs
+    auto renderView = scene->GetEntitiesWith<TransformComponent, MeshRendererComponent>();
+    
+    VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
+    VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
+    
+    for (auto entityHandle : renderView) {
+        Entity entity(entityHandle, scene);
+        auto& transform = entity.GetComponent<TransformComponent>();
+        auto& renderer = entity.GetComponent<MeshRendererComponent>();
+        
+        if (!renderer.visible) continue;
+        if (!renderer.HasValidMesh() || renderer.meshHandle >= m_meshLibrary.size()) continue;
+        
+        MeshGPU& mesh = m_meshLibrary[renderer.meshHandle];
+        if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
+            mesh.indexBuffer.buffer == VK_NULL_HANDLE) continue;
+        
+        // Bind vertex buffer if different
+        if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
+            VkBuffer vb = mesh.vertexBuffer.buffer;
+            VkDeviceSize vbOffset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
+            currentVertexBuffer = vb;
+        }
+        
+        // Bind index buffer if different
+        if (mesh.indexBuffer.buffer != currentIndexBuffer) {
+            vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+            currentIndexBuffer = mesh.indexBuffer.buffer;
+        }
+        
+        // Push model matrix and entity ID
+        IdPicker::IdPushConstants pc;
+        pc.model = scene->GetWorldTransform(entity);
+        pc.entityId = static_cast<uint32_t>(entityHandle);
+        
+        vkCmdPushConstants(cmd, m_idPicker.pipelineLayout, 
+                          VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                          0, sizeof(IdPicker::IdPushConstants), &pc);
+        
+        vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+    }
+    
+    vkCmdEndRenderPass(cmd);
+}
+
+uint32_t EngineFrameRenderer::PickEntityAt(uint32_t screenX, uint32_t screenY)
+{
+    if (!m_idPicker.initialized || !m_idPicker.mappedStagingBuffer) {
+        return UINT32_MAX;
+    }
+    
+    // Bounds check
+    if (screenX >= m_idPicker.width || screenY >= m_idPicker.height) {
+        return UINT32_MAX;
+    }
+    
+    // Set up pick request - will be processed next frame
+    m_idPicker.pickPending = true;
+    m_idPicker.pickX = screenX;
+    m_idPicker.pickY = screenY;
+    
+    // For now, return last picked entity (1-frame latency)
+    // A more sophisticated implementation would use fences and async readback
+    return m_idPicker.lastPickedEntity;
+}
+
+void EngineFrameRenderer::cleanupIdPickerResources()
+{
+    if (!m_device || !m_device->device) return;
+    
+    VkDevice device = m_device->device;
+    VmaAllocator allocator = m_device->allocator;
+    
+    if (m_idPicker.stagingBuffer) {
+        vmaDestroyBuffer(allocator, m_idPicker.stagingBuffer, m_idPicker.stagingAllocation);
+        m_idPicker.stagingBuffer = VK_NULL_HANDLE;
+    }
+    
+    if (m_idPicker.pipeline) {
+        vkDestroyPipeline(device, m_idPicker.pipeline, nullptr);
+        m_idPicker.pipeline = VK_NULL_HANDLE;
+    }
+    
+    if (m_idPicker.pipelineLayout) {
+        vkDestroyPipelineLayout(device, m_idPicker.pipelineLayout, nullptr);
+        m_idPicker.pipelineLayout = VK_NULL_HANDLE;
+    }
+    
+    if (m_idPicker.framebuffer) {
+        vkDestroyFramebuffer(device, m_idPicker.framebuffer, nullptr);
+        m_idPicker.framebuffer = VK_NULL_HANDLE;
+    }
+    
+    if (m_idPicker.renderPass) {
+        vkDestroyRenderPass(device, m_idPicker.renderPass, nullptr);
+        m_idPicker.renderPass = VK_NULL_HANDLE;
+    }
+    
+    if (m_idPicker.colorImageView) {
+        vkDestroyImageView(device, m_idPicker.colorImageView, nullptr);
+        m_idPicker.colorImageView = VK_NULL_HANDLE;
+    }
+    
+    if (m_idPicker.colorImage) {
+        vmaDestroyImage(allocator, m_idPicker.colorImage, m_idPicker.colorAllocation);
+        m_idPicker.colorImage = VK_NULL_HANDLE;
+    }
+    
+    if (m_idPicker.depthImageView) {
+        vkDestroyImageView(device, m_idPicker.depthImageView, nullptr);
+        m_idPicker.depthImageView = VK_NULL_HANDLE;
+    }
+    
+    if (m_idPicker.depthImage) {
+        vmaDestroyImage(allocator, m_idPicker.depthImage, m_idPicker.depthAllocation);
+        m_idPicker.depthImage = VK_NULL_HANDLE;
+    }
+    
+    m_idPicker.initialized = false;
+    m_idPicker.mappedStagingBuffer = nullptr;
 }
 
 } // namespace Hephaestus

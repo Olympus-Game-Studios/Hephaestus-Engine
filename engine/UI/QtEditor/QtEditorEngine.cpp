@@ -390,7 +390,27 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         
     case InputEvent::Type::MouseRelease:
         // Update button state
-        if (event.button == 1) m_inputState.lmbDown = false;
+        if (event.button == 1) {
+            m_inputState.lmbDown = false;
+            
+            // LMB click without RMB (not fly mode) - try entity picking
+            if (!m_inputState.rmbDown && m_frameRenderer && 
+                m_frameRenderer->IsPickingAvailable()) {
+                // Initiate pick at mouse position
+                uint32_t pickedEntity = m_frameRenderer->PickEntityAt(
+                    static_cast<uint32_t>(event.x), 
+                    static_cast<uint32_t>(event.y)
+                );
+                
+                // If we got a valid entity, select it (1-frame latency)
+                if (pickedEntity != UINT32_MAX && pickedEntity != static_cast<uint32_t>(-1)) {
+                    m_editorContext.SelectEntity(static_cast<entt::entity>(pickedEntity));
+                } else {
+                    // Clicked on empty space - clear selection
+                    m_editorContext.ClearSelection();
+                }
+            }
+        }
         else if (event.button == 2) m_inputState.rmbDown = false;
         else if (event.button == 4) m_inputState.mmbDown = false;
         
@@ -464,6 +484,27 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         // Handle F key for focus
         if (event.key == 0x46) { // Qt::Key_F
             FocusOnSelection();
+        }
+        
+        // Gizmo mode shortcuts (only when not in fly mode)
+        if (!m_inputState.rmbDown) {
+            switch (event.key) {
+                case 0x57: // Qt::Key_W - Translate mode
+                    m_editorContext.SetGizmoMode(Hephaestus::GizmoMode::Translate);
+                    break;
+                case 0x45: // Qt::Key_E - Rotate mode
+                    m_editorContext.SetGizmoMode(Hephaestus::GizmoMode::Rotate);
+                    break;
+                case 0x52: // Qt::Key_R - Scale mode
+                    m_editorContext.SetGizmoMode(Hephaestus::GizmoMode::Scale);
+                    break;
+                case 0x51: // Qt::Key_Q - No gizmo
+                    m_editorContext.SetGizmoMode(Hephaestus::GizmoMode::None);
+                    break;
+                case 0x58: // Qt::Key_X - Toggle local/world space
+                    m_editorContext.ToggleGizmoSpace();
+                    break;
+            }
         }
         break;
         
@@ -643,6 +684,89 @@ void QtEditorEngine::renderFrame()
     // Calculate delta time for this frame
     float currentTime = m_frameTimer.elapsed() / 1000.0f;
     float deltaTime = currentTime - m_lastFrameTime;
+    
+    // Sync EditorContext viewport settings to FrameRenderConfig
+    const auto& viewportSettings = m_editorContext.GetViewportSettings();
+    m_renderConfig.renderGrid = viewportSettings.showGrid;
+    m_renderConfig.renderGizmo = viewportSettings.showGizmo;
+    m_renderConfig.renderOutlines = viewportSettings.showSelectionOutline;
+    m_renderConfig.renderShadows = viewportSettings.showShadows;
+    m_renderConfig.renderSkybox = viewportSettings.showSkybox;
+    m_renderConfig.renderBillboards = viewportSettings.showLightBillboards;
+    
+    // Sync selection for outline rendering
+    m_renderConfig.selectedEntity = static_cast<uint32_t>(m_editorContext.GetSelectedEntity());
+    
+    // Sync gizmo settings
+    m_renderConfig.gizmoMode = static_cast<int>(m_editorContext.GetGizmoMode());
+    m_renderConfig.gizmoSpace = static_cast<int>(m_editorContext.GetGizmoSpace());
+    const auto& snapSettings = m_editorContext.GetSnapSettings();
+    m_renderConfig.enableSnap = snapSettings.enableSnap;
+    // Set snap value based on current gizmo mode
+    switch (m_editorContext.GetGizmoMode()) {
+        case Hephaestus::GizmoMode::Translate:
+            m_renderConfig.snapValue = snapSettings.translateSnap;
+            break;
+        case Hephaestus::GizmoMode::Rotate:
+            m_renderConfig.snapValue = snapSettings.rotateSnapDeg;
+            break;
+        case Hephaestus::GizmoMode::Scale:
+            m_renderConfig.snapValue = snapSettings.scaleSnap;
+            break;
+        default:
+            m_renderConfig.snapValue = 1.0f;
+            break;
+    }
+    
+    // Update gizmo state for selected entity
+    entt::entity selectedEntity = m_editorContext.GetSelectedEntity();
+    if (selectedEntity != entt::null && scene && m_frameRenderer->IsGizmoAvailable()) {
+        Entity entity(selectedEntity, scene);
+        if (entity.HasComponent<TransformComponent>()) {
+            Mat4 worldTransform = scene->GetWorldTransform(entity);
+            
+            // Build view and projection matrices from camera
+            const auto& cam = m_editorContext.GetCamera();
+            float yawRad = cam.yawDeg * 3.14159265f / 180.0f;
+            float pitchRad = cam.pitchDeg * 3.14159265f / 180.0f;
+            Vec3 forward(
+                std::cos(pitchRad) * std::cos(yawRad),
+                std::sin(pitchRad),
+                std::cos(pitchRad) * std::sin(yawRad)
+            );
+            forward = vnorm(forward);
+            Vec3 camPos(cam.positionX, cam.positionY, cam.positionZ);
+            Vec3 target = vadd(camPos, forward);
+            Mat4 viewMatrix = Mat4::LookAt(camPos, target, Vec3(0, 1, 0));
+            
+            float aspect = static_cast<float>(m_swapchain->extent.width) / 
+                           static_cast<float>(m_swapchain->extent.height);
+            Mat4 projMatrix = Mat4::Perspective(cam.fovDeg * 3.14159265f / 180.0f, 
+                                                 aspect, cam.nearPlane, cam.farPlane);
+            // Flip Y for Vulkan
+            projMatrix.m[5] *= -1.0f;
+            
+            m_frameRenderer->UpdateGizmoState(
+                static_cast<uint32_t>(selectedEntity),
+                worldTransform,
+                viewMatrix, projMatrix,
+                camPos,
+                m_renderConfig.gizmoMode,
+                m_renderConfig.gizmoSpace
+            );
+        } else {
+            m_frameRenderer->UpdateGizmoState(UINT32_MAX, Mat4::Identity(), 
+                                               Mat4::Identity(), Mat4::Identity(),
+                                               Vec3(0,0,0), 0, 0);
+        }
+    } else {
+        // No selection - clear gizmo
+        if (m_frameRenderer->IsGizmoAvailable()) {
+            m_frameRenderer->UpdateGizmoState(UINT32_MAX, Mat4::Identity(), 
+                                               Mat4::Identity(), Mat4::Identity(),
+                                               Vec3(0,0,0), 0, 0);
+        }
+    }
     
     // Render frame using shared renderer
     bool success = m_frameRenderer->RenderFrame(

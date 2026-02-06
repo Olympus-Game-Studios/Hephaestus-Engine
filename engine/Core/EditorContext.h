@@ -40,6 +40,46 @@ struct EditorCamera {
 };
 
 /**
+ * @brief Gizmo operation modes for transform manipulation.
+ */
+enum class GizmoMode {
+    None = 0,
+    Translate,
+    Rotate,
+    Scale
+};
+
+/**
+ * @brief Gizmo coordinate space for transform manipulation.
+ */
+enum class GizmoSpace {
+    World = 0,
+    Local
+};
+
+/**
+ * @brief Snapping settings for gizmo manipulation.
+ */
+struct GizmoSnapSettings {
+    bool enableSnap = false;
+    float translateSnap = 1.0f;     // World units
+    float rotateSnapDeg = 15.0f;    // Degrees
+    float scaleSnap = 0.1f;         // Scale increment
+};
+
+/**
+ * @brief Editor viewport display toggles.
+ */
+struct EditorViewportSettings {
+    bool showGrid = true;
+    bool showGizmo = true;
+    bool showSelectionOutline = true;
+    bool showShadows = true;
+    bool showSkybox = true;
+    bool showLightBillboards = true;
+};
+
+/**
  * @brief Callback types for editor state changes.
  */
 using SceneChangedCallback = std::function<void()>;
@@ -159,6 +199,29 @@ public:
     const EditorCamera& GetCamera() const { return m_camera; }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Gizmo State
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    GizmoMode GetGizmoMode() const { return m_gizmoMode; }
+    void SetGizmoMode(GizmoMode mode) { m_gizmoMode = mode; }
+    
+    GizmoSpace GetGizmoSpace() const { return m_gizmoSpace; }
+    void SetGizmoSpace(GizmoSpace space) { m_gizmoSpace = space; }
+    void ToggleGizmoSpace() { 
+        m_gizmoSpace = (m_gizmoSpace == GizmoSpace::World) ? GizmoSpace::Local : GizmoSpace::World; 
+    }
+    
+    GizmoSnapSettings& GetSnapSettings() { return m_snapSettings; }
+    const GizmoSnapSettings& GetSnapSettings() const { return m_snapSettings; }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Viewport Settings
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    EditorViewportSettings& GetViewportSettings() { return m_viewportSettings; }
+    const EditorViewportSettings& GetViewportSettings() const { return m_viewportSettings; }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Callbacks (for UI updates)
     // ─────────────────────────────────────────────────────────────────────────
     
@@ -172,6 +235,14 @@ private:
     entt::entity m_selectedEntity = entt::null;
     bool m_isDirty = false;
     EditorCamera m_camera;
+    
+    // Gizmo state
+    GizmoMode m_gizmoMode = GizmoMode::Translate;
+    GizmoSpace m_gizmoSpace = GizmoSpace::World;
+    GizmoSnapSettings m_snapSettings;
+    
+    // Viewport settings
+    EditorViewportSettings m_viewportSettings;
 
     // Callbacks
     SceneChangedCallback m_onSceneChanged;
