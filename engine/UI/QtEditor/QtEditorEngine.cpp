@@ -357,6 +357,106 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         m_lastMouseY = event.y;
         return;
     }
+
+    auto buildViewProj = [&](Mat4& viewMatrix, Mat4& projMatrix, Vec3& camPos) -> bool {
+        if (!m_swapchain || m_swapchain->extent.width == 0 || m_swapchain->extent.height == 0) {
+            return false;
+        }
+
+        const auto& cam = m_camera;
+        float yawRad = cam.yawDeg * 3.14159265f / 180.0f;
+        float pitchRad = cam.pitchDeg * 3.14159265f / 180.0f;
+        Vec3 forward(
+            std::cos(pitchRad) * std::cos(yawRad),
+            std::sin(pitchRad),
+            std::cos(pitchRad) * std::sin(yawRad)
+        );
+        forward = vnorm(forward);
+        camPos = Vec3(cam.positionX, cam.positionY, cam.positionZ);
+        Vec3 target = vadd(camPos, forward);
+        viewMatrix = Mat4::LookAt(camPos, target, Vec3(0, 1, 0));
+
+        float aspect = static_cast<float>(m_swapchain->extent.width) /
+                       static_cast<float>(m_swapchain->extent.height);
+        projMatrix = Mat4::Perspective(60.0f * 3.14159265f / 180.0f,
+                                       aspect, cam.nearPlane, cam.farPlane);
+        return true;
+    };
+
+    auto buildRayFromScreen = [&](float screenX, float screenY,
+                                  const Mat4& viewMatrix,
+                                  const Mat4& projMatrix) -> Ray {
+        float x = (2.0f * screenX) / m_swapchain->extent.width - 1.0f;
+        float y = (2.0f * screenY) / m_swapchain->extent.height - 1.0f;
+
+        Mat4 invProj = Mat4::Invert(projMatrix);
+        Mat4 invView = Mat4::Invert(viewMatrix);
+
+        Vec3 rayNearNDC(x, y, 0.0f);
+        Vec3 rayFarNDC(x, y, 1.0f);
+
+        Vec3 rayNearView = Mat4::TransformPoint(invProj, rayNearNDC);
+        Vec3 rayFarView = Mat4::TransformPoint(invProj, rayFarNDC);
+
+        Vec3 rayNearWorld = Mat4::TransformPoint(invView, rayNearView);
+        Vec3 rayFarWorld = Mat4::TransformPoint(invView, rayFarView);
+        Vec3 rayDir = vnorm(vsub(rayFarWorld, rayNearWorld));
+
+        return Ray(rayNearWorld, rayDir);
+    };
+
+    auto toPixelCoords = [&](float x, float y, float& outX, float& outY) {
+        if (!m_swapchain || m_swapchain->extent.width == 0 || m_swapchain->extent.height == 0) {
+            outX = x;
+            outY = y;
+            return;
+        }
+        float viewW = m_viewport ? static_cast<float>(m_viewport->width()) : 0.0f;
+        float viewH = m_viewport ? static_cast<float>(m_viewport->height()) : 0.0f;
+        if (viewW <= 0.0f || viewH <= 0.0f) {
+            outX = x;
+            outY = y;
+            return;
+        }
+
+        float scaleX = static_cast<float>(m_swapchain->extent.width) / viewW;
+        float scaleY = static_cast<float>(m_swapchain->extent.height) / viewH;
+        outX = x * scaleX;
+        outY = y * scaleY;
+    };
+
+    auto canInteractWithGizmo = [&]() -> bool {
+        if (!m_frameRenderer || !m_frameRenderer->IsGizmoAvailable()) {
+            return false;
+        }
+        if (!m_editorContext.HasActiveScene()) {
+            return false;
+        }
+        const auto& viewportSettings = m_editorContext.GetViewportSettings();
+        if (!viewportSettings.showGizmo) {
+            return false;
+        }
+        if (m_editorContext.GetGizmoMode() == Hephaestus::GizmoMode::None) {
+            return false;
+        }
+        if (!m_inputState.viewportFocused && !m_inputState.mouseInViewport) {
+            return false;
+        }
+        if (m_cameraController.IsFlyModeActive() || m_cameraController.IsOrbitModeActive() ||
+            m_cameraController.IsPanModeActive() || m_cameraController.IsDollyModeActive()) {
+            return false;
+        }
+        return true;
+    };
+
+    auto endGizmoDrag = [&]() {
+        if (m_gizmoDragging && m_frameRenderer && m_frameRenderer->IsGizmoAvailable()) {
+            m_frameRenderer->GetGizmo()->EndDrag();
+            m_frameRenderer->GetGizmo()->SetHoveredAxis(-1);
+        }
+        m_gizmoDragging = false;
+        m_gizmoActiveAxis = -1;
+    };
     
     // Update input state based on event type
     switch (event.type) {
@@ -374,6 +474,26 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         // Update mouse position
         m_inputState.mouseX = event.x;
         m_inputState.mouseY = event.y;
+
+        if (event.button == 1 && !m_inputState.altDown && !m_inputState.rmbDown) {
+            if (canInteractWithGizmo()) {
+                Mat4 viewMatrix;
+                Mat4 projMatrix;
+                Vec3 camPos;
+                if (buildViewProj(viewMatrix, projMatrix, camPos)) {
+                    float px = event.x;
+                    float py = event.y;
+                    toPixelCoords(event.x, event.y, px, py);
+                    int hoveredAxis = -1;
+                    if (m_frameRenderer->CheckGizmoHover(px, py, viewMatrix, projMatrix, hoveredAxis)) {
+                        Ray gizmoRay = buildRayFromScreen(px, py, viewMatrix, projMatrix);
+                        m_frameRenderer->GetGizmo()->BeginDrag(gizmoRay, hoveredAxis);
+                        m_gizmoDragging = true;
+                        m_gizmoActiveAxis = hoveredAxis;
+                    }
+                }
+            }
+        }
         
         // Notify camera controller
         m_cameraController.OnMousePress(event.button, m_inputState);
@@ -392,14 +512,22 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         // Update button state
         if (event.button == 1) {
             m_inputState.lmbDown = false;
+
+            if (m_gizmoDragging) {
+                endGizmoDrag();
+                break;
+            }
             
             // LMB click without RMB (not fly mode) - try entity picking
             if (!m_inputState.rmbDown && m_frameRenderer && 
                 m_frameRenderer->IsPickingAvailable()) {
                 // Initiate pick at mouse position
+                float px = event.x;
+                float py = event.y;
+                toPixelCoords(event.x, event.y, px, py);
                 uint32_t pickedEntity = m_frameRenderer->PickEntityAt(
-                    static_cast<uint32_t>(event.x), 
-                    static_cast<uint32_t>(event.y)
+                    static_cast<uint32_t>(px), 
+                    static_cast<uint32_t>(py)
                 );
                 
                 // If we got a valid entity, select it (1-frame latency)
@@ -437,12 +565,74 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             m_inputState.mouseY = event.y;
             m_inputState.mouseDeltaX = deltaX;
             m_inputState.mouseDeltaY = deltaY;
+
+            if (m_gizmoDragging) {
+                if (!canInteractWithGizmo()) {
+                    endGizmoDrag();
+                } else {
+                    Mat4 viewMatrix;
+                    Mat4 projMatrix;
+                    Vec3 camPos;
+                    if (buildViewProj(viewMatrix, projMatrix, camPos)) {
+                        Scene* scene = m_editorContext.GetActiveScene();
+                        entt::entity selectedEntity = m_editorContext.GetSelectedEntity();
+                        if (scene && selectedEntity != entt::null) {
+                            Entity entity(selectedEntity, scene);
+                            if (entity.HasComponent<TransformComponent>()) {
+                                auto& transform = entity.GetComponent<TransformComponent>();
+                                float px = event.x;
+                                float py = event.y;
+                                toPixelCoords(event.x, event.y, px, py);
+                                Ray gizmoRay = buildRayFromScreen(px, py, viewMatrix, projMatrix);
+                                Mat4 newWorldTransform = m_frameRenderer->GetGizmo()->HandleDrag(gizmoRay);
+                                Mat4 localTransform = newWorldTransform;
+
+                                Entity parentEntity = scene->GetParent(entity);
+                                if (parentEntity) {
+                                    Mat4 parentWorld = scene->GetWorldTransform(parentEntity);
+                                    Mat4 parentInv = Mat4::Invert(parentWorld);
+                                    localTransform = Mat4::Multiply(parentInv, newWorldTransform);
+                                }
+
+                                transform.SetFromMatrix(localTransform);
+                                m_editorContext.MarkDirty();
+
+                                m_frameRenderer->GetGizmo()->SetHoveredAxis(m_gizmoActiveAxis);
+                                m_frameRenderer->UpdateGizmoState(
+                                    static_cast<uint32_t>(selectedEntity),
+                                    scene->GetWorldTransform(entity),
+                                    viewMatrix, projMatrix, camPos,
+                                    static_cast<int>(m_editorContext.GetGizmoMode()),
+                                    static_cast<int>(m_editorContext.GetGizmoSpace())
+                                );
+                            } else {
+                                endGizmoDrag();
+                            }
+                        } else {
+                            endGizmoDrag();
+                        }
+                    }
+                }
+            } else if (canInteractWithGizmo()) {
+                Mat4 viewMatrix;
+                Mat4 projMatrix;
+                Vec3 camPos;
+                if (buildViewProj(viewMatrix, projMatrix, camPos)) {
+                    float px = event.x;
+                    float py = event.y;
+                    toPixelCoords(event.x, event.y, px, py);
+                    int hoveredAxis = -1;
+                    m_frameRenderer->CheckGizmoHover(px, py, viewMatrix, projMatrix, hoveredAxis);
+                }
+            } else if (m_frameRenderer && m_frameRenderer->IsGizmoAvailable()) {
+                m_frameRenderer->GetGizmo()->SetHoveredAxis(-1);
+            }
             
             // Notify camera controller if any navigation mode is active
-            if (m_cameraController.IsFlyModeActive() || 
+            if (!m_gizmoDragging && (m_cameraController.IsFlyModeActive() || 
                 m_cameraController.IsOrbitModeActive() ||
                 m_cameraController.IsPanModeActive() ||
-                m_cameraController.IsDollyModeActive()) {
+                m_cameraController.IsDollyModeActive())) {
                 m_cameraController.OnMouseMove(deltaX, deltaY, m_inputState);
             }
             
@@ -527,6 +717,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         if (m_viewport && m_viewport->IsCursorCaptured()) {
             m_viewport->ReleaseCursor();
         }
+        endGizmoDrag();
         resetInputState();
         break;
         
@@ -537,6 +728,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
     case InputEvent::Type::Leave:
         m_inputState.mouseInViewport = false;
         m_hasLastMousePos = false;
+        endGizmoDrag();
         break;
     }
 }
@@ -655,6 +847,16 @@ void QtEditorEngine::onTick()
     
     // Build render camera from controller
     m_cameraController.BuildRenderCamera(m_camera);
+
+    // Keep editor context camera in sync with the render camera
+    auto& editorCam = m_editorContext.GetCamera();
+    editorCam.positionX = m_camera.positionX;
+    editorCam.positionY = m_camera.positionY;
+    editorCam.positionZ = m_camera.positionZ;
+    editorCam.yawDeg = m_camera.yawDeg;
+    editorCam.pitchDeg = m_camera.pitchDeg;
+    editorCam.nearPlane = m_camera.nearPlane;
+    editorCam.farPlane = m_camera.farPlane;
     
     renderFrame();
     
@@ -726,7 +928,7 @@ void QtEditorEngine::renderFrame()
             Mat4 worldTransform = scene->GetWorldTransform(entity);
             
             // Build view and projection matrices from camera
-            const auto& cam = m_editorContext.GetCamera();
+            const auto& cam = m_camera;
             float yawRad = cam.yawDeg * 3.14159265f / 180.0f;
             float pitchRad = cam.pitchDeg * 3.14159265f / 180.0f;
             Vec3 forward(
@@ -741,10 +943,8 @@ void QtEditorEngine::renderFrame()
             
             float aspect = static_cast<float>(m_swapchain->extent.width) / 
                            static_cast<float>(m_swapchain->extent.height);
-            Mat4 projMatrix = Mat4::Perspective(cam.fovDeg * 3.14159265f / 180.0f, 
+            Mat4 projMatrix = Mat4::Perspective(60.0f * 3.14159265f / 180.0f, 
                                                  aspect, cam.nearPlane, cam.farPlane);
-            // Flip Y for Vulkan
-            projMatrix.m[5] *= -1.0f;
             
             m_frameRenderer->UpdateGizmoState(
                 static_cast<uint32_t>(selectedEntity),

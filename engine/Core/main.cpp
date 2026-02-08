@@ -343,6 +343,7 @@ static bool g_ViewportOverlayFocused = false;
 static bool g_ViewportDropTargetHovered = false; // Track if mouse is in viewport area
 static bool g_ViewportHasFocus = false;
 static bool g_EditorPanelHovered = false;
+static bool g_EditorPanelHoveredPrevFrame = false; // Previous frame's panel hover state
 static std::string
     g_SceneSnapshotBeforePlay; // Stores scene state before entering play mode
 static std::unique_ptr<SceneDocument> g_SceneDocument;
@@ -366,20 +367,38 @@ static void UpdateViewportHoverState() {
   ImVec2 viewportMin;
   ImVec2 viewportMax;
   GetEditorViewportRect(viewportMin, viewportMax);
-  g_ViewportDropTargetHovered =
-      ImGui::IsMouseHoveringRect(viewportMin, viewportMax, true);
-  // Reset panel hover tracking - will be updated when panels are drawn this frame
+  
+  // Check if mouse is in the general viewport area
+  bool inViewportArea = ImGui::IsMouseHoveringRect(viewportMin, viewportMax, true);
+  
+  // Check if ImGui wants to capture mouse (based on previous frame's hover state)
+  // This is set by ImGui at the end of each frame based on what was hovered
+  ImGuiIO& io = ImGui::GetIO();
+  bool imguiWantsMouse = io.WantCaptureMouse;
+  
+  // Debug output (throttled)
+  static int debugCounter = 0;
+  if (debugCounter++ % 120 == 0 && inViewportArea) {  // Every 2 seconds at 60fps, only if in viewport area
+    printf("[Gizmo Debug] inViewportArea=%d, WantCaptureMouse=%d, result=%d\n", 
+           inViewportArea, imguiWantsMouse, inViewportArea && !imguiWantsMouse);
+  }
+  
+  g_ViewportDropTargetHovered = inViewportArea && !imguiWantsMouse;
+  
+  // Save current frame's panel hover state for next frame, then reset
+  g_EditorPanelHoveredPrevFrame = g_EditorPanelHovered;
   g_EditorPanelHovered = false;
 }
 
 static bool IsViewportInputAllowed() {
+  // Must be hovering the actual 3D viewport (not over any ImGui window)
+  if (!g_ViewportDropTargetHovered) {
+    return false;
+  }
+  
 #if HEPHAESTUS_EDITOR_HTML_UI
   // Only block if an HTML UI panel is being hovered
   if (g_HtmlEditorUIHost && g_HtmlEditorUIHost->IsAnyPanelHovered()) {
-    static int frameCounter = 0;
-    if (frameCounter++ % 60 == 0) { // Log once per second at 60fps
-      printf("[DEBUG] IsViewportInputAllowed: Blocked by HTML panel hover\n");
-    }
     return false;
   }
 #endif
@@ -8731,6 +8750,38 @@ int main(int argc, char *argv[]) {
     const bool viewportHasFocus = IsViewportInputAllowed();
     g_ViewportHasFocus = viewportHasFocus;
 
+    // Early gizmo hover update - needed before entity selection to prevent conflicts
+    if (!g_RuntimeMode && g_ProjectSelected && g_ShowEditorGizmo && 
+        viewportHasFocus && (!g_SimPlaying || g_SimPaused)) {
+      Entity earlySelectedEntity = viewportScene->GetSelectedEntity();
+      if (earlySelectedEntity && earlySelectedEntity.HasComponent<TransformComponent>()) {
+        auto& earlyTransform = earlySelectedEntity.GetComponent<TransformComponent>();
+        Mat4 earlyObjectMatrix = earlyTransform.GetLocalMatrix();
+        UniformBufferObject earlyUbo = camera.makeUBO(swap.extent);
+        
+        VulkanGizmo::Mode earlyGizmoMode = VulkanGizmo::Mode::Translate;
+        if (currentGizmoOperation == ImGuizmo::ROTATE)
+          earlyGizmoMode = VulkanGizmo::Mode::Rotate;
+        else if (currentGizmoOperation == ImGuizmo::SCALE)
+          earlyGizmoMode = VulkanGizmo::Mode::Scale;
+        
+        VulkanGizmo::Space earlyGizmoSpace = (currentGizmoMode == ImGuizmo::WORLD)
+                                              ? VulkanGizmo::Space::World
+                                              : VulkanGizmo::Space::Local;
+        
+        vulkanGizmo.UpdateState(earlyObjectMatrix, earlyUbo.view, earlyUbo.proj,
+                                camera.position, earlyGizmoMode, earlyGizmoSpace);
+        
+        double earlyMouseX, earlyMouseY;
+        glfwGetCursorPos(window, &earlyMouseX, &earlyMouseY);
+        Ray earlyGizmoRay = ScreenToWorldRay(earlyMouseX, earlyMouseY, swap.extent.width,
+                                              swap.extent.height, earlyUbo.view, earlyUbo.proj);
+        
+        int earlyHoveredAxis = gizmoDragging ? gizmoActiveAxis : vulkanGizmo.CheckHover(earlyGizmoRay);
+        vulkanGizmo.SetHoveredAxis(earlyHoveredAxis);
+      }
+    }
+
     // Handle mouse click for object selection (editor only)
     static bool leftMouseWasPressed = false;
     bool leftMousePressed =
@@ -10218,8 +10269,16 @@ int main(int argc, char *argv[]) {
         bool leftDown =
             glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
 
+        // Debug output for gizmo interaction (throttled)
+        static int gizmoDebugCounter = 0;
+        if (gizmoDebugCounter++ % 60 == 0) {  // Every second at 60fps
+          printf("[Gizmo] hoveredAxis=%d, leftDown=%d, gizmoDragging=%d, mouse=(%.0f,%.0f)\n",
+                 hoveredAxis, leftDown, gizmoDragging, mouseX, mouseY);
+        }
+
         if (!gizmoDragging) {
           if (leftDown && hoveredAxis != -1) {
+            printf("[Gizmo] Starting drag on axis %d\n", hoveredAxis);
             gizmoDragging = true;
             gizmoActiveAxis = hoveredAxis;
             vulkanGizmo.BeginDrag(gizmoRay, hoveredAxis);

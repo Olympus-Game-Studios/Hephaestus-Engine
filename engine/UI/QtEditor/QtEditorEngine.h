@@ -216,6 +216,10 @@ private:
     float m_lastMouseY = 0.0f;
     bool m_hasLastMousePos = false;
 
+    // Gizmo interaction state
+    bool m_gizmoDragging = false;
+    int m_gizmoActiveAxis = -1;
+
     // Viewport connection
     QtViewportWindow* m_viewport = nullptr;
     NativeSurface m_currentSurface;
