@@ -258,8 +258,8 @@ private:
 
     // Per-frame helpers
     void updateCameraUBO(uint32_t imageIndex, const RenderCamera& camera);
-    void updateLightingUBO(uint32_t imageIndex, Scene* scene);
-    void recordShadowPass(VkCommandBuffer cmd, Scene* scene);
+    void updateLightingUBO(uint32_t imageIndex, Scene* scene, const RenderCamera& camera);
+    void recordShadowPass(VkCommandBuffer cmd, Scene* scene, const RenderCamera& camera);
     void recordMainPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, 
                         const FrameRenderConfig& config);
     void recordGizmo(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene);

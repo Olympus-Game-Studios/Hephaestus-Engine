@@ -144,6 +144,42 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
         return false;
     }
     
+    // Create shadow map resources (before descriptor sets so binding 4 gets the real shadow map)
+    if (!createShadowResources()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create shadow resources (shadows will be disabled)\n";
+        // Clean up any partially-created shadow resources so IsValid() returns false
+        // and the shadow pass is correctly skipped at runtime.
+        if (m_directionalShadow.pipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(m_device->device, m_directionalShadow.pipeline, nullptr);
+            m_directionalShadow.pipeline = VK_NULL_HANDLE;
+        }
+        if (m_directionalShadow.pipelineLayout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(m_device->device, m_directionalShadow.pipelineLayout, nullptr);
+            m_directionalShadow.pipelineLayout = VK_NULL_HANDLE;
+        }
+        if (m_directionalShadow.framebuffer != VK_NULL_HANDLE) {
+            vkDestroyFramebuffer(m_device->device, m_directionalShadow.framebuffer, nullptr);
+            m_directionalShadow.framebuffer = VK_NULL_HANDLE;
+        }
+        if (m_directionalShadow.renderPass != VK_NULL_HANDLE) {
+            vkDestroyRenderPass(m_device->device, m_directionalShadow.renderPass, nullptr);
+            m_directionalShadow.renderPass = VK_NULL_HANDLE;
+        }
+        if (m_directionalShadow.sampler != VK_NULL_HANDLE) {
+            vkDestroySampler(m_device->device, m_directionalShadow.sampler, nullptr);
+            m_directionalShadow.sampler = VK_NULL_HANDLE;
+        }
+        if (m_directionalShadow.imageView != VK_NULL_HANDLE) {
+            vkDestroyImageView(m_device->device, m_directionalShadow.imageView, nullptr);
+            m_directionalShadow.imageView = VK_NULL_HANDLE;
+        }
+        if (m_directionalShadow.image != VK_NULL_HANDLE) {
+            vmaDestroyImage(m_device->allocator, m_directionalShadow.image, m_directionalShadow.allocation);
+            m_directionalShadow.image = VK_NULL_HANDLE;
+            m_directionalShadow.allocation = VK_NULL_HANDLE;
+        }
+    }
+    
     if (!createDescriptorSets()) {
         std::cerr << "[EngineFrameRenderer] Failed to create descriptor sets\n";
         return false;
@@ -233,7 +269,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     // Update uniform buffers
     updateCameraUBO(imageIndex, camera);
     if (scene) {
-        updateLightingUBO(imageIndex, scene);
+        updateLightingUBO(imageIndex, scene, camera);
     }
     
     // Record command buffer
@@ -272,7 +308,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     
     // Record shadow pass (before main pass)
     if (config.renderShadows && m_directionalShadow.IsValid()) {
-        recordShadowPass(cmd, scene);
+        recordShadowPass(cmd, scene, camera);
     }
     
     // Record main render pass
@@ -701,14 +737,25 @@ bool EngineFrameRenderer::createShadowResources()
     subpass.colorAttachmentCount = 0;
     subpass.pDepthStencilAttachment = &depthAttachmentRef;
     
-    VkSubpassDependency dependency{};
-    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dependency.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    dependency.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    dependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+    // Two subpass dependencies:
+    // [0] Ensure previous frame's shader reads complete before depth writes begin
+    // [1] Ensure depth writes complete before next render pass samples the shadow map
+    VkSubpassDependency dependencies[2]{};
+    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[0].dstSubpass = 0;
+    dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+    
+    dependencies[1].srcSubpass = 0;
+    dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[1].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
     
     VkRenderPassCreateInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -716,8 +763,8 @@ bool EngineFrameRenderer::createShadowResources()
     renderPassInfo.pAttachments = &depthAttachment;
     renderPassInfo.subpassCount = 1;
     renderPassInfo.pSubpasses = &subpass;
-    renderPassInfo.dependencyCount = 1;
-    renderPassInfo.pDependencies = &dependency;
+    renderPassInfo.dependencyCount = 2;
+    renderPassInfo.pDependencies = dependencies;
     
     if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &m_directionalShadow.renderPass) != VK_SUCCESS) {
         std::cerr << "[ShadowMap] Failed to create render pass\n";
@@ -760,30 +807,39 @@ bool EngineFrameRenderer::createShadowResources()
         return false;
     }
     
-    // Load shadow shaders
-    auto loadShader = [device](const std::string& path) -> VkShaderModule {
-        std::ifstream file(path, std::ios::ate | std::ios::binary);
-        if (!file.is_open()) return VK_NULL_HANDLE;
-        size_t fileSize = static_cast<size_t>(file.tellg());
-        std::vector<char> code(fileSize);
-        file.seekg(0);
-        file.read(code.data(), fileSize);
-        file.close();
-        
-        VkShaderModuleCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        createInfo.codeSize = code.size();
-        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-        
-        VkShaderModule shaderModule;
-        if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
-            return VK_NULL_HANDLE;
+    // Load shadow shaders - try multiple paths for compatibility
+    auto loadShader = [device](const std::string& name) -> VkShaderModule {
+        const std::string candidates[] = {
+            "shaders/" + name,
+            "../shaders/" + name,
+            "build/Release/shaders/" + name,
+            "../build/Release/shaders/" + name
+        };
+        for (const auto& path : candidates) {
+            std::ifstream file(path, std::ios::ate | std::ios::binary);
+            if (!file.is_open()) continue;
+            size_t fileSize = static_cast<size_t>(file.tellg());
+            std::vector<char> code(fileSize);
+            file.seekg(0);
+            file.read(code.data(), fileSize);
+            file.close();
+            
+            VkShaderModuleCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            createInfo.codeSize = code.size();
+            createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+            
+            VkShaderModule shaderModule;
+            if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+                return VK_NULL_HANDLE;
+            }
+            return shaderModule;
         }
-        return shaderModule;
+        return VK_NULL_HANDLE;
     };
     
-    VkShaderModule vertShader = loadShader("../shaders/shadowmap.vert.spv");
-    VkShaderModule fragShader = loadShader("../shaders/shadowmap.frag.spv");
+    VkShaderModule vertShader = loadShader("shadowmap.vert.spv");
+    VkShaderModule fragShader = loadShader("shadowmap.frag.spv");
     
     if (vertShader == VK_NULL_HANDLE || fragShader == VK_NULL_HANDLE) {
         std::cerr << "[ShadowMap] Failed to load shadow shaders\n";
@@ -948,7 +1004,7 @@ void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamer
     vmaUnmapMemory(m_device->allocator, m_uniformBuffers[imageIndex].allocation);
 }
 
-void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene)
+void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, const RenderCamera& camera)
 {
     LightingUBO lightUBO{};
     
@@ -998,15 +1054,42 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene)
                                                      lightDir.z, light.intensity);
                 lightUBO.dirLightColor = Vec4(light.color.x, light.color.y, light.color.z, 1.0f);
                 
-                // Set up shadow matrix
+                // Debug: check why shadows might not be enabled
+                static bool shadowConditionDebugPrinted = false;
+                if (!shadowConditionDebugPrinted) {
+                    std::cout << "[ShadowMap] Directional light found: IsValid=" << m_directionalShadow.IsValid()
+                              << " castShadows=" << light.castShadows << "\n";
+                    shadowConditionDebugPrinted = true;
+                }
+                
+                // Set up shadow matrix - center shadow frustum on camera position
                 if (m_directionalShadow.IsValid() && light.castShadows) {
-                    float shadowSize = 50.0f;  // Size of shadow frustum
-                    float nearPlane = 0.1f;
-                    float farPlane = 100.0f;
+                    float shadowExtent = light.shadowExtent;    // Half-size of shadow ortho box
+                    float shadowDistance = light.shadowDistance; // Distance from camera center along light direction
                     
-                    Vec3 lightPosForShadow = vscale(lightDir, -30.0f);
-                    Mat4 lightView = Mat4::LookAt(lightPosForShadow, Vec3(0, 0, 0), Vec3(0, 1, 0));
-                    Mat4 lightProj = Mat4::OrthographicShadow(-shadowSize, shadowSize, -shadowSize, shadowSize, nearPlane, farPlane);
+                    // Debug: log that shadows are being enabled
+                    static bool shadowDebugPrinted = false;
+                    if (!shadowDebugPrinted) {
+                        std::cout << "[ShadowMap] Enabling shadows: extent=" << shadowExtent 
+                                  << " distance=" << shadowDistance << " bias=" << light.shadowBias 
+                                  << " strength=" << light.shadowStrength << "\n";
+                        shadowDebugPrinted = true;
+                    }
+                    
+                    // Center shadow frustum on camera position for stable shadows
+                    Vec3 cameraPos = Vec3(camera.positionX, camera.positionY, camera.positionZ);
+                    Vec3 towardLight = vscale(lightDir, -1.0f);
+                    Vec3 lightPosForShadow = vadd(cameraPos, vscale(towardLight, shadowDistance));
+                    
+                    // Handle degenerate up vector when light points straight up/down
+                    Vec3 up = Vec3(0.0f, 1.0f, 0.0f);
+                    if (std::abs(vdot(lightDir, up)) > 0.99f) {
+                        up = Vec3(1.0f, 0.0f, 0.0f);
+                    }
+                    
+                    float shadowFar = shadowDistance * 3.0f;
+                    Mat4 lightView = Mat4::LookAt(lightPosForShadow, cameraPos, up);
+                    Mat4 lightProj = Mat4::OrthographicShadow(-shadowExtent, shadowExtent, -shadowExtent, shadowExtent, 0.1f, shadowFar);
                     lightUBO.dirLightViewProj = Mat4::Multiply(lightProj, lightView);
                     
                     // Enable shadows - bias, strength, texel size, enabled
@@ -1039,11 +1122,20 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene)
     vmaUnmapMemory(m_device->allocator, m_lightingBuffers[imageIndex].allocation);
 }
 
-void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene)
+void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, const RenderCamera& camera)
 {
-    if (!m_directionalShadow.IsValid() || !scene) return;
+    if (!m_directionalShadow.IsValid() || !scene) {
+        static bool skipDebugPrinted = false;
+        if (!skipDebugPrinted) {
+            std::cout << "[ShadowPass] Skipping: IsValid=" << m_directionalShadow.IsValid()
+                      << " scene=" << (scene != nullptr) << "\n";
+            skipDebugPrinted = true;
+        }
+        return;
+    }
     
-    // Find directional light in scene
+    // Find the first directional light with castShadows enabled
+    // TODO: Support multiple shadow-casting lights via shadow atlas
     auto& registry = scene->GetRegistry();
     Mat4 lightViewProj = Mat4::Identity();
     bool hasDirectionalLight = false;
@@ -1051,7 +1143,7 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene)
     auto lightView = registry.view<TransformComponent, LightComponent>();
     for (auto entity : lightView) {
         auto& light = lightView.get<LightComponent>(entity);
-        if (light.type == LightType::Directional) {
+        if (light.type == LightType::Directional && light.castShadows) {
             auto& transform = lightView.get<TransformComponent>(entity);
             
             // Compute light direction from rotation
@@ -1061,18 +1153,26 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene)
             Vec3 lightDir = Mat4::TransformDirection(rotation, Vec3(0, 0, -1));
             lightDir = vnorm(lightDir);
             
-            // Orthographic projection for directional light
-            float shadowSize = 50.0f;  // Size of shadow frustum
-            float nearPlane = 0.1f;
-            float farPlane = 100.0f;
+            // Center shadow frustum on camera position for stable shadows
+            float shadowExtent = light.shadowExtent;
+            float shadowDistance = light.shadowDistance;
             
-            // Look at origin from light direction
-            Vec3 lightPos = vscale(lightDir, -30.0f); // Position light "behind" the scene
-            Mat4 lightView = Mat4::LookAt(lightPos, Vec3(0, 0, 0), Vec3(0, 1, 0));
-            Mat4 lightProj = Mat4::OrthographicShadow(-shadowSize, shadowSize, -shadowSize, shadowSize, nearPlane, farPlane);
-            lightViewProj = Mat4::Multiply(lightProj, lightView);
+            Vec3 cameraPos = Vec3(camera.positionX, camera.positionY, camera.positionZ);
+            Vec3 towardLight = vscale(lightDir, -1.0f);
+            Vec3 lightPos = vadd(cameraPos, vscale(towardLight, shadowDistance));
+            
+            // Handle degenerate up vector when light points straight up/down
+            Vec3 up = Vec3(0.0f, 1.0f, 0.0f);
+            if (std::abs(vdot(lightDir, up)) > 0.99f) {
+                up = Vec3(1.0f, 0.0f, 0.0f);
+            }
+            
+            float shadowFar = shadowDistance * 3.0f;
+            Mat4 lightViewMat = Mat4::LookAt(lightPos, cameraPos, up);
+            Mat4 lightProj = Mat4::OrthographicShadow(-shadowExtent, shadowExtent, -shadowExtent, shadowExtent, 0.1f, shadowFar);
+            lightViewProj = Mat4::Multiply(lightProj, lightViewMat);
             hasDirectionalLight = true;
-            break;
+            break; // MVP: only first shadow-casting directional light
         }
     }
     
@@ -1099,6 +1199,7 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene)
     auto meshView = registry.view<TransformComponent, MeshRendererComponent>();
     VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
     VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
+    int shadowMeshCount = 0;
     
     struct ShadowPushConstants {
         Mat4 lightViewProj;
@@ -1109,11 +1210,10 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene)
         auto& meshComp = meshView.get<MeshRendererComponent>(entity);
         if (!meshComp.HasValidMesh() || !meshComp.visible) continue;
         
-        // Find mesh in library
-        auto it = m_meshLibraryLookup.find(meshComp.meshAssetPath);
-        if (it == m_meshLibraryLookup.end()) continue;
+        // Use meshHandle directly like the main pass (string lookup fails due to path mismatch)
+        if (meshComp.meshHandle >= m_meshLibrary.size()) continue;
         
-        const MeshGPU& mesh = m_meshLibrary[it->second];
+        const MeshGPU& mesh = m_meshLibrary[meshComp.meshHandle];
         
         // Bind buffers if changed
         if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
@@ -1135,6 +1235,13 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene)
                           0, sizeof(pc), &pc);
         
         vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+        shadowMeshCount++;
+    }
+    
+    static bool shadowPassDebugPrinted = false;
+    if (!shadowPassDebugPrinted && shadowMeshCount > 0) {
+        std::cout << "[ShadowPass] Rendered " << shadowMeshCount << " meshes to shadow map\n";
+        shadowPassDebugPrinted = true;
     }
     
     vkCmdEndRenderPass(cmd);
@@ -1604,32 +1711,38 @@ void EngineFrameRenderer::EditorGrid::Init(VkDevice device, VkRenderPass renderP
     }
     
     // Load shaders
-    auto loadShader = [device](const std::string& path) -> VkShaderModule {
-        std::ifstream file(path, std::ios::ate | std::ios::binary);
-        if (!file.is_open()) {
-            std::cerr << "[EditorGrid] Failed to open shader: " << path << "\n";
-            return VK_NULL_HANDLE;
+    auto loadShader = [device](const std::string& name) -> VkShaderModule {
+        const std::string candidates[] = {
+            "shaders/" + name,
+            "../shaders/" + name,
+            "build/Release/shaders/" + name,
+            "../build/Release/shaders/" + name
+        };
+        for (const auto& path : candidates) {
+            std::ifstream file(path, std::ios::ate | std::ios::binary);
+            if (!file.is_open()) continue;
+            size_t fileSize = static_cast<size_t>(file.tellg());
+            std::vector<char> code(fileSize);
+            file.seekg(0);
+            file.read(code.data(), fileSize);
+            file.close();
+            
+            VkShaderModuleCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            createInfo.codeSize = code.size();
+            createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+            
+            VkShaderModule shaderModule;
+            if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+                return VK_NULL_HANDLE;
+            }
+            return shaderModule;
         }
-        size_t fileSize = static_cast<size_t>(file.tellg());
-        std::vector<char> code(fileSize);
-        file.seekg(0);
-        file.read(code.data(), fileSize);
-        file.close();
-        
-        VkShaderModuleCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        createInfo.codeSize = code.size();
-        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-        
-        VkShaderModule shaderModule;
-        if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
-            return VK_NULL_HANDLE;
-        }
-        return shaderModule;
+        return VK_NULL_HANDLE;
     };
     
-    VkShaderModule vertShader = loadShader("../shaders/grid.vert.spv");
-    VkShaderModule fragShader = loadShader("../shaders/grid.frag.spv");
+    VkShaderModule vertShader = loadShader("grid.vert.spv");
+    VkShaderModule fragShader = loadShader("grid.frag.spv");
     
     if (vertShader == VK_NULL_HANDLE || fragShader == VK_NULL_HANDLE) {
         std::cerr << "[EditorGrid] Failed to load grid shaders\n";
@@ -1860,32 +1973,38 @@ void EngineFrameRenderer::OutlineRenderer::Init(VkDevice device, VkRenderPass re
     }
     
     // Load shaders
-    auto loadShader = [device](const std::string& path) -> VkShaderModule {
-        std::ifstream file(path, std::ios::ate | std::ios::binary);
-        if (!file.is_open()) {
-            std::cerr << "[OutlineRenderer] Failed to open shader: " << path << "\n";
-            return VK_NULL_HANDLE;
+    auto loadShader = [device](const std::string& name) -> VkShaderModule {
+        const std::string candidates[] = {
+            "shaders/" + name,
+            "../shaders/" + name,
+            "build/Release/shaders/" + name,
+            "../build/Release/shaders/" + name
+        };
+        for (const auto& path : candidates) {
+            std::ifstream file(path, std::ios::ate | std::ios::binary);
+            if (!file.is_open()) continue;
+            size_t fileSize = static_cast<size_t>(file.tellg());
+            std::vector<char> code(fileSize);
+            file.seekg(0);
+            file.read(code.data(), fileSize);
+            file.close();
+            
+            VkShaderModuleCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            createInfo.codeSize = code.size();
+            createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+            
+            VkShaderModule shaderModule;
+            if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+                return VK_NULL_HANDLE;
+            }
+            return shaderModule;
         }
-        size_t fileSize = static_cast<size_t>(file.tellg());
-        std::vector<char> code(fileSize);
-        file.seekg(0);
-        file.read(code.data(), fileSize);
-        file.close();
-        
-        VkShaderModuleCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        createInfo.codeSize = code.size();
-        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-        
-        VkShaderModule shaderModule;
-        if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
-            return VK_NULL_HANDLE;
-        }
-        return shaderModule;
+        return VK_NULL_HANDLE;
     };
     
-    VkShaderModule vertShader = loadShader("../shaders/outline.vert.spv");
-    VkShaderModule fragShader = loadShader("../shaders/outline.frag.spv");
+    VkShaderModule vertShader = loadShader("outline.vert.spv");
+    VkShaderModule fragShader = loadShader("outline.frag.spv");
     
     if (vertShader == VK_NULL_HANDLE || fragShader == VK_NULL_HANDLE) {
         std::cerr << "[OutlineRenderer] Failed to load outline shaders\n";
@@ -2290,32 +2409,38 @@ bool EngineFrameRenderer::createIdPickerResources()
     }
     
     // Load shaders
-    auto loadShader = [device](const std::string& path) -> VkShaderModule {
-        std::ifstream file(path, std::ios::ate | std::ios::binary);
-        if (!file.is_open()) {
-            std::cerr << "[IdPicker] Failed to open shader: " << path << "\n";
-            return VK_NULL_HANDLE;
+    auto loadShader = [device](const std::string& name) -> VkShaderModule {
+        const std::string candidates[] = {
+            "shaders/" + name,
+            "../shaders/" + name,
+            "build/Release/shaders/" + name,
+            "../build/Release/shaders/" + name
+        };
+        for (const auto& path : candidates) {
+            std::ifstream file(path, std::ios::ate | std::ios::binary);
+            if (!file.is_open()) continue;
+            size_t fileSize = static_cast<size_t>(file.tellg());
+            std::vector<char> code(fileSize);
+            file.seekg(0);
+            file.read(code.data(), fileSize);
+            file.close();
+            
+            VkShaderModuleCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            createInfo.codeSize = code.size();
+            createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+            
+            VkShaderModule shaderModule;
+            if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+                return VK_NULL_HANDLE;
+            }
+            return shaderModule;
         }
-        size_t fileSize = static_cast<size_t>(file.tellg());
-        std::vector<char> code(fileSize);
-        file.seekg(0);
-        file.read(code.data(), fileSize);
-        file.close();
-        
-        VkShaderModuleCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        createInfo.codeSize = code.size();
-        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-        
-        VkShaderModule shaderModule;
-        if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
-            return VK_NULL_HANDLE;
-        }
-        return shaderModule;
+        return VK_NULL_HANDLE;
     };
     
-    VkShaderModule vertShader = loadShader("../shaders/entityid.vert.spv");
-    VkShaderModule fragShader = loadShader("../shaders/entityid.frag.spv");
+    VkShaderModule vertShader = loadShader("entityid.vert.spv");
+    VkShaderModule fragShader = loadShader("entityid.frag.spv");
     
     if (vertShader == VK_NULL_HANDLE || fragShader == VK_NULL_HANDLE) {
         std::cerr << "[IdPicker] Failed to load entity ID shaders\n";

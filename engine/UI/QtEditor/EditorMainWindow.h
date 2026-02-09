@@ -68,6 +68,7 @@ private:
     void setupStatusBar();
     void initializeEngine();
     void setupEditorCallbacks();
+    void setupViewportRenderingToggles();
 
     // Outliner management
     void rebuildOutliner();

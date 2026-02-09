@@ -522,8 +522,8 @@ struct LightComponent {
         , castShadows(true)
         , shadowBias(0.002f)
         , shadowStrength(0.7f)
-        , shadowDistance(40.0f)
-        , shadowExtent(25.0f)
+        , shadowDistance(100.0f)
+        , shadowExtent(75.0f)
     {}
 
     // Factory methods for common light types

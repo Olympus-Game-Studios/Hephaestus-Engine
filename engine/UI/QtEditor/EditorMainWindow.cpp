@@ -310,6 +310,9 @@ void EditorMainWindow::setupDockWidgets()
         viewMenu->addAction(m_outlinerDock->toggleViewAction());
         viewMenu->addAction(m_detailsDock->toggleViewAction());
         viewMenu->addAction(m_assetBrowserDock->toggleViewAction());
+        
+        // Viewport rendering toggles are added after engine initialization
+        // (see setupViewportRenderingToggles called from initializeEngine)
     }
 }
 
@@ -341,6 +344,9 @@ void EditorMainWindow::setupStatusBar()
 void EditorMainWindow::initializeEngine()
 {
     m_engine = std::make_unique<QtEditorEngine>(this);
+    
+    // Set up viewport rendering toggles now that engine context is available
+    setupViewportRenderingToggles();
     
     // Connect engine signals
     connect(m_engine.get(), &QtEditorEngine::engineInitialized,
@@ -382,6 +388,45 @@ void EditorMainWindow::setupEditorCallbacks()
     ctx->SetDirtyChangedCallback([this](bool) {
         updateWindowTitle();
     });
+}
+
+void EditorMainWindow::setupViewportRenderingToggles()
+{
+    if (!m_engine) return;
+    
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx) return;
+    
+    // Find the View menu
+    QMenu* viewMenu = nullptr;
+    for (QMenu* menu : menuBar()->findChildren<QMenu*>()) {
+        if (menu->title() == tr("&View")) {
+            viewMenu = menu;
+            break;
+        }
+    }
+    if (!viewMenu) return;
+    
+    viewMenu->addSeparator();
+    QMenu* viewportMenu = viewMenu->addMenu(tr("Viewport Rendering"));
+    
+    auto& vs = ctx->GetViewportSettings();
+    
+    auto addToggle = [&](const QString& label, bool& setting) {
+        QAction* action = viewportMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(setting);
+        connect(action, &QAction::toggled, this, [&setting](bool checked) {
+            setting = checked;
+        });
+    };
+    
+    addToggle(tr("Shadows"), vs.showShadows);
+    addToggle(tr("Grid"), vs.showGrid);
+    addToggle(tr("Gizmo"), vs.showGizmo);
+    addToggle(tr("Selection Outline"), vs.showSelectionOutline);
+    addToggle(tr("Skybox"), vs.showSkybox);
+    addToggle(tr("Light Billboards"), vs.showLightBillboards);
 }
 
 void EditorMainWindow::onViewportReady()

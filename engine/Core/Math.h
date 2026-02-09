@@ -229,7 +229,7 @@ struct Mat4 {
     }
 
     // Orthographic projection for shadow mapping (Vulkan 0-1 depth)
-    // Matches Vulkan's coordinate system for shadow map rendering
+    // Matches Vulkan's coordinate system with +z forward (same as LookAt)
     static Mat4 OrthographicShadow(float left, float right, float bottom, float top,
                                    float znear, float zfar)
     {
@@ -242,7 +242,7 @@ struct Mat4 {
         }
         r.m[0] = 2.0f / width;
         r.m[5] = -2.0f / height;  // Negative Y for Vulkan (same as regular ortho)
-        r.m[10] = -1.0f / depth;  // Map depth correctly for Vulkan 0-1 range
+        r.m[10] = 1.0f / depth;   // Positive: +z forward convention (matches LookAt)
         r.m[12] = -(right + left) / width;
         r.m[13] = -(top + bottom) / height;
         r.m[14] = -znear / depth;
