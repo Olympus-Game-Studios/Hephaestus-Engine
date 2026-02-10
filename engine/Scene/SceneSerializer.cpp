@@ -669,6 +669,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss.imbue(std::locale::classic());
             oss << "        \"Light\": {\n";
             oss << "          \"type\": \"" << LightTypeToString(light->type) << "\",\n";
+            oss << "          \"enabled\": " << (light->enabled ? "true" : "false") << ",\n";
             oss << "          \"color\": " << FormatVec3(light->color) << ",\n";
             oss << "          \"intensity\": " << FormatFloat(light->intensity) << ",\n";
             oss << "          \"range\": " << FormatFloat(light->range) << ",\n";
@@ -685,6 +686,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"shadow\": {\n";
             oss << "            \"castShadows\": " << (light->castShadows ? "true" : "false") << ",\n";
             oss << "            \"bias\": " << FormatFloat(light->shadowBias) << ",\n";
+            oss << "            \"normalBias\": " << FormatFloat(light->shadowNormalBias) << ",\n";
             oss << "            \"strength\": " << FormatFloat(light->shadowStrength) << ",\n";
             oss << "            \"distance\": " << FormatFloat(light->shadowDistance) << ",\n";
             oss << "            \"extent\": " << FormatFloat(light->shadowExtent) << "\n";
@@ -759,6 +761,8 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"solidColor\": " << FormatVec3(environment->solidColor) << ",\n";
             oss << "          \"hdriPath\": \"" << EscapeString(environment->hdriPath) << "\",\n";
             oss << "          \"hdriIntensity\": " << FormatFloat(environment->hdriIntensity) << ",\n";
+            oss << "          \"rotationYaw\": " << FormatFloat(environment->rotationYaw) << ",\n";
+            oss << "          \"useAsIBL\": " << (environment->useAsIBL ? "true" : "false") << ",\n";
             oss << "          \"enableRenderDistance\": " << (environment->enableRenderDistance ? "true" : "false") << ",\n";
             oss << "          \"renderDistance\": " << FormatFloat(environment->renderDistance) << ",\n";
             oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << "\n";
@@ -1205,6 +1209,12 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     return false;
                 }
             }
+            // enabled (default true for backwards compatibility)
+            if (const JsonValue* enabledValue = lightObj->Find("enabled")) {
+                if (enabledValue->IsBool()) {
+                    light.enabled = enabledValue->AsBool();
+                }
+            }
             if (const JsonValue* colorValue = lightObj->Find("color")) {
                 ParseVec3(*colorValue, light.color);
             }
@@ -1265,6 +1275,11 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     if (const JsonValue* biasValue = shadowObj->Find("bias")) {
                         if (biasValue->IsNumber()) {
                             light.shadowBias = static_cast<float>(biasValue->AsNumber());
+                        }
+                    }
+                    if (const JsonValue* normalBiasValue = shadowObj->Find("normalBias")) {
+                        if (normalBiasValue->IsNumber()) {
+                            light.shadowNormalBias = static_cast<float>(normalBiasValue->AsNumber());
                         }
                     }
                     if (const JsonValue* strengthValue = shadowObj->Find("strength")) {
@@ -1475,6 +1490,14 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
             if (const JsonValue* v = envObj->Find("infiniteRenderDistance")) {
                 env.infiniteRenderDistance = ParseBoolLike(*v, true);
+            }
+
+            // --- Parse new fields (backwards-compatible: defaults preserved if absent) ---
+            if (const JsonValue* v = envObj->Find("rotationYaw")) {
+                if (v->IsNumber()) env.rotationYaw = static_cast<float>(v->AsNumber());
+            }
+            if (const JsonValue* v = envObj->Find("useAsIBL")) {
+                env.useAsIBL = ParseBoolLike(*v, true);
             }
 
             // --- Heuristic: if no explicit type, infer from hdriPath ---
@@ -1995,6 +2018,7 @@ std::string SceneSerializer::SerializeToString() const
             oss.imbue(std::locale::classic());
             oss << "        \"Light\": {\n";
             oss << "          \"type\": \"" << LightTypeToString(light->type) << "\",\n";
+            oss << "          \"enabled\": " << (light->enabled ? "true" : "false") << ",\n";
             oss << "          \"color\": " << FormatVec3(light->color) << ",\n";
             oss << "          \"intensity\": " << FormatFloat(light->intensity) << ",\n";
             oss << "          \"range\": " << FormatFloat(light->range) << ",\n";
@@ -2011,6 +2035,7 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"shadow\": {\n";
             oss << "            \"castShadows\": " << (light->castShadows ? "true" : "false") << ",\n";
             oss << "            \"bias\": " << FormatFloat(light->shadowBias) << ",\n";
+            oss << "            \"normalBias\": " << FormatFloat(light->shadowNormalBias) << ",\n";
             oss << "            \"strength\": " << FormatFloat(light->shadowStrength) << ",\n";
             oss << "            \"distance\": " << FormatFloat(light->shadowDistance) << ",\n";
             oss << "            \"extent\": " << FormatFloat(light->shadowExtent) << "\n";
@@ -2069,6 +2094,8 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"solidColor\": " << FormatVec3(environment->solidColor) << ",\n";
             oss << "          \"hdriPath\": \"" << EscapeString(environment->hdriPath) << "\",\n";
             oss << "          \"hdriIntensity\": " << FormatFloat(environment->hdriIntensity) << ",\n";
+            oss << "          \"rotationYaw\": " << FormatFloat(environment->rotationYaw) << ",\n";
+            oss << "          \"useAsIBL\": " << (environment->useAsIBL ? "true" : "false") << ",\n";
             oss << "          \"enableRenderDistance\": " << (environment->enableRenderDistance ? "true" : "false") << ",\n";
             oss << "          \"renderDistance\": " << FormatFloat(environment->renderDistance) << ",\n";
             oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << "\n";

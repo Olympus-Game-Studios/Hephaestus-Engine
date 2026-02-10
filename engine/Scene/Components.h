@@ -485,6 +485,7 @@ enum class LightType {
  */
 struct LightComponent {
     LightType type;
+    bool enabled;          // Whether the light is active
     Vec3 color;
     float intensity;
     
@@ -504,12 +505,14 @@ struct LightComponent {
     // Shadow settings (primarily for directional lights)
     bool castShadows;      // Whether this light casts shadows
     float shadowBias;      // Bias to prevent shadow acne (0.0001 - 0.01)
+    float shadowNormalBias; // Normal bias to reduce peter-panning
     float shadowStrength;  // How dark shadows are (0.0 = no shadow, 1.0 = full black)
     float shadowDistance;  // How far shadows extend from camera
     float shadowExtent;    // Size of orthographic shadow frustum
 
     LightComponent()
         : type(LightType::Point)
+        , enabled(true)
         , color(1.0f, 1.0f, 1.0f)
         , intensity(1.0f)
         , range(10.0f)
@@ -521,6 +524,7 @@ struct LightComponent {
         , direction(0.0f, -1.0f, 0.0f)
         , castShadows(true)
         , shadowBias(0.002f)
+        , shadowNormalBias(0.01f)
         , shadowStrength(0.7f)
         , shadowDistance(100.0f)
         , shadowExtent(75.0f)
@@ -572,6 +576,8 @@ struct EnvironmentComponent {
     Vec3 solidColor;           // Used when type == SolidColor
     std::string hdriPath;      // Path to HDRI/EXR file when type == HDRI
     float hdriIntensity;       // Brightness multiplier for HDRI
+    float rotationYaw;         // Rotate sky around Y axis in degrees (0..360)
+    bool useAsIBL;             // Use HDRI for image-based lighting / reflections
     
     // Render distance settings
     bool enableRenderDistance = false;   // Whether to cull objects beyond render distance
@@ -583,6 +589,8 @@ struct EnvironmentComponent {
         , solidColor(0.1f, 0.2f, 0.3f)
         , hdriPath("")
         , hdriIntensity(1.0f)
+        , rotationYaw(0.0f)
+        , useAsIBL(true)
         , enableRenderDistance(false)
         , renderDistance(500.0f)
         , infiniteRenderDistance(false)

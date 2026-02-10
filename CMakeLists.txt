@@ -397,6 +397,10 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/AssetBrowserWidget.h
             engine/UI/QtEditor/EditorAssetActions.cpp
             engine/UI/QtEditor/EditorAssetActions.h
+            engine/UI/QtEditor/LightInspector.cpp
+            engine/UI/QtEditor/LightInspector.h
+            engine/UI/QtEditor/EnvironmentInspector.cpp
+            engine/UI/QtEditor/EnvironmentInspector.h
         )
 
         target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets)

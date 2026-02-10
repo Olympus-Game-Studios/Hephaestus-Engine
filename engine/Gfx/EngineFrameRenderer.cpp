@@ -1323,6 +1323,9 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
             Entity entity(entityHandle, scene);
             auto& light = entity.GetComponent<LightComponent>();
             
+            // Skip disabled lights
+            if (!light.enabled) continue;
+
             Vec3 lightPos{0.0f, 0.0f, 0.0f};
             Vec3 lightDir{0.0f, -1.0f, 0.0f};
             
@@ -1434,7 +1437,7 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
     auto lightView = registry.view<TransformComponent, LightComponent>();
     for (auto entity : lightView) {
         auto& light = lightView.get<LightComponent>(entity);
-        if (light.type == LightType::Directional && light.castShadows) {
+        if (light.type == LightType::Directional && light.castShadows && light.enabled) {
             auto& transform = lightView.get<TransformComponent>(entity);
             
             // Compute light direction from rotation

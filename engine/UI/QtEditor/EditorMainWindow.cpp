@@ -10,6 +10,8 @@
 #include "QtEditorEngine.h"
 #include "AssetBrowserWidget.h"
 #include "EditorAssetActions.h"
+#include "LightInspector.h"
+#include "EnvironmentInspector.h"
 
 #include "../../Core/EditorContext.h"
 #include "../../Core/ProjectContext.h"
@@ -36,6 +38,7 @@
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QCloseEvent>
+#include <QScrollArea>
 #include <QDir>
 #include <iostream>
 #include <cmath>
@@ -194,10 +197,15 @@ void EditorMainWindow::setupDockWidgets()
     m_detailsDock->setObjectName("DetailsDock");
     m_detailsDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
-    m_detailsWidget = new QWidget(m_detailsDock);
-    QVBoxLayout* detailsMainLayout = new QVBoxLayout(m_detailsWidget);
-    detailsMainLayout->setContentsMargins(6, 6, 6, 6);
-    detailsMainLayout->setSpacing(6);
+    // Scroll area wrapper so the inspector is scrollable when many components are shown
+    m_detailsScrollArea = new QScrollArea(m_detailsDock);
+    m_detailsScrollArea->setWidgetResizable(true);
+    m_detailsScrollArea->setFrameShape(QFrame::NoFrame);
+
+    m_detailsWidget = new QWidget();
+    m_detailsLayout = new QVBoxLayout(m_detailsWidget);
+    m_detailsLayout->setContentsMargins(6, 6, 6, 6);
+    m_detailsLayout->setSpacing(6);
 
     // Name field
     QFormLayout* nameLayout = new QFormLayout();
@@ -205,7 +213,7 @@ void EditorMainWindow::setupDockWidgets()
     m_nameEdit->setPlaceholderText(tr("(No selection)"));
     m_nameEdit->setEnabled(false);
     nameLayout->addRow(tr("Name:"), m_nameEdit);
-    detailsMainLayout->addLayout(nameLayout);
+    m_detailsLayout->addLayout(nameLayout);
     
     connect(m_nameEdit, &QLineEdit::textChanged, this, &EditorMainWindow::onNameChanged);
 
@@ -264,12 +272,16 @@ void EditorMainWindow::setupDockWidgets()
     connect(m_scaleY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onScaleChanged);
     connect(m_scaleZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onScaleChanged);
 
-    detailsMainLayout->addWidget(m_transformGroup);
+    m_detailsLayout->addWidget(m_transformGroup);
     
+    // Component inspector widgets will be inserted here dynamically
+    // (LightInspector, EnvironmentInspector, etc.)
+
     // Add stretch to push everything to top
-    detailsMainLayout->addStretch();
-    
-    m_detailsDock->setWidget(m_detailsWidget);
+    m_detailsLayout->addStretch();
+
+    m_detailsScrollArea->setWidget(m_detailsWidget);
+    m_detailsDock->setWidget(m_detailsScrollArea);
     addDockWidget(Qt::RightDockWidgetArea, m_detailsDock);
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -617,6 +629,18 @@ void EditorMainWindow::clearDetailsPanel()
     
     m_transformGroup->setEnabled(false);
     
+    // Destroy component inspectors
+    if (m_lightInspector) {
+        m_detailsLayout->removeWidget(m_lightInspector);
+        delete m_lightInspector;
+        m_lightInspector = nullptr;
+    }
+    if (m_environmentInspector) {
+        m_detailsLayout->removeWidget(m_environmentInspector);
+        delete m_environmentInspector;
+        m_environmentInspector = nullptr;
+    }
+
     blockDetailSignals(false);
     m_updatingDetails = false;
 }
@@ -689,6 +713,43 @@ void EditorMainWindow::refreshDetailsPanel()
     
     blockDetailSignals(false);
     m_updatingDetails = false;
+
+    // ── Component inspectors (recreate only if entity changed) ──────────
+
+    // Remove old inspectors
+    if (m_lightInspector) {
+        m_detailsLayout->removeWidget(m_lightInspector);
+        delete m_lightInspector;
+        m_lightInspector = nullptr;
+    }
+    if (m_environmentInspector) {
+        m_detailsLayout->removeWidget(m_environmentInspector);
+        delete m_environmentInspector;
+        m_environmentInspector = nullptr;
+    }
+
+    // Find the stretch item index (insert before the final stretch)
+    int stretchIndex = m_detailsLayout->count(); // fallback: append at end
+    for (int i = 0; i < m_detailsLayout->count(); ++i) {
+        QLayoutItem* item = m_detailsLayout->itemAt(i);
+        if (item && item->spacerItem()) {
+            stretchIndex = i;
+            break;
+        }
+    }
+
+    // LightInspector — only if entity has LightComponent
+    if (registry.all_of<LightComponent>(entity)) {
+        m_lightInspector = new LightInspector(ctx, entity, m_detailsWidget);
+        m_detailsLayout->insertWidget(stretchIndex, m_lightInspector);
+        ++stretchIndex;
+    }
+
+    // EnvironmentInspector — only if entity has EnvironmentComponent
+    if (registry.all_of<EnvironmentComponent>(entity)) {
+        m_environmentInspector = new EnvironmentInspector(ctx, entity, m_detailsWidget);
+        m_detailsLayout->insertWidget(stretchIndex, m_environmentInspector);
+    }
 }
 
 void EditorMainWindow::onNameChanged(const QString& text)

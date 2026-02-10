@@ -23,6 +23,7 @@
 #include <QStatusBar>
 #include <QWidget>
 #include <QGroupBox>
+#include <QScrollArea>
 #include <memory>
 #include <entt/entt.hpp>
 
@@ -38,6 +39,8 @@ class QtViewportWindow;
 class QtEditorEngine;
 class AssetBrowserWidget;
 class EditorAssetActions;
+class LightInspector;
+class EnvironmentInspector;
 
 /**
  * @brief Main editor window with dockable panels.
@@ -133,6 +136,8 @@ private:
 
     // Details panel (inspector)
     QWidget* m_detailsWidget = nullptr;
+    QScrollArea* m_detailsScrollArea = nullptr;
+    QVBoxLayout* m_detailsLayout = nullptr;
     QLineEdit* m_nameEdit = nullptr;
     QDoubleSpinBox* m_posX = nullptr;
     QDoubleSpinBox* m_posY = nullptr;
@@ -144,6 +149,10 @@ private:
     QDoubleSpinBox* m_scaleY = nullptr;
     QDoubleSpinBox* m_scaleZ = nullptr;
     QGroupBox* m_transformGroup = nullptr;
+
+    // Component inspectors (owned by layout, recreated on selection change)
+    LightInspector* m_lightInspector = nullptr;
+    EnvironmentInspector* m_environmentInspector = nullptr;
 
     // Asset browser (new widget-based)
     AssetBrowserWidget* m_assetBrowser = nullptr;
