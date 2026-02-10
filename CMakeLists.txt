@@ -178,6 +178,7 @@ set(ENGINE_CORE_SOURCES
 set(EDITOR_ONLY_SOURCES
     engine/Core/main.cpp
     engine/Gfx/VulkanGizmo.cpp
+    engine/Gfx/VulkanLightGizmo.cpp
     engine/Scene/SceneExporter.cpp
     engine/UI/EditorDocument.cpp
     engine/UI/ProjectManager.cpp
@@ -218,6 +219,7 @@ add_executable(HephaestusEngine
     engine/Gfx/VulkanPipeline.cpp
     engine/Gfx/VulkanTexture.cpp
     engine/Gfx/VulkanGizmo.cpp
+    engine/Gfx/VulkanLightGizmo.cpp
     engine/Gfx/VulkanSkybox.cpp
     engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp

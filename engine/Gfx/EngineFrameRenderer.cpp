@@ -208,6 +208,11 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
     if (!createGizmoResources()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create gizmo resources (gizmo will be disabled)\n";
     }
+
+    // Create directional light gizmo resources (optional)
+    if (!createLightGizmoResources()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create light gizmo resources (light gizmos will be disabled)\n";
+    }
 #endif
     
     // Create billboard resources (optional, failure doesn't prevent init)
@@ -1792,6 +1797,11 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     if (config.isEditorMode && config.renderBillboards && !config.isPlaying) {
         recordBillboards(cmd, imageIndex, scene);
     }
+
+    // Render directional light direction gizmos (editor only)
+    if (config.isEditorMode && !config.isPlaying) {
+        recordLightGizmos(cmd, imageIndex, scene, config);
+    }
 #endif
 
     // Render selection outlines (in editor mode)
@@ -1945,6 +1955,56 @@ void EngineFrameRenderer::cleanupGizmoResources()
     if (m_gizmoInitialized && m_device) {
         m_gizmo.Cleanup(m_device->device, m_device->allocator);
         m_gizmoInitialized = false;
+    }
+}
+
+bool EngineFrameRenderer::createLightGizmoResources()
+{
+    if (!m_device || !m_swapchain || !m_pipeline) return false;
+
+    try {
+        m_lightGizmo.Init(m_device->device, m_swapchain->renderPass, m_swapchain->extent,
+                          m_pipeline->descriptorSetLayout, m_device->allocator);
+        m_lightGizmoInitialized = true;
+        std::cout << "[EngineFrameRenderer] Light gizmo initialized\n";
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "[EngineFrameRenderer] Failed to initialize light gizmo: " << e.what() << "\n";
+        return false;
+    }
+}
+
+void EngineFrameRenderer::cleanupLightGizmoResources()
+{
+    if (m_lightGizmoInitialized && m_device) {
+        m_lightGizmo.Cleanup(m_device->device, m_device->allocator);
+        m_lightGizmoInitialized = false;
+    }
+}
+
+void EngineFrameRenderer::recordLightGizmos(VkCommandBuffer cmd, uint32_t imageIndex,
+                                             Scene* scene, const FrameRenderConfig& config)
+{
+    if (!m_lightGizmoInitialized || !scene) return;
+
+    auto& registry = scene->GetRegistry();
+
+    // Query all entities with both LightComponent and TransformComponent
+    auto lightView = registry.view<TransformComponent, LightComponent>();
+
+    for (auto entityHandle : lightView) {
+        auto& light = registry.get<LightComponent>(entityHandle);
+        if (light.type != LightType::Directional) continue;
+
+        bool isSelected = (static_cast<uint32_t>(entityHandle) == config.selectedEntity);
+        bool isHovered  = false; // Could wire up hover detection later
+
+        // Build world transform for this entity
+        Mat4 worldMat = scene->GetWorldTransform(Entity(entityHandle, scene));
+
+        m_lightGizmo.Draw(cmd, m_descriptorSets[imageIndex],
+                          worldMat, m_gizmoCameraPos, m_gizmoProjectionMatrix,
+                          isSelected, isHovered);
     }
 }
 
@@ -2126,6 +2186,8 @@ void EngineFrameRenderer::destroyAllResources()
 #ifndef HEPHAESTUS_GAME_RUNTIME
     // Cleanup gizmo
     cleanupGizmoResources();
+    // Cleanup light direction gizmo
+    cleanupLightGizmoResources();
 #endif
 
     // Cleanup shadow map resources

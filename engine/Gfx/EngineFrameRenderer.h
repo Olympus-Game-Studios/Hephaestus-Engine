@@ -27,6 +27,7 @@
 #include "VulkanTexture.h"
 #ifndef HEPHAESTUS_GAME_RUNTIME
 #include "VulkanGizmo.h"
+#include "VulkanLightGizmo.h"
 #endif
 #include "../Assets/MeshAsset.h"
 
@@ -270,6 +271,8 @@ private:
                         const FrameRenderConfig& config);
     void recordGizmo(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene);
     void recordBillboards(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene);
+    void recordLightGizmos(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene,
+                           const FrameRenderConfig& config);
     void recordOutlines(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, 
                         const FrameRenderConfig& config);
     void recordGrid(VkCommandBuffer cmd, uint32_t imageIndex, const FrameRenderConfig& config);
@@ -286,6 +289,8 @@ private:
     // Gizmo helpers (Editor only)
     bool createGizmoResources();
     void cleanupGizmoResources();
+    bool createLightGizmoResources();
+    void cleanupLightGizmoResources();
 #endif
 
     // Cleanup helpers
@@ -544,6 +549,10 @@ private:
     Mat4 m_gizmoViewMatrix = Mat4::Identity();
     Mat4 m_gizmoProjectionMatrix = Mat4::Identity();
     Vec3 m_gizmoCameraPos = Vec3(0, 0, 0);
+
+    // Directional light gizmo (editor-only)
+    VulkanLightGizmo m_lightGizmo;
+    bool m_lightGizmoInitialized = false;
 #endif
 };
 
