@@ -2,6 +2,14 @@
 
 layout(set = 0, binding = 1) uniform sampler2D environmentMap;
 
+layout(push_constant) uniform SkyboxPushConstants {
+    float intensity;
+    float solidColorR;
+    float solidColorG;
+    float solidColorB;
+    int   useSolidColor; // 1 = solid color, 0 = HDRI
+} pc;
+
 layout(location = 0) in vec3 fragTexCoord;
 
 layout(location = 0) out vec4 outColor;
@@ -19,13 +27,19 @@ vec3 sampleEquirectangular(vec3 direction) {
 }
 
 void main() {
-    vec3 envColor = sampleEquirectangular(normalize(fragTexCoord));
+    vec3 color;
     
-    // Simple tone mapping for HDR
-    envColor = envColor / (envColor + vec3(1.0));
+    if (pc.useSolidColor != 0) {
+        color = vec3(pc.solidColorR, pc.solidColorG, pc.solidColorB);
+    } else {
+        color = sampleEquirectangular(normalize(fragTexCoord)) * pc.intensity;
+    }
+    
+    // Simple Reinhard tone mapping for HDR
+    color = color / (color + vec3(1.0));
     
     // Gamma correction
-    envColor = pow(envColor, vec3(1.0/2.2));
+    color = pow(color, vec3(1.0/2.2));
     
-    outColor = vec4(envColor, 1.0);
+    outColor = vec4(color, 1.0);
 }

@@ -257,19 +257,37 @@ static bool ParseBoolLike(const JsonValue& value, bool fallback)
     return fallback;
 }
 
+static std::string ToLowerCase(const std::string& s)
+{
+    std::string result = s;
+    for (char& ch : result) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return result;
+}
+
 static EnvironmentComponent::BackgroundType ParseBackgroundType(const JsonValue& value)
 {
     if (!value.IsString()) {
         return EnvironmentComponent::BackgroundType::SolidColor;
     }
-    std::string typeStr = value.AsString();
-    if (typeStr == "HDRI") {
+    std::string typeStr = ToLowerCase(value.AsString());
+    if (typeStr == "hdri" || typeStr == "hdr") {
         return EnvironmentComponent::BackgroundType::HDRI;
     }
-    if (typeStr == "SolidColor") {
+    if (typeStr == "solidcolor" || typeStr == "solid" || typeStr == "color") {
         return EnvironmentComponent::BackgroundType::SolidColor;
     }
+    // Unknown type string — caller will use fallback heuristic
     return EnvironmentComponent::BackgroundType::SolidColor;
+}
+
+// Check if a type string is explicitly provided vs unknown/missing
+static bool IsKnownBackgroundType(const JsonValue& value)
+{
+    if (!value.IsString()) return false;
+    std::string typeStr = ToLowerCase(value.AsString());
+    return typeStr == "hdri" || typeStr == "hdr" || typeStr == "solidcolor" || typeStr == "solid" || typeStr == "color";
 }
 
 static LightType ParseLightType(const JsonValue& value, std::string& errorOut)
@@ -1401,35 +1419,135 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                 return false;
             }
             auto& env = entity.AddComponent<EnvironmentComponent>();
+            bool usedLegacy = false;
+            bool hasExplicitType = false;
+
+            // --- Parse type (case-insensitive) ---
             if (const JsonValue* typeValue = envObj->Find("type")) {
+                hasExplicitType = IsKnownBackgroundType(*typeValue);
                 env.type = ParseBackgroundType(*typeValue);
             }
-            if (const JsonValue* colorValue = envObj->Find("solidColor")) {
-                ParseVec3(*colorValue, env.solidColor);
-            }
-            if (const JsonValue* hdriPathValue = envObj->Find("hdriPath")) {
-                if (hdriPathValue->IsString()) {
-                    env.hdriPath = hdriPathValue->AsString();
+
+            // --- Parse solidColor with legacy aliases ---
+            bool gotColor = false;
+            for (const char* key : {"solidColor", "color", "skyColor"}) {
+                if (gotColor) break;
+                if (const JsonValue* v = envObj->Find(key)) {
+                    if (ParseVec3(*v, env.solidColor)) {
+                        gotColor = true;
+                        if (std::string(key) != "solidColor") usedLegacy = true;
+                    }
                 }
             }
-            if (const JsonValue* intensityValue = envObj->Find("hdriIntensity")) {
-                if (intensityValue->IsNumber()) {
-                    env.hdriIntensity = static_cast<float>(intensityValue->AsNumber());
+
+            // --- Parse hdriPath with legacy aliases ---
+            bool gotPath = false;
+            for (const char* key : {"hdriPath", "hdrPath", "environmentPath", "skyboxPath"}) {
+                if (gotPath) break;
+                if (const JsonValue* v = envObj->Find(key)) {
+                    if (v->IsString() && !v->AsString().empty()) {
+                        env.hdriPath = v->AsString();
+                        gotPath = true;
+                        if (std::string(key) != "hdriPath") usedLegacy = true;
+                    }
                 }
             }
-            if (const JsonValue* enableRenderDistValue = envObj->Find("enableRenderDistance")) {
-                if (enableRenderDistValue->IsBool()) {
-                    env.enableRenderDistance = enableRenderDistValue->AsBool();
+
+            // --- Parse hdriIntensity with legacy aliases ---
+            bool gotIntensity = false;
+            for (const char* key : {"hdriIntensity", "intensity", "exposure"}) {
+                if (gotIntensity) break;
+                if (const JsonValue* v = envObj->Find(key)) {
+                    if (v->IsNumber()) {
+                        env.hdriIntensity = static_cast<float>(v->AsNumber());
+                        gotIntensity = true;
+                        if (std::string(key) != "hdriIntensity") usedLegacy = true;
+                    }
                 }
             }
-            if (const JsonValue* renderDistValue = envObj->Find("renderDistance")) {
-                if (renderDistValue->IsNumber()) {
-                    env.renderDistance = static_cast<float>(renderDistValue->AsNumber());
+
+            // --- Parse render distance fields (with defaults on absence) ---
+            if (const JsonValue* v = envObj->Find("enableRenderDistance")) {
+                env.enableRenderDistance = ParseBoolLike(*v, false);
+            }
+            if (const JsonValue* v = envObj->Find("renderDistance")) {
+                if (v->IsNumber()) env.renderDistance = static_cast<float>(v->AsNumber());
+            }
+            if (const JsonValue* v = envObj->Find("infiniteRenderDistance")) {
+                env.infiniteRenderDistance = ParseBoolLike(*v, true);
+            }
+
+            // --- Heuristic: if no explicit type, infer from hdriPath ---
+            if (!hasExplicitType) {
+                if (gotPath) {
+                    env.type = EnvironmentComponent::BackgroundType::HDRI;
+                    usedLegacy = true;
+                } else {
+                    env.type = EnvironmentComponent::BackgroundType::SolidColor;
                 }
             }
-            if (const JsonValue* infiniteRenderDistValue = envObj->Find("infiniteRenderDistance")) {
-                if (infiniteRenderDistValue->IsBool()) {
-                    env.infiniteRenderDistance = infiniteRenderDistValue->AsBool();
+
+            if (usedLegacy) {
+                static bool legacyWarnPrinted = false;
+                if (!legacyWarnPrinted) {
+                    std::cout << "[SceneSerializer] Loaded legacy environment format: applied defaults/aliases\n";
+                    legacyWarnPrinted = true;
+                }
+            }
+        }
+        // --- Legacy component names mapped to EnvironmentComponent ---
+        else {
+            const JsonValue* legacyEnvObj = nullptr;
+            const char* legacyName = nullptr;
+            for (const char* name : {"Sky", "Skybox", "SceneEnvironment"}) {
+                if (const JsonValue* v = components->Find(name)) {
+                    if (v->IsObject()) {
+                        legacyEnvObj = v;
+                        legacyName = name;
+                        break;
+                    }
+                }
+            }
+            if (legacyEnvObj) {
+                auto& env = entity.AddComponent<EnvironmentComponent>();
+                // Parse with same alias logic
+                bool gotPath = false;
+                for (const char* key : {"hdriPath", "hdrPath", "environmentPath", "skyboxPath"}) {
+                    if (gotPath) break;
+                    if (const JsonValue* v = legacyEnvObj->Find(key)) {
+                        if (v->IsString() && !v->AsString().empty()) {
+                            env.hdriPath = v->AsString();
+                            gotPath = true;
+                        }
+                    }
+                }
+                for (const char* key : {"solidColor", "color", "skyColor"}) {
+                    if (const JsonValue* v = legacyEnvObj->Find(key)) {
+                        if (ParseVec3(*v, env.solidColor)) break;
+                    }
+                }
+                for (const char* key : {"hdriIntensity", "intensity", "exposure"}) {
+                    if (const JsonValue* v = legacyEnvObj->Find(key)) {
+                        if (v->IsNumber()) {
+                            env.hdriIntensity = static_cast<float>(v->AsNumber());
+                            break;
+                        }
+                    }
+                }
+                if (const JsonValue* v = legacyEnvObj->Find("type")) {
+                    if (IsKnownBackgroundType(*v)) {
+                        env.type = ParseBackgroundType(*v);
+                    } else if (gotPath) {
+                        env.type = EnvironmentComponent::BackgroundType::HDRI;
+                    }
+                } else if (gotPath) {
+                    env.type = EnvironmentComponent::BackgroundType::HDRI;
+                }
+                static bool legacyNameWarnPrinted = false;
+                if (!legacyNameWarnPrinted) {
+                    std::cout << "[SceneSerializer] Loaded legacy environment component '" << legacyName
+                              << "': mapped to EnvironmentComponent with defaults/aliases\n";
+                    legacyNameWarnPrinted = true;
                 }
             }
         }

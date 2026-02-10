@@ -15,6 +15,9 @@
 #include <cstring>
 #include <cmath>
 #include <fstream>
+#include <array>
+#include <algorithm>
+#include <filesystem>
 
 namespace Hephaestus {
 
@@ -206,6 +209,11 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create gizmo resources (gizmo will be disabled)\n";
     }
 #endif
+    
+    // Create skybox resources (optional, failure doesn't prevent init)
+    if (!createSkyboxResources()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create skybox resources (skybox will be disabled)\n";
+    }
     
     m_initialized = true;
     std::cout << "[EngineFrameRenderer] Initialized successfully\n";
@@ -1277,6 +1285,136 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     
+    // ── Skybox / Environment background ──────────────────────────────
+    if (config.renderSkybox && m_skybox.initialized && scene) {
+        // Find the EnvironmentComponent in the scene
+        EnvironmentComponent* envComp = nullptr;
+        
+        // Prefer entity named "Environment"
+        auto envView = scene->GetEntitiesWith<EnvironmentComponent>();
+        for (auto ent : envView) {
+            auto* tagComp = scene->GetRegistry().try_get<TagComponent>(ent);
+            if (tagComp && tagComp->tag == "Environment") {
+                envComp = &scene->GetRegistry().get<EnvironmentComponent>(ent);
+                break;
+            }
+        }
+        // Fallback: first entity with EnvironmentComponent
+        if (!envComp) {
+            for (auto ent : envView) {
+                envComp = &scene->GetRegistry().get<EnvironmentComponent>(ent);
+                break;
+            }
+        }
+        
+        if (envComp) {
+            Skybox::SkyboxPushConstants pc;
+            
+            if (envComp->type == EnvironmentComponent::BackgroundType::HDRI &&
+                !envComp->hdriPath.empty()) {
+                
+                // Live editing: reload HDRI if path changed
+                if (envComp->hdriPath != m_lastSkyboxPath) {
+                    // Resolve the HDRI path
+                    namespace fs = std::filesystem;
+                    std::string resolvedPath;
+                    
+                    // Try multiple resolve strategies
+                    auto tryResolve = [](const std::string& candidate) -> bool {
+                        return std::filesystem::exists(candidate);
+                    };
+                    
+                    std::vector<std::string> candidates;
+                    
+                    // If path is already absolute
+                    if (fs::path(envComp->hdriPath).is_absolute()) {
+                        candidates.push_back(envComp->hdriPath);
+                    }
+                    
+                    // Strategy 1: relative to known project root (set by editor)
+                    if (!m_projectRoot.empty()) {
+                        fs::path pr(m_projectRoot);
+                        candidates.push_back((pr / envComp->hdriPath).string());
+                        candidates.push_back((pr / "assets" / envComp->hdriPath).string());
+                    }
+                    
+                    // Strategy 2: relative to working directory
+                    candidates.push_back(envComp->hdriPath);
+                    candidates.push_back("assets/" + envComp->hdriPath);
+                    candidates.push_back("../assets/" + envComp->hdriPath);
+                    
+                    // Strategy 3: walk up from CWD looking for .heproject (fallback)
+                    {
+                        fs::path cwd = fs::current_path();
+                        fs::path search = cwd;
+                        for (int i = 0; i < 10 && !search.empty(); ++i) {
+                            std::error_code ec;
+                            for (const auto& entry : fs::directory_iterator(search, fs::directory_options::skip_permission_denied, ec)) {
+                                if (entry.path().extension() == ".heproject") {
+                                    candidates.push_back((search / envComp->hdriPath).string());
+                                    candidates.push_back((search / "assets" / envComp->hdriPath).string());
+                                    break;
+                                }
+                            }
+                            auto parent = search.parent_path();
+                            if (parent == search) break;
+                            search = parent;
+                        }
+                    }
+                    
+                    for (const auto& candidate : candidates) {
+                        if (tryResolve(candidate)) {
+                            resolvedPath = candidate;
+                            break;
+                        }
+                    }
+                    
+                    if (!resolvedPath.empty()) {
+                        static bool pathLogPrinted = false;
+                        if (!pathLogPrinted) {
+                            std::cout << "[Skybox] Resolved HDRI path: " << resolvedPath << "\n";
+                            pathLogPrinted = true;
+                        }
+                        vkDeviceWaitIdle(m_device->device);
+                        m_skybox.LoadHDRI(resolvedPath, m_device->allocator,
+                                          m_device->physicalDevice, m_device->commandPool,
+                                          m_device->graphicsQueue, m_device->device);
+                    } else {
+                        static bool failLogPrinted = false;
+                        if (!failLogPrinted) {
+                            std::cerr << "[Skybox] Could not resolve HDRI path: " << envComp->hdriPath << "\n";
+                            failLogPrinted = true;
+                        }
+                    }
+                    m_lastSkyboxPath = envComp->hdriPath;
+                }
+                
+                if (m_skybox.hasHDRI) {
+                    pc.intensity = envComp->hdriIntensity;
+                    pc.useSolidColor = 0;
+                } else {
+                    // Fallback to solid color if HDRI failed to load
+                    pc.solidColorR = envComp->solidColor.x;
+                    pc.solidColorG = envComp->solidColor.y;
+                    pc.solidColorB = envComp->solidColor.z;
+                    pc.useSolidColor = 1;
+                    pc.intensity = 1.0f;
+                }
+            } else {
+                // SolidColor mode
+                pc.solidColorR = envComp->solidColor.x;
+                pc.solidColorG = envComp->solidColor.y;
+                pc.solidColorB = envComp->solidColor.z;
+                pc.useSolidColor = 1;
+                pc.intensity = 1.0f;
+            }
+            
+            m_skybox.UpdateDescriptorSet(imageIndex, m_uniformBuffers[imageIndex].buffer, m_device->device);
+            m_skybox.Draw(cmd, imageIndex, pc);
+        }
+    }
+    // ── End Skybox ───────────────────────────────────────────────────
+    
     // Bind pipeline
     VkPipeline pipeline = m_pipeline->GetPipeline(false);
     if (pipeline != VK_NULL_HANDLE) {
@@ -1593,6 +1731,9 @@ void EngineFrameRenderer::destroyAllResources()
     // Cleanup editor grid
     m_editorGrid.Cleanup(m_device->device);
     
+    // Cleanup skybox
+    m_skybox.Cleanup(m_device->allocator, m_device->device);
+    
     // Cleanup outline renderer
     cleanupOutlineResources();
     
@@ -1661,25 +1802,444 @@ void EngineFrameRenderer::BillboardPipeline::Cleanup()
 }
 
 bool EngineFrameRenderer::Skybox::LoadHDRI(const std::string& path, VmaAllocator allocator,
-                                            VkPhysicalDevice physDevice, VkCommandPool cmdPool, VkQueue queue)
+                                            VkPhysicalDevice physDevice, VkCommandPool cmdPool, VkQueue queue,
+                                            VkDevice device)
 {
-    // TODO: Implement HDRI loading
-    return false;
+    if (path == loadedHDRIPath && hasHDRI) {
+        return true; // Already loaded this exact path
+    }
+
+    // Destroy old texture
+    environmentTexture.Destroy(allocator, device);
+
+    // Load new HDRI
+    if (!environmentTexture.LoadHDRFromFile(allocator, device, physDevice, cmdPool, queue, path)) {
+        // Fallback to 1x1 white
+        environmentTexture.CreateSolidColor(allocator, device, physDevice, cmdPool, queue, 0xFFFFFFFF);
+        hasHDRI = false;
+        loadedHDRIPath.clear();
+        std::cerr << "[Skybox] Failed to load HDRI: " << path << " — falling back to solid color\n";
+        return false;
+    }
+
+    hasHDRI = true;
+    loadedHDRIPath = path;
+    std::cout << "[Skybox] Loaded HDRI: " << path << " (" << environmentTexture.width << "x" << environmentTexture.height << ")\n";
+    return true;
 }
 
-void EngineFrameRenderer::Skybox::UpdateDescriptorSet(uint32_t imageIndex, VkBuffer cameraUBO)
+void EngineFrameRenderer::Skybox::UpdateDescriptorSet(uint32_t imageIndex, VkBuffer cameraUBO, VkDevice device)
 {
-    // TODO: Implement skybox descriptor update
+    if (descriptorSets.empty()) return;
+    imageIndex %= static_cast<uint32_t>(descriptorSets.size());
+
+    VkDescriptorBufferInfo bufferInfo{};
+    bufferInfo.buffer = cameraUBO;
+    bufferInfo.offset = 0;
+    bufferInfo.range = VK_WHOLE_SIZE;
+
+    VkDescriptorImageInfo imageInfo{};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfo.imageView = environmentTexture.imageView;
+    imageInfo.sampler = environmentTexture.sampler;
+
+    std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+
+    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[0].dstSet = descriptorSets[imageIndex];
+    descriptorWrites[0].dstBinding = 0;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrites[0].descriptorCount = 1;
+    descriptorWrites[0].pBufferInfo = &bufferInfo;
+
+    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[1].dstSet = descriptorSets[imageIndex];
+    descriptorWrites[1].dstBinding = 1;
+    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[1].descriptorCount = 1;
+    descriptorWrites[1].pImageInfo = &imageInfo;
+
+    vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()),
+                           descriptorWrites.data(), 0, nullptr);
 }
 
-void EngineFrameRenderer::Skybox::Draw(VkCommandBuffer cmd, uint32_t imageIndex)
+void EngineFrameRenderer::Skybox::Draw(VkCommandBuffer cmd, uint32_t imageIndex,
+                                        const SkyboxPushConstants& pc)
 {
-    // TODO: Implement skybox drawing
+    if (!initialized || pipeline == VK_NULL_HANDLE) return;
+    if (descriptorSets.empty()) return;
+
+    imageIndex %= static_cast<uint32_t>(descriptorSets.size());
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+    // Push constants
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(SkyboxPushConstants), &pc);
+
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer, &offset);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+                            0, 1, &descriptorSets[imageIndex], 0, nullptr);
+
+    vkCmdDraw(cmd, 36, 1, 0, 0); // 36 vertices for cube
 }
 
-void EngineFrameRenderer::Skybox::Cleanup(VmaAllocator allocator)
+void EngineFrameRenderer::Skybox::Cleanup(VmaAllocator allocator, VkDevice device)
 {
-    // TODO: Implement skybox cleanup
+    if (descriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+        descriptorPool = VK_NULL_HANDLE;
+    }
+    descriptorSets.clear();
+
+    if (pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, pipeline, nullptr);
+        pipeline = VK_NULL_HANDLE;
+    }
+    if (pipelineLayout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+        pipelineLayout = VK_NULL_HANDLE;
+    }
+    if (descriptorLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+        descriptorLayout = VK_NULL_HANDLE;
+    }
+    if (vertexBuffer != VK_NULL_HANDLE) {
+        vmaDestroyBuffer(allocator, vertexBuffer, vertexAllocation);
+        vertexBuffer = VK_NULL_HANDLE;
+        vertexAllocation = VK_NULL_HANDLE;
+    }
+
+    environmentTexture.Destroy(allocator, device);
+
+    hasHDRI = false;
+    initialized = false;
+    loadedHDRIPath.clear();
+    m_device = VK_NULL_HANDLE;
+}
+
+// --- Skybox internal helpers ---
+
+static const float s_cubeVertices[] = {
+    // Back face
+    -1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f, -1.0f,
+    -1.0f, -1.0f, -1.0f, -1.0f,  1.0f, -1.0f,  1.0f,  1.0f, -1.0f,
+    // Front face
+    -1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,
+    -1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f,
+    // Left face
+    -1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f,
+    -1.0f,  1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f,
+    // Right face
+     1.0f,  1.0f,  1.0f,  1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f,
+     1.0f,  1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,
+    // Bottom face
+    -1.0f, -1.0f, -1.0f,  1.0f, -1.0f, -1.0f,  1.0f, -1.0f,  1.0f,
+    -1.0f, -1.0f, -1.0f,  1.0f, -1.0f,  1.0f, -1.0f, -1.0f,  1.0f,
+    // Top face
+    -1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  1.0f, -1.0f,
+    -1.0f,  1.0f, -1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  1.0f
+};
+
+void EngineFrameRenderer::Skybox::CreateCubeVertexBuffer(VmaAllocator allocator)
+{
+    VkDeviceSize bufferSize = sizeof(s_cubeVertices);
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = bufferSize;
+    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+
+    if (vmaCreateBuffer(allocator, &bufferInfo, &allocInfo, &vertexBuffer, &vertexAllocation, nullptr) != VK_SUCCESS) {
+        std::cerr << "[Skybox] Failed to create cube vertex buffer\n";
+        return;
+    }
+
+    void* data;
+    vmaMapMemory(allocator, vertexAllocation, &data);
+    memcpy(data, s_cubeVertices, bufferSize);
+    vmaUnmapMemory(allocator, vertexAllocation);
+}
+
+void EngineFrameRenderer::Skybox::CreateDescriptorSetLayout(VkDevice device)
+{
+    std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+
+    // Binding 0: UBO (view/proj matrices)
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    // Binding 1: Environment texture
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
+
+    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorLayout) != VK_SUCCESS) {
+        std::cerr << "[Skybox] Failed to create descriptor set layout\n";
+    }
+}
+
+std::vector<char> EngineFrameRenderer::Skybox::ReadShaderFile(const std::string& name)
+{
+    const std::string candidates[] = {
+        "shaders/" + name,
+        "../shaders/" + name,
+        "build/Release/shaders/" + name,
+        "../build/Release/shaders/" + name
+    };
+    for (const auto& path : candidates) {
+        std::ifstream file(path, std::ios::ate | std::ios::binary);
+        if (!file.is_open()) continue;
+        size_t fileSize = static_cast<size_t>(file.tellg());
+        std::vector<char> buffer(fileSize);
+        file.seekg(0);
+        file.read(buffer.data(), fileSize);
+        file.close();
+        return buffer;
+    }
+    return {};
+}
+
+VkShaderModule EngineFrameRenderer::Skybox::CreateShaderModule(VkDevice device, const std::vector<char>& code)
+{
+    if (code.empty()) return VK_NULL_HANDLE;
+
+    VkShaderModuleCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = code.size();
+    createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+    VkShaderModule shaderModule;
+    if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+        return VK_NULL_HANDLE;
+    }
+    return shaderModule;
+}
+
+void EngineFrameRenderer::Skybox::CreatePipeline(VkDevice device, VkRenderPass renderPass, VkExtent2D extent)
+{
+    auto vertCode = ReadShaderFile("skybox.vert.spv");
+    auto fragCode = ReadShaderFile("skybox.frag.spv");
+    if (vertCode.empty() || fragCode.empty()) {
+        std::cerr << "[Skybox] Failed to load skybox shaders\n";
+        return;
+    }
+
+    VkShaderModule vertShader = CreateShaderModule(device, vertCode);
+    VkShaderModule fragShader = CreateShaderModule(device, fragCode);
+    if (vertShader == VK_NULL_HANDLE || fragShader == VK_NULL_HANDLE) {
+        if (vertShader) vkDestroyShaderModule(device, vertShader, nullptr);
+        if (fragShader) vkDestroyShaderModule(device, fragShader, nullptr);
+        std::cerr << "[Skybox] Failed to create shader modules\n";
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo shaderStages[2]{};
+    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStages[0].module = vertShader;
+    shaderStages[0].pName = "main";
+    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStages[1].module = fragShader;
+    shaderStages[1].pName = "main";
+
+    // Vertex input: vec3 position
+    VkVertexInputBindingDescription binding{};
+    binding.binding = 0;
+    binding.stride = 3 * sizeof(float);
+    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attribute{};
+    attribute.binding = 0;
+    attribute.location = 0;
+    attribute.format = VK_FORMAT_R32G32B32_SFLOAT;
+    attribute.offset = 0;
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &binding;
+    vertexInputInfo.vertexAttributeDescriptionCount = 1;
+    vertexInputInfo.pVertexAttributeDescriptions = &attribute;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    std::array<VkDynamicState, 2> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR
+    };
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicState.pDynamicStates = dynamicStates.data();
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE;  // Don't write depth
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    // Push constant range for fragment shader
+    VkPushConstantRange pushRange{};
+    pushRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushRange.offset = 0;
+    pushRange.size = sizeof(SkyboxPushConstants);
+
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &descriptorLayout;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushRange;
+
+    if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+        vkDestroyShaderModule(device, vertShader, nullptr);
+        vkDestroyShaderModule(device, fragShader, nullptr);
+        std::cerr << "[Skybox] Failed to create pipeline layout\n";
+        return;
+    }
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS) {
+        std::cerr << "[Skybox] Failed to create pipeline\n";
+    }
+
+    vkDestroyShaderModule(device, vertShader, nullptr);
+    vkDestroyShaderModule(device, fragShader, nullptr);
+}
+
+bool EngineFrameRenderer::Skybox::Init(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
+                                        VmaAllocator allocator, VkPhysicalDevice physDevice,
+                                        VkCommandPool cmdPool, VkQueue queue, uint32_t frameCount)
+{
+    if (initialized) return true;
+    m_device = device;
+
+    CreateCubeVertexBuffer(allocator);
+    if (vertexBuffer == VK_NULL_HANDLE) return false;
+
+    CreateDescriptorSetLayout(device);
+    if (descriptorLayout == VK_NULL_HANDLE) return false;
+
+    CreatePipeline(device, renderPass, extent);
+    if (pipeline == VK_NULL_HANDLE) return false;
+
+    // Create descriptor pool
+    uint32_t count = std::max(frameCount, 1u);
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = count;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount = count;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = count;
+
+    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
+        std::cerr << "[Skybox] Failed to create descriptor pool\n";
+        return false;
+    }
+
+    descriptorSets.resize(count);
+    std::vector<VkDescriptorSetLayout> layouts(count, descriptorLayout);
+    VkDescriptorSetAllocateInfo allocInfoDS{};
+    allocInfoDS.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfoDS.descriptorPool = descriptorPool;
+    allocInfoDS.descriptorSetCount = count;
+    allocInfoDS.pSetLayouts = layouts.data();
+
+    if (vkAllocateDescriptorSets(device, &allocInfoDS, descriptorSets.data()) != VK_SUCCESS) {
+        std::cerr << "[Skybox] Failed to allocate descriptor sets\n";
+        return false;
+    }
+
+    // Create a fallback 1x1 white texture
+    environmentTexture.CreateSolidColor(allocator, device, physDevice, cmdPool, queue, 0xFFFFFFFF);
+
+    initialized = true;
+    std::cout << "[Skybox] Initialized in EngineFrameRenderer\n";
+    return true;
+}
+
+void EngineFrameRenderer::Skybox::Recreate(VkDevice device, VkRenderPass renderPass, VkExtent2D extent)
+{
+    if (pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, pipeline, nullptr);
+        pipeline = VK_NULL_HANDLE;
+    }
+    if (pipelineLayout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+        pipelineLayout = VK_NULL_HANDLE;
+    }
+    CreatePipeline(device, renderPass, extent);
+}
+
+bool EngineFrameRenderer::createSkyboxResources()
+{
+    if (!m_device || !m_swapchain) return false;
+
+    uint32_t frameCount = static_cast<uint32_t>(m_swapchain->images.size());
+    return m_skybox.Init(m_device->device, m_swapchain->renderPass, m_swapchain->extent,
+                         m_device->allocator, m_device->physicalDevice,
+                         m_device->commandPool, m_device->graphicsQueue, frameCount);
 }
 
 // ============================================================================

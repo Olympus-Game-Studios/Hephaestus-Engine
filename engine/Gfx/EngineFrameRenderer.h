@@ -145,6 +145,12 @@ public:
      */
     bool IsInitialized() const { return m_initialized; }
 
+    /**
+     * @brief Set the project root directory for resolving relative asset paths (HDRI, etc.).
+     */
+    void SetProjectRoot(const std::string& root) { m_projectRoot = root; }
+    const std::string& GetProjectRoot() const { return m_projectRoot; }
+
     // --- Mesh Library Management ---
 
     /**
@@ -371,24 +377,57 @@ private:
 
     // Skybox
     struct Skybox {
+        bool initialized = false;
         bool hasHDRI = false;
         VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
         VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
         std::vector<VkDescriptorSet> descriptorSets;
-        VkSampler sampler = VK_NULL_HANDLE;
-        VkImage image = VK_NULL_HANDLE;
-        VkImageView imageView = VK_NULL_HANDLE;
-        VmaAllocation allocation = VK_NULL_HANDLE;
 
+        // Environment texture (loaded HDRI or fallback)
+        VulkanTexture environmentTexture;
+
+        // Cube vertex buffer for skybox
+        VkBuffer vertexBuffer = VK_NULL_HANDLE;
+        VmaAllocation vertexAllocation = VK_NULL_HANDLE;
+
+        // Cached loaded path (empty if none loaded)
+        std::string loadedHDRIPath;
+
+        // Push constants for the skybox shader
+        struct SkyboxPushConstants {
+            float intensity = 1.0f;
+            float solidColorR = 0.1f;
+            float solidColorG = 0.2f;
+            float solidColorB = 0.3f;
+            int useSolidColor = 1; // 1 = solid, 0 = HDRI
+        };
+
+        bool Init(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
+                  VmaAllocator allocator, VkPhysicalDevice physDevice,
+                  VkCommandPool cmdPool, VkQueue queue, uint32_t frameCount);
+        void Recreate(VkDevice device, VkRenderPass renderPass, VkExtent2D extent);
         bool LoadHDRI(const std::string& path, VmaAllocator allocator,
-                      VkPhysicalDevice physDevice, VkCommandPool cmdPool, VkQueue queue);
-        void UpdateDescriptorSet(uint32_t imageIndex, VkBuffer cameraUBO);
-        void Draw(VkCommandBuffer cmd, uint32_t imageIndex);
-        void Cleanup(VmaAllocator allocator);
+                      VkPhysicalDevice physDevice, VkCommandPool cmdPool, VkQueue queue,
+                      VkDevice device);
+        void UpdateDescriptorSet(uint32_t imageIndex, VkBuffer cameraUBO, VkDevice device);
+        void Draw(VkCommandBuffer cmd, uint32_t imageIndex, const SkyboxPushConstants& pc);
+        void Cleanup(VmaAllocator allocator, VkDevice device);
+
+    private:
+        VkDevice m_device = VK_NULL_HANDLE;
+        void CreateCubeVertexBuffer(VmaAllocator allocator);
+        void CreateDescriptorSetLayout(VkDevice device);
+        void CreatePipeline(VkDevice device, VkRenderPass renderPass, VkExtent2D extent);
+        static std::vector<char> ReadShaderFile(const std::string& name);
+        VkShaderModule CreateShaderModule(VkDevice device, const std::vector<char>& code);
     };
     Skybox m_skybox;
+    bool createSkyboxResources();
+    std::string m_lastSkyboxPath;  // For live-editing change detection
+    float m_lastSkyboxIntensity = -1.0f;
+    std::string m_projectRoot;    // Project root for resolving relative asset paths
 
     // Editor grid
     struct EditorGrid {

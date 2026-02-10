@@ -1208,6 +1208,11 @@ void QtEditorEngine::RebuildSceneMeshes()
     std::cout << "[QtEditorEngine] Project root: " << projectRoot << "\n";
     std::cout << "[QtEditorEngine] Asset root: " << assetRoot << "\n";
 
+    // Pass project root to the renderer for HDRI path resolution
+    if (m_frameRenderer && !projectRoot.empty()) {
+        m_frameRenderer->SetProjectRoot(projectRoot.string());
+    }
+
     // Iterate all entities with MeshRendererComponent
     auto renderView = scene->GetEntitiesWith<MeshRendererComponent>();
     
