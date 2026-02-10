@@ -364,6 +364,7 @@ private:
         VkPipeline pipeline = VK_NULL_HANDLE;
         VkPipelineLayout layout = VK_NULL_HANDLE;
         VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
+        bool initialized = false;
         void Cleanup();
     };
     BillboardPipeline m_billboardPipeline;
@@ -374,6 +375,21 @@ private:
     VulkanTexture m_pointLightTexture;
     VulkanTexture m_spotLightTexture;
     VulkanTexture m_directionalLightTexture;
+
+    // Billboard ID picking pipeline (renders billboards into the entity-ID buffer)
+    struct BillboardIdPipeline {
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        bool initialized = false;
+
+        struct PushConstants {
+            float posX, posY, posZ;
+            float size;
+            uint32_t entityId;
+            uint32_t padding[3];
+        };
+    };
+    BillboardIdPipeline m_billboardIdPipeline;
 
     // Skybox
     struct Skybox {

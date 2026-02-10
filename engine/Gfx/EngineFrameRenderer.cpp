@@ -210,6 +210,11 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
     }
 #endif
     
+    // Create billboard resources (optional, failure doesn't prevent init)
+    if (!createBillboardResources()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create billboard resources (light icons will be disabled)\n";
+    }
+
     // Create skybox resources (optional, failure doesn't prevent init)
     if (!createSkyboxResources()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create skybox resources (skybox will be disabled)\n";
@@ -971,7 +976,280 @@ bool EngineFrameRenderer::createShadowResources()
 
 bool EngineFrameRenderer::createBillboardResources()
 {
-    // TODO: Implement billboard resources creation
+    if (!m_device || !m_swapchain || !m_pipeline) return false;
+
+    VkDevice device = m_device->device;
+    size_t imageCount = m_swapchain->images.size();
+
+    // ── 1. Load icon textures ────────────────────────────────────────────
+    auto loadTex = [&](VulkanTexture& tex, const std::string& filename) -> bool {
+        const std::string candidates[] = {
+            "editor/assets/billboards/" + filename,
+            "../editor/assets/billboards/" + filename,
+            "build/Release/editor/assets/billboards/" + filename,
+            "../build/Release/editor/assets/billboards/" + filename
+        };
+        for (const auto& path : candidates) {
+            if (tex.LoadFromFile(m_device->allocator, device, m_device->physicalDevice,
+                                 m_device->commandPool, m_device->graphicsQueue, path, false)) {
+                std::cout << "[Billboard] Loaded texture: " << path << "\n";
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Load each icon; fall back to PointLight.png if specific icon is missing.
+    if (!loadTex(m_pointLightTexture, "PointLight.png")) {
+        std::cerr << "[Billboard] Failed to load PointLight.png — using dummy\n";
+        m_pointLightTexture.CreateSolidColor(m_device->allocator, device,
+            m_device->physicalDevice, m_device->commandPool, m_device->graphicsQueue, 0xFFFFFF00);
+    }
+    if (!loadTex(m_directionalLightTexture, "DirectionalLight.png")) {
+        // Fall back to point-light icon if directional icon doesn't exist
+        if (!loadTex(m_directionalLightTexture, "PointLight.png")) {
+            m_directionalLightTexture.CreateSolidColor(m_device->allocator, device,
+                m_device->physicalDevice, m_device->commandPool, m_device->graphicsQueue, 0xFFFFFF00);
+        }
+    }
+    if (!loadTex(m_spotLightTexture, "SpotLight.png")) {
+        if (!loadTex(m_spotLightTexture, "PointLight.png")) {
+            m_spotLightTexture.CreateSolidColor(m_device->allocator, device,
+                m_device->physicalDevice, m_device->commandPool, m_device->graphicsQueue, 0xFFFFFF00);
+        }
+    }
+
+    // ── 2. Descriptor set layout for billboard: binding 0 = UBO, binding 1 = sampler
+    VkDescriptorSetLayoutBinding bindings[2] = {};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutCI{};
+    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.bindingCount = 2;
+    layoutCI.pBindings = bindings;
+
+    if (vkCreateDescriptorSetLayout(device, &layoutCI, nullptr, &m_billboardPipeline.descriptorLayout) != VK_SUCCESS) {
+        std::cerr << "[Billboard] Failed to create descriptor set layout\n";
+        return false;
+    }
+
+    // ── 3. Descriptor pool (3 light types × imageCount sets)
+    uint32_t totalSets = static_cast<uint32_t>(imageCount) * 3;
+    VkDescriptorPoolSize poolSizes[2] = {};
+    poolSizes[0] = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, totalSets };
+    poolSizes[1] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, totalSets };
+
+    VkDescriptorPoolCreateInfo poolCI{};
+    poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCI.poolSizeCount = 2;
+    poolCI.pPoolSizes = poolSizes;
+    poolCI.maxSets = totalSets;
+
+    if (vkCreateDescriptorPool(device, &poolCI, nullptr, &m_billboardDescriptorPool) != VK_SUCCESS) {
+        std::cerr << "[Billboard] Failed to create descriptor pool\n";
+        return false;
+    }
+
+    // ── 4. Allocate + write descriptor sets per light type per frame
+    auto allocAndWrite = [&](std::vector<VkDescriptorSet>& sets, const VulkanTexture& tex) -> bool {
+        sets.resize(imageCount);
+        std::vector<VkDescriptorSetLayout> layouts(imageCount, m_billboardPipeline.descriptorLayout);
+
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = m_billboardDescriptorPool;
+        allocInfo.descriptorSetCount = static_cast<uint32_t>(imageCount);
+        allocInfo.pSetLayouts = layouts.data();
+
+        if (vkAllocateDescriptorSets(device, &allocInfo, sets.data()) != VK_SUCCESS)
+            return false;
+
+        for (size_t i = 0; i < imageCount; ++i) {
+            VkDescriptorBufferInfo bufInfo{};
+            bufInfo.buffer = m_uniformBuffers[i].buffer;
+            bufInfo.offset = 0;
+            bufInfo.range  = sizeof(UniformBufferObject);
+
+            VkDescriptorImageInfo imgInfo{};
+            imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            imgInfo.imageView   = tex.imageView;
+            imgInfo.sampler     = tex.sampler;
+
+            VkWriteDescriptorSet writes[2] = {};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = sets[i];
+            writes[0].dstBinding = 0;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[0].descriptorCount = 1;
+            writes[0].pBufferInfo = &bufInfo;
+
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = sets[i];
+            writes[1].dstBinding = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[1].descriptorCount = 1;
+            writes[1].pImageInfo = &imgInfo;
+
+            vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+        }
+        return true;
+    };
+
+    if (!allocAndWrite(m_billboardDescriptorSets_Point, m_pointLightTexture) ||
+        !allocAndWrite(m_billboardDescriptorSets_Directional, m_directionalLightTexture) ||
+        !allocAndWrite(m_billboardDescriptorSets_Spot, m_spotLightTexture)) {
+        std::cerr << "[Billboard] Failed to allocate/write descriptor sets\n";
+        return false;
+    }
+
+    // ── 5. Create the billboard graphics pipeline (reuse VulkanPipeline helper)
+    auto bbPipeline = std::make_unique<VulkanPipeline>();
+    bbPipeline->CreateBillboardPipeline(device, m_swapchain->renderPass,
+                                        m_swapchain->extent, m_billboardPipeline.descriptorLayout);
+    m_billboardPipeline.pipeline = bbPipeline->pipeline;
+    m_billboardPipeline.layout   = bbPipeline->layout;
+    // Prevent the helper from destroying handles we just took ownership of
+    bbPipeline->pipeline = VK_NULL_HANDLE;
+    bbPipeline->layout = VK_NULL_HANDLE;
+    bbPipeline->ownsDescriptorSetLayout = false;
+
+    // ── 6. Create billboard ID pipeline for entity picking ───────────────
+    if (m_idPicker.initialized) {
+        // Load billboard_id shaders
+        auto loadShader = [device](const std::string& name) -> VkShaderModule {
+            const std::string candidates[] = {
+                "shaders/" + name, "../shaders/" + name,
+                "build/Release/shaders/" + name, "../build/Release/shaders/" + name
+            };
+            for (const auto& path : candidates) {
+                std::ifstream file(path, std::ios::ate | std::ios::binary);
+                if (!file.is_open()) continue;
+                size_t sz = static_cast<size_t>(file.tellg());
+                std::vector<char> code(sz);
+                file.seekg(0);
+                file.read(code.data(), sz);
+                file.close();
+                VkShaderModuleCreateInfo ci{};
+                ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+                ci.codeSize = code.size();
+                ci.pCode = reinterpret_cast<const uint32_t*>(code.data());
+                VkShaderModule sm;
+                if (vkCreateShaderModule(device, &ci, nullptr, &sm) == VK_SUCCESS) return sm;
+            }
+            return VK_NULL_HANDLE;
+        };
+
+        VkShaderModule vertSM = loadShader("billboard_id.vert.spv");
+        VkShaderModule fragSM = loadShader("billboard_id.frag.spv");
+
+        if (vertSM && fragSM) {
+            VkPipelineShaderStageCreateInfo stages[2]{};
+            stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+            stages[0].module = vertSM;
+            stages[0].pName = "main";
+            stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            stages[1].module = fragSM;
+            stages[1].pName = "main";
+
+            VkPipelineVertexInputStateCreateInfo vertInput{};
+            vertInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+            VkPipelineInputAssemblyStateCreateInfo ia{};
+            ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+            ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+
+            VkPipelineViewportStateCreateInfo vps{};
+            vps.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+            vps.viewportCount = 1;
+            vps.scissorCount = 1;
+
+            VkPipelineRasterizationStateCreateInfo rast{};
+            rast.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+            rast.polygonMode = VK_POLYGON_MODE_FILL;
+            rast.lineWidth = 1.0f;
+            rast.cullMode = VK_CULL_MODE_NONE;
+            rast.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+            VkPipelineMultisampleStateCreateInfo ms{};
+            ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+            ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+            VkPipelineDepthStencilStateCreateInfo ds{};
+            ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+            ds.depthTestEnable = VK_TRUE;
+            ds.depthWriteEnable = VK_TRUE;
+            ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+            VkPipelineColorBlendAttachmentState cba{};
+            cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                 VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            cba.blendEnable = VK_FALSE;
+
+            VkPipelineColorBlendStateCreateInfo cb{};
+            cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+            cb.attachmentCount = 1;
+            cb.pAttachments = &cba;
+
+            VkDynamicState dynStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+            VkPipelineDynamicStateCreateInfo dynState{};
+            dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+            dynState.dynamicStateCount = 2;
+            dynState.pDynamicStates = dynStates;
+
+            // Push constants: vec3 pos(12) + float size(4) + uint entityId(4) + uint[3] padding(12) = 32
+            VkPushConstantRange pcRange{};
+            pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            pcRange.offset = 0;
+            pcRange.size = sizeof(BillboardIdPipeline::PushConstants);
+
+            VkDescriptorSetLayout camLayout = m_pipeline->descriptorSetLayout;
+            VkPipelineLayoutCreateInfo plCI{};
+            plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+            plCI.setLayoutCount = 1;
+            plCI.pSetLayouts = &camLayout;
+            plCI.pushConstantRangeCount = 1;
+            plCI.pPushConstantRanges = &pcRange;
+
+            if (vkCreatePipelineLayout(device, &plCI, nullptr, &m_billboardIdPipeline.layout) == VK_SUCCESS) {
+                VkGraphicsPipelineCreateInfo pci{};
+                pci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+                pci.stageCount = 2;
+                pci.pStages = stages;
+                pci.pVertexInputState = &vertInput;
+                pci.pInputAssemblyState = &ia;
+                pci.pViewportState = &vps;
+                pci.pRasterizationState = &rast;
+                pci.pMultisampleState = &ms;
+                pci.pDepthStencilState = &ds;
+                pci.pColorBlendState = &cb;
+                pci.pDynamicState = &dynState;
+                pci.layout = m_billboardIdPipeline.layout;
+                pci.renderPass = m_idPicker.renderPass;
+                pci.subpass = 0;
+
+                if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                              &m_billboardIdPipeline.pipeline) == VK_SUCCESS) {
+                    m_billboardIdPipeline.initialized = true;
+                    std::cout << "[Billboard] ID picking pipeline created\n";
+                }
+            }
+        }
+        if (vertSM) vkDestroyShaderModule(device, vertSM, nullptr);
+        if (fragSM) vkDestroyShaderModule(device, fragSM, nullptr);
+    }
+
+    m_billboardPipeline.initialized = true;
+    std::cout << "[Billboard] Resources initialized (" << imageCount << " frames)\n";
     return true;
 }
 
@@ -1509,6 +1787,13 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         recordGrid(cmd, imageIndex, config);
     }
     
+    // Render billboard icons for lights and other editor icons (before outlines/gizmo)  
+#ifndef HEPHAESTUS_GAME_RUNTIME
+    if (config.isEditorMode && config.renderBillboards && !config.isPlaying) {
+        recordBillboards(cmd, imageIndex, scene);
+    }
+#endif
+
     // Render selection outlines (in editor mode)
     if (config.isEditorMode && config.renderOutlines && config.selectedEntity != UINT32_MAX) {
         recordOutlines(cmd, imageIndex, scene, config);
@@ -1533,7 +1818,69 @@ void EngineFrameRenderer::recordGizmo(VkCommandBuffer cmd, uint32_t imageIndex, 
 
 void EngineFrameRenderer::recordBillboards(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene)
 {
-    // TODO: Implement billboard rendering
+    if (!m_billboardPipeline.initialized || !scene) return;
+
+    auto& registry = scene->GetRegistry();
+
+    // Gather entities that have both a TransformComponent and an EditorIconComponent
+    auto iconView = registry.view<TransformComponent, EditorIconComponent>();
+    bool anyDrawn = false;
+
+    for (auto entityHandle : iconView) {
+        auto& icon = registry.get<EditorIconComponent>(entityHandle);
+        if (!icon.visible) continue;
+
+        auto& transform = registry.get<TransformComponent>(entityHandle);
+
+        // Select descriptor set based on icon type
+        VkDescriptorSet* dsPtr = nullptr;
+        switch (icon.iconType) {
+            case EditorIconType::PointLight:
+                dsPtr = &m_billboardDescriptorSets_Point[imageIndex]; break;
+            case EditorIconType::DirectionalLight:
+                dsPtr = &m_billboardDescriptorSets_Directional[imageIndex]; break;
+            case EditorIconType::SpotLight:
+                dsPtr = &m_billboardDescriptorSets_Spot[imageIndex]; break;
+            default:
+                dsPtr = &m_billboardDescriptorSets_Point[imageIndex]; break;
+        }
+
+        if (!anyDrawn) {
+            // Bind the billboard pipeline once
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_billboardPipeline.pipeline);
+
+            VkViewport vp{};
+            vp.width  = static_cast<float>(m_swapchain->extent.width);
+            vp.height = static_cast<float>(m_swapchain->extent.height);
+            vp.minDepth = 0.0f;
+            vp.maxDepth = 1.0f;
+            VkRect2D sc{{0, 0}, m_swapchain->extent};
+            vkCmdSetViewport(cmd, 0, 1, &vp);
+            vkCmdSetScissor(cmd, 0, 1, &sc);
+            anyDrawn = true;
+        }
+
+        // Bind descriptor set for this icon type
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                m_billboardPipeline.layout, 0, 1, dsPtr, 0, nullptr);
+
+        // Compute world position — use the entity's world transform translation
+        Mat4 worldMat = scene->GetWorldTransform(Entity(entityHandle, scene));
+        // Push constants: vec3 position + float size
+        struct {
+            float x, y, z, size;
+        } pc;
+        pc.x    = worldMat.m[12];
+        pc.y    = worldMat.m[13];
+        pc.z    = worldMat.m[14];
+        pc.size = icon.size;
+
+        vkCmdPushConstants(cmd, m_billboardPipeline.layout,
+                           VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+
+        // Draw a quad (4 verts, triangle strip, generated in vertex shader)
+        vkCmdDraw(cmd, 4, 1, 0, 0);
+    }
 }
 
 void EngineFrameRenderer::recordOutlines(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene,
@@ -1728,6 +2075,42 @@ void EngineFrameRenderer::destroyAllResources()
     m_meshLibrary.clear();
     m_meshLibraryLookup.clear();
     
+    // Cleanup billboard resources
+    if (m_billboardPipeline.pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(m_device->device, m_billboardPipeline.pipeline, nullptr);
+        m_billboardPipeline.pipeline = VK_NULL_HANDLE;
+    }
+    if (m_billboardPipeline.layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(m_device->device, m_billboardPipeline.layout, nullptr);
+        m_billboardPipeline.layout = VK_NULL_HANDLE;
+    }
+    if (m_billboardPipeline.descriptorLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(m_device->device, m_billboardPipeline.descriptorLayout, nullptr);
+        m_billboardPipeline.descriptorLayout = VK_NULL_HANDLE;
+    }
+    if (m_billboardDescriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(m_device->device, m_billboardDescriptorPool, nullptr);
+        m_billboardDescriptorPool = VK_NULL_HANDLE;
+    }
+    m_billboardDescriptorSets_Point.clear();
+    m_billboardDescriptorSets_Spot.clear();
+    m_billboardDescriptorSets_Directional.clear();
+    m_pointLightTexture.Destroy(m_device->allocator, m_device->device);
+    m_spotLightTexture.Destroy(m_device->allocator, m_device->device);
+    m_directionalLightTexture.Destroy(m_device->allocator, m_device->device);
+    m_billboardPipeline.initialized = false;
+
+    // Cleanup billboard ID pipeline
+    if (m_billboardIdPipeline.pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(m_device->device, m_billboardIdPipeline.pipeline, nullptr);
+        m_billboardIdPipeline.pipeline = VK_NULL_HANDLE;
+    }
+    if (m_billboardIdPipeline.layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(m_device->device, m_billboardIdPipeline.layout, nullptr);
+        m_billboardIdPipeline.layout = VK_NULL_HANDLE;
+    }
+    m_billboardIdPipeline.initialized = false;
+
     // Cleanup editor grid
     m_editorGrid.Cleanup(m_device->device);
     
@@ -1798,7 +2181,9 @@ void EngineFrameRenderer::ShadowMap::Destroy()
 
 void EngineFrameRenderer::BillboardPipeline::Cleanup()
 {
-    // TODO: Implement billboard pipeline cleanup
+    // Note: actual Vulkan destruction happens in destroyAllResources()
+    // because we need the VkDevice handle, which this struct doesn't own.
+    initialized = false;
 }
 
 bool EngineFrameRenderer::Skybox::LoadHDRI(const std::string& path, VmaAllocator allocator,
@@ -3227,6 +3612,38 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
                           0, sizeof(IdPicker::IdPushConstants), &pc);
         
         vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+    }
+
+    // ── Billboard ID pass: render editor icon billboards into the ID buffer ──
+    if (m_billboardIdPipeline.initialized) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_billboardIdPipeline.pipeline);
+
+        uint32_t dynOff = 0;
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                m_billboardIdPipeline.layout, 0, 1,
+                                &m_descriptorSets[imageIndex], 1, &dynOff);
+
+        auto& reg = scene->GetRegistry();
+        auto iconView = reg.view<TransformComponent, EditorIconComponent>();
+        for (auto ent : iconView) {
+            auto& icon = reg.get<EditorIconComponent>(ent);
+            if (!icon.visible) continue;
+
+            Mat4 worldMat = scene->GetWorldTransform(Entity(ent, scene));
+
+            BillboardIdPipeline::PushConstants bpc{};
+            bpc.posX     = worldMat.m[12];
+            bpc.posY     = worldMat.m[13];
+            bpc.posZ     = worldMat.m[14];
+            bpc.size     = icon.size;
+            bpc.entityId = static_cast<uint32_t>(ent);
+
+            vkCmdPushConstants(cmd, m_billboardIdPipeline.layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(bpc), &bpc);
+
+            vkCmdDraw(cmd, 4, 1, 0, 0);
+        }
     }
     
     vkCmdEndRenderPass(cmd);

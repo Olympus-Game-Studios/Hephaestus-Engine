@@ -584,6 +584,14 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
                         light.shadowExtent = static_cast<float>(extentValue->AsNumber());
                     }
                 }
+                // Update editor icon to match the (possibly changed) light type
+#ifndef HEPHAESTUS_GAME_RUNTIME
+                if (entity.HasComponent<EditorIconComponent>()) {
+                    entity.GetComponent<EditorIconComponent>() = EditorIconComponent::ForLight(light.type);
+                } else {
+                    entity.AddComponent<EditorIconComponent>(EditorIconComponent::ForLight(light.type));
+                }
+#endif
             } else if (componentName == "Camera") {
                 if (!componentEnabled) {
                     continue;
