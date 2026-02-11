@@ -24,7 +24,11 @@
 #include <QWidget>
 #include <QGroupBox>
 #include <QScrollArea>
+#include <QCheckBox>
+#include <QPushButton>
+#include <QComboBox>
 #include <memory>
+#include <vector>
 #include <entt/entt.hpp>
 
 namespace Hephaestus {
@@ -41,6 +45,7 @@ class AssetBrowserWidget;
 class EditorAssetActions;
 class LightInspector;
 class EnvironmentInspector;
+class ComponentInspector;
 
 /**
  * @brief Main editor window with dockable panels.
@@ -72,6 +77,7 @@ private:
     void initializeEngine();
     void setupEditorCallbacks();
     void setupViewportRenderingToggles();
+    void registerComponentInspectors();
 
     // Outliner management
     void rebuildOutliner();
@@ -81,6 +87,10 @@ private:
     void refreshDetailsPanel();
     void clearDetailsPanel();
     void blockDetailSignals(bool block);
+    void rebuildComponentInspectors();
+    void showAddComponentMenu();
+    void onComponentRemoved(entt::entity entity, const QString& name);
+    void handleDragDrop(const QString& assetPath, const QString& targetField);
 
 private slots:
     // File menu actions - Level
@@ -153,6 +163,15 @@ private:
     // Component inspectors (owned by layout, recreated on selection change)
     LightInspector* m_lightInspector = nullptr;
     EnvironmentInspector* m_environmentInspector = nullptr;
+    std::vector<ComponentInspector*> m_componentInspectors;
+
+    // Header/controls
+    QLabel*      m_entityIdLabel    = nullptr;
+    QCheckBox*   m_lockCheck        = nullptr;
+    QPushButton* m_addComponentBtn  = nullptr;
+    QPushButton* m_deleteEntityBtn  = nullptr;
+    bool         m_detailsLocked    = false;
+    entt::entity m_lockedEntity     = entt::null;
 
     // Asset browser (new widget-based)
     AssetBrowserWidget* m_assetBrowser = nullptr;

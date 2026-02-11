@@ -1,0 +1,72 @@
+#pragma once
+
+/**
+ * @file MeshRendererInspector.h
+ * @brief Inspector widget for MeshRendererComponent + MaterialComponent.
+ *
+ * Shows:
+ *   - Visible / Hide-in-game / Backface Culling checkboxes
+ *   - Mesh asset path (read-only, drag-drop target)
+ *   - Material slots table: one row per submesh with assign/clear buttons
+ *   - "Add Mesh Collider" button if no MeshColliderComponent
+ *   - "Remove Mesh Component" button
+ *
+ * Material slot migration:
+ *   Old scenes store a single material path. On display, if the mesh has N
+ *   submeshes but appliedMaterialPaths has fewer entries, the array is
+ *   padded with empty strings.  Slot 0 retains the legacy single material.
+ */
+
+#if HEPHAESTUS_EDITOR_QT_UI
+
+#include "ComponentInspector.h"
+
+#include <QCheckBox>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QTableWidget>
+#include <QFormLayout>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QString>
+
+namespace Hephaestus {
+
+class EditorContext;
+
+namespace QtEditor {
+
+class MeshRendererInspector : public ComponentInspector
+{
+    Q_OBJECT
+
+public:
+    explicit MeshRendererInspector(EditorContext* ctx, entt::entity entity, QWidget* parent = nullptr);
+    ~MeshRendererInspector() override = default;
+
+    void Refresh() override;
+
+private:
+    void buildUI();
+    void connectSignals();
+    void applyToComponent();
+    void rebuildMaterialSlots();
+    void assignMaterial(int slot);
+    void clearMaterial(int slot);
+    void blockAllSignals(bool block);
+
+    // Widgets
+    QCheckBox*      m_visibleCheck     = nullptr;
+    QCheckBox*      m_hideInGameCheck  = nullptr;
+    QCheckBox*      m_backfaceCullCheck = nullptr;
+    QLineEdit*      m_meshPathEdit     = nullptr;
+    QTableWidget*   m_materialTable    = nullptr;
+    QPushButton*    m_addColliderBtn   = nullptr;
+    QPushButton*    m_removeBtn        = nullptr;
+};
+
+} // namespace QtEditor
+} // namespace Hephaestus
+
+#endif // HEPHAESTUS_EDITOR_QT_UI

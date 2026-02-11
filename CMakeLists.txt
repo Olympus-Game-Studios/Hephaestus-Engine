@@ -401,6 +401,19 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/LightInspector.h
             engine/UI/QtEditor/EnvironmentInspector.cpp
             engine/UI/QtEditor/EnvironmentInspector.h
+            engine/UI/QtEditor/ComponentInspector.h
+            engine/UI/QtEditor/EditorUndoCommand.cpp
+            engine/UI/QtEditor/EditorUndoCommand.h
+            engine/UI/QtEditor/MeshRendererInspector.cpp
+            engine/UI/QtEditor/MeshRendererInspector.h
+            engine/UI/QtEditor/ScriptInspector.cpp
+            engine/UI/QtEditor/ScriptInspector.h
+            engine/UI/QtEditor/LuaScriptInspector.cpp
+            engine/UI/QtEditor/LuaScriptInspector.h
+            engine/UI/QtEditor/PhysicsInspectors.cpp
+            engine/UI/QtEditor/PhysicsInspectors.h
+            engine/UI/QtEditor/CameraInspector.cpp
+            engine/UI/QtEditor/CameraInspector.h
         )
 
         target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets)

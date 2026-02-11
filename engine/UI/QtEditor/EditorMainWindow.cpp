@@ -12,6 +12,13 @@
 #include "EditorAssetActions.h"
 #include "LightInspector.h"
 #include "EnvironmentInspector.h"
+#include "ComponentInspector.h"
+#include "MeshRendererInspector.h"
+#include "ScriptInspector.h"
+#include "LuaScriptInspector.h"
+#include "PhysicsInspectors.h"
+#include "CameraInspector.h"
+#include "EditorUndoCommand.h"
 
 #include "../../Core/EditorContext.h"
 #include "../../Core/ProjectContext.h"
@@ -19,6 +26,8 @@
 #include "../../Scene/Scene.h"
 #include "../../Scene/Components.h"
 #include "../../Scene/Entity.h"
+#include "../../Scripting/ScriptComponent.h"
+#include "../../Scripting/LuaScriptComponent.h"
 
 #include <QApplication>
 #include <QMenuBar>
@@ -207,6 +216,31 @@ void EditorMainWindow::setupDockWidgets()
     m_detailsLayout->setContentsMargins(6, 6, 6, 6);
     m_detailsLayout->setSpacing(6);
 
+    // ── Header row: Entity ID + Lock checkbox ───────────────────────────
+    {
+        auto* headerRow = new QHBoxLayout();
+        m_entityIdLabel = new QLabel(tr("(No selection)"));
+        m_entityIdLabel->setStyleSheet("color: gray; font-size: 10px;");
+        headerRow->addWidget(m_entityIdLabel);
+
+        headerRow->addStretch();
+
+        m_lockCheck = new QCheckBox(tr("Lock"));
+        m_lockCheck->setToolTip(tr("Lock prevents selection changes from altering the Details view"));
+        connect(m_lockCheck, &QCheckBox::toggled, this, [this](bool checked) {
+            m_detailsLocked = checked;
+            if (checked && m_engine) {
+                auto* ctx = m_engine->GetEditorContext();
+                if (ctx && ctx->HasSelection()) {
+                    m_lockedEntity = ctx->GetSelectedEntity();
+                }
+            }
+        });
+        headerRow->addWidget(m_lockCheck);
+
+        m_detailsLayout->addLayout(headerRow);
+    }
+
     // Name field
     QFormLayout* nameLayout = new QFormLayout();
     m_nameEdit = new QLineEdit();
@@ -275,7 +309,40 @@ void EditorMainWindow::setupDockWidgets()
     m_detailsLayout->addWidget(m_transformGroup);
     
     // Component inspector widgets will be inserted here dynamically
-    // (LightInspector, EnvironmentInspector, etc.)
+    // (LightInspector, EnvironmentInspector, MeshRendererInspector, etc.)
+
+    // ── Add Component + Delete Entity buttons ───────────────────────────
+    {
+        auto* actionRow = new QHBoxLayout();
+        m_addComponentBtn = new QPushButton(tr("+ Add Component"));
+        m_addComponentBtn->setEnabled(false);
+        connect(m_addComponentBtn, &QPushButton::clicked, this, &EditorMainWindow::showAddComponentMenu);
+        actionRow->addWidget(m_addComponentBtn);
+
+        actionRow->addStretch();
+
+        m_deleteEntityBtn = new QPushButton(tr("Delete Entity"));
+        m_deleteEntityBtn->setStyleSheet("color: #cc3333;");
+        m_deleteEntityBtn->setEnabled(false);
+        connect(m_deleteEntityBtn, &QPushButton::clicked, this, [this]() {
+            if (!m_engine) return;
+            auto* ctx = m_engine->GetEditorContext();
+            if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+
+            EditorUndoManager::PushSnapshot(ctx, "Delete entity");
+
+            entt::entity entity = ctx->GetSelectedEntity();
+            ctx->ClearSelection();
+            ctx->GetActiveScene()->DestroyEntity(Entity(entity, ctx->GetActiveScene()));
+            ctx->MarkDirty();
+
+            rebuildOutliner();
+            clearDetailsPanel();
+        });
+        actionRow->addWidget(m_deleteEntityBtn);
+
+        m_detailsLayout->addLayout(actionRow);
+    }
 
     // Add stretch to push everything to top
     m_detailsLayout->addStretch();
@@ -359,6 +426,9 @@ void EditorMainWindow::initializeEngine()
     
     // Set up viewport rendering toggles now that engine context is available
     setupViewportRenderingToggles();
+
+    // Register all component inspector factories
+    registerComponentInspectors();
     
     // Connect engine signals
     connect(m_engine.get(), &QtEditorEngine::engineInitialized,
@@ -628,8 +698,12 @@ void EditorMainWindow::clearDetailsPanel()
     m_scaleZ->setValue(1.0);
     
     m_transformGroup->setEnabled(false);
+
+    m_entityIdLabel->setText(tr("(No selection)"));
+    m_addComponentBtn->setEnabled(false);
+    m_deleteEntityBtn->setEnabled(false);
     
-    // Destroy component inspectors
+    // Destroy legacy component inspectors
     if (m_lightInspector) {
         m_detailsLayout->removeWidget(m_lightInspector);
         delete m_lightInspector;
@@ -640,6 +714,13 @@ void EditorMainWindow::clearDetailsPanel()
         delete m_environmentInspector;
         m_environmentInspector = nullptr;
     }
+
+    // Destroy registry-based component inspectors
+    for (auto* insp : m_componentInspectors) {
+        m_detailsLayout->removeWidget(insp);
+        delete insp;
+    }
+    m_componentInspectors.clear();
 
     blockDetailSignals(false);
     m_updatingDetails = false;
@@ -653,16 +734,34 @@ void EditorMainWindow::refreshDetailsPanel()
     }
     
     auto* ctx = m_engine->GetEditorContext();
-    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) {
+    if (!ctx || !ctx->HasActiveScene()) {
+        clearDetailsPanel();
+        return;
+    }
+
+    // Lock support: if locked, show the locked entity instead of current selection
+    entt::entity entity = entt::null;
+    if (m_detailsLocked && m_lockedEntity != entt::null) {
+        entity = m_lockedEntity;
+    } else if (ctx->HasSelection()) {
+        entity = ctx->GetSelectedEntity();
+    } else {
         clearDetailsPanel();
         return;
     }
     
     Scene* scene = ctx->GetActiveScene();
     auto& registry = scene->GetRegistry();
-    entt::entity entity = ctx->GetSelectedEntity();
     
     if (!registry.valid(entity)) {
+        if (m_detailsLocked) {
+            // Locked entity was deleted — unlock
+            m_detailsLocked = false;
+            m_lockedEntity = entt::null;
+            m_lockCheck->blockSignals(true);
+            m_lockCheck->setChecked(false);
+            m_lockCheck->blockSignals(false);
+        }
         clearDetailsPanel();
         return;
     }
@@ -670,6 +769,13 @@ void EditorMainWindow::refreshDetailsPanel()
     m_updatingDetails = true;
     blockDetailSignals(true);
     
+    // Entity ID
+    m_entityIdLabel->setText(QString("#%1").arg(static_cast<uint32_t>(entity)));
+
+    // Enable action buttons
+    m_addComponentBtn->setEnabled(true);
+    m_deleteEntityBtn->setEnabled(true);
+
     // Name
     m_nameEdit->setEnabled(true);
     if (registry.all_of<TagComponent>(entity)) {
@@ -714,42 +820,8 @@ void EditorMainWindow::refreshDetailsPanel()
     blockDetailSignals(false);
     m_updatingDetails = false;
 
-    // ── Component inspectors (recreate only if entity changed) ──────────
-
-    // Remove old inspectors
-    if (m_lightInspector) {
-        m_detailsLayout->removeWidget(m_lightInspector);
-        delete m_lightInspector;
-        m_lightInspector = nullptr;
-    }
-    if (m_environmentInspector) {
-        m_detailsLayout->removeWidget(m_environmentInspector);
-        delete m_environmentInspector;
-        m_environmentInspector = nullptr;
-    }
-
-    // Find the stretch item index (insert before the final stretch)
-    int stretchIndex = m_detailsLayout->count(); // fallback: append at end
-    for (int i = 0; i < m_detailsLayout->count(); ++i) {
-        QLayoutItem* item = m_detailsLayout->itemAt(i);
-        if (item && item->spacerItem()) {
-            stretchIndex = i;
-            break;
-        }
-    }
-
-    // LightInspector — only if entity has LightComponent
-    if (registry.all_of<LightComponent>(entity)) {
-        m_lightInspector = new LightInspector(ctx, entity, m_detailsWidget);
-        m_detailsLayout->insertWidget(stretchIndex, m_lightInspector);
-        ++stretchIndex;
-    }
-
-    // EnvironmentInspector — only if entity has EnvironmentComponent
-    if (registry.all_of<EnvironmentComponent>(entity)) {
-        m_environmentInspector = new EnvironmentInspector(ctx, entity, m_detailsWidget);
-        m_detailsLayout->insertWidget(stretchIndex, m_environmentInspector);
-    }
+    // ── Rebuild all component inspectors ─────────────────────────────────
+    rebuildComponentInspectors();
 }
 
 void EditorMainWindow::onNameChanged(const QString& text)
@@ -794,6 +866,8 @@ void EditorMainWindow::onPositionChanged()
     entt::entity entity = ctx->GetSelectedEntity();
     
     if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) return;
+
+    EditorUndoManager::PushSnapshot(ctx, "Move entity");
     
     auto& transform = registry.get<TransformComponent>(entity);
     transform.position.x = static_cast<float>(m_posX->value());
@@ -815,6 +889,8 @@ void EditorMainWindow::onRotationChanged()
     entt::entity entity = ctx->GetSelectedEntity();
     
     if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) return;
+
+    EditorUndoManager::PushSnapshot(ctx, "Rotate entity");
     
     auto& transform = registry.get<TransformComponent>(entity);
     
@@ -839,6 +915,8 @@ void EditorMainWindow::onScaleChanged()
     entt::entity entity = ctx->GetSelectedEntity();
     
     if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) return;
+
+    EditorUndoManager::PushSnapshot(ctx, "Scale entity");
     
     auto& transform = registry.get<TransformComponent>(entity);
     transform.scale.x = static_cast<float>(m_scaleX->value());
@@ -1279,11 +1357,23 @@ void EditorMainWindow::setupProjectCallbacks()
 
 void EditorMainWindow::onUndo()
 {
-    statusBar()->showMessage(tr("Undo (not yet implemented)"), 2000);
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx) return;
+
+    std::string error;
+    if (EditorUndoManager::Undo(ctx, error)) {
+        rebuildOutliner();
+        refreshDetailsPanel();
+        statusBar()->showMessage(tr("Undo"), 2000);
+    } else {
+        statusBar()->showMessage(QString::fromStdString("Undo: " + error), 2000);
+    }
 }
 
 void EditorMainWindow::onRedo()
 {
+    // Redo not yet implemented (the engine uses a LIFO-only undo stack)
     statusBar()->showMessage(tr("Redo (not yet implemented)"), 2000);
 }
 
@@ -1298,6 +1388,357 @@ void EditorMainWindow::onAbout()
            "<p>Version 1.0.0 (Qt UI)</p>"
            "<p>A 3D game engine editor built with Qt Widgets.</p>"
            "<p>Vulkan rendering integrated via EngineFrameRenderer.</p>"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Component Inspector Registry + Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Register all known component inspector factories.
+ * Called once during engine initialization.
+ * To add a new component inspector, add a Register() call here.
+ */
+void EditorMainWindow::registerComponentInspectors()
+{
+    auto& reg = ComponentInspectorRegistry::Instance();
+    reg.Clear();
+
+    // ── MeshRenderer (order 10) ─────────────────────────────────────────
+    reg.Register("MeshRenderer", 10,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<MeshRendererComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new MeshRendererInspector(ctx, e, parent);
+        });
+
+    // ── MeshCollider (order 20) ─────────────────────────────────────────
+    reg.Register("MeshCollider", 20,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<MeshColliderComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new MeshColliderInspector(ctx, e, parent);
+        });
+
+    // ── RigidBody (order 30) ────────────────────────────────────────────
+    reg.Register("RigidBody", 30,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<RigidBodyComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new RigidBodyInspector(ctx, e, parent);
+        });
+
+    // ── PhysicsShape (order 35) ─────────────────────────────────────────
+    reg.Register("PhysicsShape", 35,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<PhysicsShapeComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new PhysicsShapeInspector(ctx, e, parent);
+        });
+
+    // ── Scripts (C++) (order 40) ────────────────────────────────────────
+    reg.Register("Scripts", 40,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<ScriptComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new ScriptInspector(ctx, e, parent);
+        });
+
+    // ── LuaScript (order 45) ────────────────────────────────────────────
+    reg.Register("LuaScript", 45,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<LuaScriptComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new LuaScriptInspector(ctx, e, parent);
+        });
+
+    // ── Camera (order 50) ───────────────────────────────────────────────
+    reg.Register("Camera", 50,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<CameraComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new CameraInspector(ctx, e, parent);
+        });
+
+    // NOTE: LightInspector and EnvironmentInspector are still created
+    // via the legacy path (m_lightInspector / m_environmentInspector)
+    // because they pre-date the registry.  They could be migrated here
+    // in a future refactor.
+}
+
+/**
+ * Rebuild all component inspectors for the currently viewed entity.
+ * Removes old inspector widgets, creates new ones via the registry,
+ * and also creates legacy Light/Environment inspectors.
+ */
+void EditorMainWindow::rebuildComponentInspectors()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+
+    Scene* scene = ctx->GetActiveScene();
+    auto& registry = scene->GetRegistry();
+
+    entt::entity entity = entt::null;
+    if (m_detailsLocked && m_lockedEntity != entt::null)
+        entity = m_lockedEntity;
+    else if (ctx->HasSelection())
+        entity = ctx->GetSelectedEntity();
+
+    if (entity == entt::null || !registry.valid(entity)) return;
+
+    // --- Remove old inspectors ---
+    if (m_lightInspector) {
+        m_detailsLayout->removeWidget(m_lightInspector);
+        delete m_lightInspector;
+        m_lightInspector = nullptr;
+    }
+    if (m_environmentInspector) {
+        m_detailsLayout->removeWidget(m_environmentInspector);
+        delete m_environmentInspector;
+        m_environmentInspector = nullptr;
+    }
+    for (auto* insp : m_componentInspectors) {
+        m_detailsLayout->removeWidget(insp);
+        delete insp;
+    }
+    m_componentInspectors.clear();
+
+    // Find the stretch item index (insert before the final stretch)
+    int stretchIndex = m_detailsLayout->count(); // fallback: end
+    for (int i = 0; i < m_detailsLayout->count(); ++i) {
+        QLayoutItem* item = m_detailsLayout->itemAt(i);
+        if (item && item->spacerItem()) {
+            stretchIndex = i;
+            break;
+        }
+    }
+
+    // --- Legacy inspectors (Light, Environment) ---
+    if (registry.all_of<LightComponent>(entity)) {
+        m_lightInspector = new LightInspector(ctx, entity, m_detailsWidget);
+        m_detailsLayout->insertWidget(stretchIndex, m_lightInspector);
+        ++stretchIndex;
+    }
+    if (registry.all_of<EnvironmentComponent>(entity)) {
+        m_environmentInspector = new EnvironmentInspector(ctx, entity, m_detailsWidget);
+        m_detailsLayout->insertWidget(stretchIndex, m_environmentInspector);
+        ++stretchIndex;
+    }
+
+    // --- Registry-based inspectors ---
+    auto inspectors = ComponentInspectorRegistry::Instance().CreateInspectors(
+        ctx, entity, registry, m_detailsWidget);
+
+    for (auto* insp : inspectors) {
+        // Wire up the componentRemoved signal so the panel refreshes
+        connect(insp, &ComponentInspector::componentRemoved,
+                this, &EditorMainWindow::onComponentRemoved);
+
+        m_detailsLayout->insertWidget(stretchIndex, insp);
+        ++stretchIndex;
+        m_componentInspectors.push_back(insp);
+    }
+}
+
+/**
+ * Called when a component inspector removes (or adds) a component.
+ * Refreshes the entire Details panel to reflect the new component set.
+ */
+void EditorMainWindow::onComponentRemoved(entt::entity /*entity*/, const QString& /*name*/)
+{
+    // Defer refresh to avoid deleting the inspector while its signal is live
+    QMetaObject::invokeMethod(this, [this]() {
+        refreshDetailsPanel();
+        rebuildOutliner();
+    }, Qt::QueuedConnection);
+}
+
+/**
+ * Show a popup menu listing components that can be added to the selected entity.
+ * Only shows components the entity doesn't already have.
+ */
+void EditorMainWindow::showAddComponentMenu()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+
+    auto& reg = ctx->GetActiveScene()->GetRegistry();
+    entt::entity entity = ctx->GetSelectedEntity();
+    if (!reg.valid(entity)) return;
+
+    QMenu menu(tr("Add Component"), this);
+
+    // MeshRenderer
+    if (!reg.all_of<MeshRendererComponent>(entity)) {
+        menu.addAction(tr("Mesh Renderer"), [this, ctx, entity, &reg]() {
+            EditorUndoManager::PushSnapshot(ctx, "Add MeshRenderer");
+            reg.emplace<MeshRendererComponent>(entity);
+            if (!reg.all_of<MaterialComponent>(entity))
+                reg.emplace<MaterialComponent>(entity);
+            ctx->MarkDirty();
+            refreshDetailsPanel();
+        });
+    }
+
+    // Light
+    if (!reg.all_of<LightComponent>(entity)) {
+        menu.addAction(tr("Light"), [this, ctx, entity, &reg]() {
+            EditorUndoManager::PushSnapshot(ctx, "Add Light");
+            reg.emplace<LightComponent>(entity);
+            ctx->MarkDirty();
+            refreshDetailsPanel();
+        });
+    }
+
+    // Camera
+    if (!reg.all_of<CameraComponent>(entity)) {
+        menu.addAction(tr("Camera"), [this, ctx, entity, &reg]() {
+            EditorUndoManager::PushSnapshot(ctx, "Add Camera");
+            reg.emplace<CameraComponent>(entity);
+            ctx->MarkDirty();
+            refreshDetailsPanel();
+        });
+    }
+
+    menu.addSeparator();
+
+    // Rigid Body
+    if (!reg.all_of<RigidBodyComponent>(entity)) {
+        menu.addAction(tr("Rigid Body"), [this, ctx, entity, &reg]() {
+            EditorUndoManager::PushSnapshot(ctx, "Add RigidBody");
+            reg.emplace<RigidBodyComponent>(entity);
+            // Auto-add PhysicsShape if missing
+            if (!reg.all_of<PhysicsShapeComponent>(entity))
+                reg.emplace<PhysicsShapeComponent>(entity);
+            ctx->MarkDirty();
+            refreshDetailsPanel();
+        });
+    }
+
+    // Physics Shape
+    if (!reg.all_of<PhysicsShapeComponent>(entity)) {
+        menu.addAction(tr("Physics Shape"), [this, ctx, entity, &reg]() {
+            EditorUndoManager::PushSnapshot(ctx, "Add PhysicsShape");
+            reg.emplace<PhysicsShapeComponent>(entity);
+            ctx->MarkDirty();
+            refreshDetailsPanel();
+        });
+    }
+
+    // Mesh Collider
+    if (!reg.all_of<MeshColliderComponent>(entity)) {
+        menu.addAction(tr("Mesh Collider"), [this, ctx, entity, &reg]() {
+            EditorUndoManager::PushSnapshot(ctx, "Add MeshCollider");
+            reg.emplace<MeshColliderComponent>(entity);
+            ctx->MarkDirty();
+            refreshDetailsPanel();
+        });
+    }
+
+    menu.addSeparator();
+
+    // Scripts (C++)
+    if (!reg.all_of<ScriptComponent>(entity)) {
+        menu.addAction(tr("Script Component"), [this, ctx, entity, &reg]() {
+            EditorUndoManager::PushSnapshot(ctx, "Add ScriptComponent");
+            reg.emplace<ScriptComponent>(entity);
+            ctx->MarkDirty();
+            refreshDetailsPanel();
+        });
+    }
+
+    // Lua Script
+    if (!reg.all_of<LuaScriptComponent>(entity)) {
+        menu.addAction(tr("Lua Script"), [this, ctx, entity, &reg]() {
+            EditorUndoManager::PushSnapshot(ctx, "Add LuaScript");
+            reg.emplace<LuaScriptComponent>(entity);
+            ctx->MarkDirty();
+            refreshDetailsPanel();
+        });
+    }
+
+    menu.addSeparator();
+
+    // Environment (typically only one per scene, but allow adding)
+    if (!reg.all_of<EnvironmentComponent>(entity)) {
+        menu.addAction(tr("Environment"), [this, ctx, entity, &reg]() {
+            EditorUndoManager::PushSnapshot(ctx, "Add Environment");
+            reg.emplace<EnvironmentComponent>(entity);
+            ctx->MarkDirty();
+            refreshDetailsPanel();
+        });
+    }
+
+    if (menu.isEmpty()) {
+        menu.addAction(tr("(All components already present)"))->setEnabled(false);
+    }
+
+    menu.exec(m_addComponentBtn->mapToGlobal(QPoint(0, m_addComponentBtn->height())));
+}
+
+/**
+ * Handle an asset drag-drop onto a Details panel field.
+ * Validates asset type and assigns to the appropriate component.
+ */
+void EditorMainWindow::handleDragDrop(const QString& assetPath, const QString& targetField)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+
+    auto& reg = ctx->GetActiveScene()->GetRegistry();
+    entt::entity entity = ctx->GetSelectedEntity();
+    if (!reg.valid(entity)) return;
+
+    if (targetField == "lua_script" && assetPath.endsWith(".lua", Qt::CaseInsensitive)) {
+        EditorUndoManager::PushSnapshot(ctx, "Drag-drop lua script");
+        if (!reg.all_of<LuaScriptComponent>(entity)) {
+            reg.emplace<LuaScriptComponent>(entity, assetPath.toStdString());
+        } else {
+            reg.get<LuaScriptComponent>(entity).scriptPath = assetPath.toStdString();
+        }
+        ctx->MarkDirty();
+        refreshDetailsPanel();
+    } else if (targetField == "mesh" &&
+               (assetPath.endsWith(".obj", Qt::CaseInsensitive) ||
+                assetPath.endsWith(".fbx", Qt::CaseInsensitive) ||
+                assetPath.endsWith(".gltf", Qt::CaseInsensitive) ||
+                assetPath.endsWith(".glb", Qt::CaseInsensitive))) {
+        EditorUndoManager::PushSnapshot(ctx, "Drag-drop mesh");
+        if (!reg.all_of<MeshRendererComponent>(entity)) {
+            reg.emplace<MeshRendererComponent>(entity);
+        }
+        reg.get<MeshRendererComponent>(entity).meshAssetPath = assetPath.toStdString();
+        ctx->MarkDirty();
+        refreshDetailsPanel();
+    } else if (targetField.startsWith("material_slot_") &&
+               assetPath.endsWith(".hpmat", Qt::CaseInsensitive)) {
+        bool ok = false;
+        int slot = targetField.mid(14).toInt(&ok);
+        if (!ok || !reg.all_of<MeshRendererComponent>(entity)) return;
+
+        EditorUndoManager::PushSnapshot(ctx, "Drag-drop material");
+        auto& mr = reg.get<MeshRendererComponent>(entity);
+        while (static_cast<int>(mr.appliedMaterialPaths.size()) <= slot) {
+            mr.appliedMaterialPaths.push_back("");
+        }
+        mr.appliedMaterialPaths[slot] = assetPath.toStdString();
+        ctx->MarkDirty();
+        refreshDetailsPanel();
+    } else {
+        statusBar()->showMessage(
+            tr("Cannot drop '%1' onto '%2'").arg(assetPath, targetField), 3000);
+    }
 }
 
 } // namespace QtEditor
