@@ -15,15 +15,20 @@
 #include "MeshRendererInspector.h"
 #include "EditorUndoCommand.h"
 
+#include "../../Assets/AssetManager.h"
+#include "../../Assets/AssetTypes.h"
 #include "../../Core/EditorContext.h"
 #include "../../Scene/Scene.h"
 #include "../../Scene/Components.h"
 
-#include <QFileDialog>
+#include <QComboBox>
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QStyle>
+#include <algorithm>
+#include <filesystem>
 #include <iostream>
+#include <unordered_set>
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -220,6 +225,7 @@ void MeshRendererInspector::rebuildMaterialSlots()
 
     auto& mr = reg.get<MeshRendererComponent>(m_entity);
     EnsureMaterialSlots(mr);
+    std::vector<QString> materialOptions = collectProjectMaterialPaths();
 
     int slotCount = std::max(mr.submeshCount, 1);
     m_materialTable->setRowCount(slotCount);
@@ -230,70 +236,182 @@ void MeshRendererInspector::rebuildMaterialSlots()
         slotItem->setFlags(Qt::ItemIsEnabled);
         m_materialTable->setItem(i, 0, slotItem);
 
-        // Column 1 — Material path or "(No Material)"
-        QString matPath;
+        // Column 1 — Project material dropdown
+        auto* materialCombo = new QComboBox();
+        materialCombo->addItem(tr("(No Material)"), QString());
+        for (const auto& materialPath : materialOptions) {
+            materialCombo->addItem(materialPath, materialPath);
+        }
+
+        QString selectedPath;
         if (i < static_cast<int>(mr.appliedMaterialPaths.size()) &&
             !mr.appliedMaterialPaths[i].empty()) {
-            matPath = QString::fromStdString(mr.appliedMaterialPaths[i]);
-        } else {
-            matPath = tr("(No Material)");
+            selectedPath = normalizeMaterialPathForSelection(mr.appliedMaterialPaths[i]);
         }
-        auto* matItem = new QTableWidgetItem(matPath);
-        matItem->setFlags(Qt::ItemIsEnabled);
-        if (matPath == tr("(No Material)")) {
-            matItem->setForeground(Qt::gray);
-        }
-        m_materialTable->setItem(i, 1, matItem);
 
-        // Column 2 — Assign + Clear buttons
+        int selectedIndex = materialCombo->findData(selectedPath);
+        materialCombo->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
+        connect(materialCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this, i, materialCombo](int) {
+                    setMaterialForSlot(i, materialCombo->currentData().toString());
+                });
+        m_materialTable->setCellWidget(i, 1, materialCombo);
+
+        // Column 2 — Clear button
         auto* btnWidget = new QWidget();
         auto* btnLayout = new QHBoxLayout(btnWidget);
         btnLayout->setContentsMargins(2, 0, 2, 0);
         btnLayout->setSpacing(2);
 
-        auto* assignBtn = new QPushButton(tr("Assign"));
-        assignBtn->setFixedHeight(22);
-        connect(assignBtn, &QPushButton::clicked, this, [this, i]() { assignMaterial(i); });
-
         auto* clearBtn = new QPushButton(tr("Clear"));
         clearBtn->setFixedHeight(22);
         connect(clearBtn, &QPushButton::clicked, this, [this, i]() { clearMaterial(i); });
 
-        btnLayout->addWidget(assignBtn);
         btnLayout->addWidget(clearBtn);
         m_materialTable->setCellWidget(i, 2, btnWidget);
     }
 }
 
-// ---------------------------------------------------------------------------
-// Assign / Clear material on a slot
-// ---------------------------------------------------------------------------
-
-void MeshRendererInspector::assignMaterial(int slot)
+std::vector<QString> MeshRendererInspector::collectProjectMaterialPaths() const
 {
-    QString filepath = QFileDialog::getOpenFileName(
-        this, tr("Assign Material to Slot %1").arg(slot),
-        QString("assets"),
-        tr("Material Files (*.hpmat);;All Files (*)"));
+    auto& assetManager = AssetManager::GetInstance();
+    if (assetManager.HasValidAssetRoot()) {
+        assetManager.Refresh();
+    }
 
-    if (filepath.isEmpty()) return;
+    auto materials = assetManager.GetAssetsByType(AssetType::Material);
 
+    std::vector<QString> paths;
+    std::unordered_set<std::string> dedupe;
+
+    auto addUniquePath = [&paths, &dedupe](const QString& rawPath) {
+        if (rawPath.isEmpty()) return;
+
+        QString normalized = rawPath;
+        normalized.replace('\\', '/');
+
+        const std::string key = normalized.toLower().toStdString();
+        if (dedupe.insert(key).second) {
+            paths.push_back(normalized);
+        }
+    };
+
+    for (const auto& material : materials) {
+        if (!material.relativePath.empty()) {
+            addUniquePath(QString::fromStdString(material.relativePath));
+        }
+    }
+
+    namespace fs = std::filesystem;
+    const fs::path projectRoot = fs::path(assetManager.GetProjectRoot());
+    const fs::path assetRoot = fs::path(assetManager.GetAssetRoot());
+
+    if (!projectRoot.empty() && fs::exists(projectRoot)) {
+        std::error_code ec;
+        fs::recursive_directory_iterator it(projectRoot, fs::directory_options::skip_permission_denied, ec);
+        fs::recursive_directory_iterator end;
+
+        for (; it != end; it.increment(ec)) {
+            if (ec) {
+                ec.clear();
+                continue;
+            }
+
+            if (!it->is_regular_file(ec)) {
+                ec.clear();
+                continue;
+            }
+
+            std::string ext = it->path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+            const bool isMaterialFile =
+                ext == ".hematerial" ||
+                ext == ".hpmat" ||
+                ext == ".material" ||
+                ext == ".mat";
+
+            if (!isMaterialFile) {
+                continue;
+            }
+
+            const fs::path filePath = it->path().lexically_normal();
+            const QString filePathString = QString::fromStdString(filePath.generic_string());
+
+            if (!assetRoot.empty()) {
+                const QString assetRootString =
+                    QString::fromStdString(assetRoot.lexically_normal().generic_string());
+
+                if (filePathString.compare(assetRootString, Qt::CaseInsensitive) == 0) {
+                    continue;
+                }
+
+                if (filePathString.startsWith(assetRootString + "/", Qt::CaseInsensitive)) {
+                    addUniquePath(filePathString.mid(assetRootString.size() + 1));
+                    continue;
+                }
+            }
+
+            addUniquePath(filePathString);
+        }
+    }
+
+    std::sort(paths.begin(), paths.end(),
+              [](const QString& a, const QString& b) {
+                  return a.compare(b, Qt::CaseInsensitive) < 0;
+              });
+
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    return paths;
+}
+
+QString MeshRendererInspector::normalizeMaterialPathForSelection(const std::string& path) const
+{
+    QString normalized = QString::fromStdString(path);
+    normalized.replace('\\', '/');
+
+    const QString assetRoot = QString::fromStdString(AssetManager::GetInstance().GetAssetRoot()).replace('\\', '/');
+    if (!assetRoot.isEmpty() && normalized.startsWith(assetRoot + '/')) {
+        normalized = normalized.mid(assetRoot.size() + 1);
+    }
+
+    if (normalized.startsWith("assets/", Qt::CaseInsensitive)) {
+        normalized = normalized.mid(7);
+    }
+
+    return normalized;
+}
+
+void MeshRendererInspector::setMaterialForSlot(int slot, const QString& materialPath)
+{
     if (!m_ctx || !m_ctx->HasActiveScene()) return;
     auto& reg = m_ctx->GetActiveScene()->GetRegistry();
     if (!reg.valid(m_entity) || !reg.all_of<MeshRendererComponent>(m_entity)) return;
 
-    EditorUndoManager::PushSnapshot(m_ctx, "Assign material slot " + std::to_string(slot));
-
     auto& mr = reg.get<MeshRendererComponent>(m_entity);
     EnsureMaterialSlots(mr);
 
-    if (slot < static_cast<int>(mr.appliedMaterialPaths.size())) {
-        mr.appliedMaterialPaths[slot] = filepath.toStdString();
+    if (slot >= static_cast<int>(mr.appliedMaterialPaths.size())) return;
+
+    const std::string newPath = materialPath.toStdString();
+    if (mr.appliedMaterialPaths[slot] == newPath) {
+        return;
+    }
+
+    EditorUndoManager::PushSnapshot(m_ctx, "Assign material slot " + std::to_string(slot));
+    mr.appliedMaterialPaths[slot] = newPath;
+
+    if (newPath.empty() && slot < static_cast<int>(mr.materialIndices.size())) {
+        mr.materialIndices[slot] = -1;
     }
 
     m_ctx->MarkDirty();
-    rebuildMaterialSlots();
 }
+
+// ---------------------------------------------------------------------------
+// Assign / Clear material on a slot
+// ---------------------------------------------------------------------------
 
 void MeshRendererInspector::clearMaterial(int slot)
 {

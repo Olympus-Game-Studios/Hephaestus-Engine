@@ -22,6 +22,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <filesystem>
 
 #include "VulkanBuffer.h"
 #include "VulkanTexture.h"
@@ -30,6 +31,7 @@
 #include "VulkanLightGizmo.h"
 #endif
 #include "../Assets/MeshAsset.h"
+#include "../Scene/Components.h"
 
 // Forward declarations
 class VulkanDevice;
@@ -343,10 +345,34 @@ private:
     struct MaterialTextureSlot {
         bool valid = false;
         VulkanTexture texture;
+        VkDescriptorImageInfo descriptor{};
+        std::string key;
     };
     std::vector<MaterialTextureSlot> m_materialTextureSlots;
     std::unordered_map<std::string, uint32_t> m_materialTextureLookup;
     uint32_t m_defaultMaterialTextureSlot = 0;
+    static constexpr uint32_t kMaxMaterialTextureSlots = 128;
+
+    // Per-frame material UBO parameters
+    VkDeviceSize m_materialStride = 0;           // Aligned stride for one material in the dynamic UBO
+    static constexpr uint32_t kMaxMaterialsPerFrame = 1024;
+
+    // Material asset cache (hot-reloads from .hematerial files)
+    struct MaterialCacheEntry {
+        MaterialComponent material;
+        std::filesystem::file_time_type lastWriteTime{};
+    };
+    std::unordered_map<std::string, MaterialCacheEntry> m_materialAssetCache;
+    std::unordered_map<std::string, std::filesystem::file_time_type> m_materialAssetCacheFailed;
+
+    // Material system helpers
+    const MaterialComponent* resolveMaterialFromPath(const std::string& materialPath);
+    uint32_t ensureMaterialTextureSlot(const std::string& rawPath);
+    void updateTextureSlotInDescriptors(uint32_t slotIndex);
+
+    // Debug: material system logging
+    bool m_materialDebugLogged = false;
+    int m_materialDebugDrawCount = 0;
 
     // Shadow resources
     struct ShadowMap {

@@ -11,6 +11,8 @@
 #include "../Scene/Scene.h"
 #include "../Scene/Components.h"
 
+#include <nlohmann/json.hpp>
+
 #include <iostream>
 #include <cstring>
 #include <cmath>
@@ -18,6 +20,7 @@
 #include <array>
 #include <algorithm>
 #include <filesystem>
+#include <cassert>
 
 namespace Hephaestus {
 
@@ -145,6 +148,19 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
                                           m_device->graphicsQueue, 0xFFFFFFFF)) {
         std::cerr << "[EngineFrameRenderer] Failed to create dummy texture\n";
         return false;
+    }
+    
+    // Initialize default material texture slot (slot 0) using the dummy texture
+    {
+        MaterialTextureSlot defaultSlot;
+        defaultSlot.texture = {}; // Not owned, the dummy texture is managed separately
+        defaultSlot.descriptor.sampler = m_dummyTexture.sampler;
+        defaultSlot.descriptor.imageView = m_dummyTexture.imageView;
+        defaultSlot.descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        defaultSlot.key = "__default__";
+        defaultSlot.valid = false; // Do not destroy this slot's texture (it's the dummy)
+        m_materialTextureSlots.push_back(std::move(defaultSlot));
+        m_defaultMaterialTextureSlot = 0;
     }
     
     // Create shadow map resources (before descriptor sets so binding 4 gets the real shadow map)
@@ -496,9 +512,9 @@ bool EngineFrameRenderer::createUniformBuffers()
     VkDeviceSize materialStride = (minUboAlignment > 0) 
         ? ((materialUboSize + minUboAlignment - 1) & ~(minUboAlignment - 1))
         : materialUboSize;
+    m_materialStride = materialStride; // Store for per-frame use
     
-    constexpr uint32_t maxMaterialsPerFrame = 1024;
-    VkDeviceSize totalMaterialSize = materialStride * maxMaterialsPerFrame;
+    VkDeviceSize totalMaterialSize = materialStride * kMaxMaterialsPerFrame;
     
     m_materialBuffers.resize(imageCount);
     for (auto& buffer : m_materialBuffers) {
@@ -1541,6 +1557,231 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
     vkCmdEndRenderPass(cmd);
 }
 
+// ============================================================================
+// Material system helpers
+// ============================================================================
+
+const MaterialComponent* EngineFrameRenderer::resolveMaterialFromPath(const std::string& materialPath)
+{
+    if (materialPath.empty()) return nullptr;
+
+    namespace fs = std::filesystem;
+    fs::path resolvedPath = fs::path(materialPath);
+
+    // Resolve relative paths using project root
+    if (!resolvedPath.is_absolute()) {
+        if (!m_projectRoot.empty()) {
+            // Try: projectRoot/assets/<path>, then projectRoot/<path>
+            fs::path assetsCandidate = fs::path(m_projectRoot) / "assets" / resolvedPath;
+            fs::path rootCandidate = fs::path(m_projectRoot) / resolvedPath;
+            std::error_code ec;
+            if (fs::exists(assetsCandidate, ec)) {
+                resolvedPath = assetsCandidate.lexically_normal();
+            } else if (fs::exists(rootCandidate, ec)) {
+                resolvedPath = rootCandidate.lexically_normal();
+            } else {
+                resolvedPath = resolvedPath.lexically_normal();
+            }
+        } else {
+            resolvedPath = resolvedPath.lexically_normal();
+        }
+    } else {
+        resolvedPath = resolvedPath.lexically_normal();
+    }
+
+    std::string cacheKey = resolvedPath.generic_string();
+
+    std::error_code timeError;
+    auto timestamp = fs::exists(resolvedPath, timeError)
+        ? fs::last_write_time(resolvedPath, timeError)
+        : fs::file_time_type{};
+    if (timeError) return nullptr;
+
+    // Check cache
+    auto cached = m_materialAssetCache.find(cacheKey);
+    if (cached != m_materialAssetCache.end()) {
+        if (cached->second.lastWriteTime == timestamp) {
+            return &cached->second.material;
+        }
+    }
+
+    // Check failed cache
+    auto failed = m_materialAssetCacheFailed.find(cacheKey);
+    if (failed != m_materialAssetCacheFailed.end()) {
+        if (failed->second == timestamp) return nullptr;
+        m_materialAssetCacheFailed.erase(failed);
+    }
+
+    // Load material from .hematerial JSON file (standalone, no MaterialEditor dependency)
+    MaterialComponent loadedMaterial;
+    {
+        std::ifstream inFile(resolvedPath);
+        if (!inFile.is_open()) {
+            std::cerr << "[EngineFrameRenderer] Cannot open material file: " << cacheKey << "\n";
+            m_materialAssetCacheFailed[cacheKey] = timestamp;
+            return nullptr;
+        }
+        nlohmann::json j;
+        try {
+            j = nlohmann::json::parse(inFile);
+        } catch (const std::exception& e) {
+            std::cerr << "[EngineFrameRenderer] JSON parse error for '" << cacheKey << "': " << e.what() << "\n";
+            m_materialAssetCacheFailed[cacheKey] = timestamp;
+            return nullptr;
+        }
+
+        // Read PBR properties
+        if (j.contains("albedo") && j["albedo"].is_array() && j["albedo"].size() >= 3) {
+            loadedMaterial.albedo.x = j["albedo"][0].get<float>();
+            loadedMaterial.albedo.y = j["albedo"][1].get<float>();
+            loadedMaterial.albedo.z = j["albedo"][2].get<float>();
+        }
+        if (j.contains("metallic")) loadedMaterial.metallic = j["metallic"].get<float>();
+        if (j.contains("roughness")) loadedMaterial.roughness = j["roughness"].get<float>();
+        if (j.contains("ao")) loadedMaterial.ao = j["ao"].get<float>();
+        if (j.contains("emissive") && j["emissive"].is_array() && j["emissive"].size() >= 3) {
+            loadedMaterial.emissive.x = j["emissive"][0].get<float>();
+            loadedMaterial.emissive.y = j["emissive"][1].get<float>();
+            loadedMaterial.emissive.z = j["emissive"][2].get<float>();
+        }
+        if (j.contains("emissiveStrength")) loadedMaterial.emissiveStrength = j["emissiveStrength"].get<float>();
+
+        // Texture paths and flags
+        if (j.contains("useAlbedoTexture")) loadedMaterial.useAlbedoTexture = j["useAlbedoTexture"].get<bool>();
+        if (j.contains("albedoTexturePath")) loadedMaterial.albedoTexturePath = j["albedoTexturePath"].get<std::string>();
+        if (j.contains("useNormalTexture")) loadedMaterial.useNormalTexture = j["useNormalTexture"].get<bool>();
+        if (j.contains("normalTexturePath")) loadedMaterial.normalTexturePath = j["normalTexturePath"].get<std::string>();
+        if (j.contains("useRoughnessTexture")) loadedMaterial.useRoughnessTexture = j["useRoughnessTexture"].get<bool>();
+        if (j.contains("roughnessTexturePath")) loadedMaterial.roughnessTexturePath = j["roughnessTexturePath"].get<std::string>();
+        if (j.contains("useAoTexture")) loadedMaterial.useAoTexture = j["useAoTexture"].get<bool>();
+        if (j.contains("aoTexturePath")) loadedMaterial.aoTexturePath = j["aoTexturePath"].get<std::string>();
+        if (j.contains("useWorldAlignedTexture")) loadedMaterial.useWorldAlignedTexture = j["useWorldAlignedTexture"].get<bool>();
+        if (j.contains("worldTextureScale")) loadedMaterial.worldTextureScale = j["worldTextureScale"].get<float>();
+    }
+
+    // Update or insert cache entry
+    if (cached != m_materialAssetCache.end()) {
+        cached->second.material = loadedMaterial;
+        cached->second.lastWriteTime = timestamp;
+        return &cached->second.material;
+    }
+
+    MaterialCacheEntry entry;
+    entry.material = loadedMaterial;
+    entry.lastWriteTime = timestamp;
+    auto insertResult = m_materialAssetCache.emplace(cacheKey, std::move(entry));
+    return &insertResult.first->second.material;
+}
+
+uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPath)
+{
+    if (rawPath.empty()) return m_defaultMaterialTextureSlot;
+
+    namespace fs = std::filesystem;
+    fs::path normalizedInput = fs::path(rawPath).lexically_normal();
+    std::string key = normalizedInput.generic_string();
+
+    // Check if already loaded
+    auto existingIt = m_materialTextureLookup.find(key);
+    if (existingIt != m_materialTextureLookup.end()) return existingIt->second;
+
+    if (m_materialTextureSlots.size() >= kMaxMaterialTextureSlots) {
+        static bool overflowLogged = false;
+        if (!overflowLogged) {
+            std::cerr << "[EngineFrameRenderer] Material texture cache full (" << kMaxMaterialTextureSlots << "). Using default.\n";
+            overflowLogged = true;
+        }
+        return m_defaultMaterialTextureSlot;
+    }
+
+    // Resolve path relative to project root
+    std::vector<fs::path> candidates;
+    candidates.push_back(normalizedInput);
+    if (!m_projectRoot.empty()) {
+        fs::path pr(m_projectRoot);
+        candidates.push_back((pr / normalizedInput).lexically_normal());
+        // Strip leading "assets/" if present and try under assets root
+        std::string normalizedKey = normalizedInput.generic_string();
+        bool startsWithAssets = (normalizedKey.rfind("assets/", 0) == 0 || normalizedKey.rfind("assets\\", 0) == 0);
+        if (!startsWithAssets) {
+            candidates.push_back((pr / "assets" / normalizedInput).lexically_normal());
+        }
+    }
+
+    fs::path resolvedPath;
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        if (fs::exists(candidate, ec) && fs::is_regular_file(candidate, ec)) {
+            resolvedPath = candidate;
+            break;
+        }
+    }
+
+    if (resolvedPath.empty()) {
+        static int texFailCount = 0;
+        if (texFailCount < 10) {
+            std::cerr << "[EngineFrameRenderer] Texture not found: " << rawPath << "\n";
+            texFailCount++;
+        }
+        return m_defaultMaterialTextureSlot;
+    }
+
+    // Load texture
+    MaterialTextureSlot newSlot;
+    try {
+        if (!newSlot.texture.LoadFromFile(m_device->allocator, m_device->device,
+                                           m_device->physicalDevice, m_device->commandPool,
+                                           m_device->graphicsQueue, resolvedPath.string())) {
+            std::cerr << "[EngineFrameRenderer] Failed to load texture: " << resolvedPath << "\n";
+            return m_defaultMaterialTextureSlot;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[EngineFrameRenderer] Exception loading texture '" << resolvedPath << "': " << e.what() << "\n";
+        return m_defaultMaterialTextureSlot;
+    }
+
+    newSlot.descriptor.sampler = newSlot.texture.sampler;
+    newSlot.descriptor.imageView = newSlot.texture.imageView;
+    newSlot.descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    newSlot.key = key;
+    newSlot.valid = true;
+
+    uint32_t slotIndex = static_cast<uint32_t>(m_materialTextureSlots.size());
+    m_materialTextureSlots.push_back(std::move(newSlot));
+    m_materialTextureLookup.emplace(key, slotIndex);
+
+    // Update texture array descriptor for this slot
+    updateTextureSlotInDescriptors(slotIndex);
+
+    std::cout << "[EngineFrameRenderer] Loaded material texture [" << slotIndex << "]: " << resolvedPath << "\n";
+    return slotIndex;
+}
+
+void EngineFrameRenderer::updateTextureSlotInDescriptors(uint32_t slotIndex)
+{
+    if (slotIndex >= kMaxMaterialTextureSlots) return;
+    if (slotIndex >= m_materialTextureSlots.size()) return;
+    if (!m_materialTextureSlots[slotIndex].valid) return;
+
+    const auto& slot = m_materialTextureSlots[slotIndex];
+
+    // Update texture at this array index in each frame's descriptor set
+    for (size_t i = 0; i < m_descriptorSets.size(); ++i) {
+        VkDescriptorImageInfo imageInfo = slot.descriptor;
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = m_descriptorSets[i];
+        write.dstBinding = 3; // Texture array binding
+        write.dstArrayElement = slotIndex;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.descriptorCount = 1;
+        write.pImageInfo = &imageInfo;
+
+        vkUpdateDescriptorSets(m_device->device, 1, &write, 0, nullptr);
+    }
+}
+
 void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageIndex, 
                                           Scene* scene, const FrameRenderConfig& config)
 {
@@ -1715,6 +1956,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         if (sceneName != lastSceneName) {
             debugPrint = true;
             lastSceneName = sceneName;
+            m_materialDebugLogged = false;
+            m_materialDebugDrawCount = 0;
         }
     }
     
@@ -1723,10 +1966,202 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         
         int drawnCount = 0;
         int skippedCount = 0;
+
+        // ── Map the dynamic material UBO for this frame ──────────
+        void* matMappedBaseVoid = nullptr;
+        vmaMapMemory(m_device->allocator, m_materialBuffers[imageIndex].allocation, &matMappedBaseVoid);
+        uint8_t* matMappedBase = reinterpret_cast<uint8_t*>(matMappedBaseVoid);
+        uint32_t matSlotNext = 0; // Slot 0 is the default material (already written at init time, but we re-write it each frame for consistency)
+
+        // Write default material at slot 0
+        {
+            MaterialUBO defaultMat{};
+            defaultMat.albedo = Vec3(1.0f, 1.0f, 1.0f);
+            defaultMat.albedoPadding = 0.0f;
+            defaultMat.metallic = 0.0f;
+            defaultMat.metallicPadding0 = 0.0f;
+            defaultMat.metallicPadding1 = 0.0f;
+            defaultMat.metallicPadding2 = 0.0f;
+            defaultMat.emissive = Vec3(0.0f, 0.0f, 0.0f);
+            defaultMat.emissivePadding = 0.0f;
+            defaultMat.roughness = 0.5f;
+            defaultMat.ao = 1.0f;
+            defaultMat.emissiveStrength = 0.0f;
+            defaultMat.useAlbedoTexture = 0;
+            defaultMat.albedoTextureIndex = m_defaultMaterialTextureSlot;
+            defaultMat.useNormalTexture = 0;
+            defaultMat.normalTextureIndex = m_defaultMaterialTextureSlot;
+            defaultMat.useRoughnessTexture = 0;
+            defaultMat.roughnessTextureIndex = m_defaultMaterialTextureSlot;
+            defaultMat.useAoTexture = 0;
+            defaultMat.aoTextureIndex = m_defaultMaterialTextureSlot;
+            defaultMat.useWorldAlignedTexture = 0;
+            defaultMat.worldTextureScale = 1.0f;
+            std::memset(defaultMat.paddingTail, 0, sizeof(defaultMat.paddingTail));
+            std::memcpy(matMappedBase, &defaultMat, sizeof(defaultMat));
+            matSlotNext = 1;
+        }
+
+        // Lambda: build MaterialUBO from MaterialComponent
+        auto buildMaterialUBO = [&](const MaterialComponent* material, MaterialUBO& matUBO) {
+            if (material) {
+                const auto& mat = *material;
+                matUBO.albedo = mat.albedo;
+                matUBO.albedoPadding = 0.0f;
+                matUBO.metallic = mat.metallic;
+                matUBO.metallicPadding0 = 0.0f;
+                matUBO.metallicPadding1 = 0.0f;
+                matUBO.metallicPadding2 = 0.0f;
+                matUBO.emissive = mat.emissive;
+                matUBO.emissivePadding = 0.0f;
+                matUBO.roughness = mat.roughness;
+                matUBO.ao = mat.ao;
+                matUBO.emissiveStrength = mat.emissiveStrength;
+
+                // Albedo texture
+                uint32_t albedoSlot = m_defaultMaterialTextureSlot;
+                if (mat.useAlbedoTexture && !mat.albedoTexturePath.empty()) {
+                    albedoSlot = ensureMaterialTextureSlot(mat.albedoTexturePath);
+                    matUBO.useAlbedoTexture = (albedoSlot != m_defaultMaterialTextureSlot) ? 1u : 0u;
+                } else {
+                    matUBO.useAlbedoTexture = 0u;
+                }
+                matUBO.albedoTextureIndex = albedoSlot;
+
+                // Normal texture
+                uint32_t normalSlot = m_defaultMaterialTextureSlot;
+                if (mat.useNormalTexture && !mat.normalTexturePath.empty()) {
+                    normalSlot = ensureMaterialTextureSlot(mat.normalTexturePath);
+                    matUBO.useNormalTexture = (normalSlot != m_defaultMaterialTextureSlot) ? 1u : 0u;
+                } else {
+                    matUBO.useNormalTexture = 0u;
+                }
+                matUBO.normalTextureIndex = normalSlot;
+
+                // Roughness texture
+                uint32_t roughnessSlot = m_defaultMaterialTextureSlot;
+                if (mat.useRoughnessTexture && !mat.roughnessTexturePath.empty()) {
+                    roughnessSlot = ensureMaterialTextureSlot(mat.roughnessTexturePath);
+                    matUBO.useRoughnessTexture = (roughnessSlot != m_defaultMaterialTextureSlot) ? 1u : 0u;
+                } else {
+                    matUBO.useRoughnessTexture = 0u;
+                }
+                matUBO.roughnessTextureIndex = roughnessSlot;
+
+                // AO texture
+                uint32_t aoSlot = m_defaultMaterialTextureSlot;
+                if (mat.useAoTexture && !mat.aoTexturePath.empty()) {
+                    aoSlot = ensureMaterialTextureSlot(mat.aoTexturePath);
+                    matUBO.useAoTexture = (aoSlot != m_defaultMaterialTextureSlot) ? 1u : 0u;
+                } else {
+                    matUBO.useAoTexture = 0u;
+                }
+                matUBO.aoTextureIndex = aoSlot;
+
+                // World-aligned texture settings
+                matUBO.useWorldAlignedTexture = mat.useWorldAlignedTexture ? 1u : 0u;
+                matUBO.worldTextureScale = mat.worldTextureScale;
+                std::memset(matUBO.paddingTail, 0, sizeof(matUBO.paddingTail));
+            } else {
+                // Default white material
+                matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);
+                matUBO.albedoPadding = 0.0f;
+                matUBO.metallic = 0.0f;
+                matUBO.metallicPadding0 = 0.0f;
+                matUBO.metallicPadding1 = 0.0f;
+                matUBO.metallicPadding2 = 0.0f;
+                matUBO.roughness = 0.5f;
+                matUBO.ao = 1.0f;
+                matUBO.emissive = Vec3(0.0f, 0.0f, 0.0f);
+                matUBO.emissivePadding = 0.0f;
+                matUBO.emissiveStrength = 0.0f;
+                matUBO.useAlbedoTexture = 0u;
+                matUBO.albedoTextureIndex = m_defaultMaterialTextureSlot;
+                matUBO.useNormalTexture = 0u;
+                matUBO.normalTextureIndex = m_defaultMaterialTextureSlot;
+                matUBO.useRoughnessTexture = 0u;
+                matUBO.roughnessTextureIndex = m_defaultMaterialTextureSlot;
+                matUBO.useAoTexture = 0u;
+                matUBO.aoTextureIndex = m_defaultMaterialTextureSlot;
+                matUBO.useWorldAlignedTexture = 0u;
+                matUBO.worldTextureScale = 1.0f;
+                std::memset(matUBO.paddingTail, 0, sizeof(matUBO.paddingTail));
+            }
+        };
         
         VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
         VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
+        bool materialOverflowLogged = false;
         
+        // Lambda: resolve material for a given submesh slot on an entity
+        auto resolveMaterialForSlot = [&](Entity& entity, MeshRendererComponent& renderer, int slot) -> const MaterialComponent* {
+            if (slot < 0) slot = 0;
+            // 1) Check per-slot material path assignment (from ImGUI editor)
+            if (static_cast<size_t>(slot) < renderer.appliedMaterialPaths.size()) {
+                const std::string& slotPath = renderer.appliedMaterialPaths[slot];
+                if (!slotPath.empty()) {
+                    if (const MaterialComponent* mat = resolveMaterialFromPath(slotPath)) {
+                        return mat;
+                    }
+                }
+            }
+            // 2) Fallback: entity's own MaterialComponent (single material for all submeshes)
+            if (entity.HasComponent<MaterialComponent>()) {
+                return &entity.GetComponent<MaterialComponent>();
+            }
+            // 3) No material assigned
+            return nullptr;
+        };
+
+        // Lambda: upload material to dynamic UBO and issue draw call
+        auto drawWithMaterial = [&](const MaterialComponent* material,
+                                    uint32_t indexOffset, uint32_t indexCount,
+                                    const char* entityName, int submeshIdx, int submeshMatSlot) {
+            if (indexCount == 0) return;
+            if (matSlotNext >= kMaxMaterialsPerFrame) {
+                if (!materialOverflowLogged) {
+                    std::cerr << "[EngineFrameRenderer] Material UBO capacity exceeded (" 
+                              << kMaxMaterialsPerFrame << "). Remaining draws use default material.\n";
+                    materialOverflowLogged = true;
+                }
+                // Fall back to slot 0 (default material)
+                uint32_t dynOffset = 0;
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout,
+                                        0, 1, &m_descriptorSets[imageIndex], 1, &dynOffset);
+                vkCmdDrawIndexed(cmd, indexCount, 1, indexOffset, 0, 0);
+                drawnCount++;
+                return;
+            }
+
+            MaterialUBO matUBO = {};
+            buildMaterialUBO(material, matUBO);
+
+            VkDeviceSize matOffsetBytes = static_cast<VkDeviceSize>(matSlotNext) * m_materialStride;
+            std::memcpy(matMappedBase + matOffsetBytes, &matUBO, sizeof(matUBO));
+
+            uint32_t dynOffset = static_cast<uint32_t>(matOffsetBytes);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout,
+                                    0, 1, &m_descriptorSets[imageIndex], 1, &dynOffset);
+            vkCmdDrawIndexed(cmd, indexCount, 1, indexOffset, 0, 0);
+
+            // Debug logging for first 10 draws when scene changes
+            if (!m_materialDebugLogged && m_materialDebugDrawCount < 10) {
+                std::cout << "[MaterialDebug] entity='" << (entityName ? entityName : "?") 
+                          << "' submesh=" << submeshIdx 
+                          << " matSlot=" << submeshMatSlot
+                          << " uboSlot=" << matSlotNext 
+                          << " dynOffset=" << dynOffset
+                          << " albedo=(" << matUBO.albedo.x << "," << matUBO.albedo.y << "," << matUBO.albedo.z << ")"
+                          << " albedoTex=" << matUBO.albedoTextureIndex
+                          << " useAlbedoTex=" << matUBO.useAlbedoTexture
+                          << "\n";
+                m_materialDebugDrawCount++;
+            }
+
+            matSlotNext++;
+            drawnCount++;
+        };
+
         for (auto entityHandle : renderView) {
             Entity entity(entityHandle, scene);
             auto& transform = entity.GetComponent<TransformComponent>();
@@ -1771,19 +2206,51 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             Mat4 modelMatrix = scene->GetWorldTransform(entity);
             vkCmdPushConstants(cmd, m_pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 
                               0, sizeof(Mat4), modelMatrix.m);
-            
-            // Bind descriptor set with default material offset
-            uint32_t dynOffset = 0;
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout,
-                                    0, 1, &m_descriptorSets[imageIndex], 1, &dynOffset);
-            
-            // Draw
-            vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
-            drawnCount++;
+
+            // Get entity name for debug
+            const char* entityName = nullptr;
+            if (entity.HasComponent<TagComponent>()) {
+                entityName = entity.GetComponent<TagComponent>().tag.c_str();
+            }
+
+            // ── Per-submesh material draw ─────────────────
+            if (mesh.submeshes.empty()) {
+                // Single-submesh mesh: resolve material for slot 0
+                const MaterialComponent* mat = resolveMaterialForSlot(entity, renderer, 0);
+                drawWithMaterial(mat, 0, mesh.indexCount, entityName, 0, 0);
+            } else {
+                // Multi-submesh mesh: each submesh has its own materialSlot
+                for (size_t si = 0; si < mesh.submeshes.size(); ++si) {
+                    const auto& submesh = mesh.submeshes[si];
+                    if (submesh.indexCount == 0) continue;
+                    const MaterialComponent* mat = resolveMaterialForSlot(entity, renderer, submesh.materialSlot);
+                    drawWithMaterial(mat, submesh.indexOffset, submesh.indexCount, 
+                                    entityName, static_cast<int>(si), submesh.materialSlot);
+                }
+            }
         }
         
+        // Flush the written material UBO range and unmap
+        if (matMappedBaseVoid) {
+            VkDeviceSize writtenSize = static_cast<VkDeviceSize>(matSlotNext) * m_materialStride;
+            if (writtenSize > 0) {
+                vmaFlushAllocation(m_device->allocator, m_materialBuffers[imageIndex].allocation, 0, writtenSize);
+            }
+            vmaUnmapMemory(m_device->allocator, m_materialBuffers[imageIndex].allocation);
+        }
+
+        // Mark debug logging done after first full frame for this scene
+        if (!m_materialDebugLogged && m_materialDebugDrawCount >= 10) {
+            m_materialDebugLogged = true;
+        }
+        // Also mark done if we finished the loop (scene may have < 10 draws)
+        if (!m_materialDebugLogged && drawnCount > 0) {
+            m_materialDebugLogged = true;
+        }
+
         if (debugPrint) {
-            std::cout << "[EngineFrameRenderer] Drew " << drawnCount << " meshes, skipped " << skippedCount << "\n";
+            std::cout << "[EngineFrameRenderer] Drew " << drawnCount << " submesh draws, skipped " << skippedCount 
+                      << " entities, used " << matSlotNext << " material slots\n";
         }
     } else if (debugPrint) {
         std::cout << "[EngineFrameRenderer] No scene or empty mesh library: scene=" << (void*)scene 
@@ -2123,6 +2590,17 @@ void EngineFrameRenderer::destroyAllResources()
     
     // Cleanup dummy texture
     m_dummyTexture.Destroy(m_device->allocator, m_device->device);
+    
+    // Cleanup material texture slots
+    for (auto& slot : m_materialTextureSlots) {
+        if (slot.valid) {
+            slot.texture.Destroy(m_device->allocator, m_device->device);
+        }
+    }
+    m_materialTextureSlots.clear();
+    m_materialTextureLookup.clear();
+    m_materialAssetCache.clear();
+    m_materialAssetCacheFailed.clear();
     
     // Cleanup descriptor pool
     if (m_descriptorPool != VK_NULL_HANDLE) {

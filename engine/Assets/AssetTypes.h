@@ -84,6 +84,7 @@ inline AssetType AssetTypeFromExtension(const std::string& extension) {
         {".exr", AssetType::Texture},
         
         // Materials
+        {".hematerial", AssetType::Material},
         {".hpmat", AssetType::Material},
         {".material", AssetType::Material},
         {".mat", AssetType::Material},

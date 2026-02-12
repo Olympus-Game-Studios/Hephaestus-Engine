@@ -30,6 +30,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QString>
+#include <vector>
 
 namespace Hephaestus {
 
@@ -52,7 +53,9 @@ private:
     void connectSignals();
     void applyToComponent();
     void rebuildMaterialSlots();
-    void assignMaterial(int slot);
+    std::vector<QString> collectProjectMaterialPaths() const;
+    QString normalizeMaterialPathForSelection(const std::string& path) const;
+    void setMaterialForSlot(int slot, const QString& materialPath);
     void clearMaterial(int slot);
     void blockAllSignals(bool block);
 

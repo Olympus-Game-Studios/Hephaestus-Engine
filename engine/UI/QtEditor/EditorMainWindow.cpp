@@ -1722,7 +1722,10 @@ void EditorMainWindow::handleDragDrop(const QString& assetPath, const QString& t
         ctx->MarkDirty();
         refreshDetailsPanel();
     } else if (targetField.startsWith("material_slot_") &&
-               assetPath.endsWith(".hpmat", Qt::CaseInsensitive)) {
+               (assetPath.endsWith(".hematerial", Qt::CaseInsensitive) ||
+                assetPath.endsWith(".hpmat", Qt::CaseInsensitive) ||
+                assetPath.endsWith(".material", Qt::CaseInsensitive) ||
+                assetPath.endsWith(".mat", Qt::CaseInsensitive))) {
         bool ok = false;
         int slot = targetField.mid(14).toInt(&ok);
         if (!ok || !reg.all_of<MeshRendererComponent>(entity)) return;
