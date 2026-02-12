@@ -22,6 +22,8 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QToolBar>
+#include <QComboBox>
+#include <QToolButton>
 #include <QString>
 #include <functional>
 
@@ -108,6 +110,7 @@ private:
     void rebuildContentsView();
     void updateBreadcrumb();
     void updateStatusBar();
+    void applyViewAndFilter();
 
     // Get icon for asset type  
     QIcon getAssetIcon(int assetType, bool isDirectory) const;
@@ -140,10 +143,16 @@ private:
 
     // Top bar
     QToolBar* m_toolbar = nullptr;
+    QToolButton* m_viewToggleButton = nullptr;
+    QPushButton* m_importButton = nullptr;
+    QComboBox* m_filterCombo = nullptr;
+    QPushButton* m_newFolderButton = nullptr;
     QPushButton* m_upButton = nullptr;
     QPushButton* m_refreshButton = nullptr;
     QLabel* m_breadcrumbLabel = nullptr;
     QLineEdit* m_searchBox = nullptr;
+
+    bool m_gridView = true;
 
     // Bottom status
     QLabel* m_statusLabel = nullptr;

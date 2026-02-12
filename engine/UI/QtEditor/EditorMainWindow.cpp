@@ -49,12 +49,173 @@
 #include <QCloseEvent>
 #include <QScrollArea>
 #include <QDir>
+#include <QToolBar>
+#include <QToolButton>
+#include <QActionGroup>
+#include <QFrame>
+#include <QGridLayout>
+#include <QStyle>
+#include <QMenu>
+#include <QCursor>
+#include <QPainter>
 #include <iostream>
 #include <cmath>
 #include <filesystem>
 
 namespace Hephaestus {
 namespace QtEditor {
+
+static QIcon makeTintedIcon(const QIcon& source, const QSize& size, const QColor& tint)
+{
+    QPixmap base = source.pixmap(size);
+    if (base.isNull()) {
+        return source;
+    }
+
+    QPixmap tinted(base.size());
+    tinted.fill(Qt::transparent);
+
+    QPainter painter(&tinted);
+    painter.drawPixmap(0, 0, base);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(tinted.rect(), tint);
+    painter.end();
+
+    return QIcon(tinted);
+}
+
+static QIcon makePlayGlyphIcon(const QSize& size, const QColor& color)
+{
+    QPixmap pix(size);
+    pix.fill(Qt::transparent);
+
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+
+    const qreal w = static_cast<qreal>(size.width());
+    const qreal h = static_cast<qreal>(size.height());
+    QPolygonF triangle;
+    triangle << QPointF(w * 0.34, h * 0.26)
+             << QPointF(w * 0.34, h * 0.74)
+             << QPointF(w * 0.74, h * 0.50);
+    painter.drawPolygon(triangle);
+    return QIcon(pix);
+}
+
+static QIcon makePauseGlyphIcon(const QSize& size, const QColor& color)
+{
+    QPixmap pix(size);
+    pix.fill(Qt::transparent);
+
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+
+    const qreal w = static_cast<qreal>(size.width());
+    const qreal h = static_cast<qreal>(size.height());
+    const QRectF left(w * 0.30, h * 0.24, w * 0.14, h * 0.52);
+    const QRectF right(w * 0.56, h * 0.24, w * 0.14, h * 0.52);
+    painter.drawRoundedRect(left, 1.2, 1.2);
+    painter.drawRoundedRect(right, 1.2, 1.2);
+    return QIcon(pix);
+}
+
+static QIcon makeStopGlyphIcon(const QSize& size, const QColor& color)
+{
+    QPixmap pix(size);
+    pix.fill(Qt::transparent);
+
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+
+    const qreal w = static_cast<qreal>(size.width());
+    const qreal h = static_cast<qreal>(size.height());
+    const QRectF square(w * 0.30, h * 0.30, w * 0.40, h * 0.40);
+    painter.drawRoundedRect(square, 1.0, 1.0);
+    return QIcon(pix);
+}
+
+static QIcon makeUndoGlyphIcon(const QSize& size, const QColor& color)
+{
+    QPixmap pix(size);
+    pix.fill(Qt::transparent);
+
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+
+    const qreal w = static_cast<qreal>(size.width());
+    const qreal h = static_cast<qreal>(size.height());
+    QPolygonF tri;
+    tri << QPointF(w * 0.22, h * 0.50)
+        << QPointF(w * 0.44, h * 0.28)
+        << QPointF(w * 0.44, h * 0.72);
+    painter.drawPolygon(tri);
+
+    const QRectF body(w * 0.43, h * 0.44, w * 0.36, h * 0.12);
+    painter.drawRoundedRect(body, 1.0, 1.0);
+    return QIcon(pix);
+}
+
+static QIcon makeRedoGlyphIcon(const QSize& size, const QColor& color)
+{
+    QPixmap pix(size);
+    pix.fill(Qt::transparent);
+
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+
+    const qreal w = static_cast<qreal>(size.width());
+    const qreal h = static_cast<qreal>(size.height());
+    QPolygonF tri;
+    tri << QPointF(w * 0.78, h * 0.50)
+        << QPointF(w * 0.56, h * 0.28)
+        << QPointF(w * 0.56, h * 0.72);
+    painter.drawPolygon(tri);
+
+    const QRectF body(w * 0.21, h * 0.44, w * 0.36, h * 0.12);
+    painter.drawRoundedRect(body, 1.0, 1.0);
+    return QIcon(pix);
+}
+
+static QIcon makeSaveGlyphIcon(const QSize& size, const QColor& color)
+{
+    QPixmap pix(size);
+    pix.fill(Qt::transparent);
+
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+
+    const qreal w = static_cast<qreal>(size.width());
+    const qreal h = static_cast<qreal>(size.height());
+
+    // Floppy body
+    const QRectF body(w * 0.24, h * 0.20, w * 0.52, h * 0.60);
+    painter.drawRoundedRect(body, 1.2, 1.2);
+
+    // Label cutout
+    painter.setBrush(QColor(0, 0, 0, 0));
+    painter.setCompositionMode(QPainter::CompositionMode_Clear);
+    const QRectF labelCutout(w * 0.34, h * 0.29, w * 0.28, h * 0.16);
+    painter.drawRoundedRect(labelCutout, 0.8, 0.8);
+
+    // Notch cutout
+    const QRectF notchCutout(w * 0.58, h * 0.54, w * 0.12, h * 0.16);
+    painter.drawRoundedRect(notchCutout, 0.8, 0.8);
+
+    painter.end();
+    return QIcon(pix);
+}
 
 EditorMainWindow::EditorMainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -69,9 +230,11 @@ EditorMainWindow::EditorMainWindow(QWidget* parent)
 
     // Setup UI components
     setupMenuBar();
+    setupTopToolbar();
     setupDockWidgets();
     setupCentralWidget();
     setupStatusBar();
+    applyUnifiedStyle();
 
     // Initialize the engine after UI is setup
     initializeEngine();
@@ -176,6 +339,279 @@ void EditorMainWindow::setupMenuBar()
     connect(aboutAction, &QAction::triggered, this, &EditorMainWindow::onAbout);
 }
 
+void EditorMainWindow::setupTopToolbar()
+{
+    m_topToolbar = new QToolBar(tr("Editor Toolbar"), this);
+    m_topToolbar->setObjectName("EditorTopToolbar");
+    m_topToolbar->setMovable(false);
+    m_topToolbar->setFloatable(false);
+    m_topToolbar->setIconSize(QSize(16, 16));
+    addToolBar(Qt::TopToolBarArea, m_topToolbar);
+
+    auto makeSection = [this](const QString& name) {
+        QWidget* section = new QWidget(this);
+        section->setObjectName(name);
+        auto* layout = new QHBoxLayout(section);
+        layout->setContentsMargins(8, 4, 8, 4);
+        layout->setSpacing(6);
+        return std::pair<QWidget*, QHBoxLayout*>(section, layout);
+    };
+
+    // Left section: file/playback controls
+    {
+        auto [leftSection, leftLayout] = makeSection("TopToolbarLeft");
+        const QSize commandIconSize(18, 18);
+        const QColor commandTint(QStringLiteral("#E6E8EB"));
+
+        auto* saveBtn = new QToolButton(leftSection);
+        saveBtn->setText(tr("Save"));
+        saveBtn->setIcon(makeSaveGlyphIcon(commandIconSize, commandTint));
+        saveBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        saveBtn->setIconSize(commandIconSize);
+        saveBtn->setFixedHeight(34);
+        connect(saveBtn, &QToolButton::clicked, this, &EditorMainWindow::onSaveLevel);
+        leftLayout->addWidget(saveBtn);
+
+        auto* undoBtn = new QToolButton(leftSection);
+        undoBtn->setText(tr("Undo"));
+        undoBtn->setIcon(makeUndoGlyphIcon(commandIconSize, commandTint));
+        undoBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        undoBtn->setIconSize(commandIconSize);
+        undoBtn->setFixedHeight(34);
+        connect(undoBtn, &QToolButton::clicked, this, &EditorMainWindow::onUndo);
+        leftLayout->addWidget(undoBtn);
+
+        auto* redoBtn = new QToolButton(leftSection);
+        redoBtn->setText(tr("Redo"));
+        redoBtn->setIcon(makeRedoGlyphIcon(commandIconSize, commandTint));
+        redoBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        redoBtn->setIconSize(commandIconSize);
+        redoBtn->setFixedHeight(34);
+        connect(redoBtn, &QToolButton::clicked, this, &EditorMainWindow::onRedo);
+        leftLayout->addWidget(redoBtn);
+
+        const QSize mediaIconSize(20, 20);
+        const QColor mediaTint(QStringLiteral("#E6E8EB"));
+        m_playAction = new QAction(
+            makePlayGlyphIcon(mediaIconSize, mediaTint),
+            tr("Play"),
+            this);
+        m_playAction->setCheckable(true);
+        m_pauseAction = new QAction(
+            makePauseGlyphIcon(mediaIconSize, mediaTint),
+            tr("Pause"),
+            this);
+        m_pauseAction->setCheckable(true);
+        m_stopAction = new QAction(
+            makeStopGlyphIcon(mediaIconSize, mediaTint),
+            tr("Stop"),
+            this);
+
+        connect(m_playAction, &QAction::triggered, this, [this](bool checked) {
+            if (checked) {
+                m_pauseAction->setChecked(false);
+            }
+            if (m_viewportHost) {
+                m_viewportHost->setProperty("playMode", checked);
+                m_viewportHost->style()->unpolish(m_viewportHost);
+                m_viewportHost->style()->polish(m_viewportHost);
+            }
+            statusBar()->showMessage(checked ? tr("Play mode enabled") : tr("Play mode disabled"), 2000);
+        });
+        connect(m_pauseAction, &QAction::triggered, this, [this](bool checked) {
+            statusBar()->showMessage(checked ? tr("Play mode paused") : tr("Pause cleared"), 2000);
+        });
+        connect(m_stopAction, &QAction::triggered, this, [this]() {
+            if (m_playAction) m_playAction->setChecked(false);
+            if (m_pauseAction) m_pauseAction->setChecked(false);
+            if (m_viewportHost) {
+                m_viewportHost->setProperty("playMode", false);
+                m_viewportHost->style()->unpolish(m_viewportHost);
+                m_viewportHost->style()->polish(m_viewportHost);
+            }
+            statusBar()->showMessage(tr("Play mode stopped"), 2000);
+        });
+
+        auto* playBtn = new QToolButton(leftSection);
+        playBtn->setObjectName("PlaybackButton");
+        playBtn->setDefaultAction(m_playAction);
+        playBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        playBtn->setIconSize(mediaIconSize);
+        playBtn->setFixedSize(44, 34);
+        leftLayout->addWidget(playBtn);
+        auto* pauseBtn = new QToolButton(leftSection);
+        pauseBtn->setObjectName("PlaybackButton");
+        pauseBtn->setDefaultAction(m_pauseAction);
+        pauseBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        pauseBtn->setIconSize(mediaIconSize);
+        pauseBtn->setFixedSize(44, 34);
+        leftLayout->addWidget(pauseBtn);
+        auto* stopBtn = new QToolButton(leftSection);
+        stopBtn->setObjectName("PlaybackButton");
+        stopBtn->setDefaultAction(m_stopAction);
+        stopBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        stopBtn->setIconSize(mediaIconSize);
+        stopBtn->setFixedSize(44, 34);
+        leftLayout->addWidget(stopBtn);
+
+        m_topToolbar->addWidget(leftSection);
+    }
+
+    m_topToolbar->addSeparator();
+
+    // Center section: transform and camera controls
+    {
+        auto [centerSection, centerLayout] = makeSection("TopToolbarCenter");
+
+        QActionGroup* transformGroup = new QActionGroup(this);
+        transformGroup->setExclusive(true);
+
+        m_translateAction = new QAction(tr("Translate"), this);
+        m_translateAction->setCheckable(true);
+        m_rotateAction = new QAction(tr("Rotate"), this);
+        m_rotateAction->setCheckable(true);
+        m_scaleAction = new QAction(tr("Scale"), this);
+        m_scaleAction->setCheckable(true);
+        transformGroup->addAction(m_translateAction);
+        transformGroup->addAction(m_rotateAction);
+        transformGroup->addAction(m_scaleAction);
+        m_translateAction->setChecked(true);
+
+        auto* trBtn = new QToolButton(centerSection);
+        trBtn->setDefaultAction(m_translateAction);
+        centerLayout->addWidget(trBtn);
+        auto* rotBtn = new QToolButton(centerSection);
+        rotBtn->setDefaultAction(m_rotateAction);
+        centerLayout->addWidget(rotBtn);
+        auto* scBtn = new QToolButton(centerSection);
+        scBtn->setDefaultAction(m_scaleAction);
+        centerLayout->addWidget(scBtn);
+
+        m_worldLocalBtn = new QToolButton(centerSection);
+        m_worldLocalBtn->setText(tr("World"));
+        m_worldLocalBtn->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
+        m_worldLocalBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        m_worldLocalBtn->setCheckable(true);
+        connect(m_worldLocalBtn, &QToolButton::toggled, this, [this](bool checked) {
+            m_worldLocalBtn->setText(checked ? tr("Local") : tr("World"));
+            if (m_engine) {
+                if (auto* ctx = m_engine->GetEditorContext()) {
+                    ctx->SetGizmoSpace(checked ? GizmoSpace::Local : GizmoSpace::World);
+                }
+            }
+        });
+        centerLayout->addWidget(m_worldLocalBtn);
+
+        m_snapToggleBtn = new QToolButton(centerSection);
+        m_snapToggleBtn->setText(tr("Snap"));
+        m_snapToggleBtn->setIcon(style()->standardIcon(QStyle::SP_DialogApplyButton));
+        m_snapToggleBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        m_snapToggleBtn->setCheckable(true);
+        centerLayout->addWidget(m_snapToggleBtn);
+
+        m_snapValueCombo = new QComboBox(centerSection);
+        m_snapValueCombo->addItems({ tr("0.1"), tr("0.25"), tr("0.5"), tr("1.0"), tr("5.0"), tr("15°") });
+        m_snapValueCombo->setCurrentIndex(3);
+        centerLayout->addWidget(m_snapValueCombo);
+
+        m_cameraSpeedCombo = new QComboBox(centerSection);
+        m_cameraSpeedCombo->addItems({ tr("Cam x0.5"), tr("Cam x1"), tr("Cam x2"), tr("Cam x4") });
+        m_cameraSpeedCombo->setCurrentIndex(1);
+        centerLayout->addWidget(m_cameraSpeedCombo);
+
+        connect(m_translateAction, &QAction::triggered, this, [this]() {
+            if (m_engine) {
+                if (auto* ctx = m_engine->GetEditorContext()) ctx->SetGizmoMode(GizmoMode::Translate);
+            }
+        });
+        connect(m_rotateAction, &QAction::triggered, this, [this]() {
+            if (m_engine) {
+                if (auto* ctx = m_engine->GetEditorContext()) ctx->SetGizmoMode(GizmoMode::Rotate);
+            }
+        });
+        connect(m_scaleAction, &QAction::triggered, this, [this]() {
+            if (m_engine) {
+                if (auto* ctx = m_engine->GetEditorContext()) ctx->SetGizmoMode(GizmoMode::Scale);
+            }
+        });
+
+        connect(m_snapToggleBtn, &QToolButton::toggled, this, [this](bool checked) {
+            if (m_engine) {
+                if (auto* ctx = m_engine->GetEditorContext()) {
+                    ctx->GetSnapSettings().enableSnap = checked;
+                }
+            }
+        });
+
+        connect(m_snapValueCombo, &QComboBox::currentTextChanged, this, [this](const QString& text) {
+            bool ok = false;
+            QString clean = text;
+            clean.remove(QChar(0x00B0));
+            float value = clean.toFloat(&ok);
+            if (!ok || !m_engine) return;
+            if (auto* ctx = m_engine->GetEditorContext()) {
+                auto& snap = ctx->GetSnapSettings();
+                snap.translateSnap = value;
+                snap.scaleSnap = std::max(0.01f, value * 0.1f);
+                snap.rotateSnapDeg = std::max(1.0f, value);
+            }
+        });
+
+        connect(m_cameraSpeedCombo, &QComboBox::currentIndexChanged, this, [this](int idx) {
+            static const float speeds[] = { 2.5f, 5.0f, 10.0f, 20.0f };
+            if (idx < 0 || idx >= 4 || !m_engine) return;
+            if (auto* ctx = m_engine->GetEditorContext()) {
+                ctx->GetCamera().moveSpeed = speeds[idx];
+            }
+        });
+
+        m_topToolbar->addWidget(centerSection);
+    }
+
+    QWidget* spring = new QWidget(this);
+    spring->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_topToolbar->addWidget(spring);
+
+    // Right section: build/settings/project
+    {
+        auto [rightSection, rightLayout] = makeSection("TopToolbarRight");
+
+        auto* buildBtn = new QToolButton(rightSection);
+        buildBtn->setText(tr("Build"));
+        const QSize buildIconSize(18, 18);
+        buildBtn->setIcon(makePlayGlyphIcon(buildIconSize, QColor(QStringLiteral("#E6E8EB"))));
+        buildBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        buildBtn->setIconSize(buildIconSize);
+        buildBtn->setFixedHeight(34);
+        connect(buildBtn, &QToolButton::clicked, this, [this]() {
+            statusBar()->showMessage(tr("Build requested: run the build task from VS Code tasks"), 4000);
+        });
+        rightLayout->addWidget(buildBtn);
+
+        auto* settingsBtn = new QToolButton(rightSection);
+        settingsBtn->setText(tr("Settings"));
+        settingsBtn->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+        settingsBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        connect(settingsBtn, &QToolButton::clicked, this, [this]() {
+            QMenu menu(this);
+            menu.addAction(tr("Editor Settings"));
+            menu.addAction(tr("Viewport Preferences"));
+            menu.addAction(tr("Input Controls"));
+            menu.exec(QCursor::pos());
+        });
+        rightLayout->addWidget(settingsBtn);
+
+        auto* projectBtn = new QToolButton(rightSection);
+        projectBtn->setText(tr("Project Manager"));
+        projectBtn->setIcon(style()->standardIcon(QStyle::SP_DirHomeIcon));
+        projectBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        connect(projectBtn, &QToolButton::clicked, this, &EditorMainWindow::onOpenProject);
+        rightLayout->addWidget(projectBtn);
+
+        m_topToolbar->addWidget(rightSection);
+    }
+}
+
 void EditorMainWindow::setupDockWidgets()
 {
     // Allow docking on all sides
@@ -188,14 +624,65 @@ void EditorMainWindow::setupDockWidgets()
     m_outlinerDock->setObjectName("OutlinerDock");
     m_outlinerDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
-    m_outlinerTree = new QTreeWidget(m_outlinerDock);
-    m_outlinerTree->setHeaderLabel(tr("Scene"));
+    m_outlinerPanel = new QWidget(m_outlinerDock);
+    m_outlinerPanel->setObjectName("OutlinerPanel");
+    auto* outlinerLayout = new QVBoxLayout(m_outlinerPanel);
+    outlinerLayout->setContentsMargins(12, 12, 12, 12);
+    outlinerLayout->setSpacing(8);
+
+    auto* outlinerHeader = new QHBoxLayout();
+    m_outlinerSearch = new QLineEdit(m_outlinerPanel);
+    m_outlinerSearch->setPlaceholderText(tr("Search entities..."));
+    outlinerHeader->addWidget(m_outlinerSearch, 1);
+
+    m_addEntityBtn = new QPushButton(tr("+ Add Entity"), m_outlinerPanel);
+    outlinerHeader->addWidget(m_addEntityBtn);
+    outlinerLayout->addLayout(outlinerHeader);
+
+    m_outlinerTree = new QTreeWidget(m_outlinerPanel);
+    m_outlinerTree->setObjectName("OutlinerTree");
+    m_outlinerTree->setHeaderLabel(tr("Scene Hierarchy"));
     m_outlinerTree->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_outlinerDock->setWidget(m_outlinerTree);
+    m_outlinerTree->setRootIsDecorated(true);
+    m_outlinerTree->setIndentation(18);
+    m_outlinerTree->setUniformRowHeights(true);
+    outlinerLayout->addWidget(m_outlinerTree, 1);
+
+    m_outlinerDock->setWidget(m_outlinerPanel);
     
     // Connect selection changed signal
     connect(m_outlinerTree, &QTreeWidget::itemSelectionChanged, 
             this, &EditorMainWindow::onOutlinerSelectionChanged);
+
+    connect(m_outlinerSearch, &QLineEdit::textChanged, this, [this](const QString& text) {
+        auto filterItem = [&](auto&& self, QTreeWidgetItem* item) -> bool {
+            bool selfMatch = item->text(0).contains(text, Qt::CaseInsensitive);
+            bool childMatch = false;
+            for (int i = 0; i < item->childCount(); ++i) {
+                childMatch = self(self, item->child(i)) || childMatch;
+            }
+            bool visible = text.trimmed().isEmpty() || selfMatch || childMatch;
+            item->setHidden(!visible);
+            return visible;
+        };
+
+        for (int i = 0; i < m_outlinerTree->topLevelItemCount(); ++i) {
+            filterItem(filterItem, m_outlinerTree->topLevelItem(i));
+        }
+    });
+
+    connect(m_addEntityBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_engine) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasActiveScene()) return;
+
+        EditorUndoManager::PushSnapshot(ctx, "Create entity");
+        Entity created = ctx->GetActiveScene()->CreateEntity("Entity");
+        ctx->SelectEntity(static_cast<entt::entity>(created));
+        ctx->MarkDirty();
+        rebuildOutliner();
+        refreshDetailsPanel();
+    });
 
     addDockWidget(Qt::LeftDockWidgetArea, m_outlinerDock);
 
@@ -212,18 +699,30 @@ void EditorMainWindow::setupDockWidgets()
     m_detailsScrollArea->setFrameShape(QFrame::NoFrame);
 
     m_detailsWidget = new QWidget();
+    m_detailsWidget->setObjectName("DetailsPanel");
     m_detailsLayout = new QVBoxLayout(m_detailsWidget);
-    m_detailsLayout->setContentsMargins(6, 6, 6, 6);
-    m_detailsLayout->setSpacing(6);
+    m_detailsLayout->setContentsMargins(12, 12, 12, 12);
+    m_detailsLayout->setSpacing(10);
 
     // ── Header row: Entity ID + Lock checkbox ───────────────────────────
     {
         auto* headerRow = new QHBoxLayout();
+        m_entityIconLabel = new QLabel(QString::fromUtf8("◼"));
+        m_entityIconLabel->setObjectName("DetailsEntityIcon");
+        headerRow->addWidget(m_entityIconLabel);
+
         m_entityIdLabel = new QLabel(tr("(No selection)"));
-        m_entityIdLabel->setStyleSheet("color: gray; font-size: 10px;");
+        m_entityIdLabel->setObjectName("DetailsEntityId");
         headerRow->addWidget(m_entityIdLabel);
 
         headerRow->addStretch();
+
+        m_visibilityBtn = new QToolButton();
+        m_visibilityBtn->setIcon(style()->standardIcon(QStyle::SP_FileDialogContentsView));
+        m_visibilityBtn->setToolTip(tr("Entity visibility toggle"));
+        m_visibilityBtn->setCheckable(true);
+        m_visibilityBtn->setChecked(true);
+        headerRow->addWidget(m_visibilityBtn);
 
         m_lockCheck = new QCheckBox(tr("Lock"));
         m_lockCheck->setToolTip(tr("Lock prevents selection changes from altering the Details view"));
@@ -253,8 +752,35 @@ void EditorMainWindow::setupDockWidgets()
 
     // Transform group
     m_transformGroup = new QGroupBox(tr("Transform"));
+    m_transformGroup->setObjectName("TransformCard");
     m_transformGroup->setEnabled(false);
     QFormLayout* transformLayout = new QFormLayout(m_transformGroup);
+    transformLayout->setContentsMargins(12, 12, 12, 12);
+    transformLayout->setSpacing(8);
+
+    auto* transformControls = new QWidget(m_transformGroup);
+    auto* transformControlsLayout = new QHBoxLayout(transformControls);
+    transformControlsLayout->setContentsMargins(0, 0, 0, 0);
+    transformControlsLayout->setSpacing(6);
+
+    auto* detailsSpaceBtn = new QToolButton(transformControls);
+    detailsSpaceBtn->setText(tr("World"));
+    detailsSpaceBtn->setCheckable(true);
+    connect(detailsSpaceBtn, &QToolButton::toggled, this, [this, detailsSpaceBtn](bool checked) {
+        detailsSpaceBtn->setText(checked ? tr("Local") : tr("World"));
+        if (m_worldLocalBtn && m_worldLocalBtn->isChecked() != checked) {
+            m_worldLocalBtn->setChecked(checked);
+        }
+    });
+    transformControlsLayout->addWidget(detailsSpaceBtn);
+
+    auto* uniformScaleBtn = new QToolButton(transformControls);
+    uniformScaleBtn->setText(tr("Uniform Scale"));
+    uniformScaleBtn->setCheckable(true);
+    transformControlsLayout->addWidget(uniformScaleBtn);
+    transformControlsLayout->addStretch();
+
+    transformLayout->addRow(QString(), transformControls);
 
     // Helper lambda to create a row of 3 spin boxes
     auto createVec3Row = [this](QDoubleSpinBox*& x, QDoubleSpinBox*& y, QDoubleSpinBox*& z, 
@@ -291,6 +817,59 @@ void EditorMainWindow::setupDockWidgets()
     QWidget* scaleRow = createVec3Row(m_scaleX, m_scaleY, m_scaleZ, 0.001, 10000.0, 0.1, 3);
     transformLayout->addRow(tr("Scale:"), scaleRow);
 
+    auto makeAxisResetRow = [this](QDoubleSpinBox* x, QDoubleSpinBox* y, QDoubleSpinBox* z,
+                                   double defaultValue,
+                                   QToolButton* uniformScaleBtn = nullptr) {
+        QWidget* resetWidget = new QWidget();
+        auto* resetLayout = new QHBoxLayout(resetWidget);
+        resetLayout->setContentsMargins(0, 0, 0, 0);
+        resetLayout->setSpacing(4);
+
+        auto makeResetBtn = [resetLayout](const QString& axis) {
+            auto* btn = new QToolButton();
+            btn->setText(axis);
+            btn->setToolTip(QObject::tr("Reset %1 axis").arg(axis));
+            resetLayout->addWidget(btn);
+            return btn;
+        };
+
+        auto* resetX = makeResetBtn("X");
+        auto* resetY = makeResetBtn("Y");
+        auto* resetZ = makeResetBtn("Z");
+        resetLayout->addStretch();
+
+        connect(resetX, &QToolButton::clicked, this, [x, defaultValue]() { x->setValue(defaultValue); });
+        connect(resetY, &QToolButton::clicked, this, [y, defaultValue]() { y->setValue(defaultValue); });
+        connect(resetZ, &QToolButton::clicked, this, [z, defaultValue]() { z->setValue(defaultValue); });
+
+        if (uniformScaleBtn) {
+            connect(x, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [=](double v) {
+                if (!uniformScaleBtn->isChecked()) return;
+                y->blockSignals(true); z->blockSignals(true);
+                y->setValue(v); z->setValue(v);
+                y->blockSignals(false); z->blockSignals(false);
+            });
+            connect(y, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [=](double v) {
+                if (!uniformScaleBtn->isChecked()) return;
+                x->blockSignals(true); z->blockSignals(true);
+                x->setValue(v); z->setValue(v);
+                x->blockSignals(false); z->blockSignals(false);
+            });
+            connect(z, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [=](double v) {
+                if (!uniformScaleBtn->isChecked()) return;
+                x->blockSignals(true); y->blockSignals(true);
+                x->setValue(v); y->setValue(v);
+                x->blockSignals(false); y->blockSignals(false);
+            });
+        }
+
+        return resetWidget;
+    };
+
+    transformLayout->addRow(QString(), makeAxisResetRow(m_posX, m_posY, m_posZ, 0.0));
+    transformLayout->addRow(QString(), makeAxisResetRow(m_rotX, m_rotY, m_rotZ, 0.0));
+    transformLayout->addRow(QString(), makeAxisResetRow(m_scaleX, m_scaleY, m_scaleZ, 1.0, uniformScaleBtn));
+
     // Connect position spinbox signals
     connect(m_posX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onPositionChanged);
     connect(m_posY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onPositionChanged);
@@ -315,6 +894,7 @@ void EditorMainWindow::setupDockWidgets()
     {
         auto* actionRow = new QHBoxLayout();
         m_addComponentBtn = new QPushButton(tr("+ Add Component"));
+        m_addComponentBtn->setObjectName("PrimaryActionButton");
         m_addComponentBtn->setEnabled(false);
         connect(m_addComponentBtn, &QPushButton::clicked, this, &EditorMainWindow::showAddComponentMenu);
         actionRow->addWidget(m_addComponentBtn);
@@ -322,7 +902,7 @@ void EditorMainWindow::setupDockWidgets()
         actionRow->addStretch();
 
         m_deleteEntityBtn = new QPushButton(tr("Delete Entity"));
-        m_deleteEntityBtn->setStyleSheet("color: #cc3333;");
+        m_deleteEntityBtn->setObjectName("DangerActionButton");
         m_deleteEntityBtn->setEnabled(false);
         connect(m_deleteEntityBtn, &QPushButton::clicked, this, [this]() {
             if (!m_engine) return;
@@ -401,15 +981,151 @@ void EditorMainWindow::setupCentralWidget()
     m_viewportWindow = new QtViewportWindow();
     
     // Embed the QWindow into a QWidget container
-    m_viewportContainer = QWidget::createWindowContainer(m_viewportWindow, this);
+    m_viewportHost = new QWidget(this);
+    m_viewportHost->setObjectName("ViewportHost");
+    m_viewportContainer = QWidget::createWindowContainer(m_viewportWindow, m_viewportHost);
+    m_viewportContainer->setObjectName("ViewportContainer");
     m_viewportContainer->setMinimumSize(200, 200);
     m_viewportContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+    auto* hostLayout = new QGridLayout(m_viewportHost);
+    hostLayout->setContentsMargins(0, 0, 0, 0);
+    hostLayout->setSpacing(0);
+    hostLayout->addWidget(m_viewportContainer, 0, 0);
+
+    auto makeOverlay = [this](const QString& name) {
+        auto* overlay = new QFrame(m_viewportHost);
+        overlay->setObjectName(name);
+        overlay->setAttribute(Qt::WA_StyledBackground, true);
+        auto* layout = new QHBoxLayout(overlay);
+        layout->setContentsMargins(10, 8, 10, 8);
+        layout->setSpacing(6);
+        return std::pair<QFrame*, QHBoxLayout*>(overlay, layout);
+    };
+
+    {
+        auto [overlay, layout] = makeOverlay("ViewportOverlayTopLeft");
+        m_overlayTopLeft = overlay;
+
+        m_viewPerspectiveCombo = new QComboBox(overlay);
+        m_viewPerspectiveCombo->addItems({ tr("Perspective"), tr("Front"), tr("Top"), tr("Right") });
+        layout->addWidget(m_viewPerspectiveCombo);
+
+        m_viewModeBtn = new QToolButton(overlay);
+        m_viewModeBtn->setText(tr("Lit"));
+        m_viewModeBtn->setPopupMode(QToolButton::MenuButtonPopup);
+        auto* modeMenu = new QMenu(m_viewModeBtn);
+        modeMenu->addAction(tr("Lit"), [this]() { m_viewModeBtn->setText(tr("Lit")); });
+        modeMenu->addAction(tr("Unlit"), [this]() { m_viewModeBtn->setText(tr("Unlit")); });
+        modeMenu->addAction(tr("Wireframe"), [this]() { m_viewModeBtn->setText(tr("Wireframe")); });
+        m_viewModeBtn->setMenu(modeMenu);
+        layout->addWidget(m_viewModeBtn);
+
+        m_viewGridBtn = new QToolButton(overlay);
+        m_viewGridBtn->setText(tr("Grid"));
+        m_viewGridBtn->setCheckable(true);
+        m_viewGridBtn->setChecked(true);
+        layout->addWidget(m_viewGridBtn);
+
+        m_viewStatsBtn = new QToolButton(overlay);
+        m_viewStatsBtn->setText(tr("Stats"));
+        m_viewStatsBtn->setCheckable(true);
+        m_viewStatsBtn->setChecked(true);
+        layout->addWidget(m_viewStatsBtn);
+
+        hostLayout->addWidget(m_overlayTopLeft, 0, 0, Qt::AlignTop | Qt::AlignLeft);
+    }
+
+    {
+        auto [overlay, layout] = makeOverlay("ViewportOverlayTopRight");
+        m_overlayTopRight = overlay;
+
+        auto* gizmoTranslate = new QToolButton(overlay);
+        gizmoTranslate->setText(tr("T"));
+        gizmoTranslate->setCheckable(true);
+        gizmoTranslate->setChecked(true);
+        layout->addWidget(gizmoTranslate);
+
+        auto* gizmoRotate = new QToolButton(overlay);
+        gizmoRotate->setText(tr("R"));
+        gizmoRotate->setCheckable(true);
+        layout->addWidget(gizmoRotate);
+
+        auto* gizmoScale = new QToolButton(overlay);
+        gizmoScale->setText(tr("S"));
+        gizmoScale->setCheckable(true);
+        layout->addWidget(gizmoScale);
+
+        auto* group = new QActionGroup(this);
+        group->setExclusive(true);
+        auto* aT = new QAction(this); aT->setCheckable(true); aT->setChecked(true);
+        auto* aR = new QAction(this); aR->setCheckable(true);
+        auto* aS = new QAction(this); aS->setCheckable(true);
+        group->addAction(aT); group->addAction(aR); group->addAction(aS);
+        gizmoTranslate->setDefaultAction(aT);
+        gizmoRotate->setDefaultAction(aR);
+        gizmoScale->setDefaultAction(aS);
+
+        connect(aT, &QAction::triggered, this, [this]() { if (m_translateAction) m_translateAction->trigger(); });
+        connect(aR, &QAction::triggered, this, [this]() { if (m_rotateAction) m_rotateAction->trigger(); });
+        connect(aS, &QAction::triggered, this, [this]() { if (m_scaleAction) m_scaleAction->trigger(); });
+
+        auto* snapBtn = new QToolButton(overlay);
+        snapBtn->setText(tr("Snap"));
+        snapBtn->setCheckable(true);
+        layout->addWidget(snapBtn);
+        connect(snapBtn, &QToolButton::toggled, this, [this](bool checked) {
+            if (m_snapToggleBtn) m_snapToggleBtn->setChecked(checked);
+        });
+
+        auto* snapValue = new QComboBox(overlay);
+        snapValue->addItems({ tr("0.1"), tr("0.5"), tr("1.0"), tr("5.0"), tr("15°") });
+        snapValue->setCurrentIndex(2);
+        connect(snapValue, &QComboBox::currentTextChanged, this, [this](const QString& value) {
+            if (m_snapValueCombo) m_snapValueCombo->setCurrentText(value);
+        });
+        layout->addWidget(snapValue);
+
+        auto* spaceBtn = new QToolButton(overlay);
+        spaceBtn->setText(tr("World"));
+        spaceBtn->setCheckable(true);
+        connect(spaceBtn, &QToolButton::toggled, this, [this, spaceBtn](bool checked) {
+            spaceBtn->setText(checked ? tr("Local") : tr("World"));
+            if (m_worldLocalBtn) m_worldLocalBtn->setChecked(checked);
+        });
+        layout->addWidget(spaceBtn);
+
+        hostLayout->addWidget(m_overlayTopRight, 0, 0, Qt::AlignTop | Qt::AlignRight);
+    }
+
+    {
+        auto [overlay, layout] = makeOverlay("ViewportOverlayBottomLeft");
+        m_overlayBottomLeft = overlay;
+        m_overlayFpsLabel = new QLabel(tr("FPS 0.0"), overlay);
+        m_overlayDrawCallsLabel = new QLabel(tr("Draw 0"), overlay);
+        m_overlayRamLabel = new QLabel(tr("RAM --"), overlay);
+        layout->addWidget(m_overlayFpsLabel);
+        layout->addWidget(m_overlayDrawCallsLabel);
+        layout->addWidget(m_overlayRamLabel);
+
+        hostLayout->addWidget(m_overlayBottomLeft, 0, 0, Qt::AlignBottom | Qt::AlignLeft);
+    }
+
+    connect(m_viewGridBtn, &QToolButton::toggled, this, [this](bool checked) {
+        if (!m_engine) return;
+        if (auto* ctx = m_engine->GetEditorContext()) {
+            ctx->GetViewportSettings().showGrid = checked;
+        }
+    });
+    connect(m_viewStatsBtn, &QToolButton::toggled, this, [this](bool checked) {
+        if (m_overlayBottomLeft) m_overlayBottomLeft->setVisible(checked);
+    });
     
     // Connect viewport signals
     connect(m_viewportWindow, &QtViewportWindow::viewportReady, 
             this, &EditorMainWindow::onViewportReady);
     
-    setCentralWidget(m_viewportContainer);
+    setCentralWidget(m_viewportHost);
     
     std::cout << "[EditorMainWindow] Viewport widget created\n";
 }
@@ -417,7 +1133,251 @@ void EditorMainWindow::setupCentralWidget()
 void EditorMainWindow::setupStatusBar()
 {
     QStatusBar* status = statusBar();
+    status->setObjectName("EditorStatusBar");
+    status->setSizeGripEnabled(false);
+
+    m_statusFps = new QLabel(tr("FPS 0.0"), status);
+    m_statusDrawCalls = new QLabel(tr("Draw 0"), status);
+    m_statusRam = new QLabel(tr("RAM --"), status);
+    m_statusVersion = new QLabel(tr("Hephaestus 1.0.0"), status);
+
+    status->addPermanentWidget(m_statusFps);
+    status->addPermanentWidget(m_statusDrawCalls);
+    status->addPermanentWidget(m_statusRam);
+    status->addPermanentWidget(m_statusVersion);
     status->showMessage(tr("Initializing engine..."));
+}
+
+void EditorMainWindow::applyUnifiedStyle()
+{
+    setStyleSheet(QString::fromUtf8(R"(
+QMainWindow {
+    background: #1E1F24;
+    color: #E6E8EB;
+}
+QMenuBar {
+    background: #25272D;
+    color: #E6E8EB;
+    border-bottom: 1px solid #333740;
+}
+QMenuBar::item {
+    padding: 6px 10px;
+    border-radius: 4px;
+}
+QMenuBar::item:selected { background: #2C2F36; }
+QMenu {
+    background: #25272D;
+    color: #E6E8EB;
+    border: 1px solid #333740;
+    padding: 6px;
+}
+QMenu::item { padding: 6px 12px; border-radius: 4px; }
+QMenu::item:selected { background: #4C8DFF; color: #E6E8EB; }
+
+QToolBar#EditorTopToolbar {
+    background: #25272D;
+    border: none;
+    border-bottom: 1px solid #333740;
+    spacing: 8px;
+    padding: 6px 10px;
+}
+QToolBar#AssetBrowserToolbar {
+    background: #25272D;
+    border: 1px solid #333740;
+    border-radius: 6px;
+    spacing: 6px;
+    padding: 6px;
+}
+QLabel#AssetBrowserStatus {
+    color: #9DA3AE;
+    background: #2C2F36;
+    border: 1px solid #333740;
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+QToolBar#EditorTopToolbar QToolButton,
+QToolBar#EditorTopToolbar QPushButton {
+    background: #2C2F36;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: #E6E8EB;
+    padding: 6px 10px;
+}
+QToolBar#EditorTopToolbar QToolButton[toolButtonStyle="0"] {
+    padding: 0;
+    qproperty-autoRaise: false;
+}
+QToolBar#EditorTopToolbar QToolButton#PlaybackButton {
+    padding: 0;
+    margin: 0;
+    min-width: 40px;
+    min-height: 32px;
+    qproperty-autoRaise: false;
+}
+QToolBar#EditorTopToolbar QToolButton:hover,
+QToolBar#EditorTopToolbar QPushButton:hover {
+    border-color: #4C8DFF;
+    background: #32363F;
+}
+QToolBar#EditorTopToolbar QToolButton:checked,
+QToolBar#EditorTopToolbar QToolButton:pressed {
+    background: #4C8DFF;
+    color: #E6E8EB;
+}
+
+QDockWidget {
+    background: #25272D;
+    border: 1px solid #333740;
+    titlebar-close-icon: none;
+    titlebar-normal-icon: none;
+}
+QDockWidget::title {
+    background: #25272D;
+    color: #9DA3AE;
+    padding: 10px 12px;
+    border-bottom: 1px solid #333740;
+}
+
+QWidget#OutlinerPanel,
+QWidget#DetailsPanel,
+QWidget#AssetBrowserRoot {
+    background: #25272D;
+}
+
+QTreeWidget#OutlinerTree,
+QTreeView,
+QListView,
+QTableView,
+QTableWidget {
+    background: #25272D;
+    border: 1px solid #333740;
+    border-radius: 6px;
+    color: #E6E8EB;
+    outline: none;
+    padding: 4px;
+}
+QTreeWidget#OutlinerTree::item,
+QTreeView::item,
+QListView::item {
+    padding: 6px 8px;
+    margin: 1px 0;
+    border-radius: 4px;
+}
+QTreeWidget#OutlinerTree::item:hover,
+QTreeView::item:hover,
+QListView::item:hover {
+    background: rgba(76, 141, 255, 0.12);
+}
+QTreeWidget#OutlinerTree::item:selected,
+QTreeView::item:selected,
+QListView::item:selected {
+    background: rgba(76, 141, 255, 0.24);
+    border-left: 3px solid #4C8DFF;
+}
+
+QLabel#DetailsEntityId {
+    color: #9DA3AE;
+    font-size: 10px;
+}
+QLabel#DetailsEntityIcon {
+    color: #4C8DFF;
+    font-size: 12px;
+}
+
+QLineEdit, QComboBox, QDoubleSpinBox {
+    background: #2C2F36;
+    color: #E6E8EB;
+    border: 1px solid #333740;
+    border-radius: 6px;
+    padding: 6px 8px;
+    min-height: 22px;
+}
+QLineEdit:disabled, QComboBox:disabled, QDoubleSpinBox:disabled {
+    color: #6B7280;
+    background: #25272D;
+}
+
+QPushButton, QToolButton {
+    background: #2C2F36;
+    color: #E6E8EB;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+QPushButton:hover, QToolButton:hover {
+    background: #32363F;
+    border-color: #4C8DFF;
+}
+QPushButton:pressed, QToolButton:pressed, QToolButton:checked {
+    background: #4C8DFF;
+    color: #E6E8EB;
+}
+QPushButton#PrimaryActionButton { background: #4C8DFF; }
+QPushButton#DangerActionButton {
+    color: #E6A5A5;
+    border-color: #6A3C45;
+}
+
+QGroupBox {
+    background: #2C2F36;
+    border: 1px solid #333740;
+    border-radius: 6px;
+    margin-top: 12px;
+    padding-top: 12px;
+}
+QGroupBox::title {
+    color: #E6E8EB;
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 4px;
+}
+
+QWidget#ViewportHost {
+    background: #1E1F24;
+    border: 1px solid #333740;
+    border-radius: 6px;
+}
+QWidget#ViewportHost[playMode="true"] {
+    border: 1px solid #4C8DFF;
+}
+QFrame#ViewportOverlayTopLeft,
+QFrame#ViewportOverlayTopRight,
+QFrame#ViewportOverlayBottomLeft {
+    background: rgba(30, 31, 36, 205);
+    border: 1px solid #333740;
+    border-radius: 6px;
+    margin: 10px;
+}
+QFrame#ViewportOverlayBottomLeft QLabel {
+    color: #9DA3AE;
+}
+
+QStatusBar#EditorStatusBar {
+    background: #25272D;
+    color: #9DA3AE;
+    border-top: 1px solid #333740;
+}
+QStatusBar#EditorStatusBar QLabel {
+    color: #9DA3AE;
+    padding: 0 8px;
+}
+
+QScrollArea {
+    border: none;
+    background: #25272D;
+}
+
+QHeaderView::section {
+    background: #2C2F36;
+    color: #9DA3AE;
+    border: none;
+    border-bottom: 1px solid #333740;
+    padding: 6px;
+}
+
+QCheckBox { color: #E6E8EB; spacing: 6px; }
+QCheckBox:disabled { color: #6B7280; }
+    )"));
 }
 
 void EditorMainWindow::initializeEngine()
@@ -554,7 +1514,20 @@ void EditorMainWindow::onFrameRendered(float dt)
     // Update FPS display every 30 frames
     if (m_frameCount % 30 == 0) {
         float fps = (dt > 0.0f) ? (1.0f / dt) : 0.0f;
-        statusBar()->showMessage(QString("FPS: %1").arg(fps, 0, 'f', 1));
+        if (m_statusFps) {
+            m_statusFps->setText(QString("FPS %1").arg(fps, 0, 'f', 1));
+        }
+        if (m_overlayFpsLabel) {
+            m_overlayFpsLabel->setText(QString("FPS %1").arg(fps, 0, 'f', 1));
+        }
+
+        // Placeholder lightweight counters for now (visual telemetry surface).
+        const int drawCalls = 0;
+        const QString ramUsage = tr("RAM --");
+        if (m_statusDrawCalls) m_statusDrawCalls->setText(QString("Draw %1").arg(drawCalls));
+        if (m_overlayDrawCallsLabel) m_overlayDrawCallsLabel->setText(QString("Draw %1").arg(drawCalls));
+        if (m_statusRam) m_statusRam->setText(ramUsage);
+        if (m_overlayRamLabel) m_overlayRamLabel->setText(ramUsage);
     }
 }
 
@@ -623,7 +1596,7 @@ void EditorMainWindow::populateOutlinerItem(QTreeWidgetItem* parent, entt::entit
     QTreeWidgetItem* item = new QTreeWidgetItem(parent);
     item->setText(0, QString::fromStdString(name));
     item->setData(0, Qt::UserRole, static_cast<uint32_t>(entity));
-    
+
     // Add children if this entity has any
     if (registry.all_of<TransformComponent>(entity)) {
         auto& transform = registry.get<TransformComponent>(entity);

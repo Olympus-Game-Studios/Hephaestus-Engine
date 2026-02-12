@@ -21,12 +21,15 @@
 #include <QMenuBar>
 #include <QMenu>
 #include <QStatusBar>
+#include <QToolBar>
 #include <QWidget>
 #include <QGroupBox>
 #include <QScrollArea>
 #include <QCheckBox>
 #include <QPushButton>
 #include <QComboBox>
+#include <QToolButton>
+#include <QFrame>
 #include <memory>
 #include <vector>
 #include <entt/entt.hpp>
@@ -71,9 +74,11 @@ protected:
 
 private:
     void setupMenuBar();
+    void setupTopToolbar();
     void setupDockWidgets();
     void setupCentralWidget();
     void setupStatusBar();
+    void applyUnifiedStyle();
     void initializeEngine();
     void setupEditorCallbacks();
     void setupViewportRenderingToggles();
@@ -141,7 +146,23 @@ private:
     QDockWidget* m_detailsDock = nullptr;
     QDockWidget* m_assetBrowserDock = nullptr;
 
+    // Top toolbar
+    QToolBar* m_topToolbar = nullptr;
+    QAction* m_playAction = nullptr;
+    QAction* m_pauseAction = nullptr;
+    QAction* m_stopAction = nullptr;
+    QAction* m_translateAction = nullptr;
+    QAction* m_rotateAction = nullptr;
+    QAction* m_scaleAction = nullptr;
+    QToolButton* m_worldLocalBtn = nullptr;
+    QToolButton* m_snapToggleBtn = nullptr;
+    QComboBox* m_snapValueCombo = nullptr;
+    QComboBox* m_cameraSpeedCombo = nullptr;
+
     // Outliner (scene hierarchy)
+    QWidget* m_outlinerPanel = nullptr;
+    QLineEdit* m_outlinerSearch = nullptr;
+    QPushButton* m_addEntityBtn = nullptr;
     QTreeWidget* m_outlinerTree = nullptr;
 
     // Details panel (inspector)
@@ -166,7 +187,9 @@ private:
     std::vector<ComponentInspector*> m_componentInspectors;
 
     // Header/controls
+    QLabel*      m_entityIconLabel  = nullptr;
     QLabel*      m_entityIdLabel    = nullptr;
+    QToolButton* m_visibilityBtn    = nullptr;
     QCheckBox*   m_lockCheck        = nullptr;
     QPushButton* m_addComponentBtn  = nullptr;
     QPushButton* m_deleteEntityBtn  = nullptr;
@@ -179,7 +202,18 @@ private:
 
     // Viewport (real 3D rendering)
     QtViewportWindow* m_viewportWindow = nullptr;
+    QWidget* m_viewportHost = nullptr;
     QWidget* m_viewportContainer = nullptr;
+    QFrame* m_overlayTopLeft = nullptr;
+    QFrame* m_overlayTopRight = nullptr;
+    QFrame* m_overlayBottomLeft = nullptr;
+    QComboBox* m_viewPerspectiveCombo = nullptr;
+    QToolButton* m_viewModeBtn = nullptr;
+    QToolButton* m_viewGridBtn = nullptr;
+    QToolButton* m_viewStatsBtn = nullptr;
+    QLabel* m_overlayFpsLabel = nullptr;
+    QLabel* m_overlayDrawCallsLabel = nullptr;
+    QLabel* m_overlayRamLabel = nullptr;
 
     // Engine integration
     std::unique_ptr<QtEditorEngine> m_engine;
@@ -187,6 +221,10 @@ private:
     // Frame timing for status bar
     float m_lastDt = 0.0f;
     int m_frameCount = 0;
+    QLabel* m_statusFps = nullptr;
+    QLabel* m_statusDrawCalls = nullptr;
+    QLabel* m_statusRam = nullptr;
+    QLabel* m_statusVersion = nullptr;
 
     // Prevent re-entrant updates
     bool m_updatingDetails = false;
