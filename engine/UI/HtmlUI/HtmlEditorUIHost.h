@@ -69,6 +69,9 @@ public:
   std::optional<std::string> ConsumeAddActorsSpawnMeshRequest();
   std::optional<std::pair<std::string, uint32_t>> ConsumeOutlinerAssetDropRequest();
 
+  // Consumes a mesh spawn request originating from double-click in the Asset Browser.
+  std::optional<std::string> ConsumeAssetBrowserMeshSpawn();
+
   // Returns true if the mouse is hovering over any HTML editor panel.
   bool IsAnyPanelHovered() const;
 
@@ -135,6 +138,7 @@ private:
   std::string lastAssetDragPath_;  // Persists after drag_end for one frame to ensure drop is processed
   int assetDragEndFrameCountdown_ = 0;  // Countdown frames after drag_end before clearing
   std::optional<std::pair<std::string, uint32_t>> pendingOutlinerAssetDrop_;
+  std::optional<std::string> pendingAssetBrowserSpawnMesh_;
 
   bool LoadBlueprintDocumentFromDisk(const std::filesystem::path& path,
                                      BlueprintDocument& outDoc,

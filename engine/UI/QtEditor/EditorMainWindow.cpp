@@ -23,6 +23,9 @@
 #include "../../Core/EditorContext.h"
 #include "../../Core/ProjectContext.h"
 #include "../../Assets/AssetManager.h"
+#include "../../Assets/AssetTypes.h"
+#include "../../Assets/ModelImporter.h"
+#include "../../Assets/MeshAsset.h"
 #include "../../Scene/Scene.h"
 #include "../../Scene/Components.h"
 #include "../../Scene/Entity.h"
@@ -950,6 +953,131 @@ void EditorMainWindow::setupDockWidgets()
     connect(m_assetBrowser, &AssetBrowserWidget::assetOpenRequested,
             this, [this](const QString& relativePath) {
                 m_assetActions->Open(relativePath);
+            });
+
+    // Connect mesh spawn (double-click on mesh asset)
+    connect(m_assetBrowser, &AssetBrowserWidget::meshSpawnRequested,
+            this, [this](const QString& relativePath) {
+                if (!m_engine) return;
+                auto* ctx = m_engine->GetEditorContext();
+                if (!ctx || !ctx->HasActiveScene()) {
+                    statusBar()->showMessage(tr("No active scene to spawn mesh into."), 3000);
+                    return;
+                }
+
+                auto* frameRenderer = m_engine->GetFrameRenderer();
+                if (!frameRenderer) {
+                    statusBar()->showMessage(tr("Renderer not ready."), 3000);
+                    return;
+                }
+
+                // Resolve mesh asset path
+                namespace fs = std::filesystem;
+                auto& assetMgr = AssetManager::GetInstance();
+                auto assetInfo = assetMgr.GetAssetInfo(relativePath.toStdString());
+                if (!assetInfo) {
+                    statusBar()->showMessage(tr("Asset not found: %1").arg(relativePath), 3000);
+                    std::cerr << "[MeshSpawn] Asset not found: " << relativePath.toStdString() << "\n";
+                    return;
+                }
+
+                fs::path meshPath(assetInfo->absolutePath);
+                if (!fs::exists(meshPath)) {
+                    statusBar()->showMessage(tr("Mesh file not found: %1").arg(relativePath), 3000);
+                    std::cerr << "[MeshSpawn] File not found: " << meshPath << "\n";
+                    return;
+                }
+
+                // Check if mesh is already in the library, or load it
+                std::string normalizedKey = meshPath.lexically_normal().generic_string();
+                size_t meshHandle = frameRenderer->GetMeshHandle(normalizedKey);
+
+                if (meshHandle == SIZE_MAX) {
+                    // Try loading the mesh
+                    MeshData meshData;
+                    std::string loadError;
+                    if (!ModelImporter::LoadModel(meshPath, meshData, loadError) ||
+                        meshData.vertices.empty() || meshData.indices.empty()) {
+                        statusBar()->showMessage(tr("Failed to load mesh: %1").arg(QString::fromStdString(loadError)), 3000);
+                        std::cerr << "[MeshSpawn] Load failed: " << loadError << "\n";
+                        return;
+                    }
+
+                    // Upload to GPU
+                    std::string meshName = meshPath.stem().string();
+                    meshHandle = m_engine->uploadMeshToGPU(meshName, meshData, meshPath, true);
+                    if (meshHandle == MeshRendererComponent::InvalidMesh) {
+                        statusBar()->showMessage(tr("Failed to upload mesh to GPU."), 3000);
+                        std::cerr << "[MeshSpawn] GPU upload failed\n";
+                        return;
+                    }
+                }
+
+                // Push undo before modifying the scene
+                EditorUndoManager::PushSnapshot(ctx, "Spawn mesh actor");
+
+                Scene* scene = ctx->GetActiveScene();
+                std::string baseName = meshPath.stem().string();
+                if (baseName.empty()) baseName = "Mesh";
+
+                // Generate unique name
+                std::string entityName = baseName;
+                if (scene->FindEntityByName(entityName)) {
+                    int suffix = 1;
+                    do {
+                        entityName = baseName + " (" + std::to_string(suffix++) + ")";
+                    } while (scene->FindEntityByName(entityName));
+                }
+
+                Entity created = scene->CreateEntity(entityName);
+                if (!created) {
+                    statusBar()->showMessage(tr("Failed to create entity."), 3000);
+                    return;
+                }
+
+                // Configure MeshRenderer
+                MeshGPU* meshGPU = frameRenderer->GetMesh(meshHandle);
+                int subCount = (meshGPU && !meshGPU->submeshes.empty())
+                    ? static_cast<int>(meshGPU->submeshes.size()) : 1;
+                AABB bounds = meshGPU ? meshGPU->bounds : AABB{};
+
+                auto& renderer = created.AddComponent<MeshRendererComponent>();
+                renderer.SetMesh(meshHandle, bounds, relativePath.toStdString(), true, subCount);
+                renderer.materialIndices.assign(static_cast<size_t>(subCount), -1);
+                if (meshGPU && !meshGPU->submeshes.empty()) {
+                    for (size_t i = 0; i < meshGPU->submeshes.size(); ++i) {
+                        renderer.materialIndices[i] = meshGPU->submeshes[i].materialSlot;
+                    }
+                }
+                renderer.appliedMaterialPaths.resize(static_cast<size_t>(subCount));
+                created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
+
+                // Position in front of editor camera
+                auto& transform = created.GetComponent<TransformComponent>();
+                const auto& cam = ctx->GetCamera();
+                constexpr float kSpawnDistance = 4.0f;
+                const float yawR   = cam.yawDeg   * 3.1415926535f / 180.0f;
+                const float pitchR = cam.pitchDeg * 3.1415926535f / 180.0f;
+                float fx = std::cos(yawR) * std::cos(pitchR);
+                float fy = std::sin(pitchR);
+                float fz = std::sin(yawR) * std::cos(pitchR);
+                float len = std::sqrt(fx*fx + fy*fy + fz*fz);
+                if (len > 0.0001f) { fx /= len; fy /= len; fz /= len; }
+                transform.position = Vec3(cam.positionX + fx * kSpawnDistance,
+                                          cam.positionY + fy * kSpawnDistance,
+                                          cam.positionZ + fz * kSpawnDistance);
+                transform.rotation = Vec3(0.0f, 0.0f, 0.0f);
+                transform.scale    = Vec3(1.0f, 1.0f, 1.0f);
+
+                // Select the newly created entity, mark dirty, refresh UI
+                ctx->SelectEntity(static_cast<entt::entity>(created));
+                ctx->MarkDirty();
+                m_engine->RebuildSceneMeshes();
+                rebuildOutliner();
+                refreshDetailsPanel();
+
+                std::cout << "[MeshSpawn] Added mesh actor: " << entityName << "\n";
+                statusBar()->showMessage(tr("Added mesh actor: %1").arg(QString::fromStdString(entityName)), 3000);
             });
 
     addDockWidget(Qt::BottomDockWidgetArea, m_assetBrowserDock);

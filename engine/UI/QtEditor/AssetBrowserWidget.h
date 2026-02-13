@@ -91,6 +91,12 @@ signals:
     void assetOpenRequested(const QString& relativePath);
 
     /**
+     * @brief Emitted when the user wants to spawn a mesh into the scene.
+     * @param relativePath Mesh asset path relative to asset root
+     */
+    void meshSpawnRequested(const QString& relativePath);
+
+    /**
      * @brief Emitted when selection changes.
      */
     void selectionChanged(const QString& relativePath);

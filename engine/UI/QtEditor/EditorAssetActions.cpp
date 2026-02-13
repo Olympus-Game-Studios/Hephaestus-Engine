@@ -65,9 +65,8 @@ bool EditorAssetActions::OpenByType(const QString& absolutePath, AssetType type)
             return true;
 
         case AssetType::StaticMesh:
-            // Could open a mesh viewer in the future
-            showNotImplemented("Mesh viewer", absolutePath);
-            return true;
+            // Mesh assets are placed into scenes via drag/drop in the editor.
+            return false;
 
         case AssetType::Material:
             // Could open material editor in the future

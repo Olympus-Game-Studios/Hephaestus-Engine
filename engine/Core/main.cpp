@@ -3993,6 +3993,7 @@ struct AssetBrowserResult {
   std::optional<std::filesystem::path> materialOpenRequest;
   std::optional<std::filesystem::path> materialCreateRequest;
   std::optional<std::filesystem::path> blueprintOpenRequest;
+  std::optional<std::string> spawnMeshAssetRel;
 };
 
 struct AssetExtensionDescriptor {
@@ -5538,6 +5539,16 @@ end
               statusMessage.clear();
             } else if (IsBlueprintFile(entry.path)) {
               result.blueprintOpenRequest = clamped;
+              statusMessage.clear();
+            } else if (IsMeshFile(entry.path)) {
+              std::error_code relErr;
+              std::filesystem::path relPath =
+                  std::filesystem::relative(clamped, assetRoot, relErr)
+                      .lexically_normal();
+              if (relErr || relPath.empty()) {
+                relPath = clamped.lexically_normal();
+              }
+              result.spawnMeshAssetRel = relPath.generic_string();
               statusMessage.clear();
             } else if (IsScriptFile(entry.path)) {
               OpenFileInPreferredIDE(clamped);
@@ -9260,6 +9271,7 @@ int main(int argc, char *argv[]) {
                   if (!g_DetailsLocked) {
                     scene.SetSelectedEntity(root);
                   }
+                  if (g_ActiveDocument) g_ActiveDocument->SetDirty(true);
                   logSuccess("Instantiated blueprint: " + rel.filename().string());
                 } else {
                   logFailure("Failed to instantiate blueprint.");
@@ -9272,62 +9284,149 @@ int main(int argc, char *argv[]) {
               baseName = "Mesh";
             }
 
-            if (hasBlueprintOpen) {
-              std::string parentId = blueprintDoc->GetAsset().rootNodeId;
-              if (outlinerActions.spawnMeshParent && scene.GetRegistry().valid(*outlinerActions.spawnMeshParent)) {
-                Entity parent(*outlinerActions.spawnMeshParent, &scene);
-                if (parent && parent.HasComponent<BlueprintNodeComponent>()) {
-                  parentId = parent.GetComponent<BlueprintNodeComponent>().nodeId;
-                }
-              }
-              Entity created;
-              if (blueprintDoc->AddChildNode(parentId, baseName, &created)) {
-                auto &renderer = created.AddComponent<MeshRendererComponent>();
-                renderer.meshAssetPath = rel.generic_string();
-                renderer.meshHandle = MeshRendererComponent::InvalidMesh;
-                renderer.meshImported = false;
-                created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
-
-                blueprintDoc->SyncNodeFromEntity(created);
-                Scene* previewScene = blueprintDoc ? blueprintDoc->GetScene() : nullptr;
-                if (previewScene) {
-                  rebuildSceneMeshesFromComponents(*previewScene, false);
-                }
-
-                if (!g_DetailsLocked) {
-                  scene.SetSelectedEntity(created);
-                }
-                logSuccess("Added mesh actor to blueprint: " + rel.filename().string());
-              } else {
-                logFailure("Failed to create mesh actor.");
+            fs::path meshPath = rel;
+            if (meshPath.is_relative()) {
+              fs::path assetsRoot = ResolveActiveAssetsRoot();
+              if (!assetsRoot.empty()) {
+                meshPath = (assetsRoot / meshPath).lexically_normal();
               }
             } else {
-              Entity created = scene.CreateEntity(makeUniqueEntityName(baseName));
-              if (!created) {
-                logFailure("Failed to create mesh actor.");
-              } else {
-                auto &renderer = created.AddComponent<MeshRendererComponent>();
-                renderer.meshAssetPath = rel.generic_string();
-                renderer.meshHandle = MeshRendererComponent::InvalidMesh;
-                renderer.meshImported = false;
-                created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
+              meshPath = meshPath.lexically_normal();
+            }
 
-                if (outlinerActions.spawnMeshParent) {
-                  entt::entity parentHandle = *outlinerActions.spawnMeshParent;
-                  if (scene.GetRegistry().valid(parentHandle)) {
-                    Entity parent(parentHandle, &scene);
-                    if (parent && parent.HasComponent<FolderComponent>()) {
-                      scene.SetParent(created, parent);
-                    }
+            auto resolveOrLoadMeshHandle = [&]() -> std::optional<size_t> {
+              if (meshPath.empty() || !fs::exists(meshPath)) {
+                logFailure("Cannot spawn mesh actor: missing asset '" +
+                           rel.generic_string() + "'.");
+                return std::nullopt;
+              }
+
+              std::optional<size_t> handle;
+              std::string sourceKey = makeMeshSourceKey(meshPath);
+              if (!sourceKey.empty()) {
+                handle = meshHandleFromKey(sourceKey);
+              }
+              if (!handle) {
+                handle =
+                    meshHandleFromKey(meshPath.lexically_normal().generic_string());
+              }
+              if (handle) {
+                return handle;
+              }
+
+              MeshData importedMesh;
+              std::string loadError;
+              if (!ModelImporter::LoadModel(meshPath, importedMesh, loadError) ||
+                  importedMesh.vertices.empty() || importedMesh.indices.empty()) {
+                logFailure("Failed to load mesh '" + rel.filename().string() +
+                           "': " + loadError);
+                return std::nullopt;
+              }
+
+              try {
+                return uploadMesh(baseName, importedMesh, meshPath, true);
+              } catch (const std::exception &e) {
+                logFailure("Failed to upload mesh '" + rel.filename().string() +
+                           "': " + e.what());
+                return std::nullopt;
+              }
+            };
+
+            std::optional<size_t> meshHandle = resolveOrLoadMeshHandle();
+            if (!meshHandle || *meshHandle >= meshLibrary.size()) {
+              logFailure("Cannot spawn mesh actor: invalid mesh resource for '" +
+                         rel.filename().string() + "'.");
+            } else {
+              const MeshGPU &mesh = meshLibrary[*meshHandle];
+              const int subCount = mesh.submeshes.empty()
+                                       ? 1
+                                       : static_cast<int>(mesh.submeshes.size());
+
+              auto configureRenderer = [&](Entity created) {
+                auto &renderer = created.AddComponent<MeshRendererComponent>();
+                renderer.SetMesh(*meshHandle, mesh.bounds,
+                                 rel.generic_string(), true, subCount);
+                renderer.materialIndices.assign(static_cast<size_t>(subCount),
+                                                -1);
+                if (!mesh.submeshes.empty()) {
+                  for (size_t i = 0; i < mesh.submeshes.size(); ++i) {
+                    renderer.materialIndices[i] = mesh.submeshes[i].materialSlot;
                   }
                 }
+                renderer.appliedMaterialPaths.resize(
+                    static_cast<size_t>(subCount));
+                created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
+              };
 
-                rebuildSceneMeshesFromComponents(scene);
-
-                if (!g_DetailsLocked) {
-                  scene.SetSelectedEntity(created);
+              if (hasBlueprintOpen) {
+                std::string parentId = blueprintDoc->GetAsset().rootNodeId;
+                if (outlinerActions.spawnMeshParent && scene.GetRegistry().valid(*outlinerActions.spawnMeshParent)) {
+                  Entity parent(*outlinerActions.spawnMeshParent, &scene);
+                  if (parent && parent.HasComponent<BlueprintNodeComponent>()) {
+                    parentId = parent.GetComponent<BlueprintNodeComponent>().nodeId;
+                  }
                 }
-                logSuccess("Added mesh actor: " + rel.filename().string());
+                Entity created;
+                if (blueprintDoc->AddChildNode(parentId, baseName, &created)) {
+                  configureRenderer(created);
+
+                  blueprintDoc->SyncNodeFromEntity(created);
+                  Scene* previewScene = blueprintDoc ? blueprintDoc->GetScene() : nullptr;
+                  if (previewScene) {
+                    rebuildSceneMeshesFromComponents(*previewScene, false);
+                  }
+
+                  if (!g_DetailsLocked) {
+                    scene.SetSelectedEntity(created);
+                  }
+                  if (blueprintDoc) blueprintDoc->SetDirty(true);
+                  logSuccess("Added mesh actor to blueprint: " + rel.filename().string());
+                } else {
+                  logFailure("Failed to create mesh actor.");
+                }
+              } else {
+                Entity created = scene.CreateEntity(makeUniqueEntityName(baseName));
+                if (!created) {
+                  logFailure("Failed to create mesh actor.");
+                } else {
+                  configureRenderer(created);
+
+                  auto &transform = created.GetComponent<TransformComponent>();
+                  if (g_cameraPtr) {
+                    const float yawR = g_cameraPtr->yawDeg * 3.1415926535f / 180.0f;
+                    const float pitchR =
+                        g_cameraPtr->pitchDeg * 3.1415926535f / 180.0f;
+                    const Vec3 forward =
+                        vnorm(v3(std::cos(yawR) * std::cos(pitchR),
+                                 std::sin(pitchR),
+                                 std::sin(yawR) * std::cos(pitchR)));
+                    constexpr float kSpawnDistance = 4.0f;
+                    transform.position =
+                        vadd(g_cameraPtr->position, vscale(forward, kSpawnDistance));
+                  } else {
+                    transform.position = Vec3(0.0f, 0.0f, 0.0f);
+                  }
+                  transform.rotation = Vec3(0.0f, 0.0f, 0.0f);
+                  transform.scale = Vec3(1.0f, 1.0f, 1.0f);
+
+                  if (outlinerActions.spawnMeshParent) {
+                    entt::entity parentHandle = *outlinerActions.spawnMeshParent;
+                    if (scene.GetRegistry().valid(parentHandle)) {
+                      Entity parent(parentHandle, &scene);
+                      if (parent && parent.HasComponent<FolderComponent>()) {
+                        scene.SetParent(created, parent);
+                      }
+                    }
+                  }
+
+                  rebuildSceneMeshesFromComponents(scene);
+
+                  if (!g_DetailsLocked) {
+                    scene.SetSelectedEntity(created);
+                  }
+                  if (g_ActiveDocument) g_ActiveDocument->SetDirty(true);
+                  logSuccess("Added mesh actor: " + rel.filename().string());
+                }
               }
             }
           } else {
@@ -9540,6 +9639,18 @@ int main(int argc, char *argv[]) {
 
         AssetBrowserResult browserResult =
             DrawAssetBrowserPanel(assetBrowserStatus);
+
+#if HEPHAESTUS_EDITOR_HTML_UI
+        if (g_HtmlEditorUIHost) {
+          if (auto meshRel = g_HtmlEditorUIHost->ConsumeAssetBrowserMeshSpawn()) {
+            browserResult.spawnMeshAssetRel = *meshRel;
+          }
+        }
+#endif
+
+        if (browserResult.spawnMeshAssetRel) {
+          g_PendingViewportDropAsset = *browserResult.spawnMeshAssetRel;
+        }
 
         if (g_ReimportManager) {
           auto completed = g_ReimportManager->DrainCompleted();

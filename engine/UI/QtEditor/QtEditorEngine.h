@@ -147,6 +147,13 @@ public:
      */
     Hephaestus::EngineFrameRenderer* GetFrameRenderer() { return m_frameRenderer.get(); }
 
+    /**
+     * @brief Upload a mesh to the GPU and add it to the mesh library.
+     * @return Mesh handle, or InvalidMesh on failure.
+     */
+    size_t uploadMeshToGPU(const std::string& name, const MeshData& data,
+                           const std::filesystem::path& sourcePath, bool imported);
+
 signals:
     /**
      * @brief Emitted when engine initialization completes.
@@ -180,8 +187,6 @@ private:
     void createTestMesh();
     void cleanupVulkanResources();
     void createBuiltinMeshes();
-    size_t uploadMeshToGPU(const std::string& name, const MeshData& data,
-                           const std::filesystem::path& sourcePath, bool imported);
     std::string normalizeAssetPath(const std::string& assetPath) const;
     
     // Input helper methods

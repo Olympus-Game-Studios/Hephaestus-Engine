@@ -730,7 +730,7 @@
 
     function spawnMeshFromAsset(rel, name) {
       if (!rel) return false;
-      const r = window.hep.callCpp('actor.spawn_mesh', { rel: rel });
+      const r = window.hep.callCpp('assets.spawn_mesh', { rel: rel });
       if (!r || !r.ok) {
         setStatus('Spawn mesh failed: ' + (r && r.error ? r.error : 'error'));
         return false;

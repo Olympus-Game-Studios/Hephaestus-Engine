@@ -513,11 +513,22 @@ void AssetBrowserWidget::onContentsDoubleClicked(const QModelIndex& index)
 
     QString relativePath = index.data(RelativePathRole).toString();
     bool isDirectory = index.data(IsDirectoryRole).toBool();
+    AssetType assetType = static_cast<AssetType>(index.data(AssetTypeRole).toInt());
 
     if (isDirectory) {
         // Navigate into folder
         NavigateTo(relativePath);
     } else {
+        if (assetType == AssetType::StaticMesh) {
+            // Spawn mesh into the active scene
+            std::cout << "[AssetBrowser] Spawning mesh: " << relativePath.toStdString() << "\n";
+            emit meshSpawnRequested(relativePath);
+            if (m_statusLabel) {
+                m_statusLabel->setText(tr("Spawning mesh: %1").arg(relativePath));
+            }
+            return;
+        }
+
         // Open asset
         std::cout << "[AssetBrowser] Opening asset: " << relativePath.toStdString() << "\n";
         emit assetOpenRequested(relativePath);

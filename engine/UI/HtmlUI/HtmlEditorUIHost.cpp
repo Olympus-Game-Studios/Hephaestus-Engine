@@ -2229,6 +2229,15 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     return std::string("{\"ok\":true}");
   });
 
+  bridge_.RegisterHandler("assets.spawn_mesh", [this](const std::string& payload) -> std::string {
+    auto relOpt = EditorMessageBridge::ParseStringField(payload, "rel");
+    if (!relOpt || relOpt->empty()) {
+      return std::string("{\"ok\":false,\"error\":\"missing_rel\"}");
+    }
+    pendingAssetBrowserSpawnMesh_ = *relOpt;
+    return std::string("{\"ok\":true}");
+  });
+
   // Light properties handlers
   bridge_.RegisterHandler("light.get", [this](const std::string& payload) -> std::string {
     if (!scene_) {
@@ -3666,6 +3675,12 @@ std::optional<std::string> HtmlEditorUIHost::ConsumeAddActorsSpawnMeshRequest() 
 std::optional<std::pair<std::string, uint32_t>> HtmlEditorUIHost::ConsumeOutlinerAssetDropRequest() {
   auto v = pendingOutlinerAssetDrop_;
   pendingOutlinerAssetDrop_.reset();
+  return v;
+}
+
+std::optional<std::string> HtmlEditorUIHost::ConsumeAssetBrowserMeshSpawn() {
+  auto v = pendingAssetBrowserSpawnMesh_;
+  pendingAssetBrowserSpawnMesh_.reset();
   return v;
 }
 
