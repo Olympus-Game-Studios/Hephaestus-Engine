@@ -1942,11 +1942,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     }
     // ── End Skybox ───────────────────────────────────────────────────
     
-    // Bind pipeline
-    VkPipeline pipeline = m_pipeline->GetPipeline(false);
-    if (pipeline != VK_NULL_HANDLE) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    }
+    // Bind pipeline dynamically per-object (backface culling toggle)
+    VkPipeline currentPipeline = VK_NULL_HANDLE;
     
     // Render scene meshes if we have a scene
     static std::string lastSceneName;
@@ -2186,6 +2183,17 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 }
                 skippedCount++;
                 continue;
+            }
+
+            // Select pipeline based on per-object backface culling setting
+            VkPipeline desiredPipeline = m_pipeline->GetPipeline(renderer.backfaceCulling);
+            if (desiredPipeline == VK_NULL_HANDLE) {
+                skippedCount++;
+                continue;
+            }
+            if (desiredPipeline != currentPipeline) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
+                currentPipeline = desiredPipeline;
             }
             
             // Bind vertex buffer if different
@@ -3984,15 +3992,15 @@ bool EngineFrameRenderer::createIdPickerResources()
     viewportState.viewportCount = 1;
     viewportState.scissorCount = 1;
     
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.depthClampEnable = VK_FALSE;
-    rasterizer.rasterizerDiscardEnable = VK_FALSE;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.depthBiasEnable = VK_FALSE;
+    VkPipelineRasterizationStateCreateInfo rasterizerBase{};
+    rasterizerBase.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizerBase.depthClampEnable = VK_FALSE;
+    rasterizerBase.rasterizerDiscardEnable = VK_FALSE;
+    rasterizerBase.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizerBase.lineWidth = 1.0f;
+    rasterizerBase.cullMode = VK_CULL_MODE_NONE;
+    rasterizerBase.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizerBase.depthBiasEnable = VK_FALSE;
     
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -4031,7 +4039,6 @@ bool EngineFrameRenderer::createIdPickerResources()
     pipelineInfo.pVertexInputState = &vertexInputInfo;
     pipelineInfo.pInputAssemblyState = &inputAssembly;
     pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
@@ -4039,10 +4046,28 @@ bool EngineFrameRenderer::createIdPickerResources()
     pipelineInfo.layout = m_idPicker.pipelineLayout;
     pipelineInfo.renderPass = m_idPicker.renderPass;
     pipelineInfo.subpass = 0;
-    
-    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, 
-                                  &m_idPicker.pipeline) != VK_SUCCESS) {
+
+    auto createIdPipeline = [&](VkCullModeFlags cullMode, VkPipeline& outPipeline) -> bool {
+        VkPipelineRasterizationStateCreateInfo rasterizer = rasterizerBase;
+        rasterizer.cullMode = cullMode;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &outPipeline) != VK_SUCCESS) {
+            return false;
+        }
+        return true;
+    };
+
+    if (!createIdPipeline(VK_CULL_MODE_NONE, m_idPicker.pipeline) ||
+        !createIdPipeline(VK_CULL_MODE_FRONT_BIT, m_idPicker.pipelineBackface)) {
         std::cerr << "[IdPicker] Failed to create graphics pipeline\n";
+        if (m_idPicker.pipeline) {
+            vkDestroyPipeline(device, m_idPicker.pipeline, nullptr);
+            m_idPicker.pipeline = VK_NULL_HANDLE;
+        }
+        if (m_idPicker.pipelineBackface) {
+            vkDestroyPipeline(device, m_idPicker.pipelineBackface, nullptr);
+            m_idPicker.pipelineBackface = VK_NULL_HANDLE;
+        }
         vkDestroyShaderModule(device, vertShader, nullptr);
         vkDestroyShaderModule(device, fragShader, nullptr);
         return false;
@@ -4106,8 +4131,6 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_idPicker.pipeline);
-    
     // Bind camera descriptor set
     uint32_t dynOffset = 0;
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_idPicker.pipelineLayout,
@@ -4118,6 +4141,7 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
     
     VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
     VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
+    VkPipeline currentPipeline = VK_NULL_HANDLE;
     
     for (auto entityHandle : renderView) {
         Entity entity(entityHandle, scene);
@@ -4130,6 +4154,15 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
         MeshGPU& mesh = m_meshLibrary[renderer.meshHandle];
         if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
             mesh.indexBuffer.buffer == VK_NULL_HANDLE) continue;
+
+        VkPipeline desiredPipeline = renderer.backfaceCulling
+            ? m_idPicker.pipelineBackface
+            : m_idPicker.pipeline;
+        if (desiredPipeline == VK_NULL_HANDLE) continue;
+        if (desiredPipeline != currentPipeline) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
+            currentPipeline = desiredPipeline;
+        }
         
         // Bind vertex buffer if different
         if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
@@ -4228,6 +4261,11 @@ void EngineFrameRenderer::cleanupIdPickerResources()
     if (m_idPicker.pipeline) {
         vkDestroyPipeline(device, m_idPicker.pipeline, nullptr);
         m_idPicker.pipeline = VK_NULL_HANDLE;
+    }
+
+    if (m_idPicker.pipelineBackface) {
+        vkDestroyPipeline(device, m_idPicker.pipelineBackface, nullptr);
+        m_idPicker.pipelineBackface = VK_NULL_HANDLE;
     }
     
     if (m_idPicker.pipelineLayout) {

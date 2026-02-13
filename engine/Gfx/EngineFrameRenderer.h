@@ -517,8 +517,9 @@ private:
         VkRenderPass renderPass = VK_NULL_HANDLE;
         VkFramebuffer framebuffer = VK_NULL_HANDLE;
         
-        // Pipeline for rendering entity IDs
-        VkPipeline pipeline = VK_NULL_HANDLE;
+        // Pipelines for rendering entity IDs
+        VkPipeline pipeline = VK_NULL_HANDLE; // No culling
+        VkPipeline pipelineBackface = VK_NULL_HANDLE; // Backface culling enabled
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         
         // Readback staging buffer

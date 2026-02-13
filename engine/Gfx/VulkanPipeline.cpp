@@ -249,7 +249,7 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext)
     };
 
     pipeline = buildPipeline(VK_CULL_MODE_NONE);
-    pipelineBackface = buildPipeline(VK_CULL_MODE_BACK_BIT);
+    pipelineBackface = buildPipeline(VK_CULL_MODE_FRONT_BIT);
 
     vkDestroyShaderModule(device, vertShader, nullptr);
     vkDestroyShaderModule(device, fragShader, nullptr);
