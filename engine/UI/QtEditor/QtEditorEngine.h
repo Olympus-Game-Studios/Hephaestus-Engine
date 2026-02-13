@@ -36,6 +36,11 @@ class LuaScriptEngine;
 class ScriptEngine;
 struct GLFWwindow;
 
+namespace Physics {
+class JoltPhysicsEngine;
+class JoltPhysicsSystem;
+}
+
 namespace Hephaestus {
 namespace QtEditor {
 
@@ -278,6 +283,9 @@ private:
     Hephaestus::PlayModeManager m_playModeManager;
     std::unique_ptr<LuaScriptEngine> m_luaScriptEngine;
     std::unique_ptr<ScriptEngine>    m_cppScriptEngine;
+    std::unique_ptr<Physics::JoltPhysicsEngine> m_joltPhysicsEngine;
+    std::unique_ptr<Physics::JoltPhysicsSystem> m_joltPhysicsSystem;
+    bool m_physicsInitialized = false;
     GLFWwindow* m_glfwWindow = nullptr;   // borrowed from main if GLFW path exists
     bool m_editorGizmoVisibleBeforePlay = true;
 

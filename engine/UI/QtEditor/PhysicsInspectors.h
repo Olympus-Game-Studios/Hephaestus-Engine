@@ -16,6 +16,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "ComponentInspector.h"
+#include "../../Scene/Components.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -123,6 +124,7 @@ private:
     void connectSignals();
     void applyToComponent();
     void updateShapeFieldsVisibility();
+    void autoFitToMeshBounds(PhysicsShapeType newType);
     void blockAllSignals(bool block);
 
     // Widgets

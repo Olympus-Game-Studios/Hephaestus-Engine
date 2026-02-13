@@ -413,18 +413,41 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
         return BuildMeshShapeFromMeshData(*meshData, transform.scale);
     };
 
-    auto buildShape = [&](const PhysicsShapeComponent& shapeComp, const TransformComponent& transformComp) -> JPH::RefConst<JPH::Shape> {
+    auto buildShape = [&](const PhysicsShapeComponent& shapeComp, const TransformComponent& transformComp,
+                          const MeshRendererComponent* meshRenderer) -> JPH::RefConst<JPH::Shape> {
         Vec3 scale = transformComp.scale;
         Vec3 absScale = Vec3(std::abs(scale.x), std::abs(scale.y), std::abs(scale.z));
+
+        // Compute mesh bounds center so we can offset the collision shape to match the visual mesh.
+        // Many meshes have their origin at the bottom (e.g. character capsules) rather than
+        // at the geometric center, so the physics shape must be shifted to align.
+        Vec3 meshCenter(0.0f, 0.0f, 0.0f);
+        Vec3 meshHalf(0.5f, 0.5f, 0.5f);
+        if (meshRenderer) {
+            Vec3 mn = meshRenderer->localBounds.min;
+            Vec3 mx = meshRenderer->localBounds.max;
+            meshCenter = Vec3((mn.x + mx.x) * 0.5f,
+                              (mn.y + mx.y) * 0.5f,
+                              (mn.z + mx.z) * 0.5f);
+            meshHalf = Vec3(std::max((mx.x - mn.x) * 0.5f, 0.001f),
+                            std::max((mx.y - mn.y) * 0.5f, 0.001f),
+                            std::max((mx.z - mn.z) * 0.5f, 0.001f));
+        }
 
         auto applyOffset = [&](const JPH::RefConst<JPH::Shape>& baseShape) -> JPH::RefConst<JPH::Shape> {
             if (!baseShape) {
                 return {};
             }
+            // Combine user-specified offset with the mesh bounds center offset.
+            Vec3 totalOffset(
+                shapeComp.offset.x + meshCenter.x,
+                shapeComp.offset.y + meshCenter.y,
+                shapeComp.offset.z + meshCenter.z
+            );
             Vec3 offsetScaled = Vec3(
-                shapeComp.offset.x * scale.x,
-                shapeComp.offset.y * scale.y,
-                shapeComp.offset.z * scale.z
+                totalOffset.x * scale.x,
+                totalOffset.y * scale.y,
+                totalOffset.z * scale.z
             );
             const float offsetLenSq = offsetScaled.x * offsetScaled.x + offsetScaled.y * offsetScaled.y + offsetScaled.z * offsetScaled.z;
             if (offsetLenSq < 1e-6f) {
@@ -526,11 +549,13 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
     }
 
     // If we still don't have a shape, fall back to an explicit primitive shape if present.
+    // Pass the mesh renderer so buildShape can offset the collision shape to match
+    // the mesh's geometric center (handles meshes with origin not at center).
     if (!shape && shapeComp) {
-        shape = buildShape(*shapeComp, transform);
+        shape = buildShape(*shapeComp, transform, renderer);
     }
 
-    // If no explicit physics shape (or unsupported type), try deriving one from render bounds.
+    // If no explicit physics shape, derive from render bounds.
     if (!shape && renderer) {
         shape = buildBoxFromMeshRenderer(*renderer, transform);
     }

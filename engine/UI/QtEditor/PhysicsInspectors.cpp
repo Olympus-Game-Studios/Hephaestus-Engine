@@ -493,6 +493,8 @@ void PhysicsShapeInspector::buildUI()
 void PhysicsShapeInspector::connectSignals()
 {
     connect(m_shapeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+        auto newType = static_cast<PhysicsShapeType>(m_shapeCombo->currentData().toInt());
+        autoFitToMeshBounds(newType);
         updateShapeFieldsVisibility();
         applyToComponent();
     });
@@ -589,6 +591,58 @@ void PhysicsShapeInspector::updateShapeFieldsVisibility()
     m_boxGroup->setVisible(t == PhysicsShapeType::Box);
     m_sphereGroup->setVisible(t == PhysicsShapeType::Sphere);
     m_capsuleGroup->setVisible(t == PhysicsShapeType::Capsule);
+}
+
+void PhysicsShapeInspector::autoFitToMeshBounds(PhysicsShapeType newType)
+{
+    if (!m_ctx || !m_ctx->HasActiveScene()) return;
+    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
+    if (!reg.valid(m_entity) || !reg.all_of<MeshRendererComponent>(m_entity)) return;
+
+    const auto& renderer = reg.get<MeshRendererComponent>(m_entity);
+    Vec3 mn = renderer.localBounds.min;
+    Vec3 mx = renderer.localBounds.max;
+    Vec3 half((mx.x - mn.x) * 0.5f,
+              (mx.y - mn.y) * 0.5f,
+              (mx.z - mn.z) * 0.5f);
+    Vec3 center((mn.x + mx.x) * 0.5f,
+                (mn.y + mx.y) * 0.5f,
+                (mn.z + mx.z) * 0.5f);
+
+    blockAllSignals(true);
+
+    // The physics system automatically offsets the shape by the mesh bounds center,
+    // so the user offset should default to zero (= centered on mesh geometry).
+    m_offX->setValue(0.0);
+    m_offY->setValue(0.0);
+    m_offZ->setValue(0.0);
+
+    switch (newType) {
+        case PhysicsShapeType::Box: {
+            m_extX->setValue(static_cast<double>(std::max(half.x, 0.001f)));
+            m_extY->setValue(static_cast<double>(std::max(half.y, 0.001f)));
+            m_extZ->setValue(static_cast<double>(std::max(half.z, 0.001f)));
+            break;
+        }
+        case PhysicsShapeType::Sphere: {
+            float maxHalf = std::max(half.x, std::max(half.y, half.z));
+            m_radiusSpin->setValue(static_cast<double>(std::max(maxHalf, 0.001f)));
+            break;
+        }
+        case PhysicsShapeType::Capsule: {
+            // Capsule along Y axis.  Jolt total height = 2 * halfHeight + 2 * radius.
+            // radius = max(halfX, halfZ), height (cylinder part) = max(2*(halfY - radius), 0.01)
+            float capRadius = std::max(half.x, half.z);
+            float cylHeight = std::max((half.y - capRadius) * 2.0f, 0.01f);
+            m_capRadiusSpin->setValue(static_cast<double>(std::max(capRadius, 0.001f)));
+            m_capHeightSpin->setValue(static_cast<double>(cylHeight));
+            break;
+        }
+        default:
+            break;
+    }
+
+    blockAllSignals(false);
 }
 
 void PhysicsShapeInspector::blockAllSignals(bool block)

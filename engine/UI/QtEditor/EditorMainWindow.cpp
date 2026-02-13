@@ -2747,9 +2747,25 @@ void EditorMainWindow::showAddComponentMenu()
         menu.addAction(tr("Rigid Body"), [this, ctx, entity, &reg]() {
             EditorUndoManager::PushSnapshot(ctx, "Add RigidBody");
             reg.emplace<RigidBodyComponent>(entity);
-            // Auto-add PhysicsShape if missing
-            if (!reg.all_of<PhysicsShapeComponent>(entity))
-                reg.emplace<PhysicsShapeComponent>(entity);
+            // Auto-add PhysicsShape if missing, and auto-fit to mesh bounds
+            if (!reg.all_of<PhysicsShapeComponent>(entity)) {
+                auto& shape = reg.emplace<PhysicsShapeComponent>(entity);
+                if (reg.all_of<MeshRendererComponent>(entity)) {
+                    const auto& renderer = reg.get<MeshRendererComponent>(entity);
+                    Vec3 mn = renderer.localBounds.min;
+                    Vec3 mx = renderer.localBounds.max;
+                    Vec3 half((mx.x - mn.x) * 0.5f,
+                              (mx.y - mn.y) * 0.5f,
+                              (mx.z - mn.z) * 0.5f);
+                    shape.type = PhysicsShapeType::Box;
+                    shape.extents = Vec3(std::max(half.x, 0.001f),
+                                         std::max(half.y, 0.001f),
+                                         std::max(half.z, 0.001f));
+                    // Offset is left at zero — the physics system automatically
+                    // applies the mesh bounds center offset at body creation time.
+                    shape.offset = Vec3(0.0f, 0.0f, 0.0f);
+                }
+            }
             ctx->MarkDirty();
             refreshDetailsPanel();
         });

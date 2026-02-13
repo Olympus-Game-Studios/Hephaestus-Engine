@@ -21,11 +21,15 @@
 #include "../../Assets/MeshAsset.h"
 #include "../../Assets/ModelImporter.h"
 #include "../../Core/ProjectContext.h"
+#include "../../Physics/JoltPhysicsEngine.h"
+#include "../../Physics/JoltPhysicsSystem.h"
 #include "../../Scripting/LuaScriptEngine.h"
 #include "../../Scripting/ScriptEngine.h"
 #include "../../Scripting/LuaScriptComponent.h"
 
 #include <GLFW/glfw3.h>  // For GLFW key code constants used by RuntimeInputState
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/CastResult.h>
 
 #include <iostream>
 #include <vector>
@@ -366,6 +370,17 @@ void QtEditorEngine::Shutdown()
     if (m_device && m_device->device) {
         vkDeviceWaitIdle(m_device->device);
     }
+
+    if (m_joltPhysicsSystem) {
+        m_joltPhysicsSystem->ClearAllBodies();
+        m_joltPhysicsSystem->SetEnabled(false);
+    }
+    if (m_joltPhysicsEngine && m_physicsInitialized) {
+        m_joltPhysicsEngine->Shutdown();
+        m_physicsInitialized = false;
+    }
+    m_joltPhysicsSystem.reset();
+    m_joltPhysicsEngine.reset();
     
     cleanupVulkanResources();
     
@@ -933,6 +948,45 @@ void QtEditorEngine::FocusOnSelection()
     }
     
     Scene* scene = m_editorContext.GetActiveScene();
+
+    // ── Initialize physics (Qt path) and configure project root ───────────
+    if (!m_joltPhysicsEngine) {
+        m_joltPhysicsEngine = std::make_unique<Physics::JoltPhysicsEngine>();
+        try {
+            m_joltPhysicsEngine->Initialize();
+            m_joltPhysicsSystem = std::make_unique<Physics::JoltPhysicsSystem>(*m_joltPhysicsEngine);
+            m_physicsInitialized = true;
+            std::cout << "[QtEditorEngine] Physics engine initialized\n";
+        } catch (const std::exception& e) {
+            m_physicsInitialized = false;
+            std::cerr << "[QtEditorEngine] Failed to initialize physics engine: " << e.what() << "\n";
+        }
+    }
+
+    if (m_physicsInitialized && m_joltPhysicsSystem) {
+        std::filesystem::path projectRoot;
+        const std::string& scenePathStr = m_editorContext.GetScenePath();
+        if (!scenePathStr.empty()) {
+            std::filesystem::path cursor = std::filesystem::path(scenePathStr).parent_path();
+            while (!cursor.empty() && cursor.has_filename() && cursor.filename() != "assets") {
+                std::filesystem::path parent = cursor.parent_path();
+                if (parent == cursor) {
+                    break;
+                }
+                cursor = parent;
+            }
+            if (!cursor.empty() && cursor.has_filename() && cursor.filename() == "assets") {
+                projectRoot = cursor.parent_path();
+            }
+        }
+        if (projectRoot.empty()) {
+            projectRoot = std::filesystem::current_path();
+        }
+
+        m_joltPhysicsSystem->SetProjectRoot(projectRoot);
+        m_joltPhysicsSystem->ClearAllBodies();
+        m_joltPhysicsSystem->SetEnabled(true);
+    }
     entt::entity selected = m_editorContext.GetSelectedEntity();
     
     float focusX = 0.0f;
@@ -1010,6 +1064,19 @@ void QtEditorEngine::onTick()
     if (isPlaying) {
         populateRuntimeInputState();
         m_playModeManager.Tick(dt);
+
+        if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
+            try {
+                Scene* activeScene = m_editorContext.GetActiveScene();
+                m_joltPhysicsSystem->SetEnabled(true);
+                m_joltPhysicsSystem->Update(*activeScene, dt);
+            } catch (const std::exception& e) {
+                std::cerr << "[QtEditorEngine] Physics update error: " << e.what() << "\n";
+                m_physicsInitialized = false;
+            }
+        }
+    } else if (m_joltPhysicsSystem) {
+        m_joltPhysicsSystem->SetEnabled(false);
     }
 
     // ── Camera update ──────────────────────────────────────────────────────
@@ -1661,6 +1728,163 @@ void QtEditorEngine::StartPlayMode()
         m_luaScriptEngine->Initialize(scene, m_glfwWindow);
     }
 
+    // Provide Jolt physics callbacks to Lua scripts in Qt play mode.
+    PhysicsBinding physicsBinding{};
+    physicsBinding.hasBody = [this](uint32_t entityId) -> bool {
+        if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_editorContext.HasActiveScene()) {
+            return false;
+        }
+        Scene* activeScene = m_editorContext.GetActiveScene();
+        entt::entity handle = static_cast<entt::entity>(entityId);
+        if (!activeScene->GetRegistry().valid(handle)) {
+            return false;
+        }
+        return !m_joltPhysicsSystem->GetBodyID(handle).IsInvalid();
+    };
+
+    physicsBinding.getLinearVelocity = [this](uint32_t entityId, Vec3& outVelocity) -> bool {
+        if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine || !m_editorContext.HasActiveScene()) {
+            return false;
+        }
+        Scene* activeScene = m_editorContext.GetActiveScene();
+        entt::entity handle = static_cast<entt::entity>(entityId);
+        if (!activeScene->GetRegistry().valid(handle)) {
+            return false;
+        }
+        JPH::BodyID bodyId = m_joltPhysicsSystem->GetBodyID(handle);
+        if (bodyId.IsInvalid()) {
+            return false;
+        }
+        JPH::Vec3 vel = m_joltPhysicsEngine->GetBodyInterface().GetLinearVelocity(bodyId);
+        outVelocity = Vec3(vel.GetX(), vel.GetY(), vel.GetZ());
+        return true;
+    };
+
+    physicsBinding.setLinearVelocity = [this](uint32_t entityId, const Vec3& velocity, bool activate) -> bool {
+        if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine || !m_editorContext.HasActiveScene()) {
+            return false;
+        }
+        Scene* activeScene = m_editorContext.GetActiveScene();
+        entt::entity handle = static_cast<entt::entity>(entityId);
+        if (!activeScene->GetRegistry().valid(handle)) {
+            return false;
+        }
+        JPH::BodyID bodyId = m_joltPhysicsSystem->GetBodyID(handle);
+        if (bodyId.IsInvalid()) {
+            return false;
+        }
+        m_joltPhysicsEngine->GetBodyInterface().SetLinearVelocity(
+            bodyId, JPH::Vec3(velocity.x, velocity.y, velocity.z));
+        if (activate) {
+            m_joltPhysicsEngine->GetBodyInterface().ActivateBody(bodyId);
+        }
+        return true;
+    };
+
+    physicsBinding.setAngularVelocity = [this](uint32_t entityId, const Vec3& velocity, bool activate) -> bool {
+        if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine || !m_editorContext.HasActiveScene()) {
+            return false;
+        }
+        Scene* activeScene = m_editorContext.GetActiveScene();
+        entt::entity handle = static_cast<entt::entity>(entityId);
+        if (!activeScene->GetRegistry().valid(handle)) {
+            return false;
+        }
+        JPH::BodyID bodyId = m_joltPhysicsSystem->GetBodyID(handle);
+        if (bodyId.IsInvalid()) {
+            return false;
+        }
+        m_joltPhysicsEngine->GetBodyInterface().SetAngularVelocity(
+            bodyId, JPH::Vec3(velocity.x, velocity.y, velocity.z));
+        if (activate) {
+            m_joltPhysicsEngine->GetBodyInterface().ActivateBody(bodyId);
+        }
+        return true;
+    };
+
+    physicsBinding.setRotation = [this](uint32_t entityId, const Vec3& rotationEuler, bool activate) -> bool {
+        if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine || !m_editorContext.HasActiveScene()) {
+            return false;
+        }
+        Scene* activeScene = m_editorContext.GetActiveScene();
+        entt::entity handle = static_cast<entt::entity>(entityId);
+        if (!activeScene->GetRegistry().valid(handle)) {
+            return false;
+        }
+        JPH::BodyID bodyId = m_joltPhysicsSystem->GetBodyID(handle);
+        if (bodyId.IsInvalid()) {
+            return false;
+        }
+
+        JPH::Quat qx = JPH::Quat::sRotation(JPH::Vec3::sAxisX(), rotationEuler.x);
+        JPH::Quat qy = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), rotationEuler.y);
+        JPH::Quat qz = JPH::Quat::sRotation(JPH::Vec3::sAxisZ(), rotationEuler.z);
+        JPH::Quat rot = qx * qy * qz;
+
+        JPH::BodyInterface& bi = m_joltPhysicsEngine->GetBodyInterface();
+        JPH::RVec3 pos = bi.GetCenterOfMassPosition(bodyId);
+        bi.SetPositionAndRotation(bodyId, pos, rot,
+                                  activate ? JPH::EActivation::Activate
+                                           : JPH::EActivation::DontActivate);
+        return true;
+    };
+
+    physicsBinding.raycast = [this](uint32_t entityId, const Vec3& origin, const Vec3& direction,
+                                    float maxDistance, PhysicsRaycastHit& outHit) -> bool {
+        if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine || !m_editorContext.HasActiveScene()) {
+            return false;
+        }
+
+        entt::entity handle = static_cast<entt::entity>(entityId);
+        JPH::BodyID ignoreBody = m_joltPhysicsSystem->GetBodyID(handle);
+
+        Vec3 dir = direction;
+        float lenSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
+        if (lenSq < 1e-8f || maxDistance <= 0.0f) {
+            return false;
+        }
+        float invLen = 1.0f / std::sqrt(lenSq);
+        dir.x *= invLen;
+        dir.y *= invLen;
+        dir.z *= invLen;
+
+        JPH::Vec3 start(origin.x, origin.y, origin.z);
+        JPH::Vec3 end(origin.x + dir.x * maxDistance,
+                      origin.y + dir.y * maxDistance,
+                      origin.z + dir.z * maxDistance);
+        JPH::RRayCast ray(JPH::RVec3(start), JPH::Vec3(end - start));
+
+    #ifdef RayCastResult
+    #undef RayCastResult
+    #endif
+
+        JPH::RayCastResult rayCastResult;
+        auto& query = m_joltPhysicsEngine->GetPhysicsSystem()->GetNarrowPhaseQuery();
+
+        bool hit = false;
+        if (!ignoreBody.IsInvalid()) {
+            JPH::IgnoreSingleBodyFilter filter(ignoreBody);
+            hit = query.CastRay(ray, rayCastResult, {}, {}, filter);
+        } else {
+            hit = query.CastRay(ray, rayCastResult);
+        }
+
+        if (!hit) {
+            outHit.hit = false;
+            return true;
+        }
+
+        outHit.hit = true;
+        outHit.distance = rayCastResult.mFraction * maxDistance;
+        outHit.point = Vec3(origin.x + dir.x * outHit.distance,
+                            origin.y + dir.y * outHit.distance,
+                            origin.z + dir.z * outHit.distance);
+        outHit.normal = Vec3(0.0f, 1.0f, 0.0f);
+        return true;
+    };
+
+    m_luaScriptEngine->SetPhysicsBinding(std::move(physicsBinding));
+
     // ── Initialize C++ script engine ───────────────────────────────────────
     if (!m_cppScriptEngine) {
         m_cppScriptEngine = std::make_unique<ScriptEngine>();
@@ -1686,6 +1910,11 @@ void QtEditorEngine::StopPlayMode()
 {
     if (m_playModeManager.IsEditor()) {
         return;  // nothing to stop
+    }
+
+    if (m_joltPhysicsSystem) {
+        m_joltPhysicsSystem->ClearAllBodies();
+        m_joltPhysicsSystem->SetEnabled(false);
     }
 
     m_playModeManager.StopPlayMode();

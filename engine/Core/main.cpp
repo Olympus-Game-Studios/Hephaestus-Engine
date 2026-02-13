@@ -1945,7 +1945,18 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
       rb = RigidBodyComponent::CreateDynamic();
       if (!hasPhysicsShape) {
         auto &shape = selectedEntity.AddComponent<PhysicsShapeComponent>();
-        shape = PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f));
+        // Auto-fit box extents from mesh bounds if available
+        if (selectedEntity.HasComponent<MeshRendererComponent>()) {
+          const auto &renderer = selectedEntity.GetComponent<MeshRendererComponent>();
+          Vec3 mn = renderer.localBounds.min;
+          Vec3 mx = renderer.localBounds.max;
+          shape = PhysicsShapeComponent::CreateBox(
+              Vec3(std::max((mx.x - mn.x) * 0.5f, 0.001f),
+                   std::max((mx.y - mn.y) * 0.5f, 0.001f),
+                   std::max((mx.z - mn.z) * 0.5f, 0.001f)));
+        } else {
+          shape = PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f));
+        }
         hasPhysicsShape = true;
       }
       hasRigidBody = true;
@@ -2061,16 +2072,46 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
       break;
     }
     if (ImGui::Combo("Shape Type", &shapeIndex, shapeLabels, 3)) {
+      PhysicsShapeType newType;
       switch (shapeIndex) {
       case 1:
-        shape.type = PhysicsShapeType::Sphere;
+        newType = PhysicsShapeType::Sphere;
         break;
       case 2:
-        shape.type = PhysicsShapeType::Capsule;
+        newType = PhysicsShapeType::Capsule;
         break;
       default:
-        shape.type = PhysicsShapeType::Box;
+        newType = PhysicsShapeType::Box;
         break;
+      }
+      shape.type = newType;
+
+      // Auto-fit shape dimensions from mesh bounds when changing shape type
+      if (selectedEntity.HasComponent<MeshRendererComponent>()) {
+        const auto &meshR = selectedEntity.GetComponent<MeshRendererComponent>();
+        Vec3 mn = meshR.localBounds.min;
+        Vec3 mx = meshR.localBounds.max;
+        Vec3 halfEx((mx.x - mn.x) * 0.5f,
+                    (mx.y - mn.y) * 0.5f,
+                    (mx.z - mn.z) * 0.5f);
+        shape.offset = Vec3(0, 0, 0); // mesh center offset applied by physics system
+        switch (newType) {
+        case PhysicsShapeType::Box:
+          shape.extents = Vec3(std::max(halfEx.x, 0.001f),
+                               std::max(halfEx.y, 0.001f),
+                               std::max(halfEx.z, 0.001f));
+          break;
+        case PhysicsShapeType::Sphere:
+          shape.radius = std::max({halfEx.x, halfEx.y, halfEx.z, 0.001f});
+          break;
+        case PhysicsShapeType::Capsule: {
+          float capR = std::max(halfEx.x, halfEx.z);
+          shape.radius = std::max(capR, 0.001f);
+          shape.height = std::max((halfEx.y - capR) * 2.0f, 0.01f);
+          break;
+        }
+        default: break;
+        }
       }
       entityChanged = true;
     }
