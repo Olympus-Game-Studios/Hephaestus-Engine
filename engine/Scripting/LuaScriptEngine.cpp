@@ -431,6 +431,10 @@ void LuaScriptEngine::SetPhysicsBinding(PhysicsBinding binding) {
     m_PhysicsBinding = std::move(binding);
 }
 
+void LuaScriptEngine::SetRuntimeInputState(const RuntimeInputState& state) {
+    m_RuntimeInput = state;
+}
+
 void LuaScriptEngine::RegisterBindings() {
 #if LUA_AVAILABLE
     RegisterEntityBindings();
@@ -1623,7 +1627,7 @@ int LuaScriptEngine::Lua_Entity_setName(lua_State* L) {
 int LuaScriptEngine::Lua_Input_isKeyPressed(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->m_Window) {
+    if (!engine) {
         lua_pushboolean(L, false);
         return 1;
     }
@@ -1641,8 +1645,21 @@ int LuaScriptEngine::Lua_Input_isKeyPressed(lua_State* L) {
         return 1;
     }
 
-    int state = glfwGetKey(engine->m_Window, key);
-    lua_pushboolean(L, state == GLFW_PRESS || state == GLFW_REPEAT);
+    // Prefer RuntimeInputState (works in both GLFW and Qt paths)
+    if (engine->m_RuntimeInput.valid) {
+        bool pressed = (key >= 0 && key < RuntimeInputState::kMaxKeys)
+                       ? engine->m_RuntimeInput.keys[key] : false;
+        lua_pushboolean(L, pressed);
+        return 1;
+    }
+
+    // Fallback: GLFW direct query
+    if (engine->m_Window) {
+        int state = glfwGetKey(engine->m_Window, key);
+        lua_pushboolean(L, state == GLFW_PRESS || state == GLFW_REPEAT);
+    } else {
+        lua_pushboolean(L, false);
+    }
     return 1;
 #else
     (void)L;
@@ -1653,7 +1670,7 @@ int LuaScriptEngine::Lua_Input_isKeyPressed(lua_State* L) {
 int LuaScriptEngine::Lua_Input_isMouseButtonPressed(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->m_Window) {
+    if (!engine) {
         lua_pushboolean(L, false);
         return 1;
     }
@@ -1664,8 +1681,21 @@ int LuaScriptEngine::Lua_Input_isMouseButtonPressed(lua_State* L) {
         return 1;
     }
 
-    int state = glfwGetMouseButton(engine->m_Window, button);
-    lua_pushboolean(L, state == GLFW_PRESS);
+    // Prefer RuntimeInputState
+    if (engine->m_RuntimeInput.valid) {
+        bool pressed = (button >= 0 && button < RuntimeInputState::kMaxMouseButtons)
+                       ? engine->m_RuntimeInput.mouseButtons[button] : false;
+        lua_pushboolean(L, pressed);
+        return 1;
+    }
+
+    // Fallback: GLFW direct query
+    if (engine->m_Window) {
+        int state = glfwGetMouseButton(engine->m_Window, button);
+        lua_pushboolean(L, state == GLFW_PRESS);
+    } else {
+        lua_pushboolean(L, false);
+    }
     return 1;
 #else
     (void)L;
@@ -1676,14 +1706,24 @@ int LuaScriptEngine::Lua_Input_isMouseButtonPressed(lua_State* L) {
 int LuaScriptEngine::Lua_Input_getMousePosition(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->m_Window) {
+    if (!engine) {
         lua_pushnil(L);
         return 1;
     }
 
     double x = 0.0;
     double y = 0.0;
-    glfwGetCursorPos(engine->m_Window, &x, &y);
+
+    // Prefer RuntimeInputState
+    if (engine->m_RuntimeInput.valid) {
+        x = engine->m_RuntimeInput.mouseX;
+        y = engine->m_RuntimeInput.mouseY;
+    } else if (engine->m_Window) {
+        glfwGetCursorPos(engine->m_Window, &x, &y);
+    } else {
+        lua_pushnil(L);
+        return 1;
+    }
 
     lua_newtable(L);
     lua_pushnumber(L, x);

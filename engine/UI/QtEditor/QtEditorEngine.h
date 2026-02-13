@@ -25,12 +25,16 @@
 #include "../../Gfx/EngineFrameRenderer.h"
 #include "../../Core/EditorContext.h"
 #include "../../Core/EditorCameraController.h"
+#include "../../Core/PlayModeManager.h"
 
 // Forward declarations (avoid including heavy engine headers)
 class VulkanDevice;
 struct VulkanSwapchain;
 class VulkanPipeline;
 class Scene;
+class LuaScriptEngine;
+class ScriptEngine;
+struct GLFWwindow;
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -147,6 +151,35 @@ public:
      */
     Hephaestus::EngineFrameRenderer* GetFrameRenderer() { return m_frameRenderer.get(); }
 
+    // ── Play Mode API ─────────────────────────────────────────────────────
+
+    /**
+     * @brief Start play mode – snapshots scene, inits scripts, transitions camera.
+     */
+    void StartPlayMode();
+
+    /**
+     * @brief Stop play mode – tears down scripts, restores scene + editor camera.
+     */
+    void StopPlayMode();
+
+    /**
+     * @brief Toggle pause while in play mode.
+     */
+    void TogglePause();
+
+    /**
+     * @brief Query current play state.
+     */
+    Hephaestus::PlayState GetPlayState() const;
+    bool IsPlaying() const;
+    bool IsPaused() const;
+
+    /**
+     * @brief Get the PlayModeManager for external queries.
+     */
+    Hephaestus::PlayModeManager* GetPlayModeManager() { return &m_playModeManager; }
+
     /**
      * @brief Upload a mesh to the GPU and add it to the mesh library.
      * @return Mesh handle, or InvalidMesh on failure.
@@ -173,6 +206,11 @@ signals:
      */
     void engineError(const QString& message);
 
+    /**
+     * @brief Emitted when play mode state changes.
+     */
+    void playStateChanged(bool playing, bool paused);
+
 private slots:
     /**
      * @brief Called by QTimer to tick the engine.
@@ -192,9 +230,20 @@ private:
     // Input helper methods
     void updateKeyState(int key, bool pressed);
     void resetInputState();
+    void populateRuntimeInputState();
 
     EngineState m_state = EngineState::Uninitialized;
     bool m_builtinMeshesCreated = false;
+
+    // Runtime input tracking (for Lua scripts in Qt path)
+    // Indexed by GLFW key codes; true = pressed.
+    static constexpr int kMaxTrackedKeys = 512;
+    bool m_runtimeKeys[kMaxTrackedKeys] = {};
+    // Mouse buttons indexed by GLFW button code
+    static constexpr int kMaxTrackedMouse = 8;
+    bool m_runtimeMouseButtons[kMaxTrackedMouse] = {};
+    double m_runtimeMouseX = 0.0;
+    double m_runtimeMouseY = 0.0;
 
     // Vulkan resources (owned by main.cpp in legacy mode, but we need our own here)
     VkInstance m_instance = VK_NULL_HANDLE;
@@ -224,6 +273,13 @@ private:
     // Gizmo interaction state
     bool m_gizmoDragging = false;
     int m_gizmoActiveAxis = -1;
+
+    // Play Mode
+    Hephaestus::PlayModeManager m_playModeManager;
+    std::unique_ptr<LuaScriptEngine> m_luaScriptEngine;
+    std::unique_ptr<ScriptEngine>    m_cppScriptEngine;
+    GLFWwindow* m_glfwWindow = nullptr;   // borrowed from main if GLFW path exists
+    bool m_editorGizmoVisibleBeforePlay = true;
 
     // Viewport connection
     QtViewportWindow* m_viewport = nullptr;

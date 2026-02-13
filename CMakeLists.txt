@@ -154,6 +154,7 @@ set(ENGINE_CORE_SOURCES
     engine/Core/EditorContext.cpp
     engine/Core/EditorCameraController.cpp
     engine/Core/ProjectContext.cpp
+    engine/Core/PlayModeManager.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
     engine/Gfx/VulkanPipeline.cpp
@@ -207,6 +208,7 @@ add_executable(HephaestusEngine
     engine/Core/EditorContext.cpp
     engine/Core/EditorCameraController.cpp
     engine/Core/ProjectContext.cpp
+    engine/Core/PlayModeManager.cpp
     engine/Assets/ModelImporter.cpp
     engine/Assets/AssetDatabase.cpp
     engine/Assets/AssetImporters.cpp

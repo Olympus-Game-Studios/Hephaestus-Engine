@@ -409,30 +409,59 @@ void EditorMainWindow::setupTopToolbar()
             makeStopGlyphIcon(mediaIconSize, mediaTint),
             tr("Stop"),
             this);
+        m_pauseAction->setEnabled(false);
+        m_stopAction->setEnabled(false);
 
         connect(m_playAction, &QAction::triggered, this, [this](bool checked) {
+            if (!m_engine) return;
+
             if (checked) {
+                // Start play mode
+                m_engine->StartPlayMode();
                 m_pauseAction->setChecked(false);
+                m_pauseAction->setEnabled(true);
+                m_stopAction->setEnabled(true);
+            } else {
+                // Play unchecked = stop
+                m_engine->StopPlayMode();
+                m_pauseAction->setChecked(false);
+                m_pauseAction->setEnabled(false);
+                m_stopAction->setEnabled(false);
+                rebuildOutliner();
+                refreshDetailsPanel();
             }
             if (m_viewportHost) {
                 m_viewportHost->setProperty("playMode", checked);
                 m_viewportHost->style()->unpolish(m_viewportHost);
                 m_viewportHost->style()->polish(m_viewportHost);
             }
-            statusBar()->showMessage(checked ? tr("Play mode enabled") : tr("Play mode disabled"), 2000);
+            statusBar()->showMessage(checked ? tr("Play Mode started") : tr("Play Mode stopped"), 2000);
         });
-        connect(m_pauseAction, &QAction::triggered, this, [this](bool checked) {
-            statusBar()->showMessage(checked ? tr("Play mode paused") : tr("Pause cleared"), 2000);
+        connect(m_pauseAction, &QAction::triggered, this, [this](bool /*checked*/) {
+            if (!m_engine) return;
+            m_engine->TogglePause();
+            bool paused = m_engine->IsPaused();
+            m_pauseAction->setChecked(paused);
+            statusBar()->showMessage(paused ? tr("Play Mode paused") : tr("Play Mode resumed"), 2000);
         });
         connect(m_stopAction, &QAction::triggered, this, [this]() {
+            if (m_engine && m_engine->IsPlaying()) {
+                m_engine->StopPlayMode();
+                rebuildOutliner();
+                refreshDetailsPanel();
+            }
             if (m_playAction) m_playAction->setChecked(false);
-            if (m_pauseAction) m_pauseAction->setChecked(false);
+            if (m_pauseAction) {
+                m_pauseAction->setChecked(false);
+                m_pauseAction->setEnabled(false);
+            }
+            m_stopAction->setEnabled(false);
             if (m_viewportHost) {
                 m_viewportHost->setProperty("playMode", false);
                 m_viewportHost->style()->unpolish(m_viewportHost);
                 m_viewportHost->style()->polish(m_viewportHost);
             }
-            statusBar()->showMessage(tr("Play mode stopped"), 2000);
+            statusBar()->showMessage(tr("Play Mode stopped"), 2000);
         });
 
         auto* playBtn = new QToolButton(leftSection);

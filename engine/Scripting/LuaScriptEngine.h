@@ -61,6 +61,35 @@ struct PhysicsBinding {
 };
 
 /**
+ * Platform-independent input state that the host (Qt editor, etc.) can populate
+ * each frame so Lua scripts receive correct Input.* values even without GLFW.
+ */
+struct RuntimeInputState {
+    /// Bitfield indexed by GLFW key codes (0..GLFW_KEY_LAST).
+    /// true = pressed this frame.
+    static constexpr int kMaxKeys = 512;
+    bool keys[kMaxKeys] = {};
+
+    /// Mouse buttons indexed by GLFW mouse button codes (0..7).
+    static constexpr int kMaxMouseButtons = 8;
+    bool mouseButtons[kMaxMouseButtons] = {};
+
+    /// Cursor position in viewport pixels.
+    double mouseX = 0.0;
+    double mouseY = 0.0;
+
+    /// Set to true each frame the host has populated these fields.
+    bool valid = false;
+
+    void Reset() {
+        for (int i = 0; i < kMaxKeys; ++i) keys[i] = false;
+        for (int i = 0; i < kMaxMouseButtons; ++i) mouseButtons[i] = false;
+        mouseX = mouseY = 0.0;
+        valid = false;
+    }
+};
+
+/**
  * Manages Lua scripting for the engine
  * Provides C++ bindings to engine systems
  * Handles script loading, execution, and lifecycle
@@ -157,6 +186,13 @@ public:
      */
     void SetPhysicsBinding(PhysicsBinding binding);
 
+    /**
+     * Provide a platform-independent input state for environments without GLFW.
+     * The host must call this each frame BEFORE Update() to keep keys fresh.
+     */
+    void SetRuntimeInputState(const RuntimeInputState& state);
+    RuntimeInputState& GetRuntimeInputState() { return m_RuntimeInput; }
+
 private:
     lua_State* m_State = nullptr;
     Scene* m_Scene = nullptr;
@@ -164,6 +200,7 @@ private:
     std::filesystem::path m_ProjectRoot;
     CameraBinding m_CameraBinding{};
     PhysicsBinding m_PhysicsBinding{};
+    RuntimeInputState m_RuntimeInput{};
 
     struct ScriptInstance {
         uint32_t entityId = 0;

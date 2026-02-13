@@ -21,6 +21,11 @@
 #include "../../Assets/MeshAsset.h"
 #include "../../Assets/ModelImporter.h"
 #include "../../Core/ProjectContext.h"
+#include "../../Scripting/LuaScriptEngine.h"
+#include "../../Scripting/ScriptEngine.h"
+#include "../../Scripting/LuaScriptComponent.h"
+
+#include <GLFW/glfw3.h>  // For GLFW key code constants used by RuntimeInputState
 
 #include <iostream>
 #include <vector>
@@ -28,6 +33,7 @@
 #include <filesystem>
 #include <cmath>
 #include <algorithm>
+#include <unordered_map>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -39,6 +45,82 @@
 
 namespace Hephaestus {
 namespace QtEditor {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Qt key code → GLFW key code translation table
+// ─────────────────────────────────────────────────────────────────────────────
+static int QtKeyToGLFW(int qtKey) {
+    // Printable ASCII keys: Qt::Key_A (0x41) .. Qt::Key_Z (0x5A)
+    if (qtKey >= 0x41 && qtKey <= 0x5A) {
+        return GLFW_KEY_A + (qtKey - 0x41);
+    }
+    // Digits: Qt::Key_0 (0x30) .. Qt::Key_9 (0x39)
+    if (qtKey >= 0x30 && qtKey <= 0x39) {
+        return GLFW_KEY_0 + (qtKey - 0x30);
+    }
+
+    // Named keys
+    static const std::unordered_map<int, int> kMap = {
+        { 0x01000000, GLFW_KEY_ESCAPE },     // Qt::Key_Escape
+        { 0x01000001, GLFW_KEY_TAB },         // Qt::Key_Tab
+        { 0x01000003, GLFW_KEY_BACKSPACE },   // Qt::Key_Backspace
+        { 0x01000004, GLFW_KEY_ENTER },       // Qt::Key_Return
+        { 0x01000005, GLFW_KEY_KP_ENTER },    // Qt::Key_Enter  (keypad)
+        { 0x01000006, GLFW_KEY_INSERT },       // Qt::Key_Insert
+        { 0x01000007, GLFW_KEY_DELETE },       // Qt::Key_Delete
+        { 0x01000008, GLFW_KEY_PAUSE },        // Qt::Key_Pause
+        { 0x01000009, GLFW_KEY_PRINT_SCREEN }, // Qt::Key_Print
+        { 0x01000010, GLFW_KEY_HOME },         // Qt::Key_Home
+        { 0x01000011, GLFW_KEY_END },          // Qt::Key_End
+        { 0x01000012, GLFW_KEY_LEFT },         // Qt::Key_Left
+        { 0x01000013, GLFW_KEY_UP },           // Qt::Key_Up
+        { 0x01000014, GLFW_KEY_RIGHT },        // Qt::Key_Right
+        { 0x01000015, GLFW_KEY_DOWN },         // Qt::Key_Down
+        { 0x01000016, GLFW_KEY_PAGE_UP },      // Qt::Key_PageUp
+        { 0x01000017, GLFW_KEY_PAGE_DOWN },    // Qt::Key_PageDown
+        { 0x01000020, GLFW_KEY_LEFT_SHIFT },   // Qt::Key_Shift
+        { 0x01000021, GLFW_KEY_LEFT_CONTROL }, // Qt::Key_Control
+        { 0x01000023, GLFW_KEY_LEFT_ALT },     // Qt::Key_Alt
+        { 0x01000024, GLFW_KEY_CAPS_LOCK },    // Qt::Key_CapsLock
+        { 0x01000025, GLFW_KEY_NUM_LOCK },     // Qt::Key_NumLock
+        { 0x01000026, GLFW_KEY_SCROLL_LOCK },  // Qt::Key_ScrollLock
+        { 0x01000030, GLFW_KEY_F1 },           // Qt::Key_F1
+        { 0x01000031, GLFW_KEY_F2 },
+        { 0x01000032, GLFW_KEY_F3 },
+        { 0x01000033, GLFW_KEY_F4 },
+        { 0x01000034, GLFW_KEY_F5 },
+        { 0x01000035, GLFW_KEY_F6 },
+        { 0x01000036, GLFW_KEY_F7 },
+        { 0x01000037, GLFW_KEY_F8 },
+        { 0x01000038, GLFW_KEY_F9 },
+        { 0x01000039, GLFW_KEY_F10 },
+        { 0x0100003a, GLFW_KEY_F11 },
+        { 0x0100003b, GLFW_KEY_F12 },
+        { 0x01000055, GLFW_KEY_MENU },         // Qt::Key_Menu
+        { 0x20,       GLFW_KEY_SPACE },        // Qt::Key_Space
+        { 0x2c,       GLFW_KEY_COMMA },
+        { 0x2d,       GLFW_KEY_MINUS },
+        { 0x2e,       GLFW_KEY_PERIOD },
+        { 0x2f,       GLFW_KEY_SLASH },
+        { 0x3b,       GLFW_KEY_SEMICOLON },
+        { 0x3d,       GLFW_KEY_EQUAL },
+        { 0x5b,       GLFW_KEY_LEFT_BRACKET },
+        { 0x5c,       GLFW_KEY_BACKSLASH },
+        { 0x5d,       GLFW_KEY_RIGHT_BRACKET },
+        { 0x60,       GLFW_KEY_GRAVE_ACCENT },
+    };
+
+    auto it = kMap.find(qtKey);
+    return (it != kMap.end()) ? it->second : -1;
+}
+
+/// Translate Qt mouse button code to GLFW mouse button code
+static int QtMouseButtonToGLFW(int qtButton) {
+    if (qtButton == 1)  return GLFW_MOUSE_BUTTON_LEFT;    // Qt::LeftButton
+    if (qtButton == 2)  return GLFW_MOUSE_BUTTON_RIGHT;   // Qt::RightButton
+    if (qtButton == 4)  return GLFW_MOUSE_BUTTON_MIDDLE;  // Qt::MiddleButton
+    return -1;
+}
 
 // Debug callback for Vulkan validation
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
@@ -426,6 +508,10 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
     };
 
     auto canInteractWithGizmo = [&]() -> bool {
+        // Suppress gizmo interaction during play mode
+        if (m_playModeManager.ShouldSuppressEditorInteraction()) {
+            return false;
+        }
         if (!m_frameRenderer || !m_frameRenderer->IsGizmoAvailable()) {
             return false;
         }
@@ -466,6 +552,14 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         else if (event.button == 2) m_inputState.rmbDown = true;  // Qt::RightButton
         else if (event.button == 4) m_inputState.mmbDown = true;  // Qt::MiddleButton
         
+        // Track for Lua RuntimeInputState
+        {
+            int glfwBtn = QtMouseButtonToGLFW(event.button);
+            if (glfwBtn >= 0 && glfwBtn < kMaxTrackedMouse) {
+                m_runtimeMouseButtons[glfwBtn] = true;
+            }
+        }
+        
         // Update modifiers
         m_inputState.altDown = (event.modifiers & 0x08000000) != 0;   // Qt::AltModifier
         m_inputState.shiftDown = (event.modifiers & 0x02000000) != 0; // Qt::ShiftModifier
@@ -474,6 +568,8 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         // Update mouse position
         m_inputState.mouseX = event.x;
         m_inputState.mouseY = event.y;
+        m_runtimeMouseX = static_cast<double>(event.x);
+        m_runtimeMouseY = static_cast<double>(event.y);
 
         if (event.button == 1 && !m_inputState.altDown && !m_inputState.rmbDown) {
             if (canInteractWithGizmo()) {
@@ -512,6 +608,11 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         // Update button state
         if (event.button == 1) {
             m_inputState.lmbDown = false;
+            {
+                int glfwBtn = QtMouseButtonToGLFW(event.button);
+                if (glfwBtn >= 0 && glfwBtn < kMaxTrackedMouse)
+                    m_runtimeMouseButtons[glfwBtn] = false;
+            }
 
             if (m_gizmoDragging) {
                 endGizmoDrag();
@@ -519,8 +620,9 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             }
             
             // LMB click without RMB (not fly mode) - try entity picking
-            if (!m_inputState.rmbDown && m_frameRenderer && 
-                m_frameRenderer->IsPickingAvailable()) {
+            // Suppress picking during play mode  
+            if (!m_inputState.rmbDown && !m_playModeManager.ShouldSuppressEditorInteraction() &&
+                m_frameRenderer && m_frameRenderer->IsPickingAvailable()) {
                 // Initiate pick at mouse position
                 float px = event.x;
                 float py = event.y;
@@ -541,6 +643,13 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         }
         else if (event.button == 2) m_inputState.rmbDown = false;
         else if (event.button == 4) m_inputState.mmbDown = false;
+        
+        // Track for Lua RuntimeInputState (right/middle release)
+        if (event.button != 1) {
+            int glfwBtn = QtMouseButtonToGLFW(event.button);
+            if (glfwBtn >= 0 && glfwBtn < kMaxTrackedMouse)
+                m_runtimeMouseButtons[glfwBtn] = false;
+        }
         
         // Notify camera controller
         m_cameraController.OnMouseRelease(event.button, m_inputState);
@@ -565,6 +674,10 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             m_inputState.mouseY = event.y;
             m_inputState.mouseDeltaX = deltaX;
             m_inputState.mouseDeltaY = deltaY;
+
+            // Track for Lua input
+            m_runtimeMouseX = static_cast<double>(event.x);
+            m_runtimeMouseY = static_cast<double>(event.y);
 
             if (m_gizmoDragging) {
                 if (!canInteractWithGizmo()) {
@@ -676,8 +789,8 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             FocusOnSelection();
         }
         
-        // Gizmo mode shortcuts (only when not in fly mode)
-        if (!m_inputState.rmbDown) {
+        // Gizmo mode shortcuts (only when not in fly mode and not in play mode)
+        if (!m_inputState.rmbDown && !m_playModeManager.ShouldSuppressEditorInteraction()) {
             switch (event.key) {
                 case 0x57: // Qt::Key_W - Translate mode
                     m_editorContext.SetGizmoMode(Hephaestus::GizmoMode::Translate);
@@ -735,7 +848,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
 
 void QtEditorEngine::updateKeyState(int key, bool pressed)
 {
-    // Qt key codes
+    // Track for editor camera controller (existing WASDQE)
     switch (key) {
     case 0x57: m_inputState.wDown = pressed; break; // Qt::Key_W
     case 0x41: m_inputState.aDown = pressed; break; // Qt::Key_A
@@ -744,6 +857,26 @@ void QtEditorEngine::updateKeyState(int key, bool pressed)
     case 0x51: m_inputState.qDown = pressed; break; // Qt::Key_Q
     case 0x45: m_inputState.eDown = pressed; break; // Qt::Key_E
     default: break;
+    }
+
+    // Also track for Lua RuntimeInputState (all keys, GLFW codes)
+    int glfwKey = QtKeyToGLFW(key);
+    if (glfwKey >= 0 && glfwKey < kMaxTrackedKeys) {
+        m_runtimeKeys[glfwKey] = pressed;
+    }
+
+    // Map Shift/Ctrl/Alt as both left + right variants for GLFW
+    if (key == 0x01000020) { // Qt::Key_Shift
+        if (GLFW_KEY_LEFT_SHIFT < kMaxTrackedKeys) m_runtimeKeys[GLFW_KEY_LEFT_SHIFT] = pressed;
+        if (GLFW_KEY_RIGHT_SHIFT < kMaxTrackedKeys) m_runtimeKeys[GLFW_KEY_RIGHT_SHIFT] = pressed;
+    }
+    if (key == 0x01000021) { // Qt::Key_Control
+        if (GLFW_KEY_LEFT_CONTROL < kMaxTrackedKeys) m_runtimeKeys[GLFW_KEY_LEFT_CONTROL] = pressed;
+        if (GLFW_KEY_RIGHT_CONTROL < kMaxTrackedKeys) m_runtimeKeys[GLFW_KEY_RIGHT_CONTROL] = pressed;
+    }
+    if (key == 0x01000023) { // Qt::Key_Alt
+        if (GLFW_KEY_LEFT_ALT < kMaxTrackedKeys) m_runtimeKeys[GLFW_KEY_LEFT_ALT] = pressed;
+        if (GLFW_KEY_RIGHT_ALT < kMaxTrackedKeys) m_runtimeKeys[GLFW_KEY_RIGHT_ALT] = pressed;
     }
 }
 
@@ -764,6 +897,33 @@ void QtEditorEngine::resetInputState()
     m_inputState.wheelDelta = 0.0f;
     m_inputState.mouseDeltaX = 0.0f;
     m_inputState.mouseDeltaY = 0.0f;
+
+    // Reset runtime key/mouse tracking
+    for (int i = 0; i < kMaxTrackedKeys; ++i) m_runtimeKeys[i] = false;
+    for (int i = 0; i < kMaxTrackedMouse; ++i) m_runtimeMouseButtons[i] = false;
+}
+
+void QtEditorEngine::populateRuntimeInputState()
+{
+    if (!m_luaScriptEngine) return;
+
+    RuntimeInputState& ris = m_luaScriptEngine->GetRuntimeInputState();
+    ris.valid = true;
+
+    // Copy key states
+    static_assert(kMaxTrackedKeys <= RuntimeInputState::kMaxKeys, "key array size mismatch");
+    for (int i = 0; i < kMaxTrackedKeys; ++i) {
+        ris.keys[i] = m_runtimeKeys[i];
+    }
+
+    // Copy mouse button states
+    for (int i = 0; i < kMaxTrackedMouse && i < RuntimeInputState::kMaxMouseButtons; ++i) {
+        ris.mouseButtons[i] = m_runtimeMouseButtons[i];
+    }
+
+    // Copy mouse position
+    ris.mouseX = m_runtimeMouseX;
+    ris.mouseY = m_runtimeMouseY;
 }
 
 void QtEditorEngine::FocusOnSelection()
@@ -841,12 +1001,28 @@ void QtEditorEngine::onTick()
         m_renderInProgress = false;
         return;
     }
-    
-    // Update camera controller
-    m_cameraController.Update(m_inputState, dt);
-    
-    // Build render camera from controller
-    m_cameraController.BuildRenderCamera(m_camera);
+
+    // ── Play Mode tick ─────────────────────────────────────────────────────
+    const bool isPlaying = m_playModeManager.IsPlaying();
+    const bool isPaused  = m_playModeManager.IsPaused();
+    const bool isPlayOrPause = !m_playModeManager.IsEditor();
+
+    if (isPlaying) {
+        populateRuntimeInputState();
+        m_playModeManager.Tick(dt);
+    }
+
+    // ── Camera update ──────────────────────────────────────────────────────
+    // Only update editor camera when NOT in RuntimeScript mode
+    if (!isPlayOrPause || m_playModeManager.GetCameraMode() == Hephaestus::CameraMode::EditorFly) {
+        m_cameraController.Update(m_inputState, dt);
+        m_cameraController.BuildRenderCamera(m_camera);
+    }
+
+    // If a script is driving the camera, apply its state to the render camera
+    if (isPlayOrPause && m_playModeManager.GetCameraMode() == Hephaestus::CameraMode::RuntimeScript) {
+        m_playModeManager.ApplyRuntimeCameraToRender(m_camera);
+    }
 
     // Keep editor context camera in sync with the render camera
     auto& editorCam = m_editorContext.GetCamera();
@@ -857,6 +1033,10 @@ void QtEditorEngine::onTick()
     editorCam.pitchDeg = m_camera.pitchDeg;
     editorCam.nearPlane = m_camera.nearPlane;
     editorCam.farPlane = m_camera.farPlane;
+
+    // ── Push play/pause state into render config ───────────────────────────
+    m_renderConfig.isPlaying = isPlayOrPause;
+    m_renderConfig.isPaused  = isPaused;
     
     renderFrame();
     
@@ -890,11 +1070,11 @@ void QtEditorEngine::renderFrame()
     // Sync EditorContext viewport settings to FrameRenderConfig
     const auto& viewportSettings = m_editorContext.GetViewportSettings();
     m_renderConfig.renderGrid = viewportSettings.showGrid;
-    m_renderConfig.renderGizmo = viewportSettings.showGizmo;
-    m_renderConfig.renderOutlines = viewportSettings.showSelectionOutline;
+    m_renderConfig.renderGizmo = viewportSettings.showGizmo && !m_playModeManager.ShouldSuppressEditorInteraction();
+    m_renderConfig.renderOutlines = viewportSettings.showSelectionOutline && !m_playModeManager.ShouldSuppressEditorInteraction();
     m_renderConfig.renderShadows = viewportSettings.showShadows;
     m_renderConfig.renderSkybox = viewportSettings.showSkybox;
-    m_renderConfig.renderBillboards = viewportSettings.showLightBillboards;
+    m_renderConfig.renderBillboards = viewportSettings.showLightBillboards && !m_playModeManager.ShouldSuppressEditorInteraction();
     
     // Sync selection for outline rendering
     m_renderConfig.selectedEntity = static_cast<uint32_t>(m_editorContext.GetSelectedEntity());
@@ -1411,6 +1591,149 @@ void QtEditorEngine::RebuildSceneMeshes()
         std::cout << "[QtEditorEngine] Framed scene: center(" << center.x << ", "
                   << center.y << ", " << center.z << ") radius=" << radius << "\n";
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Play Mode API
+// ─────────────────────────────────────────────────────────────────────────────
+
+void QtEditorEngine::StartPlayMode()
+{
+    if (!m_editorContext.HasActiveScene()) {
+        std::cerr << "[QtEditorEngine] Cannot start Play Mode: no active scene\n";
+        return;
+    }
+    if (m_playModeManager.IsPlaying() || m_playModeManager.IsPaused()) {
+        return;  // already playing
+    }
+
+    Scene* scene = m_editorContext.GetActiveScene();
+
+    // Save current editor camera so it can be restored on stop
+    m_playModeManager.SaveEditorCamera(m_editorContext.GetCamera());
+
+    // Save gizmo visibility state
+    m_editorGizmoVisibleBeforePlay = m_editorContext.GetViewportSettings().showGizmo;
+    m_editorContext.GetViewportSettings().showGizmo = false;
+
+    // ── Initialize Lua script engine if not yet created ────────────────────
+    if (!m_luaScriptEngine) {
+        m_luaScriptEngine = std::make_unique<LuaScriptEngine>();
+        m_luaScriptEngine->Initialize(scene, m_glfwWindow);
+
+        // Set camera binding that routes through PlayModeManager
+        CameraBinding camBinding;
+        camBinding.setActive = [this](bool active) {
+            m_playModeManager.SetScriptCameraActive(active);
+        };
+        camBinding.isActive = [this]() -> bool {
+            return m_playModeManager.IsScriptCameraActive();
+        };
+        camBinding.setPosition = [this](const Vec3& pos) {
+            auto& cam = m_playModeManager.GetRuntimeCamera();
+            cam.posX = pos.x;
+            cam.posY = pos.y;
+            cam.posZ = pos.z;
+        };
+        camBinding.getPosition = [this]() -> Vec3 {
+            const auto& cam = m_playModeManager.GetRuntimeCamera();
+            return Vec3(cam.posX, cam.posY, cam.posZ);
+        };
+        camBinding.setRotation = [this](const Vec3& rot) {
+            auto& cam = m_playModeManager.GetRuntimeCamera();
+            cam.pitch = rot.x;  // radians
+            cam.yaw   = rot.y;
+            cam.roll  = rot.z;
+        };
+        camBinding.getRotation = [this]() -> Vec3 {
+            const auto& cam = m_playModeManager.GetRuntimeCamera();
+            return Vec3(cam.pitch, cam.yaw, cam.roll);
+        };
+        camBinding.translate = [this](const Vec3& delta) {
+            auto& cam = m_playModeManager.GetRuntimeCamera();
+            cam.posX += delta.x;
+            cam.posY += delta.y;
+            cam.posZ += delta.z;
+        };
+        m_luaScriptEngine->SetCameraBinding(camBinding);
+    } else {
+        // Re-associate with current scene
+        m_luaScriptEngine->Initialize(scene, m_glfwWindow);
+    }
+
+    // ── Initialize C++ script engine ───────────────────────────────────────
+    if (!m_cppScriptEngine) {
+        m_cppScriptEngine = std::make_unique<ScriptEngine>();
+    }
+    m_cppScriptEngine->Initialize(scene);
+
+    // Wire up engines to the play mode manager
+    m_playModeManager.SetScene(scene);
+    m_playModeManager.SetLuaScriptEngine(m_luaScriptEngine.get());
+    m_playModeManager.SetCppScriptEngine(m_cppScriptEngine.get());
+    m_playModeManager.SetLogCallback([](const std::string& msg) {
+        std::cout << msg << std::endl;
+    });
+
+    // Start!
+    m_playModeManager.StartPlayMode();
+
+    emit playStateChanged(true, false);
+    std::cout << "[QtEditorEngine] Play Mode started\n";
+}
+
+void QtEditorEngine::StopPlayMode()
+{
+    if (m_playModeManager.IsEditor()) {
+        return;  // nothing to stop
+    }
+
+    m_playModeManager.StopPlayMode();
+
+    // Restore gizmo visibility
+    m_editorContext.GetViewportSettings().showGizmo = m_editorGizmoVisibleBeforePlay;
+
+    // Restore editor camera
+    m_playModeManager.RestoreEditorCamera(m_editorContext.GetCamera());
+
+    // Sync camera controller from restored editor camera
+    const auto& cam = m_editorContext.GetCamera();
+    m_cameraController.positionX = cam.positionX;
+    m_cameraController.positionY = cam.positionY;
+    m_cameraController.positionZ = cam.positionZ;
+    m_cameraController.yawDeg    = cam.yawDeg;
+    m_cameraController.pitchDeg  = cam.pitchDeg;
+    m_cameraController.baseMoveSpeed = cam.moveSpeed;
+
+    // Rebuild render camera from restored state
+    m_cameraController.BuildRenderCamera(m_camera);
+
+    // Rebuild scene meshes since the scene was restored from snapshot
+    RebuildSceneMeshes();
+
+    emit playStateChanged(false, false);
+    std::cout << "[QtEditorEngine] Play Mode stopped\n";
+}
+
+void QtEditorEngine::TogglePause()
+{
+    m_playModeManager.TogglePause();
+    emit playStateChanged(m_playModeManager.IsPlaying(), m_playModeManager.IsPaused());
+}
+
+Hephaestus::PlayState QtEditorEngine::GetPlayState() const
+{
+    return m_playModeManager.GetState();
+}
+
+bool QtEditorEngine::IsPlaying() const
+{
+    return !m_playModeManager.IsEditor();
+}
+
+bool QtEditorEngine::IsPaused() const
+{
+    return m_playModeManager.IsPaused();
 }
 
 } // namespace QtEditor
