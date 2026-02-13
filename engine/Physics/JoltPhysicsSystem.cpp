@@ -728,7 +728,10 @@ void JoltPhysicsSystem::SyncTransformFromPhysics(Scene& scene, entt::entity enti
         return;
     }
 
-    JPH::RVec3 joltPos = bodyInterface.GetCenterOfMassPosition(bodyId);
+    // Use GetPosition() (body origin) rather than GetCenterOfMassPosition()
+    // so that offset collision shapes (RotatedTranslatedShape) don't cause
+    // the entity transform to drift from its expected location.
+    JPH::RVec3 joltPos = bodyInterface.GetPosition(bodyId);
     transform.position.x = static_cast<float>(joltPos.GetX());
     transform.position.y = static_cast<float>(joltPos.GetY());
     transform.position.z = static_cast<float>(joltPos.GetZ());

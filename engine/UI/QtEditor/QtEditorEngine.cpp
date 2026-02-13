@@ -1676,6 +1676,45 @@ void QtEditorEngine::StartPlayMode()
 
     Scene* scene = m_editorContext.GetActiveScene();
 
+    // Ensure Jolt physics is ready in Play Mode (do not depend on FocusOnSelection side-effects).
+    if (!m_joltPhysicsEngine) {
+        m_joltPhysicsEngine = std::make_unique<Physics::JoltPhysicsEngine>();
+        try {
+            m_joltPhysicsEngine->Initialize();
+            m_joltPhysicsSystem = std::make_unique<Physics::JoltPhysicsSystem>(*m_joltPhysicsEngine);
+            m_physicsInitialized = true;
+            std::cout << "[QtEditorEngine] Physics engine initialized\n";
+        } catch (const std::exception& e) {
+            m_physicsInitialized = false;
+            std::cerr << "[QtEditorEngine] Failed to initialize physics engine: " << e.what() << "\n";
+        }
+    }
+
+    if (m_physicsInitialized && m_joltPhysicsSystem) {
+        std::filesystem::path projectRoot;
+        const std::string& scenePathStr = m_editorContext.GetScenePath();
+        if (!scenePathStr.empty()) {
+            std::filesystem::path cursor = std::filesystem::path(scenePathStr).parent_path();
+            while (!cursor.empty() && cursor.has_filename() && cursor.filename() != "assets") {
+                std::filesystem::path parent = cursor.parent_path();
+                if (parent == cursor) {
+                    break;
+                }
+                cursor = parent;
+            }
+            if (!cursor.empty() && cursor.has_filename() && cursor.filename() == "assets") {
+                projectRoot = cursor.parent_path();
+            }
+        }
+        if (projectRoot.empty()) {
+            projectRoot = std::filesystem::current_path();
+        }
+
+        m_joltPhysicsSystem->SetProjectRoot(projectRoot);
+        m_joltPhysicsSystem->ClearAllBodies();
+        m_joltPhysicsSystem->SetEnabled(true);
+    }
+
     // Save current editor camera so it can be restored on stop
     m_playModeManager.SaveEditorCamera(m_editorContext.GetCamera());
 
@@ -1822,7 +1861,7 @@ void QtEditorEngine::StartPlayMode()
         JPH::Quat rot = qx * qy * qz;
 
         JPH::BodyInterface& bi = m_joltPhysicsEngine->GetBodyInterface();
-        JPH::RVec3 pos = bi.GetCenterOfMassPosition(bodyId);
+        JPH::RVec3 pos = bi.GetPosition(bodyId);
         bi.SetPositionAndRotation(bodyId, pos, rot,
                                   activate ? JPH::EActivation::Activate
                                            : JPH::EActivation::DontActivate);

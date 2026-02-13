@@ -18,6 +18,7 @@ local config = {
 
 	-- Use Jolt physics via Lua bindings when available.
 	usePhysics = true,
+	allowTransformFallback = true,
 
 	-- Camera follow settings
 	cameraOffsetY = 1.2,
@@ -59,6 +60,10 @@ local state = {
 
 	cameraActive = false,
 	cameraEntity = nil,
+	physicsRuntimeEnabled = false,
+	warnedNoPhysicsApi = false,
+	warnedNoBody = false,
+	warnedSetVelocityFailed = false,
 }
 
 local function physicsAvailable()
@@ -66,6 +71,59 @@ local function physicsAvailable()
 		and Physics
 		and Physics.isAvailable
 		and Physics.isAvailable()
+end
+
+local function refreshPhysicsRuntimeState()
+	state.physicsRuntimeEnabled = false
+
+	if not config.usePhysics then
+		if not state.warnedNoPhysicsApi then
+			engine_log("[fp-controller] usePhysics=false; using transform-only movement (no collision)")
+			state.warnedNoPhysicsApi = true
+		end
+		return false
+	end
+
+	-- Check if the Physics global table and isAvailable function exist
+	if not Physics then
+		if not state.warnedNoPhysicsApi then
+			engine_log("[fp-controller] WARNING: Physics global not found; falling back to transform movement")
+			state.warnedNoPhysicsApi = true
+		end
+		return false
+	end
+
+	if not Physics.isAvailable or not Physics.isAvailable() then
+		if not state.warnedNoPhysicsApi then
+			engine_log("[fp-controller] WARNING: Physics.isAvailable() returned false; physics bindings not wired")
+			state.warnedNoPhysicsApi = true
+		end
+		return false
+	end
+
+	-- Physics API exists; now check if THIS entity has a rigid body
+	if not Physics.hasBody then
+		if not state.warnedNoBody then
+			engine_log("[fp-controller] WARNING: Physics.hasBody not available")
+			state.warnedNoBody = true
+		end
+		return false
+	end
+
+	local hasBody = Physics.hasBody()
+	if not hasBody then
+		if not state.warnedNoBody then
+			engine_log("[fp-controller] WARNING: No rigid body on this entity (Physics.hasBody()=false)")
+			engine_log("[fp-controller]   -> Add a RigidBodyComponent + ColliderComponent for physics-based movement")
+			engine_log("[fp-controller]   -> Falling back to transform movement (no collision response)")
+			state.warnedNoBody = true
+		end
+		return false
+	end
+
+	-- All checks passed
+	state.physicsRuntimeEnabled = true
+	return true
 end
 
 local function normalize2(x, z)
@@ -83,8 +141,8 @@ local function getMoveInput()
 
 	if Input.isKeyPressed("A") then x = x - 1.0 end
 	if Input.isKeyPressed("D") then x = x + 1.0 end
-	if Input.isKeyPressed("W") then z = z - 1.0 end
-	if Input.isKeyPressed("S") then z = z + 1.0 end
+	if Input.isKeyPressed("W") then z = z + 1.0 end
+	if Input.isKeyPressed("S") then z = z - 1.0 end
 
 	x, z = normalize2(x, z)
 
@@ -117,7 +175,7 @@ local function applyMouseLook()
 	state.lastMouseX = mouse.x
 	state.lastMouseY = mouse.y
 
-	state.yaw = state.yaw - deltaX * config.lookSensitivity
+	state.yaw = state.yaw + deltaX * config.lookSensitivity
 	state.pitch = state.pitch - deltaY * config.lookSensitivity
 
 	if state.pitch > config.maxPitch then state.pitch = config.maxPitch end
@@ -125,7 +183,7 @@ local function applyMouseLook()
 
 	-- For FPS, keep body yaw-only; pitch is applied to camera.
 	Transform.setRotation(0.0, state.yaw, 0.0)
-	if physicsAvailable() and Physics.setRotation then
+	if state.physicsRuntimeEnabled and Physics.setRotation then
 		Physics.setRotation(0.0, state.yaw, 0.0, true)
 	end
 end
@@ -149,16 +207,29 @@ end
 
 local function moveHorizontal(deltaTime)
 	local velX, velZ = computeHorizontalVelocity()
-	if physicsAvailable() and Physics.getLinearVelocity and Physics.setLinearVelocity then
+
+	-- Try physics-based movement first
+	if state.physicsRuntimeEnabled and Physics.getLinearVelocity and Physics.setLinearVelocity then
 		local vel = Physics.getLinearVelocity()
 		if vel then
 			local newY = vel.y
 			if state.grounded and newY < config.groundStickVelocity then
 				newY = config.groundStickVelocity
 			end
-			Physics.setLinearVelocity(velX, newY, velZ, true)
-			return
+			local ok = Physics.setLinearVelocity(velX, newY, velZ, true)
+			if ok then
+				return
+			end
+			if not state.warnedSetVelocityFailed then
+				engine_log("[fp-controller] setLinearVelocity failed; verify rigid body is dynamic")
+				state.warnedSetVelocityFailed = true
+			end
 		end
+	end
+
+	-- Transform fallback
+	if not config.allowTransformFallback then
+		return
 	end
 
 	if velX == 0.0 and velZ == 0.0 then
@@ -170,7 +241,7 @@ end
 
 local function updateGroundedPhysics()
 	state.grounded = false
-	if not physicsAvailable() or not Physics.raycast then
+	if not state.physicsRuntimeEnabled or not Physics.raycast then
 		return false
 	end
 
@@ -197,7 +268,7 @@ local function updateJumpPhysics()
 	local jumpPressed = jumpDown and not state.jumpWasDown
 	state.jumpWasDown = jumpDown
 
-	if not physicsAvailable() or not Physics.getLinearVelocity or not Physics.setLinearVelocity then
+	if not state.physicsRuntimeEnabled or not Physics.getLinearVelocity or not Physics.setLinearVelocity then
 		return false
 	end
 
@@ -323,7 +394,7 @@ local function maintainUpright()
 		return
 	end
 
-	if physicsAvailable() and Physics.setRotation then
+	if state.physicsRuntimeEnabled and Physics.setRotation then
 		Physics.setRotation(0.0, state.yaw, 0.0, true)
 		if Physics.setAngularVelocity then
 			Physics.setAngularVelocity(0.0, 0.0, 0.0, true)
@@ -334,6 +405,8 @@ local function maintainUpright()
 end
 
 function onAwake()
+	refreshPhysicsRuntimeState()
+
 	local rot = Transform.getRotation()
 	if rot then
 		state.pitch = rot.x or 0.0
@@ -341,7 +414,7 @@ function onAwake()
 	end
 
 	Transform.setRotation(0.0, state.yaw, 0.0)
-	if physicsAvailable() and Physics.setRotation then
+	if state.physicsRuntimeEnabled and Physics.setRotation then
 		Physics.setRotation(0.0, state.yaw, 0.0, true)
 	end
 
@@ -355,7 +428,12 @@ function onAwake()
 
 	local name = Entity.getName() or "Player"
 	Entity.setName(name .. " [FP Blueprint]")
-	engine_log("[fp-controller] Ready - WASD move, Space jump, hold RMB to look")
+	if state.physicsRuntimeEnabled then
+		engine_log("[fp-controller] Ready (PHYSICS mode) - WASD move, Space jump, hold RMB to look")
+	else
+		engine_log("[fp-controller] Ready (TRANSFORM mode) - WASD move, Space jump, hold RMB to look")
+		engine_log("[fp-controller]   Transform mode has no collision response; add RigidBody+Collider for physics")
+	end
 
 	pickCameraEntity()
 	if Camera and Camera.setActive then
@@ -368,6 +446,7 @@ end
 function onEnable()
 	state.lastMouseX = nil
 	state.lastMouseY = nil
+	refreshPhysicsRuntimeState()
 	pickCameraEntity()
 	if Camera and Camera.setActive then
 		Camera.setActive(true)
@@ -382,7 +461,11 @@ function onUpdate(deltaTime)
 		return
 	end
 
-	if physicsAvailable() then
+	if config.usePhysics and not state.physicsRuntimeEnabled then
+		refreshPhysicsRuntimeState()
+	end
+
+	if state.physicsRuntimeEnabled then
 		updateGroundedPhysics()
 	end
 
@@ -390,7 +473,7 @@ function onUpdate(deltaTime)
 	moveHorizontal(deltaTime)
 	maintainUpright()
 
-	if physicsAvailable() then
+	if state.physicsRuntimeEnabled then
 		updateJumpPhysics()
 	else
 		updateGravityAndJump(deltaTime)
