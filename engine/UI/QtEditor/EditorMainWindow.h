@@ -34,7 +34,14 @@
 #include <vector>
 #include <entt/entt.hpp>
 
+#include "../../ToolsCommon/EngineSettingsManager.h"
+#include "../../ToolsCommon/ProjectSettingsManager.h"
+
 namespace Hephaestus {
+
+namespace UI {
+class SettingsWindow;
+}
 
 // Forward declare ProjectContext
 class ProjectContext;
@@ -119,6 +126,7 @@ private slots:
     // Edit menu actions
     void onUndo();
     void onRedo();
+    void onOpenSettings();
 
     // Help menu actions
     void onAbout();
@@ -160,6 +168,7 @@ private:
     QAction* m_translateAction = nullptr;
     QAction* m_rotateAction = nullptr;
     QAction* m_scaleAction = nullptr;
+    QAction* m_settingsAction = nullptr;
     QToolButton* m_worldLocalBtn = nullptr;
     QToolButton* m_snapToggleBtn = nullptr;
     QComboBox* m_snapValueCombo = nullptr;
@@ -205,6 +214,7 @@ private:
     // Asset browser (new widget-based)
     AssetBrowserWidget* m_assetBrowser = nullptr;
     std::unique_ptr<EditorAssetActions> m_assetActions;
+    UI::SettingsWindow* m_settingsWindow = nullptr;
 
     // Add Actors panel
     AddActorsPanel* m_addActorsPanel = nullptr;
@@ -241,6 +251,9 @@ private:
     // Project menu
     QMenu* m_recentProjectsMenu = nullptr;
     std::unique_ptr<ProjectContext> m_projectContext;
+
+    Tools::EngineSettingsManager m_engineSettingsManager;
+    std::unique_ptr<Tools::ProjectSettingsManager> m_projectSettingsManager;
 };
 
 } // namespace QtEditor

@@ -20,9 +20,11 @@
 #include "PhysicsInspectors.h"
 #include "CameraInspector.h"
 #include "EditorUndoCommand.h"
+#include "../Shared/SettingsWindow.h"
 
 #include "../../Core/EditorContext.h"
 #include "../../Core/ProjectContext.h"
+#include "../../ToolsCommon/EngineContext.h"
 #include "../../Assets/AssetManager.h"
 #include "../../Assets/AssetTypes.h"
 #include "../../Assets/ModelImporter.h"
@@ -228,6 +230,8 @@ EditorMainWindow::EditorMainWindow(QWidget* parent)
     : QMainWindow(parent)
     , m_projectContext(std::make_unique<ProjectContext>())
 {
+    m_engineSettingsManager.Load();
+
     // Load recent projects from settings
     m_projectContext->LoadRecentProjectsFromFile();
 
@@ -343,6 +347,12 @@ void EditorMainWindow::setupMenuBar()
     QAction* redoAction = editMenu->addAction(tr("&Redo"));
     redoAction->setShortcut(QKeySequence::Redo);
     connect(redoAction, &QAction::triggered, this, &EditorMainWindow::onRedo);
+
+    editMenu->addSeparator();
+
+    m_settingsAction = editMenu->addAction(tr("Settings"));
+    m_settingsAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+,")));
+    connect(m_settingsAction, &QAction::triggered, this, &EditorMainWindow::onOpenSettings);
 
     // ─────────────────────────────────────────────────────────────────────────
     // View Menu
@@ -2319,6 +2329,7 @@ void EditorMainWindow::onCloseProject()
 
     // Close the project
     m_projectContext->CloseProject();
+    m_projectSettingsManager.reset();
 
     // Clear the scene
     if (m_engine) {
@@ -2369,6 +2380,10 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
             tr("Failed to open project:\n%1").arg(QString::fromStdString(error)));
         return false;
     }
+
+    m_projectSettingsManager = std::make_unique<Hephaestus::Tools::ProjectSettingsManager>(
+        QString::fromStdString(m_projectContext->GetProjectRootDir()));
+    m_projectSettingsManager->Load();
 
     statusBar()->showMessage(tr("Project opened: %1").arg(
         QString::fromStdString(m_projectContext->GetProjectName())), 5000);
@@ -2456,6 +2471,14 @@ void EditorMainWindow::setupProjectCallbacks()
     m_projectContext->SetProjectChangedCallback([this]() {
         updateWindowTitle();
         refreshAssetBrowser();
+
+        if (m_settingsWindow) {
+            const bool hasProject = m_projectContext && m_projectContext->HasProject();
+            const QString root = hasProject
+                ? QString::fromStdString(m_projectContext->GetProjectRootDir())
+                : QString();
+            m_settingsWindow->ConfigureContext(Hephaestus::EngineContext::Editor, hasProject, root);
+        }
     });
 
     // Set up scene loading callback for asset actions
@@ -2520,6 +2543,26 @@ void EditorMainWindow::onRedo()
 {
     // Redo not yet implemented (the engine uses a LIFO-only undo stack)
     statusBar()->showMessage(tr("Redo (not yet implemented)"), 2000);
+}
+
+void EditorMainWindow::onOpenSettings()
+{
+    const bool hasProject = m_projectContext && m_projectContext->HasProject();
+    const QString projectRoot = hasProject
+        ? QString::fromStdString(m_projectContext->GetProjectRootDir())
+        : QString();
+
+    if (!m_settingsWindow) {
+        m_settingsWindow = new Hephaestus::UI::SettingsWindow(this);
+        connect(m_settingsWindow, &QObject::destroyed, this, [this]() {
+            m_settingsWindow = nullptr;
+        });
+    }
+
+    m_settingsWindow->ConfigureContext(Hephaestus::EngineContext::Editor, hasProject, projectRoot);
+    m_settingsWindow->show();
+    m_settingsWindow->raise();
+    m_settingsWindow->activateWindow();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

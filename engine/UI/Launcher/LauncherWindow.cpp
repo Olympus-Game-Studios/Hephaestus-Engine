@@ -1,7 +1,9 @@
 #include "LauncherWindow.h"
+#include "../Shared/SettingsWindow.h"
 
 #include "../../ToolsCommon/PathUtils.h"
 #include "../../ToolsCommon/VersionInfo.h"
+#include "../../ToolsCommon/EngineContext.h"
 
 #include <QApplication>
 #include <QAbstractItemView>
@@ -109,6 +111,8 @@ LauncherWindow::LauncherWindow(QWidget* parent)
     , m_projectModel(this)
     , m_projectDelegate(this)
 {
+    m_engineSettingsManager.Load();
+
     setWindowTitle(QStringLiteral("Hephaestus Project Browser"));
     setMinimumSize(1320, 780);
 
@@ -203,6 +207,8 @@ QWidget* LauncherWindow::BuildRecentProjectsPage()
     auto* header = new QHBoxLayout();
     auto* title = new QLabel(QStringLiteral("Projects"), page);
     title->setObjectName(QStringLiteral("PageTitle"));
+    m_openSettingsButton = new QPushButton(QStringLiteral("Settings"), page);
+    m_openSettingsButton->setObjectName(QStringLiteral("PrimaryButton"));
     m_projectSearchEdit = new QLineEdit(page);
     m_projectSearchEdit->setPlaceholderText(QStringLiteral("Filter Projects"));
     m_projectSearchEdit->setObjectName(QStringLiteral("ProjectSearch"));
@@ -212,6 +218,7 @@ QWidget* LauncherWindow::BuildRecentProjectsPage()
 
     header->addWidget(title);
     header->addStretch(1);
+    header->addWidget(m_openSettingsButton);
     header->addWidget(m_projectSearchEdit, 1);
     header->addWidget(m_sortCombo);
     root->addLayout(header);
@@ -535,6 +542,7 @@ void LauncherWindow::BindSignals()
     });
     connect(m_showExplorerButton, &QPushButton::clicked, this, &LauncherWindow::ShowProjectInExplorer);
     connect(m_deleteButton, &QPushButton::clicked, this, &LauncherWindow::DeleteSelectedProject);
+    connect(m_openSettingsButton, &QPushButton::clicked, this, &LauncherWindow::OpenSettingsWindow);
 
     connect(&m_projectScanner, &LauncherProjectScanner::ScanStarted, this, [this]() {
         m_scanStatusLabel->setText(QStringLiteral("Scanning projects..."));
@@ -670,7 +678,29 @@ void LauncherWindow::NavigateToSidebarItem(int row)
     if (row == TemplatesPage) {
         return;
     }
+    if (row == SettingsPage) {
+        OpenSettingsWindow();
+        if (m_sidebar->currentRow() == SettingsPage) {
+            m_sidebar->setCurrentRow(RecentProjectsPage);
+        }
+        return;
+    }
     m_mainContent->setCurrentIndex(row);
+}
+
+void LauncherWindow::OpenSettingsWindow()
+{
+    if (!m_settingsWindow) {
+        m_settingsWindow = new Hephaestus::UI::SettingsWindow(this);
+        connect(m_settingsWindow, &QObject::destroyed, this, [this]() {
+            m_settingsWindow = nullptr;
+        });
+    }
+
+    m_settingsWindow->ConfigureContext(Hephaestus::EngineContext::Launcher, false, QString());
+    m_settingsWindow->show();
+    m_settingsWindow->raise();
+    m_settingsWindow->activateWindow();
 }
 
 QModelIndex LauncherWindow::CurrentProjectIndex() const

@@ -6,6 +6,7 @@
 #include "ProjectCardModel.h"
 #include "ProjectCardDelegate.h"
 #include "../../ToolsCommon/SharedAssetPaths.h"
+#include "../../ToolsCommon/EngineSettingsManager.h"
 
 #include <QWidget>
 
@@ -21,6 +22,10 @@ class QPushButton;
 class QStackedWidget;
 class QModelIndex;
 class QTimer;
+
+namespace Hephaestus::UI {
+class SettingsWindow;
+}
 
 namespace Hephaestus::Launcher {
 
@@ -64,6 +69,7 @@ private:
     void DeleteSelectedProject();
     void ShowProjectInExplorer();
     void CreateNewProject();
+    void OpenSettingsWindow();
 
     QString EnsureExecutableExistsOrPrompt(const QString& currentPath, const QString& dialogTitle);
     QString ResolveAsset(const QString& relativePath) const;
@@ -107,6 +113,7 @@ private:
 
     QPushButton* m_openButton = nullptr;
     QPushButton* m_openBottomButton = nullptr;
+    QPushButton* m_openSettingsButton = nullptr;
     QPushButton* m_showExplorerButton = nullptr;
     QPushButton* m_duplicateButton = nullptr;
     QPushButton* m_deleteButton = nullptr;
@@ -127,6 +134,9 @@ private:
     QListWidget* m_projectRootsList = nullptr;
     QComboBox* m_themeCombo = nullptr;
     QCheckBox* m_openLastProjectCheck = nullptr;
+
+    Hephaestus::Tools::EngineSettingsManager m_engineSettingsManager;
+    Hephaestus::UI::SettingsWindow* m_settingsWindow = nullptr;
 
     bool m_isInitializingUi = false;
     QTimer* m_projectRescanTimer = nullptr;

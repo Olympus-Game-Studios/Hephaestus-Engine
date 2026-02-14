@@ -215,6 +215,13 @@ if(HEPHAESTUS_USE_QT AND Qt6_FOUND)
         engine/ToolsCommon/PathUtils.cpp
         engine/ToolsCommon/JsonUtils.h
         engine/ToolsCommon/JsonUtils.cpp
+        engine/ToolsCommon/EngineContext.h
+        engine/ToolsCommon/SettingsSchema.h
+        engine/ToolsCommon/SettingsSchema.cpp
+        engine/ToolsCommon/EngineSettingsManager.h
+        engine/ToolsCommon/EngineSettingsManager.cpp
+        engine/ToolsCommon/ProjectSettingsManager.h
+        engine/ToolsCommon/ProjectSettingsManager.cpp
         engine/ToolsCommon/VersionInfo.h
         engine/ToolsCommon/VersionInfo.cpp
     )
@@ -446,6 +453,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/CameraInspector.h
             engine/UI/QtEditor/AddActorsPanel.cpp
             engine/UI/QtEditor/AddActorsPanel.h
+            engine/UI/Shared/SettingsWindow.cpp
+            engine/UI/Shared/SettingsWindow.h
         )
 
         target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets)
@@ -555,6 +564,8 @@ add_executable(HephaestusLauncher
     engine/UI/Launcher/ProjectCardDelegate.cpp
     engine/UI/Launcher/LauncherWindow.h
     engine/UI/Launcher/LauncherWindow.cpp
+    engine/UI/Shared/SettingsWindow.h
+    engine/UI/Shared/SettingsWindow.cpp
 )
 
 if(NOT HEPHAESTUS_USE_SHARED_ASSETS)
