@@ -1063,8 +1063,6 @@ void QtEditorEngine::onTick()
 
     if (isPlaying) {
         populateRuntimeInputState();
-        m_playModeManager.Tick(dt);
-
         if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
             try {
                 Scene* activeScene = m_editorContext.GetActiveScene();
@@ -1075,6 +1073,8 @@ void QtEditorEngine::onTick()
                 m_physicsInitialized = false;
             }
         }
+
+        m_playModeManager.Tick(dt);
     } else if (m_joltPhysicsSystem) {
         m_joltPhysicsSystem->SetEnabled(false);
     }
