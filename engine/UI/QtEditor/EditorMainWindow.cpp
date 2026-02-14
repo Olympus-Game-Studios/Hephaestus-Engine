@@ -253,6 +253,21 @@ EditorMainWindow::~EditorMainWindow()
     std::cout << "[EditorMainWindow] Destructor called\n";
 }
 
+void EditorMainWindow::OpenProjectFromPath(const QString& filepath)
+{
+    if (filepath.isEmpty()) {
+        return;
+    }
+
+    if (m_projectContext && m_projectContext->HasProject()) {
+        if (!promptSaveDirtyScene()) {
+            return;
+        }
+    }
+
+    openProjectFile(filepath);
+}
+
 void EditorMainWindow::closeEvent(QCloseEvent* event)
 {
     std::cout << "[EditorMainWindow] Close event received\n";
@@ -2288,34 +2303,7 @@ void EditorMainWindow::onOpenProject()
         return;
     }
 
-    // Load the project
-    std::string error;
-    if (m_projectContext->LoadProject(filepath.toStdString(), error)) {
-        statusBar()->showMessage(tr("Project opened: %1").arg(
-            QString::fromStdString(m_projectContext->GetProjectName())), 5000);
-        
-        // Update UI
-        updateWindowTitle();
-        refreshAssetBrowser();
-        rebuildRecentProjectsMenu();
-        
-        // Load last scene if available
-        const std::string& lastScene = m_projectContext->GetLastScene();
-        if (!lastScene.empty() && m_engine) {
-            auto* ctx = m_engine->GetEditorContext();
-            if (ctx) {
-                // Try to load relative to project root
-                std::filesystem::path scenePath = 
-                    std::filesystem::path(m_projectContext->GetProjectRootDir()) / lastScene;
-                if (std::filesystem::exists(scenePath)) {
-                    ctx->LoadScene(scenePath.string());
-                }
-            }
-        }
-    } else {
-        QMessageBox::critical(this, tr("Open Project Failed"),
-            tr("Failed to open project:\n%1").arg(QString::fromStdString(error)));
-    }
+    openProjectFile(filepath);
 }
 
 void EditorMainWindow::onCloseProject()
@@ -2360,44 +2348,48 @@ void EditorMainWindow::onOpenRecentProject()
         return;
     }
 
-    // Check if file exists
-    if (!std::filesystem::exists(projectPath.toStdString())) {
-        QMessageBox::warning(this, tr("Project Not Found"),
-            tr("The project file no longer exists:\n%1\n\n"
-               "It will be removed from recent projects.").arg(projectPath));
-        
-        // Remove from recent list (by reloading without this entry)
-        // For now, user can clear recent projects
-        return;
+    openProjectFile(projectPath);
+}
+
+bool EditorMainWindow::openProjectFile(const QString& filepath)
+{
+    if (filepath.isEmpty()) {
+        return false;
     }
 
-    // Load the project
+    if (!std::filesystem::exists(filepath.toStdString())) {
+        QMessageBox::warning(this, tr("Project Not Found"),
+            tr("The project file no longer exists:\n%1").arg(filepath));
+        return false;
+    }
+
     std::string error;
-    if (m_projectContext->LoadProject(projectPath.toStdString(), error)) {
-        statusBar()->showMessage(tr("Project opened: %1").arg(
-            QString::fromStdString(m_projectContext->GetProjectName())), 5000);
-        
-        // Update UI
-        updateWindowTitle();
-        refreshAssetBrowser();
-        rebuildRecentProjectsMenu();
-        
-        // Load last scene if available
-        const std::string& lastScene = m_projectContext->GetLastScene();
-        if (!lastScene.empty() && m_engine) {
-            auto* ctx = m_engine->GetEditorContext();
-            if (ctx) {
-                std::filesystem::path scenePath = 
-                    std::filesystem::path(m_projectContext->GetProjectRootDir()) / lastScene;
-                if (std::filesystem::exists(scenePath)) {
-                    ctx->LoadScene(scenePath.string());
-                }
-            }
-        }
-    } else {
+    if (!m_projectContext->LoadProject(filepath.toStdString(), error)) {
         QMessageBox::critical(this, tr("Open Project Failed"),
             tr("Failed to open project:\n%1").arg(QString::fromStdString(error)));
+        return false;
     }
+
+    statusBar()->showMessage(tr("Project opened: %1").arg(
+        QString::fromStdString(m_projectContext->GetProjectName())), 5000);
+
+    updateWindowTitle();
+    refreshAssetBrowser();
+    rebuildRecentProjectsMenu();
+
+    const std::string& lastScene = m_projectContext->GetLastScene();
+    if (!lastScene.empty() && m_engine) {
+        auto* ctx = m_engine->GetEditorContext();
+        if (ctx) {
+            std::filesystem::path scenePath =
+                std::filesystem::path(m_projectContext->GetProjectRootDir()) / lastScene;
+            if (std::filesystem::exists(scenePath)) {
+                ctx->LoadScene(scenePath.string());
+            }
+        }
+    }
+
+    return true;
 }
 
 void EditorMainWindow::onClearRecentProjects()

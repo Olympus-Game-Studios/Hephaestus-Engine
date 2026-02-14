@@ -85,6 +85,7 @@ option(HEPHAESTUS_BUILD_GAME "Build the standalone game runtime (HephaestusGame.
 option(HEPHAESTUS_GAME_SCRIPTING "Enable Lua scripting in game runtime" ON)
 option(HEPHAESTUS_GAME_USE_ULTRALIGHT "Enable Ultralight UI in game runtime (off by default)" OFF)
 option(HEPHAESTUS_USE_QT "Enable Qt-based editor UI" ON)
+option(HEPHAESTUS_USE_SHARED_ASSETS "Use shared runtime/editor/launcher asset folders" ON)
 
 # Qt (Windows) - use C:\Qt as a hint for discovery
 set(HEPHAESTUS_QT_ROOT "C:/Qt" CACHE PATH "Root path to Qt installation")
@@ -123,7 +124,11 @@ if(HEPHAESTUS_USE_QT)
     endif()
 
     if(HEPHAESTUS_USE_QT)
-        find_package(Qt6 COMPONENTS Widgets QUIET)
+        find_package(Qt6 COMPONENTS Core Widgets QUIET)
+        if(Qt6_FOUND)
+            find_package(Qt6 COMPONENTS Svg QUIET)
+            find_package(Qt6 COMPONENTS Concurrent QUIET)
+        endif()
     endif()
 
     # MSVC requires /Zc:__cplusplus for Qt to detect C++ standard correctly
@@ -198,6 +203,29 @@ set(GAME_RUNTIME_SOURCES
     engine/Game/GameMain.cpp
     engine/Core/RuntimeBootstrap.cpp
 )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HephaestusToolsCommon (shared launcher/editor utilities)
+# ─────────────────────────────────────────────────────────────────────────────
+if(HEPHAESTUS_USE_QT AND Qt6_FOUND)
+    add_library(HephaestusToolsCommon STATIC
+        engine/ToolsCommon/SharedAssetPaths.h
+        engine/ToolsCommon/SharedAssetPaths.cpp
+        engine/ToolsCommon/PathUtils.h
+        engine/ToolsCommon/PathUtils.cpp
+        engine/ToolsCommon/JsonUtils.h
+        engine/ToolsCommon/JsonUtils.cpp
+        engine/ToolsCommon/VersionInfo.h
+        engine/ToolsCommon/VersionInfo.cpp
+    )
+
+    target_link_libraries(HephaestusToolsCommon PUBLIC Qt6::Core)
+    target_include_directories(HephaestusToolsCommon PUBLIC engine)
+    target_compile_definitions(HephaestusToolsCommon PUBLIC
+        $<$<BOOL:${HEPHAESTUS_USE_SHARED_ASSETS}>:HEPHAESTUS_USE_SHARED_ASSETS=1>
+        $<$<NOT:$<BOOL:${HEPHAESTUS_USE_SHARED_ASSETS}>>:HEPHAESTUS_USE_SHARED_ASSETS=0>
+    )
+endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HephaestusEngine (Editor) Target
@@ -421,6 +449,9 @@ if(HEPHAESTUS_USE_QT)
         )
 
         target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets)
+        if(TARGET HephaestusToolsCommon)
+            target_link_libraries(HephaestusEngine PRIVATE HephaestusToolsCommon)
+        endif()
         target_compile_definitions(HephaestusEngine PRIVATE HEPHAESTUS_EDITOR_QT_UI=1)
 
         # Copy Qt DLLs to output directory (Windows)
@@ -506,6 +537,95 @@ add_subdirectory(extern/imnodes)
 target_link_libraries(HephaestusEngine PRIVATE imnodes)
 
 endif() # End HEPHAESTUS_BUILD_EDITOR
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HephaestusLauncher (Qt-based launcher)
+# ─────────────────────────────────────────────────────────────────────────────
+if(HEPHAESTUS_USE_QT AND Qt6_FOUND)
+add_executable(HephaestusLauncher
+    engine/UI/Launcher/LauncherMain.cpp
+    engine/UI/Launcher/LauncherProject.h
+    engine/UI/Launcher/LauncherProjectManager.h
+    engine/UI/Launcher/LauncherProjectManager.cpp
+    engine/UI/Launcher/LauncherProjectScanner.h
+    engine/UI/Launcher/LauncherProjectScanner.cpp
+    engine/UI/Launcher/ProjectCardModel.h
+    engine/UI/Launcher/ProjectCardModel.cpp
+    engine/UI/Launcher/ProjectCardDelegate.h
+    engine/UI/Launcher/ProjectCardDelegate.cpp
+    engine/UI/Launcher/LauncherWindow.h
+    engine/UI/Launcher/LauncherWindow.cpp
+)
+
+if(NOT HEPHAESTUS_USE_SHARED_ASSETS)
+    target_sources(HephaestusLauncher PRIVATE
+        engine/UI/Launcher/launcher_fallback.qrc
+    )
+endif()
+
+set_target_properties(HephaestusLauncher PROPERTIES
+    AUTOMOC ON
+    AUTOUIC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug"
+)
+
+target_link_libraries(HephaestusLauncher PRIVATE
+    Qt6::Widgets
+    HephaestusToolsCommon
+)
+
+if(TARGET Qt6::Concurrent)
+    target_link_libraries(HephaestusLauncher PRIVATE Qt6::Concurrent)
+endif()
+
+if(TARGET Qt6::Svg)
+    target_link_libraries(HephaestusLauncher PRIVATE Qt6::Svg)
+    target_compile_definitions(HephaestusLauncher PRIVATE HEPHAESTUS_QT_SVG_AVAILABLE=1)
+else()
+    target_compile_definitions(HephaestusLauncher PRIVATE HEPHAESTUS_QT_SVG_AVAILABLE=0)
+endif()
+
+if(WIN32)
+    get_target_property(_qt6_widgets_location Qt6::Widgets LOCATION)
+    get_filename_component(_qt6_bin_dir "${_qt6_widgets_location}" DIRECTORY)
+
+    add_custom_command(TARGET HephaestusLauncher POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_qt6_bin_dir}/Qt6Core.dll"
+            "$<TARGET_FILE_DIR:HephaestusLauncher>/Qt6Core.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_qt6_bin_dir}/Qt6Gui.dll"
+            "$<TARGET_FILE_DIR:HephaestusLauncher>/Qt6Gui.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_qt6_bin_dir}/Qt6Widgets.dll"
+            "$<TARGET_FILE_DIR:HephaestusLauncher>/Qt6Widgets.dll"
+        COMMENT "Copying Qt6 DLLs for launcher"
+    )
+
+    add_custom_command(TARGET HephaestusLauncher POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:HephaestusLauncher>/platforms"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_qt6_bin_dir}/../plugins/platforms/qwindows.dll"
+            "$<TARGET_FILE_DIR:HephaestusLauncher>/platforms/qwindows.dll"
+        COMMENT "Copying Qt6 platform plugin for launcher"
+    )
+
+    if(TARGET Qt6::Svg)
+        add_custom_command(TARGET HephaestusLauncher POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:HephaestusLauncher>/iconengines"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_qt6_bin_dir}/../plugins/iconengines/qsvgicon.dll"
+                "$<TARGET_FILE_DIR:HephaestusLauncher>/iconengines/qsvgicon.dll"
+            COMMENT "Copying Qt6 SVG icon engine plugin for launcher"
+        )
+    endif()
+endif()
+endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HephaestusGame (Standalone Game Runtime) Target
@@ -620,22 +740,6 @@ if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND AND WIN32)
     endif()
 endif()
 
-# Copy assets to game output directory (for development)
-add_custom_command(TARGET HephaestusGame POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-        "$<TARGET_FILE_DIR:HephaestusGame>/assets"
-    COMMENT "Copying assets to game build directory"
-)
-
-# Copy scripts to game output directory
-add_custom_command(TARGET HephaestusGame POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/scripts"
-        "$<TARGET_FILE_DIR:HephaestusGame>/scripts"
-    COMMENT "Copying scripts to game build directory"
-)
-
 # Depend on shaders
 if(TARGET Shaders)
     add_dependencies(HephaestusGame Shaders)
@@ -699,30 +803,42 @@ else()
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Editor Post-Build: Copy assets and editor resources
+# Shared Post-Build Assets Copy (Editor/Game/Launcher)
 # ─────────────────────────────────────────────────────────────────────────────
-if(TARGET HephaestusEngine)
-    add_custom_command(TARGET HephaestusEngine POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:HephaestusEngine>/assets"
-        COMMENT "Copying assets to editor build directory"
-    )
+function(hephaestus_add_shared_assets_copy target_name)
+    if(NOT TARGET ${target_name})
+        return()
+    endif()
 
-    add_custom_command(TARGET HephaestusEngine POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/editor"
-            "$<TARGET_FILE_DIR:HephaestusEngine>/editor"
-        COMMENT "Copying editor assets to build directory"
-    )
-    
-    add_custom_command(TARGET HephaestusEngine POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts"
-            "$<TARGET_FILE_DIR:HephaestusEngine>/scripts"
-        COMMENT "Copying scripts to editor build directory"
-    )
-endif()
+    if(HEPHAESTUS_USE_SHARED_ASSETS)
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+                "$<TARGET_FILE_DIR:${target_name}>/assets"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/editor"
+                "$<TARGET_FILE_DIR:${target_name}>/editor"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts"
+                "$<TARGET_FILE_DIR:${target_name}>/scripts"
+            COMMENT "Copying shared runtime/editor assets for ${target_name}"
+        )
+    else()
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+                "$<TARGET_FILE_DIR:${target_name}>/assets"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts"
+                "$<TARGET_FILE_DIR:${target_name}>/scripts"
+            COMMENT "Copying runtime assets for ${target_name}"
+        )
+    endif()
+endfunction()
+
+hephaestus_add_shared_assets_copy(HephaestusEngine)
+hephaestus_add_shared_assets_copy(HephaestusGame)
+hephaestus_add_shared_assets_copy(HephaestusLauncher)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install Targets for Distribution
@@ -740,6 +856,14 @@ endif()
 # Install game runtime
 if(TARGET HephaestusGame)
     install(TARGETS HephaestusGame
+        RUNTIME DESTINATION .
+        BUNDLE DESTINATION .
+    )
+endif()
+
+# Install launcher
+if(TARGET HephaestusLauncher)
+    install(TARGETS HephaestusLauncher
         RUNTIME DESTINATION .
         BUNDLE DESTINATION .
     )

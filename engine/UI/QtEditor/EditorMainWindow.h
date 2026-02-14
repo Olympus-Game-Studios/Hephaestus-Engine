@@ -69,6 +69,7 @@ class EditorMainWindow : public QMainWindow
 public:
     explicit EditorMainWindow(QWidget* parent = nullptr);
     ~EditorMainWindow() override;
+    void OpenProjectFromPath(const QString& filepath);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -143,6 +144,7 @@ private:
     void rebuildRecentProjectsMenu();
     void refreshAssetBrowser();
     bool promptSaveDirtyScene();  // Returns true if OK to proceed, false if cancelled
+    bool openProjectFile(const QString& filepath);
 
     // Dock widgets
     QDockWidget* m_outlinerDock = nullptr;
