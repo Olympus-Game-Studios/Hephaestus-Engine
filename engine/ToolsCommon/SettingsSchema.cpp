@@ -122,6 +122,8 @@ void SettingsSchemaRegistry::RegisterBuiltins()
             QStringLiteral("1.0.0")),
         MakeDef("project.info.companyName", "projectInfo", "Project Info", "companyName", "Company Name", SettingControlType::String,
             QString()),
+        MakeDef("project.info.defaultScene", "projectInfo", "Project Info", "defaultScene", "Default Scene", SettingControlType::String,
+            QString()),
 
         MakeDef("project.rendering.defaultSkybox", "rendering", "Rendering", "defaultSkybox", "Default Skybox", SettingControlType::Path,
             QString()),

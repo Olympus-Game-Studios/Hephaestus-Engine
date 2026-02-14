@@ -71,6 +71,9 @@ private:
     QHash<QString, QVariant>& PendingForTab(const QString& tabKey);
     QHash<QString, QVariant> CurrentValuesForTab(const QString& tabKey) const;
 
+    QStringList CollectProjectScenePaths() const;
+    void RefreshDefaultSceneEditor(QWidget* editor, const QString& selectedValue, const QString& tabKey);
+
     void SaveWindowState() const;
     void LoadWindowState();
 

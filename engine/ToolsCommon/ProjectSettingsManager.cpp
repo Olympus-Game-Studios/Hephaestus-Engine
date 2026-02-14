@@ -162,7 +162,13 @@ bool ProjectSettingsManager::Save() const
 
     const auto& defs = Definitions();
     for (const SettingDefinition& def : defs) {
-        if (def.categoryId == QStringLiteral("projectInfo")) {
+        const bool isProjectMetadataField =
+            def.id == QStringLiteral("project.info.name") ||
+            def.id == QStringLiteral("project.info.description") ||
+            def.id == QStringLiteral("project.info.version") ||
+            def.id == QStringLiteral("project.info.companyName");
+
+        if (isProjectMetadataField) {
             continue;
         }
         QJsonObject categoryObject = output.value(def.categoryId).toObject();

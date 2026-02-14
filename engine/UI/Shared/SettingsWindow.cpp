@@ -14,14 +14,20 @@
 #include <QLayout>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QFileInfo>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QTabWidget>
 #include <QTabBar>
 #include <QVBoxLayout>
+#include <QDir>
+#include <QDirIterator>
 #include <QtGlobal>
+
+#include <algorithm>
 
 namespace {
 
@@ -402,6 +408,41 @@ QWidget* SettingsWindow::BuildEditor(const Hephaestus::Tools::SettingDefinition&
         return row;
     }
 
+    if (definition.id == QStringLiteral("project.info.defaultScene") &&
+        tab.key == QStringLiteral("project")) {
+        auto* row = new QWidget();
+        auto* layout = new QHBoxLayout(row);
+        layout->setContentsMargins(0, 0, 0, 0);
+
+        auto* combo = new QComboBox(row);
+        combo->setObjectName(QStringLiteral("defaultSceneCombo"));
+        combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+
+        auto* refresh = new QPushButton(QStringLiteral("Refresh"), row);
+        refresh->setObjectName(QStringLiteral("defaultSceneRefreshButton"));
+
+        layout->addWidget(combo, 1);
+        layout->addWidget(refresh);
+
+        const auto updatePending = [this, key = tab.key, id = definition.id, combo]() {
+            PendingForTab(key)[id] = combo->currentData().toString();
+            UpdateDirtyState();
+        };
+
+        RefreshDefaultSceneEditor(row, value.toString(), tab.key);
+
+        connect(combo, &QComboBox::currentIndexChanged, this, [updatePending](int) {
+            updatePending();
+        });
+
+        connect(refresh, &QPushButton::clicked, this, [this, row, key = tab.key, id = definition.id]() {
+            const QString selected = PendingForTab(key).value(id).toString();
+            RefreshDefaultSceneEditor(row, selected, key);
+        });
+
+        return row;
+    }
+
     auto* edit = new QLineEdit();
     edit->setText(value.toString());
     connect(edit, &QLineEdit::textChanged, this, [this, key = tab.key, id = definition.id](const QString& text) {
@@ -459,6 +500,17 @@ void SettingsWindow::PopulateTabValues(TabUi& tab, const QHash<QString, QVariant
         }
         case SettingControlType::String:
         default: {
+            if (auto* combo = editor->findChild<QComboBox*>(QStringLiteral("defaultSceneCombo"))) {
+                RefreshDefaultSceneEditor(editor, value.toString(), tab.key);
+                const QString desired = value.toString().trimmed().replace('\\', '/');
+                for (int i = 0; i < combo->count(); ++i) {
+                    if (combo->itemData(i).toString().trimmed().replace('\\', '/') == desired) {
+                        combo->setCurrentIndex(i);
+                        break;
+                    }
+                }
+                break;
+            }
             if (auto* line = qobject_cast<QLineEdit*>(editor)) {
                 line->setText(value.toString());
             }
@@ -466,6 +518,74 @@ void SettingsWindow::PopulateTabValues(TabUi& tab, const QHash<QString, QVariant
         }
         }
     }
+}
+
+QStringList SettingsWindow::CollectProjectScenePaths() const
+{
+    QStringList scenes;
+    if (m_projectRoot.trimmed().isEmpty()) {
+        return scenes;
+    }
+
+    const QDir projectDir(m_projectRoot);
+    const QString scenesRoot = projectDir.filePath(QStringLiteral("assets/scenes"));
+    if (!QDir(scenesRoot).exists()) {
+        return scenes;
+    }
+
+    QDirIterator it(scenesRoot,
+                    QStringList() << QStringLiteral("*.hpscene") << QStringLiteral("*.hescene"),
+                    QDir::Files,
+                    QDirIterator::Subdirectories);
+
+    while (it.hasNext()) {
+        const QString absolutePath = it.next();
+        QString relativePath = projectDir.relativeFilePath(absolutePath);
+        relativePath = QDir::fromNativeSeparators(relativePath);
+        scenes.push_back(relativePath);
+    }
+
+    std::sort(scenes.begin(), scenes.end(), [](const QString& lhs, const QString& rhs) {
+        return lhs.compare(rhs, Qt::CaseInsensitive) < 0;
+    });
+
+    return scenes;
+}
+
+void SettingsWindow::RefreshDefaultSceneEditor(QWidget* editor,
+                                               const QString& selectedValue,
+                                               const QString& tabKey)
+{
+    QComboBox* combo = editor ? editor->findChild<QComboBox*>(QStringLiteral("defaultSceneCombo")) : nullptr;
+    if (!combo) {
+        return;
+    }
+
+    const QString normalizedSelected = QDir::fromNativeSeparators(selectedValue.trimmed());
+    const QStringList scenes = CollectProjectScenePaths();
+
+    QSignalBlocker blocker(combo);
+    combo->clear();
+    combo->addItem(QStringLiteral("(None)"), QString());
+
+    int selectedIndex = 0;
+    for (const QString& scene : scenes) {
+        combo->addItem(scene, scene);
+        if (!normalizedSelected.isEmpty() && scene.compare(normalizedSelected, Qt::CaseInsensitive) == 0) {
+            selectedIndex = combo->count() - 1;
+        }
+    }
+
+    if (!normalizedSelected.isEmpty() && selectedIndex == 0) {
+        QFileInfo selectedInfo(normalizedSelected);
+        const QString label = QStringLiteral("%1 (Missing)").arg(selectedInfo.fileName().isEmpty() ? normalizedSelected : selectedInfo.fileName());
+        combo->addItem(label, normalizedSelected);
+        selectedIndex = combo->count() - 1;
+    }
+
+    combo->setCurrentIndex(selectedIndex);
+
+    PendingForTab(tabKey)[QStringLiteral("project.info.defaultScene")] = combo->currentData().toString();
 }
 
 void SettingsWindow::ApplySearchFilter(TabUi& tab, const QString& searchText)

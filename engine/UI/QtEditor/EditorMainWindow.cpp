@@ -2333,6 +2333,9 @@ void EditorMainWindow::onCloseProject()
 
     // Clear the scene
     if (m_engine) {
+        if (auto* frameRenderer = m_engine->GetFrameRenderer()) {
+            frameRenderer->SetProjectRoot(std::string());
+        }
         auto* ctx = m_engine->GetEditorContext();
         if (ctx) {
             ctx->NewScene("New Scene");
@@ -2385,6 +2388,12 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
         QString::fromStdString(m_projectContext->GetProjectRootDir()));
     m_projectSettingsManager->Load();
 
+    if (m_engine) {
+        if (auto* frameRenderer = m_engine->GetFrameRenderer()) {
+            frameRenderer->SetProjectRoot(m_projectContext->GetProjectRootDir());
+        }
+    }
+
     statusBar()->showMessage(tr("Project opened: %1").arg(
         QString::fromStdString(m_projectContext->GetProjectName())), 5000);
 
@@ -2392,14 +2401,51 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
     refreshAssetBrowser();
     rebuildRecentProjectsMenu();
 
-    const std::string& lastScene = m_projectContext->GetLastScene();
-    if (!lastScene.empty() && m_engine) {
+    if (m_engine) {
         auto* ctx = m_engine->GetEditorContext();
         if (ctx) {
-            std::filesystem::path scenePath =
-                std::filesystem::path(m_projectContext->GetProjectRootDir()) / lastScene;
-            if (std::filesystem::exists(scenePath)) {
-                ctx->LoadScene(scenePath.string());
+            const std::string projectRoot = m_projectContext->GetProjectRootDir();
+
+            auto tryLoadScene = [&](const QString& configuredPath) {
+                const QString trimmed = configuredPath.trimmed();
+                if (trimmed.isEmpty()) {
+                    return false;
+                }
+
+                std::filesystem::path scenePath(trimmed.toStdString());
+                if (scenePath.is_relative()) {
+                    scenePath = std::filesystem::path(projectRoot) / scenePath;
+                }
+
+                if (!std::filesystem::exists(scenePath)) {
+                    return false;
+                }
+
+                if (!ctx->LoadScene(scenePath.string())) {
+                    return false;
+                }
+
+                m_engine->RebuildSceneMeshes();
+                return true;
+            };
+
+            bool loadedScene = false;
+            const QString defaultScene = m_projectSettingsManager
+                ? m_projectSettingsManager->Value(QStringLiteral("project.info.defaultScene")).toString()
+                : QString();
+
+            if (!defaultScene.trimmed().isEmpty()) {
+                loadedScene = tryLoadScene(defaultScene);
+                if (!loadedScene) {
+                    statusBar()->showMessage(tr("Default Scene could not be loaded. Falling back to last scene."), 4000);
+                }
+            }
+
+            if (!loadedScene) {
+                const std::string& lastScene = m_projectContext->GetLastScene();
+                if (!lastScene.empty()) {
+                    loadedScene = tryLoadScene(QString::fromStdString(lastScene));
+                }
             }
         }
     }

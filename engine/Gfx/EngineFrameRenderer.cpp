@@ -1903,9 +1903,11 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                             pathLogPrinted = true;
                         }
                         vkDeviceWaitIdle(m_device->device);
-                        m_skybox.LoadHDRI(resolvedPath, m_device->allocator,
-                                          m_device->physicalDevice, m_device->commandPool,
-                                          m_device->graphicsQueue, m_device->device);
+                        if (m_skybox.LoadHDRI(resolvedPath, m_device->allocator,
+                                              m_device->physicalDevice, m_device->commandPool,
+                                              m_device->graphicsQueue, m_device->device)) {
+                            m_lastSkyboxPath = envComp->hdriPath;
+                        }
                     } else {
                         static bool failLogPrinted = false;
                         if (!failLogPrinted) {
@@ -1913,7 +1915,6 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                             failLogPrinted = true;
                         }
                     }
-                    m_lastSkyboxPath = envComp->hdriPath;
                 }
                 
                 if (m_skybox.hasHDRI) {

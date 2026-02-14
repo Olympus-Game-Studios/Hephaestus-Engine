@@ -320,8 +320,11 @@ bool QtEditorEngine::createSwapchain()
             throw std::runtime_error("Failed to initialize frame renderer");
         }
         
-        // Create a new empty scene via EditorContext
-        m_editorContext.NewScene("New Scene");
+        // Create a default scene only if one wasn't already loaded
+        // (e.g. project startup may load a configured default scene first).
+        if (!m_editorContext.HasActiveScene()) {
+            m_editorContext.NewScene("New Scene");
+        }
         
         // Set up default camera from EditorContext
         const auto& cam = m_editorContext.GetCamera();
