@@ -223,8 +223,7 @@ void MeshRendererInspector::rebuildMaterialSlots()
     auto& reg = m_ctx->GetActiveScene()->GetRegistry();
     if (!reg.valid(m_entity) || !reg.all_of<MeshRendererComponent>(m_entity)) return;
 
-    auto& mr = reg.get<MeshRendererComponent>(m_entity);
-    EnsureMaterialSlots(mr);
+    const auto& mr = reg.get<MeshRendererComponent>(m_entity);
     std::vector<QString> materialOptions = collectProjectMaterialPaths();
 
     int slotCount = std::max(mr.submeshCount, 1);

@@ -1460,6 +1460,16 @@ void QtEditorEngine::RebuildSceneMeshes()
         m_frameRenderer->SetProjectRoot(projectRoot.string());
     }
 
+    auto syncMaterialSlots = [](MeshRendererComponent& renderer, int subCount) {
+        const int requiredSlots = std::max(subCount, 1);
+        if (static_cast<int>(renderer.appliedMaterialPaths.size()) < requiredSlots) {
+            renderer.appliedMaterialPaths.resize(static_cast<size_t>(requiredSlots), "");
+        }
+        if (static_cast<int>(renderer.materialIndices.size()) < requiredSlots) {
+            renderer.materialIndices.resize(static_cast<size_t>(requiredSlots), -1);
+        }
+    };
+
     // Iterate all entities with MeshRendererComponent
     auto renderView = scene->GetEntitiesWith<MeshRendererComponent>();
     
@@ -1493,6 +1503,7 @@ void QtEditorEngine::RebuildSceneMeshes()
             if (mesh) {
                 int subCount = mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size());
                 renderer.SetMesh(existingHandle, mesh->bounds, mesh->sourceKey, mesh->imported, subCount);
+                syncMaterialSlots(renderer, subCount);
                 std::cout << "[QtEditorEngine]   -> Found in library: handle " << existingHandle << "\n";
                 continue;
             }
@@ -1506,6 +1517,7 @@ void QtEditorEngine::RebuildSceneMeshes()
                 if (mesh) {
                     int subCount = mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size());
                     renderer.SetMesh(handle, mesh->bounds, mesh->sourceKey, mesh->imported, subCount);
+                    syncMaterialSlots(renderer, subCount);
                     std::cout << "[QtEditorEngine]   -> Builtin mesh: handle " << handle << "\n";
                 }
             } else {
@@ -1564,6 +1576,7 @@ void QtEditorEngine::RebuildSceneMeshes()
             MeshGPU* mesh = m_frameRenderer->GetMesh(handle);
             int subCount = mesh ? (mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size())) : 1;
             renderer.SetMesh(handle, meshData.bounds, lookupKey, true, subCount);
+            syncMaterialSlots(renderer, subCount);
             std::cout << "[QtEditorEngine]   -> Uploaded: handle " << handle << "\n";
         }
     }
