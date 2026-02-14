@@ -45,6 +45,7 @@ namespace QtEditor {
 class QtViewportWindow;
 class QtEditorEngine;
 class AssetBrowserWidget;
+class AddActorsPanel;
 class EditorAssetActions;
 class LightInspector;
 class EnvironmentInspector;
@@ -71,6 +72,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void setupMenuBar();
@@ -96,6 +98,7 @@ private:
     void showAddComponentMenu();
     void onComponentRemoved(entt::entity entity, const QString& name);
     void handleDragDrop(const QString& assetPath, const QString& targetField);
+    void handleViewportSpawnDrop(const QByteArray& spawnPayload, const QPoint& dropPos);
 
 private slots:
     // File menu actions - Level
@@ -145,6 +148,7 @@ private:
     QDockWidget* m_outlinerDock = nullptr;
     QDockWidget* m_detailsDock = nullptr;
     QDockWidget* m_assetBrowserDock = nullptr;
+    QDockWidget* m_addActorsDock = nullptr;
 
     // Top toolbar
     QToolBar* m_topToolbar = nullptr;
@@ -199,6 +203,9 @@ private:
     // Asset browser (new widget-based)
     AssetBrowserWidget* m_assetBrowser = nullptr;
     std::unique_ptr<EditorAssetActions> m_assetActions;
+
+    // Add Actors panel
+    AddActorsPanel* m_addActorsPanel = nullptr;
 
     // Viewport (real 3D rendering)
     QtViewportWindow* m_viewportWindow = nullptr;

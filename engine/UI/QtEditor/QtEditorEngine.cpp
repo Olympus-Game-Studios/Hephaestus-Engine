@@ -1494,6 +1494,23 @@ void QtEditorEngine::RebuildSceneMeshes()
             continue;
         }
 
+        // If the entity already has a valid handle that still lives in the
+        // library, keep it.  This covers meshes loaded from a path that
+        // differs from the stored meshAssetPath (e.g. engine default meshes
+        // loaded from the build output while the asset path is stored as a
+        // relative string).
+        if (renderer.meshHandle != MeshRendererComponent::InvalidMesh) {
+            MeshGPU* existing = m_frameRenderer->GetMesh(renderer.meshHandle);
+            if (existing) {
+                int subCount = existing->submeshes.empty()
+                    ? 1 : static_cast<int>(existing->submeshes.size());
+                syncMaterialSlots(renderer, subCount);
+                std::cout << "[QtEditorEngine]   -> Keeping existing handle "
+                          << renderer.meshHandle << "\n";
+                continue;
+            }
+        }
+
         std::string lookupKey = normalizeAssetPath(renderer.meshAssetPath);
 
         // Check if mesh already in library

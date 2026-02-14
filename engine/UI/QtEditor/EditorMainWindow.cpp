@@ -9,6 +9,7 @@
 #include "QtViewportWindow.h"
 #include "QtEditorEngine.h"
 #include "AssetBrowserWidget.h"
+#include "AddActorsPanel.h"
 #include "EditorAssetActions.h"
 #include "LightInspector.h"
 #include "EnvironmentInspector.h"
@@ -50,6 +51,9 @@
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QCloseEvent>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QScrollArea>
 #include <QDir>
 #include <QToolBar>
@@ -1112,6 +1116,20 @@ void EditorMainWindow::setupDockWidgets()
     addDockWidget(Qt::BottomDockWidgetArea, m_assetBrowserDock);
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Add Actors Dock (Left, tabbed with Outliner)
+    // ─────────────────────────────────────────────────────────────────────────
+    m_addActorsDock = new QDockWidget(tr("Add Actors"), this);
+    m_addActorsDock->setObjectName("AddActorsDock");
+    m_addActorsDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea | Qt::BottomDockWidgetArea);
+
+    m_addActorsPanel = new AddActorsPanel(this, m_addActorsDock);
+    m_addActorsDock->setWidget(m_addActorsPanel);
+
+    addDockWidget(Qt::LeftDockWidgetArea, m_addActorsDock);
+    tabifyDockWidget(m_outlinerDock, m_addActorsDock);
+    m_outlinerDock->raise(); // Outliner stays visible by default
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Add dock visibility toggles to View menu
     // ─────────────────────────────────────────────────────────────────────────
     QMenu* viewMenu = menuBar()->findChild<QMenu*>();
@@ -1124,6 +1142,7 @@ void EditorMainWindow::setupDockWidgets()
     
     if (viewMenu) {
         viewMenu->addAction(m_outlinerDock->toggleViewAction());
+        viewMenu->addAction(m_addActorsDock->toggleViewAction());
         viewMenu->addAction(m_detailsDock->toggleViewAction());
         viewMenu->addAction(m_assetBrowserDock->toggleViewAction());
         
@@ -1283,6 +1302,10 @@ void EditorMainWindow::setupCentralWidget()
             this, &EditorMainWindow::onViewportReady);
     
     setCentralWidget(m_viewportHost);
+
+    // ── Enable drag-drop onto the viewport container ────────────────────────
+    m_viewportContainer->setAcceptDrops(true);
+    m_viewportContainer->installEventFilter(this);
     
     std::cout << "[EditorMainWindow] Viewport widget created\n";
 }
@@ -2888,6 +2911,243 @@ void EditorMainWindow::handleDragDrop(const QString& assetPath, const QString& t
         statusBar()->showMessage(
             tr("Cannot drop '%1' onto '%2'").arg(assetPath, targetField), 3000);
     }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Viewport drag-drop event filter (Add Actors / Asset spawning)
+// ═════════════════════════════════════════════════════════════════════════════
+
+bool EditorMainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_viewportContainer) {
+        if (event->type() == QEvent::DragEnter) {
+            auto* de = static_cast<QDragEnterEvent*>(event);
+            if (de->mimeData()->hasFormat(kSpawnableMimeType)) {
+                de->acceptProposedAction();
+                return true;
+            }
+        }
+        else if (event->type() == QEvent::DragMove) {
+            auto* de = static_cast<QDragMoveEvent*>(event);
+            if (de->mimeData()->hasFormat(kSpawnableMimeType)) {
+                de->acceptProposedAction();
+                return true;
+            }
+        }
+        else if (event->type() == QEvent::Drop) {
+            auto* de = static_cast<QDropEvent*>(event);
+            if (de->mimeData()->hasFormat(kSpawnableMimeType)) {
+                QByteArray payload = de->mimeData()->data(kSpawnableMimeType);
+                QPoint dropPos = de->position().toPoint();
+                de->acceptProposedAction();
+                handleViewportSpawnDrop(payload, dropPos);
+                return true;
+            }
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spawn entity from an Add Actors drop onto the viewport
+// ─────────────────────────────────────────────────────────────────────────────
+
+void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, const QPoint& dropPos)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) {
+        statusBar()->showMessage(tr("No active scene to spawn into."), 3000);
+        return;
+    }
+
+    auto* frameRenderer = m_engine->GetFrameRenderer();
+    SpawnableEntry entry = SpawnableEntry::fromMimePayload(spawnPayload);
+    Scene* scene = ctx->GetActiveScene();
+
+    // ── Determine spawn position ────────────────────────────────────────────
+    // Try to hit-test against the scene at the drop pixel position.
+    // If no hit, place a fixed distance in front of the editor camera.
+    const auto& cam = ctx->GetCamera();
+    constexpr float kSpawnDistance = 6.0f;
+    const float yawR   = cam.yawDeg   * 3.1415926535f / 180.0f;
+    const float pitchR = cam.pitchDeg * 3.1415926535f / 180.0f;
+    float fx = std::cos(yawR) * std::cos(pitchR);
+    float fy = std::sin(pitchR);
+    float fz = std::sin(yawR) * std::cos(pitchR);
+    float len = std::sqrt(fx*fx + fy*fy + fz*fz);
+    if (len > 0.0001f) { fx /= len; fy /= len; fz /= len; }
+
+    Vec3 spawnPos(cam.positionX + fx * kSpawnDistance,
+                  cam.positionY + fy * kSpawnDistance,
+                  cam.positionZ + fz * kSpawnDistance);
+
+    // ── Push undo ───────────────────────────────────────────────────────────
+    EditorUndoManager::PushSnapshot(ctx, "Add Actor: " + entry.displayName.toStdString());
+
+    // ── Generate a unique entity name ───────────────────────────────────────
+    std::string baseName = entry.displayName.toStdString();
+    if (baseName.empty()) baseName = "Actor";
+    std::string entityName = baseName;
+    if (scene->FindEntityByName(entityName)) {
+        int suffix = 1;
+        do {
+            entityName = baseName + " (" + std::to_string(suffix++) + ")";
+        } while (scene->FindEntityByName(entityName));
+    }
+
+    // ── Spawn based on kind ─────────────────────────────────────────────────
+    switch (entry.kind) {
+
+    case SpawnableEntry::Kind::Mesh: {
+        if (!frameRenderer) {
+            statusBar()->showMessage(tr("Renderer not ready."), 3000);
+            return;
+        }
+        // Resolve the mesh file
+        namespace fs = std::filesystem;
+        fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
+        fs::path meshPath = exeDir / entry.assetPath.toStdString();
+        if (!fs::exists(meshPath)) {
+            statusBar()->showMessage(tr("Mesh file not found: %1").arg(entry.assetPath), 3000);
+            return;
+        }
+
+        std::string normalizedKey = meshPath.lexically_normal().generic_string();
+        size_t meshHandle = frameRenderer->GetMeshHandle(normalizedKey);
+
+        if (meshHandle == SIZE_MAX) {
+            MeshData meshData;
+            std::string loadError;
+            if (!ModelImporter::LoadModel(meshPath, meshData, loadError) ||
+                meshData.vertices.empty() || meshData.indices.empty()) {
+                statusBar()->showMessage(tr("Failed to load mesh: %1").arg(QString::fromStdString(loadError)), 3000);
+                return;
+            }
+            std::string meshName = meshPath.stem().string();
+            meshHandle = m_engine->uploadMeshToGPU(meshName, meshData, meshPath, true);
+            if (meshHandle == MeshRendererComponent::InvalidMesh) {
+                statusBar()->showMessage(tr("Failed to upload mesh to GPU."), 3000);
+                return;
+            }
+        }
+
+        Entity created = scene->CreateEntity(entityName);
+        if (!created) break;
+
+        MeshGPU* meshGPU = frameRenderer->GetMesh(meshHandle);
+        int subCount = (meshGPU && !meshGPU->submeshes.empty())
+            ? static_cast<int>(meshGPU->submeshes.size()) : 1;
+        AABB bounds = meshGPU ? meshGPU->bounds : AABB{};
+
+        auto& renderer = created.AddComponent<MeshRendererComponent>();
+        renderer.SetMesh(meshHandle, bounds, entry.assetPath.toStdString(), true, subCount);
+        renderer.materialIndices.assign(static_cast<size_t>(subCount), -1);
+        if (meshGPU && !meshGPU->submeshes.empty()) {
+            for (size_t i = 0; i < meshGPU->submeshes.size(); ++i)
+                renderer.materialIndices[i] = meshGPU->submeshes[i].materialSlot;
+        }
+        renderer.appliedMaterialPaths.resize(static_cast<size_t>(subCount));
+        created.AddComponent<MaterialComponent>(Vec3(1.0f, 1.0f, 1.0f));
+
+        auto& tc = created.GetComponent<TransformComponent>();
+        tc.position = spawnPos;
+        tc.rotation = Vec3(0.0f, 0.0f, 0.0f);
+        tc.scale    = Vec3(1.0f, 1.0f, 1.0f);
+
+        ctx->SelectEntity(static_cast<entt::entity>(created));
+        break;
+    }
+
+    case SpawnableEntry::Kind::Light: {
+        Entity created = scene->CreateEntity(entityName);
+        if (!created) break;
+
+        LightComponent light;
+        if (entry.typeId == "DirectionalLight") {
+            light = LightComponent::CreateDirectional(Vec3(0.0f, -1.0f, 0.0f));
+        } else if (entry.typeId == "PointLight") {
+            light = LightComponent::CreatePoint(Vec3(1,1,1), 1.0f, 10.0f);
+        } else if (entry.typeId == "SpotLight") {
+            light = LightComponent::CreateSpot(Vec3(1,1,1), 1.0f, 10.0f);
+        } else {
+            light = LightComponent::CreatePoint();
+        }
+        created.AddComponent<LightComponent>(light);
+        created.AddComponent<EditorIconComponent>(EditorIconComponent::ForLight(light.type));
+
+        auto& tc = created.GetComponent<TransformComponent>();
+        tc.position = spawnPos;
+        tc.rotation = Vec3(0.0f, 0.0f, 0.0f);
+        tc.scale    = Vec3(1.0f, 1.0f, 1.0f);
+
+        ctx->SelectEntity(static_cast<entt::entity>(created));
+        break;
+    }
+
+    case SpawnableEntry::Kind::Camera: {
+        Entity created = scene->CreateEntity(entityName);
+        if (!created) break;
+
+        // CameraComponent — inactive by default so it won't override editor camera
+        CameraComponent camComp;
+        camComp.fov      = 60.0f;
+        camComp.nearPlane = 0.1f;
+        camComp.farPlane  = 1000.0f;
+        camComp.isActive  = false;
+        camComp.showEditorMesh = true;
+        created.AddComponent<CameraComponent>(camComp);
+
+        // Editor-only visual representation via Camera.glb mesh
+        if (frameRenderer) {
+            namespace fs = std::filesystem;
+            fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
+            fs::path camMeshPath = exeDir / "assets" / "meshes" / "Camera.glb";
+            if (fs::exists(camMeshPath)) {
+                std::string normalizedKey = camMeshPath.lexically_normal().generic_string();
+                size_t meshHandle = frameRenderer->GetMeshHandle(normalizedKey);
+                if (meshHandle == SIZE_MAX) {
+                    MeshData meshData;
+                    std::string loadError;
+                    if (ModelImporter::LoadModel(camMeshPath, meshData, loadError) &&
+                        !meshData.vertices.empty() && !meshData.indices.empty()) {
+                        meshHandle = m_engine->uploadMeshToGPU("Camera", meshData, camMeshPath, true);
+                    }
+                }
+                if (meshHandle != MeshRendererComponent::InvalidMesh) {
+                    MeshGPU* meshGPU = frameRenderer->GetMesh(meshHandle);
+                    int subCount = (meshGPU && !meshGPU->submeshes.empty())
+                        ? static_cast<int>(meshGPU->submeshes.size()) : 1;
+                    AABB bounds = meshGPU ? meshGPU->bounds : AABB{};
+
+                    auto& renderer = created.AddComponent<MeshRendererComponent>();
+                    renderer.SetMesh(meshHandle, bounds, "assets/meshes/Camera.glb", true, subCount);
+                    renderer.materialIndices.assign(static_cast<size_t>(subCount), -1);
+                    renderer.appliedMaterialPaths.resize(static_cast<size_t>(subCount));
+                    renderer.hideInGame = true; // Editor-only visual
+                    created.AddComponent<MaterialComponent>(Vec3(0.6f, 0.6f, 0.7f));
+                }
+            }
+        }
+
+        auto& tc = created.GetComponent<TransformComponent>();
+        tc.position = spawnPos;
+        tc.rotation = Vec3(0.0f, 0.0f, 0.0f);
+        tc.scale    = Vec3(1.0f, 1.0f, 1.0f);
+
+        ctx->SelectEntity(static_cast<entt::entity>(created));
+        break;
+    }
+
+    } // switch
+
+    // ── Finalise ────────────────────────────────────────────────────────────
+    ctx->MarkDirty();
+    rebuildOutliner();
+    refreshDetailsPanel();
+
+    std::cout << "[AddActors] Spawned: " << entityName << "\n";
+    statusBar()->showMessage(tr("Added actor: %1").arg(QString::fromStdString(entityName)), 3000);
 }
 
 } // namespace QtEditor

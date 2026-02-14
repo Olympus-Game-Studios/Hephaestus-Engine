@@ -416,6 +416,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/PhysicsInspectors.h
             engine/UI/QtEditor/CameraInspector.cpp
             engine/UI/QtEditor/CameraInspector.h
+            engine/UI/QtEditor/AddActorsPanel.cpp
+            engine/UI/QtEditor/AddActorsPanel.h
         )
 
         target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets)
