@@ -20,26 +20,17 @@ void main() {
     // Transform to world space
     vec4 worldPos = pc.model * vec4(inPosition, 1.0);
 
-    // Approximate world-space pivot using model translation (column 3)
-    vec3 worldPivot = pc.model[3].xyz;
-
-    // Direction from pivot to vertex (handles rotations/scales reasonably well)
-    vec3 offsetDir = worldPos.xyz - worldPivot;
-    float dirLen = length(offsetDir);
-    if (dirLen < 1e-4) {
-        mat3 normalMatrix = mat3(transpose(inverse(mat3(pc.model))));
-        offsetDir = normalize(normalMatrix * inNormal);
-    } else {
-        offsetDir /= dirLen;
-    }
+    // Transform normal to world space
+    mat3 normalMatrix = mat3(transpose(inverse(mat3(pc.model))));
+    vec3 worldNormal = normalize(normalMatrix * inNormal);
 
     // Distance-based scale (grows slower with distance)
     float distanceToCamera = length(worldPos.xyz - ubo.viewPos);
-    float outlineScale = 0.015 * sqrt(max(distanceToCamera, 0.001) / 10.0);
-    outlineScale = clamp(outlineScale, 0.008, 0.05);
+    float outlineScale = 0.02 * sqrt(max(distanceToCamera, 0.001) / 10.0);
+    outlineScale = clamp(outlineScale, 0.01, 0.08);
 
-    // Expand away from pivot
-    worldPos.xyz += offsetDir * outlineScale;
+    // Expand along normal direction
+    worldPos.xyz += worldNormal * outlineScale;
 
     gl_Position = ubo.proj * ubo.view * worldPos;
 }

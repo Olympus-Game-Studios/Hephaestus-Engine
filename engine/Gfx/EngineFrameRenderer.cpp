@@ -3606,9 +3606,9 @@ void EngineFrameRenderer::OutlineRenderer::Init(VkDevice device, VkRenderPass re
     
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_FALSE;  // Disable depth test so outline renders on top of all geometry
+    depthStencil.depthTestEnable = VK_TRUE;   // Enable depth test so interior is occluded by the original mesh
     depthStencil.depthWriteEnable = VK_FALSE; // Don't write to depth buffer
-    depthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
     
