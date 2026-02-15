@@ -152,6 +152,23 @@ public:
      */
     void SetProjectChangedCallback(ProjectChangedCallback cb) { m_onProjectChanged = std::move(cb); }
 
+    /**
+     * @brief Synchronise built-in engine assets into the project's .engine folder.
+     *
+     * Copies default meshes (and in future other engine-provided assets) from
+     * the directory next to the running executable into
+     * <projectRoot>/.engine/meshes/.  Existing files whose size already
+     * matches the source are skipped so the operation is fast on subsequent
+     * opens.
+     */
+    void SyncEngineAssets();
+
+    /**
+     * @brief Get the .engine directory path for this project.
+     * @return "<projectRoot>/.engine" (empty string if no project is open).
+     */
+    std::string GetEngineFolderDir() const;
+
 private:
     bool parseProjectFile(const std::string& content, std::string& outError);
     std::string getDefaultSettingsPath() const;

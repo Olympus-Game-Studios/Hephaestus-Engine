@@ -24,6 +24,7 @@
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <vector>
+#include <string>
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -91,10 +92,17 @@ public:
     /**
      * @brief Rebuild the spawnable entries.
      *
-     * Scans the runtime assets/meshes directory for .glb files and
-     * combines them with the hard-coded Lights category.
+     * Scans the project's .engine/meshes directory for default mesh files
+     * and combines them with the hard-coded Lights category.
      */
     void Refresh();
+
+    /**
+     * @brief Set the project root directory for resolving .engine/ assets.
+     *
+     * Call this after a project is opened or changed, then call Refresh().
+     */
+    void SetProjectRoot(const std::string& projectRoot);
 
 signals:
     /// Emitted when the user wants to spawn a mesh from the panel.
@@ -107,6 +115,7 @@ private:
     void applySearchFilter();
 
     EditorMainWindow* m_mainWindow = nullptr;
+    std::string m_projectRoot;  ///< Project root dir (set via SetProjectRoot)
 
     // Data
     std::vector<SpawnableCategory> m_categories;

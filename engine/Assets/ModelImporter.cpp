@@ -813,7 +813,6 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
             const auto& accessors = root["accessors"];
             const auto& bufferViews = root.value("bufferViews", json::array());
 
-            bool useSubmeshes = mesh["primitives"].size() > 1;
             Vec3 minBounds{};
             Vec3 maxBounds{};
             bool boundsInitialized = false;
@@ -826,7 +825,7 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
                                          boundsInitialized, errorMessage, primResult)) {
                     return false;
                 }
-                if (useSubmeshes && primResult.indexCount > 0) {
+                if (primResult.indexCount > 0) {
                     MeshData::Submesh submesh{};
                     submesh.indexOffset = primResult.indexOffset;
                     submesh.indexCount = primResult.indexCount;
@@ -908,7 +907,6 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
                 const auto& accessors = root["accessors"];
                 const auto& bufferViews = root.value("bufferViews", json::array());
 
-                bool useSubmeshes = mesh["primitives"].size() > 1;
                 Vec3 minBounds{};
                 Vec3 maxBounds{};
                 bool boundsInitialized = false;
@@ -921,7 +919,7 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
                                              boundsInitialized, errorMessage, primResult)) {
                         return false;
                     }
-                    if (useSubmeshes && primResult.indexCount > 0) {
+                    if (primResult.indexCount > 0) {
                         MeshData::Submesh submesh{};
                         submesh.indexOffset = primResult.indexOffset;
                         submesh.indexCount = primResult.indexCount;

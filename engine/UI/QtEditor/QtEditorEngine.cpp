@@ -27,6 +27,7 @@
 #include "../../Scripting/ScriptEngine.h"
 #include "../../Scripting/LuaScriptComponent.h"
 
+#include <QCoreApplication>
 #include <GLFW/glfw3.h>  // For GLFW key code constants used by RuntimeInputState
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
@@ -1550,9 +1551,29 @@ void QtEditorEngine::RebuildSceneMeshes()
         // Try to load mesh from file
         fs::path meshPath;
         
-        // If path is relative, resolve against asset root
+        // If path is relative, resolve against project root first (handles
+        // .engine/meshes/... paths), then fall back to asset root, then
+        // try the .engine/ mirror of an assets/ path for backward compat.
         fs::path assetP(renderer.meshAssetPath);
-        if (assetP.is_relative() && !assetRoot.empty()) {
+        if (assetP.is_relative() && !projectRoot.empty()) {
+            fs::path candidate = projectRoot / renderer.meshAssetPath;
+            if (fs::exists(candidate)) {
+                meshPath = candidate;
+            }
+        }
+        // Backward compat: old scenes may store "assets/meshes/Cube.glb"
+        // but the mesh now lives in ".engine/meshes/Cube.glb".
+        if (meshPath.empty() && assetP.is_relative() && !projectRoot.empty()) {
+            std::string rel = assetP.generic_string();
+            if (rel.rfind("assets/meshes/", 0) == 0) {
+                std::string filename = rel.substr(std::string("assets/meshes/").size());
+                fs::path candidate = projectRoot / ".engine" / "meshes" / filename;
+                if (fs::exists(candidate)) {
+                    meshPath = candidate;
+                }
+            }
+        }
+        if (meshPath.empty() && assetP.is_relative() && !assetRoot.empty()) {
             std::string rel = assetP.generic_string();
             if (rel.rfind("assets/", 0) == 0) {
                 rel = rel.substr(std::string("assets/").size());
@@ -1560,9 +1581,19 @@ void QtEditorEngine::RebuildSceneMeshes()
             } else {
                 meshPath = assetRoot / assetP;
             }
-        } else if (assetP.is_relative() && !projectRoot.empty()) {
+        }
+        if (meshPath.empty() && assetP.is_relative() && !projectRoot.empty()) {
             meshPath = projectRoot / renderer.meshAssetPath;
-        } else {
+        }
+        // Last resort: try next to the executable (no project open)
+        if ((meshPath.empty() || !fs::exists(meshPath)) && assetP.is_relative()) {
+            fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
+            fs::path candidate = exeDir / renderer.meshAssetPath;
+            if (fs::exists(candidate)) {
+                meshPath = candidate;
+            }
+        }
+        if (meshPath.empty()) {
             meshPath = assetP;
         }
 
@@ -1597,6 +1628,12 @@ void QtEditorEngine::RebuildSceneMeshes()
             int subCount = mesh ? (mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size())) : 1;
             renderer.SetMesh(handle, meshData.bounds, lookupKey, true, subCount);
             syncMaterialSlots(renderer, subCount);
+
+            // Register the relative asset path as an alias so that future
+            // lookups (e.g. after the next play-mode cycle) find this mesh
+            // without hitting disk again.
+            m_frameRenderer->AddMeshAlias(lookupKey, handle);
+
             std::cout << "[QtEditorEngine]   -> Uploaded: handle " << handle << "\n";
         }
     }

@@ -178,6 +178,16 @@ public:
     size_t GetMeshHandle(const std::string& sourceKey) const;
 
     /**
+     * @brief Register an additional lookup key (alias) for an existing mesh.
+     * @param aliasKey Alternative key (e.g. relative asset path)
+     * @param handle   Handle returned by AddMesh
+     *
+     * This allows the same mesh to be found by both its absolute source
+     * path and a portable relative path such as "assets/meshes/Cube.glb".
+     */
+    void AddMeshAlias(const std::string& aliasKey, size_t handle);
+
+    /**
      * @brief Get total mesh count.
      */
     size_t GetMeshCount() const { return m_meshLibrary.size(); }

@@ -85,6 +85,9 @@ bool ProjectContext::LoadProject(const std::string& projectFilePath, std::string
     assetMgr.SetAssetRoot(m_assetRootDir);
     assetMgr.Refresh();
 
+    // Synchronise built-in engine assets into <projectRoot>/.engine/
+    SyncEngineAssets();
+
     // Notify listeners
     if (m_onProjectChanged) {
         m_onProjectChanged();
@@ -353,6 +356,87 @@ void ProjectContext::SaveRecentProjectsToFile(const std::string& filePath) const
     file << "}\n";
 
     file.close();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Engine asset synchronisation
+// ─────────────────────────────────────────────────────────────────────────────
+
+static std::filesystem::path getExecutableDir()
+{
+#ifdef _WIN32
+    wchar_t buf[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    return std::filesystem::path(buf).parent_path();
+#else
+    // Linux / macOS: /proc/self/exe or _NSGetExecutablePath
+    char buf[4096]{};
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len <= 0) return {};
+    buf[len] = '\0';
+    return std::filesystem::path(buf).parent_path();
+#endif
+}
+
+std::string ProjectContext::GetEngineFolderDir() const
+{
+    if (!m_hasProject || m_projectRootDir.empty()) return {};
+    namespace fs = std::filesystem;
+    fs::path dir = fs::path(m_projectRootDir) / ".engine";
+    std::string s = dir.string();
+    std::replace(s.begin(), s.end(), '\\', '/');
+    return s;
+}
+
+void ProjectContext::SyncEngineAssets()
+{
+    if (!m_hasProject || m_projectRootDir.empty()) return;
+
+    namespace fs = std::filesystem;
+    fs::path exeDir = getExecutableDir();
+    fs::path srcMeshDir = exeDir / "assets" / "meshes";
+    fs::path dstEngineDir = fs::path(m_projectRootDir) / ".engine";
+    fs::path dstMeshDir = dstEngineDir / "meshes";
+
+    // Create .engine/meshes/ if needed
+    std::error_code ec;
+    fs::create_directories(dstMeshDir, ec);
+    if (ec) {
+        std::cerr << "[ProjectContext] Failed to create .engine/meshes: " << ec.message() << "\n";
+        return;
+    }
+
+    if (!fs::is_directory(srcMeshDir)) {
+        std::cerr << "[ProjectContext] Engine mesh source not found: " << srcMeshDir << "\n";
+        return;
+    }
+
+    int copied = 0, skipped = 0;
+    for (const auto& entry : fs::directory_iterator(srcMeshDir, fs::directory_options::skip_permission_denied)) {
+        if (!entry.is_regular_file()) continue;
+        auto ext = entry.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext != ".glb" && ext != ".gltf" && ext != ".obj" && ext != ".fbx") continue;
+
+        fs::path dst = dstMeshDir / entry.path().filename();
+
+        // Skip if destination already exists and is same size (fast check)
+        if (fs::exists(dst) && fs::file_size(dst) == entry.file_size()) {
+            ++skipped;
+            continue;
+        }
+
+        fs::copy_file(entry.path(), dst, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            std::cerr << "[ProjectContext] Failed to copy " << entry.path().filename()
+                      << ": " << ec.message() << "\n";
+        } else {
+            ++copied;
+        }
+    }
+
+    std::cout << "[ProjectContext] SyncEngineAssets: copied=" << copied
+              << " skipped=" << skipped << " to " << dstMeshDir << "\n";
 }
 
 } // namespace Hephaestus

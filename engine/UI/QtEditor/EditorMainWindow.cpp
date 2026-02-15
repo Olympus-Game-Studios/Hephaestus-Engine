@@ -739,7 +739,11 @@ void EditorMainWindow::setupDockWidgets()
 
         EditorUndoManager::PushSnapshot(ctx, "Create entity");
         Entity created = ctx->GetActiveScene()->CreateEntity("Entity");
+        ctx->SetSelectionChangedCallback(nullptr);
         ctx->SelectEntity(static_cast<entt::entity>(created));
+        ctx->SetSelectionChangedCallback([this](entt::entity) {
+            refreshDetailsPanel();
+        });
         ctx->MarkDirty();
         rebuildOutliner();
         refreshDetailsPanel();
@@ -1071,6 +1075,16 @@ void EditorMainWindow::setupDockWidgets()
                     }
                 }
 
+                // Register the portable relative asset path as an alias so that
+                // RebuildSceneMeshes can find this mesh after scene reload / play-mode exit.
+                {
+                    std::string relativeKey = std::filesystem::path(relativePath.toStdString())
+                                                  .lexically_normal().generic_string();
+                    if (relativeKey != normalizedKey) {
+                        frameRenderer->AddMeshAlias(relativeKey, meshHandle);
+                    }
+                }
+
                 // Push undo before modifying the scene
                 EditorUndoManager::PushSnapshot(ctx, "Spawn mesh actor");
 
@@ -1128,7 +1142,11 @@ void EditorMainWindow::setupDockWidgets()
                 transform.scale    = Vec3(1.0f, 1.0f, 1.0f);
 
                 // Select the newly created entity, mark dirty, refresh UI
+                ctx->SetSelectionChangedCallback(nullptr);
                 ctx->SelectEntity(static_cast<entt::entity>(created));
+                ctx->SetSelectionChangedCallback([this](entt::entity) {
+                    refreshDetailsPanel();
+                });
                 ctx->MarkDirty();
                 m_engine->RebuildSceneMeshes();
                 rebuildOutliner();
@@ -1843,7 +1861,11 @@ void EditorMainWindow::onEngineError(const QString& message)
 
 void EditorMainWindow::rebuildOutliner()
 {
+    // Block signals while clearing to prevent itemSelectionChanged from
+    // firing onOutlinerSelectionChanged → ClearSelection during rebuild.
+    m_outlinerTree->blockSignals(true);
     m_outlinerTree->clear();
+    m_outlinerTree->blockSignals(false);
     
     if (!m_engine) return;
     auto* ctx = m_engine->GetEditorContext();
@@ -2496,6 +2518,12 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
     refreshAssetBrowser();
     rebuildRecentProjectsMenu();
 
+    // Refresh the Add Actors panel so it picks up .engine/meshes from this project
+    if (m_addActorsPanel && m_projectContext->HasProject()) {
+        m_addActorsPanel->SetProjectRoot(m_projectContext->GetProjectRootDir());
+        m_addActorsPanel->Refresh();
+    }
+
     if (m_engine) {
         auto* ctx = m_engine->GetEditorContext();
         if (ctx) {
@@ -3130,16 +3158,27 @@ bool EditorMainWindow::eventFilter(QObject* watched, QEvent* event)
 
 void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, const QPoint& dropPos)
 {
-    if (!m_engine) return;
+    std::cout << "[SpawnDrop] === handleViewportSpawnDrop START ===\n";
+    std::cout.flush();
+
+    try {
+
+    if (!m_engine) { std::cout << "[SpawnDrop] ABORT: m_engine null\n"; return; }
     auto* ctx = m_engine->GetEditorContext();
     if (!ctx || !ctx->HasActiveScene()) {
         statusBar()->showMessage(tr("No active scene to spawn into."), 3000);
+        std::cout << "[SpawnDrop] ABORT: no active scene\n";
         return;
     }
 
     auto* frameRenderer = m_engine->GetFrameRenderer();
     SpawnableEntry entry = SpawnableEntry::fromMimePayload(spawnPayload);
     Scene* scene = ctx->GetActiveScene();
+
+    std::cout << "[SpawnDrop] kind=" << static_cast<int>(entry.kind)
+              << " display=" << entry.displayName.toStdString()
+              << " asset=" << entry.assetPath.toStdString() << "\n";
+    std::cout.flush();
 
     // ── Determine spawn position ────────────────────────────────────────────
     // Try to hit-test against the scene at the drop pixel position.
@@ -3176,46 +3215,91 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
     switch (entry.kind) {
 
     case SpawnableEntry::Kind::Mesh: {
+        std::cout << "[SpawnDrop] Kind::Mesh\n"; std::cout.flush();
         if (!frameRenderer) {
             statusBar()->showMessage(tr("Renderer not ready."), 3000);
             return;
         }
-        // Resolve the mesh file
+        // Resolve the mesh file against the project root.
+        // The asset path stored by AddActorsPanel is e.g. ".engine/meshes/Cube.glb"
+        // which is relative to the project root (copied there by SyncEngineAssets).
         namespace fs = std::filesystem;
-        fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
-        fs::path meshPath = exeDir / entry.assetPath.toStdString();
+        fs::path meshPath;
+        if (m_projectContext && m_projectContext->HasProject()) {
+            meshPath = fs::path(m_projectContext->GetProjectRootDir()) / entry.assetPath.toStdString();
+            std::cout << "[SpawnDrop] projectRoot path: " << meshPath << "\n"; std::cout.flush();
+        }
+        // Fallback to exe dir for legacy paths like "assets/meshes/Cube.glb"
+        if (meshPath.empty() || !fs::exists(meshPath)) {
+            fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
+            meshPath = exeDir / entry.assetPath.toStdString();
+            std::cout << "[SpawnDrop] fallback exe path: " << meshPath << "\n"; std::cout.flush();
+        }
         if (!fs::exists(meshPath)) {
             statusBar()->showMessage(tr("Mesh file not found: %1").arg(entry.assetPath), 3000);
+            std::cout << "[SpawnDrop] ABORT: mesh not found: " << meshPath << "\n";
             return;
         }
+        std::cout << "[SpawnDrop] resolved meshPath: " << meshPath << "\n"; std::cout.flush();
 
         std::string normalizedKey = meshPath.lexically_normal().generic_string();
         size_t meshHandle = frameRenderer->GetMeshHandle(normalizedKey);
+        std::cout << "[SpawnDrop] lookup normalizedKey='" << normalizedKey << "' -> handle=" << meshHandle << "\n"; std::cout.flush();
+
+        // Also try the relative asset path as a lookup key (alias)
+        if (meshHandle == SIZE_MAX) {
+            std::string relativeKey = fs::path(entry.assetPath.toStdString())
+                                         .lexically_normal().generic_string();
+            meshHandle = frameRenderer->GetMeshHandle(relativeKey);
+            std::cout << "[SpawnDrop] lookup relativeKey='" << relativeKey << "' -> handle=" << meshHandle << "\n"; std::cout.flush();
+        }
 
         if (meshHandle == SIZE_MAX) {
+            std::cout << "[SpawnDrop] Loading mesh from disk...\n"; std::cout.flush();
             MeshData meshData;
             std::string loadError;
             if (!ModelImporter::LoadModel(meshPath, meshData, loadError) ||
                 meshData.vertices.empty() || meshData.indices.empty()) {
                 statusBar()->showMessage(tr("Failed to load mesh: %1").arg(QString::fromStdString(loadError)), 3000);
+                std::cout << "[SpawnDrop] ABORT: load failed: " << loadError << "\n";
                 return;
             }
+            std::cout << "[SpawnDrop] Loaded: verts=" << meshData.vertices.size()
+                      << " indices=" << meshData.indices.size() << "\n"; std::cout.flush();
             std::string meshName = meshPath.stem().string();
             meshHandle = m_engine->uploadMeshToGPU(meshName, meshData, meshPath, true);
+            std::cout << "[SpawnDrop] Uploaded -> handle=" << meshHandle << "\n"; std::cout.flush();
             if (meshHandle == MeshRendererComponent::InvalidMesh) {
                 statusBar()->showMessage(tr("Failed to upload mesh to GPU."), 3000);
                 return;
             }
         }
 
-        Entity created = scene->CreateEntity(entityName);
-        if (!created) break;
+        std::cout << "[SpawnDrop] Final meshHandle=" << meshHandle
+                  << " librarySize=" << frameRenderer->GetMeshCount() << "\n"; std::cout.flush();
 
+        // Register the portable relative asset path as an alias so that
+        // RebuildSceneMeshes can find this mesh after scene reload / play-mode exit.
+        {
+            std::string relativeKey = std::filesystem::path(entry.assetPath.toStdString())
+                                          .lexically_normal().generic_string();
+            if (relativeKey != normalizedKey) {
+                frameRenderer->AddMeshAlias(relativeKey, meshHandle);
+            }
+        }
+
+        std::cout << "[SpawnDrop] Creating entity '" << entityName << "'...\n"; std::cout.flush();
+        Entity created = scene->CreateEntity(entityName);
+        if (!created) { std::cout << "[SpawnDrop] ABORT: CreateEntity failed\n"; break; }
+
+        std::cout << "[SpawnDrop] Getting MeshGPU for handle " << meshHandle << "...\n"; std::cout.flush();
         MeshGPU* meshGPU = frameRenderer->GetMesh(meshHandle);
+        std::cout << "[SpawnDrop] meshGPU=" << (void*)meshGPU << "\n"; std::cout.flush();
         int subCount = (meshGPU && !meshGPU->submeshes.empty())
             ? static_cast<int>(meshGPU->submeshes.size()) : 1;
         AABB bounds = meshGPU ? meshGPU->bounds : AABB{};
 
+        std::cout << "[SpawnDrop] Adding MeshRendererComponent...\n"; std::cout.flush();
         auto& renderer = created.AddComponent<MeshRendererComponent>();
         renderer.SetMesh(meshHandle, bounds, entry.assetPath.toStdString(), true, subCount);
         renderer.materialIndices.assign(static_cast<size_t>(subCount), -1);
@@ -3231,7 +3315,17 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         tc.rotation = Vec3(0.0f, 0.0f, 0.0f);
         tc.scale    = Vec3(1.0f, 1.0f, 1.0f);
 
+        std::cout << "[SpawnDrop] Selecting entity...\n"; std::cout.flush();
+        // Suppress the selection-changed callback to avoid a premature
+        // refreshDetailsPanel() that creates inspectors and scans the
+        // filesystem while the spawn handler is still running.  We'll
+        // call refreshDetailsPanel() once at the end of this function.
+        ctx->SetSelectionChangedCallback(nullptr);
         ctx->SelectEntity(static_cast<entt::entity>(created));
+        ctx->SetSelectionChangedCallback([this](entt::entity) {
+            refreshDetailsPanel();
+        });
+        std::cout << "[SpawnDrop] Mesh spawn complete.\n"; std::cout.flush();
         break;
     }
 
@@ -3257,7 +3351,11 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         tc.rotation = Vec3(0.0f, 0.0f, 0.0f);
         tc.scale    = Vec3(1.0f, 1.0f, 1.0f);
 
+        ctx->SetSelectionChangedCallback(nullptr);
         ctx->SelectEntity(static_cast<entt::entity>(created));
+        ctx->SetSelectionChangedCallback([this](entt::entity) {
+            refreshDetailsPanel();
+        });
         break;
     }
 
@@ -3277,17 +3375,31 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         // Editor-only visual representation via Camera.glb mesh
         if (frameRenderer) {
             namespace fs = std::filesystem;
-            fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
-            fs::path camMeshPath = exeDir / "assets" / "meshes" / "Camera.glb";
+            // Resolve camera mesh from the project's .engine folder first
+            fs::path camMeshPath;
+            if (m_projectContext && m_projectContext->HasProject()) {
+                camMeshPath = fs::path(m_projectContext->GetProjectRootDir()) / ".engine" / "meshes" / "Camera.glb";
+            }
+            if (camMeshPath.empty() || !fs::exists(camMeshPath)) {
+                fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
+                camMeshPath = exeDir / "assets" / "meshes" / "Camera.glb";
+            }
+            std::string camAssetPath = ".engine/meshes/Camera.glb";
             if (fs::exists(camMeshPath)) {
                 std::string normalizedKey = camMeshPath.lexically_normal().generic_string();
                 size_t meshHandle = frameRenderer->GetMeshHandle(normalizedKey);
+                if (meshHandle == SIZE_MAX) {
+                    meshHandle = frameRenderer->GetMeshHandle(camAssetPath);
+                }
                 if (meshHandle == SIZE_MAX) {
                     MeshData meshData;
                     std::string loadError;
                     if (ModelImporter::LoadModel(camMeshPath, meshData, loadError) &&
                         !meshData.vertices.empty() && !meshData.indices.empty()) {
                         meshHandle = m_engine->uploadMeshToGPU("Camera", meshData, camMeshPath, true);
+                        if (meshHandle != MeshRendererComponent::InvalidMesh) {
+                            frameRenderer->AddMeshAlias(camAssetPath, meshHandle);
+                        }
                     }
                 }
                 if (meshHandle != MeshRendererComponent::InvalidMesh) {
@@ -3297,7 +3409,7 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
                     AABB bounds = meshGPU ? meshGPU->bounds : AABB{};
 
                     auto& renderer = created.AddComponent<MeshRendererComponent>();
-                    renderer.SetMesh(meshHandle, bounds, "assets/meshes/Camera.glb", true, subCount);
+                    renderer.SetMesh(meshHandle, bounds, camAssetPath, true, subCount);
                     renderer.materialIndices.assign(static_cast<size_t>(subCount), -1);
                     renderer.appliedMaterialPaths.resize(static_cast<size_t>(subCount));
                     renderer.hideInGame = true; // Editor-only visual
@@ -3311,19 +3423,35 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         tc.rotation = Vec3(0.0f, 0.0f, 0.0f);
         tc.scale    = Vec3(1.0f, 1.0f, 1.0f);
 
+        ctx->SetSelectionChangedCallback(nullptr);
         ctx->SelectEntity(static_cast<entt::entity>(created));
+        ctx->SetSelectionChangedCallback([this](entt::entity) {
+            refreshDetailsPanel();
+        });
         break;
     }
 
     } // switch
 
     // ── Finalise ────────────────────────────────────────────────────────────
+    std::cout << "[SpawnDrop] Finalising: MarkDirty...\n"; std::cout.flush();
     ctx->MarkDirty();
+    std::cout << "[SpawnDrop] rebuildOutliner...\n"; std::cout.flush();
     rebuildOutliner();
+    std::cout << "[SpawnDrop] refreshDetailsPanel...\n"; std::cout.flush();
     refreshDetailsPanel();
 
-    std::cout << "[AddActors] Spawned: " << entityName << "\n";
+    std::cout << "[SpawnDrop] === handleViewportSpawnDrop DONE: " << entityName << " ===\n";
+    std::cout.flush();
     statusBar()->showMessage(tr("Added actor: %1").arg(QString::fromStdString(entityName)), 3000);
+
+    } catch (const std::exception& e) {
+        std::cerr << "[SpawnDrop] EXCEPTION: " << e.what() << "\n";
+        std::cerr.flush();
+    } catch (...) {
+        std::cerr << "[SpawnDrop] UNKNOWN EXCEPTION\n";
+        std::cerr.flush();
+    }
 }
 
 } // namespace QtEditor

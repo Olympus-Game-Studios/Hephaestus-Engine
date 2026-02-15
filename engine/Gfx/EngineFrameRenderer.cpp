@@ -430,6 +430,13 @@ size_t EngineFrameRenderer::GetMeshHandle(const std::string& sourceKey) const
     return SIZE_MAX;
 }
 
+void EngineFrameRenderer::AddMeshAlias(const std::string& aliasKey, size_t handle)
+{
+    if (aliasKey.empty() || handle >= m_meshLibrary.size()) return;
+    // Only insert if the key is not already mapped
+    m_meshLibraryLookup.emplace(aliasKey, handle);
+}
+
 // ============================================================================
 // Private: Resource Creation
 // ============================================================================
@@ -2392,14 +2399,16 @@ void EngineFrameRenderer::recordOutlines(VkCommandBuffer cmd, uint32_t imageInde
     auto* meshComp = registry.try_get<MeshRendererComponent>(selectedEnt);
     if (!meshComp || !meshComp->HasValidMesh()) return;
     
-    // Find the mesh in our library
-    auto it = m_meshLibraryLookup.find(meshComp->meshAssetPath);
-    if (it == m_meshLibraryLookup.end()) return;
+    // Use the mesh handle directly (consistent with shadow pass and main pass)
+    if (meshComp->meshHandle >= m_meshLibrary.size()) return;
     
-    size_t meshIdx = it->second;
-    const MeshGPU& mesh = m_meshLibrary[meshIdx];
+    const MeshGPU& mesh = m_meshLibrary[meshComp->meshHandle];
+    if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
+        mesh.indexBuffer.buffer == VK_NULL_HANDLE) return;
     
-    Mat4 modelMatrix = transformComp->GetLocalMatrix();
+    // Use world transform (same as main pass) so outline matches rendered mesh position
+    Entity entity(selectedEnt, scene);
+    Mat4 modelMatrix = scene->GetWorldTransform(entity);
     
     // Draw the outline
     m_outlineRenderer.Draw(cmd, m_descriptorSets[imageIndex], 
@@ -3377,8 +3386,9 @@ void EngineFrameRenderer::EditorGrid::Draw(VkCommandBuffer cmd, VkDescriptorSet 
     if (!initialized || pipeline == VK_NULL_HANDLE) return;
     
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    uint32_t dynamicOffset = 0;
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 
-                            0, 1, &cameraDescSet, 0, nullptr);
+                            0, 1, &cameraDescSet, 1, &dynamicOffset);
     vkCmdPushConstants(cmd, pipelineLayout, 
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 
                        0, sizeof(GridPushConstants), &pc);
@@ -3574,9 +3584,9 @@ void EngineFrameRenderer::OutlineRenderer::Init(VkDevice device, VkRenderPass re
     VkPipelineViewportStateCreateInfo viewportState{};
     viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     viewportState.viewportCount = 1;
-    viewportState.pViewports = &viewport;
+    viewportState.pViewports = nullptr; // dynamic
     viewportState.scissorCount = 1;
-    viewportState.pScissors = &scissor;
+    viewportState.pScissors = nullptr; // dynamic
     
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -3596,9 +3606,9 @@ void EngineFrameRenderer::OutlineRenderer::Init(VkDevice device, VkRenderPass re
     
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_FALSE;  // Don't write to depth buffer
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depthStencil.depthTestEnable = VK_FALSE;  // Disable depth test so outline renders on top of all geometry
+    depthStencil.depthWriteEnable = VK_FALSE; // Don't write to depth buffer
+    depthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
     
@@ -3625,7 +3635,14 @@ void EngineFrameRenderer::OutlineRenderer::Init(VkDevice device, VkRenderPass re
     pipelineInfo.pMultisampleState = &multisampling;
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = nullptr;
+    
+    // Dynamic viewport/scissor so outline adapts to window resizes
+    VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamicStateInfo{};
+    dynamicStateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicStateInfo.dynamicStateCount = 2;
+    dynamicStateInfo.pDynamicStates = dynamicStates;
+    pipelineInfo.pDynamicState = &dynamicStateInfo;
     pipelineInfo.layout = pipelineLayout;
     pipelineInfo.renderPass = renderPass;
     pipelineInfo.subpass = 0;
@@ -3666,7 +3683,8 @@ void EngineFrameRenderer::OutlineRenderer::Draw(VkCommandBuffer cmd, VkDescripto
     if (!initialized || pipeline == VK_NULL_HANDLE) return;
     
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &cameraDescSet, 0, nullptr);
+    uint32_t dynamicOffset = 0;
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &cameraDescSet, 1, &dynamicOffset);
     
     OutlinePushConstants pc;
     pc.model = modelMatrix;

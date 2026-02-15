@@ -192,10 +192,27 @@ void AddActorsPanel::buildCategories()
         SpawnableCategory cat;
         cat.name = tr("Meshes");
 
-        // Scan the runtime assets/meshes directory next to the executable
+        // Scan the project's .engine/meshes directory for default engine meshes.
+        // These are synchronised from the exe's assets/meshes/ folder when
+        // the project is opened (see ProjectContext::SyncEngineAssets).
         namespace fs = std::filesystem;
-        fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
-        fs::path meshDir = exeDir / "assets" / "meshes";
+        fs::path meshDir;
+        bool usingProjectEnginePath = false;
+
+        if (!m_projectRoot.empty()) {
+            fs::path candidate = fs::path(m_projectRoot) / ".engine" / "meshes";
+            if (fs::is_directory(candidate)) {
+                meshDir = candidate;
+                usingProjectEnginePath = true;
+            }
+        }
+
+        // Fallback: if no project is open yet, scan next to the executable
+        // so the panel isn't completely empty before a project is loaded.
+        if (meshDir.empty()) {
+            fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
+            meshDir = exeDir / "assets" / "meshes";
+        }
 
         if (fs::is_directory(meshDir)) {
             for (auto& entry : fs::directory_iterator(meshDir)) {
@@ -215,8 +232,12 @@ void AddActorsPanel::buildCategories()
                     se.kind = SpawnableEntry::Kind::Mesh;
                 }
                 se.displayName = display;
-                se.assetPath   = QString("assets/meshes/%1").arg(QString::fromStdString(entry.path().filename().string()));
-                se.icon        = makePlaceholderIcon(display[0].toUpper(), QColor(76, 141, 255));
+                // Use the correct relative prefix depending on source
+                QString prefix = usingProjectEnginePath
+                    ? QStringLiteral(".engine/meshes/")
+                    : QStringLiteral("assets/meshes/");
+                se.assetPath = prefix + QString::fromStdString(entry.path().filename().string());
+                se.icon      = makePlaceholderIcon(display[0].toUpper(), QColor(76, 141, 255));
 
                 cat.entries.push_back(std::move(se));
             }
@@ -313,6 +334,11 @@ void AddActorsPanel::Refresh()
 {
     buildCategories();
     populateItemList();
+}
+
+void AddActorsPanel::SetProjectRoot(const std::string& projectRoot)
+{
+    m_projectRoot = projectRoot;
 }
 
 void AddActorsPanel::applySearchFilter()

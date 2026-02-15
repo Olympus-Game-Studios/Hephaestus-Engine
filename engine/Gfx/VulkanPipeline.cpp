@@ -317,9 +317,9 @@ void VulkanPipeline::CreateOutlinePipeline()
 
     VkPipelineDepthStencilStateCreateInfo depth{};
     depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depth.depthTestEnable = VK_TRUE;
+    depth.depthTestEnable = VK_FALSE;  // Disable depth test so outline renders on top of all geometry
     depth.depthWriteEnable = VK_FALSE; // Don't write to depth buffer
-    depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL; // Expanded mesh is slightly closer -> visible on silhouette
+    depth.depthCompareOp = VK_COMPARE_OP_ALWAYS;
     depth.depthBoundsTestEnable = VK_FALSE;
     depth.stencilTestEnable = VK_FALSE;
 
