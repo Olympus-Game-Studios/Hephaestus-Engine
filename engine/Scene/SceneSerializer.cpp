@@ -928,17 +928,14 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             if (const JsonValue* hideInGameValue = meshObj->Find("hideInGame")) {
                 mesh.hideInGame = ParseBoolLike(*hideInGameValue, mesh.hideInGame);
             }
-            const JsonValue* meshHandleValue = meshObj->Find("mesh");
-            if (meshHandleValue) {
-                if (meshHandleValue->IsNumber()) {
-                    double rawHandle = meshHandleValue->AsNumber();
-                    if (rawHandle >= 0.0) {
-                        mesh.meshHandle = static_cast<size_t>(rawHandle);
-                    }
-                } else {
-                    mesh.meshHandle = MeshRendererComponent::InvalidMesh;
-                }
-            }
+            // The "mesh" field in the scene file stores a runtime mesh handle
+            // index that is only valid for the session in which the scene was
+            // saved.  Across sessions the mesh library is rebuilt from scratch
+            // so the old index is meaningless (and using it causes meshes to
+            // swap or disappear).  Always start with InvalidMesh here —
+            // rebuildSceneMeshesFromComponents() will resolve the correct
+            // handle from meshAssetPath / "meshSource".
+            mesh.meshHandle = MeshRendererComponent::InvalidMesh;
             if (const JsonValue* meshSourceValue = meshObj->Find("meshSource")) {
                 if (meshSourceValue->IsString()) {
                     mesh.meshAssetPath = meshSourceValue->AsString();

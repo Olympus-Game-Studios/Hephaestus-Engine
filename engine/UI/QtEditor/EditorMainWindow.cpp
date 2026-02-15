@@ -1692,6 +1692,20 @@ void EditorMainWindow::onViewportReady()
         setupEditorCallbacks();
         setupProjectCallbacks();
         
+        // If a project was already loaded before the viewport was ready
+        // (e.g. startup project from the launcher), push the project root
+        // to the frame renderer and rebuild scene meshes now that the GPU
+        // resources are available.
+        if (m_projectContext && m_projectContext->HasProject()) {
+            if (auto* fr = m_engine->GetFrameRenderer()) {
+                fr->SetProjectRoot(m_projectContext->GetProjectRootDir());
+            }
+            if (m_engine->GetEditorContext() &&
+                m_engine->GetEditorContext()->HasActiveScene()) {
+                m_engine->RebuildSceneMeshes();
+            }
+        }
+        
         // Initial UI state
         rebuildOutliner();
         updateWindowTitle();
@@ -1715,6 +1729,9 @@ void EditorMainWindow::onFrameRendered(float dt)
 {
     m_lastDt = dt;
     m_frameCount++;
+
+    // Keep transform fields synchronized with viewport gizmo edits and other runtime transform updates.
+    syncTransformFieldsFromScene();
     
     // Update FPS display every 30 frames
     if (m_frameCount % 30 == 0) {
@@ -1734,6 +1751,84 @@ void EditorMainWindow::onFrameRendered(float dt)
         if (m_statusRam) m_statusRam->setText(ramUsage);
         if (m_overlayRamLabel) m_overlayRamLabel->setText(ramUsage);
     }
+}
+
+void EditorMainWindow::syncTransformFieldsFromScene()
+{
+    if (!m_engine || m_updatingDetails || !m_transformGroup || !m_transformGroup->isEnabled()) {
+        return;
+    }
+
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) {
+        return;
+    }
+
+    entt::entity entity = entt::null;
+    if (m_detailsLocked && m_lockedEntity != entt::null) {
+        entity = m_lockedEntity;
+    } else if (ctx->HasSelection()) {
+        entity = ctx->GetSelectedEntity();
+    }
+
+    if (entity == entt::null) {
+        return;
+    }
+
+    Scene* scene = ctx->GetActiveScene();
+    auto& registry = scene->GetRegistry();
+    if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) {
+        return;
+    }
+
+    auto& transform = registry.get<TransformComponent>(entity);
+    constexpr float RAD_TO_DEG = 180.0f / 3.14159265358979f;
+
+    const double nextPosX = static_cast<double>(transform.position.x);
+    const double nextPosY = static_cast<double>(transform.position.y);
+    const double nextPosZ = static_cast<double>(transform.position.z);
+    const double nextRotX = static_cast<double>(transform.rotation.x * RAD_TO_DEG);
+    const double nextRotY = static_cast<double>(transform.rotation.y * RAD_TO_DEG);
+    const double nextRotZ = static_cast<double>(transform.rotation.z * RAD_TO_DEG);
+    const double nextScaleX = static_cast<double>(transform.scale.x);
+    const double nextScaleY = static_cast<double>(transform.scale.y);
+    const double nextScaleZ = static_cast<double>(transform.scale.z);
+
+    constexpr double kEpsilon = 0.0005;
+    auto differs = [](double a, double b, double eps) {
+        return std::abs(a - b) > eps;
+    };
+
+    const bool changed =
+        differs(m_posX->value(), nextPosX, kEpsilon) ||
+        differs(m_posY->value(), nextPosY, kEpsilon) ||
+        differs(m_posZ->value(), nextPosZ, kEpsilon) ||
+        differs(m_rotX->value(), nextRotX, kEpsilon) ||
+        differs(m_rotY->value(), nextRotY, kEpsilon) ||
+        differs(m_rotZ->value(), nextRotZ, kEpsilon) ||
+        differs(m_scaleX->value(), nextScaleX, kEpsilon) ||
+        differs(m_scaleY->value(), nextScaleY, kEpsilon) ||
+        differs(m_scaleZ->value(), nextScaleZ, kEpsilon);
+
+    if (!changed) {
+        return;
+    }
+
+    m_updatingDetails = true;
+    blockDetailSignals(true);
+
+    m_posX->setValue(nextPosX);
+    m_posY->setValue(nextPosY);
+    m_posZ->setValue(nextPosZ);
+    m_rotX->setValue(nextRotX);
+    m_rotY->setValue(nextRotY);
+    m_rotZ->setValue(nextRotZ);
+    m_scaleX->setValue(nextScaleX);
+    m_scaleY->setValue(nextScaleY);
+    m_scaleZ->setValue(nextScaleZ);
+
+    blockDetailSignals(false);
+    m_updatingDetails = false;
 }
 
 void EditorMainWindow::onEngineError(const QString& message)

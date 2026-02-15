@@ -148,6 +148,7 @@ private slots:
 
 private:
     void updateWindowTitle();
+    void syncTransformFieldsFromScene();
     void setupProjectCallbacks();
     void rebuildRecentProjectsMenu();
     void refreshAssetBrowser();
