@@ -278,7 +278,8 @@ private:
     // Per-frame helpers
     void updateCameraUBO(uint32_t imageIndex, const RenderCamera& camera);
     void updateLightingUBO(uint32_t imageIndex, Scene* scene, const RenderCamera& camera);
-    void recordShadowPass(VkCommandBuffer cmd, Scene* scene, const RenderCamera& camera);
+    void recordShadowPass(VkCommandBuffer cmd, Scene* scene, const RenderCamera& camera,
+                          const FrameRenderConfig& config);
     void recordMainPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, 
                         const FrameRenderConfig& config);
     void recordGizmo(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene);
@@ -294,7 +295,8 @@ private:
     
     // ID picking helpers
     bool createIdPickerResources();
-    void recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene);
+    void recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene,
+                      const FrameRenderConfig& config);
     void cleanupIdPickerResources();
     
 #ifndef HEPHAESTUS_GAME_RUNTIME

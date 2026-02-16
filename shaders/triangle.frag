@@ -208,19 +208,38 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
     // Texel size in full-atlas UV space (1 / full resolution)
     float texelSize = lighting.dirShadowParams.z;
 
-    // PCF (Percentage Closer Filtering) for softer shadows
+    // 16-sample Poisson disk for smooth soft shadows
+    const vec2 poissonDisk[16] = vec2[](
+        vec2(-0.9420, -0.3990), vec2( 0.9456, -0.7689),
+        vec2(-0.0942, -0.9293), vec2( 0.3448,  0.2930),
+        vec2(-0.9159,  0.4572), vec2(-0.8154, -0.8790),
+        vec2(-0.3826,  0.2762), vec2( 0.9744,  0.7564),
+        vec2( 0.4430, -0.1675), vec2( 0.1600,  0.8520),
+        vec2(-0.5268, -0.6275), vec2( 0.7936,  0.1592),
+        vec2(-0.2415,  0.9525), vec2( 0.5375, -0.8607),
+        vec2(-0.6168,  0.7338), vec2( 0.1120, -0.3690)
+    );
+
+    // Per-fragment rotation angle from world position to break up banding
+    float rotAngle = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+    float cosA = cos(rotAngle);
+    float sinA = sin(rotAngle);
+
+    // Spread radius in atlas texels — wider for far cascades
+    float spreadTexels = 2.5 + float(cascade) * 1.0;
+
     float shadow = 0.0;
-    const int pcfRadius = 2;
-    const float pcfSamples = float((pcfRadius * 2 + 1) * (pcfRadius * 2 + 1));
-    
-    for (int x = -pcfRadius; x <= pcfRadius; ++x) {
-        for (int y = -pcfRadius; y <= pcfRadius; ++y) {
-            vec2 sampleCoord = atlasUV + vec2(float(x), float(y)) * texelSize;
-            float closestDepth = texture(shadowMap, sampleCoord).r;
-            shadow += (projCoords.z - bias > closestDepth) ? 1.0 : 0.0;
-        }
+    for (int i = 0; i < 16; i++) {
+        // Rotate sample around origin
+        vec2 offset = vec2(
+            poissonDisk[i].x * cosA - poissonDisk[i].y * sinA,
+            poissonDisk[i].x * sinA + poissonDisk[i].y * cosA
+        );
+        vec2 sampleCoord = atlasUV + offset * spreadTexels * texelSize;
+        float closestDepth = texture(shadowMap, sampleCoord).r;
+        shadow += (projCoords.z - bias > closestDepth) ? 1.0 : 0.0;
     }
-    shadow /= pcfSamples;
+    shadow /= 16.0;
 
     float strength = lighting.dirShadowParams.y;
     return 1.0 - shadow * strength;

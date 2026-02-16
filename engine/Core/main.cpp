@@ -2783,7 +2783,7 @@ static VkFormat FindSupportedFormat(VkPhysicalDevice phys,
 }
 
 struct DirectionalShadowResources {
-  uint32_t resolution = 2048;
+  uint32_t resolution = 4096;
   VkDevice device = VK_NULL_HANDLE;
   VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
   VmaAllocator allocator = VK_NULL_HANDLE;

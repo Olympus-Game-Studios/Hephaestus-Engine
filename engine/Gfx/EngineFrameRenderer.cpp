@@ -320,7 +320,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     
     // Record ID pass for entity picking (editor only)
     if (config.isEditorMode && m_idPicker.initialized) {
-        recordIdPass(cmd, imageIndex, scene);
+        recordIdPass(cmd, imageIndex, scene, config);
         
         // If there's a pending pick request, copy the pixel to staging buffer
         if (m_idPicker.pickPending && m_idPicker.pickX < m_idPicker.width && 
@@ -346,7 +346,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     
     // Record shadow pass (before main pass)
     if (config.renderShadows && m_directionalShadow.IsValid()) {
-        recordShadowPass(cmd, scene, camera);
+        recordShadowPass(cmd, scene, camera, config);
     }
     
     // Record main render pass
@@ -1451,7 +1451,8 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
     vmaUnmapMemory(m_device->allocator, m_lightingBuffers[imageIndex].allocation);
 }
 
-void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, const RenderCamera& camera)
+void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, const RenderCamera& camera,
+                                           const FrameRenderConfig& config)
 {
     if (!m_directionalShadow.IsValid() || !scene) {
         static bool skipDebugPrinted = false;
@@ -1562,6 +1563,7 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
         for (auto entity : meshView) {
             auto& meshComp = meshView.get<MeshRendererComponent>(entity);
             if (!meshComp.HasValidMesh() || !meshComp.visible) continue;
+            if (config.isPlaying && meshComp.hideInGame) continue;
             if (meshComp.meshHandle >= m_meshLibrary.size()) continue;
             
             const MeshGPU& mesh = m_meshLibrary[meshComp.meshHandle];
@@ -2206,6 +2208,10 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             auto& renderer = entity.GetComponent<MeshRendererComponent>();
             
             if (!renderer.visible) {
+                skippedCount++;
+                continue;
+            }
+            if (config.isPlaying && renderer.hideInGame) {
                 skippedCount++;
                 continue;
             }
@@ -4153,7 +4159,8 @@ bool EngineFrameRenderer::createIdPickerResources()
     return true;
 }
 
-void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene)
+void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene,
+                                       const FrameRenderConfig& config)
 {
     if (!m_idPicker.initialized || !scene) return;
     
@@ -4201,6 +4208,7 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
         auto& renderer = entity.GetComponent<MeshRendererComponent>();
         
         if (!renderer.visible) continue;
+        if (config.isPlaying && renderer.hideInGame) continue;
         if (!renderer.HasValidMesh() || renderer.meshHandle >= m_meshLibrary.size()) continue;
         
         MeshGPU& mesh = m_meshLibrary[renderer.meshHandle];
