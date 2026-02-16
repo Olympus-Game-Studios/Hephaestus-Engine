@@ -172,6 +172,37 @@ void EnvironmentInspector::buildUI()
     hdriLayout->addRow(tr(""), m_useAsIBLCheck);
 
     form->addRow(m_hdriGroup);
+
+    // ---- Render Distance section ----
+    auto* renderDistSeparator = new QLabel(tr("<b>Render Distance</b>"));
+    mainLayout->addWidget(renderDistSeparator);
+
+    auto* renderDistForm = new QFormLayout();
+    renderDistForm->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    m_enableRenderDistCheck = new QCheckBox(tr("Enable Render Distance"));
+    m_enableRenderDistCheck->setToolTip(tr("Cull objects beyond a certain distance from the camera."));
+    renderDistForm->addRow(m_enableRenderDistCheck);
+
+    m_renderDistGroup = new QWidget();
+    auto* rdLayout = new QFormLayout(m_renderDistGroup);
+    rdLayout->setContentsMargins(12, 4, 0, 0);
+    rdLayout->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    m_infiniteRenderDistCheck = new QCheckBox(tr("Infinite"));
+    m_infiniteRenderDistCheck->setToolTip(tr("Render all objects regardless of distance."));
+    rdLayout->addRow(m_infiniteRenderDistCheck);
+
+    m_renderDistSpin = new QDoubleSpinBox();
+    m_renderDistSpin->setRange(10.0, 100000.0);
+    m_renderDistSpin->setSingleStep(50.0);
+    m_renderDistSpin->setDecimals(0);
+    m_renderDistSpin->setToolTip(tr("Maximum distance at which objects are rendered."));
+    rdLayout->addRow(tr("Distance:"), m_renderDistSpin);
+
+    renderDistForm->addRow(m_renderDistGroup);
+    mainLayout->addLayout(renderDistForm);
+
     mainLayout->addLayout(form);
 }
 
@@ -191,6 +222,16 @@ void EnvironmentInspector::connectSignals()
     connect(m_hdriIntensitySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
     connect(m_rotationYawSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
     connect(m_useAsIBLCheck, &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
+
+    connect(m_enableRenderDistCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_renderDistGroup->setVisible(checked);
+        applyToComponent();
+    });
+    connect(m_infiniteRenderDistCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_renderDistSpin->setEnabled(!checked);
+        applyToComponent();
+    });
+    connect(m_renderDistSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
 
     connect(m_resetIntensityBtn, &QPushButton::clicked, this, &EnvironmentInspector::resetIntensity);
     connect(m_resetRotationBtn, &QPushButton::clicked, this, &EnvironmentInspector::resetRotation);
@@ -227,10 +268,17 @@ void EnvironmentInspector::Refresh()
     m_rotationYawSpin->setValue(static_cast<double>(env.rotationYaw));
     m_useAsIBLCheck->setChecked(env.useAsIBL);
 
+    // Render distance
+    m_enableRenderDistCheck->setChecked(env.enableRenderDistance);
+    m_infiniteRenderDistCheck->setChecked(env.infiniteRenderDistance);
+    m_renderDistSpin->setValue(static_cast<double>(env.renderDistance));
+
     blockAllSignals(false);
     m_updating = false;
 
     updateModeVisibility();
+    m_renderDistGroup->setVisible(env.enableRenderDistance);
+    m_renderDistSpin->setEnabled(!env.infiniteRenderDistance);
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +301,10 @@ void EnvironmentInspector::applyToComponent()
     env.rotationYaw = static_cast<float>(m_rotationYawSpin->value());
     env.useAsIBL = m_useAsIBLCheck->isChecked();
 
+    env.enableRenderDistance = m_enableRenderDistCheck->isChecked();
+    env.infiniteRenderDistance = m_infiniteRenderDistCheck->isChecked();
+    env.renderDistance = static_cast<float>(m_renderDistSpin->value());
+
     m_ctx->MarkDirty();
 }
 
@@ -273,6 +325,9 @@ void EnvironmentInspector::blockAllSignals(bool block)
     m_hdriIntensitySpin->blockSignals(block);
     m_rotationYawSpin->blockSignals(block);
     m_useAsIBLCheck->blockSignals(block);
+    m_enableRenderDistCheck->blockSignals(block);
+    m_infiniteRenderDistCheck->blockSignals(block);
+    m_renderDistSpin->blockSignals(block);
 }
 
 // ---------------------------------------------------------------------------

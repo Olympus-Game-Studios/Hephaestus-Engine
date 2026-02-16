@@ -143,8 +143,12 @@ struct LightingUBO {
     Vec4 spotLightAttenuation[16];
     int pointLightCount = 0;
     int spotLightCount = 0;
-    float padding5 = 0.0f;
-    float padding6 = 0.0f;
+    int cascadeCount = 0;
+    float csmPadding1 = 0.0f;
+    
+    // CSM cascade data
+    Mat4 cascadeViewProj[4];
+    Vec4 cascadeSplits;  // view-space far plane for each cascade
 };
 
 // ──────────────────────────────────────────────────────────────────────────────

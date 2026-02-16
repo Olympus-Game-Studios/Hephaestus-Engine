@@ -504,11 +504,13 @@ struct LightComponent {
     
     // Shadow settings (primarily for directional lights)
     bool castShadows;      // Whether this light casts shadows
+    bool shadowAutoFit;    // Automatically fit shadow frustum to camera view distance
     float shadowBias;      // Bias to prevent shadow acne (0.0001 - 0.01)
     float shadowNormalBias; // Normal bias to reduce peter-panning
     float shadowStrength;  // How dark shadows are (0.0 = no shadow, 1.0 = full black)
-    float shadowDistance;  // How far shadows extend from camera
-    float shadowExtent;    // Size of orthographic shadow frustum
+    float shadowDistance;  // How far shadows extend from camera (used when shadowAutoFit=false)
+    float shadowExtent;    // Size of orthographic shadow frustum (used when shadowAutoFit=false)
+    float shadowMaxDistance; // Max shadow range when auto-fit is on (caps camera farPlane)
 
     LightComponent()
         : type(LightType::Point)
@@ -523,11 +525,13 @@ struct LightComponent {
         , outerConeAngle(0.959f)  // 55 degrees
         , direction(0.0f, -1.0f, 0.0f)
         , castShadows(true)
+        , shadowAutoFit(true)
         , shadowBias(0.002f)
         , shadowNormalBias(0.01f)
         , shadowStrength(0.7f)
-        , shadowDistance(100.0f)
-        , shadowExtent(75.0f)
+        , shadowDistance(500.0f)
+        , shadowExtent(500.0f)
+        , shadowMaxDistance(500.0f)
     {}
 
     // Factory methods for common light types

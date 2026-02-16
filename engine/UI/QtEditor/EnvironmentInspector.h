@@ -81,6 +81,12 @@ private:
     QDoubleSpinBox* m_rotationYawSpin = nullptr;
     QPushButton*    m_resetRotationBtn = nullptr;
     QCheckBox*      m_useAsIBLCheck = nullptr;
+
+    // Render distance
+    QCheckBox*      m_enableRenderDistCheck = nullptr;
+    QCheckBox*      m_infiniteRenderDistCheck = nullptr;
+    QWidget*        m_renderDistGroup = nullptr;
+    QDoubleSpinBox* m_renderDistSpin = nullptr;
 };
 
 } // namespace QtEditor

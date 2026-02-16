@@ -30,8 +30,10 @@ layout(std140, set = 0, binding = 2) uniform LightingUBO {
     vec4 spotLightAttenuation[16];
     int pointLightCount;
     int spotLightCount;
-    float padding5;
-    float padding6;
+    int cascadeCount;
+    float csmPadding1;
+    mat4 cascadeViewProj[4];
+    vec4 cascadeSplits;
 } lighting;
 
 layout(location = 0) out vec3 fragWorldPos;

@@ -66,8 +66,10 @@ layout(std140, set = 0, binding = 2) uniform LightingUBO {
     vec4 spotLightAttenuation[16];
     int pointLightCount;
     int spotLightCount;
-    float padding5;
-    float padding6;
+    int cascadeCount;
+    float csmPadding1;
+    mat4 cascadeViewProj[4];
+    vec4 cascadeSplits;
 } lighting;
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
@@ -158,29 +160,52 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
         return 1.0;
     }
 
-    // Perspective divide
-    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
+    // Compute view-space depth of this fragment for cascade selection
+    // Engine LookAt maps forward to +Z, so view-space Z is positive for objects in front
+    float viewDepth = (ubo.view * vec4(fragWorldPos, 1.0)).z;
+    
+    // Select cascade based on view depth vs split distances
+    int cascade = 0;
+    if      (viewDepth < lighting.cascadeSplits.x) cascade = 0;
+    else if (viewDepth < lighting.cascadeSplits.y) cascade = 1;
+    else if (viewDepth < lighting.cascadeSplits.z) cascade = 2;
+    else                                           cascade = 3;
+    
+    // Transform world position by this cascade's VP matrix
+    vec4 cascadeLightSpace = lighting.cascadeViewProj[cascade] * vec4(fragWorldPos, 1.0);
+    vec3 projCoords = cascadeLightSpace.xyz / cascadeLightSpace.w;
     
     // Transform from NDC [-1,1] to texture coordinates [0,1]
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
-
+    
     // Fragment is outside the shadow map frustum - no shadow
-    float margin = 0.01;
     if (projCoords.z > 1.0 || projCoords.z < 0.0) {
         return 1.0;
     }
-    if (projCoords.x < margin || projCoords.x > (1.0 - margin) || 
-        projCoords.y < margin || projCoords.y > (1.0 - margin)) {
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 || 
+        projCoords.y < 0.0 || projCoords.y > 1.0) {
         return 1.0;
     }
-
-    // Calculate slope-scaled bias to reduce shadow acne
-    float NdotL = max(dot(normal, lightDir), 0.0);
-    float slopeBias = lighting.dirShadowParams.x * tan(acos(clamp(NdotL, 0.001, 1.0)));
-    slopeBias = clamp(slopeBias, 0.0, 0.015);
-    float constantBias = 0.003;
-    float bias = constantBias + slopeBias;
     
+    // Map UV to the correct 2x2 atlas quadrant
+    // Cascade 0: top-left, 1: top-right, 2: bottom-left, 3: bottom-right
+    vec2 atlasOffset;
+    if      (cascade == 0) atlasOffset = vec2(0.0, 0.0);
+    else if (cascade == 1) atlasOffset = vec2(0.5, 0.0);
+    else if (cascade == 2) atlasOffset = vec2(0.0, 0.5);
+    else                   atlasOffset = vec2(0.5, 0.5);
+    
+    vec2 atlasUV = projCoords.xy * 0.5 + atlasOffset;
+
+    // Calculate slope-scaled bias — scale with cascade index for stability
+    float baseBias = lighting.dirShadowParams.x;
+    float NdotL = max(dot(normal, lightDir), 0.0);
+    float slopeBias = baseBias * tan(acos(clamp(NdotL, 0.001, 1.0)));
+    slopeBias = clamp(slopeBias, 0.0, baseBias * 5.0);
+    float cascadeBiasScale = 1.0 + float(cascade) * 0.75;
+    float bias = (baseBias + slopeBias) * cascadeBiasScale;
+    
+    // Texel size in full-atlas UV space (1 / full resolution)
     float texelSize = lighting.dirShadowParams.z;
 
     // PCF (Percentage Closer Filtering) for softer shadows
@@ -190,7 +215,7 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
     
     for (int x = -pcfRadius; x <= pcfRadius; ++x) {
         for (int y = -pcfRadius; y <= pcfRadius; ++y) {
-            vec2 sampleCoord = projCoords.xy + vec2(float(x), float(y)) * texelSize;
+            vec2 sampleCoord = atlasUV + vec2(float(x), float(y)) * texelSize;
             float closestDepth = texture(shadowMap, sampleCoord).r;
             shadow += (projCoords.z - bias > closestDepth) ? 1.0 : 0.0;
         }

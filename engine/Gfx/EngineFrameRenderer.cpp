@@ -77,8 +77,12 @@ struct LightingUBO {
     
     int pointLightCount;
     int spotLightCount;
-    float padding5;
-    float padding6;
+    int cascadeCount;
+    float csmPadding1;
+    
+    // CSM cascade data (appended to preserve existing layout offsets)
+    Mat4 cascadeViewProj[4];
+    Vec4 cascadeSplits;  // view-space far plane for each cascade
 };
 
 // ============================================================================
@@ -972,6 +976,13 @@ bool EngineFrameRenderer::createShadowResources()
     colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     colorBlending.attachmentCount = 0;
     
+    // Enable dynamic viewport and scissor for CSM atlas rendering
+    VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates = dynamicStates;
+    
     VkGraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipelineInfo.stageCount = 2;
@@ -983,7 +994,7 @@ bool EngineFrameRenderer::createShadowResources()
     pipelineInfo.pMultisampleState = &multisampling;
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = nullptr;
+    pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = m_directionalShadow.pipelineLayout;
     pipelineInfo.renderPass = m_directionalShadow.renderPass;
     pipelineInfo.subpass = 0;
@@ -1379,39 +1390,40 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                     shadowConditionDebugPrinted = true;
                 }
                 
-                // Set up shadow matrix - center shadow frustum on camera position
+                // Set up shadow matrix - CSM cascades
                 if (m_directionalShadow.IsValid() && light.castShadows) {
-                    float shadowExtent = light.shadowExtent;    // Half-size of shadow ortho box
-                    float shadowDistance = light.shadowDistance; // Distance from camera center along light direction
+                    constexpr float D2R = 3.1415926535f / 180.0f;
+                    uint32_t sw = std::max(m_swapchain->extent.width, 1u);
+                    uint32_t sh = std::max(m_swapchain->extent.height, 1u);
+                    float aspect = static_cast<float>(sw) / static_cast<float>(sh);
+                    float fovY = 60.0f * D2R;
                     
-                    // Debug: log that shadows are being enabled
-                    static bool shadowDebugPrinted = false;
-                    if (!shadowDebugPrinted) {
-                        std::cout << "[ShadowMap] Enabling shadows: extent=" << shadowExtent 
-                                  << " distance=" << shadowDistance << " bias=" << light.shadowBias 
-                                  << " strength=" << light.shadowStrength << "\n";
-                        shadowDebugPrinted = true;
+                    float maxRange = light.shadowAutoFit 
+                        ? std::max(10.0f, std::min(camera.farPlane, light.shadowMaxDistance))
+                        : light.shadowDistance;
+                    
+                    // Compute cascade splits
+                    float splits[CSM_CASCADE_COUNT + 1];
+                    ComputeCascadeSplits(camera.nearPlane, maxRange, splits);
+                    
+                    // Compute VP matrix for each cascade
+                    for (int c = 0; c < CSM_CASCADE_COUNT; c++) {
+                        lightUBO.cascadeViewProj[c] = ComputeCascadeShadowVP(
+                            camera.positionX, camera.positionY, camera.positionZ,
+                            camera.yawDeg, camera.pitchDeg,
+                            splits[c], splits[c + 1],
+                            fovY, aspect, lightDir);
                     }
+                    lightUBO.cascadeSplits = Vec4(splits[1], splits[2], splits[3], splits[4]);
+                    lightUBO.cascadeCount = CSM_CASCADE_COUNT;
                     
-                    // Center shadow frustum on camera position for stable shadows
-                    Vec3 cameraPos = Vec3(camera.positionX, camera.positionY, camera.positionZ);
-                    Vec3 towardLight = vscale(lightDir, -1.0f);
-                    Vec3 lightPosForShadow = vadd(cameraPos, vscale(towardLight, shadowDistance));
+                    // Set first cascade as the legacy dirLightViewProj (vertex shader backward compat)
+                    lightUBO.dirLightViewProj = lightUBO.cascadeViewProj[0];
                     
-                    // Handle degenerate up vector when light points straight up/down
-                    Vec3 up = Vec3(0.0f, 1.0f, 0.0f);
-                    if (std::abs(vdot(lightDir, up)) > 0.99f) {
-                        up = Vec3(1.0f, 0.0f, 0.0f);
-                    }
-                    
-                    float shadowFar = shadowDistance * 3.0f;
-                    Mat4 lightView = Mat4::LookAt(lightPosForShadow, cameraPos, up);
-                    Mat4 lightProj = Mat4::OrthographicShadow(-shadowExtent, shadowExtent, -shadowExtent, shadowExtent, 0.1f, shadowFar);
-                    lightUBO.dirLightViewProj = Mat4::Multiply(lightProj, lightView);
-                    
-                    // Enable shadows - bias, strength, texel size, enabled
-                    lightUBO.dirShadowParams = Vec4(light.shadowBias, light.shadowStrength, 
-                                                    1.0f / m_directionalShadow.resolution, 1.0f);
+                    // Enable shadows - bias, strength, texel size in atlas UV space (full resolution), enabled
+                    float cascadeTexelSize = 1.0f / static_cast<float>(m_directionalShadow.resolution);
+                    lightUBO.dirShadowParams = Vec4(light.shadowBias, light.shadowStrength,
+                                                    cascadeTexelSize, 1.0f);
                 }
             } else if (light.type == LightType::Point && pointLightIndex < 16) {
                 lightUBO.pointLightPositions[pointLightIndex] = {lightPos.x, lightPos.y, lightPos.z, light.range};
@@ -1452,10 +1464,9 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
     }
     
     // Find the first directional light with castShadows enabled
-    // TODO: Support multiple shadow-casting lights via shadow atlas
     auto& registry = scene->GetRegistry();
-    Mat4 lightViewProj = Mat4::Identity();
     bool hasDirectionalLight = false;
+    Mat4 cascadeVPs[CSM_CASCADE_COUNT];
     
     auto lightView = registry.view<TransformComponent, LightComponent>();
     for (auto entity : lightView) {
@@ -1470,32 +1481,34 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
             Vec3 lightDir = Mat4::TransformDirection(rotation, Vec3(0, 0, -1));
             lightDir = vnorm(lightDir);
             
-            // Center shadow frustum on camera position for stable shadows
-            float shadowExtent = light.shadowExtent;
-            float shadowDistance = light.shadowDistance;
+            constexpr float D2R = 3.1415926535f / 180.0f;
+            uint32_t sw = std::max(m_swapchain->extent.width, 1u);
+            uint32_t sh = std::max(m_swapchain->extent.height, 1u);
+            float aspect = static_cast<float>(sw) / static_cast<float>(sh);
+            float fovY = 60.0f * D2R;
+            float maxRange = light.shadowAutoFit
+                ? std::max(10.0f, std::min(camera.farPlane, light.shadowMaxDistance))
+                : light.shadowDistance;
             
-            Vec3 cameraPos = Vec3(camera.positionX, camera.positionY, camera.positionZ);
-            Vec3 towardLight = vscale(lightDir, -1.0f);
-            Vec3 lightPos = vadd(cameraPos, vscale(towardLight, shadowDistance));
+            float splits[CSM_CASCADE_COUNT + 1];
+            ComputeCascadeSplits(camera.nearPlane, maxRange, splits);
             
-            // Handle degenerate up vector when light points straight up/down
-            Vec3 up = Vec3(0.0f, 1.0f, 0.0f);
-            if (std::abs(vdot(lightDir, up)) > 0.99f) {
-                up = Vec3(1.0f, 0.0f, 0.0f);
+            for (int c = 0; c < CSM_CASCADE_COUNT; c++) {
+                cascadeVPs[c] = ComputeCascadeShadowVP(
+                    camera.positionX, camera.positionY, camera.positionZ,
+                    camera.yawDeg, camera.pitchDeg,
+                    splits[c], splits[c + 1],
+                    fovY, aspect, lightDir);
             }
             
-            float shadowFar = shadowDistance * 3.0f;
-            Mat4 lightViewMat = Mat4::LookAt(lightPos, cameraPos, up);
-            Mat4 lightProj = Mat4::OrthographicShadow(-shadowExtent, shadowExtent, -shadowExtent, shadowExtent, 0.1f, shadowFar);
-            lightViewProj = Mat4::Multiply(lightProj, lightViewMat);
             hasDirectionalLight = true;
-            break; // MVP: only first shadow-casting directional light
+            break;
         }
     }
     
     if (!hasDirectionalLight) return;
     
-    // Begin shadow render pass
+    // Begin shadow render pass (clears entire 4096x4096 atlas)
     VkClearValue clearValue{};
     clearValue.depthStencil = {1.0f, 0};
     
@@ -1509,13 +1522,9 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
     renderPassInfo.pClearValues = &clearValue;
     
     vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_directionalShadow.pipeline);
     
-    // Render all mesh entities
     auto meshView = registry.view<TransformComponent, MeshRendererComponent>();
-    VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
-    VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
     int shadowMeshCount = 0;
     
     struct ShadowPushConstants {
@@ -1523,41 +1532,65 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
         Mat4 model;
     };
     
-    for (auto entity : meshView) {
-        auto& meshComp = meshView.get<MeshRendererComponent>(entity);
-        if (!meshComp.HasValidMesh() || !meshComp.visible) continue;
+    // 2x2 atlas offsets for 4 cascades
+    uint32_t halfRes = m_directionalShadow.resolution / 2;
+    int atlasOffsetX[4] = { 0, 1, 0, 1 };
+    int atlasOffsetY[4] = { 0, 0, 1, 1 };
+    
+    // Render each cascade into its atlas quadrant
+    for (int cascade = 0; cascade < CSM_CASCADE_COUNT; cascade++) {
+        // Set viewport and scissor to this cascade's quadrant
+        VkViewport vp{};
+        vp.x = static_cast<float>(atlasOffsetX[cascade] * halfRes);
+        vp.y = static_cast<float>(atlasOffsetY[cascade] * halfRes);
+        vp.width = static_cast<float>(halfRes);
+        vp.height = static_cast<float>(halfRes);
+        vp.minDepth = 0.0f;
+        vp.maxDepth = 1.0f;
+        vkCmdSetViewport(cmd, 0, 1, &vp);
         
-        // Use meshHandle directly like the main pass (string lookup fails due to path mismatch)
-        if (meshComp.meshHandle >= m_meshLibrary.size()) continue;
+        VkRect2D sc{};
+        sc.offset = { static_cast<int32_t>(atlasOffsetX[cascade] * halfRes),
+                      static_cast<int32_t>(atlasOffsetY[cascade] * halfRes) };
+        sc.extent = { halfRes, halfRes };
+        vkCmdSetScissor(cmd, 0, 1, &sc);
         
-        const MeshGPU& mesh = m_meshLibrary[meshComp.meshHandle];
+        // Render all meshes with this cascade's VP matrix
+        VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
+        VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
         
-        // Bind buffers if changed
-        if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
-            VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, &offset);
-            currentVertexBuffer = mesh.vertexBuffer.buffer;
+        for (auto entity : meshView) {
+            auto& meshComp = meshView.get<MeshRendererComponent>(entity);
+            if (!meshComp.HasValidMesh() || !meshComp.visible) continue;
+            if (meshComp.meshHandle >= m_meshLibrary.size()) continue;
+            
+            const MeshGPU& mesh = m_meshLibrary[meshComp.meshHandle];
+            
+            if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
+                VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, &offset);
+                currentVertexBuffer = mesh.vertexBuffer.buffer;
+            }
+            if (mesh.indexBuffer.buffer != currentIndexBuffer) {
+                vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+                currentIndexBuffer = mesh.indexBuffer.buffer;
+            }
+            
+            auto& transform = meshView.get<TransformComponent>(entity);
+            ShadowPushConstants pc;
+            pc.lightViewProj = cascadeVPs[cascade];
+            pc.model = transform.GetLocalMatrix();
+            vkCmdPushConstants(cmd, m_directionalShadow.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                              0, sizeof(pc), &pc);
+            
+            vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+            shadowMeshCount++;
         }
-        if (mesh.indexBuffer.buffer != currentIndexBuffer) {
-            vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-            currentIndexBuffer = mesh.indexBuffer.buffer;
-        }
-        
-        // Push constants
-        auto& transform = meshView.get<TransformComponent>(entity);
-        ShadowPushConstants pc;
-        pc.lightViewProj = lightViewProj;
-        pc.model = transform.GetLocalMatrix();
-        vkCmdPushConstants(cmd, m_directionalShadow.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
-                          0, sizeof(pc), &pc);
-        
-        vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
-        shadowMeshCount++;
     }
     
     static bool shadowPassDebugPrinted = false;
     if (!shadowPassDebugPrinted && shadowMeshCount > 0) {
-        std::cout << "[ShadowPass] Rendered " << shadowMeshCount << " meshes to shadow map\n";
+        std::cout << "[ShadowPass] CSM: Rendered " << shadowMeshCount << " draw calls across " << CSM_CASCADE_COUNT << " cascades\n";
         shadowPassDebugPrinted = true;
     }
     

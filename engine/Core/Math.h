@@ -411,3 +411,95 @@ struct AABB {
         max = vadd(max, delta);
     }
 };
+
+// Number of shadow cascades for CSM
+static constexpr int CSM_CASCADE_COUNT = 4;
+
+// Compute a shadow view-projection matrix for a single cascade slice of the camera frustum.
+// sliceNear/sliceFar define the depth range of this cascade in view space.
+inline Mat4 ComputeCascadeShadowVP(
+    float camPosX, float camPosY, float camPosZ,
+    float camYawDeg, float camPitchDeg,
+    float sliceNear, float sliceFar,
+    float fovRadians, float aspect,
+    Vec3 lightDir)
+{
+    constexpr float D2R = 3.1415926535f / 180.0f;
+
+    float tanHF = std::tan(fovRadians * 0.5f);
+    float nH = tanHF * sliceNear;
+    float nW = nH * aspect;
+    float fH = tanHF * sliceFar;
+    float fW = fH * aspect;
+
+    // Camera basis vectors from yaw/pitch
+    float yR = camYawDeg * D2R;
+    float pR = camPitchDeg * D2R;
+    Vec3 fwd = vnorm(Vec3(
+        std::cos(yR) * std::cos(pR),
+        std::sin(pR),
+        std::sin(yR) * std::cos(pR)));
+    Vec3 wUp(0.0f, 1.0f, 0.0f);
+    if (std::abs(vdot(fwd, wUp)) > 0.99f) wUp = Vec3(0.0f, 0.0f, 1.0f);
+    Vec3 right = vnorm(vcross(fwd, wUp));
+    Vec3 up = vcross(right, fwd);
+
+    Vec3 camPos(camPosX, camPosY, camPosZ);
+    Vec3 nc = vadd(camPos, vscale(fwd, sliceNear));
+    Vec3 fc = vadd(camPos, vscale(fwd, sliceFar));
+
+    // 8 frustum corners in world space for this slice
+    Vec3 c[8] = {
+        vadd(vadd(nc, vscale(up,  nH)), vscale(right, -nW)),
+        vadd(vadd(nc, vscale(up,  nH)), vscale(right,  nW)),
+        vadd(vadd(nc, vscale(up, -nH)), vscale(right, -nW)),
+        vadd(vadd(nc, vscale(up, -nH)), vscale(right,  nW)),
+        vadd(vadd(fc, vscale(up,  fH)), vscale(right, -fW)),
+        vadd(vadd(fc, vscale(up,  fH)), vscale(right,  fW)),
+        vadd(vadd(fc, vscale(up, -fH)), vscale(right, -fW)),
+        vadd(vadd(fc, vscale(up, -fH)), vscale(right,  fW)),
+    };
+
+    // Frustum center
+    Vec3 center(0, 0, 0);
+    for (int i = 0; i < 8; i++) center = vadd(center, c[i]);
+    center = vscale(center, 1.0f / 8.0f);
+
+    // Use a bounding sphere to keep the shadow map stable during camera rotation
+    float radius = 0.0f;
+    for (int i = 0; i < 8; i++) {
+        float d = vlen(vsub(c[i], center));
+        if (d > radius) radius = d;
+    }
+    // Round up to texel size for stability (assuming 2048 per cascade tile)
+    float texelsPerUnit = 2048.0f / (radius * 2.0f);
+    radius = std::ceil(radius * texelsPerUnit) / texelsPerUnit;
+
+    // Light view: look from behind the frustum toward its center
+    Vec3 toLight = vscale(lightDir, -1.0f);
+    Vec3 lUp(0.0f, 1.0f, 0.0f);
+    if (std::abs(vdot(lightDir, lUp)) > 0.99f) lUp = Vec3(1.0f, 0.0f, 0.0f);
+
+    Vec3 lPos = vadd(center, vscale(toLight, radius + 500.0f));
+    Mat4 lv = Mat4::LookAt(lPos, center, lUp);
+
+    // Use bounding sphere as ortho extent for stability
+    float nearZ = 0.1f;
+    float farZ = radius * 2.0f + 1000.0f;
+    Mat4 lp = Mat4::OrthographicShadow(-radius, radius, -radius, radius, nearZ, farZ);
+
+    return Mat4::Multiply(lp, lv);
+}
+
+// Compute cascade split distances using practical split scheme (log/linear blend)
+inline void ComputeCascadeSplits(float nearPlane, float farPlane, float splits[CSM_CASCADE_COUNT + 1], float lambda = 0.75f)
+{
+    splits[0] = nearPlane;
+    for (int i = 1; i <= CSM_CASCADE_COUNT; i++) {
+        float p = static_cast<float>(i) / static_cast<float>(CSM_CASCADE_COUNT);
+        float logSplit = nearPlane * std::pow(farPlane / nearPlane, p);
+        float linSplit = nearPlane + (farPlane - nearPlane) * p;
+        splits[i] = lambda * logSplit + (1.0f - lambda) * linSplit;
+    }
+}
+

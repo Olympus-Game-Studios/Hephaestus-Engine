@@ -103,6 +103,7 @@ private:
 
     // Shadows
     QCheckBox*      m_castShadowsCheck = nullptr;
+    QCheckBox*      m_shadowAutoFitCheck = nullptr;
     QWidget*        m_shadowGroup = nullptr;
     QDoubleSpinBox* m_shadowBiasSpin = nullptr;
     QPushButton*    m_resetShadowBias = nullptr;
@@ -110,6 +111,10 @@ private:
     QPushButton*    m_resetShadowNormalBias = nullptr;
     QDoubleSpinBox* m_shadowStrengthSpin = nullptr;
     QPushButton*    m_resetShadowStrength = nullptr;
+    QWidget*        m_shadowManualGroup = nullptr;
+    QDoubleSpinBox* m_shadowDistanceSpin = nullptr;
+    QDoubleSpinBox* m_shadowExtentSpin = nullptr;
+    QDoubleSpinBox* m_shadowMaxDistanceSpin = nullptr;
 };
 
 } // namespace QtEditor

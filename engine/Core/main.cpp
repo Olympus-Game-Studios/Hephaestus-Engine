@@ -2263,17 +2263,33 @@ static DetailsPanelActions DrawDetailsPanel(Scene &scene,
         if (ImGui::IsItemHovered()) {
           ImGui::SetTooltip("How dark the shadows are. 0 = no shadow, 1 = full black shadow.");
         }
-        if (ImGui::SliderFloat("Shadow Distance", &light.shadowDistance, 10.0f, 200.0f)) {
+        if (ImGui::Checkbox("Auto-Fit to Camera", &light.shadowAutoFit)) {
           entityChanged = true;
         }
         if (ImGui::IsItemHovered()) {
-          ImGui::SetTooltip("How far shadows are rendered from the camera.");
+          ImGui::SetTooltip("Automatically fit shadow distance and extent to match the camera's view distance.");
         }
-        if (ImGui::SliderFloat("Shadow Extent", &light.shadowExtent, 5.0f, 100.0f)) {
-          entityChanged = true;
+        if (light.shadowAutoFit) {
+          if (ImGui::SliderFloat("Max Shadow Distance", &light.shadowMaxDistance, 50.0f, 10000.0f, "%.0f")) {
+            entityChanged = true;
+          }
+          if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Maximum shadow range. Shadows extend up to this distance or the camera far plane, whichever is smaller.");
+          }
         }
-        if (ImGui::IsItemHovered()) {
-          ImGui::SetTooltip("Size of the shadow area. Increase for larger scenes, decrease for sharper shadows.");
+        if (!light.shadowAutoFit) {
+          if (ImGui::SliderFloat("Shadow Distance", &light.shadowDistance, 10.0f, 10000.0f, "%.0f")) {
+            entityChanged = true;
+          }
+          if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("How far shadows are rendered from the camera.");
+          }
+          if (ImGui::SliderFloat("Shadow Extent", &light.shadowExtent, 5.0f, 10000.0f, "%.0f")) {
+            entityChanged = true;
+          }
+          if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Size of the shadow area. Increase for larger scenes, decrease for sharper shadows.");
+          }
         }
       }
     }
@@ -2718,8 +2734,12 @@ struct LightingUBO {
 
   int pointLightCount;
   int spotLightCount;
-  float padding5;
-  float padding6;
+  int cascadeCount;
+  float csmPadding1;
+  
+  // CSM cascade data
+  Mat4 cascadeViewProj[4];
+  Vec4 cascadeSplits;  // view-space far plane for each cascade
 };
 
 struct ShadowPushConstants {
@@ -10595,7 +10615,8 @@ int main(int argc, char *argv[]) {
     // per-object immediately before each draw to reflect that object's
     // MaterialComponent.
 
-    Mat4 dirShadowMatrix = Mat4::Identity();
+    Mat4 cascadeShadowVPs[CSM_CASCADE_COUNT];
+    float cascadeSplitDists[CSM_CASCADE_COUNT + 1] = {};
     bool dirShadowEnabled = false;
     float shadowBias = 0.002f;
     float shadowStrength = 0.7f;
@@ -10612,11 +10633,6 @@ int main(int argc, char *argv[]) {
         Vec3 cameraForward =
           vnorm(v3(std::cos(yawR) * std::cos(pitchR), std::sin(pitchR),
                std::sin(yawR) * std::cos(pitchR)));
-        const float shadowNear = 1.0f;
-        float shadowTexelSize = g_DirectionalShadow.IsValid()
-                      ? 1.0f / static_cast<float>(
-                               g_DirectionalShadow.resolution)
-                      : 0.0f;
 
       // Gather directional lights
       auto dirLightView = viewportScene->GetEntitiesWith<LightComponent>();
@@ -10640,37 +10656,28 @@ int main(int argc, char *argv[]) {
           lightUBO.dirLightDirIntensity = Vec4(direction.x, direction.y, direction.z, light.intensity);
           lightUBO.dirLightColor = Vec4(light.color.x, light.color.y, light.color.z, 0.0f);
 
-          // Use shadow settings from LightComponent
+          // Use shadow settings from LightComponent - CSM
           if (light.castShadows && g_DirectionalShadow.IsValid()) {
             shadowBias = light.shadowBias;
             shadowStrength = light.shadowStrength;
-            float shadowDistance = light.shadowDistance;
-            float shadowExtent = light.shadowExtent;
             
-            // Center the shadow frustum on the scene origin (0,0,0)
-            Vec3 sceneCenter = v3(0.0f, 0.0f, 0.0f);
+            uint32_t sw = (swap.extent.width > 0) ? swap.extent.width : 1u;
+            uint32_t sh = (swap.extent.height > 0) ? swap.extent.height : 1u;
+            float aspect = static_cast<float>(sw) / static_cast<float>(sh);
+            float fovY = 60.0f * degToRad;
+            float maxRange = light.shadowAutoFit
+                ? std::max(10.0f, std::min(camera.farPlane, light.shadowMaxDistance))
+                : light.shadowDistance;
             
-            // 'direction' = where light SHINES (e.g., (0,-1,0) = shining down)
-            // In shader, L = -direction = direction TOWARD light
-            // Light SOURCE position = sceneCenter + L * distance = sceneCenter - direction * distance
-            Vec3 towardLight = vscale(direction, -1.0f);
-            Vec3 lightPos = vadd(sceneCenter, vscale(towardLight, shadowDistance));
+            ComputeCascadeSplits(camera.nearPlane, maxRange, cascadeSplitDists);
             
-            // Compute a stable up vector that isn't parallel to light direction
-            Vec3 up = v3(0.0f, 1.0f, 0.0f);
-            if (std::abs(vdot(direction, up)) > 0.99f) {
-              up = v3(1.0f, 0.0f, 0.0f);
+            for (int c = 0; c < CSM_CASCADE_COUNT; c++) {
+                cascadeShadowVPs[c] = ComputeCascadeShadowVP(
+                    camera.position.x, camera.position.y, camera.position.z,
+                    camera.yawDeg, camera.pitchDeg,
+                    cascadeSplitDists[c], cascadeSplitDists[c + 1],
+                    fovY, aspect, direction);
             }
-            
-            Mat4 lightView = Mat4::LookAt(lightPos, sceneCenter, up);
-            
-            // Orthographic projection for shadow map
-            float shadowFar = shadowDistance * 3.0f;
-            Mat4 lightProj = Mat4::OrthographicShadow(
-                -shadowExtent, shadowExtent, -shadowExtent, shadowExtent,
-                shadowNear, shadowFar);
-            
-            dirShadowMatrix = Mat4::Multiply(lightProj, lightView);
             dirShadowEnabled = true;
           }
 
@@ -10768,26 +10775,28 @@ int main(int argc, char *argv[]) {
         // Ambient lighting
       lightUBO.ambientColorIntensity = Vec4(0.1f, 0.1f, 0.15f, 0.3f);
 
-      lightUBO.dirLightViewProj = dirShadowMatrix;
+      lightUBO.dirLightViewProj = cascadeShadowVPs[0];
+      // CSM cascade data
+      for (int c = 0; c < CSM_CASCADE_COUNT; c++)
+        lightUBO.cascadeViewProj[c] = cascadeShadowVPs[c];
+      lightUBO.cascadeSplits = Vec4(
+          cascadeSplitDists[1], cascadeSplitDists[2],
+          cascadeSplitDists[3], cascadeSplitDists[4]);
+      lightUBO.cascadeCount = CSM_CASCADE_COUNT;
+      float cascadeTexelSize = 1.0f / static_cast<float>(g_DirectionalShadow.resolution);
       lightUBO.dirShadowParams =
-          Vec4(shadowBias, shadowStrength, shadowTexelSize,
+          Vec4(shadowBias, shadowStrength, cascadeTexelSize,
                dirShadowEnabled ? 1.0f : 0.0f);
 
       if (!debugLogged && dirShadowEnabled) {
-        std::cout << "[Shadow] Enabled: " << dirShadowEnabled
-                  << " Valid: " << g_DirectionalShadow.IsValid()
-                  << " Strength: " << shadowStrength
-                  << " TexelSize: " << shadowTexelSize << " Bias: " << shadowBias
+        std::cout << "[Shadow CSM] Enabled: " << dirShadowEnabled
+                  << " Cascades: " << CSM_CASCADE_COUNT
+                  << " Splits: [" << cascadeSplitDists[0]
+                  << ", " << cascadeSplitDists[1]
+                  << ", " << cascadeSplitDists[2]
+                  << ", " << cascadeSplitDists[3]
+                  << ", " << cascadeSplitDists[4] << "]"
                   << std::endl;
-        std::cout << "[Shadow] Light direction: (" 
-                  << lightUBO.dirLightDirIntensity.x << ", "
-                  << lightUBO.dirLightDirIntensity.y << ", "
-                  << lightUBO.dirLightDirIntensity.z << ")" << std::endl;
-        std::cout << "[Shadow] Matrix diagonal: [" 
-                  << dirShadowMatrix.m[0] << ", "
-                  << dirShadowMatrix.m[5] << ", "
-                  << dirShadowMatrix.m[10] << ", "
-                  << dirShadowMatrix.m[15] << "]" << std::endl;
         debugLogged = true;
       }
       
@@ -10847,71 +10856,77 @@ int main(int argc, char *argv[]) {
 
       vkCmdBeginRenderPass(cmd, &shadowBegin, VK_SUBPASS_CONTENTS_INLINE);
 
-      VkViewport shadowViewport{};
-      shadowViewport.x = 0.0f;
-      shadowViewport.y = 0.0f;
-      shadowViewport.width =
-          static_cast<float>(g_DirectionalShadow.resolution);
-      shadowViewport.height =
-          static_cast<float>(g_DirectionalShadow.resolution);
-      shadowViewport.minDepth = 0.0f;
-      shadowViewport.maxDepth = 1.0f;
-      VkRect2D shadowScissor{{0, 0},
-                             {g_DirectionalShadow.resolution,
-                              g_DirectionalShadow.resolution}};
-      vkCmdSetViewport(cmd, 0, 1, &shadowViewport);
-      vkCmdSetScissor(cmd, 0, 1, &shadowScissor);
-
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                         g_DirectionalShadow.pipeline);
 
-      ShadowPushConstants shadowPC{};
-      shadowPC.lightViewProj = dirShadowMatrix;
+      uint32_t halfRes = g_DirectionalShadow.resolution / 2;
+      // Atlas offsets: cascade 0=TL, 1=TR, 2=BL, 3=BR
+      uint32_t cascadeOffX[4] = {0, halfRes, 0, halfRes};
+      uint32_t cascadeOffY[4] = {0, 0, halfRes, halfRes};
 
-      VkBuffer shadowVertexBuffer = VK_NULL_HANDLE;
-      VkBuffer shadowIndexBuffer = VK_NULL_HANDLE;
-      
-      for (auto entityHandle : renderView) {
-        Entity entity(entityHandle, viewportScene);
-        auto &transform = entity.GetComponent<TransformComponent>();
-        auto &renderer = entity.GetComponent<MeshRendererComponent>();
+      for (int cascade = 0; cascade < CSM_CASCADE_COUNT; cascade++) {
+        VkViewport shadowViewport{};
+        shadowViewport.x = static_cast<float>(cascadeOffX[cascade]);
+        shadowViewport.y = static_cast<float>(cascadeOffY[cascade]);
+        shadowViewport.width = static_cast<float>(halfRes);
+        shadowViewport.height = static_cast<float>(halfRes);
+        shadowViewport.minDepth = 0.0f;
+        shadowViewport.maxDepth = 1.0f;
+        VkRect2D shadowScissor{
+            {static_cast<int32_t>(cascadeOffX[cascade]),
+             static_cast<int32_t>(cascadeOffY[cascade])},
+            {halfRes, halfRes}};
+        vkCmdSetViewport(cmd, 0, 1, &shadowViewport);
+        vkCmdSetScissor(cmd, 0, 1, &shadowScissor);
 
-        if (!renderer.visible)
-          continue;
-        if ((g_RuntimeMode || g_SimPlaying) && renderer.hideInGame)
-          continue;
+        ShadowPushConstants shadowPC{};
+        shadowPC.lightViewProj = cascadeShadowVPs[cascade];
 
-        if (!renderer.HasValidMesh() ||
-            renderer.meshHandle >= meshLibrary.size())
-          continue;
+        VkBuffer shadowVertexBuffer = VK_NULL_HANDLE;
+        VkBuffer shadowIndexBuffer = VK_NULL_HANDLE;
 
-        MeshGPU &mesh = meshLibrary[renderer.meshHandle];
-        if (mesh.indexCount == 0 ||
-            mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
-            mesh.indexBuffer.buffer == VK_NULL_HANDLE)
-          continue;
+        for (auto entityHandle : renderView) {
+          Entity entity(entityHandle, viewportScene);
+          auto &transform = entity.GetComponent<TransformComponent>();
+          auto &renderer = entity.GetComponent<MeshRendererComponent>();
 
-        if (g_DebugSkipImportedMeshes && mesh.imported)
-          continue;
+          if (!renderer.visible)
+            continue;
+          if ((g_RuntimeMode || g_SimPlaying) && renderer.hideInGame)
+            continue;
 
-        if (mesh.vertexBuffer.buffer != shadowVertexBuffer) {
-          VkBuffer vb = mesh.vertexBuffer.buffer;
-          VkDeviceSize vbOffset = 0;
-          vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
-          shadowVertexBuffer = vb;
+          if (!renderer.HasValidMesh() ||
+              renderer.meshHandle >= meshLibrary.size())
+            continue;
+
+          MeshGPU &mesh = meshLibrary[renderer.meshHandle];
+          if (mesh.indexCount == 0 ||
+              mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
+              mesh.indexBuffer.buffer == VK_NULL_HANDLE)
+            continue;
+
+          if (g_DebugSkipImportedMeshes && mesh.imported)
+            continue;
+
+          if (mesh.vertexBuffer.buffer != shadowVertexBuffer) {
+            VkBuffer vb = mesh.vertexBuffer.buffer;
+            VkDeviceSize vbOffset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
+            shadowVertexBuffer = vb;
+          }
+
+          if (mesh.indexBuffer.buffer != shadowIndexBuffer) {
+            vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0,
+                                 VK_INDEX_TYPE_UINT32);
+            shadowIndexBuffer = mesh.indexBuffer.buffer;
+          }
+
+          shadowPC.model = viewportScene->GetWorldTransform(entity);
+          vkCmdPushConstants(cmd, g_DirectionalShadow.pipelineLayout,
+                             VK_SHADER_STAGE_VERTEX_BIT, 0,
+                             sizeof(ShadowPushConstants), &shadowPC);
+          vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
         }
-
-        if (mesh.indexBuffer.buffer != shadowIndexBuffer) {
-          vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0,
-                               VK_INDEX_TYPE_UINT32);
-          shadowIndexBuffer = mesh.indexBuffer.buffer;
-        }
-
-        shadowPC.model = viewportScene->GetWorldTransform(entity);
-        vkCmdPushConstants(cmd, g_DirectionalShadow.pipelineLayout,
-                           VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(ShadowPushConstants), &shadowPC);
-        vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
       }
 
       vkCmdEndRenderPass(cmd);

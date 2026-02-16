@@ -394,7 +394,7 @@ private:
         VkPipeline pipeline = VK_NULL_HANDLE;
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VmaAllocation allocation = VK_NULL_HANDLE;
-        uint32_t resolution = 2048;
+        uint32_t resolution = 4096;
         bool IsValid() const { return image != VK_NULL_HANDLE; }
         void Destroy();
     };

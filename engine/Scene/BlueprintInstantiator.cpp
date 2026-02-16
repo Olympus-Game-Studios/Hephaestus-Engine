@@ -236,6 +236,8 @@ void ApplyPropertyOverridesLight(LightComponent& light, const BlueprintComponent
             light.direction = *value.AsVec3();
         } else if (key == "castShadows" && value.IsBool()) {
             light.castShadows = *value.AsBool();
+        } else if (key == "shadowAutoFit" && value.IsBool()) {
+            light.shadowAutoFit = *value.AsBool();
         } else if (key == "shadowBias" && value.IsNumber()) {
             light.shadowBias = static_cast<float>(*value.AsNumber());
         } else if (key == "shadowStrength" && value.IsNumber()) {
@@ -244,6 +246,8 @@ void ApplyPropertyOverridesLight(LightComponent& light, const BlueprintComponent
             light.shadowDistance = static_cast<float>(*value.AsNumber());
         } else if (key == "shadowExtent" && value.IsNumber()) {
             light.shadowExtent = static_cast<float>(*value.AsNumber());
+        } else if (key == "shadowMaxDistance" && value.IsNumber()) {
+            light.shadowMaxDistance = static_cast<float>(*value.AsNumber());
         }
     }
 }
@@ -564,6 +568,9 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
                 if (const JsonValue* shadowsValue = componentData.Find("castShadows")) {
                     light.castShadows = ParseBoolLike(*shadowsValue, light.castShadows);
                 }
+                if (const JsonValue* autoFitValue = componentData.Find("shadowAutoFit")) {
+                    light.shadowAutoFit = ParseBoolLike(*autoFitValue, light.shadowAutoFit);
+                }
                 if (const JsonValue* biasValue = componentData.Find("shadowBias")) {
                     if (biasValue->IsNumber()) {
                         light.shadowBias = static_cast<float>(biasValue->AsNumber());
@@ -582,6 +589,11 @@ Entity BlueprintInstantiator::Instantiate(Scene& scene, const BlueprintAsset& as
                 if (const JsonValue* extentValue = componentData.Find("shadowExtent")) {
                     if (extentValue->IsNumber()) {
                         light.shadowExtent = static_cast<float>(extentValue->AsNumber());
+                    }
+                }
+                if (const JsonValue* maxDistValue = componentData.Find("shadowMaxDistance")) {
+                    if (maxDistValue->IsNumber()) {
+                        light.shadowMaxDistance = static_cast<float>(maxDistValue->AsNumber());
                     }
                 }
                 // Update editor icon to match the (possibly changed) light type

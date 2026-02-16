@@ -225,6 +225,41 @@ void LightInspector::buildUI()
         shadowForm->addRow(tr("Strength:"), static_cast<QLayout*>(row));
     }
 
+    // Auto-fit to camera checkbox
+    m_shadowAutoFitCheck = new QCheckBox(tr("Auto-Fit to Camera"));
+    m_shadowAutoFitCheck->setToolTip(tr("Automatically fit shadow distance and extent to match the camera's view distance."));
+    shadowForm->addRow(m_shadowAutoFitCheck);
+
+    // Max distance (shown when auto-fit is on)
+    m_shadowMaxDistanceSpin = new QDoubleSpinBox();
+    m_shadowMaxDistanceSpin->setRange(50.0, 100000.0);
+    m_shadowMaxDistanceSpin->setSingleStep(50.0);
+    m_shadowMaxDistanceSpin->setDecimals(0);
+    m_shadowMaxDistanceSpin->setToolTip(tr("Maximum shadow range. Shadows extend up to this or the camera far plane, whichever is smaller."));
+    shadowForm->addRow(tr("Max Distance:"), m_shadowMaxDistanceSpin);
+
+    // Manual shadow distance/extent (hidden when auto-fit is on)
+    m_shadowManualGroup = new QWidget();
+    auto* manualForm = new QFormLayout(m_shadowManualGroup);
+    manualForm->setContentsMargins(0, 4, 0, 0);
+    manualForm->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    m_shadowDistanceSpin = new QDoubleSpinBox();
+    m_shadowDistanceSpin->setRange(10.0, 100000.0);
+    m_shadowDistanceSpin->setSingleStep(50.0);
+    m_shadowDistanceSpin->setDecimals(0);
+    m_shadowDistanceSpin->setToolTip(tr("How far shadows are rendered from the camera."));
+    manualForm->addRow(tr("Distance:"), m_shadowDistanceSpin);
+
+    m_shadowExtentSpin = new QDoubleSpinBox();
+    m_shadowExtentSpin->setRange(5.0, 100000.0);
+    m_shadowExtentSpin->setSingleStep(50.0);
+    m_shadowExtentSpin->setDecimals(0);
+    m_shadowExtentSpin->setToolTip(tr("Size of the shadow area. Increase for larger scenes, decrease for sharper shadows."));
+    manualForm->addRow(tr("Extent:"), m_shadowExtentSpin);
+
+    shadowForm->addRow(m_shadowManualGroup);
+
     mainLayout->addWidget(m_shadowGroup);
 }
 
@@ -264,9 +299,29 @@ void LightInspector::connectSignals()
         m_shadowGroup->setVisible(checked);
         applyToComponent();
     });
+    connect(m_shadowAutoFitCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_shadowManualGroup->setVisible(!checked);
+        m_shadowMaxDistanceSpin->setVisible(checked);
+        // Also hide/show the label for max distance
+        if (auto* form = qobject_cast<QFormLayout*>(m_shadowMaxDistanceSpin->parentWidget()->layout())) {
+            for (int i = 0; i < form->rowCount(); ++i) {
+                if (form->itemAt(i, QFormLayout::FieldRole) &&
+                    form->itemAt(i, QFormLayout::FieldRole)->widget() == m_shadowMaxDistanceSpin) {
+                    if (auto* label = form->itemAt(i, QFormLayout::LabelRole)) {
+                        if (label->widget()) label->widget()->setVisible(checked);
+                    }
+                    break;
+                }
+            }
+        }
+        applyToComponent();
+    });
     connect(m_shadowBiasSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
     connect(m_shadowNormalBiasSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
     connect(m_shadowStrengthSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
+    connect(m_shadowMaxDistanceSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
+    connect(m_shadowDistanceSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
+    connect(m_shadowExtentSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
 
     // Reset buttons
     connect(m_resetIntensity, &QPushButton::clicked, this, &LightInspector::resetIntensity);
@@ -317,15 +372,33 @@ void LightInspector::Refresh()
     m_outerConeSpin->setValue(static_cast<double>(lc.outerConeAngle * RAD_TO_DEG));
 
     m_castShadowsCheck->setChecked(lc.castShadows);
+    m_shadowAutoFitCheck->setChecked(lc.shadowAutoFit);
     m_shadowBiasSpin->setValue(static_cast<double>(lc.shadowBias));
     m_shadowNormalBiasSpin->setValue(static_cast<double>(lc.shadowNormalBias));
     m_shadowStrengthSpin->setValue(static_cast<double>(lc.shadowStrength));
+    m_shadowDistanceSpin->setValue(static_cast<double>(lc.shadowDistance));
+    m_shadowExtentSpin->setValue(static_cast<double>(lc.shadowExtent));
+    m_shadowMaxDistanceSpin->setValue(static_cast<double>(lc.shadowMaxDistance));
 
     blockAllSignals(false);
     m_updating = false;
 
     updateTypeVisibility();
     m_shadowGroup->setVisible(lc.castShadows);
+    m_shadowManualGroup->setVisible(!lc.shadowAutoFit);
+    m_shadowMaxDistanceSpin->setVisible(lc.shadowAutoFit);
+    // Also hide/show the label
+    if (auto* form = qobject_cast<QFormLayout*>(m_shadowMaxDistanceSpin->parentWidget()->layout())) {
+        for (int i = 0; i < form->rowCount(); ++i) {
+            if (form->itemAt(i, QFormLayout::FieldRole) &&
+                form->itemAt(i, QFormLayout::FieldRole)->widget() == m_shadowMaxDistanceSpin) {
+                if (auto* label = form->itemAt(i, QFormLayout::LabelRole)) {
+                    if (label->widget()) label->widget()->setVisible(lc.shadowAutoFit);
+                }
+                break;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -349,9 +422,13 @@ void LightInspector::applyToComponent()
     lc.innerConeAngle = static_cast<float>(m_innerConeSpin->value()) * DEG_TO_RAD;
     lc.outerConeAngle = static_cast<float>(m_outerConeSpin->value()) * DEG_TO_RAD;
     lc.castShadows = m_castShadowsCheck->isChecked();
+    lc.shadowAutoFit = m_shadowAutoFitCheck->isChecked();
     lc.shadowBias = static_cast<float>(m_shadowBiasSpin->value());
     lc.shadowNormalBias = static_cast<float>(m_shadowNormalBiasSpin->value());
     lc.shadowStrength = static_cast<float>(m_shadowStrengthSpin->value());
+    lc.shadowDistance = static_cast<float>(m_shadowDistanceSpin->value());
+    lc.shadowExtent = static_cast<float>(m_shadowExtentSpin->value());
+    lc.shadowMaxDistance = static_cast<float>(m_shadowMaxDistanceSpin->value());
 
     // Update editor icon if type changed
     if (reg.all_of<EditorIconComponent>(m_entity)) {
@@ -399,9 +476,13 @@ void LightInspector::blockAllSignals(bool block)
     m_innerConeSpin->blockSignals(block);
     m_outerConeSpin->blockSignals(block);
     m_castShadowsCheck->blockSignals(block);
+    m_shadowAutoFitCheck->blockSignals(block);
     m_shadowBiasSpin->blockSignals(block);
     m_shadowNormalBiasSpin->blockSignals(block);
     m_shadowStrengthSpin->blockSignals(block);
+    m_shadowDistanceSpin->blockSignals(block);
+    m_shadowExtentSpin->blockSignals(block);
+    m_shadowMaxDistanceSpin->blockSignals(block);
 }
 
 // ---------------------------------------------------------------------------

@@ -2273,10 +2273,12 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     json << "\"outerConeAngle\":" << light.outerConeAngle << ",";
     json << "\"dirX\":" << light.direction.x << ",\"dirY\":" << light.direction.y << ",\"dirZ\":" << light.direction.z << ",";
     json << "\"castShadows\":" << (light.castShadows ? "true" : "false") << ",";
+    json << "\"shadowAutoFit\":" << (light.shadowAutoFit ? "true" : "false") << ",";
     json << "\"shadowBias\":" << light.shadowBias << ",";
     json << "\"shadowStrength\":" << light.shadowStrength << ",";
     json << "\"shadowDistance\":" << light.shadowDistance << ",";
-    json << "\"shadowExtent\":" << light.shadowExtent;
+    json << "\"shadowExtent\":" << light.shadowExtent << ",";
+    json << "\"shadowMaxDistance\":" << light.shadowMaxDistance;
     json << "}}";
     return json.str();
   });
@@ -2346,6 +2348,9 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     if (auto castShadows = EditorMessageBridge::ParseIntField(payload, "castShadows")) {
       light.castShadows = *castShadows != 0;
     }
+    if (auto shadowAutoFit = EditorMessageBridge::ParseIntField(payload, "shadowAutoFit")) {
+      light.shadowAutoFit = *shadowAutoFit != 0;
+    }
     if (auto shadowBias = EditorMessageBridge::ParseFloatField(payload, "shadowBias")) {
       light.shadowBias = *shadowBias;
     }
@@ -2357,6 +2362,9 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     }
     if (auto shadowExtent = EditorMessageBridge::ParseFloatField(payload, "shadowExtent")) {
       light.shadowExtent = *shadowExtent;
+    }
+    if (auto shadowMaxDistance = EditorMessageBridge::ParseFloatField(payload, "shadowMaxDistance")) {
+      light.shadowMaxDistance = *shadowMaxDistance;
     }
 
     return std::string("{\"ok\":true}");

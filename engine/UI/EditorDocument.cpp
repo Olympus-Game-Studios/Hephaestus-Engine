@@ -503,10 +503,12 @@ bool BlueprintDocument::SyncNodeFromEntity(Entity entity) {
         data.objectValue["outerConeAngle"] = MakeNumber(light.outerConeAngle);
         data.objectValue["direction"] = MakeVec3(light.direction);
         data.objectValue["castShadows"] = MakeBool(light.castShadows);
+        data.objectValue["shadowAutoFit"] = MakeBool(light.shadowAutoFit);
         data.objectValue["shadowBias"] = MakeNumber(light.shadowBias);
         data.objectValue["shadowStrength"] = MakeNumber(light.shadowStrength);
         data.objectValue["shadowDistance"] = MakeNumber(light.shadowDistance);
         data.objectValue["shadowExtent"] = MakeNumber(light.shadowExtent);
+        data.objectValue["shadowMaxDistance"] = MakeNumber(light.shadowMaxDistance);
         addComponentEntry("Light", true, std::move(data));
     }
 

@@ -685,11 +685,13 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"direction\": " << FormatVec3(light->direction) << ",\n";
             oss << "          \"shadow\": {\n";
             oss << "            \"castShadows\": " << (light->castShadows ? "true" : "false") << ",\n";
+            oss << "            \"autoFit\": " << (light->shadowAutoFit ? "true" : "false") << ",\n";
             oss << "            \"bias\": " << FormatFloat(light->shadowBias) << ",\n";
             oss << "            \"normalBias\": " << FormatFloat(light->shadowNormalBias) << ",\n";
             oss << "            \"strength\": " << FormatFloat(light->shadowStrength) << ",\n";
             oss << "            \"distance\": " << FormatFloat(light->shadowDistance) << ",\n";
-            oss << "            \"extent\": " << FormatFloat(light->shadowExtent) << "\n";
+            oss << "            \"extent\": " << FormatFloat(light->shadowExtent) << ",\n";
+            oss << "            \"maxDistance\": " << FormatFloat(light->shadowMaxDistance) << "\n";
             oss << "          }\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
@@ -1269,6 +1271,11 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                             light.castShadows = castValue->AsBool();
                         }
                     }
+                    if (const JsonValue* autoFitValue = shadowObj->Find("autoFit")) {
+                        if (autoFitValue->IsBool()) {
+                            light.shadowAutoFit = autoFitValue->AsBool();
+                        }
+                    }
                     if (const JsonValue* biasValue = shadowObj->Find("bias")) {
                         if (biasValue->IsNumber()) {
                             light.shadowBias = static_cast<float>(biasValue->AsNumber());
@@ -1292,6 +1299,11 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     if (const JsonValue* extentValue = shadowObj->Find("extent")) {
                         if (extentValue->IsNumber()) {
                             light.shadowExtent = static_cast<float>(extentValue->AsNumber());
+                        }
+                    }
+                    if (const JsonValue* maxDistValue = shadowObj->Find("maxDistance")) {
+                        if (maxDistValue->IsNumber()) {
+                            light.shadowMaxDistance = static_cast<float>(maxDistValue->AsNumber());
                         }
                     }
                 }
@@ -2031,11 +2043,13 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"direction\": " << FormatVec3(light->direction) << ",\n";
             oss << "          \"shadow\": {\n";
             oss << "            \"castShadows\": " << (light->castShadows ? "true" : "false") << ",\n";
+            oss << "            \"autoFit\": " << (light->shadowAutoFit ? "true" : "false") << ",\n";
             oss << "            \"bias\": " << FormatFloat(light->shadowBias) << ",\n";
             oss << "            \"normalBias\": " << FormatFloat(light->shadowNormalBias) << ",\n";
             oss << "            \"strength\": " << FormatFloat(light->shadowStrength) << ",\n";
             oss << "            \"distance\": " << FormatFloat(light->shadowDistance) << ",\n";
-            oss << "            \"extent\": " << FormatFloat(light->shadowExtent) << "\n";
+            oss << "            \"extent\": " << FormatFloat(light->shadowExtent) << ",\n";
+            oss << "            \"maxDistance\": " << FormatFloat(light->shadowMaxDistance) << "\n";
             oss << "          }\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
