@@ -66,6 +66,7 @@ public:
 
 private:
     bool openScene(const QString& absolutePath);
+    bool openMaterial(const QString& absolutePath);
     bool openScript(const QString& absolutePath);
     bool openText(const QString& absolutePath);
     bool openExternal(const QString& absolutePath);

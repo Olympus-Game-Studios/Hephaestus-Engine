@@ -17,6 +17,7 @@ constexpr std::string_view NodeLabel(NodeType type) {
     case NodeType::WorldAlignedTexture: return "World Aligned Texture";
     case NodeType::Add: return "Add";
     case NodeType::Multiply: return "Multiply";
+    case NodeType::Unknown: return "Unknown Node";
     }
     return "Node";
 }
@@ -101,6 +102,7 @@ Node& Graph::CreateNode(NodeType type, std::string displayName) {
     Node node;
     node.id = m_NextNodeID++;
     node.type = type;
+    node.serializedType = (type == NodeType::Unknown) ? "Unknown" : "";
     node.displayName = displayName.empty() ? MakeNodeDisplayName(type) : std::move(displayName);
     switch (type) {
     case NodeType::ConstantFloat:
@@ -120,6 +122,8 @@ Node& Graph::CreateNode(NodeType type, std::string displayName) {
     case NodeType::WorldAlignedTexture:
         node.resourcePath.clear();
         node.worldAlignedScale = 1.0f;
+        break;
+    case NodeType::Unknown:
         break;
     default:
         break;
@@ -230,6 +234,14 @@ void Graph::Clear() {
     m_NextNodeID = 1;
     m_NextPinID = 1;
     m_NextLinkID = 1;
+    m_LegacyMode = false;
+    m_GraphEditingEnabled = true;
+    m_HasSourceGraph = false;
+    m_ApplyGraphRepairsOnSave = false;
+    m_CleanOrphansOnSave = false;
+    m_LoadWarnings.clear();
+    m_GraphUnknownFields = nlohmann::json::object();
+    ClearOriginalRootJson();
 }
 
 std::string Graph::MakeNodeDisplayName(NodeType type) const {
@@ -273,6 +285,8 @@ void Graph::AttachDefaultPins(Node& node) {
         addInputs(2);
         addOutputs(1);
         break;
+    case NodeType::Unknown:
+        break;
     default:
         break;
     }
@@ -305,6 +319,7 @@ Node& Graph::CreateNodeWithID(NodeID id, NodeType type, std::string displayName)
     Node node;
     node.id = id;
     node.type = type;
+    node.serializedType = (type == NodeType::Unknown) ? "Unknown" : "";
     node.displayName = displayName.empty() ? MakeNodeDisplayName(type) : std::move(displayName);
     switch (type) {
     case NodeType::ConstantFloat:
@@ -325,6 +340,8 @@ Node& Graph::CreateNodeWithID(NodeID id, NodeType type, std::string displayName)
         node.resourcePath.clear();
         node.worldAlignedScale = 1.0f;
         break;
+    case NodeType::Unknown:
+        break;
     default:
         break;
     }
@@ -337,6 +354,43 @@ Node& Graph::CreateNodeWithID(NodeID id, NodeType type, std::string displayName)
 void Graph::SetPinIDsForNode(NodeID nodeId, const std::vector<PinID>& inputPinIds, const std::vector<PinID>& outputPinIds) {
     Node* node = FindNode(nodeId);
     if (!node) return;
+
+    if (node->type == NodeType::Unknown) {
+        for (PinID pinId : node->inputs) {
+            m_Pins.erase(std::remove_if(m_Pins.begin(), m_Pins.end(), [pinId](const Pin& pin) {
+                return pin.id == pinId;
+            }), m_Pins.end());
+        }
+        for (PinID pinId : node->outputs) {
+            m_Pins.erase(std::remove_if(m_Pins.begin(), m_Pins.end(), [pinId](const Pin& pin) {
+                return pin.id == pinId;
+            }), m_Pins.end());
+        }
+        node->inputs.clear();
+        node->outputs.clear();
+
+        for (size_t i = 0; i < inputPinIds.size(); ++i) {
+            Pin pin;
+            pin.id = inputPinIds[i];
+            pin.node = nodeId;
+            pin.kind = PinKind::Input;
+            pin.valueType = ValueType::Float1;
+            pin.name = "In " + std::to_string(static_cast<int>(i) + 1);
+            m_Pins.push_back(std::move(pin));
+            node->inputs.push_back(inputPinIds[i]);
+        }
+        for (size_t i = 0; i < outputPinIds.size(); ++i) {
+            Pin pin;
+            pin.id = outputPinIds[i];
+            pin.node = nodeId;
+            pin.kind = PinKind::Output;
+            pin.valueType = ValueType::Float1;
+            pin.name = "Out " + std::to_string(static_cast<int>(i) + 1);
+            m_Pins.push_back(std::move(pin));
+            node->outputs.push_back(outputPinIds[i]);
+        }
+        return;
+    }
     
     // Update input pin IDs
     for (size_t i = 0; i < inputPinIds.size() && i < node->inputs.size(); ++i) {
@@ -362,30 +416,39 @@ void Graph::SetPinIDsForNode(NodeID nodeId, const std::vector<PinID>& inputPinId
 Link* Graph::CreateLinkWithID(LinkID id, PinID from, PinID to) {
     Pin* startPin = FindPin(from);
     Pin* endPin = FindPin(to);
-    if (!startPin || !endPin) {
-        return nullptr;
-    }
-    if (startPin->kind != PinKind::Output || endPin->kind != PinKind::Input) {
-        return nullptr;
-    }
-    if (startPin->valueType != endPin->valueType) {
-        return nullptr;
+    const PinID originalFrom = from;
+    const PinID originalTo = to;
+
+    bool orphan = (startPin == nullptr || endPin == nullptr);
+    bool repaired = false;
+
+    if (!orphan && startPin->kind == PinKind::Input && endPin->kind == PinKind::Output) {
+        std::swap(from, to);
+        std::swap(startPin, endPin);
+        repaired = true;
     }
 
-    // Check for existing link
-    for (const Link& link : m_Links) {
-        if (link.startPin == from && link.endPin == to) {
-            return nullptr;
+    if (!orphan) {
+        if (startPin->kind != PinKind::Output || endPin->kind != PinKind::Input) {
+            orphan = true;
+        } else if (startPin->valueType != endPin->valueType) {
+            orphan = true;
         }
     }
 
-    // Remove any existing link to this input
-    m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(), [to](const Link& link) { return link.endPin == to; }), m_Links.end());
+    if (!orphan) {
+        // Remove any existing link to this input
+        m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(), [to](const Link& link) { return link.endPin == to; }), m_Links.end());
+    }
 
     Link link;
     link.id = id;
     link.startPin = from;
     link.endPin = to;
+    link.orphan = orphan;
+    link.directionRepairedInMemory = repaired;
+    link.originalStartPin = originalFrom;
+    link.originalEndPin = originalTo;
     m_Links.push_back(link);
     return &m_Links.back();
 }
@@ -412,6 +475,18 @@ void Graph::UpdateNextIDs() {
             m_NextLinkID = link.id + 1;
         }
     }
+}
+
+NodeID Graph::AllocateNodeID() {
+    return m_NextNodeID++;
+}
+
+PinID Graph::AllocatePinID() {
+    return m_NextPinID++;
+}
+
+LinkID Graph::AllocateLinkID() {
+    return m_NextLinkID++;
 }
 
 } // namespace MaterialEditor

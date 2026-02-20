@@ -1,4 +1,5 @@
 #include "MaterialEditorPanel.h"
+#include "MaterialAssetSerializer.h"
 
 #include "imgui.h"
 #include "imnodes.h"
@@ -609,7 +610,18 @@ bool SaveMaterialAssetFile(const std::filesystem::path& path,
                            const Graph& graph,
                            ImNodesEditorContext* editorContext,
                            std::string& outError) {
-    return SaveMaterialAssetFile_Internal(path, material, displayName, graph, editorContext, outError);
+    NodePositionProvider provider;
+    if (editorContext != nullptr) {
+        provider = [editorContext](NodeID nodeId, float& outX, float& outY) -> bool {
+            ImNodes::EditorContextSet(editorContext);
+            ImVec2 pos = ImNodes::GetNodeEditorSpacePos(nodeId);
+            ImNodes::EditorContextSet(nullptr);
+            outX = pos.x;
+            outY = pos.y;
+            return true;
+        };
+    }
+    return SaveMaterialAssetCompat(path, material, displayName, graph, provider, outError);
 }
 
 bool LoadMaterialAssetFile(const std::filesystem::path& path,
@@ -617,7 +629,7 @@ bool LoadMaterialAssetFile(const std::filesystem::path& path,
                            std::string& outDisplayName,
                            Graph& outGraph,
                            std::string& outError) {
-    return LoadMaterialAssetFile_Internal(path, outMaterial, outDisplayName, outGraph, outError);
+    return LoadMaterialAssetCompat(path, outMaterial, outDisplayName, outGraph, outError);
 }
 
 void Panel::RefreshTextureCache() {
@@ -762,6 +774,12 @@ void Panel::DrawToolbar(Graph& graph) {
 void Panel::DrawNodeCanvas(Graph& graph) {
     if (!HasActiveAsset()) {
         ImGui::TextDisabled("Create or open a material asset to edit the graph.");
+        return;
+    }
+
+    if (graph.IsLegacyMode() && !graph.IsGraphEditingEnabled()) {
+        ImGui::TextDisabled("Legacy PBR Mode active. Graph editing is disabled.");
+        ImGui::TextDisabled("Use 'Enable Graph Editing' in the inspector to generate a graph.");
         return;
     }
 
@@ -964,9 +982,76 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
         return applyResult;
     }
 
+    const auto& warnings = graph.GetLoadWarnings();
+    if (!warnings.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Graph Warnings");
+        for (const std::string& warning : warnings) {
+            ImGui::BulletText("%s", warning.c_str());
+        }
+        ImGui::Separator();
+    }
+
+    int orphanCount = 0;
+    int repairedCount = 0;
+    for (const Link& link : graph.GetLinks()) {
+        if (link.orphan) {
+            ++orphanCount;
+        }
+        if (link.directionRepairedInMemory) {
+            ++repairedCount;
+        }
+    }
+    if (orphanCount > 0 || repairedCount > 0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "Graph Errors");
+        if (orphanCount > 0) {
+            ImGui::Text("Orphan links: %d", orphanCount);
+        }
+        if (repairedCount > 0) {
+            ImGui::Text("Auto-repaired link directions: %d", repairedCount);
+        }
+        bool applyRepairs = graph.ShouldApplyGraphRepairsOnSave();
+        bool cleanOrphans = graph.ShouldCleanOrphansOnSave();
+        if (ImGui::Checkbox("Fix Graph on Save", &applyRepairs)) {
+            graph.SetApplyGraphRepairsOnSave(applyRepairs);
+        }
+        if (ImGui::Checkbox("Clean Orphans on Save", &cleanOrphans)) {
+            graph.SetCleanOrphansOnSave(cleanOrphans);
+        }
+        ImGui::Separator();
+    }
+
     if (!m_LastSelectedNode) {
         ImGui::TextDisabled("Select a node to edit its properties.");
         ImGui::Spacing();
+    }
+
+    if (graph.IsLegacyMode() && !graph.IsGraphEditingEnabled()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.4f, 1.0f), "Legacy PBR Mode");
+        ImGui::TextWrapped("This material has no valid graph. Editing uses legacy PBR fields and preserves graph JSON until you enable graph editing.");
+        if (ImGui::Button("Enable Graph Editing")) {
+            BuildMinimalGraphFromLegacyPbr(m_LegacyMaterial, graph);
+            graph.SetGraphEditingEnabled(true);
+            graph.SetLegacyMode(false);
+            m_LegacyMode = false;
+            m_StatusMessage = "Generated graph from legacy PBR values.";
+        }
+        ImGui::Separator();
+        ImGui::ColorEdit3("Albedo", &m_LegacyMaterial.albedo.x, ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_HDR);
+        ImGui::SliderFloat("Metallic", &m_LegacyMaterial.metallic, 0.0f, 1.0f, "%.3f");
+        ImGui::SliderFloat("Roughness", &m_LegacyMaterial.roughness, 0.0f, 1.0f, "%.3f");
+        ImGui::SliderFloat("AO", &m_LegacyMaterial.ao, 0.0f, 1.0f, "%.3f");
+        ImGui::ColorEdit3("Emissive", &m_LegacyMaterial.emissive.x, ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_HDR);
+        ImGui::SliderFloat("Emissive Strength", &m_LegacyMaterial.emissiveStrength, 0.0f, 32.0f, "%.3f");
+        ImGui::Checkbox("Use Albedo Texture", &m_LegacyMaterial.useAlbedoTexture);
+        InputText("Albedo Path", m_LegacyMaterial.albedoTexturePath);
+        ImGui::Checkbox("Use Normal Texture", &m_LegacyMaterial.useNormalTexture);
+        InputText("Normal Path", m_LegacyMaterial.normalTexturePath);
+        ImGui::Checkbox("Use Roughness Texture", &m_LegacyMaterial.useRoughnessTexture);
+        InputText("Roughness Path", m_LegacyMaterial.roughnessTexturePath);
+        ImGui::Checkbox("Use AO Texture", &m_LegacyMaterial.useAoTexture);
+        InputText("AO Path", m_LegacyMaterial.aoTexturePath);
+        ImGui::Checkbox("Use World Aligned", &m_LegacyMaterial.useWorldAlignedTexture);
+        ImGui::DragFloat("World Texture Scale", &m_LegacyMaterial.worldTextureScale, 0.01f, 0.001f, 100.0f, "%.3f");
     }
 
     Node* node = m_LastSelectedNode ? graph.FindNode(*m_LastSelectedNode) : nullptr;
@@ -1108,6 +1193,12 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
         case NodeType::MaterialOutput:
             ImGui::TextDisabled("Connect material attributes to build the final surface.");
             break;
+        case NodeType::Unknown:
+            ImGui::TextDisabled("Opaque legacy node. Unknown fields are preserved on save.");
+            ImGui::Text("Type: %s", node->serializedType.empty() ? "Unknown" : node->serializedType.c_str());
+            ImGui::Text("Inputs: %d", static_cast<int>(node->inputs.size()));
+            ImGui::Text("Outputs: %d", static_cast<int>(node->outputs.size()));
+            break;
         }
 
         ImGui::Spacing();
@@ -1117,16 +1208,20 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
     if (ImGui::Button("Save Material")) {
         MaterialComponent material;
         std::string error;
-        if (EvaluateGraph(graph, material, error)) {
-            std::string saveError;
-            bool saved = SaveMaterialAssetFile_Internal(m_CurrentAssetPath, material, m_CurrentMaterialName, graph, m_EditorContext, saveError);
-            if (!saved) {
-                m_StatusMessage = "Save failed: " + saveError;
-            } else {
-                m_StatusMessage = "Material saved successfully.";
-            }
-        } else {
+        const bool useLegacy = graph.IsLegacyMode() && !graph.IsGraphEditingEnabled();
+        if (useLegacy) {
+            material = m_LegacyMaterial;
+        } else if (!EvaluateGraph(graph, material, error)) {
             m_StatusMessage = "Cannot save: " + error;
+            return applyResult;
+        }
+
+        std::string saveError;
+        bool saved = SaveMaterialAssetFile(m_CurrentAssetPath, material, m_CurrentMaterialName, graph, m_EditorContext, saveError);
+        if (!saved) {
+            m_StatusMessage = "Save failed: " + saveError;
+        } else {
+            m_StatusMessage = "Material saved successfully.";
         }
     }
     ImGui::SameLine();
@@ -1134,18 +1229,22 @@ std::optional<PanelResult> Panel::DrawInspector(Graph& graph) {
     if (ImGui::Button("Apply To Selected Entity")) {
         MaterialComponent material;
         std::string error;
-        if (EvaluateGraph(graph, material, error)) {
-            std::string saveError;
-            bool saved = SaveMaterialAssetFile_Internal(m_CurrentAssetPath, material, m_CurrentMaterialName, graph, m_EditorContext, saveError);
-            if (!saved) {
-                m_StatusMessage = "Material applied, but save failed: " + saveError;
-            } else {
-                m_StatusMessage = "Material saved and applied.";
-            }
-            applyResult = PanelResult{material, m_CurrentMaterialName, m_CurrentAssetPath};
-        } else {
+        const bool useLegacy = graph.IsLegacyMode() && !graph.IsGraphEditingEnabled();
+        if (useLegacy) {
+            material = m_LegacyMaterial;
+        } else if (!EvaluateGraph(graph, material, error)) {
             m_StatusMessage = error;
+            return applyResult;
         }
+
+        std::string saveError;
+        bool saved = SaveMaterialAssetFile(m_CurrentAssetPath, material, m_CurrentMaterialName, graph, m_EditorContext, saveError);
+        if (!saved) {
+            m_StatusMessage = "Material applied, but save failed: " + saveError;
+        } else {
+            m_StatusMessage = "Material saved and applied.";
+        }
+        applyResult = PanelResult{material, m_CurrentMaterialName, m_CurrentAssetPath};
     }
 
     return applyResult;
@@ -1180,10 +1279,12 @@ void Panel::SetActiveAsset(const std::filesystem::path& path) {
         Graph tempGraph; // Temporary graph, will be loaded via LoadMaterialIntoGraph later
         std::string loadError;
         
-        if (LoadMaterialAssetFile_Internal(m_CurrentAssetPath, loadedMaterial, loadedName, tempGraph, loadError)) {
+        if (LoadMaterialAssetFile(m_CurrentAssetPath, loadedMaterial, loadedName, tempGraph, loadError)) {
             if (!loadedName.empty()) {
                 m_CurrentMaterialName = loadedName;
             }
+            m_LegacyMaterial = loadedMaterial;
+            m_LegacyMode = tempGraph.IsLegacyMode();
             m_StatusMessage = "Loaded material '" + m_CurrentMaterialName + "'.";
         } else {
             m_StatusMessage = "Opened material '" + m_CurrentMaterialName + "', but failed to load data: " + loadError;
@@ -1213,7 +1314,9 @@ void Panel::LoadMaterialIntoGraph(Graph& graph) {
     std::string tempName;
     std::string loadError;
     
-    if (LoadMaterialAssetFile_Internal(m_CurrentAssetPath, tempMaterial, tempName, graph, loadError)) {
+    if (LoadMaterialAssetFile(m_CurrentAssetPath, tempMaterial, tempName, graph, loadError)) {
+        m_LegacyMaterial = tempMaterial;
+        m_LegacyMode = graph.IsLegacyMode();
         // Graph has been populated
         // Queue node placements using loaded positions
         const auto& nodes = graph.GetNodes();

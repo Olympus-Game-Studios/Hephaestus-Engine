@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -38,7 +39,8 @@ enum class NodeType {
     AoTextureSample,
     WorldAlignedTexture,
     Add,
-    Multiply
+    Multiply,
+    Unknown
 };
 
 struct Float3 {
@@ -58,6 +60,7 @@ struct Pin {
 struct Node {
     NodeID id = 0;
     NodeType type = NodeType::MaterialOutput;
+    std::string serializedType;
     std::string displayName;
     float scalar = 0.0f;
     Float3 color;
@@ -69,12 +72,22 @@ struct Node {
     // Position in editor (for serialization)
     float posX = 0.0f;
     float posY = 0.0f;
+
+    // Legacy compatibility payload to preserve unknown keys on save
+    nlohmann::json unknownFields = nlohmann::json::object();
 };
 
 struct Link {
     LinkID id = 0;
     PinID startPin = 0;
     PinID endPin = 0;
+    bool orphan = false;
+    bool directionRepairedInMemory = false;
+    PinID originalStartPin = 0;
+    PinID originalEndPin = 0;
+
+    // Legacy compatibility payload to preserve unknown keys on save
+    nlohmann::json unknownFields = nlohmann::json::object();
 };
 
 class Graph {
@@ -106,6 +119,32 @@ public:
     void SetPinIDsForNode(NodeID nodeId, const std::vector<PinID>& inputPinIds, const std::vector<PinID>& outputPinIds);
     Link* CreateLinkWithID(LinkID id, PinID from, PinID to);
     void UpdateNextIDs(); // Call after loading to ensure new IDs don't conflict
+    NodeID AllocateNodeID();
+    PinID AllocatePinID();
+    LinkID AllocateLinkID();
+
+    void SetLegacyMode(bool enabled) { m_LegacyMode = enabled; }
+    bool IsLegacyMode() const { return m_LegacyMode; }
+    void SetGraphEditingEnabled(bool enabled) { m_GraphEditingEnabled = enabled; }
+    bool IsGraphEditingEnabled() const { return m_GraphEditingEnabled; }
+    void SetHasSourceGraph(bool hasGraph) { m_HasSourceGraph = hasGraph; }
+    bool HasSourceGraph() const { return m_HasSourceGraph; }
+
+    void SetOriginalRootJson(nlohmann::json value) { m_OriginalRootJson = std::move(value); m_HasOriginalRootJson = true; }
+    const nlohmann::json& GetOriginalRootJson() const { return m_OriginalRootJson; }
+    bool HasOriginalRootJson() const { return m_HasOriginalRootJson; }
+    void ClearOriginalRootJson() { m_OriginalRootJson = nlohmann::json::object(); m_HasOriginalRootJson = false; }
+
+    void SetGraphUnknownFields(nlohmann::json value) { m_GraphUnknownFields = std::move(value); }
+    const nlohmann::json& GetGraphUnknownFields() const { return m_GraphUnknownFields; }
+
+    void SetLoadWarnings(std::vector<std::string> warnings) { m_LoadWarnings = std::move(warnings); }
+    const std::vector<std::string>& GetLoadWarnings() const { return m_LoadWarnings; }
+
+    void SetApplyGraphRepairsOnSave(bool enabled) { m_ApplyGraphRepairsOnSave = enabled; }
+    bool ShouldApplyGraphRepairsOnSave() const { return m_ApplyGraphRepairsOnSave; }
+    void SetCleanOrphansOnSave(bool enabled) { m_CleanOrphansOnSave = enabled; }
+    bool ShouldCleanOrphansOnSave() const { return m_CleanOrphansOnSave; }
 
 private:
     std::string MakeNodeDisplayName(NodeType type) const;
@@ -119,6 +158,16 @@ private:
     std::vector<Node> m_Nodes;
     std::vector<Pin> m_Pins;
     std::vector<Link> m_Links;
+
+    bool m_LegacyMode = false;
+    bool m_GraphEditingEnabled = true;
+    bool m_HasSourceGraph = false;
+    bool m_HasOriginalRootJson = false;
+    bool m_ApplyGraphRepairsOnSave = false;
+    bool m_CleanOrphansOnSave = false;
+    nlohmann::json m_OriginalRootJson = nlohmann::json::object();
+    nlohmann::json m_GraphUnknownFields = nlohmann::json::object();
+    std::vector<std::string> m_LoadWarnings;
 };
 
 } // namespace MaterialEditor

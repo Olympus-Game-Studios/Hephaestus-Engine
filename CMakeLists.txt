@@ -194,6 +194,7 @@ set(EDITOR_ONLY_SOURCES
     engine/UI/HtmlUI/HtmlEditorUIHost.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
+    engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
     engine/UI/MaterialEditor/MaterialEditorPanel.cpp
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
@@ -280,6 +281,7 @@ add_executable(HephaestusEngine
     engine/UI/HtmlUI/HtmlEditorUIHost.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
+    engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
     engine/UI/MaterialEditor/MaterialEditorPanel.cpp
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
@@ -916,4 +918,30 @@ install(CODE "
     file(WRITE \"\${CMAKE_INSTALL_PREFIX}/PACKAGE_MANIFEST.txt\" 
          \"Hephaestus Engine Runtime Package\\nGenerated: ${CMAKE_CURRENT_TIMESTAMP}\\n\")
 ")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Material compatibility tests
+# ─────────────────────────────────────────────────────────────────────────────
+option(HEPHAESTUS_BUILD_COMPAT_TESTS "Build material compatibility tests" ON)
+if(HEPHAESTUS_BUILD_COMPAT_TESTS)
+    include(CTest)
+
+    add_executable(MaterialCompatibilityTests
+        engine/Tests/MaterialCompatibilityTests.cpp
+        engine/UI/MaterialEditor/MaterialGraph.cpp
+        engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
+        engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
+    )
+
+    target_include_directories(MaterialCompatibilityTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+
+    add_test(
+        NAME MaterialCompatibilityRoundtrip
+        COMMAND MaterialCompatibilityTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+endif()
 

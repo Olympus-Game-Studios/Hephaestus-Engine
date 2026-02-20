@@ -193,6 +193,7 @@ bool EvaluateOutputPin(const Graph& graph,
         break;
     }
     case NodeType::MaterialOutput:
+    case NodeType::Unknown:
         break;
     }
 

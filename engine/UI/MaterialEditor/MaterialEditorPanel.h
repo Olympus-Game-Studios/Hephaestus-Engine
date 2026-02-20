@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MaterialGraph.h"
+#include "MaterialAssetSerializer.h"
 #include "MaterialGraphEvaluator.h"
 #include "TextureDiscovery.h"
 
@@ -70,6 +71,8 @@ private:
     std::filesystem::path m_CurrentAssetPath;
     std::vector<std::string> m_DiscoveredTextures;
     std::filesystem::path m_ProjectRoot;
+    MaterialComponent m_LegacyMaterial;
+    bool m_LegacyMode = false;
 };
 
 } // namespace MaterialEditor
