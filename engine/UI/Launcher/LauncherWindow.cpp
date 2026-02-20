@@ -121,6 +121,22 @@ LauncherWindow::LauncherWindow(QWidget* parent)
     ApplyTheme();
     LoadSettings();
 
+    const QVector<LauncherProject> cachedProjects = m_projectManager.LoadProjectIndex();
+    if (!cachedProjects.isEmpty()) {
+        m_projectModel.SetProjects(cachedProjects);
+        UpdateRecentEmptyState();
+        UpdateProjectDetailsPanel();
+        m_scanStatusLabel->setText(QStringLiteral("Loaded %1 cached projects. Confirming...").arg(cachedProjects.size()));
+
+        if (!m_settings.lastOpenedProject.isEmpty()) {
+            const int row = m_projectModel.RowForProjectPath(m_settings.lastOpenedProject);
+            if (row >= 0) {
+                const QModelIndex idx = m_projectModel.index(row, 0);
+                m_projectGrid->setCurrentIndex(idx);
+            }
+        }
+    }
+
     m_projectRescanTimer = new QTimer(this);
     m_projectRescanTimer->setInterval(5000);
     connect(m_projectRescanTimer, &QTimer::timeout, this, &LauncherWindow::RefreshProjectsAsync);
@@ -731,6 +747,7 @@ void LauncherWindow::RefreshProjectsAsync()
 void LauncherWindow::OnProjectsScanned(const QVector<LauncherProject>& projects)
 {
     m_projectModel.SetProjects(projects);
+    m_projectManager.SaveProjectIndex(projects);
     UpdateRecentEmptyState();
     UpdateProjectDetailsPanel();
 

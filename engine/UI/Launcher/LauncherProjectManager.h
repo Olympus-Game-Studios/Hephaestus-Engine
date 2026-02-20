@@ -4,6 +4,7 @@
 
 #include <QObject>
 #include <QStringList>
+#include <QVector>
 
 namespace Hephaestus::Launcher {
 
@@ -24,6 +25,8 @@ public:
 
     LauncherSettings LoadSettings() const;
     void SaveSettings(const LauncherSettings& settings) const;
+    QVector<LauncherProject> LoadProjectIndex() const;
+    void SaveProjectIndex(const QVector<LauncherProject>& projects) const;
 
     QString DetectEditorPath() const;
     QString DetectRuntimePath() const;

@@ -7,6 +7,7 @@
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
 #include <QSettings>
@@ -55,6 +56,70 @@ QJsonObject BuildProjectJson(const Hephaestus::Launcher::LauncherProject& projec
     root[QStringLiteral("tags")] = tags;
 
     return root;
+}
+
+QJsonObject BuildProjectIndexEntry(const Hephaestus::Launcher::LauncherProject& project)
+{
+    QJsonObject entry;
+    entry[QStringLiteral("projectDir")] = QDir::cleanPath(project.projectDir);
+    entry[QStringLiteral("projectFilePath")] = project.projectFilePath;
+    entry[QStringLiteral("name")] = project.name;
+    entry[QStringLiteral("description")] = project.description;
+    entry[QStringLiteral("engineVersion")] = project.engineVersion;
+    entry[QStringLiteral("screenshot")] = project.screenshotPath;
+    entry[QStringLiteral("screenshotAbsolutePath")] = project.screenshotAbsolutePath;
+    entry[QStringLiteral("isFavorite")] = project.favorite;
+    entry[QStringLiteral("broken")] = project.broken;
+    entry[QStringLiteral("brokenReason")] = project.brokenReason;
+    entry[QStringLiteral("created")] = project.created.toSecsSinceEpoch();
+    entry[QStringLiteral("lastModified")] = project.lastModified.toSecsSinceEpoch();
+
+    QJsonArray tags;
+    for (const QString& tag : project.tags) {
+        tags.append(tag);
+    }
+    entry[QStringLiteral("tags")] = tags;
+
+    return entry;
+}
+
+Hephaestus::Launcher::LauncherProject ParseProjectIndexEntry(const QJsonObject& entry)
+{
+    Hephaestus::Launcher::LauncherProject project;
+    project.projectDir = QDir::cleanPath(entry.value(QStringLiteral("projectDir")).toString());
+    project.projectFilePath = entry.value(QStringLiteral("projectFilePath")).toString();
+    project.name = entry.value(QStringLiteral("name")).toString(QFileInfo(project.projectDir).fileName());
+    project.description = entry.value(QStringLiteral("description")).toString();
+    project.engineVersion = entry.value(QStringLiteral("engineVersion")).toString(QStringLiteral("1.0.0"));
+    project.screenshotPath = entry.value(QStringLiteral("screenshot")).toString();
+    project.screenshotAbsolutePath = entry.value(QStringLiteral("screenshotAbsolutePath")).toString();
+    project.favorite = entry.value(QStringLiteral("isFavorite")).toBool(false);
+    project.broken = entry.value(QStringLiteral("broken")).toBool(false);
+    project.brokenReason = entry.value(QStringLiteral("brokenReason")).toString();
+
+    const QDateTime now = QDateTime::currentDateTime();
+    project.created = ReadEpochDate(entry, QStringLiteral("created"), now);
+    project.lastModified = ReadEpochDate(entry, QStringLiteral("lastModified"), now);
+
+    const QJsonArray tagsArray = entry.value(QStringLiteral("tags")).toArray();
+    for (const QJsonValue& tagValue : tagsArray) {
+        if (tagValue.isString()) {
+            project.tags.push_back(tagValue.toString());
+        }
+    }
+
+    if (project.projectFilePath.isEmpty() && !project.projectDir.isEmpty()) {
+        project.projectFilePath = QDir(project.projectDir).filePath(QStringLiteral("project.heproject"));
+    }
+
+    if (project.screenshotAbsolutePath.isEmpty() && !project.screenshotPath.isEmpty() && !project.projectDir.isEmpty()) {
+        const QFileInfo screenshotInfo(QDir(project.projectDir).filePath(project.screenshotPath));
+        if (screenshotInfo.exists() && screenshotInfo.isFile()) {
+            project.screenshotAbsolutePath = screenshotInfo.absoluteFilePath();
+        }
+    }
+
+    return project;
 }
 
 bool IsProjectMetadataFile(const QString& projectDirPath, const QString& candidatePath)
@@ -133,6 +198,57 @@ void LauncherProjectManager::SaveSettings(const LauncherSettings& settings) cons
     qsettings.setValue(QStringLiteral("settings/theme"), settings.theme);
     qsettings.setValue(QStringLiteral("settings/openLastProjectOnStartup"), settings.openLastProjectOnStartup);
     qsettings.setValue(QStringLiteral("settings/lastOpenedProject"), settings.lastOpenedProject);
+}
+
+QVector<LauncherProject> LauncherProjectManager::LoadProjectIndex() const
+{
+    QVector<LauncherProject> projects;
+
+    QSettings qsettings(QStringLiteral("Hephaestus"), QStringLiteral("Launcher"));
+    const QByteArray serialized = qsettings.value(QStringLiteral("settings/projectIndex")).toByteArray();
+    if (serialized.isEmpty()) {
+        return projects;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(serialized, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isArray()) {
+        return projects;
+    }
+
+    const QJsonArray entries = document.array();
+    projects.reserve(entries.size());
+
+    for (const QJsonValue& value : entries) {
+        if (!value.isObject()) {
+            continue;
+        }
+
+        LauncherProject project = ParseProjectIndexEntry(value.toObject());
+        if (project.projectDir.isEmpty() && project.projectFilePath.isEmpty()) {
+            continue;
+        }
+
+        projects.push_back(project);
+    }
+
+    return projects;
+}
+
+void LauncherProjectManager::SaveProjectIndex(const QVector<LauncherProject>& projects) const
+{
+    QJsonArray entries;
+
+    for (const LauncherProject& project : projects) {
+        if (project.projectDir.isEmpty() && project.projectFilePath.isEmpty()) {
+            continue;
+        }
+        entries.append(BuildProjectIndexEntry(project));
+    }
+
+    const QJsonDocument document(entries);
+    QSettings qsettings(QStringLiteral("Hephaestus"), QStringLiteral("Launcher"));
+    qsettings.setValue(QStringLiteral("settings/projectIndex"), document.toJson(QJsonDocument::Compact));
 }
 
 QString LauncherProjectManager::DetectEditorPath() const
