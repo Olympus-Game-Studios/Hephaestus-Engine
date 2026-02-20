@@ -43,6 +43,14 @@ Float3 Multiply(const Float3& a, const Float3& b) {
     return Float3{a.x * b.x, a.y * b.y, a.z * b.z};
 }
 
+Float3 Lerp(const Float3& a, const Float3& b, float alpha) {
+    return Float3{
+        a.x + (b.x - a.x) * alpha,
+        a.y + (b.y - a.y) * alpha,
+        a.z + (b.z - a.z) * alpha
+    };
+}
+
 bool EvaluateOutputPin(const Graph& graph,
                        PinID outputPin,
                        std::unordered_map<PinID, Value>& cache,
@@ -189,6 +197,17 @@ bool EvaluateOutputPin(const Graph& graph,
             result.scalar = a.scalar * b.scalar;
         } else {
             result.vec = Multiply(a.vec, b.vec);
+        }
+        break;
+    }
+    case NodeType::Lerp: {
+        Value a = fetchInput(0);
+        Value b = fetchInput(1);
+        Value alpha = fetchInput(2);
+        if (pin->valueType == ValueType::Float1) {
+            result.scalar = a.scalar + (b.scalar - a.scalar) * alpha.scalar;
+        } else {
+            result.vec = Lerp(a.vec, b.vec, alpha.scalar);
         }
         break;
     }

@@ -436,6 +436,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/AssetBrowserWidget.h
             engine/UI/QtEditor/EditorAssetActions.cpp
             engine/UI/QtEditor/EditorAssetActions.h
+            engine/UI/QtEditor/MaterialGraphQtEditorDialog.cpp
+            engine/UI/QtEditor/MaterialGraphQtEditorDialog.h
             engine/UI/QtEditor/LightInspector.cpp
             engine/UI/QtEditor/LightInspector.h
             engine/UI/QtEditor/EnvironmentInspector.cpp

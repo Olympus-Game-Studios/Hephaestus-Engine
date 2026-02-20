@@ -17,6 +17,7 @@ constexpr std::string_view NodeLabel(NodeType type) {
     case NodeType::WorldAlignedTexture: return "World Aligned Texture";
     case NodeType::Add: return "Add";
     case NodeType::Multiply: return "Multiply";
+    case NodeType::Lerp: return "Lerp";
     case NodeType::Unknown: return "Unknown Node";
     }
     return "Node";
@@ -54,6 +55,14 @@ constexpr std::string_view PinLabel(NodeType ownerType, PinKind kind, int index)
     if ((ownerType == NodeType::Add || ownerType == NodeType::Multiply) && kind == PinKind::Output) {
         return "Result";
     }
+    if (ownerType == NodeType::Lerp && kind == PinKind::Input) {
+        if (index == 0) return "A";
+        if (index == 1) return "B";
+        return "Alpha";
+    }
+    if (ownerType == NodeType::Lerp && kind == PinKind::Output) {
+        return "Result";
+    }
     return kind == PinKind::Input ? "In" : "Out";
 }
 
@@ -86,6 +95,12 @@ constexpr ValueType DefaultPinType(NodeType ownerType, PinKind kind, int index) 
         return ValueType::Float1;
     }
     if (ownerType == NodeType::Add || ownerType == NodeType::Multiply) {
+        return ValueType::Float1;
+    }
+    if (ownerType == NodeType::Lerp) {
+        if (kind == PinKind::Input && index == 2) {
+            return ValueType::Float1;
+        }
         return ValueType::Float1;
     }
     return ValueType::Float1;
@@ -283,6 +298,10 @@ void Graph::AttachDefaultPins(Node& node) {
     case NodeType::Add:
     case NodeType::Multiply:
         addInputs(2);
+        addOutputs(1);
+        break;
+    case NodeType::Lerp:
+        addInputs(3);
         addOutputs(1);
         break;
     case NodeType::Unknown:

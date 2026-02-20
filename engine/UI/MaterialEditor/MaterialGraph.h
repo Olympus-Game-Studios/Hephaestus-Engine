@@ -40,6 +40,7 @@ enum class NodeType {
     WorldAlignedTexture,
     Add,
     Multiply,
+    Lerp,
     Unknown
 };
 

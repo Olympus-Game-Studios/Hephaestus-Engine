@@ -24,6 +24,7 @@ std::string NodeTypeToString(NodeType type) {
     case NodeType::WorldAlignedTexture: return "WorldAlignedTexture";
     case NodeType::Add: return "Add";
     case NodeType::Multiply: return "Multiply";
+    case NodeType::Lerp: return "Lerp";
     case NodeType::Unknown: return "Unknown";
     }
     return "Unknown";
@@ -39,9 +40,13 @@ bool TryNodeTypeFromString(const std::string& str, NodeType& outType) {
     if (str == "NormalTextureSample") { outType = NodeType::NormalTextureSample; return true; }
     if (str == "RoughnessTextureSample") { outType = NodeType::RoughnessTextureSample; return true; }
     if (str == "AoTextureSample") { outType = NodeType::AoTextureSample; return true; }
+    if (str == "AOTextureSample") { outType = NodeType::AoTextureSample; return true; }
     if (str == "WorldAlignedTexture") { outType = NodeType::WorldAlignedTexture; return true; }
     if (str == "Add") { outType = NodeType::Add; return true; }
     if (str == "Multiply") { outType = NodeType::Multiply; return true; }
+    if (str == "Lerp") { outType = NodeType::Lerp; return true; }
+    if (str == "ConstantScalar") { outType = NodeType::ConstantFloat; return true; }
+    if (str == "ConstantColor") { outType = NodeType::ConstantVec3; return true; }
     return false;
 }
 
