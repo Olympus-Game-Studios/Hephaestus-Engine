@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <array>
 #include <algorithm>
+#include <cstdint>
 #include <iostream>
 
 // Cube vertices for skybox (just positions, texture coords generated from position)
@@ -242,6 +243,13 @@ void VulkanSkybox::CreatePipeline(VkExtent2D extent) {
     pipelineLayoutInfo.setLayoutCount = 1;
     pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
 
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(float) * 4 + sizeof(std::int32_t);
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+
     if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
         throw std::runtime_error("Failed to create skybox pipeline layout");
     }
@@ -376,6 +384,22 @@ void VulkanSkybox::Draw(VkCommandBuffer cmd, uint32_t frameIndex) {
     frameIndex %= descriptorSets.size();
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+    struct SkyboxPushConstants {
+        float intensity;
+        float solidColorR;
+        float solidColorG;
+        float solidColorB;
+        std::int32_t useSolidColor;
+    } pushConstants{1.0f, 0.0f, 0.0f, 0.0f, 0};
+
+    vkCmdPushConstants(
+        cmd,
+        pipelineLayout,
+        VK_SHADER_STAGE_FRAGMENT_BIT,
+        0,
+        sizeof(SkyboxPushConstants),
+        &pushConstants);
     
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer, &offset);

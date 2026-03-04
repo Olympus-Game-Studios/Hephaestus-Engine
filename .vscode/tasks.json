@@ -90,6 +90,34 @@
 				"Release"
 			],
 			"group": "build"
+		},
+		{
+			"label": "Build HephaestusEngine target",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--config",
+				"Release",
+				"--target",
+				"HephaestusEngine"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build HephaestusGame target",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--config",
+				"Release",
+				"--target",
+				"HephaestusGame"
+			],
+			"group": "build"
 		}
 	]
 }

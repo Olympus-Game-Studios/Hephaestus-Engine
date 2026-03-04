@@ -141,6 +141,7 @@ endif()
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build Jolt as static library" FORCE)
 set(JOLT_SANITIZE_UNDEFINED_BEHAVIOR OFF CACHE BOOL "" FORCE)
 set(JOLT_CROSS_PLATFORM_DETERMINISTIC ON CACHE BOOL "Enable deterministic behavior" FORCE)
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "Disable Jolt warnings-as-errors in superproject builds" FORCE)
 # Disable static MSVC runtime to avoid linker conflicts
 set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "Use dynamic MSVC runtime" FORCE)
 add_subdirectory(extern/JoltPhysics/Build)

@@ -6296,6 +6296,10 @@ int main(int argc, char *argv[]) {
 
   std::vector<const char *> extensions(exts, exts + extCount);
 
+  if (enableValidationLayers) {
+    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  }
+
 #ifdef __APPLE__
   extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
   // On newer macOS/MoltenVK, we might also need
