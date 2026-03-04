@@ -4001,6 +4001,35 @@ static void SetActiveProjectRoot(const std::filesystem::path &projectPath) {
     }
     g_ActiveProjectName = name;
     g_ProjectSelected = true;
+
+    // Sync built-in engine meshes into the project's .engine/meshes/
+    // directory so that scenes created on another device (or via the Qt
+    // editor) that reference .engine/meshes/ paths can resolve correctly.
+    namespace fs = std::filesystem;
+    fs::path exeDir = GetExecutableDirectory();
+    fs::path srcMeshDir = exeDir / "assets" / "meshes";
+    fs::path dstMeshDir = g_ActiveProjectRoot / ".engine" / "meshes";
+    if (fs::is_directory(srcMeshDir)) {
+      std::error_code ec;
+      fs::create_directories(dstMeshDir, ec);
+      if (!ec) {
+        int synced = 0;
+        for (const auto &entry : fs::directory_iterator(srcMeshDir, fs::directory_options::skip_permission_denied)) {
+          if (!entry.is_regular_file()) continue;
+          auto ext = entry.path().extension().string();
+          std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+          if (ext != ".glb" && ext != ".gltf" && ext != ".obj" && ext != ".fbx") continue;
+          fs::path dst = dstMeshDir / entry.path().filename();
+          if (fs::exists(dst, ec) && fs::file_size(dst, ec) == entry.file_size()) continue;
+          fs::copy_file(entry.path(), dst, fs::copy_options::overwrite_existing, ec);
+          if (!ec) ++synced;
+        }
+        if (synced > 0) {
+          std::cout << "[SetActiveProjectRoot] Synced " << synced
+                    << " engine meshes to " << dstMeshDir << std::endl;
+        }
+      }
+    }
   } else {
     g_ActiveProjectName.clear();
     g_ProjectSelected = false;
@@ -4027,6 +4056,47 @@ static std::filesystem::path ResolveActiveAssetsRoot() {
     return {};
   }
   return (g_ActiveProjectRoot / "assets").lexically_normal();
+}
+
+static std::filesystem::path DetectProjectRootFromScenePath(
+    const std::filesystem::path &scenePath) {
+  namespace fs = std::filesystem;
+  if (scenePath.empty()) {
+    return {};
+  }
+
+  std::error_code ec;
+  fs::path current = scenePath;
+  if (fs::is_regular_file(current, ec)) {
+    current = current.parent_path();
+  }
+
+  for (int depth = 0; depth < 16 && !current.empty(); ++depth) {
+    for (const auto &entry :
+         fs::directory_iterator(current,
+                                fs::directory_options::skip_permission_denied,
+                                ec)) {
+      if (ec) {
+        break;
+      }
+      if (entry.is_regular_file(ec) && entry.path().extension() == ".heproject") {
+        return current.lexically_normal();
+      }
+    }
+
+    // Fallback convention: .../<project>/assets/scenes/<scene>.hpscene
+    if (current.filename() == "assets" && current.has_parent_path()) {
+      return current.parent_path().lexically_normal();
+    }
+
+    fs::path parent = current.parent_path();
+    if (parent == current) {
+      break;
+    }
+    current = parent;
+  }
+
+  return {};
 }
 
 struct AssetBrowserIcon {
@@ -6447,15 +6517,61 @@ int main(int argc, char *argv[]) {
     fs::path stored = fs::path(key).lexically_normal();
     fs::path projectRoot = ResolveActiveProjectRoot();
     if (!projectRoot.empty()) {
+      // 1. projectRoot / key  (handles "assets/meshes/X.obj", ".engine/meshes/X.glb")
       fs::path candidate = (projectRoot / stored).lexically_normal();
       if (fs::exists(candidate)) {
         return candidate;
       }
+
       fs::path assetsRoot = ResolveActiveAssetsRoot();
+
+      // 2. Backward compat: "assets/meshes/X" → ".engine/meshes/X"
+      {
+        std::string rel = stored.generic_string();
+        if (rel.rfind("assets/meshes/", 0) == 0) {
+          std::string filename = rel.substr(std::string("assets/meshes/").size());
+          candidate = (projectRoot / ".engine" / "meshes" / filename).lexically_normal();
+          if (fs::exists(candidate)) {
+            return candidate;
+          }
+        }
+      }
+
+      // 3. Strip "assets/" prefix and try under assetsRoot
       if (!assetsRoot.empty()) {
-        candidate = (assetsRoot / stored).lexically_normal();
-        if (fs::exists(candidate)) {
-          return candidate;
+        std::string rel = stored.generic_string();
+        if (rel.rfind("assets/", 0) == 0) {
+          std::string stripped = rel.substr(std::string("assets/").size());
+          candidate = (assetsRoot / stripped).lexically_normal();
+          if (fs::exists(candidate)) {
+            return candidate;
+          }
+        } else {
+          candidate = (assetsRoot / stored).lexically_normal();
+          if (fs::exists(candidate)) {
+            return candidate;
+          }
+        }
+      }
+
+      // 4. Filename-based fallback: search known mesh directories
+      fs::path filename = stored.filename();
+      if (!filename.empty()) {
+        std::vector<fs::path> searchDirs;
+        if (!assetsRoot.empty()) {
+          searchDirs.push_back(assetsRoot / "meshes");
+          searchDirs.push_back(assetsRoot);
+        }
+        searchDirs.push_back(projectRoot / ".engine" / "meshes");
+        for (const auto &dir : searchDirs) {
+          std::error_code ec;
+          if (!fs::is_directory(dir, ec)) continue;
+          candidate = dir / filename;
+          if (fs::exists(candidate, ec)) {
+            std::cout << "[resolveMeshSourceKey] Fallback found '"
+                      << key << "' at " << candidate << std::endl;
+            return candidate;
+          }
         }
       }
     }
@@ -7450,6 +7566,7 @@ int main(int argc, char *argv[]) {
 
   auto importModelFromFile =
       [&](const std::filesystem::path &modelPath) -> Entity {
+    namespace fs = std::filesystem;
     std::cout << "[Import] Attempting to load model from " << modelPath.string()
               << std::endl;
     MeshData importedMesh;
@@ -7465,6 +7582,44 @@ int main(int argc, char *argv[]) {
               << ", indices=" << importedMesh.indices.size() << ")"
               << std::endl;
 
+    // If the mesh file is outside the project, copy it into
+    // <projectRoot>/assets/meshes/ so it will be available on other devices.
+    fs::path effectivePath = modelPath;
+    fs::path projectRoot = ResolveActiveProjectRoot();
+    if (!projectRoot.empty()) {
+      fs::path normalized = fs::weakly_canonical(modelPath);
+      fs::path relative = normalized.lexically_relative(projectRoot);
+      std::string relStr = relative.generic_string();
+      bool isInsideProject = !relative.empty()
+                             && relStr.find("..") == std::string::npos
+                             && !relStr.empty();
+      if (!isInsideProject) {
+        // Mesh is external – copy into project assets
+        fs::path destDir = projectRoot / "assets" / "meshes";
+        std::error_code ec;
+        fs::create_directories(destDir, ec);
+        fs::path destFile = destDir / modelPath.filename();
+        // Avoid clobbering an existing file with a different name
+        if (fs::exists(destFile, ec)) {
+          // Append a numeric suffix if name already taken
+          std::string stem = modelPath.stem().string();
+          std::string ext = modelPath.extension().string();
+          for (int i = 1; i < 100 && fs::exists(destFile, ec); ++i) {
+            destFile = destDir / (stem + "_" + std::to_string(i) + ext);
+          }
+        }
+        fs::copy_file(modelPath, destFile, fs::copy_options::skip_existing, ec);
+        if (!ec || fs::exists(destFile, ec)) {
+          std::cout << "[Import] Copied external mesh to project: "
+                    << destFile.string() << std::endl;
+          effectivePath = destFile;
+        } else {
+          std::cerr << "[Import] Warning: failed to copy mesh into project: "
+                    << ec.message() << std::endl;
+        }
+      }
+    }
+
     std::string baseName = modelPath.stem().string();
     if (baseName.empty()) {
       baseName = "Imported Model";
@@ -7475,7 +7630,7 @@ int main(int argc, char *argv[]) {
     try {
       std::cout << "[Import] Uploading mesh to GPU as '" << entityName << "'"
                 << std::endl;
-      meshIndex = uploadMesh(entityName, importedMesh, modelPath, true);
+      meshIndex = uploadMesh(entityName, importedMesh, effectivePath, true);
       std::cout << "[Import] Upload complete. Handle=" << meshIndex
                 << std::endl;
     } catch (const std::exception &e) {
@@ -8699,6 +8854,36 @@ int main(int argc, char *argv[]) {
   // Runtime mode: Load scene and start simulation automatically
   if (g_RuntimeMode) {
     if (!g_RuntimeScenePath.empty()) {
+      namespace fs = std::filesystem;
+      fs::path runtimeScenePath = fs::path(g_RuntimeScenePath).lexically_normal();
+
+      if (runtimeScenePath.is_relative()) {
+        fs::path activeProjectCandidate =
+            (ResolveActiveProjectRoot() / runtimeScenePath).lexically_normal();
+        fs::path exeCandidate =
+            (GetExecutableDirectory() / runtimeScenePath).lexically_normal();
+        if (fs::exists(activeProjectCandidate)) {
+          runtimeScenePath = activeProjectCandidate;
+        } else if (fs::exists(exeCandidate)) {
+          runtimeScenePath = exeCandidate;
+        }
+      }
+
+      std::error_code sceneEc;
+      if (fs::exists(runtimeScenePath, sceneEc)) {
+        runtimeScenePath = fs::weakly_canonical(runtimeScenePath, sceneEc);
+      }
+
+      fs::path detectedProjectRoot =
+          DetectProjectRootFromScenePath(runtimeScenePath);
+      if (!detectedProjectRoot.empty() &&
+          detectedProjectRoot != ResolveActiveProjectRoot()) {
+        SetActiveProjectRoot(detectedProjectRoot);
+        std::cout << "[Runtime] Project root from scene: "
+                  << detectedProjectRoot << std::endl;
+      }
+
+      g_RuntimeScenePath = runtimeScenePath.string();
       std::cout << "[Runtime] Loading scene: " << g_RuntimeScenePath
                 << std::endl;
       std::string loadError;

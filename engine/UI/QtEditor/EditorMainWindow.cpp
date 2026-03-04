@@ -1083,6 +1083,14 @@ void EditorMainWindow::setupDockWidgets()
                     if (relativeKey != normalizedKey) {
                         frameRenderer->AddMeshAlias(relativeKey, meshHandle);
                     }
+                    // Also register the project-root-relative key
+                    std::string projectRelKey = relativeKey;
+                    if (projectRelKey.rfind("assets/", 0) != 0) {
+                        projectRelKey = "assets/" + projectRelKey;
+                    }
+                    if (projectRelKey != normalizedKey && projectRelKey != relativeKey) {
+                        frameRenderer->AddMeshAlias(projectRelKey, meshHandle);
+                    }
                 }
 
                 // Push undo before modifying the scene
@@ -1114,7 +1122,16 @@ void EditorMainWindow::setupDockWidgets()
                 AABB bounds = meshGPU ? meshGPU->bounds : AABB{};
 
                 auto& renderer = created.AddComponent<MeshRendererComponent>();
-                renderer.SetMesh(meshHandle, bounds, relativePath.toStdString(), true, subCount);
+                // Store the path as project-root-relative (assets/<relativePath>)
+                // so it resolves correctly on any device.
+                std::string portablePath = relativePath.toStdString();
+                {
+                    std::string generic = std::filesystem::path(portablePath).generic_string();
+                    if (generic.rfind("assets/", 0) != 0) {
+                        portablePath = "assets/" + generic;
+                    }
+                }
+                renderer.SetMesh(meshHandle, bounds, portablePath, true, subCount);
                 renderer.materialIndices.assign(static_cast<size_t>(subCount), -1);
                 if (meshGPU && !meshGPU->submeshes.empty()) {
                     for (size_t i = 0; i < meshGPU->submeshes.size(); ++i) {
@@ -2525,6 +2542,12 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
     }
 
     if (m_engine) {
+        // Set the project root on the engine so RebuildSceneMeshes can
+        // resolve relative mesh paths without re-discovering it from the
+        // scene file path.  This is critical when opening projects that
+        // were created on another device.
+        m_engine->SetProjectRoot(m_projectContext->GetProjectRootDir());
+
         auto* ctx = m_engine->GetEditorContext();
         if (ctx) {
             const std::string projectRoot = m_projectContext->GetProjectRootDir();
@@ -3091,7 +3114,47 @@ void EditorMainWindow::handleDragDrop(const QString& assetPath, const QString& t
         if (!reg.all_of<MeshRendererComponent>(entity)) {
             reg.emplace<MeshRendererComponent>(entity);
         }
-        reg.get<MeshRendererComponent>(entity).meshAssetPath = assetPath.toStdString();
+        // Normalise the mesh path to be project-root-relative.
+        // If the path is relative to the asset root (from the asset browser),
+        // prefix it with "assets/". If it's an absolute path external to the
+        // project, copy the file into <projectRoot>/assets/meshes/ first.
+        namespace fs = std::filesystem;
+        std::string portablePath = assetPath.toStdString();
+        fs::path assetP(portablePath);
+        if (assetP.is_absolute()) {
+            // Try to make project-relative
+            std::string projRoot;
+            if (m_projectContext && m_projectContext->HasProject()) {
+                projRoot = m_projectContext->GetProjectRootDir();
+            }
+            if (!projRoot.empty()) {
+                fs::path normalized = fs::weakly_canonical(assetP);
+                fs::path rel = normalized.lexically_relative(fs::path(projRoot));
+                std::string relStr = rel.generic_string();
+                if (!rel.empty() && relStr.find("..") == std::string::npos) {
+                    portablePath = relStr;
+                } else {
+                    // External file: copy into project
+                    fs::path destDir = fs::path(projRoot) / "assets" / "meshes";
+                    std::error_code ec;
+                    fs::create_directories(destDir, ec);
+                    fs::path destFile = destDir / assetP.filename();
+                    fs::copy_file(assetP, destFile, fs::copy_options::skip_existing, ec);
+                    if (fs::exists(destFile)) {
+                        portablePath = fs::path("assets/meshes" / assetP.filename()).generic_string();
+                        std::cout << "[DragDrop] Copied external mesh to project: " << destFile << "\n";
+                    }
+                }
+            }
+        } else {
+            // Asset-root-relative path (e.g. "meshes/hero.obj") from the
+            // asset browser – prefix with "assets/" for portability.
+            std::string generic = fs::path(portablePath).generic_string();
+            if (generic.rfind("assets/", 0) != 0) {
+                portablePath = "assets/" + generic;
+            }
+        }
+        reg.get<MeshRendererComponent>(entity).meshAssetPath = portablePath;
         ctx->MarkDirty();
         refreshDetailsPanel();
     } else if (targetField.startsWith("material_slot_") &&

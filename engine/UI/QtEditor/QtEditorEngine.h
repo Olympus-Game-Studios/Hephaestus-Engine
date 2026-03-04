@@ -131,6 +131,15 @@ public:
     const Hephaestus::EditorContext* GetEditorContext() const { return &m_editorContext; }
 
     /**
+     * @brief Set the project root directory for mesh path resolution.
+     *
+     * Call this when a project is opened so that RebuildSceneMeshes()
+     * can resolve relative mesh asset paths without having to
+     * re-discover the project root from the scene file path.
+     */
+    void SetProjectRoot(const std::string& projectRoot);
+
+    /**
      * @brief Rebuild meshes in the renderer for the current scene.
      * 
      * Call this after loading a scene to ensure all meshes are uploaded
@@ -239,6 +248,10 @@ private:
 
     EngineState m_state = EngineState::Uninitialized;
     bool m_builtinMeshesCreated = false;
+
+    // Project root directory for mesh path resolution (set by EditorMainWindow)
+    std::string m_projectRoot;
+    std::string m_assetRoot;
 
     // Runtime input tracking (for Lua scripts in Qt path)
     // Indexed by GLFW key codes; true = pressed.

@@ -558,6 +558,8 @@ struct GameConfig {
 
 static bool g_FramebufferResized = false;
 static fs::path g_RuntimeRoot;
+static fs::path g_ProjectRoot;   // Detected from scene file / .heproject
+static fs::path g_ProjectAssets; // g_ProjectRoot / "assets"
 static GameConfig g_Config;
 static GameCamera* g_GameCameraPtr = nullptr; // For Lua camera binding
 
@@ -679,19 +681,72 @@ static std::string NormalizeAssetPath(const std::string& path) {
     }
     fs::path resolved = fs::path(path);
     if (resolved.is_relative()) {
+        // Try runtime root first
         fs::path runtimeCandidate = (g_RuntimeRoot / resolved).lexically_normal();
         if (fs::exists(runtimeCandidate)) {
             return runtimeCandidate.string();
         }
-
         fs::path assetsCandidate = (g_RuntimeRoot / "assets" / resolved).lexically_normal();
         if (fs::exists(assetsCandidate)) {
             return assetsCandidate.string();
         }
-
+        // Try project root (detected from scene)
+        if (!g_ProjectRoot.empty()) {
+            fs::path projCandidate = (g_ProjectRoot / resolved).lexically_normal();
+            if (fs::exists(projCandidate)) {
+                return projCandidate.string();
+            }
+        }
+        if (!g_ProjectAssets.empty()) {
+            std::string rel = resolved.generic_string();
+            if (rel.rfind("assets/", 0) == 0) {
+                std::string stripped = rel.substr(7);
+                fs::path candidate = (g_ProjectAssets / stripped).lexically_normal();
+                if (fs::exists(candidate)) return candidate.string();
+            } else {
+                fs::path candidate = (g_ProjectAssets / resolved).lexically_normal();
+                if (fs::exists(candidate)) return candidate.string();
+            }
+        }
         return runtimeCandidate.string();
     }
     return resolved.lexically_normal().string();
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Project Root Detection
+// Walk up from a known path (e.g. scene file) looking for .heproject
+// ──────────────────────────────────────────────────────────────────────────────
+
+static fs::path DetectProjectRoot(const fs::path& startPath) {
+    std::error_code ec;
+    fs::path dir = startPath;
+    if (fs::is_regular_file(dir, ec)) {
+        dir = dir.parent_path();
+    }
+    for (int depth = 0; depth < 15 && !dir.empty(); ++depth) {
+        for (const auto& entry : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied, ec)) {
+            if (ec) break;
+            if (entry.is_regular_file() && entry.path().extension() == ".heproject") {
+                return dir;
+            }
+        }
+        fs::path parent = dir.parent_path();
+        if (parent == dir) break;
+        dir = parent;
+    }
+    return {};
+}
+
+static void SetProjectRootFromScene(const fs::path& scenePath) {
+    g_ProjectRoot = DetectProjectRoot(scenePath);
+    if (!g_ProjectRoot.empty()) {
+        g_ProjectAssets = (g_ProjectRoot / "assets").lexically_normal();
+        HP_LOG(Info, "Detected project root: " + g_ProjectRoot.string());
+        HP_LOG(Info, "Project assets dir: " + g_ProjectAssets.string());
+    } else {
+        HP_LOG(Warning, "Could not detect project root from scene path: " + scenePath.string());
+    }
 }
 
 static bool LoadMaterialAsset(const std::string& rawPath, MaterialComponent& outMaterial) {
@@ -1321,6 +1376,10 @@ int main(int argc, char* argv[]) {
 
     HP_LOG(Info, "Scene loaded successfully: " + scene.GetName());
     
+    // Detect project root from the scene file so mesh/asset paths resolve
+    // correctly even when the game runs from a different directory.
+    SetProjectRootFromScene(scenePath);
+
     // Load HDRI from scene's EnvironmentComponent
     auto envView = scene.GetEntitiesWith<EnvironmentComponent>();
     for (auto entityHandle : envView) {
@@ -1330,7 +1389,19 @@ int main(int argc, char* argv[]) {
         if (env.type == EnvironmentComponent::BackgroundType::HDRI && !env.hdriPath.empty()) {
             fs::path hdriPath = env.hdriPath;
             if (hdriPath.is_relative()) {
-                hdriPath = g_RuntimeRoot / hdriPath;
+                // Try runtime root first, then project root
+                fs::path runtimeCandidate = g_RuntimeRoot / hdriPath;
+                fs::path projectCandidate;
+                if (!g_ProjectRoot.empty()) {
+                    projectCandidate = g_ProjectRoot / hdriPath;
+                }
+                if (fs::exists(runtimeCandidate)) {
+                    hdriPath = runtimeCandidate;
+                } else if (!projectCandidate.empty() && fs::exists(projectCandidate)) {
+                    hdriPath = projectCandidate;
+                } else {
+                    hdriPath = runtimeCandidate; // fallback, will fail with a warning below
+                }
             }
             
             if (fs::exists(hdriPath)) {
@@ -1357,7 +1428,7 @@ int main(int argc, char* argv[]) {
     joltPhysicsEngine.Initialize();
     
     Physics::JoltPhysicsSystem physicsSystem(joltPhysicsEngine);
-    physicsSystem.SetProjectRoot(g_RuntimeRoot);
+    physicsSystem.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
     
     Bootstrap::EndStage(InitStage::Physics, true);
 
@@ -2074,14 +2145,108 @@ int main(int argc, char* argv[]) {
                     continue;
                 }
                 
-                // Load mesh from file
-                fs::path meshPath = renderer.meshAssetPath;
-                if (meshPath.is_relative()) {
-                    meshPath = g_RuntimeRoot / meshPath;
+                // Load mesh from file – try multiple resolution strategies
+                // so that scenes created on another device still work.
+                fs::path meshPath;
+                fs::path assetP(renderer.meshAssetPath);
+
+                // 1. runtimeRoot / key  (standard relative path)
+                if (assetP.is_relative() && !g_RuntimeRoot.empty()) {
+                    fs::path candidate = g_RuntimeRoot / assetP;
+                    if (fs::exists(candidate)) meshPath = candidate;
+                }
+
+                // 1b. projectRoot / key  (project detected from .heproject)
+                if (meshPath.empty() && assetP.is_relative() && !g_ProjectRoot.empty()) {
+                    fs::path candidate = (g_ProjectRoot / assetP).lexically_normal();
+                    if (fs::exists(candidate)) meshPath = candidate;
+                }
+
+                // 2. Backward compat: "assets/meshes/X" → ".engine/meshes/X"
+                if (meshPath.empty() && assetP.is_relative() && !g_RuntimeRoot.empty()) {
+                    std::string rel = assetP.generic_string();
+                    if (rel.rfind("assets/meshes/", 0) == 0) {
+                        std::string filename = rel.substr(std::string("assets/meshes/").size());
+                        fs::path candidate = g_RuntimeRoot / ".engine" / "meshes" / filename;
+                        if (fs::exists(candidate)) meshPath = candidate;
+                    }
+                }
+                // 2b. Same backward compat under project root
+                if (meshPath.empty() && assetP.is_relative() && !g_ProjectRoot.empty()) {
+                    std::string rel = assetP.generic_string();
+                    if (rel.rfind("assets/meshes/", 0) == 0) {
+                        std::string filename = rel.substr(std::string("assets/meshes/").size());
+                        fs::path candidate = (g_ProjectRoot / ".engine" / "meshes" / filename).lexically_normal();
+                        if (fs::exists(candidate)) meshPath = candidate;
+                    }
+                }
+
+                // 3. Strip "assets/" prefix, try under runtimeRoot/assets/
+                if (meshPath.empty() && assetP.is_relative() && !g_RuntimeRoot.empty()) {
+                    std::string rel = assetP.generic_string();
+                    fs::path assetsDir = g_RuntimeRoot / "assets";
+                    if (rel.rfind("assets/", 0) == 0) {
+                        std::string stripped = rel.substr(std::string("assets/").size());
+                        fs::path candidate = assetsDir / stripped;
+                        if (fs::exists(candidate)) meshPath = candidate;
+                    } else {
+                        fs::path candidate = assetsDir / assetP;
+                        if (fs::exists(candidate)) meshPath = candidate;
+                    }
+                }
+                // 3b. Strip "assets/" prefix, try under projectRoot/assets/
+                if (meshPath.empty() && assetP.is_relative() && !g_ProjectAssets.empty()) {
+                    std::string rel = assetP.generic_string();
+                    if (rel.rfind("assets/", 0) == 0) {
+                        std::string stripped = rel.substr(std::string("assets/").size());
+                        fs::path candidate = (g_ProjectAssets / stripped).lexically_normal();
+                        if (fs::exists(candidate)) meshPath = candidate;
+                    } else {
+                        fs::path candidate = (g_ProjectAssets / assetP).lexically_normal();
+                        if (fs::exists(candidate)) meshPath = candidate;
+                    }
+                }
+
+                // 4. Filename search in known mesh directories
+                if (meshPath.empty()) {
+                    fs::path filename = assetP.filename();
+                    if (!filename.empty()) {
+                        std::vector<fs::path> searchDirs;
+                        // Project directories first (most likely to have custom meshes)
+                        if (!g_ProjectAssets.empty()) {
+                            searchDirs.push_back(g_ProjectAssets / "meshes");
+                            searchDirs.push_back(g_ProjectAssets);
+                        }
+                        if (!g_ProjectRoot.empty()) {
+                            searchDirs.push_back(g_ProjectRoot / ".engine" / "meshes");
+                        }
+                        // Runtime directories as fallback
+                        if (!g_RuntimeRoot.empty()) {
+                            searchDirs.push_back(g_RuntimeRoot / "assets" / "meshes");
+                            searchDirs.push_back(g_RuntimeRoot / "assets");
+                            searchDirs.push_back(g_RuntimeRoot / ".engine" / "meshes");
+                        }
+                        for (const auto& dir : searchDirs) {
+                            std::error_code ec;
+                            if (!fs::is_directory(dir, ec)) continue;
+                            fs::path candidate = dir / filename;
+                            if (fs::exists(candidate, ec)) {
+                                HP_LOG(Info, "    Fallback found '" + renderer.meshAssetPath + "' at " + candidate.string());
+                                meshPath = candidate;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // 5. Try as absolute (legacy scenes from the original device)
+                if (meshPath.empty() && assetP.is_absolute() && fs::exists(assetP)) {
+                    meshPath = assetP;
                 }
                 
                 if (!fs::exists(meshPath)) {
-                    HP_LOG(Warning, "    Mesh not found: " + meshPath.string());
+                    HP_LOG(Warning, "    Mesh not found: " + renderer.meshAssetPath
+                        + " (tried project root, .engine/meshes, assets/meshes, filename search)");
                     continue;
                 }
                 

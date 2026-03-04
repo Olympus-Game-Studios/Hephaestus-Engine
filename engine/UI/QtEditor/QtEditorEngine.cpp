@@ -1401,6 +1401,18 @@ size_t QtEditorEngine::uploadMeshToGPU(const std::string& name, const MeshData& 
     return handle;
 }
 
+void QtEditorEngine::SetProjectRoot(const std::string& projectRoot)
+{
+    m_projectRoot = projectRoot;
+    if (!m_projectRoot.empty()) {
+        m_assetRoot = (std::filesystem::path(m_projectRoot) / "assets").lexically_normal().string();
+    } else {
+        m_assetRoot.clear();
+    }
+    std::cout << "[QtEditorEngine] Project root set to: " << m_projectRoot << "\n";
+    std::cout << "[QtEditorEngine] Asset root set to: " << m_assetRoot << "\n";
+}
+
 std::string QtEditorEngine::normalizeAssetPath(const std::string& assetPath) const
 {
     namespace fs = std::filesystem;
@@ -1411,10 +1423,43 @@ std::string QtEditorEngine::normalizeAssetPath(const std::string& assetPath) con
     if (assetPath.rfind("builtin://", 0) == 0) {
         return assetPath;
     }
-    
+
     // Normalize to forward slashes
     fs::path p(assetPath);
-    return p.lexically_normal().generic_string();
+    std::string normalized = p.lexically_normal().generic_string();
+
+    // Already portable project-relative keys
+    if (normalized.rfind("assets/", 0) == 0 || normalized.rfind(".engine/", 0) == 0) {
+        return normalized;
+    }
+
+    // Remap stale absolute paths saved from another machine/share:
+    //   //server/.../Project/assets/models/X.obj  -> assets/models/X.obj
+    //   //server/.../Project/.engine/meshes/X.glb -> .engine/meshes/X.glb
+    const size_t assetsPos = normalized.find("/assets/");
+    if (assetsPos != std::string::npos) {
+        return normalized.substr(assetsPos + 1);
+    }
+    const size_t enginePos = normalized.find("/.engine/");
+    if (enginePos != std::string::npos) {
+        return normalized.substr(enginePos + 1);
+    }
+
+    // If this is inside the active project, convert to project-relative key.
+    if (!m_projectRoot.empty()) {
+        fs::path projectRoot = fs::path(m_projectRoot).lexically_normal();
+        std::error_code ec;
+        fs::path canonPath = fs::weakly_canonical(p, ec);
+        if (!ec) {
+            fs::path rel = canonPath.lexically_relative(projectRoot);
+            std::string relStr = rel.generic_string();
+            if (!rel.empty() && relStr.find("..") == std::string::npos && !relStr.empty()) {
+                return relStr;
+            }
+        }
+    }
+
+    return normalized;
 }
 
 void QtEditorEngine::RebuildSceneMeshes()
@@ -1432,27 +1477,38 @@ void QtEditorEngine::RebuildSceneMeshes()
 
     namespace fs = std::filesystem;
 
-    // Get project root for resolving relative paths
-    // We need to access this from somewhere - for now use a simple heuristic
+    // Get project root for resolving relative paths.
+    // Prefer the explicitly-set project root (from ProjectContext via
+    // EditorMainWindow) so that mesh resolution works even when the scene
+    // path is unavailable or has moved.
     fs::path projectRoot;
     fs::path assetRoot;
-    
-    // Try to get paths from scene path if available
-    std::string scenePath = m_editorContext.GetScenePath();
-    if (!scenePath.empty()) {
-        fs::path sp(scenePath);
-        // Walk up to find project root (look for .heproject)
-        fs::path search = sp.parent_path();
-        for (int i = 0; i < 10 && !search.empty(); ++i) {
-            for (const auto& entry : fs::directory_iterator(search, fs::directory_options::skip_permission_denied)) {
-                if (entry.path().extension() == ".heproject") {
-                    projectRoot = search;
-                    assetRoot = projectRoot / "assets";
-                    break;
+
+    if (!m_projectRoot.empty()) {
+        projectRoot = fs::path(m_projectRoot).lexically_normal();
+        assetRoot   = !m_assetRoot.empty()
+                          ? fs::path(m_assetRoot).lexically_normal()
+                          : (projectRoot / "assets").lexically_normal();
+    }
+
+    // Fallback: discover project root by walking up from the scene file.
+    if (projectRoot.empty()) {
+        std::string scenePath = m_editorContext.GetScenePath();
+        if (!scenePath.empty()) {
+            fs::path sp(scenePath);
+            fs::path search = sp.parent_path();
+            for (int i = 0; i < 10 && !search.empty(); ++i) {
+                std::error_code dirErr;
+                for (const auto& entry : fs::directory_iterator(search, fs::directory_options::skip_permission_denied, dirErr)) {
+                    if (entry.path().extension() == ".heproject") {
+                        projectRoot = search;
+                        assetRoot = projectRoot / "assets";
+                        break;
+                    }
                 }
+                if (!projectRoot.empty()) break;
+                search = search.parent_path();
             }
-            if (!projectRoot.empty()) break;
-            search = search.parent_path();
         }
     }
 
@@ -1463,6 +1519,102 @@ void QtEditorEngine::RebuildSceneMeshes()
     if (m_frameRenderer && !projectRoot.empty()) {
         m_frameRenderer->SetProjectRoot(projectRoot.string());
     }
+
+    // -----------------------------------------------------------------
+    // Helper: resolve a mesh asset path (relative key) to an absolute
+    // path on disk, trying multiple fallback locations.
+    // -----------------------------------------------------------------
+    auto resolveAssetPathToFile = [&](const std::string& assetPath) -> fs::path {
+        if (assetPath.empty()) return {};
+        if (assetPath.rfind("builtin://", 0) == 0) return fs::path(assetPath);
+
+        std::string remapped = normalizeAssetPath(assetPath);
+        fs::path assetP(remapped);
+
+        // 0. If remap produced an already-existing absolute path, use it.
+        if (assetP.is_absolute() && fs::exists(assetP)) {
+            return assetP;
+        }
+
+        // 1. projectRoot / key  (works for "assets/meshes/X.obj" and ".engine/meshes/X.glb")
+        if (assetP.is_relative() && !projectRoot.empty()) {
+            fs::path candidate = (projectRoot / assetP).lexically_normal();
+            if (fs::exists(candidate)) return candidate;
+        }
+
+        // 2. Backward compat: "assets/meshes/X" might live in ".engine/meshes/X"
+        if (assetP.is_relative() && !projectRoot.empty()) {
+            std::string rel = assetP.generic_string();
+            if (rel.rfind("assets/meshes/", 0) == 0) {
+                std::string filename = rel.substr(std::string("assets/meshes/").size());
+                fs::path candidate = projectRoot / ".engine" / "meshes" / filename;
+                if (fs::exists(candidate)) return candidate;
+            }
+        }
+
+        // 3. Strip "assets/" prefix and try under assetsRoot
+        if (assetP.is_relative() && !assetRoot.empty()) {
+            std::string rel = assetP.generic_string();
+            if (rel.rfind("assets/", 0) == 0) {
+                rel = rel.substr(std::string("assets/").size());
+                fs::path candidate = (assetRoot / fs::path(rel)).lexically_normal();
+                if (fs::exists(candidate)) return candidate;
+            } else {
+                fs::path candidate = (assetRoot / assetP).lexically_normal();
+                if (fs::exists(candidate)) return candidate;
+            }
+        }
+
+        // 4. Search by filename in known mesh directories
+        fs::path filename = assetP.filename();
+        if (!filename.empty()) {
+            std::vector<fs::path> searchDirs;
+            if (!assetRoot.empty()) {
+                searchDirs.push_back(assetRoot / "meshes");
+                searchDirs.push_back(assetRoot);
+            }
+            if (!projectRoot.empty()) {
+                searchDirs.push_back(projectRoot / ".engine" / "meshes");
+            }
+            for (const auto& dir : searchDirs) {
+                if (!fs::is_directory(dir)) continue;
+                fs::path candidate = dir / filename;
+                if (fs::exists(candidate)) {
+                    std::cout << "[QtEditorEngine]   -> Fallback found '"
+                              << assetPath << "' at " << candidate << "\n";
+                    return candidate;
+                }
+            }
+
+            // 4b. Recursive filename search under assetRoot for legacy scenes
+            // that used absolute paths on another machine.
+            if (!assetRoot.empty() && fs::is_directory(assetRoot)) {
+                std::error_code ec;
+                for (const auto& entry : fs::recursive_directory_iterator(
+                         assetRoot, fs::directory_options::skip_permission_denied, ec)) {
+                    if (ec) break;
+                    if (!entry.is_regular_file()) continue;
+                    if (entry.path().filename() == filename) {
+                        std::cout << "[QtEditorEngine]   -> Recursive fallback found '"
+                                  << assetPath << "' at " << entry.path() << "\n";
+                        return entry.path();
+                    }
+                }
+            }
+        }
+
+        // 5. Try as absolute path (may have been stored from a different machine)
+        if (assetP.is_absolute() && fs::exists(assetP)) return assetP;
+
+        // 6. Last resort: next to the executable
+        {
+            fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
+            fs::path candidate = exeDir / assetPath;
+            if (fs::exists(candidate)) return candidate;
+        }
+
+        return {};
+    };
 
     auto syncMaterialSlots = [](MeshRendererComponent& renderer, int subCount) {
         const int requiredSlots = std::max(subCount, 1);
@@ -1516,6 +1668,10 @@ void QtEditorEngine::RebuildSceneMeshes()
         }
 
         std::string lookupKey = normalizeAssetPath(renderer.meshAssetPath);
+        if (!lookupKey.empty() && lookupKey != renderer.meshAssetPath &&
+            lookupKey.rfind("builtin://", 0) != 0) {
+            renderer.meshAssetPath = lookupKey;
+        }
 
         // Check if mesh already in library
         size_t existingHandle = m_frameRenderer->GetMeshHandle(lookupKey);
@@ -1548,64 +1704,20 @@ void QtEditorEngine::RebuildSceneMeshes()
             continue;
         }
 
-        // Try to load mesh from file
-        fs::path meshPath;
-        
-        // If path is relative, resolve against project root first (handles
-        // .engine/meshes/... paths), then fall back to asset root, then
-        // try the .engine/ mirror of an assets/ path for backward compat.
-        fs::path assetP(renderer.meshAssetPath);
-        if (assetP.is_relative() && !projectRoot.empty()) {
-            fs::path candidate = projectRoot / renderer.meshAssetPath;
-            if (fs::exists(candidate)) {
-                meshPath = candidate;
-            }
-        }
-        // Backward compat: old scenes may store "assets/meshes/Cube.glb"
-        // but the mesh now lives in ".engine/meshes/Cube.glb".
-        if (meshPath.empty() && assetP.is_relative() && !projectRoot.empty()) {
-            std::string rel = assetP.generic_string();
-            if (rel.rfind("assets/meshes/", 0) == 0) {
-                std::string filename = rel.substr(std::string("assets/meshes/").size());
-                fs::path candidate = projectRoot / ".engine" / "meshes" / filename;
-                if (fs::exists(candidate)) {
-                    meshPath = candidate;
-                }
-            }
-        }
-        if (meshPath.empty() && assetP.is_relative() && !assetRoot.empty()) {
-            std::string rel = assetP.generic_string();
-            if (rel.rfind("assets/", 0) == 0) {
-                rel = rel.substr(std::string("assets/").size());
-                meshPath = assetRoot / fs::path(rel);
-            } else {
-                meshPath = assetRoot / assetP;
-            }
-        }
-        if (meshPath.empty() && assetP.is_relative() && !projectRoot.empty()) {
-            meshPath = projectRoot / renderer.meshAssetPath;
-        }
-        // Last resort: try next to the executable (no project open)
-        if ((meshPath.empty() || !fs::exists(meshPath)) && assetP.is_relative()) {
-            fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
-            fs::path candidate = exeDir / renderer.meshAssetPath;
-            if (fs::exists(candidate)) {
-                meshPath = candidate;
-            }
-        }
-        if (meshPath.empty()) {
-            meshPath = assetP;
-        }
+        // Try to load mesh from file using the robust resolver
+        fs::path meshPath = resolveAssetPathToFile(renderer.meshAssetPath);
 
         // Normalize
-        if (!meshPath.empty()) {
+        if (!meshPath.empty() && fs::exists(meshPath)) {
             meshPath = fs::weakly_canonical(meshPath);
         }
 
         std::cout << "[QtEditorEngine]   -> Resolved path: " << meshPath << "\n";
 
-        if (!fs::exists(meshPath)) {
-            std::cerr << "[QtEditorEngine]   -> File not found: " << meshPath << "\n";
+        if (meshPath.empty() || !fs::exists(meshPath)) {
+            std::cerr << "[QtEditorEngine]   -> File not found for '"
+                      << renderer.meshAssetPath << "' (tried project root, asset root, "
+                      << ".engine/meshes, and filename search)\n";
             renderer.meshHandle = MeshRendererComponent::InvalidMesh;
             continue;
         }
