@@ -2723,6 +2723,9 @@ void EditorMainWindow::onUndo()
 
     std::string error;
     if (EditorUndoManager::Undo(ctx, error)) {
+        // Scene was deserialized from snapshot — mesh handles are now invalid.
+        // Rebuild GPU mesh handles from the restored meshAssetPath values.
+        m_engine->RebuildSceneMeshes();
         rebuildOutliner();
         refreshDetailsPanel();
         statusBar()->showMessage(tr("Undo"), 2000);
