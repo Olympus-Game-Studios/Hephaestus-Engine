@@ -77,20 +77,21 @@ struct TransformComponent {
         scale.y = sy;
         scale.z = sz;
 
-        // Extract rotation
+        // Extract rotation (must match GetLocalMatrix order: R = Rx * Ry * Rz)
         if (sx > 0.0001f && sy > 0.0001f && sz > 0.0001f) {
-            float m00 = mat.m[0] / sx;
-            float m10 = mat.m[1] / sx;
-            float m20 = mat.m[2] / sx;
-            float m21 = mat.m[6] / sy;
-            float m22 = mat.m[10] / sz;
+            // R[0][2] = sin(β) in column-major is m[8]
+            float r02 = mat.m[8] / sz;
+            r02 = std::max(-1.0f, std::min(1.0f, r02)); // clamp for asin safety
 
-            rotation.y = std::asin(-m20);
+            rotation.y = std::asin(r02);
             if (std::cos(rotation.y) > 0.0001f) {
-                rotation.x = std::atan2(m21, m22);
-                rotation.z = std::atan2(m10, m00);
+                // R[1][2] = -sin(α)cos(β) → m[9], R[2][2] = cos(α)cos(β) → m[10]
+                rotation.x = std::atan2(-mat.m[9] / sz, mat.m[10] / sz);
+                // R[0][1] = -cos(β)sin(γ) → m[4], R[0][0] = cos(β)cos(γ) → m[0]
+                rotation.z = std::atan2(-mat.m[4] / sy, mat.m[0] / sx);
             } else {
-                rotation.x = std::atan2(-mat.m[9], mat.m[5]);
+                // Gimbal lock: β ≈ ±π/2, can only determine α±γ; set γ=0
+                rotation.x = std::atan2(mat.m[1] / sx, mat.m[5] / sy);
                 rotation.z = 0;
             }
         }
