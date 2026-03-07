@@ -161,6 +161,9 @@ void VulkanGizmo::GenerateScaleGeometry(VkDevice device, VmaAllocator allocator)
     AddArrow(vertices, indices, Vec3(0, 0, 1), m_ScaleLength, m_AxisThickness * 0.5f, Vec3(0, 0, 1));
     AddCube(vertices, indices, Vec3(0, 0, m_ScaleLength), cubeSize, Vec3(0, 0, 1));
 
+    // Center cube for uniform scale (white/light gray)
+    AddCube(vertices, indices, Vec3(0, 0, 0), m_UniformScaleCubeSize, Vec3(0.9f, 0.9f, 0.9f));
+
     m_ScaleGeo.indexCount = static_cast<uint32_t>(indices.size());
 
     // Upload to GPU buffers
@@ -638,6 +641,22 @@ int VulkanGizmo::CheckHover(const Ray& ray) const {
                 }
             }
         }
+
+        // Check center cube for uniform scale (only in Scale mode)
+        if (m_Mode == Mode::Scale) {
+            float cubeDist = vlen(vsub(m_GizmoOrigin, ray.origin));
+            Vec3 toOrigin = vsub(m_GizmoOrigin, ray.origin);
+            float t = vdot(toOrigin, ray.direction);
+            if (t > 0.0f) {
+                Vec3 closestPoint = vadd(ray.origin, vscale(ray.direction, t));
+                float dist = vlen(vsub(closestPoint, m_GizmoOrigin));
+                float cubeThreshold = m_CurrentScale * m_UniformScaleCubeSize * 0.7f;
+                if (dist < cubeThreshold && dist < bestScore) {
+                    bestScore = dist;
+                    bestAxis = 3; // Uniform scale
+                }
+            }
+        }
     }
 
     return bestAxis;
@@ -648,20 +667,22 @@ void VulkanGizmo::SetHoveredAxis(int axis) {
 }
 
 void VulkanGizmo::BeginDrag(const Ray& ray, int axis) {
-    if (!m_StateValid || axis < 0 || axis > 2) return;
+    if (!m_StateValid || axis < 0 || axis > 3) return; // 0-2 = per-axis, 3 = uniform
 
     m_IsDragging = true;
     m_ActiveAxis = axis;
     m_DragStartTransform = m_ObjectTransform;
     m_DragStartPosition = Vec3(m_ObjectTransform.m[12], m_ObjectTransform.m[13], m_ObjectTransform.m[14]);
-    m_DragAxisDir = m_AxisDirections[axis];
+    if (axis < 3)
+        m_DragAxisDir = m_AxisDirections[axis];
     m_DragStartAxisParam = 0.0f;
     m_DragStartScale = Vec3(1, 1, 1);
     m_RotationStartValid = false;
+    m_UniformDragStartDistance = 1.0f;
 
     float axisParam = 0.0f;
     float distance = 0.0f;
-    if (m_Mode != Mode::Rotate) {
+    if (m_Mode != Mode::Rotate && axis < 3) {
         if (ClosestPointOnAxis(ray, m_GizmoOrigin, m_DragAxisDir, axisParam, distance, false)) {
             m_DragStartAxisParam = axisParam;
         }
@@ -676,8 +697,17 @@ void VulkanGizmo::BeginDrag(const Ray& ray, int axis) {
                                 std::max(vlen(basisY), 1e-4f),
                                 std::max(vlen(basisZ), 1e-4f));
 
-        if (std::abs(m_DragStartAxisParam) < 0.05f * m_CurrentScale) {
-            m_DragStartAxisParam = (m_DragStartAxisParam >= 0.0f ? 1.0f : -1.0f) * 0.05f * m_CurrentScale;
+        if (axis == 3) {
+            // Uniform scale: compute initial distance on camera-facing plane
+            Vec3 viewDir = vnorm(vsub(m_GizmoOrigin, m_CameraPos));
+            Vec3 hitPoint;
+            if (IntersectPlane(ray, m_GizmoOrigin, viewDir, hitPoint)) {
+                m_UniformDragStartDistance = std::max(vlen(vsub(hitPoint, m_GizmoOrigin)), 0.01f);
+            }
+        } else {
+            if (std::abs(m_DragStartAxisParam) < 0.05f * m_CurrentScale) {
+                m_DragStartAxisParam = (m_DragStartAxisParam >= 0.0f ? 1.0f : -1.0f) * 0.05f * m_CurrentScale;
+            }
         }
     }
 
@@ -713,45 +743,58 @@ Mat4 VulkanGizmo::HandleDrag(const Ray& ray) {
             result.m[13] = newPosition.y;
             result.m[14] = newPosition.z;
         }
-    } else if (m_ActiveAxis >= 0 && m_ActiveAxis < 3 && m_Mode == Mode::Scale) {
-        float axisParam = 0.0f;
-        float distance = 0.0f;
-        if (ClosestPointOnAxis(ray, m_GizmoOrigin, m_DragAxisDir, axisParam, distance, false) && std::abs(m_DragStartAxisParam) > 1e-4f) {
-            float ratio = axisParam / m_DragStartAxisParam;
-            if (!std::isfinite(ratio)) {
-                ratio = 1.0f;
+    } else if (m_ActiveAxis >= 0 && m_ActiveAxis <= 3 && m_Mode == Mode::Scale) {
+        Vec3 translation(m_DragStartTransform.m[12], m_DragStartTransform.m[13], m_DragStartTransform.m[14]);
+        Vec3 basisX(m_DragStartTransform.m[0], m_DragStartTransform.m[1], m_DragStartTransform.m[2]);
+        Vec3 basisY(m_DragStartTransform.m[4], m_DragStartTransform.m[5], m_DragStartTransform.m[6]);
+        Vec3 basisZ(m_DragStartTransform.m[8], m_DragStartTransform.m[9], m_DragStartTransform.m[10]);
+
+        float scaleX = m_DragStartScale.x;
+        float scaleY = m_DragStartScale.y;
+        float scaleZ = m_DragStartScale.z;
+
+        if (m_ActiveAxis == 3) {
+            // Uniform scale: use camera-facing plane distance ratio
+            Vec3 viewDir = vnorm(vsub(m_GizmoOrigin, m_CameraPos));
+            Vec3 hitPoint;
+            if (IntersectPlane(ray, m_GizmoOrigin, viewDir, hitPoint)) {
+                float currentDist = vlen(vsub(hitPoint, m_GizmoOrigin));
+                float ratio = currentDist / m_UniformDragStartDistance;
+                if (!std::isfinite(ratio)) ratio = 1.0f;
+                ratio = std::max(ratio, 0.01f);
+                scaleX = std::max(0.01f, m_DragStartScale.x * ratio);
+                scaleY = std::max(0.01f, m_DragStartScale.y * ratio);
+                scaleZ = std::max(0.01f, m_DragStartScale.z * ratio);
             }
-            ratio = std::max(ratio, 0.01f);
-
-            Vec3 translation(m_DragStartTransform.m[12], m_DragStartTransform.m[13], m_DragStartTransform.m[14]);
-            Vec3 basisX(m_DragStartTransform.m[0], m_DragStartTransform.m[1], m_DragStartTransform.m[2]);
-            Vec3 basisY(m_DragStartTransform.m[4], m_DragStartTransform.m[5], m_DragStartTransform.m[6]);
-            Vec3 basisZ(m_DragStartTransform.m[8], m_DragStartTransform.m[9], m_DragStartTransform.m[10]);
-
-            float scaleX = m_DragStartScale.x;
-            float scaleY = m_DragStartScale.y;
-            float scaleZ = m_DragStartScale.z;
-
-            switch (m_ActiveAxis) {
-                case 0: scaleX = std::max(0.01f, m_DragStartScale.x * ratio); break;
-                case 1: scaleY = std::max(0.01f, m_DragStartScale.y * ratio); break;
-                case 2: scaleZ = std::max(0.01f, m_DragStartScale.z * ratio); break;
+        } else {
+            // Per-axis scale
+            float axisParam = 0.0f;
+            float distance = 0.0f;
+            if (ClosestPointOnAxis(ray, m_GizmoOrigin, m_DragAxisDir, axisParam, distance, false) && std::abs(m_DragStartAxisParam) > 1e-4f) {
+                float ratio = axisParam / m_DragStartAxisParam;
+                if (!std::isfinite(ratio)) ratio = 1.0f;
+                ratio = std::max(ratio, 0.01f);
+                switch (m_ActiveAxis) {
+                    case 0: scaleX = std::max(0.01f, m_DragStartScale.x * ratio); break;
+                    case 1: scaleY = std::max(0.01f, m_DragStartScale.y * ratio); break;
+                    case 2: scaleZ = std::max(0.01f, m_DragStartScale.z * ratio); break;
+                }
             }
-
-            Vec3 normX = vnorm(basisX);
-            Vec3 normY = vnorm(basisY);
-            Vec3 normZ = vnorm(basisZ);
-
-            Mat4 rotation = Mat4::Identity();
-            rotation.m[0] = normX.x; rotation.m[1] = normX.y; rotation.m[2] = normX.z;
-            rotation.m[4] = normY.x; rotation.m[5] = normY.y; rotation.m[6] = normY.z;
-            rotation.m[8] = normZ.x; rotation.m[9] = normZ.y; rotation.m[10] = normZ.z;
-
-            Mat4 translate = Mat4::Translation(translation);
-            Mat4 scale = Mat4::Scale(Vec3(scaleX, scaleY, scaleZ));
-
-            result = Mat4::Multiply(translate, Mat4::Multiply(rotation, scale));
         }
+
+        Vec3 normX = vnorm(basisX);
+        Vec3 normY = vnorm(basisY);
+        Vec3 normZ = vnorm(basisZ);
+
+        Mat4 rotation = Mat4::Identity();
+        rotation.m[0] = normX.x; rotation.m[1] = normX.y; rotation.m[2] = normX.z;
+        rotation.m[4] = normY.x; rotation.m[5] = normY.y; rotation.m[6] = normY.z;
+        rotation.m[8] = normZ.x; rotation.m[9] = normZ.y; rotation.m[10] = normZ.z;
+
+        Mat4 translate = Mat4::Translation(translation);
+        Mat4 scale = Mat4::Scale(Vec3(scaleX, scaleY, scaleZ));
+
+        result = Mat4::Multiply(translate, Mat4::Multiply(rotation, scale));
     } else if (m_ActiveAxis >= 0 && m_ActiveAxis < 3 && m_Mode == Mode::Rotate) {
         if (m_RotationStartValid) {
             Vec3 hitPoint;

@@ -35,6 +35,8 @@ void main() {
         axisId = 1;
     } else if (fragColor.b > fragColor.r && fragColor.b > fragColor.g) {
         axisId = 2;
+    } else if (fragColor.r > 0.8 && fragColor.g > 0.8 && fragColor.b > 0.8) {
+        axisId = 3; // Center cube (uniform scale)
     }
 
     int hoveredAxis = gizmoState.x > -0.5 ? int(gizmoState.x + 0.5) : -1;
@@ -47,6 +49,13 @@ void main() {
         }
         if (axisId == activeAxis) {
             intensity = 1.8;
+        }
+        // When uniform scale (axis 3) is hovered/active, also highlight per-axis handles
+        if (hoveredAxis == 3 && axisId < 3 && activeAxis < 0) {
+            intensity = 1.2;
+        }
+        if (activeAxis == 3 && axisId < 3) {
+            intensity = 1.5;
         }
     }
 

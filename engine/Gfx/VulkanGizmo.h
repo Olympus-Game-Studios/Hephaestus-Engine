@@ -161,7 +161,7 @@ private:
     float m_CurrentScale = 1.0f;
 
     // Interaction state
-    int m_HoveredAxis = -1;
+    int m_HoveredAxis = -1;     // 0=X, 1=Y, 2=Z, 3=uniform (center cube)
     int m_ActiveAxis = -1;
     bool m_IsDragging = false;
     Mat4 m_DragStartTransform = Mat4::Identity();
@@ -171,6 +171,7 @@ private:
     Vec3 m_DragStartScale = Vec3(1, 1, 1);
     Vec3 m_RotationStartVector = Vec3(1, 0, 0);
     bool m_RotationStartValid = false;
+    float m_UniformDragStartDistance = 1.0f; // For uniform scale: initial screen-plane distance
 
     // Tuning constants
     const float m_TranslateLength = 1.6f;
@@ -179,4 +180,5 @@ private:
     const float m_AxisThickness = 0.08f;
     const float m_RotationPickWidth = 0.18f;
     const float m_ScreenScaleFactor = 0.2f;
+    const float m_UniformScaleCubeSize = 0.25f;  // Size of center cube for uniform scale
 };
