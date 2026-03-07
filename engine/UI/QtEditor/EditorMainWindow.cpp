@@ -350,6 +350,20 @@ void EditorMainWindow::setupMenuBar()
 
     editMenu->addSeparator();
 
+    QAction* copyAction = editMenu->addAction(tr("&Copy Entity"));
+    copyAction->setShortcut(QKeySequence::Copy);
+    connect(copyAction, &QAction::triggered, this, &EditorMainWindow::onCopyEntity);
+
+    QAction* pasteAction = editMenu->addAction(tr("&Paste Entity"));
+    pasteAction->setShortcut(QKeySequence::Paste);
+    connect(pasteAction, &QAction::triggered, this, &EditorMainWindow::onPasteEntity);
+
+    QAction* duplicateAction = editMenu->addAction(tr("&Duplicate Entity"));
+    duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+    connect(duplicateAction, &QAction::triggered, this, &EditorMainWindow::onDuplicateEntity);
+
+    editMenu->addSeparator();
+
     m_settingsAction = editMenu->addAction(tr("Settings"));
     m_settingsAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+,")));
     connect(m_settingsAction, &QAction::triggered, this, &EditorMainWindow::onOpenSettings);
@@ -2738,6 +2752,65 @@ void EditorMainWindow::onRedo()
 {
     // Redo not yet implemented (the engine uses a LIFO-only undo stack)
     statusBar()->showMessage(tr("Redo (not yet implemented)"), 2000);
+}
+
+void EditorMainWindow::onCopyEntity()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+
+    Scene* scene = ctx->GetActiveScene();
+    Entity selected(ctx->GetSelectedEntity(), scene);
+    if (selected) {
+        scene->CopyEntityToClipboard(selected);
+        statusBar()->showMessage(tr("Entity copied"), 2000);
+    }
+}
+
+void EditorMainWindow::onPasteEntity()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+
+    Scene* scene = ctx->GetActiveScene();
+    if (!scene->HasClipboardEntity()) {
+        statusBar()->showMessage(tr("Nothing to paste"), 2000);
+        return;
+    }
+
+    EditorUndoManager::PushSnapshot(ctx, "Paste entity");
+    Entity pasted = scene->PasteClipboard();
+    if (pasted) {
+        ctx->SelectEntity(pasted);
+        ctx->MarkDirty();
+        rebuildOutliner();
+        refreshDetailsPanel();
+        statusBar()->showMessage(tr("Entity pasted"), 2000);
+    }
+}
+
+void EditorMainWindow::onDuplicateEntity()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+
+    Scene* scene = ctx->GetActiveScene();
+    Entity selected(ctx->GetSelectedEntity(), scene);
+    if (!selected) return;
+
+    EditorUndoManager::PushSnapshot(ctx, "Duplicate entity");
+    scene->CopyEntityToClipboard(selected);
+    Entity duplicated = scene->PasteClipboard();
+    if (duplicated) {
+        ctx->SelectEntity(duplicated);
+        ctx->MarkDirty();
+        rebuildOutliner();
+        refreshDetailsPanel();
+        statusBar()->showMessage(tr("Entity duplicated"), 2000);
+    }
 }
 
 void EditorMainWindow::onOpenSettings()

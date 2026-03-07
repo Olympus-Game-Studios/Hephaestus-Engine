@@ -126,6 +126,9 @@ private slots:
     // Edit menu actions
     void onUndo();
     void onRedo();
+    void onCopyEntity();
+    void onPasteEntity();
+    void onDuplicateEntity();
     void onOpenSettings();
 
     // Help menu actions
