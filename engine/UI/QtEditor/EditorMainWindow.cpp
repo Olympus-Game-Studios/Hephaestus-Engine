@@ -68,6 +68,7 @@
 #include <QMenu>
 #include <QCursor>
 #include <QPainter>
+#include <QInputDialog>
 #include <iostream>
 #include <cmath>
 #include <filesystem>
@@ -711,6 +712,9 @@ void EditorMainWindow::setupDockWidgets()
     m_outlinerSearch->setPlaceholderText(tr("Search entities..."));
     outlinerHeader->addWidget(m_outlinerSearch, 1);
 
+    m_addFolderBtn = new QPushButton(tr("+ Folder"), m_outlinerPanel);
+    outlinerHeader->addWidget(m_addFolderBtn);
+
     m_addEntityBtn = new QPushButton(tr("+ Add Entity"), m_outlinerPanel);
     outlinerHeader->addWidget(m_addEntityBtn);
     outlinerLayout->addLayout(outlinerHeader);
@@ -725,6 +729,9 @@ void EditorMainWindow::setupDockWidgets()
     m_outlinerTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_outlinerTree->header()->setStretchLastSection(true);
     m_outlinerTree->setTextElideMode(Qt::ElideRight);
+    m_outlinerTree->setDragDropMode(QAbstractItemView::InternalMove);
+    m_outlinerTree->setDefaultDropAction(Qt::MoveAction);
+    m_outlinerTree->setContextMenuPolicy(Qt::CustomContextMenu);
     outlinerLayout->addWidget(m_outlinerTree, 1);
 
     m_outlinerDock->setWidget(m_outlinerPanel);
@@ -732,6 +739,59 @@ void EditorMainWindow::setupDockWidgets()
     // Connect selection changed signal
     connect(m_outlinerTree, &QTreeWidget::itemSelectionChanged, 
             this, &EditorMainWindow::onOutlinerSelectionChanged);
+
+    // Context menu
+    connect(m_outlinerTree, &QTreeWidget::customContextMenuRequested,
+            this, &EditorMainWindow::onOutlinerContextMenu);
+
+    // Handle drag & drop reparenting
+    connect(m_outlinerTree->model(), &QAbstractItemModel::rowsMoved, this, [this]() {
+        // After Qt moves items in the tree, sync the hierarchy back to the scene
+        if (!m_engine) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasActiveScene()) return;
+        Scene* scene = ctx->GetActiveScene();
+
+        EditorUndoManager::PushSnapshot(ctx, "Reparent entity");
+
+        // Walk the tree and fix parent relationships
+        std::function<void(QTreeWidgetItem*, entt::entity)> syncParents;
+        syncParents = [&](QTreeWidgetItem* parentItem, entt::entity parentEntity) {
+            for (int i = 0; i < parentItem->childCount(); ++i) {
+                QTreeWidgetItem* childItem = parentItem->child(i);
+                QVariant data = childItem->data(0, Qt::UserRole);
+                if (!data.isValid()) continue;
+                entt::entity childEntity = static_cast<entt::entity>(data.toUInt());
+                Entity child(childEntity, scene);
+                if (!child) continue;
+
+                if (parentEntity == entt::null) {
+                    scene->RemoveParent(child);
+                } else {
+                    Entity parent(parentEntity, scene);
+                    if (parent) scene->SetParent(child, parent);
+                }
+                syncParents(childItem, childEntity);
+            }
+        };
+
+        for (int i = 0; i < m_outlinerTree->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* top = m_outlinerTree->topLevelItem(i);
+            // Scene root node - children are root-level entities
+            for (int j = 0; j < top->childCount(); ++j) {
+                QTreeWidgetItem* childItem = top->child(j);
+                QVariant data = childItem->data(0, Qt::UserRole);
+                if (!data.isValid()) continue;
+                entt::entity childEntity = static_cast<entt::entity>(data.toUInt());
+                Entity child(childEntity, scene);
+                if (child) scene->RemoveParent(child);
+                syncParents(childItem, childEntity);
+            }
+        }
+
+        ctx->MarkDirty();
+        rebuildOutliner();
+    });
 
     connect(m_outlinerSearch, &QLineEdit::textChanged, this, [this](const QString& text) {
         auto filterItem = [&](auto&& self, QTreeWidgetItem* item) -> bool {
@@ -765,6 +825,10 @@ void EditorMainWindow::setupDockWidgets()
         ctx->MarkDirty();
         rebuildOutliner();
         refreshDetailsPanel();
+    });
+
+    connect(m_addFolderBtn, &QPushButton::clicked, this, [this]() {
+        createFolderInOutliner(entt::null);
     });
 
     addDockWidget(Qt::LeftDockWidgetArea, m_outlinerDock);
@@ -1956,6 +2020,16 @@ void EditorMainWindow::populateOutlinerItem(QTreeWidgetItem* parent, entt::entit
     item->setText(0, QString::fromStdString(name));
     item->setData(0, Qt::UserRole, static_cast<uint32_t>(entity));
 
+    // Set icon based on entity type
+    if (registry.all_of<FolderComponent>(entity)) {
+        item->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
+        // Folders accept drops
+        item->setFlags(item->flags() | Qt::ItemIsDropEnabled);
+    } else if (registry.all_of<EnvironmentComponent>(entity)) {
+        item->setIcon(0, style()->standardIcon(QStyle::SP_ComputerIcon));
+        item->setFlags(item->flags() | Qt::ItemIsDropEnabled);
+    }
+
     // Add children if this entity has any
     if (registry.all_of<TransformComponent>(entity)) {
         auto& transform = registry.get<TransformComponent>(entity);
@@ -1990,6 +2064,152 @@ void EditorMainWindow::onOutlinerSelectionChanged()
         // Clicked on scene root or invalid item
         ctx->ClearSelection();
     }
+}
+
+void EditorMainWindow::onOutlinerContextMenu(const QPoint& pos)
+{
+    QTreeWidgetItem* item = m_outlinerTree->itemAt(pos);
+    QMenu menu(this);
+
+    entt::entity entity = entt::null;
+    bool isFolder = false;
+    bool isEnv = false;
+
+    if (item) {
+        QVariant data = item->data(0, Qt::UserRole);
+        if (data.isValid()) {
+            entity = static_cast<entt::entity>(data.toUInt());
+            if (m_engine) {
+                auto* ctx = m_engine->GetEditorContext();
+                if (ctx && ctx->HasActiveScene()) {
+                    auto& reg = ctx->GetActiveScene()->GetRegistry();
+                    isFolder = reg.all_of<FolderComponent>(entity);
+                    isEnv = reg.all_of<EnvironmentComponent>(entity);
+                }
+            }
+        }
+    }
+
+    // "New Folder" - always available
+    if (isFolder || isEnv) {
+        menu.addAction(tr("New Folder Inside"), [this, entity]() {
+            createFolderInOutliner(entity);
+        });
+    }
+    menu.addAction(tr("New Folder"), [this]() {
+        createFolderInOutliner(entt::null);
+    });
+
+    if (entity != entt::null && !isEnv) {
+        menu.addSeparator();
+        menu.addAction(tr("Rename"), [this, entity]() {
+            renameEntityInOutliner(entity);
+        });
+        menu.addAction(tr("Move to Root"), [this, entity]() {
+            reparentEntityToRoot(entity);
+        });
+        menu.addSeparator();
+        QAction* deleteAction = menu.addAction(tr("Delete"), [this, entity]() {
+            deleteEntityFromOutliner(entity);
+        });
+        deleteAction->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+    }
+
+    menu.exec(m_outlinerTree->viewport()->mapToGlobal(pos));
+}
+
+void EditorMainWindow::createFolderInOutliner(entt::entity parentEntity)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("Create Folder"),
+                                         tr("Folder name:"), QLineEdit::Normal,
+                                         tr("New Folder"), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+
+    EditorUndoManager::PushSnapshot(ctx, "Create folder");
+    Scene* scene = ctx->GetActiveScene();
+    Entity folder = scene->CreateEntity(name.trimmed().toStdString());
+    folder.AddComponent<FolderComponent>();
+
+    if (parentEntity != entt::null) {
+        Entity parent(parentEntity, scene);
+        if (parent) {
+            scene->SetParent(folder, parent);
+        }
+    }
+
+    ctx->MarkDirty();
+    rebuildOutliner();
+}
+
+void EditorMainWindow::deleteEntityFromOutliner(entt::entity entity)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+
+    Scene* scene = ctx->GetActiveScene();
+    Entity e(entity, scene);
+    if (!e) return;
+
+    // Don't allow deleting the environment root
+    if (e.HasComponent<EnvironmentComponent>()) return;
+
+    EditorUndoManager::PushSnapshot(ctx, "Delete entity");
+
+    // Clear selection if this entity is selected
+    if (ctx->HasSelection() && ctx->GetSelectedEntity() == entity) {
+        ctx->ClearSelection();
+    }
+
+    scene->DestroyEntity(e);
+    ctx->MarkDirty();
+    rebuildOutliner();
+    clearDetailsPanel();
+}
+
+void EditorMainWindow::reparentEntityToRoot(entt::entity entity)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+
+    Scene* scene = ctx->GetActiveScene();
+    Entity e(entity, scene);
+    if (!e) return;
+
+    EditorUndoManager::PushSnapshot(ctx, "Move to root");
+    scene->RemoveParent(e);
+    ctx->MarkDirty();
+    rebuildOutliner();
+}
+
+void EditorMainWindow::renameEntityInOutliner(entt::entity entity)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+
+    Scene* scene = ctx->GetActiveScene();
+    Entity e(entity, scene);
+    if (!e || !e.HasComponent<TagComponent>()) return;
+
+    QString current = QString::fromStdString(e.GetComponent<TagComponent>().tag);
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("Rename"),
+                                         tr("New name:"), QLineEdit::Normal,
+                                         current, &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+
+    EditorUndoManager::PushSnapshot(ctx, "Rename entity");
+    e.GetComponent<TagComponent>().tag = name.trimmed().toStdString();
+    ctx->MarkDirty();
+    rebuildOutliner();
+    refreshDetailsPanel();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

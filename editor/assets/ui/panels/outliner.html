@@ -106,6 +106,43 @@
       outline: 2px dashed var(--accent, #4285f4);
       outline-offset: -2px;
     }
+    .outliner-ctx {
+      position: fixed;
+      display: none;
+      min-width: calc(160px * var(--uiScale));
+      background: #252d3a;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 6px;
+      padding: calc(4px * var(--uiScale)) 0;
+      box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+      z-index: 200;
+    }
+    .outliner-ctx.is-open {
+      display: block;
+    }
+    .outliner-ctx-item {
+      padding: calc(6px * var(--uiScale)) calc(12px * var(--uiScale));
+      font-size: calc(12px * var(--uiScale));
+      color: #c8d2e0;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .outliner-ctx-item:hover {
+      background: #3a4556;
+      color: #f0f4f8;
+    }
+    .outliner-ctx-item.is-danger {
+      color: #e86060;
+    }
+    .outliner-ctx-item.is-danger:hover {
+      background: #4a2020;
+      color: #ff8080;
+    }
+    .outliner-ctx-sep {
+      height: 1px;
+      background: rgba(255,255,255,0.08);
+      margin: calc(4px * var(--uiScale)) 0;
+    }
     .outliner-modal {
       position: fixed;
       inset: 0;
@@ -162,13 +199,33 @@
 
   <div class="outliner-modal" id="folderModal">
     <div class="outliner-modal-card">
-      <div class="outliner-modal-title">Create Folder</div>
+      <div class="outliner-modal-title" id="folderModalTitle">Create Folder</div>
       <input class="ui-input" id="folderName" placeholder="Folder name" />
       <div class="outliner-modal-actions">
         <button class="ui-btn" id="folderCancel">Cancel</button>
         <button class="ui-btn" id="folderCreate">Create</button>
       </div>
     </div>
+  </div>
+
+  <div class="outliner-modal" id="renameModal">
+    <div class="outliner-modal-card">
+      <div class="outliner-modal-title">Rename</div>
+      <input class="ui-input" id="renameName" placeholder="Name" />
+      <div class="outliner-modal-actions">
+        <button class="ui-btn" id="renameCancel">Cancel</button>
+        <button class="ui-btn" id="renameConfirm">Rename</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="outliner-ctx" id="ctxMenu">
+    <div class="outliner-ctx-item" data-action="create-folder">New Folder Here</div>
+    <div class="outliner-ctx-item" data-action="rename">Rename</div>
+    <div class="outliner-ctx-sep"></div>
+    <div class="outliner-ctx-item" data-action="move-to-root">Move to Root</div>
+    <div class="outliner-ctx-sep"></div>
+    <div class="outliner-ctx-item is-danger" data-action="delete">Delete</div>
   </div>
 
   <script src="../ui_common.js"></script>
@@ -333,6 +390,13 @@
         left.appendChild(name);
         left.appendChild(badge);
         row.appendChild(left);
+
+        // Right-click context menu
+        row.addEventListener('contextmenu', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          openCtxMenu(ev.clientX, ev.clientY, ent.id, ent.isFolder, ent.isEnvironment);
+        });
 
         // Track pointer state for drag detection
         let pointerDownTime = 0;
@@ -536,13 +600,18 @@
       renderList(data);
     }
 
-    function createFolderWithName(name) {
+    function createFolderWithName(name, explicitParent) {
       const finalName = (name || '').trim() || 'Folder';
-      let parentId = lastEnvRootId || 0;
-      if (lastData && lastData.entities && lastData.selectedId) {
-        const selected = lastData.entities.find(ent => ent.id === lastData.selectedId);
-        if (selected && (selected.isFolder || selected.type === 'FOLDER' || selected.type === 'ENV')) {
-          parentId = selected.id;
+      let parentId;
+      if (explicitParent !== undefined) {
+        parentId = explicitParent;
+      } else {
+        parentId = lastEnvRootId || 0;
+        if (lastData && lastData.entities && lastData.selectedId) {
+          const selected = lastData.entities.find(ent => ent.id === lastData.selectedId);
+          if (selected && (selected.isFolder || selected.type === 'FOLDER' || selected.type === 'ENV')) {
+            parentId = selected.id;
+          }
         }
       }
 
@@ -556,25 +625,131 @@
       refresh();
     }
 
-    function openFolderDialog() {
+    let folderDialogParent = undefined;
+
+    function openFolderDialog(parentId) {
       const modal = document.getElementById('folderModal');
       const input = document.getElementById('folderName');
+      const title = document.getElementById('folderModalTitle');
       if (!modal || !input) return;
+      folderDialogParent = parentId;
       input.value = 'New Folder';
+      if (title) title.textContent = parentId !== undefined ? 'Create Subfolder' : 'Create Folder';
       modal.classList.add('is-open');
-      setTimeout(() => input.focus(), 0);
+      setTimeout(() => { input.focus(); input.select(); }, 0);
     }
 
     function closeFolderDialog() {
       const modal = document.getElementById('folderModal');
       if (modal) modal.classList.remove('is-open');
+      folderDialogParent = undefined;
     }
 
     function submitFolderDialog() {
       const input = document.getElementById('folderName');
       const name = input ? input.value : '';
+      const parent = folderDialogParent;
       closeFolderDialog();
-      createFolderWithName(name);
+      createFolderWithName(name, parent);
+    }
+
+    // --- Context menu ---
+    let ctxTargetId = 0;
+    let ctxTargetIsFolder = false;
+    let ctxTargetIsEnv = false;
+
+    function openCtxMenu(x, y, entityId, isFolder, isEnv) {
+      ctxTargetId = entityId;
+      ctxTargetIsFolder = isFolder;
+      ctxTargetIsEnv = isEnv;
+      const menu = document.getElementById('ctxMenu');
+      if (!menu) return;
+      // Show/hide items based on context
+      menu.querySelectorAll('[data-action="create-folder"]').forEach(el => el.style.display = '');
+      menu.querySelectorAll('[data-action="rename"]').forEach(el => el.style.display = isEnv ? 'none' : '');
+      menu.querySelectorAll('[data-action="move-to-root"]').forEach(el => el.style.display = isEnv ? 'none' : '');
+      menu.querySelectorAll('[data-action="delete"]').forEach(el => el.style.display = isEnv ? 'none' : '');
+      menu.style.left = x + 'px';
+      menu.style.top = y + 'px';
+      menu.classList.add('is-open');
+      // Clamp to viewport
+      requestAnimationFrame(() => {
+        const rect = menu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 4) + 'px';
+        if (rect.bottom > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 4) + 'px';
+      });
+    }
+
+    function closeCtxMenu() {
+      const menu = document.getElementById('ctxMenu');
+      if (menu) menu.classList.remove('is-open');
+    }
+
+    function handleCtxAction(action) {
+      closeCtxMenu();
+      const statusEl = document.getElementById('status');
+      if (action === 'create-folder') {
+        const parent = ctxTargetIsFolder || ctxTargetIsEnv ? ctxTargetId : (lastEnvRootId || 0);
+        openFolderDialog(parent);
+      } else if (action === 'rename') {
+        openRenameDialog(ctxTargetId);
+      } else if (action === 'move-to-root') {
+        const parentId = lastEnvRootId || 0;
+        const r = window.hep.callCpp('scene.reparent', { entityId: ctxTargetId, newParentId: parentId });
+        if (!r || !r.ok) {
+          statusEl.textContent = 'Move to root failed: ' + (r && r.error ? r.error : 'error');
+        } else {
+          statusEl.textContent = 'Moved to root.';
+          refresh();
+        }
+      } else if (action === 'delete') {
+        const r = window.hep.callCpp('scene.delete_entity', { id: ctxTargetId });
+        if (!r || !r.ok) {
+          statusEl.textContent = 'Delete failed: ' + (r && r.error ? r.error : 'error');
+        } else {
+          statusEl.textContent = 'Deleted.';
+          refresh();
+        }
+      }
+    }
+
+    // --- Rename dialog ---
+    let renameTargetId = 0;
+
+    function openRenameDialog(entityId) {
+      renameTargetId = entityId;
+      const modal = document.getElementById('renameModal');
+      const input = document.getElementById('renameName');
+      if (!modal || !input) return;
+      // Pre-fill with current name
+      let currentName = 'Entity';
+      if (lastData && lastData.entities) {
+        const ent = lastData.entities.find(e => e.id === entityId);
+        if (ent) currentName = ent.name || 'Entity';
+      }
+      input.value = currentName;
+      modal.classList.add('is-open');
+      setTimeout(() => { input.focus(); input.select(); }, 0);
+    }
+
+    function closeRenameDialog() {
+      const modal = document.getElementById('renameModal');
+      if (modal) modal.classList.remove('is-open');
+    }
+
+    function submitRenameDialog() {
+      const input = document.getElementById('renameName');
+      const name = (input ? input.value : '').trim();
+      if (!name) { closeRenameDialog(); return; }
+      closeRenameDialog();
+      const r = window.hep.callCpp('entity.rename', { id: renameTargetId, name: name });
+      const statusEl = document.getElementById('status');
+      if (!r || !r.ok) {
+        statusEl.textContent = 'Rename failed: ' + (r && r.error ? r.error : 'error');
+      } else {
+        statusEl.textContent = 'Renamed to: ' + name;
+        refresh();
+      }
     }
 
     // Receive events from C++
@@ -592,8 +767,12 @@
       const folderName = document.getElementById('folderName');
       const folderCreate = document.getElementById('folderCreate');
       const folderCancel = document.getElementById('folderCancel');
+      const renameModal = document.getElementById('renameModal');
+      const renameName = document.getElementById('renameName');
+      const renameConfirm = document.getElementById('renameConfirm');
+      const renameCancel = document.getElementById('renameCancel');
 
-      if (newFolderBtn) newFolderBtn.onclick = openFolderDialog;
+      if (newFolderBtn) newFolderBtn.onclick = () => openFolderDialog();
       if (folderCreate) folderCreate.onclick = submitFolderDialog;
       if (folderCancel) folderCancel.onclick = closeFolderDialog;
       if (folderModal) {
@@ -610,6 +789,47 @@
           }
         });
       }
+
+      // Rename modal
+      if (renameConfirm) renameConfirm.onclick = submitRenameDialog;
+      if (renameCancel) renameCancel.onclick = closeRenameDialog;
+      if (renameModal) {
+        renameModal.addEventListener('click', (ev) => {
+          if (ev.target === renameModal) closeRenameDialog();
+        });
+      }
+      if (renameName) {
+        renameName.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') {
+            submitRenameDialog();
+          } else if (ev.key === 'Escape') {
+            closeRenameDialog();
+          }
+        });
+      }
+
+      // Context menu actions
+      const ctxMenu = document.getElementById('ctxMenu');
+      if (ctxMenu) {
+        ctxMenu.addEventListener('click', (ev) => {
+          const item = ev.target.closest('[data-action]');
+          if (item) handleCtxAction(item.dataset.action);
+        });
+      }
+
+      // Close context menu on click outside
+      document.addEventListener('click', (ev) => {
+        if (!ev.target.closest('.outliner-ctx')) closeCtxMenu();
+      });
+
+      // Right-click on list background creates folder at root
+      document.getElementById('list').addEventListener('contextmenu', (ev) => {
+        if (!ev.target.closest('.outliner-row')) {
+          ev.preventDefault();
+          openCtxMenu(ev.clientX, ev.clientY, lastEnvRootId || 0, true, true);
+        }
+      });
+
       document.getElementById('refreshBtn').onclick = refresh;
       document.getElementById('filter').addEventListener('input', refresh);
       refresh();

@@ -927,6 +927,32 @@ void HtmlEditorUIHost::Init(VulkanDevice* vkdev, VkDescriptorPool imguiDescripto
     return std::string("{\"ok\":true}");
   });
 
+  bridge_.RegisterHandler("scene.delete_entity", [this](const std::string& payload) -> std::string {
+    if (!scene_) {
+      return std::string("{\"ok\":false,\"error\":\"no_scene\"}");
+    }
+
+    auto idOpt = EditorMessageBridge::ParseIntField(payload, "id");
+    if (!idOpt) {
+      return std::string("{\"ok\":false,\"error\":\"missing_id\"}");
+    }
+
+    entt::entity handle = static_cast<entt::entity>(static_cast<uint32_t>(*idOpt));
+    if (!scene_->GetRegistry().valid(handle)) {
+      return std::string("{\"ok\":false,\"error\":\"invalid_entity\"}");
+    }
+
+    Entity entity(handle, scene_);
+
+    // Don't allow deleting the environment root
+    if (entity.HasComponent<EnvironmentComponent>()) {
+      return std::string("{\"ok\":false,\"error\":\"cannot_delete_environment\"}");
+    }
+
+    scene_->DestroyEntity(entity);
+    return std::string("{\"ok\":true}");
+  });
+
   bridge_.RegisterHandler("actor.spawn_preset", [this](const std::string& payload) -> std::string {
     auto presetOpt = EditorMessageBridge::ParseIntField(payload, "preset");
     if (!presetOpt) {

@@ -97,6 +97,11 @@ private:
     // Outliner management
     void rebuildOutliner();
     void populateOutlinerItem(QTreeWidgetItem* parent, entt::entity entity);
+    void onOutlinerContextMenu(const QPoint& pos);
+    void createFolderInOutliner(entt::entity parentEntity);
+    void deleteEntityFromOutliner(entt::entity entity);
+    void reparentEntityToRoot(entt::entity entity);
+    void renameEntityInOutliner(entt::entity entity);
 
     // Details panel management
     void refreshDetailsPanel();
@@ -182,6 +187,7 @@ private:
     QWidget* m_outlinerPanel = nullptr;
     QLineEdit* m_outlinerSearch = nullptr;
     QPushButton* m_addEntityBtn = nullptr;
+    QPushButton* m_addFolderBtn = nullptr;
     QTreeWidget* m_outlinerTree = nullptr;
 
     // Details panel (inspector)
