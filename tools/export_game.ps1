@@ -36,9 +36,6 @@ param(
     [string]$EngineRoot = "",
     
     [Parameter(Mandatory=$false)]
-    [switch]$IncludeUltralight = $false,
-    
-    [Parameter(Mandatory=$false)]
     [switch]$CreateZip = $false,
     
     [Parameter(Mandatory=$false)]
@@ -242,30 +239,6 @@ foreach ($path in $luaDllPaths) {
 
 if (-not $luaCopied) {
     Write-Log "lua.dll not found - scripting may not work!" "WARNING"
-}
-
-# Ultralight DLLs (optional, for games that use HTML UI)
-if ($IncludeUltralight) {
-    Write-Log "Including Ultralight dependencies..." "INFO"
-    
-    $ultralightBinDir = Join-Path $EngineRoot "extern" "Ultralight" "SDK" "bin"
-    $ultralightResDir = Join-Path $EngineRoot "extern" "Ultralight" "SDK" "resources"
-    
-    $ultralightDlls = @("AppCore.dll", "Ultralight.dll", "UltralightCore.dll", "WebCore.dll")
-    
-    foreach ($dll in $ultralightDlls) {
-        $dllPath = Join-Path $ultralightBinDir $dll
-        if (Test-Path $dllPath) {
-            Copy-ItemSafe -Source $dllPath -Destination (Join-Path $OutputPath $dll) -Description $dll
-        } else {
-            Write-Log "Ultralight DLL not found: $dll" "WARNING"
-        }
-    }
-    
-    # Copy Ultralight resources
-    if (Test-Path $ultralightResDir) {
-        Copy-ItemSafe -Source $ultralightResDir -Destination (Join-Path $OutputPath "resources") -Recurse -Description "Ultralight resources"
-    }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

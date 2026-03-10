@@ -18,15 +18,6 @@ endif()
 
 add_subdirectory(extern/glfw)
 
-# Ultralight (optional)
-option(HEPHAESTUS_USE_ULTRALIGHT "Enable Ultralight integration" ON)
-if(HEPHAESTUS_USE_ULTRALIGHT)
-    set(ULTRALIGHT_BUILD_SAMPLES OFF CACHE BOOL "Disable Ultralight samples" FORCE)
-    add_subdirectory(extern/Ultralight)
-
-    option(HEPHAESTUS_EDITOR_HTML_UI "Enable Ultralight-hosted HTML editor panels" ON)
-endif()
-
 # Lua scripting support - try to find it, but make it optional for now
 # Check for vcpkg installation first
 set(VCPKG_ROOT "$ENV{USERPROFILE}/vcpkg" CACHE PATH "Path to vcpkg installation")
@@ -112,7 +103,6 @@ endif()
 option(HEPHAESTUS_BUILD_EDITOR "Build the editor (HephaestusEngine.exe)" ON)
 option(HEPHAESTUS_BUILD_GAME "Build the standalone game runtime (HephaestusGame.exe)" ON)
 option(HEPHAESTUS_GAME_SCRIPTING "Enable Lua scripting in game runtime" ON)
-option(HEPHAESTUS_GAME_USE_ULTRALIGHT "Enable Ultralight UI in game runtime (off by default)" OFF)
 option(HEPHAESTUS_USE_QT "Enable Qt-based editor UI" ON)
 option(HEPHAESTUS_USE_SHARED_ASSETS "Use shared runtime/editor/launcher asset folders" ON)
 
@@ -217,15 +207,9 @@ set(EDITOR_ONLY_SOURCES
     engine/Gfx/VulkanLightGizmo.cpp
     engine/Scene/SceneExporter.cpp
     engine/UI/EditorDocument.cpp
-    engine/UI/ProjectManager.cpp
-    engine/UI/HtmlUI/UltralightPlatformSetup.cpp
-    engine/UI/HtmlUI/EditorMessageBridge.cpp
-    engine/UI/HtmlUI/HtmlPanelView.cpp
-    engine/UI/HtmlUI/HtmlEditorUIHost.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
     engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
-    engine/UI/MaterialEditor/MaterialEditorPanel.cpp
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
 
@@ -304,15 +288,9 @@ add_executable(HephaestusEngine
     engine/Scripting/ScriptEngine.cpp
     engine/Scripting/LuaScriptEngine.cpp
     engine/UI/EditorDocument.cpp
-    engine/UI/ProjectManager.cpp
-    engine/UI/HtmlUI/UltralightPlatformSetup.cpp
-    engine/UI/HtmlUI/EditorMessageBridge.cpp
-    engine/UI/HtmlUI/HtmlPanelView.cpp
-    engine/UI/HtmlUI/HtmlEditorUIHost.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
     engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
-    engine/UI/MaterialEditor/MaterialEditorPanel.cpp
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
 
@@ -392,55 +370,6 @@ target_include_directories(HephaestusEngine PRIVATE
     extern/JoltPhysics/Build
 )
 
-if(HEPHAESTUS_USE_ULTRALIGHT)
-    target_include_directories(HephaestusEngine PRIVATE
-        extern/Ultralight/SDK/include
-    )
-
-    # Link Ultralight SDK libraries directly (Windows).
-    target_link_libraries(HephaestusEngine PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/lib/AppCore.lib"
-        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/lib/Ultralight.lib"
-        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/lib/UltralightCore.lib"
-        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/lib/WebCore.lib"
-    )
-
-    if(HEPHAESTUS_EDITOR_HTML_UI)
-        target_compile_definitions(HephaestusEngine PRIVATE HEPHAESTUS_EDITOR_HTML_UI=1)
-    else()
-        target_compile_definitions(HephaestusEngine PRIVATE HEPHAESTUS_EDITOR_HTML_UI=0)
-    endif()
-
-    if(WIN32)
-        # Copy Ultralight DLLs to output directory.
-        add_custom_command(TARGET HephaestusEngine POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/bin/AppCore.dll"
-                "$<TARGET_FILE_DIR:HephaestusEngine>/AppCore.dll"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/bin/Ultralight.dll"
-                "$<TARGET_FILE_DIR:HephaestusEngine>/Ultralight.dll"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/bin/UltralightCore.dll"
-                "$<TARGET_FILE_DIR:HephaestusEngine>/UltralightCore.dll"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/bin/WebCore.dll"
-                "$<TARGET_FILE_DIR:HephaestusEngine>/WebCore.dll"
-            COMMENT "Copying Ultralight SDK DLLs"
-        )
-
-        # Ultralight runtime resources (ICU data, cacert, etc.).
-        # Ultralight loads these via the FileSystem interface using the relative path "resources/...".
-        add_custom_command(TARGET HephaestusEngine POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/resources"
-                "$<TARGET_FILE_DIR:HephaestusEngine>/resources"
-            COMMENT "Copying Ultralight SDK resources"
-        )
-    endif()
-else()
-    target_compile_definitions(HephaestusEngine PRIVATE HEPHAESTUS_EDITOR_HTML_UI=0)
-endif()
 
 # Qt editor UI (optional)
 if(HEPHAESTUS_USE_QT)
@@ -543,41 +472,6 @@ set_target_properties(HephaestusEngine PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug"
 )
 
-
-# Dear ImGui
-add_library(imgui STATIC
-    extern/imgui/imgui.cpp
-    extern/imgui/imgui_draw.cpp
-    extern/imgui/imgui_tables.cpp
-    extern/imgui/imgui_widgets.cpp
-    extern/imgui/backends/imgui_impl_glfw.cpp
-    extern/imgui/backends/imgui_impl_vulkan.cpp
-)
-
-target_include_directories(imgui PUBLIC
-    extern/imgui
-    extern/imgui/backends
-)
-
-target_link_libraries(imgui PUBLIC glfw Vulkan::Vulkan)
-target_link_libraries(HephaestusEngine PRIVATE imgui)
-
-# ImGuizmo
-add_library(imguizmo STATIC
-    extern/ImGuizmo/ImGuizmo.cpp
-)
-
-target_include_directories(imguizmo PUBLIC
-    extern/ImGuizmo
-)
-
-target_link_libraries(imguizmo PUBLIC imgui)
-target_link_libraries(HephaestusEngine PRIVATE imguizmo)
-
-set(IMNODES_IMGUI_TARGET_NAME imgui)
-set(IMNODES_EXAMPLES OFF CACHE BOOL "Disable ImNodes examples" FORCE)
-add_subdirectory(extern/imnodes)
-target_link_libraries(HephaestusEngine PRIVATE imnodes)
 
 endif() # End HEPHAESTUS_BUILD_EDITOR
 
@@ -685,7 +579,6 @@ add_executable(HephaestusGame
 # Game runtime compile definitions
 target_compile_definitions(HephaestusGame PRIVATE
     HEPHAESTUS_GAME_RUNTIME=1
-    HEPHAESTUS_EDITOR_HTML_UI=0
 )
 
 if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND)
@@ -719,43 +612,6 @@ if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND)
         list(APPEND GAME_LINK_LIBS ${LUA_LIBRARIES})
         target_include_directories(HephaestusGame PRIVATE ${LUA_INCLUDE_DIR})
     endif()
-endif()
-
-# Ultralight for game (optional, off by default)
-if(HEPHAESTUS_GAME_USE_ULTRALIGHT AND HEPHAESTUS_USE_ULTRALIGHT)
-    target_include_directories(HephaestusGame PRIVATE
-        extern/Ultralight/SDK/include
-    )
-    target_link_libraries(HephaestusGame PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/lib/AppCore.lib"
-        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/lib/Ultralight.lib"
-        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/lib/UltralightCore.lib"
-        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/lib/WebCore.lib"
-    )
-    target_compile_definitions(HephaestusGame PRIVATE HEPHAESTUS_GAME_USE_ULTRALIGHT=1)
-    
-    if(WIN32)
-        add_custom_command(TARGET HephaestusGame POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/bin/AppCore.dll"
-                "$<TARGET_FILE_DIR:HephaestusGame>/AppCore.dll"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/bin/Ultralight.dll"
-                "$<TARGET_FILE_DIR:HephaestusGame>/Ultralight.dll"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/bin/UltralightCore.dll"
-                "$<TARGET_FILE_DIR:HephaestusGame>/UltralightCore.dll"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/bin/WebCore.dll"
-                "$<TARGET_FILE_DIR:HephaestusGame>/WebCore.dll"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/extern/Ultralight/SDK/resources"
-                "$<TARGET_FILE_DIR:HephaestusGame>/resources"
-            COMMENT "Copying Ultralight SDK DLLs to game runtime"
-        )
-    endif()
-else()
-    target_compile_definitions(HephaestusGame PRIVATE HEPHAESTUS_GAME_USE_ULTRALIGHT=0)
 endif()
 
 target_link_libraries(HephaestusGame PRIVATE ${GAME_LINK_LIBS})

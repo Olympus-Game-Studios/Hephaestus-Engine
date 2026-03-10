@@ -1,19 +1,6 @@
 [submodule "extern/glfw"]
 	path = extern/glfw
 	url = https://github.com/glfw/glfw
-[submodule "extern/imgui"]
-	path = extern/imgui
-	url = https://github.com/ocornut/imgui
-[submodule "extern/ImGuizmo"]
-	path = extern/ImGuizmo
-	url = https://github.com/CedricGuillemet/ImGuizmo
-[submodule "extern/imnodes"]
-	path = extern/imnodes
-	url = https://github.com/Nelarius/imnodes.git
 [submodule "extern/JoltPhysics"]
 	path = extern/JoltPhysics
 	url = https://github.com/jrouwe/JoltPhysics.git
-[submodule "extern/Ultralight"]
-	path = extern/Ultralight
-	url = https://github.com/Bobbybear007/Ultralight.git
-	branch = master
