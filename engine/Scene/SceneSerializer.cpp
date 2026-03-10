@@ -732,7 +732,22 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             std::ostringstream oss;
             oss.imbue(std::locale::classic());
             oss << "        \"LuaScript\": {\n";
-            oss << "          \"scriptPath\": \"" << EscapeString(script->scriptPath) << "\"\n";
+            oss << "          \"scriptPath\": \"" << EscapeString(script->scriptPath) << "\",\n";
+            oss << "          \"scriptSource\": \"" << EscapeString(script->scriptSource) << "\",\n";
+            oss << "          \"functionOnAwake\": \"" << EscapeString(script->functionOnAwake) << "\",\n";
+            oss << "          \"functionOnUpdate\": \"" << EscapeString(script->functionOnUpdate) << "\",\n";
+            oss << "          \"functionOnDestroy\": \"" << EscapeString(script->functionOnDestroy) << "\",\n";
+            oss << "          \"enabled\": " << (script->enabled ? "true" : "false") << ",\n";
+            oss << "          \"variables\": {";
+            size_t varIndex = 0;
+            for (const auto& [key, value] : script->variables) {
+                if (varIndex++) {
+                    oss << ", ";
+                }
+                oss << "\"" << EscapeString(key) << "\": ";
+                WritePropertyValue(oss, value);
+            }
+            oss << "}\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1398,6 +1413,37 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             if (const JsonValue* pathValue = scriptObj->Find("scriptPath")) {
                 if (pathValue->IsString()) {
                     script.scriptPath = pathValue->AsString();
+                }
+            }
+            if (const JsonValue* sourceValue = scriptObj->Find("scriptSource")) {
+                if (sourceValue->IsString()) {
+                    script.scriptSource = sourceValue->AsString();
+                }
+            }
+            if (const JsonValue* awakeValue = scriptObj->Find("functionOnAwake")) {
+                if (awakeValue->IsString()) {
+                    script.functionOnAwake = awakeValue->AsString();
+                }
+            }
+            if (const JsonValue* updateValue = scriptObj->Find("functionOnUpdate")) {
+                if (updateValue->IsString()) {
+                    script.functionOnUpdate = updateValue->AsString();
+                }
+            }
+            if (const JsonValue* destroyValue = scriptObj->Find("functionOnDestroy")) {
+                if (destroyValue->IsString()) {
+                    script.functionOnDestroy = destroyValue->AsString();
+                }
+            }
+            if (const JsonValue* enabledValue = scriptObj->Find("enabled")) {
+                script.enabled = ParseBoolLike(*enabledValue, script.enabled);
+            }
+            if (const JsonValue* varsValue = scriptObj->Find("variables")) {
+                if (varsValue->IsObject()) {
+                    script.variables.clear();
+                    for (const auto& [key, value] : varsValue->AsObject()) {
+                        script.variables.emplace(key, ParsePropertyValue(value));
+                    }
                 }
             }
         }
@@ -2074,7 +2120,22 @@ std::string SceneSerializer::SerializeToString() const
             std::ostringstream oss;
             oss.imbue(std::locale::classic());
             oss << "        \"LuaScript\": {\n";
-            oss << "          \"scriptPath\": \"" << EscapeString(script->scriptPath) << "\"\n";
+            oss << "          \"scriptPath\": \"" << EscapeString(script->scriptPath) << "\",\n";
+            oss << "          \"scriptSource\": \"" << EscapeString(script->scriptSource) << "\",\n";
+            oss << "          \"functionOnAwake\": \"" << EscapeString(script->functionOnAwake) << "\",\n";
+            oss << "          \"functionOnUpdate\": \"" << EscapeString(script->functionOnUpdate) << "\",\n";
+            oss << "          \"functionOnDestroy\": \"" << EscapeString(script->functionOnDestroy) << "\",\n";
+            oss << "          \"enabled\": " << (script->enabled ? "true" : "false") << ",\n";
+            oss << "          \"variables\": {";
+            size_t varIndex = 0;
+            for (const auto& [key, value] : script->variables) {
+                if (varIndex++) {
+                    oss << ", ";
+                }
+                oss << "\"" << EscapeString(key) << "\": ";
+                WritePropertyValue(oss, value);
+            }
+            oss << "}\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }

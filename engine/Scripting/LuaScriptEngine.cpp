@@ -384,6 +384,8 @@ void LuaScriptEngine::OnSimulationStopped() {
         instance.valid = false;
         instance.errorLogged = false;
     }
+    // Drop all cached instances so the next Play start always rebuilds from scene data.
+    m_ScriptInstances.clear();
     m_ActiveUpdateOrder.clear();
 #endif
 }
