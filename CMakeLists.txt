@@ -41,36 +41,65 @@ find_package(Lua QUIET)
 if(NOT Lua_FOUND)
     message(STATUS "Lua not found via standard search paths")
     
-    # Try manual search in vcpkg directories
-    set(VCPKG_TRIPLET "x64-windows")
-    set(VCPKG_LUA_PATH "$ENV{USERPROFILE}/vcpkg/installed/${VCPKG_TRIPLET}")
-    
-    if(EXISTS "${VCPKG_LUA_PATH}/include/lua.h")
-        message(STATUS "Found Lua in vcpkg at ${VCPKG_LUA_PATH}")
-        set(LUA_INCLUDE_DIR "${VCPKG_LUA_PATH}/include")
+    # Try bundled Lua in extern/lua (MSVC import lib + headers)
+    set(BUNDLED_LUA_PATH "${CMAKE_CURRENT_SOURCE_DIR}/extern/lua")
+    if(EXISTS "${BUNDLED_LUA_PATH}/lua.h" AND EXISTS "${BUNDLED_LUA_PATH}/lua54.lib")
+        message(STATUS "Found bundled Lua in extern/lua")
+        set(LUA_INCLUDE_DIR "${BUNDLED_LUA_PATH}")
+        set(LUA_LIBRARIES "${BUNDLED_LUA_PATH}/lua54.lib")
+        set(LUA_DLL_PATH "${BUNDLED_LUA_PATH}/lua54.dll")
         set(LUA_FOUND TRUE)
-        
-        # Find Lua library
-        if(EXISTS "${VCPKG_LUA_PATH}/lib/lua.lib")
-            set(LUA_LIBRARIES "${VCPKG_LUA_PATH}/lib/lua.lib")
-        elseif(EXISTS "${VCPKG_LUA_PATH}/lib/lua54.lib")
-            set(LUA_LIBRARIES "${VCPKG_LUA_PATH}/lib/lua54.lib")
-        elseif(EXISTS "${VCPKG_LUA_PATH}/lib/lua53.lib")
-            set(LUA_LIBRARIES "${VCPKG_LUA_PATH}/lib/lua53.lib")
-        else()
-            message(WARNING "Lua include found but library not found in ${VCPKG_LUA_PATH}/lib/")
-            set(LUA_FOUND FALSE)
-        endif()
     else()
-        message(STATUS "Lua not found in vcpkg either")
-        message(WARNING "Lua not found! Lua scripting will be disabled.")
-        message(STATUS "To enable Lua support:")
-        message(STATUS "  Option 1: vcpkg install lua:x64-windows")
-        message(STATUS "  Option 2: Download from lua.org and install manually")
-        message(STATUS "  Option 3: For CMake to find vcpkg Lua, use: cmake -DCMAKE_TOOLCHAIN_FILE=%USERPROFILE%/vcpkg/scripts/buildsystems/vcpkg.cmake ..")
+        # Try manual search in vcpkg directories
+        set(VCPKG_TRIPLET "x64-windows")
+        set(VCPKG_LUA_PATH "$ENV{USERPROFILE}/vcpkg/installed/${VCPKG_TRIPLET}")
         
-        set(LUA_INCLUDE_DIR "")
-        set(LUA_LIBRARIES "")
+        if(EXISTS "${VCPKG_LUA_PATH}/include/lua.h")
+            message(STATUS "Found Lua in vcpkg at ${VCPKG_LUA_PATH}")
+            set(LUA_INCLUDE_DIR "${VCPKG_LUA_PATH}/include")
+            set(LUA_FOUND TRUE)
+            
+            # Find Lua library
+            if(EXISTS "${VCPKG_LUA_PATH}/lib/lua.lib")
+                set(LUA_LIBRARIES "${VCPKG_LUA_PATH}/lib/lua.lib")
+                set(LUA_DLL_PATH "${VCPKG_LUA_PATH}/bin/lua.dll")
+            elseif(EXISTS "${VCPKG_LUA_PATH}/lib/lua54.lib")
+                set(LUA_LIBRARIES "${VCPKG_LUA_PATH}/lib/lua54.lib")
+                set(LUA_DLL_PATH "${VCPKG_LUA_PATH}/bin/lua54.dll")
+            elseif(EXISTS "${VCPKG_LUA_PATH}/lib/lua53.lib")
+                set(LUA_LIBRARIES "${VCPKG_LUA_PATH}/lib/lua53.lib")
+                set(LUA_DLL_PATH "${VCPKG_LUA_PATH}/bin/lua53.dll")
+            else()
+                message(WARNING "Lua include found but library not found in ${VCPKG_LUA_PATH}/lib/")
+                set(LUA_FOUND FALSE)
+            endif()
+        else()
+            # Try Scoop installation
+            set(SCOOP_LUA_PATH "$ENV{USERPROFILE}/scoop/apps/lua/current")
+            if(EXISTS "${SCOOP_LUA_PATH}/include/lua.h")
+                message(STATUS "Found Lua in Scoop at ${SCOOP_LUA_PATH}")
+                set(LUA_INCLUDE_DIR "${SCOOP_LUA_PATH}/include")
+                set(LUA_DLL_PATH "${SCOOP_LUA_PATH}/bin/lua54.dll")
+                # Scoop only ships MinGW .a files; need extern/lua/lua54.lib import lib
+                if(EXISTS "${BUNDLED_LUA_PATH}/lua54.lib")
+                    set(LUA_LIBRARIES "${BUNDLED_LUA_PATH}/lua54.lib")
+                    set(LUA_FOUND TRUE)
+                else()
+                    message(WARNING "Scoop Lua found but no MSVC import library. Run: dumpbin/lib to create extern/lua/lua54.lib")
+                    set(LUA_FOUND FALSE)
+                endif()
+            else()
+                message(STATUS "Lua not found in vcpkg or Scoop either")
+                message(WARNING "Lua not found! Lua scripting will be disabled.")
+                message(STATUS "To enable Lua support:")
+                message(STATUS "  Option 1: vcpkg install lua:x64-windows")
+                message(STATUS "  Option 2: scoop install lua")
+                message(STATUS "  Option 3: Place lua.h + lua54.lib in extern/lua/")
+                
+                set(LUA_INCLUDE_DIR "")
+                set(LUA_LIBRARIES "")
+            endif()
+        endif()
     endif()
 else()
     message(STATUS "Found Lua: ${LUA_LIBRARIES}")
@@ -340,13 +369,13 @@ if(LUA_FOUND)
     target_compile_definitions(HephaestusEngine PRIVATE LUA_AVAILABLE=1)
     
     # Copy Lua DLL to output directory
-    set(VCPKG_LUA_DLL_PATH "$ENV{USERPROFILE}/vcpkg/installed/x64-windows/bin/lua.dll")
-    if(EXISTS "${VCPKG_LUA_DLL_PATH}")
+    if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
+        get_filename_component(LUA_DLL_NAME "${LUA_DLL_PATH}" NAME)
         add_custom_command(TARGET HephaestusEngine POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${VCPKG_LUA_DLL_PATH}"
-                "$<TARGET_FILE_DIR:HephaestusEngine>/lua.dll"
-            COMMENT "Copying lua.dll to output directory"
+                "${LUA_DLL_PATH}"
+                "$<TARGET_FILE_DIR:HephaestusEngine>/${LUA_DLL_NAME}"
+            COMMENT "Copying ${LUA_DLL_NAME} to output directory"
         )
     endif()
 else()
@@ -745,13 +774,13 @@ set_target_properties(HephaestusGame PROPERTIES
 
 # Copy Lua DLL to game output directory if using scripting
 if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND AND WIN32)
-    set(VCPKG_LUA_DLL_PATH "$ENV{USERPROFILE}/vcpkg/installed/x64-windows/bin/lua.dll")
-    if(EXISTS "${VCPKG_LUA_DLL_PATH}")
+    if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
+        get_filename_component(LUA_DLL_NAME "${LUA_DLL_PATH}" NAME)
         add_custom_command(TARGET HephaestusGame POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${VCPKG_LUA_DLL_PATH}"
-                "$<TARGET_FILE_DIR:HephaestusGame>/lua.dll"
-            COMMENT "Copying lua.dll to game output directory"
+                "${LUA_DLL_PATH}"
+                "$<TARGET_FILE_DIR:HephaestusGame>/${LUA_DLL_NAME}"
+            COMMENT "Copying ${LUA_DLL_NAME} to game output directory"
         )
     endif()
 endif()

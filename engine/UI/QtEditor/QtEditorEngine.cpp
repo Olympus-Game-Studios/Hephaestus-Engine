@@ -1411,6 +1411,11 @@ void QtEditorEngine::SetProjectRoot(const std::string& projectRoot)
     }
     std::cout << "[QtEditorEngine] Project root set to: " << m_projectRoot << "\n";
     std::cout << "[QtEditorEngine] Asset root set to: " << m_assetRoot << "\n";
+
+    // Keep Lua search paths in sync so relative script paths keep resolving.
+    if (m_luaScriptEngine) {
+        m_luaScriptEngine->SetProjectRoot(std::filesystem::path(m_projectRoot));
+    }
 }
 
 std::string QtEditorEngine::normalizeAssetPath(const std::string& assetPath) const
@@ -1858,6 +1863,30 @@ void QtEditorEngine::StartPlayMode()
 
     Scene* scene = m_editorContext.GetActiveScene();
 
+    // Resolve project root once and share it across subsystems (physics, Lua, renderer).
+    std::filesystem::path projectRootPath;
+    if (!m_projectRoot.empty()) {
+        projectRootPath = std::filesystem::path(m_projectRoot).lexically_normal();
+    } else {
+        const std::string& scenePathStr = m_editorContext.GetScenePath();
+        if (!scenePathStr.empty()) {
+            std::filesystem::path cursor = std::filesystem::path(scenePathStr).parent_path();
+            while (!cursor.empty() && cursor.has_filename() && cursor.filename() != "assets") {
+                std::filesystem::path parent = cursor.parent_path();
+                if (parent == cursor) {
+                    break;
+                }
+                cursor = parent;
+            }
+            if (!cursor.empty() && cursor.has_filename() && cursor.filename() == "assets") {
+                projectRootPath = cursor.parent_path();
+            }
+        }
+        if (projectRootPath.empty()) {
+            projectRootPath = std::filesystem::current_path();
+        }
+    }
+
     // Ensure Jolt physics is ready in Play Mode (do not depend on FocusOnSelection side-effects).
     if (!m_joltPhysicsEngine) {
         m_joltPhysicsEngine = std::make_unique<Physics::JoltPhysicsEngine>();
@@ -1873,26 +1902,7 @@ void QtEditorEngine::StartPlayMode()
     }
 
     if (m_physicsInitialized && m_joltPhysicsSystem) {
-        std::filesystem::path projectRoot;
-        const std::string& scenePathStr = m_editorContext.GetScenePath();
-        if (!scenePathStr.empty()) {
-            std::filesystem::path cursor = std::filesystem::path(scenePathStr).parent_path();
-            while (!cursor.empty() && cursor.has_filename() && cursor.filename() != "assets") {
-                std::filesystem::path parent = cursor.parent_path();
-                if (parent == cursor) {
-                    break;
-                }
-                cursor = parent;
-            }
-            if (!cursor.empty() && cursor.has_filename() && cursor.filename() == "assets") {
-                projectRoot = cursor.parent_path();
-            }
-        }
-        if (projectRoot.empty()) {
-            projectRoot = std::filesystem::current_path();
-        }
-
-        m_joltPhysicsSystem->SetProjectRoot(projectRoot);
+        m_joltPhysicsSystem->SetProjectRoot(projectRootPath);
         m_joltPhysicsSystem->ClearAllBodies();
         m_joltPhysicsSystem->SetEnabled(true);
     }
@@ -1908,6 +1918,7 @@ void QtEditorEngine::StartPlayMode()
     if (!m_luaScriptEngine) {
         m_luaScriptEngine = std::make_unique<LuaScriptEngine>();
         m_luaScriptEngine->Initialize(scene, m_glfwWindow);
+        m_luaScriptEngine->SetProjectRoot(projectRootPath);
 
         // Set camera binding that routes through PlayModeManager
         CameraBinding camBinding;
@@ -1947,6 +1958,7 @@ void QtEditorEngine::StartPlayMode()
     } else {
         // Re-associate with current scene
         m_luaScriptEngine->Initialize(scene, m_glfwWindow);
+        m_luaScriptEngine->SetProjectRoot(projectRootPath);
     }
 
     // Provide Jolt physics callbacks to Lua scripts in Qt play mode.
