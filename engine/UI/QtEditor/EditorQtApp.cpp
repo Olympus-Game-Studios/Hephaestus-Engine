@@ -64,6 +64,12 @@ int RunQtEditor(int argc, char** argv)
 
     const std::string startupProjectPath = ExtractProjectPathArg(argc, argv);
 
+    // Qt 6 enables high-DPI scaling by default. Use PassThrough rounding so
+    // fractional scale factors (e.g. 125%, 150%) are honoured precisely,
+    // avoiding blurry text on laptop displays.
+    QApplication::setHighDpiScaleFactorRoundingPolicy(
+        Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+
     // Create Qt application
     QApplication app(argc, argv);
     

@@ -42,6 +42,7 @@
 #include <QStatusBar>
 #include <QDockWidget>
 #include <QTreeWidget>
+#include <QHeaderView>
 #include <QListWidget>
 #include <QFormLayout>
 #include <QVBoxLayout>
@@ -702,8 +703,8 @@ void EditorMainWindow::setupDockWidgets()
     m_outlinerPanel = new QWidget(m_outlinerDock);
     m_outlinerPanel->setObjectName("OutlinerPanel");
     auto* outlinerLayout = new QVBoxLayout(m_outlinerPanel);
-    outlinerLayout->setContentsMargins(12, 12, 12, 12);
-    outlinerLayout->setSpacing(8);
+    outlinerLayout->setContentsMargins(8, 8, 8, 8);
+    outlinerLayout->setSpacing(6);
 
     auto* outlinerHeader = new QHBoxLayout();
     m_outlinerSearch = new QLineEdit(m_outlinerPanel);
@@ -721,6 +722,9 @@ void EditorMainWindow::setupDockWidgets()
     m_outlinerTree->setRootIsDecorated(true);
     m_outlinerTree->setIndentation(18);
     m_outlinerTree->setUniformRowHeights(true);
+    m_outlinerTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_outlinerTree->header()->setStretchLastSection(true);
+    m_outlinerTree->setTextElideMode(Qt::ElideRight);
     outlinerLayout->addWidget(m_outlinerTree, 1);
 
     m_outlinerDock->setWidget(m_outlinerPanel);
@@ -776,12 +780,13 @@ void EditorMainWindow::setupDockWidgets()
     m_detailsScrollArea = new QScrollArea(m_detailsDock);
     m_detailsScrollArea->setWidgetResizable(true);
     m_detailsScrollArea->setFrameShape(QFrame::NoFrame);
+    m_detailsScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
     m_detailsWidget = new QWidget();
     m_detailsWidget->setObjectName("DetailsPanel");
     m_detailsLayout = new QVBoxLayout(m_detailsWidget);
-    m_detailsLayout->setContentsMargins(12, 12, 12, 12);
-    m_detailsLayout->setSpacing(10);
+    m_detailsLayout->setContentsMargins(8, 8, 8, 8);
+    m_detailsLayout->setSpacing(8);
 
     // ── Header row: Entity ID + Lock checkbox ───────────────────────────
     {
@@ -821,6 +826,7 @@ void EditorMainWindow::setupDockWidgets()
 
     // Name field
     QFormLayout* nameLayout = new QFormLayout();
+    nameLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     m_nameEdit = new QLineEdit();
     m_nameEdit->setPlaceholderText(tr("(No selection)"));
     m_nameEdit->setEnabled(false);
@@ -836,6 +842,7 @@ void EditorMainWindow::setupDockWidgets()
     QFormLayout* transformLayout = new QFormLayout(m_transformGroup);
     transformLayout->setContentsMargins(12, 12, 12, 12);
     transformLayout->setSpacing(8);
+    transformLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
     auto* transformControls = new QWidget(m_transformGroup);
     auto* transformControlsLayout = new QHBoxLayout(transformControls);
@@ -874,7 +881,7 @@ void EditorMainWindow::setupDockWidgets()
             sb->setRange(min, max);
             sb->setSingleStep(step);
             sb->setDecimals(decimals);
-            sb->setMinimumWidth(60);
+            sb->setMinimumWidth(50);
             rowLayout->addWidget(sb);
         };
 
@@ -1020,7 +1027,6 @@ void EditorMainWindow::setupDockWidgets()
     // Create the new asset browser widget
     m_assetBrowser = new AssetBrowserWidget(this, m_assetBrowserDock);
     m_assetBrowserDock->setWidget(m_assetBrowser);
-    m_assetBrowserDock->setMinimumHeight(200);
 
     // Create asset actions handler
     m_assetActions = std::make_unique<EditorAssetActions>(this);
@@ -1531,11 +1537,11 @@ QListView::item:selected {
 
 QLabel#DetailsEntityId {
     color: #9DA3AE;
-    font-size: 10px;
+    font-size: 8pt;
 }
 QLabel#DetailsEntityIcon {
     color: #4C8DFF;
-    font-size: 12px;
+    font-size: 9pt;
 }
 
 QLineEdit, QComboBox, QDoubleSpinBox {

@@ -86,8 +86,8 @@ void AssetBrowserWidget::setupUI()
 {
     setObjectName("AssetBrowserRoot");
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(12, 12, 12, 12);
-    mainLayout->setSpacing(8);
+    mainLayout->setContentsMargins(8, 8, 8, 8);
+    mainLayout->setSpacing(6);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Top Toolbar
@@ -149,7 +149,7 @@ void AssetBrowserWidget::setupUI()
 
     // Breadcrumb label
     m_breadcrumbLabel = new QLabel(tr("Assets"), this);
-    m_breadcrumbLabel->setMinimumWidth(100);
+    m_breadcrumbLabel->setMinimumWidth(40);
     QFont breadcrumbFont = m_breadcrumbLabel->font();
     breadcrumbFont.setBold(true);
     m_breadcrumbLabel->setFont(breadcrumbFont);
@@ -203,8 +203,10 @@ void AssetBrowserWidget::setupUI()
     m_folderTree->setSelectionMode(QAbstractItemView::SingleSelection);
     m_folderTree->setIndentation(18);
     m_folderTree->setAnimated(true);
+    m_folderTree->setMinimumHeight(0);
     connect(m_folderTree, &QTreeView::clicked, this, &AssetBrowserWidget::onFolderTreeClicked);
     leftLayout->addWidget(m_folderTree, 1);
+    leftPanel->setMinimumSize(0, 0);
     m_splitter->addWidget(leftPanel);
 
     // Right panel - Contents
@@ -224,33 +226,41 @@ void AssetBrowserWidget::setupUI()
     m_contentsView->setUniformItemSizes(true);
     m_contentsView->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_contentsView->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_contentsView->setMinimumHeight(0);
     connect(m_contentsView, &QListView::doubleClicked, this, &AssetBrowserWidget::onContentsDoubleClicked);
     connect(m_contentsView, &QListView::clicked, this, &AssetBrowserWidget::onContentsClicked);
     contentsLayout->addWidget(m_contentsView);
 
+    m_contentsPanel->setMinimumSize(0, 0);
     m_splitter->addWidget(m_contentsPanel);
-    m_splitter->setSizes({220, 760});
+    m_splitter->setSizes({180, 600});
+    m_splitter->setChildrenCollapsible(true);
+    m_splitter->setMinimumHeight(0);
+    m_splitter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-    mainLayout->addWidget(m_splitter);
+    mainLayout->addWidget(m_splitter, 1);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Empty State Widget (overlay)
     // ─────────────────────────────────────────────────────────────────────────
     m_emptyStateWidget = new QWidget(this);
+    m_emptyStateWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     QVBoxLayout* emptyLayout = new QVBoxLayout(m_emptyStateWidget);
     emptyLayout->setAlignment(Qt::AlignCenter);
+    emptyLayout->setContentsMargins(4, 4, 4, 4);
+    emptyLayout->setSpacing(4);
 
     QLabel* emptyIcon = new QLabel(this);
-    emptyIcon->setText(QString::fromUtf8("📁"));
+    emptyIcon->setText(QString::fromUtf8("\xF0\x9F\x93\x81"));
     QFont iconFont = emptyIcon->font();
-    iconFont.setPointSize(48);
+    iconFont.setPointSize(28);
     emptyIcon->setFont(iconFont);
     emptyIcon->setAlignment(Qt::AlignCenter);
     emptyLayout->addWidget(emptyIcon);
 
     QLabel* emptyLabel = new QLabel(tr("No project open"), this);
     QFont labelFont = emptyLabel->font();
-    labelFont.setPointSize(14);
+    labelFont.setPointSize(11);
     emptyLabel->setFont(labelFont);
     emptyLabel->setAlignment(Qt::AlignCenter);
     emptyLayout->addWidget(emptyLabel);
@@ -261,11 +271,10 @@ void AssetBrowserWidget::setupUI()
     emptyLayout->addWidget(emptySubLabel);
 
     m_openProjectButton = new QPushButton(tr("Open Project..."), this);
-    m_openProjectButton->setMinimumWidth(150);
     connect(m_openProjectButton, &QPushButton::clicked, this, &AssetBrowserWidget::onOpenProjectButtonClicked);
     emptyLayout->addWidget(m_openProjectButton, 0, Qt::AlignCenter);
 
-    mainLayout->addWidget(m_emptyStateWidget);
+    mainLayout->addWidget(m_emptyStateWidget, 1);
     m_emptyStateWidget->hide();
 
     // ─────────────────────────────────────────────────────────────────────────
