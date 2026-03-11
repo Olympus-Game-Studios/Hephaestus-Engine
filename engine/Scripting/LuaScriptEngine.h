@@ -78,6 +78,14 @@ struct RuntimeInputState {
     double mouseX = 0.0;
     double mouseY = 0.0;
 
+    /// Mouse movement delta (pixels) since last frame.
+    double mouseDeltaX = 0.0;
+    double mouseDeltaY = 0.0;
+
+    /// Cursor mode requested by Lua scripts.
+    /// 0 = normal, 1 = disabled (captured + hidden + infinite movement)
+    int cursorModeRequest = 0;
+
     /// Set to true each frame the host has populated these fields.
     bool valid = false;
 
@@ -85,6 +93,8 @@ struct RuntimeInputState {
         for (int i = 0; i < kMaxKeys; ++i) keys[i] = false;
         for (int i = 0; i < kMaxMouseButtons; ++i) mouseButtons[i] = false;
         mouseX = mouseY = 0.0;
+        mouseDeltaX = mouseDeltaY = 0.0;
+        cursorModeRequest = 0;
         valid = false;
     }
 };
@@ -201,6 +211,10 @@ private:
     CameraBinding m_CameraBinding{};
     PhysicsBinding m_PhysicsBinding{};
     RuntimeInputState m_RuntimeInput{};
+    double m_LastMouseX = 0.0;
+    double m_LastMouseY = 0.0;
+    bool m_HasLastMousePos = false;
+    int m_CurrentCursorMode = 0; // 0=normal, 1=disabled
 
     struct ScriptInstance {
         uint32_t entityId = 0;
@@ -305,6 +319,8 @@ private:
     static int Lua_Input_isKeyPressed(lua_State* L);
     static int Lua_Input_isMouseButtonPressed(lua_State* L);
     static int Lua_Input_getMousePosition(lua_State* L);
+    static int Lua_Input_getMouseDelta(lua_State* L);
+    static int Lua_Input_setCursorMode(lua_State* L);
 
     static int Lua_Time_deltaTime(lua_State* L);
 

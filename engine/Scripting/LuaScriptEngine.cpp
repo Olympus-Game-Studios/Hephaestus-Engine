@@ -363,6 +363,18 @@ void LuaScriptEngine::OnSimulationStopped() {
         return;
     }
 
+    // Restore cursor mode to normal
+    if (m_CurrentCursorMode != 0) {
+        if (m_RuntimeInput.valid) {
+            m_RuntimeInput.cursorModeRequest = 0;
+        } else if (m_Window) {
+            glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            glfwSetInputMode(m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+        }
+        m_CurrentCursorMode = 0;
+        m_HasLastMousePos = false;
+    }
+
     if (m_CameraBinding.setActive) {
         m_CameraBinding.setActive(false);
     }
@@ -511,6 +523,12 @@ void LuaScriptEngine::RegisterInputBindings() {
 
     lua_pushcfunction(m_State, Lua_Input_getMousePosition);
     lua_setfield(m_State, -2, "getMousePosition");
+
+    lua_pushcfunction(m_State, Lua_Input_getMouseDelta);
+    lua_setfield(m_State, -2, "getMouseDelta");
+
+    lua_pushcfunction(m_State, Lua_Input_setCursorMode);
+    lua_setfield(m_State, -2, "setCursorMode");
 
     lua_setglobal(m_State, "Input");
 #endif
@@ -1733,6 +1751,98 @@ int LuaScriptEngine::Lua_Input_getMousePosition(lua_State* L) {
     lua_pushnumber(L, y);
     lua_setfield(L, -2, "y");
     return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Input_getMouseDelta(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_newtable(L);
+        lua_pushnumber(L, 0.0);
+        lua_setfield(L, -2, "x");
+        lua_pushnumber(L, 0.0);
+        lua_setfield(L, -2, "y");
+        return 1;
+    }
+
+    double dx = 0.0;
+    double dy = 0.0;
+
+    // RuntimeInputState path (Qt editor): host provides deltas
+    if (engine->m_RuntimeInput.valid) {
+        dx = engine->m_RuntimeInput.mouseDeltaX;
+        dy = engine->m_RuntimeInput.mouseDeltaY;
+    } else if (engine->m_Window) {
+        // GLFW path: compute deltas from absolute position
+        double mx = 0.0, my = 0.0;
+        glfwGetCursorPos(engine->m_Window, &mx, &my);
+        if (engine->m_HasLastMousePos) {
+            dx = mx - engine->m_LastMouseX;
+            dy = my - engine->m_LastMouseY;
+        }
+        engine->m_LastMouseX = mx;
+        engine->m_LastMouseY = my;
+        engine->m_HasLastMousePos = true;
+    }
+
+    lua_newtable(L);
+    lua_pushnumber(L, dx);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, dy);
+    lua_setfield(L, -2, "y");
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Input_setCursorMode(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) return 0;
+
+    const char* modeStr = luaL_checkstring(L, 1);
+    std::string mode = modeStr ? modeStr : "";
+
+    // Normalize to lowercase
+    for (auto& c : mode) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    int newMode = 0;
+    if (mode == "disabled" || mode == "captured" || mode == "locked") {
+        newMode = 1;
+    } else if (mode == "normal" || mode == "default") {
+        newMode = 0;
+    } else {
+        luaL_error(L, "Input.setCursorMode: unknown mode '%s' (use 'disabled' or 'normal')", modeStr);
+        return 0;
+    }
+
+    // If using RuntimeInputState (Qt editor), set the request flag for the host
+    if (engine->m_RuntimeInput.valid) {
+        engine->m_RuntimeInput.cursorModeRequest = newMode;
+    } else if (engine->m_Window) {
+        // GLFW path: apply directly
+        int glfwMode = (newMode == 1) ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
+        glfwSetInputMode(engine->m_Window, GLFW_CURSOR, glfwMode);
+
+        // Enable raw mouse motion if available and entering disabled mode
+        if (newMode == 1 && glfwRawMouseMotionSupported()) {
+            glfwSetInputMode(engine->m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+        } else if (newMode == 0) {
+            glfwSetInputMode(engine->m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+        }
+
+        // Reset delta tracking on mode change to avoid jump
+        engine->m_HasLastMousePos = false;
+    }
+
+    engine->m_CurrentCursorMode = newMode;
+    return 0;
 #else
     (void)L;
     return 0;

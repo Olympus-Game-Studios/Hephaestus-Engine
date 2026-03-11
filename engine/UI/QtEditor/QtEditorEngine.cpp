@@ -940,9 +940,20 @@ void QtEditorEngine::populateRuntimeInputState()
         ris.mouseButtons[i] = m_runtimeMouseButtons[i];
     }
 
-    // Copy mouse position
+    // Copy mouse position and compute deltas
+    double prevX = ris.mouseX;
+    double prevY = ris.mouseY;
     ris.mouseX = m_runtimeMouseX;
     ris.mouseY = m_runtimeMouseY;
+    ris.mouseDeltaX = m_runtimeMouseX - prevX;
+    ris.mouseDeltaY = m_runtimeMouseY - prevY;
+
+    // Handle cursor capture requested by Lua scripts
+    if (ris.cursorModeRequest == 1 && m_viewport && !m_viewport->IsCursorCaptured()) {
+        m_viewport->CaptureCursor();
+    } else if (ris.cursorModeRequest == 0 && m_viewport && m_viewport->IsCursorCaptured()) {
+        m_viewport->ReleaseCursor();
+    }
 }
 
 void QtEditorEngine::FocusOnSelection()
@@ -2151,6 +2162,11 @@ void QtEditorEngine::StopPlayMode()
     }
 
     m_playModeManager.StopPlayMode();
+
+    // Release cursor if Lua scripts captured it during play
+    if (m_viewport && m_viewport->IsCursorCaptured()) {
+        m_viewport->ReleaseCursor();
+    }
 
     // Restore gizmo visibility
     m_editorContext.GetViewportSettings().showGizmo = m_editorGizmoVisibleBeforePlay;
