@@ -13,6 +13,7 @@
 #include <QMainWindow>
 #include <QDockWidget>
 #include <QTreeWidget>
+#include <QDropEvent>
 #include <QListWidget>
 #include <QFormLayout>
 #include <QLabel>
@@ -57,6 +58,28 @@ class EditorAssetActions;
 class LightInspector;
 class EnvironmentInspector;
 class ComponentInspector;
+
+/**
+ * QTreeWidget subclass that emits a signal after drag-and-drop operations.
+ * QTreeWidget's internal move uses remove+insert (not moveRows), so the
+ * standard rowsMoved signal is never emitted. This subclass overrides
+ * dropEvent to emit itemsDropped() after the drop completes.
+ */
+class OutlinerTreeWidget : public QTreeWidget
+{
+    Q_OBJECT
+public:
+    using QTreeWidget::QTreeWidget;
+signals:
+    void itemsDropped();
+protected:
+    void dropEvent(QDropEvent* event) override {
+        QTreeWidget::dropEvent(event);
+        if (event->isAccepted()) {
+            emit itemsDropped();
+        }
+    }
+};
 
 /**
  * @brief Main editor window with dockable panels.
@@ -188,7 +211,7 @@ private:
     QLineEdit* m_outlinerSearch = nullptr;
     QPushButton* m_addEntityBtn = nullptr;
     QPushButton* m_addFolderBtn = nullptr;
-    QTreeWidget* m_outlinerTree = nullptr;
+    OutlinerTreeWidget* m_outlinerTree = nullptr;
 
     // Details panel (inspector)
     QWidget* m_detailsWidget = nullptr;

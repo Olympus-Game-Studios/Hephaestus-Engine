@@ -719,7 +719,7 @@ void EditorMainWindow::setupDockWidgets()
     outlinerHeader->addWidget(m_addEntityBtn);
     outlinerLayout->addLayout(outlinerHeader);
 
-    m_outlinerTree = new QTreeWidget(m_outlinerPanel);
+    m_outlinerTree = new OutlinerTreeWidget(m_outlinerPanel);
     m_outlinerTree->setObjectName("OutlinerTree");
     m_outlinerTree->setHeaderLabel(tr("Scene Hierarchy"));
     m_outlinerTree->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -745,7 +745,7 @@ void EditorMainWindow::setupDockWidgets()
             this, &EditorMainWindow::onOutlinerContextMenu);
 
     // Handle drag & drop reparenting
-    connect(m_outlinerTree->model(), &QAbstractItemModel::rowsMoved, this, [this]() {
+    connect(m_outlinerTree, &OutlinerTreeWidget::itemsDropped, this, [this]() {
         // After Qt moves items in the tree, sync the hierarchy back to the scene
         if (!m_engine) return;
         auto* ctx = m_engine->GetEditorContext();
