@@ -203,6 +203,9 @@ public:
     void SetRuntimeInputState(const RuntimeInputState& state);
     RuntimeInputState& GetRuntimeInputState() { return m_RuntimeInput; }
 
+    using QuitRequestCallback = std::function<void()>;
+    void SetQuitRequestCallback(QuitRequestCallback cb) { m_QuitRequestCallback = std::move(cb); }
+
 private:
     lua_State* m_State = nullptr;
     Scene* m_Scene = nullptr;
@@ -211,6 +214,7 @@ private:
     CameraBinding m_CameraBinding{};
     PhysicsBinding m_PhysicsBinding{};
     RuntimeInputState m_RuntimeInput{};
+    QuitRequestCallback m_QuitRequestCallback;
     double m_LastMouseX = 0.0;
     double m_LastMouseY = 0.0;
     bool m_HasLastMousePos = false;
@@ -324,6 +328,8 @@ private:
 
     static int Lua_Time_deltaTime(lua_State* L);
 
+    static int Lua_Application_quit(lua_State* L);
+
     static int Lua_Camera_setActive(lua_State* L);
     static int Lua_Camera_isActive(lua_State* L);
     static int Lua_Camera_setPosition(lua_State* L);
@@ -373,6 +379,7 @@ private:
     static int Lua_Scene_SetActiveCamera(lua_State* L);
     static int Lua_Scene_GetActiveCamera(lua_State* L);
 
+    void RegisterApplicationBindings();
     void RegisterThisBindings();
     void RegisterSceneBindings();
 };

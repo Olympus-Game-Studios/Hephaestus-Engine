@@ -308,6 +308,9 @@ void QtViewportWindow::CaptureCursor()
     setMouseGrabEnabled(true);
     m_cursorCaptured = true;
     
+    // Ensure keyboard focus so key events reach the viewport
+    requestActivate();
+    
     std::cout << "[QtViewport] Cursor captured\n";
 }
 

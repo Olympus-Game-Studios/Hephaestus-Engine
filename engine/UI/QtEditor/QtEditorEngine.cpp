@@ -1090,6 +1090,11 @@ void QtEditorEngine::onTick()
         }
 
         m_playModeManager.Tick(dt);
+
+        if (m_playModeManager.IsStopRequested()) {
+            m_playModeManager.ClearStopRequest();
+            StopPlayMode();
+        }
     } else if (m_joltPhysicsSystem) {
         m_joltPhysicsSystem->SetEnabled(false);
     }
@@ -2138,6 +2143,9 @@ void QtEditorEngine::StartPlayMode()
     // Wire up engines to the play mode manager
     m_playModeManager.SetScene(scene);
     m_playModeManager.SetLuaScriptEngine(m_luaScriptEngine.get());
+    m_luaScriptEngine->SetQuitRequestCallback([this]() {
+        m_playModeManager.RequestStop();
+    });
     m_playModeManager.SetCppScriptEngine(m_cppScriptEngine.get());
     m_playModeManager.SetLogCallback([](const std::string& msg) {
         std::cout << msg << std::endl;

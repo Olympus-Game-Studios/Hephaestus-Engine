@@ -152,6 +152,11 @@ public:
     /// Returns true when editor gizmo / selection should be suppressed.
     bool ShouldSuppressEditorInteraction() const;
 
+    /// Scripts can request that play mode be stopped (e.g. Application.quit()).
+    void RequestStop();
+    bool IsStopRequested() const { return m_stopRequested; }
+    void ClearStopRequest() { m_stopRequested = false; }
+
 private:
     void Log(const std::string& msg);
 
@@ -180,6 +185,9 @@ private:
     // Time
     float m_deltaTime = 0.0f;
     float m_timeSincePlay = 0.0f;
+
+    // Stop request (set by scripts via Application.quit())
+    bool m_stopRequested = false;
 
     // Logging
     PlayModeLogCallback m_logCb;

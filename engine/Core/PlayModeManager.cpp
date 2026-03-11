@@ -203,6 +203,10 @@ void PlayModeManager::StopPlayMode() {
 // Tick  (call once per frame from your render/update loop)
 // ─────────────────────────────────────────────────────────────────────────────
 
+void PlayModeManager::RequestStop() {
+    m_stopRequested = true;
+}
+
 void PlayModeManager::Tick(float dt) {
     m_deltaTime = dt;
 

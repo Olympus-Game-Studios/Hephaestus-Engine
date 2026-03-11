@@ -455,6 +455,7 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterTransformBindings();
     RegisterInputBindings();
     RegisterUtilityBindings();
+    RegisterApplicationBindings();
     RegisterCameraBindings();
     RegisterPhysicsBindings();
     RegisterThisBindings();
@@ -546,6 +547,34 @@ void LuaScriptEngine::RegisterUtilityBindings() {
     lua_pushcfunction(m_State, Lua_Time_deltaTime);
     lua_setfield(m_State, -2, "deltaTime");
     lua_setglobal(m_State, "Time");
+#endif
+}
+
+void LuaScriptEngine::RegisterApplicationBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+
+    lua_pushcfunction(m_State, Lua_Application_quit);
+    lua_setfield(m_State, -2, "quit");
+
+    lua_setglobal(m_State, "Application");
+#endif
+}
+
+int LuaScriptEngine::Lua_Application_quit(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (engine) {
+        if (engine->m_Window) {
+            glfwSetWindowShouldClose(engine->m_Window, GLFW_TRUE);
+        } else if (engine->m_QuitRequestCallback) {
+            engine->m_QuitRequestCallback();
+        }
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
 #endif
 }
 

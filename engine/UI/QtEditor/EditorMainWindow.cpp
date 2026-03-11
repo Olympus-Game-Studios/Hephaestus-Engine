@@ -1738,6 +1738,24 @@ void EditorMainWindow::initializeEngine()
             this, &EditorMainWindow::onFrameRendered);
     connect(m_engine.get(), &QtEditorEngine::engineError,
             this, &EditorMainWindow::onEngineError);
+    connect(m_engine.get(), &QtEditorEngine::playStateChanged,
+            this, [this](bool playing, bool paused) {
+        if (m_playAction)  m_playAction->setChecked(playing);
+        if (m_pauseAction) {
+            m_pauseAction->setChecked(paused);
+            m_pauseAction->setEnabled(playing);
+        }
+        if (m_stopAction)  m_stopAction->setEnabled(playing);
+        if (m_viewportHost) {
+            m_viewportHost->setProperty("playMode", playing);
+            m_viewportHost->style()->unpolish(m_viewportHost);
+            m_viewportHost->style()->polish(m_viewportHost);
+        }
+        if (!playing) {
+            rebuildOutliner();
+            refreshDetailsPanel();
+        }
+    });
     
     // Start Vulkan initialization
     if (!m_engine->InitializeVulkan()) {
