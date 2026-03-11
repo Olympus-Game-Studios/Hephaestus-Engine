@@ -20,6 +20,7 @@
 #include "PhysicsInspectors.h"
 #include "CameraInspector.h"
 #include "EditorUndoCommand.h"
+#include "BuildSettingsDialog.h"
 #include "../Shared/SettingsWindow.h"
 
 #include "../../Core/EditorContext.h"
@@ -653,17 +654,15 @@ void EditorMainWindow::setupTopToolbar()
     {
         auto [rightSection, rightLayout] = makeSection("TopToolbarRight");
 
-        auto* buildBtn = new QToolButton(rightSection);
-        buildBtn->setText(tr("Build"));
+        m_buildBtn = new QToolButton(rightSection);
+        m_buildBtn->setText(tr("Build"));
         const QSize buildIconSize(18, 18);
-        buildBtn->setIcon(makePlayGlyphIcon(buildIconSize, QColor(QStringLiteral("#E6E8EB"))));
-        buildBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        buildBtn->setIconSize(buildIconSize);
-        buildBtn->setFixedHeight(34);
-        connect(buildBtn, &QToolButton::clicked, this, [this]() {
-            statusBar()->showMessage(tr("Build requested: run the build task from VS Code tasks"), 4000);
-        });
-        rightLayout->addWidget(buildBtn);
+        m_buildBtn->setIcon(makePlayGlyphIcon(buildIconSize, QColor(QStringLiteral("#E6E8EB"))));
+        m_buildBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        m_buildBtn->setIconSize(buildIconSize);
+        m_buildBtn->setFixedHeight(34);
+        connect(m_buildBtn, &QToolButton::clicked, this, &EditorMainWindow::onBuildProject);
+        rightLayout->addWidget(m_buildBtn);
 
         auto* settingsBtn = new QToolButton(rightSection);
         settingsBtn->setText(tr("Settings"));
@@ -1260,6 +1259,23 @@ void EditorMainWindow::setupDockWidgets()
     addDockWidget(Qt::BottomDockWidgetArea, m_assetBrowserDock);
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Build Output Dock (Bottom, tabbed with Asset Browser)
+    // ─────────────────────────────────────────────────────────────────────────
+    m_buildOutputDock = new QDockWidget(tr("Build Output"), this);
+    m_buildOutputDock->setObjectName("BuildOutputDock");
+    m_buildOutputDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
+
+    m_buildOutputText = new QPlainTextEdit(m_buildOutputDock);
+    m_buildOutputText->setReadOnly(true);
+    m_buildOutputText->setFont(QFont("Consolas", 9));
+    m_buildOutputText->setMaximumBlockCount(5000);
+    m_buildOutputDock->setWidget(m_buildOutputText);
+
+    addDockWidget(Qt::BottomDockWidgetArea, m_buildOutputDock);
+    tabifyDockWidget(m_assetBrowserDock, m_buildOutputDock);
+    m_assetBrowserDock->raise(); // Asset browser stays visible by default
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Add Actors Dock (Left, tabbed with Outliner)
     // ─────────────────────────────────────────────────────────────────────────
     m_addActorsDock = new QDockWidget(tr("Add Actors"), this);
@@ -1289,6 +1305,7 @@ void EditorMainWindow::setupDockWidgets()
         viewMenu->addAction(m_addActorsDock->toggleViewAction());
         viewMenu->addAction(m_detailsDock->toggleViewAction());
         viewMenu->addAction(m_assetBrowserDock->toggleViewAction());
+        viewMenu->addAction(m_buildOutputDock->toggleViewAction());
         
         // Viewport rendering toggles are added after engine initialization
         // (see setupViewportRenderingToggles called from initializeEngine)
@@ -3073,8 +3090,214 @@ void EditorMainWindow::onAbout()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Component Inspector Registry + Helpers
+// Build
 // ─────────────────────────────────────────────────────────────────────────────
+
+void EditorMainWindow::onBuildProject()
+{
+    // Don't start another build while one is running
+    if (m_buildProcess && m_buildProcess->state() != QProcess::NotRunning) {
+        statusBar()->showMessage(tr("Build already in progress..."), 3000);
+        m_buildOutputDock->raise();
+        return;
+    }
+
+    // Determine the engine root directory (the folder containing the build/ directory).
+    // The running executable lives in build/Release/ (or build/Debug/), so go up two levels.
+    QString appDir = QCoreApplication::applicationDirPath();
+    QDir engineRoot(appDir);
+    engineRoot.cdUp(); // build/Release -> build/
+    engineRoot.cdUp(); // build/ -> engine root
+
+    QString buildDir = engineRoot.absoluteFilePath("build");
+    if (!QDir(buildDir).exists()) {
+        QMessageBox::warning(this, tr("Build Error"),
+            tr("Cannot find build directory at:\n%1\n\n"
+               "Make sure CMake has been configured first.").arg(buildDir));
+        return;
+    }
+
+    // Resolve project name and path
+    QString projectName;
+    QString projectPath;
+    if (m_projectContext && m_projectContext->HasProject()) {
+        projectName = QString::fromStdString(m_projectContext->GetProjectName());
+        projectPath = QString::fromStdString(m_projectContext->GetProjectRootDir());
+    }
+    if (projectName.isEmpty()) {
+        projectName = QStringLiteral("HephaestusGame");
+    }
+    if (projectPath.isEmpty()) {
+        projectPath = engineRoot.absolutePath();
+    }
+
+    // Scan for .hpscene files in project and engine asset directories
+    QStringList sceneFiles;
+    auto scanDir = [&](const QString& rootDir) {
+        QDir scenesDir(rootDir + "/assets/scenes");
+        if (!scenesDir.exists()) return;
+        for (const QFileInfo& fi : scenesDir.entryInfoList({"*.hpscene"}, QDir::Files)) {
+            // Store as relative path: assets/scenes/Name.hpscene
+            QString rel = "assets/scenes/" + fi.fileName();
+            if (!sceneFiles.contains(rel))
+                sceneFiles.append(rel);
+        }
+    };
+    scanDir(projectPath);
+    if (projectPath != engineRoot.absolutePath())
+        scanDir(engineRoot.absolutePath());
+
+    // Show Build Settings dialog
+    BuildSettingsDialog dlg(projectName, sceneFiles, this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    m_lastBuildSettings = dlg.GetSettings();
+
+    // Show the build output dock
+    m_buildOutputDock->show();
+    m_buildOutputDock->raise();
+    m_buildOutputText->clear();
+
+    m_buildBtn->setEnabled(false);
+    m_buildExportPhase = false; // Start with compile phase
+
+    m_buildOutputText->appendPlainText(tr("=== Building game: %1 ===").arg(projectName));
+    if (!m_lastBuildSettings.startScene.isEmpty()) {
+        m_buildOutputText->appendPlainText(tr("Start scene: %1").arg(m_lastBuildSettings.startScene));
+    }
+    m_buildOutputText->appendPlainText(QString());
+    statusBar()->showMessage(tr("Compiling %1...").arg(projectName));
+
+    // Create the process (once, reused for both compile and export phases)
+    if (!m_buildProcess) {
+        m_buildProcess = new QProcess(this);
+
+        connect(m_buildProcess, &QProcess::readyReadStandardOutput, this, [this]() {
+            QByteArray data = m_buildProcess->readAllStandardOutput();
+            m_buildOutputText->appendPlainText(QString::fromLocal8Bit(data));
+        });
+
+        connect(m_buildProcess, &QProcess::readyReadStandardError, this, [this]() {
+            QByteArray data = m_buildProcess->readAllStandardError();
+            m_buildOutputText->appendPlainText(QString::fromLocal8Bit(data));
+        });
+
+        connect(m_buildProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this](int exitCode, QProcess::ExitStatus exitStatus) {
+                if (exitStatus == QProcess::CrashExit || exitCode != 0) {
+                    // Failure in either phase
+                    m_buildBtn->setEnabled(true);
+                    QString phase = m_buildExportPhase ? tr("Export") : tr("Compile");
+                    if (exitStatus == QProcess::CrashExit) {
+                        m_buildOutputText->appendPlainText(tr("\n=== %1 process crashed ===").arg(phase));
+                        statusBar()->showMessage(tr("%1 crashed").arg(phase), 5000);
+                    } else {
+                        m_buildOutputText->appendPlainText(tr("\n=== %1 FAILED (exit code %2) ===").arg(phase).arg(exitCode));
+                        statusBar()->showMessage(tr("%1 failed (exit code %2)").arg(phase).arg(exitCode), 5000);
+                    }
+                    return;
+                }
+
+                if (!m_buildExportPhase) {
+                    // Compile succeeded — now run the export script
+                    m_buildExportPhase = true;
+
+                    QString appDir = QCoreApplication::applicationDirPath();
+                    QDir engineRoot(appDir);
+                    engineRoot.cdUp();
+                    engineRoot.cdUp();
+
+                    QString exportScript = engineRoot.absoluteFilePath("tools/export_game.ps1");
+                    if (!QFile::exists(exportScript)) {
+                        m_buildOutputText->appendPlainText(tr("\n=== Compile succeeded, but export script not found ==="));
+                        m_buildOutputText->appendPlainText(tr("Expected: %1").arg(exportScript));
+                        m_buildBtn->setEnabled(true);
+                        statusBar()->showMessage(tr("Compile succeeded (export script missing)"), 5000);
+                        return;
+                    }
+
+                    // Determine names
+                    QString projectName;
+                    QString projectPath;
+                    if (m_projectContext && m_projectContext->HasProject()) {
+                        projectName = QString::fromStdString(m_projectContext->GetProjectName());
+                        projectPath = QString::fromStdString(m_projectContext->GetProjectRootDir());
+                    }
+                    if (projectName.isEmpty()) projectName = QStringLiteral("HephaestusGame");
+                    if (projectPath.isEmpty()) projectPath = engineRoot.absolutePath();
+
+                    m_buildOutputText->appendPlainText(tr("\n=== Compile succeeded — exporting to dist/%1 ===\n").arg(projectName));
+                    statusBar()->showMessage(tr("Exporting %1...").arg(projectName));
+
+                    m_buildProcess->setWorkingDirectory(engineRoot.absolutePath());
+
+                    QStringList exportArgs = {
+                        "-ExecutionPolicy", "Bypass",
+                        "-File", exportScript,
+                        "-ProjectPath", projectPath,
+                        "-ProjectName", projectName,
+                        "-EngineRoot", engineRoot.absolutePath(),
+                        "-Configuration", "Release"
+                    };
+                    if (!m_lastBuildSettings.startScene.isEmpty()) {
+                        exportArgs << "-StartScene" << m_lastBuildSettings.startScene;
+                    }
+                    if (!m_lastBuildSettings.windowTitle.isEmpty()) {
+                        exportArgs << "-WindowTitle" << m_lastBuildSettings.windowTitle;
+                    }
+                    exportArgs << "-WindowWidth" << QString::number(m_lastBuildSettings.windowWidth);
+                    exportArgs << "-WindowHeight" << QString::number(m_lastBuildSettings.windowHeight);
+                    if (m_lastBuildSettings.fullscreen) {
+                        exportArgs << "-Fullscreen";
+                    }
+                    if (!m_lastBuildSettings.vsync) {
+                        exportArgs << "-NoVsync";
+                    }
+
+                    m_buildProcess->start("powershell", exportArgs);
+                } else {
+                    // Export succeeded — done!
+                    m_buildBtn->setEnabled(true);
+
+                    QString projectName;
+                    if (m_projectContext && m_projectContext->HasProject()) {
+                        projectName = QString::fromStdString(m_projectContext->GetProjectName());
+                    }
+                    if (projectName.isEmpty()) projectName = QStringLiteral("HephaestusGame");
+
+                    m_buildOutputText->appendPlainText(tr("\n=== Build & export complete — output in dist/%1/ ===").arg(projectName));
+                    statusBar()->showMessage(tr("Build complete — dist/%1/").arg(projectName), 8000);
+                }
+            });
+
+        connect(m_buildProcess, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+            m_buildBtn->setEnabled(true);
+            QString phase = m_buildExportPhase ? tr("Export") : tr("Build");
+            QString msg;
+            switch (error) {
+            case QProcess::FailedToStart:
+                msg = m_buildExportPhase
+                    ? tr("Failed to start powershell for export.")
+                    : tr("Failed to start cmake. Make sure it is installed and in PATH.");
+                break;
+            case QProcess::Timedout:
+                msg = tr("%1 process timed out.").arg(phase);
+                break;
+            default:
+                msg = tr("%1 process error occurred.").arg(phase);
+                break;
+            }
+            m_buildOutputText->appendPlainText(tr("\n=== ERROR: %1 ===").arg(msg));
+            statusBar()->showMessage(msg, 5000);
+        });
+    }
+
+    // Phase 1: Compile the HephaestusGame target
+    m_buildProcess->setWorkingDirectory(engineRoot.absolutePath());
+    m_buildProcess->setProcessChannelMode(QProcess::MergedChannels);
+    m_buildProcess->start("cmake", {"--build", "build", "--config", "Release", "--target", "HephaestusGame"});
+}
 
 /**
  * Register all known component inspector factories.

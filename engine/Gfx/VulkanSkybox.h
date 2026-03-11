@@ -37,6 +37,8 @@ public:
     void UpdateDescriptorSet(uint32_t frameIndex, VkBuffer uniformBuffer);
     
     void Draw(VkCommandBuffer cmd, uint32_t frameIndex);
+    void Draw(VkCommandBuffer cmd, uint32_t frameIndex, float intensity,
+              float solidR, float solidG, float solidB, bool useSolidColor);
     
     void Cleanup(VmaAllocator allocator);
 

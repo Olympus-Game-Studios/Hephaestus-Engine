@@ -876,6 +876,40 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
     scene.Clear();
     scene.SetName(sceneName);
 
+    // Parse root-level "environment" block (legacy format) into an Environment entity
+    if (const JsonValue* rootEnvObj = root.Find("environment")) {
+        if (rootEnvObj->IsObject()) {
+            Entity envEntity = scene.CreateEntity("Environment");
+            auto& env = envEntity.AddComponent<EnvironmentComponent>();
+
+            if (const JsonValue* v = rootEnvObj->Find("ambientColor")) {
+                ParseVec3(*v, env.solidColor);
+            }
+            if (const JsonValue* v = rootEnvObj->Find("ambientIntensity")) {
+                if (v->IsNumber()) {
+                    env.hdriIntensity = static_cast<float>(v->AsNumber());
+                }
+            }
+
+            // Check for skybox/HDRI path
+            for (const char* key : {"skybox", "hdriPath", "skyboxPath"}) {
+                if (const JsonValue* v = rootEnvObj->Find(key)) {
+                    if (v->IsString() && !v->AsString().empty()) {
+                        env.hdriPath = v->AsString();
+                        env.type = EnvironmentComponent::BackgroundType::HDRI;
+                        break;
+                    }
+                }
+            }
+
+            if (const JsonValue* v = rootEnvObj->Find("type")) {
+                if (IsKnownBackgroundType(*v)) {
+                    env.type = ParseBackgroundType(*v);
+                }
+            }
+        }
+    }
+
     std::unordered_map<uint32_t, entt::entity> idToEntity;
     std::vector<std::pair<entt::entity, uint32_t>> pendingParents;
     entt::entity selectedHandle = entt::null;

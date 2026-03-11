@@ -377,8 +377,13 @@ void VulkanSkybox::UpdateDescriptorSet(uint32_t frameIndex, VkBuffer uniformBuff
 }
 
 void VulkanSkybox::Draw(VkCommandBuffer cmd, uint32_t frameIndex) {
-    if (!hasHDRI || descriptorSets.empty()) {
-        return; // Don't draw skybox if no HDRI is loaded
+    Draw(cmd, frameIndex, 1.0f, 0.0f, 0.0f, 0.0f, false);
+}
+
+void VulkanSkybox::Draw(VkCommandBuffer cmd, uint32_t frameIndex, float intensity,
+                         float solidR, float solidG, float solidB, bool useSolidColor) {
+    if (descriptorSets.empty() || pipeline == VK_NULL_HANDLE) {
+        return; // Don't draw skybox if not initialized
     }
 
     frameIndex %= descriptorSets.size();
@@ -391,7 +396,7 @@ void VulkanSkybox::Draw(VkCommandBuffer cmd, uint32_t frameIndex) {
         float solidColorG;
         float solidColorB;
         std::int32_t useSolidColor;
-    } pushConstants{1.0f, 0.0f, 0.0f, 0.0f, 0};
+    } pushConstants{intensity, solidR, solidG, solidB, useSolidColor ? 1 : 0};
 
     vkCmdPushConstants(
         cmd,

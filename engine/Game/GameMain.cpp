@@ -1153,7 +1153,7 @@ int main(int argc, char* argv[]) {
     Bootstrap::BeginStage(InitStage::Bootstrap);
     
 #if HEPHAESTUS_GAME_SCRIPTING
-    std::vector<std::string> requiredDlls = {"lua.dll"};
+    std::vector<std::string> requiredDlls = {"lua54.dll"};
 #else
     std::vector<std::string> requiredDlls = {};
 #endif
@@ -1389,19 +1389,22 @@ int main(int argc, char* argv[]) {
         if (env.type == EnvironmentComponent::BackgroundType::HDRI && !env.hdriPath.empty()) {
             fs::path hdriPath = env.hdriPath;
             if (hdriPath.is_relative()) {
-                // Try runtime root first, then project root
-                fs::path runtimeCandidate = g_RuntimeRoot / hdriPath;
-                fs::path projectCandidate;
+                // Try multiple resolution strategies
+                fs::path resolved;
+                std::vector<fs::path> candidates;
+                candidates.push_back(g_RuntimeRoot / hdriPath);
+                candidates.push_back(g_RuntimeRoot / "assets" / hdriPath);
                 if (!g_ProjectRoot.empty()) {
-                    projectCandidate = g_ProjectRoot / hdriPath;
+                    candidates.push_back(g_ProjectRoot / hdriPath);
+                    candidates.push_back(g_ProjectRoot / "assets" / hdriPath);
                 }
-                if (fs::exists(runtimeCandidate)) {
-                    hdriPath = runtimeCandidate;
-                } else if (!projectCandidate.empty() && fs::exists(projectCandidate)) {
-                    hdriPath = projectCandidate;
-                } else {
-                    hdriPath = runtimeCandidate; // fallback, will fail with a warning below
+                for (const auto& c : candidates) {
+                    if (fs::exists(c)) {
+                        resolved = c;
+                        break;
+                    }
                 }
+                hdriPath = resolved.empty() ? candidates.front() : resolved;
             }
             
             if (fs::exists(hdriPath)) {
@@ -1523,7 +1526,7 @@ int main(int argc, char* argv[]) {
         JPH::Quat rot = qx * qy * qz;
 
         JPH::BodyInterface& bi = joltPhysicsEngine.GetBodyInterface();
-        JPH::RVec3 pos = bi.GetCenterOfMassPosition(bodyId);
+        JPH::RVec3 pos = bi.GetPosition(bodyId);
         bi.SetPositionAndRotation(bodyId, pos, rot,
                                   activate ? JPH::EActivation::Activate
                                            : JPH::EActivation::DontActivate);
@@ -2455,6 +2458,24 @@ int main(int argc, char* argv[]) {
     uint32_t currentFrame = 0;
     auto lastTime = std::chrono::high_resolution_clock::now();
 
+    // Cache environment settings for skybox rendering
+    bool envUseSolidColor = true;
+    Vec3 envSolidColor = {0.1f, 0.2f, 0.3f};
+    float envHdriIntensity = 1.0f;
+    {
+        auto envView = scene.GetEntitiesWith<EnvironmentComponent>();
+        for (auto ent : envView) {
+            Entity envEntity(ent, &scene);
+            auto& env = envEntity.GetComponent<EnvironmentComponent>();
+            envSolidColor = env.solidColor;
+            envHdriIntensity = env.hdriIntensity;
+            if (env.type == EnvironmentComponent::BackgroundType::HDRI && skybox.hasHDRI) {
+                envUseSolidColor = false;
+            }
+            break;
+        }
+    }
+
     // ── Main Loop ─────────────────────────────────
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -2509,9 +2530,19 @@ int main(int argc, char* argv[]) {
         // Default directional light
         lightingUBO.dirLightDirIntensity = Vec4(-0.3f, -0.8f, -0.5f, 1.5f);
         lightingUBO.dirLightColor = Vec4(1.0f, 0.98f, 0.95f, 1.0f);
-        lightingUBO.ambientColorIntensity = Vec4(0.4f, 0.45f, 0.5f, 0.4f);
+        lightingUBO.ambientColorIntensity = Vec4(0.1f, 0.1f, 0.15f, 0.3f);
         lightingUBO.pointLightCount = 0;
         lightingUBO.spotLightCount = 0;
+        
+        // Override ambient from EnvironmentComponent if present
+        {
+            auto ambientEnvView = scene.GetEntitiesWith<EnvironmentComponent>();
+            for (auto ent : ambientEnvView) {
+                // EnvironmentComponent doesn't have dedicated ambient fields;
+                // keep the default ambient. The editor also uses hard-coded defaults.
+                break;
+            }
+        }
         
         // Shadow state
         bool dirShadowEnabled = false;
@@ -2575,6 +2606,12 @@ int main(int argc, char* argv[]) {
                     float shadowTexelSize = 1.0f / static_cast<float>(g_DirectionalShadow.resolution);
                     lightingUBO.dirShadowParams = Vec4(light.shadowBias, light.shadowStrength, shadowTexelSize, 1.0f);
                     lightingUBO.dirLightViewProj = dirShadowMatrix;
+                    
+                    // Populate CSM data: single cascade in top-left atlas quadrant
+                    lightingUBO.cascadeCount = 1;
+                    lightingUBO.cascadeViewProj[0] = dirShadowMatrix;
+                    // Set all splits to a very large value so cascade 0 is always selected
+                    lightingUBO.cascadeSplits = Vec4(9999.0f, 9999.0f, 9999.0f, 9999.0f);
                 }
             } else if (light.type == LightType::Point && lightingUBO.pointLightCount < 16) {
                 HP_LOG(Info, "Found point light: " + lightName + " at (" + 
@@ -2653,12 +2690,18 @@ int main(int argc, char* argv[]) {
 
             vkCmdBeginRenderPass(cmdBufs[imageIndex], &shadowBegin, VK_SUBPASS_CONTENTS_INLINE);
 
+            // Render into top-left quadrant (cascade 0 of the 2x2 atlas)
+            // The fragment shader expects a CSM atlas layout where each cascade
+            // occupies a quarter of the texture.
+            uint32_t halfRes = g_DirectionalShadow.resolution / 2;
             VkViewport shadowViewport{};
-            shadowViewport.width = static_cast<float>(g_DirectionalShadow.resolution);
-            shadowViewport.height = static_cast<float>(g_DirectionalShadow.resolution);
+            shadowViewport.x = 0.0f;
+            shadowViewport.y = 0.0f;
+            shadowViewport.width = static_cast<float>(halfRes);
+            shadowViewport.height = static_cast<float>(halfRes);
             shadowViewport.minDepth = 0.0f;
             shadowViewport.maxDepth = 1.0f;
-            VkRect2D shadowScissor{{0, 0}, {g_DirectionalShadow.resolution, g_DirectionalShadow.resolution}};
+            VkRect2D shadowScissor{{0, 0}, {halfRes, halfRes}};
             vkCmdSetViewport(cmdBufs[imageIndex], 0, 1, &shadowViewport);
             vkCmdSetScissor(cmdBufs[imageIndex], 0, 1, &shadowScissor);
 
@@ -2895,9 +2938,15 @@ int main(int argc, char* argv[]) {
         }
 
         // Render skybox (after meshes, uses depth test to only draw where nothing else rendered)
-        if (skybox.hasHDRI) {
+        {
             skybox.UpdateDescriptorSet(imageIndex, uniformBuffers[imageIndex].buffer);
-            skybox.Draw(cmdBufs[imageIndex], imageIndex);
+            if (envUseSolidColor) {
+                skybox.Draw(cmdBufs[imageIndex], imageIndex, 1.0f,
+                            envSolidColor.x, envSolidColor.y, envSolidColor.z, true);
+            } else {
+                skybox.Draw(cmdBufs[imageIndex], imageIndex, envHdriIntensity,
+                            0.0f, 0.0f, 0.0f, false);
+            }
         }
 
         vkCmdEndRenderPass(cmdBufs[imageIndex]);

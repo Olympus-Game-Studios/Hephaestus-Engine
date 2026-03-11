@@ -31,6 +31,9 @@
 #include <QComboBox>
 #include <QToolButton>
 #include <QFrame>
+#include <QPlainTextEdit>
+#include <QProcess>
+#include "BuildSettingsDialog.h"
 #include <memory>
 #include <vector>
 #include <entt/entt.hpp>
@@ -162,6 +165,9 @@ private slots:
     // Help menu actions
     void onAbout();
 
+    // Build
+    void onBuildProject();
+
     // Engine callbacks
     void onViewportReady();
     void onEngineInitialized(bool success);
@@ -248,6 +254,14 @@ private:
     AssetBrowserWidget* m_assetBrowser = nullptr;
     std::unique_ptr<EditorAssetActions> m_assetActions;
     UI::SettingsWindow* m_settingsWindow = nullptr;
+
+    // Build output
+    QDockWidget* m_buildOutputDock = nullptr;
+    QPlainTextEdit* m_buildOutputText = nullptr;
+    QProcess* m_buildProcess = nullptr;
+    QToolButton* m_buildBtn = nullptr;
+    bool m_buildExportPhase = false; // false = compile, true = export
+    BuildSettings m_lastBuildSettings;
 
     // Add Actors panel
     AddActorsPanel* m_addActorsPanel = nullptr;

@@ -416,6 +416,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/CameraInspector.h
             engine/UI/QtEditor/AddActorsPanel.cpp
             engine/UI/QtEditor/AddActorsPanel.h
+            engine/UI/QtEditor/BuildSettingsDialog.cpp
+            engine/UI/QtEditor/BuildSettingsDialog.h
             engine/UI/Shared/SettingsWindow.cpp
             engine/UI/Shared/SettingsWindow.h
         )
