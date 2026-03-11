@@ -2546,7 +2546,7 @@ int main(int argc, char* argv[]) {
         
         // Shadow state
         bool dirShadowEnabled = false;
-        Mat4 dirShadowMatrix = Mat4::Identity();
+        Mat4 cascadeVPs[CSM_CASCADE_COUNT];
         
         // Gather lights from scene
         // First, try to find lights with TransformComponent
@@ -2581,37 +2581,39 @@ int main(int argc, char* argv[]) {
                 lightingUBO.dirLightDirIntensity = Vec4(dir.x, dir.y, dir.z, light.intensity);
                 lightingUBO.dirLightColor = Vec4(light.color.x, light.color.y, light.color.z, 1.0f);
                 
-                // Shadow mapping setup
+                // Shadow mapping setup – full CSM matching editor
                 if (light.castShadows && g_DirectionalShadow.IsValid()) {
                     HP_LOG(Info, "Shadow mapping enabled for directional light");
-                    float shadowDistance = light.shadowDistance;
-                    float shadowExtent = light.shadowExtent;
-                    
-                    Vec3 sceneCenter = v3(0.0f, 0.0f, 0.0f);
-                    Vec3 towardLight = vscale(dir, -1.0f);
-                    Vec3 lightPos = vadd(sceneCenter, vscale(towardLight, shadowDistance));
-                    
-                    Vec3 up = v3(0.0f, 1.0f, 0.0f);
-                    if (std::abs(vdot(dir, up)) > 0.99f) {
-                        up = v3(1.0f, 0.0f, 0.0f);
-                    }
-                    
-                    Mat4 lightViewMat = Mat4::LookAt(lightPos, sceneCenter, up);
-                    float shadowFar = shadowDistance * 3.0f;
-                    Mat4 lightProj = Mat4::OrthographicShadow(-shadowExtent, shadowExtent, -shadowExtent, shadowExtent, 0.1f, shadowFar);
-                    
-                    dirShadowMatrix = Mat4::Multiply(lightProj, lightViewMat);
                     dirShadowEnabled = true;
-                    
+
+                    constexpr float D2R = 3.1415926535f / 180.0f;
+                    uint32_t sw = std::max(swap.extent.width, 1u);
+                    uint32_t sh = std::max(swap.extent.height, 1u);
+                    float aspect = static_cast<float>(sw) / static_cast<float>(sh);
+                    float fovY = gameCamera.fovDeg * D2R;
+
+                    float maxRange = light.shadowAutoFit
+                        ? std::max(10.0f, std::min(gameCamera.farPlane, light.shadowMaxDistance))
+                        : light.shadowDistance;
+
+                    float splits[CSM_CASCADE_COUNT + 1];
+                    ComputeCascadeSplits(gameCamera.nearPlane, maxRange, splits);
+
+                    for (int c = 0; c < CSM_CASCADE_COUNT; c++) {
+                        cascadeVPs[c] = ComputeCascadeShadowVP(
+                            gameCamera.position.x, gameCamera.position.y, gameCamera.position.z,
+                            gameCamera.yawDeg, gameCamera.pitchDeg,
+                            splits[c], splits[c + 1],
+                            fovY, aspect, dir);
+                    }
+
                     float shadowTexelSize = 1.0f / static_cast<float>(g_DirectionalShadow.resolution);
                     lightingUBO.dirShadowParams = Vec4(light.shadowBias, light.shadowStrength, shadowTexelSize, 1.0f);
-                    lightingUBO.dirLightViewProj = dirShadowMatrix;
-                    
-                    // Populate CSM data: single cascade in top-left atlas quadrant
-                    lightingUBO.cascadeCount = 1;
-                    lightingUBO.cascadeViewProj[0] = dirShadowMatrix;
-                    // Set all splits to a very large value so cascade 0 is always selected
-                    lightingUBO.cascadeSplits = Vec4(9999.0f, 9999.0f, 9999.0f, 9999.0f);
+                    lightingUBO.dirLightViewProj = cascadeVPs[0];
+                    lightingUBO.cascadeCount = CSM_CASCADE_COUNT;
+                    for (int c = 0; c < CSM_CASCADE_COUNT; c++)
+                        lightingUBO.cascadeViewProj[c] = cascadeVPs[c];
+                    lightingUBO.cascadeSplits = Vec4(splits[1], splits[2], splits[3], splits[4]);
                 }
             } else if (light.type == LightType::Point && lightingUBO.pointLightCount < 16) {
                 HP_LOG(Info, "Found point light: " + lightName + " at (" + 
@@ -2690,55 +2692,61 @@ int main(int argc, char* argv[]) {
 
             vkCmdBeginRenderPass(cmdBufs[imageIndex], &shadowBegin, VK_SUBPASS_CONTENTS_INLINE);
 
-            // Render into top-left quadrant (cascade 0 of the 2x2 atlas)
-            // The fragment shader expects a CSM atlas layout where each cascade
-            // occupies a quarter of the texture.
-            uint32_t halfRes = g_DirectionalShadow.resolution / 2;
-            VkViewport shadowViewport{};
-            shadowViewport.x = 0.0f;
-            shadowViewport.y = 0.0f;
-            shadowViewport.width = static_cast<float>(halfRes);
-            shadowViewport.height = static_cast<float>(halfRes);
-            shadowViewport.minDepth = 0.0f;
-            shadowViewport.maxDepth = 1.0f;
-            VkRect2D shadowScissor{{0, 0}, {halfRes, halfRes}};
-            vkCmdSetViewport(cmdBufs[imageIndex], 0, 1, &shadowViewport);
-            vkCmdSetScissor(cmdBufs[imageIndex], 0, 1, &shadowScissor);
-
             vkCmdBindPipeline(cmdBufs[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, g_DirectionalShadow.pipeline);
 
-            ShadowPushConstants shadowPC{};
-            shadowPC.lightViewProj = dirShadowMatrix;
+            // 2x2 atlas offsets for 4 cascades
+            uint32_t halfRes = g_DirectionalShadow.resolution / 2;
+            int atlasOffsetX[4] = { 0, 1, 0, 1 };
+            int atlasOffsetY[4] = { 0, 0, 1, 1 };
 
-            VkBuffer shadowVertexBuffer = VK_NULL_HANDLE;
-            VkBuffer shadowIndexBuffer = VK_NULL_HANDLE;
+            for (int cascade = 0; cascade < CSM_CASCADE_COUNT; cascade++) {
+                VkViewport shadowViewport{};
+                shadowViewport.x = static_cast<float>(atlasOffsetX[cascade] * halfRes);
+                shadowViewport.y = static_cast<float>(atlasOffsetY[cascade] * halfRes);
+                shadowViewport.width = static_cast<float>(halfRes);
+                shadowViewport.height = static_cast<float>(halfRes);
+                shadowViewport.minDepth = 0.0f;
+                shadowViewport.maxDepth = 1.0f;
+                VkRect2D shadowScissor{
+                    { static_cast<int32_t>(atlasOffsetX[cascade] * halfRes),
+                      static_cast<int32_t>(atlasOffsetY[cascade] * halfRes) },
+                    { halfRes, halfRes }};
+                vkCmdSetViewport(cmdBufs[imageIndex], 0, 1, &shadowViewport);
+                vkCmdSetScissor(cmdBufs[imageIndex], 0, 1, &shadowScissor);
 
-            for (auto entityHandle : renderView) {
-                Entity entity(entityHandle, &scene);
-                auto& renderer = entity.GetComponent<MeshRendererComponent>();
-                auto& transform = entity.GetComponent<TransformComponent>();
+                ShadowPushConstants shadowPC{};
+                shadowPC.lightViewProj = cascadeVPs[cascade];
 
-                if (!renderer.visible || renderer.hideInGame) continue;
-                if (!renderer.HasValidMesh() || renderer.meshHandle >= g_MeshLibrary.size()) continue;
+                VkBuffer shadowVertexBuffer = VK_NULL_HANDLE;
+                VkBuffer shadowIndexBuffer = VK_NULL_HANDLE;
 
-                MeshGPU& mesh = g_MeshLibrary[renderer.meshHandle];
-                if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE) continue;
+                for (auto entityHandle : renderView) {
+                    Entity entity(entityHandle, &scene);
+                    auto& renderer = entity.GetComponent<MeshRendererComponent>();
+                    auto& transform = entity.GetComponent<TransformComponent>();
 
-                if (mesh.vertexBuffer.buffer != shadowVertexBuffer) {
-                    VkDeviceSize offset = 0;
-                    vkCmdBindVertexBuffers(cmdBufs[imageIndex], 0, 1, &mesh.vertexBuffer.buffer, &offset);
-                    shadowVertexBuffer = mesh.vertexBuffer.buffer;
+                    if (!renderer.visible || renderer.hideInGame) continue;
+                    if (!renderer.HasValidMesh() || renderer.meshHandle >= g_MeshLibrary.size()) continue;
+
+                    MeshGPU& mesh = g_MeshLibrary[renderer.meshHandle];
+                    if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE) continue;
+
+                    if (mesh.vertexBuffer.buffer != shadowVertexBuffer) {
+                        VkDeviceSize offset = 0;
+                        vkCmdBindVertexBuffers(cmdBufs[imageIndex], 0, 1, &mesh.vertexBuffer.buffer, &offset);
+                        shadowVertexBuffer = mesh.vertexBuffer.buffer;
+                    }
+
+                    if (mesh.indexBuffer.buffer != shadowIndexBuffer) {
+                        vkCmdBindIndexBuffer(cmdBufs[imageIndex], mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+                        shadowIndexBuffer = mesh.indexBuffer.buffer;
+                    }
+
+                    shadowPC.model = scene.GetWorldTransform(entity);
+                    vkCmdPushConstants(cmdBufs[imageIndex], g_DirectionalShadow.pipelineLayout,
+                        VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ShadowPushConstants), &shadowPC);
+                    vkCmdDrawIndexed(cmdBufs[imageIndex], mesh.indexCount, 1, 0, 0, 0);
                 }
-
-                if (mesh.indexBuffer.buffer != shadowIndexBuffer) {
-                    vkCmdBindIndexBuffer(cmdBufs[imageIndex], mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-                    shadowIndexBuffer = mesh.indexBuffer.buffer;
-                }
-
-                shadowPC.model = scene.GetWorldTransform(entity);
-                vkCmdPushConstants(cmdBufs[imageIndex], g_DirectionalShadow.pipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ShadowPushConstants), &shadowPC);
-                vkCmdDrawIndexed(cmdBufs[imageIndex], mesh.indexCount, 1, 0, 0, 0);
             }
 
             vkCmdEndRenderPass(cmdBufs[imageIndex]);
