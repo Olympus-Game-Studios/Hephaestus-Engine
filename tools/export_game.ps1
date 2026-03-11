@@ -16,7 +16,6 @@
 #     scripts/
 #     shaders/
 #     logs/ (created at runtime)
-#     RunGame.bat
 
 param(
     [Parameter(Mandatory=$false)]
@@ -392,38 +391,6 @@ $gameIniContent | Out-File -FilePath $gameIniPath -Encoding UTF8
 Write-Log "Created game.ini" "SUCCESS"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Create Launcher Script
-# ─────────────────────────────────────────────────────────────────────────────
-
-Write-Log "Creating launcher scripts..." "INFO"
-
-# Windows batch launcher
-$runGameBatPath = Join-Path $OutputPath "RunGame.bat"
-$runGameBatContent = @"
-@echo off
-title $ProjectName
-cd /d "%~dp0"
-
-echo Starting $ProjectName...
-echo.
-
-"$destExeName"
-
-if %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo ════════════════════════════════════════════════════════════════
-    echo  Game exited with error code: %ERRORLEVEL%
-    echo  Check logs/runtime.log for details.
-    echo ════════════════════════════════════════════════════════════════
-    echo.
-    pause
-)
-"@
-
-$runGameBatContent | Out-File -FilePath $runGameBatPath -Encoding ASCII
-Write-Log "Created RunGame.bat" "SUCCESS"
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Create Export Manifest
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -481,7 +448,7 @@ $((Get-ChildItem -Path (Join-Path $OutputPath "scripts") -Filter "*.lua" -Recurs
   HOW TO RUN
 ═══════════════════════════════════════════════════════════════════════════════
 
-1. Double-click 'RunGame.bat' or '$destExeName'
+1. Double-click '$destExeName' to start the game
 2. Logs will be written to 'logs/runtime.log'
 3. Crash reports (if any) will be saved to 'crashes/'
 

@@ -720,6 +720,15 @@ static std::string NormalizeAssetPath(const std::string& path) {
 
 static fs::path DetectProjectRoot(const fs::path& startPath) {
     std::error_code ec;
+
+    // In an exported game the runtime root IS the project root.
+    // Detect this by the presence of export_manifest.txt or game.ini next to
+    // the executable and stop immediately — never walk outside the dist folder.
+    if (fs::exists(g_RuntimeRoot / "export_manifest.txt", ec) ||
+        fs::exists(g_RuntimeRoot / "game.ini", ec)) {
+        return g_RuntimeRoot;
+    }
+
     fs::path dir = startPath;
     if (fs::is_regular_file(dir, ec)) {
         dir = dir.parent_path();

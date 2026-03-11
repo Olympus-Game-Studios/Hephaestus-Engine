@@ -151,14 +151,7 @@ if ($RuntimeMode) {
     "Hephaestus Runtime Package - $(Get-Date)" | Out-File -FilePath $manifestPath -Encoding UTF8
     Write-Success "PACKAGE_MANIFEST.txt (runtime marker)"
     
-    # Create batch file launcher for runtime
-    $batchPath = Join-Path $OutputPath "RunGame.bat"
-@"
-@echo off
-cd /d "%~dp0"
-start HephaestusEngine.exe --runtime %*
-"@ | Out-File -FilePath $batchPath -Encoding ASCII
-    Write-Success "RunGame.bat"
+
 }
 
 # Summary
