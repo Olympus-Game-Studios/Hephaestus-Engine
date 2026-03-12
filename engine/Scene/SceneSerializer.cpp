@@ -266,6 +266,39 @@ static std::string ToLowerCase(const std::string& s)
     return result;
 }
 
+// Normalize an asset path for portable serialization.
+// Converts absolute paths to project-relative by finding known directory
+// markers (assets/, scripts/) in the path, using forward slashes.
+static std::string NormalizeAssetPathForSave(const std::string& rawPath)
+{
+    if (rawPath.empty() || rawPath.rfind("builtin://", 0) == 0) {
+        return rawPath;
+    }
+
+    namespace fs = std::filesystem;
+    fs::path p(rawPath);
+    if (!p.is_absolute()) {
+        // Already relative — just ensure forward slashes for portability
+        return p.generic_string();
+    }
+
+    // Convert to generic (forward-slash) string and look for known markers
+    std::string generic = p.generic_string();
+
+    // Use rfind to find the last occurrence of known project directory markers
+    static const std::string markers[] = { "/assets/", "/scripts/" };
+    for (const auto& marker : markers) {
+        auto pos = generic.rfind(marker);
+        if (pos != std::string::npos) {
+            // Return from the marker onward (e.g. "assets/meshes/player.glb")
+            return generic.substr(pos + 1);
+        }
+    }
+
+    // Fallback: return just the filename to avoid baking in machine-specific paths
+    return p.filename().generic_string();
+}
+
 static EnvironmentComponent::BackgroundType ParseBackgroundType(const JsonValue& value)
 {
     if (!value.IsString()) {
@@ -566,7 +599,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             }
             oss << "          \"meshSource\": ";
             if (!mesh->meshAssetPath.empty()) {
-                oss << "\"" << EscapeString(mesh->meshAssetPath) << "\"";
+                oss << "\"" << EscapeString(NormalizeAssetPathForSave(mesh->meshAssetPath)) << "\"";
             } else {
                 oss << "null";
             }
@@ -582,7 +615,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"appliedMaterialPaths\": [";
             for (size_t i = 0; i < mesh->appliedMaterialPaths.size(); ++i) {
                 if (i) oss << ", ";
-                oss << "\"" << EscapeString(mesh->appliedMaterialPaths[i]) << "\"";
+                oss << "\"" << EscapeString(NormalizeAssetPathForSave(mesh->appliedMaterialPaths[i])) << "\"";
             }
             oss << "],\n";
             oss << "          \"backfaceCulling\": " << (mesh->backfaceCulling ? "true" : "false") << ",\n";
@@ -651,13 +684,13 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"emissive\": " << FormatVec3(material->emissive) << ",\n";
             oss << "          \"emissiveStrength\": " << FormatFloat(material->emissiveStrength) << ",\n";
             oss << "          \"useAlbedoTexture\": " << (material->useAlbedoTexture ? "true" : "false") << ",\n";
-            oss << "          \"albedoTexturePath\": \"" << EscapeString(material->albedoTexturePath) << "\",\n";
+            oss << "          \"albedoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->albedoTexturePath)) << "\",\n";
             oss << "          \"useNormalTexture\": " << (material->useNormalTexture ? "true" : "false") << ",\n";
-            oss << "          \"normalTexturePath\": \"" << EscapeString(material->normalTexturePath) << "\",\n";
+            oss << "          \"normalTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->normalTexturePath)) << "\",\n";
             oss << "          \"useRoughnessTexture\": " << (material->useRoughnessTexture ? "true" : "false") << ",\n";
-            oss << "          \"roughnessTexturePath\": \"" << EscapeString(material->roughnessTexturePath) << "\",\n";
+            oss << "          \"roughnessTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->roughnessTexturePath)) << "\",\n";
             oss << "          \"useAoTexture\": " << (material->useAoTexture ? "true" : "false") << ",\n";
-            oss << "          \"aoTexturePath\": \"" << EscapeString(material->aoTexturePath) << "\",\n";
+            oss << "          \"aoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->aoTexturePath)) << "\",\n";
             oss << "          \"useWorldAlignedTexture\": " << (material->useWorldAlignedTexture ? "true" : "false") << ",\n";
             oss << "          \"worldTextureScale\": " << FormatFloat(material->worldTextureScale) << "\n";
             oss << "        }";
@@ -732,7 +765,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             std::ostringstream oss;
             oss.imbue(std::locale::classic());
             oss << "        \"LuaScript\": {\n";
-            oss << "          \"scriptPath\": \"" << EscapeString(script->scriptPath) << "\",\n";
+            oss << "          \"scriptPath\": \"" << EscapeString(NormalizeAssetPathForSave(script->scriptPath)) << "\",\n";
             oss << "          \"scriptSource\": \"" << EscapeString(script->scriptSource) << "\",\n";
             oss << "          \"functionOnAwake\": \"" << EscapeString(script->functionOnAwake) << "\",\n";
             oss << "          \"functionOnUpdate\": \"" << EscapeString(script->functionOnUpdate) << "\",\n";
@@ -776,7 +809,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "        \"Environment\": {\n";
             oss << "          \"type\": \"" << BackgroundTypeToString(environment->type) << "\",\n";
             oss << "          \"solidColor\": " << FormatVec3(environment->solidColor) << ",\n";
-            oss << "          \"hdriPath\": \"" << EscapeString(environment->hdriPath) << "\",\n";
+            oss << "          \"hdriPath\": \"" << EscapeString(NormalizeAssetPathForSave(environment->hdriPath)) << "\",\n";
             oss << "          \"hdriIntensity\": " << FormatFloat(environment->hdriIntensity) << ",\n";
             oss << "          \"rotationYaw\": " << FormatFloat(environment->rotationYaw) << ",\n";
             oss << "          \"useAsIBL\": " << (environment->useAsIBL ? "true" : "false") << ",\n";
@@ -2004,7 +2037,7 @@ std::string SceneSerializer::SerializeToString() const
             }
             oss << "          \"meshSource\": ";
             if (!mesh->meshAssetPath.empty()) {
-                oss << "\"" << EscapeString(mesh->meshAssetPath) << "\"";
+                oss << "\"" << EscapeString(NormalizeAssetPathForSave(mesh->meshAssetPath)) << "\"";
             } else {
                 oss << "null";
             }
@@ -2020,7 +2053,7 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"appliedMaterialPaths\": [";
             for (size_t i = 0; i < mesh->appliedMaterialPaths.size(); ++i) {
                 if (i) oss << ", ";
-                oss << "\"" << EscapeString(mesh->appliedMaterialPaths[i]) << "\"";
+                oss << "\"" << EscapeString(NormalizeAssetPathForSave(mesh->appliedMaterialPaths[i])) << "\"";
             }
             oss << "],\n";
             oss << "          \"backfaceCulling\": " << (mesh->backfaceCulling ? "true" : "false") << ",\n";
@@ -2089,13 +2122,13 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"emissive\": " << FormatVec3(material->emissive) << ",\n";
             oss << "          \"emissiveStrength\": " << FormatFloat(material->emissiveStrength) << ",\n";
             oss << "          \"useAlbedoTexture\": " << (material->useAlbedoTexture ? "true" : "false") << ",\n";
-            oss << "          \"albedoTexturePath\": \"" << EscapeString(material->albedoTexturePath) << "\",\n";
+            oss << "          \"albedoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->albedoTexturePath)) << "\",\n";
             oss << "          \"useNormalTexture\": " << (material->useNormalTexture ? "true" : "false") << ",\n";
-            oss << "          \"normalTexturePath\": \"" << EscapeString(material->normalTexturePath) << "\",\n";
+            oss << "          \"normalTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->normalTexturePath)) << "\",\n";
             oss << "          \"useRoughnessTexture\": " << (material->useRoughnessTexture ? "true" : "false") << ",\n";
-            oss << "          \"roughnessTexturePath\": \"" << EscapeString(material->roughnessTexturePath) << "\",\n";
+            oss << "          \"roughnessTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->roughnessTexturePath)) << "\",\n";
             oss << "          \"useAoTexture\": " << (material->useAoTexture ? "true" : "false") << ",\n";
-            oss << "          \"aoTexturePath\": \"" << EscapeString(material->aoTexturePath) << "\",\n";
+            oss << "          \"aoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->aoTexturePath)) << "\",\n";
             oss << "          \"useWorldAlignedTexture\": " << (material->useWorldAlignedTexture ? "true" : "false") << ",\n";
             oss << "          \"worldTextureScale\": " << FormatFloat(material->worldTextureScale) << "\n";
             oss << "        }";
@@ -2154,7 +2187,7 @@ std::string SceneSerializer::SerializeToString() const
             std::ostringstream oss;
             oss.imbue(std::locale::classic());
             oss << "        \"LuaScript\": {\n";
-            oss << "          \"scriptPath\": \"" << EscapeString(script->scriptPath) << "\",\n";
+            oss << "          \"scriptPath\": \"" << EscapeString(NormalizeAssetPathForSave(script->scriptPath)) << "\",\n";
             oss << "          \"scriptSource\": \"" << EscapeString(script->scriptSource) << "\",\n";
             oss << "          \"functionOnAwake\": \"" << EscapeString(script->functionOnAwake) << "\",\n";
             oss << "          \"functionOnUpdate\": \"" << EscapeString(script->functionOnUpdate) << "\",\n";
@@ -2198,7 +2231,7 @@ std::string SceneSerializer::SerializeToString() const
             oss << "        \"Environment\": {\n";
             oss << "          \"type\": \"" << BackgroundTypeToString(environment->type) << "\",\n";
             oss << "          \"solidColor\": " << FormatVec3(environment->solidColor) << ",\n";
-            oss << "          \"hdriPath\": \"" << EscapeString(environment->hdriPath) << "\",\n";
+            oss << "          \"hdriPath\": \"" << EscapeString(NormalizeAssetPathForSave(environment->hdriPath)) << "\",\n";
             oss << "          \"hdriIntensity\": " << FormatFloat(environment->hdriIntensity) << ",\n";
             oss << "          \"rotationYaw\": " << FormatFloat(environment->rotationYaw) << ",\n";
             oss << "          \"useAsIBL\": " << (environment->useAsIBL ? "true" : "false") << ",\n";

@@ -353,6 +353,34 @@ if (-not $scriptsCopied) {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Copy Engine Meshes (.engine/meshes - builtin primitives like Cube.glb, Sphere.glb)
+# ─────────────────────────────────────────────────────────────────────────────
+
+Write-Log "Copying engine meshes..." "INFO"
+
+$engineMeshSources = @(
+    (Join-Path $ProjectPath ".engine\meshes"),
+    (Join-Path $EngineRoot ".engine\meshes")
+)
+
+$engineMeshesCopied = $false
+foreach ($meshDir in $engineMeshSources) {
+    if (Test-Path $meshDir) {
+        $destEngineMeshes = Join-Path $OutputPath ".engine\meshes"
+        Copy-ItemSafe -Source $meshDir -Destination $destEngineMeshes -Recurse -Description "Engine meshes"
+        
+        $meshCount = (Get-ChildItem -Path $destEngineMeshes -Filter "*.glb" -Recurse).Count
+        Write-Log "Copied $meshCount engine mesh files from: $meshDir" "SUCCESS"
+        $engineMeshesCopied = $true
+        break
+    }
+}
+
+if (-not $engineMeshesCopied) {
+    Write-Log ".engine/meshes not found - builtin primitives may not render!" "WARNING"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Create Configuration File
 # ─────────────────────────────────────────────────────────────────────────────
 

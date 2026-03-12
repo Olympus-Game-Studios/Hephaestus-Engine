@@ -1451,6 +1451,8 @@ int main(int argc, char* argv[]) {
     LuaScriptEngine luaEngine;
     try {
         luaEngine.Initialize(&scene, window);
+        // Set project root so script search paths resolve correctly on any device
+        luaEngine.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
         HP_LOG(Info, "Lua scripting engine initialized");
     } catch (const std::exception& e) {
         HP_LOG(Error, std::string("Failed to initialize Lua: ") + e.what());
@@ -1981,37 +1983,39 @@ int main(int argc, char* argv[]) {
     HP_LOG(Info, "Generating builtin primitive meshes...");
     
     // Cube mesh data (24 vertices with proper normals per face)
+    // Uses extent [-1, +1] (2x2x2) to match Blender default Cube.glb
+    const float c = 1.0f;
     const std::vector<Vertex> cubeVertices = {
         // Front face (Z+)
-        {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-        {{0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
-        {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-        {{-0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+        {{-c, -c, c}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+        {{c, -c, c}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
+        {{c, c, c}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+        {{-c, c, c}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
         // Back face (Z-)
-        {{0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-        {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
-        {{-0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-        {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+        {{c, -c, -c}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+        {{-c, -c, -c}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
+        {{-c, c, -c}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+        {{c, c, -c}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
         // Right face (X+)
-        {{0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-        {{0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
-        {{0.5f, 0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-        {{0.5f, 0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+        {{c, -c, c}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+        {{c, -c, -c}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
+        {{c, c, -c}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+        {{c, c, c}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
         // Left face (X-)
-        {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-        {{-0.5f, -0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
-        {{-0.5f, 0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-        {{-0.5f, 0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+        {{-c, -c, -c}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+        {{-c, -c, c}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
+        {{-c, c, c}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+        {{-c, c, -c}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
         // Top face (Y+)
-        {{-0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-        {{0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
-        {{0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-        {{-0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+        {{-c, c, c}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+        {{c, c, c}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
+        {{c, c, -c}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+        {{-c, c, -c}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
         // Bottom face (Y-)
-        {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-        {{0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
-        {{0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-        {{-0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+        {{-c, -c, -c}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+        {{c, -c, -c}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
+        {{c, -c, c}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+        {{-c, -c, c}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
     };
     const std::vector<uint32_t> cubeIndices = {
         0, 1, 2, 2, 3, 0,       // Front
@@ -2025,7 +2029,7 @@ int main(int argc, char* argv[]) {
     MeshData cubeMeshData;
     cubeMeshData.vertices = cubeVertices;
     cubeMeshData.indices = cubeIndices;
-    cubeMeshData.bounds = AABB(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f));
+    cubeMeshData.bounds = AABB(Vec3(-1.0f, -1.0f, -1.0f), Vec3(1.0f, 1.0f, 1.0f));
     
     size_t builtinCubeHandle = LoadMeshToGPU(cubeMeshData, "builtin://cube", vkdev.allocator,
         vkdev.device, vkdev.commandPool, vkdev.graphicsQueue);
@@ -2078,7 +2082,7 @@ int main(int argc, char* argv[]) {
         return data;
     };
     
-    MeshData sphereMeshData = generateSphereMesh(0.5f, 24, 16);
+    MeshData sphereMeshData = generateSphereMesh(1.0f, 24, 16);
     size_t builtinSphereHandle = LoadMeshToGPU(sphereMeshData, "builtin://sphere", vkdev.allocator,
         vkdev.device, vkdev.commandPool, vkdev.graphicsQueue);
     if (builtinSphereHandle != SIZE_MAX) {
@@ -2254,6 +2258,37 @@ int main(int argc, char* argv[]) {
                 // 5. Try as absolute (legacy scenes from the original device)
                 if (meshPath.empty() && assetP.is_absolute() && fs::exists(assetP)) {
                     meshPath = assetP;
+                }
+
+                // 6. Fallback: map engine mesh paths to builtin:// equivalents.
+                //    Handles .engine/meshes/X.glb or bare filenames like Cube.glb
+                //    when the .engine/ directory wasn't deployed and the
+                //    procedural builtin equivalent exists.
+                if (!fs::exists(meshPath)) {
+                    std::string rel = assetP.generic_string();
+                    std::string stem;
+                    const std::string engineMeshPrefix = ".engine/meshes/";
+                    if (rel.rfind(engineMeshPrefix, 0) == 0) {
+                        stem = rel.substr(engineMeshPrefix.size());
+                    } else {
+                        // Bare filename (e.g. "Cube.glb") — try as builtin
+                        stem = assetP.filename().string();
+                    }
+                    // Strip extension to get base name
+                    auto dotPos = stem.rfind('.');
+                    if (dotPos != std::string::npos)
+                        stem = stem.substr(0, dotPos);
+                    if (!stem.empty()) {
+                        // Lowercase for builtin:// key matching
+                        std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
+                        std::string builtinKey = "builtin://" + stem;
+                        if (g_MeshLookup.count(builtinKey) > 0) {
+                            renderer.meshHandle = g_MeshLookup[builtinKey];
+                            HP_LOG(Info, "  " + entityName + " mapped " + renderer.meshAssetPath + " -> " + builtinKey + " (handle " + std::to_string(renderer.meshHandle) + ")");
+                            loadedCount++;
+                            continue;
+                        }
+                    }
                 }
                 
                 if (!fs::exists(meshPath)) {

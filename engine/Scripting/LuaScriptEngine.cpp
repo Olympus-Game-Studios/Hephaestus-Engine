@@ -835,9 +835,10 @@ void LuaScriptEngine::RebuildSearchPaths() {
 
     const std::filesystem::path current = std::filesystem::current_path();
     add(current);
-    add(current / "engine");
-    add(current / "engine" / "Game");
-    add(current / "engine" / "Game" / "scripts");
+    // Deployed game paths (scripts next to executable)
+    add(current / "scripts");
+    add(current / "assets" / "scripts");
+    add(current / "assets");
 
     if (!m_ProjectRoot.empty()) {
         add(m_ProjectRoot);
@@ -845,6 +846,9 @@ void LuaScriptEngine::RebuildSearchPaths() {
         add(m_ProjectRoot / "assets" / "scripts");
         add(m_ProjectRoot / "scripts");
     }
+
+    // Source tree paths (dev builds only)
+    add(current / "engine" / "Game" / "scripts");
 }
 
 void LuaScriptEngine::AddSearchPath(const std::filesystem::path& path) {

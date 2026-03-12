@@ -441,6 +441,20 @@ SceneExporter::ExportResult SceneExporter::Export(const Scene& scene, const Expo
                            options.outputDirectory / "editor" / "Icons",
                            "editor icon");
 
+    // Step 3d: Copy .engine/meshes (builtin primitive meshes used by the editor)
+    // Try project root first (SyncEngineAssets copies them there), then engine root
+    if (fs::is_directory(projectRoot / ".engine" / "meshes")) {
+        copyDirectoryRecursive(projectRoot / ".engine" / "meshes",
+                               options.outputDirectory / ".engine" / "meshes",
+                               "engine mesh");
+    } else if (fs::is_directory(engineRoot / ".engine" / "meshes")) {
+        copyDirectoryRecursive(engineRoot / ".engine" / "meshes",
+                               options.outputDirectory / ".engine" / "meshes",
+                               "engine mesh");
+    } else {
+        std::cerr << "[SceneExporter] Warning: .engine/meshes not found in project or engine root" << std::endl;
+    }
+
     // Step 4: Copy runtime executable if found
     // Prefer HephaestusGame.exe (standalone game runtime) over HephaestusEngine.exe
     std::vector<fs::path> exeSearchPaths = {
@@ -525,6 +539,33 @@ SceneExporter::ExportResult SceneExporter::Export(const Scene& scene, const Expo
     
     if (!exeCopied) {
         std::cerr << "[SceneExporter] Warning: Runtime executable not found in expected locations" << std::endl;
+    }
+
+    // Always create game.ini so the runtime can detect this as an exported game
+    // (DetectProjectRoot checks for game.ini to set g_ProjectRoot = g_RuntimeRoot)
+    {
+        fs::path gameIniPath = options.outputDirectory / "game.ini";
+        if (!fs::exists(gameIniPath)) {
+            std::ofstream gameIni(gameIniPath);
+            if (gameIni) {
+                gameIni << "# Hephaestus Game Configuration\n";
+                gameIni << "# Auto-generated during export\n\n";
+                gameIni << "[Game]\n";
+                gameIni << "project_name = " << options.projectName << "\n";
+                gameIni << "window_title = " << options.projectName << "\n";
+                if (!relativeScenePath.empty()) {
+                    gameIni << "scene = " << relativeScenePath.generic_string() << "\n";
+                }
+                gameIni << "\n[Display]\n";
+                gameIni << "window_width = 1280\n";
+                gameIni << "window_height = 720\n";
+                gameIni << "fullscreen = false\n";
+                gameIni << "vsync = true\n";
+                gameIni.close();
+                result.exportedAssets.push_back(gameIniPath);
+                std::cout << "[SceneExporter] Created game.ini configuration" << std::endl;
+            }
+        }
     }
 
     // Step 4b: Copy runtime dependencies (DLLs)
