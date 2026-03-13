@@ -9,17 +9,34 @@
 #include "EditorMainWindow.h"
 
 #include <QApplication>
+#include <QDir>
 #include <iostream>
 #include <cassert>
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <string>
 
 namespace {
 
+bool HasHeprojectExtension(const std::filesystem::path& path)
+{
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return ext == ".heproject";
+}
+
 std::string ExtractProjectPathArg(int argc, char** argv)
 {
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
+        static constexpr const char* kProjectArgPrefix = "--project=";
+        if (arg.rfind(kProjectArgPrefix, 0) == 0 && arg.size() > std::char_traits<char>::length(kProjectArgPrefix)) {
+            return arg.substr(std::char_traits<char>::length(kProjectArgPrefix));
+        }
+
         if ((arg == "--project" || arg == "-p") && (i + 1 < argc)) {
             return argv[i + 1];
         }
@@ -32,7 +49,7 @@ std::string ExtractProjectPathArg(int argc, char** argv)
         }
 
         std::filesystem::path candidate(arg);
-        if (candidate.extension() == ".heproject") {
+        if (HasHeprojectExtension(candidate)) {
             return arg;
         }
     }
@@ -72,6 +89,16 @@ int RunQtEditor(int argc, char** argv)
 
     // Create Qt application
     QApplication app(argc, argv);
+
+    // Normalize working directory so relative shader/resource paths are stable.
+    // "Open with" launches can start with CWD set to the .heproject folder.
+    const QString executableDir = QCoreApplication::applicationDirPath();
+    if (!executableDir.isEmpty()) {
+        if (!QDir::setCurrent(executableDir)) {
+            std::cerr << "[QtEditor] Warning: Failed to set working directory to executable directory: "
+                      << executableDir.toStdString() << std::endl;
+        }
+    }
     
     // Set application metadata
     QApplication::setApplicationName("Hephaestus Engine Editor");
