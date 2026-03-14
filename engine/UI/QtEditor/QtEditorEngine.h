@@ -34,6 +34,7 @@ class VulkanPipeline;
 class Scene;
 class LuaScriptEngine;
 class ScriptEngine;
+class AudioEngine;
 struct GLFWwindow;
 
 namespace Physics {
@@ -294,6 +295,7 @@ private:
 
     // Play Mode
     Hephaestus::PlayModeManager m_playModeManager;
+    std::unique_ptr<AudioEngine> m_audioEngine;
     std::unique_ptr<LuaScriptEngine> m_luaScriptEngine;
     std::unique_ptr<ScriptEngine>    m_cppScriptEngine;
     std::unique_ptr<Physics::JoltPhysicsEngine> m_joltPhysicsEngine;

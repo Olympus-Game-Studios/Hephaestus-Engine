@@ -77,6 +77,7 @@
 #include "../Scene/Transform.h"
 
 // Scripting
+#include "../Audio/AudioEngine.h"
 #if HEPHAESTUS_GAME_SCRIPTING
 #include "../Scripting/LuaScriptEngine.h"
 #include "../Scripting/ScriptEngine.h"
@@ -1127,6 +1128,38 @@ static void LoadConfigFile(GameConfig& config) {
     HP_LOG(Info, "Loaded configuration from game.ini");
 }
 
+static void UpdateAudioSources(Scene& scene, AudioEngine& audioEngine) {
+    auto audioView = scene.GetEntitiesWith<AudioSourceComponent>();
+    for (auto entityHandle : audioView) {
+        auto& audio = audioView.get<AudioSourceComponent>(entityHandle);
+
+        if (!audio.enabled || audio.clipPath.empty()) {
+            if (audio.runtimeHandle != 0) {
+                audioEngine.Stop(audio.runtimeHandle);
+                audio.runtimeHandle = 0;
+            }
+            audio.runtimeStarted = false;
+            audio.runtimeLastClip.clear();
+            continue;
+        }
+
+        if (audio.runtimeHandle != 0) {
+            if (audio.runtimeLastClip != audio.clipPath || !audioEngine.IsPlaying(audio.runtimeHandle)) {
+                audioEngine.Stop(audio.runtimeHandle);
+                audio.runtimeHandle = 0;
+            } else {
+                audioEngine.SetVolume(audio.runtimeHandle, audio.volume);
+            }
+        }
+
+        if (audio.runtimeHandle == 0 && audio.playOnStart && !audio.runtimeStarted) {
+            audio.runtimeHandle = audioEngine.Play(audio.clipPath, audio.loop, audio.volume);
+            audio.runtimeStarted = audio.runtimeHandle != 0;
+            audio.runtimeLastClip = audio.clipPath;
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Main Entry Point
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1444,6 +1477,10 @@ int main(int argc, char* argv[]) {
     
     Bootstrap::EndStage(InitStage::Physics, true);
 
+    AudioEngine audioEngine;
+    audioEngine.Initialize();
+    audioEngine.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
+
     // ── Scripting ─────────────────────────────────
 #if HEPHAESTUS_GAME_SCRIPTING
     Bootstrap::BeginStage(InitStage::Scripting);
@@ -1453,6 +1490,7 @@ int main(int argc, char* argv[]) {
         luaEngine.Initialize(&scene, window);
         // Set project root so script search paths resolve correctly on any device
         luaEngine.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
+        luaEngine.SetAudioEngine(&audioEngine);
         HP_LOG(Info, "Lua scripting engine initialized");
     } catch (const std::exception& e) {
         HP_LOG(Error, std::string("Failed to initialize Lua: ") + e.what());
@@ -2531,6 +2569,9 @@ int main(int argc, char* argv[]) {
 
         // Update physics
         physicsSystem.Update(scene, deltaTime);
+
+        // Update declarative ECS audio sources.
+        UpdateAudioSources(scene, audioEngine);
 
         // Update scripts
 #if HEPHAESTUS_GAME_SCRIPTING

@@ -556,6 +556,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
         const ScriptComponent* scriptComponent = registry.try_get<ScriptComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
+        const AudioSourceComponent* audio = registry.try_get<AudioSourceComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
         const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
@@ -781,6 +782,19 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
                 WritePropertyValue(oss, value);
             }
             oss << "}\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (audio) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"AudioSource\": {\n";
+            oss << "          \"clipPath\": \"" << EscapeString(NormalizeAssetPathForSave(audio->clipPath)) << "\",\n";
+            oss << "          \"enabled\": " << (audio->enabled ? "true" : "false") << ",\n";
+            oss << "          \"playOnStart\": " << (audio->playOnStart ? "true" : "false") << ",\n";
+            oss << "          \"loop\": " << (audio->loop ? "true" : "false") << ",\n";
+            oss << "          \"volume\": " << FormatFloat(audio->volume) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1515,6 +1529,37 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
         }
 
+        if (const JsonValue* audioObj = components->Find("AudioSource")) {
+            if (!audioObj->IsObject()) {
+                outError = "AudioSource component is not an object.";
+                return false;
+            }
+
+            auto& audio = entity.AddComponent<AudioSourceComponent>();
+            if (const JsonValue* clipPathValue = audioObj->Find("clipPath")) {
+                if (clipPathValue->IsString()) {
+                    audio.clipPath = clipPathValue->AsString();
+                }
+            }
+            if (const JsonValue* enabledValue = audioObj->Find("enabled")) {
+                audio.enabled = ParseBoolLike(*enabledValue, audio.enabled);
+            }
+            if (const JsonValue* playOnStartValue = audioObj->Find("playOnStart")) {
+                audio.playOnStart = ParseBoolLike(*playOnStartValue, audio.playOnStart);
+            }
+            if (const JsonValue* loopValue = audioObj->Find("loop")) {
+                audio.loop = ParseBoolLike(*loopValue, audio.loop);
+            }
+            if (const JsonValue* volumeValue = audioObj->Find("volume")) {
+                if (volumeValue->IsNumber()) {
+                    audio.volume = static_cast<float>(volumeValue->AsNumber());
+                }
+            }
+            audio.runtimeHandle = 0;
+            audio.runtimeStarted = false;
+            audio.runtimeLastClip.clear();
+        }
+
         if (const JsonValue* selectionObj = components->Find("Selection")) {
             if (!selectionObj->IsObject()) {
                 outError = "Selection component is not an object.";
@@ -1994,6 +2039,7 @@ std::string SceneSerializer::SerializeToString() const
         const LightComponent* light = registry.try_get<LightComponent>(handle);
         const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
+        const AudioSourceComponent* audio = registry.try_get<AudioSourceComponent>(handle);
     const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
         const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
@@ -2203,6 +2249,19 @@ std::string SceneSerializer::SerializeToString() const
                 WritePropertyValue(oss, value);
             }
             oss << "}\n";
+            oss << "        }";
+            componentBlocks.push_back(oss.str());
+        }
+
+        if (audio) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << "        \"AudioSource\": {\n";
+            oss << "          \"clipPath\": \"" << EscapeString(NormalizeAssetPathForSave(audio->clipPath)) << "\",\n";
+            oss << "          \"enabled\": " << (audio->enabled ? "true" : "false") << ",\n";
+            oss << "          \"playOnStart\": " << (audio->playOnStart ? "true" : "false") << ",\n";
+            oss << "          \"loop\": " << (audio->loop ? "true" : "false") << ",\n";
+            oss << "          \"volume\": " << FormatFloat(audio->volume) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }

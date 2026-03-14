@@ -403,6 +403,23 @@ struct CameraComponent {
 };
 
 /**
+ * Audio source component - declarative scene audio playback.
+ * Runtime fields are not serialized and are managed by the audio system.
+ */
+struct AudioSourceComponent {
+    std::string clipPath;       // Relative/absolute path to .wav/.mp3
+    bool enabled = true;
+    bool playOnStart = true;
+    bool loop = false;
+    float volume = 1.0f;        // 0..1
+
+    // Runtime-only state
+    uint32_t runtimeHandle = 0;
+    bool runtimeStarted = false;
+    std::string runtimeLastClip;
+};
+
+/**
  * Relationship component - tracks parent-child hierarchy
  * This is automatically managed by the Scene graph
  */

@@ -169,6 +169,7 @@ add_subdirectory(extern/JoltPhysics/Build)
 # Shared Engine Sources (used by both Editor and Game)
 # ─────────────────────────────────────────────────────────────────────────────
 set(ENGINE_CORE_SOURCES
+    engine/Audio/AudioEngine.cpp
     engine/Assets/ModelImporter.cpp
     engine/Assets/AssetDatabase.cpp
     engine/Assets/AssetImporters.cpp
@@ -254,6 +255,7 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 if(HEPHAESTUS_BUILD_EDITOR)
 add_executable(HephaestusEngine
+    engine/Audio/AudioEngine.cpp
     engine/Core/main.cpp
     engine/Core/EditorContext.cpp
     engine/Core/EditorCameraController.cpp
@@ -360,6 +362,9 @@ else()
     target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt)
     # Lua disabled - LuaScriptEngine will be a stub
     target_compile_definitions(HephaestusEngine PRIVATE LUA_AVAILABLE=0)
+endif()
+if(WIN32)
+    target_link_libraries(HephaestusEngine PRIVATE winmm)
 endif()
 target_include_directories(HephaestusEngine PRIVATE
     engine
@@ -621,6 +626,7 @@ target_link_libraries(HephaestusGame PRIVATE ${GAME_LINK_LIBS})
 # Windows: link dbghelp for crash handler
 if(WIN32)
     target_link_libraries(HephaestusGame PRIVATE dbghelp)
+    target_link_libraries(HephaestusGame PRIVATE winmm)
 endif()
 
 # Set output directory for game executable

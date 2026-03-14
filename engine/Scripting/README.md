@@ -83,6 +83,7 @@ Transform.rotate(0, 45, 0)
 ✅ Full lifecycle hooks (onAwake, onUpdate, onDestroy, etc.)  
 ✅ OOP-style API with `this` binding  
 ✅ Transform, Input, Camera, and Entity access  
+✅ Audio playback control from Lua (`.wav` and `.mp3`)  
 ✅ No recompilation required - instant iteration  
 ✅ Automatic hot-reload on script changes  
 ✅ Console logging for debugging  
@@ -93,7 +94,7 @@ Transform.rotate(0, 45, 0)
 - [ ] Hot-reload during gameplay
 - [ ] Lua debugger integration
 - [ ] Script profiler
-- [ ] More bindings (Physics, Audio, etc.)
+- [ ] More bindings (UI, nav, AI, etc.)
 
 ## Script Lifecycle
 
@@ -181,6 +182,35 @@ end
 
 local mousePos = Input.getMousePosition()  -- Returns {x, y}
 ```
+
+### Audio
+
+```lua
+-- Play a one-shot sound
+local handle = Audio.play("assets/audio/click.wav")
+
+-- Loop background music at 40% volume
+local music = Audio.play("assets/audio/theme.mp3", true, 0.4)
+
+if Audio.isPlaying(music) then
+    Audio.setVolume(music, 0.3)
+end
+
+Audio.pause(music)
+Audio.resume(music)
+Audio.stop(music)
+```
+
+Available helpers:
+
+- `Audio.isAvailable()` → `boolean`
+- `Audio.play(path, loop=false, volume=1.0)` → `handle` (`0` on failure)
+- `Audio.stop(handle)` → `boolean`
+- `Audio.pause(handle)` → `boolean`
+- `Audio.resume(handle)` → `boolean`
+- `Audio.setVolume(handle, volume)` → `boolean` (`volume` in `0.0..1.0`)
+- `Audio.isPlaying(handle)` → `boolean`
+- `Audio.stopAll()`
 
 ## Performance
 

@@ -240,6 +240,35 @@ Camera.setRotation(math.rad(0.0), math.rad(180.0), 0.0)
 - `Camera.translate(dx, dy, dz)` → offsets camera in world space
 - `Camera.setRotation(rx, ry, rz)` / `Camera.getRotation()` (radians, pitch/yaw/roll)
 
+### Audio
+
+```lua
+-- One-shot effect
+local click = Audio.play("assets/audio/click.wav")
+
+-- Looping music (path, loop, volume)
+local music = Audio.play("assets/audio/music/theme.mp3", true, 0.5)
+
+if Audio.isPlaying(music) then
+    Audio.setVolume(music, 0.35)
+end
+
+Audio.pause(music)
+Audio.resume(music)
+Audio.stop(music)
+```
+
+Available helpers:
+
+- `Audio.isAvailable()` → `boolean`
+- `Audio.play(path, loop=false, volume=1.0)` → `handle` (`0` on failure)
+- `Audio.stop(handle)` → `boolean`
+- `Audio.pause(handle)` → `boolean`
+- `Audio.resume(handle)` → `boolean`
+- `Audio.setVolume(handle, volume)` → `boolean` (`0.0..1.0`)
+- `Audio.isPlaying(handle)` → `boolean`
+- `Audio.stopAll()`
+
 ### Time
 
 ```lua

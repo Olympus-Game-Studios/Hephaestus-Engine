@@ -29,6 +29,7 @@ struct GLFWwindow;
 struct LuaScriptComponent;
 struct TransformComponent;
 struct TagComponent;
+class AudioEngine;
 
 namespace entt {
     enum class entity : uint32_t;
@@ -206,6 +207,11 @@ public:
     using QuitRequestCallback = std::function<void()>;
     void SetQuitRequestCallback(QuitRequestCallback cb) { m_QuitRequestCallback = std::move(cb); }
 
+    /**
+     * Provide audio backend for Lua Audio.* bindings.
+     */
+    void SetAudioEngine(AudioEngine* audioEngine);
+
 private:
     lua_State* m_State = nullptr;
     Scene* m_Scene = nullptr;
@@ -215,6 +221,7 @@ private:
     PhysicsBinding m_PhysicsBinding{};
     RuntimeInputState m_RuntimeInput{};
     QuitRequestCallback m_QuitRequestCallback;
+    AudioEngine* m_AudioEngine = nullptr;
     double m_LastMouseX = 0.0;
     double m_LastMouseY = 0.0;
     bool m_HasLastMousePos = false;
@@ -283,6 +290,11 @@ private:
      */
     void RegisterPhysicsBindings();
 
+    /**
+     * Register audio bindings
+     */
+    void RegisterAudioBindings();
+
     void RebuildSearchPaths();
     void AddSearchPath(const std::filesystem::path& path);
 
@@ -345,6 +357,15 @@ private:
     static int Lua_Physics_setAngularVelocity(lua_State* L);
     static int Lua_Physics_setRotation(lua_State* L);
     static int Lua_Physics_raycast(lua_State* L);
+
+    static int Lua_Audio_isAvailable(lua_State* L);
+    static int Lua_Audio_play(lua_State* L);
+    static int Lua_Audio_stop(lua_State* L);
+    static int Lua_Audio_pause(lua_State* L);
+    static int Lua_Audio_resume(lua_State* L);
+    static int Lua_Audio_setVolume(lua_State* L);
+    static int Lua_Audio_isPlaying(lua_State* L);
+    static int Lua_Audio_stopAll(lua_State* L);
 
     // 'this' entity binding methods (OOP-style API)
     static int Lua_This_GetTransform(lua_State* L);

@@ -10,6 +10,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "QtEditorEngine.h"
+#include "../../Audio/AudioEngine.h"
 #include "../../Gfx/VulkanDevice.h"
 #include "../../Gfx/VulkanSwapchain.h"
 #include "../../Gfx/VulkanPipeline.h"
@@ -125,6 +126,38 @@ static int QtMouseButtonToGLFW(int qtButton) {
     if (qtButton == 2)  return GLFW_MOUSE_BUTTON_RIGHT;   // Qt::RightButton
     if (qtButton == 4)  return GLFW_MOUSE_BUTTON_MIDDLE;  // Qt::MiddleButton
     return -1;
+}
+
+static void UpdateAudioSourcesForScene(Scene& scene, AudioEngine& audioEngine) {
+    auto audioView = scene.GetEntitiesWith<AudioSourceComponent>();
+    for (auto entityHandle : audioView) {
+        auto& audio = audioView.get<AudioSourceComponent>(entityHandle);
+
+        if (!audio.enabled || audio.clipPath.empty()) {
+            if (audio.runtimeHandle != 0) {
+                audioEngine.Stop(audio.runtimeHandle);
+                audio.runtimeHandle = 0;
+            }
+            audio.runtimeStarted = false;
+            audio.runtimeLastClip.clear();
+            continue;
+        }
+
+        if (audio.runtimeHandle != 0) {
+            if (audio.runtimeLastClip != audio.clipPath || !audioEngine.IsPlaying(audio.runtimeHandle)) {
+                audioEngine.Stop(audio.runtimeHandle);
+                audio.runtimeHandle = 0;
+            } else {
+                audioEngine.SetVolume(audio.runtimeHandle, audio.volume);
+            }
+        }
+
+        if (audio.runtimeHandle == 0 && audio.playOnStart && !audio.runtimeStarted) {
+            audio.runtimeHandle = audioEngine.Play(audio.clipPath, audio.loop, audio.volume);
+            audio.runtimeStarted = audio.runtimeHandle != 0;
+            audio.runtimeLastClip = audio.clipPath;
+        }
+    }
 }
 
 // Debug callback for Vulkan validation
@@ -1078,6 +1111,10 @@ void QtEditorEngine::onTick()
 
     if (isPlaying) {
         populateRuntimeInputState();
+        if (m_audioEngine && m_editorContext.HasActiveScene()) {
+            Scene* activeScene = m_editorContext.GetActiveScene();
+            UpdateAudioSourcesForScene(*activeScene, *m_audioEngine);
+        }
         if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
             try {
                 Scene* activeScene = m_editorContext.GetActiveScene();
@@ -1431,6 +1468,9 @@ void QtEditorEngine::SetProjectRoot(const std::string& projectRoot)
     // Keep Lua search paths in sync so relative script paths keep resolving.
     if (m_luaScriptEngine) {
         m_luaScriptEngine->SetProjectRoot(std::filesystem::path(m_projectRoot));
+    }
+    if (m_audioEngine) {
+        m_audioEngine->SetProjectRoot(std::filesystem::path(m_projectRoot));
     }
 }
 
@@ -1923,6 +1963,12 @@ void QtEditorEngine::StartPlayMode()
         m_joltPhysicsSystem->SetEnabled(true);
     }
 
+    if (!m_audioEngine) {
+        m_audioEngine = std::make_unique<AudioEngine>();
+        m_audioEngine->Initialize();
+    }
+    m_audioEngine->SetProjectRoot(projectRootPath);
+
     // Save current editor camera so it can be restored on stop
     m_playModeManager.SaveEditorCamera(m_editorContext.GetCamera());
 
@@ -1935,6 +1981,7 @@ void QtEditorEngine::StartPlayMode()
         m_luaScriptEngine = std::make_unique<LuaScriptEngine>();
         m_luaScriptEngine->Initialize(scene, m_glfwWindow);
         m_luaScriptEngine->SetProjectRoot(projectRootPath);
+        m_luaScriptEngine->SetAudioEngine(m_audioEngine.get());
 
         // Set camera binding that routes through PlayModeManager
         CameraBinding camBinding;
@@ -1975,6 +2022,7 @@ void QtEditorEngine::StartPlayMode()
         // Re-associate with current scene
         m_luaScriptEngine->Initialize(scene, m_glfwWindow);
         m_luaScriptEngine->SetProjectRoot(projectRootPath);
+        m_luaScriptEngine->SetAudioEngine(m_audioEngine.get());
     }
 
     // Provide Jolt physics callbacks to Lua scripts in Qt play mode.
@@ -2170,6 +2218,10 @@ void QtEditorEngine::StopPlayMode()
     }
 
     m_playModeManager.StopPlayMode();
+
+    if (m_audioEngine) {
+        m_audioEngine->StopAll();
+    }
 
     // Release cursor if Lua scripts captured it during play
     if (m_viewport && m_viewport->IsCursorCaptured()) {
