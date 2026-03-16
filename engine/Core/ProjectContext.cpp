@@ -13,10 +13,15 @@
 #include <iostream>
 #include <algorithm>
 #include <cstdlib>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace Hephaestus {
@@ -368,8 +373,16 @@ static std::filesystem::path getExecutableDir()
     wchar_t buf[MAX_PATH]{};
     GetModuleFileNameW(nullptr, buf, MAX_PATH);
     return std::filesystem::path(buf).parent_path();
+#elif defined(__APPLE__)
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    if (size == 0) return {};
+
+    std::vector<char> buf(size + 1, '\0');
+    if (_NSGetExecutablePath(buf.data(), &size) != 0) return {};
+    return std::filesystem::path(buf.data()).parent_path();
 #else
-    // Linux / macOS: /proc/self/exe or _NSGetExecutablePath
+    // Linux: resolve executable path from /proc/self/exe
     char buf[4096]{};
     ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (len <= 0) return {};
