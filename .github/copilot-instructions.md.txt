@@ -1,0 +1,226 @@
+3. Do not complete a task that modifies source code without also updating the changelog.
+
+---
+
+# Project Architecture
+
+Copilot must respect the repository's architecture.
+
+Guidelines:
+
+- Keep systems modular.
+- Avoid circular dependencies.
+- Do not move large parts of the codebase unless explicitly asked.
+- Prefer extending existing modules over creating new subsystems.
+
+When implementing new features:
+- Integrate into the existing structure.
+- Follow existing patterns used in the repository.
+
+---
+
+# Coding Style
+
+Copilot must follow the project's coding conventions.
+
+General rules:
+
+- Write clear, readable code.
+- Prefer explicit logic over clever shortcuts.
+- Avoid deeply nested logic.
+- Avoid unnecessary abstraction layers.
+
+Formatting:
+
+- Use consistent indentation.
+- Keep functions reasonably small.
+- Break large logic blocks into helper functions.
+
+Naming conventions:
+
+- Classes: PascalCase
+- Functions: camelCase
+- Variables: camelCase
+- Constants: UPPER_CASE
+
+---
+
+# Dependency Management
+
+Do not introduce new dependencies unless explicitly requested.
+
+Before adding any dependency:
+
+1. Check if the functionality already exists in the repository.
+2. Prefer internal utilities over external libraries.
+3. Avoid large frameworks for small tasks.
+
+---
+
+# Performance Guidelines
+
+Generated code should follow basic performance best practices.
+
+Avoid:
+
+- Unnecessary allocations
+- Redundant loops
+- Copying large objects unnecessarily
+- Blocking operations in performance-critical paths
+
+Prefer:
+
+- Reusing existing objects
+- Efficient algorithms
+- Clear control flow
+
+---
+
+# Safety and Reliability
+
+Copilot should prioritize safe and robust code.
+
+Guidelines:
+
+- Validate inputs before use.
+- Avoid undefined behavior.
+- Handle errors explicitly.
+- Avoid silent failures.
+
+When dealing with external data:
+- Validate and sanitize inputs.
+- Fail safely.
+
+---
+
+# File Organization
+
+Copilot must respect the repository's directory structure.
+
+Rules:
+
+- Do not introduce new root directories without reason.
+- Place new files in the appropriate module or feature directory.
+- Avoid mixing unrelated systems in the same folder.
+
+---
+
+# Documentation
+
+Generated code should be reasonably documented.
+
+Guidelines:
+
+- Public functions should include brief explanations.
+- Complex systems should include a short overview comment.
+- Avoid comments that simply restate the code.
+
+Examples of good documentation:
+
+- Explain *why* something exists.
+- Explain non-obvious logic.
+- Document assumptions.
+
+---
+
+# Refactoring Guidelines
+
+When refactoring:
+
+- Preserve functionality.
+- Keep behavior unchanged unless explicitly asked.
+- Avoid rewriting entire systems.
+
+Refactors should:
+
+- Improve readability
+- Reduce duplication
+- Simplify logic
+
+Large-scale rewrites should **never be done automatically**.
+
+---
+
+# Testing Expectations
+
+When modifying code:
+
+- Avoid breaking existing functionality.
+- Maintain compatibility with existing systems.
+
+If tests exist:
+- Ensure changes do not break them.
+
+If tests do not exist:
+- Write code that is easy to test.
+
+---
+
+# Error Handling
+
+Error handling should be explicit and predictable.
+
+Avoid:
+
+- Silent failures
+- Ignoring returned errors
+
+Prefer:
+
+- Clear error messages
+- Safe fallbacks when possible
+
+---
+
+# Security Considerations
+
+Copilot must avoid generating insecure code.
+
+Do not:
+
+- Hardcode credentials
+- Expose secrets
+- Introduce unsafe input handling
+
+Sensitive information should always come from:
+
+- Environment variables
+- Configuration files
+
+---
+
+# Editing Behavior
+
+When editing existing code:
+
+- Preserve existing formatting and style.
+- Avoid reformatting entire files unnecessarily.
+- Only modify sections relevant to the task.
+
+Prefer **minimal diffs**.
+
+---
+
+# Code Generation Guidelines
+
+Generated code should be:
+
+- Readable
+- Maintainable
+- Consistent with the repository style
+- Easy for humans to modify later
+
+Avoid overly complex generated code.
+
+---
+
+# Final Rule
+
+Copilot should behave like a careful collaborator.
+
+If unsure:
+
+- Prefer conservative changes
+- Avoid breaking architecture
+- Maintain project consistency
+- Ask user
