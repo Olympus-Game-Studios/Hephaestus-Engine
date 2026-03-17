@@ -23,6 +23,7 @@
 #include "QtViewportWindow.h"
 #include "../../Gfx/NativeSurface.h"
 #include "../../Gfx/EngineFrameRenderer.h"
+#include "../HephaestusUI/UIRenderer.h"
 #include "../../Core/EditorContext.h"
 #include "../../Core/EditorCameraController.h"
 #include "../../Core/PlayModeManager.h"
@@ -189,6 +190,11 @@ public:
     Hephaestus::PlayState GetPlayState() const;
     bool IsPlaying() const;
     bool IsPaused() const;
+
+    /**
+     * @brief Get runtime UI draw commands produced during play mode.
+     */
+    const std::vector<::Hephaestus::HephaestusUI::UIDrawCommand>& GetRuntimeUIDrawCommands() const;
 
     /**
      * @brief Get the PlayModeManager for external queries.

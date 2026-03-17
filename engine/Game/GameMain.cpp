@@ -83,6 +83,11 @@
 #include "../Scripting/ScriptEngine.h"
 #endif
 
+// Runtime UI
+#include "../UI/HephaestusUI/UIContext.h"
+#include "../UI/HephaestusUI/UIRenderer.h"
+#include "../UI/HephaestusUI/UISystem.h"
+
 // Assets
 #include "../Assets/MeshAsset.h"
 #include "../Assets/ModelImporter.h"
@@ -92,6 +97,7 @@
 
 namespace fs = std::filesystem;
 using namespace Hephaestus::Runtime;
+namespace HUI = Hephaestus::HephaestusUI;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Uniform Buffer Object (must match shader layout)
@@ -1481,6 +1487,12 @@ int main(int argc, char* argv[]) {
     audioEngine.Initialize();
     audioEngine.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
 
+    // ── Runtime UI ────────────────────────────────
+    HUI::UISystem uiSystem;
+    HUI::UIContext uiContext;
+    HUI::UIRenderer uiRenderer;
+    uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
+
     // ── Scripting ─────────────────────────────────
 #if HEPHAESTUS_GAME_SCRIPTING
     Bootstrap::BeginStage(InitStage::Scripting);
@@ -1491,6 +1503,7 @@ int main(int argc, char* argv[]) {
         // Set project root so script search paths resolve correctly on any device
         luaEngine.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
         luaEngine.SetAudioEngine(&audioEngine);
+        luaEngine.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);
         HP_LOG(Info, "Lua scripting engine initialized");
     } catch (const std::exception& e) {
         HP_LOG(Error, std::string("Failed to initialize Lua: ") + e.what());
@@ -2539,6 +2552,7 @@ int main(int argc, char* argv[]) {
 
     uint32_t currentFrame = 0;
     auto lastTime = std::chrono::high_resolution_clock::now();
+    std::array<bool, 3> uiMousePressed = {false, false, false};
 
     // Cache environment settings for skybox rendering
     bool envUseSolidColor = true;
@@ -2567,6 +2581,26 @@ int main(int argc, char* argv[]) {
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
         lastTime = currentTime;
 
+        uiContext.SetDeltaTimeSeconds(deltaTime);
+        uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
+
+        double cursorX = 0.0;
+        double cursorY = 0.0;
+        glfwGetCursorPos(window, &cursorX, &cursorY);
+        const HUI::UIVec2 mousePos{static_cast<float>(cursorX), static_cast<float>(cursorY)};
+        uiContext.QueueMouseMove(mousePos);
+
+        const int mouseButtons[3] = {GLFW_MOUSE_BUTTON_LEFT, GLFW_MOUSE_BUTTON_RIGHT, GLFW_MOUSE_BUTTON_MIDDLE};
+        for (int i = 0; i < 3; ++i) {
+            const bool pressed = glfwGetMouseButton(window, mouseButtons[i]) == GLFW_PRESS;
+            if (pressed && !uiMousePressed[static_cast<size_t>(i)]) {
+                uiContext.QueueMousePress(mousePos, mouseButtons[i]);
+            } else if (!pressed && uiMousePressed[static_cast<size_t>(i)]) {
+                uiContext.QueueMouseRelease(mousePos, mouseButtons[i]);
+            }
+            uiMousePressed[static_cast<size_t>(i)] = pressed;
+        }
+
         // Update physics
         physicsSystem.Update(scene, deltaTime);
 
@@ -2577,6 +2611,10 @@ int main(int argc, char* argv[]) {
 #if HEPHAESTUS_GAME_SCRIPTING
         luaEngine.Update(scene, deltaTime);
 #endif
+
+    uiSystem.Update(uiContext);
+    uiRenderer.Reset();
+    uiSystem.Render(uiRenderer);
 
         // Wait for previous frame
         vkWaitForFences(vkdev.device, 1, &inFlight[currentFrame], VK_TRUE, UINT64_MAX);

@@ -27,6 +27,9 @@
 #include "../../Scripting/LuaScriptEngine.h"
 #include "../../Scripting/ScriptEngine.h"
 #include "../../Scripting/LuaScriptComponent.h"
+#include "../HephaestusUI/UISystem.h"
+#include "../HephaestusUI/UIContext.h"
+#include "../HephaestusUI/UIRenderer.h"
 
 #include <QCoreApplication>
 #include <GLFW/glfw3.h>  // For GLFW key code constants used by RuntimeInputState
@@ -158,6 +161,33 @@ static void UpdateAudioSourcesForScene(Scene& scene, AudioEngine& audioEngine) {
             audio.runtimeLastClip = audio.clipPath;
         }
     }
+}
+
+struct RuntimeUIState {
+    std::unique_ptr<::Hephaestus::HephaestusUI::UISystem> system;
+    std::unique_ptr<::Hephaestus::HephaestusUI::UIContext> context;
+    std::unique_ptr<::Hephaestus::HephaestusUI::UIRenderer> renderer;
+};
+
+static std::unordered_map<const QtEditorEngine*, RuntimeUIState> g_runtimeUIStates;
+
+static RuntimeUIState& EnsureRuntimeUIState(const QtEditorEngine* engine)
+{
+    return g_runtimeUIStates[engine];
+}
+
+static RuntimeUIState* FindRuntimeUIState(const QtEditorEngine* engine)
+{
+    auto it = g_runtimeUIStates.find(engine);
+    if (it == g_runtimeUIStates.end()) {
+        return nullptr;
+    }
+    return &it->second;
+}
+
+static void ClearRuntimeUIState(const QtEditorEngine* engine)
+{
+    g_runtimeUIStates.erase(engine);
 }
 
 // Debug callback for Vulkan validation
@@ -420,6 +450,7 @@ void QtEditorEngine::Shutdown()
     m_joltPhysicsEngine.reset();
     
     cleanupVulkanResources();
+    ClearRuntimeUIState(this);
     
     m_state = EngineState::Shutdown;
     std::cout << "[QtEditorEngine] Shutdown complete\n";
@@ -559,6 +590,13 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         outY = y * scaleY;
     };
 
+    auto toUIPoint = [&](float x, float y) -> ::Hephaestus::HephaestusUI::UIVec2 {
+        float px = x;
+        float py = y;
+        toPixelCoords(x, y, px, py);
+        return {px, py};
+    };
+
     auto canInteractWithGizmo = [&]() -> bool {
         // Suppress gizmo interaction during play mode
         if (m_playModeManager.ShouldSuppressEditorInteraction()) {
@@ -598,7 +636,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
     
     // Update input state based on event type
     switch (event.type) {
-    case InputEvent::Type::MousePress:
+    case InputEvent::Type::MousePress: {
         // Update button state
         if (event.button == 1) m_inputState.lmbDown = true;       // Qt::LeftButton
         else if (event.button == 2) m_inputState.rmbDown = true;  // Qt::RightButton
@@ -622,6 +660,12 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         m_inputState.mouseY = event.y;
         m_runtimeMouseX = static_cast<double>(event.x);
         m_runtimeMouseY = static_cast<double>(event.y);
+
+        RuntimeUIState* runtimeUIState = FindRuntimeUIState(this);
+        if (!m_playModeManager.IsEditor() && runtimeUIState && runtimeUIState->context) {
+            const ::Hephaestus::HephaestusUI::UIVec2 uiPos = toUIPoint(event.x, event.y);
+            runtimeUIState->context->QueueMousePress(uiPos, event.button);
+        }
 
         if (event.button == 1 && !m_inputState.altDown && !m_inputState.rmbDown) {
             if (canInteractWithGizmo()) {
@@ -655,8 +699,9 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         m_lastMouseY = event.y;
         m_hasLastMousePos = true;
         break;
+    }
         
-    case InputEvent::Type::MouseRelease:
+    case InputEvent::Type::MouseRelease: {
         // Update button state
         if (event.button == 1) {
             m_inputState.lmbDown = false;
@@ -695,6 +740,12 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         }
         else if (event.button == 2) m_inputState.rmbDown = false;
         else if (event.button == 4) m_inputState.mmbDown = false;
+
+        RuntimeUIState* runtimeUIState = FindRuntimeUIState(this);
+        if (!m_playModeManager.IsEditor() && runtimeUIState && runtimeUIState->context) {
+            const ::Hephaestus::HephaestusUI::UIVec2 uiPos = toUIPoint(event.x, event.y);
+            runtimeUIState->context->QueueMouseRelease(uiPos, event.button);
+        }
         
         // Track for Lua RuntimeInputState (right/middle release)
         if (event.button != 1) {
@@ -711,6 +762,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             m_viewport->ReleaseCursor();
         }
         break;
+    }
         
     case InputEvent::Type::MouseMove:
         {
@@ -726,6 +778,12 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             m_inputState.mouseY = event.y;
             m_inputState.mouseDeltaX = deltaX;
             m_inputState.mouseDeltaY = deltaY;
+
+            RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
+            if (!m_playModeManager.IsEditor() && runtimeUI && runtimeUI->context) {
+                const ::Hephaestus::HephaestusUI::UIVec2 uiPos = toUIPoint(event.x, event.y);
+                runtimeUI->context->QueueMouseMove(uiPos);
+            }
 
             // Track for Lua input
             m_runtimeMouseX = static_cast<double>(event.x);
@@ -1134,6 +1192,20 @@ void QtEditorEngine::onTick()
         }
     } else if (m_joltPhysicsSystem) {
         m_joltPhysicsSystem->SetEnabled(false);
+    }
+
+    RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
+    if (isPlayOrPause && runtimeUI && runtimeUI->system && runtimeUI->context && runtimeUI->renderer) {
+        runtimeUI->context->SetViewportSize({
+            static_cast<float>(m_swapchain->extent.width),
+            static_cast<float>(m_swapchain->extent.height)
+        });
+        runtimeUI->context->SetDeltaTimeSeconds(dt);
+        runtimeUI->system->Update(*runtimeUI->context);
+        runtimeUI->renderer->Reset();
+        runtimeUI->system->Render(*runtimeUI->renderer);
+    } else if (runtimeUI && runtimeUI->renderer) {
+        runtimeUI->renderer->Reset();
     }
 
     // ── Camera update ──────────────────────────────────────────────────────
@@ -1969,6 +2041,23 @@ void QtEditorEngine::StartPlayMode()
     }
     m_audioEngine->SetProjectRoot(projectRootPath);
 
+    RuntimeUIState& runtimeUI = EnsureRuntimeUIState(this);
+    if (!runtimeUI.system) {
+        runtimeUI.system = std::make_unique<::Hephaestus::HephaestusUI::UISystem>();
+    }
+    if (!runtimeUI.context) {
+        runtimeUI.context = std::make_unique<::Hephaestus::HephaestusUI::UIContext>();
+    }
+    if (!runtimeUI.renderer) {
+        runtimeUI.renderer = std::make_unique<::Hephaestus::HephaestusUI::UIRenderer>();
+    }
+    if (runtimeUI.system) {
+        runtimeUI.system->ClearScreens();
+    }
+    if (runtimeUI.renderer) {
+        runtimeUI.renderer->Reset();
+    }
+
     // Save current editor camera so it can be restored on stop
     m_playModeManager.SaveEditorCamera(m_editorContext.GetCamera());
 
@@ -2024,6 +2113,7 @@ void QtEditorEngine::StartPlayMode()
         m_luaScriptEngine->SetProjectRoot(projectRootPath);
         m_luaScriptEngine->SetAudioEngine(m_audioEngine.get());
     }
+    m_luaScriptEngine->SetUIBindings(runtimeUI.system.get(), runtimeUI.context.get(), runtimeUI.renderer.get());
 
     // Provide Jolt physics callbacks to Lua scripts in Qt play mode.
     PhysicsBinding physicsBinding{};
@@ -2219,6 +2309,17 @@ void QtEditorEngine::StopPlayMode()
 
     m_playModeManager.StopPlayMode();
 
+    if (m_luaScriptEngine) {
+        m_luaScriptEngine->SetUIBindings(nullptr, nullptr, nullptr);
+    }
+    RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
+    if (runtimeUI && runtimeUI->system) {
+        runtimeUI->system->ClearScreens();
+    }
+    if (runtimeUI && runtimeUI->renderer) {
+        runtimeUI->renderer->Reset();
+    }
+
     if (m_audioEngine) {
         m_audioEngine->StopAll();
     }
@@ -2272,6 +2373,16 @@ bool QtEditorEngine::IsPlaying() const
 bool QtEditorEngine::IsPaused() const
 {
     return m_playModeManager.IsPaused();
+}
+
+const std::vector<::Hephaestus::HephaestusUI::UIDrawCommand>& QtEditorEngine::GetRuntimeUIDrawCommands() const
+{
+    static const std::vector<::Hephaestus::HephaestusUI::UIDrawCommand> kEmpty;
+    RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
+    if (!runtimeUI || !runtimeUI->renderer) {
+        return kEmpty;
+    }
+    return runtimeUI->renderer->GetDrawCommands();
 }
 
 } // namespace QtEditor

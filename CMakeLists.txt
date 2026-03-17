@@ -199,6 +199,22 @@ set(ENGINE_CORE_SOURCES
     engine/Scripting/ScriptBase.cpp
     engine/Scripting/ScriptEngine.cpp
     engine/Scripting/LuaScriptEngine.cpp
+    engine/UI/HephaestusUI/UIButton.cpp
+    engine/UI/HephaestusUI/UICanvas.cpp
+    engine/UI/HephaestusUI/UIContext.cpp
+    engine/UI/HephaestusUI/UIElement.cpp
+    engine/UI/HephaestusUI/UIFont.cpp
+    engine/UI/HephaestusUI/UIHorizontalBox.cpp
+    engine/UI/HephaestusUI/UIImage.cpp
+    engine/UI/HephaestusUI/UIInputRouter.cpp
+    engine/UI/HephaestusUI/UILayout.cpp
+    engine/UI/HephaestusUI/UIPanel.cpp
+    engine/UI/HephaestusUI/UIRenderer.cpp
+    engine/UI/HephaestusUI/UIScreen.cpp
+    engine/UI/HephaestusUI/UISimpleMenuExample.cpp
+    engine/UI/HephaestusUI/UISystem.cpp
+    engine/UI/HephaestusUI/UIText.cpp
+    engine/UI/HephaestusUI/UIVerticalBox.cpp
 )
 
 # Editor-only sources
@@ -289,6 +305,22 @@ add_executable(HephaestusEngine
     engine/Scripting/ScriptBase.cpp
     engine/Scripting/ScriptEngine.cpp
     engine/Scripting/LuaScriptEngine.cpp
+    engine/UI/HephaestusUI/UIButton.cpp
+    engine/UI/HephaestusUI/UICanvas.cpp
+    engine/UI/HephaestusUI/UIContext.cpp
+    engine/UI/HephaestusUI/UIElement.cpp
+    engine/UI/HephaestusUI/UIFont.cpp
+    engine/UI/HephaestusUI/UIHorizontalBox.cpp
+    engine/UI/HephaestusUI/UIImage.cpp
+    engine/UI/HephaestusUI/UIInputRouter.cpp
+    engine/UI/HephaestusUI/UILayout.cpp
+    engine/UI/HephaestusUI/UIPanel.cpp
+    engine/UI/HephaestusUI/UIRenderer.cpp
+    engine/UI/HephaestusUI/UIScreen.cpp
+    engine/UI/HephaestusUI/UISimpleMenuExample.cpp
+    engine/UI/HephaestusUI/UISystem.cpp
+    engine/UI/HephaestusUI/UIText.cpp
+    engine/UI/HephaestusUI/UIVerticalBox.cpp
     engine/UI/EditorDocument.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
@@ -396,6 +428,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/QtViewportWindow.h
             engine/UI/QtEditor/QtEditorEngine.cpp
             engine/UI/QtEditor/QtEditorEngine.h
+            engine/UI/QtEditor/RuntimeUIOverlayWidget.cpp
+            engine/UI/QtEditor/RuntimeUIOverlayWidget.h
             engine/UI/QtEditor/AssetBrowserWidget.cpp
             engine/UI/QtEditor/AssetBrowserWidget.h
             engine/UI/QtEditor/EditorAssetActions.cpp

@@ -21,6 +21,7 @@
 #include "CameraInspector.h"
 #include "EditorUndoCommand.h"
 #include "BuildSettingsDialog.h"
+#include "RuntimeUIOverlayWidget.h"
 #include "../Shared/SettingsWindow.h"
 
 #include "../../Core/EditorContext.h"
@@ -1330,6 +1331,12 @@ void EditorMainWindow::setupCentralWidget()
     hostLayout->setSpacing(0);
     hostLayout->addWidget(m_viewportContainer, 0, 0);
 
+    m_runtimeUIOverlay = new RuntimeUIOverlayWidget(m_viewportHost);
+    m_runtimeUIOverlay->setObjectName("RuntimeUIOverlay");
+    m_runtimeUIOverlay->setVisible(false);
+    m_runtimeUIOverlay->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    hostLayout->addWidget(m_runtimeUIOverlay, 0, 0);
+
     auto makeOverlay = [this](const QString& name) {
         auto* overlay = new QFrame(m_viewportHost);
         overlay->setObjectName(name);
@@ -1751,6 +1758,12 @@ void EditorMainWindow::initializeEngine()
             m_viewportHost->style()->unpolish(m_viewportHost);
             m_viewportHost->style()->polish(m_viewportHost);
         }
+        if (m_runtimeUIOverlay) {
+            m_runtimeUIOverlay->setVisible(playing || paused);
+            if (!playing && !paused) {
+                m_runtimeUIOverlay->SetDrawCommands({});
+            }
+        }
         if (!playing) {
             rebuildOutliner();
             refreshDetailsPanel();
@@ -1883,6 +1896,12 @@ void EditorMainWindow::onFrameRendered(float dt)
 {
     m_lastDt = dt;
     m_frameCount++;
+
+    if (m_runtimeUIOverlay && m_engine) {
+        const bool showRuntimeUI = m_engine->IsPlaying() || m_engine->IsPaused();
+        m_runtimeUIOverlay->setVisible(showRuntimeUI);
+        m_runtimeUIOverlay->SetDrawCommands(m_engine->GetRuntimeUIDrawCommands());
+    }
 
     // Keep transform fields synchronized with viewport gizmo edits and other runtime transform updates.
     syncTransformFieldsFromScene();

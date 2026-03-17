@@ -13,6 +13,7 @@ This directory focuses on Lua as the primary gameplay scripting language. C++ is
 ### 📖 **Complete Guides** (References)
 - **[SCRIPT_DEVELOPMENT_GUIDE.md](../../SCRIPT_DEVELOPMENT_GUIDE.md)** - Engine/native extension reference (C++)
 - **[LUA_SCRIPTING_GUIDE.md](./LUA_SCRIPTING_GUIDE.md)** - Complete Lua scripting reference
+- **[LUA_UI_API_REFERENCE.md](./LUA_UI_API_REFERENCE.md)** - Runtime UI Lua API (screen + widget handles)
 - **[LUA_INSTALLATION_GUIDE.md](./LUA_INSTALLATION_GUIDE.md)** - How to install Lua on your platform
 
 ### 🏗️ **Architecture & Deep Dives** (For developers)

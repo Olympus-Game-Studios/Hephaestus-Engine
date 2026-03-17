@@ -2,6 +2,7 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <filesystem>
 #include <limits>
@@ -30,6 +31,14 @@ struct LuaScriptComponent;
 struct TransformComponent;
 struct TagComponent;
 class AudioEngine;
+
+namespace Hephaestus::HephaestusUI {
+    class UIElement;
+    class UIScreen;
+    class UISystem;
+    class UIContext;
+    class UIRenderer;
+}
 
 namespace entt {
     enum class entity : uint32_t;
@@ -212,6 +221,13 @@ public:
      */
     void SetAudioEngine(AudioEngine* audioEngine);
 
+    /**
+     * Provide runtime UI bridge for Lua UI.* bindings.
+     */
+    void SetUIBindings(Hephaestus::HephaestusUI::UISystem* uiSystem,
+                       Hephaestus::HephaestusUI::UIContext* uiContext,
+                       Hephaestus::HephaestusUI::UIRenderer* uiRenderer);
+
 private:
     lua_State* m_State = nullptr;
     Scene* m_Scene = nullptr;
@@ -222,6 +238,9 @@ private:
     RuntimeInputState m_RuntimeInput{};
     QuitRequestCallback m_QuitRequestCallback;
     AudioEngine* m_AudioEngine = nullptr;
+    Hephaestus::HephaestusUI::UISystem* m_UISystem = nullptr;
+    Hephaestus::HephaestusUI::UIContext* m_UIContext = nullptr;
+    Hephaestus::HephaestusUI::UIRenderer* m_UIRenderer = nullptr;
     double m_LastMouseX = 0.0;
     double m_LastMouseY = 0.0;
     bool m_HasLastMousePos = false;
@@ -294,6 +313,7 @@ private:
      * Register audio bindings
      */
     void RegisterAudioBindings();
+    void RegisterUIBindings();
 
     void RebuildSearchPaths();
     void AddSearchPath(const std::filesystem::path& path);
@@ -366,6 +386,43 @@ private:
     static int Lua_Audio_setVolume(lua_State* L);
     static int Lua_Audio_isPlaying(lua_State* L);
     static int Lua_Audio_stopAll(lua_State* L);
+
+    static int Lua_UI_isAvailable(lua_State* L);
+    static int Lua_UI_createSimpleMenu(lua_State* L);
+    static int Lua_UI_createScreen(lua_State* L);
+    static int Lua_UI_getRoot(lua_State* L);
+    static int Lua_UI_createPanel(lua_State* L);
+    static int Lua_UI_createText(lua_State* L);
+    static int Lua_UI_createButton(lua_State* L);
+    static int Lua_UI_createImage(lua_State* L);
+    static int Lua_UI_createVerticalBox(lua_State* L);
+    static int Lua_UI_createHorizontalBox(lua_State* L);
+    static int Lua_UI_clearScreens(lua_State* L);
+    static int Lua_UI_getScreenCount(lua_State* L);
+    static int Lua_UI_setScreenVisible(lua_State* L);
+    static int Lua_UI_setScreenActive(lua_State* L);
+    static int Lua_UI_setViewportSize(lua_State* L);
+    static int Lua_UI_getDrawCommandCount(lua_State* L);
+    static int Lua_UI_setPosition(lua_State* L);
+    static int Lua_UI_setSize(lua_State* L);
+    static int Lua_UI_setVisible(lua_State* L);
+    static int Lua_UI_setOpacity(lua_State* L);
+    static int Lua_UI_setZOrder(lua_State* L);
+    static int Lua_UI_setText(lua_State* L);
+    static int Lua_UI_setImage(lua_State* L);
+    static int Lua_UI_setSpacing(lua_State* L);
+
+    uint32_t RegisterUIScreenHandle(const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>& screen);
+    uint32_t RegisterUIElementHandle(Hephaestus::HephaestusUI::UIElement* element);
+    std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> ResolveUIScreen(uint32_t handle) const;
+    Hephaestus::HephaestusUI::UIElement* ResolveUIElement(uint32_t handle) const;
+    void ResetUIHandleMaps();
+
+    uint32_t m_NextUIScreenHandle = 1;
+    uint32_t m_NextUIElementHandle = 1;
+    std::unordered_map<uint32_t, std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>> m_UIScreenHandles;
+    std::unordered_map<uint32_t, Hephaestus::HephaestusUI::UIElement*> m_UIElementHandles;
+    std::unordered_map<const Hephaestus::HephaestusUI::UIElement*, uint32_t> m_UIElementReverseHandles;
 
     // 'this' entity binding methods (OOP-style API)
     static int Lua_This_GetTransform(lua_State* L);

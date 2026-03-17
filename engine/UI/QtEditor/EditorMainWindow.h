@@ -58,6 +58,7 @@ class QtEditorEngine;
 class AssetBrowserWidget;
 class AddActorsPanel;
 class EditorAssetActions;
+class RuntimeUIOverlayWidget;
 class LightInspector;
 class EnvironmentInspector;
 class ComponentInspector;
@@ -109,6 +110,7 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+     RuntimeUIOverlayWidget* m_runtimeUIOverlay = nullptr;
     void setupMenuBar();
     void setupTopToolbar();
     void setupDockWidgets();

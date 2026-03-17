@@ -33,6 +33,7 @@ Welcome to the Hephaestus Engine scripting documentation! This index guides you 
 |-------|---------|-----------|
 | [SCRIPTING_QUICK_START.md](./SCRIPTING_QUICK_START.md) | Get started with Lua scripting | 5 min |
 | [LUA_SCRIPTING_GUIDE.md](./LUA_SCRIPTING_GUIDE.md) | Lua scripting | 15 min |
+| [LUA_UI_API_REFERENCE.md](./LUA_UI_API_REFERENCE.md) | Runtime UI Lua API reference | 10 min |
 
 ### Setup & Installation (5-30 minutes)
 

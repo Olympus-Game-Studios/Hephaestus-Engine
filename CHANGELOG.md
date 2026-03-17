@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-03-17: Added initial `HephaestusUI` runtime retained-mode UI module with `UISystem`, `UIContext`, `UIScreen`, base `UIElement` tree, layout containers (`UICanvas`, `UIVerticalBox`, `UIHorizontalBox`), widgets (`UIPanel`, `UIText`, `UIImage`, `UIButton`), command-list based `UIRenderer`, `UIInputRouter`, `UIFont` registry scaffolding, `UIStyle`, and a code example for building a simple menu screen.
+- 2026-03-17: Connected runtime UI to Lua scripting via a new `UI` binding surface (`isAvailable`, `createSimpleMenu`, `clearScreens`, `getScreenCount`, `setScreenVisible`, `setScreenActive`, `setViewportSize`, `getDrawCommandCount`) and wired `HephaestusGame` to update UI input/layout each frame through `UISystem`/`UIContext`.
+- 2026-03-17: Expanded Lua runtime UI API with handle-based widget creation and mutation (`createScreen`, `getRoot`, `createPanel`, `createText`, `createButton`, `createImage`, `createVerticalBox`, `createHorizontalBox`, `setPosition`, `setSize`, `setVisible`, `setOpacity`, `setZOrder`, `setText`, `setImage`, `setSpacing`) plus internal UI handle lifecycle tracking.
+- 2026-03-17: Added full HephaestusUI documentation including runtime architecture/lifecycle/render-command integration guide and complete Lua UI API reference, with links added in Features and Scripting documentation indexes.
+- 2026-03-17: Added a dedicated script-only guide for creating and displaying custom runtime UI without engine source access (`Documentation/Guides/NO_SOURCE_RUNTIME_UI_GUIDE.md`) and linked it from the Guides index and HephaestusUI runtime guide.
+- 2026-03-17: Wired HephaestusUI into Qt editor play mode by binding editor Lua runtime to `UISystem`/`UIContext`/`UIRenderer`, forwarding viewport mouse input to UI routing, ticking UI per frame, and adding a viewport overlay widget to visualize runtime UI draw commands during editor play testing.
+
 #### Multi-Selection Support in Outliner (2026-01-29)
 
 **Feature**: Users can now select multiple actors in the World Outliner and viewport using 

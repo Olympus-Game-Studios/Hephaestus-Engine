@@ -1,6 +1,19 @@
 #include "LuaScriptEngine.h"
 #include "LuaScriptComponent.h"
 #include "../Audio/AudioEngine.h"
+#include "../UI/HephaestusUI/UIContext.h"
+#include "../UI/HephaestusUI/UICanvas.h"
+#include "../UI/HephaestusUI/UIElement.h"
+#include "../UI/HephaestusUI/UIHorizontalBox.h"
+#include "../UI/HephaestusUI/UIImage.h"
+#include "../UI/HephaestusUI/UIPanel.h"
+#include "../UI/HephaestusUI/UIRenderer.h"
+#include "../UI/HephaestusUI/UIScreen.h"
+#include "../UI/HephaestusUI/UISimpleMenuExample.h"
+#include "../UI/HephaestusUI/UISystem.h"
+#include "../UI/HephaestusUI/UIText.h"
+#include "../UI/HephaestusUI/UIVerticalBox.h"
+#include "../UI/HephaestusUI/UIButton.h"
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Components.h"
@@ -25,6 +38,24 @@
 namespace {
     constexpr int kInvalidRef = -1;
     constexpr uint32_t kInvalidEntityId = std::numeric_limits<uint32_t>::max();
+
+    bool ContainsUIElement(const Hephaestus::HephaestusUI::UIElement* root,
+                           const Hephaestus::HephaestusUI::UIElement* target) {
+        if (!root || !target) {
+            return false;
+        }
+        if (root == target) {
+            return true;
+        }
+
+        for (const std::unique_ptr<Hephaestus::HephaestusUI::UIElement>& child : root->GetChildren()) {
+            if (ContainsUIElement(child.get(), target)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
 #if LUA_AVAILABLE
     std::string ToUpper(std::string value) {
@@ -454,6 +485,89 @@ void LuaScriptEngine::SetAudioEngine(AudioEngine* audioEngine) {
     m_AudioEngine = audioEngine;
 }
 
+void LuaScriptEngine::SetUIBindings(Hephaestus::HephaestusUI::UISystem* uiSystem,
+                                    Hephaestus::HephaestusUI::UIContext* uiContext,
+                                    Hephaestus::HephaestusUI::UIRenderer* uiRenderer) {
+    m_UISystem = uiSystem;
+    m_UIContext = uiContext;
+    m_UIRenderer = uiRenderer;
+    if (!m_UISystem || !m_UIContext || !m_UIRenderer) {
+        ResetUIHandleMaps();
+    }
+}
+
+uint32_t LuaScriptEngine::RegisterUIScreenHandle(const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>& screen) {
+    if (!screen) {
+        return 0;
+    }
+
+    for (const auto& [handle, existing] : m_UIScreenHandles) {
+        if (existing == screen) {
+            return handle;
+        }
+    }
+
+    const uint32_t handle = m_NextUIScreenHandle++;
+    m_UIScreenHandles[handle] = screen;
+    RegisterUIElementHandle(screen->GetRootCanvas());
+    return handle;
+}
+
+uint32_t LuaScriptEngine::RegisterUIElementHandle(Hephaestus::HephaestusUI::UIElement* element) {
+    if (!element) {
+        return 0;
+    }
+
+    const auto existing = m_UIElementReverseHandles.find(element);
+    if (existing != m_UIElementReverseHandles.end()) {
+        return existing->second;
+    }
+
+    const uint32_t handle = m_NextUIElementHandle++;
+    m_UIElementHandles[handle] = element;
+    m_UIElementReverseHandles[element] = handle;
+    return handle;
+}
+
+std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> LuaScriptEngine::ResolveUIScreen(uint32_t handle) const {
+    const auto it = m_UIScreenHandles.find(handle);
+    if (it == m_UIScreenHandles.end()) {
+        return nullptr;
+    }
+    return it->second;
+}
+
+Hephaestus::HephaestusUI::UIElement* LuaScriptEngine::ResolveUIElement(uint32_t handle) const {
+    const auto it = m_UIElementHandles.find(handle);
+    if (it == m_UIElementHandles.end()) {
+        return nullptr;
+    }
+
+    Hephaestus::HephaestusUI::UIElement* element = it->second;
+    if (!m_UISystem || !element) {
+        return nullptr;
+    }
+
+    for (const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>& screen : m_UISystem->GetScreens()) {
+        if (!screen || !screen->GetRootCanvas()) {
+            continue;
+        }
+        if (ContainsUIElement(screen->GetRootCanvas(), element)) {
+            return element;
+        }
+    }
+
+    return nullptr;
+}
+
+void LuaScriptEngine::ResetUIHandleMaps() {
+    m_UIScreenHandles.clear();
+    m_UIElementHandles.clear();
+    m_UIElementReverseHandles.clear();
+    m_NextUIScreenHandle = 1;
+    m_NextUIElementHandle = 1;
+}
+
 void LuaScriptEngine::RegisterBindings() {
 #if LUA_AVAILABLE
     RegisterEntityBindings();
@@ -464,6 +578,7 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterCameraBindings();
     RegisterPhysicsBindings();
     RegisterAudioBindings();
+    RegisterUIBindings();
     RegisterThisBindings();
     RegisterSceneBindings();
 #endif
@@ -3124,6 +3239,684 @@ int LuaScriptEngine::Lua_Audio_stopAll(lua_State* L) {
         engine->m_AudioEngine->StopAll();
     }
     return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+void LuaScriptEngine::RegisterUIBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+
+    lua_pushcfunction(m_State, Lua_UI_isAvailable);
+    lua_setfield(m_State, -2, "isAvailable");
+
+    lua_pushcfunction(m_State, Lua_UI_createSimpleMenu);
+    lua_setfield(m_State, -2, "createSimpleMenu");
+
+    lua_pushcfunction(m_State, Lua_UI_createScreen);
+    lua_setfield(m_State, -2, "createScreen");
+
+    lua_pushcfunction(m_State, Lua_UI_getRoot);
+    lua_setfield(m_State, -2, "getRoot");
+
+    lua_pushcfunction(m_State, Lua_UI_createPanel);
+    lua_setfield(m_State, -2, "createPanel");
+
+    lua_pushcfunction(m_State, Lua_UI_createText);
+    lua_setfield(m_State, -2, "createText");
+
+    lua_pushcfunction(m_State, Lua_UI_createButton);
+    lua_setfield(m_State, -2, "createButton");
+
+    lua_pushcfunction(m_State, Lua_UI_createImage);
+    lua_setfield(m_State, -2, "createImage");
+
+    lua_pushcfunction(m_State, Lua_UI_createVerticalBox);
+    lua_setfield(m_State, -2, "createVerticalBox");
+
+    lua_pushcfunction(m_State, Lua_UI_createHorizontalBox);
+    lua_setfield(m_State, -2, "createHorizontalBox");
+
+    lua_pushcfunction(m_State, Lua_UI_clearScreens);
+    lua_setfield(m_State, -2, "clearScreens");
+
+    lua_pushcfunction(m_State, Lua_UI_getScreenCount);
+    lua_setfield(m_State, -2, "getScreenCount");
+
+    lua_pushcfunction(m_State, Lua_UI_setScreenVisible);
+    lua_setfield(m_State, -2, "setScreenVisible");
+
+    lua_pushcfunction(m_State, Lua_UI_setScreenActive);
+    lua_setfield(m_State, -2, "setScreenActive");
+
+    lua_pushcfunction(m_State, Lua_UI_setViewportSize);
+    lua_setfield(m_State, -2, "setViewportSize");
+
+    lua_pushcfunction(m_State, Lua_UI_getDrawCommandCount);
+    lua_setfield(m_State, -2, "getDrawCommandCount");
+
+    lua_pushcfunction(m_State, Lua_UI_setPosition);
+    lua_setfield(m_State, -2, "setPosition");
+
+    lua_pushcfunction(m_State, Lua_UI_setSize);
+    lua_setfield(m_State, -2, "setSize");
+
+    lua_pushcfunction(m_State, Lua_UI_setVisible);
+    lua_setfield(m_State, -2, "setVisible");
+
+    lua_pushcfunction(m_State, Lua_UI_setOpacity);
+    lua_setfield(m_State, -2, "setOpacity");
+
+    lua_pushcfunction(m_State, Lua_UI_setZOrder);
+    lua_setfield(m_State, -2, "setZOrder");
+
+    lua_pushcfunction(m_State, Lua_UI_setText);
+    lua_setfield(m_State, -2, "setText");
+
+    lua_pushcfunction(m_State, Lua_UI_setImage);
+    lua_setfield(m_State, -2, "setImage");
+
+    lua_pushcfunction(m_State, Lua_UI_setSpacing);
+    lua_setfield(m_State, -2, "setSpacing");
+
+    lua_setglobal(m_State, "UI");
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_isAvailable(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const bool available = engine && engine->m_UISystem && engine->m_UIContext && engine->m_UIRenderer;
+    lua_pushboolean(L, available);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_createSimpleMenu(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UISystem) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> screen =
+        engine->m_UISystem->FindScreenByName("MainMenu");
+    if (!screen) {
+        screen = Hephaestus::HephaestusUI::CreateSimpleMenuScreen();
+        if (engine->m_UIContext) {
+            screen->SetViewportSize(engine->m_UIContext->GetViewportSize());
+        }
+        engine->m_UISystem->AddScreen(screen);
+    }
+
+    const uint32_t screenHandle = engine->RegisterUIScreenHandle(screen);
+    lua_pushinteger(L, static_cast<lua_Integer>(screenHandle));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_createScreen(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UISystem) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    const char* screenName = luaL_checkstring(L, 1);
+    std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> screen =
+        engine->m_UISystem->FindScreenByName(screenName);
+    if (!screen) {
+        screen = std::make_shared<Hephaestus::HephaestusUI::UIScreen>(screenName);
+        if (engine->m_UIContext) {
+            screen->SetViewportSize(engine->m_UIContext->GetViewportSize());
+        }
+        engine->m_UISystem->AddScreen(screen);
+    }
+
+    const uint32_t handle = engine->RegisterUIScreenHandle(screen);
+    lua_pushinteger(L, static_cast<lua_Integer>(handle));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_getRoot(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    const uint32_t screenHandle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> screen = engine->ResolveUIScreen(screenHandle);
+    if (!screen || !screen->GetRootCanvas()) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    const uint32_t rootHandle = engine->RegisterUIElementHandle(screen->GetRootCanvas());
+    lua_pushinteger(L, static_cast<lua_Integer>(rootHandle));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_createPanel(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    const uint32_t parentHandle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* parent = engine->ResolveUIElement(parentHandle);
+    if (!parent) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    auto panel = std::make_unique<Hephaestus::HephaestusUI::UIPanel>();
+    Hephaestus::HephaestusUI::UIElement* created = parent->AddChild(std::move(panel));
+    const uint32_t handle = engine->RegisterUIElementHandle(created);
+    lua_pushinteger(L, static_cast<lua_Integer>(handle));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_createText(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    const uint32_t parentHandle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* text = luaL_optstring(L, 2, "");
+    Hephaestus::HephaestusUI::UIElement* parent = engine->ResolveUIElement(parentHandle);
+    if (!parent) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    auto element = std::make_unique<Hephaestus::HephaestusUI::UIText>(text);
+    Hephaestus::HephaestusUI::UIElement* created = parent->AddChild(std::move(element));
+    const uint32_t handle = engine->RegisterUIElementHandle(created);
+    lua_pushinteger(L, static_cast<lua_Integer>(handle));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_createButton(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    const uint32_t parentHandle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* label = luaL_optstring(L, 2, "Button");
+    Hephaestus::HephaestusUI::UIElement* parent = engine->ResolveUIElement(parentHandle);
+    if (!parent) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    auto element = std::make_unique<Hephaestus::HephaestusUI::UIButton>(label);
+    Hephaestus::HephaestusUI::UIElement* created = parent->AddChild(std::move(element));
+    const uint32_t handle = engine->RegisterUIElementHandle(created);
+    lua_pushinteger(L, static_cast<lua_Integer>(handle));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_createImage(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    const uint32_t parentHandle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* imageId = luaL_optstring(L, 2, "");
+    Hephaestus::HephaestusUI::UIElement* parent = engine->ResolveUIElement(parentHandle);
+    if (!parent) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    auto element = std::make_unique<Hephaestus::HephaestusUI::UIImage>(imageId);
+    Hephaestus::HephaestusUI::UIElement* created = parent->AddChild(std::move(element));
+    const uint32_t handle = engine->RegisterUIElementHandle(created);
+    lua_pushinteger(L, static_cast<lua_Integer>(handle));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_createVerticalBox(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    const uint32_t parentHandle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* parent = engine->ResolveUIElement(parentHandle);
+    if (!parent) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    auto element = std::make_unique<Hephaestus::HephaestusUI::UIVerticalBox>();
+    Hephaestus::HephaestusUI::UIElement* created = parent->AddChild(std::move(element));
+    const uint32_t handle = engine->RegisterUIElementHandle(created);
+    lua_pushinteger(L, static_cast<lua_Integer>(handle));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_createHorizontalBox(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    const uint32_t parentHandle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* parent = engine->ResolveUIElement(parentHandle);
+    if (!parent) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    auto element = std::make_unique<Hephaestus::HephaestusUI::UIHorizontalBox>();
+    Hephaestus::HephaestusUI::UIElement* created = parent->AddChild(std::move(element));
+    const uint32_t handle = engine->RegisterUIElementHandle(created);
+    lua_pushinteger(L, static_cast<lua_Integer>(handle));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_clearScreens(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (engine && engine->m_UISystem) {
+        engine->m_UISystem->ClearScreens();
+        engine->ResetUIHandleMaps();
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_getScreenCount(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const size_t count = (engine && engine->m_UISystem) ? engine->m_UISystem->GetScreens().size() : 0;
+    lua_pushinteger(L, static_cast<lua_Integer>(count));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setScreenVisible(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UISystem) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const char* screenName = luaL_checkstring(L, 1);
+    const bool visible = lua_toboolean(L, 2) != 0;
+    const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> screen =
+        engine->m_UISystem->FindScreenByName(screenName);
+    if (!screen) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    screen->SetVisible(visible);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setScreenActive(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UISystem) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const char* screenName = luaL_checkstring(L, 1);
+    const bool active = lua_toboolean(L, 2) != 0;
+    const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> screen =
+        engine->m_UISystem->FindScreenByName(screenName);
+    if (!screen) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    screen->SetActive(active);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setViewportSize(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UIContext || !engine->m_UISystem) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const float width = static_cast<float>(luaL_checknumber(L, 1));
+    const float height = static_cast<float>(luaL_checknumber(L, 2));
+    const Hephaestus::HephaestusUI::UIVec2 size{width, height};
+
+    engine->m_UIContext->SetViewportSize(size);
+    for (const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>& screen : engine->m_UISystem->GetScreens()) {
+        if (screen) {
+            screen->SetViewportSize(size);
+        }
+    }
+
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_getDrawCommandCount(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const size_t count = (engine && engine->m_UIRenderer)
+        ? engine->m_UIRenderer->GetDrawCommands().size()
+        : 0;
+    lua_pushinteger(L, static_cast<lua_Integer>(count));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setPosition(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const float x = static_cast<float>(luaL_checknumber(L, 2));
+    const float y = static_cast<float>(luaL_checknumber(L, 3));
+    element->SetPosition({x, y});
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setSize(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const float width = static_cast<float>(luaL_checknumber(L, 2));
+    const float height = static_cast<float>(luaL_checknumber(L, 3));
+    element->SetSize({width, height});
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setVisible(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const bool visible = lua_toboolean(L, 2) != 0;
+    element->SetVisible(visible);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setOpacity(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const float opacity = static_cast<float>(luaL_checknumber(L, 2));
+    element->SetOpacity(opacity);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setZOrder(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const int zOrder = static_cast<int>(luaL_checkinteger(L, 2));
+    element->SetZOrder(zOrder);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setText(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* text = luaL_checkstring(L, 2);
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    if (auto* textElement = dynamic_cast<Hephaestus::HephaestusUI::UIText*>(element)) {
+        textElement->SetText(text);
+        lua_pushboolean(L, true);
+        return 1;
+    }
+
+    if (auto* button = dynamic_cast<Hephaestus::HephaestusUI::UIButton*>(element)) {
+        button->SetText(text);
+        lua_pushboolean(L, true);
+        return 1;
+    }
+
+    lua_pushboolean(L, false);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setImage(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* imageId = luaL_checkstring(L, 2);
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    if (auto* image = dynamic_cast<Hephaestus::HephaestusUI::UIImage*>(element)) {
+        image->SetImageId(imageId);
+        lua_pushboolean(L, true);
+        return 1;
+    }
+
+    lua_pushboolean(L, false);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setSpacing(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const float spacing = static_cast<float>(luaL_checknumber(L, 2));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    if (auto* vertical = dynamic_cast<Hephaestus::HephaestusUI::UIVerticalBox*>(element)) {
+        vertical->SetSpacing(spacing);
+        lua_pushboolean(L, true);
+        return 1;
+    }
+
+    if (auto* horizontal = dynamic_cast<Hephaestus::HephaestusUI::UIHorizontalBox*>(element)) {
+        horizontal->SetSpacing(spacing);
+        lua_pushboolean(L, true);
+        return 1;
+    }
+
+    lua_pushboolean(L, false);
+    return 1;
 #else
     (void)L;
     return 0;
