@@ -1,0 +1,38 @@
+---
+description: Qt UI rules for Hephaestus Engine editor
+alwaysApply: true
+---
+
+# Qt UI Rules
+
+Qt is the primary UI framework.
+
+## General
+
+- Use Qt Widgets (not web-based UI unless explicitly stated)
+- Prefer Qt-native patterns over custom UI systems
+
+## Layout
+
+- Use layouts (QVBoxLayout, QHBoxLayout, etc.)
+- Avoid absolute positioning
+- Keep UI responsive and scalable
+
+## Signals & Slots
+
+- Use signals and slots properly
+- Avoid tightly coupled UI logic
+
+## Separation
+
+- UI should not contain heavy engine logic
+- Keep logic in engine systems, not UI code
+
+## Style
+
+- Keep UI clean and minimal
+- Follow consistent spacing and hierarchy
+
+## Restrictions
+
+- Do not introduce ImGui or HTML UI unless explicitly requested

@@ -1,0 +1,52 @@
+---
+description: Enforces changelog updates with dated entries
+alwaysApply: true
+---
+
+# Changelog Rules
+
+The agent MUST update `CHANGELOG.md` after ANY change.
+
+This includes:
+- Code
+- Config
+- Assets
+- Build system
+- Documentation
+
+## Format Rules
+
+- Every entry must start with a date: YYYY-MM-DD
+- Entries go under: ## [Unreleased]
+- Version headers are NEVER created or modified by the agent
+
+## Structure
+
+## [Unreleased]
+
+### Added
+- 2026-03-23: Description
+
+### Changed
+- 2026-03-23: Description
+
+### Fixed
+- 2026-03-23: Description
+
+### Performance
+- 2026-03-23: Description
+
+### Internal
+- 2026-03-23: Description
+
+## Behaviour Rules
+
+- Append only, never rewrite existing entries
+- Group logically under correct section
+- Keep entries concise and technical
+- Always reflect the actual change made
+
+## Completion Rule
+
+A task is NOT complete unless:
+- CHANGELOG.md has been updated
