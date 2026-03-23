@@ -55,7 +55,9 @@ RuntimeUIOverlayWidget::RuntimeUIOverlayWidget(QWidget* parent)
 {
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
-    setAttribute(Qt::WA_AlwaysStackOnTop, true);
+    setAttribute(Qt::WA_DontCreateNativeAncestors, true);
+    setAttribute(Qt::WA_NativeWindow, true);
+    setAttribute(Qt::WA_TranslucentBackground, true);
     setAutoFillBackground(false);
 }
 

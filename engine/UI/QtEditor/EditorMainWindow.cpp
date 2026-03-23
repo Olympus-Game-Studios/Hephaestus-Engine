@@ -1374,7 +1374,7 @@ void EditorMainWindow::setupCentralWidget()
         m_viewStatsBtn = new QToolButton(overlay);
         m_viewStatsBtn->setText(tr("Stats"));
         m_viewStatsBtn->setCheckable(true);
-        m_viewStatsBtn->setChecked(true);
+        m_viewStatsBtn->setChecked(false);
         layout->addWidget(m_viewStatsBtn);
 
         hostLayout->addWidget(m_overlayTopLeft, 0, 0, Qt::AlignTop | Qt::AlignLeft);
@@ -1453,6 +1453,7 @@ void EditorMainWindow::setupCentralWidget()
         layout->addWidget(m_overlayRamLabel);
 
         hostLayout->addWidget(m_overlayBottomLeft, 0, 0, Qt::AlignBottom | Qt::AlignLeft);
+        m_overlayBottomLeft->setVisible(false);
     }
 
     connect(m_viewGridBtn, &QToolButton::toggled, this, [this](bool checked) {
@@ -1699,6 +1700,33 @@ QFrame#ViewportOverlayBottomLeft {
 QFrame#ViewportOverlayBottomLeft QLabel {
     color: #9DA3AE;
 }
+/* Match main toolbar control styling; viewport widgets are QFrames, not QToolBar#EditorTopToolbar */
+QFrame#ViewportOverlayTopLeft QToolButton,
+QFrame#ViewportOverlayTopRight QToolButton {
+    background: #2C2F36;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: #E6E8EB;
+    padding: 6px 10px;
+    min-height: 22px;
+}
+QFrame#ViewportOverlayTopLeft QToolButton:hover,
+QFrame#ViewportOverlayTopRight QToolButton:hover {
+    border-color: #4C8DFF;
+    background: #32363F;
+}
+QFrame#ViewportOverlayTopLeft QToolButton:checked,
+QFrame#ViewportOverlayTopLeft QToolButton:pressed,
+QFrame#ViewportOverlayTopRight QToolButton:checked,
+QFrame#ViewportOverlayTopRight QToolButton:pressed {
+    background: #4C8DFF;
+    color: #E6E8EB;
+}
+QFrame#ViewportOverlayTopLeft QComboBox,
+QFrame#ViewportOverlayTopRight QComboBox {
+    min-height: 22px;
+    padding: 4px 8px;
+}
 
 QStatusBar#EditorStatusBar {
     background: #25272D;
@@ -1759,8 +1787,11 @@ void EditorMainWindow::initializeEngine()
             m_viewportHost->style()->polish(m_viewportHost);
         }
         if (m_runtimeUIOverlay) {
-            m_runtimeUIOverlay->setVisible(playing || paused);
-            if (!playing && !paused) {
+            const bool showUI = playing || paused;
+            m_runtimeUIOverlay->setVisible(showUI);
+            if (showUI) {
+                m_runtimeUIOverlay->raise();
+            } else {
                 m_runtimeUIOverlay->SetDrawCommands({});
             }
         }
@@ -1901,6 +1932,9 @@ void EditorMainWindow::onFrameRendered(float dt)
         const bool showRuntimeUI = m_engine->IsPlaying() || m_engine->IsPaused();
         m_runtimeUIOverlay->setVisible(showRuntimeUI);
         m_runtimeUIOverlay->SetDrawCommands(m_engine->GetRuntimeUIDrawCommands());
+        if (showRuntimeUI) {
+            m_runtimeUIOverlay->raise();
+        }
     }
 
     // Keep transform fields synchronized with viewport gizmo edits and other runtime transform updates.
@@ -1912,17 +1946,21 @@ void EditorMainWindow::onFrameRendered(float dt)
         if (m_statusFps) {
             m_statusFps->setText(QString("FPS %1").arg(fps, 0, 'f', 1));
         }
-        if (m_overlayFpsLabel) {
-            m_overlayFpsLabel->setText(QString("FPS %1").arg(fps, 0, 'f', 1));
+        if (m_overlayBottomLeft && m_overlayBottomLeft->isVisible()) {
+            if (m_overlayFpsLabel) {
+                m_overlayFpsLabel->setText(QString("FPS %1").arg(fps, 0, 'f', 1));
+            }
         }
 
         // Placeholder lightweight counters for now (visual telemetry surface).
         const int drawCalls = 0;
         const QString ramUsage = tr("RAM --");
         if (m_statusDrawCalls) m_statusDrawCalls->setText(QString("Draw %1").arg(drawCalls));
-        if (m_overlayDrawCallsLabel) m_overlayDrawCallsLabel->setText(QString("Draw %1").arg(drawCalls));
+        if (m_overlayBottomLeft && m_overlayBottomLeft->isVisible()) {
+            if (m_overlayDrawCallsLabel) m_overlayDrawCallsLabel->setText(QString("Draw %1").arg(drawCalls));
+            if (m_overlayRamLabel) m_overlayRamLabel->setText(ramUsage);
+        }
         if (m_statusRam) m_statusRam->setText(ramUsage);
-        if (m_overlayRamLabel) m_overlayRamLabel->setText(ramUsage);
     }
 }
 
