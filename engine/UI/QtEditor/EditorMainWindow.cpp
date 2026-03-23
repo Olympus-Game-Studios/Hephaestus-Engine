@@ -230,6 +230,86 @@ static QIcon makeSaveGlyphIcon(const QSize& size, const QColor& color)
     return QIcon(pix);
 }
 
+static QIcon makeGridGlyphIcon(const QSize& size, const QColor& color)
+{
+    QPixmap pix(size);
+    pix.fill(Qt::transparent);
+
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(color);
+    pen.setWidthF(1.1);
+    painter.setPen(pen);
+
+    const qreal w = static_cast<qreal>(size.width());
+    const qreal h = static_cast<qreal>(size.height());
+    const QRectF box(w * 0.20, h * 0.20, w * 0.60, h * 0.60);
+    painter.drawRoundedRect(box, 1.0, 1.0);
+    painter.drawLine(QPointF(w * 0.40, h * 0.20), QPointF(w * 0.40, h * 0.80));
+    painter.drawLine(QPointF(w * 0.60, h * 0.20), QPointF(w * 0.60, h * 0.80));
+    painter.drawLine(QPointF(w * 0.20, h * 0.40), QPointF(w * 0.80, h * 0.40));
+    painter.drawLine(QPointF(w * 0.20, h * 0.60), QPointF(w * 0.80, h * 0.60));
+    return QIcon(pix);
+}
+
+static QIcon makeStatsGlyphIcon(const QSize& size, const QColor& color)
+{
+    QPixmap pix(size);
+    pix.fill(Qt::transparent);
+
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+
+    const qreal w = static_cast<qreal>(size.width());
+    const qreal h = static_cast<qreal>(size.height());
+    painter.drawRoundedRect(QRectF(w * 0.22, h * 0.56, w * 0.14, h * 0.22), 1.0, 1.0);
+    painter.drawRoundedRect(QRectF(w * 0.43, h * 0.42, w * 0.14, h * 0.36), 1.0, 1.0);
+    painter.drawRoundedRect(QRectF(w * 0.64, h * 0.28, w * 0.14, h * 0.50), 1.0, 1.0);
+    return QIcon(pix);
+}
+
+static QIcon makeCameraModeGlyphIcon(const QSize& size, const QColor& color)
+{
+    QPixmap pix(size);
+    pix.fill(Qt::transparent);
+
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(color);
+    pen.setWidthF(1.15);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+
+    const qreal w = static_cast<qreal>(size.width());
+    const qreal h = static_cast<qreal>(size.height());
+    painter.drawRoundedRect(QRectF(w * 0.22, h * 0.26, w * 0.56, h * 0.48), 1.4, 1.4);
+    painter.drawEllipse(QRectF(w * 0.39, h * 0.41, w * 0.22, h * 0.18));
+    return QIcon(pix);
+}
+
+static QIcon makeSnapGlyphIcon(const QSize& size, const QColor& color)
+{
+    QPixmap pix(size);
+    pix.fill(Qt::transparent);
+
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(color);
+    pen.setWidthF(1.2);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+
+    const qreal w = static_cast<qreal>(size.width());
+    const qreal h = static_cast<qreal>(size.height());
+    painter.drawArc(QRectF(w * 0.20, h * 0.30, w * 0.28, h * 0.40), 90 * 16, 180 * 16);
+    painter.drawArc(QRectF(w * 0.52, h * 0.30, w * 0.28, h * 0.40), -90 * 16, 180 * 16);
+    painter.drawLine(QPointF(w * 0.34, h * 0.60), QPointF(w * 0.34, h * 0.78));
+    painter.drawLine(QPointF(w * 0.66, h * 0.60), QPointF(w * 0.66, h * 0.78));
+    return QIcon(pix);
+}
+
 EditorMainWindow::EditorMainWindow(QWidget* parent)
     : QMainWindow(parent)
     , m_projectContext(std::make_unique<ProjectContext>())
@@ -1315,10 +1395,8 @@ void EditorMainWindow::setupDockWidgets()
 
 void EditorMainWindow::setupCentralWidget()
 {
-    // Create the native Qt window for Vulkan rendering
     m_viewportWindow = new QtViewportWindow();
-    
-    // Embed the QWindow into a QWidget container
+
     m_viewportHost = new QWidget(this);
     m_viewportHost->setObjectName("ViewportHost");
     m_viewportContainer = QWidget::createWindowContainer(m_viewportWindow, m_viewportHost);
@@ -1326,136 +1404,210 @@ void EditorMainWindow::setupCentralWidget()
     m_viewportContainer->setMinimumSize(200, 200);
     m_viewportContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-    auto* hostLayout = new QGridLayout(m_viewportHost);
-    hostLayout->setContentsMargins(0, 0, 0, 0);
-    hostLayout->setSpacing(0);
-    hostLayout->addWidget(m_viewportContainer, 0, 0);
+    auto* hostVLayout = new QVBoxLayout(m_viewportHost);
+    hostVLayout->setContentsMargins(0, 0, 0, 0);
+    hostVLayout->setSpacing(0);
 
-    m_runtimeUIOverlay = new RuntimeUIOverlayWidget(m_viewportHost);
+    // ── Unified viewport toolbar ────────────────────────────────────────────
+    m_viewportToolbar = new QWidget(m_viewportHost);
+    m_viewportToolbar->setObjectName("ViewportToolbar");
+    m_viewportToolbar->setAttribute(Qt::WA_StyledBackground, true);
+    m_viewportToolbar->setFixedHeight(30);
+
+    auto* tbLayout = new QHBoxLayout(m_viewportToolbar);
+    tbLayout->setContentsMargins(6, 0, 6, 0);
+    tbLayout->setSpacing(2);
+
+    const QSize tbIconSize(14, 14);
+    const QColor tbIconTint(QStringLiteral("#C8CDD5"));
+
+    // Left: Perspective combo
+    m_viewPerspectiveCombo = new QComboBox(m_viewportToolbar);
+    m_viewPerspectiveCombo->addItems({ tr("Perspective"), tr("Front"), tr("Top"), tr("Right") });
+    m_viewPerspectiveCombo->setMinimumContentsLength(10);
+    m_viewPerspectiveCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    tbLayout->addWidget(m_viewPerspectiveCombo);
+
+    // Left: Lit / Unlit / Wireframe
+    m_viewModeBtn = new QToolButton(m_viewportToolbar);
+    m_viewModeBtn->setAutoRaise(true);
+    m_viewModeBtn->setIcon(makeCameraModeGlyphIcon(tbIconSize, tbIconTint));
+    m_viewModeBtn->setIconSize(tbIconSize);
+    m_viewModeBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_viewModeBtn->setText(tr("Lit"));
+    m_viewModeBtn->setPopupMode(QToolButton::InstantPopup);
+    m_viewModeBtn->setCursor(Qt::PointingHandCursor);
+    auto* modeMenu = new QMenu(m_viewModeBtn);
+    modeMenu->addAction(tr("Lit"),       [this]() { m_viewModeBtn->setText(tr("Lit")); });
+    modeMenu->addAction(tr("Unlit"),     [this]() { m_viewModeBtn->setText(tr("Unlit")); });
+    modeMenu->addAction(tr("Wireframe"), [this]() { m_viewModeBtn->setText(tr("Wireframe")); });
+    m_viewModeBtn->setMenu(modeMenu);
+    tbLayout->addWidget(m_viewModeBtn);
+
+    auto makeSep = [this]() {
+        auto* sep = new QFrame(m_viewportToolbar);
+        sep->setObjectName("VPToolbarSep");
+        sep->setFrameShape(QFrame::VLine);
+        sep->setFixedSize(1, 16);
+        return sep;
+    };
+
+    tbLayout->addWidget(makeSep());
+
+    // Left: Grid toggle
+    m_viewGridBtn = new QToolButton(m_viewportToolbar);
+    m_viewGridBtn->setAutoRaise(true);
+    m_viewGridBtn->setIcon(makeGridGlyphIcon(tbIconSize, tbIconTint));
+    m_viewGridBtn->setIconSize(tbIconSize);
+    m_viewGridBtn->setToolTip(tr("Toggle Grid"));
+    m_viewGridBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_viewGridBtn->setCheckable(true);
+    m_viewGridBtn->setChecked(true);
+    m_viewGridBtn->setCursor(Qt::PointingHandCursor);
+    tbLayout->addWidget(m_viewGridBtn);
+
+    // Left: Stats toggle
+    m_viewStatsBtn = new QToolButton(m_viewportToolbar);
+    m_viewStatsBtn->setAutoRaise(true);
+    m_viewStatsBtn->setIcon(makeStatsGlyphIcon(tbIconSize, tbIconTint));
+    m_viewStatsBtn->setIconSize(tbIconSize);
+    m_viewStatsBtn->setToolTip(tr("Toggle Stats"));
+    m_viewStatsBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_viewStatsBtn->setCheckable(true);
+    m_viewStatsBtn->setChecked(false);
+    m_viewStatsBtn->setCursor(Qt::PointingHandCursor);
+    tbLayout->addWidget(m_viewStatsBtn);
+
+    // ── Center stretch ──────────────────────────────────────────────────────
+    tbLayout->addStretch(1);
+
+    // Right: Gizmo mode buttons (T / R / S)
+    auto* gizmoTranslate = new QToolButton(m_viewportToolbar);
+    gizmoTranslate->setAutoRaise(true);
+    gizmoTranslate->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    gizmoTranslate->setCursor(Qt::PointingHandCursor);
+    gizmoTranslate->setToolTip(tr("Translate"));
+    tbLayout->addWidget(gizmoTranslate);
+
+    auto* gizmoRotate = new QToolButton(m_viewportToolbar);
+    gizmoRotate->setAutoRaise(true);
+    gizmoRotate->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    gizmoRotate->setCursor(Qt::PointingHandCursor);
+    gizmoRotate->setToolTip(tr("Rotate"));
+    tbLayout->addWidget(gizmoRotate);
+
+    auto* gizmoScale = new QToolButton(m_viewportToolbar);
+    gizmoScale->setAutoRaise(true);
+    gizmoScale->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    gizmoScale->setCursor(Qt::PointingHandCursor);
+    gizmoScale->setToolTip(tr("Scale"));
+    tbLayout->addWidget(gizmoScale);
+
+    auto* gizmoGroup = new QActionGroup(this);
+    gizmoGroup->setExclusive(true);
+    auto* aT = new QAction(tr("T"), this); aT->setCheckable(true); aT->setChecked(true);
+    auto* aR = new QAction(tr("R"), this); aR->setCheckable(true);
+    auto* aS = new QAction(tr("S"), this); aS->setCheckable(true);
+    gizmoGroup->addAction(aT);
+    gizmoGroup->addAction(aR);
+    gizmoGroup->addAction(aS);
+    gizmoTranslate->setDefaultAction(aT);
+    gizmoRotate->setDefaultAction(aR);
+    gizmoScale->setDefaultAction(aS);
+
+    connect(aT, &QAction::triggered, this, [this]() { if (m_translateAction) m_translateAction->trigger(); });
+    connect(aR, &QAction::triggered, this, [this]() { if (m_rotateAction)    m_rotateAction->trigger(); });
+    connect(aS, &QAction::triggered, this, [this]() { if (m_scaleAction)     m_scaleAction->trigger(); });
+
+    tbLayout->addWidget(makeSep());
+
+    // Right: Snap toggle
+    auto* snapBtn = new QToolButton(m_viewportToolbar);
+    snapBtn->setAutoRaise(true);
+    snapBtn->setIcon(makeSnapGlyphIcon(tbIconSize, tbIconTint));
+    snapBtn->setIconSize(tbIconSize);
+    snapBtn->setToolTip(tr("Toggle Snap"));
+    snapBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    snapBtn->setCheckable(true);
+    snapBtn->setCursor(Qt::PointingHandCursor);
+    tbLayout->addWidget(snapBtn);
+    connect(snapBtn, &QToolButton::toggled, this, [this](bool checked) {
+        if (m_snapToggleBtn) m_snapToggleBtn->setChecked(checked);
+    });
+
+    // Right: Snap value
+    auto* snapValue = new QComboBox(m_viewportToolbar);
+    snapValue->addItems({ tr("0.1"), tr("0.5"), tr("1.0"), tr("5.0"), tr("15\u00B0") });
+    snapValue->setCurrentIndex(2);
+    tbLayout->addWidget(snapValue);
+    connect(snapValue, &QComboBox::currentTextChanged, this, [this](const QString& value) {
+        if (m_snapValueCombo) m_snapValueCombo->setCurrentText(value);
+    });
+
+    // Right: World / Local toggle
+    auto* spaceBtn = new QToolButton(m_viewportToolbar);
+    spaceBtn->setAutoRaise(true);
+    spaceBtn->setText(tr("W"));
+    spaceBtn->setToolTip(tr("World / Local Space"));
+    spaceBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    spaceBtn->setCheckable(true);
+    spaceBtn->setCursor(Qt::PointingHandCursor);
+    tbLayout->addWidget(spaceBtn);
+    connect(spaceBtn, &QToolButton::toggled, this, [this, spaceBtn](bool checked) {
+        spaceBtn->setText(checked ? tr("L") : tr("W"));
+        if (m_worldLocalBtn) m_worldLocalBtn->setChecked(checked);
+    });
+
+    hostVLayout->addWidget(m_viewportToolbar);
+
+    // ── Viewport area (stacked: 3D view + runtime overlay + stats) ──────────
+    auto* viewportArea = new QWidget(m_viewportHost);
+    viewportArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    auto* areaLayout = new QGridLayout(viewportArea);
+    areaLayout->setContentsMargins(0, 0, 0, 0);
+    areaLayout->setSpacing(0);
+    areaLayout->addWidget(m_viewportContainer, 0, 0);
+
+    m_runtimeUIOverlay = new RuntimeUIOverlayWidget(viewportArea);
     m_runtimeUIOverlay->setObjectName("RuntimeUIOverlay");
     m_runtimeUIOverlay->setVisible(false);
     m_runtimeUIOverlay->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    hostLayout->addWidget(m_runtimeUIOverlay, 0, 0);
+    areaLayout->addWidget(m_runtimeUIOverlay, 0, 0);
 
-    auto makeOverlay = [this](const QString& name) {
-        auto* overlay = new QFrame(m_viewportHost);
-        overlay->setObjectName(name);
-        overlay->setAttribute(Qt::WA_StyledBackground, true);
-        auto* layout = new QHBoxLayout(overlay);
-        layout->setContentsMargins(10, 8, 10, 8);
-        layout->setSpacing(6);
-        return std::pair<QFrame*, QHBoxLayout*>(overlay, layout);
-    };
-
+    // Bottom-left stats overlay (shown when Stats is toggled on)
     {
-        auto [overlay, layout] = makeOverlay("ViewportOverlayTopLeft");
-        m_overlayTopLeft = overlay;
+        auto* overlay = new QFrame(viewportArea);
+        overlay->setObjectName("ViewportOverlayBottomLeft");
+        overlay->setFrameShape(QFrame::NoFrame);
+        overlay->setAttribute(Qt::WA_TranslucentBackground, true);
+        overlay->setStyleSheet("background: transparent; border: none;");
+        auto* oLayout = new QHBoxLayout(overlay);
+        oLayout->setContentsMargins(6, 6, 6, 6);
+        oLayout->setSpacing(6);
 
-        m_viewPerspectiveCombo = new QComboBox(overlay);
-        m_viewPerspectiveCombo->addItems({ tr("Perspective"), tr("Front"), tr("Top"), tr("Right") });
-        layout->addWidget(m_viewPerspectiveCombo);
+        auto* statsFrame = new QFrame(overlay);
+        statsFrame->setProperty("overlayGroup", true);
+        statsFrame->setAttribute(Qt::WA_StyledBackground, true);
+        auto* statsLayout = new QHBoxLayout(statsFrame);
+        statsLayout->setContentsMargins(6, 4, 6, 4);
+        statsLayout->setSpacing(3);
 
-        m_viewModeBtn = new QToolButton(overlay);
-        m_viewModeBtn->setText(tr("Lit"));
-        m_viewModeBtn->setPopupMode(QToolButton::MenuButtonPopup);
-        auto* modeMenu = new QMenu(m_viewModeBtn);
-        modeMenu->addAction(tr("Lit"), [this]() { m_viewModeBtn->setText(tr("Lit")); });
-        modeMenu->addAction(tr("Unlit"), [this]() { m_viewModeBtn->setText(tr("Unlit")); });
-        modeMenu->addAction(tr("Wireframe"), [this]() { m_viewModeBtn->setText(tr("Wireframe")); });
-        m_viewModeBtn->setMenu(modeMenu);
-        layout->addWidget(m_viewModeBtn);
+        m_overlayFpsLabel       = new QLabel(tr("FPS 0.0"), statsFrame);
+        m_overlayDrawCallsLabel = new QLabel(tr("Draw 0"),  statsFrame);
+        m_overlayRamLabel       = new QLabel(tr("RAM --"),  statsFrame);
+        statsLayout->addWidget(m_overlayFpsLabel);
+        statsLayout->addWidget(m_overlayDrawCallsLabel);
+        statsLayout->addWidget(m_overlayRamLabel);
+        oLayout->addWidget(statsFrame);
 
-        m_viewGridBtn = new QToolButton(overlay);
-        m_viewGridBtn->setText(tr("Grid"));
-        m_viewGridBtn->setCheckable(true);
-        m_viewGridBtn->setChecked(true);
-        layout->addWidget(m_viewGridBtn);
-
-        m_viewStatsBtn = new QToolButton(overlay);
-        m_viewStatsBtn->setText(tr("Stats"));
-        m_viewStatsBtn->setCheckable(true);
-        m_viewStatsBtn->setChecked(false);
-        layout->addWidget(m_viewStatsBtn);
-
-        hostLayout->addWidget(m_overlayTopLeft, 0, 0, Qt::AlignTop | Qt::AlignLeft);
-    }
-
-    {
-        auto [overlay, layout] = makeOverlay("ViewportOverlayTopRight");
-        m_overlayTopRight = overlay;
-
-        auto* gizmoTranslate = new QToolButton(overlay);
-        gizmoTranslate->setText(tr("T"));
-        gizmoTranslate->setCheckable(true);
-        gizmoTranslate->setChecked(true);
-        layout->addWidget(gizmoTranslate);
-
-        auto* gizmoRotate = new QToolButton(overlay);
-        gizmoRotate->setText(tr("R"));
-        gizmoRotate->setCheckable(true);
-        layout->addWidget(gizmoRotate);
-
-        auto* gizmoScale = new QToolButton(overlay);
-        gizmoScale->setText(tr("S"));
-        gizmoScale->setCheckable(true);
-        layout->addWidget(gizmoScale);
-
-        auto* group = new QActionGroup(this);
-        group->setExclusive(true);
-        auto* aT = new QAction(this); aT->setCheckable(true); aT->setChecked(true);
-        auto* aR = new QAction(this); aR->setCheckable(true);
-        auto* aS = new QAction(this); aS->setCheckable(true);
-        group->addAction(aT); group->addAction(aR); group->addAction(aS);
-        gizmoTranslate->setDefaultAction(aT);
-        gizmoRotate->setDefaultAction(aR);
-        gizmoScale->setDefaultAction(aS);
-
-        connect(aT, &QAction::triggered, this, [this]() { if (m_translateAction) m_translateAction->trigger(); });
-        connect(aR, &QAction::triggered, this, [this]() { if (m_rotateAction) m_rotateAction->trigger(); });
-        connect(aS, &QAction::triggered, this, [this]() { if (m_scaleAction) m_scaleAction->trigger(); });
-
-        auto* snapBtn = new QToolButton(overlay);
-        snapBtn->setText(tr("Snap"));
-        snapBtn->setCheckable(true);
-        layout->addWidget(snapBtn);
-        connect(snapBtn, &QToolButton::toggled, this, [this](bool checked) {
-            if (m_snapToggleBtn) m_snapToggleBtn->setChecked(checked);
-        });
-
-        auto* snapValue = new QComboBox(overlay);
-        snapValue->addItems({ tr("0.1"), tr("0.5"), tr("1.0"), tr("5.0"), tr("15°") });
-        snapValue->setCurrentIndex(2);
-        connect(snapValue, &QComboBox::currentTextChanged, this, [this](const QString& value) {
-            if (m_snapValueCombo) m_snapValueCombo->setCurrentText(value);
-        });
-        layout->addWidget(snapValue);
-
-        auto* spaceBtn = new QToolButton(overlay);
-        spaceBtn->setText(tr("World"));
-        spaceBtn->setCheckable(true);
-        connect(spaceBtn, &QToolButton::toggled, this, [this, spaceBtn](bool checked) {
-            spaceBtn->setText(checked ? tr("Local") : tr("World"));
-            if (m_worldLocalBtn) m_worldLocalBtn->setChecked(checked);
-        });
-        layout->addWidget(spaceBtn);
-
-        hostLayout->addWidget(m_overlayTopRight, 0, 0, Qt::AlignTop | Qt::AlignRight);
-    }
-
-    {
-        auto [overlay, layout] = makeOverlay("ViewportOverlayBottomLeft");
         m_overlayBottomLeft = overlay;
-        m_overlayFpsLabel = new QLabel(tr("FPS 0.0"), overlay);
-        m_overlayDrawCallsLabel = new QLabel(tr("Draw 0"), overlay);
-        m_overlayRamLabel = new QLabel(tr("RAM --"), overlay);
-        layout->addWidget(m_overlayFpsLabel);
-        layout->addWidget(m_overlayDrawCallsLabel);
-        layout->addWidget(m_overlayRamLabel);
-
-        hostLayout->addWidget(m_overlayBottomLeft, 0, 0, Qt::AlignBottom | Qt::AlignLeft);
+        areaLayout->addWidget(m_overlayBottomLeft, 0, 0, Qt::AlignBottom | Qt::AlignLeft);
         m_overlayBottomLeft->setVisible(false);
     }
 
+    hostVLayout->addWidget(viewportArea, 1);
+
+    // ── Connections ─────────────────────────────────────────────────────────
     connect(m_viewGridBtn, &QToolButton::toggled, this, [this](bool checked) {
         if (!m_engine) return;
         if (auto* ctx = m_engine->GetEditorContext()) {
@@ -1465,17 +1617,15 @@ void EditorMainWindow::setupCentralWidget()
     connect(m_viewStatsBtn, &QToolButton::toggled, this, [this](bool checked) {
         if (m_overlayBottomLeft) m_overlayBottomLeft->setVisible(checked);
     });
-    
-    // Connect viewport signals
-    connect(m_viewportWindow, &QtViewportWindow::viewportReady, 
+
+    connect(m_viewportWindow, &QtViewportWindow::viewportReady,
             this, &EditorMainWindow::onViewportReady);
-    
+
     setCentralWidget(m_viewportHost);
 
-    // ── Enable drag-drop onto the viewport container ────────────────────────
     m_viewportContainer->setAcceptDrops(true);
     m_viewportContainer->installEventFilter(this);
-    
+
     std::cout << "[EditorMainWindow] Viewport widget created\n";
 }
 
@@ -1689,43 +1839,80 @@ QWidget#ViewportHost {
 QWidget#ViewportHost[playMode="true"] {
     border: 1px solid #4C8DFF;
 }
-QFrame#ViewportOverlayTopLeft,
-QFrame#ViewportOverlayTopRight,
+
+QWidget#ViewportToolbar {
+    background: rgba(30, 33, 39, 225);
+    border-bottom: 1px solid rgba(255, 255, 255, 6);
+}
+QWidget#ViewportToolbar QToolButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: rgba(200, 207, 218, 220);
+    padding: 2px 7px;
+    min-height: 20px;
+    min-width: 20px;
+    font-size: 10px;
+    font-weight: 500;
+}
+QWidget#ViewportToolbar QToolButton:hover {
+    background: rgba(255, 255, 255, 14);
+    border-color: rgba(255, 255, 255, 12);
+}
+QWidget#ViewportToolbar QToolButton:checked,
+QWidget#ViewportToolbar QToolButton:pressed {
+    background: rgba(76, 141, 255, 107);
+    border-color: rgba(100, 160, 255, 89);
+    color: rgba(235, 240, 250, 240);
+}
+QWidget#ViewportToolbar QToolButton::menu-indicator {
+    image: none;
+    width: 0;
+    height: 0;
+}
+QWidget#ViewportToolbar QComboBox {
+    background: rgba(255, 255, 255, 7);
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: rgba(200, 207, 218, 220);
+    min-height: 20px;
+    padding: 1px 18px 1px 6px;
+    font-size: 10px;
+    font-weight: 400;
+}
+QWidget#ViewportToolbar QComboBox:hover {
+    background: rgba(255, 255, 255, 14);
+    border-color: rgba(255, 255, 255, 12);
+}
+QWidget#ViewportToolbar QComboBox::drop-down {
+    border: none;
+    width: 14px;
+}
+QWidget#ViewportToolbar QComboBox QAbstractItemView {
+    background: #1F2228;
+    color: #E6E8EB;
+    border: 1px solid #3A404B;
+    selection-background-color: #4C8DFF;
+}
+QFrame#VPToolbarSep {
+    background: rgba(255, 255, 255, 16);
+    border: none;
+}
+
 QFrame#ViewportOverlayBottomLeft {
-    background: rgba(30, 31, 36, 205);
-    border: 1px solid #333740;
-    border-radius: 6px;
-    margin: 10px;
+    background: transparent;
+    border: none;
+    border-radius: 0px;
+    margin: 0px;
+}
+QFrame[overlayGroup="true"] {
+    background: rgba(24, 26, 31, 160);
+    border: 1px solid rgba(255, 255, 255, 12);
+    border-radius: 8px;
 }
 QFrame#ViewportOverlayBottomLeft QLabel {
-    color: #9DA3AE;
-}
-/* Match main toolbar control styling; viewport widgets are QFrames, not QToolBar#EditorTopToolbar */
-QFrame#ViewportOverlayTopLeft QToolButton,
-QFrame#ViewportOverlayTopRight QToolButton {
-    background: #2C2F36;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    color: #E6E8EB;
-    padding: 6px 10px;
-    min-height: 22px;
-}
-QFrame#ViewportOverlayTopLeft QToolButton:hover,
-QFrame#ViewportOverlayTopRight QToolButton:hover {
-    border-color: #4C8DFF;
-    background: #32363F;
-}
-QFrame#ViewportOverlayTopLeft QToolButton:checked,
-QFrame#ViewportOverlayTopLeft QToolButton:pressed,
-QFrame#ViewportOverlayTopRight QToolButton:checked,
-QFrame#ViewportOverlayTopRight QToolButton:pressed {
-    background: #4C8DFF;
-    color: #E6E8EB;
-}
-QFrame#ViewportOverlayTopLeft QComboBox,
-QFrame#ViewportOverlayTopRight QComboBox {
-    min-height: 22px;
-    padding: 4px 8px;
+    color: rgba(197, 205, 216, 210);
+    font-size: 10px;
 }
 
 QStatusBar#EditorStatusBar {

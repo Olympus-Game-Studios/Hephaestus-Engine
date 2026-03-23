@@ -272,8 +272,7 @@ private:
     QtViewportWindow* m_viewportWindow = nullptr;
     QWidget* m_viewportHost = nullptr;
     QWidget* m_viewportContainer = nullptr;
-    QFrame* m_overlayTopLeft = nullptr;
-    QFrame* m_overlayTopRight = nullptr;
+    QWidget* m_viewportToolbar = nullptr;
     QFrame* m_overlayBottomLeft = nullptr;
     QComboBox* m_viewPerspectiveCombo = nullptr;
     QToolButton* m_viewModeBtn = nullptr;
