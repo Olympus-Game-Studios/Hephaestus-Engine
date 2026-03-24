@@ -413,6 +413,7 @@ private:
     static int Lua_UI_setSpacing(lua_State* L);
     static int Lua_UI_setCursorMode(lua_State* L);
     static int Lua_UI_getCursorMode(lua_State* L);
+    static int Lua_UI_setOnClick(lua_State* L);
 
     uint32_t RegisterUIScreenHandle(const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>& screen);
     uint32_t RegisterUIElementHandle(Hephaestus::HephaestusUI::UIElement* element);
@@ -425,6 +426,7 @@ private:
     std::unordered_map<uint32_t, std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>> m_UIScreenHandles;
     std::unordered_map<uint32_t, Hephaestus::HephaestusUI::UIElement*> m_UIElementHandles;
     std::unordered_map<const Hephaestus::HephaestusUI::UIElement*, uint32_t> m_UIElementReverseHandles;
+    std::unordered_map<uint32_t, int> m_UIButtonClickCallbacks;  // elementHandle -> Lua registry ref
 
     // 'this' entity binding methods (OOP-style API)
     static int Lua_This_GetTransform(lua_State* L);

@@ -58,8 +58,8 @@ local function showMenu()
     UI.setScreenVisible(menu.screenName, true)
     UI.setScreenActive(menu.screenName, true)
     UI.setCursorMode(CursorMode.UI)
-    setStatus("Click viewport, then use W/S (or Up/Down) + Enter.")
-    engine_log("[MainMenu] Opened (click viewport for keyboard focus)")
+    setStatus("Click a button or use keyboard (W/S + Enter).")
+    engine_log("[MainMenu] Opened")
 end
 
 local function hideMenu()
@@ -105,6 +105,28 @@ local function moveSelection(step)
     setStatus("Selected: " .. buttonLabels[menu.selectedIndex])
 end
 
+local function onStartGameClicked()
+    setStatus("Starting test run. Press ESC to open the menu again.")
+    engine_log("[MainMenu] Start Game clicked")
+    hideMenu()
+end
+
+local function onOptionsClicked()
+    menu.showOptionsHint = not menu.showOptionsHint
+    if menu.showOptionsHint then
+        setStatus("Options placeholder: wire settings or scene loading here.")
+    else
+        setStatus("Click a button or use keyboard navigation.")
+    end
+    engine_log("[MainMenu] Options clicked")
+end
+
+local function onQuitClicked()
+    setStatus("Quit requested...")
+    engine_log("[MainMenu] Quit clicked")
+    Application.quit()
+end
+
 local function buildUI()
     menu.screen = UI.createScreen(menu.screenName)
     menu.root = UI.getRoot(menu.screen)
@@ -128,7 +150,7 @@ local function buildUI()
     UI.setPosition(menu.title, 24, 24)
     UI.setSize(menu.title, 512, 40)
 
-    menu.subtitle = UI.createText(menu.panel, "Basic runtime UI test menu")
+    menu.subtitle = UI.createText(menu.panel, "Click buttons or use keyboard (W/S + Enter)")
     UI.setPosition(menu.subtitle, 24, 64)
     UI.setSize(menu.subtitle, 512, 28)
 
@@ -137,10 +159,20 @@ local function buildUI()
     UI.setSize(menu.buttonList, 512, 180)
     UI.setSpacing(menu.buttonList, 12)
 
-    for _, label in ipairs(buttonLabels) do
+    local clickHandlers = {
+        onStartGameClicked,
+        onOptionsClicked,
+        onQuitClicked
+    }
+
+    for index, label in ipairs(buttonLabels) do
         local button = UI.createButton(menu.buttonList, label)
         UI.setSize(button, 512, 52)
         table.insert(menu.buttons, button)
+
+        if UI.setOnClick and clickHandlers[index] then
+            UI.setOnClick(button, clickHandlers[index])
+        end
     end
 
     menu.statusText = UI.createText(menu.panel, "")
@@ -150,8 +182,6 @@ local function buildUI()
     refreshButtonLabels()
     return true
 end
-
-local debugInputOnce = true
 
 function onAwake()
     if not UI or not UI.isAvailable() then
@@ -164,8 +194,7 @@ function onAwake()
     end
 
     showMenu()
-    setStatus("Click viewport, then use W/S (or Up/Down) + Enter.")
-    engine_log("[MainMenu] Ready - NOTE: click the 3D viewport to give it keyboard focus")
+    engine_log("[MainMenu] Ready - supports mouse clicks and keyboard navigation")
 end
 
 function onUpdate(deltaTime)
@@ -182,25 +211,11 @@ function onUpdate(deltaTime)
     local downPressed = downArrowPressed or sPressed
     local activatePressed = enterPressed or spacePressed
 
-    if debugInputOnce and menu.visible then
-        debugInputOnce = false
-        engine_log("[MainMenu] Input debug: press any key after clicking the viewport...")
-    end
-
-    if upArrowPressed then engine_log("[MainMenu] UP arrow detected") end
-    if wPressed then engine_log("[MainMenu] W detected") end
-    if downArrowPressed then engine_log("[MainMenu] DOWN arrow detected") end
-    if sPressed then engine_log("[MainMenu] S detected") end
-    if enterPressed then engine_log("[MainMenu] ENTER detected") end
-    if spacePressed then engine_log("[MainMenu] SPACE detected") end
-
     if escapePressed then
-        engine_log("[MainMenu] ESC detected")
         if menu.visible then
             hideMenu()
         else
             showMenu()
-            debugInputOnce = true
         end
     end
 

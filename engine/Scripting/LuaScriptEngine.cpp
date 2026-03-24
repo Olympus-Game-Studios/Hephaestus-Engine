@@ -560,6 +560,15 @@ Hephaestus::HephaestusUI::UIElement* LuaScriptEngine::ResolveUIElement(uint32_t 
 }
 
 void LuaScriptEngine::ResetUIHandleMaps() {
+    // Release Lua callback references before clearing
+#if LUA_AVAILABLE
+    if (m_State) {
+        for (const auto& [handle, ref] : m_UIButtonClickCallbacks) {
+            luaL_unref(m_State, LUA_REGISTRYINDEX, ref);
+        }
+    }
+#endif
+    m_UIButtonClickCallbacks.clear();
     m_UIScreenHandles.clear();
     m_UIElementHandles.clear();
     m_UIElementReverseHandles.clear();
@@ -3325,6 +3334,9 @@ void LuaScriptEngine::RegisterUIBindings() {
     lua_pushcfunction(m_State, Lua_UI_getCursorMode);
     lua_setfield(m_State, -2, "getCursorMode");
 
+    lua_pushcfunction(m_State, Lua_UI_setOnClick);
+    lua_setfield(m_State, -2, "setOnClick");
+
     lua_setglobal(m_State, "UI");
 
     // CursorMode enum constants
@@ -3995,6 +4007,69 @@ int LuaScriptEngine::Lua_UI_getCursorMode(lua_State* L) {
     using CursorMode = Hephaestus::HephaestusUI::CursorMode;
     const char* result = (engine->m_UISystem->GetCursorMode() == CursorMode::UI) ? "ui" : "game";
     lua_pushstring(L, result);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setOnClick(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const uint32_t elementHandle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    if (!lua_isfunction(L, 2)) {
+        luaL_error(L, "UI.setOnClick: second argument must be a function");
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(elementHandle);
+    if (!element) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    auto* button = dynamic_cast<Hephaestus::HephaestusUI::UIButton*>(element);
+    if (!button) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    // Remove old callback if present
+    auto it = engine->m_UIButtonClickCallbacks.find(elementHandle);
+    if (it != engine->m_UIButtonClickCallbacks.end()) {
+        luaL_unref(L, LUA_REGISTRYINDEX, it->second);
+        engine->m_UIButtonClickCallbacks.erase(it);
+    }
+
+    // Push the function to the top of the stack and create a reference
+    lua_pushvalue(L, 2);
+    const int callbackRef = luaL_ref(L, LUA_REGISTRYINDEX);
+    engine->m_UIButtonClickCallbacks[elementHandle] = callbackRef;
+
+    // Set the C++ callback that will invoke the Lua function
+    button->SetOnClicked([engine, callbackRef]() {
+        if (!engine || !engine->m_State) return;
+
+        lua_rawgeti(engine->m_State, LUA_REGISTRYINDEX, callbackRef);
+        if (lua_isfunction(engine->m_State, -1)) {
+            if (lua_pcall(engine->m_State, 0, 0, 0) != LUA_OK) {
+                const char* err = lua_tostring(engine->m_State, -1);
+                std::cerr << "[Lua] UI.setOnClick callback error: " << (err ? err : "unknown") << "\n";
+                lua_pop(engine->m_State, 1);
+            }
+        } else {
+            lua_pop(engine->m_State, 1);
+        }
+    });
+
+    lua_pushboolean(L, true);
     return 1;
 #else
     (void)L;

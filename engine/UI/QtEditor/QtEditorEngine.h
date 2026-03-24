@@ -200,6 +200,14 @@ public:
     void ForwardKeyEvent(int qtKey, bool pressed);
 
     /**
+     * @brief Forward a mouse event from the UI overlay to the runtime UI system.
+     * 
+     * Used by EditorMainWindow to route mouse events captured by the overlay
+     * to the HephaestusUI system during play mode.
+     */
+    void ForwardOverlayMouseEvent(int type, float x, float y, int button);
+
+    /**
      * @brief Get runtime UI draw commands produced during play mode.
      */
     const std::vector<::Hephaestus::HephaestusUI::UIDrawCommand>& GetRuntimeUIDrawCommands() const;

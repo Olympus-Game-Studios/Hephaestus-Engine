@@ -235,6 +235,29 @@ Supported element types:
 Return contract for setters:
 - `boolean` success/failure
 
+### UI.setOnClick(buttonHandle, callback)
+
+Register a click callback for a button element. When the button is clicked (mouse press and release on the same button), the callback function is invoked.
+
+```lua
+local button = UI.createButton(parent, "Click Me")
+UI.setOnClick(button, function()
+    print("Button was clicked!")
+end)
+```
+
+Parameters:
+- `buttonHandle: integer` — handle returned by `UI.createButton`
+- `callback: function` — Lua function to call when clicked
+
+Returns:
+- `boolean` — `true` on success, `false` if handle is invalid or not a button
+
+Notes:
+- Only one callback per button; setting a new callback replaces the previous one
+- Callbacks are automatically cleaned up when play mode stops
+- The button must be a `UIButton` element (not text, panel, etc.)
+
 ## 5. Cursor Mode API
 
 ### UI.setCursorMode(mode)
@@ -362,7 +385,7 @@ Not yet exposed in Lua:
 - Widget removal API
 - Child enumeration API
 - Style/color/font setters
-- Button click callback registration
 - Per-widget clipping/padding/margin/anchor setters
+- Hover enter/exit callbacks
 
 These are planned extension points for the next API iteration.

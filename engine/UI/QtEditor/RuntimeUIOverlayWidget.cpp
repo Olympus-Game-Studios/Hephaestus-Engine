@@ -4,7 +4,9 @@
 
 #include <QPainter>
 #include <QPaintEvent>
+#include <QMouseEvent>
 #include <algorithm>
+#include <iostream>
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -59,6 +61,62 @@ RuntimeUIOverlayWidget::RuntimeUIOverlayWidget(QWidget* parent)
     setAttribute(Qt::WA_NativeWindow, true);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAutoFillBackground(false);
+    setMouseTracking(true);
+}
+
+void RuntimeUIOverlayWidget::SetMouseEventsEnabled(bool enabled)
+{
+    m_mouseEventsEnabled = enabled;
+    setAttribute(Qt::WA_TransparentForMouseEvents, !enabled);
+}
+
+void RuntimeUIOverlayWidget::mousePressEvent(QMouseEvent* event)
+{
+    if (m_mouseEventsEnabled && m_mouseCallback) {
+        qreal dpr = devicePixelRatioF();
+        UIMouseEventData data;
+        data.type = UIMouseEventData::Type::Press;
+        data.x = static_cast<float>(event->position().x() * dpr);
+        data.y = static_cast<float>(event->position().y() * dpr);
+        data.button = static_cast<int>(event->button());
+        std::cout << "[UI Overlay] Mouse press at (" << data.x << ", " << data.y << ") button=" << data.button << std::endl;
+        m_mouseCallback(data);
+        event->accept();
+    } else {
+        event->ignore();
+    }
+}
+
+void RuntimeUIOverlayWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (m_mouseEventsEnabled && m_mouseCallback) {
+        qreal dpr = devicePixelRatioF();
+        UIMouseEventData data;
+        data.type = UIMouseEventData::Type::Release;
+        data.x = static_cast<float>(event->position().x() * dpr);
+        data.y = static_cast<float>(event->position().y() * dpr);
+        data.button = static_cast<int>(event->button());
+        m_mouseCallback(data);
+        event->accept();
+    } else {
+        event->ignore();
+    }
+}
+
+void RuntimeUIOverlayWidget::mouseMoveEvent(QMouseEvent* event)
+{
+    if (m_mouseEventsEnabled && m_mouseCallback) {
+        qreal dpr = devicePixelRatioF();
+        UIMouseEventData data;
+        data.type = UIMouseEventData::Type::Move;
+        data.x = static_cast<float>(event->position().x() * dpr);
+        data.y = static_cast<float>(event->position().y() * dpr);
+        data.button = static_cast<int>(event->buttons());
+        m_mouseCallback(data);
+        event->accept();
+    } else {
+        event->ignore();
+    }
 }
 
 void RuntimeUIOverlayWidget::SetDrawCommands(const std::vector<Hephaestus::HephaestusUI::UIDrawCommand>& commands)

@@ -84,7 +84,7 @@ void QtViewportWindow::SetResizeCallback(ResizeEventCallback callback)
 
 bool QtViewportWindow::ShouldForwardInput() const
 {
-    return isActive() || m_mouseInside;
+    return m_forceForwardInput || isActive() || m_mouseInside;
 }
 
 void QtViewportWindow::exposeEvent(QExposeEvent* event)

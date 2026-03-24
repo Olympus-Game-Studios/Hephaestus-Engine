@@ -106,10 +106,19 @@ public:
      * @brief Check if input should be forwarded to the engine.
      * 
      * Input is forwarded when:
+     * - Force forwarding is enabled (play mode), OR
      * - The viewport has keyboard focus, OR
      * - The mouse is inside the viewport (for mouse events)
      */
     bool ShouldForwardInput() const;
+
+    /**
+     * @brief Enable/disable forced input forwarding.
+     * 
+     * When enabled, input events are always forwarded regardless of focus.
+     * Used during play mode when UI overlay might intercept events.
+     */
+    void SetForceInputForwarding(bool force) { m_forceForwardInput = force; }
 
     /**
      * @brief Capture the mouse cursor for camera control.
@@ -190,6 +199,9 @@ private:
     bool m_ignoreNextMouseMove = false;
     int m_savedCursorX = 0;
     int m_savedCursorY = 0;
+    
+    // Force forwarding mode (for play mode)
+    bool m_forceForwardInput = false;
 };
 
 } // namespace QtEditor

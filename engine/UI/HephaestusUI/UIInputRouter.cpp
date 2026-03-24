@@ -3,6 +3,8 @@
 #include "UIElement.h"
 #include "UIScreen.h"
 
+#include <iostream>
+
 namespace Hephaestus::HephaestusUI {
 
 bool UIInputRouter::RouteMouseMove(UIScreen& screen, const UIVec2& position) {
@@ -14,6 +16,7 @@ bool UIInputRouter::RouteMouseMove(UIScreen& screen, const UIVec2& position) {
         m_HoveredElement = newHover;
         if (m_HoveredElement) {
             m_HoveredElement->OnHoverEnter();
+            std::cout << "[UI Debug] Hover entered element" << std::endl;
         }
     }
 
@@ -23,6 +26,9 @@ bool UIInputRouter::RouteMouseMove(UIScreen& screen, const UIVec2& position) {
 bool UIInputRouter::RouteMousePress(UIScreen& screen, const UIVec2& position, int button) {
     m_PressedElement = screen.HitTest(position);
     m_PressedButton = button;
+
+    std::cout << "[UI Debug] RouteMousePress at (" << position.x << ", " << position.y 
+              << ") button=" << button << " hit=" << (m_PressedElement ? "yes" : "no") << std::endl;
 
     if (m_PressedElement) {
         m_PressedElement->OnPressed();

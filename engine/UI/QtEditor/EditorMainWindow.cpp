@@ -1972,6 +1972,21 @@ void EditorMainWindow::initializeEngine()
     // Register all component inspector factories
     registerComponentInspectors();
     
+    // Set up mouse event callback for the runtime UI overlay
+    if (m_runtimeUIOverlay) {
+        m_runtimeUIOverlay->SetMouseEventCallback([this](const UIMouseEventData& event) {
+            if (m_engine) {
+                int type = 0;
+                switch (event.type) {
+                case UIMouseEventData::Type::Press:   type = 0; break;
+                case UIMouseEventData::Type::Release: type = 1; break;
+                case UIMouseEventData::Type::Move:    type = 2; break;
+                }
+                m_engine->ForwardOverlayMouseEvent(type, event.x, event.y, event.button);
+            }
+        });
+    }
+    
     // Connect engine signals
     connect(m_engine.get(), &QtEditorEngine::engineInitialized,
             this, &EditorMainWindow::onEngineInitialized);
@@ -1995,6 +2010,7 @@ void EditorMainWindow::initializeEngine()
         if (m_runtimeUIOverlay) {
             const bool showUI = playing || paused;
             m_runtimeUIOverlay->setVisible(showUI);
+            m_runtimeUIOverlay->SetMouseEventsEnabled(showUI);
             if (showUI) {
                 m_runtimeUIOverlay->raise();
             } else {

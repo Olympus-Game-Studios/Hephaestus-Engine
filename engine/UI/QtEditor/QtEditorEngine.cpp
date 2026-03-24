@@ -671,6 +671,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         RuntimeUIState* runtimeUIState = FindRuntimeUIState(this);
         if (!m_playModeManager.IsEditor() && runtimeUIState && runtimeUIState->context) {
             const ::Hephaestus::HephaestusUI::UIVec2 uiPos = toUIPoint(event.x, event.y);
+            std::cout << "[UI Debug] Mouse Press at (" << uiPos.x << ", " << uiPos.y << ") button=" << event.button << std::endl;
             runtimeUIState->context->QueueMousePress(uiPos, event.button);
         }
 
@@ -2301,8 +2302,10 @@ void QtEditorEngine::StartPlayMode()
     m_playModeManager.StartPlayMode();
 
     // Request keyboard focus on the viewport so Lua scripts can receive input
+    // Enable force input forwarding so mouse events reach the UI even when overlay is visible
     if (m_viewport) {
         m_viewport->requestActivate();
+        m_viewport->SetForceInputForwarding(true);
     }
 
     emit playStateChanged(true, false);
@@ -2340,8 +2343,12 @@ void QtEditorEngine::StopPlayMode()
     }
 
     // Release cursor if Lua scripts captured it during play
-    if (m_viewport && m_viewport->IsCursorCaptured()) {
-        m_viewport->ReleaseCursor();
+    // Disable force input forwarding (play mode is ending)
+    if (m_viewport) {
+        if (m_viewport->IsCursorCaptured()) {
+            m_viewport->ReleaseCursor();
+        }
+        m_viewport->SetForceInputForwarding(false);
     }
 
     // Restore gizmo visibility
@@ -2394,6 +2401,33 @@ void QtEditorEngine::ForwardKeyEvent(int qtKey, bool pressed)
 {
     // Forward the key event to the runtime input state so Lua scripts can read it
     updateKeyState(qtKey, pressed);
+}
+
+void QtEditorEngine::ForwardOverlayMouseEvent(int type, float x, float y, int button)
+{
+    if (m_playModeManager.IsEditor()) {
+        return;
+    }
+    
+    RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
+    if (!runtimeUI || !runtimeUI->context) {
+        return;
+    }
+    
+    const ::Hephaestus::HephaestusUI::UIVec2 pos = {x, y};
+    
+    switch (type) {
+    case 0: // Press
+        std::cout << "[UI Debug] ForwardOverlayMouseEvent Press at (" << x << ", " << y << ") button=" << button << std::endl;
+        runtimeUI->context->QueueMousePress(pos, button);
+        break;
+    case 1: // Release
+        runtimeUI->context->QueueMouseRelease(pos, button);
+        break;
+    case 2: // Move
+        runtimeUI->context->QueueMouseMove(pos);
+        break;
+    }
 }
 
 const std::vector<::Hephaestus::HephaestusUI::UIDrawCommand>& QtEditorEngine::GetRuntimeUIDrawCommands() const

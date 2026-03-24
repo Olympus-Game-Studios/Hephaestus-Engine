@@ -16,9 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - 2026-03-24: Updated `scripts/pauseUI.lua` example to demonstrate `UI.setCursorMode` / `CursorMode` API for pause menu toggle with proper cursor lock/unlock. Menu starts visible in UI mode on play so the UI is immediately shown with a free cursor.
 - 2026-03-24: Documented cursor mode API in `LUA_UI_API_REFERENCE.md`, `LUA_SCRIPTING_GUIDE.md`, and `HEPHAESTUS_UI_RUNTIME_GUIDE.md`.
 - 2026-03-24: Added `scripts/mainMenu.lua`, a basic Lua-driven runtime main menu test with keyboard navigation, cursor mode switching, start/hide behavior, and `Application.quit()` integration.
+- 2026-03-24: Added `UI.setOnClick(buttonHandle, callback)` Lua binding for registering mouse click callbacks on UIButton elements. Callbacks are stored as Lua registry references and invoked when buttons are clicked.
 
 ### Fixed
 
+- 2026-03-24: Fixed Lua scripts not receiving mouse input during Qt editor play mode. The `RuntimeUIOverlayWidget` now directly captures mouse events (press/release/move) and forwards them to the `UIContext` via `QtEditorEngine::ForwardOverlayMouseEvent()`, bypassing the viewport's focus-based input filtering.
 - 2026-03-24: Fixed Lua scripts not receiving keyboard input during Qt editor play mode when the viewport window didn't have direct focus. Key events are now forwarded from `EditorMainWindow` to the engine's `RuntimeInputState` during play mode, enabling UI menu navigation (W/S/Up/Down/Enter) even when another Qt widget has focus.
 - 2026-03-24: Fixed `Input.setCursorMode` and `UI.setCursorMode` calls made during `onAwake` being silently dropped in the Qt editor because `RuntimeInputState.valid` was not yet true. The `cursorModeRequest` is now always written so the host picks it up on the first tick.
 - 2026-03-17: Added initial `HephaestusUI` runtime retained-mode UI module with `UISystem`, `UIContext`, `UIScreen`, base `UIElement` tree, layout containers (`UICanvas`, `UIVerticalBox`, `UIHorizontalBox`), widgets (`UIPanel`, `UIText`, `UIImage`, `UIButton`), command-list based `UIRenderer`, `UIInputRouter`, `UIFont` registry scaffolding, `UIStyle`, and a code example for building a simple menu screen.
