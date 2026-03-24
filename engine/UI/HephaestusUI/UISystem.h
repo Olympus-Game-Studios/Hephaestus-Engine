@@ -10,6 +10,12 @@ class UIContext;
 class UIRenderer;
 class UIScreen;
 
+/// High-level cursor/input mode for switching between gameplay and UI interaction.
+enum class CursorMode {
+    Game, ///< Cursor hidden + captured; mouse routed to gameplay (camera look, etc.)
+    UI    ///< Cursor visible + unlocked; mouse routed to UI widgets
+};
+
 class UISystem {
 public:
     void AddScreen(const std::shared_ptr<UIScreen>& screen);
@@ -22,8 +28,17 @@ public:
     void Update(UIContext& context);
     void Render(UIRenderer& renderer) const;
 
+    void SetCursorMode(CursorMode mode);
+    [[nodiscard]] CursorMode GetCursorMode() const { return m_CursorMode; }
+
+    /// Returns true when the mode has changed since last call to ConsumeCursorModeChange().
+    [[nodiscard]] bool HasCursorModeChanged() const { return m_CursorModeDirty; }
+    CursorMode ConsumeCursorModeChange();
+
 private:
     std::vector<std::shared_ptr<UIScreen>> m_Screens;
+    CursorMode m_CursorMode = CursorMode::Game;
+    bool m_CursorModeDirty = false;
 };
 
 } // namespace Hephaestus::HephaestusUI

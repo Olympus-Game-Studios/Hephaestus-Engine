@@ -397,9 +397,8 @@ void LuaScriptEngine::OnSimulationStopped() {
 
     // Restore cursor mode to normal
     if (m_CurrentCursorMode != 0) {
-        if (m_RuntimeInput.valid) {
-            m_RuntimeInput.cursorModeRequest = 0;
-        } else if (m_Window) {
+        m_RuntimeInput.cursorModeRequest = 0;
+        if (m_Window) {
             glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             glfwSetInputMode(m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
         }
@@ -1976,22 +1975,21 @@ int LuaScriptEngine::Lua_Input_setCursorMode(lua_State* L) {
         return 0;
     }
 
-    // If using RuntimeInputState (Qt editor), set the request flag for the host
-    if (engine->m_RuntimeInput.valid) {
-        engine->m_RuntimeInput.cursorModeRequest = newMode;
-    } else if (engine->m_Window) {
-        // GLFW path: apply directly
+    // Always store the request so the host picks it up on the next tick
+    // (covers calls made during onAwake before the first populateRuntimeInputState).
+    engine->m_RuntimeInput.cursorModeRequest = newMode;
+
+    // GLFW runtime: apply immediately since there is no host tick to consume the request
+    if (engine->m_Window) {
         int glfwMode = (newMode == 1) ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
         glfwSetInputMode(engine->m_Window, GLFW_CURSOR, glfwMode);
 
-        // Enable raw mouse motion if available and entering disabled mode
         if (newMode == 1 && glfwRawMouseMotionSupported()) {
             glfwSetInputMode(engine->m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
         } else if (newMode == 0) {
             glfwSetInputMode(engine->m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
         }
 
-        // Reset delta tracking on mode change to avoid jump
         engine->m_HasLastMousePos = false;
     }
 
@@ -3321,7 +3319,21 @@ void LuaScriptEngine::RegisterUIBindings() {
     lua_pushcfunction(m_State, Lua_UI_setSpacing);
     lua_setfield(m_State, -2, "setSpacing");
 
+    lua_pushcfunction(m_State, Lua_UI_setCursorMode);
+    lua_setfield(m_State, -2, "setCursorMode");
+
+    lua_pushcfunction(m_State, Lua_UI_getCursorMode);
+    lua_setfield(m_State, -2, "getCursorMode");
+
     lua_setglobal(m_State, "UI");
+
+    // CursorMode enum constants
+    lua_newtable(m_State);
+    lua_pushstring(m_State, "game");
+    lua_setfield(m_State, -2, "Game");
+    lua_pushstring(m_State, "ui");
+    lua_setfield(m_State, -2, "UI");
+    lua_setglobal(m_State, "CursorMode");
 #endif
 }
 
@@ -3916,6 +3928,73 @@ int LuaScriptEngine::Lua_UI_setSpacing(lua_State* L) {
     }
 
     lua_pushboolean(L, false);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setCursorMode(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UISystem) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const char* modeStr = luaL_checkstring(L, 1);
+    std::string mode = modeStr ? modeStr : "";
+    for (auto& c : mode) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    using CursorMode = Hephaestus::HephaestusUI::CursorMode;
+
+    if (mode == "ui") {
+        engine->m_UISystem->SetCursorMode(CursorMode::UI);
+    } else if (mode == "game") {
+        engine->m_UISystem->SetCursorMode(CursorMode::Game);
+    } else {
+        luaL_error(L, "UI.setCursorMode: unknown mode '%s' (use 'ui' or 'game', or CursorMode.UI / CursorMode.Game)", modeStr);
+        return 0;
+    }
+
+    // Always store the request so the host picks it up on the next tick
+    // (covers calls made during onAwake before the first populateRuntimeInputState).
+    const int legacyMode = (mode == "ui") ? 0 : 1;
+    engine->m_RuntimeInput.cursorModeRequest = legacyMode;
+
+    // GLFW runtime: apply immediately since there is no host tick to consume the request
+    if (engine->m_Window) {
+        int glfwMode = (legacyMode == 1) ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
+        glfwSetInputMode(engine->m_Window, GLFW_CURSOR, glfwMode);
+        if (legacyMode == 1 && glfwRawMouseMotionSupported()) {
+            glfwSetInputMode(engine->m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+        } else if (legacyMode == 0) {
+            glfwSetInputMode(engine->m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+        }
+        engine->m_HasLastMousePos = false;
+    }
+    engine->m_CurrentCursorMode = legacyMode;
+
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_getCursorMode(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UISystem) {
+        lua_pushstring(L, "game");
+        return 1;
+    }
+
+    using CursorMode = Hephaestus::HephaestusUI::CursorMode;
+    const char* result = (engine->m_UISystem->GetCursorMode() == CursorMode::UI) ? "ui" : "game";
+    lua_pushstring(L, result);
     return 1;
 #else
     (void)L;

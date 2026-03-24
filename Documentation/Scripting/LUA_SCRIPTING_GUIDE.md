@@ -224,7 +224,25 @@ Available helpers:
 - `Input.isKeyPressed(key)` → `boolean` (string name or key code)
 - `Input.isMouseButtonPressed(button)` → `boolean`
 - `Input.getMousePosition()` → `{ x, y }` (window pixels)
-- `Input.getMousePosition()` → `{ x, y }` (window pixels)
+- `Input.getMouseDelta()` → `{ x, y }` (pixels since last frame)
+- `Input.setCursorMode(mode)` — low-level cursor control (`"normal"` or `"disabled"`)
+
+### Cursor Mode (UI ↔ Game)
+
+For switching between gameplay mouse capture and UI interaction, use the high-level `UI.setCursorMode` API:
+
+```lua
+-- Show cursor and unlock it for UI interaction
+UI.setCursorMode(CursorMode.UI)
+
+-- Hide and capture cursor for gameplay (camera look, etc.)
+UI.setCursorMode(CursorMode.Game)
+
+-- Query current mode
+local mode = UI.getCursorMode()  -- returns "ui" or "game"
+```
+
+This is the recommended way to manage cursor state. It works identically in the Qt editor play mode and in exported game builds.
 
 ### Camera
 

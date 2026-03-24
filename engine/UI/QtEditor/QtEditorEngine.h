@@ -192,6 +192,14 @@ public:
     bool IsPaused() const;
 
     /**
+     * @brief Forward a key event to the Lua runtime input state.
+     * 
+     * Used by EditorMainWindow to ensure Lua scripts receive keyboard input
+     * even when the viewport window doesn't have direct keyboard focus.
+     */
+    void ForwardKeyEvent(int qtKey, bool pressed);
+
+    /**
      * @brief Get runtime UI draw commands produced during play mode.
      */
     const std::vector<::Hephaestus::HephaestusUI::UIDrawCommand>& GetRuntimeUIDrawCommands() const;

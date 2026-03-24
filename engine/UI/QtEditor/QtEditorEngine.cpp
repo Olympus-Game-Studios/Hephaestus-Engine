@@ -597,6 +597,13 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         return {px, py};
     };
 
+    auto isRuntimeUICursorMode = [&]() -> bool {
+        if (m_playModeManager.IsEditor()) return false;
+        RuntimeUIState* rui = FindRuntimeUIState(this);
+        return rui && rui->system &&
+               rui->system->GetCursorMode() == Hephaestus::HephaestusUI::CursorMode::UI;
+    };
+
     auto canInteractWithGizmo = [&]() -> bool {
         // Suppress gizmo interaction during play mode
         if (m_playModeManager.ShouldSuppressEditorInteraction()) {
@@ -687,12 +694,13 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             }
         }
         
-        // Notify camera controller
-        m_cameraController.OnMousePress(event.button, m_inputState);
-        
-        // Handle cursor capture for fly mode
-        if (m_cameraController.ShouldCaptureCursor() && m_viewport) {
-            m_viewport->CaptureCursor();
+        // Notify camera controller (suppressed when Lua UI has cursor unlocked)
+        if (!isRuntimeUICursorMode()) {
+            m_cameraController.OnMousePress(event.button, m_inputState);
+
+            if (m_cameraController.ShouldCaptureCursor() && m_viewport) {
+                m_viewport->CaptureCursor();
+            }
         }
         
         m_lastMouseX = event.x;
@@ -754,12 +762,12 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                 m_runtimeMouseButtons[glfwBtn] = false;
         }
         
-        // Notify camera controller
-        m_cameraController.OnMouseRelease(event.button, m_inputState);
-        
-        // Release cursor if no longer in fly mode
-        if (!m_cameraController.ShouldCaptureCursor() && m_viewport) {
-            m_viewport->ReleaseCursor();
+        if (!isRuntimeUICursorMode()) {
+            m_cameraController.OnMouseRelease(event.button, m_inputState);
+
+            if (!m_cameraController.ShouldCaptureCursor() && m_viewport) {
+                m_viewport->ReleaseCursor();
+            }
         }
         break;
     }
@@ -852,7 +860,9 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             }
             
             // Notify camera controller if any navigation mode is active
-            if (!m_gizmoDragging && (m_cameraController.IsFlyModeActive() || 
+            // (suppressed when Lua UI has cursor unlocked for UI interaction)
+            if (!m_gizmoDragging && !isRuntimeUICursorMode() &&
+                (m_cameraController.IsFlyModeActive() || 
                 m_cameraController.IsOrbitModeActive() ||
                 m_cameraController.IsPanModeActive() ||
                 m_cameraController.IsDollyModeActive())) {
@@ -867,11 +877,9 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         
     case InputEvent::Type::MouseWheel:
         m_inputState.wheelDelta = event.wheelDelta;
-        // Check if RMB is held (Qt::RightButton = 2) via event.button or tracked state
-        {
+        if (!isRuntimeUICursorMode()) {
             bool rmbHeld = (event.button & 2) != 0 || m_inputState.rmbDown;
             if (rmbHeld && m_cameraController.IsFlyModeActive()) {
-                // Adjust fly mode speed instead of zooming
                 const float minMoveSpeed = 0.1f;
                 const float maxMoveSpeed = 50.0f;
                 const float speedStep = 1.1f;
@@ -881,8 +889,8 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                 m_editorContext.GetCamera().moveSpeed = newSpeed;
                 break;
             }
+            m_cameraController.OnMouseWheel(event.wheelDelta, m_inputState);
         }
-        m_cameraController.OnMouseWheel(event.wheelDelta, m_inputState);
         break;
         
     case InputEvent::Type::KeyPress:
@@ -2292,6 +2300,11 @@ void QtEditorEngine::StartPlayMode()
     // Start!
     m_playModeManager.StartPlayMode();
 
+    // Request keyboard focus on the viewport so Lua scripts can receive input
+    if (m_viewport) {
+        m_viewport->requestActivate();
+    }
+
     emit playStateChanged(true, false);
     std::cout << "[QtEditorEngine] Play Mode started\n";
 }
@@ -2314,6 +2327,8 @@ void QtEditorEngine::StopPlayMode()
     }
     RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
     if (runtimeUI && runtimeUI->system) {
+        runtimeUI->system->SetCursorMode(Hephaestus::HephaestusUI::CursorMode::Game);
+        runtimeUI->system->ConsumeCursorModeChange();
         runtimeUI->system->ClearScreens();
     }
     if (runtimeUI && runtimeUI->renderer) {
@@ -2373,6 +2388,12 @@ bool QtEditorEngine::IsPlaying() const
 bool QtEditorEngine::IsPaused() const
 {
     return m_playModeManager.IsPaused();
+}
+
+void QtEditorEngine::ForwardKeyEvent(int qtKey, bool pressed)
+{
+    // Forward the key event to the runtime input state so Lua scripts can read it
+    updateKeyState(qtKey, pressed);
 }
 
 const std::vector<::Hephaestus::HephaestusUI::UIDrawCommand>& QtEditorEngine::GetRuntimeUIDrawCommands() const

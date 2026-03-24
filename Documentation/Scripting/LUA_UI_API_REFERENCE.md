@@ -235,7 +235,76 @@ Supported element types:
 Return contract for setters:
 - `boolean` success/failure
 
-## 5. Complete Example
+## 5. Cursor Mode API
+
+### UI.setCursorMode(mode)
+
+Switch between gameplay and UI cursor modes. This is the recommended high-level API for managing cursor lock/visibility when transitioning between gameplay and UI screens (pause menus, inventories, dialogue, etc.).
+
+Signature:
+```lua
+local ok = UI.setCursorMode("ui")
+```
+
+Parameters:
+- `mode: string` — `"ui"` or `"game"` (case-insensitive)
+
+You can also use the `CursorMode` constants table:
+```lua
+UI.setCursorMode(CursorMode.UI)
+UI.setCursorMode(CursorMode.Game)
+```
+
+Returns:
+- `boolean` — `true` on success
+
+Behavior when `"ui"`:
+- Cursor becomes visible and unlocked
+- Mouse input routes to UI widgets
+- In the Qt editor, the editor camera controller is suppressed so it does not interfere
+- In the GLFW runtime, cursor is set to `GLFW_CURSOR_NORMAL`
+
+Behavior when `"game"`:
+- Cursor is hidden and captured
+- Mouse input routes to gameplay systems (camera look, etc.)
+- In the Qt editor, the viewport captures the cursor
+- In the GLFW runtime, cursor is set to `GLFW_CURSOR_DISABLED` with raw mouse motion
+
+### UI.getCursorMode()
+
+Query the current cursor mode.
+
+Signature:
+```lua
+local mode = UI.getCursorMode()
+```
+
+Returns:
+- `string` — `"ui"` or `"game"`
+
+### CursorMode Constants
+
+A global `CursorMode` table is registered with named constants:
+- `CursorMode.UI` — string `"ui"`
+- `CursorMode.Game` — string `"game"`
+
+### Typical Usage Pattern
+
+```lua
+local function showPauseMenu()
+    UI.setScreenVisible("PauseMenu", true)
+    UI.setScreenActive("PauseMenu", true)
+    UI.setCursorMode(CursorMode.UI)
+end
+
+local function hidePauseMenu()
+    UI.setScreenVisible("PauseMenu", false)
+    UI.setScreenActive("PauseMenu", false)
+    UI.setCursorMode(CursorMode.Game)
+end
+```
+
+## 6. Complete Example
 
 ```lua
 if not UI.isAvailable() then
@@ -272,7 +341,7 @@ UI.setScreenVisible("PauseMenu", true)
 UI.setScreenActive("PauseMenu", true)
 ```
 
-## 6. Error Handling Guidance
+## 7. Error Handling Guidance
 
 Recommended pattern:
 
@@ -287,7 +356,7 @@ end
 local screen = assertHandle(UI.createScreen("HUD"), "Failed to create HUD screen")
 ```
 
-## 7. Current Limitations
+## 8. Current Limitations
 
 Not yet exposed in Lua:
 - Widget removal API

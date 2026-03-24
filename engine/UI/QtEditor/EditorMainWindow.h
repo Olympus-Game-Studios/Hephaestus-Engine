@@ -108,6 +108,8 @@ public:
 protected:
     void closeEvent(QCloseEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
 
 private:
      RuntimeUIOverlayWidget* m_runtimeUIOverlay = nullptr;

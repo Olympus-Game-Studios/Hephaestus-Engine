@@ -411,6 +411,8 @@ private:
     static int Lua_UI_setText(lua_State* L);
     static int Lua_UI_setImage(lua_State* L);
     static int Lua_UI_setSpacing(lua_State* L);
+    static int Lua_UI_setCursorMode(lua_State* L);
+    static int Lua_UI_getCursorMode(lua_State* L);
 
     uint32_t RegisterUIScreenHandle(const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>& screen);
     uint32_t RegisterUIElementHandle(Hephaestus::HephaestusUI::UIElement* element);

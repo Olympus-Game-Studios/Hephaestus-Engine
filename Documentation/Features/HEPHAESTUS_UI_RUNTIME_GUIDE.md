@@ -129,9 +129,42 @@ Backend responsibility:
 - `OnReleased`
 - `OnClicked`
 
-## 7. Style and Font
+## 7. Cursor Mode (Input Ownership)
 
-### 7.1 UIStyle
+`UISystem` tracks a high-level `CursorMode` that governs whether mouse input is owned by the UI or by gameplay:
+
+```cpp
+enum class CursorMode {
+    Game, // cursor hidden + captured; mouse goes to gameplay (camera, etc.)
+    UI    // cursor visible + unlocked; mouse goes to UI widgets
+};
+```
+
+### C++ API
+```cpp
+uiSystem.SetCursorMode(HUI::CursorMode::UI);
+HUI::CursorMode current = uiSystem.GetCursorMode();
+```
+
+### Lua API
+```lua
+UI.setCursorMode(CursorMode.UI)   -- unlock + show cursor
+UI.setCursorMode(CursorMode.Game) -- lock + hide cursor
+local mode = UI.getCursorMode()   -- "ui" or "game"
+```
+
+### Host Integration
+
+When `CursorMode` changes the host (Qt editor or GLFW runtime) must react:
+
+- **Qt editor**: `populateRuntimeInputState()` already honours the underlying `cursorModeRequest`. The editor camera controller is suppressed when the runtime UI is in `CursorMode::UI` to prevent fly-mode interference.
+- **GLFW runtime**: the Lua binding calls `glfwSetInputMode` directly. Script-driven camera controllers should check `UI.getCursorMode()` and skip mouse-look when in UI mode.
+
+Cursor mode resets to `Game` when play mode stops or `UISystem::ClearScreens()` is called.
+
+## 8. Style and Font
+
+### 8.1 UIStyle
 
 `UIStyle` fields:
 - `backgroundColor`
@@ -143,7 +176,7 @@ Backend responsibility:
 
 Widgets may use local style or inherited/default behavior.
 
-### 7.2 UIFont
+### 8.2 UIFont
 
 `UIFont` and `UIFontRegistry` provide metadata storage:
 - Family name
@@ -152,7 +185,7 @@ Widgets may use local style or inherited/default behavior.
 
 This is prepared for future FreeType integration.
 
-## 8. C++ Usage Example
+## 9. C++ Usage Example
 
 Simple runtime setup pattern:
 
@@ -182,7 +215,7 @@ const auto& commands = uiRenderer.GetDrawCommands();
 // Feed commands into render backend.
 ```
 
-## 9. Lua Bridge Summary
+## 10. Lua Bridge Summary
 
 HephaestusUI is exposed to Lua through the global `UI` table in `LuaScriptEngine`.
 
@@ -196,7 +229,7 @@ Full Lua API reference is documented in:
 Script-only workflow (no engine source access):
 - `Documentation/Guides/NO_SOURCE_RUNTIME_UI_GUIDE.md`
 
-## 10. Current Limitations
+## 11. Current Limitations
 
 Known v1 constraints:
 - No keyboard/controller focus navigation
@@ -205,7 +238,7 @@ Known v1 constraints:
 - No data binding framework
 - No direct Lua button callback registration yet
 
-## 11. Extension Plan
+## 12. Extension Plan
 
 Designed extension points:
 - Add focus manager for controller/keyboard navigation
@@ -215,7 +248,7 @@ Designed extension points:
 - Add Lua callback/event subscription API
 - Add editor-side visual UI authoring that exports runtime assets
 
-## 12. Integration Checklist
+## 13. Integration Checklist
 
 When integrating into a runtime target:
 - Create `UISystem`, `UIContext`, `UIRenderer`

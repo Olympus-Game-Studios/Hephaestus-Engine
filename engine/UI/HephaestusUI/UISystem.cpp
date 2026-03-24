@@ -57,4 +57,16 @@ void UISystem::Render(UIRenderer& renderer) const {
     }
 }
 
+void UISystem::SetCursorMode(CursorMode mode) {
+    if (mode != m_CursorMode) {
+        m_CursorMode = mode;
+        m_CursorModeDirty = true;
+    }
+}
+
+CursorMode UISystem::ConsumeCursorModeChange() {
+    m_CursorModeDirty = false;
+    return m_CursorMode;
+}
+
 } // namespace Hephaestus::HephaestusUI

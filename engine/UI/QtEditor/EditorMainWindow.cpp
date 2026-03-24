@@ -56,6 +56,7 @@
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QCloseEvent>
+#include <QKeyEvent>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
@@ -366,6 +367,24 @@ void EditorMainWindow::closeEvent(QCloseEvent* event)
     }
     
     event->accept();
+}
+
+void EditorMainWindow::keyPressEvent(QKeyEvent* event)
+{
+    // Forward key events to the engine during play mode so Lua scripts receive input
+    // even when the viewport doesn't have direct keyboard focus.
+    if (m_engine && m_engine->IsPlaying()) {
+        m_engine->ForwardKeyEvent(event->key(), true);
+    }
+    QMainWindow::keyPressEvent(event);
+}
+
+void EditorMainWindow::keyReleaseEvent(QKeyEvent* event)
+{
+    if (m_engine && m_engine->IsPlaying()) {
+        m_engine->ForwardKeyEvent(event->key(), false);
+    }
+    QMainWindow::keyReleaseEvent(event);
 }
 
 void EditorMainWindow::setupMenuBar()
