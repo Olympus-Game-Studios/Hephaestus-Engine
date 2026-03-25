@@ -13,6 +13,7 @@ void UIImage::OnEmitDrawCommands(UIRenderer& renderer) const {
         .rect = GetLayoutRect(),
         .imageId = m_ImageId,
         .tint = m_Tint,
+        .scaleMode = m_ScaleMode,
         .opacity = ResolveOpacity(),
         .zOrder = GetZOrder()
     });

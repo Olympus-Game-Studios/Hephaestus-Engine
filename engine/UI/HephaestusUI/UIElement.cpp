@@ -45,19 +45,121 @@ UIRect UIElement::GetContentRect() const {
     };
 }
 
+float UIElement::ApplyMinMaxWidth(float width) const {
+    float result = std::max(0.0f, width);
+    if (m_MinSize.x > 0.0f) {
+        result = std::max(result, m_MinSize.x);
+    }
+    if (m_MaxSize.x > 0.0f) {
+        result = std::min(result, m_MaxSize.x);
+    }
+    return result;
+}
+
+float UIElement::ApplyMinMaxHeight(float height) const {
+    float result = std::max(0.0f, height);
+    if (m_MinSize.y > 0.0f) {
+        result = std::max(result, m_MinSize.y);
+    }
+    if (m_MaxSize.y > 0.0f) {
+        result = std::min(result, m_MaxSize.y);
+    }
+    return result;
+}
+
 void UIElement::UpdateLayout() {
     if (m_Parent) {
         const UIRect parentContent = m_Parent->GetContentRect();
+        float computedWidth = ApplyMinMaxWidth(m_Size.x);
+        float computedHeight = ApplyMinMaxHeight(m_Size.y);
 
-        m_LayoutRect.x = parentContent.x + m_Position.x + m_Margin.left;
-        m_LayoutRect.y = parentContent.y + m_Position.y + m_Margin.top;
-        m_LayoutRect.width = std::max(0.0f, m_Size.x);
-        m_LayoutRect.height = std::max(0.0f, m_Size.y);
+        float posX = m_Position.x + m_Margin.left;
+        float posY = m_Position.y + m_Margin.top;
+
+        const float availWidth = parentContent.width - (m_Margin.left + m_Margin.right);
+        const float availHeight = parentContent.height - (m_Margin.top + m_Margin.bottom);
+
+        switch (m_HAlignment) {
+        case UIHAlignment::Center:
+            posX = m_Position.x + (availWidth - computedWidth) * 0.5f;
+            break;
+        case UIHAlignment::Right:
+            posX = m_Position.x + availWidth - computedWidth;
+            break;
+        case UIHAlignment::Stretch:
+            posX = m_Margin.left;
+            computedWidth = ApplyMinMaxWidth(availWidth);
+            break;
+        case UIHAlignment::Left:
+        default:
+            break;
+        }
+
+        switch (m_VAlignment) {
+        case UIVAlignment::Center:
+            posY = m_Position.y + (availHeight - computedHeight) * 0.5f;
+            break;
+        case UIVAlignment::Bottom:
+            posY = m_Position.y + availHeight - computedHeight;
+            break;
+        case UIVAlignment::Stretch:
+            posY = m_Margin.top;
+            computedHeight = ApplyMinMaxHeight(availHeight);
+            break;
+        case UIVAlignment::Top:
+        default:
+            break;
+        }
+
+        switch (m_Anchor.preset) {
+        case UIAnchorPreset::TopCenter:
+            posX = (parentContent.width - computedWidth) * 0.5f;
+            break;
+        case UIAnchorPreset::TopRight:
+            posX = parentContent.width - computedWidth - m_Margin.right;
+            break;
+        case UIAnchorPreset::CenterLeft:
+            posY = (parentContent.height - computedHeight) * 0.5f;
+            break;
+        case UIAnchorPreset::Center:
+            posX = (parentContent.width - computedWidth) * 0.5f;
+            posY = (parentContent.height - computedHeight) * 0.5f;
+            break;
+        case UIAnchorPreset::CenterRight:
+            posX = parentContent.width - computedWidth - m_Margin.right;
+            posY = (parentContent.height - computedHeight) * 0.5f;
+            break;
+        case UIAnchorPreset::BottomLeft:
+            posY = parentContent.height - computedHeight - m_Margin.bottom;
+            break;
+        case UIAnchorPreset::BottomCenter:
+            posX = (parentContent.width - computedWidth) * 0.5f;
+            posY = parentContent.height - computedHeight - m_Margin.bottom;
+            break;
+        case UIAnchorPreset::BottomRight:
+            posX = parentContent.width - computedWidth - m_Margin.right;
+            posY = parentContent.height - computedHeight - m_Margin.bottom;
+            break;
+        case UIAnchorPreset::Stretch:
+            posX = m_Margin.left;
+            posY = m_Margin.top;
+            computedWidth = ApplyMinMaxWidth(parentContent.width - m_Margin.left - m_Margin.right);
+            computedHeight = ApplyMinMaxHeight(parentContent.height - m_Margin.top - m_Margin.bottom);
+            break;
+        case UIAnchorPreset::TopLeft:
+        default:
+            break;
+        }
+
+        m_LayoutRect.x = parentContent.x + posX;
+        m_LayoutRect.y = parentContent.y + posY;
+        m_LayoutRect.width = computedWidth;
+        m_LayoutRect.height = computedHeight;
     } else {
         m_LayoutRect.x = m_Position.x;
         m_LayoutRect.y = m_Position.y;
-        m_LayoutRect.width = std::max(0.0f, m_Size.x);
-        m_LayoutRect.height = std::max(0.0f, m_Size.y);
+        m_LayoutRect.width = ApplyMinMaxWidth(m_Size.x);
+        m_LayoutRect.height = ApplyMinMaxHeight(m_Size.y);
     }
 
     OnUpdateLayout();
@@ -89,7 +191,7 @@ void UIElement::Draw(UIRenderer& renderer) const {
 }
 
 UIElement* UIElement::HitTest(const UIVec2& point) {
-    if (!m_Visible) {
+    if (!m_Visible || !m_Enabled) {
         return nullptr;
     }
 
@@ -113,6 +215,9 @@ UIElement* UIElement::HitTest(const UIVec2& point) {
 }
 
 const UIStyle* UIElement::ResolveStyle() const {
+    if (m_UseOwnedStyle) {
+        return &m_OwnedStyle;
+    }
     return m_Style;
 }
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "UITheme.h"
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,10 +37,14 @@ public:
     [[nodiscard]] bool HasCursorModeChanged() const { return m_CursorModeDirty; }
     CursorMode ConsumeCursorModeChange();
 
+    [[nodiscard]] UITheme& GetTheme() { return m_Theme; }
+    [[nodiscard]] const UITheme& GetTheme() const { return m_Theme; }
+
 private:
     std::vector<std::shared_ptr<UIScreen>> m_Screens;
     CursorMode m_CursorMode = CursorMode::Game;
     bool m_CursorModeDirty = false;
+    UITheme m_Theme = UITheme::CreateDefaultTheme();
 };
 
 } // namespace Hephaestus::HephaestusUI

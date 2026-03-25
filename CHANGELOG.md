@@ -8,6 +8,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-03-25: Added right-click context menu to `AssetBrowserWidget` on both the contents view and folder tree. Supports creating new folders, Lua scripts, scenes (`.hpscene`), and materials (`.hematerial`). Also supports rename, delete, and "Show in Explorer" for existing assets.
+- 2026-03-24: Expanded `UIStyle` with comprehensive per-widget visual properties: `fontFamily`, `fontSize`, `fontBold`, `fontItalic`, `textAlignment`, `opacity`, `scale`, `backgroundImageId`, `imageScaleMode`, `imageTint`, `textShadow`, `textShadowColor`, `textShadowOffset`.
+- 2026-03-24: Added `UIHAlignment`, `UIVAlignment`, and `UIImageScaleMode` enums to `UIStyle.h` for layout alignment and image scaling control.
+- 2026-03-24: Added per-element `enabled/disabled` state, `minSize`/`maxSize` constraints, horizontal/vertical alignment, and owned style support to `UIElement`.
+- 2026-03-24: Implemented anchor-based layout in `UIElement::UpdateLayout()` — all `UIAnchorPreset` values (TopLeft through Stretch) now compute layout positions correctly.
+- 2026-03-24: Expanded `UIButton` with `Focused` and `Disabled` visual states, per-state style getters, `SetFocused(bool)`, and `SetOnHovered` callback.
+- 2026-03-24: Added `UITheme` named style registry with `SetStyle`/`GetStyle`/`HasStyle` and `CreateDefaultTheme()` factory providing preset styles (`default_button`, `primary_button`, `danger_button`, `title_text`, `heading_text`, `body_text`, `label_text`, `panel_background`, `menu_container`, `overlay_background`).
+- 2026-03-24: Integrated `UITheme` into `UISystem` (initialized with default theme) for centralized style management.
+- 2026-03-24: Added `UIGridLayout` container widget with configurable columns, horizontal/vertical spacing, and per-cell alignment.
+- 2026-03-24: Added child alignment support to `UIVerticalBox` (`SetChildHAlignment`) and `UIHorizontalBox` (`SetChildVAlignment`) for controlling how children are positioned within the cross-axis.
+- 2026-03-24: Expanded `UIDrawTextCommand` with `bold`, `italic`, `shadow`, `shadowColor`, `shadowOffset` fields for richer text rendering.
+- 2026-03-24: Expanded `UIDrawRectCommand` with `backgroundImageId`, `imageScaleMode`, `imageTint` for image-backed rectangles.
+- 2026-03-24: Expanded `UIDrawImageCommand` with `scaleMode` field.
+- 2026-03-24: Added text shadow rendering support in `RuntimeUIOverlayWidget` QPainter backend (draws shadow pass before main text).
+- 2026-03-24: Added bold/italic font support in `RuntimeUIOverlayWidget` QPainter text rendering.
+- 2026-03-24: Added 30+ new Lua UI bindings: `setStyle`, `setButtonStyle`, `setFocused`, `registerThemeStyle`, `applyThemeStyle`, `setEnabled`, `setPadding`, `setMargin`, `setMinSize`, `setMaxSize`, `setAnchor`, `setAlignment`, `setChildAlignment`, `setBackgroundColor`, `setBorderColor`, `setBorderWidth`, `setCornerRadius`, `setTextColor`, `setFontSize`, `setFontBold`, `setFontItalic`, `setTextAlignment`, `setTextShadow`, `setWordWrap`, `setOnHover`, `createGrid`, `setGridColumns`, `setGridSpacing`, `setImageScaleMode`, `setImageTint`.
+- 2026-03-24: Added `ParseStyleTable` helper for Lua table-to-UIStyle conversion, supporting all style properties including colors as `{r,g,b,a}` tables and spacing as uniform float or `{left,top,right,bottom}` tables.
+- 2026-03-24: Added Lua enum constant tables: `UIAnchor` (TopLeft..Stretch), `UIAlign` (Left/Center/Right/Top/Bottom/Stretch), `UIScaleMode` (Stretch/Fit/Fill/Center).
+- 2026-03-24: Rewrote `scripts/mainMenu.lua` to demonstrate the new styled UI system: centered panel with rounded corners, semi-transparent overlay, styled title with text shadow, per-state button styling (normal/hovered/pressed/focused/disabled), keyboard focus visuals, hover callbacks, and modern visual hierarchy.
 - 2026-03-24: Added `CursorMode` enum (`Game` / `UI`) to `UISystem` for high-level cursor/input ownership switching between gameplay and UI interaction.
 - 2026-03-24: Added Lua `UI.setCursorMode(mode)` and `UI.getCursorMode()` bindings plus global `CursorMode` constants table (`CursorMode.Game`, `CursorMode.UI`) for script-driven cursor mode control.
 - 2026-03-24: Wired cursor mode into Qt editor play mode: editor camera controller is suppressed (mouse press/release/move/wheel) when runtime UI is in `CursorMode::UI` to prevent fly-mode interference with UI interaction.

@@ -21,8 +21,14 @@
 #include <QFont>
 #include <QFileIconProvider>
 #include <QFileDialog>
+#include <QInputDialog>
+#include <QMenu>
 #include <QMessageBox>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QProcess>
 #include <iostream>
+#include <fstream>
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -204,7 +210,9 @@ void AssetBrowserWidget::setupUI()
     m_folderTree->setIndentation(18);
     m_folderTree->setAnimated(true);
     m_folderTree->setMinimumHeight(0);
+    m_folderTree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_folderTree, &QTreeView::clicked, this, &AssetBrowserWidget::onFolderTreeClicked);
+    connect(m_folderTree, &QTreeView::customContextMenuRequested, this, &AssetBrowserWidget::onFolderTreeContextMenu);
     leftLayout->addWidget(m_folderTree, 1);
     leftPanel->setMinimumSize(0, 0);
     m_splitter->addWidget(leftPanel);
@@ -227,8 +235,10 @@ void AssetBrowserWidget::setupUI()
     m_contentsView->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_contentsView->setSelectionMode(QAbstractItemView::SingleSelection);
     m_contentsView->setMinimumHeight(0);
+    m_contentsView->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_contentsView, &QListView::doubleClicked, this, &AssetBrowserWidget::onContentsDoubleClicked);
     connect(m_contentsView, &QListView::clicked, this, &AssetBrowserWidget::onContentsClicked);
+    connect(m_contentsView, &QListView::customContextMenuRequested, this, &AssetBrowserWidget::onContentsContextMenu);
     contentsLayout->addWidget(m_contentsView);
 
     m_contentsPanel->setMinimumSize(0, 0);
@@ -578,9 +588,346 @@ void AssetBrowserWidget::onOpenProjectButtonClicked()
 {
     // Trigger main window's Open Project action
     if (m_mainWindow) {
-        // Use QMetaObject to invoke the slot
         QMetaObject::invokeMethod(m_mainWindow, "onOpenProject", Qt::QueuedConnection);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Context Menus
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
+{
+    auto& assetMgr = AssetManager::GetInstance();
+    if (!assetMgr.HasValidAssetRoot()) return;
+
+    QModelIndex index = m_contentsView->indexAt(pos);
+    QMenu menu(this);
+
+    if (index.isValid()) {
+        QString relativePath = index.data(RelativePathRole).toString();
+        bool isDirectory = index.data(IsDirectoryRole).toBool();
+
+        if (isDirectory) {
+            menu.addAction(style()->standardIcon(QStyle::SP_DirOpenIcon), tr("Open"), [this, relativePath]() {
+                NavigateTo(relativePath);
+            });
+            menu.addSeparator();
+            showCreateMenu(menu, relativePath);
+            menu.addSeparator();
+        }
+
+        menu.addAction(tr("Rename"), [this, relativePath, isDirectory]() {
+            renameAsset(relativePath, isDirectory);
+        });
+
+        QAction* deleteAct = menu.addAction(tr("Delete"), [this, relativePath, isDirectory]() {
+            deleteAsset(relativePath, isDirectory);
+        });
+        deleteAct->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+
+        menu.addSeparator();
+        menu.addAction(tr("Show in Explorer"), [this, relativePath]() {
+            showInExplorer(relativePath);
+        });
+    } else {
+        showCreateMenu(menu, m_currentPath);
+        menu.addSeparator();
+        menu.addAction(tr("Show in Explorer"), [this]() {
+            showInExplorer(m_currentPath);
+        });
+    }
+
+    menu.exec(m_contentsView->viewport()->mapToGlobal(pos));
+}
+
+void AssetBrowserWidget::onFolderTreeContextMenu(const QPoint& pos)
+{
+    auto& assetMgr = AssetManager::GetInstance();
+    if (!assetMgr.HasValidAssetRoot()) return;
+
+    QModelIndex index = m_folderTree->indexAt(pos);
+    QMenu menu(this);
+
+    QString targetDir;
+    if (index.isValid()) {
+        targetDir = index.data(RelativePathRole).toString();
+    }
+
+    showCreateMenu(menu, targetDir);
+
+    if (index.isValid() && !targetDir.isEmpty()) {
+        menu.addSeparator();
+        menu.addAction(tr("Rename"), [this, targetDir]() {
+            renameAsset(targetDir, true);
+        });
+        QAction* deleteAct = menu.addAction(tr("Delete"), [this, targetDir]() {
+            deleteAsset(targetDir, true);
+        });
+        deleteAct->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+    }
+
+    menu.addSeparator();
+    menu.addAction(tr("Show in Explorer"), [this, targetDir]() {
+        showInExplorer(targetDir);
+    });
+
+    menu.exec(m_folderTree->viewport()->mapToGlobal(pos));
+}
+
+void AssetBrowserWidget::showCreateMenu(QMenu& menu, const QString& targetDirectory)
+{
+    menu.addAction(style()->standardIcon(QStyle::SP_DirIcon), tr("New Folder"), [this, targetDirectory]() {
+        createNewFolder(targetDirectory);
+    });
+
+    menu.addSeparator();
+
+    menu.addAction(style()->standardIcon(QStyle::SP_FileDialogListView), tr("New Lua Script"), [this, targetDirectory]() {
+        createNewLuaScript(targetDirectory);
+    });
+
+    menu.addAction(style()->standardIcon(QStyle::SP_FileDialogDetailedView), tr("New Scene"), [this, targetDirectory]() {
+        createNewScene(targetDirectory);
+    });
+
+    menu.addAction(style()->standardIcon(QStyle::SP_DialogApplyButton), tr("New Material"), [this, targetDirectory]() {
+        createNewMaterial(targetDirectory);
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Asset Creation / Management
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AssetBrowserWidget::createNewFolder(const QString& parentRelativePath)
+{
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("New Folder"),
+                                         tr("Folder name:"), QLineEdit::Normal,
+                                         tr("New Folder"), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+
+    auto& assetMgr = AssetManager::GetInstance();
+    std::string parentAbs = parentRelativePath.isEmpty()
+        ? assetMgr.GetAssetRoot()
+        : assetMgr.ToAbsolutePath(parentRelativePath.toStdString());
+
+    std::filesystem::path folderPath = std::filesystem::path(parentAbs) / name.trimmed().toStdString();
+
+    std::error_code ec;
+    if (std::filesystem::exists(folderPath, ec)) {
+        QMessageBox::warning(this, tr("New Folder"), tr("A folder with that name already exists."));
+        return;
+    }
+
+    if (!std::filesystem::create_directories(folderPath, ec)) {
+        QMessageBox::critical(this, tr("New Folder"), tr("Failed to create folder: %1").arg(QString::fromStdString(ec.message())));
+        return;
+    }
+
+    Refresh();
+    std::cout << "[AssetBrowser] Created folder: " << folderPath.string() << "\n";
+}
+
+void AssetBrowserWidget::createNewLuaScript(const QString& parentRelativePath)
+{
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("New Lua Script"),
+                                         tr("Script name (without .lua):"), QLineEdit::Normal,
+                                         tr("NewScript"), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+
+    auto& assetMgr = AssetManager::GetInstance();
+    std::string parentAbs = parentRelativePath.isEmpty()
+        ? assetMgr.GetAssetRoot()
+        : assetMgr.ToAbsolutePath(parentRelativePath.toStdString());
+
+    std::filesystem::path filePath = std::filesystem::path(parentAbs) / (name.trimmed().toStdString() + ".lua");
+
+    if (std::filesystem::exists(filePath)) {
+        QMessageBox::warning(this, tr("New Lua Script"), tr("A file with that name already exists."));
+        return;
+    }
+
+    std::ofstream file(filePath);
+    if (!file.is_open()) {
+        QMessageBox::critical(this, tr("New Lua Script"), tr("Failed to create script file."));
+        return;
+    }
+
+    std::string scriptName = name.trimmed().toStdString();
+    file << "-- " << scriptName << ".lua\n"
+         << "-- Hephaestus Lua Script\n\n"
+         << "function OnStart()\n"
+         << "    -- Called when the script starts\n"
+         << "end\n\n"
+         << "function OnUpdate(dt)\n"
+         << "    -- Called every frame (dt = delta time in seconds)\n"
+         << "end\n";
+    file.close();
+
+    Refresh();
+    std::cout << "[AssetBrowser] Created Lua script: " << filePath.string() << "\n";
+}
+
+void AssetBrowserWidget::createNewScene(const QString& parentRelativePath)
+{
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("New Scene"),
+                                         tr("Scene name (without extension):"), QLineEdit::Normal,
+                                         tr("NewScene"), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+
+    auto& assetMgr = AssetManager::GetInstance();
+    std::string parentAbs = parentRelativePath.isEmpty()
+        ? assetMgr.GetAssetRoot()
+        : assetMgr.ToAbsolutePath(parentRelativePath.toStdString());
+
+    std::filesystem::path filePath = std::filesystem::path(parentAbs) / (name.trimmed().toStdString() + ".hpscene");
+
+    if (std::filesystem::exists(filePath)) {
+        QMessageBox::warning(this, tr("New Scene"), tr("A scene with that name already exists."));
+        return;
+    }
+
+    std::ofstream file(filePath);
+    if (!file.is_open()) {
+        QMessageBox::critical(this, tr("New Scene"), tr("Failed to create scene file."));
+        return;
+    }
+
+    file << "{\n"
+         << "  \"name\": \"" << name.trimmed().toStdString() << "\",\n"
+         << "  \"entities\": []\n"
+         << "}\n";
+    file.close();
+
+    Refresh();
+    std::cout << "[AssetBrowser] Created scene: " << filePath.string() << "\n";
+}
+
+void AssetBrowserWidget::createNewMaterial(const QString& parentRelativePath)
+{
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("New Material"),
+                                         tr("Material name (without extension):"), QLineEdit::Normal,
+                                         tr("NewMaterial"), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+
+    auto& assetMgr = AssetManager::GetInstance();
+    std::string parentAbs = parentRelativePath.isEmpty()
+        ? assetMgr.GetAssetRoot()
+        : assetMgr.ToAbsolutePath(parentRelativePath.toStdString());
+
+    std::filesystem::path filePath = std::filesystem::path(parentAbs) / (name.trimmed().toStdString() + ".hematerial");
+
+    if (std::filesystem::exists(filePath)) {
+        QMessageBox::warning(this, tr("New Material"), tr("A material with that name already exists."));
+        return;
+    }
+
+    std::ofstream file(filePath);
+    if (!file.is_open()) {
+        QMessageBox::critical(this, tr("New Material"), tr("Failed to create material file."));
+        return;
+    }
+
+    file << "{\n"
+         << "  \"name\": \"" << name.trimmed().toStdString() << "\",\n"
+         << "  \"shader\": \"default\",\n"
+         << "  \"properties\": {}\n"
+         << "}\n";
+    file.close();
+
+    Refresh();
+    std::cout << "[AssetBrowser] Created material: " << filePath.string() << "\n";
+}
+
+void AssetBrowserWidget::deleteAsset(const QString& relativePath, bool isDirectory)
+{
+    if (relativePath.isEmpty()) return;
+
+    QString typeName = isDirectory ? tr("folder") : tr("file");
+    auto result = QMessageBox::question(this, tr("Delete Asset"),
+        tr("Are you sure you want to delete this %1?\n\n%2\n\nThis cannot be undone.")
+            .arg(typeName, relativePath),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+    if (result != QMessageBox::Yes) return;
+
+    auto& assetMgr = AssetManager::GetInstance();
+    std::string absPath = assetMgr.ToAbsolutePath(relativePath.toStdString());
+
+    std::error_code ec;
+    if (isDirectory) {
+        std::filesystem::remove_all(absPath, ec);
+    } else {
+        std::filesystem::remove(absPath, ec);
+    }
+
+    if (ec) {
+        QMessageBox::critical(this, tr("Delete Asset"),
+            tr("Failed to delete: %1").arg(QString::fromStdString(ec.message())));
+        return;
+    }
+
+    std::cout << "[AssetBrowser] Deleted: " << absPath << "\n";
+    Refresh();
+}
+
+void AssetBrowserWidget::renameAsset(const QString& relativePath, bool isDirectory)
+{
+    if (relativePath.isEmpty()) return;
+
+    auto& assetMgr = AssetManager::GetInstance();
+    std::filesystem::path oldAbsPath(assetMgr.ToAbsolutePath(relativePath.toStdString()));
+    QString oldName = QString::fromStdString(oldAbsPath.filename().string());
+
+    bool ok = false;
+    QString newName = QInputDialog::getText(this, tr("Rename"),
+                                            tr("New name:"), QLineEdit::Normal,
+                                            oldName, &ok);
+    if (!ok || newName.trimmed().isEmpty() || newName.trimmed() == oldName) return;
+
+    std::filesystem::path newAbsPath = oldAbsPath.parent_path() / newName.trimmed().toStdString();
+
+    if (std::filesystem::exists(newAbsPath)) {
+        QMessageBox::warning(this, tr("Rename"), tr("An item with that name already exists."));
+        return;
+    }
+
+    std::error_code ec;
+    std::filesystem::rename(oldAbsPath, newAbsPath, ec);
+    if (ec) {
+        QMessageBox::critical(this, tr("Rename"),
+            tr("Failed to rename: %1").arg(QString::fromStdString(ec.message())));
+        return;
+    }
+
+    std::cout << "[AssetBrowser] Renamed: " << oldAbsPath.string() << " -> " << newAbsPath.string() << "\n";
+    Refresh();
+}
+
+void AssetBrowserWidget::showInExplorer(const QString& relativePath)
+{
+    auto& assetMgr = AssetManager::GetInstance();
+    std::string absPath = relativePath.isEmpty()
+        ? assetMgr.GetAssetRoot()
+        : assetMgr.ToAbsolutePath(relativePath.toStdString());
+
+    QString qPath = QString::fromStdString(absPath);
+
+#ifdef _WIN32
+    if (std::filesystem::is_directory(absPath)) {
+        QProcess::startDetached("explorer", {QDir::toNativeSeparators(qPath)});
+    } else {
+        QProcess::startDetached("explorer", {"/select,", QDir::toNativeSeparators(qPath)});
+    }
+#else
+    QDesktopServices::openUrl(QUrl::fromLocalFile(
+        QString::fromStdString(std::filesystem::path(absPath).parent_path().string())));
+#endif
 }
 
 } // namespace QtEditor

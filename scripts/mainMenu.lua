@@ -2,6 +2,7 @@ local menu = {
     screenName = "MainMenu",
     screen = 0,
     root = 0,
+    overlay = 0,
     panel = 0,
     title = 0,
     subtitle = 0,
@@ -9,24 +10,39 @@ local menu = {
     buttons = {},
     statusText = 0,
     visible = false,
-    selectedIndex = 1,
-    showOptionsHint = false
+    selectedIndex = 1
 }
 
-local buttonLabels = {
-    "Start Game",
-    "Options",
-    "Quit"
+local buttonDefs = {
+    { label = "Start Game",  action = "start" },
+    { label = "Options",     action = "options" },
+    { label = "Credits",     action = "credits" },
+    { label = "Quit",        action = "quit" }
 }
 
 local keyState = {
-    up = false,
-    w = false,
-    down = false,
-    s = false,
-    enter = false,
-    space = false,
+    up = false, w = false,
+    down = false, s = false,
+    enter = false, space = false,
     escape = false
+}
+
+-- Theme colors
+local colors = {
+    panelBg       = { r = 0.06, g = 0.06, b = 0.09, a = 0.94 },
+    panelBorder   = { r = 0.22, g = 0.24, b = 0.32, a = 0.7 },
+    overlayBg     = { r = 0.0,  g = 0.0,  b = 0.0,  a = 0.5 },
+    buttonNormalBg   = { r = 0.12, g = 0.13, b = 0.18, a = 1.0 },
+    buttonNormalBdr  = { r = 0.28, g = 0.30, b = 0.38, a = 1.0 },
+    buttonHoverBg    = { r = 0.18, g = 0.22, b = 0.35, a = 1.0 },
+    buttonHoverBdr   = { r = 0.35, g = 0.45, b = 0.75, a = 1.0 },
+    buttonPressBg    = { r = 0.08, g = 0.10, b = 0.16, a = 1.0 },
+    buttonFocusBdr   = { r = 0.4,  g = 0.6,  b = 1.0,  a = 1.0 },
+    buttonDisabledBg = { r = 0.10, g = 0.10, b = 0.12, a = 0.5 },
+    textWhite     = { r = 1.0,  g = 1.0,  b = 1.0,  a = 1.0 },
+    textDim       = { r = 0.6,  g = 0.6,  b = 0.65, a = 1.0 },
+    textDisabled  = { r = 0.4,  g = 0.4,  b = 0.4,  a = 1.0 },
+    shadowColor   = { r = 0.0,  g = 0.0,  b = 0.0,  a = 0.4 }
 }
 
 local function keyPressedNow(key, stateField)
@@ -42,14 +58,9 @@ local function setStatus(text)
     end
 end
 
-local function refreshButtonLabels()
-    for index, button in ipairs(menu.buttons) do
-        local prefix = "  "
-        if index == menu.selectedIndex then
-            prefix = "> "
-        end
-
-        UI.setText(button, prefix .. buttonLabels[index])
+local function updateButtonFocus()
+    for index, btn in ipairs(menu.buttons) do
+        UI.setFocused(btn, index == menu.selectedIndex)
     end
 end
 
@@ -58,7 +69,8 @@ local function showMenu()
     UI.setScreenVisible(menu.screenName, true)
     UI.setScreenActive(menu.screenName, true)
     UI.setCursorMode(CursorMode.UI)
-    setStatus("Click a button or use keyboard (W/S + Enter).")
+    updateButtonFocus()
+    setStatus("Navigate with W/S or arrows. Enter to select.")
     engine_log("[MainMenu] Opened")
 end
 
@@ -70,61 +82,84 @@ local function hideMenu()
     engine_log("[MainMenu] Hidden")
 end
 
-local function activateCurrentSelection()
-    local currentLabel = buttonLabels[menu.selectedIndex]
-
-    if currentLabel == "Start Game" then
-        setStatus("Starting test run. Press ESC to open the menu again.")
+local function activateAction(action)
+    if action == "start" then
+        setStatus("Starting game...")
         engine_log("[MainMenu] Start Game selected")
         hideMenu()
-        return
-    end
-
-    if currentLabel == "Options" then
-        menu.showOptionsHint = not menu.showOptionsHint
-        if menu.showOptionsHint then
-            setStatus("Options placeholder: wire settings or scene loading here.")
-        else
-            setStatus("Use Up/Down or W/S, then Enter or Space.")
-        end
+    elseif action == "options" then
+        setStatus("Options panel coming soon.")
         engine_log("[MainMenu] Options selected")
-        return
-    end
-
-    if currentLabel == "Quit" then
-        setStatus("Quit requested...")
+    elseif action == "credits" then
+        setStatus("Hephaestus Engine - Built with care.")
+        engine_log("[MainMenu] Credits selected")
+    elseif action == "quit" then
+        setStatus("Quitting...")
         engine_log("[MainMenu] Quit selected")
         Application.quit()
     end
 end
 
 local function moveSelection(step)
-    local count = #buttonLabels
+    local count = #buttonDefs
     menu.selectedIndex = ((menu.selectedIndex - 1 + step) % count) + 1
-    refreshButtonLabels()
-    setStatus("Selected: " .. buttonLabels[menu.selectedIndex])
+    updateButtonFocus()
+    setStatus("Selected: " .. buttonDefs[menu.selectedIndex].label)
 end
 
-local function onStartGameClicked()
-    setStatus("Starting test run. Press ESC to open the menu again.")
-    engine_log("[MainMenu] Start Game clicked")
-    hideMenu()
-end
+local function styleButton(btn)
+    UI.setCornerRadius(btn, 8)
 
-local function onOptionsClicked()
-    menu.showOptionsHint = not menu.showOptionsHint
-    if menu.showOptionsHint then
-        setStatus("Options placeholder: wire settings or scene loading here.")
-    else
-        setStatus("Click a button or use keyboard navigation.")
-    end
-    engine_log("[MainMenu] Options clicked")
-end
-
-local function onQuitClicked()
-    setStatus("Quit requested...")
-    engine_log("[MainMenu] Quit clicked")
-    Application.quit()
+    UI.setButtonStyle(btn, "normal", {
+        backgroundColor = colors.buttonNormalBg,
+        borderColor     = colors.buttonNormalBdr,
+        borderWidth     = 1,
+        cornerRadius    = 8,
+        textColor       = colors.textWhite,
+        fontSize        = 16,
+        textAlignment   = "center",
+        padding         = 10
+    })
+    UI.setButtonStyle(btn, "hovered", {
+        backgroundColor = colors.buttonHoverBg,
+        borderColor     = colors.buttonHoverBdr,
+        borderWidth     = 1.5,
+        cornerRadius    = 8,
+        textColor       = colors.textWhite,
+        fontSize        = 16,
+        textAlignment   = "center",
+        padding         = 10
+    })
+    UI.setButtonStyle(btn, "pressed", {
+        backgroundColor = colors.buttonPressBg,
+        borderColor     = colors.buttonNormalBdr,
+        borderWidth     = 1,
+        cornerRadius    = 8,
+        textColor       = colors.textDim,
+        fontSize        = 16,
+        textAlignment   = "center",
+        padding         = 10
+    })
+    UI.setButtonStyle(btn, "focused", {
+        backgroundColor = colors.buttonNormalBg,
+        borderColor     = colors.buttonFocusBdr,
+        borderWidth     = 2,
+        cornerRadius    = 8,
+        textColor       = colors.textWhite,
+        fontSize        = 16,
+        textAlignment   = "center",
+        padding         = 10
+    })
+    UI.setButtonStyle(btn, "disabled", {
+        backgroundColor = colors.buttonDisabledBg,
+        borderColor     = { r = 0.15, g = 0.15, b = 0.18, a = 0.5 },
+        borderWidth     = 1,
+        cornerRadius    = 8,
+        textColor       = colors.textDisabled,
+        fontSize        = 16,
+        textAlignment   = "center",
+        padding         = 10
+    })
 end
 
 local function buildUI()
@@ -136,50 +171,89 @@ local function buildUI()
         return false
     end
 
+    -- Semi-transparent overlay behind the panel
+    menu.overlay = UI.createPanel(menu.root)
+    UI.setAnchor(menu.overlay, UIAnchor.Stretch)
+    UI.setStyle(menu.overlay, {
+        backgroundColor = colors.overlayBg,
+        borderWidth     = 0,
+        cornerRadius    = 0
+    })
+    UI.setZOrder(menu.overlay, 10)
+
+    -- Main panel, centered
     menu.panel = UI.createPanel(menu.root)
-    if menu.panel == 0 then
-        engine_log("[MainMenu] ERROR: Failed to create panel")
-        return false
-    end
-
-    UI.setPosition(menu.panel, 64, 64)
-    UI.setSize(menu.panel, 560, 360)
+    UI.setSize(menu.panel, 480, 480)
+    UI.setAnchor(menu.panel, UIAnchor.Center)
+    UI.setPadding(menu.panel, 32)
     UI.setZOrder(menu.panel, 50)
+    UI.setStyle(menu.panel, {
+        backgroundColor = colors.panelBg,
+        borderColor     = colors.panelBorder,
+        borderWidth     = 1,
+        cornerRadius    = 16
+    })
 
-    menu.title = UI.createText(menu.panel, "Hephaestus Main Menu")
-    UI.setPosition(menu.title, 24, 24)
-    UI.setSize(menu.title, 512, 40)
+    -- Title
+    menu.title = UI.createText(menu.panel, "Hephaestus")
+    UI.setSize(menu.title, 0, 48)
+    UI.setFontSize(menu.title, 32)
+    UI.setFontBold(menu.title, true)
+    UI.setTextAlignment(menu.title, "center")
+    UI.setTextColor(menu.title, 1.0, 1.0, 1.0, 1.0)
+    UI.setTextShadow(menu.title, true, 0.0, 0.0, 0.0, 0.4, 2, 2)
+    UI.setPosition(menu.title, 0, 0)
 
-    menu.subtitle = UI.createText(menu.panel, "Click buttons or use keyboard (W/S + Enter)")
-    UI.setPosition(menu.subtitle, 24, 64)
-    UI.setSize(menu.subtitle, 512, 28)
+    -- Subtitle
+    menu.subtitle = UI.createText(menu.panel, "Main Menu")
+    UI.setSize(menu.subtitle, 0, 28)
+    UI.setFontSize(menu.subtitle, 14)
+    UI.setTextAlignment(menu.subtitle, "center")
+    UI.setTextColor(menu.subtitle, 0.6, 0.6, 0.7, 1.0)
+    UI.setPosition(menu.subtitle, 0, 48)
 
+    -- Vertical button list, centered in panel
     menu.buttonList = UI.createVerticalBox(menu.panel)
-    UI.setPosition(menu.buttonList, 24, 110)
-    UI.setSize(menu.buttonList, 512, 180)
-    UI.setSpacing(menu.buttonList, 12)
+    UI.setPosition(menu.buttonList, 0, 100)
+    UI.setSize(menu.buttonList, 0, 280)
+    UI.setSpacing(menu.buttonList, 10)
+    UI.setChildAlignment(menu.buttonList, "center")
+    UI.setAnchor(menu.buttonList, UIAnchor.Stretch)
 
-    local clickHandlers = {
-        onStartGameClicked,
-        onOptionsClicked,
-        onQuitClicked
-    }
+    for index, def in ipairs(buttonDefs) do
+        local btn = UI.createButton(menu.buttonList, def.label)
+        UI.setSize(btn, 320, 50)
+        styleButton(btn)
+        table.insert(menu.buttons, btn)
 
-    for index, label in ipairs(buttonLabels) do
-        local button = UI.createButton(menu.buttonList, label)
-        UI.setSize(button, 512, 52)
-        table.insert(menu.buttons, button)
+        if UI.setOnClick then
+            local action = def.action
+            UI.setOnClick(btn, function()
+                menu.selectedIndex = index
+                updateButtonFocus()
+                activateAction(action)
+            end)
+        end
 
-        if UI.setOnClick and clickHandlers[index] then
-            UI.setOnClick(button, clickHandlers[index])
+        if UI.setOnHover then
+            UI.setOnHover(btn, function(entered)
+                if entered then
+                    menu.selectedIndex = index
+                    updateButtonFocus()
+                end
+            end)
         end
     end
 
+    -- Status text at the bottom of the panel
     menu.statusText = UI.createText(menu.panel, "")
-    UI.setPosition(menu.statusText, 24, 308)
-    UI.setSize(menu.statusText, 512, 28)
+    UI.setPosition(menu.statusText, 0, 400)
+    UI.setSize(menu.statusText, 0, 24)
+    UI.setFontSize(menu.statusText, 12)
+    UI.setTextAlignment(menu.statusText, "center")
+    UI.setTextColor(menu.statusText, 0.5, 0.5, 0.55, 1.0)
+    UI.setWordWrap(menu.statusText, true)
 
-    refreshButtonLabels()
     return true
 end
 
@@ -194,22 +268,16 @@ function onAwake()
     end
 
     showMenu()
-    engine_log("[MainMenu] Ready - supports mouse clicks and keyboard navigation")
+    engine_log("[MainMenu] Ready - styled menu with keyboard + mouse support")
 end
 
 function onUpdate(deltaTime)
     local _ = deltaTime
 
-    local upArrowPressed = keyPressedNow("UP", "up")
-    local wPressed = keyPressedNow("W", "w")
-    local downArrowPressed = keyPressedNow("DOWN", "down")
-    local sPressed = keyPressedNow("S", "s")
-    local enterPressed = keyPressedNow("ENTER", "enter")
-    local spacePressed = keyPressedNow("SPACE", "space")
-    local escapePressed = keyPressedNow("ESCAPE", "escape")
-    local upPressed = upArrowPressed or wPressed
-    local downPressed = downArrowPressed or sPressed
-    local activatePressed = enterPressed or spacePressed
+    local upPressed    = keyPressedNow("UP", "up")    or keyPressedNow("W", "w")
+    local downPressed  = keyPressedNow("DOWN", "down") or keyPressedNow("S", "s")
+    local activatePressed = keyPressedNow("ENTER", "enter") or keyPressedNow("SPACE", "space")
+    local escapePressed   = keyPressedNow("ESCAPE", "escape")
 
     if escapePressed then
         if menu.visible then
@@ -232,7 +300,7 @@ function onUpdate(deltaTime)
     end
 
     if activatePressed then
-        activateCurrentSelection()
+        activateAction(buttonDefs[menu.selectedIndex].action)
     end
 end
 

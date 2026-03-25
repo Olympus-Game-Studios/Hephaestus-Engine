@@ -4,6 +4,7 @@
 #include "../UI/HephaestusUI/UIContext.h"
 #include "../UI/HephaestusUI/UICanvas.h"
 #include "../UI/HephaestusUI/UIElement.h"
+#include "../UI/HephaestusUI/UIGridLayout.h"
 #include "../UI/HephaestusUI/UIHorizontalBox.h"
 #include "../UI/HephaestusUI/UIImage.h"
 #include "../UI/HephaestusUI/UIPanel.h"
@@ -12,6 +13,7 @@
 #include "../UI/HephaestusUI/UISimpleMenuExample.h"
 #include "../UI/HephaestusUI/UISystem.h"
 #include "../UI/HephaestusUI/UIText.h"
+#include "../UI/HephaestusUI/UITheme.h"
 #include "../UI/HephaestusUI/UIVerticalBox.h"
 #include "../UI/HephaestusUI/UIButton.h"
 #include "../Scene/Entity.h"
@@ -560,15 +562,18 @@ Hephaestus::HephaestusUI::UIElement* LuaScriptEngine::ResolveUIElement(uint32_t 
 }
 
 void LuaScriptEngine::ResetUIHandleMaps() {
-    // Release Lua callback references before clearing
 #if LUA_AVAILABLE
     if (m_State) {
         for (const auto& [handle, ref] : m_UIButtonClickCallbacks) {
             luaL_unref(m_State, LUA_REGISTRYINDEX, ref);
         }
+        for (const auto& [handle, ref] : m_UIHoverCallbacks) {
+            luaL_unref(m_State, LUA_REGISTRYINDEX, ref);
+        }
     }
 #endif
     m_UIButtonClickCallbacks.clear();
+    m_UIHoverCallbacks.clear();
     m_UIScreenHandles.clear();
     m_UIElementHandles.clear();
     m_UIElementReverseHandles.clear();
@@ -3337,6 +3342,96 @@ void LuaScriptEngine::RegisterUIBindings() {
     lua_pushcfunction(m_State, Lua_UI_setOnClick);
     lua_setfield(m_State, -2, "setOnClick");
 
+    lua_pushcfunction(m_State, Lua_UI_setOnHover);
+    lua_setfield(m_State, -2, "setOnHover");
+
+    lua_pushcfunction(m_State, Lua_UI_createGrid);
+    lua_setfield(m_State, -2, "createGrid");
+
+    lua_pushcfunction(m_State, Lua_UI_setGridColumns);
+    lua_setfield(m_State, -2, "setGridColumns");
+
+    lua_pushcfunction(m_State, Lua_UI_setGridSpacing);
+    lua_setfield(m_State, -2, "setGridSpacing");
+
+    lua_pushcfunction(m_State, Lua_UI_setEnabled);
+    lua_setfield(m_State, -2, "setEnabled");
+
+    lua_pushcfunction(m_State, Lua_UI_setPadding);
+    lua_setfield(m_State, -2, "setPadding");
+
+    lua_pushcfunction(m_State, Lua_UI_setMargin);
+    lua_setfield(m_State, -2, "setMargin");
+
+    lua_pushcfunction(m_State, Lua_UI_setMinSize);
+    lua_setfield(m_State, -2, "setMinSize");
+
+    lua_pushcfunction(m_State, Lua_UI_setMaxSize);
+    lua_setfield(m_State, -2, "setMaxSize");
+
+    lua_pushcfunction(m_State, Lua_UI_setAnchor);
+    lua_setfield(m_State, -2, "setAnchor");
+
+    lua_pushcfunction(m_State, Lua_UI_setAlignment);
+    lua_setfield(m_State, -2, "setAlignment");
+
+    lua_pushcfunction(m_State, Lua_UI_setBackgroundColor);
+    lua_setfield(m_State, -2, "setBackgroundColor");
+
+    lua_pushcfunction(m_State, Lua_UI_setBorderColor);
+    lua_setfield(m_State, -2, "setBorderColor");
+
+    lua_pushcfunction(m_State, Lua_UI_setBorderWidth);
+    lua_setfield(m_State, -2, "setBorderWidth");
+
+    lua_pushcfunction(m_State, Lua_UI_setCornerRadius);
+    lua_setfield(m_State, -2, "setCornerRadius");
+
+    lua_pushcfunction(m_State, Lua_UI_setTextColor);
+    lua_setfield(m_State, -2, "setTextColor");
+
+    lua_pushcfunction(m_State, Lua_UI_setFontSize);
+    lua_setfield(m_State, -2, "setFontSize");
+
+    lua_pushcfunction(m_State, Lua_UI_setFontBold);
+    lua_setfield(m_State, -2, "setFontBold");
+
+    lua_pushcfunction(m_State, Lua_UI_setFontItalic);
+    lua_setfield(m_State, -2, "setFontItalic");
+
+    lua_pushcfunction(m_State, Lua_UI_setTextAlignment);
+    lua_setfield(m_State, -2, "setTextAlignment");
+
+    lua_pushcfunction(m_State, Lua_UI_setTextShadow);
+    lua_setfield(m_State, -2, "setTextShadow");
+
+    lua_pushcfunction(m_State, Lua_UI_setWordWrap);
+    lua_setfield(m_State, -2, "setWordWrap");
+
+    lua_pushcfunction(m_State, Lua_UI_setStyle);
+    lua_setfield(m_State, -2, "setStyle");
+
+    lua_pushcfunction(m_State, Lua_UI_setButtonStyle);
+    lua_setfield(m_State, -2, "setButtonStyle");
+
+    lua_pushcfunction(m_State, Lua_UI_setFocused);
+    lua_setfield(m_State, -2, "setFocused");
+
+    lua_pushcfunction(m_State, Lua_UI_registerThemeStyle);
+    lua_setfield(m_State, -2, "registerThemeStyle");
+
+    lua_pushcfunction(m_State, Lua_UI_applyThemeStyle);
+    lua_setfield(m_State, -2, "applyThemeStyle");
+
+    lua_pushcfunction(m_State, Lua_UI_setChildAlignment);
+    lua_setfield(m_State, -2, "setChildAlignment");
+
+    lua_pushcfunction(m_State, Lua_UI_setImageScaleMode);
+    lua_setfield(m_State, -2, "setImageScaleMode");
+
+    lua_pushcfunction(m_State, Lua_UI_setImageTint);
+    lua_setfield(m_State, -2, "setImageTint");
+
     lua_setglobal(m_State, "UI");
 
     // CursorMode enum constants
@@ -3346,6 +3441,38 @@ void LuaScriptEngine::RegisterUIBindings() {
     lua_pushstring(m_State, "ui");
     lua_setfield(m_State, -2, "UI");
     lua_setglobal(m_State, "CursorMode");
+
+    // UIAnchor enum constants
+    lua_newtable(m_State);
+    lua_pushstring(m_State, "topLeft");      lua_setfield(m_State, -2, "TopLeft");
+    lua_pushstring(m_State, "topCenter");    lua_setfield(m_State, -2, "TopCenter");
+    lua_pushstring(m_State, "topRight");     lua_setfield(m_State, -2, "TopRight");
+    lua_pushstring(m_State, "centerLeft");   lua_setfield(m_State, -2, "CenterLeft");
+    lua_pushstring(m_State, "center");       lua_setfield(m_State, -2, "Center");
+    lua_pushstring(m_State, "centerRight");  lua_setfield(m_State, -2, "CenterRight");
+    lua_pushstring(m_State, "bottomLeft");   lua_setfield(m_State, -2, "BottomLeft");
+    lua_pushstring(m_State, "bottomCenter"); lua_setfield(m_State, -2, "BottomCenter");
+    lua_pushstring(m_State, "bottomRight");  lua_setfield(m_State, -2, "BottomRight");
+    lua_pushstring(m_State, "stretch");      lua_setfield(m_State, -2, "Stretch");
+    lua_setglobal(m_State, "UIAnchor");
+
+    // UIAlign enum constants
+    lua_newtable(m_State);
+    lua_pushstring(m_State, "left");    lua_setfield(m_State, -2, "Left");
+    lua_pushstring(m_State, "center");  lua_setfield(m_State, -2, "Center");
+    lua_pushstring(m_State, "right");   lua_setfield(m_State, -2, "Right");
+    lua_pushstring(m_State, "top");     lua_setfield(m_State, -2, "Top");
+    lua_pushstring(m_State, "bottom");  lua_setfield(m_State, -2, "Bottom");
+    lua_pushstring(m_State, "stretch"); lua_setfield(m_State, -2, "Stretch");
+    lua_setglobal(m_State, "UIAlign");
+
+    // UIScaleMode enum constants
+    lua_newtable(m_State);
+    lua_pushstring(m_State, "stretch"); lua_setfield(m_State, -2, "Stretch");
+    lua_pushstring(m_State, "fit");     lua_setfield(m_State, -2, "Fit");
+    lua_pushstring(m_State, "fill");    lua_setfield(m_State, -2, "Fill");
+    lua_pushstring(m_State, "center");  lua_setfield(m_State, -2, "Center");
+    lua_setglobal(m_State, "UIScaleMode");
 #endif
 }
 
@@ -4074,5 +4201,950 @@ int LuaScriptEngine::Lua_UI_setOnClick(lua_State* L) {
 #else
     (void)L;
     return 0;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Helper: parse a Lua table into a UIStyle
+// ---------------------------------------------------------------------------
+Hephaestus::HephaestusUI::UIStyle LuaScriptEngine::ParseStyleTable(lua_State* L, int tableIndex) {
+    Hephaestus::HephaestusUI::UIStyle style;
+#if LUA_AVAILABLE
+    if (!lua_istable(L, tableIndex)) return style;
+
+    auto getFloat = [&](const char* field, float& out) {
+        lua_getfield(L, tableIndex, field);
+        if (lua_isnumber(L, -1)) out = static_cast<float>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    };
+    auto getBool = [&](const char* field, bool& out) {
+        lua_getfield(L, tableIndex, field);
+        if (!lua_isnil(L, -1)) out = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+    };
+    auto getString = [&](const char* field, std::string& out) {
+        lua_getfield(L, tableIndex, field);
+        if (lua_isstring(L, -1)) out = lua_tostring(L, -1);
+        lua_pop(L, 1);
+    };
+    auto getColor = [&](const char* field, Hephaestus::HephaestusUI::UIColor& out) {
+        lua_getfield(L, tableIndex, field);
+        if (lua_istable(L, -1)) {
+            int ci = lua_gettop(L);
+            lua_getfield(L, ci, "r"); if (lua_isnumber(L, -1)) out.r = static_cast<float>(lua_tonumber(L, -1)); lua_pop(L, 1);
+            lua_getfield(L, ci, "g"); if (lua_isnumber(L, -1)) out.g = static_cast<float>(lua_tonumber(L, -1)); lua_pop(L, 1);
+            lua_getfield(L, ci, "b"); if (lua_isnumber(L, -1)) out.b = static_cast<float>(lua_tonumber(L, -1)); lua_pop(L, 1);
+            lua_getfield(L, ci, "a"); if (lua_isnumber(L, -1)) out.a = static_cast<float>(lua_tonumber(L, -1)); lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    };
+    auto getSpacing = [&](const char* field, Hephaestus::HephaestusUI::UISpacing& out) {
+        lua_getfield(L, tableIndex, field);
+        if (lua_isnumber(L, -1)) {
+            float v = static_cast<float>(lua_tonumber(L, -1));
+            out = Hephaestus::HephaestusUI::UISpacing::Uniform(v);
+        } else if (lua_istable(L, -1)) {
+            int si = lua_gettop(L);
+            lua_getfield(L, si, "left");   if (lua_isnumber(L, -1)) out.left   = static_cast<float>(lua_tonumber(L, -1)); lua_pop(L, 1);
+            lua_getfield(L, si, "top");    if (lua_isnumber(L, -1)) out.top    = static_cast<float>(lua_tonumber(L, -1)); lua_pop(L, 1);
+            lua_getfield(L, si, "right");  if (lua_isnumber(L, -1)) out.right  = static_cast<float>(lua_tonumber(L, -1)); lua_pop(L, 1);
+            lua_getfield(L, si, "bottom"); if (lua_isnumber(L, -1)) out.bottom = static_cast<float>(lua_tonumber(L, -1)); lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    };
+
+    getColor("backgroundColor", style.backgroundColor);
+    getString("backgroundImageId", style.backgroundImageId);
+    getColor("imageTint", style.imageTint);
+    getColor("borderColor", style.borderColor);
+    getFloat("borderWidth", style.borderWidth);
+    getFloat("cornerRadius", style.cornerRadius);
+    getColor("textColor", style.textColor);
+    getString("fontFamily", style.fontFamily);
+    getFloat("fontSize", style.fontSize);
+    getBool("fontBold", style.fontBold);
+    getBool("fontItalic", style.fontItalic);
+    getSpacing("padding", style.padding);
+    getFloat("opacity", style.opacity);
+    getFloat("scale", style.scale);
+    getBool("textShadow", style.textShadow);
+    getColor("textShadowColor", style.textShadowColor);
+
+    lua_getfield(L, tableIndex, "textAlignment");
+    if (lua_isstring(L, -1)) {
+        std::string val = lua_tostring(L, -1);
+        if (val == "center") style.textAlignment = Hephaestus::HephaestusUI::UITextAlignment::Center;
+        else if (val == "right") style.textAlignment = Hephaestus::HephaestusUI::UITextAlignment::Right;
+        else style.textAlignment = Hephaestus::HephaestusUI::UITextAlignment::Left;
+    }
+    lua_pop(L, 1);
+
+    lua_getfield(L, tableIndex, "imageScaleMode");
+    if (lua_isstring(L, -1)) {
+        std::string val = lua_tostring(L, -1);
+        if (val == "fit") style.imageScaleMode = Hephaestus::HephaestusUI::UIImageScaleMode::Fit;
+        else if (val == "fill") style.imageScaleMode = Hephaestus::HephaestusUI::UIImageScaleMode::Fill;
+        else if (val == "center") style.imageScaleMode = Hephaestus::HephaestusUI::UIImageScaleMode::Center;
+        else style.imageScaleMode = Hephaestus::HephaestusUI::UIImageScaleMode::Stretch;
+    }
+    lua_pop(L, 1);
+
+    lua_getfield(L, tableIndex, "textShadowOffset");
+    if (lua_istable(L, -1)) {
+        int si = lua_gettop(L);
+        lua_getfield(L, si, "x"); if (lua_isnumber(L, -1)) style.textShadowOffset.x = static_cast<float>(lua_tonumber(L, -1)); lua_pop(L, 1);
+        lua_getfield(L, si, "y"); if (lua_isnumber(L, -1)) style.textShadowOffset.y = static_cast<float>(lua_tonumber(L, -1)); lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+#else
+    (void)L; (void)tableIndex;
+#endif
+    return style;
+}
+
+void LuaScriptEngine::ApplyStyleToPanel(Hephaestus::HephaestusUI::UIElement* element,
+                                         const Hephaestus::HephaestusUI::UIStyle& style) {
+    if (auto* panel = dynamic_cast<Hephaestus::HephaestusUI::UIPanel*>(element)) {
+        panel->SetLocalStyle(style);
+    } else if (auto* button = dynamic_cast<Hephaestus::HephaestusUI::UIButton*>(element)) {
+        button->SetNormalStyle(style);
+        auto hovered = style;
+        hovered.backgroundColor.r = std::min(1.0f, style.backgroundColor.r + 0.07f);
+        hovered.backgroundColor.g = std::min(1.0f, style.backgroundColor.g + 0.07f);
+        hovered.backgroundColor.b = std::min(1.0f, style.backgroundColor.b + 0.07f);
+        button->SetHoveredStyle(hovered);
+        auto pressed = style;
+        pressed.backgroundColor.r = std::max(0.0f, style.backgroundColor.r - 0.05f);
+        pressed.backgroundColor.g = std::max(0.0f, style.backgroundColor.g - 0.05f);
+        pressed.backgroundColor.b = std::max(0.0f, style.backgroundColor.b - 0.05f);
+        button->SetPressedStyle(pressed);
+    } else {
+        element->SetOwnedStyle(style);
+    }
+}
+
+int LuaScriptEngine::Lua_UI_setOnHover(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    if (!lua_isfunction(L, 2)) {
+        luaL_error(L, "UI.setOnHover: second argument must be a function");
+        return 0;
+    }
+
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    auto* button = dynamic_cast<Hephaestus::HephaestusUI::UIButton*>(element);
+    if (!button) { lua_pushboolean(L, false); return 1; }
+
+    auto it = engine->m_UIHoverCallbacks.find(handle);
+    if (it != engine->m_UIHoverCallbacks.end()) {
+        luaL_unref(L, LUA_REGISTRYINDEX, it->second);
+        engine->m_UIHoverCallbacks.erase(it);
+    }
+
+    lua_pushvalue(L, 2);
+    const int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    engine->m_UIHoverCallbacks[handle] = ref;
+
+    button->SetOnHovered([engine, ref](bool entered) {
+        if (!engine || !engine->m_State) return;
+        lua_rawgeti(engine->m_State, LUA_REGISTRYINDEX, ref);
+        if (lua_isfunction(engine->m_State, -1)) {
+            lua_pushboolean(engine->m_State, entered ? 1 : 0);
+            if (lua_pcall(engine->m_State, 1, 0, 0) != LUA_OK) {
+                lua_pop(engine->m_State, 1);
+            }
+        } else {
+            lua_pop(engine->m_State, 1);
+        }
+    });
+
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_createGrid(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushinteger(L, 0); return 1; }
+
+    const uint32_t parentHandle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* parent = engine->ResolveUIElement(parentHandle);
+    if (!parent) { lua_pushinteger(L, 0); return 1; }
+
+    auto element = std::make_unique<Hephaestus::HephaestusUI::UIGridLayout>();
+    Hephaestus::HephaestusUI::UIElement* created = parent->AddChild(std::move(element));
+    const uint32_t handle = engine->RegisterUIElementHandle(created);
+    lua_pushinteger(L, static_cast<lua_Integer>(handle));
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setGridColumns(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const int columns = static_cast<int>(luaL_checkinteger(L, 2));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    if (auto* grid = dynamic_cast<Hephaestus::HephaestusUI::UIGridLayout*>(element)) {
+        grid->SetColumns(columns);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setGridSpacing(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const float hSpacing = static_cast<float>(luaL_checknumber(L, 2));
+    const float vSpacing = static_cast<float>(luaL_optnumber(L, 3, hSpacing));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    if (auto* grid = dynamic_cast<Hephaestus::HephaestusUI::UIGridLayout*>(element)) {
+        grid->SetHSpacing(hSpacing);
+        grid->SetVSpacing(vSpacing);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setEnabled(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const bool enabled = lua_toboolean(L, 2) != 0;
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    element->SetEnabled(enabled);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setPadding(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    int nargs = lua_gettop(L);
+    Hephaestus::HephaestusUI::UISpacing padding;
+    if (nargs == 2) {
+        float v = static_cast<float>(luaL_checknumber(L, 2));
+        padding = Hephaestus::HephaestusUI::UISpacing::Uniform(v);
+    } else {
+        padding.top    = static_cast<float>(luaL_checknumber(L, 2));
+        padding.right  = static_cast<float>(luaL_checknumber(L, 3));
+        padding.bottom = static_cast<float>(luaL_optnumber(L, 4, padding.top));
+        padding.left   = static_cast<float>(luaL_optnumber(L, 5, padding.right));
+    }
+    element->SetPadding(padding);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setMargin(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    int nargs = lua_gettop(L);
+    Hephaestus::HephaestusUI::UISpacing margin;
+    if (nargs == 2) {
+        float v = static_cast<float>(luaL_checknumber(L, 2));
+        margin = Hephaestus::HephaestusUI::UISpacing::Uniform(v);
+    } else {
+        margin.top    = static_cast<float>(luaL_checknumber(L, 2));
+        margin.right  = static_cast<float>(luaL_checknumber(L, 3));
+        margin.bottom = static_cast<float>(luaL_optnumber(L, 4, margin.top));
+        margin.left   = static_cast<float>(luaL_optnumber(L, 5, margin.right));
+    }
+    element->SetMargin(margin);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setMinSize(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    const float w = static_cast<float>(luaL_checknumber(L, 2));
+    const float h = static_cast<float>(luaL_checknumber(L, 3));
+    element->SetMinSize({w, h});
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setMaxSize(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    const float w = static_cast<float>(luaL_checknumber(L, 2));
+    const float h = static_cast<float>(luaL_checknumber(L, 3));
+    element->SetMaxSize({w, h});
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setAnchor(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* anchorStr = luaL_checkstring(L, 2);
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    std::string anchor = anchorStr ? anchorStr : "";
+    for (auto& c : anchor) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    using AP = Hephaestus::HephaestusUI::UIAnchorPreset;
+    AP preset = AP::TopLeft;
+    if (anchor == "topcenter")       preset = AP::TopCenter;
+    else if (anchor == "topright")   preset = AP::TopRight;
+    else if (anchor == "centerleft") preset = AP::CenterLeft;
+    else if (anchor == "center")     preset = AP::Center;
+    else if (anchor == "centerright")preset = AP::CenterRight;
+    else if (anchor == "bottomleft") preset = AP::BottomLeft;
+    else if (anchor == "bottomcenter") preset = AP::BottomCenter;
+    else if (anchor == "bottomright")preset = AP::BottomRight;
+    else if (anchor == "stretch")    preset = AP::Stretch;
+
+    element->SetAnchor({preset});
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setAlignment(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* hStr = luaL_checkstring(L, 2);
+    const char* vStr = luaL_optstring(L, 3, nullptr);
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    auto parseH = [](const char* s) -> Hephaestus::HephaestusUI::UIHAlignment {
+        if (!s) return Hephaestus::HephaestusUI::UIHAlignment::Left;
+        std::string v = s;
+        for (auto& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (v == "center") return Hephaestus::HephaestusUI::UIHAlignment::Center;
+        if (v == "right")  return Hephaestus::HephaestusUI::UIHAlignment::Right;
+        if (v == "stretch") return Hephaestus::HephaestusUI::UIHAlignment::Stretch;
+        return Hephaestus::HephaestusUI::UIHAlignment::Left;
+    };
+    auto parseV = [](const char* s) -> Hephaestus::HephaestusUI::UIVAlignment {
+        if (!s) return Hephaestus::HephaestusUI::UIVAlignment::Top;
+        std::string v = s;
+        for (auto& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (v == "center") return Hephaestus::HephaestusUI::UIVAlignment::Center;
+        if (v == "bottom") return Hephaestus::HephaestusUI::UIVAlignment::Bottom;
+        if (v == "stretch") return Hephaestus::HephaestusUI::UIVAlignment::Stretch;
+        return Hephaestus::HephaestusUI::UIVAlignment::Top;
+    };
+
+    element->SetHAlignment(parseH(hStr));
+    if (vStr) element->SetVAlignment(parseV(vStr));
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setBackgroundColor(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    const float r = static_cast<float>(luaL_checknumber(L, 2));
+    const float g = static_cast<float>(luaL_checknumber(L, 3));
+    const float b = static_cast<float>(luaL_checknumber(L, 4));
+    const float a = static_cast<float>(luaL_optnumber(L, 5, 1.0));
+    Hephaestus::HephaestusUI::UIColor color{r, g, b, a};
+
+    if (auto* panel = dynamic_cast<Hephaestus::HephaestusUI::UIPanel*>(element)) {
+        auto style = panel->GetLocalStyle();
+        style.backgroundColor = color;
+        panel->SetLocalStyle(style);
+        lua_pushboolean(L, true);
+    } else if (auto* button = dynamic_cast<Hephaestus::HephaestusUI::UIButton*>(element)) {
+        auto style = button->GetNormalStyle();
+        style.backgroundColor = color;
+        button->SetNormalStyle(style);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setBorderColor(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    const float r = static_cast<float>(luaL_checknumber(L, 2));
+    const float g = static_cast<float>(luaL_checknumber(L, 3));
+    const float b = static_cast<float>(luaL_checknumber(L, 4));
+    const float a = static_cast<float>(luaL_optnumber(L, 5, 1.0));
+    Hephaestus::HephaestusUI::UIColor color{r, g, b, a};
+
+    if (auto* panel = dynamic_cast<Hephaestus::HephaestusUI::UIPanel*>(element)) {
+        auto style = panel->GetLocalStyle();
+        style.borderColor = color;
+        panel->SetLocalStyle(style);
+        lua_pushboolean(L, true);
+    } else if (auto* button = dynamic_cast<Hephaestus::HephaestusUI::UIButton*>(element)) {
+        auto style = button->GetNormalStyle();
+        style.borderColor = color;
+        button->SetNormalStyle(style);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setBorderWidth(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const float width = static_cast<float>(luaL_checknumber(L, 2));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    if (auto* panel = dynamic_cast<Hephaestus::HephaestusUI::UIPanel*>(element)) {
+        auto style = panel->GetLocalStyle();
+        style.borderWidth = width;
+        panel->SetLocalStyle(style);
+        lua_pushboolean(L, true);
+    } else if (auto* button = dynamic_cast<Hephaestus::HephaestusUI::UIButton*>(element)) {
+        auto style = button->GetNormalStyle();
+        style.borderWidth = width;
+        button->SetNormalStyle(style);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setCornerRadius(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const float radius = static_cast<float>(luaL_checknumber(L, 2));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    if (auto* panel = dynamic_cast<Hephaestus::HephaestusUI::UIPanel*>(element)) {
+        auto style = panel->GetLocalStyle();
+        style.cornerRadius = radius;
+        panel->SetLocalStyle(style);
+        lua_pushboolean(L, true);
+    } else if (auto* button = dynamic_cast<Hephaestus::HephaestusUI::UIButton*>(element)) {
+        auto nStyle = button->GetNormalStyle();   nStyle.cornerRadius = radius;  button->SetNormalStyle(nStyle);
+        auto hStyle = button->GetHoveredStyle();  hStyle.cornerRadius = radius;  button->SetHoveredStyle(hStyle);
+        auto pStyle = button->GetPressedStyle();  pStyle.cornerRadius = radius;  button->SetPressedStyle(pStyle);
+        auto fStyle = button->GetFocusedStyle();  fStyle.cornerRadius = radius;  button->SetFocusedStyle(fStyle);
+        auto dStyle = button->GetDisabledStyle(); dStyle.cornerRadius = radius;  button->SetDisabledStyle(dStyle);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setTextColor(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    const float r = static_cast<float>(luaL_checknumber(L, 2));
+    const float g = static_cast<float>(luaL_checknumber(L, 3));
+    const float b = static_cast<float>(luaL_checknumber(L, 4));
+    const float a = static_cast<float>(luaL_optnumber(L, 5, 1.0));
+
+    if (auto* text = dynamic_cast<Hephaestus::HephaestusUI::UIText*>(element)) {
+        text->SetColor({r, g, b, a});
+        lua_pushboolean(L, true);
+    } else if (auto* button = dynamic_cast<Hephaestus::HephaestusUI::UIButton*>(element)) {
+        auto style = button->GetNormalStyle();
+        style.textColor = {r, g, b, a};
+        button->SetNormalStyle(style);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setFontSize(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const float size = static_cast<float>(luaL_checknumber(L, 2));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    if (auto* text = dynamic_cast<Hephaestus::HephaestusUI::UIText*>(element)) {
+        auto font = text->GetFont();
+        font.SetPointSize(size);
+        text->SetFont(font);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setFontBold(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const bool bold = lua_toboolean(L, 2) != 0;
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    if (auto* text = dynamic_cast<Hephaestus::HephaestusUI::UIText*>(element)) {
+        auto font = text->GetFont();
+        font.SetBold(bold);
+        text->SetFont(font);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setFontItalic(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const bool italic = lua_toboolean(L, 2) != 0;
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    if (auto* text = dynamic_cast<Hephaestus::HephaestusUI::UIText*>(element)) {
+        auto font = text->GetFont();
+        font.SetItalic(italic);
+        text->SetFont(font);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setTextAlignment(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* alignStr = luaL_checkstring(L, 2);
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    std::string align = alignStr ? alignStr : "";
+    for (auto& c : align) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    auto alignment = Hephaestus::HephaestusUI::UITextAlignment::Left;
+    if (align == "center") alignment = Hephaestus::HephaestusUI::UITextAlignment::Center;
+    else if (align == "right") alignment = Hephaestus::HephaestusUI::UITextAlignment::Right;
+
+    if (auto* text = dynamic_cast<Hephaestus::HephaestusUI::UIText*>(element)) {
+        text->SetAlignment(alignment);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setTextShadow(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const bool enabled = lua_toboolean(L, 2) != 0;
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    if (auto* text = dynamic_cast<Hephaestus::HephaestusUI::UIText*>(element)) {
+        text->SetShadow(enabled);
+        if (lua_gettop(L) >= 6) {
+            const float r = static_cast<float>(luaL_checknumber(L, 3));
+            const float g = static_cast<float>(luaL_checknumber(L, 4));
+            const float b = static_cast<float>(luaL_checknumber(L, 5));
+            const float a = static_cast<float>(luaL_optnumber(L, 6, 0.5));
+            text->SetShadowColor({r, g, b, a});
+        }
+        if (lua_gettop(L) >= 8) {
+            const float ox = static_cast<float>(luaL_checknumber(L, 7));
+            const float oy = static_cast<float>(luaL_checknumber(L, 8));
+            text->SetShadowOffset({ox, oy});
+        }
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setWordWrap(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const bool wrap = lua_toboolean(L, 2) != 0;
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    if (auto* text = dynamic_cast<Hephaestus::HephaestusUI::UIText*>(element)) {
+        text->SetWordWrap(wrap);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setStyle(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    luaL_checktype(L, 2, LUA_TTABLE);
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    auto style = ParseStyleTable(L, 2);
+    ApplyStyleToPanel(element, style);
+
+    if (style.padding.left != 0 || style.padding.top != 0 || style.padding.right != 0 || style.padding.bottom != 0) {
+        element->SetPadding(style.padding);
+    }
+
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setButtonStyle(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* stateStr = luaL_checkstring(L, 2);
+    luaL_checktype(L, 3, LUA_TTABLE);
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    auto* button = dynamic_cast<Hephaestus::HephaestusUI::UIButton*>(element);
+    if (!button) { lua_pushboolean(L, false); return 1; }
+
+    auto style = ParseStyleTable(L, 3);
+    std::string state = stateStr ? stateStr : "";
+    for (auto& c : state) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    if (state == "normal")        button->SetNormalStyle(style);
+    else if (state == "hovered")  button->SetHoveredStyle(style);
+    else if (state == "pressed")  button->SetPressedStyle(style);
+    else if (state == "focused")  button->SetFocusedStyle(style);
+    else if (state == "disabled") button->SetDisabledStyle(style);
+    else { lua_pushboolean(L, false); return 1; }
+
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setFocused(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const bool focused = lua_toboolean(L, 2) != 0;
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    if (auto* button = dynamic_cast<Hephaestus::HephaestusUI::UIButton*>(element)) {
+        button->SetFocused(focused);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_registerThemeStyle(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UISystem) { lua_pushboolean(L, false); return 1; }
+
+    const char* name = luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+
+    auto style = ParseStyleTable(L, 2);
+    engine->m_UISystem->GetTheme().SetStyle(name, style);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_applyThemeStyle(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UISystem) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* name = luaL_checkstring(L, 2);
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    const Hephaestus::HephaestusUI::UIStyle* themeStyle = engine->m_UISystem->GetTheme().GetStyle(name);
+    if (!themeStyle) { lua_pushboolean(L, false); return 1; }
+
+    ApplyStyleToPanel(element, *themeStyle);
+
+    if (themeStyle->padding.left != 0 || themeStyle->padding.top != 0 ||
+        themeStyle->padding.right != 0 || themeStyle->padding.bottom != 0) {
+        element->SetPadding(themeStyle->padding);
+    }
+
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setChildAlignment(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* alignStr = luaL_checkstring(L, 2);
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    std::string align = alignStr ? alignStr : "";
+    for (auto& c : align) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    if (auto* vbox = dynamic_cast<Hephaestus::HephaestusUI::UIVerticalBox*>(element)) {
+        auto ha = Hephaestus::HephaestusUI::UIHAlignment::Stretch;
+        if (align == "left")    ha = Hephaestus::HephaestusUI::UIHAlignment::Left;
+        if (align == "center")  ha = Hephaestus::HephaestusUI::UIHAlignment::Center;
+        if (align == "right")   ha = Hephaestus::HephaestusUI::UIHAlignment::Right;
+        vbox->SetChildHAlignment(ha);
+        lua_pushboolean(L, true);
+    } else if (auto* hbox = dynamic_cast<Hephaestus::HephaestusUI::UIHorizontalBox*>(element)) {
+        auto va = Hephaestus::HephaestusUI::UIVAlignment::Stretch;
+        if (align == "top")     va = Hephaestus::HephaestusUI::UIVAlignment::Top;
+        if (align == "center")  va = Hephaestus::HephaestusUI::UIVAlignment::Center;
+        if (align == "bottom")  va = Hephaestus::HephaestusUI::UIVAlignment::Bottom;
+        hbox->SetChildVAlignment(va);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setImageScaleMode(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* modeStr = luaL_checkstring(L, 2);
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    std::string mode = modeStr ? modeStr : "";
+    for (auto& c : mode) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    auto scaleMode = Hephaestus::HephaestusUI::UIImageScaleMode::Stretch;
+    if (mode == "fit")    scaleMode = Hephaestus::HephaestusUI::UIImageScaleMode::Fit;
+    if (mode == "fill")   scaleMode = Hephaestus::HephaestusUI::UIImageScaleMode::Fill;
+    if (mode == "center") scaleMode = Hephaestus::HephaestusUI::UIImageScaleMode::Center;
+
+    if (auto* image = dynamic_cast<Hephaestus::HephaestusUI::UIImage*>(element)) {
+        image->SetScaleMode(scaleMode);
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_setImageTint(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) { lua_pushboolean(L, false); return 1; }
+
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    Hephaestus::HephaestusUI::UIElement* element = engine->ResolveUIElement(handle);
+    if (!element) { lua_pushboolean(L, false); return 1; }
+
+    const float r = static_cast<float>(luaL_checknumber(L, 2));
+    const float g = static_cast<float>(luaL_checknumber(L, 3));
+    const float b = static_cast<float>(luaL_checknumber(L, 4));
+    const float a = static_cast<float>(luaL_optnumber(L, 5, 1.0));
+
+    if (auto* image = dynamic_cast<Hephaestus::HephaestusUI::UIImage*>(element)) {
+        image->SetTint({r, g, b, a});
+        lua_pushboolean(L, true);
+    } else {
+        lua_pushboolean(L, false);
+    }
+    return 1;
+#else
+    (void)L; return 0;
 #endif
 }

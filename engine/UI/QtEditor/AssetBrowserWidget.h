@@ -108,6 +108,8 @@ private slots:
     void onUpButtonClicked();
     void onRefreshButtonClicked();
     void onOpenProjectButtonClicked();
+    void onContentsContextMenu(const QPoint& pos);
+    void onFolderTreeContextMenu(const QPoint& pos);
 
 private:
     void setupUI();
@@ -120,6 +122,16 @@ private:
 
     // Get icon for asset type  
     QIcon getAssetIcon(int assetType, bool isDirectory) const;
+
+    // Context menu helpers
+    void showCreateMenu(QMenu& menu, const QString& targetDirectory);
+    void createNewFolder(const QString& parentRelativePath);
+    void createNewLuaScript(const QString& parentRelativePath);
+    void createNewScene(const QString& parentRelativePath);
+    void createNewMaterial(const QString& parentRelativePath);
+    void deleteAsset(const QString& relativePath, bool isDirectory);
+    void renameAsset(const QString& relativePath, bool isDirectory);
+    void showInExplorer(const QString& relativePath);
 
     // Data roles for items
     enum ItemDataRole {

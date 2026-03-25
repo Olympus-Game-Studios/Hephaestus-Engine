@@ -38,7 +38,9 @@ namespace Hephaestus::HephaestusUI {
     class UISystem;
     class UIContext;
     class UIRenderer;
+    struct UIStyle;
 }
+#include "../UI/HephaestusUI/UIStyle.h"
 
 namespace entt {
     enum class entity : uint32_t;
@@ -414,6 +416,40 @@ private:
     static int Lua_UI_setCursorMode(lua_State* L);
     static int Lua_UI_getCursorMode(lua_State* L);
     static int Lua_UI_setOnClick(lua_State* L);
+    static int Lua_UI_setOnHover(lua_State* L);
+    static int Lua_UI_createGrid(lua_State* L);
+    static int Lua_UI_setGridColumns(lua_State* L);
+    static int Lua_UI_setGridSpacing(lua_State* L);
+    static int Lua_UI_setEnabled(lua_State* L);
+    static int Lua_UI_setPadding(lua_State* L);
+    static int Lua_UI_setMargin(lua_State* L);
+    static int Lua_UI_setMinSize(lua_State* L);
+    static int Lua_UI_setMaxSize(lua_State* L);
+    static int Lua_UI_setAnchor(lua_State* L);
+    static int Lua_UI_setAlignment(lua_State* L);
+    static int Lua_UI_setBackgroundColor(lua_State* L);
+    static int Lua_UI_setBorderColor(lua_State* L);
+    static int Lua_UI_setBorderWidth(lua_State* L);
+    static int Lua_UI_setCornerRadius(lua_State* L);
+    static int Lua_UI_setTextColor(lua_State* L);
+    static int Lua_UI_setFontSize(lua_State* L);
+    static int Lua_UI_setFontBold(lua_State* L);
+    static int Lua_UI_setFontItalic(lua_State* L);
+    static int Lua_UI_setTextAlignment(lua_State* L);
+    static int Lua_UI_setTextShadow(lua_State* L);
+    static int Lua_UI_setWordWrap(lua_State* L);
+    static int Lua_UI_setStyle(lua_State* L);
+    static int Lua_UI_setButtonStyle(lua_State* L);
+    static int Lua_UI_setFocused(lua_State* L);
+    static int Lua_UI_registerThemeStyle(lua_State* L);
+    static int Lua_UI_applyThemeStyle(lua_State* L);
+    static int Lua_UI_setChildAlignment(lua_State* L);
+    static int Lua_UI_setImageScaleMode(lua_State* L);
+    static int Lua_UI_setImageTint(lua_State* L);
+
+    static Hephaestus::HephaestusUI::UIStyle ParseStyleTable(lua_State* L, int tableIndex);
+    static void ApplyStyleToPanel(Hephaestus::HephaestusUI::UIElement* element,
+                                  const Hephaestus::HephaestusUI::UIStyle& style);
 
     uint32_t RegisterUIScreenHandle(const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>& screen);
     uint32_t RegisterUIElementHandle(Hephaestus::HephaestusUI::UIElement* element);
@@ -426,7 +462,8 @@ private:
     std::unordered_map<uint32_t, std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>> m_UIScreenHandles;
     std::unordered_map<uint32_t, Hephaestus::HephaestusUI::UIElement*> m_UIElementHandles;
     std::unordered_map<const Hephaestus::HephaestusUI::UIElement*, uint32_t> m_UIElementReverseHandles;
-    std::unordered_map<uint32_t, int> m_UIButtonClickCallbacks;  // elementHandle -> Lua registry ref
+    std::unordered_map<uint32_t, int> m_UIButtonClickCallbacks;
+    std::unordered_map<uint32_t, int> m_UIHoverCallbacks;
 
     // 'this' entity binding methods (OOP-style API)
     static int Lua_This_GetTransform(lua_State* L);

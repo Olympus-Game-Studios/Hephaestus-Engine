@@ -6,7 +6,6 @@
 #include <QPaintEvent>
 #include <QMouseEvent>
 #include <algorithm>
-#include <iostream>
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -79,7 +78,6 @@ void RuntimeUIOverlayWidget::mousePressEvent(QMouseEvent* event)
         data.x = static_cast<float>(event->position().x() * dpr);
         data.y = static_cast<float>(event->position().y() * dpr);
         data.button = static_cast<int>(event->button());
-        std::cout << "[UI Overlay] Mouse press at (" << data.x << ", " << data.y << ") button=" << data.button << std::endl;
         m_mouseCallback(data);
         event->accept();
     } else {
@@ -137,8 +135,6 @@ void RuntimeUIOverlayWidget::paintEvent(QPaintEvent* event)
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
 
-    // UI viewport size is in device pixels (from Vulkan swapchain extent)
-    // but painter works in logical pixels. Scale DOWN to convert.
     qreal dpiScale = devicePixelRatioF();
     if (dpiScale != 1.0f) {
         painter.scale(1.0f / dpiScale, 1.0f / dpiScale);
@@ -181,14 +177,24 @@ void RuntimeUIOverlayWidget::paintEvent(QPaintEvent* event)
                 font.setFamily(QString::fromStdString(drawText.fontFamily));
             }
             font.setPointSizeF(std::max(1.0f, drawText.fontSize));
+            font.setBold(drawText.bold);
+            font.setItalic(drawText.italic);
             painter.setFont(font);
+
+            const QRectF rect = toQRectF(drawText.rect);
+            const int alignFlags = toQtAlign(drawText.alignment, drawText.wordWrap);
+
+            if (drawText.shadow) {
+                QColor shadowColor = toQColor(drawText.shadowColor);
+                shadowColor.setAlphaF(clamp01(shadowColor.alphaF() * drawText.opacity));
+                painter.setPen(shadowColor);
+                QRectF shadowRect = rect.translated(drawText.shadowOffset.x, drawText.shadowOffset.y);
+                painter.drawText(shadowRect, alignFlags, QString::fromStdString(drawText.text));
+            }
 
             QColor color = toQColor(drawText.textColor);
             color.setAlphaF(clamp01(color.alphaF() * drawText.opacity));
             painter.setPen(color);
-
-            const QRectF rect = toQRectF(drawText.rect);
-            const int alignFlags = toQtAlign(drawText.alignment, drawText.wordWrap);
             painter.drawText(rect, alignFlags, QString::fromStdString(drawText.text));
             continue;
         }

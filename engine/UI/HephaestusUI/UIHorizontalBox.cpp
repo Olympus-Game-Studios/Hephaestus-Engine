@@ -5,7 +5,7 @@
 namespace Hephaestus::HephaestusUI {
 
 void UIHorizontalBox::OnUpdateLayout() {
-    UILayout::ApplyHorizontalLayout(*this, m_Spacing);
+    UILayout::ApplyHorizontalLayout(*this, m_Spacing, m_ChildVAlignment);
 }
 
 } // namespace Hephaestus::HephaestusUI

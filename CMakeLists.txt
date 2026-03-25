@@ -204,6 +204,7 @@ set(ENGINE_CORE_SOURCES
     engine/UI/HephaestusUI/UIContext.cpp
     engine/UI/HephaestusUI/UIElement.cpp
     engine/UI/HephaestusUI/UIFont.cpp
+    engine/UI/HephaestusUI/UIGridLayout.cpp
     engine/UI/HephaestusUI/UIHorizontalBox.cpp
     engine/UI/HephaestusUI/UIImage.cpp
     engine/UI/HephaestusUI/UIInputRouter.cpp
@@ -214,6 +215,7 @@ set(ENGINE_CORE_SOURCES
     engine/UI/HephaestusUI/UISimpleMenuExample.cpp
     engine/UI/HephaestusUI/UISystem.cpp
     engine/UI/HephaestusUI/UIText.cpp
+    engine/UI/HephaestusUI/UITheme.cpp
     engine/UI/HephaestusUI/UIVerticalBox.cpp
 )
 
@@ -310,6 +312,7 @@ add_executable(HephaestusEngine
     engine/UI/HephaestusUI/UIContext.cpp
     engine/UI/HephaestusUI/UIElement.cpp
     engine/UI/HephaestusUI/UIFont.cpp
+    engine/UI/HephaestusUI/UIGridLayout.cpp
     engine/UI/HephaestusUI/UIHorizontalBox.cpp
     engine/UI/HephaestusUI/UIImage.cpp
     engine/UI/HephaestusUI/UIInputRouter.cpp
@@ -320,6 +323,7 @@ add_executable(HephaestusEngine
     engine/UI/HephaestusUI/UISimpleMenuExample.cpp
     engine/UI/HephaestusUI/UISystem.cpp
     engine/UI/HephaestusUI/UIText.cpp
+    engine/UI/HephaestusUI/UITheme.cpp
     engine/UI/HephaestusUI/UIVerticalBox.cpp
     engine/UI/EditorDocument.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp

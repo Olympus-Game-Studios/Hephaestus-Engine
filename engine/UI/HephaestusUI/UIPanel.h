@@ -11,6 +11,9 @@ public:
     void SetLocalStyle(const UIStyle& style) { m_LocalStyle = style; m_UseLocalStyle = true; }
     void ClearLocalStyle() { m_UseLocalStyle = false; }
 
+    [[nodiscard]] const UIStyle& GetLocalStyle() const { return m_LocalStyle; }
+    [[nodiscard]] bool HasLocalStyle() const { return m_UseLocalStyle; }
+
 protected:
     void OnEmitDrawCommands(UIRenderer& renderer) const override;
 

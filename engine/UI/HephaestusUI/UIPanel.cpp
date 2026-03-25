@@ -21,8 +21,11 @@ void UIPanel::OnEmitDrawCommands(UIRenderer& renderer) const {
         .borderColor = style.borderColor,
         .borderWidth = style.borderWidth,
         .cornerRadius = style.cornerRadius,
-        .opacity = ResolveOpacity(),
-        .zOrder = GetZOrder()
+        .opacity = ResolveOpacity() * style.opacity,
+        .zOrder = GetZOrder(),
+        .backgroundImageId = style.backgroundImageId,
+        .imageScaleMode = style.imageScaleMode,
+        .imageTint = style.imageTint
     });
 }
 
