@@ -248,6 +248,72 @@ QColor PickColor(QWidget* parent, const QColor& initial)
     return picked.isValid() ? picked : initial;
 }
 
+void StyleInspectorColorPickerButton(QPushButton* button, const QColor& color, const QString& toolTip)
+{
+    // Approximate how the swatch reads on top of the dark inspector panel when alpha < 1.
+    constexpr int pr = 44, pg = 47, pb = 54;
+    const float a = std::clamp(color.alphaF(), 0.0f, 1.0f);
+    const float br = color.redF() * a + static_cast<float>(pr) / 255.0f * (1.0f - a);
+    const float bg = color.greenF() * a + static_cast<float>(pg) / 255.0f * (1.0f - a);
+    const float bb = color.blueF() * a + static_cast<float>(pb) / 255.0f * (1.0f - a);
+    const double lum = 0.2126 * static_cast<double>(br) + 0.7152 * static_cast<double>(bg) + 0.0722 * static_cast<double>(bb);
+    const QString fg = lum > 0.55 ? QStringLiteral("#141414") : QStringLiteral("#f0f0f0");
+
+    button->setMinimumHeight(26);
+    button->setText(color.name(QColor::HexArgb));
+    button->setToolTip(toolTip);
+    button->setStyleSheet(QStringLiteral(
+        "QPushButton {"
+        "  background-color: %1;"
+        "  color: %2;"
+        "  border: 1px solid #555;"
+        "  border-radius: 4px;"
+        "  padding: 4px 8px;"
+        "  font-family: monospace;"
+        "}"
+        "QPushButton:hover { border: 1px solid #4C8DFF; }"
+    ).arg(color.name(QColor::HexArgb), fg));
+}
+
+UIStyle EditorDefaultButtonBaseStyle()
+{
+    UIStyle s;
+    s.backgroundColor = {0.22f, 0.52f, 0.82f, 1.0f};
+    s.cornerRadius = 8.0f;
+    s.textColor = {1.0f, 1.0f, 1.0f, 1.0f};
+    s.fontSize = 18.0f;
+    return s;
+}
+
+UIStyle ButtonEditorBaseStyle(const HUIWidgetNode& node)
+{
+    if (node.hasNormalStyle) {
+        return node.normalStyle;
+    }
+    if (node.hasStyle) {
+        return node.style;
+    }
+    return EditorDefaultButtonBaseStyle();
+}
+
+void SeedHoveredButtonStyle(HUIWidgetNode& node)
+{
+    if (node.hasHoveredStyle) {
+        return;
+    }
+    node.hoveredStyle = ButtonEditorBaseStyle(node);
+    node.hasHoveredStyle = true;
+}
+
+void SeedPressedButtonStyle(HUIWidgetNode& node)
+{
+    if (node.hasPressedStyle) {
+        return;
+    }
+    node.pressedStyle = ButtonEditorBaseStyle(node);
+    node.hasPressedStyle = true;
+}
+
 void ClearLayout(QLayout* layout)
 {
     while (QLayoutItem* item = layout->takeAt(0)) {
@@ -1450,8 +1516,12 @@ private:
             return {&node->style, &node->hasStyle};
         }();
 
-        auto* bgColorButton = new QPushButton(tr("Background"), m_inspectorContainer);
-        auto* textColorButton = new QPushButton(tr("Text"), m_inspectorContainer);
+        auto* bgColorButton = new QPushButton(m_inspectorContainer);
+        auto* textColorButton = new QPushButton(m_inspectorContainer);
+        StyleInspectorColorPickerButton(bgColorButton, ToQColor(editableStyle.first->backgroundColor),
+            tr("Click to choose background color"));
+        StyleInspectorColorPickerButton(textColorButton, ToQColor(editableStyle.first->textColor),
+            tr("Click to choose text color"));
         auto* cornerSpin = makeSpin(editableStyle.first->cornerRadius, 0.0, 64.0);
         auto* fontSizeSpin = makeSpin(editableStyle.first->fontSize, 0.0, 96.0);
         styleSection->addRow(tr("Background"), bgColorButton);
@@ -1511,6 +1581,92 @@ private:
             markDirty();
             rebuildAll();
         });
+
+        if (node->type == HUIWidgetType::Button) {
+            QFormLayout* hoveredSection = addSection(tr("Hovered"));
+            auto* hoverBgButton = new QPushButton(m_inspectorContainer);
+            auto* hoverTextButton = new QPushButton(m_inspectorContainer);
+            {
+                const UIStyle hoverBase = node->hasHoveredStyle ? node->hoveredStyle : ButtonEditorBaseStyle(*node);
+                StyleInspectorColorPickerButton(hoverBgButton, ToQColor(hoverBase.backgroundColor),
+                    tr("Click to choose hovered background color"));
+                StyleInspectorColorPickerButton(hoverTextButton, ToQColor(hoverBase.textColor),
+                    tr("Click to choose hovered text color"));
+            }
+            hoveredSection->addRow(tr("Background"), hoverBgButton);
+            hoveredSection->addRow(tr("Text Color"), hoverTextButton);
+
+            connect(hoverBgButton, &QPushButton::clicked, this, [this]() {
+                HUIWidgetNode* live = NodeForPath(m_document.root, m_selectedPath);
+                if (!live || live->type != HUIWidgetType::Button) {
+                    return;
+                }
+                const UIColor initialColor =
+                    live->hasHoveredStyle ? live->hoveredStyle.backgroundColor : ButtonEditorBaseStyle(*live).backgroundColor;
+                QColor picked = PickColor(this, ToQColor(initialColor));
+                pushUndoSnapshot();
+                SeedHoveredButtonStyle(*live);
+                live->hoveredStyle.backgroundColor = ToUIColor(picked);
+                markDirty();
+                rebuildAll();
+            });
+            connect(hoverTextButton, &QPushButton::clicked, this, [this]() {
+                HUIWidgetNode* live = NodeForPath(m_document.root, m_selectedPath);
+                if (!live || live->type != HUIWidgetType::Button) {
+                    return;
+                }
+                const UIColor initialColor =
+                    live->hasHoveredStyle ? live->hoveredStyle.textColor : ButtonEditorBaseStyle(*live).textColor;
+                QColor picked = PickColor(this, ToQColor(initialColor));
+                pushUndoSnapshot();
+                SeedHoveredButtonStyle(*live);
+                live->hoveredStyle.textColor = ToUIColor(picked);
+                markDirty();
+                rebuildAll();
+            });
+
+            QFormLayout* pressedSection = addSection(tr("Pressed"));
+            auto* pressedBgButton = new QPushButton(m_inspectorContainer);
+            auto* pressedTextButton = new QPushButton(m_inspectorContainer);
+            {
+                const UIStyle pressedBase = node->hasPressedStyle ? node->pressedStyle : ButtonEditorBaseStyle(*node);
+                StyleInspectorColorPickerButton(pressedBgButton, ToQColor(pressedBase.backgroundColor),
+                    tr("Click to choose pressed background color"));
+                StyleInspectorColorPickerButton(pressedTextButton, ToQColor(pressedBase.textColor),
+                    tr("Click to choose pressed text color"));
+            }
+            pressedSection->addRow(tr("Background"), pressedBgButton);
+            pressedSection->addRow(tr("Text Color"), pressedTextButton);
+
+            connect(pressedBgButton, &QPushButton::clicked, this, [this]() {
+                HUIWidgetNode* live = NodeForPath(m_document.root, m_selectedPath);
+                if (!live || live->type != HUIWidgetType::Button) {
+                    return;
+                }
+                const UIColor initialColor =
+                    live->hasPressedStyle ? live->pressedStyle.backgroundColor : ButtonEditorBaseStyle(*live).backgroundColor;
+                QColor picked = PickColor(this, ToQColor(initialColor));
+                pushUndoSnapshot();
+                SeedPressedButtonStyle(*live);
+                live->pressedStyle.backgroundColor = ToUIColor(picked);
+                markDirty();
+                rebuildAll();
+            });
+            connect(pressedTextButton, &QPushButton::clicked, this, [this]() {
+                HUIWidgetNode* live = NodeForPath(m_document.root, m_selectedPath);
+                if (!live || live->type != HUIWidgetType::Button) {
+                    return;
+                }
+                const UIColor initialColor =
+                    live->hasPressedStyle ? live->pressedStyle.textColor : ButtonEditorBaseStyle(*live).textColor;
+                QColor picked = PickColor(this, ToQColor(initialColor));
+                pushUndoSnapshot();
+                SeedPressedButtonStyle(*live);
+                live->pressedStyle.textColor = ToUIColor(picked);
+                markDirty();
+                rebuildAll();
+            });
+        }
 
         m_inspectorFormLayout->addStretch();
     }
