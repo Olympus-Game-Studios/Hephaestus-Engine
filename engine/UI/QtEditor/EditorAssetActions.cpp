@@ -81,8 +81,10 @@ bool EditorAssetActions::OpenByType(const QString& absolutePath, AssetType type)
             showNotImplemented("Blueprint editor", absolutePath);
             return true;
 
+        case AssetType::UILayout:
+            return openScript(absolutePath);
+
         case AssetType::Shader:
-            // Open shaders in external editor
             return openScript(absolutePath);
 
         case AssetType::Font:

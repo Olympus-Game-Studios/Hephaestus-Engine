@@ -447,6 +447,14 @@ private:
     static int Lua_UI_setImageScaleMode(lua_State* L);
     static int Lua_UI_setImageTint(lua_State* L);
 
+    static int Lua_UI_loadHUI(lua_State* L);
+    static int Lua_UI_getWidget(lua_State* L);
+
+    // display / destroy global Lua API
+    static int Lua_Display_ui(lua_State* L);
+    static int Lua_Destroy_ui(lua_State* L);
+    void RegisterDisplayDestroyBindings();
+
     static Hephaestus::HephaestusUI::UIStyle ParseStyleTable(lua_State* L, int tableIndex);
     static void ApplyStyleToPanel(Hephaestus::HephaestusUI::UIElement* element,
                                   const Hephaestus::HephaestusUI::UIStyle& style);
@@ -464,6 +472,24 @@ private:
     std::unordered_map<const Hephaestus::HephaestusUI::UIElement*, uint32_t> m_UIElementReverseHandles;
     std::unordered_map<uint32_t, int> m_UIButtonClickCallbacks;
     std::unordered_map<uint32_t, int> m_UIHoverCallbacks;
+
+    // HUI asset widget maps: screen handle -> (widget id -> element handle)
+    std::unordered_map<uint32_t, std::unordered_map<std::string, uint32_t>> m_HUIWidgetMaps;
+
+    // Managed HUI instance lifecycle tracking
+    struct HUIInstance {
+        uint32_t screenHandle = 0;
+        std::string sourcePath;
+        bool alive = false;
+    };
+    std::unordered_map<uint32_t, HUIInstance> m_ActiveHUIInstances;
+    std::unordered_map<std::string, uint32_t> m_HUIPathToHandle;
+    std::vector<uint32_t> m_HUIStack; // most-recent-last; back() = current
+
+    uint32_t displayHUI(const std::string& filePath, std::string& outError);
+    bool destroyHUI(uint32_t screenHandle);
+    void destroyAllHUIInstances();
+    std::string normalizeHUIPath(const std::string& rawPath) const;
 
     // 'this' entity binding methods (OOP-style API)
     static int Lua_This_GetTransform(lua_State* L);

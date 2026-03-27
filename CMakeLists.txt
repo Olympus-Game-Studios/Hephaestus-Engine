@@ -199,6 +199,7 @@ set(ENGINE_CORE_SOURCES
     engine/Scripting/ScriptBase.cpp
     engine/Scripting/ScriptEngine.cpp
     engine/Scripting/LuaScriptEngine.cpp
+    engine/UI/HephaestusUI/HUIAsset.cpp
     engine/UI/HephaestusUI/UIButton.cpp
     engine/UI/HephaestusUI/UICanvas.cpp
     engine/UI/HephaestusUI/UIContext.cpp
@@ -307,6 +308,7 @@ add_executable(HephaestusEngine
     engine/Scripting/ScriptBase.cpp
     engine/Scripting/ScriptEngine.cpp
     engine/Scripting/LuaScriptEngine.cpp
+    engine/UI/HephaestusUI/HUIAsset.cpp
     engine/UI/HephaestusUI/UIButton.cpp
     engine/UI/HephaestusUI/UICanvas.cpp
     engine/UI/HephaestusUI/UIContext.cpp

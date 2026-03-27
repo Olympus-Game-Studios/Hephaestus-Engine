@@ -127,7 +127,7 @@ void AssetBrowserWidget::setupUI()
     m_toolbar->addWidget(m_importButton);
 
     m_filterCombo = new QComboBox(this);
-    m_filterCombo->addItems({ tr("All"), tr("Meshes"), tr("Textures"), tr("Materials"), tr("Scenes"), tr("Scripts") });
+    m_filterCombo->addItems({ tr("All"), tr("Meshes"), tr("Textures"), tr("Materials"), tr("Scenes"), tr("Scripts"), tr("UI Layouts") });
     connect(m_filterCombo, &QComboBox::currentTextChanged, this, [this](const QString&) {
         rebuildContentsView();
     });
@@ -380,6 +380,7 @@ void AssetBrowserWidget::rebuildContentsView()
         if (filter == tr("Materials")) return type == AssetType::Material;
         if (filter == tr("Scenes")) return type == AssetType::Scene;
         if (filter == tr("Scripts")) return type == AssetType::Script;
+        if (filter == tr("UI Layouts")) return type == AssetType::UILayout;
         return true;
     };
 
@@ -396,6 +397,7 @@ void AssetBrowserWidget::rebuildContentsView()
             case AssetType::Shader: return QStringLiteral("[Shader]");
             case AssetType::Font: return QStringLiteral("[Font]");
             case AssetType::Text: return QStringLiteral("[Text]");
+            case AssetType::UILayout: return QStringLiteral("[UI Layout]");
             default: return QStringLiteral("[Asset]");
         }
     };
@@ -505,6 +507,8 @@ QIcon AssetBrowserWidget::getAssetIcon(int assetType, bool isDirectory) const
             return s->standardIcon(QStyle::SP_FileDialogInfoView);
         case AssetType::Text:
             return s->standardIcon(QStyle::SP_FileIcon);
+        case AssetType::UILayout:
+            return s->standardIcon(QStyle::SP_DesktopIcon);
         default:
             return s->standardIcon(QStyle::SP_FileIcon);
     }
@@ -694,6 +698,10 @@ void AssetBrowserWidget::showCreateMenu(QMenu& menu, const QString& targetDirect
     menu.addAction(style()->standardIcon(QStyle::SP_DialogApplyButton), tr("New Material"), [this, targetDirectory]() {
         createNewMaterial(targetDirectory);
     });
+
+    menu.addAction(style()->standardIcon(QStyle::SP_DesktopIcon), tr("New UI File"), [this, targetDirectory]() {
+        createNewUIFile(targetDirectory);
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -842,6 +850,137 @@ void AssetBrowserWidget::createNewMaterial(const QString& parentRelativePath)
 
     Refresh();
     std::cout << "[AssetBrowser] Created material: " << filePath.string() << "\n";
+}
+
+void AssetBrowserWidget::createNewUIFile(const QString& parentRelativePath)
+{
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("New UI File"),
+                                         tr("UI file name (without .hui):"), QLineEdit::Normal,
+                                         tr("NewUI"), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+
+    auto& assetMgr = AssetManager::GetInstance();
+    std::string parentAbs = parentRelativePath.isEmpty()
+        ? assetMgr.GetAssetRoot()
+        : assetMgr.ToAbsolutePath(parentRelativePath.toStdString());
+
+    std::filesystem::path filePath = std::filesystem::path(parentAbs) / (name.trimmed().toStdString() + ".hui");
+
+    if (std::filesystem::exists(filePath)) {
+        QMessageBox::warning(this, tr("New UI File"), tr("A file with that name already exists."));
+        return;
+    }
+
+    std::ofstream file(filePath);
+    if (!file.is_open()) {
+        QMessageBox::critical(this, tr("New UI File"), tr("Failed to create UI file."));
+        return;
+    }
+
+    std::string uiName = name.trimmed().toStdString();
+    file << "{\n"
+         << "    \"version\": 1,\n"
+         << "    \"controller\": \"\",\n"
+         << "    \"root\": {\n"
+         << "        \"type\": \"Panel\",\n"
+         << "        \"id\": \"root\",\n"
+         << "        \"properties\": {\n"
+         << "            \"anchor\": \"Stretch\",\n"
+         << "            \"visible\": true\n"
+         << "        },\n"
+         << "        \"style\": {\n"
+         << "            \"backgroundColor\": [0.1, 0.1, 0.15, 0.95],\n"
+         << "            \"cornerRadius\": 0\n"
+         << "        },\n"
+         << "        \"children\": [\n"
+         << "            {\n"
+         << "                \"type\": \"VerticalBox\",\n"
+         << "                \"id\": \"main_layout\",\n"
+         << "                \"properties\": {\n"
+         << "                    \"spacing\": 16,\n"
+         << "                    \"padding\": [40, 40, 40, 40],\n"
+         << "                    \"childHAlignment\": \"Center\",\n"
+         << "                    \"anchor\": \"Stretch\"\n"
+         << "                },\n"
+         << "                \"children\": [\n"
+         << "                    {\n"
+         << "                        \"type\": \"Text\",\n"
+         << "                        \"id\": \"title_label\",\n"
+         << "                        \"properties\": {\n"
+         << "                            \"text\": \"" << uiName << "\",\n"
+         << "                            \"textAlignment\": \"Center\"\n"
+         << "                        },\n"
+         << "                        \"style\": {\n"
+         << "                            \"fontSize\": 32,\n"
+         << "                            \"fontBold\": true,\n"
+         << "                            \"textColor\": [1, 1, 1, 1],\n"
+         << "                            \"textShadow\": true,\n"
+         << "                            \"textShadowColor\": [0, 0, 0, 0.5],\n"
+         << "                            \"textShadowOffset\": [2, 2]\n"
+         << "                        }\n"
+         << "                    },\n"
+         << "                    {\n"
+         << "                        \"type\": \"Button\",\n"
+         << "                        \"id\": \"action_button\",\n"
+         << "                        \"properties\": {\n"
+         << "                            \"text\": \"Click Me\",\n"
+         << "                            \"size\": [200, 50]\n"
+         << "                        },\n"
+         << "                        \"normalStyle\": {\n"
+         << "                            \"backgroundColor\": [0.2, 0.5, 0.8, 1.0],\n"
+         << "                            \"cornerRadius\": 8,\n"
+         << "                            \"textColor\": [1, 1, 1, 1],\n"
+         << "                            \"fontSize\": 18\n"
+         << "                        },\n"
+         << "                        \"hoveredStyle\": {\n"
+         << "                            \"backgroundColor\": [0.3, 0.6, 0.9, 1.0],\n"
+         << "                            \"cornerRadius\": 8,\n"
+         << "                            \"textColor\": [1, 1, 1, 1],\n"
+         << "                            \"fontSize\": 18\n"
+         << "                        },\n"
+         << "                        \"pressedStyle\": {\n"
+         << "                            \"backgroundColor\": [0.15, 0.4, 0.65, 1.0],\n"
+         << "                            \"cornerRadius\": 8,\n"
+         << "                            \"textColor\": [1, 1, 1, 1],\n"
+         << "                            \"fontSize\": 18\n"
+         << "                        }\n"
+         << "                    },\n"
+         << "                    {\n"
+         << "                        \"type\": \"Button\",\n"
+         << "                        \"id\": \"secondary_button\",\n"
+         << "                        \"properties\": {\n"
+         << "                            \"text\": \"Cancel\",\n"
+         << "                            \"size\": [200, 50]\n"
+         << "                        },\n"
+         << "                        \"normalStyle\": {\n"
+         << "                            \"backgroundColor\": [0.3, 0.3, 0.35, 1.0],\n"
+         << "                            \"cornerRadius\": 8,\n"
+         << "                            \"textColor\": [0.9, 0.9, 0.9, 1.0],\n"
+         << "                            \"fontSize\": 18\n"
+         << "                        },\n"
+         << "                        \"hoveredStyle\": {\n"
+         << "                            \"backgroundColor\": [0.4, 0.4, 0.45, 1.0],\n"
+         << "                            \"cornerRadius\": 8,\n"
+         << "                            \"textColor\": [1, 1, 1, 1],\n"
+         << "                            \"fontSize\": 18\n"
+         << "                        },\n"
+         << "                        \"pressedStyle\": {\n"
+         << "                            \"backgroundColor\": [0.25, 0.25, 0.3, 1.0],\n"
+         << "                            \"cornerRadius\": 8,\n"
+         << "                            \"textColor\": [1, 1, 1, 1],\n"
+         << "                            \"fontSize\": 18\n"
+         << "                        }\n"
+         << "                    }\n"
+         << "                ]\n"
+         << "            }\n"
+         << "        ]\n"
+         << "    }\n"
+         << "}\n";
+    file.close();
+
+    Refresh();
+    std::cout << "[AssetBrowser] Created UI file: " << filePath.string() << "\n";
 }
 
 void AssetBrowserWidget::deleteAsset(const QString& relativePath, bool isDirectory)

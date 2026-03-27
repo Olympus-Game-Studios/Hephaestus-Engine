@@ -129,6 +129,7 @@ private:
     void createNewLuaScript(const QString& parentRelativePath);
     void createNewScene(const QString& parentRelativePath);
     void createNewMaterial(const QString& parentRelativePath);
+    void createNewUIFile(const QString& parentRelativePath);
     void deleteAsset(const QString& relativePath, bool isDirectory);
     void renameAsset(const QString& relativePath, bool isDirectory);
     void showInExplorer(const QString& relativePath);

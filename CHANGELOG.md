@@ -8,6 +8,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-03-27: Added `display.ui(path)` and `destroy.ui(target)` Lua global APIs for managed `.hui` lifecycle. `display.ui` loads a `.hui` file, builds the UI, auto-loads the controller, tracks the instance, and returns a handle. `destroy.ui` accepts a handle, `"current"`, or `"all"` to cleanly remove UI with full callback/resource cleanup.
+- 2026-03-27: Added HUI instance lifecycle management: duplicate path detection (re-display replaces the previous instance), a current-UI stack for `destroy.ui("current")`, automatic cleanup of all managed HUI instances on simulation stop, and safe no-op behavior for destroying already-destroyed handles.
+- 2026-03-27: Added `display` and `destroy` global Lua tables registered in `RegisterDisplayDestroyBindings()` alongside existing binding registration.
+- 2026-03-27: Updated `assets/ui/MainMenu.lua` example to demonstrate the `display.ui` / `destroy.ui` workflow with path constants and handle-based lifecycle control.
+- 2026-03-27: Added `Documentation/Scripting/LUA_DISPLAY_DESTROY_API.md` with complete API reference covering display/destroy signatures, lifecycle rules, current-UI stack, error messages, recommended script patterns, and future expansion notes.
+- 2026-03-27: Updated `Documentation/Features/HUI_FORMAT_REFERENCE.md` Lua integration and examples sections to use `display.ui` / `destroy.ui` as the recommended API, documenting `UI.loadHUI` as the lower-level alternative.
+- 2026-03-27: Updated `Documentation/Scripting/SCRIPTING_DOCUMENTATION_INDEX.md` to reference the new display/destroy API documentation.
+- 2026-03-27: Introduced `.hui` (Hephaestus UI) as a first-class asset format for declarative UI layout definition. `.hui` files use a JSON-based structure to describe widget hierarchy, types, properties, layout, styling, and optional Lua controller references — separating UI presentation from behavioral logic.
+- 2026-03-27: Added `HUIParser` and `HUIBuilder` in `engine/UI/HephaestusUI/HUIAsset.h/.cpp` for parsing `.hui` files from disk or string, validating widget types/IDs/properties, and constructing runtime `UIScreen` widget trees with an id-to-element lookup map.
+- 2026-03-27: Registered `UILayout` as a new `AssetType` in `AssetTypes.h` with `.hui` extension mapping, `ToString`/`AssetTypeFromString`/`AssetTypeFromExtension` support, and editor display integration (filter combo, type badge, icon).
+- 2026-03-27: Added `UI.loadHUI(path)` Lua binding to load a `.hui` file, build a UI screen, register all widget handles, and optionally auto-load the referenced controller Lua script. Returns `(screenHandle, nil)` on success or `(nil, errorString)` on failure.
+- 2026-03-27: Added `UI.getWidget(screenHandle, widgetId)` Lua binding to look up widget element handles by string ID within a loaded `.hui` screen, enabling Lua scripts to bind events and modify widgets without procedural construction.
+- 2026-03-27: Added "New UI File" action to the Asset Browser right-click context menu (`showCreateMenu`), creating a valid `.hui` starter template with a root panel, vertical layout, title label, and two styled buttons.
+- 2026-03-27: Added `HUIAsset.cpp` to both editor and game CMake targets.
+- 2026-03-27: Added `.hui` opening support in `EditorAssetActions` (opens in external editor like scripts).
+- 2026-03-27: Added `generateDefaultHUIContent()` and `serializeHUIDocument()` utility functions for template generation and deterministic round-trip serialization.
+- 2026-03-27: Added example `assets/ui/MainMenu.hui` and `assets/ui/MainMenu.lua` demonstrating the full `.hui` workflow: declarative layout with styled buttons, paired with a Lua controller that binds click handlers.
+- 2026-03-27: Added comprehensive `.hui` format documentation at `Documentation/Features/HUI_FORMAT_REFERENCE.md` covering file structure, widget types, layout system, styling, Lua integration, asset workflow, examples, best practices, error handling, and future expansion notes.
+
 - 2026-03-25: Added right-click context menu to `AssetBrowserWidget` on both the contents view and folder tree. Supports creating new folders, Lua scripts, scenes (`.hpscene`), and materials (`.hematerial`). Also supports rename, delete, and "Show in Explorer" for existing assets.
 - 2026-03-24: Expanded `UIStyle` with comprehensive per-widget visual properties: `fontFamily`, `fontSize`, `fontBold`, `fontItalic`, `textAlignment`, `opacity`, `scale`, `backgroundImageId`, `imageScaleMode`, `imageTint`, `textShadow`, `textShadowColor`, `textShadowOffset`.
 - 2026-03-24: Added `UIHAlignment`, `UIVAlignment`, and `UIImageScaleMode` enums to `UIStyle.h` for layout alignment and image scaling control.

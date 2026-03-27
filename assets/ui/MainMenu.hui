@@ -1,0 +1,164 @@
+{
+    "version": 1,
+    "controller": "MainMenu.lua",
+    "root": {
+        "type": "Panel",
+        "id": "root",
+        "properties": {
+            "anchor": "Stretch",
+            "visible": true
+        },
+        "style": {
+            "backgroundColor": [0.05, 0.05, 0.1, 0.95],
+            "cornerRadius": 0
+        },
+        "children": [
+            {
+                "type": "VerticalBox",
+                "id": "main_layout",
+                "properties": {
+                    "spacing": 24,
+                    "padding": [60, 80, 60, 60],
+                    "childHAlignment": "Center",
+                    "anchor": "Stretch"
+                },
+                "children": [
+                    {
+                        "type": "Text",
+                        "id": "title",
+                        "properties": {
+                            "text": "Hephaestus",
+                            "textAlignment": "Center"
+                        },
+                        "style": {
+                            "fontSize": 48,
+                            "fontBold": true,
+                            "textColor": [0.9, 0.75, 0.3, 1.0],
+                            "textShadow": true,
+                            "textShadowColor": [0, 0, 0, 0.7],
+                            "textShadowOffset": [3, 3]
+                        }
+                    },
+                    {
+                        "type": "Text",
+                        "id": "subtitle",
+                        "properties": {
+                            "text": "Game Engine Demo",
+                            "textAlignment": "Center"
+                        },
+                        "style": {
+                            "fontSize": 18,
+                            "textColor": [0.7, 0.7, 0.75, 1.0]
+                        }
+                    },
+                    {
+                        "type": "Panel",
+                        "id": "spacer",
+                        "properties": {
+                            "size": [1, 40]
+                        }
+                    },
+                    {
+                        "type": "Button",
+                        "id": "btn_start",
+                        "properties": {
+                            "text": "Start Game",
+                            "size": [280, 55]
+                        },
+                        "normalStyle": {
+                            "backgroundColor": [0.2, 0.55, 0.85, 1.0],
+                            "cornerRadius": 10,
+                            "textColor": [1, 1, 1, 1],
+                            "fontSize": 20,
+                            "fontBold": true
+                        },
+                        "hoveredStyle": {
+                            "backgroundColor": [0.3, 0.65, 0.95, 1.0],
+                            "cornerRadius": 10,
+                            "textColor": [1, 1, 1, 1],
+                            "fontSize": 20,
+                            "fontBold": true,
+                            "borderColor": [1, 1, 1, 0.3],
+                            "borderWidth": 2
+                        },
+                        "pressedStyle": {
+                            "backgroundColor": [0.15, 0.4, 0.65, 1.0],
+                            "cornerRadius": 10,
+                            "textColor": [0.9, 0.9, 0.9, 1.0],
+                            "fontSize": 20,
+                            "fontBold": true
+                        }
+                    },
+                    {
+                        "type": "Button",
+                        "id": "btn_settings",
+                        "properties": {
+                            "text": "Settings",
+                            "size": [280, 55]
+                        },
+                        "normalStyle": {
+                            "backgroundColor": [0.25, 0.25, 0.3, 1.0],
+                            "cornerRadius": 10,
+                            "textColor": [0.9, 0.9, 0.95, 1.0],
+                            "fontSize": 20
+                        },
+                        "hoveredStyle": {
+                            "backgroundColor": [0.35, 0.35, 0.4, 1.0],
+                            "cornerRadius": 10,
+                            "textColor": [1, 1, 1, 1],
+                            "fontSize": 20,
+                            "borderColor": [1, 1, 1, 0.2],
+                            "borderWidth": 1
+                        },
+                        "pressedStyle": {
+                            "backgroundColor": [0.2, 0.2, 0.25, 1.0],
+                            "cornerRadius": 10,
+                            "textColor": [0.85, 0.85, 0.85, 1.0],
+                            "fontSize": 20
+                        }
+                    },
+                    {
+                        "type": "Button",
+                        "id": "btn_quit",
+                        "properties": {
+                            "text": "Quit",
+                            "size": [280, 55]
+                        },
+                        "normalStyle": {
+                            "backgroundColor": [0.6, 0.15, 0.15, 1.0],
+                            "cornerRadius": 10,
+                            "textColor": [1, 1, 1, 1],
+                            "fontSize": 20
+                        },
+                        "hoveredStyle": {
+                            "backgroundColor": [0.75, 0.2, 0.2, 1.0],
+                            "cornerRadius": 10,
+                            "textColor": [1, 1, 1, 1],
+                            "fontSize": 20,
+                            "borderColor": [1, 0.4, 0.4, 0.4],
+                            "borderWidth": 1
+                        },
+                        "pressedStyle": {
+                            "backgroundColor": [0.45, 0.1, 0.1, 1.0],
+                            "cornerRadius": 10,
+                            "textColor": [0.9, 0.9, 0.9, 1.0],
+                            "fontSize": 20
+                        }
+                    },
+                    {
+                        "type": "Text",
+                        "id": "version_label",
+                        "properties": {
+                            "text": "v0.1.0 Alpha",
+                            "textAlignment": "Center"
+                        },
+                        "style": {
+                            "fontSize": 12,
+                            "textColor": [0.4, 0.4, 0.45, 1.0]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+}

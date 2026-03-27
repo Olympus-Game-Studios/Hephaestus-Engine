@@ -15,7 +15,8 @@ enum class AssetType {
     Blueprint,
     Shader,
     Font,
-    Text
+    Text,
+    UILayout
 };
 
 struct AssetFingerprint {
@@ -37,6 +38,7 @@ inline const char* ToString(AssetType type) {
         case AssetType::Shader: return "Shader";
         case AssetType::Font: return "Font";
         case AssetType::Text: return "Text";
+        case AssetType::UILayout: return "UILayout";
         default: return "Unknown";
     }
 }
@@ -53,6 +55,7 @@ inline AssetType AssetTypeFromString(const std::string& value) {
     if (value == "Shader") return AssetType::Shader;
     if (value == "Font") return AssetType::Font;
     if (value == "Text") return AssetType::Text;
+    if (value == "UILayout") return AssetType::UILayout;
     return AssetType::Unknown;
 }
 
@@ -118,6 +121,9 @@ inline AssetType AssetTypeFromExtension(const std::string& extension) {
         {".ttf", AssetType::Font},
         {".otf", AssetType::Font},
         
+        // UI Layouts
+        {".hui", AssetType::UILayout},
+
         // Text
         {".txt", AssetType::Text},
         {".md", AssetType::Text},

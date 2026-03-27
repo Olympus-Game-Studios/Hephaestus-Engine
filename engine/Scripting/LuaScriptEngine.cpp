@@ -16,6 +16,7 @@
 #include "../UI/HephaestusUI/UITheme.h"
 #include "../UI/HephaestusUI/UIVerticalBox.h"
 #include "../UI/HephaestusUI/UIButton.h"
+#include "../UI/HephaestusUI/HUIAsset.h"
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Components.h"
@@ -432,6 +433,9 @@ void LuaScriptEngine::OnSimulationStopped() {
     // Drop all cached instances so the next Play start always rebuilds from scene data.
     m_ScriptInstances.clear();
     m_ActiveUpdateOrder.clear();
+
+    // Destroy all managed HUI instances so nothing leaks between sessions
+    destroyAllHUIInstances();
 #endif
 }
 
@@ -577,6 +581,10 @@ void LuaScriptEngine::ResetUIHandleMaps() {
     m_UIScreenHandles.clear();
     m_UIElementHandles.clear();
     m_UIElementReverseHandles.clear();
+    m_HUIWidgetMaps.clear();
+    m_ActiveHUIInstances.clear();
+    m_HUIPathToHandle.clear();
+    m_HUIStack.clear();
     m_NextUIScreenHandle = 1;
     m_NextUIElementHandle = 1;
 }
@@ -592,6 +600,7 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterPhysicsBindings();
     RegisterAudioBindings();
     RegisterUIBindings();
+    RegisterDisplayDestroyBindings();
     RegisterThisBindings();
     RegisterSceneBindings();
 #endif
@@ -3432,6 +3441,12 @@ void LuaScriptEngine::RegisterUIBindings() {
     lua_pushcfunction(m_State, Lua_UI_setImageTint);
     lua_setfield(m_State, -2, "setImageTint");
 
+    lua_pushcfunction(m_State, Lua_UI_loadHUI);
+    lua_setfield(m_State, -2, "loadHUI");
+
+    lua_pushcfunction(m_State, Lua_UI_getWidget);
+    lua_setfield(m_State, -2, "getWidget");
+
     lua_setglobal(m_State, "UI");
 
     // CursorMode enum constants
@@ -5146,5 +5161,444 @@ int LuaScriptEngine::Lua_UI_setImageTint(lua_State* L) {
     return 1;
 #else
     (void)L; return 0;
+#endif
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HUI Asset Loading (UI.loadHUI / UI.getWidget)
+// ─────────────────────────────────────────────────────────────────────────────
+
+int LuaScriptEngine::Lua_UI_loadHUI(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UISystem) {
+        lua_pushnil(L);
+        lua_pushstring(L, "UI system not available");
+        return 2;
+    }
+
+    const char* filePath = luaL_checkstring(L, 1);
+    if (!filePath || filePath[0] == '\0') {
+        lua_pushnil(L);
+        lua_pushstring(L, "File path is empty");
+        return 2;
+    }
+
+    // Resolve path relative to project root / search paths
+    std::filesystem::path resolved(filePath);
+    if (!resolved.is_absolute()) {
+        for (const auto& searchPath : engine->m_SearchPaths) {
+            auto candidate = searchPath / filePath;
+            if (std::filesystem::exists(candidate)) {
+                resolved = candidate;
+                break;
+            }
+        }
+        if (!resolved.is_absolute() && !engine->m_ProjectRoot.empty()) {
+            auto candidate = engine->m_ProjectRoot / filePath;
+            if (std::filesystem::exists(candidate)) {
+                resolved = candidate;
+            }
+        }
+    }
+
+    Hephaestus::HephaestusUI::HUIParser parser;
+    Hephaestus::HephaestusUI::HUIDocument document;
+
+    if (!parser.ParseFile(resolved.string(), document)) {
+        lua_pushnil(L);
+        lua_pushstring(L, parser.GetErrorString().c_str());
+        return 2;
+    }
+
+    Hephaestus::HephaestusUI::HUIBuilder builder;
+    auto result = builder.Build(document);
+
+    if (!result.success || !result.screen) {
+        lua_pushnil(L);
+        lua_pushstring(L, "Failed to build UI from .hui document");
+        return 2;
+    }
+
+    engine->m_UISystem->AddScreen(result.screen);
+    uint32_t screenHandle = engine->RegisterUIScreenHandle(result.screen);
+
+    // Register all widget elements in the handle map
+    std::unordered_map<std::string, uint32_t> widgetHandleMap;
+    for (auto& [widgetId, element] : result.widgetMap) {
+        uint32_t elemHandle = engine->RegisterUIElementHandle(element);
+        widgetHandleMap[widgetId] = elemHandle;
+    }
+    engine->m_HUIWidgetMaps[screenHandle] = std::move(widgetHandleMap);
+
+    // If a controller script is referenced, load it
+    if (!result.controller.empty()) {
+        std::filesystem::path controllerPath(result.controller);
+        if (!controllerPath.is_absolute()) {
+            // Try relative to the .hui file's directory
+            auto huiDir = resolved.parent_path();
+            auto candidate = huiDir / result.controller;
+            if (std::filesystem::exists(candidate)) {
+                controllerPath = candidate;
+            } else {
+                controllerPath = engine->ResolveScriptPath(result.controller);
+            }
+        }
+        if (std::filesystem::exists(controllerPath)) {
+            engine->LoadScript(controllerPath.string());
+        } else {
+            std::cerr << "[HUI] Controller script not found: " << result.controller << "\n";
+        }
+    }
+
+    lua_pushinteger(L, screenHandle);
+    lua_pushnil(L); // no error
+    return 2;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_getWidget(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const uint32_t screenHandle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const char* widgetId = luaL_checkstring(L, 2);
+
+    auto mapIt = engine->m_HUIWidgetMaps.find(screenHandle);
+    if (mapIt == engine->m_HUIWidgetMaps.end()) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    auto widgetIt = mapIt->second.find(widgetId);
+    if (widgetIt == mapIt->second.end()) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_pushinteger(L, widgetIt->second);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// display / destroy API — Managed HUI lifecycle
+// ─────────────────────────────────────────────────────────────────────────────
+
+void LuaScriptEngine::RegisterDisplayDestroyBindings() {
+#if LUA_AVAILABLE
+    // display table
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Display_ui);
+    lua_setfield(m_State, -2, "ui");
+    lua_setglobal(m_State, "display");
+
+    // destroy table
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Destroy_ui);
+    lua_setfield(m_State, -2, "ui");
+    lua_setglobal(m_State, "destroy");
+#endif
+}
+
+std::string LuaScriptEngine::normalizeHUIPath(const std::string& rawPath) const {
+    std::string path = rawPath;
+    for (auto& c : path) {
+        if (c == '\\') c = '/';
+    }
+    // Strip leading ./ if present
+    if (path.size() >= 2 && path[0] == '.' && path[1] == '/') {
+        path = path.substr(2);
+    }
+    return path;
+}
+
+uint32_t LuaScriptEngine::displayHUI(const std::string& filePath, std::string& outError) {
+    if (!m_UISystem) {
+        outError = "UI system not available";
+        return 0;
+    }
+
+    if (filePath.empty()) {
+        outError = "File path is empty";
+        return 0;
+    }
+
+    // Validate extension
+    {
+        std::string ext;
+        auto dotPos = filePath.rfind('.');
+        if (dotPos != std::string::npos) {
+            ext = filePath.substr(dotPos);
+            for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (ext != ".hui") {
+            outError = "Expected a .hui file, got: '" + filePath + "'";
+            return 0;
+        }
+    }
+
+    std::string normalizedPath = normalizeHUIPath(filePath);
+
+    // Resolve to an absolute path
+    std::filesystem::path resolved(filePath);
+    if (!resolved.is_absolute()) {
+        bool found = false;
+        for (const auto& searchPath : m_SearchPaths) {
+            auto candidate = searchPath / filePath;
+            if (std::filesystem::exists(candidate)) {
+                resolved = candidate;
+                found = true;
+                break;
+            }
+        }
+        if (!found && !m_ProjectRoot.empty()) {
+            auto candidate = m_ProjectRoot / filePath;
+            if (std::filesystem::exists(candidate)) {
+                resolved = candidate;
+            }
+        }
+    }
+
+    if (!std::filesystem::exists(resolved)) {
+        outError = "File not found: '" + filePath + "'";
+        return 0;
+    }
+
+    // If this path is already loaded, destroy the old instance first (replace semantics)
+    auto existingIt = m_HUIPathToHandle.find(normalizedPath);
+    if (existingIt != m_HUIPathToHandle.end()) {
+        destroyHUI(existingIt->second);
+    }
+
+    // Parse
+    Hephaestus::HephaestusUI::HUIParser parser;
+    Hephaestus::HephaestusUI::HUIDocument document;
+    if (!parser.ParseFile(resolved.string(), document)) {
+        outError = parser.GetErrorString();
+        return 0;
+    }
+
+    // Build
+    Hephaestus::HephaestusUI::HUIBuilder builder;
+    auto result = builder.Build(document);
+    if (!result.success || !result.screen) {
+        outError = "Failed to build UI from .hui document";
+        return 0;
+    }
+
+    // Add to the UI system and make visible
+    result.screen->SetVisible(true);
+    result.screen->SetActive(true);
+    m_UISystem->AddScreen(result.screen);
+    uint32_t screenHandle = RegisterUIScreenHandle(result.screen);
+
+    // Register all widget element handles
+    std::unordered_map<std::string, uint32_t> widgetHandleMap;
+    for (auto& [widgetId, element] : result.widgetMap) {
+        uint32_t elemHandle = RegisterUIElementHandle(element);
+        widgetHandleMap[widgetId] = elemHandle;
+    }
+    m_HUIWidgetMaps[screenHandle] = std::move(widgetHandleMap);
+
+    // Track the instance
+    HUIInstance instance;
+    instance.screenHandle = screenHandle;
+    instance.sourcePath = normalizedPath;
+    instance.alive = true;
+    m_ActiveHUIInstances[screenHandle] = std::move(instance);
+    m_HUIPathToHandle[normalizedPath] = screenHandle;
+
+    // Push onto the current-UI stack
+    m_HUIStack.push_back(screenHandle);
+
+    // Auto-load controller script if referenced
+    if (!result.controller.empty()) {
+        std::filesystem::path controllerPath(result.controller);
+        if (!controllerPath.is_absolute()) {
+            auto huiDir = resolved.parent_path();
+            auto candidate = huiDir / result.controller;
+            if (std::filesystem::exists(candidate)) {
+                controllerPath = candidate;
+            } else {
+                controllerPath = ResolveScriptPath(result.controller);
+            }
+        }
+        if (std::filesystem::exists(controllerPath)) {
+            LoadScript(controllerPath.string());
+        } else {
+            std::cerr << "[display.ui] Controller script not found: " << result.controller << "\n";
+        }
+    }
+
+    return screenHandle;
+}
+
+bool LuaScriptEngine::destroyHUI(uint32_t screenHandle) {
+    auto instanceIt = m_ActiveHUIInstances.find(screenHandle);
+    if (instanceIt == m_ActiveHUIInstances.end() || !instanceIt->second.alive) {
+        return false;
+    }
+
+    HUIInstance& inst = instanceIt->second;
+    inst.alive = false;
+
+    // Remove from path lookup
+    m_HUIPathToHandle.erase(inst.sourcePath);
+
+    // Remove from the stack
+    m_HUIStack.erase(
+        std::remove(m_HUIStack.begin(), m_HUIStack.end(), screenHandle),
+        m_HUIStack.end());
+
+    // Clean up Lua callbacks for widgets belonging to this screen
+    auto widgetMapIt = m_HUIWidgetMaps.find(screenHandle);
+    if (widgetMapIt != m_HUIWidgetMaps.end()) {
+#if LUA_AVAILABLE
+        for (auto& [widgetId, elemHandle] : widgetMapIt->second) {
+            auto clickIt = m_UIButtonClickCallbacks.find(elemHandle);
+            if (clickIt != m_UIButtonClickCallbacks.end()) {
+                if (m_State) luaL_unref(m_State, LUA_REGISTRYINDEX, clickIt->second);
+                m_UIButtonClickCallbacks.erase(clickIt);
+            }
+            auto hoverIt = m_UIHoverCallbacks.find(elemHandle);
+            if (hoverIt != m_UIHoverCallbacks.end()) {
+                if (m_State) luaL_unref(m_State, LUA_REGISTRYINDEX, hoverIt->second);
+                m_UIHoverCallbacks.erase(hoverIt);
+            }
+            // Remove element handle mappings
+            auto* elemPtr = ResolveUIElement(elemHandle);
+            if (elemPtr) {
+                m_UIElementReverseHandles.erase(elemPtr);
+            }
+            m_UIElementHandles.erase(elemHandle);
+        }
+#endif
+        m_HUIWidgetMaps.erase(widgetMapIt);
+    }
+
+    // Remove the screen from the UI system
+    auto screen = ResolveUIScreen(screenHandle);
+    if (screen && m_UISystem) {
+        m_UISystem->RemoveScreen(screen);
+    }
+    m_UIScreenHandles.erase(screenHandle);
+
+    m_ActiveHUIInstances.erase(instanceIt);
+
+    std::cout << "[destroy.ui] Destroyed UI handle " << screenHandle << "\n";
+    return true;
+}
+
+void LuaScriptEngine::destroyAllHUIInstances() {
+    // Copy handles because destroyHUI mutates the map
+    std::vector<uint32_t> handles;
+    handles.reserve(m_ActiveHUIInstances.size());
+    for (auto& [handle, inst] : m_ActiveHUIInstances) {
+        if (inst.alive) handles.push_back(handle);
+    }
+    for (uint32_t h : handles) {
+        destroyHUI(h);
+    }
+}
+
+int LuaScriptEngine::Lua_Display_ui(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushnil(L);
+        lua_pushstring(L, "Script engine not available");
+        return 2;
+    }
+
+    const char* path = luaL_checkstring(L, 1);
+    if (!path) {
+        lua_pushnil(L);
+        lua_pushstring(L, "Path argument is required");
+        return 2;
+    }
+
+    std::string error;
+    uint32_t handle = engine->displayHUI(path, error);
+    if (handle == 0) {
+        lua_pushnil(L);
+        lua_pushstring(L, error.c_str());
+        std::cerr << "[display.ui] Error: " << error << "\n";
+        return 2;
+    }
+
+    lua_pushinteger(L, handle);
+    lua_pushnil(L); // no error
+    return 2;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Destroy_ui(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    // Accept either an integer handle or the string "current"
+    if (lua_isstring(L, 1)) {
+        const char* target = lua_tostring(L, 1);
+        if (std::string(target) == "current") {
+            if (engine->m_HUIStack.empty()) {
+                std::cerr << "[destroy.ui] No current UI to destroy\n";
+                lua_pushboolean(L, false);
+                return 1;
+            }
+            uint32_t currentHandle = engine->m_HUIStack.back();
+            lua_pushboolean(L, engine->destroyHUI(currentHandle));
+            return 1;
+        }
+        if (std::string(target) == "all") {
+            engine->destroyAllHUIInstances();
+            lua_pushboolean(L, true);
+            return 1;
+        }
+        std::cerr << "[destroy.ui] Unknown target: '" << target
+                  << "'. Use a handle from display.ui(), \"current\", or \"all\".\n";
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    if (lua_isinteger(L, 1) || lua_isnumber(L, 1)) {
+        uint32_t handle = static_cast<uint32_t>(lua_tointeger(L, 1));
+        if (handle == 0) {
+            std::cerr << "[destroy.ui] Invalid handle: 0\n";
+            lua_pushboolean(L, false);
+            return 1;
+        }
+        lua_pushboolean(L, engine->destroyHUI(handle));
+        return 1;
+    }
+
+    if (lua_isnil(L, 1)) {
+        std::cerr << "[destroy.ui] Cannot destroy nil. Pass a handle from display.ui() or \"current\".\n";
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    luaL_error(L, "destroy.ui expects a handle (number), \"current\", or \"all\"");
+    return 0;
+#else
+    (void)L;
+    return 0;
 #endif
 }
