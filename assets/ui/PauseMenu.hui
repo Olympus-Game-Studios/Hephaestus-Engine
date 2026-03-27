@@ -1,0 +1,155 @@
+{
+    "version": 1,
+    "controller": "",
+    "root": {
+        "type": "Panel",
+        "id": "root",
+        "properties": {
+            "anchor": "Stretch"
+        },
+        "style": {
+            "backgroundColor": [0.0, 0.0, 0.0, 0.6]
+        },
+        "children": [
+            {
+                "type": "VerticalBox",
+                "id": "content_layout",
+                "properties": {
+                    "size": [400, 380],
+                    "anchor": "Center",
+                    "spacing": 18,
+                    "padding": [30, 30, 30, 30],
+                    "childHAlignment": "Center"
+                },
+                "style": {
+                    "backgroundColor": [0.12, 0.12, 0.16, 1.0],
+                    "cornerRadius": 16,
+                    "borderColor": [0.3, 0.3, 0.4, 1.0],
+                    "borderWidth": 1
+                },
+                "children": [
+                    {
+                        "type": "Text",
+                        "id": "lbl_title",
+                        "properties": {
+                            "text": "Paused",
+                            "textAlignment": "Center"
+                        },
+                        "style": {
+                            "fontSize": 36,
+                            "fontBold": true,
+                            "textColor": [1.0, 1.0, 1.0, 1.0]
+                        }
+                    },
+                    {
+                        "type": "Text",
+                        "id": "lbl_playtime",
+                        "properties": {
+                            "text": "Play time: 0:00",
+                            "textAlignment": "Center"
+                        },
+                        "style": {
+                            "fontSize": 14,
+                            "textColor": [0.6, 0.6, 0.65, 1.0]
+                        }
+                    },
+                    {
+                        "type": "Panel",
+                        "id": "divider",
+                        "properties": {
+                            "size": [320, 1]
+                        },
+                        "style": {
+                            "backgroundColor": [0.3, 0.3, 0.35, 1.0]
+                        }
+                    },
+                    {
+                        "type": "Button",
+                        "id": "btn_resume",
+                        "properties": {
+                            "text": "Resume",
+                            "size": [260, 48]
+                        },
+                        "normalStyle": {
+                            "backgroundColor": [0.2, 0.6, 0.35, 1.0],
+                            "cornerRadius": 8,
+                            "textColor": [1, 1, 1, 1],
+                            "fontSize": 18,
+                            "fontBold": true
+                        },
+                        "hoveredStyle": {
+                            "backgroundColor": [0.25, 0.7, 0.4, 1.0],
+                            "cornerRadius": 8,
+                            "textColor": [1, 1, 1, 1],
+                            "fontSize": 18,
+                            "fontBold": true,
+                            "borderColor": [1, 1, 1, 0.2],
+                            "borderWidth": 1
+                        },
+                        "pressedStyle": {
+                            "backgroundColor": [0.15, 0.5, 0.28, 1.0],
+                            "cornerRadius": 8,
+                            "textColor": [0.9, 0.9, 0.9, 1.0],
+                            "fontSize": 18,
+                            "fontBold": true
+                        }
+                    },
+                    {
+                        "type": "Button",
+                        "id": "btn_main_menu",
+                        "properties": {
+                            "text": "Main Menu",
+                            "size": [260, 48]
+                        },
+                        "normalStyle": {
+                            "backgroundColor": [0.25, 0.25, 0.3, 1.0],
+                            "cornerRadius": 8,
+                            "textColor": [0.9, 0.9, 0.9, 1.0],
+                            "fontSize": 18
+                        },
+                        "hoveredStyle": {
+                            "backgroundColor": [0.35, 0.35, 0.4, 1.0],
+                            "cornerRadius": 8,
+                            "textColor": [1, 1, 1, 1],
+                            "fontSize": 18
+                        },
+                        "pressedStyle": {
+                            "backgroundColor": [0.2, 0.2, 0.25, 1.0],
+                            "cornerRadius": 8,
+                            "textColor": [0.85, 0.85, 0.85, 1.0],
+                            "fontSize": 18
+                        }
+                    },
+                    {
+                        "type": "Button",
+                        "id": "btn_quit",
+                        "properties": {
+                            "text": "Quit to Desktop",
+                            "size": [260, 48]
+                        },
+                        "normalStyle": {
+                            "backgroundColor": [0.55, 0.12, 0.12, 1.0],
+                            "cornerRadius": 8,
+                            "textColor": [1, 1, 1, 1],
+                            "fontSize": 18
+                        },
+                        "hoveredStyle": {
+                            "backgroundColor": [0.7, 0.18, 0.18, 1.0],
+                            "cornerRadius": 8,
+                            "textColor": [1, 1, 1, 1],
+                            "fontSize": 18,
+                            "borderColor": [1, 0.4, 0.4, 0.3],
+                            "borderWidth": 1
+                        },
+                        "pressedStyle": {
+                            "backgroundColor": [0.42, 0.08, 0.08, 1.0],
+                            "cornerRadius": 8,
+                            "textColor": [0.9, 0.9, 0.9, 1.0],
+                            "fontSize": 18
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+}

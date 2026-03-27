@@ -7,7 +7,15 @@ local MAIN_MENU_UI = "assets/ui/MainMenu.hui"
 
 local menuHandle = nil
 
+function onAwake()
+    showMainMenu()
+end
+
 function showMainMenu()
+    if menuHandle then
+        return
+    end
+
     local handle, err = display.ui(MAIN_MENU_UI)
     if not handle then
         print("[MainMenu] Failed to load UI: " .. tostring(err))

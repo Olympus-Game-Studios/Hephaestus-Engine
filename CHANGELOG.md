@@ -15,6 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - 2026-03-27: Added `Documentation/Scripting/LUA_DISPLAY_DESTROY_API.md` with complete API reference covering display/destroy signatures, lifecycle rules, current-UI stack, error messages, recommended script patterns, and future expansion notes.
 - 2026-03-27: Updated `Documentation/Features/HUI_FORMAT_REFERENCE.md` Lua integration and examples sections to use `display.ui` / `destroy.ui` as the recommended API, documenting `UI.loadHUI` as the lower-level alternative.
 - 2026-03-27: Updated `Documentation/Scripting/SCRIPTING_DOCUMENTATION_INDEX.md` to reference the new display/destroy API documentation.
+- 2026-03-27: Added `assets/ui/PauseMenu.hui` and `assets/ui/PauseMenu.lua` example demonstrating Escape-toggle pause overlay with play-time tracking, resume/main-menu/quit buttons, runtime widget mutation, and layered `display.ui`/`destroy.ui` lifecycle.
+
+### Fixed
+
+- 2026-03-27: Updated `assets/ui/MainMenu.lua` so attaching the script directly in play mode now opens the menu from `onAwake()` instead of only defining helper functions. Added a guard to avoid duplicate `display.ui()` calls when `showMainMenu()` is triggered more than once.
+- 2026-03-27: Restructured `PauseMenu.hui` to use a direct `root Panel → VerticalBox` hierarchy instead of nesting through an intermediate `dialog_box` Panel. The VerticalBox now owns the dialog styling (background, corner radius, border) and Center anchor directly, matching the proven `MainMenu.hui` layout pattern and fixing an issue where nested Panel containers could prevent child widgets from rendering.
 - 2026-03-27: Introduced `.hui` (Hephaestus UI) as a first-class asset format for declarative UI layout definition. `.hui` files use a JSON-based structure to describe widget hierarchy, types, properties, layout, styling, and optional Lua controller references — separating UI presentation from behavioral logic.
 - 2026-03-27: Added `HUIParser` and `HUIBuilder` in `engine/UI/HephaestusUI/HUIAsset.h/.cpp` for parsing `.hui` files from disk or string, validating widget types/IDs/properties, and constructing runtime `UIScreen` widget trees with an id-to-element lookup map.
 - 2026-03-27: Registered `UILayout` as a new `AssetType` in `AssetTypes.h` with `.hui` extension mapping, `ToString`/`AssetTypeFromString`/`AssetTypeFromExtension` support, and editor display integration (filter combo, type badge, icon).
