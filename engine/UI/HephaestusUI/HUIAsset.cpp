@@ -15,6 +15,7 @@
 #include <sstream>
 #include <iostream>
 #include <algorithm>
+#include <set>
 
 namespace Hephaestus::HephaestusUI {
 
@@ -84,6 +85,13 @@ std::string HUIParser::GetErrorString() const
 
 bool HUIParser::parseDocument(const JsonValue& root, HUIDocument& doc)
 {
+    doc.extraFields.clear();
+    for (const auto& [key, value] : root.AsObject()) {
+        if (key != "version" && key != "controller" && key != "root") {
+            doc.extraFields[key] = value;
+        }
+    }
+
     auto* versionVal = root.Find("version");
     if (versionVal && versionVal->IsNumber()) {
         doc.version = static_cast<int>(versionVal->AsNumber());
@@ -105,6 +113,23 @@ bool HUIParser::parseDocument(const JsonValue& root, HUIDocument& doc)
 
 bool HUIParser::parseWidget(const JsonValue& node, HUIWidgetNode& widget)
 {
+    widget.extraFields.clear();
+    widget.extraProperties.clear();
+    widget.extraStyleFields.clear();
+    widget.extraNormalStyleFields.clear();
+    widget.extraHoveredStyleFields.clear();
+    widget.extraPressedStyleFields.clear();
+    widget.extraDisabledStyleFields.clear();
+    widget.children.clear();
+
+    for (const auto& [key, value] : node.AsObject()) {
+        if (key != "type" && key != "id" && key != "class" && key != "properties" &&
+            key != "style" && key != "normalStyle" && key != "hoveredStyle" &&
+            key != "pressedStyle" && key != "disabledStyle" && key != "children") {
+            widget.extraFields[key] = value;
+        }
+    }
+
     auto* typeVal = node.Find("type");
     if (!typeVal || !typeVal->IsString()) {
         addError("Widget missing 'type' field");
@@ -138,6 +163,17 @@ bool HUIParser::parseWidget(const JsonValue& node, HUIWidgetNode& widget)
     if (styleVal && styleVal->IsObject()) {
         widget.hasStyle = true;
         parseStyleBlock(*styleVal, widget.style);
+        static const std::set<std::string> knownStyleKeys = {
+            "backgroundColor", "backgroundImageId", "imageScaleMode", "imageTint",
+            "borderColor", "borderWidth", "cornerRadius", "textColor", "fontFamily",
+            "fontSize", "fontBold", "fontItalic", "textAlignment", "padding", "opacity",
+            "scale", "textShadow", "textShadowColor", "textShadowOffset"
+        };
+        for (const auto& [key, value] : styleVal->AsObject()) {
+            if (knownStyleKeys.find(key) == knownStyleKeys.end()) {
+                widget.extraStyleFields[key] = value;
+            }
+        }
     }
 
     // Button state styles
@@ -145,21 +181,65 @@ bool HUIParser::parseWidget(const JsonValue& node, HUIWidgetNode& widget)
     if (normalStyleVal && normalStyleVal->IsObject()) {
         widget.hasNormalStyle = true;
         parseStyleBlock(*normalStyleVal, widget.normalStyle);
+        static const std::set<std::string> knownStyleKeys = {
+            "backgroundColor", "backgroundImageId", "imageScaleMode", "imageTint",
+            "borderColor", "borderWidth", "cornerRadius", "textColor", "fontFamily",
+            "fontSize", "fontBold", "fontItalic", "textAlignment", "padding", "opacity",
+            "scale", "textShadow", "textShadowColor", "textShadowOffset"
+        };
+        for (const auto& [key, value] : normalStyleVal->AsObject()) {
+            if (knownStyleKeys.find(key) == knownStyleKeys.end()) {
+                widget.extraNormalStyleFields[key] = value;
+            }
+        }
     }
     auto* hoveredStyleVal = node.Find("hoveredStyle");
     if (hoveredStyleVal && hoveredStyleVal->IsObject()) {
         widget.hasHoveredStyle = true;
         parseStyleBlock(*hoveredStyleVal, widget.hoveredStyle);
+        static const std::set<std::string> knownStyleKeys = {
+            "backgroundColor", "backgroundImageId", "imageScaleMode", "imageTint",
+            "borderColor", "borderWidth", "cornerRadius", "textColor", "fontFamily",
+            "fontSize", "fontBold", "fontItalic", "textAlignment", "padding", "opacity",
+            "scale", "textShadow", "textShadowColor", "textShadowOffset"
+        };
+        for (const auto& [key, value] : hoveredStyleVal->AsObject()) {
+            if (knownStyleKeys.find(key) == knownStyleKeys.end()) {
+                widget.extraHoveredStyleFields[key] = value;
+            }
+        }
     }
     auto* pressedStyleVal = node.Find("pressedStyle");
     if (pressedStyleVal && pressedStyleVal->IsObject()) {
         widget.hasPressedStyle = true;
         parseStyleBlock(*pressedStyleVal, widget.pressedStyle);
+        static const std::set<std::string> knownStyleKeys = {
+            "backgroundColor", "backgroundImageId", "imageScaleMode", "imageTint",
+            "borderColor", "borderWidth", "cornerRadius", "textColor", "fontFamily",
+            "fontSize", "fontBold", "fontItalic", "textAlignment", "padding", "opacity",
+            "scale", "textShadow", "textShadowColor", "textShadowOffset"
+        };
+        for (const auto& [key, value] : pressedStyleVal->AsObject()) {
+            if (knownStyleKeys.find(key) == knownStyleKeys.end()) {
+                widget.extraPressedStyleFields[key] = value;
+            }
+        }
     }
     auto* disabledStyleVal = node.Find("disabledStyle");
     if (disabledStyleVal && disabledStyleVal->IsObject()) {
         widget.hasDisabledStyle = true;
         parseStyleBlock(*disabledStyleVal, widget.disabledStyle);
+        static const std::set<std::string> knownStyleKeys = {
+            "backgroundColor", "backgroundImageId", "imageScaleMode", "imageTint",
+            "borderColor", "borderWidth", "cornerRadius", "textColor", "fontFamily",
+            "fontSize", "fontBold", "fontItalic", "textAlignment", "padding", "opacity",
+            "scale", "textShadow", "textShadowColor", "textShadowOffset"
+        };
+        for (const auto& [key, value] : disabledStyleVal->AsObject()) {
+            if (knownStyleKeys.find(key) == knownStyleKeys.end()) {
+                widget.extraDisabledStyleFields[key] = value;
+            }
+        }
     }
 
     auto* childrenVal = node.Find("children");
@@ -181,6 +261,20 @@ bool HUIParser::parseWidget(const JsonValue& node, HUIWidgetNode& widget)
 
 bool HUIParser::parseProperties(const JsonValue& props, HUIWidgetNode& widget)
 {
+    static const std::set<std::string> knownPropertyKeys = {
+        "position", "size", "minSize", "maxSize", "anchor", "hAlignment", "vAlignment",
+        "padding", "margin", "visible", "enabled", "opacity", "zOrder", "interactable",
+        "clippingEnabled", "text", "textAlignment", "wordWrap", "imageId", "imageScaleMode",
+        "imageTint", "spacing", "columns", "hSpacing", "vSpacing", "childHAlignment",
+        "childVAlignment"
+    };
+    widget.extraProperties.clear();
+    for (const auto& [key, value] : props.AsObject()) {
+        if (knownPropertyKeys.find(key) == knownPropertyKeys.end()) {
+            widget.extraProperties[key] = value;
+        }
+    }
+
     auto* posVal = props.Find("position");
     if (posVal) parseVec2(*posVal, widget.position);
 
@@ -284,6 +378,8 @@ bool HUIParser::parseProperties(const JsonValue& props, HUIWidgetNode& widget)
 
 bool HUIParser::parseStyleBlock(const JsonValue& styleVal, UIStyle& style)
 {
+    style = UIStyle{};
+
     auto* bgColorVal = styleVal.Find("backgroundColor");
     if (bgColorVal) parseColor(*bgColorVal, style.backgroundColor);
 
@@ -871,6 +967,79 @@ std::string imageScaleModeToString(UIImageScaleMode m)
     return "Stretch";
 }
 
+std::string jsonNumberToString(double value)
+{
+    std::ostringstream out;
+    out << value;
+    return out.str();
+}
+
+void serializeJsonValue(std::ostringstream& out, const JsonValue& value, int depth)
+{
+    switch (value.type) {
+        case JsonValue::Type::Null:
+            out << "null";
+            return;
+        case JsonValue::Type::Bool:
+            out << (value.boolValue ? "true" : "false");
+            return;
+        case JsonValue::Type::Number:
+            out << jsonNumberToString(value.numberValue);
+            return;
+        case JsonValue::Type::String:
+            out << "\"" << escapeJson(value.stringValue) << "\"";
+            return;
+        case JsonValue::Type::Array: {
+            out << "[";
+            for (size_t i = 0; i < value.arrayValue.size(); ++i) {
+                if (i > 0) out << ", ";
+                serializeJsonValue(out, value.arrayValue[i], depth);
+            }
+            out << "]";
+            return;
+        }
+        case JsonValue::Type::Object: {
+            out << "{\n";
+            std::vector<std::string> keys;
+            keys.reserve(value.objectValue.size());
+            for (const auto& [key, ignored] : value.objectValue) {
+                (void)ignored;
+                keys.push_back(key);
+            }
+            std::sort(keys.begin(), keys.end());
+            for (size_t i = 0; i < keys.size(); ++i) {
+                const std::string& key = keys[i];
+                out << indent(depth + 1) << "\"" << escapeJson(key) << "\": ";
+                serializeJsonValue(out, value.objectValue.at(key), depth + 1);
+                if (i + 1 < keys.size()) out << ",";
+                out << "\n";
+            }
+            out << indent(depth) << "}";
+            return;
+        }
+    }
+}
+
+void appendUnknownEntries(std::vector<std::string>& entries,
+                          const std::unordered_map<std::string, JsonValue>& extraFields,
+                          int depth)
+{
+    std::vector<std::string> keys;
+    keys.reserve(extraFields.size());
+    for (const auto& [key, ignored] : extraFields) {
+        (void)ignored;
+        keys.push_back(key);
+    }
+    std::sort(keys.begin(), keys.end());
+
+    for (const std::string& key : keys) {
+        std::ostringstream entry;
+        entry << indent(depth) << "\"" << escapeJson(key) << "\": ";
+        serializeJsonValue(entry, extraFields.at(key), depth);
+        entries.push_back(entry.str());
+    }
+}
+
 std::string widgetTypeToString(HUIWidgetType t)
 {
     switch (t) {
@@ -886,7 +1055,10 @@ std::string widgetTypeToString(HUIWidgetType t)
     return "Panel";
 }
 
-void serializeStyle(std::ostringstream& out, const UIStyle& style, int depth)
+void serializeStyle(std::ostringstream& out,
+                    const UIStyle& style,
+                    int depth,
+                    const std::unordered_map<std::string, JsonValue>& extraFields = {})
 {
     std::string ind = indent(depth);
     std::string ind1 = indent(depth + 1);
@@ -905,6 +1077,10 @@ void serializeStyle(std::ostringstream& out, const UIStyle& style, int depth)
     if (!style.backgroundImageId.empty()) {
         entries.push_back(ind1 + "\"backgroundImageId\": \"" + escapeJson(style.backgroundImageId) + "\"");
     }
+    if (style.imageScaleMode != UIImageScaleMode::Stretch)
+        entries.push_back(ind1 + "\"imageScaleMode\": \"" + imageScaleModeToString(style.imageScaleMode) + "\"");
+    if (style.imageTint.r != 1.0f || style.imageTint.g != 1.0f || style.imageTint.b != 1.0f || style.imageTint.a != 1.0f)
+        addColor("imageTint", style.imageTint);
     if (style.borderWidth > 0.0f) {
         addColor("borderColor", style.borderColor);
         std::ostringstream e;
@@ -928,11 +1104,27 @@ void serializeStyle(std::ostringstream& out, const UIStyle& style, int depth)
         entries.push_back(ind1 + "\"fontBold\": true");
     if (style.fontItalic)
         entries.push_back(ind1 + "\"fontItalic\": true");
+    if (style.textAlignment != UITextAlignment::Left)
+        entries.push_back(ind1 + "\"textAlignment\": \"" + textAlignToString(style.textAlignment) + "\"");
+    if (style.padding.left != 0.0f || style.padding.top != 0.0f || style.padding.right != 0.0f || style.padding.bottom != 0.0f)
+        entries.push_back(ind1 + "\"padding\": " + spacingToJson(style.padding));
+    if (style.opacity != 1.0f) {
+        std::ostringstream e;
+        e << ind1 << "\"opacity\": " << style.opacity;
+        entries.push_back(e.str());
+    }
+    if (style.scale != 1.0f) {
+        std::ostringstream e;
+        e << ind1 << "\"scale\": " << style.scale;
+        entries.push_back(e.str());
+    }
     if (style.textShadow) {
         entries.push_back(ind1 + "\"textShadow\": true");
         addColor("textShadowColor", style.textShadowColor);
         entries.push_back(ind1 + "\"textShadowOffset\": " + vec2ToJson(style.textShadowOffset));
     }
+
+    appendUnknownEntries(entries, extraFields, depth + 1);
 
     for (size_t i = 0; i < entries.size(); ++i) {
         out << entries[i];
@@ -948,17 +1140,14 @@ void serializeWidget(std::ostringstream& out, const HUIWidgetNode& node, int dep
     std::string ind = indent(depth);
     std::string ind1 = indent(depth + 1);
     std::string ind2 = indent(depth + 2);
-
-    out << ind << "{\n";
-    out << ind1 << "\"type\": \"" << widgetTypeToString(node.type) << "\",\n";
-
+    std::vector<std::string> entries;
+    entries.push_back(ind1 + "\"type\": \"" + widgetTypeToString(node.type) + "\"");
     if (!node.id.empty())
-        out << ind1 << "\"id\": \"" << escapeJson(node.id) << "\",\n";
+        entries.push_back(ind1 + "\"id\": \"" + escapeJson(node.id) + "\"");
     if (!node.styleClass.empty())
-        out << ind1 << "\"class\": \"" << escapeJson(node.styleClass) << "\",\n";
+        entries.push_back(ind1 + "\"class\": \"" + escapeJson(node.styleClass) + "\"");
 
     // Properties
-    out << ind1 << "\"properties\": {\n";
     std::vector<std::string> propEntries;
 
     auto addVec2 = [&](const char* name, const UIVec2& v) {
@@ -993,6 +1182,15 @@ void serializeWidget(std::ostringstream& out, const HUIWidgetNode& node, int dep
         e << ind2 << "\"opacity\": " << node.opacity;
         propEntries.push_back(e.str());
     }
+    if (node.zOrder != 0) {
+        std::ostringstream e;
+        e << ind2 << "\"zOrder\": " << node.zOrder;
+        propEntries.push_back(e.str());
+    }
+    if (!node.interactable)
+        propEntries.push_back(ind2 + "\"interactable\": false");
+    if (node.clippingEnabled)
+        propEntries.push_back(ind2 + "\"clippingEnabled\": true");
 
     // Type-specific properties
     if (node.type == HUIWidgetType::Text || node.type == HUIWidgetType::Button) {
@@ -1006,6 +1204,10 @@ void serializeWidget(std::ostringstream& out, const HUIWidgetNode& node, int dep
     if (node.type == HUIWidgetType::Image) {
         if (!node.imageId.empty())
             propEntries.push_back(ind2 + "\"imageId\": \"" + escapeJson(node.imageId) + "\"");
+        if (node.imageScaleMode != UIImageScaleMode::Stretch)
+            propEntries.push_back(ind2 + "\"imageScaleMode\": \"" + imageScaleModeToString(node.imageScaleMode) + "\"");
+        if (node.imageTint.r != 1.0f || node.imageTint.g != 1.0f || node.imageTint.b != 1.0f || node.imageTint.a != 1.0f)
+            propEntries.push_back(ind2 + "\"imageTint\": " + colorToJson(node.imageTint));
     }
     if (node.type == HUIWidgetType::VerticalBox || node.type == HUIWidgetType::HorizontalBox) {
         std::ostringstream e;
@@ -1026,49 +1228,78 @@ void serializeWidget(std::ostringstream& out, const HUIWidgetNode& node, int dep
         std::ostringstream e3;
         e3 << ind2 << "\"vSpacing\": " << node.gridVSpacing;
         propEntries.push_back(e3.str());
+        if (node.childHAlignment != UIHAlignment::Stretch)
+            propEntries.push_back(ind2 + "\"childHAlignment\": \"" + hAlignToString(node.childHAlignment) + "\"");
+        if (node.childVAlignment != UIVAlignment::Stretch)
+            propEntries.push_back(ind2 + "\"childVAlignment\": \"" + vAlignToString(node.childVAlignment) + "\"");
     }
 
+    appendUnknownEntries(propEntries, node.extraProperties, depth + 2);
+
+    std::ostringstream propertiesOut;
+    propertiesOut << ind1 << "\"properties\": {\n";
     for (size_t i = 0; i < propEntries.size(); ++i) {
-        out << propEntries[i];
-        if (i + 1 < propEntries.size()) out << ",";
-        out << "\n";
+        propertiesOut << propEntries[i];
+        if (i + 1 < propEntries.size()) propertiesOut << ",";
+        propertiesOut << "\n";
     }
-    out << ind1 << "}";
+    propertiesOut << ind1 << "}";
+    entries.push_back(propertiesOut.str());
 
     // Style blocks
     if (node.hasStyle) {
-        out << ",\n" << ind1 << "\"style\": ";
-        serializeStyle(out, node.style, depth + 1);
+        std::ostringstream styleOut;
+        styleOut << ind1 << "\"style\": ";
+        serializeStyle(styleOut, node.style, depth + 1, node.extraStyleFields);
+        entries.push_back(styleOut.str());
     }
     if (node.hasNormalStyle) {
-        out << ",\n" << ind1 << "\"normalStyle\": ";
-        serializeStyle(out, node.normalStyle, depth + 1);
+        std::ostringstream styleOut;
+        styleOut << ind1 << "\"normalStyle\": ";
+        serializeStyle(styleOut, node.normalStyle, depth + 1, node.extraNormalStyleFields);
+        entries.push_back(styleOut.str());
     }
     if (node.hasHoveredStyle) {
-        out << ",\n" << ind1 << "\"hoveredStyle\": ";
-        serializeStyle(out, node.hoveredStyle, depth + 1);
+        std::ostringstream styleOut;
+        styleOut << ind1 << "\"hoveredStyle\": ";
+        serializeStyle(styleOut, node.hoveredStyle, depth + 1, node.extraHoveredStyleFields);
+        entries.push_back(styleOut.str());
     }
     if (node.hasPressedStyle) {
-        out << ",\n" << ind1 << "\"pressedStyle\": ";
-        serializeStyle(out, node.pressedStyle, depth + 1);
+        std::ostringstream styleOut;
+        styleOut << ind1 << "\"pressedStyle\": ";
+        serializeStyle(styleOut, node.pressedStyle, depth + 1, node.extraPressedStyleFields);
+        entries.push_back(styleOut.str());
     }
     if (node.hasDisabledStyle) {
-        out << ",\n" << ind1 << "\"disabledStyle\": ";
-        serializeStyle(out, node.disabledStyle, depth + 1);
+        std::ostringstream styleOut;
+        styleOut << ind1 << "\"disabledStyle\": ";
+        serializeStyle(styleOut, node.disabledStyle, depth + 1, node.extraDisabledStyleFields);
+        entries.push_back(styleOut.str());
     }
 
     // Children
     if (!node.children.empty()) {
-        out << ",\n" << ind1 << "\"children\": [\n";
+        std::ostringstream childrenOut;
+        childrenOut << ind1 << "\"children\": [\n";
         for (size_t i = 0; i < node.children.size(); ++i) {
-            serializeWidget(out, node.children[i], depth + 2);
-            if (i + 1 < node.children.size()) out << ",";
-            out << "\n";
+            serializeWidget(childrenOut, node.children[i], depth + 2);
+            if (i + 1 < node.children.size()) childrenOut << ",";
+            childrenOut << "\n";
         }
-        out << ind1 << "]";
+        childrenOut << ind1 << "]";
+        entries.push_back(childrenOut.str());
     }
 
-    out << "\n" << ind << "}";
+    appendUnknownEntries(entries, node.extraFields, depth + 1);
+
+    out << ind << "{\n";
+    for (size_t i = 0; i < entries.size(); ++i) {
+        out << entries[i];
+        if (i + 1 < entries.size()) out << ",";
+        out << "\n";
+    }
+    out << ind << "}";
 }
 
 } // anonymous namespace
@@ -1076,12 +1307,28 @@ void serializeWidget(std::ostringstream& out, const HUIWidgetNode& node, int dep
 std::string serializeHUIDocument(const HUIDocument& document)
 {
     std::ostringstream out;
+    std::vector<std::string> entries;
+    {
+        std::ostringstream entry;
+        entry << "    \"version\": " << document.version;
+        entries.push_back(entry.str());
+    }
+    entries.push_back("    \"controller\": \"" + escapeJson(document.controller) + "\"");
+    {
+        std::ostringstream rootEntry;
+        rootEntry << "    \"root\": ";
+        serializeWidget(rootEntry, document.root, 1);
+        entries.push_back(rootEntry.str());
+    }
+    appendUnknownEntries(entries, document.extraFields, 1);
+
     out << "{\n";
-    out << "    \"version\": " << document.version << ",\n";
-    out << "    \"controller\": \"" << escapeJson(document.controller) << "\",\n";
-    out << "    \"root\": ";
-    serializeWidget(out, document.root, 1);
-    out << "\n}\n";
+    for (size_t i = 0; i < entries.size(); ++i) {
+        out << entries[i];
+        if (i + 1 < entries.size()) out << ",";
+        out << "\n";
+    }
+    out << "}\n";
     return out.str();
 }
 

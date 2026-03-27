@@ -1,14 +1,13 @@
 #pragma once
 
 #include "UIStyle.h"
+#include "../../Scene/Json.h"
 
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-
-struct JsonValue;
 
 namespace Hephaestus::HephaestusUI {
 
@@ -83,12 +82,24 @@ struct HUIWidgetNode {
     bool hasDisabledStyle = false;
 
     std::vector<HUIWidgetNode> children;
+
+    // Preserved unsupported data for lossless round-tripping.
+    std::unordered_map<std::string, JsonValue> extraFields;
+    std::unordered_map<std::string, JsonValue> extraProperties;
+    std::unordered_map<std::string, JsonValue> extraStyleFields;
+    std::unordered_map<std::string, JsonValue> extraNormalStyleFields;
+    std::unordered_map<std::string, JsonValue> extraHoveredStyleFields;
+    std::unordered_map<std::string, JsonValue> extraPressedStyleFields;
+    std::unordered_map<std::string, JsonValue> extraDisabledStyleFields;
 };
 
 struct HUIDocument {
     int version = 1;
     std::string controller;
     HUIWidgetNode root;
+
+    // Preserved unsupported top-level fields for lossless round-tripping.
+    std::unordered_map<std::string, JsonValue> extraFields;
 
     [[nodiscard]] bool isValid() const { return !root.id.empty(); }
 };

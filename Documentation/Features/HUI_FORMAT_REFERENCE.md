@@ -6,6 +6,8 @@
 
 `.hui` (**H**ephaestus **UI**) is the engine-native file format for defining UI layouts in the Hephaestus Engine. It is a declarative, JSON-based asset format designed to describe the structure, hierarchy, styling, and properties of runtime UI widget trees.
 
+For editor workflow details, see `Documentation/Features/VISUAL_UI_EDITOR.md`.
+
 ### Why does it exist?
 
 Previously, all runtime UI in Hephaestus was built procedurally via Lua scripts using the `UI.*` API. While flexible, this approach mixed layout concerns with behavioral logic, making UIs harder to iterate on, share between designers and programmers, and tool-author for.
@@ -17,7 +19,7 @@ Previously, all runtime UI in Hephaestus was built procedurally via Lua scripts 
 | Widget hierarchy, types, layout, sizing, styling, text, images | `.hui` file |
 | Click handlers, state changes, animations, game logic | `.lua` controller script |
 
-This separation makes the UI workflow more declarative, easier to visually inspect, and ready for a future visual editor.
+This separation makes the UI workflow more declarative, easier to visually inspect, and compatible with the engine's Visual UI Editor.
 
 ### How it replaces Lua-based UI layout
 

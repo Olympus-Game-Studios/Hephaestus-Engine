@@ -89,6 +89,7 @@ signals:
      * @param relativePath Path relative to asset root
      */
     void assetOpenRequested(const QString& relativePath);
+    void assetOpenInIDERequested(const QString& relativePath);
 
     /**
      * @brief Emitted when the user wants to spawn a mesh into the scene.

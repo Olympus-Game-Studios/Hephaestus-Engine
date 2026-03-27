@@ -7,15 +7,18 @@
 
 #include "EditorAssetActions.h"
 #include "EditorMainWindow.h"
+#include "HUIVisualEditorDialog.h"
 #include "MaterialGraphQtEditorDialog.h"
 #include "../../Assets/AssetManager.h"
 
 #include <QDesktopServices>
+#include <QFileInfo>
+#include <QProcess>
+#include <QSettings>
 #include <QUrl>
 #include <QMessageBox>
 #include <QFile>
 #include <QTextStream>
-#include <QFileInfo>
 #include <QTextEdit>
 #include <QDialog>
 #include <QVBoxLayout>
@@ -43,6 +46,19 @@ bool EditorAssetActions::Open(const QString& relativePath)
 
     QString absolutePath = QString::fromStdString(assetInfo->absolutePath);
     return OpenByType(absolutePath, assetInfo->type);
+}
+
+bool EditorAssetActions::OpenInIDE(const QString& relativePath)
+{
+    auto& assetMgr = AssetManager::GetInstance();
+
+    auto assetInfo = assetMgr.GetAssetInfo(relativePath.toStdString());
+    if (!assetInfo) {
+        std::cerr << "[EditorAssetActions] Asset not found: " << relativePath.toStdString() << "\n";
+        return false;
+    }
+
+    return openInIDEAbsolute(QString::fromStdString(assetInfo->absolutePath));
 }
 
 bool EditorAssetActions::OpenByType(const QString& absolutePath, AssetType type)
@@ -82,7 +98,7 @@ bool EditorAssetActions::OpenByType(const QString& absolutePath, AssetType type)
             return true;
 
         case AssetType::UILayout:
-            return openScript(absolutePath);
+            return openHUI(absolutePath);
 
         case AssetType::Shader:
             return openScript(absolutePath);
@@ -123,10 +139,15 @@ bool EditorAssetActions::openMaterial(const QString& absolutePath)
     return OpenMaterialGraphEditorDialog(m_mainWindow, absolutePath);
 }
 
+bool EditorAssetActions::openHUI(const QString& absolutePath)
+{
+    return OpenHUIVisualEditorDialog(m_mainWindow, absolutePath);
+}
+
 bool EditorAssetActions::openScript(const QString& absolutePath)
 {
     // Open in external editor (IDE, VS Code, etc.)
-    return openExternal(absolutePath);
+    return openInIDEAbsolute(absolutePath);
 }
 
 bool EditorAssetActions::openText(const QString& absolutePath)
@@ -186,6 +207,23 @@ bool EditorAssetActions::openExternal(const QString& absolutePath)
     }
     
     return success;
+}
+
+bool EditorAssetActions::openInIDEAbsolute(const QString& absolutePath)
+{
+    QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Launcher"));
+    const QString editorPath = settings.value(QStringLiteral("settings/editorPath")).toString().trimmed();
+    if (!editorPath.isEmpty() && QFileInfo::exists(editorPath)) {
+        const bool started = QProcess::startDetached(editorPath, {absolutePath});
+        if (!started) {
+            QMessageBox::warning(m_mainWindow,
+                QObject::tr("Cannot Open File"),
+                QObject::tr("Failed to launch configured editor:\n%1").arg(editorPath));
+        }
+        return started;
+    }
+
+    return openExternal(absolutePath);
 }
 
 void EditorAssetActions::showNotImplemented(const QString& typeName, const QString& path)

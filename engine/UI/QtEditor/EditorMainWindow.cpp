@@ -1199,6 +1199,10 @@ void EditorMainWindow::setupDockWidgets()
             this, [this](const QString& relativePath) {
                 m_assetActions->Open(relativePath);
             });
+    connect(m_assetBrowser, &AssetBrowserWidget::assetOpenInIDERequested,
+            this, [this](const QString& relativePath) {
+                m_assetActions->OpenInIDE(relativePath);
+            });
 
     // Connect mesh spawn (double-click on mesh asset)
     connect(m_assetBrowser, &AssetBrowserWidget::meshSpawnRequested,

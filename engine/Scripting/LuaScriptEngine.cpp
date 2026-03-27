@@ -976,19 +976,21 @@ void LuaScriptEngine::RebuildSearchPaths() {
         AddSearchPath(path);
     };
 
-    const std::filesystem::path current = std::filesystem::current_path();
-    add(current);
-    // Deployed game paths (scripts next to executable)
-    add(current / "scripts");
-    add(current / "assets" / "scripts");
-    add(current / "assets");
-
+    // Opened project first: CWD is often the build output dir, which may contain a
+    // stale copy of assets/; the user's edited .hui lives under the project root.
     if (!m_ProjectRoot.empty()) {
         add(m_ProjectRoot);
         add(m_ProjectRoot / "assets");
         add(m_ProjectRoot / "assets" / "scripts");
         add(m_ProjectRoot / "scripts");
     }
+
+    const std::filesystem::path current = std::filesystem::current_path();
+    add(current);
+    // Deployed game paths (scripts next to executable)
+    add(current / "scripts");
+    add(current / "assets" / "scripts");
+    add(current / "assets");
 
     // Source tree paths (dev builds only)
     add(current / "engine" / "Game" / "scripts");

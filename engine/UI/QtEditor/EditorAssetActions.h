@@ -49,6 +49,7 @@ public:
      * @return true if asset was handled (may still fail)
      */
     bool Open(const QString& relativePath);
+    bool OpenInIDE(const QString& relativePath);
 
     /**
      * @brief Open an asset by its info.
@@ -67,8 +68,10 @@ public:
 private:
     bool openScene(const QString& absolutePath);
     bool openMaterial(const QString& absolutePath);
+    bool openHUI(const QString& absolutePath);
     bool openScript(const QString& absolutePath);
     bool openText(const QString& absolutePath);
+    bool openInIDEAbsolute(const QString& absolutePath);
     bool openExternal(const QString& absolutePath);
     void showNotImplemented(const QString& typeName, const QString& path);
 

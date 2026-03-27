@@ -7,6 +7,7 @@
 
 #include "AssetBrowserWidget.h"
 #include "EditorMainWindow.h"
+#include "../HephaestusUI/HUIAsset.h"
 #include "../../Assets/AssetManager.h"
 #include "../../Assets/AssetTypes.h"
 #include "../../Core/ProjectContext.h"
@@ -611,6 +612,7 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
     if (index.isValid()) {
         QString relativePath = index.data(RelativePathRole).toString();
         bool isDirectory = index.data(IsDirectoryRole).toBool();
+        AssetType assetType = static_cast<AssetType>(index.data(AssetTypeRole).toInt());
 
         if (isDirectory) {
             menu.addAction(style()->standardIcon(QStyle::SP_DirOpenIcon), tr("Open"), [this, relativePath]() {
@@ -618,6 +620,16 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
             });
             menu.addSeparator();
             showCreateMenu(menu, relativePath);
+            menu.addSeparator();
+        } else {
+            menu.addAction(style()->standardIcon(QStyle::SP_DialogOpenButton), tr("Open"), [this, relativePath]() {
+                emit assetOpenRequested(relativePath);
+            });
+            if (assetType == AssetType::UILayout) {
+                menu.addAction(tr("Open in IDE"), [this, relativePath]() {
+                    emit assetOpenInIDERequested(relativePath);
+                });
+            }
             menu.addSeparator();
         }
 
@@ -879,104 +891,7 @@ void AssetBrowserWidget::createNewUIFile(const QString& parentRelativePath)
     }
 
     std::string uiName = name.trimmed().toStdString();
-    file << "{\n"
-         << "    \"version\": 1,\n"
-         << "    \"controller\": \"\",\n"
-         << "    \"root\": {\n"
-         << "        \"type\": \"Panel\",\n"
-         << "        \"id\": \"root\",\n"
-         << "        \"properties\": {\n"
-         << "            \"anchor\": \"Stretch\",\n"
-         << "            \"visible\": true\n"
-         << "        },\n"
-         << "        \"style\": {\n"
-         << "            \"backgroundColor\": [0.1, 0.1, 0.15, 0.95],\n"
-         << "            \"cornerRadius\": 0\n"
-         << "        },\n"
-         << "        \"children\": [\n"
-         << "            {\n"
-         << "                \"type\": \"VerticalBox\",\n"
-         << "                \"id\": \"main_layout\",\n"
-         << "                \"properties\": {\n"
-         << "                    \"spacing\": 16,\n"
-         << "                    \"padding\": [40, 40, 40, 40],\n"
-         << "                    \"childHAlignment\": \"Center\",\n"
-         << "                    \"anchor\": \"Stretch\"\n"
-         << "                },\n"
-         << "                \"children\": [\n"
-         << "                    {\n"
-         << "                        \"type\": \"Text\",\n"
-         << "                        \"id\": \"title_label\",\n"
-         << "                        \"properties\": {\n"
-         << "                            \"text\": \"" << uiName << "\",\n"
-         << "                            \"textAlignment\": \"Center\"\n"
-         << "                        },\n"
-         << "                        \"style\": {\n"
-         << "                            \"fontSize\": 32,\n"
-         << "                            \"fontBold\": true,\n"
-         << "                            \"textColor\": [1, 1, 1, 1],\n"
-         << "                            \"textShadow\": true,\n"
-         << "                            \"textShadowColor\": [0, 0, 0, 0.5],\n"
-         << "                            \"textShadowOffset\": [2, 2]\n"
-         << "                        }\n"
-         << "                    },\n"
-         << "                    {\n"
-         << "                        \"type\": \"Button\",\n"
-         << "                        \"id\": \"action_button\",\n"
-         << "                        \"properties\": {\n"
-         << "                            \"text\": \"Click Me\",\n"
-         << "                            \"size\": [200, 50]\n"
-         << "                        },\n"
-         << "                        \"normalStyle\": {\n"
-         << "                            \"backgroundColor\": [0.2, 0.5, 0.8, 1.0],\n"
-         << "                            \"cornerRadius\": 8,\n"
-         << "                            \"textColor\": [1, 1, 1, 1],\n"
-         << "                            \"fontSize\": 18\n"
-         << "                        },\n"
-         << "                        \"hoveredStyle\": {\n"
-         << "                            \"backgroundColor\": [0.3, 0.6, 0.9, 1.0],\n"
-         << "                            \"cornerRadius\": 8,\n"
-         << "                            \"textColor\": [1, 1, 1, 1],\n"
-         << "                            \"fontSize\": 18\n"
-         << "                        },\n"
-         << "                        \"pressedStyle\": {\n"
-         << "                            \"backgroundColor\": [0.15, 0.4, 0.65, 1.0],\n"
-         << "                            \"cornerRadius\": 8,\n"
-         << "                            \"textColor\": [1, 1, 1, 1],\n"
-         << "                            \"fontSize\": 18\n"
-         << "                        }\n"
-         << "                    },\n"
-         << "                    {\n"
-         << "                        \"type\": \"Button\",\n"
-         << "                        \"id\": \"secondary_button\",\n"
-         << "                        \"properties\": {\n"
-         << "                            \"text\": \"Cancel\",\n"
-         << "                            \"size\": [200, 50]\n"
-         << "                        },\n"
-         << "                        \"normalStyle\": {\n"
-         << "                            \"backgroundColor\": [0.3, 0.3, 0.35, 1.0],\n"
-         << "                            \"cornerRadius\": 8,\n"
-         << "                            \"textColor\": [0.9, 0.9, 0.9, 1.0],\n"
-         << "                            \"fontSize\": 18\n"
-         << "                        },\n"
-         << "                        \"hoveredStyle\": {\n"
-         << "                            \"backgroundColor\": [0.4, 0.4, 0.45, 1.0],\n"
-         << "                            \"cornerRadius\": 8,\n"
-         << "                            \"textColor\": [1, 1, 1, 1],\n"
-         << "                            \"fontSize\": 18\n"
-         << "                        },\n"
-         << "                        \"pressedStyle\": {\n"
-         << "                            \"backgroundColor\": [0.25, 0.25, 0.3, 1.0],\n"
-         << "                            \"cornerRadius\": 8,\n"
-         << "                            \"textColor\": [1, 1, 1, 1],\n"
-         << "                            \"fontSize\": 18\n"
-         << "                        }\n"
-         << "                    }\n"
-         << "                ]\n"
-         << "            }\n"
-         << "        ]\n"
-         << "    }\n"
-         << "}\n";
+    file << Hephaestus::HephaestusUI::generateDefaultHUIContent(uiName);
     file.close();
 
     Refresh();
