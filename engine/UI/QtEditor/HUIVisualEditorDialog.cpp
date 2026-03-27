@@ -54,8 +54,11 @@
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QWheelEvent>
+#include <QSignalBlocker>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <optional>
 #include <sstream>
@@ -586,6 +589,8 @@ public:
         update();
     }
 
+    std::function<void(double)> onZoomChanged;
+
     std::function<void(const QString&)> onSelect;
     std::function<void(const QString&, const QPointF&, bool)> onDrag;
     std::function<void(const QPointF&)> onPointerMove;
@@ -648,8 +653,63 @@ protected:
         }
     }
 
+    void wheelEvent(QWheelEvent* event) override
+    {
+        const QRectF before = previewRect();
+        const QPointF P = event->position();
+        const double z0 = m_zoom;
+
+        QPointF d;
+        QPointF anchorScreen;
+        if (before.contains(P)) {
+            const QPointF tl = before.topLeft();
+            d = QPointF((P.x() - tl.x()) / z0, (P.y() - tl.y()) / z0);
+            anchorScreen = P;
+        } else {
+            d = QPointF(m_previewSize.width() * 0.5, m_previewSize.height() * 0.5);
+            anchorScreen = before.center();
+        }
+
+        double steps = static_cast<double>(event->angleDelta().y()) / 120.0;
+        if (qFuzzyIsNull(steps)) {
+            const QPoint pd = event->pixelDelta();
+            if (pd.y() != 0) {
+                steps = pd.y() > 0 ? 0.25 : -0.25;
+            }
+        }
+        if (qFuzzyIsNull(steps)) {
+            event->accept();
+            return;
+        }
+
+        double z1 = z0 * std::pow(1.1, steps);
+        z1 = std::max(0.25, std::min(z1, 3.0));
+        if (qFuzzyCompare(z1, z0)) {
+            event->accept();
+            return;
+        }
+
+        const QPointF tlPrime = anchorScreen - QPointF(d.x() * z1, d.y() * z1);
+        const QSizeF scaled1(m_previewSize.width() * z1, m_previewSize.height() * z1);
+        const QPointF defaultTl1((width() - scaled1.width()) * 0.5, (height() - scaled1.height()) * 0.5);
+        m_viewPan = tlPrime - defaultTl1;
+        m_zoom = z1;
+        update();
+        if (onZoomChanged) {
+            onZoomChanged(m_zoom);
+        }
+        event->accept();
+    }
+
     void mousePressEvent(QMouseEvent* event) override
     {
+        if (event->button() == Qt::MiddleButton) {
+            m_panning = true;
+            m_lastMousePos = event->position();
+            setCursor(Qt::ClosedHandCursor);
+            event->accept();
+            return;
+        }
         if (event->button() != Qt::LeftButton) return;
         const QString hit = hitTest(event->position());
         if (!hit.isEmpty() && onSelect) onSelect(hit);
@@ -662,6 +722,15 @@ protected:
 
     void mouseMoveEvent(QMouseEvent* event) override
     {
+        if (m_panning) {
+            const QPointF delta = event->position() - m_lastMousePos;
+            m_lastMousePos = event->position();
+            m_viewPan += delta;
+            event->accept();
+            update();
+            return;
+        }
+
         if (const auto designPos = screenToDesign(event->position()); designPos) {
             m_hoveredPath = hitTest(event->position());
             if (onPointerMove) onPointerMove(*designPos);
@@ -680,6 +749,13 @@ protected:
 
     void mouseReleaseEvent(QMouseEvent* event) override
     {
+        if (event->button() == Qt::MiddleButton && m_panning) {
+            m_panning = false;
+            setCursor(Qt::ArrowCursor);
+            event->accept();
+            return;
+        }
+
         if (onPointerRelease) {
             if (const auto designPos = screenToDesign(event->position()); designPos) {
                 onPointerRelease(*designPos, static_cast<int>(event->button()));
@@ -697,7 +773,8 @@ private:
     QRectF previewRect() const
     {
         QSizeF scaled(m_previewSize.width() * m_zoom, m_previewSize.height() * m_zoom);
-        QPointF topLeft((width() - scaled.width()) * 0.5, (height() - scaled.height()) * 0.5);
+        QPointF topLeft((width() - scaled.width()) * 0.5 + m_viewPan.x(),
+                        (height() - scaled.height()) * 0.5 + m_viewPan.y());
         return QRectF(topLeft, scaled);
     }
 
@@ -913,6 +990,8 @@ private:
 
     QSize m_previewSize = QSize(1280, 720);
     double m_zoom = 1.0;
+    QPointF m_viewPan;
+    bool m_panning = false;
     bool m_previewMode = false;
     QString m_selectedPath;
     QString m_hoveredPath;
@@ -978,6 +1057,8 @@ private:
 
         m_zoomCombo = new QComboBox(m_toolbar);
         m_zoomCombo->addItems({"50%", "75%", "100%", "150%", "200%"});
+        m_zoomCombo->setEditable(true);
+        m_zoomCombo->lineEdit()->setReadOnly(true);
         m_zoomCombo->setCurrentText("100%");
         m_toolbar->addSeparator();
         m_toolbar->addWidget(new QLabel(tr("Zoom: "), m_toolbar));
@@ -1096,6 +1177,11 @@ private:
             trimmed.remove('%');
             m_canvas->setZoom(trimmed.toDouble() / 100.0);
         });
+
+        m_canvas->onZoomChanged = [this](double z) {
+            QSignalBlocker blocker(m_zoomCombo);
+            m_zoomCombo->setEditText(QString::number(qRound(z * 100.0)) + QLatin1Char('%'));
+        };
 
         m_canvas->onSelect = [this](const QString& path) {
             m_selectedPath = path;
