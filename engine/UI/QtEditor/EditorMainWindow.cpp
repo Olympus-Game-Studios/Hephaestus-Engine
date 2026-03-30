@@ -2012,10 +2012,12 @@ void EditorMainWindow::initializeEngine()
             m_viewportHost->style()->polish(m_viewportHost);
         }
         if (m_runtimeUIOverlay) {
-            const bool showUI = playing || paused;
+            const auto& runtimeUICommands = m_engine->GetRuntimeUIDrawCommands();
+            const bool showUI = (playing || paused) && !runtimeUICommands.empty();
             m_runtimeUIOverlay->setVisible(showUI);
             m_runtimeUIOverlay->SetMouseEventsEnabled(showUI);
             if (showUI) {
+                m_runtimeUIOverlay->SetDrawCommands(runtimeUICommands);
                 m_runtimeUIOverlay->raise();
             } else {
                 m_runtimeUIOverlay->SetDrawCommands({});
@@ -2155,9 +2157,12 @@ void EditorMainWindow::onFrameRendered(float dt)
     m_frameCount++;
 
     if (m_runtimeUIOverlay && m_engine) {
-        const bool showRuntimeUI = m_engine->IsPlaying() || m_engine->IsPaused();
+        const auto& runtimeUICommands = m_engine->GetRuntimeUIDrawCommands();
+        const bool showRuntimeUI = (m_engine->IsPlaying() || m_engine->IsPaused()) &&
+                                   !runtimeUICommands.empty();
         m_runtimeUIOverlay->setVisible(showRuntimeUI);
-        m_runtimeUIOverlay->SetDrawCommands(m_engine->GetRuntimeUIDrawCommands());
+        m_runtimeUIOverlay->SetMouseEventsEnabled(showRuntimeUI);
+        m_runtimeUIOverlay->SetDrawCommands(runtimeUICommands);
         if (showRuntimeUI) {
             m_runtimeUIOverlay->raise();
         }

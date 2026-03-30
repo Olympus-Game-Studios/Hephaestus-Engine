@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-03-30: Fixed Qt play mode showing a flat gray viewport when no runtime UI exists. `RuntimeUIOverlayWidget` is now only shown (and mouse-enabled) when runtime UI draw commands are present, so empty projects render the scene/background instead of an empty overlay surface.
 - 2026-03-30: Fixed missing per-swapchain-image fence tracking in `EngineFrameRenderer::RenderFrame`. The renderer now waits on `m_imagesInFlight[imageIndex]` before reusing image command buffers/resources, preventing GPU races that can lead to `VK_ERROR_DEVICE_LOST` on submit.
 - 2026-03-30: Fixed unsafe material texture descriptor updates during rendering. `EngineFrameRenderer` now defers texture-slot descriptor writes per swapchain image and applies them only after that image is acquired, avoiding updates to descriptor sets that may still be in flight.
 - 2026-03-30: Fixed Qt editor render-loop lockup after `VK_ERROR_DEVICE_LOST` by marking device-lost as fatal in `EngineFrameRenderer` and stopping swapchain recreation retries in `QtEditorEngine`. The editor now emits a clear error and halts rendering instead of repeatedly recreating the swapchain.
