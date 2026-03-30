@@ -1,4 +1,4 @@
-﻿#include "VulkanSwapchain.h"
+#include "VulkanSwapchain.h"
 #include <stdexcept>
 #include <iostream>
 #include <algorithm>
@@ -98,7 +98,22 @@ void VulkanSwapchain::InitFromNativeSurface(VkPhysicalDevice phys, VkDevice dev,
 
 void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
 {
-    extent = { width, height };
+    // ── Query surface capabilities ──────────────────────────────────────
+    VkSurfaceCapabilitiesKHR caps{};
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &caps);
+    
+    // Clamp requested extent to the surface's supported range
+    if (caps.currentExtent.width != UINT32_MAX) {
+        extent = caps.currentExtent;
+    } else {
+        extent.width  = std::clamp(width,  caps.minImageExtent.width,  caps.maxImageExtent.width);
+        extent.height = std::clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height);
+    }
+    
+    uint32_t imageCount = std::max(2u, caps.minImageCount);
+    if (caps.maxImageCount > 0) {
+        imageCount = std::min(imageCount, caps.maxImageCount);
+    }
 
     // ── Choose surface format and present mode ─────────────────────────
     uint32_t formatCount;
@@ -117,15 +132,23 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
     VkSwapchainCreateInfoKHR swapInfo{};
     swapInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     swapInfo.surface = surface;
-    swapInfo.minImageCount = 2;
+    swapInfo.minImageCount = imageCount;
     swapInfo.imageFormat = format;
     swapInfo.imageColorSpace = formats[0].colorSpace;
     swapInfo.imageExtent = extent;
     swapInfo.imageArrayLayers = 1;
     swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     swapInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    swapInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-    swapInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    swapInfo.preTransform = caps.currentTransform;
+    VkCompositeAlphaFlagBitsKHR compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    if (!(caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)) {
+        for (auto flag : { VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+                           VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+                           VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR }) {
+            if (caps.supportedCompositeAlpha & flag) { compositeAlpha = flag; break; }
+        }
+    }
+    swapInfo.compositeAlpha = compositeAlpha;
     swapInfo.presentMode = presentMode;
     swapInfo.clipped = VK_TRUE;
     swapInfo.oldSwapchain = VK_NULL_HANDLE;
@@ -134,10 +157,10 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
         throw std::runtime_error("Failed to create swapchain");
 
     // ── Get images ────────────────────────────────────────────────────
-    uint32_t imageCount;
-    vkGetSwapchainImagesKHR(device, swapchain, &imageCount, nullptr);
-    images.resize(imageCount);
-    vkGetSwapchainImagesKHR(device, swapchain, &imageCount, images.data());
+    uint32_t actualImageCount;
+    vkGetSwapchainImagesKHR(device, swapchain, &actualImageCount, nullptr);
+    images.resize(actualImageCount);
+    vkGetSwapchainImagesKHR(device, swapchain, &actualImageCount, images.data());
 
     // ── Create image views ─────────────────────────────────────────────
     imageViews.resize(images.size());

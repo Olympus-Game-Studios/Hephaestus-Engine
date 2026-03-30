@@ -124,6 +124,7 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
     
     m_device = device;
     m_swapchain = swapchain;
+    m_deviceLost = false;
     
     // Create render resources
     if (!createPipeline()) {
@@ -263,11 +264,36 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
                                        const FrameRenderConfig& config, float deltaTime)
 {
     if (!m_initialized) return false;
+    if (m_deviceLost) {
+        return false;
+    }
     
     // Handle pending resize
     if (m_swapchainDirty) {
         vkDeviceWaitIdle(m_device->device);
-        // Swapchain recreation is handled externally by QtEditorEngine
+        
+        // Recreate sync objects to guarantee clean state after swapchain recreation.
+        // Previous frame's semaphores/fences may be in intermediate states that
+        // cannot be recovered by vkDeviceWaitIdle alone (e.g. a binary semaphore
+        // left signaled after a failed submit, or a fence reset but never submitted).
+        m_currentFrame = 0;
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+            vkDestroySemaphore(m_device->device, m_imageAvailableSemaphores[i], nullptr);
+            vkDestroySemaphore(m_device->device, m_renderFinishedSemaphores[i], nullptr);
+            vkDestroyFence(m_device->device, m_inFlightFences[i], nullptr);
+            
+            VkSemaphoreCreateInfo semInfo{};
+            semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+            vkCreateSemaphore(m_device->device, &semInfo, nullptr, &m_imageAvailableSemaphores[i]);
+            vkCreateSemaphore(m_device->device, &semInfo, nullptr, &m_renderFinishedSemaphores[i]);
+            
+            VkFenceCreateInfo fenceInfo{};
+            fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+            vkCreateFence(m_device->device, &fenceInfo, nullptr, &m_inFlightFences[i]);
+        }
+        m_imagesInFlight.assign(m_swapchain->images.size(), VK_NULL_HANDLE);
+        
         m_swapchainDirty = false;
     }
     
@@ -297,9 +323,23 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         m_swapchainDirty = true;
         return false;
+    } else if (result == VK_ERROR_DEVICE_LOST) {
+        m_deviceLost = true;
+        std::cerr << "[EngineFrameRenderer] vkAcquireNextImageKHR reported VK_ERROR_DEVICE_LOST\n";
+        return false;
     } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         std::cerr << "[EngineFrameRenderer] Failed to acquire swapchain image\n";
         return false;
+    }
+    flushPendingTextureDescriptorUpdates(imageIndex);
+
+    // Per-image synchronization: if this swapchain image is already in flight,
+    // wait for the fence that owns it before reusing its command buffer/resources.
+    if (imageIndex < m_imagesInFlight.size() && m_imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+        vkWaitForFences(m_device->device, 1, &m_imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+    }
+    if (imageIndex < m_imagesInFlight.size()) {
+        m_imagesInFlight[imageIndex] = m_inFlightFences[m_currentFrame];
     }
     
     vkResetFences(m_device->device, 1, &m_inFlightFences[m_currentFrame]);
@@ -352,7 +392,11 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     // Record main render pass
     recordMainPass(cmd, imageIndex, scene, config);
     
-    vkEndCommandBuffer(cmd);
+    VkResult endResult = vkEndCommandBuffer(cmd);
+    if (endResult != VK_SUCCESS) {
+        std::cerr << "[EngineFrameRenderer] Failed to end command buffer (VkResult: " << endResult << ")\n";
+        return false;
+    }
     
     // Submit
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -366,8 +410,13 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &m_renderFinishedSemaphores[m_currentFrame];
     
-    if (vkQueueSubmit(m_device->graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]) != VK_SUCCESS) {
-        std::cerr << "[EngineFrameRenderer] Failed to submit draw command buffer\n";
+    VkResult submitResult = vkQueueSubmit(m_device->graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
+    if (submitResult != VK_SUCCESS) {
+        if (submitResult == VK_ERROR_DEVICE_LOST) {
+            m_deviceLost = true;
+            std::cerr << "[EngineFrameRenderer] vkQueueSubmit reported VK_ERROR_DEVICE_LOST\n";
+        }
+        std::cerr << "[EngineFrameRenderer] Failed to submit draw command buffer (VkResult: " << submitResult << ")\n";
         return false;
     }
     
@@ -384,6 +433,10 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
         m_swapchainDirty = true;
+    } else if (result == VK_ERROR_DEVICE_LOST) {
+        m_deviceLost = true;
+        std::cerr << "[EngineFrameRenderer] vkQueuePresentKHR reported VK_ERROR_DEVICE_LOST\n";
+        return false;
     }
     
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -606,6 +659,8 @@ bool EngineFrameRenderer::createDescriptorSets()
     if (vkAllocateDescriptorSets(m_device->device, &allocInfo, m_descriptorSets.data()) != VK_SUCCESS) {
         return false;
     }
+    m_pendingTextureSlotUpdates.clear();
+    m_pendingTextureSlotUpdates.resize(imageCount);
     
     // Create a dummy texture for the texture array (1x1 white pixel)
     // This is needed because descriptor sets must be valid even if not used
@@ -1792,36 +1847,52 @@ uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPa
     m_materialTextureSlots.push_back(std::move(newSlot));
     m_materialTextureLookup.emplace(key, slotIndex);
 
-    // Update texture array descriptor for this slot
-    updateTextureSlotInDescriptors(slotIndex);
+    // Defer descriptor writes and apply them when each swapchain image is acquired.
+    // This avoids updating descriptor sets that may still be in flight on the GPU.
+    for (auto& pending : m_pendingTextureSlotUpdates) {
+        pending.push_back(slotIndex);
+    }
 
     std::cout << "[EngineFrameRenderer] Loaded material texture [" << slotIndex << "]: " << resolvedPath << "\n";
     return slotIndex;
 }
 
-void EngineFrameRenderer::updateTextureSlotInDescriptors(uint32_t slotIndex)
+void EngineFrameRenderer::updateTextureSlotInDescriptors(uint32_t slotIndex, uint32_t imageIndex)
 {
     if (slotIndex >= kMaxMaterialTextureSlots) return;
     if (slotIndex >= m_materialTextureSlots.size()) return;
     if (!m_materialTextureSlots[slotIndex].valid) return;
+    if (imageIndex >= m_descriptorSets.size()) return;
 
     const auto& slot = m_materialTextureSlots[slotIndex];
+    VkDescriptorImageInfo imageInfo = slot.descriptor;
 
-    // Update texture at this array index in each frame's descriptor set
-    for (size_t i = 0; i < m_descriptorSets.size(); ++i) {
-        VkDescriptorImageInfo imageInfo = slot.descriptor;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = m_descriptorSets[imageIndex];
+    write.dstBinding = 3; // Texture array binding
+    write.dstArrayElement = slotIndex;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.descriptorCount = 1;
+    write.pImageInfo = &imageInfo;
 
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = m_descriptorSets[i];
-        write.dstBinding = 3; // Texture array binding
-        write.dstArrayElement = slotIndex;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        write.descriptorCount = 1;
-        write.pImageInfo = &imageInfo;
+    vkUpdateDescriptorSets(m_device->device, 1, &write, 0, nullptr);
+}
 
-        vkUpdateDescriptorSets(m_device->device, 1, &write, 0, nullptr);
+void EngineFrameRenderer::flushPendingTextureDescriptorUpdates(uint32_t imageIndex)
+{
+    if (imageIndex >= m_pendingTextureSlotUpdates.size()) return;
+
+    auto& pending = m_pendingTextureSlotUpdates[imageIndex];
+    if (pending.empty()) return;
+
+    std::sort(pending.begin(), pending.end());
+    pending.erase(std::unique(pending.begin(), pending.end()), pending.end());
+
+    for (uint32_t slotIndex : pending) {
+        updateTextureSlotInDescriptors(slotIndex, imageIndex);
     }
+    pending.clear();
 }
 
 void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageIndex, 
@@ -2656,6 +2727,7 @@ void EngineFrameRenderer::destroyAllResources()
     }
     m_materialTextureSlots.clear();
     m_materialTextureLookup.clear();
+    m_pendingTextureSlotUpdates.clear();
     m_materialAssetCache.clear();
     m_materialAssetCacheFailed.clear();
     
@@ -4013,25 +4085,25 @@ bool EngineFrameRenderer::createIdPickerResources()
     shaderStages[1].module = fragShader;
     shaderStages[1].pName = "main";
     
-    // Vertex input - same as main pipeline
+    // Vertex input - must match the actual Vertex struct layout in the vertex buffer
     VkVertexInputBindingDescription bindingDesc{};
     bindingDesc.binding = 0;
-    bindingDesc.stride = sizeof(float) * 8; // pos(3) + normal(3) + uv(2)
+    bindingDesc.stride = sizeof(Vertex);
     bindingDesc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
     
     VkVertexInputAttributeDescription attribDescs[3]{};
     attribDescs[0].binding = 0;
     attribDescs[0].location = 0;
     attribDescs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attribDescs[0].offset = 0;
+    attribDescs[0].offset = offsetof(Vertex, pos);
     attribDescs[1].binding = 0;
     attribDescs[1].location = 1;
     attribDescs[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attribDescs[1].offset = sizeof(float) * 3;
+    attribDescs[1].offset = offsetof(Vertex, normal);
     attribDescs[2].binding = 0;
     attribDescs[2].location = 2;
     attribDescs[2].format = VK_FORMAT_R32G32_SFLOAT;
-    attribDescs[2].offset = sizeof(float) * 6;
+    attribDescs[2].offset = offsetof(Vertex, texCoord);
     
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;

@@ -335,6 +335,7 @@ private:
     QElapsedTimer m_frameTimer;
     float m_lastFrameTime = 0.0f;
     bool m_renderInProgress = false;
+    bool m_reportedFatalRenderError = false;
 
     // Swapchain state
     bool m_swapchainNeedsRecreation = false;

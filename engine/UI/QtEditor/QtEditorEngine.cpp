@@ -400,6 +400,7 @@ bool QtEditorEngine::createSwapchain()
         
         std::cout << "[QtEditorEngine] Swapchain and frame renderer created (" 
                   << m_swapchain->extent.width << "x" << m_swapchain->extent.height << ")\n";
+        m_reportedFatalRenderError = false;
         return true;
         
     } catch (const std::exception& e) {
@@ -417,6 +418,7 @@ void QtEditorEngine::StartRenderLoop()
     
     // Use 0ms interval for maximum frame rate (regulated by vsync/fence waits)
     m_renderTimer.setInterval(0);
+    m_reportedFatalRenderError = false;
     m_renderTimer.start();
     
     std::cout << "[QtEditorEngine] Render loop started\n";
@@ -1149,6 +1151,19 @@ void QtEditorEngine::onTick()
     }
     
     m_renderInProgress = true;
+
+    if (m_frameRenderer && m_frameRenderer->HasDeviceLost()) {
+        if (!m_reportedFatalRenderError) {
+            m_reportedFatalRenderError = true;
+            const QString message = "Vulkan device lost during rendering. Rendering has been stopped. Please restart the editor.";
+            std::cerr << "[QtEditorEngine] " << message.toStdString() << "\n";
+            emit engineError(message);
+        }
+        m_swapchainNeedsRecreation = false;
+        m_renderTimer.stop();
+        m_renderInProgress = false;
+        return;
+    }
     
     // Calculate delta time
     float currentTime = m_frameTimer.elapsed() / 1000.0f;
@@ -1157,6 +1172,11 @@ void QtEditorEngine::onTick()
     
     // Handle pending swapchain recreation
     if (m_swapchainNeedsRecreation) {
+        if (m_frameRenderer && m_frameRenderer->HasDeviceLost()) {
+            m_swapchainNeedsRecreation = false;
+            m_renderInProgress = false;
+            return;
+        }
         vkDeviceWaitIdle(m_device->device);
         m_swapchain->RecreateFromNativeSurface(m_pendingWidth, m_pendingHeight);
         if (m_frameRenderer) {
@@ -1362,7 +1382,19 @@ void QtEditorEngine::renderFrame()
     );
     
     if (!success) {
-        // Swapchain may need recreation
+        if (m_frameRenderer && m_frameRenderer->HasDeviceLost()) {
+            if (!m_reportedFatalRenderError) {
+                m_reportedFatalRenderError = true;
+                const QString message = "Vulkan device lost during rendering. Rendering has been stopped. Please restart the editor.";
+                std::cerr << "[QtEditorEngine] " << message.toStdString() << "\n";
+                emit engineError(message);
+            }
+            m_swapchainNeedsRecreation = false;
+            m_renderTimer.stop();
+            return;
+        }
+
+        // Swapchain may need recreation for non-fatal errors (out-of-date/suboptimal).
         m_swapchainNeedsRecreation = true;
         m_pendingWidth = m_viewport->width();
         m_pendingHeight = m_viewport->height();

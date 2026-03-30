@@ -147,6 +147,7 @@ public:
      * @brief Check if renderer is initialized and ready.
      */
     bool IsInitialized() const { return m_initialized; }
+    bool HasDeviceLost() const { return m_deviceLost; }
 
     /**
      * @brief Set the project root directory for resolving relative asset paths (HDRI, etc.).
@@ -314,6 +315,7 @@ private:
 private:
     bool m_initialized = false;
     bool m_swapchainDirty = false;
+    bool m_deviceLost = false;
     uint32_t m_pendingWidth = 0;
     uint32_t m_pendingHeight = 0;
 
@@ -362,6 +364,7 @@ private:
     };
     std::vector<MaterialTextureSlot> m_materialTextureSlots;
     std::unordered_map<std::string, uint32_t> m_materialTextureLookup;
+    std::vector<std::vector<uint32_t>> m_pendingTextureSlotUpdates;
     uint32_t m_defaultMaterialTextureSlot = 0;
     static constexpr uint32_t kMaxMaterialTextureSlots = 128;
 
@@ -380,7 +383,8 @@ private:
     // Material system helpers
     const MaterialComponent* resolveMaterialFromPath(const std::string& materialPath);
     uint32_t ensureMaterialTextureSlot(const std::string& rawPath);
-    void updateTextureSlotInDescriptors(uint32_t slotIndex);
+    void updateTextureSlotInDescriptors(uint32_t slotIndex, uint32_t imageIndex);
+    void flushPendingTextureDescriptorUpdates(uint32_t imageIndex);
 
     // Debug: material system logging
     bool m_materialDebugLogged = false;
