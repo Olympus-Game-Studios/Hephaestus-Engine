@@ -1294,7 +1294,8 @@ void QtEditorEngine::renderFrame()
     
     // Sync EditorContext viewport settings to FrameRenderConfig
     const auto& viewportSettings = m_editorContext.GetViewportSettings();
-    m_renderConfig.renderGrid = viewportSettings.showGrid;
+    m_renderConfig.isEditorMode = true;
+    m_renderConfig.renderGrid = viewportSettings.showGrid && m_playModeManager.IsEditor();
     m_renderConfig.renderGizmo = viewportSettings.showGizmo && !m_playModeManager.ShouldSuppressEditorInteraction();
     m_renderConfig.renderOutlines = viewportSettings.showSelectionOutline && !m_playModeManager.ShouldSuppressEditorInteraction();
     m_renderConfig.renderShadows = viewportSettings.showShadows;

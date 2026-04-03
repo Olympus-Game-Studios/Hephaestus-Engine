@@ -209,10 +209,12 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
         return false;
     }
     
-    // Create editor grid resources (optional, failure doesn't prevent init)
+    // Editor viewport grid (optional; omitted in standalone game runtime)
+#ifndef HEPHAESTUS_GAME_RUNTIME
     if (!createGridResources()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create grid resources (grid will be disabled)\n";
     }
+#endif
     
     // Create outline resources (optional, failure doesn't prevent init)
     if (!createOutlineResources()) {
@@ -2383,8 +2385,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                   << " meshLibrary.size=" << m_meshLibrary.size() << "\n";
     }
     
-    // Render editor grid (after opaque meshes, before transparent)
-    if (config.isEditorMode && config.renderGrid) {
+    // Render editor grid (after opaque meshes, before transparent) — not in play/pause or shipped game
+    if (config.isEditorMode && config.renderGrid && !config.isPlaying) {
         recordGrid(cmd, imageIndex, config);
     }
     
@@ -3473,6 +3475,11 @@ void EngineFrameRenderer::EditorGrid::Init(VkDevice device, VkRenderPass renderP
     
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS) {
         std::cerr << "[EditorGrid] Failed to create graphics pipeline\n";
+        vkDestroyShaderModule(device, vertShader, nullptr);
+        vkDestroyShaderModule(device, fragShader, nullptr);
+        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+        pipelineLayout = VK_NULL_HANDLE;
+        return;
     }
     
     vkDestroyShaderModule(device, vertShader, nullptr);
@@ -3533,7 +3540,7 @@ void EngineFrameRenderer::EditorGrid::Cleanup(VkDevice device)
 void EngineFrameRenderer::recordGrid(VkCommandBuffer cmd, uint32_t imageIndex, 
                                       const FrameRenderConfig& config)
 {
-    if (!config.renderGrid || !config.isEditorMode) return;
+    if (!config.renderGrid || !config.isEditorMode || config.isPlaying) return;
     
     EditorGrid::GridPushConstants pc;
     pc.gridSize = 10.0f;     // Major grid lines every 10 units

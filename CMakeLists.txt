@@ -719,6 +719,8 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/skybox.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.frag
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)
