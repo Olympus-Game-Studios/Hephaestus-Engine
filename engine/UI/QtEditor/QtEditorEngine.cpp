@@ -641,6 +641,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         }
         m_gizmoDragging = false;
         m_gizmoActiveAxis = -1;
+        clearGizmoMultiDragWorldStarts();
     };
     
     // Update input state based on event type
@@ -692,6 +693,10 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                         m_frameRenderer->GetGizmo()->BeginDrag(gizmoRay, hoveredAxis);
                         m_gizmoDragging = true;
                         m_gizmoActiveAxis = hoveredAxis;
+                        Scene* sceneForGizmo = m_editorContext.GetActiveScene();
+                        if (sceneForGizmo) {
+                            captureGizmoMultiDragWorldStarts(sceneForGizmo);
+                        }
                     }
                 }
             }
@@ -811,30 +816,78 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                         Scene* scene = m_editorContext.GetActiveScene();
                         entt::entity selectedEntity = m_editorContext.GetSelectedEntity();
                         if (scene && selectedEntity != entt::null) {
-                            Entity entity(selectedEntity, scene);
-                            if (entity.HasComponent<TransformComponent>()) {
-                                auto& transform = entity.GetComponent<TransformComponent>();
+                            Entity primaryEntity(selectedEntity, scene);
+                            if (primaryEntity.HasComponent<TransformComponent>()) {
                                 float px = event.x;
                                 float py = event.y;
                                 toPixelCoords(event.x, event.y, px, py);
                                 Ray gizmoRay = buildRayFromScreen(px, py, viewMatrix, projMatrix);
-                                Mat4 newWorldTransform = m_frameRenderer->GetGizmo()->HandleDrag(gizmoRay);
-                                Mat4 localTransform = newWorldTransform;
+                                const Mat4 newWorldPrimary = m_frameRenderer->GetGizmo()->HandleDrag(gizmoRay);
 
-                                Entity parentEntity = scene->GetParent(entity);
-                                if (parentEntity) {
-                                    Mat4 parentWorld = scene->GetWorldTransform(parentEntity);
-                                    Mat4 parentInv = Mat4::Invert(parentWorld);
-                                    localTransform = Mat4::Multiply(parentInv, newWorldTransform);
+                                if (!m_gizmoDragEntityWorldStart.empty()) {
+                                    const Mat4 invPrimaryStart = Mat4::Invert(m_gizmoDragPrimaryWorldStart);
+                                    const Mat4 deltaWorld = Mat4::Multiply(newWorldPrimary, invPrimaryStart);
+
+                                    std::vector<std::pair<entt::entity, Mat4>> newWorlds;
+                                    newWorlds.reserve(m_gizmoDragEntityWorldStart.size());
+                                    for (const auto& start : m_gizmoDragEntityWorldStart) {
+                                        const Mat4 nw = (start.first == selectedEntity)
+                                            ? newWorldPrimary
+                                            : Mat4::Multiply(deltaWorld, start.second);
+                                        newWorlds.push_back({start.first, nw});
+                                    }
+
+                                    auto depthToRoot = [&](entt::entity e) -> int {
+                                        int d = 0;
+                                        Entity ent(e, scene);
+                                        while (ent) {
+                                            Entity p = scene->GetParent(ent);
+                                            if (!p) {
+                                                break;
+                                            }
+                                            ++d;
+                                            ent = p;
+                                        }
+                                        return d;
+                                    };
+                                    std::sort(newWorlds.begin(), newWorlds.end(),
+                                              [&](const auto& a, const auto& b) {
+                                                  return depthToRoot(a.first) < depthToRoot(b.first);
+                                              });
+
+                                    for (const auto& nwPair : newWorlds) {
+                                        Entity ent(nwPair.first, scene);
+                                        if (!ent.HasComponent<TransformComponent>()) {
+                                            continue;
+                                        }
+                                        auto& transform = ent.GetComponent<TransformComponent>();
+                                        Mat4 localTransform = nwPair.second;
+                                        Entity parentEntity = scene->GetParent(ent);
+                                        if (parentEntity) {
+                                            Mat4 parentWorld = scene->GetWorldTransform(parentEntity);
+                                            Mat4 parentInv = Mat4::Invert(parentWorld);
+                                            localTransform = Mat4::Multiply(parentInv, nwPair.second);
+                                        }
+                                        transform.SetFromMatrix(localTransform);
+                                    }
+                                } else {
+                                    auto& transform = primaryEntity.GetComponent<TransformComponent>();
+                                    Mat4 localTransform = newWorldPrimary;
+                                    Entity parentEntity = scene->GetParent(primaryEntity);
+                                    if (parentEntity) {
+                                        Mat4 parentWorld = scene->GetWorldTransform(parentEntity);
+                                        Mat4 parentInv = Mat4::Invert(parentWorld);
+                                        localTransform = Mat4::Multiply(parentInv, newWorldPrimary);
+                                    }
+                                    transform.SetFromMatrix(localTransform);
                                 }
 
-                                transform.SetFromMatrix(localTransform);
                                 m_editorContext.MarkDirty();
 
                                 m_frameRenderer->GetGizmo()->SetHoveredAxis(m_gizmoActiveAxis);
                                 m_frameRenderer->UpdateGizmoState(
                                     static_cast<uint32_t>(selectedEntity),
-                                    scene->GetWorldTransform(entity),
+                                    scene->GetWorldTransform(primaryEntity),
                                     viewMatrix, projMatrix, camPos,
                                     static_cast<int>(m_editorContext.GetGizmoMode()),
                                     static_cast<int>(m_editorContext.GetGizmoSpace())
@@ -965,6 +1018,45 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         endGizmoDrag();
         break;
     }
+}
+
+void QtEditorEngine::captureGizmoMultiDragWorldStarts(Scene* scene)
+{
+    m_gizmoDragEntityWorldStart.clear();
+    m_gizmoDragPrimaryWorldStart = Mat4::Identity();
+    if (!scene) {
+        return;
+    }
+
+    const entt::entity primary = m_editorContext.GetSelectedEntity();
+    if (primary == entt::null) {
+        return;
+    }
+
+    bool capturedPrimary = false;
+    for (entt::entity e : m_editorContext.GetSelectedEntities()) {
+        Entity ent(e, scene);
+        if (!ent || !ent.HasComponent<TransformComponent>()) {
+            continue;
+        }
+        const Mat4 w = scene->GetWorldTransform(ent);
+        m_gizmoDragEntityWorldStart.push_back({e, w});
+        if (e == primary) {
+            m_gizmoDragPrimaryWorldStart = w;
+            capturedPrimary = true;
+        }
+    }
+
+    if (!capturedPrimary) {
+        m_gizmoDragEntityWorldStart.clear();
+        m_gizmoDragPrimaryWorldStart = Mat4::Identity();
+    }
+}
+
+void QtEditorEngine::clearGizmoMultiDragWorldStarts()
+{
+    m_gizmoDragEntityWorldStart.clear();
+    m_gizmoDragPrimaryWorldStart = Mat4::Identity();
 }
 
 void QtEditorEngine::updateKeyState(int key, bool pressed)

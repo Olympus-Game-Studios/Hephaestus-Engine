@@ -75,9 +75,48 @@
 #include <iostream>
 #include <cmath>
 #include <filesystem>
+#include <algorithm>
+#include <unordered_set>
+#include <vector>
+
+#include <QTreeWidgetItemIterator>
 
 namespace Hephaestus {
 namespace QtEditor {
+
+namespace {
+
+entt::entity entityFromOutlinerItem(QTreeWidgetItem* item)
+{
+    if (!item) {
+        return entt::null;
+    }
+    const QVariant data = item->data(0, Qt::UserRole);
+    if (!data.isValid()) {
+        return entt::null;
+    }
+    return static_cast<entt::entity>(data.toUInt());
+}
+
+void appendSelectedEntitiesInDisplayOrder(QTreeWidgetItem* parent,
+                                          const std::unordered_set<uint32_t>& selectedIds,
+                                          std::vector<entt::entity>& out)
+{
+    if (!parent) {
+        return;
+    }
+    const int childCount = parent->childCount();
+    for (int i = 0; i < childCount; ++i) {
+        QTreeWidgetItem* item = parent->child(i);
+        const entt::entity e = entityFromOutlinerItem(item);
+        if (e != entt::null && selectedIds.count(static_cast<uint32_t>(e)) != 0) {
+            out.push_back(e);
+        }
+        appendSelectedEntitiesInDisplayOrder(item, selectedIds, out);
+    }
+}
+
+} // namespace
 
 static QIcon makeTintedIcon(const QIcon& source, const QSize& size, const QColor& tint)
 {
@@ -821,7 +860,7 @@ void EditorMainWindow::setupDockWidgets()
     m_outlinerTree = new OutlinerTreeWidget(m_outlinerPanel);
     m_outlinerTree->setObjectName("OutlinerTree");
     m_outlinerTree->setHeaderLabel(tr("Scene Hierarchy"));
-    m_outlinerTree->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_outlinerTree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_outlinerTree->setRootIsDecorated(true);
     m_outlinerTree->setIndentation(18);
     m_outlinerTree->setUniformRowHeights(true);
@@ -2322,6 +2361,8 @@ void EditorMainWindow::rebuildOutliner()
             populateOutlinerItem(sceneRoot, entity);
         }
     }
+
+    restoreOutlinerTreeSelection();
 }
 
 void EditorMainWindow::populateOutlinerItem(QTreeWidgetItem* parent, entt::entity entity)
@@ -2369,24 +2410,112 @@ void EditorMainWindow::onOutlinerSelectionChanged()
     if (!m_engine) return;
     auto* ctx = m_engine->GetEditorContext();
     if (!ctx) return;
-    
-    QList<QTreeWidgetItem*> selected = m_outlinerTree->selectedItems();
+
+    const QList<QTreeWidgetItem*> selected = m_outlinerTree->selectedItems();
     if (selected.isEmpty()) {
         ctx->ClearSelection();
         return;
     }
-    
-    QTreeWidgetItem* item = selected.first();
-    QVariant data = item->data(0, Qt::UserRole);
-    
-    if (data.isValid()) {
-        entt::entity entity = static_cast<entt::entity>(data.toUInt());
-        ctx->SelectEntity(entity);
-        std::cout << "[EditorMainWindow] Selected entity: " << static_cast<uint32_t>(entity) << "\n";
-    } else {
-        // Clicked on scene root or invalid item
-        ctx->ClearSelection();
+
+    std::unordered_set<uint32_t> selectedIds;
+    selectedIds.reserve(static_cast<size_t>(selected.size()));
+    for (QTreeWidgetItem* item : selected) {
+        const entt::entity e = entityFromOutlinerItem(item);
+        if (e != entt::null) {
+            selectedIds.insert(static_cast<uint32_t>(e));
+        }
     }
+
+    if (selectedIds.empty()) {
+        ctx->ClearSelection();
+        return;
+    }
+
+    std::vector<entt::entity> ordered;
+    ordered.reserve(selectedIds.size());
+    if (QTreeWidgetItem* sceneRoot = m_outlinerTree->topLevelItem(0)) {
+        appendSelectedEntitiesInDisplayOrder(sceneRoot, selectedIds, ordered);
+    }
+
+    if (ordered.empty()) {
+        ctx->ClearSelection();
+        return;
+    }
+
+    entt::entity primary = entt::null;
+    QTreeWidgetItem* current = m_outlinerTree->currentItem();
+    if (current && current->isSelected()) {
+        primary = entityFromOutlinerItem(current);
+    }
+    if (primary == entt::null || selectedIds.count(static_cast<uint32_t>(primary)) == 0) {
+        primary = ordered.front();
+    }
+
+    ctx->SelectEntities(ordered, primary);
+}
+
+void EditorMainWindow::restoreOutlinerTreeSelection()
+{
+    if (!m_engine || !m_outlinerTree) {
+        return;
+    }
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) {
+        return;
+    }
+
+    const std::vector<entt::entity> entities = ctx->GetSelectedEntities();
+    if (entities.empty()) {
+        return;
+    }
+
+    std::unordered_set<uint32_t> ids;
+    for (entt::entity e : entities) {
+        ids.insert(static_cast<uint32_t>(e));
+    }
+
+    const entt::entity primary = ctx->GetSelectedEntity();
+
+    m_outlinerTree->blockSignals(true);
+    m_outlinerTree->clearSelection();
+    QTreeWidgetItem* primaryItem = nullptr;
+    QTreeWidgetItemIterator it(m_outlinerTree);
+    while (*it) {
+        QTreeWidgetItem* item = *it;
+        const QVariant d = item->data(0, Qt::UserRole);
+        if (d.isValid()) {
+            const uint32_t raw = d.toUInt();
+            if (ids.count(raw) != 0) {
+                item->setSelected(true);
+                if (raw == static_cast<uint32_t>(primary)) {
+                    primaryItem = item;
+                }
+            }
+        }
+        ++it;
+    }
+    if (primaryItem != nullptr) {
+        m_outlinerTree->setCurrentItem(primaryItem);
+    }
+    m_outlinerTree->blockSignals(false);
+}
+
+QTreeWidgetItem* EditorMainWindow::findOutlinerItemForEntity(entt::entity entity)
+{
+    if (entity == entt::null || !m_outlinerTree) {
+        return nullptr;
+    }
+    const uint32_t id = static_cast<uint32_t>(entity);
+    QTreeWidgetItemIterator it(m_outlinerTree);
+    while (*it) {
+        QTreeWidgetItem* item = *it;
+        const QVariant d = item->data(0, Qt::UserRole);
+        if (d.isValid() && d.toUInt() == id) {
+            return item;
+        }
+        ++it;
+    }
+    return nullptr;
 }
 
 void EditorMainWindow::onOutlinerContextMenu(const QPoint& pos)
@@ -2484,8 +2613,9 @@ void EditorMainWindow::deleteEntityFromOutliner(entt::entity entity)
 
     EditorUndoManager::PushSnapshot(ctx, "Delete entity");
 
-    // Clear selection if this entity is selected
-    if (ctx->HasSelection() && ctx->GetSelectedEntity() == entity) {
+    const auto selectedIds = ctx->GetSelectedEntities();
+    const auto it = std::find(selectedIds.begin(), selectedIds.end(), entity);
+    if (it != selectedIds.end()) {
         ctx->ClearSelection();
     }
 
@@ -2721,11 +2851,9 @@ void EditorMainWindow::onNameChanged(const QString& text)
     }
     
     ctx->MarkDirty();
-    
-    // Update outliner display
-    QList<QTreeWidgetItem*> selected = m_outlinerTree->selectedItems();
-    if (!selected.isEmpty()) {
-        selected.first()->setText(0, text);
+
+    if (QTreeWidgetItem* row = findOutlinerItemForEntity(entity)) {
+        row->setText(0, text);
     }
 }
 

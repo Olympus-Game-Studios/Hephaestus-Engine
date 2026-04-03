@@ -129,12 +129,25 @@ bool EditorContext::SaveSceneAs(const std::string& filepath)
 
 void EditorContext::SelectEntity(entt::entity entity)
 {
-    if (m_selectedEntity == entity) {
-        return; // No change
+    if (m_activeScene) {
+        if (entity != entt::null) {
+            const auto sel = m_activeScene->GetSelectedEntities();
+            if (m_selectedEntity == entity && sel.size() == 1 && sel[0]
+                && static_cast<entt::entity>(sel[0]) == entity) {
+                return;
+            }
+        } else if (m_selectedEntity == entt::null) {
+            const auto sel = m_activeScene->GetSelectedEntities();
+            if (sel.empty()) {
+                return;
+            }
+        }
+    } else if (m_selectedEntity == entity) {
+        return;
     }
-    
+
     m_selectedEntity = entity;
-    
+
     // Also update scene's internal selection if scene exists
     if (m_activeScene && entity != entt::null) {
         Entity e(entity, m_activeScene.get());
@@ -142,10 +155,58 @@ void EditorContext::SelectEntity(entt::entity entity)
     } else if (m_activeScene) {
         m_activeScene->ClearSelection();
     }
-    
+
     if (m_onSelectionChanged) {
         m_onSelectionChanged(entity);
     }
+}
+
+void EditorContext::SelectEntities(const std::vector<entt::entity>& entities, entt::entity primary)
+{
+    if (!m_activeScene) {
+        if (m_selectedEntity != entt::null || !entities.empty()) {
+            m_selectedEntity = entt::null;
+            if (m_onSelectionChanged) {
+                m_onSelectionChanged(entt::null);
+            }
+        }
+        return;
+    }
+
+    if (entities.empty()) {
+        ClearSelection();
+        return;
+    }
+
+    entt::entity resolvedPrimary = primary;
+    if (resolvedPrimary == entt::null || !m_activeScene->GetRegistry().valid(resolvedPrimary)) {
+        resolvedPrimary = entt::null;
+        for (entt::entity e : entities) {
+            if (e != entt::null && m_activeScene->GetRegistry().valid(e)) {
+                resolvedPrimary = e;
+                break;
+            }
+        }
+    }
+
+    m_activeScene->SetSelectedEntities(entities, resolvedPrimary);
+    m_selectedEntity = resolvedPrimary;
+
+    if (m_onSelectionChanged) {
+        m_onSelectionChanged(resolvedPrimary);
+    }
+}
+
+std::vector<entt::entity> EditorContext::GetSelectedEntities() const
+{
+    std::vector<entt::entity> out;
+    if (!m_activeScene) {
+        return out;
+    }
+    for (const auto& e : m_activeScene->GetSelectedEntities()) {
+        out.push_back(static_cast<entt::entity>(e));
+    }
+    return out;
 }
 
 void EditorContext::ClearSelection()

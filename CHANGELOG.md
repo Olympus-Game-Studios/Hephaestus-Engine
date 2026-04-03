@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-04-03: Qt editor outliner supports extended multi-selection: Shift+click selects a contiguous range in hierarchy order; Ctrl+click toggles items. Scene `SelectionComponent` state and `EditorContext::SelectEntities` / `GetSelectedEntities` track the full set; the current (focused) row is the primary for details and viewport outline until viewport multi-select is added.
 - 2026-03-30: Added `Documentation/HEPHAESTUS_ENGINE_WEBSITE.md`, a public-facing overview for the project website covering vision, core tech (C++/Vulkan/Qt/Lua/Jolt), architecture, editor, HephaestusUI (`.hui`, `display.ui` / `destroy.ui`), rendering capabilities, strengths, limitations, use cases, roadmap, and design philosophy.
 - 2026-03-27: Added `display.ui(path)` and `destroy.ui(target)` Lua global APIs for managed `.hui` lifecycle. `display.ui` loads a `.hui` file, builds the UI, auto-loads the controller, tracks the instance, and returns a handle. `destroy.ui` accepts a handle, `"current"`, or `"all"` to cleanly remove UI with full callback/resource cleanup.
 - 2026-03-27: Added HUI instance lifecycle management: duplicate path detection (re-display replaces the previous instance), a current-UI stack for `destroy.ui("current")`, automatic cleanup of all managed HUI instances on simulation stop, and safe no-op behavior for destroying already-destroyed handles.
@@ -20,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-04-03: Qt editor gizmo translate/rotate/scale now applies the same world-space delta to every entity in the current selection (using the primary entity's gizmo result), with parent-before-child write order so nested selections stay consistent.
 - 2026-03-30: Fixed Qt play mode showing a flat gray viewport when no runtime UI exists. `RuntimeUIOverlayWidget` is now only shown (and mouse-enabled) when runtime UI draw commands are present, so empty projects render the scene/background instead of an empty overlay surface.
 - 2026-03-30: Fixed missing per-swapchain-image fence tracking in `EngineFrameRenderer::RenderFrame`. The renderer now waits on `m_imagesInFlight[imageIndex]` before reusing image command buffers/resources, preventing GPU races that can lead to `VK_ERROR_DEVICE_LOST` on submit.
 - 2026-03-30: Fixed unsafe material texture descriptor updates during rendering. `EngineFrameRenderer` now defers texture-slot descriptor writes per swapchain image and applies them only after that image is acquired, avoiding updates to descriptor sets that may still be in flight.

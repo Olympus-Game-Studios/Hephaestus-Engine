@@ -45,6 +45,8 @@ public:
     Entity GetSelectedEntity();
     std::vector<Entity> GetSelectedEntities();
     void SetSelectedEntity(Entity entity);
+    /** Replace selection with the given entities; primary is the focused entity for gizmo/inspector. */
+    void SetSelectedEntities(const std::vector<entt::entity>& entities, entt::entity primary);
     void AddSelectedEntity(Entity entity);
     void ToggleSelectedEntity(Entity entity);
     void ClearSelection();

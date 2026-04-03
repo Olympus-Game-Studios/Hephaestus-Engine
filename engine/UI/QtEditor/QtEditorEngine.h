@@ -18,7 +18,13 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <memory>
+#include <utility>
+#include <vector>
 #include <vulkan/vulkan.h>
+
+#include <entt/entt.hpp>
+
+#include "../../Core/Math.h"
 
 #include "QtViewportWindow.h"
 #include "../../Gfx/NativeSurface.h"
@@ -268,6 +274,8 @@ private:
     void updateKeyState(int key, bool pressed);
     void resetInputState();
     void populateRuntimeInputState();
+    void captureGizmoMultiDragWorldStarts(Scene* scene);
+    void clearGizmoMultiDragWorldStarts();
 
     EngineState m_state = EngineState::Uninitialized;
     bool m_builtinMeshesCreated = false;
@@ -314,6 +322,9 @@ private:
     // Gizmo interaction state
     bool m_gizmoDragging = false;
     int m_gizmoActiveAxis = -1;
+    /** Per-entity world matrices at gizmo drag start (multi-select). */
+    std::vector<std::pair<entt::entity, Mat4>> m_gizmoDragEntityWorldStart;
+    Mat4 m_gizmoDragPrimaryWorldStart = Mat4::Identity();
 
     // Play Mode
     Hephaestus::PlayModeManager m_playModeManager;

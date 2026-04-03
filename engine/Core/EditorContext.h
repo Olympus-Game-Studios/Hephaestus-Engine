@@ -16,6 +16,7 @@
 #include <string>
 #include <memory>
 #include <functional>
+#include <vector>
 #include <entt/entt.hpp>
 
 // Forward declarations
@@ -158,6 +159,11 @@ public:
     void SelectEntity(entt::entity entity);
 
     /**
+     * @brief Set multiple selected entities (e.g. outliner). Primary drives gizmo and details.
+     */
+    void SelectEntities(const std::vector<entt::entity>& entities, entt::entity primary);
+
+    /**
      * @brief Clear the current selection.
      */
     void ClearSelection();
@@ -166,6 +172,11 @@ public:
      * @brief Get the currently selected entity.
      */
     entt::entity GetSelectedEntity() const { return m_selectedEntity; }
+
+    /**
+     * @brief All entities marked selected in the active scene (empty if no scene).
+     */
+    std::vector<entt::entity> GetSelectedEntities() const;
 
     /**
      * @brief Check if an entity is selected.

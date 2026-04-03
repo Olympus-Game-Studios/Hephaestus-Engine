@@ -127,6 +127,8 @@ private:
     // Outliner management
     void rebuildOutliner();
     void populateOutlinerItem(QTreeWidgetItem* parent, entt::entity entity);
+    void restoreOutlinerTreeSelection();
+    QTreeWidgetItem* findOutlinerItemForEntity(entt::entity entity);
     void onOutlinerContextMenu(const QPoint& pos);
     void createFolderInOutliner(entt::entity parentEntity);
     void deleteEntityFromOutliner(entt::entity entity);

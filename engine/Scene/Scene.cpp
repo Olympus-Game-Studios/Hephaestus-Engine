@@ -240,6 +240,37 @@ void Scene::SetSelectedEntity(Entity entity)
     }
 }
 
+void Scene::SetSelectedEntities(const std::vector<entt::entity>& entities, entt::entity primary)
+{
+    ClearSelection();
+    if (entities.empty()) {
+        return;
+    }
+
+    for (entt::entity e : entities) {
+        if (e == entt::null || !m_Registry.valid(e)) {
+            continue;
+        }
+        Entity ent(e, this);
+        if (!ent.HasComponent<SelectionComponent>()) {
+            ent.AddComponent<SelectionComponent>(true);
+        } else {
+            ent.GetComponent<SelectionComponent>().selected = true;
+        }
+    }
+
+    if (primary != entt::null && m_Registry.valid(primary)) {
+        m_PrimarySelected = primary;
+    } else {
+        for (entt::entity e : entities) {
+            if (e != entt::null && m_Registry.valid(e)) {
+                m_PrimarySelected = e;
+                break;
+            }
+        }
+    }
+}
+
 void Scene::AddSelectedEntity(Entity entity)
 {
     if (!entity)
