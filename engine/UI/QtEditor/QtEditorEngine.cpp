@@ -733,24 +733,28 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             }
             
             // LMB click without RMB (not fly mode) - try entity picking
-            // Suppress picking during play mode  
+            // Suppress picking during play mode; skip while Alt+orbit is active so release does not clear selection
             if (!m_inputState.rmbDown && !m_playModeManager.ShouldSuppressEditorInteraction() &&
+                !m_cameraController.IsOrbitModeActive() &&
                 m_frameRenderer && m_frameRenderer->IsPickingAvailable()) {
                 // Initiate pick at mouse position
                 float px = event.x;
                 float py = event.y;
                 toPixelCoords(event.x, event.y, px, py);
-                uint32_t pickedEntity = m_frameRenderer->PickEntityAt(
-                    static_cast<uint32_t>(px), 
-                    static_cast<uint32_t>(py)
-                );
-                
-                // If we got a valid entity, select it (1-frame latency)
-                if (pickedEntity != UINT32_MAX && pickedEntity != static_cast<uint32_t>(-1)) {
-                    m_editorContext.SelectEntity(static_cast<entt::entity>(pickedEntity));
+
+                const bool ctrlHeld = (event.modifiers & 0x04000000) != 0;  // Qt::ControlModifier
+                const bool shiftHeld = (event.modifiers & 0x02000000) != 0; // Qt::ShiftModifier
+
+                const uint32_t pixX = static_cast<uint32_t>(px);
+                const uint32_t pixY = static_cast<uint32_t>(py);
+                if (!m_swapchain || pixX >= m_swapchain->extent.width ||
+                    pixY >= m_swapchain->extent.height) {
+                    m_editorContext.SelectFromViewportClick(entt::null, ctrlHeld, shiftHeld);
                 } else {
-                    // Clicked on empty space - clear selection
-                    m_editorContext.ClearSelection();
+                    m_viewportPickCtrlHeld = ctrlHeld;
+                    m_viewportPickShiftHeld = shiftHeld;
+                    m_viewportPickWaitingReadback = true;
+                    m_frameRenderer->PickEntityAt(pixX, pixY);
                 }
             }
         }
@@ -1369,6 +1373,7 @@ void QtEditorEngine::renderFrame()
         return;
     }
     if (!m_editorContext.HasActiveScene()) {
+        m_viewportPickWaitingReadback = false;
         return;
     }
     
@@ -1484,6 +1489,7 @@ void QtEditorEngine::renderFrame()
             }
             m_swapchainNeedsRecreation = false;
             m_renderTimer.stop();
+            m_viewportPickWaitingReadback = false;
             return;
         }
 
@@ -1492,6 +1498,25 @@ void QtEditorEngine::renderFrame()
         m_pendingWidth = m_viewport->width();
         m_pendingHeight = m_viewport->height();
     }
+
+    tryApplyCompletedViewportPick();
+}
+
+void QtEditorEngine::tryApplyCompletedViewportPick()
+{
+    if (!m_viewportPickWaitingReadback || !m_frameRenderer) {
+        return;
+    }
+    uint32_t raw = UINT32_MAX;
+    if (!m_frameRenderer->TakeViewportPickResult(raw)) {
+        return;
+    }
+    entt::entity picked = entt::null;
+    if (raw != UINT32_MAX && raw != static_cast<uint32_t>(-1)) {
+        picked = static_cast<entt::entity>(raw);
+    }
+    m_editorContext.SelectFromViewportClick(picked, m_viewportPickCtrlHeld, m_viewportPickShiftHeld);
+    m_viewportPickWaitingReadback = false;
 }
 
 void QtEditorEngine::createTestMesh()

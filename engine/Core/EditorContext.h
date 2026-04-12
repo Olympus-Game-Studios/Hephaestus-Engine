@@ -164,6 +164,14 @@ public:
     void SelectEntities(const std::vector<entt::entity>& entities, entt::entity primary);
 
     /**
+     * @brief Viewport click selection: plain click replaces selection; Ctrl toggles; Shift adds or focuses.
+     * @param picked Entity under cursor (entt::null if none / miss). Invalid handles are ignored.
+     * @param ctrlHeld Qt Ctrl (toggle in/out of multi-selection).
+     * @param shiftHeld Qt Shift (add to selection, or set primary if already selected).
+     */
+    void SelectFromViewportClick(entt::entity picked, bool ctrlHeld, bool shiftHeld);
+
+    /**
      * @brief Clear the current selection.
      */
     void ClearSelection();

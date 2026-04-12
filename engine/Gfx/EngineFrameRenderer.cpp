@@ -302,13 +302,14 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     // Wait for previous frame
     vkWaitForFences(m_device->device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
     
-    // Process pending pick request (read from previous frame's copy)
-    if (m_idPicker.pickPending && m_idPicker.mappedStagingBuffer) {
+    // Read back pick from the copy submitted on the previous use of this frame slot (fence waited above).
+    if (m_idPicker.pickReadPending && m_idPicker.mappedStagingBuffer) {
         const uint8_t* pixelData = static_cast<const uint8_t*>(m_idPicker.mappedStagingBuffer);
-        uint32_t entityId = pixelData[0] | (pixelData[1] << 8) | 
+        uint32_t entityId = pixelData[0] | (pixelData[1] << 8) |
                             (pixelData[2] << 16) | (pixelData[3] << 24);
         m_idPicker.lastPickedEntity = entityId;
-        m_idPicker.pickPending = false;
+        m_idPicker.pickReadPending = false;
+        m_idPicker.pickJustCompleted = true;
     }
     
     // Acquire next image
@@ -364,10 +365,9 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (config.isEditorMode && m_idPicker.initialized) {
         recordIdPass(cmd, imageIndex, scene, config);
         
-        // If there's a pending pick request, copy the pixel to staging buffer
-        if (m_idPicker.pickPending && m_idPicker.pickX < m_idPicker.width && 
+        // Copy one pixel to staging; readback happens at the start of a later frame after GPU completes.
+        if (m_idPicker.pickCopyRequested && m_idPicker.pickX < m_idPicker.width &&
             m_idPicker.pickY < m_idPicker.height) {
-            
             VkBufferImageCopy region{};
             region.bufferOffset = 0;
             region.bufferRowLength = 0;
@@ -376,14 +376,19 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             region.imageSubresource.mipLevel = 0;
             region.imageSubresource.baseArrayLayer = 0;
             region.imageSubresource.layerCount = 1;
-            region.imageOffset = {static_cast<int32_t>(m_idPicker.pickX), 
+            region.imageOffset = {static_cast<int32_t>(m_idPicker.pickX),
                                   static_cast<int32_t>(m_idPicker.pickY), 0};
             region.imageExtent = {1, 1, 1};
-            
-            vkCmdCopyImageToBuffer(cmd, m_idPicker.colorImage, 
+
+            vkCmdCopyImageToBuffer(cmd, m_idPicker.colorImage,
                                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                    m_idPicker.stagingBuffer, 1, &region);
+            m_idPicker.pickCopyRequested = false;
+            m_idPicker.pickReadPending = true;
         }
+    } else if (m_idPicker.pickCopyRequested) {
+        // No ID pass this frame — drop the request so the UI does not wait forever.
+        m_idPicker.pickCopyRequested = false;
     }
     
     // Record shadow pass (before main pass)
@@ -4369,20 +4374,26 @@ uint32_t EngineFrameRenderer::PickEntityAt(uint32_t screenX, uint32_t screenY)
     if (!m_idPicker.initialized || !m_idPicker.mappedStagingBuffer) {
         return UINT32_MAX;
     }
-    
-    // Bounds check
+
     if (screenX >= m_idPicker.width || screenY >= m_idPicker.height) {
         return UINT32_MAX;
     }
-    
-    // Set up pick request - will be processed next frame
-    m_idPicker.pickPending = true;
+
+    m_idPicker.pickCopyRequested = true;
     m_idPicker.pickX = screenX;
     m_idPicker.pickY = screenY;
-    
-    // For now, return last picked entity (1-frame latency)
-    // A more sophisticated implementation would use fences and async readback
+
     return m_idPicker.lastPickedEntity;
+}
+
+bool EngineFrameRenderer::TakeViewportPickResult(uint32_t& outEntityId)
+{
+    if (!m_idPicker.pickJustCompleted) {
+        return false;
+    }
+    m_idPicker.pickJustCompleted = false;
+    outEntityId = m_idPicker.lastPickedEntity;
+    return true;
 }
 
 void EngineFrameRenderer::cleanupIdPickerResources()
@@ -4444,6 +4455,9 @@ void EngineFrameRenderer::cleanupIdPickerResources()
     
     m_idPicker.initialized = false;
     m_idPicker.mappedStagingBuffer = nullptr;
+    m_idPicker.pickCopyRequested = false;
+    m_idPicker.pickReadPending = false;
+    m_idPicker.pickJustCompleted = false;
 }
 
 } // namespace Hephaestus

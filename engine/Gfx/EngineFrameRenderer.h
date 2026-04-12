@@ -202,15 +202,17 @@ public:
     // --- Entity ID Picking ---
 
     /**
-     * @brief Pick an entity at the given screen coordinates.
-     * @param screenX X coordinate in viewport pixels
-     * @param screenY Y coordinate in viewport pixels
-     * @return Entity ID or UINT32_MAX if no entity at that location
-     * 
-     * Note: This requires the ID buffer to have been rendered this frame.
-     * The pick is performed as a GPU readback which may have 1-frame latency.
+     * @brief Queue a GPU pick at swapchain pixel coordinates (see QtEditorEngine toPixelCoords).
+     * @return Stale lastPickedEntity; use TakeViewportPickResult after the next successful frame
+     *         to read the resolved id once GPU readback completes (typically one frame later).
      */
     uint32_t PickEntityAt(uint32_t screenX, uint32_t screenY);
+
+    /**
+     * @brief If a pick readback finished at the start of the last RenderFrame, return the entity id once.
+     * @param outEntityId Raw uint32 entity handle; UINT32_MAX means empty / background.
+     */
+    bool TakeViewportPickResult(uint32_t& outEntityId);
 
     /**
      * @brief Check if ID picking is available.
@@ -547,8 +549,10 @@ private:
         uint32_t width = 0;
         uint32_t height = 0;
         
-        // Pending pick request
-        bool pickPending = false;
+        // GPU pick pipeline: request copy this frame -> readback next frame after fence
+        bool pickCopyRequested = false;
+        bool pickReadPending = false;
+        bool pickJustCompleted = false;
         uint32_t pickX = 0;
         uint32_t pickY = 0;
         uint32_t lastPickedEntity = UINT32_MAX;

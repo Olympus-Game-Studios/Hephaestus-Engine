@@ -265,6 +265,8 @@ private:
     bool initializeVulkanDevice();
     bool createSwapchain();
     void renderFrame();
+    /** Applies GPU viewport pick once readback completes (see EngineFrameRenderer::TakeViewportPickResult). */
+    void tryApplyCompletedViewportPick();
     void createTestMesh();
     void cleanupVulkanResources();
     void createBuiltinMeshes();
@@ -352,6 +354,11 @@ private:
     bool m_swapchainNeedsRecreation = false;
     uint32_t m_pendingWidth = 0;
     uint32_t m_pendingHeight = 0;
+
+    /** Viewport LMB pick waits one frame for GPU ID readback before updating selection. */
+    bool m_viewportPickWaitingReadback = false;
+    bool m_viewportPickCtrlHeld = false;
+    bool m_viewportPickShiftHeld = false;
 };
 
 } // namespace QtEditor

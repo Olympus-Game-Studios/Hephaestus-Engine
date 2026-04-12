@@ -6,6 +6,7 @@
 #include "EditorContext.h"
 #include "../Scene/Scene.h"
 #include "../Scene/SceneSerializer.h"
+#include <algorithm>
 #include <iostream>
 #include <filesystem>
 
@@ -195,6 +196,59 @@ void EditorContext::SelectEntities(const std::vector<entt::entity>& entities, en
     if (m_onSelectionChanged) {
         m_onSelectionChanged(resolvedPrimary);
     }
+}
+
+void EditorContext::SelectFromViewportClick(entt::entity picked, bool ctrlHeld, bool shiftHeld)
+{
+    if (!m_activeScene) {
+        return;
+    }
+
+    const bool hit = (picked != entt::null) && m_activeScene->GetRegistry().valid(picked);
+
+    if (!ctrlHeld && !shiftHeld) {
+        if (hit) {
+            SelectEntity(picked);
+        } else {
+            ClearSelection();
+        }
+        return;
+    }
+
+    if (!hit) {
+        return;
+    }
+
+    std::vector<entt::entity> cur = GetSelectedEntities();
+    const auto it = std::find(cur.begin(), cur.end(), picked);
+
+    if (ctrlHeld) {
+        if (it != cur.end()) {
+            cur.erase(it);
+            if (cur.empty()) {
+                ClearSelection();
+            } else {
+                entt::entity newPrimary = cur.front();
+                if (m_selectedEntity != entt::null && m_activeScene->GetRegistry().valid(m_selectedEntity)) {
+                    const auto pit = std::find(cur.begin(), cur.end(), m_selectedEntity);
+                    if (pit != cur.end()) {
+                        newPrimary = m_selectedEntity;
+                    }
+                }
+                SelectEntities(cur, newPrimary);
+            }
+        } else {
+            cur.push_back(picked);
+            SelectEntities(cur, picked);
+        }
+        return;
+    }
+
+    // Shift: add to selection, or focus as primary if already selected
+    if (it == cur.end()) {
+        cur.push_back(picked);
+    }
+    SelectEntities(cur, picked);
 }
 
 std::vector<entt::entity> EditorContext::GetSelectedEntities() const
