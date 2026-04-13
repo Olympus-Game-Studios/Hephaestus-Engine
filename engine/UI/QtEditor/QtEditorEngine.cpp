@@ -679,6 +679,11 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         }
 
         if (event.button == 1 && !m_inputState.altDown && !m_inputState.rmbDown) {
+            // Save press position for picking (release may drift due to jitter)
+            m_pickPressX = event.x;
+            m_pickPressY = event.y;
+            m_pickPressValid = true;
+
             if (canInteractWithGizmo()) {
                 Mat4 viewMatrix;
                 Mat4 projMatrix;
@@ -693,6 +698,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                         m_frameRenderer->GetGizmo()->BeginDrag(gizmoRay, hoveredAxis);
                         m_gizmoDragging = true;
                         m_gizmoActiveAxis = hoveredAxis;
+                        m_pickPressValid = false; // gizmo owns this click
                         Scene* sceneForGizmo = m_editorContext.GetActiveScene();
                         if (sceneForGizmo) {
                             captureGizmoMultiDragWorldStarts(sceneForGizmo);
@@ -736,17 +742,18 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             // Suppress picking during play mode; skip while Alt+orbit is active so release does not clear selection
             if (!m_inputState.rmbDown && !m_playModeManager.ShouldSuppressEditorInteraction() &&
                 !m_cameraController.IsOrbitModeActive() &&
-                m_frameRenderer && m_frameRenderer->IsPickingAvailable()) {
-                // Initiate pick at mouse position
-                float px = event.x;
-                float py = event.y;
-                toPixelCoords(event.x, event.y, px, py);
+                m_frameRenderer && m_frameRenderer->IsPickingAvailable() &&
+                m_pickPressValid) {
+                // Use the press position (not release) for accuracy - avoids jitter drift
+                float px = m_pickPressX;
+                float py = m_pickPressY;
+                toPixelCoords(m_pickPressX, m_pickPressY, px, py);
 
                 const bool ctrlHeld = (event.modifiers & 0x04000000) != 0;  // Qt::ControlModifier
                 const bool shiftHeld = (event.modifiers & 0x02000000) != 0; // Qt::ShiftModifier
 
-                const uint32_t pixX = static_cast<uint32_t>(px);
-                const uint32_t pixY = static_cast<uint32_t>(py);
+                const uint32_t pixX = static_cast<uint32_t>(px + 0.5f);
+                const uint32_t pixY = static_cast<uint32_t>(py + 0.5f);
                 if (!m_swapchain || pixX >= m_swapchain->extent.width ||
                     pixY >= m_swapchain->extent.height) {
                     m_editorContext.SelectFromViewportClick(entt::null, ctrlHeld, shiftHeld);
@@ -757,6 +764,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                     m_frameRenderer->PickEntityAt(pixX, pixY);
                 }
             }
+            m_pickPressValid = false;
         }
         else if (event.button == 2) m_inputState.rmbDown = false;
         else if (event.button == 4) m_inputState.mmbDown = false;
@@ -1401,6 +1409,14 @@ void QtEditorEngine::renderFrame()
     
     // Sync selection for outline rendering
     m_renderConfig.selectedEntity = static_cast<uint32_t>(m_editorContext.GetSelectedEntity());
+    {
+        auto selEntities = m_editorContext.GetSelectedEntities();
+        m_renderConfig.selectedEntities.clear();
+        m_renderConfig.selectedEntities.reserve(selEntities.size());
+        for (entt::entity e : selEntities) {
+            m_renderConfig.selectedEntities.push_back(static_cast<uint32_t>(e));
+        }
+    }
     
     // Sync gizmo settings
     m_renderConfig.gizmoMode = static_cast<int>(m_editorContext.GetGizmoMode());

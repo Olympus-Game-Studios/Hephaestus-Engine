@@ -359,6 +359,11 @@ private:
     bool m_viewportPickWaitingReadback = false;
     bool m_viewportPickCtrlHeld = false;
     bool m_viewportPickShiftHeld = false;
+
+    /** Mouse press position saved for picking (use press, not release, to avoid jitter). */
+    float m_pickPressX = 0.0f;
+    float m_pickPressY = 0.0f;
+    bool  m_pickPressValid = false;
 };
 
 } // namespace QtEditor

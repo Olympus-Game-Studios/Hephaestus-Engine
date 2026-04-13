@@ -295,6 +295,14 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             vkCreateFence(m_device->device, &fenceInfo, nullptr, &m_inFlightFences[i]);
         }
         m_imagesInFlight.assign(m_swapchain->images.size(), VK_NULL_HANDLE);
+
+        // Recreate ID picker at new swapchain dimensions
+        if (m_idPicker.initialized) {
+            cleanupIdPickerResources();
+            if (!createIdPickerResources()) {
+                std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate ID picker after resize\n";
+            }
+        }
         
         m_swapchainDirty = false;
     }
@@ -302,12 +310,11 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     // Wait for previous frame
     vkWaitForFences(m_device->device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
     
-    // Read back pick from the copy submitted on the previous use of this frame slot (fence waited above).
+    // Deferred readback fallback: if the immediate readback below didn't run
+    // (e.g. submit failed), drain any pending pick on the next frame where the
+    // GPU work is guaranteed complete.
     if (m_idPicker.pickReadPending && m_idPicker.mappedStagingBuffer) {
-        const uint8_t* pixelData = static_cast<const uint8_t*>(m_idPicker.mappedStagingBuffer);
-        uint32_t entityId = pixelData[0] | (pixelData[1] << 8) |
-                            (pixelData[2] << 16) | (pixelData[3] << 24);
-        m_idPicker.lastPickedEntity = entityId;
+        m_idPicker.lastPickedEntity = resolvePickRegion();
         m_idPicker.pickReadPending = false;
         m_idPicker.pickJustCompleted = true;
     }
@@ -365,20 +372,32 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (config.isEditorMode && m_idPicker.initialized) {
         recordIdPass(cmd, imageIndex, scene, config);
         
-        // Copy one pixel to staging; readback happens at the start of a later frame after GPU completes.
+        // Copy a small region around the click to staging for multi-pixel sampling.
         if (m_idPicker.pickCopyRequested && m_idPicker.pickX < m_idPicker.width &&
             m_idPicker.pickY < m_idPicker.height) {
+            const uint32_t R = IdPicker::SAMPLE_RADIUS;
+            uint32_t x0 = (m_idPicker.pickX > R) ? (m_idPicker.pickX - R) : 0;
+            uint32_t y0 = (m_idPicker.pickY > R) ? (m_idPicker.pickY - R) : 0;
+            uint32_t x1 = std::min(m_idPicker.pickX + R + 1, m_idPicker.width);
+            uint32_t y1 = std::min(m_idPicker.pickY + R + 1, m_idPicker.height);
+            uint32_t copyW = x1 - x0;
+            uint32_t copyH = y1 - y0;
+
+            m_idPicker.sampleOriginX = x0;
+            m_idPicker.sampleOriginY = y0;
+            m_idPicker.sampleW = copyW;
+            m_idPicker.sampleH = copyH;
+
             VkBufferImageCopy region{};
             region.bufferOffset = 0;
-            region.bufferRowLength = 0;
-            region.bufferImageHeight = 0;
+            region.bufferRowLength = copyW;
+            region.bufferImageHeight = copyH;
             region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             region.imageSubresource.mipLevel = 0;
             region.imageSubresource.baseArrayLayer = 0;
             region.imageSubresource.layerCount = 1;
-            region.imageOffset = {static_cast<int32_t>(m_idPicker.pickX),
-                                  static_cast<int32_t>(m_idPicker.pickY), 0};
-            region.imageExtent = {1, 1, 1};
+            region.imageOffset = {static_cast<int32_t>(x0), static_cast<int32_t>(y0), 0};
+            region.imageExtent = {copyW, copyH, 1};
 
             vkCmdCopyImageToBuffer(cmd, m_idPicker.colorImage,
                                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -445,7 +464,17 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         std::cerr << "[EngineFrameRenderer] vkQueuePresentKHR reported VK_ERROR_DEVICE_LOST\n";
         return false;
     }
-    
+
+    // Immediate pick readback: wait on the fence we just submitted so the
+    // staging buffer is safe to read, then resolve the result this frame.
+    // Only stalls the CPU on frames where the user actually clicked.
+    if (m_idPicker.pickReadPending && m_idPicker.mappedStagingBuffer) {
+        vkWaitForFences(m_device->device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+        m_idPicker.lastPickedEntity = resolvePickRegion();
+        m_idPicker.pickReadPending = false;
+        m_idPicker.pickJustCompleted = true;
+    }
+
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     return true;
 }
@@ -2500,37 +2529,58 @@ void EngineFrameRenderer::recordOutlines(VkCommandBuffer cmd, uint32_t imageInde
                                           const FrameRenderConfig& config)
 {
     if (!m_outlineRenderer.initialized || !scene) return;
-    if (config.selectedEntity == UINT32_MAX) return;
-    
-    // Find the selected entity's mesh/transform
+
+    const std::vector<uint32_t>& entities = config.selectedEntities;
+
+    // Fall back to the single primary if the multi-select list is empty
+    if (entities.empty()) {
+        if (config.selectedEntity == UINT32_MAX) return;
+
+        auto& registry = scene->GetRegistry();
+        entt::entity selectedEnt = static_cast<entt::entity>(config.selectedEntity);
+        if (!registry.valid(selectedEnt)) return;
+
+        auto* transformComp = registry.try_get<TransformComponent>(selectedEnt);
+        if (!transformComp) return;
+
+        auto* meshComp = registry.try_get<MeshRendererComponent>(selectedEnt);
+        if (!meshComp || !meshComp->HasValidMesh()) return;
+        if (meshComp->meshHandle >= m_meshLibrary.size()) return;
+
+        const MeshGPU& mesh = m_meshLibrary[meshComp->meshHandle];
+        if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
+            mesh.indexBuffer.buffer == VK_NULL_HANDLE) return;
+
+        Entity entity(selectedEnt, scene);
+        Mat4 modelMatrix = scene->GetWorldTransform(entity);
+        m_outlineRenderer.Draw(cmd, m_descriptorSets[imageIndex],
+                               mesh.vertexBuffer.buffer, mesh.indexBuffer.buffer,
+                               mesh.indexCount, modelMatrix);
+        return;
+    }
+
     auto& registry = scene->GetRegistry();
-    entt::entity selectedEnt = static_cast<entt::entity>(config.selectedEntity);
-    
-    if (!registry.valid(selectedEnt)) return;
-    
-    // Get transform component
-    auto* transformComp = registry.try_get<TransformComponent>(selectedEnt);
-    if (!transformComp) return;
-    
-    // Get mesh renderer component
-    auto* meshComp = registry.try_get<MeshRendererComponent>(selectedEnt);
-    if (!meshComp || !meshComp->HasValidMesh()) return;
-    
-    // Use the mesh handle directly (consistent with shadow pass and main pass)
-    if (meshComp->meshHandle >= m_meshLibrary.size()) return;
-    
-    const MeshGPU& mesh = m_meshLibrary[meshComp->meshHandle];
-    if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
-        mesh.indexBuffer.buffer == VK_NULL_HANDLE) return;
-    
-    // Use world transform (same as main pass) so outline matches rendered mesh position
-    Entity entity(selectedEnt, scene);
-    Mat4 modelMatrix = scene->GetWorldTransform(entity);
-    
-    // Draw the outline
-    m_outlineRenderer.Draw(cmd, m_descriptorSets[imageIndex], 
-                           mesh.vertexBuffer.buffer, mesh.indexBuffer.buffer,
-                           mesh.indexCount, modelMatrix);
+    for (uint32_t rawId : entities) {
+        entt::entity ent = static_cast<entt::entity>(rawId);
+        if (!registry.valid(ent)) continue;
+
+        auto* transformComp = registry.try_get<TransformComponent>(ent);
+        if (!transformComp) continue;
+
+        auto* meshComp = registry.try_get<MeshRendererComponent>(ent);
+        if (!meshComp || !meshComp->HasValidMesh()) continue;
+        if (meshComp->meshHandle >= m_meshLibrary.size()) continue;
+
+        const MeshGPU& mesh = m_meshLibrary[meshComp->meshHandle];
+        if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
+            mesh.indexBuffer.buffer == VK_NULL_HANDLE) continue;
+
+        Entity entity(ent, scene);
+        Mat4 modelMatrix = scene->GetWorldTransform(entity);
+        m_outlineRenderer.Draw(cmd, m_descriptorSets[imageIndex],
+                               mesh.vertexBuffer.buffer, mesh.indexBuffer.buffer,
+                               mesh.indexCount, modelMatrix);
+    }
 }
 
 // ============================================================================
@@ -4218,10 +4268,10 @@ bool EngineFrameRenderer::createIdPickerResources()
     vkDestroyShaderModule(device, vertShader, nullptr);
     vkDestroyShaderModule(device, fragShader, nullptr);
     
-    // Create staging buffer for readback (small, just needs a few pixels)
+    // Create staging buffer for readback (sized for SAMPLE_SIDE x SAMPLE_SIDE region)
     VkBufferCreateInfo stagingBufInfo{};
     stagingBufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    stagingBufInfo.size = 4; // 4 bytes for one RGBA8 pixel
+    stagingBufInfo.size = IdPicker::STAGING_BYTES;
     stagingBufInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     stagingBufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     
@@ -4394,6 +4444,46 @@ bool EngineFrameRenderer::TakeViewportPickResult(uint32_t& outEntityId)
     m_idPicker.pickJustCompleted = false;
     outEntityId = m_idPicker.lastPickedEntity;
     return true;
+}
+
+uint32_t EngineFrameRenderer::resolvePickRegion() const
+{
+    if (!m_idPicker.mappedStagingBuffer || m_idPicker.sampleW == 0 || m_idPicker.sampleH == 0) {
+        return UINT32_MAX;
+    }
+
+    const uint8_t* data = static_cast<const uint8_t*>(m_idPicker.mappedStagingBuffer);
+    const uint32_t w = m_idPicker.sampleW;
+    const uint32_t h = m_idPicker.sampleH;
+
+    // Center of the sample region in local coordinates
+    const float cx = static_cast<float>(m_idPicker.pickX - m_idPicker.sampleOriginX);
+    const float cy = static_cast<float>(m_idPicker.pickY - m_idPicker.sampleOriginY);
+
+    uint32_t bestEntity = UINT32_MAX;
+    float bestDist = 1e9f;
+
+    for (uint32_t sy = 0; sy < h; ++sy) {
+        for (uint32_t sx = 0; sx < w; ++sx) {
+            const uint32_t offset = (sy * w + sx) * 4;
+            uint32_t id = data[offset]
+                        | (data[offset + 1] << 8)
+                        | (data[offset + 2] << 16)
+                        | (data[offset + 3] << 24);
+
+            if (id == UINT32_MAX) continue;
+
+            float dx = static_cast<float>(sx) - cx;
+            float dy = static_cast<float>(sy) - cy;
+            float dist = dx * dx + dy * dy;
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestEntity = id;
+            }
+        }
+    }
+
+    return bestEntity;
 }
 
 void EngineFrameRenderer::cleanupIdPickerResources()

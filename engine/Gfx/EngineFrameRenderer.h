@@ -84,7 +84,8 @@ struct FrameRenderConfig {
     float clearColorB = 0.3f;
     
     // Selection for outline rendering (entt::entity as uint32_t)
-    uint32_t selectedEntity = static_cast<uint32_t>(-1); // entt::null
+    uint32_t selectedEntity = static_cast<uint32_t>(-1); // entt::null (primary)
+    std::vector<uint32_t> selectedEntities;               // All selected entities for multi-select outlines
     
     // Gizmo configuration (read from EditorContext)
     int gizmoMode = 1;      // 0=None, 1=Translate, 2=Rotate, 3=Scale
@@ -301,6 +302,7 @@ private:
     void recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene,
                       const FrameRenderConfig& config);
     void cleanupIdPickerResources();
+    uint32_t resolvePickRegion() const;
     
 #ifndef HEPHAESTUS_GAME_RUNTIME
     // Gizmo helpers (Editor only)
@@ -540,7 +542,7 @@ private:
         VkPipeline pipelineBackface = VK_NULL_HANDLE; // Backface culling enabled
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         
-        // Readback staging buffer
+        // Readback staging buffer (sized for SAMPLE_SIDE x SAMPLE_SIDE region)
         VkBuffer stagingBuffer = VK_NULL_HANDLE;
         VmaAllocation stagingAllocation = VK_NULL_HANDLE;
         void* mappedStagingBuffer = nullptr;
@@ -549,12 +551,22 @@ private:
         uint32_t width = 0;
         uint32_t height = 0;
         
-        // GPU pick pipeline: request copy this frame -> readback next frame after fence
+        // Multi-pixel sample region (must be odd). 5x5 = 25 pixels.
+        static constexpr uint32_t SAMPLE_RADIUS = 2;
+        static constexpr uint32_t SAMPLE_SIDE = SAMPLE_RADIUS * 2 + 1;
+        static constexpr uint32_t SAMPLE_PIXEL_COUNT = SAMPLE_SIDE * SAMPLE_SIDE;
+        static constexpr uint32_t STAGING_BYTES = SAMPLE_PIXEL_COUNT * 4; // RGBA8
+        
+        // GPU pick state
         bool pickCopyRequested = false;
         bool pickReadPending = false;
         bool pickJustCompleted = false;
         uint32_t pickX = 0;
         uint32_t pickY = 0;
+        uint32_t sampleOriginX = 0; // top-left of the copied region (clamped)
+        uint32_t sampleOriginY = 0;
+        uint32_t sampleW = 0;       // actual copied width/height (may be < SAMPLE_SIDE near edges)
+        uint32_t sampleH = 0;
         uint32_t lastPickedEntity = UINT32_MAX;
         
         struct IdPushConstants {
