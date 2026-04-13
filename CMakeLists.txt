@@ -1,6 +1,27 @@
 cmake_minimum_required(VERSION 3.24)
 project(HephaestusEngine LANGUAGES CXX)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Application Details  (single source of truth — edit these, not C++ files)
+# ─────────────────────────────────────────────────────────────────────────────
+set(HEPHAESTUS_VERSION_MAJOR 2026)
+set(HEPHAESTUS_VERSION_MINOR 4)
+set(HEPHAESTUS_VERSION_PATCH 0)
+set(HEPHAESTUS_VERSION "${HEPHAESTUS_VERSION_MAJOR}.${HEPHAESTUS_VERSION_MINOR}.${HEPHAESTUS_VERSION_PATCH}")
+
+set(HEPHAESTUS_APP_NAME        "Hephaestus Engine")
+set(HEPHAESTUS_APP_DESCRIPTION "A 3D game engine built with C++20, Vulkan, Qt, and Lua.")
+set(HEPHAESTUS_ORGANIZATION    "Hephaestus")
+set(HEPHAESTUS_DOMAIN          "dev.olympusgames.hephaestus")
+set(HEPHAESTUS_WEBSITE         "https://hepheastus.olympusgames.dev")
+set(HEPHAESTUS_COPYRIGHT       "Copyright (c) 2026 Hephaestus Contributors")
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/engine/Core/AppConfig.h.in"
+    "${CMAKE_BINARY_DIR}/generated/AppConfig.h"
+    @ONLY
+)
+
 if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum OS X deployment version")
 endif()
@@ -262,7 +283,7 @@ if(HEPHAESTUS_USE_QT AND Qt6_FOUND)
     )
 
     target_link_libraries(HephaestusToolsCommon PUBLIC Qt6::Core)
-    target_include_directories(HephaestusToolsCommon PUBLIC engine)
+    target_include_directories(HephaestusToolsCommon PUBLIC engine "${CMAKE_BINARY_DIR}/generated")
     target_compile_definitions(HephaestusToolsCommon PUBLIC
         $<$<BOOL:${HEPHAESTUS_USE_SHARED_ASSETS}>:HEPHAESTUS_USE_SHARED_ASSETS=1>
         $<$<NOT:$<BOOL:${HEPHAESTUS_USE_SHARED_ASSETS}>>:HEPHAESTUS_USE_SHARED_ASSETS=0>
@@ -366,16 +387,19 @@ if (WIN32)
     target_sources(HephaestusEngine PRIVATE ${APP_ICON_RC})
     set_source_files_properties(${APP_ICON_RC} PROPERTIES GENERATED TRUE)
 elseif(APPLE)
-    # macOS App Bundle setup
+    # macOS App Bundle setup — version/metadata sourced from CMake variables
     set_target_properties(HephaestusEngine PROPERTIES
         MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "Hephaestus Engine"
-        MACOSX_BUNDLE_GUI_IDENTIFIER "com.hephaestus.engine"
-        MACOSX_BUNDLE_INFO_STRING "Hephaestus Engine Editor"
+        MACOSX_BUNDLE_BUNDLE_NAME "${HEPHAESTUS_APP_NAME}"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "${HEPHAESTUS_DOMAIN}"
+        MACOSX_BUNDLE_INFO_STRING "${HEPHAESTUS_APP_DESCRIPTION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${HEPHAESTUS_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${HEPHAESTUS_VERSION}"
+        MACOSX_BUNDLE_COPYRIGHT "${HEPHAESTUS_COPYRIGHT}"
     )
 endif()
 
-target_include_directories(HephaestusEngine PRIVATE engine)
+target_include_directories(HephaestusEngine PRIVATE engine "${CMAKE_BINARY_DIR}/generated")
 if(LUA_FOUND)
     if(TARGET Lua::Lua)
         target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt Lua::Lua)
@@ -465,6 +489,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/AddActorsPanel.h
             engine/UI/QtEditor/BuildSettingsDialog.cpp
             engine/UI/QtEditor/BuildSettingsDialog.h
+            engine/UI/QtEditor/AboutDialog.cpp
+            engine/UI/QtEditor/AboutDialog.h
             engine/UI/Shared/SettingsWindow.cpp
             engine/UI/Shared/SettingsWindow.h
         )
@@ -649,6 +675,7 @@ target_include_directories(HephaestusGame PRIVATE
     extern/entt/single_include
     extern/JoltPhysics
     extern/JoltPhysics/Build
+    "${CMAKE_BINARY_DIR}/generated"
 )
 
 # Link libraries for game runtime

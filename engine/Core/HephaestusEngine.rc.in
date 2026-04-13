@@ -1,3 +1,31 @@
 #include <windows.h>
 
 IDI_APP_ICON ICON "@APP_ICON_PATH@"
+
+1 VERSIONINFO
+FILEVERSION     @HEPHAESTUS_VERSION_MAJOR@,@HEPHAESTUS_VERSION_MINOR@,@HEPHAESTUS_VERSION_PATCH@,0
+PRODUCTVERSION  @HEPHAESTUS_VERSION_MAJOR@,@HEPHAESTUS_VERSION_MINOR@,@HEPHAESTUS_VERSION_PATCH@,0
+FILEFLAGSMASK   0x3fL
+FILEFLAGS       0x0L
+FILEOS          0x40004L
+FILETYPE        0x1L
+FILESUBTYPE     0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName",      "@HEPHAESTUS_ORGANIZATION@"
+            VALUE "FileDescription",  "@HEPHAESTUS_APP_DESCRIPTION@"
+            VALUE "FileVersion",      "@HEPHAESTUS_VERSION@.0"
+            VALUE "InternalName",     "HephaestusEngine"
+            VALUE "LegalCopyright",   "@HEPHAESTUS_COPYRIGHT@"
+            VALUE "ProductName",      "@HEPHAESTUS_APP_NAME@"
+            VALUE "ProductVersion",   "@HEPHAESTUS_VERSION@.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

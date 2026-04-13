@@ -39,6 +39,7 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
+#include "AppConfig.h"
 #include "Core/RuntimeBootstrap.h"
 
 #ifdef _WIN32
@@ -1284,9 +1285,9 @@ int main(int argc, char* argv[]) {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     appInfo.pApplicationName = g_Config.windowTitle.c_str();
-    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.pEngineName = "Hephaestus Engine";
-    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.applicationVersion = VK_MAKE_VERSION(HEPHAESTUS_VERSION_MAJOR, HEPHAESTUS_VERSION_MINOR, HEPHAESTUS_VERSION_PATCH);
+    appInfo.pEngineName = HEPHAESTUS_APP_NAME;
+    appInfo.engineVersion = VK_MAKE_VERSION(HEPHAESTUS_VERSION_MAJOR, HEPHAESTUS_VERSION_MINOR, HEPHAESTUS_VERSION_PATCH);
     appInfo.apiVersion = VK_API_VERSION_1_3;
 
     uint32_t extCount = 0;

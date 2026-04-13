@@ -7,6 +7,7 @@
 
 #include "EditorQtApp.h"
 #include "EditorMainWindow.h"
+#include "../../ToolsCommon/VersionInfo.h"
 
 #include <QApplication>
 #include <QDir>
@@ -100,10 +101,11 @@ int RunQtEditor(int argc, char** argv)
         }
     }
     
-    // Set application metadata
-    QApplication::setApplicationName("Hephaestus Engine Editor");
-    QApplication::setApplicationVersion("1.0.0");
-    QApplication::setOrganizationName("Hephaestus");
+    // Set application metadata from centralized config
+    QApplication::setApplicationName(Hephaestus::Tools::VersionInfo::AppName());
+    QApplication::setApplicationVersion(Hephaestus::Tools::VersionInfo::EngineVersion());
+    QApplication::setOrganizationName(Hephaestus::Tools::VersionInfo::Organization());
+    QApplication::setOrganizationDomain(Hephaestus::Tools::VersionInfo::Domain());
 
     // Create and show the main editor window
     Hephaestus::QtEditor::EditorMainWindow mainWindow;

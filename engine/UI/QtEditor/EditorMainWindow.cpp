@@ -6,6 +6,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "EditorMainWindow.h"
+#include "AboutDialog.h"
 #include "QtViewportWindow.h"
 #include "QtEditorEngine.h"
 #include "AssetBrowserWidget.h"
@@ -27,6 +28,7 @@
 #include "../../Core/EditorContext.h"
 #include "../../Core/ProjectContext.h"
 #include "../../ToolsCommon/EngineContext.h"
+#include "../../ToolsCommon/VersionInfo.h"
 #include "../../Assets/AssetManager.h"
 #include "../../Assets/AssetTypes.h"
 #include "../../Assets/ModelImporter.h"
@@ -79,12 +81,53 @@
 #include <unordered_set>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#pragma comment(lib, "psapi.lib")
+#elif defined(__APPLE__)
+#include <mach/mach.h>
+#elif defined(__linux__)
+#include <fstream>
+#endif
+
 #include <QTreeWidgetItemIterator>
 
 namespace Hephaestus {
 namespace QtEditor {
 
 namespace {
+
+/// Returns process resident memory (working set) in megabytes, or -1.0 on failure.
+double getProcessMemoryMB()
+{
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS pmc{};
+    pmc.cb = sizeof(pmc);
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        return static_cast<double>(pmc.WorkingSetSize) / (1024.0 * 1024.0);
+    }
+#elif defined(__APPLE__)
+    mach_task_basic_info_data_t info{};
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                  reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS) {
+        return static_cast<double>(info.resident_size) / (1024.0 * 1024.0);
+    }
+#elif defined(__linux__)
+    std::ifstream statm("/proc/self/statm");
+    if (statm.is_open()) {
+        long pages = 0;
+        statm >> pages; // first field = total program size (we want RSS = second)
+        statm >> pages;
+        return static_cast<double>(pages) * sysconf(_SC_PAGESIZE) / (1024.0 * 1024.0);
+    }
+#endif
+    return -1.0;
+}
 
 entt::entity entityFromOutlinerItem(QTreeWidgetItem* item)
 {
@@ -524,6 +567,7 @@ void EditorMainWindow::setupMenuBar()
     QMenu* helpMenu = menuBar->addMenu(tr("&Help"));
 
     QAction* aboutAction = helpMenu->addAction(tr("&About"));
+    aboutAction->setMenuRole(QAction::AboutRole);
     connect(aboutAction, &QAction::triggered, this, &EditorMainWindow::onAbout);
 }
 
@@ -1700,7 +1744,9 @@ void EditorMainWindow::setupStatusBar()
     m_statusFps = new QLabel(tr("FPS 0.0"), status);
     m_statusDrawCalls = new QLabel(tr("Draw 0"), status);
     m_statusRam = new QLabel(tr("RAM --"), status);
-    m_statusVersion = new QLabel(tr("Hephaestus 1.0.0"), status);
+    m_statusVersion = new QLabel(
+        QStringLiteral("%1 %2").arg(Hephaestus::Tools::VersionInfo::AppName(),
+                                    Hephaestus::Tools::VersionInfo::EngineVersion()), status);
 
     status->addPermanentWidget(m_statusFps);
     status->addPermanentWidget(m_statusDrawCalls);
@@ -2222,9 +2268,17 @@ void EditorMainWindow::onFrameRendered(float dt)
             }
         }
 
-        // Placeholder lightweight counters for now (visual telemetry surface).
-        const int drawCalls = 0;
-        const QString ramUsage = tr("RAM --");
+        int drawCalls = 0;
+        if (m_engine) {
+            if (auto* renderer = m_engine->GetFrameRenderer())
+                drawCalls = renderer->GetLastFrameStats().drawCalls;
+        }
+
+        const double ramMB = getProcessMemoryMB();
+        const QString ramUsage = (ramMB >= 0.0)
+            ? QString("RAM %1 MB").arg(ramMB, 0, 'f', 0)
+            : QStringLiteral("RAM --");
+
         if (m_statusDrawCalls) m_statusDrawCalls->setText(QString("Draw %1").arg(drawCalls));
         if (m_overlayBottomLeft && m_overlayBottomLeft->isVisible()) {
             if (m_overlayDrawCallsLabel) m_overlayDrawCallsLabel->setText(QString("Draw %1").arg(drawCalls));
@@ -3112,9 +3166,10 @@ void EditorMainWindow::onNewProject()
            "     \"formatVersion\": 1,\n"
            "     \"name\": \"YourProjectName\",\n"
            "     \"description\": \"...\",\n"
-           "     \"engineVersion\": \"1.0.0\"\n"
+           "     \"engineVersion\": \"%1\"\n"
            "   }\n"
-           "3. Use File → Open Project... to open it"));
+           "3. Use File → Open Project... to open it")
+           .arg(Hephaestus::Tools::VersionInfo::EngineVersion()));
 }
 
 void EditorMainWindow::onOpenProject()
@@ -3516,11 +3571,8 @@ void EditorMainWindow::onOpenSettings()
 
 void EditorMainWindow::onAbout()
 {
-    QMessageBox::about(this, tr("About Hephaestus Engine Editor"),
-        tr("<h2>Hephaestus Engine Editor</h2>"
-           "<p>Version 1.0.0 (Qt UI)</p>"
-           "<p>A 3D game engine editor built with Qt Widgets.</p>"
-           "<p>Vulkan rendering integrated via EngineFrameRenderer.</p>"));
+    AboutDialog dlg(this);
+    dlg.exec();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

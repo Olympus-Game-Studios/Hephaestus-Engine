@@ -95,6 +95,15 @@ struct FrameRenderConfig {
 };
 
 /**
+ * @brief Per-frame rendering statistics collected during RenderFrame().
+ */
+struct FrameStats {
+    int drawCalls   = 0;
+    int meshesDrawn = 0;
+    int entitiesSkipped = 0;
+};
+
+/**
  * @brief Shared frame rendering system.
  * 
  * Usage:
@@ -149,6 +158,8 @@ public:
      */
     bool IsInitialized() const { return m_initialized; }
     bool HasDeviceLost() const { return m_deviceLost; }
+
+    const FrameStats& GetLastFrameStats() const { return m_lastFrameStats; }
 
     /**
      * @brief Set the project root directory for resolving relative asset paths (HDRI, etc.).
@@ -389,6 +400,9 @@ private:
     uint32_t ensureMaterialTextureSlot(const std::string& rawPath);
     void updateTextureSlotInDescriptors(uint32_t slotIndex, uint32_t imageIndex);
     void flushPendingTextureDescriptorUpdates(uint32_t imageIndex);
+
+    // Per-frame stats (written during RenderFrame, read via GetLastFrameStats)
+    FrameStats m_lastFrameStats;
 
     // Debug: material system logging
     bool m_materialDebugLogged = false;

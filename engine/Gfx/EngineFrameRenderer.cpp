@@ -2414,9 +2414,16 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             std::cout << "[EngineFrameRenderer] Drew " << drawnCount << " submesh draws, skipped " << skippedCount 
                       << " entities, used " << matSlotNext << " material slots\n";
         }
-    } else if (debugPrint) {
-        std::cout << "[EngineFrameRenderer] No scene or empty mesh library: scene=" << (void*)scene 
-                  << " meshLibrary.size=" << m_meshLibrary.size() << "\n";
+
+        m_lastFrameStats.drawCalls       = drawnCount;
+        m_lastFrameStats.meshesDrawn     = drawnCount;
+        m_lastFrameStats.entitiesSkipped = skippedCount;
+    } else {
+        m_lastFrameStats = {};
+        if (debugPrint) {
+            std::cout << "[EngineFrameRenderer] No scene or empty mesh library: scene=" << (void*)scene 
+                      << " meshLibrary.size=" << m_meshLibrary.size() << "\n";
+        }
     }
     
     // Render editor grid (after opaque meshes, before transparent) — not in play/pause or shipped game
