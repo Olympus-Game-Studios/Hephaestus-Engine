@@ -1,7 +1,7 @@
 #include "EditorDocument.h"
 
-#include "../Scene/BlueprintSerializer.h"
-#include "../Scene/BlueprintInstantiator.h"
+#include "../Scene/PrefabSerializer.h"
+#include "../Scene/PrefabInstantiator.h"
 #include "../Scene/SceneSerializer.h"
 #include "../Scene/Components.h"
 #include "../Scripting/ScriptComponent.h"
@@ -223,20 +223,20 @@ bool SceneDocument::DeserializeFromUndo(const std::string& data, std::string& ou
     return true;
 }
 
-BlueprintDocument::BlueprintDocument(Scene* previewScene) : scene_(previewScene) {
-    displayName_ = "Blueprint Mode";
+PrefabDocument::PrefabDocument(Scene* previewScene) : scene_(previewScene) {
+    displayName_ = "Prefab";
 }
 
-bool BlueprintDocument::OnOpen(const std::filesystem::path& path, std::string& outError) {
+bool PrefabDocument::OnOpen(const std::filesystem::path& path, std::string& outError) {
     if (!scene_) {
         outError = "Preview scene not available.";
         return false;
     }
 
     path_ = path;
-    displayName_ = "Blueprint Mode";
+    displayName_ = path_.stem().string();
 
-    if (!BlueprintSerializer::Deserialize(asset_, path_, outError)) {
+    if (!PrefabSerializer::Deserialize(asset_, path_, outError)) {
         return false;
     }
 
@@ -255,19 +255,22 @@ bool BlueprintDocument::OnOpen(const std::filesystem::path& path, std::string& o
     return true;
 }
 
-bool BlueprintDocument::OnSave(std::string& outError) {
+bool PrefabDocument::OnSave(std::string& outError) {
     if (path_.empty()) {
-        outError = "Blueprint save failed: no path set.";
+        outError = "Prefab save failed: no path set.";
         return false;
     }
-    if (!BlueprintSerializer::Serialize(asset_, path_, outError)) {
+    if (!PrefabSerializer::Serialize(asset_, path_, outError)) {
         return false;
     }
     dirty_ = false;
+    if (postSaveCallback_) {
+        postSaveCallback_(path_);
+    }
     return true;
 }
 
-void BlueprintDocument::OnClose() {
+void PrefabDocument::OnClose() {
     // Restore the preview scene from snapshot if we have one
     if (scene_ && !sceneSnapshotBeforeOpen_.empty()) {
         scene_->Clear();
@@ -283,12 +286,12 @@ void BlueprintDocument::OnClose() {
     }
 }
 
-std::string BlueprintDocument::SerializeForUndo() {
-    return BlueprintSerializer::SerializeToString(asset_);
+std::string PrefabDocument::SerializeForUndo() {
+    return PrefabSerializer::SerializeToString(asset_);
 }
 
-bool BlueprintDocument::DeserializeFromUndo(const std::string& data, std::string& outError) {
-    if (!BlueprintSerializer::DeserializeFromString(asset_, data, outError)) {
+bool PrefabDocument::DeserializeFromUndo(const std::string& data, std::string& outError) {
+    if (!PrefabSerializer::DeserializeFromString(asset_, data, outError)) {
         return false;
     }
     RebuildPreviewWorld();
@@ -296,7 +299,7 @@ bool BlueprintDocument::DeserializeFromUndo(const std::string& data, std::string
     return true;
 }
 
-std::vector<std::string> BlueprintDocument::GetNodeIds() const {
+std::vector<std::string> PrefabDocument::GetNodeIds() const {
     std::vector<std::string> ids;
     ids.reserve(asset_.nodes.size());
     for (const auto& node : asset_.nodes) {
@@ -305,7 +308,7 @@ std::vector<std::string> BlueprintDocument::GetNodeIds() const {
     return ids;
 }
 
-BlueprintNode* BlueprintDocument::FindNodeById(const std::string& nodeId) {
+PrefabNode* PrefabDocument::FindNodeById(const std::string& nodeId) {
     for (auto& node : asset_.nodes) {
         if (node.id == nodeId) {
             return &node;
@@ -314,14 +317,14 @@ BlueprintNode* BlueprintDocument::FindNodeById(const std::string& nodeId) {
     return nullptr;
 }
 
-Entity BlueprintDocument::FindEntityByNodeId(const std::string& nodeId) {
+Entity PrefabDocument::FindEntityByNodeId(const std::string& nodeId) {
     if (!scene_ || nodeId.empty()) {
         return {};
     }
-    auto view = scene_->GetEntitiesWith<BlueprintNodeComponent>();
+    auto view = scene_->GetEntitiesWith<PrefabNodeComponent>();
     for (auto entityHandle : view) {
         Entity entity(entityHandle, scene_);
-        const auto& nodeComp = entity.GetComponent<BlueprintNodeComponent>();
+        const auto& nodeComp = entity.GetComponent<PrefabNodeComponent>();
         if (nodeComp.nodeId == nodeId) {
             return entity;
         }
@@ -329,14 +332,18 @@ Entity BlueprintDocument::FindEntityByNodeId(const std::string& nodeId) {
     return {};
 }
 
-std::string BlueprintDocument::GenerateNodeId() const {
+std::string PrefabDocument::GenerateNodeId() const {
     static unsigned int counter = 0;
     std::stringstream idStream;
     idStream << std::hex << std::time(nullptr) << "-" << counter++;
     return idStream.str();
 }
 
-void BlueprintDocument::RebuildPreviewWorld() {
+void PrefabDocument::RebuildPreview() {
+    RebuildPreviewWorld();
+}
+
+void PrefabDocument::RebuildPreviewWorld() {
     if (!scene_) {
         return;
     }
@@ -344,17 +351,17 @@ void BlueprintDocument::RebuildPreviewWorld() {
     scene_->Clear();
     scene_->ClearSelection();
 
-    Entity env = scene_->CreateEntity("Blueprint Preview Environment");
+    Entity env = scene_->CreateEntity("Prefab Preview Environment");
     env.AddComponent<EnvironmentComponent>();
     env.AddComponent<EditorOnlyComponent>();
 
-    Entity light = scene_->CreateEntity("Blueprint Preview Light");
+    Entity light = scene_->CreateEntity("Prefab Preview Light");
     light.AddComponent<LightComponent>(LightComponent::CreateDirectional(Vec3(0.0f, -1.0f, -0.2f)));
     light.AddComponent<EditorOnlyComponent>();
 
-    BlueprintInstantiateOptions options;
-    options.blueprintPath = path_.generic_string();
-    Entity root = BlueprintInstantiator::Instantiate(*scene_, asset_, options);
+    PrefabInstantiateOptions options;
+    options.prefabPath = path_.generic_string();
+    Entity root = PrefabInstantiator::Instantiate(*scene_, asset_, options);
     rootEntity_ = root ? static_cast<entt::entity>(root) : entt::null;
 
     if (postRebuildCallback_) {
@@ -362,16 +369,16 @@ void BlueprintDocument::RebuildPreviewWorld() {
     }
 }
 
-bool BlueprintDocument::SyncNodeFromEntity(Entity entity) {
+bool PrefabDocument::SyncNodeFromEntity(Entity entity) {
     if (!entity || !scene_) {
         return false;
     }
-    if (!entity.HasComponent<BlueprintNodeComponent>()) {
+    if (!entity.HasComponent<PrefabNodeComponent>()) {
         return false;
     }
 
-    const auto& nodeComp = entity.GetComponent<BlueprintNodeComponent>();
-    BlueprintNode* node = FindNodeById(nodeComp.nodeId);
+    const auto& nodeComp = entity.GetComponent<PrefabNodeComponent>();
+    PrefabNode* node = FindNodeById(nodeComp.nodeId);
     if (!node) {
         return false;
     }
@@ -387,8 +394,8 @@ bool BlueprintDocument::SyncNodeFromEntity(Entity entity) {
 
     if (transform.parent != entt::null) {
         Entity parent(transform.parent, scene_);
-        if (parent && parent.HasComponent<BlueprintNodeComponent>()) {
-            node->parentId = parent.GetComponent<BlueprintNodeComponent>().nodeId;
+        if (parent && parent.HasComponent<PrefabNodeComponent>()) {
+            node->parentId = parent.GetComponent<PrefabNodeComponent>().nodeId;
         } else {
             node->parentId.clear();
         }
@@ -400,12 +407,12 @@ bool BlueprintDocument::SyncNodeFromEntity(Entity entity) {
         asset_.rootNodeId = node->id;
     }
 
-    std::vector<BlueprintComponentEntry> updatedComponents;
+    std::vector<PrefabComponentEntry> updatedComponents;
     updatedComponents.reserve(12);
     std::unordered_set<std::string> knownTypes;
 
     auto addComponentEntry = [&](const std::string& type, bool enabled, JsonValue data) {
-        BlueprintComponentEntry entry;
+        PrefabComponentEntry entry;
         entry.type = type;
         entry.enabled = enabled;
         entry.data = std::move(data);
@@ -565,15 +572,15 @@ bool BlueprintDocument::SyncNodeFromEntity(Entity entity) {
     return true;
 }
 
-bool BlueprintDocument::AddChildNode(const std::string& parentId, const std::string& nameHint, Entity* outEntity) {
-    BlueprintNode* parentNode = FindNodeById(parentId);
+bool PrefabDocument::AddChildNode(const std::string& parentId, const std::string& nameHint, Entity* outEntity) {
+    PrefabNode* parentNode = FindNodeById(parentId);
     if (!parentNode) {
         return false;
     }
 
-    BlueprintNode node;
+    PrefabNode node;
     node.id = GenerateNodeId();
-    node.name = nameHint.empty() ? "Blueprint Node" : nameHint;
+    node.name = nameHint.empty() ? "Prefab Node" : nameHint;
     node.parentId = parentNode->id;
     node.localTransform = TransformComponent();
 
@@ -582,7 +589,7 @@ bool BlueprintDocument::AddChildNode(const std::string& parentId, const std::str
     Entity parentEntity = FindEntityByNodeId(parentNode->id);
     Entity created = scene_ ? scene_->CreateEntity(node.name) : Entity{};
     if (created) {
-        auto& nodeComp = created.AddComponent<BlueprintNodeComponent>();
+        auto& nodeComp = created.AddComponent<PrefabNodeComponent>();
         nodeComp.nodeId = node.id;
         nodeComp.instanceId = "preview";
         if (parentEntity) {
@@ -597,7 +604,7 @@ bool BlueprintDocument::AddChildNode(const std::string& parentId, const std::str
     return true;
 }
 
-bool BlueprintDocument::DeleteNode(const std::string& nodeId) {
+bool PrefabDocument::DeleteNode(const std::string& nodeId) {
     if (nodeId.empty() || nodeId == asset_.rootNodeId) {
         return false;
     }
@@ -618,7 +625,7 @@ bool BlueprintDocument::DeleteNode(const std::string& nodeId) {
         }
     }
 
-    asset_.nodes.erase(std::remove_if(asset_.nodes.begin(), asset_.nodes.end(), [&](const BlueprintNode& node) {
+    asset_.nodes.erase(std::remove_if(asset_.nodes.begin(), asset_.nodes.end(), [&](const PrefabNode& node) {
         return toDelete.count(node.id) > 0;
     }), asset_.nodes.end());
 
@@ -636,11 +643,11 @@ bool BlueprintDocument::DeleteNode(const std::string& nodeId) {
     return true;
 }
 
-bool BlueprintDocument::ReparentNode(const std::string& nodeId, const std::string& newParentId) {
+bool PrefabDocument::ReparentNode(const std::string& nodeId, const std::string& newParentId) {
     if (nodeId.empty() || nodeId == asset_.rootNodeId) {
         return false;
     }
-    BlueprintNode* node = FindNodeById(nodeId);
+    PrefabNode* node = FindNodeById(nodeId);
     if (!node) {
         return false;
     }

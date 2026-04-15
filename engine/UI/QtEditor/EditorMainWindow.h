@@ -58,6 +58,7 @@ class QtEditorEngine;
 class AssetBrowserWidget;
 class AddActorsPanel;
 class EditorAssetActions;
+class PrefabEditorManager;
 class RuntimeUIOverlayWidget;
 class LightInspector;
 class EnvironmentInspector;
@@ -259,6 +260,7 @@ private:
     // Asset browser (new widget-based)
     AssetBrowserWidget* m_assetBrowser = nullptr;
     std::unique_ptr<EditorAssetActions> m_assetActions;
+    std::unique_ptr<PrefabEditorManager> m_prefabEditorManager;
     UI::SettingsWindow* m_settingsWindow = nullptr;
 
     // Build output

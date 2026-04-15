@@ -26,6 +26,16 @@ EditorContext::~EditorContext()
 // Scene Management
 // ─────────────────────────────────────────────────────────────────────────────
 
+void EditorContext::SetExternalScene(Scene* scene)
+{
+    ClearSelection();
+    m_externalScene = scene;
+
+    if (m_onSceneChanged) {
+        m_onSceneChanged();
+    }
+}
+
 void EditorContext::NewScene(const std::string& name)
 {
     // Clear selection first

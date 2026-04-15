@@ -3,8 +3,8 @@
 #include "Scene.h"
 #include "Components.h"
 #include "Json.h"
-#include "BlueprintSerializer.h"
-#include "BlueprintInstantiator.h"
+#include "PrefabSerializer.h"
+#include "PrefabInstantiator.h"
 #include "../Scripting/ScriptComponent.h"
 #include "../Scripting/ScriptRegistry.h"
 
@@ -410,7 +410,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
     std::vector<entt::entity> entities;
     auto taggedEntities = registry.view<TagComponent>();
     for (entt::entity entity : taggedEntities) {
-        if (registry.any_of<BlueprintNodeComponent>(entity)) {
+        if (registry.any_of<PrefabNodeComponent>(entity)) {
             continue;
         }
         entities.push_back(entity);
@@ -434,27 +434,27 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
     stream << "  \"name\": \"" << EscapeString(m_Scene.GetName()) << "\",\n";
     stream << "  \"entityCount\": " << entities.size() << ",\n";
 
-    std::vector<entt::entity> blueprintInstances;
-    auto blueprintView = registry.view<BlueprintInstanceComponent>();
-    for (entt::entity entity : blueprintView) {
-        blueprintInstances.push_back(entity);
+    std::vector<entt::entity> prefabInstances;
+    auto prefabView = registry.view<PrefabInstanceComponent>();
+    for (entt::entity entity : prefabView) {
+        prefabInstances.push_back(entity);
     }
-    std::sort(blueprintInstances.begin(), blueprintInstances.end(), [](entt::entity a, entt::entity b) {
+    std::sort(prefabInstances.begin(), prefabInstances.end(), [](entt::entity a, entt::entity b) {
         return static_cast<uint32_t>(a) < static_cast<uint32_t>(b);
     });
 
-    stream << "  \"blueprintInstanceCount\": " << blueprintInstances.size() << ",\n";
-    stream << "  \"blueprintInstances\": [\n";
-    for (size_t instanceIndex = 0; instanceIndex < blueprintInstances.size(); ++instanceIndex) {
-        entt::entity handle = blueprintInstances[instanceIndex];
-        const BlueprintInstanceComponent* instance = registry.try_get<BlueprintInstanceComponent>(handle);
+    stream << "  \"prefabInstanceCount\": " << prefabInstances.size() << ",\n";
+    stream << "  \"prefabInstances\": [\n";
+    for (size_t instanceIndex = 0; instanceIndex < prefabInstances.size(); ++instanceIndex) {
+        entt::entity handle = prefabInstances[instanceIndex];
+        const PrefabInstanceComponent* instance = registry.try_get<PrefabInstanceComponent>(handle);
         if (!instance) {
             continue;
         }
 
         stream << "    {\n";
-        stream << "      \"blueprintPath\": \"" << EscapeString(instance->blueprintPath) << "\",\n";
-        stream << "      \"blueprintGuid\": \"" << EscapeString(instance->blueprintGuid) << "\",\n";
+        stream << "      \"prefabPath\": \"" << EscapeString(instance->prefabPath) << "\",\n";
+        stream << "      \"prefabGuid\": \"" << EscapeString(instance->prefabGuid) << "\",\n";
         stream << "      \"instanceId\": \"" << EscapeString(instance->instanceId) << "\",\n";
         stream << "      \"rootNodeId\": \"" << EscapeString(instance->rootNodeId) << "\",\n";
         stream << "      \"parent\": ";
@@ -532,7 +532,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         stream << "      }\n";
 
         stream << "    }";
-        if (instanceIndex + 1 < blueprintInstances.size()) {
+        if (instanceIndex + 1 < prefabInstances.size()) {
             stream << ",\n";
         } else {
             stream << "\n";
@@ -1743,31 +1743,51 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
         }
     }
 
-    if (const JsonValue* blueprintInstancesValue = root.Find("blueprintInstances")) {
-        if (!blueprintInstancesValue->IsArray()) {
-            outError = "blueprintInstances is not an array";
+    // Load prefab instances (new format: "prefabInstances", legacy: "blueprintInstances")
+    const JsonValue* prefabInstancesValue = root.Find("prefabInstances");
+    if (!prefabInstancesValue) {
+        prefabInstancesValue = root.Find("blueprintInstances");
+    }
+    if (prefabInstancesValue) {
+        if (!prefabInstancesValue->IsArray()) {
+            outError = "prefabInstances is not an array";
             return false;
         }
 
-        for (const JsonValue& instanceValue : blueprintInstancesValue->AsArray()) {
+        for (const JsonValue& instanceValue : prefabInstancesValue->AsArray()) {
             if (!instanceValue.IsObject()) {
-                outError = "blueprint instance entry must be an object";
+                outError = "prefab instance entry must be an object";
                 return false;
             }
 
-            BlueprintInstanceComponent instanceData;
-            if (const JsonValue* pathValue = instanceValue.Find("blueprintPath")) {
+            PrefabInstanceComponent instanceData;
+            // New format: prefabPath / prefabGuid; legacy: blueprintPath / blueprintGuid
+            if (const JsonValue* pathValue = instanceValue.Find("prefabPath")) {
                 if (pathValue->IsString()) {
-                    instanceData.blueprintPath = pathValue->AsString();
+                    instanceData.prefabPath = pathValue->AsString();
                 }
             }
-            if (const JsonValue* guidValue = instanceValue.Find("blueprintGuid")) {
+            if (instanceData.prefabPath.empty()) {
+                if (const JsonValue* pathValue = instanceValue.Find("blueprintPath")) {
+                    if (pathValue->IsString()) {
+                        instanceData.prefabPath = pathValue->AsString();
+                    }
+                }
+            }
+            if (const JsonValue* guidValue = instanceValue.Find("prefabGuid")) {
                 if (guidValue->IsString()) {
-                    instanceData.blueprintGuid = guidValue->AsString();
+                    instanceData.prefabGuid = guidValue->AsString();
                 }
             }
-            if (instanceData.blueprintPath.empty()) {
-                outError = "blueprint instance missing blueprintPath";
+            if (instanceData.prefabGuid.empty()) {
+                if (const JsonValue* guidValue = instanceValue.Find("blueprintGuid")) {
+                    if (guidValue->IsString()) {
+                        instanceData.prefabGuid = guidValue->AsString();
+                    }
+                }
+            }
+            if (instanceData.prefabPath.empty()) {
+                outError = "prefab instance missing prefabPath";
                 return false;
             }
             if (const JsonValue* idValue = instanceValue.Find("instanceId")) {
@@ -1795,7 +1815,7 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
 
             if (const JsonValue* overridesValue = instanceValue.Find("overrides")) {
                 if (!overridesValue->IsObject()) {
-                    outError = "blueprint overrides must be an object";
+                    outError = "prefab overrides must be an object";
                     return false;
                 }
 
@@ -1803,7 +1823,7 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     if (!nodeValue.IsObject()) {
                         continue;
                     }
-                    BlueprintNodeOverride nodeOverride;
+                    PrefabNodeOverride nodeOverride;
 
                     if (const JsonValue* transformValue = nodeValue.Find("transform")) {
                         if (transformValue->IsObject()) {
@@ -1826,7 +1846,7 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                                 if (!componentValue.IsObject()) {
                                     continue;
                                 }
-                                BlueprintComponentOverride componentOverride;
+                                PrefabComponentOverride componentOverride;
                                 for (const auto& [propKey, propValue] : componentValue.AsObject()) {
                                     componentOverride.properties.emplace(propKey, ParsePropertyValue(propValue));
                                 }
@@ -1847,20 +1867,20 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                 }
             }
 
-            BlueprintAsset asset;
-            std::string blueprintError;
-            if (!BlueprintSerializer::Deserialize(asset, instanceData.blueprintPath, blueprintError)) {
-                outError = "Failed to load blueprint '" + instanceData.blueprintPath + "': " + blueprintError;
+            PrefabAsset asset;
+            std::string prefabError;
+            if (!PrefabSerializer::Deserialize(asset, instanceData.prefabPath, prefabError)) {
+                outError = "Failed to load prefab '" + instanceData.prefabPath + "': " + prefabError;
                 return false;
             }
 
-            BlueprintInstantiateOptions options;
-            options.blueprintPath = instanceData.blueprintPath;
+            PrefabInstantiateOptions options;
+            options.prefabPath = instanceData.prefabPath;
             options.instanceId = instanceData.instanceId;
             options.parent = instanceData.parent;
             options.instanceData = &instanceData;
 
-            BlueprintInstantiator::Instantiate(scene, asset, options);
+            PrefabInstantiator::Instantiate(scene, asset, options);
         }
     }
 
@@ -1894,7 +1914,7 @@ std::string SceneSerializer::SerializeToString() const
     std::vector<entt::entity> entities;
     auto taggedEntities = registry.view<TagComponent>();
     for (entt::entity entity : taggedEntities) {
-        if (registry.any_of<BlueprintNodeComponent>(entity)) {
+        if (registry.any_of<PrefabNodeComponent>(entity)) {
             continue;
         }
         entities.push_back(entity);
@@ -1918,27 +1938,27 @@ std::string SceneSerializer::SerializeToString() const
     stream << "  \"name\": \"" << EscapeString(m_Scene.GetName()) << "\",\n";
     stream << "  \"entityCount\": " << entities.size() << ",\n";
 
-    std::vector<entt::entity> blueprintInstances;
-    auto blueprintView = registry.view<BlueprintInstanceComponent>();
-    for (entt::entity entity : blueprintView) {
-        blueprintInstances.push_back(entity);
+    std::vector<entt::entity> prefabInstances;
+    auto prefabView = registry.view<PrefabInstanceComponent>();
+    for (entt::entity entity : prefabView) {
+        prefabInstances.push_back(entity);
     }
-    std::sort(blueprintInstances.begin(), blueprintInstances.end(), [](entt::entity a, entt::entity b) {
+    std::sort(prefabInstances.begin(), prefabInstances.end(), [](entt::entity a, entt::entity b) {
         return static_cast<uint32_t>(a) < static_cast<uint32_t>(b);
     });
 
-    stream << "  \"blueprintInstanceCount\": " << blueprintInstances.size() << ",\n";
-    stream << "  \"blueprintInstances\": [\n";
-    for (size_t instanceIndex = 0; instanceIndex < blueprintInstances.size(); ++instanceIndex) {
-        entt::entity handle = blueprintInstances[instanceIndex];
-        const BlueprintInstanceComponent* instance = registry.try_get<BlueprintInstanceComponent>(handle);
+    stream << "  \"prefabInstanceCount\": " << prefabInstances.size() << ",\n";
+    stream << "  \"prefabInstances\": [\n";
+    for (size_t instanceIndex = 0; instanceIndex < prefabInstances.size(); ++instanceIndex) {
+        entt::entity handle = prefabInstances[instanceIndex];
+        const PrefabInstanceComponent* instance = registry.try_get<PrefabInstanceComponent>(handle);
         if (!instance) {
             continue;
         }
 
         stream << "    {\n";
-        stream << "      \"blueprintPath\": \"" << EscapeString(instance->blueprintPath) << "\",\n";
-        stream << "      \"blueprintGuid\": \"" << EscapeString(instance->blueprintGuid) << "\",\n";
+        stream << "      \"prefabPath\": \"" << EscapeString(instance->prefabPath) << "\",\n";
+        stream << "      \"prefabGuid\": \"" << EscapeString(instance->prefabGuid) << "\",\n";
         stream << "      \"instanceId\": \"" << EscapeString(instance->instanceId) << "\",\n";
         stream << "      \"rootNodeId\": \"" << EscapeString(instance->rootNodeId) << "\",\n";
         stream << "      \"parent\": ";
@@ -2016,7 +2036,7 @@ std::string SceneSerializer::SerializeToString() const
         stream << "      }\n";
 
         stream << "    }";
-        if (instanceIndex + 1 < blueprintInstances.size()) {
+        if (instanceIndex + 1 < prefabInstances.size()) {
             stream << ",\n";
         } else {
             stream << "\n";

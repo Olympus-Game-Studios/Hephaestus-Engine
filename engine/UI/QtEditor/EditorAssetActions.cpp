@@ -92,10 +92,8 @@ bool EditorAssetActions::OpenByType(const QString& absolutePath, AssetType type)
             // Could open audio player in the future
             return openExternal(absolutePath);
 
-        case AssetType::Blueprint:
-            // Could open blueprint editor in the future
-            showNotImplemented("Blueprint editor", absolutePath);
-            return true;
+        case AssetType::Prefab:
+            return openPrefab(absolutePath);
 
         case AssetType::UILayout:
             return openHUI(absolutePath);
@@ -121,6 +119,11 @@ void EditorAssetActions::SetLoadSceneCallback(LoadSceneCallback callback)
     m_loadSceneCallback = std::move(callback);
 }
 
+void EditorAssetActions::SetOpenPrefabCallback(OpenPrefabCallback callback)
+{
+    m_openPrefabCallback = std::move(callback);
+}
+
 bool EditorAssetActions::openScene(const QString& absolutePath)
 {
     if (m_loadSceneCallback) {
@@ -131,6 +134,18 @@ bool EditorAssetActions::openScene(const QString& absolutePath)
     QMessageBox::warning(m_mainWindow, 
         QObject::tr("Cannot Open Scene"),
         QObject::tr("Scene loading callback not configured."));
+    return false;
+}
+
+bool EditorAssetActions::openPrefab(const QString& absolutePath)
+{
+    if (m_openPrefabCallback) {
+        return m_openPrefabCallback(absolutePath);
+    }
+
+    QMessageBox::warning(m_mainWindow,
+        QObject::tr("Cannot Open Prefab"),
+        QObject::tr("Prefab editor callback not configured."));
     return false;
 }
 

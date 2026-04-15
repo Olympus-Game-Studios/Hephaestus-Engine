@@ -24,13 +24,10 @@ class EditorContext;
 namespace QtEditor {
 
 class EditorMainWindow;
+class PrefabEditorManager;
 
-/**
- * @brief Callback type for loading a scene.
- * @param absolutePath Full path to scene file
- * @return true if scene loaded successfully
- */
 using LoadSceneCallback = std::function<bool(const QString& absolutePath)>;
+using OpenPrefabCallback = std::function<bool(const QString& absolutePath)>;
 
 /**
  * @brief Central handler for opening assets from the browser.
@@ -59,14 +56,12 @@ public:
      */
     bool OpenByType(const QString& absolutePath, AssetType type);
 
-    /**
-     * @brief Set callback for scene loading.
-     * Used to integrate with EditorContext::LoadScene.
-     */
     void SetLoadSceneCallback(LoadSceneCallback callback);
+    void SetOpenPrefabCallback(OpenPrefabCallback callback);
 
 private:
     bool openScene(const QString& absolutePath);
+    bool openPrefab(const QString& absolutePath);
     bool openMaterial(const QString& absolutePath);
     bool openHUI(const QString& absolutePath);
     bool openScript(const QString& absolutePath);
@@ -77,6 +72,7 @@ private:
 
     EditorMainWindow* m_mainWindow = nullptr;
     LoadSceneCallback m_loadSceneCallback;
+    OpenPrefabCallback m_openPrefabCallback;
 };
 
 } // namespace QtEditor

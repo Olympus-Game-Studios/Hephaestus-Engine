@@ -6,11 +6,13 @@
 #include <functional>
 
 #include "../Scene/Scene.h"
-#include "../Scene/BlueprintAsset.h"
+#include "../Scene/PrefabAsset.h"
 
 enum class EditorDocumentType {
     Scene,
-    Blueprint
+    Prefab,
+
+    Blueprint = Prefab  // Legacy alias
 };
 
 class EditorDocument {
@@ -72,11 +74,11 @@ private:
     std::function<void(Scene&)> postUndoCallback_;
 };
 
-class BlueprintDocument : public EditorDocument {
+class PrefabDocument : public EditorDocument {
 public:
-    explicit BlueprintDocument(Scene* previewScene);
+    explicit PrefabDocument(Scene* previewScene);
 
-    EditorDocumentType GetType() const override { return EditorDocumentType::Blueprint; }
+    EditorDocumentType GetType() const override { return EditorDocumentType::Prefab; }
     const std::string& GetDisplayName() const override { return displayName_; }
     Scene* GetScene() override { return scene_; }
 
@@ -84,8 +86,8 @@ public:
     bool OnSave(std::string& outError) override;
     void OnClose() override;
 
-    BlueprintAsset& GetAsset() { return asset_; }
-    const BlueprintAsset& GetAsset() const { return asset_; }
+    PrefabAsset& GetAsset() { return asset_; }
+    const PrefabAsset& GetAsset() const { return asset_; }
 
     bool SyncNodeFromEntity(Entity entity);
     bool AddChildNode(const std::string& parentId, const std::string& nameHint, Entity* outEntity = nullptr);
@@ -95,8 +97,11 @@ public:
     bool IsRootNode(const std::string& nodeId) const { return nodeId == asset_.rootNodeId; }
     std::vector<std::string> GetNodeIds() const;
 
+    void RebuildPreview();
+
     void SetPostRebuildCallback(std::function<void(Scene&)> callback) { postRebuildCallback_ = std::move(callback); }
     void SetPostCloseCallback(std::function<void(Scene&)> callback) { postCloseCallback_ = std::move(callback); }
+    void SetPostSaveCallback(std::function<void(const std::filesystem::path&)> callback) { postSaveCallback_ = std::move(callback); }
 
 protected:
     std::string SerializeForUndo() override;
@@ -104,14 +109,18 @@ protected:
 
 private:
     void RebuildPreviewWorld();
-    BlueprintNode* FindNodeById(const std::string& nodeId);
+    PrefabNode* FindNodeById(const std::string& nodeId);
     Entity FindEntityByNodeId(const std::string& nodeId);
     std::string GenerateNodeId() const;
 
     Scene* scene_ = nullptr;
-    BlueprintAsset asset_;
+    PrefabAsset asset_;
     entt::entity rootEntity_ = entt::null;
     std::string sceneSnapshotBeforeOpen_;
     std::function<void(Scene&)> postRebuildCallback_;
     std::function<void(Scene&)> postCloseCallback_;
+    std::function<void(const std::filesystem::path&)> postSaveCallback_;
 };
+
+// Legacy alias
+using BlueprintDocument = PrefabDocument;

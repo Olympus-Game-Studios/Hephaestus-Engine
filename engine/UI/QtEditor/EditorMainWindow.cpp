@@ -12,6 +12,8 @@
 #include "AssetBrowserWidget.h"
 #include "AddActorsPanel.h"
 #include "EditorAssetActions.h"
+#include "PrefabEditorManager.h"
+#include "PrefabEditorWindow.h"
 #include "LightInspector.h"
 #include "EnvironmentInspector.h"
 #include "ComponentInspector.h"
@@ -27,6 +29,8 @@
 
 #include "../../Core/EditorContext.h"
 #include "../../Core/ProjectContext.h"
+#include "../../Scene/PrefabSerializer.h"
+#include "../../Scene/PrefabInstantiator.h"
 #include "../../ToolsCommon/EngineContext.h"
 #include "../../ToolsCommon/VersionInfo.h"
 #include "../../Assets/AssetManager.h"
@@ -442,12 +446,17 @@ void EditorMainWindow::OpenProjectFromPath(const QString& filepath)
 void EditorMainWindow::closeEvent(QCloseEvent* event)
 {
     std::cout << "[EditorMainWindow] Close event received\n";
-    
+
+    // Close all prefab editor windows
+    if (m_prefabEditorManager) {
+        m_prefabEditorManager->CloseAll();
+    }
+
     // Stop and cleanup the engine before closing
     if (m_engine) {
         m_engine->Shutdown();
     }
-    
+
     event->accept();
 }
 
@@ -1276,6 +1285,7 @@ void EditorMainWindow::setupDockWidgets()
 
     // Create asset actions handler
     m_assetActions = std::make_unique<EditorAssetActions>(this);
+    m_prefabEditorManager = std::make_unique<PrefabEditorManager>(this, this);
 
     // Connect asset browser to actions
     connect(m_assetBrowser, &AssetBrowserWidget::assetOpenRequested,
@@ -2439,9 +2449,14 @@ void EditorMainWindow::populateOutlinerItem(QTreeWidgetItem* parent, entt::entit
     item->setData(0, Qt::UserRole, static_cast<uint32_t>(entity));
 
     // Set icon based on entity type
-    if (registry.all_of<FolderComponent>(entity)) {
+    if (registry.all_of<PrefabInstanceComponent>(entity)) {
+        item->setIcon(0, style()->standardIcon(QStyle::SP_VistaShield));
+        item->setToolTip(0, QString::fromStdString(
+            "Prefab: " + registry.get<PrefabInstanceComponent>(entity).prefabPath));
+    } else if (registry.all_of<PrefabNodeComponent>(entity)) {
+        item->setForeground(0, QBrush(QColor(130, 170, 255)));
+    } else if (registry.all_of<FolderComponent>(entity)) {
         item->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
-        // Folders accept drops
         item->setFlags(item->flags() | Qt::ItemIsDropEnabled);
     } else if (registry.all_of<EnvironmentComponent>(entity)) {
         item->setIcon(0, style()->standardIcon(QStyle::SP_ComputerIcon));
@@ -2614,6 +2629,131 @@ void EditorMainWindow::onOutlinerContextMenu(const QPoint& pos)
         menu.addAction(tr("Move to Root"), [this, entity]() {
             reparentEntityToRoot(entity);
         });
+
+        // Prefab actions
+        if (m_engine) {
+            auto* ctx = m_engine->GetEditorContext();
+            if (ctx && ctx->HasActiveScene()) {
+                auto& reg = ctx->GetActiveScene()->GetRegistry();
+                bool isPrefabInstance = reg.all_of<PrefabInstanceComponent>(entity);
+                bool isPrefabNode = reg.all_of<PrefabNodeComponent>(entity);
+
+                menu.addSeparator();
+                if (!isPrefabNode && !isPrefabInstance) {
+                    menu.addAction(tr("Create Prefab From Selection"), [this, entity]() {
+                        if (!m_engine) return;
+                        auto* ctx = m_engine->GetEditorContext();
+                        if (!ctx || !ctx->HasActiveScene()) return;
+                        Scene* scene = ctx->GetActiveScene();
+                        Entity ent(entity, scene);
+                        if (!ent) return;
+
+                        QString defaultName = QString::fromStdString(
+                            ent.HasComponent<TagComponent>() ? ent.GetComponent<TagComponent>().tag : "NewPrefab");
+                        QString filePath = QFileDialog::getSaveFileName(this,
+                            tr("Save Prefab As"), defaultName + ".hpprefab",
+                            tr("Prefab Files (*.hpprefab *.hpblueprint)"));
+                        if (filePath.isEmpty()) return;
+
+                        // Build PrefabAsset from selected entity hierarchy
+                        PrefabAsset asset;
+                        asset.assetVersion = 1;
+                        asset.name = QFileInfo(filePath).baseName().toStdString();
+
+                        std::function<void(Entity, const std::string&)> buildNode;
+                        int nodeCounter = 0;
+                        buildNode = [&](Entity e, const std::string& parentId) {
+                            PrefabNode node;
+                            node.id = "node_" + std::to_string(nodeCounter++);
+                            node.name = e.HasComponent<TagComponent>() ? e.GetComponent<TagComponent>().tag : "Node";
+                            node.parentId = parentId;
+                            auto& t = e.GetComponent<TransformComponent>();
+                            node.localTransform.position = t.position;
+                            node.localTransform.rotation = t.rotation;
+                            node.localTransform.scale = t.scale;
+                            if (parentId.empty()) {
+                                asset.rootNodeId = node.id;
+                            }
+                            std::string myId = node.id;
+                            asset.nodes.push_back(std::move(node));
+                            for (entt::entity child : t.children) {
+                                Entity childEnt(child, scene);
+                                if (childEnt) {
+                                    buildNode(childEnt, myId);
+                                }
+                            }
+                        };
+                        buildNode(ent, "");
+
+                        std::string error;
+                        if (PrefabSerializer::Serialize(asset, filePath.toStdString(), error)) {
+                            statusBar()->showMessage(tr("Prefab created: %1").arg(filePath), 3000);
+                        } else {
+                            QMessageBox::warning(this, tr("Error"),
+                                tr("Failed to create prefab: %1").arg(QString::fromStdString(error)));
+                        }
+                    });
+                }
+
+                if (isPrefabInstance) {
+                    const auto& instComp = reg.get<PrefabInstanceComponent>(entity);
+                    menu.addAction(tr("Open Prefab"), [this, instComp]() {
+                        if (m_prefabEditorManager) {
+                            m_prefabEditorManager->OpenPrefab(QString::fromStdString(instComp.prefabPath));
+                        }
+                    });
+                    menu.addAction(tr("Refresh From Prefab"), [this, entity]() {
+                        if (!m_engine) return;
+                        auto* ctx = m_engine->GetEditorContext();
+                        if (!ctx || !ctx->HasActiveScene()) return;
+                        Scene* scene = ctx->GetActiveScene();
+                        Entity ent(entity, scene);
+                        if (!ent || !ent.HasComponent<PrefabInstanceComponent>()) return;
+
+                        EditorUndoManager::PushSnapshot(ctx, "Refresh prefab instance");
+                        const auto instData = ent.GetComponent<PrefabInstanceComponent>();
+                        PrefabInstantiator::DestroyInstance(*scene, ent);
+
+                        PrefabAsset asset;
+                        std::string error;
+                        if (PrefabSerializer::Deserialize(asset, instData.prefabPath, error)) {
+                            PrefabInstantiator::ReinstantiateInstance(*scene, asset, instData);
+                            m_engine->RebuildSceneMeshes();
+                        }
+                        ctx->MarkDirty();
+                        rebuildOutliner();
+                    });
+                    menu.addAction(tr("Unpack Prefab"), [this, entity]() {
+                        if (!m_engine) return;
+                        auto* ctx = m_engine->GetEditorContext();
+                        if (!ctx || !ctx->HasActiveScene()) return;
+                        Scene* scene = ctx->GetActiveScene();
+
+                        EditorUndoManager::PushSnapshot(ctx, "Unpack prefab");
+                        auto& reg = scene->GetRegistry();
+                        // Remove prefab tracking components but keep the entities
+                        auto view = reg.view<PrefabNodeComponent>();
+                        Entity rootEnt(entity, scene);
+                        if (!rootEnt) return;
+                        std::string instId;
+                        if (rootEnt.HasComponent<PrefabInstanceComponent>()) {
+                            instId = rootEnt.GetComponent<PrefabInstanceComponent>().instanceId;
+                            reg.remove<PrefabInstanceComponent>(entity);
+                        }
+                        for (auto e : view) {
+                            auto& nc = reg.get<PrefabNodeComponent>(e);
+                            if (nc.instanceId == instId) {
+                                reg.remove<PrefabNodeComponent>(e);
+                            }
+                        }
+                        ctx->MarkDirty();
+                        rebuildOutliner();
+                        statusBar()->showMessage(tr("Prefab unpacked"), 3000);
+                    });
+                }
+            }
+        }
+
         menu.addSeparator();
         QAction* deleteAction = menu.addAction(tr("Delete"), [this, entity]() {
             deleteEntityFromOutliner(entity);
@@ -3452,6 +3592,52 @@ void EditorMainWindow::setupProjectCallbacks()
                 QMessageBox::warning(this, tr("Load Failed"),
                     tr("Failed to load scene: %1").arg(absolutePath));
                 return false;
+            }
+        });
+
+        m_assetActions->SetOpenPrefabCallback([this](const QString& absolutePath) -> bool {
+            if (!m_prefabEditorManager) return false;
+            auto* window = m_prefabEditorManager->OpenPrefab(absolutePath);
+            return window != nullptr;
+        });
+    }
+
+    // Wire up prefab-saved notifications to refresh scene instances
+    if (m_prefabEditorManager) {
+        m_prefabEditorManager->SetPrefabSavedNotification([this](const std::filesystem::path& prefabPath) {
+            if (!m_engine) return;
+            auto* ctx = m_engine->GetEditorContext();
+            if (!ctx) return;
+            Scene* scene = ctx->GetActiveScene();
+            if (!scene) return;
+
+            auto view = scene->GetEntitiesWith<PrefabInstanceComponent>();
+            std::vector<PrefabInstanceComponent> toRefresh;
+
+            for (auto entityHandle : view) {
+                Entity entity(entityHandle, scene);
+                const auto& inst = entity.GetComponent<PrefabInstanceComponent>();
+                std::filesystem::path instPath(inst.prefabPath);
+                std::error_code ec;
+                if (std::filesystem::equivalent(instPath, prefabPath, ec) && !ec) {
+                    toRefresh.push_back(inst);
+                    PrefabInstantiator::DestroyInstance(*scene, entity);
+                }
+            }
+
+            for (const auto& instData : toRefresh) {
+                PrefabAsset asset;
+                std::string error;
+                if (PrefabSerializer::Deserialize(asset, instData.prefabPath, error)) {
+                    PrefabInstantiator::ReinstantiateInstance(*scene, asset, instData);
+                }
+            }
+
+            if (!toRefresh.empty()) {
+                m_engine->RebuildSceneMeshes();
+                rebuildOutliner();
+                statusBar()->showMessage(
+                    tr("Refreshed %1 prefab instance(s)").arg(toRefresh.size()), 3000);
             }
         });
     }

@@ -620,34 +620,40 @@ struct EnvironmentComponent {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// BLUEPRINT / PREFAB INSTANCING
+// PREFAB INSTANCING
 // ═══════════════════════════════════════════════════════════════
 
-struct BlueprintComponentOverride {
+struct PrefabComponentOverride {
     std::unordered_map<std::string, PropertyValue> properties;
 };
 
-struct BlueprintNodeOverride {
+struct PrefabNodeOverride {
     bool hasTransform = false;
     TransformComponent transform;
-    std::unordered_map<std::string, BlueprintComponentOverride> componentOverrides;
+    std::unordered_map<std::string, PrefabComponentOverride> componentOverrides;
     std::unordered_map<std::string, PropertyValue> scriptVars;
 };
 
-struct BlueprintInstanceComponent {
-    std::string blueprintPath;
-    std::string blueprintGuid;
+struct PrefabInstanceComponent {
+    std::string prefabPath;
+    std::string prefabGuid;
     std::string instanceId;
     std::string rootNodeId;
     entt::entity parent = entt::null;
-    std::unordered_map<std::string, BlueprintNodeOverride> overrides;
+    std::unordered_map<std::string, PrefabNodeOverride> overrides;
 };
 
-struct BlueprintNodeComponent {
+struct PrefabNodeComponent {
     std::string instanceId;
     std::string nodeId;
     bool isRoot = false;
 };
+
+// Legacy aliases for backward compatibility
+using BlueprintComponentOverride = PrefabComponentOverride;
+using BlueprintNodeOverride = PrefabNodeOverride;
+using BlueprintInstanceComponent = PrefabInstanceComponent;
+using BlueprintNodeComponent = PrefabNodeComponent;
 
 // Editor-only marker to hide helper entities from hierarchy/selection.
 struct EditorOnlyComponent {

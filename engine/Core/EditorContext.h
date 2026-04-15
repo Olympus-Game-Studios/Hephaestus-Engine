@@ -133,15 +133,24 @@ public:
     bool SaveSceneAs(const std::string& filepath);
 
     /**
+     * @brief Use an externally-owned scene instead of the internally-managed one.
+     *
+     * The caller retains ownership. Pass nullptr to revert to internal scene.
+     * Useful for sub-editors (e.g. Prefab Editor) that manage their own scene
+     * but need the engine's rendering, gizmo, and selection infrastructure.
+     */
+    void SetExternalScene(Scene* scene);
+
+    /**
      * @brief Get the active scene (may be null).
      */
-    Scene* GetActiveScene() { return m_activeScene.get(); }
-    const Scene* GetActiveScene() const { return m_activeScene.get(); }
+    Scene* GetActiveScene() { return m_externalScene ? m_externalScene : m_activeScene.get(); }
+    const Scene* GetActiveScene() const { return m_externalScene ? m_externalScene : m_activeScene.get(); }
 
     /**
      * @brief Check if there is an active scene.
      */
-    bool HasActiveScene() const { return m_activeScene != nullptr; }
+    bool HasActiveScene() const { return m_externalScene || m_activeScene != nullptr; }
 
     /**
      * @brief Get the current scene file path (empty if new/unsaved).
@@ -250,6 +259,7 @@ public:
 
 private:
     std::unique_ptr<Scene> m_activeScene;
+    Scene* m_externalScene = nullptr;
     std::string m_scenePath;
     entt::entity m_selectedEntity = entt::null;
     bool m_isDirty = false;

@@ -214,8 +214,8 @@ set(ENGINE_CORE_SOURCES
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
     engine/Scene/Json.cpp
-    engine/Scene/BlueprintSerializer.cpp
-    engine/Scene/BlueprintInstantiator.cpp
+    engine/Scene/PrefabSerializer.cpp
+    engine/Scene/PrefabInstantiator.cpp
     engine/Scene/SceneSerializer.cpp
     engine/Scripting/ScriptBase.cpp
     engine/Scripting/ScriptEngine.cpp
@@ -322,8 +322,8 @@ add_executable(HephaestusEngine
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
     engine/Scene/Json.cpp
-    engine/Scene/BlueprintSerializer.cpp
-    engine/Scene/BlueprintInstantiator.cpp
+    engine/Scene/PrefabSerializer.cpp
+    engine/Scene/PrefabInstantiator.cpp
     engine/Scene/SceneSerializer.cpp
     engine/Scene/SceneExporter.cpp
     engine/Scripting/ScriptBase.cpp
@@ -491,6 +491,14 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/BuildSettingsDialog.h
             engine/UI/QtEditor/AboutDialog.cpp
             engine/UI/QtEditor/AboutDialog.h
+            engine/UI/QtEditor/PrefabEditorWindow.cpp
+            engine/UI/QtEditor/PrefabEditorWindow.h
+            engine/UI/QtEditor/PrefabEditorManager.cpp
+            engine/UI/QtEditor/PrefabEditorManager.h
+            engine/UI/QtEditor/PrefabHierarchyPanel.cpp
+            engine/UI/QtEditor/PrefabHierarchyPanel.h
+            engine/UI/QtEditor/PrefabInspectorPanel.cpp
+            engine/UI/QtEditor/PrefabInspectorPanel.h
             engine/UI/Shared/SettingsWindow.cpp
             engine/UI/Shared/SettingsWindow.h
         )

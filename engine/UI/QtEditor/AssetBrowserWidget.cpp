@@ -394,7 +394,7 @@ void AssetBrowserWidget::rebuildContentsView()
             case AssetType::Material: return QStringLiteral("[Material]");
             case AssetType::Script: return QStringLiteral("[Script]");
             case AssetType::Audio: return QStringLiteral("[Audio]");
-            case AssetType::Blueprint: return QStringLiteral("[Blueprint]");
+            case AssetType::Prefab: return QStringLiteral("[Prefab]");
             case AssetType::Shader: return QStringLiteral("[Shader]");
             case AssetType::Font: return QStringLiteral("[Font]");
             case AssetType::Text: return QStringLiteral("[Text]");
@@ -500,7 +500,7 @@ QIcon AssetBrowserWidget::getAssetIcon(int assetType, bool isDirectory) const
             return s->standardIcon(QStyle::SP_FileDialogListView);
         case AssetType::Audio:
             return s->standardIcon(QStyle::SP_MediaVolume);
-        case AssetType::Blueprint:
+        case AssetType::Prefab:
             return s->standardIcon(QStyle::SP_VistaShield);
         case AssetType::Shader:
             return s->standardIcon(QStyle::SP_TitleBarMenuButton);

@@ -12,11 +12,13 @@ enum class AssetType {
     Material,
     Script,
     Audio,
-    Blueprint,
+    Prefab,
     Shader,
     Font,
     Text,
-    UILayout
+    UILayout,
+
+    Blueprint = Prefab  // Legacy alias
 };
 
 struct AssetFingerprint {
@@ -34,7 +36,7 @@ inline const char* ToString(AssetType type) {
         case AssetType::Material: return "Material";
         case AssetType::Script: return "Script";
         case AssetType::Audio: return "Audio";
-        case AssetType::Blueprint: return "Blueprint";
+        case AssetType::Prefab: return "Prefab";
         case AssetType::Shader: return "Shader";
         case AssetType::Font: return "Font";
         case AssetType::Text: return "Text";
@@ -51,7 +53,8 @@ inline AssetType AssetTypeFromString(const std::string& value) {
     if (value == "Material") return AssetType::Material;
     if (value == "Script") return AssetType::Script;
     if (value == "Audio") return AssetType::Audio;
-    if (value == "Blueprint") return AssetType::Blueprint;
+    if (value == "Prefab") return AssetType::Prefab;
+    if (value == "Blueprint") return AssetType::Prefab;
     if (value == "Shader") return AssetType::Shader;
     if (value == "Font") return AssetType::Font;
     if (value == "Text") return AssetType::Text;
@@ -106,9 +109,10 @@ inline AssetType AssetTypeFromExtension(const std::string& extension) {
         {".mp3", AssetType::Audio},
         {".flac", AssetType::Audio},
         
-        // Blueprints
-        {".hpblueprint", AssetType::Blueprint},
-        {".blueprint", AssetType::Blueprint},
+        // Prefabs (and legacy blueprint extensions)
+        {".hpprefab", AssetType::Prefab},
+        {".hpblueprint", AssetType::Prefab},
+        {".blueprint", AssetType::Prefab},
         
         // Shaders
         {".vert", AssetType::Shader},
