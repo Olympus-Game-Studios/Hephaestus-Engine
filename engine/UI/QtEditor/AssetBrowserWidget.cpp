@@ -11,6 +11,8 @@
 #include "../../Assets/AssetManager.h"
 #include "../../Assets/AssetTypes.h"
 #include "../../Core/ProjectContext.h"
+#include "../../Scene/PrefabAsset.h"
+#include "../../Scene/PrefabSerializer.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -714,6 +716,10 @@ void AssetBrowserWidget::showCreateMenu(QMenu& menu, const QString& targetDirect
     menu.addAction(style()->standardIcon(QStyle::SP_DesktopIcon), tr("New UI File"), [this, targetDirectory]() {
         createNewUIFile(targetDirectory);
     });
+
+    menu.addAction(style()->standardIcon(QStyle::SP_VistaShield), tr("New Prefab"), [this, targetDirectory]() {
+        createNewPrefab(targetDirectory);
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -896,6 +902,51 @@ void AssetBrowserWidget::createNewUIFile(const QString& parentRelativePath)
 
     Refresh();
     std::cout << "[AssetBrowser] Created UI file: " << filePath.string() << "\n";
+}
+
+void AssetBrowserWidget::createNewPrefab(const QString& parentRelativePath)
+{
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("New Prefab"),
+                                         tr("Prefab name (without extension):"), QLineEdit::Normal,
+                                         tr("NewPrefab"), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+
+    auto& assetMgr = AssetManager::GetInstance();
+    std::string parentAbs = parentRelativePath.isEmpty()
+        ? assetMgr.GetAssetRoot()
+        : assetMgr.ToAbsolutePath(parentRelativePath.toStdString());
+
+    std::string prefabName = name.trimmed().toStdString();
+    std::filesystem::path filePath = std::filesystem::path(parentAbs) / (prefabName + ".hpprefab");
+
+    if (std::filesystem::exists(filePath)) {
+        QMessageBox::warning(this, tr("New Prefab"), tr("A prefab with that name already exists."));
+        return;
+    }
+
+    PrefabAsset asset;
+    asset.assetVersion = 1;
+    asset.name = prefabName;
+    asset.rootNodeId = "root";
+
+    PrefabNode rootNode;
+    rootNode.id = "root";
+    rootNode.name = prefabName;
+    rootNode.localTransform.position = {0.0f, 0.0f, 0.0f};
+    rootNode.localTransform.rotation = {0.0f, 0.0f, 0.0f};
+    rootNode.localTransform.scale = {1.0f, 1.0f, 1.0f};
+    asset.nodes.push_back(std::move(rootNode));
+
+    std::string error;
+    if (!PrefabSerializer::Serialize(asset, filePath, error)) {
+        QMessageBox::critical(this, tr("New Prefab"),
+            tr("Failed to create prefab: %1").arg(QString::fromStdString(error)));
+        return;
+    }
+
+    Refresh();
+    std::cout << "[AssetBrowser] Created prefab: " << filePath.string() << "\n";
 }
 
 void AssetBrowserWidget::deleteAsset(const QString& relativePath, bool isDirectory)
