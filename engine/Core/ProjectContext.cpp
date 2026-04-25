@@ -408,14 +408,21 @@ void ProjectContext::SyncEngineAssets()
     namespace fs = std::filesystem;
     fs::path exeDir = getExecutableDir();
     fs::path srcMeshDir = exeDir / "assets" / "meshes";
+    fs::path srcDefaultHdri = exeDir / "assets" / "textures" / "hdris" / "studio_garden_1k.hdr";
     fs::path dstEngineDir = fs::path(m_projectRootDir) / ".engine";
     fs::path dstMeshDir = dstEngineDir / "meshes";
+    fs::path dstHdriDir = dstEngineDir / "hdris";
 
-    // Create .engine/meshes/ if needed
+    // Create .engine asset folders if needed
     std::error_code ec;
     fs::create_directories(dstMeshDir, ec);
     if (ec) {
         std::cerr << "[ProjectContext] Failed to create .engine/meshes: " << ec.message() << "\n";
+        return;
+    }
+    fs::create_directories(dstHdriDir, ec);
+    if (ec) {
+        std::cerr << "[ProjectContext] Failed to create .engine/hdris: " << ec.message() << "\n";
         return;
     }
 
@@ -450,6 +457,19 @@ void ProjectContext::SyncEngineAssets()
 
     std::cout << "[ProjectContext] SyncEngineAssets: copied=" << copied
               << " skipped=" << skipped << " to " << dstMeshDir << "\n";
+
+    if (fs::is_regular_file(srcDefaultHdri)) {
+        fs::path dstDefaultHdri = dstHdriDir / srcDefaultHdri.filename();
+        if (!fs::exists(dstDefaultHdri) || fs::file_size(dstDefaultHdri) != fs::file_size(srcDefaultHdri)) {
+            fs::copy_file(srcDefaultHdri, dstDefaultHdri, fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                std::cerr << "[ProjectContext] Failed to copy default HDRI "
+                          << srcDefaultHdri.filename() << ": " << ec.message() << "\n";
+            }
+        }
+    } else {
+        std::cerr << "[ProjectContext] Default HDRI source not found: " << srcDefaultHdri << "\n";
+    }
 }
 
 } // namespace Hephaestus

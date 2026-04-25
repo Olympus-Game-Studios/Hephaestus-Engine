@@ -5,6 +5,7 @@
 
 #include <QDir>
 #include <QDirIterator>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -14,6 +15,9 @@
 #include <QStandardPaths>
 
 namespace {
+
+constexpr const char* DEFAULT_ENGINE_HDRI_SOURCE = "assets/textures/hdris/studio_garden_1k.hdr";
+constexpr const char* DEFAULT_PROJECT_HDRI_PATH = ".engine/hdris/studio_garden_1k.hdr";
 
 QString FirstExistingFile(const QStringList& candidates)
 {
@@ -56,6 +60,47 @@ QJsonObject BuildProjectJson(const Hephaestus::Launcher::LauncherProject& projec
     root[QStringLiteral("tags")] = tags;
 
     return root;
+}
+
+bool CopyDefaultHDRIToProject(const QString& projectDirPath, QString* outError)
+{
+    const QString srcPath = QDir(Hephaestus::Tools::PathUtils::ExecutableDir()).filePath(QString::fromUtf8(DEFAULT_ENGINE_HDRI_SOURCE));
+    const QFileInfo srcInfo(srcPath);
+    if (!srcInfo.exists() || !srcInfo.isFile()) {
+        if (outError) {
+            *outError = QStringLiteral("Default HDRI source not found: %1").arg(srcPath);
+        }
+        return false;
+    }
+
+    const QString dstPath = QDir(projectDirPath).filePath(QString::fromUtf8(DEFAULT_PROJECT_HDRI_PATH));
+    const QFileInfo dstInfo(dstPath);
+    if (!QDir().mkpath(dstInfo.absolutePath())) {
+        if (outError) {
+            *outError = QStringLiteral("Failed to create HDRI folder: %1").arg(dstInfo.absolutePath());
+        }
+        return false;
+    }
+
+    if (dstInfo.exists() && dstInfo.size() == srcInfo.size()) {
+        return true;
+    }
+
+    if (dstInfo.exists() && !QFile::remove(dstInfo.absoluteFilePath())) {
+        if (outError) {
+            *outError = QStringLiteral("Failed to replace default HDRI: %1").arg(dstInfo.absoluteFilePath());
+        }
+        return false;
+    }
+
+    if (!QFile::copy(srcInfo.absoluteFilePath(), dstPath)) {
+        if (outError) {
+            *outError = QStringLiteral("Failed to copy default HDRI to project: %1").arg(dstPath);
+        }
+        return false;
+    }
+
+    return true;
 }
 
 QJsonObject BuildProjectIndexEntry(const Hephaestus::Launcher::LauncherProject& project)
@@ -414,6 +459,9 @@ bool LauncherProjectManager::CreateProject(const QString& projectName,
     QDir().mkpath(projectDir.filePath(QStringLiteral(".hephaestus")));
     QDir().mkpath(projectDir.filePath(QStringLiteral("assets/scenes")));
     QDir().mkpath(projectDir.filePath(QStringLiteral("assets/textures")));
+    if (!CopyDefaultHDRIToProject(projectDirPath, outError)) {
+        return false;
+    }
 
     LauncherProject project;
     project.projectDir = projectDirPath;

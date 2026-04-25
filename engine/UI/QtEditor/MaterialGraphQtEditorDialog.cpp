@@ -18,6 +18,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGroupBox>
@@ -71,6 +72,8 @@ namespace QtEditor {
 namespace {
 
 using namespace MaterialEditor;
+
+constexpr const char* DEFAULT_PREVIEW_HDRI_PATH = ".engine/hdris/studio_garden_1k.hdr";
 
 QString NodeTypeLabel(NodeType type) {
     switch (type) {
@@ -1805,6 +1808,17 @@ private:
         m_previewMeshCombo->addItems({QObject::tr("Sphere"), QObject::tr("Cube"), QObject::tr("Plane")});
         previewControls->addWidget(m_previewMeshCombo, 1);
         previewLayout->addLayout(previewControls);
+        auto* previewHdriControls = new QHBoxLayout();
+        previewHdriControls->addWidget(new QLabel(QObject::tr("HDRI:"), previewHost));
+        m_previewHdriEdit = new QLineEdit(QString::fromUtf8(DEFAULT_PREVIEW_HDRI_PATH), previewHost);
+        m_previewHdriEdit->setReadOnly(true);
+        m_previewHdriEdit->setToolTip(QObject::tr("Environment map used only by this material preview."));
+        m_previewHdriChooseButton = new QPushButton(QObject::tr("Choose..."), previewHost);
+        m_previewHdriDefaultButton = new QPushButton(QObject::tr("Default"), previewHost);
+        previewHdriControls->addWidget(m_previewHdriEdit, 1);
+        previewHdriControls->addWidget(m_previewHdriChooseButton);
+        previewHdriControls->addWidget(m_previewHdriDefaultButton);
+        previewLayout->addLayout(previewHdriControls);
         m_previewViewportHost = new QWidget(previewHost);
         m_previewViewportHost->setMinimumHeight(180);
         m_previewViewportHost->setStyleSheet(QStringLiteral("background: #202026; border: 1px solid #3a3a44;"));
@@ -1814,7 +1828,7 @@ private:
         m_previewPlaceholderLabel->setAlignment(Qt::AlignCenter);
         previewViewportLayout->addWidget(m_previewPlaceholderLabel);
         previewLayout->addWidget(m_previewViewportHost, 1);
-        m_previewStatusLabel = new QLabel(QObject::tr("Lighting: default editor environment"), previewHost);
+        m_previewStatusLabel = new QLabel(previewLightingStatus(), previewHost);
         m_previewStatusLabel->setWordWrap(true);
         previewLayout->addWidget(m_previewStatusLabel);
         rightSplitter->addWidget(previewHost);
@@ -1852,6 +1866,10 @@ private:
         });
         connect(m_previewMeshCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
             updatePreviewMesh();
+        });
+        connect(m_previewHdriChooseButton, &QPushButton::clicked, this, [this]() { choosePreviewHDRI(); });
+        connect(m_previewHdriDefaultButton, &QPushButton::clicked, this, [this]() {
+            setPreviewHDRI(QString::fromUtf8(DEFAULT_PREVIEW_HDRI_PATH));
         });
 
         connect(m_graphScene, &QGraphicsScene::selectionChanged, this, [this]() {
@@ -2066,6 +2084,134 @@ private:
         }
     }
 
+    QString resolvePreviewHDRIPath(const QString& rawPath) const {
+        QString path = QDir::fromNativeSeparators(rawPath.trimmed());
+        if (path.isEmpty() || QFileInfo(path).isAbsolute()) {
+            return path;
+        }
+
+        const QString projectRoot = QDir::fromNativeSeparators(QString::fromStdString(AssetManager::GetInstance().GetProjectRoot()));
+        if (!projectRoot.isEmpty()) {
+            const QString projectCandidate = QDir(projectRoot).filePath(path);
+            if (QFileInfo(projectCandidate).exists()) {
+                return QDir::fromNativeSeparators(projectCandidate);
+            }
+
+            const QString projectAssetsCandidate = QDir(projectRoot).filePath(QStringLiteral("assets/") + path);
+            if (QFileInfo(projectAssetsCandidate).exists()) {
+                return QDir::fromNativeSeparators(projectAssetsCandidate);
+            }
+        }
+
+        const QString assetRoot = QDir::fromNativeSeparators(QString::fromStdString(AssetManager::GetInstance().GetAssetRoot()));
+        if (!assetRoot.isEmpty()) {
+            const QString assetCandidate = QDir(assetRoot).filePath(path);
+            if (QFileInfo(assetCandidate).exists()) {
+                return QDir::fromNativeSeparators(assetCandidate);
+            }
+        }
+
+        return path;
+    }
+
+    QString normalizePreviewHDRIPath(const QString& filePath) const {
+        const QString cleaned = QDir::fromNativeSeparators(filePath.trimmed());
+        if (cleaned.isEmpty()) {
+            return QString();
+        }
+
+        const QFileInfo fileInfo(cleaned);
+        if (!fileInfo.isAbsolute()) {
+            return cleaned;
+        }
+
+        const QString projectRoot = QDir::fromNativeSeparators(QString::fromStdString(AssetManager::GetInstance().GetProjectRoot()));
+        if (!projectRoot.isEmpty()) {
+            const QString relative = QDir::fromNativeSeparators(QDir(projectRoot).relativeFilePath(fileInfo.absoluteFilePath()));
+            if (!relative.isEmpty() && relative != QStringLiteral("..") && !relative.startsWith(QStringLiteral("../"))) {
+                return relative;
+            }
+        }
+
+        return QDir::fromNativeSeparators(fileInfo.absoluteFilePath());
+    }
+
+    QString previewHDRIStartDir() const {
+        const QString resolved = resolvePreviewHDRIPath(m_previewHdriPath);
+        if (!resolved.isEmpty()) {
+            const QFileInfo info(resolved);
+            if (info.exists()) {
+                return info.absolutePath();
+            }
+        }
+
+        const QString projectRoot = QDir::fromNativeSeparators(QString::fromStdString(AssetManager::GetInstance().GetProjectRoot()));
+        if (!projectRoot.isEmpty()) {
+            const QString hdris = QDir(projectRoot).filePath(QStringLiteral("assets/textures/hdris"));
+            if (QFileInfo(hdris).exists()) {
+                return hdris;
+            }
+            const QString textures = QDir(projectRoot).filePath(QStringLiteral("assets/textures"));
+            if (QFileInfo(textures).exists()) {
+                return textures;
+            }
+        }
+
+        return QFileInfo(m_absolutePath).absolutePath();
+    }
+
+    QString previewLightingStatus() const {
+        return QObject::tr("Lighting: HDRI (%1)").arg(m_previewHdriPath);
+    }
+
+    void setPreviewHDRI(const QString& hdriPath) {
+        m_previewHdriPath = normalizePreviewHDRIPath(hdriPath);
+        if (m_previewHdriPath.isEmpty()) {
+            m_previewHdriPath = QString::fromUtf8(DEFAULT_PREVIEW_HDRI_PATH);
+        }
+        if (m_previewHdriEdit) {
+            m_previewHdriEdit->setText(m_previewHdriPath);
+        }
+        applyPreviewEnvironment();
+        if (m_previewStatusLabel) {
+            m_previewStatusLabel->setText(QObject::tr("Preview mesh: %1. %2.").arg(m_previewMeshCombo->currentText(), previewLightingStatus()));
+        }
+    }
+
+    void choosePreviewHDRI() {
+        const QString file = QFileDialog::getOpenFileName(
+            this,
+            QObject::tr("Choose Preview HDRI"),
+            previewHDRIStartDir(),
+            QObject::tr("HDR Images (*.hdr *.exr);;All Files (*.*)"));
+        if (file.isEmpty()) {
+            return;
+        }
+        setPreviewHDRI(file);
+    }
+
+    void applyPreviewEnvironment() {
+        if (!m_previewScene || m_previewEnvironmentEntity == entt::null) {
+            return;
+        }
+
+        auto& registry = m_previewScene->GetRegistry();
+        if (!registry.valid(m_previewEnvironmentEntity)) {
+            return;
+        }
+
+        EnvironmentComponent* env = registry.try_get<EnvironmentComponent>(m_previewEnvironmentEntity);
+        if (!env) {
+            env = &registry.emplace<EnvironmentComponent>(m_previewEnvironmentEntity);
+        }
+
+        env->type = EnvironmentComponent::BackgroundType::HDRI;
+        env->hdriPath = m_previewHdriPath.toStdString();
+        env->hdriIntensity = 1.0f;
+        env->rotationYaw = 0.0f;
+        env->useAsIBL = true;
+    }
+
     void initPreview() {
         if (!m_previewViewportHost || m_previewEngine) {
             return;
@@ -2081,6 +2227,11 @@ private:
         renderer.materialIndices = {-1};
         previewEntity.AddComponent<MaterialComponent>(m_material);
         m_previewEntity = static_cast<entt::entity>(previewEntity);
+
+        Entity environmentEntity = m_previewScene->CreateEntity("Environment");
+        environmentEntity.AddComponent<EnvironmentComponent>();
+        m_previewEnvironmentEntity = static_cast<entt::entity>(environmentEntity);
+        applyPreviewEnvironment();
 
         m_previewViewportWindow = new QtViewportWindow();
         m_previewViewportContainer = QWidget::createWindowContainer(m_previewViewportWindow, m_previewViewportHost);
@@ -2131,7 +2282,7 @@ private:
             m_previewEngine->RebuildSceneMeshes();
             updatePreviewMaterial();
             if (m_previewStatusLabel) {
-                m_previewStatusLabel->setText(QObject::tr("Rendered preview: %1. Lighting: default editor environment.").arg(m_previewMeshCombo->currentText()));
+                m_previewStatusLabel->setText(QObject::tr("Rendered preview: %1. %2.").arg(m_previewMeshCombo->currentText(), previewLightingStatus()));
             }
         });
 
@@ -2179,7 +2330,7 @@ private:
             }
         }
         if (m_previewStatusLabel) {
-            m_previewStatusLabel->setText(QObject::tr("Preview mesh: %1. Lighting: default editor environment.").arg(m_previewMeshCombo->currentText()));
+            m_previewStatusLabel->setText(QObject::tr("Preview mesh: %1. %2.").arg(m_previewMeshCombo->currentText(), previewLightingStatus()));
         }
         schedulePreviewUpdate();
     }
@@ -2811,6 +2962,10 @@ private:
     QLabel* m_statusLabel = nullptr;
     QListWidget* m_errorList = nullptr;
     QComboBox* m_previewMeshCombo = nullptr;
+    QLineEdit* m_previewHdriEdit = nullptr;
+    QPushButton* m_previewHdriChooseButton = nullptr;
+    QPushButton* m_previewHdriDefaultButton = nullptr;
+    QString m_previewHdriPath = QString::fromUtf8(DEFAULT_PREVIEW_HDRI_PATH);
     QWidget* m_previewViewportHost = nullptr;
     QLabel* m_previewPlaceholderLabel = nullptr;
     QLabel* m_previewStatusLabel = nullptr;
@@ -2818,6 +2973,7 @@ private:
     MaterialComponent m_previewMaterial;
     std::unique_ptr<Scene> m_previewScene;
     entt::entity m_previewEntity = entt::null;
+    entt::entity m_previewEnvironmentEntity = entt::null;
     QtViewportWindow* m_previewViewportWindow = nullptr;
     QWidget* m_previewViewportContainer = nullptr;
     std::unique_ptr<QtEditorEngine> m_previewEngine;
