@@ -14,6 +14,7 @@
 
 #include "MeshRendererInspector.h"
 #include "EditorUndoCommand.h"
+#include "MaterialGraphQtEditorDialog.h"
 
 #include "../../Assets/AssetManager.h"
 #include "../../Assets/AssetTypes.h"
@@ -22,8 +23,13 @@
 #include "../../Scene/Components.h"
 
 #include <QComboBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QHeaderView>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QStyle>
 #include <algorithm>
 #include <filesystem>
@@ -116,6 +122,10 @@ void MeshRendererInspector::buildUI()
     m_materialTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_materialTable->setMaximumHeight(180);
     m_materialTable->setAcceptDrops(true);
+    m_materialTable->viewport()->setAcceptDrops(true);
+    m_materialTable->setMouseTracking(true);
+    m_materialTable->viewport()->installEventFilter(this);
+    m_materialTable->setStyleSheet("QTableWidget::item:hover { background: rgba(120, 170, 255, 45); }");
     mainLayout->addWidget(m_materialTable);
 
     // ── Buttons ─────────────────────────────────────────────────────────
@@ -174,6 +184,64 @@ void MeshRendererInspector::connectSignals()
     });
 }
 
+bool MeshRendererInspector::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched != m_materialTable->viewport()) {
+        return ComponentInspector::eventFilter(watched, event);
+    }
+
+    auto isMaterialPath = [](QString path) {
+        path.replace('\\', '/');
+        const QString ext = QFileInfo(path).suffix().toLower();
+        return ext == "hematerial" || ext == "hpmat" || ext == "material" || ext == "mat";
+    };
+
+    auto extractPath = [](const QMimeData* mime) {
+        if (!mime) return QString();
+        if (mime->hasUrls() && !mime->urls().isEmpty()) {
+            return mime->urls().front().toLocalFile();
+        }
+        if (mime->hasText()) {
+            return mime->text().trimmed();
+        }
+        return QString();
+    };
+
+    if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove) {
+        auto* dragEvent = static_cast<QDragMoveEvent*>(event);
+        const QString path = extractPath(dragEvent->mimeData());
+        if (isMaterialPath(path)) {
+            dragEvent->acceptProposedAction();
+            return true;
+        }
+    }
+
+    if (event->type() == QEvent::Drop) {
+        auto* dropEvent = static_cast<QDropEvent*>(event);
+        QString path = extractPath(dropEvent->mimeData());
+        if (!isMaterialPath(path)) {
+            return false;
+        }
+
+        const int row = m_materialTable->rowAt(dropEvent->position().toPoint().y());
+        if (row < 0) {
+            return false;
+        }
+
+        path.replace('\\', '/');
+        const QString assetRoot = QString::fromStdString(AssetManager::GetInstance().GetAssetRoot()).replace('\\', '/');
+        if (!assetRoot.isEmpty() && path.startsWith(assetRoot + "/", Qt::CaseInsensitive)) {
+            path = path.mid(assetRoot.size() + 1);
+        }
+        setMaterialForSlot(row, path);
+        rebuildMaterialSlots();
+        dropEvent->acceptProposedAction();
+        return true;
+    }
+
+    return ComponentInspector::eventFilter(watched, event);
+}
+
 // ---------------------------------------------------------------------------
 // Refresh (component → UI)
 // ---------------------------------------------------------------------------
@@ -230,9 +298,18 @@ void MeshRendererInspector::rebuildMaterialSlots()
     m_materialTable->setRowCount(slotCount);
 
     for (int i = 0; i < slotCount; ++i) {
-        // Column 0 — Slot index
-        auto* slotItem = new QTableWidgetItem(QString("Slot %1").arg(i));
+        QString selectedPath;
+        if (i < static_cast<int>(mr.appliedMaterialPaths.size()) &&
+            !mr.appliedMaterialPaths[i].empty()) {
+            selectedPath = normalizeMaterialPathForSelection(mr.appliedMaterialPaths[i]);
+        }
+
+        // Column 0 — Slot index/name
+        auto* slotItem = new QTableWidgetItem(selectedPath.isEmpty()
+            ? QString("Slot %1\n%2").arg(i).arg(tr("Fallback material"))
+            : QString("Slot %1").arg(i));
         slotItem->setFlags(Qt::ItemIsEnabled);
+        slotItem->setToolTip(tr("Material slot %1. Drop a material asset here to assign it.").arg(i));
         m_materialTable->setItem(i, 0, slotItem);
 
         // Column 1 — Project material dropdown
@@ -242,14 +319,9 @@ void MeshRendererInspector::rebuildMaterialSlots()
             materialCombo->addItem(materialPath, materialPath);
         }
 
-        QString selectedPath;
-        if (i < static_cast<int>(mr.appliedMaterialPaths.size()) &&
-            !mr.appliedMaterialPaths[i].empty()) {
-            selectedPath = normalizeMaterialPathForSelection(mr.appliedMaterialPaths[i]);
-        }
-
         int selectedIndex = materialCombo->findData(selectedPath);
         materialCombo->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
+        materialCombo->setToolTip(selectedPath.isEmpty() ? tr("Using renderer fallback material.") : selectedPath);
         connect(materialCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this, i, materialCombo](int) {
                     setMaterialForSlot(i, materialCombo->currentData().toString());
@@ -262,10 +334,40 @@ void MeshRendererInspector::rebuildMaterialSlots()
         btnLayout->setContentsMargins(2, 0, 2, 0);
         btnLayout->setSpacing(2);
 
+        auto* openBtn = new QPushButton(tr("Open"));
+        openBtn->setFixedHeight(22);
+        openBtn->setEnabled(!selectedPath.isEmpty());
+        openBtn->setToolTip(tr("Open the assigned material in the material editor."));
+        connect(openBtn, &QPushButton::clicked, this, [this, selectedPath]() {
+            if (selectedPath.isEmpty()) return;
+            const std::string absolute = AssetManager::GetInstance().ToAbsolutePath(selectedPath.toStdString());
+            OpenMaterialGraphEditorDialog(window(), QString::fromStdString(absolute));
+        });
+
+        auto* assignBtn = new QPushButton(tr("Assign"));
+        assignBtn->setFixedHeight(22);
+        assignBtn->setToolTip(tr("Choose a material file for this slot."));
+        connect(assignBtn, &QPushButton::clicked, this, [this, i]() {
+            const QString file = QFileDialog::getOpenFileName(this, tr("Assign Material"), QString::fromStdString(AssetManager::GetInstance().GetAssetRoot()),
+                tr("Materials (*.hematerial *.hpmat *.material *.mat);;All Files (*.*)"));
+            if (file.isEmpty()) return;
+            QString normalized = file;
+            normalized.replace('\\', '/');
+            const QString assetRoot = QString::fromStdString(AssetManager::GetInstance().GetAssetRoot()).replace('\\', '/');
+            if (!assetRoot.isEmpty() && normalized.startsWith(assetRoot + "/", Qt::CaseInsensitive)) {
+                normalized = normalized.mid(assetRoot.size() + 1);
+            }
+            setMaterialForSlot(i, normalized);
+            rebuildMaterialSlots();
+        });
+
         auto* clearBtn = new QPushButton(tr("Clear"));
         clearBtn->setFixedHeight(22);
+        clearBtn->setToolTip(tr("Clear this material slot and use the fallback material."));
         connect(clearBtn, &QPushButton::clicked, this, [this, i]() { clearMaterial(i); });
 
+        btnLayout->addWidget(openBtn);
+        btnLayout->addWidget(assignBtn);
         btnLayout->addWidget(clearBtn);
         m_materialTable->setCellWidget(i, 2, btnWidget);
     }

@@ -6,6 +6,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "AssetBrowserWidget.h"
+#include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "EditorMainWindow.h"
 #include "../HephaestusUI/HUIAsset.h"
 #include "../../Assets/AssetManager.h"
@@ -853,20 +854,25 @@ void AssetBrowserWidget::createNewMaterial(const QString& parentRelativePath)
         return;
     }
 
-    std::ofstream file(filePath);
-    if (!file.is_open()) {
-        QMessageBox::critical(this, tr("New Material"), tr("Failed to create material file."));
+    MaterialComponent material;
+    material.albedo = Vec3(1.0f, 1.0f, 1.0f);
+    material.roughness = 0.5f;
+    material.metallic = 0.0f;
+    material.ao = 1.0f;
+
+    MaterialEditor::Graph graph;
+    MaterialEditor::BuildMinimalGraphFromLegacyPbr(material, graph);
+
+    std::string error;
+    if (!MaterialEditor::SaveMaterialAssetCompat(filePath, material, name.trimmed().toStdString(), graph, {}, error)) {
+        QMessageBox::critical(this, tr("New Material"), tr("Failed to create material file:\n%1").arg(QString::fromStdString(error)));
         return;
     }
 
-    file << "{\n"
-         << "  \"name\": \"" << name.trimmed().toStdString() << "\",\n"
-         << "  \"shader\": \"default\",\n"
-         << "  \"properties\": {}\n"
-         << "}\n";
-    file.close();
-
     Refresh();
+    const QString fileName = name.trimmed() + ".hematerial";
+    const QString relativePath = parentRelativePath.isEmpty() ? fileName : parentRelativePath + "/" + fileName;
+    emit assetOpenRequested(relativePath);
     std::cout << "[AssetBrowser] Created material: " << filePath.string() << "\n";
 }
 

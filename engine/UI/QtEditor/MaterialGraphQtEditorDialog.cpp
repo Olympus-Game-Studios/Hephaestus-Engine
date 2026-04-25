@@ -4,15 +4,23 @@
 
 #include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "../MaterialEditor/MaterialGraphEvaluator.h"
+#include "QtEditorEngine.h"
+#include "QtViewportWindow.h"
+
+#include "../../Assets/AssetManager.h"
+#include "../../Scene/Scene.h"
 
 #include <QAbstractItemView>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGroupBox>
 #include <QGuiApplication>
 #include <QClipboard>
 #include <QFormLayout>
@@ -25,18 +33,23 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
 #include <QScrollBar>
+#include <QSlider>
 #include <QSplitter>
+#include <QTimer>
 #include <QToolButton>
+#include <QTreeWidget>
 #include <QUndoCommand>
 #include <QUndoStack>
 #include <QVBoxLayout>
@@ -63,7 +76,7 @@ QString NodeTypeLabel(NodeType type) {
     switch (type) {
     case NodeType::MaterialOutput: return QObject::tr("MaterialOutput");
     case NodeType::ConstantFloat: return QObject::tr("ConstantScalar");
-    case NodeType::ConstantVec3: return QObject::tr("ConstantColor");
+    case NodeType::ConstantVec3: return QObject::tr("Vector3");
     case NodeType::AlbedoTextureSample: return QObject::tr("AlbedoTextureSample");
     case NodeType::NormalTextureSample: return QObject::tr("NormalTextureSample");
     case NodeType::RoughnessTextureSample: return QObject::tr("RoughnessTextureSample");
@@ -71,6 +84,7 @@ QString NodeTypeLabel(NodeType type) {
     case NodeType::WorldAlignedTexture: return QObject::tr("WorldAlignedTexture");
     case NodeType::Add: return QObject::tr("Add");
     case NodeType::Multiply: return QObject::tr("Multiply");
+    case NodeType::Lerp: return QObject::tr("Lerp");
     case NodeType::ColorParameter: return QObject::tr("ColorParameter");
     case NodeType::FloatParameter: return QObject::tr("FloatParameter");
     case NodeType::Unknown: return QObject::tr("Unknown Node");
@@ -82,6 +96,7 @@ QString NodeCategory(NodeType type) {
     switch (type) {
     case NodeType::ColorParameter:
     case NodeType::FloatParameter:
+        return QStringLiteral("Parameters");
     case NodeType::ConstantFloat:
     case NodeType::ConstantVec3:
         return QStringLiteral("Inputs");
@@ -93,13 +108,14 @@ QString NodeCategory(NodeType type) {
         return QStringLiteral("Textures");
     case NodeType::Add:
     case NodeType::Multiply:
+    case NodeType::Lerp:
         return QStringLiteral("Math");
     case NodeType::MaterialOutput:
-        return QStringLiteral("Output");
+        return QStringLiteral("PBR");
     case NodeType::Unknown:
-        return QStringLiteral("Utilities");
+        return QStringLiteral("Utility");
     }
-    return QStringLiteral("Utilities");
+    return QStringLiteral("Utility");
 }
 
 QColor PinColor(ValueType type) {
@@ -115,10 +131,11 @@ QColor PinColor(ValueType type) {
 
 QColor NodeTitleColor(NodeType type) {
     const QString category = NodeCategory(type);
-    if (category == "Textures") return QColor(76, 58, 125);
-    if (category == "Math") return QColor(64, 98, 120);
-    if (category == "Inputs") return QColor(66, 92, 64);
-    if (category == "Output") return QColor(132, 78, 64);
+    if (category == "Textures") return QColor(180, 100, 42);
+    if (category == "Math") return QColor(58, 112, 175);
+    if (category == "Inputs") return QColor(92, 92, 96);
+    if (category == "Parameters") return QColor(70, 145, 88);
+    if (category == "PBR") return QColor(155, 82, 66);
     return QColor(82, 82, 82);
 }
 
@@ -141,11 +158,41 @@ struct NodeMenuEntry {
     NodeType type;
 };
 
+QString ValueTypeLabel(ValueType type) {
+    switch (type) {
+    case ValueType::Float1: return QObject::tr("Float");
+    case ValueType::Float2: return QObject::tr("Float2");
+    case ValueType::Float3: return QObject::tr("Float3 / Color");
+    case ValueType::Float4: return QObject::tr("Float4");
+    case ValueType::Sampler2D: return QObject::tr("Texture");
+    }
+    return QObject::tr("Value");
+}
+
+bool FuzzyMatch(const QString& needle, const QString& haystack) {
+    if (needle.isEmpty()) {
+        return true;
+    }
+    int n = 0;
+    const QString a = needle.toLower();
+    const QString b = haystack.toLower();
+    for (int h = 0; h < b.size() && n < a.size(); ++h) {
+        if (a[n] == b[h]) {
+            ++n;
+        }
+    }
+    return n == a.size();
+}
+
 const std::vector<NodeMenuEntry>& NodeMenuEntries() {
     static const std::vector<NodeMenuEntry> entries = {
         {QObject::tr("MaterialOutput"), NodeType::MaterialOutput},
+        {QObject::tr("Scalar"), NodeType::ConstantFloat},
+        {QObject::tr("Vector3"), NodeType::ConstantVec3},
         {QObject::tr("ConstantScalar"), NodeType::ConstantFloat},
         {QObject::tr("ConstantColor"), NodeType::ConstantVec3},
+        {QObject::tr("FloatParameter"), NodeType::FloatParameter},
+        {QObject::tr("ColorParameter"), NodeType::ColorParameter},
         {QObject::tr("AlbedoTextureSample"), NodeType::AlbedoTextureSample},
         {QObject::tr("NormalTextureSample"), NodeType::NormalTextureSample},
         {QObject::tr("RoughnessTextureSample"), NodeType::RoughnessTextureSample},
@@ -161,6 +208,7 @@ const std::vector<NodeMenuEntry>& NodeMenuEntries() {
 struct GraphIssue {
     QString message;
     NodeID nodeId = 0;
+    enum class Severity { Error, Warning, Info } severity = Severity::Error;
 };
 
 struct GraphValidationResult {
@@ -178,10 +226,12 @@ GraphValidationResult ValidateGraph(const Graph& graph) {
 
     int outputCount = 0;
     NodeID outputNodeId = 0;
+    const Node* outputNode = nullptr;
     for (const Node& node : graph.GetNodes()) {
         if (node.type == NodeType::MaterialOutput) {
             ++outputCount;
             outputNodeId = node.id;
+            outputNode = &node;
         }
     }
     if (outputCount != 1) {
@@ -190,6 +240,7 @@ GraphValidationResult ValidateGraph(const Graph& graph) {
     }
 
     std::unordered_map<NodeID, std::vector<NodeID>> adjacency;
+    std::unordered_map<NodeID, std::vector<NodeID>> reverseAdjacency;
     for (const Link& link : graph.GetLinks()) {
         const Pin* start = graph.FindPin(link.startPin);
         const Pin* end = graph.FindPin(link.endPin);
@@ -209,6 +260,36 @@ GraphValidationResult ValidateGraph(const Graph& graph) {
             continue;
         }
         adjacency[start->node].push_back(end->node);
+        reverseAdjacency[end->node].push_back(start->node);
+    }
+
+    if (outputNode) {
+        auto inputLinked = [&](int inputIndex) {
+            return inputIndex >= 0 &&
+                   inputIndex < static_cast<int>(outputNode->inputs.size()) &&
+                   graph.FindInputSource(outputNode->inputs[inputIndex]) != 0;
+        };
+        if (!inputLinked(0)) {
+            result.ok = false;
+            result.issues.push_back({QObject::tr("Material Output has no Base Color input."), outputNode->id, GraphIssue::Severity::Error});
+        }
+        if (!inputLinked(2)) {
+            result.issues.push_back({QObject::tr("Material Output has no Roughness input; default material roughness will be used."), outputNode->id, GraphIssue::Severity::Warning});
+        }
+        if (!inputLinked(1)) {
+            result.issues.push_back({QObject::tr("Material Output has no Metallic input; default material metallic value will be used."), outputNode->id, GraphIssue::Severity::Info});
+        }
+    }
+
+    for (const Node& node : graph.GetNodes()) {
+        if (IsTextureNode(node.type) && node.resourcePath.empty()) {
+            result.issues.push_back({QObject::tr("%1 has no texture assigned.").arg(QString::fromStdString(node.displayName)), node.id, GraphIssue::Severity::Warning});
+        } else if (IsTextureNode(node.type) && !node.resourcePath.empty()) {
+            std::filesystem::path texturePath(node.resourcePath);
+            if (texturePath.is_absolute() && !std::filesystem::exists(texturePath)) {
+                result.issues.push_back({QObject::tr("Texture file is missing: %1").arg(QString::fromStdString(node.resourcePath)), node.id, GraphIssue::Severity::Warning});
+            }
+        }
     }
 
     enum class Mark : uint8_t { None, Visiting, Done };
@@ -235,6 +316,29 @@ GraphValidationResult ValidateGraph(const Graph& graph) {
             result.ok = false;
             result.issues.push_back({QObject::tr("Graph contains a cycle."), node.id});
             break;
+        }
+    }
+
+    if (outputNode) {
+        std::unordered_set<NodeID> used;
+        std::vector<NodeID> stack{outputNode->id};
+        while (!stack.empty()) {
+            const NodeID current = stack.back();
+            stack.pop_back();
+            if (!used.insert(current).second) {
+                continue;
+            }
+            auto it = reverseAdjacency.find(current);
+            if (it != reverseAdjacency.end()) {
+                for (NodeID source : it->second) {
+                    stack.push_back(source);
+                }
+            }
+        }
+        for (const Node& node : graph.GetNodes()) {
+            if (node.type != NodeType::MaterialOutput && used.find(node.id) == used.end()) {
+                result.issues.push_back({QObject::tr("%1 is not connected to the Material Output.").arg(QString::fromStdString(node.displayName)), node.id, GraphIssue::Severity::Info});
+            }
         }
     }
 
@@ -373,6 +477,7 @@ public:
     PinItem(PinID pinId, PinKind kind, ValueType valueType, QString pinLabel, QGraphicsItem* parent = nullptr)
         : QGraphicsItem(parent), m_pinId(pinId), m_kind(kind), m_valueType(valueType), m_label(std::move(pinLabel)) {
         setAcceptHoverEvents(true);
+        setToolTip(QObject::tr("%1 (%2)").arg(m_label, ValueTypeLabel(m_valueType)));
         setZValue(2.0);
     }
 
@@ -458,7 +563,11 @@ public:
         setFlag(QGraphicsItem::ItemIsMovable, true);
         setFlag(QGraphicsItem::ItemIsSelectable, true);
         setFlag(QGraphicsItem::ItemSendsGeometryChanges, true);
+        setToolTip(QObject::tr("%1 node").arg(NodeCategory(node.type)));
         setZValue(3.0);
+        if (m_type == NodeType::MaterialOutput) {
+            m_width = 270.0;
+        }
     }
 
     int type() const override { return Type; }
@@ -480,6 +589,16 @@ public:
 
     void setMovedCallback(std::function<void(NodeID)> callback) {
         m_moved = std::move(callback);
+    }
+
+    void setIssueSeverity(std::optional<GraphIssue::Severity> severity) {
+        m_issueSeverity = severity;
+        update();
+    }
+
+    void setDimmed(bool dimmed) {
+        m_dimmed = dimmed;
+        setOpacity(dimmed ? 0.55 : 1.0);
     }
 
     void setPins(std::vector<PinItem*> inputs, std::vector<PinItem*> outputs) {
@@ -515,8 +634,8 @@ public:
 
         QRectF rect = boundingRect();
         painter->setPen(QPen(isSelected() ? QColor(250, 230, 140) : QColor(40, 40, 40), isSelected() ? 2.0 : 1.0));
-        painter->setBrush(QColor(36, 36, 40));
-        painter->drawRoundedRect(rect, 6.0, 6.0);
+        painter->setBrush(m_type == NodeType::MaterialOutput ? QColor(44, 38, 40) : QColor(36, 36, 40));
+        painter->drawRoundedRect(rect, m_type == NodeType::MaterialOutput ? 10.0 : 6.0, m_type == NodeType::MaterialOutput ? 10.0 : 6.0);
 
         QRectF titleRect(0.0, 0.0, rect.width(), 30.0);
         painter->setPen(Qt::NoPen);
@@ -526,7 +645,12 @@ public:
         painter->drawRect(0.0, 26.0, rect.width(), 4.0);
 
         painter->setPen(Qt::white);
+        QFont titleFont = painter->font();
+        titleFont.setBold(m_type == NodeType::MaterialOutput);
+        painter->setFont(titleFont);
         painter->drawText(titleRect.adjusted(8.0, 0.0, -8.0, 0.0), Qt::AlignVCenter | Qt::AlignLeft, m_title);
+        titleFont.setBold(false);
+        painter->setFont(titleFont);
 
         painter->setPen(QColor(210, 210, 210));
         for (PinItem* p : m_inputs) {
@@ -536,6 +660,24 @@ public:
         for (PinItem* p : m_outputs) {
             const QPointF lp = p->pos();
             painter->drawText(QRectF(m_width * 0.45, lp.y() - 8.0, m_width * 0.45, 16.0), Qt::AlignVCenter | Qt::AlignRight, p->label());
+        }
+
+        if (m_issueSeverity.has_value()) {
+            QColor issueColor(110, 170, 255);
+            QString marker = QStringLiteral("i");
+            if (*m_issueSeverity == GraphIssue::Severity::Error) {
+                issueColor = QColor(235, 90, 80);
+                marker = QStringLiteral("!");
+            } else if (*m_issueSeverity == GraphIssue::Severity::Warning) {
+                issueColor = QColor(240, 185, 70);
+                marker = QStringLiteral("!");
+            }
+            const QRectF badge(rect.width() - 26.0, 6.0, 18.0, 18.0);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(issueColor);
+            painter->drawEllipse(badge);
+            painter->setPen(Qt::black);
+            painter->drawText(badge, Qt::AlignCenter, marker);
         }
 
         Q_UNUSED(option);
@@ -570,6 +712,8 @@ private:
     qreal m_width = 220.0;
     qreal m_height = 120.0;
     QPointF m_dragStart;
+    bool m_dimmed = false;
+    std::optional<GraphIssue::Severity> m_issueSeverity;
     std::vector<PinItem*> m_inputs;
     std::vector<PinItem*> m_outputs;
     std::function<void(NodeID, QPointF, QPointF)> m_moveCommit;
@@ -708,6 +852,14 @@ public:
         m_graphChanged = std::move(callback);
     }
 
+    void setNodeSearchCallback(std::function<void(const QPoint&, const QPointF&)> callback) {
+        m_nodeSearchRequested = std::move(callback);
+    }
+
+    void setSnapToGrid(bool enabled) {
+        m_snapToGrid = enabled;
+    }
+
     void reloadFromGraph() {
         clear();
         m_nodeItems.clear();
@@ -723,10 +875,19 @@ public:
                 if (m_ignoreMoveCommit) {
                     return;
                 }
+                if (m_snapToGrid) {
+                    to = snapPoint(to);
+                    if (NodeItem* item = nodeItemFor(id)) {
+                        m_ignoreMoveCommit = true;
+                        item->setPos(to);
+                        m_ignoreMoveCommit = false;
+                    }
+                }
                 m_undo->push(new MoveNodeCommand(this, id, from, to));
             });
             nodeItem->setMovedCallback([this](NodeID id) {
                 updateLinksForNode(id);
+                updateAlignmentGuides(id);
                 Node* model = m_graph->FindNode(id);
                 if (model) {
                     NodeItem* item = nodeItemFor(id);
@@ -765,6 +926,54 @@ public:
         }
 
         emitGraphChanged();
+    }
+
+    void applyValidation(const GraphValidationResult& validation) {
+        std::unordered_map<NodeID, GraphIssue::Severity> severityByNode;
+        for (const GraphIssue& issue : validation.issues) {
+            if (issue.nodeId <= 0) {
+                continue;
+            }
+            auto it = severityByNode.find(issue.nodeId);
+            if (it == severityByNode.end() ||
+                static_cast<int>(issue.severity) < static_cast<int>(it->second)) {
+                severityByNode[issue.nodeId] = issue.severity;
+            }
+        }
+
+        std::unordered_set<NodeID> connectedToOutput;
+        std::vector<NodeID> stack;
+        for (const Node& node : m_graph->GetNodes()) {
+            if (node.type == NodeType::MaterialOutput) {
+                stack.push_back(node.id);
+                break;
+            }
+        }
+        while (!stack.empty()) {
+            const NodeID current = stack.back();
+            stack.pop_back();
+            if (!connectedToOutput.insert(current).second) {
+                continue;
+            }
+            for (const Link& link : m_graph->GetLinks()) {
+                const NodeID dst = PinToNode(*m_graph, link.endPin);
+                if (dst == current) {
+                    const NodeID src = PinToNode(*m_graph, link.startPin);
+                    if (src > 0) {
+                        stack.push_back(src);
+                    }
+                }
+            }
+        }
+
+        for (auto& [nodeId, item] : m_nodeItems) {
+            auto issueIt = severityByNode.find(nodeId);
+            item->setIssueSeverity(issueIt == severityByNode.end()
+                ? std::optional<GraphIssue::Severity>{}
+                : std::optional<GraphIssue::Severity>{issueIt->second});
+            const Node* node = m_graph->FindNode(nodeId);
+            item->setDimmed(node && node->type != NodeType::MaterialOutput && connectedToOutput.find(nodeId) == connectedToOutput.end());
+        }
     }
 
     NodeItem* nodeItemFor(NodeID id) const {
@@ -911,8 +1120,30 @@ public:
         }
         clearSelection();
         item->setSelected(true);
+        for (QGraphicsView* view : views()) {
+            view->centerOn(item);
+        }
         if (m_selectionChanged) {
             m_selectionChanged(nodeId);
+        }
+    }
+
+    void focusSelection() {
+        QRectF bounds;
+        bool hasBounds = false;
+        for (QGraphicsItem* item : selectedItems()) {
+            if (item->type() == NodeItem::Type || item->type() == LinkItem::Type) {
+                bounds = hasBounds ? bounds.united(item->sceneBoundingRect()) : item->sceneBoundingRect();
+                hasBounds = true;
+            }
+        }
+        if (!hasBounds) {
+            bounds = itemsBoundingRect();
+        }
+        if (bounds.isValid() && !bounds.isEmpty()) {
+            for (QGraphicsView* view : views()) {
+                view->fitInView(bounds.adjusted(-120, -80, 120, 80), Qt::KeepAspectRatio);
+            }
         }
     }
 
@@ -929,6 +1160,33 @@ public:
     }
 
 protected:
+    void drawBackground(QPainter* painter, const QRectF& rect) override {
+        QGraphicsScene::drawBackground(painter, rect);
+        constexpr qreal grid = 32.0;
+        const qreal left = std::floor(rect.left() / grid) * grid;
+        const qreal top = std::floor(rect.top() / grid) * grid;
+        QPen minor(QColor(42, 42, 48), 1.0);
+        painter->setPen(minor);
+        for (qreal x = left; x < rect.right(); x += grid) {
+            painter->drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()));
+        }
+        for (qreal y = top; y < rect.bottom(); y += grid) {
+            painter->drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y));
+        }
+    }
+
+    void drawForeground(QPainter* painter, const QRectF& rect) override {
+        QGraphicsScene::drawForeground(painter, rect);
+        if (m_alignmentGuideLines.empty()) {
+            return;
+        }
+        QPen guidePen(QColor(110, 185, 255, 180), 1.0, Qt::DashLine);
+        painter->setPen(guidePen);
+        for (const QLineF& line : m_alignmentGuideLines) {
+            painter->drawLine(line);
+        }
+    }
+
     void mousePressEvent(QGraphicsSceneMouseEvent* event) override {
         if (event->button() == Qt::LeftButton) {
             QGraphicsItem* hit = itemAt(event->scenePos(), QTransform());
@@ -965,6 +1223,10 @@ protected:
             return;
         }
         QGraphicsScene::mouseReleaseEvent(event);
+        if (event->button() == Qt::LeftButton && !m_alignmentGuideLines.empty()) {
+            m_alignmentGuideLines.clear();
+            update();
+        }
     }
 
     void contextMenuEvent(QGraphicsSceneContextMenuEvent* event) override {
@@ -972,20 +1234,29 @@ protected:
         QGraphicsItem* hit = itemAt(event->scenePos(), QTransform());
 
         if (!hit) {
-            QMenu* add = menu.addMenu(QObject::tr("Add Node"));
+            QAction* search = menu.addAction(QObject::tr("Add Node..."));
+            connect(search, &QAction::triggered, this, [this, event]() {
+                if (m_nodeSearchRequested) {
+                    m_nodeSearchRequested(event->screenPos(), event->scenePos());
+                }
+            });
 
-            QMenu* outputMenu = add->addMenu(QObject::tr("Output"));
+            QMenu* add = menu.addMenu(QObject::tr("Add Node by Category"));
+
+            QMenu* outputMenu = add->addMenu(QObject::tr("PBR"));
             QMenu* inputsMenu = add->addMenu(QObject::tr("Inputs"));
             QMenu* texturesMenu = add->addMenu(QObject::tr("Textures"));
             QMenu* mathMenu = add->addMenu(QObject::tr("Math"));
-            QMenu* utilitiesMenu = add->addMenu(QObject::tr("Utilities"));
+            QMenu* parametersMenu = add->addMenu(QObject::tr("Parameters"));
+            QMenu* utilitiesMenu = add->addMenu(QObject::tr("Utility"));
 
             auto categoryMenu = [&](NodeType type) -> QMenu* {
                 const QString cat = NodeCategory(type);
-                if (cat == "Output") return outputMenu;
+                if (cat == "PBR") return outputMenu;
                 if (cat == "Inputs") return inputsMenu;
                 if (cat == "Textures") return texturesMenu;
                 if (cat == "Math") return mathMenu;
+                if (cat == "Parameters") return parametersMenu;
                 return utilitiesMenu;
             };
 
@@ -1003,9 +1274,7 @@ protected:
             menu.addSeparator();
             QAction* frame = menu.addAction(QObject::tr("Frame Selection"));
             connect(frame, &QAction::triggered, this, [this]() {
-                if (!views().isEmpty()) {
-                    views().front()->fitInView(itemsBoundingRect(), Qt::KeepAspectRatio);
-                }
+                focusSelection();
             });
         } else if (hit->type() == NodeItem::Type) {
             NodeItem* nodeItem = static_cast<NodeItem*>(hit);
@@ -1050,7 +1319,24 @@ protected:
         menu.exec(event->screenPos());
     }
 
+    void mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event) override {
+        QGraphicsItem* hit = itemAt(event->scenePos(), QTransform());
+        if (hit && hit->type() == NodeItem::Type) {
+            clearSelection();
+            hit->setSelected(true);
+            focusSelection();
+            event->accept();
+            return;
+        }
+        QGraphicsScene::mouseDoubleClickEvent(event);
+    }
+
 private:
+    QPointF snapPoint(const QPointF& pos) const {
+        constexpr qreal grid = 32.0;
+        return QPointF(std::round(pos.x() / grid) * grid, std::round(pos.y() / grid) * grid);
+    }
+
     bool canConnectPins(PinItem* output, PinItem* input) const {
         if (!output || !input) return false;
         if (output->kind() != PinKind::Output || input->kind() != PinKind::Input) return false;
@@ -1114,6 +1400,36 @@ private:
         }
     }
 
+    void updateAlignmentGuides(NodeID movingNodeId) {
+        m_alignmentGuideLines.clear();
+        NodeItem* moving = nodeItemFor(movingNodeId);
+        if (!moving) {
+            return;
+        }
+        const QRectF movingRect = moving->sceneBoundingRect();
+        const QPointF movingCenter = movingRect.center();
+        constexpr qreal threshold = 6.0;
+        const QRectF sceneBounds = itemsBoundingRect().adjusted(-200, -200, 200, 200);
+
+        for (const auto& [nodeId, other] : m_nodeItems) {
+            if (nodeId == movingNodeId || !other) {
+                continue;
+            }
+            const QRectF otherRect = other->sceneBoundingRect();
+            const QPointF otherCenter = otherRect.center();
+            if (std::abs(otherCenter.x() - movingCenter.x()) <= threshold) {
+                m_alignmentGuideLines.push_back(QLineF(otherCenter.x(), sceneBounds.top(), otherCenter.x(), sceneBounds.bottom()));
+            }
+            if (std::abs(otherCenter.y() - movingCenter.y()) <= threshold) {
+                m_alignmentGuideLines.push_back(QLineF(sceneBounds.left(), otherCenter.y(), sceneBounds.right(), otherCenter.y()));
+            }
+            if (m_alignmentGuideLines.size() >= 2) {
+                break;
+            }
+        }
+        update();
+    }
+
     void emitGraphChanged() {
         if (m_graphChanged) {
             m_graphChanged();
@@ -1126,11 +1442,14 @@ private:
     std::unordered_map<NodeID, NodeItem*> m_nodeItems;
     std::unordered_map<PinID, PinItem*> m_pinItems;
     std::unordered_map<LinkID, LinkItem*> m_linkItems;
+    std::vector<QLineF> m_alignmentGuideLines;
     PinItem* m_liveDragPin = nullptr;
     LinkItem* m_liveWire = nullptr;
     bool m_ignoreMoveCommit = false;
+    bool m_snapToGrid = false;
     std::function<void(NodeID)> m_selectionChanged;
     std::function<void()> m_graphChanged;
+    std::function<void(const QPoint&, const QPointF&)> m_nodeSearchRequested;
 };
 
 AddNodeCommand::AddNodeCommand(MaterialGraphScene* scene, NodeType type, const QPointF& pos, std::optional<Node> source)
@@ -1256,15 +1575,22 @@ public:
     explicit MaterialGraphView(QWidget* parent = nullptr)
         : QGraphicsView(parent) {
         setRenderHint(QPainter::Antialiasing, true);
+        setRenderHint(QPainter::TextAntialiasing, true);
         setViewportUpdateMode(QGraphicsView::SmartViewportUpdate);
         setDragMode(QGraphicsView::RubberBandDrag);
         setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
         setResizeAnchor(QGraphicsView::AnchorUnderMouse);
+        setCacheMode(QGraphicsView::CacheBackground);
     }
 
 protected:
     void wheelEvent(QWheelEvent* event) override {
         const qreal factor = (event->angleDelta().y() > 0) ? 1.12 : 0.89;
+        const qreal nextScale = transform().m11() * factor;
+        if (nextScale < 0.25 || nextScale > 2.75) {
+            event->accept();
+            return;
+        }
         scale(factor, factor);
         event->accept();
     }
@@ -1325,10 +1651,36 @@ public:
         rebuildGraphScene();
         rebuildInspector(0);
         refreshStatus(QObject::tr("Ready"), true);
+        m_undo->setClean();
+        setDirty(false);
     }
 
     bool isInitialized() const {
         return m_initialized;
+    }
+
+protected:
+    void closeEvent(QCloseEvent* event) override {
+        if (m_dirty) {
+            const QMessageBox::StandardButton result = QMessageBox::question(
+                this,
+                QObject::tr("Unsaved Material"),
+                QObject::tr("This material has unsaved changes. Save before closing?"),
+                QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+            if (result == QMessageBox::Cancel) {
+                event->ignore();
+                return;
+            }
+            if (result == QMessageBox::Save) {
+                saveMaterial();
+                if (m_dirty) {
+                    event->ignore();
+                    return;
+                }
+            }
+        }
+        shutdownPreview();
+        QDialog::closeEvent(event);
     }
 
 private:
@@ -1351,34 +1703,78 @@ private:
 
     void buildUi() {
         auto* root = new QVBoxLayout(this);
+        root->setContentsMargins(10, 10, 10, 10);
+        root->setSpacing(8);
 
         auto* toolbar = new QHBoxLayout();
-        m_applyButton = new QPushButton(QObject::tr("Compile/Apply"), this);
+        toolbar->setSpacing(6);
         m_saveButton = new QPushButton(QObject::tr("Save"), this);
+        m_applyButton = new QPushButton(QObject::tr("Apply"), this);
+        m_compileButton = new QPushButton(QObject::tr("Compile"), this);
         m_addNodeButton = new QPushButton(QObject::tr("Add Node"), this);
-        m_searchEdit = new QLineEdit(this);
-        m_searchEdit->setPlaceholderText(QObject::tr("Search nodes..."));
         m_viewButton = new QToolButton(this);
-        m_viewButton->setText(QObject::tr("View"));
+        m_viewButton->setText(QObject::tr("Reset View"));
+        m_snapCheck = new QCheckBox(QObject::tr("Snap"), this);
+        m_dirtyLabel = new QLabel(QObject::tr("Saved"), this);
+        m_dirtyLabel->setToolTip(QObject::tr("Shows whether this material has unsaved editor changes."));
         m_syncLegacyCheck = new QCheckBox(QObject::tr("Sync legacy fields from graph"), this);
         m_syncLegacyCheck->setChecked(true);
-        toolbar->addWidget(m_applyButton);
         toolbar->addWidget(m_saveButton);
+        toolbar->addWidget(m_applyButton);
+        toolbar->addWidget(m_compileButton);
         toolbar->addWidget(m_addNodeButton);
-        toolbar->addWidget(m_searchEdit, 1);
         toolbar->addWidget(m_viewButton);
+        toolbar->addWidget(m_snapCheck);
+        toolbar->addStretch(1);
         toolbar->addWidget(m_syncLegacyCheck);
+        toolbar->addWidget(m_dirtyLabel);
         root->addLayout(toolbar);
-
-        auto* splitter = new QSplitter(Qt::Horizontal, this);
 
         m_graphScene = new MaterialGraphScene(&m_graph, m_undo, this);
         m_graphView = new MaterialGraphView(this);
         m_graphView->setScene(m_graphScene);
-        splitter->addWidget(m_graphView);
 
-        auto* inspectorHost = new QWidget(this);
+        auto* horizontalSplitter = new QSplitter(Qt::Horizontal, this);
+
+        auto* paletteHost = new QGroupBox(QObject::tr("Node Palette"), this);
+        auto* paletteLayout = new QVBoxLayout(paletteHost);
+        paletteLayout->setContentsMargins(8, 8, 8, 8);
+        m_paletteSearchEdit = new QLineEdit(paletteHost);
+        m_paletteSearchEdit->setPlaceholderText(QObject::tr("Search nodes (try \"tex\")"));
+        m_nodePalette = new QTreeWidget(paletteHost);
+        m_nodePalette->setHeaderHidden(true);
+        m_nodePalette->setRootIsDecorated(true);
+        m_nodePalette->setUniformRowHeights(true);
+        paletteLayout->addWidget(m_paletteSearchEdit);
+        paletteLayout->addWidget(m_nodePalette, 1);
+        horizontalSplitter->addWidget(paletteHost);
+
+        auto* centerSplitter = new QSplitter(Qt::Vertical, this);
+        auto* graphHost = new QGroupBox(QObject::tr("Graph"), this);
+        auto* graphLayout = new QVBoxLayout(graphHost);
+        graphLayout->setContentsMargins(4, 4, 4, 4);
+        graphLayout->addWidget(m_graphView, 1);
+        centerSplitter->addWidget(graphHost);
+
+        auto* statusFrame = new QGroupBox(QObject::tr("Errors / Validation"), this);
+        auto* statusLayout = new QVBoxLayout(statusFrame);
+        statusLayout->setContentsMargins(8, 8, 8, 8);
+        m_statusLabel = new QLabel(QObject::tr("Status: Ready"), statusFrame);
+        statusLayout->addWidget(m_statusLabel);
+        m_errorList = new QListWidget(statusFrame);
+        m_errorList->setSelectionMode(QAbstractItemView::SingleSelection);
+        m_errorList->setMaximumHeight(150);
+        statusLayout->addWidget(m_errorList);
+        centerSplitter->addWidget(statusFrame);
+        centerSplitter->setStretchFactor(0, 5);
+        centerSplitter->setStretchFactor(1, 1);
+        horizontalSplitter->addWidget(centerSplitter);
+
+        auto* rightSplitter = new QSplitter(Qt::Vertical, this);
+
+        auto* inspectorHost = new QGroupBox(QObject::tr("Details"), this);
         auto* inspectorLayout = new QVBoxLayout(inspectorHost);
+        inspectorLayout->setContentsMargins(8, 8, 8, 8);
         m_nameEdit = new QLineEdit(QString::fromStdString(m_displayName), inspectorHost);
         inspectorLayout->addWidget(new QLabel(QObject::tr("Material Name"), inspectorHost));
         inspectorLayout->addWidget(m_nameEdit);
@@ -1398,31 +1794,65 @@ private:
         m_convertButton = new QPushButton(QObject::tr("Convert to Graph"), inspectorHost);
         inspectorLayout->addWidget(m_convertButton);
 
-        splitter->addWidget(inspectorHost);
-        splitter->setStretchFactor(0, 4);
-        splitter->setStretchFactor(1, 2);
+        rightSplitter->addWidget(inspectorHost);
 
-        root->addWidget(splitter, 1);
+        auto* previewHost = new QGroupBox(QObject::tr("Preview"), this);
+        auto* previewLayout = new QVBoxLayout(previewHost);
+        previewLayout->setContentsMargins(8, 8, 8, 8);
+        auto* previewControls = new QHBoxLayout();
+        previewControls->addWidget(new QLabel(QObject::tr("Mesh:"), previewHost));
+        m_previewMeshCombo = new QComboBox(previewHost);
+        m_previewMeshCombo->addItems({QObject::tr("Sphere"), QObject::tr("Cube"), QObject::tr("Plane")});
+        previewControls->addWidget(m_previewMeshCombo, 1);
+        previewLayout->addLayout(previewControls);
+        m_previewViewportHost = new QWidget(previewHost);
+        m_previewViewportHost->setMinimumHeight(180);
+        m_previewViewportHost->setStyleSheet(QStringLiteral("background: #202026; border: 1px solid #3a3a44;"));
+        auto* previewViewportLayout = new QVBoxLayout(m_previewViewportHost);
+        previewViewportLayout->setContentsMargins(0, 0, 0, 0);
+        m_previewPlaceholderLabel = new QLabel(QObject::tr("Preview initializing..."), m_previewViewportHost);
+        m_previewPlaceholderLabel->setAlignment(Qt::AlignCenter);
+        previewViewportLayout->addWidget(m_previewPlaceholderLabel);
+        previewLayout->addWidget(m_previewViewportHost, 1);
+        m_previewStatusLabel = new QLabel(QObject::tr("Lighting: default editor environment"), previewHost);
+        m_previewStatusLabel->setWordWrap(true);
+        previewLayout->addWidget(m_previewStatusLabel);
+        rightSplitter->addWidget(previewHost);
+        rightSplitter->setStretchFactor(0, 3);
+        rightSplitter->setStretchFactor(1, 2);
+        horizontalSplitter->addWidget(rightSplitter);
+        horizontalSplitter->setStretchFactor(0, 1);
+        horizontalSplitter->setStretchFactor(1, 5);
+        horizontalSplitter->setStretchFactor(2, 2);
 
-        auto* statusFrame = new QFrame(this);
-        statusFrame->setFrameShape(QFrame::StyledPanel);
-        auto* statusLayout = new QVBoxLayout(statusFrame);
-        m_statusLabel = new QLabel(QObject::tr("Status: Ready"), statusFrame);
-        statusLayout->addWidget(m_statusLabel);
-        m_errorList = new QListWidget(statusFrame);
-        m_errorList->setSelectionMode(QAbstractItemView::SingleSelection);
-        statusLayout->addWidget(m_errorList);
-        root->addWidget(statusFrame);
+        root->addWidget(horizontalSplitter, 1);
 
         auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
         root->addWidget(buttons);
-        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::close);
 
         connect(m_applyButton, &QPushButton::clicked, this, [this]() { compileAndApply(); });
+        connect(m_compileButton, &QPushButton::clicked, this, [this]() { compileAndApply(); });
         connect(m_saveButton, &QPushButton::clicked, this, [this]() { saveMaterial(); });
         connect(m_convertButton, &QPushButton::clicked, this, [this]() { convertLegacyToGraph(); });
-        connect(m_addNodeButton, &QPushButton::clicked, this, [this]() { showAddNodeMenu(); });
-        connect(m_viewButton, &QToolButton::clicked, this, [this]() { m_graphView->fitInView(m_graphScene->itemsBoundingRect(), Qt::KeepAspectRatio); });
+        connect(m_addNodeButton, &QPushButton::clicked, this, [this]() {
+            showNodeSearchPopup(m_addNodeButton->mapToGlobal(QPoint(0, m_addNodeButton->height())), graphViewCenter());
+        });
+        connect(m_viewButton, &QToolButton::clicked, this, [this]() { m_graphScene->focusSelection(); });
+        connect(m_snapCheck, &QCheckBox::toggled, this, [this](bool checked) {
+            m_graphScene->setSnapToGrid(checked);
+        });
+        connect(m_paletteSearchEdit, &QLineEdit::textChanged, this, [this]() { populateNodePalette(); });
+        connect(m_nodePalette, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item, int) {
+            if (!item || item->data(0, Qt::UserRole).isNull()) {
+                return;
+            }
+            const NodeType type = static_cast<NodeType>(item->data(0, Qt::UserRole).toInt());
+            addNodeFromUi(type, graphViewCenter());
+        });
+        connect(m_previewMeshCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
+            updatePreviewMesh();
+        });
 
         connect(m_graphScene, &QGraphicsScene::selectionChanged, this, [this]() {
             NodeID nodeId = 0;
@@ -1436,6 +1866,11 @@ private:
         });
         m_graphScene->setGraphChangedCallback([this]() {
             refreshGraphBanner();
+            markDirty();
+            schedulePreviewUpdate();
+        });
+        m_graphScene->setNodeSearchCallback([this](const QPoint& globalPos, const QPointF& scenePos) {
+            showNodeSearchPopup(globalPos, scenePos);
         });
 
         connect(m_errorList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
@@ -1449,14 +1884,31 @@ private:
         new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y), this, [this]() { m_undo->redo(); });
         new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_D), this, [this]() { m_graphScene->duplicateSelected(); });
         new QShortcut(QKeySequence(Qt::Key_Delete), this, [this]() { m_graphScene->removeSelected(); });
+        new QShortcut(QKeySequence(Qt::Key_F), this, [this]() { m_graphScene->focusSelection(); });
+        new QShortcut(QKeySequence(Qt::Key_Tab), this, [this]() {
+            showNodeSearchPopup(m_graphView->mapToGlobal(m_graphView->viewport()->rect().center()), graphViewCenter());
+        });
 
         connect(m_nameEdit, &QLineEdit::editingFinished, this, [this]() {
             m_displayName = m_nameEdit->text().trimmed().isEmpty()
                 ? QFileInfo(m_absolutePath).completeBaseName().toStdString()
                 : m_nameEdit->text().toStdString();
+            markDirty();
         });
 
+        connect(m_undo, &QUndoStack::cleanChanged, this, [this](bool clean) {
+            setDirty(!clean);
+        });
+
+        m_previewUpdateTimer = new QTimer(this);
+        m_previewUpdateTimer->setSingleShot(true);
+        m_previewUpdateTimer->setInterval(180);
+        connect(m_previewUpdateTimer, &QTimer::timeout, this, [this]() { updatePreviewMaterial(); });
+
+        populateNodePalette();
+        initPreview();
         refreshGraphBanner();
+        setDirty(false);
     }
 
     void refreshGraphBanner() {
@@ -1477,6 +1929,296 @@ private:
         m_graphView->setSceneRect(m_graphScene->itemsBoundingRect().adjusted(-300, -200, 300, 200));
     }
 
+    QPointF graphViewCenter() const {
+        const QPoint viewCenter = m_graphView->viewport()->rect().center();
+        return m_graphView->mapToScene(viewCenter);
+    }
+
+    void populateNodePalette() {
+        if (!m_nodePalette) {
+            return;
+        }
+        m_nodePalette->clear();
+        const QString filter = m_paletteSearchEdit ? m_paletteSearchEdit->text().trimmed() : QString();
+        std::unordered_map<std::string, QTreeWidgetItem*> categoryItems;
+
+        auto getCategoryItem = [&](const QString& category) {
+            const std::string key = category.toStdString();
+            auto it = categoryItems.find(key);
+            if (it != categoryItems.end()) {
+                return it->second;
+            }
+            auto* item = new QTreeWidgetItem(m_nodePalette);
+            item->setText(0, category);
+            item->setFlags(Qt::ItemIsEnabled);
+            categoryItems[key] = item;
+            return item;
+        };
+
+        for (NodeType recent : m_recentNodeTypes) {
+            const QString label = NodeTypeLabel(recent);
+            if (!FuzzyMatch(filter, label)) {
+                continue;
+            }
+            auto* child = new QTreeWidgetItem(getCategoryItem(QObject::tr("Recently Used")));
+            child->setText(0, label);
+            child->setData(0, Qt::UserRole, static_cast<int>(recent));
+            child->setToolTip(0, QObject::tr("Double-click to add %1").arg(label));
+        }
+
+        for (const NodeMenuEntry& entry : NodeMenuEntries()) {
+            if (!FuzzyMatch(filter, entry.label)) {
+                continue;
+            }
+            auto* child = new QTreeWidgetItem(getCategoryItem(NodeCategory(entry.type)));
+            child->setText(0, entry.label);
+            child->setData(0, Qt::UserRole, static_cast<int>(entry.type));
+            child->setToolTip(0, QObject::tr("Double-click to add %1").arg(entry.label));
+        }
+        m_nodePalette->expandAll();
+    }
+
+    void addNodeFromUi(NodeType type, const QPointF& scenePos) {
+        m_graphScene->addNode(type, scenePos);
+        m_recentNodeTypes.erase(std::remove(m_recentNodeTypes.begin(), m_recentNodeTypes.end(), type), m_recentNodeTypes.end());
+        m_recentNodeTypes.insert(m_recentNodeTypes.begin(), type);
+        if (m_recentNodeTypes.size() > 5) {
+            m_recentNodeTypes.resize(5);
+        }
+        populateNodePalette();
+    }
+
+    void showNodeSearchPopup(const QPoint& globalPos, const QPointF& scenePos) {
+        QDialog popup(this);
+        popup.setWindowTitle(QObject::tr("Add Node"));
+        popup.setWindowFlags(Qt::Popup);
+        auto* layout = new QVBoxLayout(&popup);
+        layout->setContentsMargins(8, 8, 8, 8);
+        auto* search = new QLineEdit(&popup);
+        search->setPlaceholderText(QObject::tr("Search nodes..."));
+        auto* results = new QListWidget(&popup);
+        results->setMinimumWidth(340);
+        results->setMinimumHeight(280);
+        layout->addWidget(search);
+        layout->addWidget(results);
+
+        auto rebuildResults = [&]() {
+            results->clear();
+            const QString filter = search->text().trimmed();
+            auto addEntry = [&](const QString& prefix, NodeType type, const QString& label) {
+                if (!FuzzyMatch(filter, label) && !FuzzyMatch(filter, prefix + label)) {
+                    return;
+                }
+                auto* item = new QListWidgetItem(prefix.isEmpty() ? label : QObject::tr("%1  -  %2").arg(prefix, label), results);
+                item->setData(Qt::UserRole, static_cast<int>(type));
+            };
+            for (NodeType recent : m_recentNodeTypes) {
+                addEntry(QObject::tr("Recent"), recent, NodeTypeLabel(recent));
+            }
+            for (const NodeMenuEntry& entry : NodeMenuEntries()) {
+                addEntry(NodeCategory(entry.type), entry.type, entry.label);
+            }
+            if (results->count() > 0) {
+                results->setCurrentRow(0);
+            }
+        };
+
+        connect(search, &QLineEdit::textChanged, &popup, rebuildResults);
+        connect(results, &QListWidget::itemActivated, &popup, [&](QListWidgetItem* item) {
+            if (!item) {
+                return;
+            }
+            addNodeFromUi(static_cast<NodeType>(item->data(Qt::UserRole).toInt()), scenePos);
+            popup.accept();
+        });
+        connect(search, &QLineEdit::returnPressed, &popup, [&]() {
+            if (auto* item = results->currentItem()) {
+                addNodeFromUi(static_cast<NodeType>(item->data(Qt::UserRole).toInt()), scenePos);
+                popup.accept();
+            }
+        });
+
+        rebuildResults();
+        popup.move(globalPos);
+        search->setFocus();
+        popup.exec();
+    }
+
+    void markDirty() {
+        setDirty(true);
+    }
+
+    void setDirty(bool dirty) {
+        m_dirty = dirty;
+        const QString baseTitle = QObject::tr("Material Editor - %1").arg(QFileInfo(m_absolutePath).fileName());
+        setWindowTitle(dirty ? baseTitle + QStringLiteral(" *") : baseTitle);
+        if (m_dirtyLabel) {
+            m_dirtyLabel->setText(dirty ? QObject::tr("Unsaved") : QObject::tr("Saved"));
+            QPalette pal = m_dirtyLabel->palette();
+            pal.setColor(QPalette::WindowText, dirty ? QColor(240, 185, 70) : QColor(140, 230, 140));
+            m_dirtyLabel->setPalette(pal);
+        }
+    }
+
+    void schedulePreviewUpdate() {
+        if (m_previewUpdateTimer) {
+            m_previewUpdateTimer->start();
+        }
+    }
+
+    void initPreview() {
+        if (!m_previewViewportHost || m_previewEngine) {
+            return;
+        }
+
+        m_previewScene = std::make_unique<Scene>("Material Preview");
+        Entity previewEntity = m_previewScene->CreateEntity("Preview Material");
+        previewEntity.AddComponent<TransformComponent>();
+        auto& renderer = previewEntity.AddComponent<MeshRendererComponent>();
+        renderer.meshAssetPath = previewMeshKey();
+        renderer.submeshCount = 1;
+        renderer.appliedMaterialPaths = {""};
+        renderer.materialIndices = {-1};
+        previewEntity.AddComponent<MaterialComponent>(m_material);
+        m_previewEntity = static_cast<entt::entity>(previewEntity);
+
+        m_previewViewportWindow = new QtViewportWindow();
+        m_previewViewportContainer = QWidget::createWindowContainer(m_previewViewportWindow, m_previewViewportHost);
+        m_previewViewportContainer->setMinimumHeight(180);
+        if (auto* layout = m_previewViewportHost->layout()) {
+            if (m_previewPlaceholderLabel) {
+                m_previewPlaceholderLabel->hide();
+            }
+            layout->addWidget(m_previewViewportContainer);
+        }
+
+        m_previewEngine = std::make_unique<QtEditorEngine>(this);
+        connect(m_previewEngine.get(), &QtEditorEngine::engineError, this, [this](const QString& message) {
+            if (m_previewStatusLabel) {
+                m_previewStatusLabel->setText(QObject::tr("Preview error: %1").arg(message));
+            }
+        });
+        connect(m_previewViewportWindow, &QtViewportWindow::viewportReady, this, [this]() {
+            if (!m_previewEngine || !m_previewViewportWindow) {
+                return;
+            }
+            if (!m_previewEngine->AttachToViewport(m_previewViewportWindow)) {
+                if (m_previewStatusLabel) {
+                    m_previewStatusLabel->setText(QObject::tr("Preview failed to attach renderer."));
+                }
+                return;
+            }
+
+            auto* ctx = m_previewEngine->GetEditorContext();
+            ctx->SetExternalScene(m_previewScene.get());
+            auto& settings = ctx->GetViewportSettings();
+            settings.showGrid = false;
+            settings.showGizmo = false;
+            settings.showSelectionOutline = false;
+            settings.showShadows = true;
+            settings.showSkybox = true;
+            settings.showLightBillboards = false;
+
+            const std::string projectRoot = AssetManager::GetInstance().GetProjectRoot();
+            if (!projectRoot.empty()) {
+                m_previewEngine->SetProjectRoot(projectRoot);
+                if (auto* renderer = m_previewEngine->GetFrameRenderer()) {
+                    renderer->SetProjectRoot(projectRoot);
+                }
+            }
+
+            m_previewEngine->StartRenderLoop();
+            m_previewEngine->RebuildSceneMeshes();
+            updatePreviewMaterial();
+            if (m_previewStatusLabel) {
+                m_previewStatusLabel->setText(QObject::tr("Rendered preview: %1. Lighting: default editor environment.").arg(m_previewMeshCombo->currentText()));
+            }
+        });
+
+        if (!m_previewEngine->InitializeVulkan()) {
+            if (m_previewStatusLabel) {
+                m_previewStatusLabel->setText(QObject::tr("Preview renderer failed to initialize Vulkan."));
+            }
+        }
+        updatePreviewMaterial();
+    }
+
+    void shutdownPreview() {
+        if (m_previewUpdateTimer) {
+            m_previewUpdateTimer->stop();
+        }
+        if (m_previewEngine) {
+            if (m_previewViewportWindow) {
+                m_previewViewportWindow->SetInputEventCallback(nullptr);
+            }
+            if (auto* ctx = m_previewEngine->GetEditorContext()) {
+                ctx->SetSelectionChangedCallback(nullptr);
+                ctx->SetSceneChangedCallback(nullptr);
+                ctx->ClearSelection();
+                ctx->SetExternalScene(nullptr);
+            }
+            m_previewEngine->Shutdown();
+            m_previewEngine.reset();
+        }
+        m_previewScene.reset();
+    }
+
+    void updatePreviewMesh() {
+        if (m_previewScene && m_previewEntity != entt::null) {
+            auto& registry = m_previewScene->GetRegistry();
+            if (registry.valid(m_previewEntity) && registry.all_of<MeshRendererComponent>(m_previewEntity)) {
+                auto& renderer = registry.get<MeshRendererComponent>(m_previewEntity);
+                renderer.meshAssetPath = previewMeshKey();
+                renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+                renderer.submeshCount = 1;
+                renderer.appliedMaterialPaths = {""};
+                renderer.materialIndices = {-1};
+                if (m_previewEngine) {
+                    m_previewEngine->RebuildSceneMeshes();
+                }
+            }
+        }
+        if (m_previewStatusLabel) {
+            m_previewStatusLabel->setText(QObject::tr("Preview mesh: %1. Lighting: default editor environment.").arg(m_previewMeshCombo->currentText()));
+        }
+        schedulePreviewUpdate();
+    }
+
+    void updatePreviewMaterial() {
+        MaterialComponent evaluated = m_material;
+        std::string evalError;
+        if (m_graph.HasSourceGraph() && !m_graph.IsLegacyMode() && !EvaluateGraph(m_graph, evaluated, evalError)) {
+            if (m_previewPlaceholderLabel) {
+                m_previewPlaceholderLabel->setText(QObject::tr("Preview unavailable\n%1").arg(QString::fromStdString(evalError)));
+            }
+            return;
+        }
+        m_previewMaterial = evaluated;
+        if (m_previewScene && m_previewEntity != entt::null) {
+            auto& registry = m_previewScene->GetRegistry();
+            if (registry.valid(m_previewEntity) && registry.all_of<MaterialComponent>(m_previewEntity)) {
+                registry.replace<MaterialComponent>(m_previewEntity, m_previewMaterial);
+            }
+        }
+        if (m_previewPlaceholderLabel && m_previewPlaceholderLabel->isVisible()) {
+            m_previewPlaceholderLabel->setText(QObject::tr("Preview initializing..."));
+        }
+    }
+
+    std::string previewMeshKey() const {
+        if (!m_previewMeshCombo) {
+            return "builtin://sphere";
+        }
+        const QString text = m_previewMeshCombo->currentText().toLower();
+        if (text.contains("cube")) {
+            return "builtin://cube";
+        }
+        if (text.contains("plane")) {
+            return "builtin://plane";
+        }
+        return "builtin://sphere";
+    }
+
     void clearInspectorForm() {
         while (m_inspectorForm->rowCount() > 0) {
             m_inspectorForm->removeRow(0);
@@ -1495,6 +2237,11 @@ private:
 
         auto addUndoSpin = [this](QDoubleSpinBox* spin, const QString& label, std::function<double()> getter, std::function<void(double)> setter) {
             spin->setProperty("lastCommitted", getter());
+            connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, setter](double value) {
+                setter(value);
+                markDirty();
+                schedulePreviewUpdate();
+            });
             connect(spin, &QDoubleSpinBox::editingFinished, this, [this, spin, label, getter, setter]() {
                 const double oldValue = spin->property("lastCommitted").toDouble();
                 const double newValue = spin->value();
@@ -1567,21 +2314,60 @@ private:
         });
 
         if (IsScalarNode(node.type)) {
+            auto* row = new QWidget(m_inspectorContent);
+            auto* rowLayout = new QHBoxLayout(row);
+            rowLayout->setContentsMargins(0, 0, 0, 0);
             auto* scalar = new QDoubleSpinBox(m_inspectorContent);
             scalar->setRange(-10000.0, 10000.0);
             scalar->setDecimals(4);
             scalar->setValue(node.scalar);
-            m_inspectorForm->addRow(QObject::tr("Scalar"), scalar);
+            auto* slider = new QSlider(Qt::Horizontal, row);
+            slider->setRange(0, 1000);
+            slider->setValue(static_cast<int>(std::clamp(node.scalar, 0.0f, 1.0f) * 1000.0f));
+            slider->setToolTip(QObject::tr("Normalized 0-1 edit range for common scalar values."));
+            auto* reset = new QPushButton(QObject::tr("Reset"), row);
+            reset->setToolTip(QObject::tr("Reset to the default value for this scalar node."));
+            rowLayout->addWidget(scalar);
+            rowLayout->addWidget(slider, 1);
+            rowLayout->addWidget(reset);
+            m_inspectorForm->addRow(QObject::tr("Scalar"), row);
+            scalar->setProperty("lastCommitted", node.scalar);
+            connect(slider, &QSlider::valueChanged, this, [scalar](int v) {
+                scalar->setValue(static_cast<double>(v) / 1000.0);
+            });
+            connect(scalar, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, slider, nodeId = node.id](double value) {
+                if (Node* n = m_graph.FindNode(nodeId)) {
+                    n->scalar = static_cast<float>(value);
+                    slider->blockSignals(true);
+                    slider->setValue(static_cast<int>(std::clamp(value, 0.0, 1.0) * 1000.0));
+                    slider->blockSignals(false);
+                    markDirty();
+                    schedulePreviewUpdate();
+                }
+            });
             connect(scalar, &QDoubleSpinBox::editingFinished, this, [this, scalar, nodeId = node.id]() {
                 Node* n = m_graph.FindNode(nodeId);
                 if (!n) return;
-                const float oldValue = n->scalar;
+                const float oldValue = scalar->property("lastCommitted").toFloat();
                 const float newValue = static_cast<float>(scalar->value());
                 if (std::abs(oldValue - newValue) < 1e-6f) return;
                 m_undo->push(new EditNodePropertyCommand(
                     [this, nodeId, oldValue]() { if (Node* node = m_graph.FindNode(nodeId)) node->scalar = oldValue; },
                     [this, nodeId, newValue]() { if (Node* node = m_graph.FindNode(nodeId)) node->scalar = newValue; },
                     QObject::tr("Edit Scalar")));
+                scalar->setProperty("lastCommitted", newValue);
+            });
+            connect(reset, &QPushButton::clicked, this, [this, scalar, nodeId = node.id]() {
+                Node* n = m_graph.FindNode(nodeId);
+                if (!n) return;
+                const float oldValue = n->scalar;
+                const float newValue = 0.5f;
+                scalar->setValue(newValue);
+                if (std::abs(oldValue - newValue) < 1e-6f) return;
+                m_undo->push(new EditNodePropertyCommand(
+                    [this, nodeId, oldValue]() { if (Node* node = m_graph.FindNode(nodeId)) node->scalar = oldValue; },
+                    [this, nodeId, newValue]() { if (Node* node = m_graph.FindNode(nodeId)) node->scalar = newValue; },
+                    QObject::tr("Reset Scalar")));
             });
         }
 
@@ -1596,6 +2382,8 @@ private:
 
             auto* picker = new QPushButton(QObject::tr("Select RGBA..."), row);
             picker->setToolTip(QObject::tr("Opens RGBA picker. Alpha is editor-only for now; RGB is saved to .hematerial color[3]."));
+            auto* reset = new QPushButton(QObject::tr("Reset"), row);
+            reset->setToolTip(QObject::tr("Reset to default white."));
 
             auto updatePreview = [preview](const Float3& c, float alpha = 1.0f) {
                 const QColor q = QColor::fromRgbF(std::clamp(static_cast<double>(c.x), 0.0, 1.0),
@@ -1609,6 +2397,7 @@ private:
 
             rowLayout->addWidget(preview);
             rowLayout->addWidget(picker, 1);
+            rowLayout->addWidget(reset);
             m_inspectorForm->addRow(QObject::tr("Color"), row);
 
             connect(picker, &QPushButton::clicked, this, [this, nodeId = node.id, updatePreview]() {
@@ -1657,35 +2446,197 @@ private:
                     },
                     QObject::tr("Edit Color")));
             });
+            connect(reset, &QPushButton::clicked, this, [this, nodeId = node.id, updatePreview]() {
+                Node* n = m_graph.FindNode(nodeId);
+                if (!n) return;
+                const Float3 oldColor = n->color;
+                const Float3 newColor{1.0f, 1.0f, 1.0f};
+                updatePreview(newColor, 1.0f);
+                if (oldColor.x == newColor.x && oldColor.y == newColor.y && oldColor.z == newColor.z) {
+                    return;
+                }
+                m_undo->push(new EditNodePropertyCommand(
+                    [this, nodeId, oldColor, updatePreview]() {
+                        if (Node* node = m_graph.FindNode(nodeId)) {
+                            node->color = oldColor;
+                            updatePreview(oldColor, 1.0f);
+                        }
+                    },
+                    [this, nodeId, newColor, updatePreview]() {
+                        if (Node* node = m_graph.FindNode(nodeId)) {
+                            node->color = newColor;
+                            updatePreview(newColor, 1.0f);
+                        }
+                    },
+                    QObject::tr("Reset Color")));
+            });
+
+            auto* vectorRow = new QWidget(m_inspectorContent);
+            auto* vectorLayout = new QHBoxLayout(vectorRow);
+            vectorLayout->setContentsMargins(0, 0, 0, 0);
+            auto makeComponentSpin = [this](float value) {
+                auto* spin = new QDoubleSpinBox(m_inspectorContent);
+                spin->setRange(-10000.0, 10000.0);
+                spin->setDecimals(4);
+                spin->setSingleStep(0.01);
+                spin->setValue(value);
+                return spin;
+            };
+            auto* xSpin = makeComponentSpin(node.color.x);
+            auto* ySpin = makeComponentSpin(node.color.y);
+            auto* zSpin = makeComponentSpin(node.color.z);
+            xSpin->setProperty("lastCommitted", node.color.x);
+            ySpin->setProperty("lastCommitted", node.color.y);
+            zSpin->setProperty("lastCommitted", node.color.z);
+            xSpin->setPrefix(QObject::tr("X "));
+            ySpin->setPrefix(QObject::tr("Y "));
+            zSpin->setPrefix(QObject::tr("Z "));
+            vectorLayout->addWidget(xSpin);
+            vectorLayout->addWidget(ySpin);
+            vectorLayout->addWidget(zSpin);
+            m_inspectorForm->addRow(QObject::tr("Vector3"), vectorRow);
+
+            auto updateVectorLive = [this, nodeId = node.id, xSpin, ySpin, zSpin, updatePreview]() {
+                if (Node* n = m_graph.FindNode(nodeId)) {
+                    n->color = Float3{
+                        static_cast<float>(xSpin->value()),
+                        static_cast<float>(ySpin->value()),
+                        static_cast<float>(zSpin->value())};
+                    updatePreview(n->color, 1.0f);
+                    markDirty();
+                    schedulePreviewUpdate();
+                }
+            };
+            connect(xSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, updateVectorLive);
+            connect(ySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, updateVectorLive);
+            connect(zSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, updateVectorLive);
+
+            auto commitVector = [this, nodeId = node.id, xSpin, ySpin, zSpin, updatePreview]() {
+                Node* n = m_graph.FindNode(nodeId);
+                if (!n) return;
+                const Float3 oldValue{
+                    xSpin->property("lastCommitted").toFloat(),
+                    ySpin->property("lastCommitted").toFloat(),
+                    zSpin->property("lastCommitted").toFloat()};
+                const Float3 newValue{
+                    static_cast<float>(xSpin->value()),
+                    static_cast<float>(ySpin->value()),
+                    static_cast<float>(zSpin->value())};
+                if (oldValue.x == newValue.x && oldValue.y == newValue.y && oldValue.z == newValue.z) {
+                    return;
+                }
+                m_undo->push(new EditNodePropertyCommand(
+                    [this, nodeId, oldValue, updatePreview]() {
+                        if (Node* node = m_graph.FindNode(nodeId)) {
+                            node->color = oldValue;
+                            updatePreview(oldValue, 1.0f);
+                        }
+                    },
+                    [this, nodeId, newValue, updatePreview]() {
+                        if (Node* node = m_graph.FindNode(nodeId)) {
+                            node->color = newValue;
+                            updatePreview(newValue, 1.0f);
+                        }
+                    },
+                    QObject::tr("Edit Vector3")));
+                xSpin->setProperty("lastCommitted", newValue.x);
+                ySpin->setProperty("lastCommitted", newValue.y);
+                zSpin->setProperty("lastCommitted", newValue.z);
+            };
+            connect(xSpin, &QDoubleSpinBox::editingFinished, this, commitVector);
+            connect(ySpin, &QDoubleSpinBox::editingFinished, this, commitVector);
+            connect(zSpin, &QDoubleSpinBox::editingFinished, this, commitVector);
         }
 
         if (IsTextureNode(node.type)) {
+            auto* texturePreviewRow = new QWidget(m_inspectorContent);
+            auto* texturePreviewLayout = new QHBoxLayout(texturePreviewRow);
+            texturePreviewLayout->setContentsMargins(0, 0, 0, 0);
+            auto* thumbnail = new QLabel(texturePreviewRow);
+            thumbnail->setFixedSize(64, 64);
+            thumbnail->setFrameShape(QFrame::Box);
+            thumbnail->setAlignment(Qt::AlignCenter);
+            auto* textureInfo = new QLabel(texturePreviewRow);
+            textureInfo->setWordWrap(true);
+            texturePreviewLayout->addWidget(thumbnail);
+            texturePreviewLayout->addWidget(textureInfo, 1);
+            m_inspectorForm->addRow(QObject::tr("Texture Preview"), texturePreviewRow);
+
             auto* pathRow = new QWidget(m_inspectorContent);
             auto* pathLayout = new QHBoxLayout(pathRow);
             pathLayout->setContentsMargins(0, 0, 0, 0);
             auto* path = new QLineEdit(QString::fromStdString(node.resourcePath), pathRow);
+            path->setPlaceholderText(QObject::tr("Texture asset path"));
             auto* browse = new QPushButton(QObject::tr("..."), pathRow);
             browse->setMaximumWidth(28);
+            auto* reset = new QPushButton(QObject::tr("Clear"), pathRow);
             pathLayout->addWidget(path, 1);
             pathLayout->addWidget(browse);
+            pathLayout->addWidget(reset);
             m_inspectorForm->addRow(QObject::tr("Texture Path"), pathRow);
+            if (node.type == NodeType::AoTextureSample || node.type == NodeType::RoughnessTextureSample) {
+                textureInfo->setToolTip(QObject::tr("Packed ORM maps usually use R=AO, G=Roughness, B=Metallic. This node samples the channel relevant to its input."));
+            }
+            auto updateTexturePreview = [this, thumbnail, textureInfo](const QString& rawPath) {
+                QString resolved = rawPath;
+                resolved.replace('\\', '/');
+                if (!resolved.isEmpty() && !QFileInfo(resolved).isAbsolute()) {
+                    const QString assetRoot = QString::fromStdString(AssetManager::GetInstance().GetAssetRoot()).replace('\\', '/');
+                    const QString projectRoot = QString::fromStdString(AssetManager::GetInstance().GetProjectRoot()).replace('\\', '/');
+                    if (!assetRoot.isEmpty() && QFileInfo(assetRoot + "/" + resolved).exists()) {
+                        resolved = assetRoot + "/" + resolved;
+                    } else if (!projectRoot.isEmpty() && QFileInfo(projectRoot + "/" + resolved).exists()) {
+                        resolved = projectRoot + "/" + resolved;
+                    }
+                }
+
+                QImage image(resolved);
+                if (rawPath.trimmed().isEmpty()) {
+                    thumbnail->setText(QObject::tr("None"));
+                    thumbnail->setPixmap(QPixmap());
+                    textureInfo->setText(QObject::tr("No texture assigned."));
+                } else if (image.isNull()) {
+                    thumbnail->setText(QObject::tr("Missing"));
+                    thumbnail->setPixmap(QPixmap());
+                    textureInfo->setText(QObject::tr("Missing or unsupported texture:\n%1").arg(rawPath));
+                } else {
+                    thumbnail->setText(QString());
+                    thumbnail->setPixmap(QPixmap::fromImage(image).scaled(thumbnail->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                    textureInfo->setText(QObject::tr("%1 x %2\n%3").arg(image.width()).arg(image.height()).arg(rawPath));
+                }
+            };
+            updateTexturePreview(path->text());
+            path->setProperty("lastCommitted", path->text());
             auto commitPath = [this, nodeId = node.id, path]() {
                 Node* n = m_graph.FindNode(nodeId);
                 if (!n) return;
-                const std::string oldPath = n->resourcePath;
+                const std::string oldPath = path->property("lastCommitted").toString().toStdString();
                 const std::string newPath = path->text().toStdString();
                 if (oldPath == newPath) return;
                 m_undo->push(new EditNodePropertyCommand(
                     [this, nodeId, oldPath]() { if (Node* node = m_graph.FindNode(nodeId)) node->resourcePath = oldPath; },
                     [this, nodeId, newPath]() { if (Node* node = m_graph.FindNode(nodeId)) node->resourcePath = newPath; },
                     QObject::tr("Edit Texture Path")));
+                path->setProperty("lastCommitted", path->text());
             };
+            connect(path, &QLineEdit::textChanged, this, updateTexturePreview);
+            connect(path, &QLineEdit::textChanged, this, [this, nodeId = node.id](const QString& value) {
+                if (Node* n = m_graph.FindNode(nodeId)) {
+                    n->resourcePath = value.toStdString();
+                    markDirty();
+                    schedulePreviewUpdate();
+                }
+            });
             connect(path, &QLineEdit::editingFinished, this, commitPath);
             connect(browse, &QPushButton::clicked, this, [this, path, commitPath]() {
                 const QString file = QFileDialog::getOpenFileName(this, QObject::tr("Choose Texture"),
                     QFileInfo(m_absolutePath).absolutePath(), QObject::tr("Textures (*.png *.jpg *.jpeg *.tga *.dds *.ktx *.bmp);;All Files (*.*)"));
                 if (file.isEmpty()) return;
                 path->setText(file);
+                commitPath();
+            });
+            connect(reset, &QPushButton::clicked, this, [path, commitPath]() {
+                path->clear();
                 commitPath();
             });
         }
@@ -1695,17 +2646,26 @@ private:
             scale->setRange(0.001, 10000.0);
             scale->setDecimals(4);
             scale->setValue(node.worldAlignedScale);
+            scale->setProperty("lastCommitted", node.worldAlignedScale);
             m_inspectorForm->addRow(QObject::tr("World Aligned Scale"), scale);
+            connect(scale, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, nodeId = node.id](double value) {
+                if (Node* n = m_graph.FindNode(nodeId)) {
+                    n->worldAlignedScale = static_cast<float>(value);
+                    markDirty();
+                    schedulePreviewUpdate();
+                }
+            });
             connect(scale, &QDoubleSpinBox::editingFinished, this, [this, nodeId = node.id, scale]() {
                 Node* n = m_graph.FindNode(nodeId);
                 if (!n) return;
-                const float oldValue = n->worldAlignedScale;
+                const float oldValue = scale->property("lastCommitted").toFloat();
                 const float newValue = static_cast<float>(scale->value());
                 if (std::abs(oldValue - newValue) < 1e-6f) return;
                 m_undo->push(new EditNodePropertyCommand(
                     [this, nodeId, oldValue]() { if (Node* node = m_graph.FindNode(nodeId)) node->worldAlignedScale = oldValue; },
                     [this, nodeId, newValue]() { if (Node* node = m_graph.FindNode(nodeId)) node->worldAlignedScale = newValue; },
                     QObject::tr("Edit World Aligned Scale")));
+                scale->setProperty("lastCommitted", newValue);
             });
         }
     }
@@ -1727,55 +2687,29 @@ private:
     }
 
     void showAddNodeMenu() {
-        QMenu menu(this);
-        const QString filter = m_searchEdit->text().trimmed().toLower();
-
-        QMenu* outputMenu = menu.addMenu(QObject::tr("Output"));
-        QMenu* inputsMenu = menu.addMenu(QObject::tr("Inputs"));
-        QMenu* texturesMenu = menu.addMenu(QObject::tr("Textures"));
-        QMenu* mathMenu = menu.addMenu(QObject::tr("Math"));
-        QMenu* utilitiesMenu = menu.addMenu(QObject::tr("Utilities"));
-
-        auto categoryMenu = [&](NodeType type) -> QMenu* {
-            const QString cat = NodeCategory(type);
-            if (cat == "Output") return outputMenu;
-            if (cat == "Inputs") return inputsMenu;
-            if (cat == "Textures") return texturesMenu;
-            if (cat == "Math") return mathMenu;
-            return utilitiesMenu;
-        };
-
-        for (const NodeMenuEntry& entry : NodeMenuEntries()) {
-            if (!filter.isEmpty() && !entry.label.toLower().contains(filter)) {
-                continue;
-            }
-            QAction* action = categoryMenu(entry.type)->addAction(entry.label);
-            connect(action, &QAction::triggered, this, [this, type = entry.type]() {
-                const QPoint viewCenter = m_graphView->viewport()->rect().center();
-                const QPointF scenePos = m_graphView->mapToScene(viewCenter);
-                m_graphScene->addNode(type, scenePos);
-            });
-        }
-
-        outputMenu->menuAction()->setVisible(!outputMenu->actions().isEmpty());
-        inputsMenu->menuAction()->setVisible(!inputsMenu->actions().isEmpty());
-        texturesMenu->menuAction()->setVisible(!texturesMenu->actions().isEmpty());
-        mathMenu->menuAction()->setVisible(!mathMenu->actions().isEmpty());
-        utilitiesMenu->menuAction()->setVisible(!utilitiesMenu->actions().isEmpty());
-
-        menu.exec(m_addNodeButton->mapToGlobal(QPoint(0, m_addNodeButton->height())));
+        showNodeSearchPopup(m_addNodeButton->mapToGlobal(QPoint(0, m_addNodeButton->height())), graphViewCenter());
     }
 
     void compileAndApply() {
         GraphValidationResult validation = ValidateGraph(m_graph);
         m_errorList->clear();
         for (const GraphIssue& issue : validation.issues) {
-            auto* item = new QListWidgetItem(issue.message, m_errorList);
+            QString prefix = QObject::tr("Error");
+            if (issue.severity == GraphIssue::Severity::Warning) {
+                prefix = QObject::tr("Warning");
+            } else if (issue.severity == GraphIssue::Severity::Info) {
+                prefix = QObject::tr("Info");
+            }
+            auto* item = new QListWidgetItem(QObject::tr("[%1] %2").arg(prefix, issue.message), m_errorList);
             item->setData(Qt::UserRole, issue.nodeId);
         }
+        m_graphScene->applyValidation(validation);
 
         if (!validation.ok) {
             refreshStatus(QObject::tr("Compile error"), false);
+            if (m_previewPlaceholderLabel) {
+                m_previewPlaceholderLabel->setText(QObject::tr("Preview blocked by graph errors."));
+            }
             return;
         }
 
@@ -1792,6 +2726,7 @@ private:
         }
 
         refreshStatus(QObject::tr("Compiled"), true);
+        schedulePreviewUpdate();
     }
 
     void convertLegacyToGraph() {
@@ -1801,6 +2736,7 @@ private:
         m_graph.SetHasSourceGraph(true);
         rebuildGraphScene();
         rebuildInspector(0);
+        markDirty();
         refreshStatus(QObject::tr("Converted legacy material to graph."), true);
     }
 
@@ -1829,6 +2765,8 @@ private:
             return;
         }
 
+        m_undo->setClean();
+        setDirty(false);
         refreshStatus(QObject::tr("Saved"), true);
     }
 
@@ -1856,16 +2794,33 @@ private:
     QLabel* m_graphBanner = nullptr;
     QPushButton* m_convertButton = nullptr;
     QPushButton* m_applyButton = nullptr;
+    QPushButton* m_compileButton = nullptr;
     QPushButton* m_saveButton = nullptr;
     QPushButton* m_addNodeButton = nullptr;
-    QLineEdit* m_searchEdit = nullptr;
     QToolButton* m_viewButton = nullptr;
+    QCheckBox* m_snapCheck = nullptr;
     QCheckBox* m_syncLegacyCheck = nullptr;
+    QLabel* m_dirtyLabel = nullptr;
+    bool m_dirty = false;
 
+    QLineEdit* m_paletteSearchEdit = nullptr;
+    QTreeWidget* m_nodePalette = nullptr;
+    std::vector<NodeType> m_recentNodeTypes;
     QWidget* m_inspectorContent = nullptr;
     QFormLayout* m_inspectorForm = nullptr;
     QLabel* m_statusLabel = nullptr;
     QListWidget* m_errorList = nullptr;
+    QComboBox* m_previewMeshCombo = nullptr;
+    QWidget* m_previewViewportHost = nullptr;
+    QLabel* m_previewPlaceholderLabel = nullptr;
+    QLabel* m_previewStatusLabel = nullptr;
+    QTimer* m_previewUpdateTimer = nullptr;
+    MaterialComponent m_previewMaterial;
+    std::unique_ptr<Scene> m_previewScene;
+    entt::entity m_previewEntity = entt::null;
+    QtViewportWindow* m_previewViewportWindow = nullptr;
+    QWidget* m_previewViewportContainer = nullptr;
+    std::unique_ptr<QtEditorEngine> m_previewEngine;
 };
 
 } // namespace

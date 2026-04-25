@@ -48,6 +48,9 @@ public:
 
     void Refresh() override;
 
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
     void buildUI();
     void connectSignals();

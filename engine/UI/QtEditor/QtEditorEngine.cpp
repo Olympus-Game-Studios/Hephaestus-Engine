@@ -1607,6 +1607,17 @@ void QtEditorEngine::createBuiltinMeshes()
 
     uploadMeshToGPU("Default Cube", cubeMesh, std::filesystem::path("builtin://cube"), false);
 
+    // Create a simple preview plane
+    MeshData planeMesh;
+    const float p = 0.75f;
+    planeMesh.vertices.push_back({{-p, 0.0f, -p}, {0, 1, 0}, {1, 1, 1}, {0, 0}});
+    planeMesh.vertices.push_back({{ p, 0.0f, -p}, {0, 1, 0}, {1, 1, 1}, {1, 0}});
+    planeMesh.vertices.push_back({{ p, 0.0f,  p}, {0, 1, 0}, {1, 1, 1}, {1, 1}});
+    planeMesh.vertices.push_back({{-p, 0.0f,  p}, {0, 1, 0}, {1, 1, 1}, {0, 1}});
+    planeMesh.indices = {0, 1, 2, 0, 2, 3};
+    planeMesh.bounds = AABB(Vec3(-p, 0.0f, -p), Vec3(p, 0.0f, p));
+    uploadMeshToGPU("Default Plane", planeMesh, std::filesystem::path("builtin://plane"), false);
+
     // Create a simple sphere mesh
     MeshData sphereMesh;
     const int stacks = 16;
