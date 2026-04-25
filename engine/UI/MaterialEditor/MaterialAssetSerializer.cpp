@@ -132,6 +132,7 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
     if (root.contains("ao") && root["ao"].is_number()) outMaterial.ao = root["ao"].get<float>();
     if (root.contains("emissive")) ParseVec3(root["emissive"], outMaterial.emissive);
     if (root.contains("emissiveStrength") && root["emissiveStrength"].is_number()) outMaterial.emissiveStrength = root["emissiveStrength"].get<float>();
+    if (root.contains("reflectionStrength") && root["reflectionStrength"].is_number()) outMaterial.reflectionStrength = root["reflectionStrength"].get<float>();
 
     if (root.contains("useAlbedoTexture") && root["useAlbedoTexture"].is_boolean()) outMaterial.useAlbedoTexture = root["useAlbedoTexture"].get<bool>();
     if (root.contains("albedoTexturePath") && root["albedoTexturePath"].is_string()) outMaterial.albedoTexturePath = root["albedoTexturePath"].get<std::string>();
@@ -325,6 +326,9 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
     root["ao"] = material.ao;
     root["emissive"] = { material.emissive.x, material.emissive.y, material.emissive.z };
     root["emissiveStrength"] = material.emissiveStrength;
+    if (root.contains("reflectionStrength") || material.reflectionStrength != 1.0f) {
+        root["reflectionStrength"] = material.reflectionStrength;
+    }
     root["useAlbedoTexture"] = material.useAlbedoTexture;
     root["albedoTexturePath"] = material.albedoTexturePath;
     root["useNormalTexture"] = material.useNormalTexture;

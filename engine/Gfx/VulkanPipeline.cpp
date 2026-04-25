@@ -50,13 +50,14 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext)
 
     constexpr uint32_t kTextureArraySize = 128; // Keep in sync with main texture slot count
 
-    // Create descriptor set layout with 5 bindings:
+    // Create descriptor set layout with 6 bindings:
     // - binding 0: UBO (view/proj matrices + camera position)
     // - binding 1: Material UBO
     // - binding 2: Lighting UBO
     // - binding 3: Combined image sampler array for material textures
     // - binding 4: Directional shadow map sampler
-    VkDescriptorSetLayoutBinding bindings[5] = {};
+    // - binding 5: Environment reflection texture
+    VkDescriptorSetLayoutBinding bindings[6] = {};
     
     // Binding 0: Camera/View UBO
     bindings[0].binding = 0;
@@ -88,8 +89,14 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext)
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // Binding 5: Environment reflection map
+    bindings[5].binding = 5;
+    bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    setInfo.bindingCount = 5;
+    setInfo.bindingCount = 6;
     setInfo.pBindings = bindings;
     if (vkCreateDescriptorSetLayout(device, &setInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create descriptor set layout");

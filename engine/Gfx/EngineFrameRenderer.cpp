@@ -57,7 +57,8 @@ struct alignas(16) MaterialUBO {
     uint32_t aoTextureIndex;
     uint32_t useWorldAlignedTexture;
     float worldTextureScale;
-    uint32_t paddingTail[7];
+    float reflectionStrength;
+    uint32_t paddingTail[6];
 };
 
 struct LightingUBO {
@@ -66,6 +67,7 @@ struct LightingUBO {
     Vec4 dirLightDirIntensity;
     Vec4 dirLightColor;
     Vec4 ambientColorIntensity;
+    Vec4 environmentReflectionParams;
     
     struct { float x, y, z, range; } pointLightPositions[16];
     struct { float r, g, b, intensity; } pointLightColors[16];
@@ -668,13 +670,12 @@ bool EngineFrameRenderer::createDescriptorSets()
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount) },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, static_cast<uint32_t>(imageCount) },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount) },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount) * kTextureArraySize },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount) }
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount) * (kTextureArraySize + 2) }
     };
     
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 5;
+    poolInfo.poolSizeCount = 4;
     poolInfo.pPoolSizes = poolSizes;
     poolInfo.maxSets = static_cast<uint32_t>(imageCount);
     
@@ -737,7 +738,12 @@ bool EngineFrameRenderer::createDescriptorSets()
             shadowMapInfo.sampler = m_dummyTexture.sampler;
         }
         
-        VkWriteDescriptorSet descriptorWrites[5] = {};
+        VkDescriptorImageInfo environmentMapInfo{};
+        environmentMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        environmentMapInfo.imageView = m_dummyTexture.imageView;
+        environmentMapInfo.sampler = m_dummyTexture.sampler;
+
+        VkWriteDescriptorSet descriptorWrites[6] = {};
         
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = m_descriptorSets[i];
@@ -780,8 +786,17 @@ bool EngineFrameRenderer::createDescriptorSets()
         descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         descriptorWrites[4].descriptorCount = 1;
         descriptorWrites[4].pImageInfo = &shadowMapInfo;
+
+        // Binding 5: Environment reflection map
+        descriptorWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[5].dstSet = m_descriptorSets[i];
+        descriptorWrites[5].dstBinding = 5;
+        descriptorWrites[5].dstArrayElement = 0;
+        descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[5].descriptorCount = 1;
+        descriptorWrites[5].pImageInfo = &environmentMapInfo;
         
-        vkUpdateDescriptorSets(m_device->device, 5, descriptorWrites, 0, nullptr);
+        vkUpdateDescriptorSets(m_device->device, 6, descriptorWrites, 0, nullptr);
     }
     
     return true;
@@ -1426,6 +1441,7 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
     
     // Default ambient lighting
     lightUBO.ambientColorIntensity = Vec4(0.1f, 0.1f, 0.15f, 0.3f);
+    lightUBO.environmentReflectionParams = Vec4(0.0f, 0.0f, 0.0f, 0.0f);
     
     // Default directional light
     lightUBO.dirLightDirIntensity = Vec4(0.0f, -1.0f, 0.0f, 0.5f);
@@ -1440,6 +1456,21 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
     
     // If scene is provided, gather lights from it
     if (scene) {
+        auto envView = scene->GetEntitiesWith<EnvironmentComponent>();
+        for (auto entityHandle : envView) {
+            Entity entity(entityHandle, scene);
+            const auto& env = entity.GetComponent<EnvironmentComponent>();
+            const bool enableReflections =
+                env.type == EnvironmentComponent::BackgroundType::HDRI &&
+                env.useAsIBL &&
+                !env.hdriPath.empty() &&
+                m_skybox.hasHDRI;
+            if (enableReflections) {
+                lightUBO.environmentReflectionParams = Vec4(std::max(0.0f, env.reflectionIntensity), 1.0f, 0.0f, 0.0f);
+            }
+            break;
+        }
+
         auto lightView = scene->GetEntitiesWith<LightComponent>();
         int pointLightIndex = 0;
         int spotLightIndex = 0;
@@ -1778,6 +1809,7 @@ const MaterialComponent* EngineFrameRenderer::resolveMaterialFromPath(const std:
             loadedMaterial.emissive.z = j["emissive"][2].get<float>();
         }
         if (j.contains("emissiveStrength")) loadedMaterial.emissiveStrength = j["emissiveStrength"].get<float>();
+        if (j.contains("reflectionStrength")) loadedMaterial.reflectionStrength = j["reflectionStrength"].get<float>();
 
         // Texture paths and flags
         if (j.contains("useAlbedoTexture")) loadedMaterial.useAlbedoTexture = j["useAlbedoTexture"].get<bool>();
@@ -1891,6 +1923,34 @@ uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPa
 
     std::cout << "[EngineFrameRenderer] Loaded material texture [" << slotIndex << "]: " << resolvedPath << "\n";
     return slotIndex;
+}
+
+void EngineFrameRenderer::updateEnvironmentReflectionDescriptor(uint32_t imageIndex)
+{
+    if (imageIndex >= m_descriptorSets.size() || !m_device) {
+        return;
+    }
+
+    VkDescriptorImageInfo imageInfo{};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    if (m_skybox.hasHDRI && m_skybox.environmentTexture.imageView != VK_NULL_HANDLE) {
+        imageInfo.imageView = m_skybox.environmentTexture.imageView;
+        imageInfo.sampler = m_skybox.environmentTexture.sampler;
+    } else {
+        imageInfo.imageView = m_dummyTexture.imageView;
+        imageInfo.sampler = m_dummyTexture.sampler;
+    }
+
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = m_descriptorSets[imageIndex];
+    write.dstBinding = 5;
+    write.dstArrayElement = 0;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.descriptorCount = 1;
+    write.pImageInfo = &imageInfo;
+
+    vkUpdateDescriptorSets(m_device->device, 1, &write, 0, nullptr);
 }
 
 void EngineFrameRenderer::updateTextureSlotInDescriptors(uint32_t slotIndex, uint32_t imageIndex)
@@ -2091,6 +2151,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         }
     }
     // ── End Skybox ───────────────────────────────────────────────────
+
+    updateEnvironmentReflectionDescriptor(imageIndex);
     
     // Bind pipeline dynamically per-object (backface culling toggle)
     VkPipeline currentPipeline = VK_NULL_HANDLE;
@@ -2208,6 +2270,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 // World-aligned texture settings
                 matUBO.useWorldAlignedTexture = mat.useWorldAlignedTexture ? 1u : 0u;
                 matUBO.worldTextureScale = mat.worldTextureScale;
+                matUBO.reflectionStrength = mat.reflectionStrength;
                 std::memset(matUBO.paddingTail, 0, sizeof(matUBO.paddingTail));
             } else {
                 // Default white material
@@ -2232,6 +2295,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 matUBO.aoTextureIndex = m_defaultMaterialTextureSlot;
                 matUBO.useWorldAlignedTexture = 0u;
                 matUBO.worldTextureScale = 1.0f;
+                matUBO.reflectionStrength = 1.0f;
                 std::memset(matUBO.paddingTail, 0, sizeof(matUBO.paddingTail));
             }
         };

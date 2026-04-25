@@ -76,6 +76,31 @@ neon.emissive = Vec3(1.0f, 0.0f, 1.0f);
 neon.emissiveStrength = 5.0f;
 ```
 
+## Environment Reflections
+
+Hephaestus supports a basic HDRI/environment reflection path for PBR materials. When an `EnvironmentComponent` uses an HDRI and `useAsIBL` is enabled, the renderer samples that HDRI with the material reflection vector and blends the result into the PBR output before tone mapping.
+
+```cpp
+EnvironmentComponent env;
+env.type = EnvironmentComponent::BackgroundType::HDRI;
+env.hdriPath = "assets/textures/hdris/studio_garden_1k.hdr";
+env.useAsIBL = true;
+env.reflectionIntensity = 1.0f;
+
+MaterialComponent polishedMetal;
+polishedMetal.metallic = 1.0f;
+polishedMetal.roughness = 0.12f;
+polishedMetal.reflectionStrength = 1.0f;
+```
+
+Roughness controls how much of the HDRI reflection appears: smooth materials show the strongest reflections, while very rough materials contribute little. Metallic materials reflect more strongly through their PBR reflectance, and non-metallic materials still receive a subtle dielectric reflection.
+
+Current limitations:
+
+- Reflections only show the active HDRI/environment, not nearby scene objects.
+- Screen-space reflections, planar reflections, and reflection probes are not part of this implementation.
+- The environment map is sampled directly as a simple foundation; prefiltered IBL and BRDF LUT support can be added later.
+
 ## Lighting Scenarios
 
 ### 1. Outdoor Daytime Scene

@@ -39,7 +39,7 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     uint aoTextureIndex;      // offset 88
     uint useWorldAlignedTexture; // offset 92
     float worldTextureScale;  // offset 96
-    uint paddingTail0;        // offset 100
+    float reflectionStrength; // offset 100
     uint paddingTail1;        // offset 104
     uint paddingTail2;        // offset 108
     uint paddingTail3;        // offset 112
@@ -49,6 +49,7 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
 } material;
 
 layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOTS];
+layout(set = 0, binding = 5) uniform sampler2D environmentMap;
 
 // Lighting data
 layout(std140, set = 0, binding = 2) uniform LightingUBO {
@@ -57,6 +58,7 @@ layout(std140, set = 0, binding = 2) uniform LightingUBO {
     vec4 dirLightDirIntensity;      // xyz = direction, w = intensity
     vec4 dirLightColor;             // rgb = color, w = unused
     vec4 ambientColorIntensity;     // rgb = ambient color, w = ambient intensity
+    vec4 environmentReflectionParams; // x = intensity, y = enabled, zw = unused
     vec4 pointLightPositions[16];
     vec4 pointLightColors[16];
     vec4 pointLightAttenuation[16];
@@ -153,6 +155,14 @@ float calculateSpotlightFalloff(vec3 lightDir, vec3 lightToFrag, float innerAngl
     // Map from [cosOuter, cosInner] to [0, 1]
     float falloff = (cosTheta - cosOuter) / (cosInner - cosOuter);
     return smoothstep(0.0, 1.0, falloff);
+}
+
+vec3 sampleEnvironmentReflection(vec3 direction) {
+    vec3 dir = normalize(direction);
+    vec2 uv;
+    uv.x = atan(dir.z, dir.x) / (2.0 * PI) + 0.5;
+    uv.y = asin(clamp(dir.y, -1.0, 1.0)) / PI + 0.5;
+    return texture(environmentMap, uv).rgb;
 }
 
 float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
@@ -443,6 +453,20 @@ void main() {
     // ── Ambient Lighting ─────────────────────────────────────
     vec3 ambient = lighting.ambientColorIntensity.rgb * lighting.ambientColorIntensity.w * albedo * ao;
     vec3 color = ambient + Lo;
+
+    // ── Environment Reflections ──────────────────────────────
+    // Basic IBL foundation: reflect the active HDRI only. Nearby objects are not reflected yet.
+    if (lighting.environmentReflectionParams.y > 0.5 && material.reflectionStrength > 0.0) {
+        vec3 R = reflect(-V, N);
+        vec3 envReflection = sampleEnvironmentReflection(R);
+        float roughnessFactor = 1.0 - clamp(roughness, 0.0, 1.0);
+        roughnessFactor *= roughnessFactor;
+        vec3 reflectionFresnel = fresnelSchlick(max(dot(N, V), 0.0), F0);
+        vec3 environmentSpecular = envReflection * reflectionFresnel * roughnessFactor *
+                                   lighting.environmentReflectionParams.x *
+                                   material.reflectionStrength * ao;
+        color += environmentSpecular;
+    }
     
     // Add emissive
     color += material.emissive * material.emissiveStrength;

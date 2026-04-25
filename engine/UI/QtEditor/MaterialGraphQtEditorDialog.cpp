@@ -2424,16 +2424,19 @@ private:
         auto* metallic = makeSpin(0.0, 1.0, 0.01, m_material.metallic);
         auto* roughness = makeSpin(0.0, 1.0, 0.01, m_material.roughness);
         auto* ao = makeSpin(0.0, 1.0, 0.01, m_material.ao);
+        auto* reflectionStrength = makeSpin(0.0, 10.0, 0.01, m_material.reflectionStrength);
         auto* emissiveStrength = makeSpin(0.0, 100.0, 0.01, m_material.emissiveStrength);
 
         m_inspectorForm->addRow(QObject::tr("Metallic"), metallic);
         m_inspectorForm->addRow(QObject::tr("Roughness"), roughness);
         m_inspectorForm->addRow(QObject::tr("AO"), ao);
+        m_inspectorForm->addRow(QObject::tr("Reflection Strength"), reflectionStrength);
         m_inspectorForm->addRow(QObject::tr("Emissive Strength"), emissiveStrength);
 
         addUndoSpin(metallic, QObject::tr("Edit Metallic"), [this]() { return m_material.metallic; }, [this](double v) { m_material.metallic = static_cast<float>(v); });
         addUndoSpin(roughness, QObject::tr("Edit Roughness"), [this]() { return m_material.roughness; }, [this](double v) { m_material.roughness = static_cast<float>(v); });
         addUndoSpin(ao, QObject::tr("Edit AO"), [this]() { return m_material.ao; }, [this](double v) { m_material.ao = static_cast<float>(v); });
+        addUndoSpin(reflectionStrength, QObject::tr("Edit Reflection Strength"), [this]() { return m_material.reflectionStrength; }, [this](double v) { m_material.reflectionStrength = static_cast<float>(v); });
         addUndoSpin(emissiveStrength, QObject::tr("Edit Emissive Strength"), [this]() { return m_material.emissiveStrength; }, [this](double v) { m_material.emissiveStrength = static_cast<float>(v); });
     }
 

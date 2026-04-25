@@ -91,9 +91,11 @@ HephaestusUI is **game-facing** (menus, HUDs, overlays). It complements—not re
 
 The following reflects the **current** implementation direction; it is **not** an exhaustive AAA feature list.
 
-- **PBR materials** — Metallic–roughness style workflow with albedo, emissive, roughness, metallic, and ambient occlusion channels; texture bindings for albedo, normals, roughness, AO, and related options as exposed in the material system.
+- **PBR materials** — Metallic–roughness style workflow with albedo, emissive, roughness, metallic, ambient occlusion, and basic HDRI/environment reflection strength; texture bindings for albedo, normals, roughness, AO, and related options as exposed in the material system.
 - **Lighting** — Directional lighting with engine support for **shadow mapping** (including cascade-related data for directional shadows), plus **point** and **spot** lights with bounded counts suitable for real-time use.
-- **Environment** — **Skybox** rendering with support for **HDRI-based** environments (including intensity control) and **solid-color** environment fallbacks when no HDRI is used.
+- **Environment** — **Skybox** rendering with support for **HDRI-based** environments (including sky intensity and environment-reflection intensity controls) and **solid-color** environment fallbacks when no HDRI is used.
+
+Environment reflections are a first-pass image-based reflection feature: PBR materials can reflect the active HDRI/environment map, with roughness, metallic, global intensity, and per-material reflection strength controlling the contribution. This is not screen-space reflection, planar reflection, or reflection-probe rendering, so nearby objects are not reflected yet.
 
 Exact limits (light counts, shadow resolution, platform quirks) depend on project settings and hardware; treat them as **project-tunable implementation details**, not marketing guarantees.
 

@@ -283,7 +283,9 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         return connected ? value.scalar : fallback;
     };
 
+    const float reflectionStrength = outMaterial.reflectionStrength;
     outMaterial = MaterialComponent();
+    outMaterial.reflectionStrength = reflectionStrength;
 
     // Track if any texture uses world-aligned mode
     bool anyWorldAligned = false;

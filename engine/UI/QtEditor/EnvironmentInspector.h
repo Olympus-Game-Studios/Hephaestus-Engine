@@ -56,6 +56,7 @@ private:
     void browseHDRI();
     void reloadHDRI();
     void resetIntensity();
+    void resetReflectionIntensity();
     void resetRotation();
 
     // Context
@@ -78,6 +79,8 @@ private:
     QPushButton*    m_hdriReloadBtn = nullptr;
     QDoubleSpinBox* m_hdriIntensitySpin = nullptr;
     QPushButton*    m_resetIntensityBtn = nullptr;
+    QDoubleSpinBox* m_reflectionIntensitySpin = nullptr;
+    QPushButton*    m_resetReflectionIntensityBtn = nullptr;
     QDoubleSpinBox* m_rotationYawSpin = nullptr;
     QPushButton*    m_resetRotationBtn = nullptr;
     QCheckBox*      m_useAsIBLCheck = nullptr;

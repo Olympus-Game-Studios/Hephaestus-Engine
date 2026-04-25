@@ -398,6 +398,7 @@ private:
     // Material system helpers
     const MaterialComponent* resolveMaterialFromPath(const std::string& materialPath);
     uint32_t ensureMaterialTextureSlot(const std::string& rawPath);
+    void updateEnvironmentReflectionDescriptor(uint32_t imageIndex);
     void updateTextureSlotInDescriptors(uint32_t slotIndex, uint32_t imageIndex);
     void flushPendingTextureDescriptorUpdates(uint32_t imageIndex);
 

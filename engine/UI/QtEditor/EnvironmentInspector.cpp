@@ -167,9 +167,22 @@ void EnvironmentInspector::buildUI()
         hdriLayout->addRow(tr("Rotation:"), static_cast<QLayout*>(row));
     }
 
-    // Use as IBL
-    m_useAsIBLCheck = new QCheckBox(tr("Use as IBL (reflections)"));
+    // Environment reflections
+    m_useAsIBLCheck = new QCheckBox(tr("Environment Reflections"));
     hdriLayout->addRow(tr(""), m_useAsIBLCheck);
+
+    {
+        auto* row = new QHBoxLayout();
+        m_reflectionIntensitySpin = new QDoubleSpinBox();
+        m_reflectionIntensitySpin->setRange(0.0, 100.0);
+        m_reflectionIntensitySpin->setSingleStep(0.1);
+        m_reflectionIntensitySpin->setDecimals(3);
+        m_reflectionIntensitySpin->setToolTip(tr("Global multiplier for HDRI reflections on PBR materials."));
+        m_resetReflectionIntensityBtn = makeResetBtn(this);
+        row->addWidget(m_reflectionIntensitySpin, 1);
+        row->addWidget(m_resetReflectionIntensityBtn);
+        hdriLayout->addRow(tr("Reflection Intensity:"), static_cast<QLayout*>(row));
+    }
 
     form->addRow(m_hdriGroup);
 
@@ -220,6 +233,7 @@ void EnvironmentInspector::connectSignals()
     connect(m_hdriChooseBtn, &QPushButton::clicked, this, &EnvironmentInspector::browseHDRI);
     connect(m_hdriReloadBtn, &QPushButton::clicked, this, &EnvironmentInspector::reloadHDRI);
     connect(m_hdriIntensitySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
+    connect(m_reflectionIntensitySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
     connect(m_rotationYawSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
     connect(m_useAsIBLCheck, &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
 
@@ -234,6 +248,7 @@ void EnvironmentInspector::connectSignals()
     connect(m_renderDistSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
 
     connect(m_resetIntensityBtn, &QPushButton::clicked, this, &EnvironmentInspector::resetIntensity);
+    connect(m_resetReflectionIntensityBtn, &QPushButton::clicked, this, &EnvironmentInspector::resetReflectionIntensity);
     connect(m_resetRotationBtn, &QPushButton::clicked, this, &EnvironmentInspector::resetRotation);
 }
 
@@ -265,6 +280,7 @@ void EnvironmentInspector::Refresh()
     // HDRI
     m_hdriPathEdit->setText(QString::fromStdString(env.hdriPath));
     m_hdriIntensitySpin->setValue(static_cast<double>(env.hdriIntensity));
+    m_reflectionIntensitySpin->setValue(static_cast<double>(env.reflectionIntensity));
     m_rotationYawSpin->setValue(static_cast<double>(env.rotationYaw));
     m_useAsIBLCheck->setChecked(env.useAsIBL);
 
@@ -298,6 +314,7 @@ void EnvironmentInspector::applyToComponent()
     env.solidColor = qcolorToVec3(m_currentSolidColor);
     env.hdriPath = m_hdriPathEdit->text().toStdString();
     env.hdriIntensity = static_cast<float>(m_hdriIntensitySpin->value());
+    env.reflectionIntensity = static_cast<float>(m_reflectionIntensitySpin->value());
     env.rotationYaw = static_cast<float>(m_rotationYawSpin->value());
     env.useAsIBL = m_useAsIBLCheck->isChecked();
 
@@ -323,6 +340,7 @@ void EnvironmentInspector::blockAllSignals(bool block)
 {
     m_modeCombo->blockSignals(block);
     m_hdriIntensitySpin->blockSignals(block);
+    m_reflectionIntensitySpin->blockSignals(block);
     m_rotationYawSpin->blockSignals(block);
     m_useAsIBLCheck->blockSignals(block);
     m_enableRenderDistCheck->blockSignals(block);
@@ -387,6 +405,7 @@ void EnvironmentInspector::reloadHDRI()
 // ---------------------------------------------------------------------------
 
 void EnvironmentInspector::resetIntensity()  { m_hdriIntensitySpin->setValue(1.0); }
+void EnvironmentInspector::resetReflectionIntensity() { m_reflectionIntensitySpin->setValue(1.0); }
 void EnvironmentInspector::resetRotation()   { m_rotationYawSpin->setValue(0.0); }
 
 } // namespace QtEditor

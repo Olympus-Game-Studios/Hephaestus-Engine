@@ -1,0 +1,296 @@
+{
+  "scene": {
+    "name": "EnvironmentReflectionTest",
+    "version": "1.0"
+  },
+  "blueprintInstances": [],
+  "entities": [
+    {
+      "id": 1,
+      "name": "Environment",
+      "parent": null,
+      "components": {
+        "Environment": {
+          "type": "HDRI",
+          "solidColor": [0.1, 0.2, 0.3],
+          "hdriPath": "assets/textures/hdris/studio_garden_1k.hdr",
+          "hdriIntensity": 1.0,
+          "rotationYaw": 0.0,
+          "useAsIBL": true,
+          "reflectionIntensity": 1.2,
+          "enableRenderDistance": false,
+          "renderDistance": 500.0,
+          "infiniteRenderDistance": false
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "KeyLight",
+      "parent": null,
+      "components": {
+        "Transform": {
+          "position": [0.0, 6.0, 4.0],
+          "rotation": [-0.785398, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "Light": {
+          "type": "Directional",
+          "enabled": true,
+          "color": [1.0, 0.96, 0.9],
+          "intensity": 0.8,
+          "castsShadow": true
+        }
+      }
+    },
+    {
+      "id": 3,
+      "name": "MainCamera",
+      "parent": null,
+      "components": {
+        "Transform": {
+          "position": [0.0, 2.2, 8.0],
+          "rotation": [-0.15, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "Camera": {
+          "fov": 60.0,
+          "nearPlane": 0.1,
+          "farPlane": 1000.0,
+          "projection": "Perspective",
+          "isActive": true
+        }
+      }
+    },
+    {
+      "id": 10,
+      "name": "Rough_NonMetal",
+      "parent": null,
+      "components": {
+        "Transform": {
+          "position": [-4.5, 1.0, 0.0],
+          "rotation": [0.0, 0.0, 0.0],
+          "scale": [1.25, 1.25, 1.25]
+        },
+        "MeshRenderer": {
+          "visible": true,
+          "hideInGame": false,
+          "mesh": null,
+          "meshSource": "builtin://sphere",
+          "meshImported": false,
+          "submeshCount": 1,
+          "materialIndices": [0],
+          "appliedMaterialPaths": [],
+          "backfaceCulling": false,
+          "localBounds": {
+            "min": [-1.0, -1.0, -1.0],
+            "max": [1.0, 1.0, 1.0]
+          }
+        },
+        "Material": {
+          "albedo": [0.75, 0.25, 0.18],
+          "metallic": 0.0,
+          "roughness": 0.85,
+          "ao": 1.0,
+          "emissive": [0.0, 0.0, 0.0],
+          "emissiveStrength": 0.0,
+          "reflectionStrength": 1.0,
+          "useAlbedoTexture": false,
+          "albedoTexturePath": "",
+          "useNormalTexture": false,
+          "normalTexturePath": "",
+          "useRoughnessTexture": false,
+          "roughnessTexturePath": "",
+          "useAoTexture": false,
+          "aoTexturePath": "",
+          "useWorldAlignedTexture": false,
+          "worldTextureScale": 1.0
+        }
+      }
+    },
+    {
+      "id": 11,
+      "name": "Smooth_NonMetal",
+      "parent": null,
+      "components": {
+        "Transform": {
+          "position": [-1.5, 1.0, 0.0],
+          "rotation": [0.0, 0.0, 0.0],
+          "scale": [1.25, 1.25, 1.25]
+        },
+        "MeshRenderer": {
+          "visible": true,
+          "hideInGame": false,
+          "mesh": null,
+          "meshSource": "builtin://sphere",
+          "meshImported": false,
+          "submeshCount": 1,
+          "materialIndices": [0],
+          "appliedMaterialPaths": [],
+          "backfaceCulling": false,
+          "localBounds": {
+            "min": [-1.0, -1.0, -1.0],
+            "max": [1.0, 1.0, 1.0]
+          }
+        },
+        "Material": {
+          "albedo": [0.15, 0.45, 0.95],
+          "metallic": 0.0,
+          "roughness": 0.08,
+          "ao": 1.0,
+          "emissive": [0.0, 0.0, 0.0],
+          "emissiveStrength": 0.0,
+          "reflectionStrength": 1.0,
+          "useAlbedoTexture": false,
+          "albedoTexturePath": "",
+          "useNormalTexture": false,
+          "normalTexturePath": "",
+          "useRoughnessTexture": false,
+          "roughnessTexturePath": "",
+          "useAoTexture": false,
+          "aoTexturePath": "",
+          "useWorldAlignedTexture": false,
+          "worldTextureScale": 1.0
+        }
+      }
+    },
+    {
+      "id": 12,
+      "name": "Metallic",
+      "parent": null,
+      "components": {
+        "Transform": {
+          "position": [1.5, 1.0, 0.0],
+          "rotation": [0.0, 0.0, 0.0],
+          "scale": [1.25, 1.25, 1.25]
+        },
+        "MeshRenderer": {
+          "visible": true,
+          "hideInGame": false,
+          "mesh": null,
+          "meshSource": "builtin://sphere",
+          "meshImported": false,
+          "submeshCount": 1,
+          "materialIndices": [0],
+          "appliedMaterialPaths": [],
+          "backfaceCulling": false,
+          "localBounds": {
+            "min": [-1.0, -1.0, -1.0],
+            "max": [1.0, 1.0, 1.0]
+          }
+        },
+        "Material": {
+          "albedo": [0.95, 0.72, 0.35],
+          "metallic": 1.0,
+          "roughness": 0.12,
+          "ao": 1.0,
+          "emissive": [0.0, 0.0, 0.0],
+          "emissiveStrength": 0.0,
+          "reflectionStrength": 1.0,
+          "useAlbedoTexture": false,
+          "albedoTexturePath": "",
+          "useNormalTexture": false,
+          "normalTexturePath": "",
+          "useRoughnessTexture": false,
+          "roughnessTexturePath": "",
+          "useAoTexture": false,
+          "aoTexturePath": "",
+          "useWorldAlignedTexture": false,
+          "worldTextureScale": 1.0
+        }
+      }
+    },
+    {
+      "id": 13,
+      "name": "Very_Rough",
+      "parent": null,
+      "components": {
+        "Transform": {
+          "position": [4.5, 1.0, 0.0],
+          "rotation": [0.0, 0.0, 0.0],
+          "scale": [1.25, 1.25, 1.25]
+        },
+        "MeshRenderer": {
+          "visible": true,
+          "hideInGame": false,
+          "mesh": null,
+          "meshSource": "builtin://sphere",
+          "meshImported": false,
+          "submeshCount": 1,
+          "materialIndices": [0],
+          "appliedMaterialPaths": [],
+          "backfaceCulling": false,
+          "localBounds": {
+            "min": [-1.0, -1.0, -1.0],
+            "max": [1.0, 1.0, 1.0]
+          }
+        },
+        "Material": {
+          "albedo": [0.45, 0.45, 0.45],
+          "metallic": 0.0,
+          "roughness": 1.0,
+          "ao": 1.0,
+          "emissive": [0.0, 0.0, 0.0],
+          "emissiveStrength": 0.0,
+          "reflectionStrength": 1.0,
+          "useAlbedoTexture": false,
+          "albedoTexturePath": "",
+          "useNormalTexture": false,
+          "normalTexturePath": "",
+          "useRoughnessTexture": false,
+          "roughnessTexturePath": "",
+          "useAoTexture": false,
+          "aoTexturePath": "",
+          "useWorldAlignedTexture": false,
+          "worldTextureScale": 1.0
+        }
+      }
+    },
+    {
+      "id": 20,
+      "name": "Ground",
+      "parent": null,
+      "components": {
+        "Transform": {
+          "position": [0.0, -0.25, 0.0],
+          "rotation": [0.0, 0.0, 0.0],
+          "scale": [12.0, 0.25, 6.0]
+        },
+        "MeshRenderer": {
+          "visible": true,
+          "hideInGame": false,
+          "mesh": null,
+          "meshSource": "builtin://cube",
+          "meshImported": false,
+          "submeshCount": 1,
+          "materialIndices": [0],
+          "appliedMaterialPaths": [],
+          "backfaceCulling": false,
+          "localBounds": {
+            "min": [-0.5, -0.5, -0.5],
+            "max": [0.5, 0.5, 0.5]
+          }
+        },
+        "Material": {
+          "albedo": [0.18, 0.18, 0.18],
+          "metallic": 0.0,
+          "roughness": 0.65,
+          "ao": 1.0,
+          "emissive": [0.0, 0.0, 0.0],
+          "emissiveStrength": 0.0,
+          "reflectionStrength": 0.35,
+          "useAlbedoTexture": false,
+          "albedoTexturePath": "",
+          "useNormalTexture": false,
+          "normalTexturePath": "",
+          "useRoughnessTexture": false,
+          "roughnessTexturePath": "",
+          "useAoTexture": false,
+          "aoTexturePath": "",
+          "useWorldAlignedTexture": false,
+          "worldTextureScale": 1.0
+        }
+      }
+    }
+  ]
+}

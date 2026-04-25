@@ -684,6 +684,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"ao\": " << FormatFloat(material->ao) << ",\n";
             oss << "          \"emissive\": " << FormatVec3(material->emissive) << ",\n";
             oss << "          \"emissiveStrength\": " << FormatFloat(material->emissiveStrength) << ",\n";
+            oss << "          \"reflectionStrength\": " << FormatFloat(material->reflectionStrength) << ",\n";
             oss << "          \"useAlbedoTexture\": " << (material->useAlbedoTexture ? "true" : "false") << ",\n";
             oss << "          \"albedoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->albedoTexturePath)) << "\",\n";
             oss << "          \"useNormalTexture\": " << (material->useNormalTexture ? "true" : "false") << ",\n";
@@ -827,6 +828,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"hdriIntensity\": " << FormatFloat(environment->hdriIntensity) << ",\n";
             oss << "          \"rotationYaw\": " << FormatFloat(environment->rotationYaw) << ",\n";
             oss << "          \"useAsIBL\": " << (environment->useAsIBL ? "true" : "false") << ",\n";
+            oss << "          \"reflectionIntensity\": " << FormatFloat(environment->reflectionIntensity) << ",\n";
             oss << "          \"enableRenderDistance\": " << (environment->enableRenderDistance ? "true" : "false") << ",\n";
             oss << "          \"renderDistance\": " << FormatFloat(environment->renderDistance) << ",\n";
             oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << "\n";
@@ -1248,6 +1250,11 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     material.emissiveStrength = static_cast<float>(emissiveStrengthValue->AsNumber());
                 }
             }
+            if (const JsonValue* reflectionStrengthValue = materialObj->Find("reflectionStrength")) {
+                if (reflectionStrengthValue->IsNumber()) {
+                    material.reflectionStrength = static_cast<float>(reflectionStrengthValue->AsNumber());
+                }
+            }
             if (const JsonValue* useTexValue = materialObj->Find("useAlbedoTexture")) {
                 material.useAlbedoTexture = ParseBoolLike(*useTexValue, material.useAlbedoTexture);
             }
@@ -1665,6 +1672,9 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
             if (const JsonValue* v = envObj->Find("useAsIBL")) {
                 env.useAsIBL = ParseBoolLike(*v, true);
+            }
+            if (const JsonValue* v = envObj->Find("reflectionIntensity")) {
+                if (v->IsNumber()) env.reflectionIntensity = static_cast<float>(v->AsNumber());
             }
 
             // --- Heuristic: if no explicit type, infer from hdriPath ---
@@ -2187,6 +2197,7 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"ao\": " << FormatFloat(material->ao) << ",\n";
             oss << "          \"emissive\": " << FormatVec3(material->emissive) << ",\n";
             oss << "          \"emissiveStrength\": " << FormatFloat(material->emissiveStrength) << ",\n";
+            oss << "          \"reflectionStrength\": " << FormatFloat(material->reflectionStrength) << ",\n";
             oss << "          \"useAlbedoTexture\": " << (material->useAlbedoTexture ? "true" : "false") << ",\n";
             oss << "          \"albedoTexturePath\": \"" << EscapeString(NormalizeAssetPathForSave(material->albedoTexturePath)) << "\",\n";
             oss << "          \"useNormalTexture\": " << (material->useNormalTexture ? "true" : "false") << ",\n";
@@ -2314,6 +2325,7 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"hdriIntensity\": " << FormatFloat(environment->hdriIntensity) << ",\n";
             oss << "          \"rotationYaw\": " << FormatFloat(environment->rotationYaw) << ",\n";
             oss << "          \"useAsIBL\": " << (environment->useAsIBL ? "true" : "false") << ",\n";
+            oss << "          \"reflectionIntensity\": " << FormatFloat(environment->reflectionIntensity) << ",\n";
             oss << "          \"enableRenderDistance\": " << (environment->enableRenderDistance ? "true" : "false") << ",\n";
             oss << "          \"renderDistance\": " << FormatFloat(environment->renderDistance) << ",\n";
             oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << "\n";

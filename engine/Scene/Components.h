@@ -448,6 +448,7 @@ struct MaterialComponent {
     float ao;           // Ambient occlusion (0-1)
     Vec3 emissive;      // Self-illumination color
     float emissiveStrength; // Multiplier for emissive
+    float reflectionStrength; // Per-material environment reflection multiplier
     
     // Albedo (diffuse) texture
     std::string albedoTexturePath;
@@ -477,6 +478,7 @@ struct MaterialComponent {
         , ao(1.0f)
         , emissive(0.0f, 0.0f, 0.0f)
         , emissiveStrength(0.0f)
+        , reflectionStrength(1.0f)
     {}
 
     MaterialComponent(const Vec3& color)
@@ -486,6 +488,7 @@ struct MaterialComponent {
         , ao(1.0f)
         , emissive(0.0f, 0.0f, 0.0f)
         , emissiveStrength(0.0f)
+        , reflectionStrength(1.0f)
     {}
 };
 
@@ -600,6 +603,7 @@ struct EnvironmentComponent {
     float hdriIntensity;       // Brightness multiplier for HDRI
     float rotationYaw;         // Rotate sky around Y axis in degrees (0..360)
     bool useAsIBL;             // Use HDRI for image-based lighting / reflections
+    float reflectionIntensity; // Global environment reflection intensity
     
     // Render distance settings
     bool enableRenderDistance = false;   // Whether to cull objects beyond render distance
@@ -613,6 +617,7 @@ struct EnvironmentComponent {
         , hdriIntensity(1.0f)
         , rotationYaw(0.0f)
         , useAsIBL(true)
+        , reflectionIntensity(1.0f)
         , enableRenderDistance(false)
         , renderDistance(500.0f)
         , infiniteRenderDistance(false)

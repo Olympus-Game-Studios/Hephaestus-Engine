@@ -133,7 +133,8 @@ struct alignas(16) MaterialUBO {
     uint32_t aoTextureIndex = 0;
     uint32_t useWorldAlignedTexture = 0;
     float worldTextureScale = 1.0f;
-    uint32_t paddingTail[7] = {0};
+    float reflectionStrength = 1.0f;
+    uint32_t paddingTail[6] = {0};
 };
 
 struct LightingUBO {
@@ -142,6 +143,7 @@ struct LightingUBO {
     Vec4 dirLightDirIntensity;      // xyz = direction, w = intensity
     Vec4 dirLightColor;             // rgb = color, w = unused
     Vec4 ambientColorIntensity;     // rgb = ambient color, w = ambient intensity
+    Vec4 environmentReflectionParams; // x = intensity, y = enabled, zw = unused
     Vec4 pointLightPositions[16];
     Vec4 pointLightColors[16];
     Vec4 pointLightAttenuation[16];
@@ -928,6 +930,7 @@ static bool LoadMaterialAsset(const std::string& rawPath, MaterialComponent& out
     if (const JsonValue* ao = root.Find("ao")) if (ao->IsNumber()) material.ao = static_cast<float>(ao->AsNumber());
     if (const JsonValue* emissive = root.Find("emissive")) parseVec3(*emissive, material.emissive);
     if (const JsonValue* emissiveStrength = root.Find("emissiveStrength")) if (emissiveStrength->IsNumber()) material.emissiveStrength = static_cast<float>(emissiveStrength->AsNumber());
+    if (const JsonValue* reflectionStrength = root.Find("reflectionStrength")) if (reflectionStrength->IsNumber()) material.reflectionStrength = static_cast<float>(reflectionStrength->AsNumber());
     if (const JsonValue* useAlbedoTexture = root.Find("useAlbedoTexture")) if (useAlbedoTexture->IsBool()) material.useAlbedoTexture = useAlbedoTexture->AsBool();
     if (const JsonValue* albedoTexturePath = root.Find("albedoTexturePath")) if (albedoTexturePath->IsString()) material.albedoTexturePath = albedoTexturePath->AsString();
     if (const JsonValue* useNormalTexture = root.Find("useNormalTexture")) if (useNormalTexture->IsBool()) material.useNormalTexture = useNormalTexture->AsBool();
@@ -1733,7 +1736,7 @@ int main(int argc, char* argv[]) {
     std::vector<VkDescriptorPoolSize> poolSizes = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount * 2)},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, static_cast<uint32_t>(imageCount)},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount * 129)} // 128 textures + 1 shadow map
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount * 130)} // 128 textures + shadow map + environment map
     };
     
     VkDescriptorPool descriptorPool{};
@@ -1990,8 +1993,18 @@ int main(int argc, char* argv[]) {
             shadowMapInfo.imageView = g_TextureLibrary[0].imageView;
             shadowMapInfo.sampler = g_TextureLibrary[0].sampler;
         }
+
+        VkDescriptorImageInfo environmentMapInfo{};
+        environmentMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        if (skybox.hasHDRI && skybox.environmentTexture.imageView != VK_NULL_HANDLE) {
+            environmentMapInfo.imageView = skybox.environmentTexture.imageView;
+            environmentMapInfo.sampler = skybox.environmentTexture.sampler;
+        } else {
+            environmentMapInfo.imageView = g_TextureLibrary[0].imageView;
+            environmentMapInfo.sampler = g_TextureLibrary[0].sampler;
+        }
         
-        std::array<VkWriteDescriptorSet, 5> writes{};
+        std::array<VkWriteDescriptorSet, 6> writes{};
         
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = descriptorSets[i];
@@ -2027,6 +2040,13 @@ int main(int argc, char* argv[]) {
         writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[4].descriptorCount = 1;
         writes[4].pImageInfo = &shadowMapInfo;
+
+        writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[5].dstSet = descriptorSets[i];
+        writes[5].dstBinding = 5;
+        writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[5].descriptorCount = 1;
+        writes[5].pImageInfo = &environmentMapInfo;
         
         vkUpdateDescriptorSets(vkdev.device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
@@ -2559,6 +2579,8 @@ int main(int argc, char* argv[]) {
     bool envUseSolidColor = true;
     Vec3 envSolidColor = {0.1f, 0.2f, 0.3f};
     float envHdriIntensity = 1.0f;
+    float envReflectionIntensity = 0.0f;
+    bool envReflectionsEnabled = false;
     {
         auto envView = scene.GetEntitiesWith<EnvironmentComponent>();
         for (auto ent : envView) {
@@ -2568,6 +2590,8 @@ int main(int argc, char* argv[]) {
             envHdriIntensity = env.hdriIntensity;
             if (env.type == EnvironmentComponent::BackgroundType::HDRI && skybox.hasHDRI) {
                 envUseSolidColor = false;
+                envReflectionsEnabled = env.useAsIBL && !env.hdriPath.empty();
+                envReflectionIntensity = std::max(0.0f, env.reflectionIntensity);
             }
             break;
         }
@@ -2655,6 +2679,11 @@ int main(int argc, char* argv[]) {
         lightingUBO.dirLightDirIntensity = Vec4(-0.3f, -0.8f, -0.5f, 1.5f);
         lightingUBO.dirLightColor = Vec4(1.0f, 0.98f, 0.95f, 1.0f);
         lightingUBO.ambientColorIntensity = Vec4(0.1f, 0.1f, 0.15f, 0.3f);
+        lightingUBO.environmentReflectionParams = Vec4(
+            envReflectionsEnabled ? envReflectionIntensity : 0.0f,
+            envReflectionsEnabled ? 1.0f : 0.0f,
+            0.0f,
+            0.0f);
         lightingUBO.pointLightCount = 0;
         lightingUBO.spotLightCount = 0;
         
@@ -2996,6 +3025,7 @@ int main(int argc, char* argv[]) {
                 matUBO.emissive = mat->emissive;
                 matUBO.emissiveStrength = mat->emissiveStrength;
                 matUBO.ao = mat->ao;
+                matUBO.reflectionStrength = mat->reflectionStrength;
 
                 if (mat->useAlbedoTexture && !mat->albedoTexturePath.empty()) {
                     std::string key = NormalizeAssetPath(mat->albedoTexturePath);

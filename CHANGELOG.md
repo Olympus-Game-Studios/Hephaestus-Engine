@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-04-25: Added basic HDRI/environment reflections for PBR materials, including renderer descriptor binding support, global environment reflection controls, per-material reflection strength, documentation, and an `assets/scenes/EnvironmentReflectionTest.hpscene` test scene.
 - 2026-04-25: Material editor preview now defaults to `.engine/hdris/studio_garden_1k.hdr` as an HDRI environment and exposes preview controls to choose or restore the HDRI. New and loaded projects seed this HDRI into the project `.engine` folder from the engine runtime assets.
 - 2026-04-13: Wired live draw-call count and process RAM usage into the editor status bar and viewport overlay. `EngineFrameRenderer` now tracks per-frame `FrameStats` (draw calls, meshes drawn, entities skipped) and exposes them via `GetLastFrameStats()`. Process working-set memory is read via platform APIs (Win32 `GetProcessMemoryInfo`, macOS `task_info`, Linux `/proc/self/statm`).
 - 2026-04-13: Centralized app details (version, name, description, copyright, website) in root `CMakeLists.txt`. CMake `configure_file` generates `AppConfig.h` so every target (editor, game, launcher, tools) reads the same values. Removed all hardcoded `"1.0.0"` and `"Hephaestus Engine"` literals from C++ sources.
