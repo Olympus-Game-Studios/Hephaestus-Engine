@@ -1,109 +1,43 @@
 #include "MaterialGraph.h"
+#include "MaterialNodeDefinitions.h"
 
 namespace MaterialEditor {
 namespace {
 
-constexpr std::string_view NodeLabel(NodeType type) {
-    switch (type) {
-    case NodeType::MaterialOutput: return "Material Output";
-    case NodeType::ConstantFloat: return "Scalar";
-    case NodeType::ConstantVec3: return "Vector3";
-    case NodeType::ColorParameter: return "Color";
-    case NodeType::FloatParameter: return "Float";
-    case NodeType::AlbedoTextureSample: return "Albedo Texture";
-    case NodeType::NormalTextureSample: return "Normal Texture";
-    case NodeType::RoughnessTextureSample: return "Roughness Texture";
-    case NodeType::AoTextureSample: return "AO Texture";
-    case NodeType::WorldAlignedTexture: return "World Aligned Texture";
-    case NodeType::Add: return "Add";
-    case NodeType::Multiply: return "Multiply";
-    case NodeType::Lerp: return "Lerp";
-    case NodeType::Unknown: return "Unknown Node";
+void ApplyNodeDefaults(Node& node) {
+    switch (node.type) {
+    case NodeType::ConstantFloat:
+    case NodeType::FloatParameter:
+    case NodeType::BoolParameter:
+    case NodeType::StaticSwitchParameter:
+        node.scalar = 0.5f;
+        break;
+    case NodeType::ConstantVec3:
+    case NodeType::ColorParameter:
+        node.color = Float3{1.0f, 1.0f, 1.0f};
+        break;
+    case NodeType::Clamp:
+        node.scalar = 1.0f;
+        break;
+    case NodeType::Compare:
+        node.operation = ">";
+        break;
+    case NodeType::Gradient:
+        node.operation = "Linear";
+        break;
+    case NodeType::Transform:
+        node.sourceSpace = "World";
+        node.targetSpace = "Local";
+        break;
+    case NodeType::TextureParameter:
+        node.parameterName = "Texture";
+        break;
+    case NodeType::Vector2Parameter:
+        node.parameterName = "Vector2";
+        break;
+    default:
+        break;
     }
-    return "Node";
-}
-
-constexpr std::string_view PinLabel(NodeType ownerType, PinKind kind, int index) {
-    if (ownerType == NodeType::MaterialOutput && kind == PinKind::Input) {
-        switch (index) {
-        case 0: return "Base Color";
-        case 1: return "Metallic";
-        case 2: return "Roughness";
-        case 3: return "Emissive";
-        case 4: return "Normal Map";
-        case 5: return "Roughness Map";
-        case 6: return "AO Map";
-        default: break;
-        }
-    }
-    if ((ownerType == NodeType::ConstantFloat || ownerType == NodeType::FloatParameter) && kind == PinKind::Output) {
-        return "Value";
-    }
-    if ((ownerType == NodeType::ConstantVec3 || ownerType == NodeType::ColorParameter) && kind == PinKind::Output) {
-        return "Value";
-    }
-    if ((ownerType == NodeType::AlbedoTextureSample || ownerType == NodeType::NormalTextureSample || 
-         ownerType == NodeType::RoughnessTextureSample || ownerType == NodeType::AoTextureSample) && kind == PinKind::Output) {
-        return "Color";
-    }
-    if (ownerType == NodeType::WorldAlignedTexture && kind == PinKind::Output) {
-        return index == 0 ? "Color" : "Value";
-    }
-    if ((ownerType == NodeType::Add || ownerType == NodeType::Multiply) && kind == PinKind::Input) {
-        return index == 0 ? "A" : "B";
-    }
-    if ((ownerType == NodeType::Add || ownerType == NodeType::Multiply) && kind == PinKind::Output) {
-        return "Result";
-    }
-    if (ownerType == NodeType::Lerp && kind == PinKind::Input) {
-        if (index == 0) return "A";
-        if (index == 1) return "B";
-        return "Alpha";
-    }
-    if (ownerType == NodeType::Lerp && kind == PinKind::Output) {
-        return "Result";
-    }
-    return kind == PinKind::Input ? "In" : "Out";
-}
-
-constexpr ValueType DefaultPinType(NodeType ownerType, PinKind kind, int index) {
-    if (ownerType == NodeType::MaterialOutput) {
-        if (index == 0 || index == 3 || index == 4) {
-            return ValueType::Float3;
-        }
-        return ValueType::Float1;
-    }
-    if (ownerType == NodeType::ConstantFloat || ownerType == NodeType::FloatParameter) {
-        return ValueType::Float1;
-    }
-    if (ownerType == NodeType::ConstantVec3 || ownerType == NodeType::ColorParameter) {
-        return ValueType::Float3;
-    }
-    if (ownerType == NodeType::AlbedoTextureSample || ownerType == NodeType::NormalTextureSample || 
-        ownerType == NodeType::RoughnessTextureSample || ownerType == NodeType::AoTextureSample) {
-        if (kind == PinKind::Output) {
-            return (ownerType == NodeType::RoughnessTextureSample || ownerType == NodeType::AoTextureSample)
-                   ? ValueType::Float1 : ValueType::Float3;
-        }
-        return ValueType::Float1;
-    }
-    if (ownerType == NodeType::WorldAlignedTexture) {
-        if (kind == PinKind::Output) {
-            // First output is Color (Float3), second is Value (Float1)
-            return index == 0 ? ValueType::Float3 : ValueType::Float1;
-        }
-        return ValueType::Float1;
-    }
-    if (ownerType == NodeType::Add || ownerType == NodeType::Multiply) {
-        return ValueType::Float1;
-    }
-    if (ownerType == NodeType::Lerp) {
-        if (kind == PinKind::Input && index == 2) {
-            return ValueType::Float1;
-        }
-        return ValueType::Float1;
-    }
-    return ValueType::Float1;
 }
 
 } // namespace
@@ -119,30 +53,7 @@ Node& Graph::CreateNode(NodeType type, std::string displayName) {
     node.type = type;
     node.serializedType = (type == NodeType::Unknown) ? "Unknown" : "";
     node.displayName = displayName.empty() ? MakeNodeDisplayName(type) : std::move(displayName);
-    switch (type) {
-    case NodeType::ConstantFloat:
-    case NodeType::FloatParameter:
-        node.scalar = 0.5f;
-        break;
-    case NodeType::ConstantVec3:
-    case NodeType::ColorParameter:
-        node.color = Float3{1.0f, 1.0f, 1.0f};
-        break;
-    case NodeType::AlbedoTextureSample:
-    case NodeType::NormalTextureSample:
-    case NodeType::RoughnessTextureSample:
-    case NodeType::AoTextureSample:
-        node.resourcePath.clear();
-        break;
-    case NodeType::WorldAlignedTexture:
-        node.resourcePath.clear();
-        node.worldAlignedScale = 1.0f;
-        break;
-    case NodeType::Unknown:
-        break;
-    default:
-        break;
-    }
+    ApplyNodeDefaults(node);
     m_Nodes.push_back(std::move(node));
     Node& stored = m_Nodes.back();
     AttachDefaultPins(stored);
@@ -206,7 +117,7 @@ Link* Graph::CreateLink(PinID from, PinID to) {
     if (startPin->kind != PinKind::Output || endPin->kind != PinKind::Input) {
         return nullptr;
     }
-    if (startPin->valueType != endPin->valueType) {
+    if (!ArePinTypesCompatible(startPin->valueType, endPin->valueType)) {
         return nullptr;
     }
 
@@ -224,6 +135,18 @@ Link* Graph::CreateLink(PinID from, PinID to) {
     link.endPin = to;
     m_Links.push_back(link);
     return &m_Links.back();
+}
+
+bool Graph::CanConnect(PinID from, PinID to) const {
+    const Pin* startPin = FindPin(from);
+    const Pin* endPin = FindPin(to);
+    if (!startPin || !endPin) {
+        return false;
+    }
+    if (startPin->kind != PinKind::Output || endPin->kind != PinKind::Input) {
+        return false;
+    }
+    return ArePinTypesCompatible(startPin->valueType, endPin->valueType);
 }
 
 bool Graph::RemoveLink(LinkID id) {
@@ -260,54 +183,19 @@ void Graph::Clear() {
 }
 
 std::string Graph::MakeNodeDisplayName(NodeType type) const {
-    return std::string(NodeLabel(type));
+    return std::string(GetNodeDefinition(type).displayName);
 }
 
 void Graph::AttachDefaultPins(Node& node) {
     node.inputs.clear();
     node.outputs.clear();
 
-    auto addInputs = [&](int count) {
-        for (int i = 0; i < count; ++i) {
-            AddPin(node, PinKind::Input, DefaultPinType(node.type, PinKind::Input, i), std::string(PinLabel(node.type, PinKind::Input, i)));
-        }
-    };
-    auto addOutputs = [&](int count) {
-        for (int i = 0; i < count; ++i) {
-            AddPin(node, PinKind::Output, DefaultPinType(node.type, PinKind::Output, i), std::string(PinLabel(node.type, PinKind::Output, i)));
-        }
-    };
-
-    switch (node.type) {
-    case NodeType::MaterialOutput:
-        addInputs(7);  // Base Color, Metallic, Roughness, Emissive, Normal, RoughnessMap, AO
-        break;
-    case NodeType::ConstantFloat:
-    case NodeType::FloatParameter:
-    case NodeType::ConstantVec3:
-    case NodeType::ColorParameter:
-    case NodeType::AlbedoTextureSample:
-    case NodeType::NormalTextureSample:
-    case NodeType::RoughnessTextureSample:
-    case NodeType::AoTextureSample:
-        addOutputs(1);
-        break;
-    case NodeType::WorldAlignedTexture:
-        addOutputs(2);  // Color (Float3) and Value (Float1)
-        break;
-    case NodeType::Add:
-    case NodeType::Multiply:
-        addInputs(2);
-        addOutputs(1);
-        break;
-    case NodeType::Lerp:
-        addInputs(3);
-        addOutputs(1);
-        break;
-    case NodeType::Unknown:
-        break;
-    default:
-        break;
+    const NodeDefinition& definition = GetNodeDefinition(node.type);
+    for (const PinDefinition& pin : definition.inputs) {
+        AddPin(node, PinKind::Input, pin.valueType, std::string(pin.name));
+    }
+    for (const PinDefinition& pin : definition.outputs) {
+        AddPin(node, PinKind::Output, pin.valueType, std::string(pin.name));
     }
 }
 
@@ -340,30 +228,7 @@ Node& Graph::CreateNodeWithID(NodeID id, NodeType type, std::string displayName)
     node.type = type;
     node.serializedType = (type == NodeType::Unknown) ? "Unknown" : "";
     node.displayName = displayName.empty() ? MakeNodeDisplayName(type) : std::move(displayName);
-    switch (type) {
-    case NodeType::ConstantFloat:
-    case NodeType::FloatParameter:
-        node.scalar = 0.5f;
-        break;
-    case NodeType::ConstantVec3:
-    case NodeType::ColorParameter:
-        node.color = Float3{1.0f, 1.0f, 1.0f};
-        break;
-    case NodeType::AlbedoTextureSample:
-    case NodeType::NormalTextureSample:
-    case NodeType::RoughnessTextureSample:
-    case NodeType::AoTextureSample:
-        node.resourcePath.clear();
-        break;
-    case NodeType::WorldAlignedTexture:
-        node.resourcePath.clear();
-        node.worldAlignedScale = 1.0f;
-        break;
-    case NodeType::Unknown:
-        break;
-    default:
-        break;
-    }
+    ApplyNodeDefaults(node);
     m_Nodes.push_back(std::move(node));
     Node& stored = m_Nodes.back();
     AttachDefaultPins(stored);
@@ -420,11 +285,27 @@ void Graph::SetPinIDsForNode(NodeID nodeId, const std::vector<PinID>& inputPinId
         }
         node->inputs[i] = newId;
     }
+    for (size_t i = inputPinIds.size(); i < node->inputs.size(); ++i) {
+        PinID oldId = node->inputs[i];
+        PinID newId = m_NextPinID++;
+        if (Pin* pin = FindPin(oldId)) {
+            pin->id = newId;
+        }
+        node->inputs[i] = newId;
+    }
     
     // Update output pin IDs
     for (size_t i = 0; i < outputPinIds.size() && i < node->outputs.size(); ++i) {
         PinID oldId = node->outputs[i];
         PinID newId = outputPinIds[i];
+        if (Pin* pin = FindPin(oldId)) {
+            pin->id = newId;
+        }
+        node->outputs[i] = newId;
+    }
+    for (size_t i = outputPinIds.size(); i < node->outputs.size(); ++i) {
+        PinID oldId = node->outputs[i];
+        PinID newId = m_NextPinID++;
         if (Pin* pin = FindPin(oldId)) {
             pin->id = newId;
         }
@@ -450,7 +331,7 @@ Link* Graph::CreateLinkWithID(LinkID id, PinID from, PinID to) {
     if (!orphan) {
         if (startPin->kind != PinKind::Output || endPin->kind != PinKind::Input) {
             orphan = true;
-        } else if (startPin->valueType != endPin->valueType) {
+        } else if (!ArePinTypesCompatible(startPin->valueType, endPin->valueType)) {
             orphan = true;
         }
     }

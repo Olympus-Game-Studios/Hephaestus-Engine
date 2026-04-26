@@ -56,10 +56,10 @@ The Material Editor provides a node-based visual material authoring system with 
 
 Right-click in empty space within the node canvas to access the add node menu:
 - **Material Output** - The final output node for your material
-- **Scalars** - Constant Float, Float Parameter
-- **Colors** - Constant Color, Color Parameter  
-- **Textures** - Albedo, Normal, Roughness, AO texture samplers
-- **Math** - Add, Multiply operations
+- **Inputs** - Scalars, vectors, UVs, scene/view vectors, world position, and camera distance
+- **Parameters** - Float, color, texture, bool, vector2, and static switch parameters
+- **Textures** - Generic texture sampling, texture objects, tiling/offset, triplanar sampling, normal unpack, and legacy texture samplers
+- **Math / Utility / Procedural / Logic / Blend** - Arithmetic, vector tools, masks, Fresnel, noise, comparisons, and layer blending
 
 ## General Editor Shortcuts
 
@@ -127,6 +127,7 @@ Planned keyboard shortcuts for future releases:
 
 ## See Also
 
+- [Material Node Reference](../Guides/MATERIAL_NODE_REFERENCE.md)
 - [Material Editor Guide](../Guides/LIGHTING_AND_MATERIALS_GUIDE.md)
 - [ECS Guide](../Guides/ECS_GUIDE.md)
 - [Scene Management](../Architecture/ECS_ARCHITECTURE_DIAGRAM.md)

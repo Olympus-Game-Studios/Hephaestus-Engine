@@ -33,14 +33,61 @@ enum class NodeType {
     ConstantVec3,
     ColorParameter,
     FloatParameter,
+    TextureParameter,
+    BoolParameter,
+    Vector2Parameter,
+    StaticSwitchParameter,
     AlbedoTextureSample,
     NormalTextureSample,
     RoughnessTextureSample,
     AoTextureSample,
     WorldAlignedTexture,
+    TextureSample,
+    TextureObject,
+    TextureSampleFromObject,
+    TextureTilingOffset,
+    TriplanarTexture,
+    NormalUnpack,
     Add,
+    Subtract,
     Multiply,
+    Divide,
+    Clamp,
+    Saturate,
+    Power,
+    Abs,
+    Min,
+    Max,
+    OneMinus,
+    DotProduct,
+    CrossProduct,
+    Normalize,
+    Length,
     Lerp,
+    ComponentMask,
+    AppendVector,
+    BreakVector,
+    Transform,
+    TexCoord,
+    ScreenPosition,
+    Noise,
+    Gradient,
+    Fresnel,
+    UVDistortion,
+    Time,
+    CameraVector,
+    ViewDirection,
+    ReflectionVector,
+    WorldPosition,
+    ObjectPosition,
+    DistanceToCamera,
+    If,
+    Step,
+    SmoothStep,
+    Compare,
+    Overlay,
+    Screen,
+    HeightBlend,
     Unknown
 };
 
@@ -63,10 +110,19 @@ struct Node {
     NodeType type = NodeType::MaterialOutput;
     std::string serializedType;
     std::string displayName;
+    std::string parameterName;
+    std::string operation;
+    std::string sourceSpace;
+    std::string targetSpace;
     float scalar = 0.0f;
     Float3 color;
     std::string resourcePath;
     float worldAlignedScale = 1.0f;  // Scale for world-aligned textures (units per texture repeat)
+    bool boolValue = false;
+    bool maskR = true;
+    bool maskG = true;
+    bool maskB = true;
+    bool maskA = false;
     std::vector<PinID> inputs;
     std::vector<PinID> outputs;
     
@@ -106,6 +162,7 @@ public:
     const Link* FindLink(LinkID id) const;
 
     Link* CreateLink(PinID from, PinID to);
+    bool CanConnect(PinID from, PinID to) const;
     bool RemoveLink(LinkID id);
     PinID FindInputSource(PinID inputPin) const;
 

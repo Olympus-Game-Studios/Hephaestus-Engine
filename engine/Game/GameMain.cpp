@@ -134,7 +134,11 @@ struct alignas(16) MaterialUBO {
     uint32_t useWorldAlignedTexture = 0;
     float worldTextureScale = 1.0f;
     float reflectionStrength = 1.0f;
-    uint32_t paddingTail[6] = {0};
+    float specular = 0.5f;
+    float opacity = 1.0f;
+    float opacityMask = 1.0f;
+    float refraction = 0.0f;
+    uint32_t paddingTail[2] = {0};
 };
 
 struct LightingUBO {
@@ -931,6 +935,10 @@ static bool LoadMaterialAsset(const std::string& rawPath, MaterialComponent& out
     if (const JsonValue* emissive = root.Find("emissive")) parseVec3(*emissive, material.emissive);
     if (const JsonValue* emissiveStrength = root.Find("emissiveStrength")) if (emissiveStrength->IsNumber()) material.emissiveStrength = static_cast<float>(emissiveStrength->AsNumber());
     if (const JsonValue* reflectionStrength = root.Find("reflectionStrength")) if (reflectionStrength->IsNumber()) material.reflectionStrength = static_cast<float>(reflectionStrength->AsNumber());
+    if (const JsonValue* specular = root.Find("specular")) if (specular->IsNumber()) material.specular = static_cast<float>(specular->AsNumber());
+    if (const JsonValue* opacity = root.Find("opacity")) if (opacity->IsNumber()) material.opacity = static_cast<float>(opacity->AsNumber());
+    if (const JsonValue* opacityMask = root.Find("opacityMask")) if (opacityMask->IsNumber()) material.opacityMask = static_cast<float>(opacityMask->AsNumber());
+    if (const JsonValue* refraction = root.Find("refraction")) if (refraction->IsNumber()) material.refraction = static_cast<float>(refraction->AsNumber());
     if (const JsonValue* useAlbedoTexture = root.Find("useAlbedoTexture")) if (useAlbedoTexture->IsBool()) material.useAlbedoTexture = useAlbedoTexture->AsBool();
     if (const JsonValue* albedoTexturePath = root.Find("albedoTexturePath")) if (albedoTexturePath->IsString()) material.albedoTexturePath = albedoTexturePath->AsString();
     if (const JsonValue* useNormalTexture = root.Find("useNormalTexture")) if (useNormalTexture->IsBool()) material.useNormalTexture = useNormalTexture->AsBool();
@@ -3026,6 +3034,10 @@ int main(int argc, char* argv[]) {
                 matUBO.emissiveStrength = mat->emissiveStrength;
                 matUBO.ao = mat->ao;
                 matUBO.reflectionStrength = mat->reflectionStrength;
+                matUBO.specular = mat->specular;
+                matUBO.opacity = mat->opacity;
+                matUBO.opacityMask = mat->opacityMask;
+                matUBO.refraction = mat->refraction;
 
                 if (mat->useAlbedoTexture && !mat->albedoTexturePath.empty()) {
                     std::string key = NormalizeAssetPath(mat->albedoTexturePath);

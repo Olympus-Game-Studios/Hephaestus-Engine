@@ -249,7 +249,9 @@ set(EDITOR_ONLY_SOURCES
     engine/Scene/SceneExporter.cpp
     engine/UI/EditorDocument.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
+    engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
+    engine/UI/MaterialEditor/MaterialShaderGenerator.cpp
     engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
@@ -350,7 +352,9 @@ add_executable(HephaestusEngine
     engine/UI/HephaestusUI/UIVerticalBox.cpp
     engine/UI/EditorDocument.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
+    engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
+    engine/UI/MaterialEditor/MaterialShaderGenerator.cpp
     engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
@@ -912,7 +916,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_executable(MaterialCompatibilityTests
         engine/Tests/MaterialCompatibilityTests.cpp
         engine/UI/MaterialEditor/MaterialGraph.cpp
+        engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
         engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
+        engine/UI/MaterialEditor/MaterialShaderGenerator.cpp
         engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
     )
 

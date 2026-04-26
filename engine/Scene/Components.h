@@ -449,6 +449,10 @@ struct MaterialComponent {
     Vec3 emissive;      // Self-illumination color
     float emissiveStrength; // Multiplier for emissive
     float reflectionStrength; // Per-material environment reflection multiplier
+    float specular;     // Dielectric specular reflectance scale
+    float opacity;      // Surface opacity (1 = opaque)
+    float opacityMask;  // Mask threshold/input for cutout workflows
+    float refraction;   // Reserved for future translucent/refraction shaders
     
     // Albedo (diffuse) texture
     std::string albedoTexturePath;
@@ -479,6 +483,10 @@ struct MaterialComponent {
         , emissive(0.0f, 0.0f, 0.0f)
         , emissiveStrength(0.0f)
         , reflectionStrength(1.0f)
+        , specular(0.5f)
+        , opacity(1.0f)
+        , opacityMask(1.0f)
+        , refraction(0.0f)
     {}
 
     MaterialComponent(const Vec3& color)
@@ -489,6 +497,10 @@ struct MaterialComponent {
         , emissive(0.0f, 0.0f, 0.0f)
         , emissiveStrength(0.0f)
         , reflectionStrength(1.0f)
+        , specular(0.5f)
+        , opacity(1.0f)
+        , opacityMask(1.0f)
+        , refraction(0.0f)
     {}
 };
 

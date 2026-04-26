@@ -40,12 +40,12 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     uint useWorldAlignedTexture; // offset 92
     float worldTextureScale;  // offset 96
     float reflectionStrength; // offset 100
-    uint paddingTail1;        // offset 104
-    uint paddingTail2;        // offset 108
-    uint paddingTail3;        // offset 112
-    uint paddingTail4;        // offset 116
-    uint paddingTail5;        // offset 120
-    uint paddingTail6;        // offset 124
+    float specular;           // offset 104
+    float opacity;            // offset 108
+    float opacityMask;        // offset 112
+    float refraction;         // offset 116 (reserved)
+    uint paddingTail1;        // offset 120
+    uint paddingTail2;        // offset 124
 } material;
 
 layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOTS];
@@ -333,10 +333,14 @@ void main() {
     }
     
     float metallic = material.metallic;
+    float opacity = clamp(material.opacity, 0.0, 1.0);
+    if (opacity < clamp(material.opacityMask, 0.0, 1.0)) {
+        discard;
+    }
     
     // Calculate F0 (base reflectivity)
     // Dielectrics have F0 around 0.04, metals use albedo as F0
-    vec3 F0 = vec3(0.04);
+    vec3 F0 = vec3(0.08 * clamp(material.specular, 0.0, 1.0));
     F0 = mix(F0, albedo, metallic);
     
     // Reflectance equation
@@ -477,5 +481,5 @@ void main() {
     // Gamma correction
     color = pow(color, vec3(1.0 / 2.2));
     
-    outColor = vec4(color, 1.0);
+    outColor = vec4(color, opacity);
 }

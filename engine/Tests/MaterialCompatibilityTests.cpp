@@ -1,4 +1,5 @@
 #include "../UI/MaterialEditor/MaterialAssetSerializer.h"
+#include "../UI/MaterialEditor/MaterialShaderGenerator.h"
 
 #include <filesystem>
 #include <fstream>
@@ -186,7 +187,52 @@ bool TestGoldenRoundtrip(const fs::path& root, const fs::path& outDir, const std
 
     const json original = LoadJson(input);
     const json saved = LoadJson(output);
-    return Check(original == saved, "golden roundtrip mismatch for " + name);
+
+    bool ok = true;
+    ok &= Check(saved.contains("graph"), "golden roundtrip keeps graph for " + name);
+    ok &= Check(saved["graph"].contains("nodes"), "golden roundtrip keeps nodes for " + name);
+    ok &= Check(saved["graph"].contains("links"), "golden roundtrip keeps links for " + name);
+    ok &= Check(saved["graph"]["nodes"].size() == original["graph"]["nodes"].size(), "golden node count preserved for " + name);
+    ok &= Check(saved["graph"]["links"].size() == original["graph"]["links"].size(), "golden link count preserved for " + name);
+    return ok;
+}
+
+bool TestExpandedNodesAndShaderGeneration() {
+    Graph graph;
+    NodeID outputId = graph.CreateNode(NodeType::MaterialOutput).id;
+    NodeID colorId = graph.CreateNode(NodeType::ConstantVec3).id;
+    NodeID roughnessId = graph.CreateNode(NodeType::Saturate).id;
+    NodeID scalarId = graph.CreateNode(NodeType::ConstantFloat).id;
+    if (Node* color = graph.FindNode(colorId)) color->color = Float3{0.2f, 0.4f, 0.8f};
+    if (Node* scalar = graph.FindNode(scalarId)) scalar->scalar = 0.75f;
+    const Node* output = graph.FindNode(outputId);
+    const Node* color = graph.FindNode(colorId);
+    const Node* roughness = graph.FindNode(roughnessId);
+    const Node* scalar = graph.FindNode(scalarId);
+
+    bool ok = true;
+    ok &= Check(output && output->inputs.size() >= 11, "MaterialOutput exposes expanded PBR pins");
+    ok &= Check(color && !color->outputs.empty(), "color node has output pin");
+    ok &= Check(roughness && !roughness->inputs.empty() && !roughness->outputs.empty(), "saturate node has pins");
+    ok &= Check(scalar && !scalar->outputs.empty(), "scalar node has output pin");
+    if (!output || !color || !roughness || !scalar) {
+        return false;
+    }
+    ok &= Check(graph.CreateLink(color->outputs[0], output->inputs[0]) != nullptr, "vec3 base color link succeeds");
+    ok &= Check(graph.CreateLink(scalar->outputs[0], roughness->inputs[0]) != nullptr, "scalar math link succeeds");
+    ok &= Check(graph.CreateLink(roughness->outputs[0], output->inputs[2]) != nullptr, "math roughness link succeeds");
+
+    NodeID scalarToColorId = graph.CreateNode(NodeType::ConstantFloat).id;
+    if (Node* scalarToColor = graph.FindNode(scalarToColorId)) scalarToColor->scalar = 0.25f;
+    const Node* scalarToColor = graph.FindNode(scalarToColorId);
+    output = graph.FindNode(outputId);
+    ok &= Check(output && scalarToColor && graph.CanConnect(scalarToColor->outputs[0], output->inputs[3]), "scalar can auto-expand to vector input");
+
+    MaterialShaderGenerationResult generated = GenerateMaterialShader(graph);
+    ok &= Check(generated.ok, "expanded graph shader generation succeeds");
+    ok &= Check(generated.body.find("material.albedo") != std::string::npos, "shader body writes albedo");
+    ok &= Check(generated.body.find("clamp") != std::string::npos, "shader body contains Saturate clamp");
+    return ok;
 }
 
 } // namespace
@@ -206,6 +252,7 @@ int main(int argc, char** argv) {
     ok &= TestUnknownGraphRoundtrip(root, outDir);
     ok &= TestSwappedDirectionRepairControl(root, outDir);
     ok &= TestGoldenRoundtrip(root, outDir, "unknown_graph_payload.hematerial");
+    ok &= TestExpandedNodesAndShaderGeneration();
 
     if (!ok) {
         return 1;

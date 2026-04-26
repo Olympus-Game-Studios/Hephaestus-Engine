@@ -21,7 +21,13 @@ The Material Editor is designed to be backwards compatible with legacy `.hemater
   - `*TexturePath=""`
   - `useWorldAlignedTexture=false`
   - `worldTextureScale=1`
+- Expanded PBR fields also default safely when absent:
+  - `specular=0.5`
+  - `opacity=1`
+  - `opacityMask=1`
+  - `refraction=0`
 - Existing node IDs, link IDs, and pin IDs are preserved.
+- New node settings are additive JSON fields. Older files that do not contain `parameterName`, `operation`, transform spaces, mask channels, or boolean defaults continue to load with node-defined defaults.
 
 ## Legacy Materials (No Graph / Invalid Graph)
 
@@ -66,3 +72,4 @@ These tests validate:
 - defaulting behavior for missing fields
 - unknown node/orphan link safety
 - tolerant golden roundtrip JSON equivalence (value-based, key-order independent)
+- expanded node output pins, scalar-to-vector connection compatibility, and shader snippet generation

@@ -1,5 +1,8 @@
 #include "MaterialGraphEvaluator.h"
+#include "MaterialNodeDefinitions.h"
 
+#include <algorithm>
+#include <cmath>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -49,6 +52,49 @@ Float3 Lerp(const Float3& a, const Float3& b, float alpha) {
         a.y + (b.y - a.y) * alpha,
         a.z + (b.z - a.z) * alpha
     };
+}
+
+float Clamp01(float value) {
+    return std::clamp(value, 0.0f, 1.0f);
+}
+
+float Length(const Float3& value) {
+    return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
+}
+
+Float3 Cross(const Float3& a, const Float3& b) {
+    return Float3{
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    };
+}
+
+Float3 Normalize(const Float3& value) {
+    const float length = Length(value);
+    if (length <= 0.00001f) {
+        return Float3{0.0f, 0.0f, 1.0f};
+    }
+    return Float3{value.x / length, value.y / length, value.z / length};
+}
+
+float Dot(const Float3& a, const Float3& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+Float3 ScalarToVec(float value) {
+    return Float3{value, value, value};
+}
+
+Value Coerce(Value value, ValueType targetType) {
+    if (value.type == targetType) {
+        return value;
+    }
+    if (value.type == ValueType::Float1 && IsNumericValueType(targetType)) {
+        value.vec = ScalarToVec(value.scalar);
+        value.type = targetType;
+    }
+    return value;
 }
 
 bool EvaluateOutputPin(const Graph& graph,
@@ -130,22 +176,40 @@ bool EvaluateOutputPin(const Graph& graph,
     case NodeType::FloatParameter:
         result.scalar = node->scalar;
         break;
+    case NodeType::BoolParameter:
+        result.scalar = node->boolValue ? 1.0f : 0.0f;
+        break;
+    case NodeType::Vector2Parameter:
+        result.vec = Float3{node->color.x, node->color.y, 0.0f};
+        break;
     case NodeType::ConstantVec3:
     case NodeType::ColorParameter:
         result.vec = node->color;
         break;
+    case NodeType::TextureParameter:
+    case NodeType::TextureObject:
+        result.hasTexture = !node->resourcePath.empty();
+        result.texturePath = node->resourcePath;
+        break;
     case NodeType::AlbedoTextureSample:
     case NodeType::NormalTextureSample:
     case NodeType::RoughnessTextureSample:
-    case NodeType::AoTextureSample: {
+    case NodeType::AoTextureSample:
+    case NodeType::TextureSample:
+    case NodeType::TextureSampleFromObject:
+    case NodeType::TriplanarTexture: {
         // Texture sample nodes combine parameter + sampling
         result.hasTexture = !node->resourcePath.empty();
         result.texturePath = node->resourcePath;
         
         // Output type depends on the texture type
-        if (node->type == NodeType::RoughnessTextureSample || node->type == NodeType::AoTextureSample) {
+        if (node->type == NodeType::RoughnessTextureSample || node->type == NodeType::AoTextureSample ||
+            pin->valueType == ValueType::Float1) {
             result.type = ValueType::Float1;
             result.scalar = 1.0f;
+        } else if (pin->valueType == ValueType::Float4) {
+            result.type = ValueType::Float4;
+            result.vec = Float3{1.0f, 1.0f, 1.0f};
         } else {
             result.type = ValueType::Float3;
             result.vec = Float3{1.0f, 1.0f, 1.0f};
@@ -181,8 +245,8 @@ bool EvaluateOutputPin(const Graph& graph,
         break;
     }
     case NodeType::Add: {
-        Value a = fetchInput(0);
-        Value b = fetchInput(1);
+        Value a = Coerce(fetchInput(0), pin->valueType);
+        Value b = Coerce(fetchInput(1), pin->valueType);
         if (pin->valueType == ValueType::Float1) {
             result.scalar = a.scalar + b.scalar;
         } else {
@@ -190,9 +254,19 @@ bool EvaluateOutputPin(const Graph& graph,
         }
         break;
     }
+    case NodeType::Subtract: {
+        Value a = Coerce(fetchInput(0), pin->valueType);
+        Value b = Coerce(fetchInput(1), pin->valueType);
+        if (pin->valueType == ValueType::Float1) {
+            result.scalar = a.scalar - b.scalar;
+        } else {
+            result.vec = Float3{a.vec.x - b.vec.x, a.vec.y - b.vec.y, a.vec.z - b.vec.z};
+        }
+        break;
+    }
     case NodeType::Multiply: {
-        Value a = fetchInput(0);
-        Value b = fetchInput(1);
+        Value a = Coerce(fetchInput(0), pin->valueType);
+        Value b = Coerce(fetchInput(1), pin->valueType);
         if (pin->valueType == ValueType::Float1) {
             result.scalar = a.scalar * b.scalar;
         } else {
@@ -200,9 +274,72 @@ bool EvaluateOutputPin(const Graph& graph,
         }
         break;
     }
+    case NodeType::Divide: {
+        Value a = Coerce(fetchInput(0), pin->valueType);
+        Value b = Coerce(fetchInput(1), pin->valueType);
+        if (pin->valueType == ValueType::Float1) {
+            result.scalar = std::abs(b.scalar) > 0.00001f ? a.scalar / b.scalar : 0.0f;
+        } else {
+            result.vec = Float3{
+                std::abs(b.vec.x) > 0.00001f ? a.vec.x / b.vec.x : 0.0f,
+                std::abs(b.vec.y) > 0.00001f ? a.vec.y / b.vec.y : 0.0f,
+                std::abs(b.vec.z) > 0.00001f ? a.vec.z / b.vec.z : 0.0f
+            };
+        }
+        break;
+    }
+    case NodeType::Clamp: {
+        Value value = fetchInput(0);
+        Value minValue = fetchInput(1);
+        Value maxValue = fetchInput(2);
+        const float minScalar = minValue.scalar;
+        const float maxScalar = maxValue.scalar == 0.0f ? node->scalar : maxValue.scalar;
+        result.scalar = std::clamp(value.scalar, minScalar, maxScalar);
+        break;
+    }
+    case NodeType::Saturate: {
+        result.scalar = Clamp01(fetchInput(0).scalar);
+        break;
+    }
+    case NodeType::Power: {
+        Value base = fetchInput(0);
+        Value exponent = fetchInput(1);
+        result.scalar = std::pow(std::max(base.scalar, 0.0f), exponent.scalar == 0.0f ? 1.0f : exponent.scalar);
+        break;
+    }
+    case NodeType::Abs:
+        result.scalar = std::abs(fetchInput(0).scalar);
+        break;
+    case NodeType::Min:
+        result.scalar = std::min(fetchInput(0).scalar, fetchInput(1).scalar);
+        break;
+    case NodeType::Max:
+        result.scalar = std::max(fetchInput(0).scalar, fetchInput(1).scalar);
+        break;
+    case NodeType::OneMinus:
+        result.scalar = 1.0f - fetchInput(0).scalar;
+        break;
+    case NodeType::DotProduct: {
+        Value a = Coerce(fetchInput(0), ValueType::Float3);
+        Value b = Coerce(fetchInput(1), ValueType::Float3);
+        result.scalar = Dot(a.vec, b.vec);
+        break;
+    }
+    case NodeType::CrossProduct: {
+        Value a = Coerce(fetchInput(0), ValueType::Float3);
+        Value b = Coerce(fetchInput(1), ValueType::Float3);
+        result.vec = Cross(a.vec, b.vec);
+        break;
+    }
+    case NodeType::Normalize:
+        result.vec = Normalize(Coerce(fetchInput(0), ValueType::Float3).vec);
+        break;
+    case NodeType::Length:
+        result.scalar = Length(Coerce(fetchInput(0), ValueType::Float3).vec);
+        break;
     case NodeType::Lerp: {
-        Value a = fetchInput(0);
-        Value b = fetchInput(1);
+        Value a = Coerce(fetchInput(0), pin->valueType);
+        Value b = Coerce(fetchInput(1), pin->valueType);
         Value alpha = fetchInput(2);
         if (pin->valueType == ValueType::Float1) {
             result.scalar = a.scalar + (b.scalar - a.scalar) * alpha.scalar;
@@ -211,6 +348,101 @@ bool EvaluateOutputPin(const Graph& graph,
         }
         break;
     }
+    case NodeType::ComponentMask: {
+        Value value = Coerce(fetchInput(0), ValueType::Float4);
+        const int count = (node->maskR ? 1 : 0) + (node->maskG ? 1 : 0) + (node->maskB ? 1 : 0) + (node->maskA ? 1 : 0);
+        result.type = count <= 1 ? ValueType::Float1 : (count == 2 ? ValueType::Float2 : (count == 3 ? ValueType::Float3 : ValueType::Float4));
+        result.scalar = node->maskR ? value.vec.x : (node->maskG ? value.vec.y : (node->maskB ? value.vec.z : 1.0f));
+        result.vec = Float3{
+            node->maskR ? value.vec.x : result.scalar,
+            node->maskG ? value.vec.y : result.scalar,
+            node->maskB ? value.vec.z : result.scalar
+        };
+        break;
+    }
+    case NodeType::AppendVector:
+        result.vec = Float3{fetchInput(0).scalar, fetchInput(1).scalar, 0.0f};
+        break;
+    case NodeType::BreakVector: {
+        Value value = Coerce(fetchInput(0), ValueType::Float4);
+        int outputIndex = 0;
+        for (size_t i = 0; i < node->outputs.size(); ++i) {
+            if (node->outputs[i] == outputPin) {
+                outputIndex = static_cast<int>(i);
+                break;
+            }
+        }
+        result.scalar = outputIndex == 0 ? value.vec.x : (outputIndex == 1 ? value.vec.y : (outputIndex == 2 ? value.vec.z : 1.0f));
+        break;
+    }
+    case NodeType::NormalUnpack: {
+        Value packed = Coerce(fetchInput(0), ValueType::Float3);
+        result.vec = Normalize(Float3{packed.vec.x * 2.0f - 1.0f, packed.vec.y * 2.0f - 1.0f, packed.vec.z * 2.0f - 1.0f});
+        break;
+    }
+    case NodeType::Step:
+        result.scalar = fetchInput(1).scalar < fetchInput(0).scalar ? 0.0f : 1.0f;
+        break;
+    case NodeType::SmoothStep: {
+        const float edge0 = fetchInput(0).scalar;
+        const float edge1 = fetchInput(1).scalar;
+        const float value = fetchInput(2).scalar;
+        const float t = Clamp01((value - edge0) / std::max(edge1 - edge0, 0.00001f));
+        result.scalar = t * t * (3.0f - 2.0f * t);
+        break;
+    }
+    case NodeType::Compare: {
+        const float a = fetchInput(0).scalar;
+        const float b = fetchInput(1).scalar;
+        bool pass = a > b;
+        if (node->operation == "<") pass = a < b;
+        else if (node->operation == "==") pass = std::abs(a - b) <= 0.0001f;
+        result.scalar = pass ? 1.0f : 0.0f;
+        break;
+    }
+    case NodeType::If:
+        result.scalar = fetchInput(0).scalar > fetchInput(1).scalar ? fetchInput(2).scalar : fetchInput(3).scalar;
+        break;
+    case NodeType::Overlay: {
+        Value base = Coerce(fetchInput(0), ValueType::Float3);
+        Value blend = Coerce(fetchInput(1), ValueType::Float3);
+        auto overlay = [](float a, float b) { return a < 0.5f ? 2.0f * a * b : 1.0f - 2.0f * (1.0f - a) * (1.0f - b); };
+        result.vec = Float3{overlay(base.vec.x, blend.vec.x), overlay(base.vec.y, blend.vec.y), overlay(base.vec.z, blend.vec.z)};
+        break;
+    }
+    case NodeType::Screen: {
+        Value base = Coerce(fetchInput(0), ValueType::Float3);
+        Value blend = Coerce(fetchInput(1), ValueType::Float3);
+        result.vec = Float3{1.0f - (1.0f - base.vec.x) * (1.0f - blend.vec.x),
+                            1.0f - (1.0f - base.vec.y) * (1.0f - blend.vec.y),
+                            1.0f - (1.0f - base.vec.z) * (1.0f - blend.vec.z)};
+        break;
+    }
+    case NodeType::HeightBlend: {
+        Value a = Coerce(fetchInput(0), ValueType::Float3);
+        Value b = Coerce(fetchInput(1), ValueType::Float3);
+        const float alpha = Clamp01((fetchInput(2).scalar - 0.5f) * std::max(fetchInput(3).scalar, 1.0f) + 0.5f);
+        result.vec = Lerp(a.vec, b.vec, alpha);
+        break;
+    }
+    case NodeType::TexCoord:
+    case NodeType::ScreenPosition:
+    case NodeType::Transform:
+    case NodeType::TextureTilingOffset:
+    case NodeType::Noise:
+    case NodeType::Gradient:
+    case NodeType::Fresnel:
+    case NodeType::UVDistortion:
+    case NodeType::Time:
+    case NodeType::CameraVector:
+    case NodeType::ViewDirection:
+    case NodeType::ReflectionVector:
+    case NodeType::WorldPosition:
+    case NodeType::ObjectPosition:
+    case NodeType::DistanceToCamera:
+    case NodeType::StaticSwitchParameter:
+        // Per-fragment/runtime-only nodes are represented by the shader generator.
+        break;
     case NodeType::MaterialOutput:
     case NodeType::Unknown:
         break;
@@ -283,8 +515,10 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         return connected ? value.scalar : fallback;
     };
 
+    const float emissiveStrength = outMaterial.emissiveStrength;
     const float reflectionStrength = outMaterial.reflectionStrength;
     outMaterial = MaterialComponent();
+    outMaterial.emissiveStrength = emissiveStrength;
     outMaterial.reflectionStrength = reflectionStrength;
 
     // Track if any texture uses world-aligned mode
@@ -330,8 +564,9 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
     if (outputNode->inputs.size() > 4) {
         bool texWorldAligned = false;
         float texWorldScale = 1.0f;
+        Vec3 normalFallback(0.5f, 0.5f, 1.0f);
         resolveColor(outputNode->inputs[4], Float3{0.5f, 0.5f, 1.0f}, true,
-                     outMaterial.emissive, outMaterial.useNormalTexture, outMaterial.normalTexturePath,
+                     normalFallback, outMaterial.useNormalTexture, outMaterial.normalTexturePath,
                      &texWorldAligned, &texWorldScale);
         if (texWorldAligned && outMaterial.useNormalTexture) {
             anyWorldAligned = true;
@@ -374,6 +609,18 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
                 worldScale = texValue.worldAlignedScale;
             }
         }
+    }
+    if (outputNode->inputs.size() > 7) {
+        outMaterial.specular = resolveScalar(outputNode->inputs[7], outMaterial.specular);
+    }
+    if (outputNode->inputs.size() > 8) {
+        outMaterial.opacity = resolveScalar(outputNode->inputs[8], outMaterial.opacity);
+    }
+    if (outputNode->inputs.size() > 9) {
+        outMaterial.opacityMask = resolveScalar(outputNode->inputs[9], outMaterial.opacityMask);
+    }
+    if (outputNode->inputs.size() > 10) {
+        outMaterial.refraction = resolveScalar(outputNode->inputs[10], outMaterial.refraction);
     }
 
     // Apply world-aligned settings if any texture uses it

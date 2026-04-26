@@ -1,4 +1,5 @@
 #include "MaterialAssetSerializer.h"
+#include "MaterialNodeDefinitions.h"
 
 #include <fstream>
 #include <unordered_set>
@@ -11,43 +12,11 @@ namespace {
 using json = nlohmann::json;
 
 std::string NodeTypeToString(NodeType type) {
-    switch (type) {
-    case NodeType::MaterialOutput: return "MaterialOutput";
-    case NodeType::ConstantFloat: return "ConstantFloat";
-    case NodeType::ConstantVec3: return "ConstantVec3";
-    case NodeType::ColorParameter: return "ColorParameter";
-    case NodeType::FloatParameter: return "FloatParameter";
-    case NodeType::AlbedoTextureSample: return "AlbedoTextureSample";
-    case NodeType::NormalTextureSample: return "NormalTextureSample";
-    case NodeType::RoughnessTextureSample: return "RoughnessTextureSample";
-    case NodeType::AoTextureSample: return "AoTextureSample";
-    case NodeType::WorldAlignedTexture: return "WorldAlignedTexture";
-    case NodeType::Add: return "Add";
-    case NodeType::Multiply: return "Multiply";
-    case NodeType::Lerp: return "Lerp";
-    case NodeType::Unknown: return "Unknown";
-    }
-    return "Unknown";
+    return std::string(NodeTypeName(type));
 }
 
 bool TryNodeTypeFromString(const std::string& str, NodeType& outType) {
-    if (str == "MaterialOutput") { outType = NodeType::MaterialOutput; return true; }
-    if (str == "ConstantFloat") { outType = NodeType::ConstantFloat; return true; }
-    if (str == "ConstantVec3") { outType = NodeType::ConstantVec3; return true; }
-    if (str == "ColorParameter") { outType = NodeType::ColorParameter; return true; }
-    if (str == "FloatParameter") { outType = NodeType::FloatParameter; return true; }
-    if (str == "AlbedoTextureSample") { outType = NodeType::AlbedoTextureSample; return true; }
-    if (str == "NormalTextureSample") { outType = NodeType::NormalTextureSample; return true; }
-    if (str == "RoughnessTextureSample") { outType = NodeType::RoughnessTextureSample; return true; }
-    if (str == "AoTextureSample") { outType = NodeType::AoTextureSample; return true; }
-    if (str == "AOTextureSample") { outType = NodeType::AoTextureSample; return true; }
-    if (str == "WorldAlignedTexture") { outType = NodeType::WorldAlignedTexture; return true; }
-    if (str == "Add") { outType = NodeType::Add; return true; }
-    if (str == "Multiply") { outType = NodeType::Multiply; return true; }
-    if (str == "Lerp") { outType = NodeType::Lerp; return true; }
-    if (str == "ConstantScalar") { outType = NodeType::ConstantFloat; return true; }
-    if (str == "ConstantColor") { outType = NodeType::ConstantVec3; return true; }
-    return false;
+    return TryNodeTypeName(str, outType);
 }
 
 void ParseVec3(const json& value, Vec3& out) {
@@ -133,6 +102,10 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
     if (root.contains("emissive")) ParseVec3(root["emissive"], outMaterial.emissive);
     if (root.contains("emissiveStrength") && root["emissiveStrength"].is_number()) outMaterial.emissiveStrength = root["emissiveStrength"].get<float>();
     if (root.contains("reflectionStrength") && root["reflectionStrength"].is_number()) outMaterial.reflectionStrength = root["reflectionStrength"].get<float>();
+    if (root.contains("specular") && root["specular"].is_number()) outMaterial.specular = root["specular"].get<float>();
+    if (root.contains("opacity") && root["opacity"].is_number()) outMaterial.opacity = root["opacity"].get<float>();
+    if (root.contains("opacityMask") && root["opacityMask"].is_number()) outMaterial.opacityMask = root["opacityMask"].get<float>();
+    if (root.contains("refraction") && root["refraction"].is_number()) outMaterial.refraction = root["refraction"].get<float>();
 
     if (root.contains("useAlbedoTexture") && root["useAlbedoTexture"].is_boolean()) outMaterial.useAlbedoTexture = root["useAlbedoTexture"].get<bool>();
     if (root.contains("albedoTexturePath") && root["albedoTexturePath"].is_string()) outMaterial.albedoTexturePath = root["albedoTexturePath"].get<std::string>();
@@ -205,6 +178,15 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
             if (nodeVal.contains("color")) ParseFloat3(nodeVal["color"], node.color);
             if (nodeVal.contains("resourcePath") && nodeVal["resourcePath"].is_string()) node.resourcePath = nodeVal["resourcePath"].get<std::string>();
             if (nodeVal.contains("worldAlignedScale") && nodeVal["worldAlignedScale"].is_number()) node.worldAlignedScale = nodeVal["worldAlignedScale"].get<float>();
+            if (nodeVal.contains("parameterName") && nodeVal["parameterName"].is_string()) node.parameterName = nodeVal["parameterName"].get<std::string>();
+            if (nodeVal.contains("operation") && nodeVal["operation"].is_string()) node.operation = nodeVal["operation"].get<std::string>();
+            if (nodeVal.contains("sourceSpace") && nodeVal["sourceSpace"].is_string()) node.sourceSpace = nodeVal["sourceSpace"].get<std::string>();
+            if (nodeVal.contains("targetSpace") && nodeVal["targetSpace"].is_string()) node.targetSpace = nodeVal["targetSpace"].get<std::string>();
+            if (nodeVal.contains("boolValue") && nodeVal["boolValue"].is_boolean()) node.boolValue = nodeVal["boolValue"].get<bool>();
+            if (nodeVal.contains("maskR") && nodeVal["maskR"].is_boolean()) node.maskR = nodeVal["maskR"].get<bool>();
+            if (nodeVal.contains("maskG") && nodeVal["maskG"].is_boolean()) node.maskG = nodeVal["maskG"].get<bool>();
+            if (nodeVal.contains("maskB") && nodeVal["maskB"].is_boolean()) node.maskB = nodeVal["maskB"].get<bool>();
+            if (nodeVal.contains("maskA") && nodeVal["maskA"].is_boolean()) node.maskA = nodeVal["maskA"].get<bool>();
             if (nodeVal.contains("posX") && nodeVal["posX"].is_number()) node.posX = nodeVal["posX"].get<float>();
             if (nodeVal.contains("posY") && nodeVal["posY"].is_number()) node.posY = nodeVal["posY"].get<float>();
 
@@ -229,7 +211,9 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
             }
 
             static const std::unordered_set<std::string> nodeKeys = {
-                "id", "type", "displayName", "scalar", "color", "resourcePath", "worldAlignedScale", "posX", "posY", "inputPins", "outputPins"
+                "id", "type", "displayName", "parameterName", "operation", "sourceSpace", "targetSpace",
+                "scalar", "color", "resourcePath", "worldAlignedScale", "boolValue",
+                "maskR", "maskG", "maskB", "maskA", "posX", "posY", "inputPins", "outputPins"
             };
             node.unknownFields = ExtractUnknownObjectKeys(nodeVal, nodeKeys);
         }
@@ -326,6 +310,10 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
     root["ao"] = material.ao;
     root["emissive"] = { material.emissive.x, material.emissive.y, material.emissive.z };
     root["emissiveStrength"] = material.emissiveStrength;
+    root["specular"] = material.specular;
+    root["opacity"] = material.opacity;
+    root["opacityMask"] = material.opacityMask;
+    root["refraction"] = material.refraction;
     if (root.contains("reflectionStrength") || material.reflectionStrength != 1.0f) {
         root["reflectionStrength"] = material.reflectionStrength;
     }
@@ -359,6 +347,15 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
             nodeJson["color"] = { node.color.x, node.color.y, node.color.z };
             nodeJson["resourcePath"] = node.resourcePath;
             nodeJson["worldAlignedScale"] = node.worldAlignedScale;
+            if (!node.parameterName.empty()) nodeJson["parameterName"] = node.parameterName;
+            if (!node.operation.empty()) nodeJson["operation"] = node.operation;
+            if (!node.sourceSpace.empty()) nodeJson["sourceSpace"] = node.sourceSpace;
+            if (!node.targetSpace.empty()) nodeJson["targetSpace"] = node.targetSpace;
+            nodeJson["boolValue"] = node.boolValue;
+            nodeJson["maskR"] = node.maskR;
+            nodeJson["maskG"] = node.maskG;
+            nodeJson["maskB"] = node.maskB;
+            nodeJson["maskA"] = node.maskA;
 
             float posX = node.posX;
             float posY = node.posY;

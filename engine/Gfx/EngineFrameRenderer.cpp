@@ -58,7 +58,11 @@ struct alignas(16) MaterialUBO {
     uint32_t useWorldAlignedTexture;
     float worldTextureScale;
     float reflectionStrength;
-    uint32_t paddingTail[6];
+    float specular;
+    float opacity;
+    float opacityMask;
+    float refraction;
+    uint32_t paddingTail[2];
 };
 
 struct LightingUBO {
@@ -647,6 +651,11 @@ bool EngineFrameRenderer::createUniformBuffers()
         defaultMaterial.aoTextureIndex = 0;
         defaultMaterial.useWorldAlignedTexture = 0;
         defaultMaterial.worldTextureScale = 1.0f;
+        defaultMaterial.reflectionStrength = 1.0f;
+        defaultMaterial.specular = 0.5f;
+        defaultMaterial.opacity = 1.0f;
+        defaultMaterial.opacityMask = 1.0f;
+        defaultMaterial.refraction = 0.0f;
         
         void* mapped = nullptr;
         if (vmaMapMemory(m_device->allocator, buffer.allocation, &mapped) == VK_SUCCESS) {
@@ -1810,6 +1819,10 @@ const MaterialComponent* EngineFrameRenderer::resolveMaterialFromPath(const std:
         }
         if (j.contains("emissiveStrength")) loadedMaterial.emissiveStrength = j["emissiveStrength"].get<float>();
         if (j.contains("reflectionStrength")) loadedMaterial.reflectionStrength = j["reflectionStrength"].get<float>();
+        if (j.contains("specular")) loadedMaterial.specular = j["specular"].get<float>();
+        if (j.contains("opacity")) loadedMaterial.opacity = j["opacity"].get<float>();
+        if (j.contains("opacityMask")) loadedMaterial.opacityMask = j["opacityMask"].get<float>();
+        if (j.contains("refraction")) loadedMaterial.refraction = j["refraction"].get<float>();
 
         // Texture paths and flags
         if (j.contains("useAlbedoTexture")) loadedMaterial.useAlbedoTexture = j["useAlbedoTexture"].get<bool>();
@@ -2271,6 +2284,10 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 matUBO.useWorldAlignedTexture = mat.useWorldAlignedTexture ? 1u : 0u;
                 matUBO.worldTextureScale = mat.worldTextureScale;
                 matUBO.reflectionStrength = mat.reflectionStrength;
+                matUBO.specular = mat.specular;
+                matUBO.opacity = mat.opacity;
+                matUBO.opacityMask = mat.opacityMask;
+                matUBO.refraction = mat.refraction;
                 std::memset(matUBO.paddingTail, 0, sizeof(matUBO.paddingTail));
             } else {
                 // Default white material
@@ -2296,6 +2313,10 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 matUBO.useWorldAlignedTexture = 0u;
                 matUBO.worldTextureScale = 1.0f;
                 matUBO.reflectionStrength = 1.0f;
+                matUBO.specular = 0.5f;
+                matUBO.opacity = 1.0f;
+                matUBO.opacityMask = 1.0f;
+                matUBO.refraction = 0.0f;
                 std::memset(matUBO.paddingTail, 0, sizeof(matUBO.paddingTail));
             }
         };

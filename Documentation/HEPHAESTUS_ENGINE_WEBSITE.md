@@ -67,7 +67,7 @@ Highlights:
 - **Asset browser** — Project file discovery, filtering, and creation shortcuts for supported asset types (including UI documents).
 - **Scene hierarchy / Outliner** — Create, rename, reparent, and select entities; mirrors the ECS scene structure.
 - **Details / inspectors** — Edit transforms, components, and referenced assets per selection.
-- **Material authoring** — PBR-oriented editing with support for both property-driven workflows and **node-based material graphs** (where enabled in the build), plus live preview against the scene.
+- **Material authoring** — PBR-oriented editing with support for both property-driven workflows and expanded **node-based material graphs** (math, utility, texture, procedural, logic, blend, scene input, and parameter nodes where enabled in the build), plus live preview against the scene.
 
 The editor is **evolving**: new panels, shortcuts, and polish land regularly; expect rough edges compared to decade-old commercial tools.
 
@@ -91,7 +91,7 @@ HephaestusUI is **game-facing** (menus, HUDs, overlays). It complements—not re
 
 The following reflects the **current** implementation direction; it is **not** an exhaustive AAA feature list.
 
-- **PBR materials** — Metallic–roughness style workflow with albedo, emissive, roughness, metallic, ambient occlusion, and basic HDRI/environment reflection strength; texture bindings for albedo, normals, roughness, AO, and related options as exposed in the material system.
+- **PBR materials** — Metallic–roughness style workflow with albedo, emissive, roughness, metallic, specular, opacity, opacity mask, refraction stubs, ambient occlusion, and basic HDRI/environment reflection strength; texture bindings for albedo, normals, roughness, AO, and related options as exposed in the material system.
 - **Lighting** — Directional lighting with engine support for **shadow mapping** (including cascade-related data for directional shadows), plus **point** and **spot** lights with bounded counts suitable for real-time use.
 - **Environment** — **Skybox** rendering with support for **HDRI-based** environments (including sky intensity and environment-reflection intensity controls) and **solid-color** environment fallbacks when no HDRI is used.
 

@@ -4,6 +4,8 @@
 
 #include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "../MaterialEditor/MaterialGraphEvaluator.h"
+#include "../MaterialEditor/MaterialNodeDefinitions.h"
+#include "../MaterialEditor/MaterialShaderGenerator.h"
 #include "QtEditorEngine.h"
 #include "QtViewportWindow.h"
 
@@ -76,58 +78,21 @@ using namespace MaterialEditor;
 constexpr const char* DEFAULT_PREVIEW_HDRI_PATH = ".engine/hdris/studio_garden_1k.hdr";
 
 QString NodeTypeLabel(NodeType type) {
-    switch (type) {
-    case NodeType::MaterialOutput: return QObject::tr("MaterialOutput");
-    case NodeType::ConstantFloat: return QObject::tr("ConstantScalar");
-    case NodeType::ConstantVec3: return QObject::tr("Vector3");
-    case NodeType::AlbedoTextureSample: return QObject::tr("AlbedoTextureSample");
-    case NodeType::NormalTextureSample: return QObject::tr("NormalTextureSample");
-    case NodeType::RoughnessTextureSample: return QObject::tr("RoughnessTextureSample");
-    case NodeType::AoTextureSample: return QObject::tr("AOTextureSample");
-    case NodeType::WorldAlignedTexture: return QObject::tr("WorldAlignedTexture");
-    case NodeType::Add: return QObject::tr("Add");
-    case NodeType::Multiply: return QObject::tr("Multiply");
-    case NodeType::Lerp: return QObject::tr("Lerp");
-    case NodeType::ColorParameter: return QObject::tr("ColorParameter");
-    case NodeType::FloatParameter: return QObject::tr("FloatParameter");
-    case NodeType::Unknown: return QObject::tr("Unknown Node");
-    }
-    return QObject::tr("Node");
+    return QString::fromUtf8(GetNodeDefinition(type).typeName.data(), static_cast<int>(GetNodeDefinition(type).typeName.size()));
 }
 
 QString NodeCategory(NodeType type) {
-    switch (type) {
-    case NodeType::ColorParameter:
-    case NodeType::FloatParameter:
-        return QStringLiteral("Parameters");
-    case NodeType::ConstantFloat:
-    case NodeType::ConstantVec3:
-        return QStringLiteral("Inputs");
-    case NodeType::AlbedoTextureSample:
-    case NodeType::NormalTextureSample:
-    case NodeType::RoughnessTextureSample:
-    case NodeType::AoTextureSample:
-    case NodeType::WorldAlignedTexture:
-        return QStringLiteral("Textures");
-    case NodeType::Add:
-    case NodeType::Multiply:
-    case NodeType::Lerp:
-        return QStringLiteral("Math");
-    case NodeType::MaterialOutput:
-        return QStringLiteral("PBR");
-    case NodeType::Unknown:
-        return QStringLiteral("Utility");
-    }
-    return QStringLiteral("Utility");
+    const auto category = GetNodeDefinition(type).category;
+    return QString::fromUtf8(category.data(), static_cast<int>(category.size()));
 }
 
 QColor PinColor(ValueType type) {
     switch (type) {
     case ValueType::Float1: return QColor(240, 220, 100);
-    case ValueType::Float3: return QColor(90, 170, 255);
+    case ValueType::Float3: return QColor(140, 220, 140);
     case ValueType::Sampler2D: return QColor(190, 120, 255);
     case ValueType::Float2: return QColor(140, 220, 140);
-    case ValueType::Float4: return QColor(255, 140, 140);
+    case ValueType::Float4: return QColor(140, 220, 140);
     }
     return QColor(180, 180, 180);
 }
@@ -143,17 +108,15 @@ QColor NodeTitleColor(NodeType type) {
 }
 
 bool IsTextureNode(NodeType type) {
-    return type == NodeType::AlbedoTextureSample || type == NodeType::NormalTextureSample ||
-           type == NodeType::RoughnessTextureSample || type == NodeType::AoTextureSample ||
-           type == NodeType::WorldAlignedTexture;
+    return GetNodeDefinition(type).textureNode;
 }
 
 bool IsScalarNode(NodeType type) {
-    return type == NodeType::ConstantFloat || type == NodeType::FloatParameter;
+    return type == NodeType::ConstantFloat || type == NodeType::FloatParameter || type == NodeType::BoolParameter;
 }
 
 bool IsColorNode(NodeType type) {
-    return type == NodeType::ConstantVec3 || type == NodeType::ColorParameter;
+    return type == NodeType::ConstantVec3 || type == NodeType::ColorParameter || type == NodeType::Vector2Parameter;
 }
 
 struct NodeMenuEntry {
@@ -162,14 +125,7 @@ struct NodeMenuEntry {
 };
 
 QString ValueTypeLabel(ValueType type) {
-    switch (type) {
-    case ValueType::Float1: return QObject::tr("Float");
-    case ValueType::Float2: return QObject::tr("Float2");
-    case ValueType::Float3: return QObject::tr("Float3 / Color");
-    case ValueType::Float4: return QObject::tr("Float4");
-    case ValueType::Sampler2D: return QObject::tr("Texture");
-    }
-    return QObject::tr("Value");
+    return QString::fromUtf8(ValueTypeName(type).data(), static_cast<int>(ValueTypeName(type).size()));
 }
 
 bool FuzzyMatch(const QString& needle, const QString& haystack) {
@@ -196,14 +152,61 @@ const std::vector<NodeMenuEntry>& NodeMenuEntries() {
         {QObject::tr("ConstantColor"), NodeType::ConstantVec3},
         {QObject::tr("FloatParameter"), NodeType::FloatParameter},
         {QObject::tr("ColorParameter"), NodeType::ColorParameter},
+        {QObject::tr("TextureParameter"), NodeType::TextureParameter},
+        {QObject::tr("BoolParameter"), NodeType::BoolParameter},
+        {QObject::tr("Vector2Parameter"), NodeType::Vector2Parameter},
+        {QObject::tr("StaticSwitchParameter"), NodeType::StaticSwitchParameter},
         {QObject::tr("AlbedoTextureSample"), NodeType::AlbedoTextureSample},
         {QObject::tr("NormalTextureSample"), NodeType::NormalTextureSample},
         {QObject::tr("RoughnessTextureSample"), NodeType::RoughnessTextureSample},
         {QObject::tr("AOTextureSample"), NodeType::AoTextureSample},
         {QObject::tr("WorldAlignedTexture"), NodeType::WorldAlignedTexture},
+        {QObject::tr("TextureSample"), NodeType::TextureSample},
+        {QObject::tr("TextureObject"), NodeType::TextureObject},
+        {QObject::tr("TextureSampleFromObject"), NodeType::TextureSampleFromObject},
+        {QObject::tr("TextureTilingOffset"), NodeType::TextureTilingOffset},
+        {QObject::tr("TriplanarTexture"), NodeType::TriplanarTexture},
+        {QObject::tr("NormalUnpack"), NodeType::NormalUnpack},
         {QObject::tr("Add"), NodeType::Add},
+        {QObject::tr("Subtract"), NodeType::Subtract},
         {QObject::tr("Multiply"), NodeType::Multiply},
-        {QObject::tr("Lerp"), NodeType::Lerp}
+        {QObject::tr("Divide"), NodeType::Divide},
+        {QObject::tr("Clamp"), NodeType::Clamp},
+        {QObject::tr("Saturate"), NodeType::Saturate},
+        {QObject::tr("Power"), NodeType::Power},
+        {QObject::tr("Abs"), NodeType::Abs},
+        {QObject::tr("Min"), NodeType::Min},
+        {QObject::tr("Max"), NodeType::Max},
+        {QObject::tr("OneMinus"), NodeType::OneMinus},
+        {QObject::tr("DotProduct"), NodeType::DotProduct},
+        {QObject::tr("CrossProduct"), NodeType::CrossProduct},
+        {QObject::tr("Normalize"), NodeType::Normalize},
+        {QObject::tr("Length"), NodeType::Length},
+        {QObject::tr("ComponentMask"), NodeType::ComponentMask},
+        {QObject::tr("AppendVector"), NodeType::AppendVector},
+        {QObject::tr("BreakVector"), NodeType::BreakVector},
+        {QObject::tr("Transform"), NodeType::Transform},
+        {QObject::tr("TexCoord"), NodeType::TexCoord},
+        {QObject::tr("ScreenPosition"), NodeType::ScreenPosition},
+        {QObject::tr("Noise"), NodeType::Noise},
+        {QObject::tr("Gradient"), NodeType::Gradient},
+        {QObject::tr("Fresnel"), NodeType::Fresnel},
+        {QObject::tr("UVDistortion"), NodeType::UVDistortion},
+        {QObject::tr("Time"), NodeType::Time},
+        {QObject::tr("CameraVector"), NodeType::CameraVector},
+        {QObject::tr("ViewDirection"), NodeType::ViewDirection},
+        {QObject::tr("ReflectionVector"), NodeType::ReflectionVector},
+        {QObject::tr("WorldPosition"), NodeType::WorldPosition},
+        {QObject::tr("ObjectPosition"), NodeType::ObjectPosition},
+        {QObject::tr("DistanceToCamera"), NodeType::DistanceToCamera},
+        {QObject::tr("If"), NodeType::If},
+        {QObject::tr("Step"), NodeType::Step},
+        {QObject::tr("SmoothStep"), NodeType::SmoothStep},
+        {QObject::tr("Compare"), NodeType::Compare},
+        {QObject::tr("Lerp"), NodeType::Lerp},
+        {QObject::tr("Overlay"), NodeType::Overlay},
+        {QObject::tr("Screen"), NodeType::Screen},
+        {QObject::tr("HeightBlend"), NodeType::HeightBlend}
     };
     return entries;
 }
@@ -257,7 +260,7 @@ GraphValidationResult ValidateGraph(const Graph& graph) {
             result.issues.push_back({QObject::tr("Link id=%1 has invalid direction (Output -> Input required).").arg(link.id), start->node});
             continue;
         }
-        if (start->valueType != end->valueType) {
+        if (!ArePinTypesCompatible(start->valueType, end->valueType)) {
             result.ok = false;
             result.issues.push_back({QObject::tr("Type mismatch on link id=%1.").arg(link.id), start->node});
             continue;
@@ -566,7 +569,8 @@ public:
         setFlag(QGraphicsItem::ItemIsMovable, true);
         setFlag(QGraphicsItem::ItemIsSelectable, true);
         setFlag(QGraphicsItem::ItemSendsGeometryChanges, true);
-        setToolTip(QObject::tr("%1 node").arg(NodeCategory(node.type)));
+        const auto tooltip = GetNodeDefinition(node.type).tooltip;
+        setToolTip(QString::fromUtf8(tooltip.data(), static_cast<int>(tooltip.size())));
         setZValue(3.0);
         if (m_type == NodeType::MaterialOutput) {
             m_width = 270.0;
@@ -1056,10 +1060,19 @@ public:
     bool restoreNodeFromSnapshot(const Node& node) {
         Node& restored = m_graph->CreateNodeWithID(node.id, node.type, node.displayName);
         restored.serializedType = node.serializedType;
+        restored.parameterName = node.parameterName;
+        restored.operation = node.operation;
+        restored.sourceSpace = node.sourceSpace;
+        restored.targetSpace = node.targetSpace;
         restored.scalar = node.scalar;
         restored.color = node.color;
         restored.resourcePath = node.resourcePath;
         restored.worldAlignedScale = node.worldAlignedScale;
+        restored.boolValue = node.boolValue;
+        restored.maskR = node.maskR;
+        restored.maskG = node.maskG;
+        restored.maskB = node.maskB;
+        restored.maskA = node.maskA;
         restored.posX = node.posX;
         restored.posY = node.posY;
         restored.unknownFields = node.unknownFields;
@@ -1252,6 +1265,9 @@ protected:
             QMenu* mathMenu = add->addMenu(QObject::tr("Math"));
             QMenu* parametersMenu = add->addMenu(QObject::tr("Parameters"));
             QMenu* utilitiesMenu = add->addMenu(QObject::tr("Utility"));
+            QMenu* proceduralMenu = add->addMenu(QObject::tr("Procedural"));
+            QMenu* logicMenu = add->addMenu(QObject::tr("Logic"));
+            QMenu* blendMenu = add->addMenu(QObject::tr("Blend"));
 
             auto categoryMenu = [&](NodeType type) -> QMenu* {
                 const QString cat = NodeCategory(type);
@@ -1260,6 +1276,9 @@ protected:
                 if (cat == "Textures") return texturesMenu;
                 if (cat == "Math") return mathMenu;
                 if (cat == "Parameters") return parametersMenu;
+                if (cat == "Procedural") return proceduralMenu;
+                if (cat == "Logic") return logicMenu;
+                if (cat == "Blend") return blendMenu;
                 return utilitiesMenu;
             };
 
@@ -1343,7 +1362,7 @@ private:
     bool canConnectPins(PinItem* output, PinItem* input) const {
         if (!output || !input) return false;
         if (output->kind() != PinKind::Output || input->kind() != PinKind::Input) return false;
-        return output->valueType() == input->valueType();
+        return ArePinTypesCompatible(output->valueType(), input->valueType());
     }
 
     void beginLiveWire(PinItem* pin, const QPointF& startPos) {
@@ -1469,6 +1488,15 @@ void AddNodeCommand::redo() {
             node.color = m_source->color;
             node.resourcePath = m_source->resourcePath;
             node.worldAlignedScale = m_source->worldAlignedScale;
+            node.parameterName = m_source->parameterName;
+            node.operation = m_source->operation;
+            node.sourceSpace = m_source->sourceSpace;
+            node.targetSpace = m_source->targetSpace;
+            node.boolValue = m_source->boolValue;
+            node.maskR = m_source->maskR;
+            node.maskG = m_source->maskG;
+            node.maskB = m_source->maskB;
+            node.maskA = m_source->maskA;
             node.serializedType = m_source->serializedType;
         }
         node.posX = static_cast<float>(m_pos.x());
@@ -1975,23 +2003,28 @@ private:
 
         for (NodeType recent : m_recentNodeTypes) {
             const QString label = NodeTypeLabel(recent);
-            if (!FuzzyMatch(filter, label)) {
+            const QString searchable = QObject::tr("%1 %2 %3")
+                .arg(label, NodeCategory(recent), QString::fromUtf8(GetNodeDefinition(recent).tooltip.data(), static_cast<int>(GetNodeDefinition(recent).tooltip.size())));
+            if (!FuzzyMatch(filter, searchable)) {
                 continue;
             }
             auto* child = new QTreeWidgetItem(getCategoryItem(QObject::tr("Recently Used")));
             child->setText(0, label);
             child->setData(0, Qt::UserRole, static_cast<int>(recent));
-            child->setToolTip(0, QObject::tr("Double-click to add %1").arg(label));
+            child->setToolTip(0, QString::fromUtf8(GetNodeDefinition(recent).tooltip.data(), static_cast<int>(GetNodeDefinition(recent).tooltip.size())));
         }
 
         for (const NodeMenuEntry& entry : NodeMenuEntries()) {
-            if (!FuzzyMatch(filter, entry.label)) {
+            const auto tooltip = GetNodeDefinition(entry.type).tooltip;
+            const QString searchable = QObject::tr("%1 %2 %3")
+                .arg(entry.label, NodeCategory(entry.type), QString::fromUtf8(tooltip.data(), static_cast<int>(tooltip.size())));
+            if (!FuzzyMatch(filter, searchable)) {
                 continue;
             }
             auto* child = new QTreeWidgetItem(getCategoryItem(NodeCategory(entry.type)));
             child->setText(0, entry.label);
             child->setData(0, Qt::UserRole, static_cast<int>(entry.type));
-            child->setToolTip(0, QObject::tr("Double-click to add %1").arg(entry.label));
+            child->setToolTip(0, QString::fromUtf8(tooltip.data(), static_cast<int>(tooltip.size())));
         }
         m_nodePalette->expandAll();
     }
@@ -2024,11 +2057,15 @@ private:
             results->clear();
             const QString filter = search->text().trimmed();
             auto addEntry = [&](const QString& prefix, NodeType type, const QString& label) {
-                if (!FuzzyMatch(filter, label) && !FuzzyMatch(filter, prefix + label)) {
+                const auto tooltip = GetNodeDefinition(type).tooltip;
+                const QString searchable = QObject::tr("%1 %2 %3")
+                    .arg(label, prefix, QString::fromUtf8(tooltip.data(), static_cast<int>(tooltip.size())));
+                if (!FuzzyMatch(filter, searchable)) {
                     return;
                 }
                 auto* item = new QListWidgetItem(prefix.isEmpty() ? label : QObject::tr("%1  -  %2").arg(prefix, label), results);
                 item->setData(Qt::UserRole, static_cast<int>(type));
+                item->setToolTip(QString::fromUtf8(tooltip.data(), static_cast<int>(tooltip.size())));
             };
             for (NodeType recent : m_recentNodeTypes) {
                 addEntry(QObject::tr("Recent"), recent, NodeTypeLabel(recent));
@@ -2426,18 +2463,30 @@ private:
         auto* ao = makeSpin(0.0, 1.0, 0.01, m_material.ao);
         auto* reflectionStrength = makeSpin(0.0, 10.0, 0.01, m_material.reflectionStrength);
         auto* emissiveStrength = makeSpin(0.0, 100.0, 0.01, m_material.emissiveStrength);
+        auto* specular = makeSpin(0.0, 1.0, 0.01, m_material.specular);
+        auto* opacity = makeSpin(0.0, 1.0, 0.01, m_material.opacity);
+        auto* opacityMask = makeSpin(0.0, 1.0, 0.01, m_material.opacityMask);
+        auto* refraction = makeSpin(0.0, 2.0, 0.01, m_material.refraction);
 
         m_inspectorForm->addRow(QObject::tr("Metallic"), metallic);
         m_inspectorForm->addRow(QObject::tr("Roughness"), roughness);
         m_inspectorForm->addRow(QObject::tr("AO"), ao);
         m_inspectorForm->addRow(QObject::tr("Reflection Strength"), reflectionStrength);
         m_inspectorForm->addRow(QObject::tr("Emissive Strength"), emissiveStrength);
+        m_inspectorForm->addRow(QObject::tr("Specular"), specular);
+        m_inspectorForm->addRow(QObject::tr("Opacity"), opacity);
+        m_inspectorForm->addRow(QObject::tr("Opacity Mask"), opacityMask);
+        m_inspectorForm->addRow(QObject::tr("Refraction"), refraction);
 
         addUndoSpin(metallic, QObject::tr("Edit Metallic"), [this]() { return m_material.metallic; }, [this](double v) { m_material.metallic = static_cast<float>(v); });
         addUndoSpin(roughness, QObject::tr("Edit Roughness"), [this]() { return m_material.roughness; }, [this](double v) { m_material.roughness = static_cast<float>(v); });
         addUndoSpin(ao, QObject::tr("Edit AO"), [this]() { return m_material.ao; }, [this](double v) { m_material.ao = static_cast<float>(v); });
         addUndoSpin(reflectionStrength, QObject::tr("Edit Reflection Strength"), [this]() { return m_material.reflectionStrength; }, [this](double v) { m_material.reflectionStrength = static_cast<float>(v); });
         addUndoSpin(emissiveStrength, QObject::tr("Edit Emissive Strength"), [this]() { return m_material.emissiveStrength; }, [this](double v) { m_material.emissiveStrength = static_cast<float>(v); });
+        addUndoSpin(specular, QObject::tr("Edit Specular"), [this]() { return m_material.specular; }, [this](double v) { m_material.specular = static_cast<float>(v); });
+        addUndoSpin(opacity, QObject::tr("Edit Opacity"), [this]() { return m_material.opacity; }, [this](double v) { m_material.opacity = static_cast<float>(v); });
+        addUndoSpin(opacityMask, QObject::tr("Edit Opacity Mask"), [this]() { return m_material.opacityMask; }, [this](double v) { m_material.opacityMask = static_cast<float>(v); });
+        addUndoSpin(refraction, QObject::tr("Edit Refraction"), [this]() { return m_material.refraction; }, [this](double v) { m_material.refraction = static_cast<float>(v); });
     }
 
     void addNodeInspector(Node& node) {
@@ -2466,6 +2515,86 @@ private:
                 },
                 QObject::tr("Rename Node")));
         });
+
+        if (GetNodeDefinition(node.type).parameterNode) {
+            auto* parameter = new QLineEdit(QString::fromStdString(node.parameterName), m_inspectorContent);
+            parameter->setPlaceholderText(QObject::tr("Material parameter name"));
+            parameter->setProperty("lastCommitted", parameter->text());
+            m_inspectorForm->addRow(QObject::tr("Parameter"), parameter);
+            connect(parameter, &QLineEdit::textChanged, this, [this, nodeId = node.id](const QString& value) {
+                if (Node* n = m_graph.FindNode(nodeId)) {
+                    n->parameterName = value.toStdString();
+                    markDirty();
+                }
+            });
+            connect(parameter, &QLineEdit::editingFinished, this, [this, parameter, nodeId = node.id]() {
+                Node* n = m_graph.FindNode(nodeId);
+                if (!n) return;
+                const std::string oldValue = parameter->property("lastCommitted").toString().toStdString();
+                const std::string newValue = parameter->text().toStdString();
+                if (oldValue == newValue) return;
+                m_undo->push(new EditNodePropertyCommand(
+                    [this, nodeId, oldValue]() { if (Node* node = m_graph.FindNode(nodeId)) node->parameterName = oldValue; },
+                    [this, nodeId, newValue]() { if (Node* node = m_graph.FindNode(nodeId)) node->parameterName = newValue; },
+                    QObject::tr("Edit Parameter Name")));
+                parameter->setProperty("lastCommitted", parameter->text());
+            });
+        }
+
+        if (node.type == NodeType::Compare || node.type == NodeType::Gradient) {
+            auto* operation = new QComboBox(m_inspectorContent);
+            const QStringList values = node.type == NodeType::Compare
+                ? QStringList{QStringLiteral(">"), QStringLiteral("<"), QStringLiteral("==")}
+                : QStringList{QObject::tr("Linear"), QObject::tr("Radial")};
+            operation->addItems(values);
+            const int current = operation->findText(QString::fromStdString(node.operation));
+            operation->setCurrentIndex(current >= 0 ? current : 0);
+            m_inspectorForm->addRow(node.type == NodeType::Compare ? QObject::tr("Compare") : QObject::tr("Mode"), operation);
+            connect(operation, &QComboBox::currentTextChanged, this, [this, nodeId = node.id](const QString& value) {
+                if (Node* n = m_graph.FindNode(nodeId)) {
+                    n->operation = value.toStdString();
+                    markDirty();
+                    schedulePreviewUpdate();
+                }
+            });
+        }
+
+        if (node.type == NodeType::ComponentMask) {
+            auto* row = new QWidget(m_inspectorContent);
+            auto* layout = new QHBoxLayout(row);
+            layout->setContentsMargins(0, 0, 0, 0);
+            auto addMask = [&](const QString& label, bool checked, auto setter) {
+                auto* check = new QCheckBox(label, row);
+                check->setChecked(checked);
+                layout->addWidget(check);
+                connect(check, &QCheckBox::toggled, this, [this, nodeId = node.id, setter](bool value) {
+                    if (Node* n = m_graph.FindNode(nodeId)) {
+                        setter(*n, value);
+                        markDirty();
+                        schedulePreviewUpdate();
+                    }
+                });
+            };
+            addMask(QObject::tr("R"), node.maskR, [](Node& n, bool v) { n.maskR = v; });
+            addMask(QObject::tr("G"), node.maskG, [](Node& n, bool v) { n.maskG = v; });
+            addMask(QObject::tr("B"), node.maskB, [](Node& n, bool v) { n.maskB = v; });
+            addMask(QObject::tr("A"), node.maskA, [](Node& n, bool v) { n.maskA = v; });
+            m_inspectorForm->addRow(QObject::tr("Mask"), row);
+        }
+
+        if (node.type == NodeType::BoolParameter || node.type == NodeType::StaticSwitchParameter) {
+            auto* value = new QCheckBox(QObject::tr("Enabled"), m_inspectorContent);
+            value->setChecked(node.boolValue);
+            m_inspectorForm->addRow(QObject::tr("Bool Value"), value);
+            connect(value, &QCheckBox::toggled, this, [this, nodeId = node.id](bool checked) {
+                if (Node* n = m_graph.FindNode(nodeId)) {
+                    n->boolValue = checked;
+                    n->scalar = checked ? 1.0f : 0.0f;
+                    markDirty();
+                    schedulePreviewUpdate();
+                }
+            });
+        }
 
         if (IsScalarNode(node.type)) {
             auto* row = new QWidget(m_inspectorContent);
@@ -2868,6 +2997,11 @@ private:
         }
 
         if (m_graph.HasSourceGraph() && !m_graph.IsLegacyMode()) {
+            MaterialShaderGenerationResult shaderResult = GenerateMaterialShader(m_graph);
+            for (const std::string& diagnostic : shaderResult.diagnostics) {
+                auto* item = new QListWidgetItem(QObject::tr("[Shader] %1").arg(QString::fromStdString(diagnostic)), m_errorList);
+                item->setData(Qt::UserRole, 0);
+            }
             MaterialComponent evaluated = m_material;
             std::string evalError;
             if (!EvaluateGraph(m_graph, evaluated, evalError)) {
