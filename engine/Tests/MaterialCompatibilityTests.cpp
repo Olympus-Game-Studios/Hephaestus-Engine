@@ -197,6 +197,71 @@ bool TestGoldenRoundtrip(const fs::path& root, const fs::path& outDir, const std
     return ok;
 }
 
+bool TestPinIdCollision(const fs::path& root, const fs::path& outDir) {
+    const fs::path input = root / "assets/tests/material_compat/pin_id_collision.hematerial";
+    const fs::path output = outDir / "pin_id_collision.saved.hematerial";
+
+    MaterialComponent material;
+    Graph graph;
+    std::string displayName;
+    std::string error;
+    if (!LoadMaterialAssetCompat(input, material, displayName, graph, error)) {
+        std::cerr << error << "\n";
+        return false;
+    }
+
+    bool ok = true;
+    ok &= Check(!graph.IsLegacyMode(), "pin_id_collision should not be in legacy mode");
+    ok &= Check(graph.IsGraphEditingEnabled(), "pin_id_collision should have graph editing enabled");
+    ok &= Check(graph.GetNodes().size() == 4, "pin_id_collision should have 4 nodes");
+    ok &= Check(graph.GetLinks().size() == 3, "pin_id_collision should have 3 links");
+
+    int orphanCount = 0;
+    for (const Link& link : graph.GetLinks()) {
+        if (link.orphan) {
+            ++orphanCount;
+        }
+    }
+    ok &= Check(orphanCount == 0, "pin_id_collision should have no orphan links (regression test for SetPinIDsForNode bug)");
+
+    for (const Node& node : graph.GetNodes()) {
+        if (node.type == NodeType::ConstantVec3 || node.type == NodeType::ConstantFloat) {
+            ok &= Check(!node.outputs.empty(), "constant node should have output pin");
+            if (!node.outputs.empty()) {
+                const Pin* pin = graph.FindPin(node.outputs[0]);
+                ok &= Check(pin != nullptr, "output pin should exist");
+                if (pin) {
+                    ok &= Check(pin->name == "Value", "constant node output pin should be named 'Value', not '" + pin->name + "'");
+                }
+            }
+        }
+    }
+
+    if (!SaveMaterialAssetCompat(output, material, displayName, graph, {}, error)) {
+        std::cerr << error << "\n";
+        return false;
+    }
+
+    MaterialComponent material2;
+    Graph graph2;
+    std::string displayName2;
+    if (!LoadMaterialAssetCompat(output, material2, displayName2, graph2, error)) {
+        std::cerr << error << "\n";
+        return false;
+    }
+
+    ok &= Check(graph2.GetLinks().size() == 3, "roundtrip should preserve 3 links");
+    orphanCount = 0;
+    for (const Link& link : graph2.GetLinks()) {
+        if (link.orphan) {
+            ++orphanCount;
+        }
+    }
+    ok &= Check(orphanCount == 0, "roundtrip should have no orphan links");
+
+    return ok;
+}
+
 bool TestExpandedNodesAndShaderGeneration() {
     Graph graph;
     NodeID outputId = graph.CreateNode(NodeType::MaterialOutput).id;
@@ -252,6 +317,7 @@ int main(int argc, char** argv) {
     ok &= TestUnknownGraphRoundtrip(root, outDir);
     ok &= TestSwappedDirectionRepairControl(root, outDir);
     ok &= TestGoldenRoundtrip(root, outDir, "unknown_graph_payload.hematerial");
+    ok &= TestPinIdCollision(root, outDir);
     ok &= TestExpandedNodesAndShaderGeneration();
 
     if (!ok) {

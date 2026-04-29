@@ -1,6 +1,8 @@
 #include "MaterialGraph.h"
 #include "MaterialNodeDefinitions.h"
 
+#include <unordered_map>
+
 namespace MaterialEditor {
 namespace {
 
@@ -275,41 +277,49 @@ void Graph::SetPinIDsForNode(NodeID nodeId, const std::vector<PinID>& inputPinId
         }
         return;
     }
-    
-    // Update input pin IDs
+
+    // Build a mapping from old (auto-allocated) IDs to new (serialized) IDs.
+    // We must collect all mappings first before modifying any IDs to avoid
+    // mid-loop collisions where FindPin returns the wrong pin.
+    std::unordered_map<PinID, PinID> idRemapping;
+
     for (size_t i = 0; i < inputPinIds.size() && i < node->inputs.size(); ++i) {
-        PinID oldId = node->inputs[i];
-        PinID newId = inputPinIds[i];
-        if (Pin* pin = FindPin(oldId)) {
-            pin->id = newId;
-        }
-        node->inputs[i] = newId;
+        idRemapping[node->inputs[i]] = inputPinIds[i];
     }
     for (size_t i = inputPinIds.size(); i < node->inputs.size(); ++i) {
-        PinID oldId = node->inputs[i];
-        PinID newId = m_NextPinID++;
-        if (Pin* pin = FindPin(oldId)) {
-            pin->id = newId;
-        }
-        node->inputs[i] = newId;
+        idRemapping[node->inputs[i]] = m_NextPinID++;
     }
-    
-    // Update output pin IDs
     for (size_t i = 0; i < outputPinIds.size() && i < node->outputs.size(); ++i) {
-        PinID oldId = node->outputs[i];
-        PinID newId = outputPinIds[i];
-        if (Pin* pin = FindPin(oldId)) {
-            pin->id = newId;
-        }
-        node->outputs[i] = newId;
+        idRemapping[node->outputs[i]] = outputPinIds[i];
     }
     for (size_t i = outputPinIds.size(); i < node->outputs.size(); ++i) {
-        PinID oldId = node->outputs[i];
-        PinID newId = m_NextPinID++;
-        if (Pin* pin = FindPin(oldId)) {
-            pin->id = newId;
+        idRemapping[node->outputs[i]] = m_NextPinID++;
+    }
+
+    // Apply remapping to pins belonging to this node only.
+    // Using pin.node check avoids incorrectly modifying pins from other nodes
+    // that may have already been remapped to IDs matching our old IDs.
+    for (Pin& pin : m_Pins) {
+        if (pin.node == nodeId) {
+            auto it = idRemapping.find(pin.id);
+            if (it != idRemapping.end()) {
+                pin.id = it->second;
+            }
         }
-        node->outputs[i] = newId;
+    }
+
+    // Update node's input/output ID vectors
+    for (size_t i = 0; i < node->inputs.size(); ++i) {
+        auto it = idRemapping.find(node->inputs[i]);
+        if (it != idRemapping.end()) {
+            node->inputs[i] = it->second;
+        }
+    }
+    for (size_t i = 0; i < node->outputs.size(); ++i) {
+        auto it = idRemapping.find(node->outputs[i]);
+        if (it != idRemapping.end()) {
+            node->outputs[i] = it->second;
+        }
     }
 }
 
