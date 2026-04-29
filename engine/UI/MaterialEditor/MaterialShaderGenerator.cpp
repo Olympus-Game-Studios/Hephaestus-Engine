@@ -171,6 +171,7 @@ Expression GenerateOutput(GeneratorContext& ctx, PinID outputPin) {
     case NodeType::AlbedoTextureSample:
     case NodeType::NormalTextureSample:
     case NodeType::RoughnessTextureSample:
+    case NodeType::MetallicTextureSample:
     case NodeType::AoTextureSample:
     case NodeType::TextureSample:
     case NodeType::TriplanarTexture:

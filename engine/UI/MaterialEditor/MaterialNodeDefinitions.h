@@ -34,6 +34,8 @@ std::string_view ValueTypeName(ValueType type);
 int ValueTypeComponentCount(ValueType type);
 bool IsNumericValueType(ValueType type);
 bool IsScalarToVectorCompatible(ValueType from, ValueType to);
+bool IsVectorToScalarCompatible(ValueType from, ValueType to);
+bool IsVectorToVectorCompatible(ValueType from, ValueType to);
 bool ArePinTypesCompatible(ValueType from, ValueType to);
 
 } // namespace MaterialEditor

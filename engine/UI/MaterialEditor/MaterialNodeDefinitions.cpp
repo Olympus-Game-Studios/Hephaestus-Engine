@@ -32,6 +32,7 @@ const std::vector<NodeDefinition>& Definitions() {
         {NodeType::AlbedoTextureSample, "AlbedoTextureSample", "Albedo Texture", "Textures", "Legacy albedo texture sample.", NoPins(), {{"Color", ValueType::Float3}}, true},
         {NodeType::NormalTextureSample, "NormalTextureSample", "Normal Texture", "Textures", "Legacy normal texture sample.", NoPins(), {{"Color", ValueType::Float3}}, true},
         {NodeType::RoughnessTextureSample, "RoughnessTextureSample", "Roughness Texture", "Textures", "Legacy roughness texture sample.", NoPins(), {{"Value", ValueType::Float1}}, true},
+        {NodeType::MetallicTextureSample, "MetallicTextureSample", "Metallic Texture", "Textures", "Metallic texture sample.", NoPins(), {{"Value", ValueType::Float1}}, true},
         {NodeType::AoTextureSample, "AoTextureSample", "AO Texture", "Textures", "Legacy ambient occlusion texture sample.", NoPins(), {{"Value", ValueType::Float1}}, true},
         {NodeType::WorldAlignedTexture, "WorldAlignedTexture", "World Aligned Texture", "Textures", "Legacy world-aligned texture sample.", NoPins(), {{"Color", ValueType::Float3}, {"Value", ValueType::Float1}}, true},
         {NodeType::TextureSample, "TextureSample", "Texture Sample", "Textures", "Samples the node's assigned texture using optional UV input.", {{"UV", ValueType::Float2}}, {{"RGBA", ValueType::Float4}, {"RGB", ValueType::Float3}, {"R", ValueType::Float1}}, true},
@@ -163,11 +164,37 @@ bool IsScalarToVectorCompatible(ValueType from, ValueType to) {
     return from == ValueType::Float1 && IsNumericValueType(to);
 }
 
+bool IsVectorToScalarCompatible(ValueType from, ValueType to) {
+    // Allow connecting higher-dimension vectors to scalar inputs (extracts first component)
+    // e.g., Float3 -> Float1 takes the R/X channel, Float4 -> Float1 takes R/X
+    return to == ValueType::Float1 && IsNumericValueType(from);
+}
+
+bool IsVectorToVectorCompatible(ValueType from, ValueType to) {
+    // Allow connecting higher-dimension vectors to lower-dimension vectors
+    // e.g., Float4 -> Float3 takes RGB, Float4 -> Float2 takes RG
+    if (!IsNumericValueType(from) || !IsNumericValueType(to)) {
+        return false;
+    }
+    // Get dimensions (Float1=1, Float2=2, Float3=3, Float4=4)
+    int fromDim = (from == ValueType::Float1) ? 1 : (from == ValueType::Float2) ? 2 : (from == ValueType::Float3) ? 3 : 4;
+    int toDim = (to == ValueType::Float1) ? 1 : (to == ValueType::Float2) ? 2 : (to == ValueType::Float3) ? 3 : 4;
+    return fromDim >= toDim;
+}
+
 bool ArePinTypesCompatible(ValueType from, ValueType to) {
     if (from == to) {
         return true;
     }
-    return IsScalarToVectorCompatible(from, to);
+    // Allow scalar to vector (broadcasts scalar to all components)
+    if (IsScalarToVectorCompatible(from, to)) {
+        return true;
+    }
+    // Allow vector to scalar/smaller vector (extracts first component(s))
+    if (IsVectorToVectorCompatible(from, to)) {
+        return true;
+    }
+    return false;
 }
 
 } // namespace MaterialEditor

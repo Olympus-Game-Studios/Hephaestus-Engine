@@ -204,6 +204,10 @@ void ApplyPropertyOverridesMaterial(MaterialComponent& material, const PrefabCom
             material.roughnessTexturePath = *value.AsString();
         } else if (key == "useRoughnessTexture" && value.IsBool()) {
             material.useRoughnessTexture = *value.AsBool();
+        } else if (key == "metallicTexturePath" && value.IsString()) {
+            material.metallicTexturePath = *value.AsString();
+        } else if (key == "useMetallicTexture" && value.IsBool()) {
+            material.useMetallicTexture = *value.AsBool();
         } else if (key == "aoTexturePath" && value.IsString()) {
             material.aoTexturePath = *value.AsString();
         } else if (key == "useAoTexture" && value.IsBool()) {
@@ -527,6 +531,14 @@ Entity PrefabInstantiator::Instantiate(Scene& scene, const PrefabAsset& asset, c
                 }
                 if (const JsonValue* useRoughnessValue = componentData.Find("useRoughnessTexture")) {
                     material.useRoughnessTexture = ParseBoolLike(*useRoughnessValue, material.useRoughnessTexture);
+                }
+                if (const JsonValue* metallicTextureValue = componentData.Find("metallicTexturePath")) {
+                    if (metallicTextureValue->IsString()) {
+                        material.metallicTexturePath = metallicTextureValue->AsString();
+                    }
+                }
+                if (const JsonValue* useMetallicValue = componentData.Find("useMetallicTexture")) {
+                    material.useMetallicTexture = ParseBoolLike(*useMetallicValue, material.useMetallicTexture);
                 }
                 if (const JsonValue* aoTextureValue = componentData.Find("aoTexturePath")) {
                     if (aoTextureValue->IsString()) {

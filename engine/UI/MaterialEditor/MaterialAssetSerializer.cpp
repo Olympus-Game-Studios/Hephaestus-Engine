@@ -113,6 +113,8 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
     if (root.contains("normalTexturePath") && root["normalTexturePath"].is_string()) outMaterial.normalTexturePath = root["normalTexturePath"].get<std::string>();
     if (root.contains("useRoughnessTexture") && root["useRoughnessTexture"].is_boolean()) outMaterial.useRoughnessTexture = root["useRoughnessTexture"].get<bool>();
     if (root.contains("roughnessTexturePath") && root["roughnessTexturePath"].is_string()) outMaterial.roughnessTexturePath = root["roughnessTexturePath"].get<std::string>();
+    if (root.contains("useMetallicTexture") && root["useMetallicTexture"].is_boolean()) outMaterial.useMetallicTexture = root["useMetallicTexture"].get<bool>();
+    if (root.contains("metallicTexturePath") && root["metallicTexturePath"].is_string()) outMaterial.metallicTexturePath = root["metallicTexturePath"].get<std::string>();
     if (root.contains("useAoTexture") && root["useAoTexture"].is_boolean()) outMaterial.useAoTexture = root["useAoTexture"].get<bool>();
     if (root.contains("aoTexturePath") && root["aoTexturePath"].is_string()) outMaterial.aoTexturePath = root["aoTexturePath"].get<std::string>();
     if (root.contains("useWorldAlignedTexture") && root["useWorldAlignedTexture"].is_boolean()) outMaterial.useWorldAlignedTexture = root["useWorldAlignedTexture"].get<bool>();
@@ -323,6 +325,8 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
     root["normalTexturePath"] = material.normalTexturePath;
     root["useRoughnessTexture"] = material.useRoughnessTexture;
     root["roughnessTexturePath"] = material.roughnessTexturePath;
+    root["useMetallicTexture"] = material.useMetallicTexture;
+    root["metallicTexturePath"] = material.metallicTexturePath;
     root["useAoTexture"] = material.useAoTexture;
     root["aoTexturePath"] = material.aoTexturePath;
     root["useWorldAlignedTexture"] = material.useWorldAlignedTexture;
@@ -461,7 +465,19 @@ void BuildMinimalGraphFromLegacyPbr(const MaterialComponent& material, Graph& gr
             connectColor(material.albedo, output.inputs[0]);
         }
     }
-    if (output.inputs.size() > 1) connectScalar(material.metallic, output.inputs[1]);
+    if (output.inputs.size() > 1) {
+        if (material.useMetallicTexture && !material.metallicTexturePath.empty()) {
+            Node& tex = graph.CreateNode(NodeType::MetallicTextureSample);
+            tex.resourcePath = material.metallicTexturePath;
+            tex.posX = 140.0f;
+            tex.posY = 140.0f;
+            if (!tex.outputs.empty()) {
+                graph.CreateLink(tex.outputs[0], output.inputs[1]);
+            }
+        } else {
+            connectScalar(material.metallic, output.inputs[1]);
+        }
+    }
     if (output.inputs.size() > 2) connectScalar(material.roughness, output.inputs[2]);
     if (output.inputs.size() > 3) connectColor(material.emissive, output.inputs[3]);
 

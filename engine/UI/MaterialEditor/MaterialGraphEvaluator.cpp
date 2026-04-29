@@ -194,6 +194,7 @@ bool EvaluateOutputPin(const Graph& graph,
     case NodeType::AlbedoTextureSample:
     case NodeType::NormalTextureSample:
     case NodeType::RoughnessTextureSample:
+    case NodeType::MetallicTextureSample:
     case NodeType::AoTextureSample:
     case NodeType::TextureSample:
     case NodeType::TextureSampleFromObject:
@@ -203,7 +204,7 @@ bool EvaluateOutputPin(const Graph& graph,
         result.texturePath = node->resourcePath;
         
         // Output type depends on the texture type
-        if (node->type == NodeType::RoughnessTextureSample || node->type == NodeType::AoTextureSample ||
+        if (node->type == NodeType::RoughnessTextureSample || node->type == NodeType::MetallicTextureSample || node->type == NodeType::AoTextureSample ||
             pin->valueType == ValueType::Float1) {
             result.type = ValueType::Float1;
             result.scalar = 1.0f;
@@ -512,7 +513,14 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         if (!outErrorMessage.empty()) {
             return fallback;
         }
-        return connected ? value.scalar : fallback;
+        if (!connected) {
+            return fallback;
+        }
+        // Handle vector-to-scalar conversion by extracting first component
+        if (value.type == ValueType::Float2 || value.type == ValueType::Float3 || value.type == ValueType::Float4) {
+            return value.vec.x;
+        }
+        return value.scalar;
     };
 
     const float emissiveStrength = outMaterial.emissiveStrength;
@@ -545,11 +553,33 @@ bool EvaluateGraph(const Graph& graph, MaterialComponent& outMaterial, std::stri
         if (!outErrorMessage.empty()) {
             return false;
         }
+        // Check if it's a texture instead
+        bool connected = false;
+        Value texValue = EvaluateInputPin(graph, outputNode->inputs[1], cache, active, outErrorMessage, &connected);
+        if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
+            outMaterial.useMetallicTexture = true;
+            outMaterial.metallicTexturePath = texValue.texturePath;
+            if (texValue.isWorldAligned) {
+                anyWorldAligned = true;
+                worldScale = texValue.worldAlignedScale;
+            }
+        }
     }
     if (outputNode->inputs.size() > 2) {
         outMaterial.roughness = resolveScalar(outputNode->inputs[2], outMaterial.roughness);
         if (!outErrorMessage.empty()) {
             return false;
+        }
+        // Check if it's a texture instead (allows texture on scalar Roughness pin)
+        bool connected = false;
+        Value texValue = EvaluateInputPin(graph, outputNode->inputs[2], cache, active, outErrorMessage, &connected);
+        if (connected && (texValue.hasTexture || !texValue.texturePath.empty())) {
+            outMaterial.useRoughnessTexture = true;
+            outMaterial.roughnessTexturePath = texValue.texturePath;
+            if (texValue.isWorldAligned) {
+                anyWorldAligned = true;
+                worldScale = texValue.worldAlignedScale;
+            }
         }
     }
     if (outputNode->inputs.size() > 3) {

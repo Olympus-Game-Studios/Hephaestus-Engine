@@ -129,6 +129,8 @@ struct alignas(16) MaterialUBO {
     uint32_t normalTextureIndex = 0;
     uint32_t useRoughnessTexture = 0;
     uint32_t roughnessTextureIndex = 0;
+    uint32_t useMetallicTexture = 0;
+    uint32_t metallicTextureIndex = 0;
     uint32_t useAoTexture = 0;
     uint32_t aoTextureIndex = 0;
     uint32_t useWorldAlignedTexture = 0;
@@ -945,6 +947,8 @@ static bool LoadMaterialAsset(const std::string& rawPath, MaterialComponent& out
     if (const JsonValue* normalTexturePath = root.Find("normalTexturePath")) if (normalTexturePath->IsString()) material.normalTexturePath = normalTexturePath->AsString();
     if (const JsonValue* useRoughnessTexture = root.Find("useRoughnessTexture")) if (useRoughnessTexture->IsBool()) material.useRoughnessTexture = useRoughnessTexture->AsBool();
     if (const JsonValue* roughnessTexturePath = root.Find("roughnessTexturePath")) if (roughnessTexturePath->IsString()) material.roughnessTexturePath = roughnessTexturePath->AsString();
+    if (const JsonValue* useMetallicTexture = root.Find("useMetallicTexture")) if (useMetallicTexture->IsBool()) material.useMetallicTexture = useMetallicTexture->AsBool();
+    if (const JsonValue* metallicTexturePath = root.Find("metallicTexturePath")) if (metallicTexturePath->IsString()) material.metallicTexturePath = metallicTexturePath->AsString();
     if (const JsonValue* useAoTexture = root.Find("useAoTexture")) if (useAoTexture->IsBool()) material.useAoTexture = useAoTexture->AsBool();
     if (const JsonValue* aoTexturePath = root.Find("aoTexturePath")) if (aoTexturePath->IsString()) material.aoTexturePath = aoTexturePath->AsString();
     if (const JsonValue* useWorldAlignedTexture = root.Find("useWorldAlignedTexture")) if (useWorldAlignedTexture->IsBool()) material.useWorldAlignedTexture = useWorldAlignedTexture->AsBool();
@@ -1943,6 +1947,9 @@ int main(int argc, char* argv[]) {
         if (mat.useRoughnessTexture && !mat.roughnessTexturePath.empty()) {
             loadTexture(mat.roughnessTexturePath, "Roughness");
         }
+        if (mat.useMetallicTexture && !mat.metallicTexturePath.empty()) {
+            loadTexture(mat.metallicTexturePath, "Metallic");
+        }
         if (mat.useAoTexture && !mat.aoTexturePath.empty()) {
             loadTexture(mat.aoTexturePath, "AO");
         }
@@ -1958,6 +1965,9 @@ int main(int argc, char* argv[]) {
         }
         if (mat.useRoughnessTexture && !mat.roughnessTexturePath.empty()) {
             loadTexture(mat.roughnessTexturePath, "Roughness");
+        }
+        if (mat.useMetallicTexture && !mat.metallicTexturePath.empty()) {
+            loadTexture(mat.metallicTexturePath, "Metallic");
         }
         if (mat.useAoTexture && !mat.aoTexturePath.empty()) {
             loadTexture(mat.aoTexturePath, "AO");
@@ -3061,6 +3071,14 @@ int main(int argc, char* argv[]) {
                     if (it != g_TextureLookup.end()) {
                         matUBO.useRoughnessTexture = 1;
                         matUBO.roughnessTextureIndex = it->second;
+                    }
+                }
+                if (mat->useMetallicTexture && !mat->metallicTexturePath.empty()) {
+                    std::string key = NormalizeAssetPath(mat->metallicTexturePath);
+                    auto it = g_TextureLookup.find(key);
+                    if (it != g_TextureLookup.end()) {
+                        matUBO.useMetallicTexture = 1;
+                        matUBO.metallicTextureIndex = it->second;
                     }
                 }
                 if (mat->useAoTexture && !mat->aoTexturePath.empty()) {

@@ -492,6 +492,8 @@ bool PrefabDocument::SyncNodeFromEntity(Entity entity) {
         data.objectValue["useNormalTexture"] = MakeBool(material.useNormalTexture);
         data.objectValue["roughnessTexturePath"] = MakeString(material.roughnessTexturePath);
         data.objectValue["useRoughnessTexture"] = MakeBool(material.useRoughnessTexture);
+        data.objectValue["metallicTexturePath"] = MakeString(material.metallicTexturePath);
+        data.objectValue["useMetallicTexture"] = MakeBool(material.useMetallicTexture);
         data.objectValue["aoTexturePath"] = MakeString(material.aoTexturePath);
         data.objectValue["useAoTexture"] = MakeBool(material.useAoTexture);
         data.objectValue["useWorldAlignedTexture"] = MakeBool(material.useWorldAlignedTexture);

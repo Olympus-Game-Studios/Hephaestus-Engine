@@ -412,6 +412,12 @@ SyncResult SyncLegacyFieldsFromGraph(const Graph& graph, MaterialComponent& ioMa
     if (const Node* n = findDirectNode(1)) {
         if (n->type == NodeType::ConstantFloat || n->type == NodeType::FloatParameter) {
             ioMaterial.metallic = n->scalar;
+            ioMaterial.useMetallicTexture = false;
+            ioMaterial.metallicTexturePath.clear();
+        } else if (n->type == NodeType::MetallicTextureSample || n->type == NodeType::WorldAlignedTexture ||
+                   n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
+            ioMaterial.useMetallicTexture = true;
+            ioMaterial.metallicTexturePath = n->resourcePath;
         } else {
             markComplex();
         }
@@ -422,7 +428,8 @@ SyncResult SyncLegacyFieldsFromGraph(const Graph& graph, MaterialComponent& ioMa
             ioMaterial.roughness = n->scalar;
             ioMaterial.useRoughnessTexture = false;
             ioMaterial.roughnessTexturePath.clear();
-        } else if (n->type == NodeType::RoughnessTextureSample || n->type == NodeType::WorldAlignedTexture) {
+        } else if (n->type == NodeType::RoughnessTextureSample || n->type == NodeType::WorldAlignedTexture ||
+                   n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
             ioMaterial.useRoughnessTexture = true;
             ioMaterial.roughnessTexturePath = n->resourcePath;
         } else {
@@ -439,7 +446,8 @@ SyncResult SyncLegacyFieldsFromGraph(const Graph& graph, MaterialComponent& ioMa
     }
 
     if (const Node* n = findDirectNode(4)) {
-        if (n->type == NodeType::NormalTextureSample || n->type == NodeType::WorldAlignedTexture) {
+        if (n->type == NodeType::NormalTextureSample || n->type == NodeType::WorldAlignedTexture ||
+            n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
             ioMaterial.useNormalTexture = true;
             ioMaterial.normalTexturePath = n->resourcePath;
         } else {
@@ -448,7 +456,8 @@ SyncResult SyncLegacyFieldsFromGraph(const Graph& graph, MaterialComponent& ioMa
     }
 
     if (const Node* n = findDirectNode(5)) {
-        if (n->type == NodeType::RoughnessTextureSample || n->type == NodeType::WorldAlignedTexture) {
+        if (n->type == NodeType::RoughnessTextureSample || n->type == NodeType::WorldAlignedTexture ||
+            n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
             ioMaterial.useRoughnessTexture = true;
             ioMaterial.roughnessTexturePath = n->resourcePath;
         } else if (n->type == NodeType::ConstantFloat || n->type == NodeType::FloatParameter) {
@@ -461,7 +470,8 @@ SyncResult SyncLegacyFieldsFromGraph(const Graph& graph, MaterialComponent& ioMa
     }
 
     if (const Node* n = findDirectNode(6)) {
-        if (n->type == NodeType::AoTextureSample || n->type == NodeType::WorldAlignedTexture) {
+        if (n->type == NodeType::AoTextureSample || n->type == NodeType::WorldAlignedTexture ||
+            n->type == NodeType::TextureSample || n->type == NodeType::TriplanarTexture) {
             ioMaterial.useAoTexture = true;
             ioMaterial.aoTexturePath = n->resourcePath;
         } else if (n->type == NodeType::ConstantFloat || n->type == NodeType::FloatParameter) {

@@ -35,17 +35,19 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     uint normalTextureIndex;  // offset 72
     uint useRoughnessTexture; // offset 76
     uint roughnessTextureIndex; // offset 80
-    uint useAoTexture;        // offset 84
-    uint aoTextureIndex;      // offset 88
-    uint useWorldAlignedTexture; // offset 92
-    float worldTextureScale;  // offset 96
-    float reflectionStrength; // offset 100
-    float specular;           // offset 104
-    float opacity;            // offset 108
-    float opacityMask;        // offset 112
-    float refraction;         // offset 116 (reserved)
-    uint paddingTail1;        // offset 120
-    uint paddingTail2;        // offset 124
+    uint useMetallicTexture;  // offset 84
+    uint metallicTextureIndex; // offset 88
+    uint useAoTexture;        // offset 92
+    uint aoTextureIndex;      // offset 96
+    uint useWorldAlignedTexture; // offset 100
+    float worldTextureScale;  // offset 104
+    float reflectionStrength; // offset 108
+    float specular;           // offset 112
+    float opacity;            // offset 116
+    float opacityMask;        // offset 120
+    float refraction;         // offset 124 (reserved)
+    uint paddingTail1;        // offset 128
+    uint paddingTail2;        // offset 132
 } material;
 
 layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOTS];
@@ -332,7 +334,15 @@ void main() {
         ao = texAo * material.ao; // Blend with base value
     }
     
+    // Metallic texture
     float metallic = material.metallic;
+    if (material.useMetallicTexture != 0u) {
+        uint index = material.metallicTextureIndex % MAX_TEXTURE_SLOTS;
+        // Metallic is typically in the B channel of ORM maps or R channel of standalone
+        float texMetallic = texture(materialTextures[index], texCoord).r;
+        metallic = texMetallic * material.metallic; // Blend with base value
+    }
+    metallic = clamp(metallic, 0.0, 1.0);
     float opacity = clamp(material.opacity, 0.0, 1.0);
     if (opacity < clamp(material.opacityMask, 0.0, 1.0)) {
         discard;

@@ -53,6 +53,8 @@ struct alignas(16) MaterialUBO {
     uint32_t normalTextureIndex;
     uint32_t useRoughnessTexture;
     uint32_t roughnessTextureIndex;
+    uint32_t useMetallicTexture;
+    uint32_t metallicTextureIndex;
     uint32_t useAoTexture;
     uint32_t aoTextureIndex;
     uint32_t useWorldAlignedTexture;
@@ -647,6 +649,8 @@ bool EngineFrameRenderer::createUniformBuffers()
         defaultMaterial.normalTextureIndex = 0;
         defaultMaterial.useRoughnessTexture = 0;
         defaultMaterial.roughnessTextureIndex = 0;
+        defaultMaterial.useMetallicTexture = 0;
+        defaultMaterial.metallicTextureIndex = 0;
         defaultMaterial.useAoTexture = 0;
         defaultMaterial.aoTextureIndex = 0;
         defaultMaterial.useWorldAlignedTexture = 0;
@@ -2215,6 +2219,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             defaultMat.normalTextureIndex = m_defaultMaterialTextureSlot;
             defaultMat.useRoughnessTexture = 0;
             defaultMat.roughnessTextureIndex = m_defaultMaterialTextureSlot;
+            defaultMat.useMetallicTexture = 0;
+            defaultMat.metallicTextureIndex = m_defaultMaterialTextureSlot;
             defaultMat.useAoTexture = 0;
             defaultMat.aoTextureIndex = m_defaultMaterialTextureSlot;
             defaultMat.useWorldAlignedTexture = 0;
@@ -2270,6 +2276,16 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 }
                 matUBO.roughnessTextureIndex = roughnessSlot;
 
+                // Metallic texture
+                uint32_t metallicSlot = m_defaultMaterialTextureSlot;
+                if (mat.useMetallicTexture && !mat.metallicTexturePath.empty()) {
+                    metallicSlot = ensureMaterialTextureSlot(mat.metallicTexturePath);
+                    matUBO.useMetallicTexture = (metallicSlot != m_defaultMaterialTextureSlot) ? 1u : 0u;
+                } else {
+                    matUBO.useMetallicTexture = 0u;
+                }
+                matUBO.metallicTextureIndex = metallicSlot;
+
                 // AO texture
                 uint32_t aoSlot = m_defaultMaterialTextureSlot;
                 if (mat.useAoTexture && !mat.aoTexturePath.empty()) {
@@ -2308,6 +2324,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 matUBO.normalTextureIndex = m_defaultMaterialTextureSlot;
                 matUBO.useRoughnessTexture = 0u;
                 matUBO.roughnessTextureIndex = m_defaultMaterialTextureSlot;
+                matUBO.useMetallicTexture = 0u;
+                matUBO.metallicTextureIndex = m_defaultMaterialTextureSlot;
                 matUBO.useAoTexture = 0u;
                 matUBO.aoTextureIndex = m_defaultMaterialTextureSlot;
                 matUBO.useWorldAlignedTexture = 0u;

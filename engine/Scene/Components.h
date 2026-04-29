@@ -466,6 +466,10 @@ struct MaterialComponent {
     std::string roughnessTexturePath;
     bool useRoughnessTexture = false;
     
+    // Metallic texture (typically B channel of ORM map or standalone)
+    std::string metallicTexturePath;
+    bool useMetallicTexture = false;
+    
     // Ambient occlusion texture
     std::string aoTexturePath;
     bool useAoTexture = false;

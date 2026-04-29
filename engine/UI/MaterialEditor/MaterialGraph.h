@@ -40,6 +40,7 @@ enum class NodeType {
     AlbedoTextureSample,
     NormalTextureSample,
     RoughnessTextureSample,
+    MetallicTextureSample,
     AoTextureSample,
     WorldAlignedTexture,
     TextureSample,
