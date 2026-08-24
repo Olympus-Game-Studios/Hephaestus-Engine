@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-08-25: Added root `build.bat` for Windows one-command CMake configure and build (Release by default, with debug/clean/reconfigure options and automatic EnTT setup).
 - 2026-04-26: Expanded the Qt Material Editor node graph with metadata-driven node definitions, scalar-to-vector connection compatibility, a GLSL snippet generator, new math/utility/texture/procedural/logic/blend/input/parameter nodes, expanded PBR output fields, and node reference documentation.
 - 2026-04-25: Added basic HDRI/environment reflections for PBR materials, including renderer descriptor binding support, global environment reflection controls, per-material reflection strength, documentation, and an `assets/scenes/EnvironmentReflectionTest.hpscene` test scene.
 - 2026-04-25: Material editor preview now defaults to `.engine/hdris/studio_garden_1k.hdr` as an HDRI environment and exposes preview controls to choose or restore the HDRI. New and loaded projects seed this HDRI into the project `.engine` folder from the engine runtime assets.
