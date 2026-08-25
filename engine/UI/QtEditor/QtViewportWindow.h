@@ -12,7 +12,9 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include <QWindow>
+#include <QPoint>
 #include <QTimer>
+#include <algorithm>
 #include <functional>
 #include "../../Gfx/NativeSurface.h"
 
@@ -141,16 +143,26 @@ public:
     bool IsCursorCaptured() const { return m_cursorCaptured; }
 
     /**
-     * @brief Set whether warp-generated mouse moves should be ignored.
-     * 
-     * When warping cursor to center, we need to ignore the resulting move event.
+     * @brief Virtual mouse position used while the cursor is captured.
      */
-    void SetIgnoreNextMouseMove(bool ignore) { m_ignoreNextMouseMove = ignore; }
+    float GetVirtualMouseX() const { return static_cast<float>(m_virtualMouseX); }
+    float GetVirtualMouseY() const { return static_cast<float>(m_virtualMouseY); }
+
+    /**
+     * @brief Set whether warp-generated mouse moves should be ignored.
+     */
+    void SetIgnoreNextMouseMove(bool ignore) {
+        if (ignore) {
+            m_ignoreMouseMoveCount = std::max(m_ignoreMouseMoveCount, 1);
+        } else {
+            m_ignoreMouseMoveCount = 0;
+        }
+    }
 
     /**
      * @brief Check if next mouse move should be ignored.
      */
-    bool ShouldIgnoreNextMouseMove() const { return m_ignoreNextMouseMove; }
+    bool ShouldIgnoreNextMouseMove() const { return m_ignoreMouseMoveCount > 0; }
 
 signals:
     /**
@@ -186,6 +198,7 @@ protected:
 
 private:
     void emitInputEvent(const InputEvent& event);
+    QPoint viewportCenterLocal() const;
     void recenterCursor();
     void applyWin32CursorClip();
     void clearWin32CursorClip();
@@ -202,9 +215,12 @@ private:
     // Cursor capture state
     bool m_cursorCaptured = false;
     bool m_captureSuspended = false;
-    bool m_ignoreNextMouseMove = false;
+    bool m_recenteringCursor = false;
+    int m_ignoreMouseMoveCount = 0;
     int m_savedCursorX = 0;
     int m_savedCursorY = 0;
+    float m_lastLocalX = 0.0f;
+    float m_lastLocalY = 0.0f;
     double m_virtualMouseX = 0.0;
     double m_virtualMouseY = 0.0;
     

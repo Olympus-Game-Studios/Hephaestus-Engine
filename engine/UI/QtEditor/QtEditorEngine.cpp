@@ -1181,8 +1181,8 @@ void QtEditorEngine::syncViewportCursorCapture()
     if (wantCapture) {
         m_viewport->CaptureCursor();
         if (!wasCaptured && m_viewport->IsCursorCaptured()) {
-            m_runtimeMouseX = static_cast<double>(m_viewport->width()) * 0.5;
-            m_runtimeMouseY = static_cast<double>(m_viewport->height()) * 0.5;
+            m_runtimeMouseX = static_cast<double>(m_viewport->GetVirtualMouseX());
+            m_runtimeMouseY = static_cast<double>(m_viewport->GetVirtualMouseY());
             m_lastMouseX = static_cast<float>(m_runtimeMouseX);
             m_lastMouseY = static_cast<float>(m_runtimeMouseY);
             m_hasLastMousePos = true;

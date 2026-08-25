@@ -33,6 +33,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-08-25: Fixed RMB look jittering back toward the middle while turning. The hidden cursor is only recentered at the viewport edges, and warp-generated moves no longer update the look baseline or get applied as opposite mouse motion.
+- 2026-08-25: Fixed RMB look slamming the camera straight up and spinning. Captured look now uses last-position deltas, Qt DPI-aware cursor warping, and ignores teleport-sized samples so a recenter cannot be applied as mouse motion.
+- 2026-08-25: Restored RMB fly-look in the viewport. Capture no longer waits for a warp-settle that never matched Qt mouse coordinates (which discarded every look delta).
+- 2026-08-25: Fixed editor viewport camera jumping when right-clicking to look. Cursor capture now waits for the recenter warp to settle and ignores stale click-position mouse moves so the click-to-center teleport is not applied as look.
 - 2026-08-25: Hidden-object editor outlines now depth-mask the unexpanded mesh before the inverted-hull pass, so they render as a silhouette instead of filled inverted faces.
 - 2026-08-25: Fixed play-mode / FPS mouse look being clamped to the viewport rectangle. Captured cursor now recenters with virtual unbounded coordinates so look is not limited by viewport size, and play mode no longer releases capture on the next tick while RMB or `Input.setCursorMode("disabled")` is active.
 - 2026-04-13: Refined viewport entity picking for responsiveness and accuracy. Eliminated the 2-frame readback delay by immediately waiting on the GPU fence after submitting the pick copy (only stalls on click frames). Replaced single-pixel sampling with a 5x5 region sample that picks the entity closest to the click center, making edge clicks far more forgiving. Changed pick coordinates to use the mouse-press position instead of the mouse-release position, avoiding jitter drift. Rounding coordinates with `+0.5f` before truncation fixes off-by-one on DPI-scaled displays.

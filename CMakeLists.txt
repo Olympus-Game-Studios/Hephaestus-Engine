@@ -5,7 +5,7 @@ project(HephaestusEngine LANGUAGES CXX)
 # Application Details  (single source of truth — edit these, not C++ files)
 # ─────────────────────────────────────────────────────────────────────────────
 set(HEPHAESTUS_VERSION_MAJOR 2026)
-set(HEPHAESTUS_VERSION_MINOR 5)
+set(HEPHAESTUS_VERSION_MINOR 9)
 set(HEPHAESTUS_VERSION_PATCH 0)
 set(HEPHAESTUS_VERSION "${HEPHAESTUS_VERSION_MAJOR}.${HEPHAESTUS_VERSION_MINOR}.${HEPHAESTUS_VERSION_PATCH}")
 

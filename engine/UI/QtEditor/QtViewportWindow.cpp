@@ -14,6 +14,7 @@
 #include <QResizeEvent>
 #include <QExposeEvent>
 #include <cmath>
+#include <algorithm>
 #include <iostream>
 
 #ifdef _WIN32
@@ -184,17 +185,36 @@ void QtViewportWindow::mouseReleaseEvent(QMouseEvent* event)
 
 void QtViewportWindow::mouseMoveEvent(QMouseEvent* event)
 {
-    if (m_ignoreNextMouseMove) {
-        m_ignoreNextMouseMove = false;
+    const float x = static_cast<float>(event->position().x());
+    const float y = static_cast<float>(event->position().y());
+
+    if (m_recenteringCursor) {
+        event->accept();
+        return;
+    }
+
+    if (m_ignoreMouseMoveCount > 0) {
+        --m_ignoreMouseMoveCount;
         event->accept();
         return;
     }
 
     if (m_cursorCaptured && !m_captureSuspended) {
-        const float centerX = static_cast<float>(width()) * 0.5f;
-        const float centerY = static_cast<float>(height()) * 0.5f;
-        const float dx = static_cast<float>(event->position().x()) - centerX;
-        const float dy = static_cast<float>(event->position().y()) - centerY;
+        const float dx = x - m_lastLocalX;
+        const float dy = y - m_lastLocalY;
+
+        // Stale pre-warp sample: do not apply, and do not adopt this position
+        // as the baseline or the next event (the actual warp) undoes the look.
+        const float maxStep = std::max(96.0f,
+            std::min(static_cast<float>(width()), static_cast<float>(height())) * 0.25f);
+        if (std::abs(dx) > maxStep || std::abs(dy) > maxStep) {
+            event->accept();
+            return;
+        }
+
+        m_lastLocalX = x;
+        m_lastLocalY = y;
+
         if (std::abs(dx) >= 0.5f || std::abs(dy) >= 0.5f) {
             m_virtualMouseX += static_cast<double>(dx);
             m_virtualMouseY += static_cast<double>(dy);
@@ -208,7 +228,15 @@ void QtViewportWindow::mouseMoveEvent(QMouseEvent* event)
                 ie.y = static_cast<float>(m_virtualMouseY);
                 emitInputEvent(ie);
             }
+        }
 
+        // Only warp when the hidden cursor is about to hit the clip edge.
+        // Recentering every few dozen pixels applies the return-to-center as
+        // look and makes the camera jitter back toward the middle.
+        const float margin = 24.0f;
+        const float w = static_cast<float>(width());
+        const float h = static_cast<float>(height());
+        if (x < margin || y < margin || x > w - margin || y > h - margin) {
             recenterCursor();
         }
 
@@ -336,25 +364,27 @@ bool QtViewportWindow::event(QEvent* event)
     }
 }
 
+QPoint QtViewportWindow::viewportCenterLocal() const
+{
+    return QPoint(width() / 2, height() / 2);
+}
+
 void QtViewportWindow::recenterCursor()
 {
-    if (width() <= 0 || height() <= 0) {
+    if (m_recenteringCursor || width() <= 0 || height() <= 0) {
         return;
     }
 
-#ifdef _WIN32
-    HWND hwnd = reinterpret_cast<HWND>(winId());
-    RECT rect;
-    GetClientRect(hwnd, &rect);
-    POINT center = {
-        (rect.left + rect.right) / 2,
-        (rect.top + rect.bottom) / 2
-    };
-    ClientToScreen(hwnd, &center);
-    SetCursorPos(center.x, center.y);
-#else
-    QCursor::setPos(mapToGlobal(QPoint(width() / 2, height() / 2)));
-#endif
+    const QPoint center = viewportCenterLocal();
+    m_ignoreMouseMoveCount = 2;
+    m_recenteringCursor = true;
+    // QCursor::setPos converts Qt logical coordinates to native pixels.
+    // SetCursorPos does not, so feeding it mapToGlobal() on a DPI-scaled
+    // display warps the cursor to the wrong place and look deltas explode.
+    QCursor::setPos(mapToGlobal(center));
+    m_recenteringCursor = false;
+    m_lastLocalX = static_cast<float>(center.x());
+    m_lastLocalY = static_cast<float>(center.y());
 }
 
 void QtViewportWindow::applyWin32CursorClip()
@@ -411,19 +441,16 @@ void QtViewportWindow::CaptureCursor()
         return;
     }
 
-#ifdef _WIN32
-    POINT cursorPos;
-    GetCursorPos(&cursorPos);
-    m_savedCursorX = cursorPos.x;
-    m_savedCursorY = cursorPos.y;
-#else
     const QPoint cursorPos = QCursor::pos();
     m_savedCursorX = cursorPos.x();
     m_savedCursorY = cursorPos.y();
-#endif
+    const QPoint localPos = mapFromGlobal(cursorPos);
+    m_lastLocalX = static_cast<float>(localPos.x());
+    m_lastLocalY = static_cast<float>(localPos.y());
 
-    m_virtualMouseX = static_cast<double>(width()) * 0.5;
-    m_virtualMouseY = static_cast<double>(height()) * 0.5;
+    const QPoint center = viewportCenterLocal();
+    m_virtualMouseX = static_cast<double>(center.x());
+    m_virtualMouseY = static_cast<double>(center.y());
 
     applyCapturedCursorVisuals();
     applyWin32CursorClip();
@@ -432,7 +459,8 @@ void QtViewportWindow::CaptureCursor()
     m_captureSuspended = false;
 
     requestActivate();
-    recenterCursor();
+    // Start look from the click position. Warping to center here makes the
+    // first samples undo themselves. Recenter only when near the clip edge.
     
     std::cout << "[QtViewport] Cursor captured\n";
 }
@@ -449,15 +477,11 @@ void QtViewportWindow::ReleaseCursor()
         restoreCapturedCursorVisuals();
     }
 
-#ifdef _WIN32
-    SetCursorPos(m_savedCursorX, m_savedCursorY);
-#else
     QCursor::setPos(m_savedCursorX, m_savedCursorY);
-#endif
     
     m_cursorCaptured = false;
     m_captureSuspended = false;
-    m_ignoreNextMouseMove = true;
+    m_ignoreMouseMoveCount = 1;
     
     std::cout << "[QtViewport] Cursor released\n";
 }
