@@ -93,6 +93,27 @@ struct LightingUBO {
     Vec4 cascadeSplits;  // view-space far plane for each cascade
 };
 
+static bool MeshAllowsHiddenEditorOutline(const MeshRendererComponent& renderer,
+                                          const FrameRenderConfig& config)
+{
+    return !renderer.visible
+        && renderer.showHiddenOutline
+        && config.isEditorMode
+        && !config.isPlaying;
+}
+
+static bool MeshIncludedInIdPick(const MeshRendererComponent& renderer,
+                                 const FrameRenderConfig& config)
+{
+    if (config.isPlaying && renderer.hideInGame) {
+        return false;
+    }
+    if (renderer.visible) {
+        return true;
+    }
+    return MeshAllowsHiddenEditorOutline(renderer, config);
+}
+
 // ============================================================================
 // RenderCamera Implementation
 // ============================================================================
@@ -2546,8 +2567,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     }
 #endif
 
-    // Render selection outlines (in editor mode)
-    if (config.isEditorMode && config.renderOutlines && config.selectedEntity != UINT32_MAX) {
+    // Render selection outlines and hidden-object outlines (editor mode)
+    if (config.isEditorMode && config.renderOutlines) {
         recordOutlines(cmd, imageIndex, scene, config);
     }
     
@@ -2640,56 +2661,37 @@ void EngineFrameRenderer::recordOutlines(VkCommandBuffer cmd, uint32_t imageInde
 {
     if (!m_outlineRenderer.initialized || !scene) return;
 
-    const std::vector<uint32_t>& entities = config.selectedEntities;
+    auto& registry = scene->GetRegistry();
 
-    // Fall back to the single primary if the multi-select list is empty
-    if (entities.empty()) {
-        if (config.selectedEntity == UINT32_MAX) return;
+    auto isSelected = [&](entt::entity ent) {
+        const uint32_t rawId = static_cast<uint32_t>(ent);
+        if (rawId == config.selectedEntity) return true;
+        for (uint32_t selectedId : config.selectedEntities) {
+            if (selectedId == rawId) return true;
+        }
+        return false;
+    };
 
-        auto& registry = scene->GetRegistry();
-        entt::entity selectedEnt = static_cast<entt::entity>(config.selectedEntity);
-        if (!registry.valid(selectedEnt)) return;
-
-        auto* transformComp = registry.try_get<TransformComponent>(selectedEnt);
-        if (!transformComp) return;
-
-        auto* meshComp = registry.try_get<MeshRendererComponent>(selectedEnt);
-        if (!meshComp || !meshComp->HasValidMesh()) return;
-        if (meshComp->meshHandle >= m_meshLibrary.size()) return;
-
-        const MeshGPU& mesh = m_meshLibrary[meshComp->meshHandle];
+    auto drawOutline = [&](entt::entity ent, const MeshRendererComponent& meshComp, bool depthMaskFirst) {
+        if (!meshComp.HasValidMesh() || meshComp.meshHandle >= m_meshLibrary.size()) return;
+        const MeshGPU& mesh = m_meshLibrary[meshComp.meshHandle];
         if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
             mesh.indexBuffer.buffer == VK_NULL_HANDLE) return;
-
-        Entity entity(selectedEnt, scene);
-        Mat4 modelMatrix = scene->GetWorldTransform(entity);
-        m_outlineRenderer.Draw(cmd, m_descriptorSets[imageIndex],
-                               mesh.vertexBuffer.buffer, mesh.indexBuffer.buffer,
-                               mesh.indexCount, modelMatrix);
-        return;
-    }
-
-    auto& registry = scene->GetRegistry();
-    for (uint32_t rawId : entities) {
-        entt::entity ent = static_cast<entt::entity>(rawId);
-        if (!registry.valid(ent)) continue;
-
-        auto* transformComp = registry.try_get<TransformComponent>(ent);
-        if (!transformComp) continue;
-
-        auto* meshComp = registry.try_get<MeshRendererComponent>(ent);
-        if (!meshComp || !meshComp->HasValidMesh()) continue;
-        if (meshComp->meshHandle >= m_meshLibrary.size()) continue;
-
-        const MeshGPU& mesh = m_meshLibrary[meshComp->meshHandle];
-        if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
-            mesh.indexBuffer.buffer == VK_NULL_HANDLE) continue;
 
         Entity entity(ent, scene);
         Mat4 modelMatrix = scene->GetWorldTransform(entity);
         m_outlineRenderer.Draw(cmd, m_descriptorSets[imageIndex],
                                mesh.vertexBuffer.buffer, mesh.indexBuffer.buffer,
-                               mesh.indexCount, modelMatrix);
+                               mesh.indexCount, modelMatrix, depthMaskFirst);
+    };
+
+    auto meshView = registry.view<TransformComponent, MeshRendererComponent>();
+    for (auto ent : meshView) {
+        const auto& meshComp = meshView.get<MeshRendererComponent>(ent);
+        const bool hiddenOutline = MeshAllowsHiddenEditorOutline(meshComp, config);
+        const bool selectedVisible = isSelected(ent) && meshComp.visible;
+        if (!hiddenOutline && !selectedVisible) continue;
+        drawOutline(ent, meshComp, hiddenOutline);
     }
 }
 
@@ -3936,6 +3938,37 @@ void EngineFrameRenderer::OutlineRenderer::Init(VkDevice device, VkRenderPass re
         vkDestroyShaderModule(device, fragShader, nullptr);
         return;
     }
+
+    // Depth-only mask: write the unexpanded mesh into depth so inverted-hull
+    // outlines still clip their interior when the object itself is not drawn.
+    VkPipelineRasterizationStateCreateInfo maskRaster = rasterizer;
+    maskRaster.cullMode = VK_CULL_MODE_NONE;
+    maskRaster.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
+    VkPipelineDepthStencilStateCreateInfo maskDepth = depthStencil;
+    maskDepth.depthTestEnable = VK_TRUE;
+    maskDepth.depthWriteEnable = VK_TRUE;
+    maskDepth.depthCompareOp = VK_COMPARE_OP_LESS;
+
+    VkPipelineColorBlendAttachmentState maskBlendAttachment = colorBlendAttachment;
+    maskBlendAttachment.colorWriteMask = 0;
+
+    VkPipelineColorBlendStateCreateInfo maskBlending = colorBlending;
+    maskBlending.pAttachments = &maskBlendAttachment;
+
+    VkGraphicsPipelineCreateInfo maskInfo = pipelineInfo;
+    maskInfo.pRasterizationState = &maskRaster;
+    maskInfo.pDepthStencilState = &maskDepth;
+    maskInfo.pColorBlendState = &maskBlending;
+
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &maskInfo, nullptr, &maskPipeline) != VK_SUCCESS) {
+        std::cerr << "[OutlineRenderer] Failed to create depth-mask pipeline\n";
+        vkDestroyPipeline(device, pipeline, nullptr);
+        pipeline = VK_NULL_HANDLE;
+        vkDestroyShaderModule(device, vertShader, nullptr);
+        vkDestroyShaderModule(device, fragShader, nullptr);
+        return;
+    }
     
     vkDestroyShaderModule(device, vertShader, nullptr);
     vkDestroyShaderModule(device, fragShader, nullptr);
@@ -3947,41 +3980,47 @@ void EngineFrameRenderer::OutlineRenderer::Init(VkDevice device, VkRenderPass re
 void EngineFrameRenderer::OutlineRenderer::Recreate(VkDevice device, VkRenderPass renderPass,
                                                      VkExtent2D extent, VkDescriptorSetLayout cameraDescLayout)
 {
-    // Cleanup old pipeline
-    if (pipeline != VK_NULL_HANDLE) {
-        vkDestroyPipeline(device, pipeline, nullptr);
-        pipeline = VK_NULL_HANDLE;
-    }
-    
-    // Recreate with new extent - reinit
-    VmaAllocator dummyAllocator = VK_NULL_HANDLE; // Not used in Init for OutlineRenderer
-    initialized = false;
+    Cleanup(device);
+    VmaAllocator dummyAllocator = VK_NULL_HANDLE;
     Init(device, renderPass, extent, cameraDescLayout, dummyAllocator);
 }
 
 void EngineFrameRenderer::OutlineRenderer::Draw(VkCommandBuffer cmd, VkDescriptorSet cameraDescSet,
                                                  VkBuffer vertexBuffer, VkBuffer indexBuffer,
-                                                 uint32_t indexCount, const Mat4& modelMatrix)
+                                                 uint32_t indexCount, const Mat4& modelMatrix,
+                                                 bool depthMaskFirst)
 {
     if (!initialized || pipeline == VK_NULL_HANDLE) return;
-    
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    uint32_t dynamicOffset = 0;
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &cameraDescSet, 1, &dynamicOffset);
-    
-    OutlinePushConstants pc;
-    pc.model = modelMatrix;
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
-    
-    VkDeviceSize offsets[] = {0};
-    vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer, offsets);
-    vkCmdBindIndexBuffer(cmd, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-    
-    vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0);
+
+    auto bindAndDraw = [&](VkPipeline pipe, float expand) {
+        if (pipe == VK_NULL_HANDLE) return;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+        uint32_t dynamicOffset = 0;
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &cameraDescSet, 1, &dynamicOffset);
+
+        OutlinePushConstants pc{};
+        pc.model = modelMatrix;
+        pc.expand = expand;
+        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer, offsets);
+        vkCmdBindIndexBuffer(cmd, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0);
+    };
+
+    if (depthMaskFirst) {
+        bindAndDraw(maskPipeline, 0.0f);
+    }
+    bindAndDraw(pipeline, 1.0f);
 }
 
 void EngineFrameRenderer::OutlineRenderer::Cleanup(VkDevice device)
 {
+    if (maskPipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, maskPipeline, nullptr);
+        maskPipeline = VK_NULL_HANDLE;
+    }
     if (pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, pipeline, nullptr);
         pipeline = VK_NULL_HANDLE;
@@ -4451,8 +4490,7 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
         auto& transform = entity.GetComponent<TransformComponent>();
         auto& renderer = entity.GetComponent<MeshRendererComponent>();
         
-        if (!renderer.visible) continue;
-        if (config.isPlaying && renderer.hideInGame) continue;
+        if (!MeshIncludedInIdPick(renderer, config)) continue;
         if (!renderer.HasValidMesh() || renderer.meshHandle >= m_meshLibrary.size()) continue;
         
         MeshGPU& mesh = m_meshLibrary[renderer.meshHandle];

@@ -14,6 +14,7 @@ layout(std140, set = 0, binding = 0) uniform UBO {
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
+    float expand; // 0 = depth mask (no extrusion), 1 = silhouette outline
 } pc;
 
 void main() {
@@ -29,8 +30,8 @@ void main() {
     float outlineScale = 0.02 * sqrt(max(distanceToCamera, 0.001) / 10.0);
     outlineScale = clamp(outlineScale, 0.01, 0.08);
 
-    // Expand along normal direction
-    worldPos.xyz += worldNormal * outlineScale;
+    // Expand along normal direction (skipped for the hidden-object depth mask)
+    worldPos.xyz += worldNormal * outlineScale * pc.expand;
 
     gl_Position = ubo.proj * ubo.view * worldPos;
 }

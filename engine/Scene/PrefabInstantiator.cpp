@@ -102,6 +102,8 @@ void ApplyPropertyOverridesMeshRenderer(MeshRendererComponent& mesh, const Prefa
             mesh.visible = *value.AsBool();
         } else if (key == "hideInGame" && value.IsBool()) {
             mesh.hideInGame = *value.AsBool();
+        } else if (key == "showHiddenOutline" && value.IsBool()) {
+            mesh.showHiddenOutline = *value.AsBool();
         } else if (key == "meshSource" && value.IsString()) {
             mesh.meshAssetPath = *value.AsString();
         } else if (key == "meshImported" && value.IsBool()) {
@@ -361,6 +363,9 @@ Entity PrefabInstantiator::Instantiate(Scene& scene, const PrefabAsset& asset, c
                 }
                 if (const JsonValue* hideInGameValue = componentData.Find("hideInGame")) {
                     mesh.hideInGame = ParseBoolLike(*hideInGameValue, mesh.hideInGame);
+                }
+                if (const JsonValue* showHiddenOutlineValue = componentData.Find("showHiddenOutline")) {
+                    mesh.showHiddenOutline = ParseBoolLike(*showHiddenOutlineValue, mesh.showHiddenOutline);
                 }
                 if (const JsonValue* meshSourceValue = componentData.Find("meshSource")) {
                     if (meshSourceValue->IsString()) {

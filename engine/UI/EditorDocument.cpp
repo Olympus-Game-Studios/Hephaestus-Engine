@@ -425,6 +425,7 @@ bool PrefabDocument::SyncNodeFromEntity(Entity entity) {
         JsonValue data = MakeObject();
         data.objectValue["visible"] = MakeBool(mesh.visible);
         data.objectValue["hideInGame"] = MakeBool(mesh.hideInGame);
+        data.objectValue["showHiddenOutline"] = MakeBool(mesh.showHiddenOutline);
         if (!mesh.meshAssetPath.empty()) {
             data.objectValue["meshSource"] = MakeString(mesh.meshAssetPath);
         }

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-08-25: Mesh Renderer inspector shows a Show Hidden Outline checkbox when Visible is off. Checked objects still draw an editor outline and can be clicked in the viewport; unchecked objects stay fully hidden and unpickable.
 - 2026-08-25: Added root `build.bat` for Windows one-command CMake configure and build (Release by default, with debug/clean/reconfigure options and automatic EnTT setup).
 - 2026-04-26: Expanded the Qt Material Editor node graph with metadata-driven node definitions, scalar-to-vector connection compatibility, a GLSL snippet generator, new math/utility/texture/procedural/logic/blend/input/parameter nodes, expanded PBR output fields, and node reference documentation.
 - 2026-04-25: Added basic HDRI/environment reflections for PBR materials, including renderer descriptor binding support, global environment reflection controls, per-material reflection strength, documentation, and an `assets/scenes/EnvironmentReflectionTest.hpscene` test scene.
@@ -32,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-08-25: Hidden-object editor outlines now depth-mask the unexpanded mesh before the inverted-hull pass, so they render as a silhouette instead of filled inverted faces.
 - 2026-08-25: Fixed play-mode / FPS mouse look being clamped to the viewport rectangle. Captured cursor now recenters with virtual unbounded coordinates so look is not limited by viewport size, and play mode no longer releases capture on the next tick while RMB or `Input.setCursorMode("disabled")` is active.
 - 2026-04-13: Refined viewport entity picking for responsiveness and accuracy. Eliminated the 2-frame readback delay by immediately waiting on the GPU fence after submitting the pick copy (only stalls on click frames). Replaced single-pixel sampling with a 5x5 region sample that picks the entity closest to the click center, making edge clicks far more forgiving. Changed pick coordinates to use the mouse-press position instead of the mouse-release position, avoiding jitter drift. Rounding coordinates with `+0.5f` before truncation fixes off-by-one on DPI-scaled displays.
 - 2026-04-13: Fixed viewport entity picking (click-to-select) being completely non-functional. The `entityid.vert` and `entityid.frag` shaders were missing from the CMake `SHADER_SOURCES` list, so they were never compiled to SPIR-V; `createIdPickerResources()` silently failed and `IsPickingAvailable()` returned false, disabling all viewport selection. Also fixed ID picker resources not being recreated on viewport resize, which would have caused stale dimensions and incorrect pick coordinates after resizing.

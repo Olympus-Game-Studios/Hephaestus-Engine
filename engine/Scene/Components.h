@@ -122,6 +122,8 @@ struct MeshRendererComponent {
     AABB localBounds; // Bounding box in local space
     bool visible = true;
     bool hideInGame = false;
+    // Editor-only: when not visible, still draw a selection-style outline and allow viewport picking.
+    bool showHiddenOutline = false;
     bool backfaceCulling = false;
     static constexpr size_t InvalidMesh = std::numeric_limits<size_t>::max();
     size_t meshHandle = InvalidMesh;

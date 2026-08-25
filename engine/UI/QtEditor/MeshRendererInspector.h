@@ -5,7 +5,7 @@
  * @brief Inspector widget for MeshRendererComponent + MaterialComponent.
  *
  * Shows:
- *   - Visible / Hide-in-game / Backface Culling checkboxes
+ *   - Visible / Show Hidden Outline / Hide-in-game / Backface Culling checkboxes
  *   - Mesh asset path (read-only, drag-drop target)
  *   - Material slots table: one row per submesh with assign/clear buttons
  *   - "Add Mesh Collider" button if no MeshColliderComponent
@@ -64,6 +64,7 @@ private:
 
     // Widgets
     QCheckBox*      m_visibleCheck     = nullptr;
+    QCheckBox*      m_showHiddenOutlineCheck = nullptr;
     QCheckBox*      m_hideInGameCheck  = nullptr;
     QCheckBox*      m_backfaceCullCheck = nullptr;
     QLineEdit*      m_meshPathEdit     = nullptr;

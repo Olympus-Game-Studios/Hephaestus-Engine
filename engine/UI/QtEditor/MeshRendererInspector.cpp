@@ -31,6 +31,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QStyle>
+#include <QWidget>
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
@@ -85,9 +86,22 @@ void MeshRendererInspector::buildUI()
     auto* form = new QFormLayout();
     form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
-    // Visible
+    // Visible + optional hidden-outline pick
+    auto* visCol = new QWidget();
+    auto* visLayout = new QVBoxLayout(visCol);
+    visLayout->setContentsMargins(0, 0, 0, 0);
+    visLayout->setSpacing(4);
+
     m_visibleCheck = new QCheckBox(tr("Visible"));
-    form->addRow(QString(), m_visibleCheck);
+    visLayout->addWidget(m_visibleCheck);
+
+    m_showHiddenOutlineCheck = new QCheckBox(tr("Show Hidden Outline"));
+    m_showHiddenOutlineCheck->setToolTip(tr(
+        "When Visible is off, draw this object's outline in the editor viewport and allow clicking it. "
+        "If unchecked, the object stays fully hidden and cannot be picked."));
+    m_showHiddenOutlineCheck->setVisible(false);
+    visLayout->addWidget(m_showHiddenOutlineCheck);
+    form->addRow(QString(), visCol);
 
     // Hide In Game
     m_hideInGameCheck = new QCheckBox(tr("Hide In Game"));
@@ -145,7 +159,13 @@ void MeshRendererInspector::buildUI()
 
 void MeshRendererInspector::connectSignals()
 {
-    connect(m_visibleCheck,      &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
+    connect(m_visibleCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_showHiddenOutlineCheck) {
+            m_showHiddenOutlineCheck->setVisible(!checked);
+        }
+        applyToComponent();
+    });
+    connect(m_showHiddenOutlineCheck, &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
     connect(m_hideInGameCheck,   &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
     connect(m_backfaceCullCheck, &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
 
@@ -259,6 +279,8 @@ void MeshRendererInspector::Refresh()
     blockAllSignals(true);
 
     m_visibleCheck->setChecked(mr.visible);
+    m_showHiddenOutlineCheck->setChecked(mr.showHiddenOutline);
+    m_showHiddenOutlineCheck->setVisible(!mr.visible);
     m_hideInGameCheck->setChecked(mr.hideInGame);
     m_backfaceCullCheck->setChecked(mr.backfaceCulling);
 
@@ -551,6 +573,7 @@ void MeshRendererInspector::applyToComponent()
 
     auto& mr = reg.get<MeshRendererComponent>(m_entity);
     mr.visible        = m_visibleCheck->isChecked();
+    mr.showHiddenOutline = m_showHiddenOutlineCheck->isChecked();
     mr.hideInGame     = m_hideInGameCheck->isChecked();
     mr.backfaceCulling = m_backfaceCullCheck->isChecked();
 
@@ -564,6 +587,7 @@ void MeshRendererInspector::applyToComponent()
 void MeshRendererInspector::blockAllSignals(bool block)
 {
     m_visibleCheck->blockSignals(block);
+    m_showHiddenOutlineCheck->blockSignals(block);
     m_hideInGameCheck->blockSignals(block);
     m_backfaceCullCheck->blockSignals(block);
 }

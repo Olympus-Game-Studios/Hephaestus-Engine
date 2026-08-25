@@ -596,11 +596,14 @@ private:
     struct OutlineRenderer {
         bool initialized = false;
         VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipeline maskPipeline = VK_NULL_HANDLE; // Depth-only pass so hidden meshes still clip the hull
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         
         // Uses the same descriptor set layout as the main pipeline (camera UBO)
         struct OutlinePushConstants {
             Mat4 model;
+            float expand;
+            float padding[3];
         };
         
         void Init(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
@@ -609,7 +612,7 @@ private:
                       VkDescriptorSetLayout cameraDescLayout);
         void Draw(VkCommandBuffer cmd, VkDescriptorSet cameraDescSet, 
                   VkBuffer vertexBuffer, VkBuffer indexBuffer, uint32_t indexCount,
-                  const Mat4& modelMatrix);
+                  const Mat4& modelMatrix, bool depthMaskFirst);
         void Cleanup(VkDevice device);
     };
     OutlineRenderer m_outlineRenderer;
