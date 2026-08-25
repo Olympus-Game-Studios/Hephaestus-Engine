@@ -7,11 +7,13 @@
 
 #include "QtViewportWindow.h"
 
+#include <QCursor>
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QWheelEvent>
 #include <QResizeEvent>
 #include <QExposeEvent>
+#include <cmath>
 #include <iostream>
 
 #ifdef _WIN32
@@ -123,6 +125,11 @@ void QtViewportWindow::resizeEvent(QResizeEvent* event)
     if (m_resizeCallback && w > 0 && h > 0) {
         m_resizeCallback(w, h);
     }
+
+    if (m_cursorCaptured && !m_captureSuspended) {
+        applyWin32CursorClip();
+        recenterCursor();
+    }
 }
 
 void QtViewportWindow::emitInputEvent(const InputEvent& event)
@@ -144,8 +151,12 @@ void QtViewportWindow::mousePressEvent(QMouseEvent* event)
         ie.type = InputEvent::Type::MousePress;
         ie.button = static_cast<int>(event->button());
         ie.modifiers = static_cast<int>(event->modifiers());
-        ie.x = static_cast<float>(event->position().x());
-        ie.y = static_cast<float>(event->position().y());
+        ie.x = (m_cursorCaptured && !m_captureSuspended)
+            ? static_cast<float>(m_virtualMouseX)
+            : static_cast<float>(event->position().x());
+        ie.y = (m_cursorCaptured && !m_captureSuspended)
+            ? static_cast<float>(m_virtualMouseY)
+            : static_cast<float>(event->position().y());
         emitInputEvent(ie);
     }
     
@@ -159,8 +170,12 @@ void QtViewportWindow::mouseReleaseEvent(QMouseEvent* event)
         ie.type = InputEvent::Type::MouseRelease;
         ie.button = static_cast<int>(event->button());
         ie.modifiers = static_cast<int>(event->modifiers());
-        ie.x = static_cast<float>(event->position().x());
-        ie.y = static_cast<float>(event->position().y());
+        ie.x = (m_cursorCaptured && !m_captureSuspended)
+            ? static_cast<float>(m_virtualMouseX)
+            : static_cast<float>(event->position().x());
+        ie.y = (m_cursorCaptured && !m_captureSuspended)
+            ? static_cast<float>(m_virtualMouseY)
+            : static_cast<float>(event->position().y());
         emitInputEvent(ie);
     }
     
@@ -169,6 +184,38 @@ void QtViewportWindow::mouseReleaseEvent(QMouseEvent* event)
 
 void QtViewportWindow::mouseMoveEvent(QMouseEvent* event)
 {
+    if (m_ignoreNextMouseMove) {
+        m_ignoreNextMouseMove = false;
+        event->accept();
+        return;
+    }
+
+    if (m_cursorCaptured && !m_captureSuspended) {
+        const float centerX = static_cast<float>(width()) * 0.5f;
+        const float centerY = static_cast<float>(height()) * 0.5f;
+        const float dx = static_cast<float>(event->position().x()) - centerX;
+        const float dy = static_cast<float>(event->position().y()) - centerY;
+        if (std::abs(dx) >= 0.5f || std::abs(dy) >= 0.5f) {
+            m_virtualMouseX += static_cast<double>(dx);
+            m_virtualMouseY += static_cast<double>(dy);
+
+            if (ShouldForwardInput()) {
+                InputEvent ie;
+                ie.type = InputEvent::Type::MouseMove;
+                ie.button = static_cast<int>(event->buttons());
+                ie.modifiers = static_cast<int>(event->modifiers());
+                ie.x = static_cast<float>(m_virtualMouseX);
+                ie.y = static_cast<float>(m_virtualMouseY);
+                emitInputEvent(ie);
+            }
+
+            recenterCursor();
+        }
+
+        event->accept();
+        return;
+    }
+
     if (ShouldForwardInput()) {
         InputEvent ie;
         ie.type = InputEvent::Type::MouseMove;
@@ -229,6 +276,14 @@ void QtViewportWindow::keyReleaseEvent(QKeyEvent* event)
 void QtViewportWindow::focusInEvent(QFocusEvent* event)
 {
     QWindow::focusInEvent(event);
+
+    if (m_cursorCaptured && m_captureSuspended) {
+        m_captureSuspended = false;
+        applyCapturedCursorVisuals();
+        setMouseGrabEnabled(true);
+        applyWin32CursorClip();
+        recenterCursor();
+    }
     
     InputEvent ie;
     ie.type = InputEvent::Type::FocusIn;
@@ -240,6 +295,13 @@ void QtViewportWindow::focusInEvent(QFocusEvent* event)
 void QtViewportWindow::focusOutEvent(QFocusEvent* event)
 {
     QWindow::focusOutEvent(event);
+
+    if (m_cursorCaptured && !m_captureSuspended) {
+        m_captureSuspended = true;
+        setMouseGrabEnabled(false);
+        clearWin32CursorClip();
+        restoreCapturedCursorVisuals();
+    }
     
     InputEvent ie;
     ie.type = InputEvent::Type::FocusOut;
@@ -274,23 +336,30 @@ bool QtViewportWindow::event(QEvent* event)
     }
 }
 
-void QtViewportWindow::CaptureCursor()
+void QtViewportWindow::recenterCursor()
 {
-    if (m_cursorCaptured) {
+    if (width() <= 0 || height() <= 0) {
         return;
     }
-    
+
 #ifdef _WIN32
-    // Save current cursor position
-    POINT cursorPos;
-    GetCursorPos(&cursorPos);
-    m_savedCursorX = cursorPos.x;
-    m_savedCursorY = cursorPos.y;
-    
-    // Hide cursor
-    ShowCursor(FALSE);
-    
-    // Confine cursor to window
+    HWND hwnd = reinterpret_cast<HWND>(winId());
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+    POINT center = {
+        (rect.left + rect.right) / 2,
+        (rect.top + rect.bottom) / 2
+    };
+    ClientToScreen(hwnd, &center);
+    SetCursorPos(center.x, center.y);
+#else
+    QCursor::setPos(mapToGlobal(QPoint(width() / 2, height() / 2)));
+#endif
+}
+
+void QtViewportWindow::applyWin32CursorClip()
+{
+#ifdef _WIN32
     HWND hwnd = reinterpret_cast<HWND>(winId());
     RECT rect;
     GetClientRect(hwnd, &rect);
@@ -304,12 +373,66 @@ void QtViewportWindow::CaptureCursor()
     rect.bottom = bottomRight.y;
     ClipCursor(&rect);
 #endif
-    
+}
+
+void QtViewportWindow::clearWin32CursorClip()
+{
+#ifdef _WIN32
+    ClipCursor(nullptr);
+#endif
+}
+
+void QtViewportWindow::applyCapturedCursorVisuals()
+{
+    setCursor(Qt::BlankCursor);
+#ifdef _WIN32
+    ShowCursor(FALSE);
+#endif
+}
+
+void QtViewportWindow::restoreCapturedCursorVisuals()
+{
+    unsetCursor();
+#ifdef _WIN32
+    ShowCursor(TRUE);
+#endif
+}
+
+void QtViewportWindow::CaptureCursor()
+{
+    if (m_cursorCaptured) {
+        if (m_captureSuspended && isActive()) {
+            m_captureSuspended = false;
+            applyCapturedCursorVisuals();
+            setMouseGrabEnabled(true);
+            applyWin32CursorClip();
+            recenterCursor();
+        }
+        return;
+    }
+
+#ifdef _WIN32
+    POINT cursorPos;
+    GetCursorPos(&cursorPos);
+    m_savedCursorX = cursorPos.x;
+    m_savedCursorY = cursorPos.y;
+#else
+    const QPoint cursorPos = QCursor::pos();
+    m_savedCursorX = cursorPos.x();
+    m_savedCursorY = cursorPos.y();
+#endif
+
+    m_virtualMouseX = static_cast<double>(width()) * 0.5;
+    m_virtualMouseY = static_cast<double>(height()) * 0.5;
+
+    applyCapturedCursorVisuals();
+    applyWin32CursorClip();
     setMouseGrabEnabled(true);
     m_cursorCaptured = true;
-    
-    // Ensure keyboard focus so key events reach the viewport
+    m_captureSuspended = false;
+
     requestActivate();
+    recenterCursor();
     
     std::cout << "[QtViewport] Cursor captured\n";
 }
@@ -319,22 +442,22 @@ void QtViewportWindow::ReleaseCursor()
     if (!m_cursorCaptured) {
         return;
     }
-    
-    setMouseGrabEnabled(false);
-    
+
+    if (!m_captureSuspended) {
+        setMouseGrabEnabled(false);
+        clearWin32CursorClip();
+        restoreCapturedCursorVisuals();
+    }
+
 #ifdef _WIN32
-    // Release cursor confinement
-    ClipCursor(nullptr);
-    
-    // Show cursor
-    ShowCursor(TRUE);
-    
-    // Restore cursor position
     SetCursorPos(m_savedCursorX, m_savedCursorY);
+#else
+    QCursor::setPos(m_savedCursorX, m_savedCursorY);
 #endif
     
     m_cursorCaptured = false;
-    m_ignoreNextMouseMove = true; // Ignore the move caused by restoring position
+    m_captureSuspended = false;
+    m_ignoreNextMouseMove = true;
     
     std::cout << "[QtViewport] Cursor released\n";
 }

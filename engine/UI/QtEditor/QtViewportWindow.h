@@ -121,10 +121,10 @@ public:
     void SetForceInputForwarding(bool force) { m_forceForwardInput = force; }
 
     /**
-     * @brief Capture the mouse cursor for camera control.
-     * 
-     * Stores the current cursor position, hides the cursor, and grabs mouse input.
-     * Used when entering fly mode (RMB held).
+     * @brief Capture the mouse cursor for camera / FPS look.
+     *
+     * Hides the cursor, grabs mouse input, and recenters so look is not limited
+     * to the viewport rectangle (virtual unbounded mouse coordinates).
      */
     void CaptureCursor();
 
@@ -186,6 +186,11 @@ protected:
 
 private:
     void emitInputEvent(const InputEvent& event);
+    void recenterCursor();
+    void applyWin32CursorClip();
+    void clearWin32CursorClip();
+    void applyCapturedCursorVisuals();
+    void restoreCapturedCursorVisuals();
 
     InputEventCallback m_inputCallback;
     ResizeEventCallback m_resizeCallback;
@@ -196,9 +201,12 @@ private:
     
     // Cursor capture state
     bool m_cursorCaptured = false;
+    bool m_captureSuspended = false;
     bool m_ignoreNextMouseMove = false;
     int m_savedCursorX = 0;
     int m_savedCursorY = 0;
+    double m_virtualMouseX = 0.0;
+    double m_virtualMouseY = 0.0;
     
     // Force forwarding mode (for play mode)
     bool m_forceForwardInput = false;

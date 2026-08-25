@@ -276,6 +276,7 @@ private:
     void updateKeyState(int key, bool pressed);
     void resetInputState();
     void populateRuntimeInputState();
+    void syncViewportCursorCapture();
     void captureGizmoMultiDragWorldStarts(Scene* scene);
     void clearGizmoMultiDragWorldStarts();
 

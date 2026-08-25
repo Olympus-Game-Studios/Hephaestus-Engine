@@ -673,7 +673,8 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         m_runtimeMouseY = static_cast<double>(event.y);
 
         RuntimeUIState* runtimeUIState = FindRuntimeUIState(this);
-        if (!m_playModeManager.IsEditor() && runtimeUIState && runtimeUIState->context) {
+        if (!m_playModeManager.IsEditor() && runtimeUIState && runtimeUIState->context &&
+            !(m_viewport && m_viewport->IsCursorCaptured())) {
             const ::Hephaestus::HephaestusUI::UIVec2 uiPos = toUIPoint(event.x, event.y);
             std::cout << "[UI Debug] Mouse Press at (" << uiPos.x << ", " << uiPos.y << ") button=" << event.button << std::endl;
             runtimeUIState->context->QueueMousePress(uiPos, event.button);
@@ -712,14 +713,13 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         // Notify camera controller (suppressed when Lua UI has cursor unlocked)
         if (!isRuntimeUICursorMode()) {
             m_cameraController.OnMousePress(event.button, m_inputState);
-
-            if (m_cameraController.ShouldCaptureCursor() && m_viewport) {
-                m_viewport->CaptureCursor();
-            }
         }
+        syncViewportCursorCapture();
         
-        m_lastMouseX = event.x;
-        m_lastMouseY = event.y;
+        if (!(m_viewport && m_viewport->IsCursorCaptured())) {
+            m_lastMouseX = event.x;
+            m_lastMouseY = event.y;
+        }
         m_hasLastMousePos = true;
         break;
     }
@@ -771,7 +771,8 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         else if (event.button == 4) m_inputState.mmbDown = false;
 
         RuntimeUIState* runtimeUIState = FindRuntimeUIState(this);
-        if (!m_playModeManager.IsEditor() && runtimeUIState && runtimeUIState->context) {
+        if (!m_playModeManager.IsEditor() && runtimeUIState && runtimeUIState->context &&
+            !(m_viewport && m_viewport->IsCursorCaptured())) {
             const ::Hephaestus::HephaestusUI::UIVec2 uiPos = toUIPoint(event.x, event.y);
             runtimeUIState->context->QueueMouseRelease(uiPos, event.button);
         }
@@ -785,11 +786,8 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         
         if (!isRuntimeUICursorMode()) {
             m_cameraController.OnMouseRelease(event.button, m_inputState);
-
-            if (!m_cameraController.ShouldCaptureCursor() && m_viewport) {
-                m_viewport->ReleaseCursor();
-            }
         }
+        syncViewportCursorCapture();
         break;
     }
         
@@ -809,7 +807,8 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             m_inputState.mouseDeltaY = deltaY;
 
             RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
-            if (!m_playModeManager.IsEditor() && runtimeUI && runtimeUI->context) {
+            if (!m_playModeManager.IsEditor() && runtimeUI && runtimeUI->context &&
+                !(m_viewport && m_viewport->IsCursorCaptured())) {
                 const ::Hephaestus::HephaestusUI::UIVec2 uiPos = toUIPoint(event.x, event.y);
                 runtimeUI->context->QueueMouseMove(uiPos);
             }
@@ -1155,10 +1154,47 @@ void QtEditorEngine::populateRuntimeInputState()
     ris.mouseDeltaX = m_runtimeMouseX - prevX;
     ris.mouseDeltaY = m_runtimeMouseY - prevY;
 
-    // Handle cursor capture requested by Lua scripts
-    if (ris.cursorModeRequest == 1 && m_viewport && !m_viewport->IsCursorCaptured()) {
+    syncViewportCursorCapture();
+}
+
+void QtEditorEngine::syncViewportCursorCapture()
+{
+    if (!m_viewport) {
+        return;
+    }
+
+    bool wantCapture = m_cameraController.ShouldCaptureCursor();
+
+    if (!m_playModeManager.IsEditor()) {
+        RuntimeUIState* rui = FindRuntimeUIState(this);
+        const bool uiCursor = rui && rui->system &&
+            rui->system->GetCursorMode() == Hephaestus::HephaestusUI::CursorMode::UI;
+        if (uiCursor) {
+            wantCapture = false;
+        } else if (m_luaScriptEngine &&
+                   m_luaScriptEngine->GetRuntimeInputState().cursorModeRequest == 1) {
+            wantCapture = true;
+        }
+    }
+
+    const bool wasCaptured = m_viewport->IsCursorCaptured();
+    if (wantCapture) {
         m_viewport->CaptureCursor();
-    } else if (ris.cursorModeRequest == 0 && m_viewport && m_viewport->IsCursorCaptured()) {
+        if (!wasCaptured && m_viewport->IsCursorCaptured()) {
+            m_runtimeMouseX = static_cast<double>(m_viewport->width()) * 0.5;
+            m_runtimeMouseY = static_cast<double>(m_viewport->height()) * 0.5;
+            m_lastMouseX = static_cast<float>(m_runtimeMouseX);
+            m_lastMouseY = static_cast<float>(m_runtimeMouseY);
+            m_hasLastMousePos = true;
+            if (m_luaScriptEngine) {
+                RuntimeInputState& ris = m_luaScriptEngine->GetRuntimeInputState();
+                ris.mouseX = m_runtimeMouseX;
+                ris.mouseY = m_runtimeMouseY;
+                ris.mouseDeltaX = 0.0;
+                ris.mouseDeltaY = 0.0;
+            }
+        }
+    } else {
         m_viewport->ReleaseCursor();
     }
 }
@@ -1319,6 +1355,7 @@ void QtEditorEngine::onTick()
         }
 
         m_playModeManager.Tick(dt);
+        syncViewportCursorCapture();
 
         if (m_playModeManager.IsStopRequested()) {
             m_playModeManager.ClearStopRequest();
@@ -2484,6 +2521,7 @@ void QtEditorEngine::StartPlayMode()
     if (m_viewport) {
         m_viewport->requestActivate();
         m_viewport->SetForceInputForwarding(true);
+        syncViewportCursorCapture();
     }
 
     emit playStateChanged(true, false);
