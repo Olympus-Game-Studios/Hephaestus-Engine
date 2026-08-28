@@ -86,6 +86,7 @@ struct EditorViewportSettings {
 using SceneChangedCallback = std::function<void()>;
 using SelectionChangedCallback = std::function<void(entt::entity)>;
 using DirtyChangedCallback = std::function<void(bool)>;
+using SceneEditedCallback = std::function<void()>;
 
 /**
  * @brief Single source of truth for editor state.
@@ -256,6 +257,7 @@ public:
     void SetSceneChangedCallback(SceneChangedCallback cb) { m_onSceneChanged = std::move(cb); }
     void SetSelectionChangedCallback(SelectionChangedCallback cb) { m_onSelectionChanged = std::move(cb); }
     void SetDirtyChangedCallback(DirtyChangedCallback cb) { m_onDirtyChanged = std::move(cb); }
+    void SetSceneEditedCallback(SceneEditedCallback cb) { m_onSceneEdited = std::move(cb); }
 
 private:
     std::unique_ptr<Scene> m_activeScene;
@@ -277,6 +279,7 @@ private:
     SceneChangedCallback m_onSceneChanged;
     SelectionChangedCallback m_onSelectionChanged;
     DirtyChangedCallback m_onDirtyChanged;
+    SceneEditedCallback m_onSceneEdited;
 };
 
 } // namespace Hephaestus

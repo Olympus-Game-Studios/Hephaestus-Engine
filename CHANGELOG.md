@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- 2026-08-28: Production prefab instance workflow: automatic property-path override tracking (`PrefabOverrideSystem` / `PrefabComponentIO`), Inspector override indicators with Revert/Apply, Apply to Prefab (with confirmation for Apply All), reliable Refresh that reapplies overrides, Create Prefab From Selection capturing all prefab-supported components, Unpack that bakes overrides into ordinary entities, missing-prefab stubs that do not fail scene load, and Prefab Editor reuse of Scene Inspector widgets for live component authoring.
+- 2026-08-28: Scene serialization stores prefab instance `rootTransform` separately from child overrides. Prefab children remain omitted from `entities[]`.
+- 2026-08-28: Sample prefab `assets/prefabs/Lamp.hpprefab`. Legacy `assets/blueprints/Player.hpblueprint` continues to load.
+- 2026-08-28: `PrefabSystemTests` covering save/load, scene instance round-trip, refresh, apply, revert, create-from-selection, unpack, missing assets, and legacy Blueprint loading.
+
+### Changed
+
+- 2026-08-28: Prefab Editor Inspector is no longer read-only labels; it hosts the same component inspectors as the Scene Editor against the preview entity and syncs edits back into the `PrefabAsset`.
+
+### Fixed
+
+- 2026-08-28: Prefab instance transforms and component edits in the Scene Editor are recorded as overrides (or as instance `rootTransform` for the root) so they survive save/reload and Refresh.
+
 ## [2026.8.27]
 
 ### Added

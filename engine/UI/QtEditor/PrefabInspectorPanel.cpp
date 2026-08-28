@@ -1,8 +1,14 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "PrefabInspectorPanel.h"
+#include "ComponentInspector.h"
+#include "LightInspector.h"
+
+#include "../../Core/EditorContext.h"
 
 #include <QApplication>
+#include <QCursor>
+#include <QAbstractSpinBox>
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -76,7 +82,6 @@ PrefabInspectorPanel::PrefabInspectorPanel(QWidget* parent)
     m_contentLayout->setContentsMargins(8, 8, 8, 8);
     m_contentLayout->setSpacing(6);
 
-    // Node name
     m_nodeGroup = new QGroupBox(tr("Node"), m_contentWidget);
     m_nodeGroup->setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #3a3a3a; "
                                "border-radius: 3px; margin-top: 8px; padding-top: 14px; }");
@@ -92,18 +97,15 @@ PrefabInspectorPanel::PrefabInspectorPanel(QWidget* parent)
     nodeLayout->addWidget(m_nameEdit);
     m_contentLayout->addWidget(m_nodeGroup);
 
-    // Transform
     buildTransformGroup();
     m_contentLayout->addWidget(m_transformGroup);
 
-    // Components container
     m_componentsContainer = new QWidget(m_contentWidget);
     m_componentsLayout = new QVBoxLayout(m_componentsContainer);
     m_componentsLayout->setContentsMargins(0, 0, 0, 0);
     m_componentsLayout->setSpacing(4);
     m_contentLayout->addWidget(m_componentsContainer);
 
-    // Add Component button
     m_addComponentBtn = new QPushButton(tr("+ Add Component"), m_contentWidget);
     m_addComponentBtn->setStyleSheet(
         "QPushButton { padding: 6px; background: #2a4a2a; border: 1px solid #3a5a3a; "
@@ -127,7 +129,6 @@ PrefabInspectorPanel::PrefabInspectorPanel(QWidget* parent)
         menu.exec(QCursor::pos());
     });
     m_contentLayout->addWidget(m_addComponentBtn);
-
     m_contentLayout->addStretch(1);
 
     m_scrollArea->setWidget(m_contentWidget);
@@ -161,9 +162,17 @@ void PrefabInspectorPanel::buildTransformGroup() {
     }
 }
 
-void PrefabInspectorPanel::ShowNode(const PrefabNode* node, Scene* previewScene,
-                                     const std::string& rootNodeId) {
-    if (!node) { Clear(); return; }
+void PrefabInspectorPanel::ShowNode(const PrefabNode* node, Scene* /*previewScene*/,
+                                     const std::string& /*rootNodeId*/) {
+    ShowEntity(nullptr, nullptr, {}, node);
+}
+
+void PrefabInspectorPanel::ShowEntity(EditorContext* ctx, Scene* previewScene, Entity entity,
+                                      const PrefabNode* node) {
+    if (!node) {
+        Clear();
+        return;
+    }
 
     m_updatingUI = true;
     m_currentNodeId = node->id;
@@ -173,18 +182,25 @@ void PrefabInspectorPanel::ShowNode(const PrefabNode* node, Scene* previewScene,
 
     m_transformGroup->setEnabled(true);
     blockTransformSignals(true);
-    m_posX->setValue(node->localTransform.position.x);
-    m_posY->setValue(node->localTransform.position.y);
-    m_posZ->setValue(node->localTransform.position.z);
-    m_rotX->setValue(node->localTransform.rotation.x);
-    m_rotY->setValue(node->localTransform.rotation.y);
-    m_rotZ->setValue(node->localTransform.rotation.z);
-    m_scaleX->setValue(node->localTransform.scale.x);
-    m_scaleY->setValue(node->localTransform.scale.y);
-    m_scaleZ->setValue(node->localTransform.scale.z);
+    const TransformComponent& transform = (entity && entity.HasComponent<TransformComponent>())
+        ? entity.GetComponent<TransformComponent>()
+        : node->localTransform;
+    m_posX->setValue(transform.position.x);
+    m_posY->setValue(transform.position.y);
+    m_posZ->setValue(transform.position.z);
+    m_rotX->setValue(transform.rotation.x);
+    m_rotY->setValue(transform.rotation.y);
+    m_rotZ->setValue(transform.rotation.z);
+    m_scaleX->setValue(transform.scale.x);
+    m_scaleY->setValue(transform.scale.y);
+    m_scaleZ->setValue(transform.scale.z);
     blockTransformSignals(false);
 
-    buildComponentUI(node, previewScene);
+    if (ctx && previewScene && entity && ctx->GetActiveScene() == previewScene) {
+        buildLiveComponentUI(ctx, previewScene, entity);
+    } else {
+        buildComponentUI(node);
+    }
 
     m_addComponentBtn->setEnabled(true);
     m_updatingUI = false;
@@ -226,11 +242,10 @@ void PrefabInspectorPanel::RefreshTransform(const TransformComponent& transform)
     m_updatingUI = false;
 }
 
-void PrefabInspectorPanel::buildComponentUI(const PrefabNode* node, Scene* /*previewScene*/) {
+void PrefabInspectorPanel::buildComponentUI(const PrefabNode* node) {
     clearComponentWidgets();
-
     for (const auto& entry : node->components) {
-        auto* widget = createComponentWidget(entry, node->id);
+        auto* widget = createReadOnlyComponentWidget(entry, node->id);
         if (widget) {
             m_componentsLayout->addWidget(widget);
             m_componentWidgets.push_back(widget);
@@ -238,78 +253,43 @@ void PrefabInspectorPanel::buildComponentUI(const PrefabNode* node, Scene* /*pre
     }
 }
 
-QWidget* PrefabInspectorPanel::createComponentWidget(const PrefabComponentEntry& entry,
-                                                      const std::string& nodeId) {
-    auto* group = new QGroupBox(QString::fromStdString(entry.type), m_componentsContainer);
-    group->setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #3a3a3a; "
-                         "border-radius: 3px; margin-top: 8px; padding-top: 16px; }");
-    auto* layout = new QVBoxLayout(group);
-    layout->setSpacing(3);
-
-    // Enabled checkbox
-    auto* enabledRow = new QHBoxLayout();
-    auto* enabledCheck = new QCheckBox(tr("Enabled"), group);
-    enabledCheck->setChecked(entry.enabled);
-    enabledRow->addWidget(enabledCheck);
-    enabledRow->addStretch();
-
-    auto* removeBtn = new QPushButton(tr("Remove"), group);
-    removeBtn->setFixedSize(60, 20);
-    removeBtn->setStyleSheet(
-        "QPushButton { background: #5a2a2a; border: 1px solid #7a3a3a; "
-        "border-radius: 2px; font-size: 10px; }"
-        "QPushButton:hover { background: #7a3a3a; }"
-    );
-    std::string compType = entry.type;
-    connect(removeBtn, &QPushButton::clicked, this, [this, nodeId, compType]() {
-        emit removeComponentRequested(nodeId, compType);
-    });
-    enabledRow->addWidget(removeBtn);
-    layout->addLayout(enabledRow);
-
-    // Component-specific property display
-    if (entry.data.type == JsonValue::Type::Object) {
-        for (const auto& [key, value] : entry.data.objectValue) {
-            auto* propRow = new QHBoxLayout();
-            auto* propLabel = new QLabel(QString::fromStdString(key), group);
-            propLabel->setFixedWidth(120);
-            propLabel->setStyleSheet("QLabel { color: #aaa; font-weight: normal; }");
-            propRow->addWidget(propLabel);
-
-            QString valueStr;
-            switch (value.type) {
-                case JsonValue::Type::String:
-                    valueStr = QString::fromStdString(value.stringValue);
-                    break;
-                case JsonValue::Type::Number:
-                    valueStr = QString::number(value.numberValue, 'g', 6);
-                    break;
-                case JsonValue::Type::Bool:
-                    valueStr = value.boolValue ? "true" : "false";
-                    break;
-                case JsonValue::Type::Array:
-                    if (value.arrayValue.size() == 3) {
-                        valueStr = QString("(%1, %2, %3)")
-                            .arg(value.arrayValue[0].numberValue, 0, 'g', 4)
-                            .arg(value.arrayValue[1].numberValue, 0, 'g', 4)
-                            .arg(value.arrayValue[2].numberValue, 0, 'g', 4);
-                    } else {
-                        valueStr = QString("[%1 items]").arg(value.arrayValue.size());
-                    }
-                    break;
-                default:
-                    valueStr = "...";
-                    break;
-            }
-
-            auto* valueLabel = new QLabel(valueStr, group);
-            valueLabel->setStyleSheet("QLabel { color: #ccc; font-weight: normal; }");
-            valueLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-            propRow->addWidget(valueLabel, 1);
-            layout->addLayout(propRow);
-        }
+void PrefabInspectorPanel::buildLiveComponentUI(EditorContext* ctx, Scene* previewScene, Entity entity) {
+    clearComponentWidgets();
+    if (!ctx || !previewScene || !entity) {
+        return;
     }
 
+    auto& registry = previewScene->GetRegistry();
+    const entt::entity handle = static_cast<entt::entity>(entity);
+
+    if (entity.HasComponent<LightComponent>()) {
+        m_lightInspector = new LightInspector(ctx, handle, m_componentsContainer);
+        m_componentsLayout->addWidget(m_lightInspector);
+        m_componentWidgets.push_back(m_lightInspector);
+    }
+
+    auto inspectors = ComponentInspectorRegistry::Instance().CreateInspectors(
+        ctx, handle, registry, m_componentsContainer);
+    for (auto* insp : inspectors) {
+        connect(insp, &ComponentInspector::componentRemoved, this,
+                [this](entt::entity, const QString& name) {
+                    emit removeComponentRequested(m_currentNodeId, name.toStdString());
+                    emit previewComponentsChanged();
+                });
+        m_componentsLayout->addWidget(insp);
+        m_componentWidgets.push_back(insp);
+    }
+}
+
+QWidget* PrefabInspectorPanel::createReadOnlyComponentWidget(const PrefabComponentEntry& entry,
+                                                             const std::string& nodeId) {
+    auto* group = new QGroupBox(QString::fromStdString(entry.type), m_componentsContainer);
+    auto* layout = new QVBoxLayout(group);
+    auto* removeBtn = new QPushButton(tr("Remove"), group);
+    connect(removeBtn, &QPushButton::clicked, this, [this, nodeId, type = entry.type]() {
+        emit removeComponentRequested(nodeId, type);
+    });
+    layout->addWidget(removeBtn);
     return group;
 }
 
@@ -319,6 +299,7 @@ void PrefabInspectorPanel::clearComponentWidgets() {
         delete w;
     }
     m_componentWidgets.clear();
+    m_lightInspector = nullptr;
 }
 
 void PrefabInspectorPanel::blockTransformSignals(bool block) {

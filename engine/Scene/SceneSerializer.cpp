@@ -5,6 +5,8 @@
 #include "Json.h"
 #include "PrefabSerializer.h"
 #include "PrefabInstantiator.h"
+#include "PrefabOverrideSystem.h"
+#include "PrefabComponentIO.h"
 #include "../Scripting/ScriptComponent.h"
 #include "../Scripting/ScriptRegistry.h"
 
@@ -17,6 +19,7 @@
 #include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 #include <locale>
 #include <sstream>
@@ -175,6 +178,102 @@ PropertyValue ParsePropertyValue(const JsonValue& value)
         return PropertyValue(std::move(obj));
     }
     return PropertyValue();
+}
+
+void WritePrefabInstance(std::ostream& stream, const PrefabInstanceComponent& instance)
+{
+    stream << "    {\n";
+    stream << "      \"prefabPath\": \"" << EscapeString(instance.prefabPath) << "\",\n";
+    stream << "      \"prefabGuid\": \"" << EscapeString(instance.prefabGuid) << "\",\n";
+    stream << "      \"instanceId\": \"" << EscapeString(instance.instanceId) << "\",\n";
+    stream << "      \"rootNodeId\": \"" << EscapeString(instance.rootNodeId) << "\",\n";
+    stream << "      \"parent\": ";
+    if (instance.parent != entt::null) {
+        stream << static_cast<uint32_t>(instance.parent) << ",\n";
+    } else {
+        stream << "null,\n";
+    }
+
+    if (instance.hasRootTransform) {
+        stream << "      \"rootTransform\": {\n";
+        stream << "        \"position\": " << FormatVec3(instance.rootTransform.position) << ",\n";
+        stream << "        \"rotation\": " << FormatVec3(instance.rootTransform.rotation) << ",\n";
+        stream << "        \"scale\": " << FormatVec3(instance.rootTransform.scale) << "\n";
+        stream << "      },\n";
+    }
+
+    if (instance.missingPrefab) {
+        stream << "      \"missingPrefab\": true,\n";
+        stream << "      \"missingReason\": \"" << EscapeString(instance.missingReason) << "\",\n";
+    }
+
+    stream << "      \"overrides\": {\n";
+    size_t nodeIndex = 0;
+    for (const auto& [nodeId, nodeOverride] : instance.overrides) {
+        stream << "        \"" << EscapeString(nodeId) << "\": {\n";
+        bool wroteSection = false;
+
+        if (nodeOverride.hasTransform) {
+            stream << "          \"transform\": {\n";
+            stream << "            \"position\": " << FormatVec3(nodeOverride.transform.position) << ",\n";
+            stream << "            \"rotation\": " << FormatVec3(nodeOverride.transform.rotation) << ",\n";
+            stream << "            \"scale\": " << FormatVec3(nodeOverride.transform.scale) << "\n";
+            stream << "          }";
+            wroteSection = true;
+        }
+
+        if (!nodeOverride.componentOverrides.empty()) {
+            if (wroteSection) {
+                stream << ",\n";
+            }
+            stream << "          \"components\": {\n";
+            size_t compIndex = 0;
+            for (const auto& [componentType, componentOverride] : nodeOverride.componentOverrides) {
+                stream << "            \"" << EscapeString(componentType) << "\": {";
+                size_t propIndex = 0;
+                for (const auto& [propKey, propValue] : componentOverride.properties) {
+                    if (propIndex++) {
+                        stream << ", ";
+                    }
+                    stream << "\"" << EscapeString(propKey) << "\": ";
+                    WritePropertyValue(stream, propValue);
+                }
+                stream << "}";
+                if (compIndex + 1 < nodeOverride.componentOverrides.size()) {
+                    stream << ",";
+                }
+                stream << "\n";
+                ++compIndex;
+            }
+            stream << "          }";
+            wroteSection = true;
+        }
+
+        if (!nodeOverride.scriptVars.empty()) {
+            if (wroteSection) {
+                stream << ",\n";
+            }
+            stream << "          \"scriptVars\": {";
+            size_t varIndex = 0;
+            for (const auto& [key, value] : nodeOverride.scriptVars) {
+                if (varIndex++) {
+                    stream << ", ";
+                }
+                stream << "\"" << EscapeString(key) << "\": ";
+                WritePropertyValue(stream, value);
+            }
+            stream << "}";
+        }
+
+        stream << "\n        }";
+        if (nodeIndex + 1 < instance.overrides.size()) {
+            stream << ",";
+        }
+        stream << "\n";
+        ++nodeIndex;
+    }
+    stream << "      }\n";
+    stream << "    }";
 }
 
 const char* LightTypeToString(LightType type)
@@ -452,86 +551,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             continue;
         }
 
-        stream << "    {\n";
-        stream << "      \"prefabPath\": \"" << EscapeString(instance->prefabPath) << "\",\n";
-        stream << "      \"prefabGuid\": \"" << EscapeString(instance->prefabGuid) << "\",\n";
-        stream << "      \"instanceId\": \"" << EscapeString(instance->instanceId) << "\",\n";
-        stream << "      \"rootNodeId\": \"" << EscapeString(instance->rootNodeId) << "\",\n";
-        stream << "      \"parent\": ";
-        if (instance->parent != entt::null) {
-            stream << static_cast<uint32_t>(instance->parent) << ",\n";
-        } else {
-            stream << "null,\n";
-        }
-
-        stream << "      \"overrides\": {\n";
-        size_t nodeIndex = 0;
-        for (const auto& [nodeId, nodeOverride] : instance->overrides) {
-            stream << "        \"" << EscapeString(nodeId) << "\": {\n";
-            bool wroteSection = false;
-
-            if (nodeOverride.hasTransform) {
-                stream << "          \"transform\": {\n";
-                stream << "            \"position\": " << FormatVec3(nodeOverride.transform.position) << ",\n";
-                stream << "            \"rotation\": " << FormatVec3(nodeOverride.transform.rotation) << ",\n";
-                stream << "            \"scale\": " << FormatVec3(nodeOverride.transform.scale) << "\n";
-                stream << "          }";
-                wroteSection = true;
-            }
-
-            if (!nodeOverride.componentOverrides.empty()) {
-                if (wroteSection) {
-                    stream << ",\n";
-                }
-                stream << "          \"components\": {\n";
-                size_t compIndex = 0;
-                for (const auto& [componentType, componentOverride] : nodeOverride.componentOverrides) {
-                    stream << "            \"" << EscapeString(componentType) << "\": {";
-                    size_t propIndex = 0;
-                    for (const auto& [propKey, propValue] : componentOverride.properties) {
-                        if (propIndex++) {
-                            stream << ", ";
-                        }
-                        stream << "\"" << EscapeString(propKey) << "\": ";
-                        WritePropertyValue(stream, propValue);
-                    }
-                    stream << "}";
-                    if (compIndex + 1 < nodeOverride.componentOverrides.size()) {
-                        stream << ",";
-                    }
-                    stream << "\n";
-                    ++compIndex;
-                }
-                stream << "          }";
-                wroteSection = true;
-            }
-
-            if (!nodeOverride.scriptVars.empty()) {
-                if (wroteSection) {
-                    stream << ",\n";
-                }
-                stream << "          \"scriptVars\": {";
-                size_t varIndex = 0;
-                for (const auto& [key, value] : nodeOverride.scriptVars) {
-                    if (varIndex++) {
-                        stream << ", ";
-                    }
-                    stream << "\"" << EscapeString(key) << "\": ";
-                    WritePropertyValue(stream, value);
-                }
-                stream << "}";
-            }
-
-            stream << "\n        }";
-            if (nodeIndex + 1 < instance->overrides.size()) {
-                stream << ",";
-            }
-            stream << "\n";
-            ++nodeIndex;
-        }
-        stream << "      }\n";
-
-        stream << "    }";
+        WritePrefabInstance(stream, *instance);
         if (instanceIndex + 1 < prefabInstances.size()) {
             stream << ",\n";
         } else {
@@ -1837,6 +1857,29 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                 }
             }
 
+            if (const JsonValue* rootTransformValue = instanceValue.Find("rootTransform")) {
+                if (rootTransformValue->IsObject()) {
+                    if (const JsonValue* posValue = rootTransformValue->Find("position")) {
+                        ParseVec3(*posValue, instanceData.rootTransform.position);
+                    }
+                    if (const JsonValue* rotValue = rootTransformValue->Find("rotation")) {
+                        ParseVec3(*rotValue, instanceData.rootTransform.rotation);
+                    }
+                    if (const JsonValue* scaleValue = rootTransformValue->Find("scale")) {
+                        ParseVec3(*scaleValue, instanceData.rootTransform.scale);
+                    }
+                    instanceData.hasRootTransform = true;
+                }
+            }
+            if (const JsonValue* missingValue = instanceValue.Find("missingPrefab")) {
+                instanceData.missingPrefab = ParseBoolLike(*missingValue, false);
+            }
+            if (const JsonValue* missingReasonValue = instanceValue.Find("missingReason")) {
+                if (missingReasonValue->IsString()) {
+                    instanceData.missingReason = missingReasonValue->AsString();
+                }
+            }
+
             if (const JsonValue* overridesValue = instanceValue.Find("overrides")) {
                 if (!overridesValue->IsObject()) {
                     outError = "prefab overrides must be an object";
@@ -1894,10 +1937,14 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             PrefabAsset asset;
             std::string prefabError;
             if (!PrefabSerializer::Deserialize(asset, instanceData.prefabPath, prefabError)) {
-                outError = "Failed to load prefab '" + instanceData.prefabPath + "': " + prefabError;
-                return false;
+                std::cerr << "[SceneSerializer] Missing prefab '" << instanceData.prefabPath
+                          << "': " << prefabError << "\n";
+                PrefabOverrideSystem::CreateMissingStub(scene, instanceData, prefabError);
+                continue;
             }
 
+            instanceData.missingPrefab = false;
+            instanceData.missingReason.clear();
             PrefabInstantiateOptions options;
             options.prefabPath = instanceData.prefabPath;
             options.instanceId = instanceData.instanceId;
@@ -1980,86 +2027,7 @@ std::string SceneSerializer::SerializeToString() const
             continue;
         }
 
-        stream << "    {\n";
-        stream << "      \"prefabPath\": \"" << EscapeString(instance->prefabPath) << "\",\n";
-        stream << "      \"prefabGuid\": \"" << EscapeString(instance->prefabGuid) << "\",\n";
-        stream << "      \"instanceId\": \"" << EscapeString(instance->instanceId) << "\",\n";
-        stream << "      \"rootNodeId\": \"" << EscapeString(instance->rootNodeId) << "\",\n";
-        stream << "      \"parent\": ";
-        if (instance->parent != entt::null) {
-            stream << static_cast<uint32_t>(instance->parent) << ",\n";
-        } else {
-            stream << "null,\n";
-        }
-
-        stream << "      \"overrides\": {\n";
-        size_t nodeIndex = 0;
-        for (const auto& [nodeId, nodeOverride] : instance->overrides) {
-            stream << "        \"" << EscapeString(nodeId) << "\": {\n";
-            bool wroteSection = false;
-
-            if (nodeOverride.hasTransform) {
-                stream << "          \"transform\": {\n";
-                stream << "            \"position\": " << FormatVec3(nodeOverride.transform.position) << ",\n";
-                stream << "            \"rotation\": " << FormatVec3(nodeOverride.transform.rotation) << ",\n";
-                stream << "            \"scale\": " << FormatVec3(nodeOverride.transform.scale) << "\n";
-                stream << "          }";
-                wroteSection = true;
-            }
-
-            if (!nodeOverride.componentOverrides.empty()) {
-                if (wroteSection) {
-                    stream << ",\n";
-                }
-                stream << "          \"components\": {\n";
-                size_t compIndex = 0;
-                for (const auto& [componentType, componentOverride] : nodeOverride.componentOverrides) {
-                    stream << "            \"" << EscapeString(componentType) << "\": {";
-                    size_t propIndex = 0;
-                    for (const auto& [propKey, propValue] : componentOverride.properties) {
-                        if (propIndex++) {
-                            stream << ", ";
-                        }
-                        stream << "\"" << EscapeString(propKey) << "\": ";
-                        WritePropertyValue(stream, propValue);
-                    }
-                    stream << "}";
-                    if (compIndex + 1 < nodeOverride.componentOverrides.size()) {
-                        stream << ",";
-                    }
-                    stream << "\n";
-                    ++compIndex;
-                }
-                stream << "          }";
-                wroteSection = true;
-            }
-
-            if (!nodeOverride.scriptVars.empty()) {
-                if (wroteSection) {
-                    stream << ",\n";
-                }
-                stream << "          \"scriptVars\": {";
-                size_t varIndex = 0;
-                for (const auto& [key, value] : nodeOverride.scriptVars) {
-                    if (varIndex++) {
-                        stream << ", ";
-                    }
-                    stream << "\"" << EscapeString(key) << "\": ";
-                    WritePropertyValue(stream, value);
-                }
-                stream << "}";
-            }
-
-            stream << "\n        }";
-            if (nodeIndex + 1 < instance->overrides.size()) {
-                stream << ",";
-            }
-            stream << "\n";
-            ++nodeIndex;
-        }
-        stream << "      }\n";
-
-        stream << "    }";
+        WritePrefabInstance(stream, *instance);
         if (instanceIndex + 1 < prefabInstances.size()) {
             stream << ",\n";
         } else {

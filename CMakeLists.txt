@@ -217,6 +217,8 @@ set(ENGINE_CORE_SOURCES
     engine/Scene/Json.cpp
     engine/Scene/PrefabSerializer.cpp
     engine/Scene/PrefabInstantiator.cpp
+    engine/Scene/PrefabComponentIO.cpp
+    engine/Scene/PrefabOverrideSystem.cpp
     engine/Scene/SceneSerializer.cpp
     engine/Scripting/ScriptBase.cpp
     engine/Scripting/ScriptEngine.cpp
@@ -328,6 +330,8 @@ add_executable(HephaestusEngine
     engine/Scene/Json.cpp
     engine/Scene/PrefabSerializer.cpp
     engine/Scene/PrefabInstantiator.cpp
+    engine/Scene/PrefabComponentIO.cpp
+    engine/Scene/PrefabOverrideSystem.cpp
     engine/Scene/SceneSerializer.cpp
     engine/Scene/SceneExporter.cpp
     engine/Scripting/ScriptBase.cpp
@@ -505,6 +509,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/PrefabHierarchyPanel.h
             engine/UI/QtEditor/PrefabInspectorPanel.cpp
             engine/UI/QtEditor/PrefabInspectorPanel.h
+            engine/UI/QtEditor/PrefabInstanceBar.cpp
+            engine/UI/QtEditor/PrefabInstanceBar.h
             engine/UI/Shared/SettingsWindow.cpp
             engine/UI/Shared/SettingsWindow.h
         )
@@ -933,6 +939,30 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME MaterialCompatibilityRoundtrip
         COMMAND MaterialCompatibilityTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(PrefabSystemTests
+        engine/Tests/PrefabSystemTests.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+
+    target_include_directories(PrefabSystemTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+
+    add_test(
+        NAME PrefabSystemWorkflow
+        COMMAND PrefabSystemTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 endif()
 

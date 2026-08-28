@@ -663,6 +663,10 @@ struct PrefabInstanceComponent {
     std::string instanceId;
     std::string rootNodeId;
     entt::entity parent = entt::null;
+    TransformComponent rootTransform;
+    bool hasRootTransform = false;
+    bool missingPrefab = false;
+    std::string missingReason;
     std::unordered_map<std::string, PrefabNodeOverride> overrides;
 };
 

@@ -14,6 +14,7 @@
 #include "EditorAssetActions.h"
 #include "PrefabEditorManager.h"
 #include "PrefabEditorWindow.h"
+#include "PrefabInstanceBar.h"
 #include "LightInspector.h"
 #include "EnvironmentInspector.h"
 #include "ComponentInspector.h"
@@ -32,6 +33,8 @@
 #include "../../Core/ProjectContext.h"
 #include "../../Scene/PrefabSerializer.h"
 #include "../../Scene/PrefabInstantiator.h"
+#include "../../Scene/PrefabOverrideSystem.h"
+#include "../../Scene/PrefabComponentIO.h"
 #include "../../ToolsCommon/EngineContext.h"
 #include "../../ToolsCommon/VersionInfo.h"
 #include "../../Assets/AssetManager.h"
@@ -69,6 +72,7 @@
 #include <QMimeData>
 #include <QScrollArea>
 #include <QDir>
+#include <QFileInfo>
 #include <QToolBar>
 #include <QToolButton>
 #include <QActionGroup>
@@ -81,6 +85,8 @@
 #include <QInputDialog>
 #include <iostream>
 #include <cmath>
+#include <fstream>
+#include <iterator>
 #include <filesystem>
 #include <string>
 #include <algorithm>
@@ -1116,6 +1122,69 @@ void EditorMainWindow::setupDockWidgets()
     
     connect(m_nameEdit, &QLineEdit::textChanged, this, &EditorMainWindow::onNameChanged);
 
+    m_prefabBar = new PrefabInstanceBar(m_detailsWidget);
+    m_detailsLayout->addWidget(m_prefabBar);
+    connect(m_prefabBar, &PrefabInstanceBar::revertPropertyRequested, this, [this](const QString& component, const QString& property) {
+        if (!m_engine) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasSelection()) return;
+        runPrefabRevert(ctx->GetSelectedEntity(), component.toStdString(), property.toStdString());
+    });
+    connect(m_prefabBar, &PrefabInstanceBar::revertAllRequested, this, [this]() {
+        if (!m_engine) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasSelection()) return;
+        runPrefabRevert(ctx->GetSelectedEntity(), "*", "*");
+    });
+    connect(m_prefabBar, &PrefabInstanceBar::applyPropertyRequested, this, [this](const QString& component, const QString& property) {
+        if (!m_engine) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasSelection()) return;
+        runPrefabApply(ctx->GetSelectedEntity(), component.toStdString(), property.toStdString(), false);
+    });
+    connect(m_prefabBar, &PrefabInstanceBar::applyAllRequested, this, [this]() {
+        if (!m_engine) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasSelection()) return;
+        runPrefabApply(ctx->GetSelectedEntity(), "*", "*", true);
+    });
+    connect(m_prefabBar, &PrefabInstanceBar::revertNodeRequested, this, [this]() {
+        if (!m_engine) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasSelection()) return;
+        runPrefabRevert(ctx->GetSelectedEntity(), "", "");
+    });
+    connect(m_prefabBar, &PrefabInstanceBar::applyNodeRequested, this, [this]() {
+        if (!m_engine) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasSelection()) return;
+        runPrefabApply(ctx->GetSelectedEntity(), "", "", false);
+    });
+    connect(m_prefabBar, &PrefabInstanceBar::refreshRequested, this, [this]() {
+        if (!m_engine) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+        Scene* scene = ctx->GetActiveScene();
+        Entity entity(ctx->GetSelectedEntity(), scene);
+        EditorUndoManager::PushSnapshot(ctx, "Refresh prefab instance");
+        PrefabOverrideSystem::SyncInstance(*scene, entity);
+        PrefabOverrideSystem::RefreshInstance(*scene, entity);
+        m_engine->RebuildSceneMeshes();
+        ctx->MarkDirty();
+        rebuildOutliner();
+        refreshDetailsPanel();
+    });
+    connect(m_prefabBar, &PrefabInstanceBar::openPrefabRequested, this, [this]() {
+        if (!m_engine || !m_prefabEditorManager) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+        Entity entity(ctx->GetSelectedEntity(), ctx->GetActiveScene());
+        auto* inst = PrefabOverrideSystem::TryGetInstance(*ctx->GetActiveScene(), entity);
+        if (inst && !inst->prefabPath.empty()) {
+            m_prefabEditorManager->OpenPrefab(QString::fromStdString(inst->prefabPath));
+        }
+    });
+
     // Transform group
     m_transformGroup = new QGroupBox(tr("Transform"));
     m_transformGroup->setObjectName("TransformCard");
@@ -1251,6 +1320,35 @@ void EditorMainWindow::setupDockWidgets()
     connect(m_scaleX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onScaleChanged);
     connect(m_scaleY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onScaleChanged);
     connect(m_scaleZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onScaleChanged);
+
+    m_transformGroup->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_transformGroup, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        if (!m_engine) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+        Entity entity(ctx->GetSelectedEntity(), ctx->GetActiveScene());
+        if (!PrefabOverrideSystem::IsPrefabInstanceEntity(entity) || PrefabOverrideSystem::IsInstanceRoot(entity)) {
+            return;
+        }
+        QMenu menu(this);
+        menu.addAction(tr("Revert Position"), this, [this, entity]() {
+            runPrefabRevert(static_cast<entt::entity>(entity), "Transform", "position");
+        });
+        menu.addAction(tr("Revert Rotation"), this, [this, entity]() {
+            runPrefabRevert(static_cast<entt::entity>(entity), "Transform", "rotation");
+        });
+        menu.addAction(tr("Revert Scale"), this, [this, entity]() {
+            runPrefabRevert(static_cast<entt::entity>(entity), "Transform", "scale");
+        });
+        menu.addAction(tr("Revert Transform"), this, [this, entity]() {
+            runPrefabRevert(static_cast<entt::entity>(entity), "Transform", "");
+        });
+        menu.addSeparator();
+        menu.addAction(tr("Apply Transform to Prefab"), this, [this, entity]() {
+            runPrefabApply(static_cast<entt::entity>(entity), "Transform", "", false);
+        });
+        menu.exec(m_transformGroup->mapToGlobal(pos));
+    });
 
     m_detailsLayout->addWidget(m_transformGroup);
     
@@ -2187,6 +2285,13 @@ void EditorMainWindow::setupEditorCallbacks()
     ctx->SetDirtyChangedCallback([this](bool) {
         updateWindowTitle();
     });
+
+    ctx->SetSceneEditedCallback([this]() {
+        if (!m_engine || m_engine->IsPlaying()) {
+            return;
+        }
+        syncPrefabOverridesForSelection();
+    });
 }
 
 void EditorMainWindow::setupViewportRenderingToggles()
@@ -2491,8 +2596,13 @@ void EditorMainWindow::populateOutlinerItem(QTreeWidgetItem* parent, entt::entit
     // Set icon based on entity type
     if (registry.all_of<PrefabInstanceComponent>(entity)) {
         item->setIcon(0, style()->standardIcon(QStyle::SP_VistaShield));
-        item->setToolTip(0, QString::fromStdString(
-            "Prefab: " + registry.get<PrefabInstanceComponent>(entity).prefabPath));
+        const auto& inst = registry.get<PrefabInstanceComponent>(entity);
+        if (inst.missingPrefab) {
+            item->setForeground(0, QBrush(QColor(230, 120, 120)));
+            item->setToolTip(0, QString::fromStdString("Missing prefab: " + inst.prefabPath));
+        } else {
+            item->setToolTip(0, QString::fromStdString("Prefab: " + inst.prefabPath));
+        }
     } else if (registry.all_of<PrefabNodeComponent>(entity)) {
         item->setForeground(0, QBrush(QColor(130, 170, 255)));
     } else if (registry.all_of<FolderComponent>(entity)) {
@@ -2681,115 +2791,66 @@ void EditorMainWindow::onOutlinerContextMenu(const QPoint& pos)
                 menu.addSeparator();
                 if (!isPrefabNode && !isPrefabInstance) {
                     menu.addAction(tr("Create Prefab From Selection"), [this, entity]() {
-                        if (!m_engine) return;
-                        auto* ctx = m_engine->GetEditorContext();
-                        if (!ctx || !ctx->HasActiveScene()) return;
-                        Scene* scene = ctx->GetActiveScene();
-                        Entity ent(entity, scene);
-                        if (!ent) return;
-
-                        QString defaultName = QString::fromStdString(
-                            ent.HasComponent<TagComponent>() ? ent.GetComponent<TagComponent>().tag : "NewPrefab");
-                        QString filePath = QFileDialog::getSaveFileName(this,
-                            tr("Save Prefab As"), defaultName + ".hpprefab",
-                            tr("Prefab Files (*.hpprefab *.hpblueprint)"));
-                        if (filePath.isEmpty()) return;
-
-                        // Build PrefabAsset from selected entity hierarchy
-                        PrefabAsset asset;
-                        asset.assetVersion = 1;
-                        asset.name = QFileInfo(filePath).baseName().toStdString();
-
-                        std::function<void(Entity, const std::string&)> buildNode;
-                        int nodeCounter = 0;
-                        buildNode = [&](Entity e, const std::string& parentId) {
-                            PrefabNode node;
-                            node.id = "node_" + std::to_string(nodeCounter++);
-                            node.name = e.HasComponent<TagComponent>() ? e.GetComponent<TagComponent>().tag : "Node";
-                            node.parentId = parentId;
-                            auto& t = e.GetComponent<TransformComponent>();
-                            node.localTransform.position = t.position;
-                            node.localTransform.rotation = t.rotation;
-                            node.localTransform.scale = t.scale;
-                            if (parentId.empty()) {
-                                asset.rootNodeId = node.id;
-                            }
-                            std::string myId = node.id;
-                            asset.nodes.push_back(std::move(node));
-                            for (entt::entity child : t.children) {
-                                Entity childEnt(child, scene);
-                                if (childEnt) {
-                                    buildNode(childEnt, myId);
-                                }
-                            }
-                        };
-                        buildNode(ent, "");
-
-                        std::string error;
-                        if (PrefabSerializer::Serialize(asset, filePath.toStdString(), error)) {
-                            statusBar()->showMessage(tr("Prefab created: %1").arg(filePath), 3000);
-                        } else {
-                            QMessageBox::warning(this, tr("Error"),
-                                tr("Failed to create prefab: %1").arg(QString::fromStdString(error)));
-                        }
+                        createPrefabFromSelection(entity);
                     });
                 }
 
-                if (isPrefabInstance) {
-                    const auto& instComp = reg.get<PrefabInstanceComponent>(entity);
-                    menu.addAction(tr("Open Prefab"), [this, instComp]() {
-                        if (m_prefabEditorManager) {
-                            m_prefabEditorManager->OpenPrefab(QString::fromStdString(instComp.prefabPath));
+                if (isPrefabInstance || isPrefabNode) {
+                    Entity ent(entity, ctx->GetActiveScene());
+                    auto* inst = PrefabOverrideSystem::TryGetInstance(*ctx->GetActiveScene(), ent);
+                    const std::string prefabPath = inst ? inst->prefabPath : std::string();
+                    menu.addAction(tr("Open Prefab"), [this, prefabPath]() {
+                        if (m_prefabEditorManager && !prefabPath.empty()) {
+                            m_prefabEditorManager->OpenPrefab(QString::fromStdString(prefabPath));
                         }
                     });
-                    menu.addAction(tr("Refresh From Prefab"), [this, entity]() {
-                        if (!m_engine) return;
-                        auto* ctx = m_engine->GetEditorContext();
-                        if (!ctx || !ctx->HasActiveScene()) return;
-                        Scene* scene = ctx->GetActiveScene();
-                        Entity ent(entity, scene);
-                        if (!ent || !ent.HasComponent<PrefabInstanceComponent>()) return;
-
-                        EditorUndoManager::PushSnapshot(ctx, "Refresh prefab instance");
-                        const auto instData = ent.GetComponent<PrefabInstanceComponent>();
-                        PrefabInstantiator::DestroyInstance(*scene, ent);
-
-                        PrefabAsset asset;
-                        std::string error;
-                        if (PrefabSerializer::Deserialize(asset, instData.prefabPath, error)) {
-                            PrefabInstantiator::ReinstantiateInstance(*scene, asset, instData);
+                    menu.addAction(tr("Select Prefab Asset"), [this, prefabPath]() {
+                        if (!m_assetBrowser || prefabPath.empty()) return;
+                        QFileInfo info(QString::fromStdString(prefabPath));
+                        m_assetBrowser->NavigateTo(info.path());
+                    });
+                    if (isPrefabInstance) {
+                        menu.addAction(tr("Refresh From Prefab"), [this, entity]() {
+                            if (!m_engine) return;
+                            auto* ctx = m_engine->GetEditorContext();
+                            if (!ctx || !ctx->HasActiveScene()) return;
+                            Scene* scene = ctx->GetActiveScene();
+                            Entity ent(entity, scene);
+                            EditorUndoManager::PushSnapshot(ctx, "Refresh prefab instance");
+                            PrefabOverrideSystem::SyncInstance(*scene, ent);
+                            PrefabOverrideSystem::RefreshInstance(*scene, ent);
                             m_engine->RebuildSceneMeshes();
-                        }
-                        ctx->MarkDirty();
-                        rebuildOutliner();
-                    });
-                    menu.addAction(tr("Unpack Prefab"), [this, entity]() {
-                        if (!m_engine) return;
-                        auto* ctx = m_engine->GetEditorContext();
-                        if (!ctx || !ctx->HasActiveScene()) return;
-                        Scene* scene = ctx->GetActiveScene();
-
-                        EditorUndoManager::PushSnapshot(ctx, "Unpack prefab");
-                        auto& reg = scene->GetRegistry();
-                        // Remove prefab tracking components but keep the entities
-                        auto view = reg.view<PrefabNodeComponent>();
-                        Entity rootEnt(entity, scene);
-                        if (!rootEnt) return;
-                        std::string instId;
-                        if (rootEnt.HasComponent<PrefabInstanceComponent>()) {
-                            instId = rootEnt.GetComponent<PrefabInstanceComponent>().instanceId;
-                            reg.remove<PrefabInstanceComponent>(entity);
-                        }
-                        for (auto e : view) {
-                            auto& nc = reg.get<PrefabNodeComponent>(e);
-                            if (nc.instanceId == instId) {
-                                reg.remove<PrefabNodeComponent>(e);
-                            }
-                        }
-                        ctx->MarkDirty();
-                        rebuildOutliner();
-                        statusBar()->showMessage(tr("Prefab unpacked"), 3000);
-                    });
+                            ctx->MarkDirty();
+                            rebuildOutliner();
+                            refreshDetailsPanel();
+                        });
+                        menu.addAction(tr("Apply Overrides"), [this, entity]() {
+                            runPrefabApply(entity, "*", "*", true);
+                        });
+                        menu.addAction(tr("Revert Overrides"), [this, entity]() {
+                            runPrefabRevert(entity, "*", "*");
+                        });
+                        menu.addAction(tr("Unpack Prefab"), [this, entity]() {
+                            if (!m_engine) return;
+                            auto* ctx = m_engine->GetEditorContext();
+                            if (!ctx || !ctx->HasActiveScene()) return;
+                            Scene* scene = ctx->GetActiveScene();
+                            Entity ent(entity, scene);
+                            EditorUndoManager::PushSnapshot(ctx, "Unpack prefab");
+                            PrefabOverrideSystem::UnpackInstance(*scene, ent);
+                            ctx->MarkDirty();
+                            rebuildOutliner();
+                            refreshDetailsPanel();
+                            statusBar()->showMessage(tr("Prefab unpacked"), 3000);
+                        });
+                    } else {
+                        menu.addAction(tr("Revert Node Overrides"), [this, entity]() {
+                            runPrefabRevert(entity, "", "");
+                        });
+                        menu.addAction(tr("Apply Node Changes to Prefab"), [this, entity]() {
+                            runPrefabApply(entity, "", "", false);
+                        });
+                    }
                 }
             }
         }
@@ -2937,6 +2998,9 @@ void EditorMainWindow::clearDetailsPanel()
     m_scaleZ->setValue(1.0);
     
     m_transformGroup->setEnabled(false);
+    if (m_prefabBar) {
+        m_prefabBar->Clear();
+    }
 
     m_entityIdLabel->setText(tr("(No selection)"));
     m_addComponentBtn->setEnabled(false);
@@ -3061,6 +3125,7 @@ void EditorMainWindow::refreshDetailsPanel()
 
     // ── Rebuild all component inspectors ─────────────────────────────────
     rebuildComponentInspectors();
+    updatePrefabInspectorUi();
 }
 
 void EditorMainWindow::onNameChanged(const QString& text)
@@ -3651,33 +3716,14 @@ void EditorMainWindow::setupProjectCallbacks()
             Scene* scene = ctx->GetActiveScene();
             if (!scene) return;
 
-            auto view = scene->GetEntitiesWith<PrefabInstanceComponent>();
-            std::vector<PrefabInstanceComponent> toRefresh;
-
-            for (auto entityHandle : view) {
-                Entity entity(entityHandle, scene);
-                const auto& inst = entity.GetComponent<PrefabInstanceComponent>();
-                std::filesystem::path instPath(inst.prefabPath);
-                std::error_code ec;
-                if (std::filesystem::equivalent(instPath, prefabPath, ec) && !ec) {
-                    toRefresh.push_back(inst);
-                    PrefabInstantiator::DestroyInstance(*scene, entity);
-                }
-            }
-
-            for (const auto& instData : toRefresh) {
-                PrefabAsset asset;
-                std::string error;
-                if (PrefabSerializer::Deserialize(asset, instData.prefabPath, error)) {
-                    PrefabInstantiator::ReinstantiateInstance(*scene, asset, instData);
-                }
-            }
-
-            if (!toRefresh.empty()) {
+            PrefabOverrideSystem::InvalidateAssetCache(prefabPath.generic_string());
+            const int refreshed = PrefabOverrideSystem::RefreshInstancesOfPrefab(*scene, prefabPath.generic_string());
+            if (refreshed > 0) {
                 m_engine->RebuildSceneMeshes();
                 rebuildOutliner();
+                refreshDetailsPanel();
                 statusBar()->showMessage(
-                    tr("Refreshed %1 prefab instance(s)").arg(toRefresh.size()), 3000);
+                    tr("Refreshed %1 prefab instance(s)").arg(refreshed), 3000);
             }
         });
     }
@@ -4143,6 +4189,7 @@ void EditorMainWindow::rebuildComponentInspectors()
     if (registry.all_of<LightComponent>(entity)) {
         m_lightInspector = new LightInspector(ctx, entity, m_detailsWidget);
         m_detailsLayout->insertWidget(stretchIndex, m_lightInspector);
+        decoratePrefabComponentInspector(m_lightInspector, "Light");
         ++stretchIndex;
     }
     if (registry.all_of<EnvironmentComponent>(entity)) {
@@ -4161,6 +4208,7 @@ void EditorMainWindow::rebuildComponentInspectors()
                 this, &EditorMainWindow::onComponentRemoved);
 
         m_detailsLayout->insertWidget(stretchIndex, insp);
+        decoratePrefabComponentInspector(insp, insp->title().toStdString());
         ++stretchIndex;
         m_componentInspectors.push_back(insp);
     }
@@ -4752,6 +4800,232 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         std::cerr << "[SpawnDrop] UNKNOWN EXCEPTION\n";
         std::cerr.flush();
     }
+}
+
+void EditorMainWindow::syncPrefabOverridesForSelection()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    Scene* scene = ctx->GetActiveScene();
+
+    std::vector<entt::entity> entities = ctx->GetSelectedEntities();
+    if (entities.empty() && ctx->HasSelection()) {
+        entities.push_back(ctx->GetSelectedEntity());
+    }
+    for (entt::entity handle : entities) {
+        Entity entity(handle, scene);
+        if (entity) {
+            PrefabOverrideSystem::SyncEntityOverrides(*scene, entity);
+        }
+    }
+    updatePrefabInspectorUi();
+}
+
+void EditorMainWindow::updatePrefabInspectorUi()
+{
+    if (!m_prefabBar || !m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) {
+        m_prefabBar->Clear();
+        return;
+    }
+
+    entt::entity entity = entt::null;
+    if (m_detailsLocked && m_lockedEntity != entt::null) {
+        entity = m_lockedEntity;
+    } else if (ctx->HasSelection()) {
+        entity = ctx->GetSelectedEntity();
+    }
+    if (entity == entt::null) {
+        m_prefabBar->Clear();
+        return;
+    }
+
+    m_prefabBar->Bind(ctx, entity);
+
+    Scene* scene = ctx->GetActiveScene();
+    Entity ent(entity, scene);
+    auto styleSpin = [](QDoubleSpinBox* box, bool overridden) {
+        if (!box) return;
+        box->setStyleSheet(overridden ? QStringLiteral("QDoubleSpinBox { border-left: 2px solid #c9a227; }") : QString());
+    };
+
+    bool pos = false, rot = false, scl = false;
+    if (ent && PrefabOverrideSystem::IsPrefabInstanceEntity(ent) && !PrefabOverrideSystem::IsInstanceRoot(ent)) {
+        if (auto* inst = PrefabOverrideSystem::TryGetInstance(*scene, ent)) {
+            const auto* node = PrefabOverrideSystem::TryGetNode(ent);
+            if (node) {
+                pos = PrefabOverrideSystem::IsPropertyOverridden(*inst, node->nodeId, "Transform", "position");
+                rot = PrefabOverrideSystem::IsPropertyOverridden(*inst, node->nodeId, "Transform", "rotation");
+                scl = PrefabOverrideSystem::IsPropertyOverridden(*inst, node->nodeId, "Transform", "scale");
+            }
+        }
+    }
+    styleSpin(m_posX, pos); styleSpin(m_posY, pos); styleSpin(m_posZ, pos);
+    styleSpin(m_rotX, rot); styleSpin(m_rotY, rot); styleSpin(m_rotZ, rot);
+    styleSpin(m_scaleX, scl); styleSpin(m_scaleY, scl); styleSpin(m_scaleZ, scl);
+}
+
+void EditorMainWindow::decoratePrefabComponentInspector(QWidget* widget, const std::string& componentName)
+{
+    if (!widget || !m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+    Scene* scene = ctx->GetActiveScene();
+    Entity entity(ctx->GetSelectedEntity(), scene);
+    if (!entity || !PrefabOverrideSystem::IsPrefabInstanceEntity(entity)) return;
+
+    std::string type = componentName;
+    if (type == "Mesh Renderer") type = "MeshRenderer";
+    else if (type == "Mesh Collider") type = "MeshCollider";
+    else if (type == "Rigid Body") type = "RigidBody";
+    else if (type == "Physics Shape") type = "PhysicsShape";
+    else if (type == "Scripts") type = "ScriptComponent";
+    else if (type == "Lua Scripts") type = "LuaScript";
+
+    auto* inst = PrefabOverrideSystem::TryGetInstance(*scene, entity);
+    const auto* node = PrefabOverrideSystem::TryGetNode(entity);
+    const bool overridden = inst && node && PrefabOverrideSystem::IsComponentOverridden(*inst, node->nodeId, type);
+    if (overridden) {
+        widget->setStyleSheet(widget->styleSheet() +
+            QStringLiteral(" QGroupBox { border-left: 2px solid #c9a227; }"));
+    }
+
+    widget->setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::connect(widget, &QWidget::customContextMenuRequested, widget,
+        [this, widget, type, entityHandle = ctx->GetSelectedEntity()](const QPoint& pos) {
+            QMenu menu(widget);
+            menu.addAction(tr("Revert Component"), this, [this, type, entityHandle]() {
+                runPrefabRevert(entityHandle, type, "");
+            });
+            menu.addAction(tr("Apply Component to Prefab"), this, [this, type, entityHandle]() {
+                runPrefabApply(entityHandle, type, "", false);
+            });
+            menu.exec(widget->mapToGlobal(pos));
+        });
+}
+
+void EditorMainWindow::createPrefabFromSelection(entt::entity entity)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    Scene* scene = ctx->GetActiveScene();
+    Entity ent(entity, scene);
+    if (!ent) return;
+
+    QString defaultName = QString::fromStdString(
+        ent.HasComponent<TagComponent>() ? ent.GetComponent<TagComponent>().tag : "NewPrefab");
+    QString filePath = QFileDialog::getSaveFileName(this,
+        tr("Save Prefab As"), defaultName + ".hpprefab",
+        tr("Prefab Files (*.hpprefab)"));
+    if (filePath.isEmpty()) return;
+    if (!filePath.endsWith(".hpprefab", Qt::CaseInsensitive)) {
+        filePath += ".hpprefab";
+    }
+
+    EditorUndoManager::PushSnapshot(ctx, "Create prefab from selection");
+    Entity instance;
+    std::string error;
+    if (!PrefabOverrideSystem::CreateFromSelection(*scene, ent, filePath.toStdString(), &instance, error)) {
+        QMessageBox::warning(this, tr("Error"),
+            tr("Failed to create prefab: %1").arg(QString::fromStdString(error)));
+        return;
+    }
+
+    if (m_assetBrowser) {
+        m_assetBrowser->NavigateTo(QFileInfo(filePath).path());
+    }
+    m_engine->RebuildSceneMeshes();
+    ctx->MarkDirty();
+    rebuildOutliner();
+    if (instance) {
+        ctx->SelectEntity(static_cast<entt::entity>(instance));
+    }
+    statusBar()->showMessage(tr("Prefab created: %1").arg(filePath), 3000);
+}
+
+bool EditorMainWindow::runPrefabRevert(entt::entity entity, const std::string& component, const std::string& property)
+{
+    if (!m_engine) return false;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return false;
+    Scene* scene = ctx->GetActiveScene();
+    Entity ent(entity, scene);
+    if (!ent) return false;
+
+    EditorUndoManager::PushSnapshot(ctx, "Revert prefab override");
+    bool ok = false;
+    if (component == "*" && property == "*") {
+        ok = PrefabOverrideSystem::RevertAll(*scene, ent);
+    } else if (component.empty() && property.empty()) {
+        ok = PrefabOverrideSystem::RevertNode(*scene, ent);
+    } else if (property.empty()) {
+        ok = PrefabOverrideSystem::RevertComponent(*scene, ent, component);
+    } else {
+        ok = PrefabOverrideSystem::RevertProperty(*scene, ent, component, property);
+    }
+    if (ok) {
+        m_engine->RebuildSceneMeshes();
+        ctx->MarkDirty();
+        refreshDetailsPanel();
+        statusBar()->showMessage(tr("Prefab override reverted"), 2000);
+    }
+    return ok;
+}
+
+bool EditorMainWindow::runPrefabApply(entt::entity entity, const std::string& component, const std::string& property, bool confirmAll)
+{
+    if (!m_engine) return false;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return false;
+    Scene* scene = ctx->GetActiveScene();
+    Entity ent(entity, scene);
+    if (!ent) return false;
+    auto* inst = PrefabOverrideSystem::TryGetInstance(*scene, ent);
+    if (!inst) return false;
+
+    if (confirmAll) {
+        auto result = QMessageBox::question(this, tr("Apply All Overrides"),
+            tr("Apply all overrides on this instance to the source prefab?\nThis updates every instance of that prefab."),
+            QMessageBox::Yes | QMessageBox::No);
+        if (result != QMessageBox::Yes) return false;
+    }
+
+    std::string backup;
+    {
+        std::ifstream in(inst->prefabPath);
+        if (in.is_open()) {
+            backup.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        }
+    }
+    EditorUndoManager::PushSnapshotWithPrefabBackup(ctx, "Apply prefab override", inst->prefabPath, backup);
+
+    std::string error;
+    bool ok = false;
+    if (component == "*" && property == "*") {
+        ok = PrefabOverrideSystem::ApplyAllToPrefab(*scene, ent, error);
+    } else if (component.empty() && property.empty()) {
+        ok = PrefabOverrideSystem::ApplyNodeToPrefab(*scene, ent, error);
+    } else if (property.empty()) {
+        ok = PrefabOverrideSystem::ApplyComponentToPrefab(*scene, ent, component, error);
+    } else {
+        ok = PrefabOverrideSystem::ApplyPropertyToPrefab(*scene, ent, component, property, error);
+    }
+
+    if (!ok) {
+        QMessageBox::warning(this, tr("Apply Failed"),
+            tr("Could not apply to prefab: %1").arg(QString::fromStdString(error)));
+        return false;
+    }
+
+    m_engine->RebuildSceneMeshes();
+    ctx->MarkDirty();
+    rebuildOutliner();
+    refreshDetailsPanel();
+    statusBar()->showMessage(tr("Applied changes to prefab"), 3000);
+    return true;
 }
 
 } // namespace QtEditor

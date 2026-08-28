@@ -1,0 +1,58 @@
+{
+  "schema": "HephaestusPrefab",
+  "assetVersion": 1,
+  "guid": "a7c4e8f1-2b93-4d6a-9e10-prefab-lamp-01",
+  "name": "Lamp",
+  "rootNodeId": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "Lamp",
+      "parentId": null,
+      "transform": {
+        "position": [0.000000, 0.000000, 0.000000],
+        "rotation": [0.000000, 0.000000, 0.000000],
+        "scale": [1.000000, 1.000000, 1.000000]
+      },
+      "components": [
+        {
+          "type": "Light",
+          "enabled": true,
+          "data": {
+            "type": "Point",
+            "enabled": true,
+            "color": [1.000000, 0.900000, 0.700000],
+            "intensity": 1.000000,
+            "range": 12.000000
+          }
+        }
+      ],
+      "exposed": []
+    },
+    {
+      "id": "shade",
+      "name": "Shade",
+      "parentId": "root",
+      "transform": {
+        "position": [0.000000, 1.500000, 0.000000],
+        "rotation": [0.000000, 0.000000, 0.000000],
+        "scale": [1.000000, 1.000000, 1.000000]
+      },
+      "components": [
+        {
+          "type": "MeshRenderer",
+          "enabled": true,
+          "data": {
+            "visible": true,
+            "hideInGame": false,
+            "meshSource": "assets/meshes/cube.mesh",
+            "meshImported": false,
+            "backfaceCulling": false,
+            "appliedMaterialPaths": ["assets/materials/default.hematerial"]
+          }
+        }
+      ],
+      "exposed": []
+    }
+  ]
+}

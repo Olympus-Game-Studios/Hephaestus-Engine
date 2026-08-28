@@ -4,10 +4,12 @@
 #include "PrefabHierarchyPanel.h"
 #include "PrefabInspectorPanel.h"
 #include "EditorMainWindow.h"
+#include "EditorUndoCommand.h"
 #include "QtViewportWindow.h"
 #include "QtEditorEngine.h"
 
 #include "../../Scene/Components.h"
+#include "../../Scene/PrefabComponentIO.h"
 
 #include <QMessageBox>
 #include <QFileInfo>
@@ -16,6 +18,8 @@
 #include <QStatusBar>
 #include <QInputDialog>
 #include <QVBoxLayout>
+#include <QTimer>
+#include <algorithm>
 #include <iostream>
 
 namespace Hephaestus {
@@ -39,6 +43,12 @@ PrefabEditorWindow::PrefabEditorWindow(const QString& prefabPath,
 
     m_previewScene = std::make_unique<Scene>();
     m_document = std::make_unique<PrefabDocument>(m_previewScene.get());
+
+    EditorUndoManager::SetCustomPushHandler(m_previewScene.get(), [this](const std::string&) {
+        if (m_document) {
+            m_document->PushUndoSnapshot();
+        }
+    });
 
     m_document->SetPostRebuildCallback([this](Scene& /*scene*/) {
         rebuildHierarchy();
@@ -64,6 +74,9 @@ PrefabEditorWindow::PrefabEditorWindow(const QString& prefabPath,
 }
 
 PrefabEditorWindow::~PrefabEditorWindow() {
+    if (m_previewScene) {
+        EditorUndoManager::ClearCustomPushHandler(m_previewScene.get());
+    }
     shutdownEngine();
     if (m_document) {
         m_document->OnClose();
@@ -86,6 +99,7 @@ void PrefabEditorWindow::shutdownEngine() {
     if (auto* ctx = m_engine->GetEditorContext()) {
         ctx->SetSelectionChangedCallback(nullptr);
         ctx->SetSceneChangedCallback(nullptr);
+        ctx->SetSceneEditedCallback(nullptr);
         ctx->ClearSelection();
         ctx->SetExternalScene(nullptr);
     }
@@ -408,6 +422,22 @@ void PrefabEditorWindow::onViewportReady() {
             syncViewportSelectionToHierarchy();
         });
 
+        ctx->SetSceneEditedCallback([this]() {
+            if (m_refreshingInspector || !m_document) {
+                return;
+            }
+            Entity entity = findEntityByNodeId(m_selectedNodeId);
+            if (entity) {
+                m_document->SyncNodeFromEntity(entity);
+                updateWindowTitle();
+                if (m_engine) {
+                    m_engine->RebuildSceneMeshes();
+                }
+            }
+        });
+
+        refreshInspectorForSelection();
+
         statusBar()->showMessage(tr("Viewport ready"), 3000);
         std::cout << "[PrefabEditor] Viewport attached and rendering\n";
     }
@@ -469,8 +499,9 @@ void PrefabEditorWindow::updateWindowTitle() {
 void PrefabEditorWindow::onSave() {
     if (!m_document) return;
 
-    // Sync any pending viewport changes
+    // Sync any pending viewport/inspector changes
     syncTransformFromViewportToDocument();
+    syncAllPreviewNodes();
 
     std::string error;
     if (!m_document->OnSave(error)) {
@@ -507,15 +538,22 @@ void PrefabEditorWindow::onReload() {
 
 void PrefabEditorWindow::onUndo() {
     if (!m_document) return;
+    std::string previous = m_selectedNodeId;
     std::string error;
     if (!m_document->Undo(error)) {
         statusBar()->showMessage(tr("Undo: %1").arg(QString::fromStdString(error)), 3000);
         return;
     }
-    m_selectedNodeId.clear();
     rebuildHierarchy();
-    m_inspectorPanel->Clear();
     updateWindowTitle();
+    if (m_engine) {
+        m_engine->RebuildSceneMeshes();
+    }
+    if (!previous.empty()) {
+        selectNode(previous);
+    } else {
+        m_inspectorPanel->Clear();
+    }
 }
 
 void PrefabEditorWindow::onRedo() {
@@ -787,31 +825,40 @@ void PrefabEditorWindow::onInspectorAddComponent(const std::string& nodeId,
     if (!m_document) return;
     m_document->PushUndoSnapshot();
 
-    auto& asset = m_document->GetAsset();
-    for (auto& node : asset.nodes) {
-        if (node.id == nodeId) {
-            // Check if component already exists
-            bool exists = false;
-            for (const auto& c : node.components) {
-                if (c.type == componentType) { exists = true; break; }
-            }
-            if (exists) {
-                statusBar()->showMessage(
-                    tr("Component '%1' already exists").arg(QString::fromStdString(componentType)), 3000);
-                return;
-            }
-
-            PrefabComponentEntry entry;
-            entry.type = componentType;
-            entry.enabled = true;
-            entry.data.type = JsonValue::Type::Object;
-            node.components.push_back(std::move(entry));
-            break;
+    Entity entity = findEntityByNodeId(nodeId);
+    if (entity) {
+        if (!PrefabComponentIO::AddComponent(entity, componentType)) {
+            statusBar()->showMessage(
+                tr("Component '%1' already exists").arg(QString::fromStdString(componentType)), 3000);
+            return;
         }
+        m_document->SyncNodeFromEntity(entity);
+    } else {
+        auto& asset = m_document->GetAsset();
+        for (auto& node : asset.nodes) {
+            if (node.id == nodeId) {
+                bool exists = false;
+                for (const auto& c : node.components) {
+                    if (c.type == componentType) { exists = true; break; }
+                }
+                if (exists) {
+                    statusBar()->showMessage(
+                        tr("Component '%1' already exists").arg(QString::fromStdString(componentType)), 3000);
+                    return;
+                }
+
+                PrefabComponentEntry entry;
+                entry.type = componentType;
+                entry.enabled = true;
+                entry.data.type = JsonValue::Type::Object;
+                node.components.push_back(std::move(entry));
+                break;
+            }
+        }
+        m_document->RebuildPreview();
     }
 
     m_document->SetDirty(true);
-    m_document->RebuildPreview();
     refreshInspectorForSelection();
     updateWindowTitle();
     if (m_engine) m_engine->RebuildSceneMeshes();
@@ -822,19 +869,25 @@ void PrefabEditorWindow::onInspectorRemoveComponent(const std::string& nodeId,
     if (!m_document) return;
     m_document->PushUndoSnapshot();
 
-    auto& asset = m_document->GetAsset();
-    for (auto& node : asset.nodes) {
-        if (node.id == nodeId) {
-            node.components.erase(
-                std::remove_if(node.components.begin(), node.components.end(),
-                    [&](const PrefabComponentEntry& c) { return c.type == componentType; }),
-                node.components.end());
-            break;
+    Entity entity = findEntityByNodeId(nodeId);
+    if (entity) {
+        PrefabComponentIO::RemoveComponent(entity, componentType);
+        m_document->SyncNodeFromEntity(entity);
+    } else {
+        auto& asset = m_document->GetAsset();
+        for (auto& node : asset.nodes) {
+            if (node.id == nodeId) {
+                node.components.erase(
+                    std::remove_if(node.components.begin(), node.components.end(),
+                        [&](const PrefabComponentEntry& c) { return c.type == componentType; }),
+                    node.components.end());
+                break;
+            }
         }
+        m_document->RebuildPreview();
     }
 
     m_document->SetDirty(true);
-    m_document->RebuildPreview();
     refreshInspectorForSelection();
     updateWindowTitle();
     if (m_engine) m_engine->RebuildSceneMeshes();
@@ -915,7 +968,22 @@ void PrefabEditorWindow::refreshInspectorForSelection() {
     for (const auto& n : asset.nodes) {
         if (n.id == m_selectedNodeId) { node = &n; break; }
     }
-    m_inspectorPanel->ShowNode(node, m_previewScene.get(), asset.rootNodeId);
+
+    m_refreshingInspector = true;
+    EditorContext* ctx = (m_engine && m_engine->IsReadyToRender()) ? m_engine->GetEditorContext() : nullptr;
+    Entity entity = findEntityByNodeId(m_selectedNodeId);
+    m_inspectorPanel->ShowEntity(ctx, m_previewScene.get(), entity, node);
+    m_refreshingInspector = false;
+}
+
+void PrefabEditorWindow::syncAllPreviewNodes() {
+    if (!m_document || !m_previewScene) {
+        return;
+    }
+    auto view = m_previewScene->GetEntitiesWith<PrefabNodeComponent>();
+    for (auto handle : view) {
+        m_document->SyncNodeFromEntity(Entity(handle, m_previewScene.get()));
+    }
 }
 
 void PrefabEditorWindow::syncTransformFromViewportToDocument() {

@@ -6,6 +6,7 @@
 #include "EditorContext.h"
 #include "../Scene/Scene.h"
 #include "../Scene/SceneSerializer.h"
+#include "../Scene/PrefabOverrideSystem.h"
 #include <algorithm>
 #include <iostream>
 #include <filesystem>
@@ -108,13 +109,15 @@ bool EditorContext::SaveScene()
 
 bool EditorContext::SaveSceneAs(const std::string& filepath)
 {
-    if (!m_activeScene) {
+    Scene* scene = GetActiveScene();
+    if (!scene) {
         std::cerr << "[EditorContext] No active scene to save\n";
         return false;
     }
-    
-    // Serialize
-    SceneSerializer serializer(*m_activeScene);
+
+    PrefabOverrideSystem::SyncAllInstances(*scene);
+
+    SceneSerializer serializer(*scene);
     std::string error;
     if (!serializer.Serialize(filepath, error)) {
         std::cerr << "[EditorContext] Failed to save scene: " << error << "\n";
@@ -296,11 +299,13 @@ void EditorContext::ClearSelection()
 
 void EditorContext::MarkDirty()
 {
-    if (!m_isDirty) {
-        m_isDirty = true;
-        if (m_onDirtyChanged) {
-            m_onDirtyChanged(true);
-        }
+    const bool wasDirty = m_isDirty;
+    m_isDirty = true;
+    if (!wasDirty && m_onDirtyChanged) {
+        m_onDirtyChanged(true);
+    }
+    if (m_onSceneEdited) {
+        m_onSceneEdited();
     }
 }
 

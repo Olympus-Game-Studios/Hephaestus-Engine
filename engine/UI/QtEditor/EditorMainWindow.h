@@ -59,6 +59,7 @@ class AssetBrowserWidget;
 class AddActorsPanel;
 class EditorAssetActions;
 class PrefabEditorManager;
+class PrefabInstanceBar;
 class RuntimeUIOverlayWidget;
 class LightInspector;
 class EnvironmentInspector;
@@ -151,6 +152,12 @@ private:
     void onComponentRemoved(entt::entity entity, const QString& name);
     void handleDragDrop(const QString& assetPath, const QString& targetField);
     void handleViewportSpawnDrop(const QByteArray& spawnPayload, const QPoint& dropPos);
+    void syncPrefabOverridesForSelection();
+    void updatePrefabInspectorUi();
+    void decoratePrefabComponentInspector(QWidget* widget, const std::string& componentName);
+    void createPrefabFromSelection(entt::entity entity);
+    bool runPrefabRevert(entt::entity entity, const std::string& component, const std::string& property);
+    bool runPrefabApply(entt::entity entity, const std::string& component, const std::string& property, bool confirmAll);
 
 private slots:
     // File menu actions - Level
@@ -247,6 +254,7 @@ private:
     QDoubleSpinBox* m_scaleY = nullptr;
     QDoubleSpinBox* m_scaleZ = nullptr;
     QGroupBox* m_transformGroup = nullptr;
+    PrefabInstanceBar* m_prefabBar = nullptr;
 
     // Component inspectors (owned by layout, recreated on selection change)
     LightInspector* m_lightInspector = nullptr;

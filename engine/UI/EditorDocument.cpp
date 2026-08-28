@@ -2,6 +2,8 @@
 
 #include "../Scene/PrefabSerializer.h"
 #include "../Scene/PrefabInstantiator.h"
+#include "../Scene/PrefabComponentIO.h"
+#include "../Scene/PrefabOverrideSystem.h"
 #include "../Scene/SceneSerializer.h"
 #include "../Scene/Components.h"
 #include "../Scripting/ScriptComponent.h"
@@ -191,6 +193,7 @@ bool SceneDocument::OnSave(std::string& outError) {
         outError = "Scene save failed: no path set.";
         return false;
     }
+    PrefabOverrideSystem::SyncAllInstances(*scene_);
     SceneSerializer serializer(*scene_);
     if (!serializer.Serialize(path_, outError)) {
         return false;
@@ -263,6 +266,7 @@ bool PrefabDocument::OnSave(std::string& outError) {
     if (!PrefabSerializer::Serialize(asset_, path_, outError)) {
         return false;
     }
+    PrefabOverrideSystem::InvalidateAssetCache(path_.generic_string());
     dirty_ = false;
     if (postSaveCallback_) {
         postSaveCallback_(path_);
@@ -361,6 +365,7 @@ void PrefabDocument::RebuildPreviewWorld() {
 
     PrefabInstantiateOptions options;
     options.prefabPath = path_.generic_string();
+    options.attachInstanceComponent = false;
     Entity root = PrefabInstantiator::Instantiate(*scene_, asset_, options);
     rootEntity_ = root ? static_cast<entt::entity>(root) : entt::null;
 
@@ -408,167 +413,7 @@ bool PrefabDocument::SyncNodeFromEntity(Entity entity) {
     }
 
     std::vector<PrefabComponentEntry> updatedComponents;
-    updatedComponents.reserve(12);
-    std::unordered_set<std::string> knownTypes;
-
-    auto addComponentEntry = [&](const std::string& type, bool enabled, JsonValue data) {
-        PrefabComponentEntry entry;
-        entry.type = type;
-        entry.enabled = enabled;
-        entry.data = std::move(data);
-        updatedComponents.push_back(std::move(entry));
-        knownTypes.insert(type);
-    };
-
-    if (entity.HasComponent<MeshRendererComponent>()) {
-        const auto& mesh = entity.GetComponent<MeshRendererComponent>();
-        JsonValue data = MakeObject();
-        data.objectValue["visible"] = MakeBool(mesh.visible);
-        data.objectValue["hideInGame"] = MakeBool(mesh.hideInGame);
-        data.objectValue["showHiddenOutline"] = MakeBool(mesh.showHiddenOutline);
-        if (!mesh.meshAssetPath.empty()) {
-            data.objectValue["meshSource"] = MakeString(mesh.meshAssetPath);
-        }
-        data.objectValue["meshImported"] = MakeBool(mesh.meshImported);
-        data.objectValue["backfaceCulling"] = MakeBool(mesh.backfaceCulling);
-        JsonValue boundsObj = MakeObject();
-        boundsObj.objectValue["min"] = MakeVec3(mesh.localBounds.min);
-        boundsObj.objectValue["max"] = MakeVec3(mesh.localBounds.max);
-        data.objectValue["localBounds"] = std::move(boundsObj);
-        addComponentEntry("MeshRenderer", true, std::move(data));
-    }
-
-    if (entity.HasComponent<MeshColliderComponent>()) {
-        const auto& collider = entity.GetComponent<MeshColliderComponent>();
-        JsonValue data = MakeObject();
-        data.objectValue["enabled"] = MakeBool(collider.enabled);
-        data.objectValue["isStatic"] = MakeBool(collider.isStatic);
-        data.objectValue["isTrigger"] = MakeBool(collider.isTrigger);
-        data.objectValue["debugDraw"] = MakeBool(collider.debugDraw);
-        data.objectValue["useComplexCollision"] = MakeBool(collider.useComplexCollision);
-        addComponentEntry("MeshCollider", collider.enabled, std::move(data));
-    }
-
-    if (entity.HasComponent<PhysicsShapeComponent>()) {
-        const auto& shape = entity.GetComponent<PhysicsShapeComponent>();
-        JsonValue data = MakeObject();
-        data.objectValue["type"] = MakeString(PhysicsShapeTypeToString(shape.type));
-        data.objectValue["extents"] = MakeVec3(shape.extents);
-        data.objectValue["radius"] = MakeNumber(shape.radius);
-        data.objectValue["height"] = MakeNumber(shape.height);
-        data.objectValue["offset"] = MakeVec3(shape.offset);
-        addComponentEntry("PhysicsShape", true, std::move(data));
-    }
-
-    if (entity.HasComponent<RigidBodyComponent>()) {
-        const auto& body = entity.GetComponent<RigidBodyComponent>();
-        JsonValue data = MakeObject();
-        data.objectValue["mass"] = MakeNumber(body.mass);
-        data.objectValue["isStatic"] = MakeBool(body.isStatic);
-        data.objectValue["isTrigger"] = MakeBool(body.isTrigger);
-        data.objectValue["useGravity"] = MakeBool(body.useGravity);
-        data.objectValue["freezeRotation"] = MakeBool(body.freezeRotation);
-        data.objectValue["linearDamping"] = MakeNumber(body.linearDamping);
-        data.objectValue["angularDamping"] = MakeNumber(body.angularDamping);
-        data.objectValue["friction"] = MakeNumber(body.friction);
-        data.objectValue["restitution"] = MakeNumber(body.restitution);
-        data.objectValue["linearVelocity"] = MakeVec3(body.linearVelocity);
-        data.objectValue["angularVelocity"] = MakeVec3(body.angularVelocity);
-        data.objectValue["debugDraw"] = MakeBool(body.debugDraw);
-        addComponentEntry("RigidBody", true, std::move(data));
-    }
-
-    if (entity.HasComponent<MaterialComponent>()) {
-        const auto& material = entity.GetComponent<MaterialComponent>();
-        JsonValue data = MakeObject();
-        data.objectValue["albedo"] = MakeVec3(material.albedo);
-        data.objectValue["metallic"] = MakeNumber(material.metallic);
-        data.objectValue["roughness"] = MakeNumber(material.roughness);
-        data.objectValue["ao"] = MakeNumber(material.ao);
-        data.objectValue["emissive"] = MakeVec3(material.emissive);
-        data.objectValue["emissiveStrength"] = MakeNumber(material.emissiveStrength);
-        data.objectValue["albedoTexturePath"] = MakeString(material.albedoTexturePath);
-        data.objectValue["useAlbedoTexture"] = MakeBool(material.useAlbedoTexture);
-        data.objectValue["normalTexturePath"] = MakeString(material.normalTexturePath);
-        data.objectValue["useNormalTexture"] = MakeBool(material.useNormalTexture);
-        data.objectValue["roughnessTexturePath"] = MakeString(material.roughnessTexturePath);
-        data.objectValue["useRoughnessTexture"] = MakeBool(material.useRoughnessTexture);
-        data.objectValue["metallicTexturePath"] = MakeString(material.metallicTexturePath);
-        data.objectValue["useMetallicTexture"] = MakeBool(material.useMetallicTexture);
-        data.objectValue["aoTexturePath"] = MakeString(material.aoTexturePath);
-        data.objectValue["useAoTexture"] = MakeBool(material.useAoTexture);
-        data.objectValue["useWorldAlignedTexture"] = MakeBool(material.useWorldAlignedTexture);
-        data.objectValue["worldTextureScale"] = MakeNumber(material.worldTextureScale);
-        addComponentEntry("Material", true, std::move(data));
-    }
-
-    if (entity.HasComponent<LightComponent>()) {
-        const auto& light = entity.GetComponent<LightComponent>();
-        JsonValue data = MakeObject();
-        data.objectValue["type"] = MakeString(LightTypeToString(light.type));
-        data.objectValue["color"] = MakeVec3(light.color);
-        data.objectValue["intensity"] = MakeNumber(light.intensity);
-        data.objectValue["range"] = MakeNumber(light.range);
-        data.objectValue["innerConeAngle"] = MakeNumber(light.innerConeAngle);
-        data.objectValue["outerConeAngle"] = MakeNumber(light.outerConeAngle);
-        data.objectValue["direction"] = MakeVec3(light.direction);
-        data.objectValue["castShadows"] = MakeBool(light.castShadows);
-        data.objectValue["shadowAutoFit"] = MakeBool(light.shadowAutoFit);
-        data.objectValue["shadowBias"] = MakeNumber(light.shadowBias);
-        data.objectValue["shadowStrength"] = MakeNumber(light.shadowStrength);
-        data.objectValue["shadowDistance"] = MakeNumber(light.shadowDistance);
-        data.objectValue["shadowExtent"] = MakeNumber(light.shadowExtent);
-        data.objectValue["shadowMaxDistance"] = MakeNumber(light.shadowMaxDistance);
-        addComponentEntry("Light", true, std::move(data));
-    }
-
-    if (entity.HasComponent<CameraComponent>()) {
-        const auto& camera = entity.GetComponent<CameraComponent>();
-        JsonValue data = MakeObject();
-        data.objectValue["fov"] = MakeNumber(camera.fov);
-        data.objectValue["nearPlane"] = MakeNumber(camera.nearPlane);
-        data.objectValue["farPlane"] = MakeNumber(camera.farPlane);
-        data.objectValue["projection"] = MakeString(camera.projection == CameraProjection::Orthographic ? "Orthographic" : "Perspective");
-        data.objectValue["isActive"] = MakeBool(camera.isActive);
-        data.objectValue["isPrimary"] = MakeBool(camera.isPrimary || camera.isActive);
-        data.objectValue["showEditorMesh"] = MakeBool(camera.showEditorMesh);
-        addComponentEntry("Camera", true, std::move(data));
-    }
-
-    if (entity.HasComponent<ScriptComponent>()) {
-        const auto& script = entity.GetComponent<ScriptComponent>();
-        JsonValue data = MakeObject();
-        JsonValue names = MakeArray();
-        for (const auto& name : script.scriptNames) {
-            names.arrayValue.push_back(MakeString(name));
-        }
-        data.objectValue["scriptNames"] = std::move(names);
-        addComponentEntry("ScriptComponent", true, std::move(data));
-    }
-
-    if (entity.HasComponent<LuaScriptComponent>()) {
-        const auto& lua = entity.GetComponent<LuaScriptComponent>();
-        JsonValue data = MakeObject();
-        if (!lua.scriptPath.empty()) {
-            data.objectValue["path"] = MakeString(lua.scriptPath);
-        }
-        if (!lua.scriptSource.empty()) {
-            data.objectValue["source"] = MakeString(lua.scriptSource);
-        }
-        data.objectValue["enabled"] = MakeBool(lua.enabled);
-        JsonValue vars = MakeObject();
-        for (const auto& [key, value] : lua.variables) {
-            vars.objectValue.emplace(key, PropertyValueToJson(value));
-        }
-        data.objectValue["variables"] = std::move(vars);
-        addComponentEntry("LuaScript", lua.enabled, std::move(data));
-    }
-
-    for (const auto& existing : node->components) {
-        if (!knownTypes.count(existing.type)) {
-            updatedComponents.push_back(existing);
-        }
-    }
+    PrefabComponentIO::CaptureFromEntity(entity, updatedComponents);
 
     node->components = std::move(updatedComponents);
     dirty_ = true;

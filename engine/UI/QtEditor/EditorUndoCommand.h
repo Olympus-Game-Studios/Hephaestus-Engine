@@ -25,6 +25,8 @@
 #include <string>
 #include <vector>
 
+class Scene;
+
 namespace Hephaestus {
 
 class EditorContext;
@@ -55,6 +57,14 @@ public:
     static void PushSnapshot(EditorContext* ctx, const std::string& label = "");
 
     /**
+     * Push a scene snapshot and keep a backup of a prefab file so Apply-to-Prefab
+     * can restore both the scene and the source asset on undo.
+     */
+    static void PushSnapshotWithPrefabBackup(EditorContext* ctx, const std::string& label,
+                                             const std::string& prefabPath,
+                                             const std::string& prefabBackup);
+
+    /**
      * Execute undo — restores the last snapshot.
      * @param ctx     Editor context.
      * @param outError  Receives an error message on failure.
@@ -66,6 +76,10 @@ public:
      * Returns true if there is at least one undo snapshot available.
      */
     static bool CanUndo(EditorContext* ctx);
+
+    using CustomPushHandler = std::function<void(const std::string& label)>;
+    static void SetCustomPushHandler(Scene* scene, CustomPushHandler handler);
+    static void ClearCustomPushHandler(Scene* scene);
 };
 
 } // namespace QtEditor

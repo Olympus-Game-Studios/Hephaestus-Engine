@@ -12,6 +12,7 @@ struct PrefabInstantiateOptions {
     std::string instanceId;
     entt::entity parent = entt::null;
     const PrefabInstanceComponent* instanceData = nullptr;
+    bool attachInstanceComponent = true;
 };
 
 class PrefabInstantiator {

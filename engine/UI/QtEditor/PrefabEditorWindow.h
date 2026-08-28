@@ -111,6 +111,7 @@ private:
     void syncViewportSelectionToHierarchy();
     void refreshInspectorForSelection();
     void syncTransformFromViewportToDocument();
+    void syncAllPreviewNodes();
 
     // Hierarchy helpers
     void rebuildHierarchy();
@@ -169,6 +170,7 @@ private:
 
     // Selection state
     std::string m_selectedNodeId;
+    bool m_refreshingInspector = false;
 
     // Gizmo state
     GizmoMode m_gizmoMode = GizmoMode::Translate;

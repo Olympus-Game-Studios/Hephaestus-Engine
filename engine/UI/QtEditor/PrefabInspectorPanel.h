@@ -23,7 +23,13 @@
 #include "../../Scene/Components.h"
 
 namespace Hephaestus {
+
+class EditorContext;
+
 namespace QtEditor {
+
+class ComponentInspector;
+class LightInspector;
 
 class PrefabInspectorPanel : public QWidget
 {
@@ -33,6 +39,7 @@ public:
     explicit PrefabInspectorPanel(QWidget* parent = nullptr);
 
     void ShowNode(const PrefabNode* node, Scene* previewScene, const std::string& rootNodeId);
+    void ShowEntity(EditorContext* ctx, Scene* previewScene, Entity entity, const PrefabNode* node);
     void Clear();
     void RefreshTransform(const TransformComponent& transform);
 
@@ -41,12 +48,13 @@ signals:
     void transformChanged(const std::string& nodeId, const TransformComponent& transform);
     void addComponentRequested(const std::string& nodeId, const std::string& componentType);
     void removeComponentRequested(const std::string& nodeId, const std::string& componentType);
-    void componentPropertyChanged(const std::string& nodeId, const std::string& componentType);
+    void previewComponentsChanged();
 
 private:
     void buildTransformGroup();
-    void buildComponentUI(const PrefabNode* node, Scene* previewScene);
-    QWidget* createComponentWidget(const PrefabComponentEntry& entry, const std::string& nodeId);
+    void buildComponentUI(const PrefabNode* node);
+    void buildLiveComponentUI(EditorContext* ctx, Scene* previewScene, Entity entity);
+    QWidget* createReadOnlyComponentWidget(const PrefabComponentEntry& entry, const std::string& nodeId);
     void clearComponentWidgets();
     void blockTransformSignals(bool block);
 
@@ -54,14 +62,10 @@ private:
     QWidget* m_contentWidget = nullptr;
     QVBoxLayout* m_contentLayout = nullptr;
 
-    // Header
     QLabel* m_headerLabel = nullptr;
-
-    // Node info
     QGroupBox* m_nodeGroup = nullptr;
     QLineEdit* m_nameEdit = nullptr;
 
-    // Transform
     QGroupBox* m_transformGroup = nullptr;
     QDoubleSpinBox* m_posX = nullptr;
     QDoubleSpinBox* m_posY = nullptr;
@@ -73,13 +77,12 @@ private:
     QDoubleSpinBox* m_scaleY = nullptr;
     QDoubleSpinBox* m_scaleZ = nullptr;
 
-    // Components
     QWidget* m_componentsContainer = nullptr;
     QVBoxLayout* m_componentsLayout = nullptr;
     QPushButton* m_addComponentBtn = nullptr;
     std::vector<QWidget*> m_componentWidgets;
+    LightInspector* m_lightInspector = nullptr;
 
-    // State
     std::string m_currentNodeId;
     bool m_updatingUI = false;
 };
