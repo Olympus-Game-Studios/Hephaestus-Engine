@@ -44,8 +44,12 @@ void VulkanDevice::InitWithoutSurface(VkInstance inInstance) {
   instance = inInstance;
   surface = VK_NULL_HANDLE; // No surface yet
 
+  std::cout << "[VulkanDevice] InitWithoutSurface: enumerating GPUs\n";
+
   // Select GPU
   pickPhysicalDevice();
+  
+  std::cout << "[VulkanDevice] InitWithoutSurface: creating logical device\n";
   
   // Find queue families without surface (graphics-only for now)
   // Present family will be validated when AttachToSurface is called
@@ -186,21 +190,27 @@ void VulkanDevice::Cleanup() {
 void VulkanDevice::pickPhysicalDevice() {
   uint32_t count = 0;
   vkEnumeratePhysicalDevices(instance, &count, nullptr);
+  std::cout << "[VulkanDevice] Physical devices: " << count << "\n";
   if (count == 0)
     throw std::runtime_error("No Vulkan devices found!");
 
   std::vector<VkPhysicalDevice> devices(count);
   vkEnumeratePhysicalDevices(instance, &count, devices.data());
 
-  for (auto pd : devices) {
+  for (uint32_t i = 0; i < count; ++i) {
     VkPhysicalDeviceProperties props{};
-    vkGetPhysicalDeviceProperties(pd, &props);
-    physicalDevice = pd;
-    std::cout << "GPU: " << props.deviceName << "\n";
-    return;
+    vkGetPhysicalDeviceProperties(devices[i], &props);
+    std::cout << "[VulkanDevice] GPU[" << i << "]: " << props.deviceName
+              << " type=" << props.deviceType
+              << " api=" << VK_VERSION_MAJOR(props.apiVersion) << "."
+              << VK_VERSION_MINOR(props.apiVersion) << "."
+              << VK_VERSION_PATCH(props.apiVersion) << "\n";
   }
 
-  throw std::runtime_error("Failed to select a physical device");
+  physicalDevice = devices[0];
+  VkPhysicalDeviceProperties selected{};
+  vkGetPhysicalDeviceProperties(physicalDevice, &selected);
+  std::cout << "[VulkanDevice] Selected GPU: " << selected.deviceName << "\n";
 }
 
 void VulkanDevice::findQueueFamilies(VkPhysicalDevice pd) {

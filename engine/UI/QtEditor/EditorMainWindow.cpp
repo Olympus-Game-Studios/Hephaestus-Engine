@@ -28,6 +28,7 @@
 #include "../Shared/SettingsWindow.h"
 
 #include "../../Core/EditorContext.h"
+#include "../../Core/EngineLog.h"
 #include "../../Core/ProjectContext.h"
 #include "../../Scene/PrefabSerializer.h"
 #include "../../Scene/PrefabInstantiator.h"
@@ -81,6 +82,7 @@
 #include <iostream>
 #include <cmath>
 #include <filesystem>
+#include <string>
 #include <algorithm>
 #include <unordered_set>
 #include <vector>
@@ -401,31 +403,54 @@ EditorMainWindow::EditorMainWindow(QWidget* parent)
     : QMainWindow(parent)
     , m_projectContext(std::make_unique<ProjectContext>())
 {
+    EngineLog::Info("EditorMainWindow: constructing UI");
+
     m_engineSettingsManager.Load();
+    EngineLog::Info("EditorMainWindow: engine settings loaded");
 
     // Load recent projects from settings
     m_projectContext->LoadRecentProjectsFromFile();
+    EngineLog::Info("EditorMainWindow: recent projects loaded");
 
     // Set window properties
     setWindowTitle("Hephaestus Engine Editor (Qt)");
     resize(1280, 720);
 
-    // Setup UI components
+    // Setup UI components (Vulkan is started after show() via StartEngine)
     setupMenuBar();
+    EngineLog::Info("EditorMainWindow: menu bar ready");
     setupTopToolbar();
+    EngineLog::Info("EditorMainWindow: toolbar ready");
     setupDockWidgets();
+    EngineLog::Info("EditorMainWindow: dock widgets ready");
     setupCentralWidget();
+    EngineLog::Info("EditorMainWindow: central viewport widget ready");
     setupStatusBar();
     applyUnifiedStyle();
-
-    // Initialize the engine after UI is setup
-    initializeEngine();
+    EngineLog::Info("EditorMainWindow: UI construction complete (window not shown yet)");
 }
 
 EditorMainWindow::~EditorMainWindow()
 {
     // Engine cleanup happens in its destructor via unique_ptr
+    EngineLog::Info("EditorMainWindow destructor");
     std::cout << "[EditorMainWindow] Destructor called\n";
+}
+
+bool EditorMainWindow::StartEngine()
+{
+    EngineLog::Info("EditorMainWindow::StartEngine");
+    if (!initializeEngine()) {
+        return false;
+    }
+
+    // show() + processEvents() can expose the viewport before Vulkan exists.
+    // Attach now if that already happened; otherwise onViewportReady will fire later.
+    if (m_viewportWindow && m_viewportWindow->IsReadyForRendering()) {
+        EngineLog::Info("Viewport already exposed; attaching engine now");
+        onViewportReady();
+    }
+    return true;
 }
 
 void EditorMainWindow::OpenProjectFromPath(const QString& filepath)
@@ -445,6 +470,7 @@ void EditorMainWindow::OpenProjectFromPath(const QString& filepath)
 
 void EditorMainWindow::closeEvent(QCloseEvent* event)
 {
+    EngineLog::Info("EditorMainWindow close event");
     std::cout << "[EditorMainWindow] Close event received\n";
 
     // Close all prefab editor windows
@@ -2061,8 +2087,9 @@ QCheckBox:disabled { color: #6B7280; }
     )"));
 }
 
-void EditorMainWindow::initializeEngine()
+bool EditorMainWindow::initializeEngine()
 {
+    EngineLog::Info("initializeEngine: creating QtEditorEngine");
     m_engine = std::make_unique<QtEditorEngine>(this);
     
     // Set up viewport rendering toggles now that engine context is available
@@ -2125,12 +2152,16 @@ void EditorMainWindow::initializeEngine()
     });
     
     // Start Vulkan initialization
+    EngineLog::Info("initializeEngine: InitializeVulkan (this can take a while on some GPUs)");
     if (!m_engine->InitializeVulkan()) {
+        EngineLog::Error("initializeEngine: Vulkan initialization failed");
         statusBar()->showMessage(tr("Failed to initialize Vulkan"));
-        return;
+        return false;
     }
-    
+
+    EngineLog::Info("initializeEngine: Vulkan ready, waiting for viewport expose");
     statusBar()->showMessage(tr("Vulkan initialized, waiting for viewport..."));
+    return true;
 }
 
 void EditorMainWindow::setupEditorCallbacks()
@@ -2199,10 +2230,16 @@ void EditorMainWindow::setupViewportRenderingToggles()
 
 void EditorMainWindow::onViewportReady()
 {
+    EngineLog::Info("Viewport ready, attaching engine");
     std::cout << "[EditorMainWindow] Viewport ready, attaching engine\n";
     
     if (!m_engine) {
+        EngineLog::Info("Viewport ready before engine init; attach deferred");
         statusBar()->showMessage(tr("Engine not initialized"));
+        return;
+    }
+
+    if (m_engine->GetState() == EngineState::Running) {
         return;
     }
     
@@ -2231,8 +2268,10 @@ void EditorMainWindow::onViewportReady()
         rebuildOutliner();
         updateWindowTitle();
         
+        EngineLog::Info("Render loop started");
         statusBar()->showMessage(tr("Rendering started"));
     } else {
+        EngineLog::Error("Failed to attach engine to viewport");
         statusBar()->showMessage(tr("Failed to attach to viewport"));
     }
 }
@@ -2378,6 +2417,7 @@ void EditorMainWindow::syncTransformFieldsFromScene()
 
 void EditorMainWindow::onEngineError(const QString& message)
 {
+    EngineLog::Error(std::string("Engine error: ") + message.toStdString());
     statusBar()->showMessage(QString("Error: %1").arg(message));
     QMessageBox::warning(this, tr("Engine Error"), message);
 }

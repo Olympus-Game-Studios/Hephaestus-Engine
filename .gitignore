@@ -47,3 +47,6 @@
 !/CMakeLists.txt
 
 build/
+hephaestus.log
+**/hephaestus.log
+logs/

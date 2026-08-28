@@ -12,6 +12,7 @@
 #include "QtEditorEngine.h"
 #include "AppConfig.h"
 #include "../../Audio/AudioEngine.h"
+#include "../../Core/EngineLog.h"
 #include "../../Gfx/VulkanDevice.h"
 #include "../../Gfx/VulkanSwapchain.h"
 #include "../../Gfx/VulkanPipeline.h"
@@ -43,6 +44,7 @@
 #include <filesystem>
 #include <cmath>
 #include <algorithm>
+#include <string>
 #include <unordered_map>
 
 #ifdef _WIN32
@@ -220,6 +222,30 @@ QtEditorEngine::~QtEditorEngine()
     Shutdown();
 }
 
+static const char* VkResultToString(VkResult result)
+{
+    switch (result) {
+        case VK_SUCCESS: return "VK_SUCCESS";
+        case VK_NOT_READY: return "VK_NOT_READY";
+        case VK_TIMEOUT: return "VK_TIMEOUT";
+        case VK_EVENT_SET: return "VK_EVENT_SET";
+        case VK_EVENT_RESET: return "VK_EVENT_RESET";
+        case VK_INCOMPLETE: return "VK_INCOMPLETE";
+        case VK_ERROR_OUT_OF_HOST_MEMORY: return "VK_ERROR_OUT_OF_HOST_MEMORY";
+        case VK_ERROR_OUT_OF_DEVICE_MEMORY: return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+        case VK_ERROR_INITIALIZATION_FAILED: return "VK_ERROR_INITIALIZATION_FAILED";
+        case VK_ERROR_DEVICE_LOST: return "VK_ERROR_DEVICE_LOST";
+        case VK_ERROR_MEMORY_MAP_FAILED: return "VK_ERROR_MEMORY_MAP_FAILED";
+        case VK_ERROR_LAYER_NOT_PRESENT: return "VK_ERROR_LAYER_NOT_PRESENT";
+        case VK_ERROR_EXTENSION_NOT_PRESENT: return "VK_ERROR_EXTENSION_NOT_PRESENT";
+        case VK_ERROR_FEATURE_NOT_PRESENT: return "VK_ERROR_FEATURE_NOT_PRESENT";
+        case VK_ERROR_INCOMPATIBLE_DRIVER: return "VK_ERROR_INCOMPATIBLE_DRIVER";
+        case VK_ERROR_TOO_MANY_OBJECTS: return "VK_ERROR_TOO_MANY_OBJECTS";
+        case VK_ERROR_FORMAT_NOT_SUPPORTED: return "VK_ERROR_FORMAT_NOT_SUPPORTED";
+        default: return "VK_UNKNOWN";
+    }
+}
+
 bool QtEditorEngine::InitializeVulkan()
 {
     if (m_state != EngineState::Uninitialized) {
@@ -228,6 +254,7 @@ bool QtEditorEngine::InitializeVulkan()
     }
     
     m_state = EngineState::InitializingVulkan;
+    EngineLog::Info("QtEditorEngine: initializing Vulkan");
     
     if (!createVulkanInstance()) {
         m_state = EngineState::Uninitialized;
@@ -241,12 +268,14 @@ bool QtEditorEngine::InitializeVulkan()
     }
     
     m_state = EngineState::WaitingForViewport;
+    EngineLog::Info("QtEditorEngine: Vulkan initialized, waiting for viewport");
     std::cout << "[QtEditorEngine] Vulkan initialized, waiting for viewport\n";
     return true;
 }
 
 bool QtEditorEngine::createVulkanInstance()
 {
+    EngineLog::Info("createVulkanInstance: preparing VkApplicationInfo (Vulkan 1.3)");
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     appInfo.pApplicationName = HEPHAESTUS_APP_NAME " (Qt Editor)";
@@ -284,8 +313,20 @@ bool QtEditorEngine::createVulkanInstance()
     createInfo.enabledLayerCount = 0;
 #endif
 
-    if (vkCreateInstance(&createInfo, nullptr, &m_instance) != VK_SUCCESS) {
-        emit engineError("Failed to create Vulkan instance");
+#ifdef _DEBUG
+    EngineLog::Info("createVulkanInstance: requesting VK_LAYER_KHRONOS_validation");
+#else
+    EngineLog::Info("createVulkanInstance: validation layers disabled (non-debug build)");
+#endif
+
+    EngineLog::Info("createVulkanInstance: calling vkCreateInstance (hangs here usually mean a GPU driver/ICD issue)");
+    const VkResult instanceResult = vkCreateInstance(&createInfo, nullptr, &m_instance);
+    if (instanceResult != VK_SUCCESS) {
+        std::string error = std::string("Failed to create Vulkan instance: ") +
+                            VkResultToString(instanceResult) + " (" +
+                            std::to_string(static_cast<int>(instanceResult)) + ")";
+        EngineLog::Error(error);
+        emit engineError(QString::fromStdString(error));
         return false;
     }
 
@@ -307,6 +348,7 @@ bool QtEditorEngine::createVulkanInstance()
     }
 #endif
 
+    EngineLog::Info("createVulkanInstance: instance created");
     std::cout << "[QtEditorEngine] Vulkan instance created\n";
     return true;
 }
@@ -314,10 +356,13 @@ bool QtEditorEngine::createVulkanInstance()
 bool QtEditorEngine::initializeVulkanDevice()
 {
     try {
+        EngineLog::Info("initializeVulkanDevice: selecting GPU and creating logical device");
         m_device = std::make_unique<VulkanDevice>();
         m_device->InitWithoutSurface(m_instance);
+        EngineLog::Info("initializeVulkanDevice: device ready");
         return true;
     } catch (const std::exception& e) {
+        EngineLog::Error(std::string("initializeVulkanDevice failed: ") + e.what());
         emit engineError(QString("Failed to initialize Vulkan device: %1").arg(e.what()));
         return false;
     }
@@ -338,7 +383,7 @@ bool QtEditorEngine::AttachToViewport(QtViewportWindow* viewport)
     m_viewport = viewport;
     m_currentSurface = viewport->GetNativeSurface();
     
-    m_state = EngineState::CreatingSwapchain;
+    EngineLog::Info("AttachToViewport: creating Win32/Vulkan surface and swapchain");
     
     // Attach device to the native surface
     if (!m_device->AttachToSurface(m_currentSurface)) {

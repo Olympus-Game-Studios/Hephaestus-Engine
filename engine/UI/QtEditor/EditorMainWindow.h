@@ -106,6 +106,12 @@ public:
     ~EditorMainWindow() override;
     void OpenProjectFromPath(const QString& filepath);
 
+    /**
+     * Create the engine and initialize Vulkan. Call after show() so a hang
+     * or GPU failure cannot leave the user with only a console window.
+     */
+    bool StartEngine();
+
 protected:
     void closeEvent(QCloseEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -120,7 +126,7 @@ private:
     void setupCentralWidget();
     void setupStatusBar();
     void applyUnifiedStyle();
-    void initializeEngine();
+    bool initializeEngine();
     void setupEditorCallbacks();
     void setupViewportRenderingToggles();
     void registerComponentInspectors();

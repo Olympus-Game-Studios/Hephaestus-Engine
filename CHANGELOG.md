@@ -6,8 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2026.8.27]
+
 ### Added
 
+- 2026-08-27: Editor writes `hephaestus.log` next to `HephaestusEngine.exe` at startup. The log captures environment diagnostics (GPU, Qt plugins, Vulkan loader, command line) and mirrors all console output so a black-terminal / no-window launch can be diagnosed from disk.
 - 2026-08-25: Mesh Renderer inspector shows a Show Hidden Outline checkbox when Visible is off. Checked objects still draw an editor outline and can be clicked in the viewport; unchecked objects stay fully hidden and unpickable.
 - 2026-08-25: Added root `build.bat` for Windows one-command CMake configure and build (Release by default, with debug/clean/reconfigure options and automatic EnTT setup).
 - 2026-04-26: Expanded the Qt Material Editor node graph with metadata-driven node definitions, scalar-to-vector connection compatibility, a GLSL snippet generator, new math/utility/texture/procedural/logic/blend/input/parameter nodes, expanded PBR output fields, and node reference documentation.
@@ -33,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-08-27: Editor main window is shown before Vulkan initialization. A hang or GPU/driver failure during `vkCreateInstance` no longer leaves only a console window with no UI.
 - 2026-08-25: Fixed RMB look jittering back toward the middle while turning. The hidden cursor is only recentered at the viewport edges, and warp-generated moves no longer update the look baseline or get applied as opposite mouse motion.
 - 2026-08-25: Fixed RMB look slamming the camera straight up and spinning. Captured look now uses last-position deltas, Qt DPI-aware cursor warping, and ignores teleport-sized samples so a recenter cannot be applied as mouse motion.
 - 2026-08-25: Restored RMB fly-look in the viewport. Capture no longer waits for a warp-settle that never matched Qt mouse coordinates (which discarded every look delta).

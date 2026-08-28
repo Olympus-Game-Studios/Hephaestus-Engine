@@ -202,6 +202,7 @@ set(ENGINE_CORE_SOURCES
     engine/Core/EditorCameraController.cpp
     engine/Core/ProjectContext.cpp
     engine/Core/PlayModeManager.cpp
+    engine/Core/EngineLog.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
     engine/Gfx/VulkanPipeline.cpp
@@ -299,6 +300,7 @@ if(HEPHAESTUS_BUILD_EDITOR)
 add_executable(HephaestusEngine
     engine/Audio/AudioEngine.cpp
     engine/Core/main.cpp
+    engine/Core/EngineLog.cpp
     engine/Core/EditorContext.cpp
     engine/Core/EditorCameraController.cpp
     engine/Core/ProjectContext.cpp
