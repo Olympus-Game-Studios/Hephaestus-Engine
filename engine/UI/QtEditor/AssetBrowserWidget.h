@@ -24,6 +24,7 @@
 #include <QToolBar>
 #include <QComboBox>
 #include <QToolButton>
+#include <QHBoxLayout>
 #include <QString>
 #include <functional>
 
@@ -139,9 +140,14 @@ private:
     void createNewMaterial(const QString& parentRelativePath);
     void createNewUIFile(const QString& parentRelativePath);
     void createNewPrefab(const QString& parentRelativePath);
+    void importAssets();
+    void duplicateAsset(const QString& relativePath, bool isDirectory);
+    void copyAssetPath(const QString& relativePath);
     void deleteAsset(const QString& relativePath, bool isDirectory);
     void renameAsset(const QString& relativePath, bool isDirectory);
     void showInExplorer(const QString& relativePath);
+    void syncFolderTreeSelection();
+    QModelIndex findFolderIndexByPath(const QString& relativePath) const;
 
     // Main window reference for opening assets
     EditorMainWindow* m_mainWindow = nullptr;
@@ -171,6 +177,8 @@ private:
     QPushButton* m_upButton = nullptr;
     QPushButton* m_refreshButton = nullptr;
     QLabel* m_breadcrumbLabel = nullptr;
+    QWidget* m_breadcrumbBar = nullptr;
+    QHBoxLayout* m_breadcrumbLayout = nullptr;
     QLineEdit* m_searchBox = nullptr;
 
     bool m_gridView = true;

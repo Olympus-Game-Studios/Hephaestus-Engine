@@ -184,6 +184,9 @@ private slots:
     void onPasteEntity();
     void onDuplicateEntity();
     void onOpenSettings();
+    void updateUndoRedoActions();
+    void beginCoalescedTransformUndo(const char* label);
+    void endCoalescedTransformUndo();
 
     // Help menu actions
     void onAbout();
@@ -205,6 +208,7 @@ private slots:
     void onPositionChanged();
     void onRotationChanged();
     void onScaleChanged();
+    void onVisibilityToggled(bool visible);
 
 private:
     void updateWindowTitle();
@@ -318,6 +322,11 @@ private:
 
     // Prevent re-entrant updates
     bool m_updatingDetails = false;
+    bool m_transformUndoActive = false;
+
+    // Edit menu action pointers (for enable/disable)
+    QAction* m_undoAction = nullptr;
+    QAction* m_redoAction = nullptr;
 
     // Project menu
     QMenu* m_recentProjectsMenu = nullptr;

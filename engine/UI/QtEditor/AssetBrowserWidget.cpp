@@ -36,6 +36,9 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QFileInfo>
+#include <QDir>
+#include <QClipboard>
+#include <QShortcut>
 #include <iostream>
 #include <fstream>
 
@@ -163,11 +166,16 @@ void AssetBrowserWidget::NavigateTo(const QString& relativePath)
         m_currentPath.clear();
     } else if (relativePath.isEmpty() || assetMgr.IsDirectory(relativePath.toStdString())) {
         m_currentPath = relativePath;
+        m_currentPath.replace('\\', '/');
+        while (m_currentPath.startsWith('/')) {
+            m_currentPath.remove(0, 1);
+        }
     }
     
     rebuildContentsView();
     updateBreadcrumb();
     updateStatusBar();
+    syncFolderTreeSelection();
 }
 
 void AssetBrowserWidget::SetOpenAssetCallback(OpenAssetCallback callback)
@@ -205,16 +213,15 @@ void AssetBrowserWidget::setupUI()
     m_toolbar->addWidget(m_viewToggleButton);
 
     m_importButton = new QPushButton(tr("Import"), this);
-    connect(m_importButton, &QPushButton::clicked, this, [this]() {
-        QString file = QFileDialog::getOpenFileName(this, tr("Import Asset"), QString(), tr("All Files (*)"));
-        if (!file.isEmpty()) {
-            m_statusLabel->setText(tr("Import queued: %1").arg(file));
-        }
-    });
+    m_importButton->setToolTip(tr("Copy files into the current asset folder"));
+    connect(m_importButton, &QPushButton::clicked, this, &AssetBrowserWidget::importAssets);
     m_toolbar->addWidget(m_importButton);
 
     m_filterCombo = new QComboBox(this);
-    m_filterCombo->addItems({ tr("All"), tr("Meshes"), tr("Textures"), tr("Materials"), tr("Scenes"), tr("Scripts"), tr("UI Layouts") });
+    m_filterCombo->addItems({
+        tr("All"), tr("Meshes"), tr("Textures"), tr("Materials"), tr("Scenes"),
+        tr("Scripts"), tr("UI Layouts"), tr("Prefabs"), tr("Audio")
+    });
     connect(m_filterCombo, &QComboBox::currentTextChanged, this, [this](const QString&) {
         rebuildContentsView();
     });
@@ -240,13 +247,14 @@ void AssetBrowserWidget::setupUI()
 
     m_toolbar->addSeparator();
 
-    // Breadcrumb label
-    m_breadcrumbLabel = new QLabel(tr("Assets"), this);
-    m_breadcrumbLabel->setMinimumWidth(40);
-    QFont breadcrumbFont = m_breadcrumbLabel->font();
-    breadcrumbFont.setBold(true);
-    m_breadcrumbLabel->setFont(breadcrumbFont);
-    m_toolbar->addWidget(m_breadcrumbLabel);
+    // Clickable breadcrumb bar
+    m_breadcrumbBar = new QWidget(this);
+    m_breadcrumbLayout = new QHBoxLayout(m_breadcrumbBar);
+    m_breadcrumbLayout->setContentsMargins(0, 0, 0, 0);
+    m_breadcrumbLayout->setSpacing(2);
+    m_breadcrumbLabel = new QLabel(tr("Assets"), m_breadcrumbBar); // kept for compatibility
+    m_breadcrumbLabel->hide();
+    m_toolbar->addWidget(m_breadcrumbBar);
 
     // Spacer
     QWidget* spacer = new QWidget(this);
@@ -281,8 +289,9 @@ void AssetBrowserWidget::setupUI()
     leftHeader->addStretch();
     m_newFolderButton = new QPushButton(tr("+"), leftPanel);
     m_newFolderButton->setFixedSize(24, 24);
+    m_newFolderButton->setToolTip(tr("Create a new folder in the current directory"));
     connect(m_newFolderButton, &QPushButton::clicked, this, [this]() {
-        QMessageBox::information(this, tr("New Folder"), tr("Folder creation UI is ready; backend folder creation will be wired next."));
+        createNewFolder(m_currentPath);
     });
     leftHeader->addWidget(m_newFolderButton);
     leftLayout->addLayout(leftHeader);
@@ -471,6 +480,8 @@ void AssetBrowserWidget::rebuildContentsView()
         if (filter == tr("Scenes")) return type == AssetType::Scene;
         if (filter == tr("Scripts")) return type == AssetType::Script;
         if (filter == tr("UI Layouts")) return type == AssetType::UILayout;
+        if (filter == tr("Prefabs")) return type == AssetType::Prefab;
+        if (filter == tr("Audio")) return type == AssetType::Audio;
         return true;
     };
 
@@ -524,15 +535,50 @@ void AssetBrowserWidget::applyViewAndFilter()
 
 void AssetBrowserWidget::updateBreadcrumb()
 {
-    if (m_currentPath.isEmpty()) {
-        m_breadcrumbLabel->setText(tr("Assets"));
-    } else {
-        QString display = "Assets / " + m_currentPath;
-        display.replace("/", " / ");
-        m_breadcrumbLabel->setText(display);
+    if (!m_breadcrumbLayout) {
+        return;
     }
 
-    // Enable/disable up button
+    while (QLayoutItem* child = m_breadcrumbLayout->takeAt(0)) {
+        if (child->widget()) {
+            child->widget()->deleteLater();
+        }
+        delete child;
+    }
+
+    auto addCrumb = [this](const QString& label, const QString& targetPath, bool isLast) {
+        auto* btn = new QToolButton(m_breadcrumbBar);
+        btn->setAutoRaise(true);
+        btn->setText(label);
+        btn->setCursor(Qt::PointingHandCursor);
+        if (isLast) {
+            QFont f = btn->font();
+            f.setBold(true);
+            btn->setFont(f);
+            btn->setEnabled(false);
+        } else {
+            connect(btn, &QToolButton::clicked, this, [this, targetPath]() {
+                NavigateTo(targetPath);
+            });
+        }
+        m_breadcrumbLayout->addWidget(btn);
+    };
+
+    addCrumb(tr("Assets"), QString(), m_currentPath.isEmpty());
+
+    if (!m_currentPath.isEmpty()) {
+        const QStringList parts = m_currentPath.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        QString accum;
+        for (int i = 0; i < parts.size(); ++i) {
+            auto* sep = new QLabel(QStringLiteral("/"), m_breadcrumbBar);
+            m_breadcrumbLayout->addWidget(sep);
+            if (!accum.isEmpty()) accum += QLatin1Char('/');
+            accum += parts[i];
+            addCrumb(parts[i], accum, i == parts.size() - 1);
+        }
+    }
+
+    m_breadcrumbLayout->addStretch();
     m_upButton->setEnabled(!m_currentPath.isEmpty());
 }
 
@@ -740,6 +786,20 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
         menu.addAction(tr("Rename"), [this, relativePath, isDirectory]() {
             renameAsset(relativePath, isDirectory);
         });
+        if (!isDirectory) {
+            menu.addAction(tr("Duplicate"), [this, relativePath]() {
+                duplicateAsset(relativePath, false);
+            });
+            menu.addAction(tr("Copy Asset Path"), [this, relativePath]() {
+                copyAssetPath(relativePath);
+            });
+            menu.addAction(tr("Open Source Externally"), [this, relativePath]() {
+                showInExplorer(relativePath);
+                auto& assetMgr = AssetManager::GetInstance();
+                const QString abs = QString::fromStdString(assetMgr.ToAbsolutePath(relativePath.toStdString()));
+                QDesktopServices::openUrl(QUrl::fromLocalFile(abs));
+            });
+        }
 
         QAction* deleteAct = menu.addAction(tr("Delete"), [this, relativePath, isDirectory]() {
             deleteAsset(relativePath, isDirectory);
@@ -887,11 +947,14 @@ void AssetBrowserWidget::createNewLuaScript(const QString& parentRelativePath)
     std::string scriptName = name.trimmed().toStdString();
     file << "-- " << scriptName << ".lua\n"
          << "-- Hephaestus Lua Script\n\n"
-         << "function OnStart()\n"
-         << "    -- Called when the script starts\n"
+         << "function onAwake()\n"
+         << "    -- Called when the script starts (play mode)\n"
          << "end\n\n"
-         << "function OnUpdate(dt)\n"
+         << "function onUpdate(dt)\n"
          << "    -- Called every frame (dt = delta time in seconds)\n"
+         << "end\n\n"
+         << "function onDestroy()\n"
+         << "    -- Called when the script is destroyed\n"
          << "end\n";
     file.close();
 
@@ -1008,6 +1071,9 @@ void AssetBrowserWidget::createNewUIFile(const QString& parentRelativePath)
     file.close();
 
     Refresh();
+    const QString fileName = name.trimmed() + ".hui";
+    const QString relativePath = parentRelativePath.isEmpty() ? fileName : parentRelativePath + "/" + fileName;
+    emit assetOpenRequested(relativePath);
     std::cout << "[AssetBrowser] Created UI file: " << filePath.string() << "\n";
 }
 
@@ -1053,6 +1119,9 @@ void AssetBrowserWidget::createNewPrefab(const QString& parentRelativePath)
     }
 
     Refresh();
+    const QString fileName = QString::fromStdString(prefabName) + ".hpprefab";
+    const QString relativePath = parentRelativePath.isEmpty() ? fileName : parentRelativePath + "/" + fileName;
+    emit assetOpenRequested(relativePath);
     std::cout << "[AssetBrowser] Created prefab: " << filePath.string() << "\n";
 }
 
@@ -1140,6 +1209,156 @@ void AssetBrowserWidget::showInExplorer(const QString& relativePath)
     QDesktopServices::openUrl(QUrl::fromLocalFile(
         QString::fromStdString(std::filesystem::path(absPath).parent_path().string())));
 #endif
+}
+
+void AssetBrowserWidget::importAssets()
+{
+    auto& assetMgr = AssetManager::GetInstance();
+    if (!assetMgr.HasValidAssetRoot()) {
+        QMessageBox::information(this, tr("Import"), tr("Open a project before importing assets."));
+        return;
+    }
+
+    const QStringList files = QFileDialog::getOpenFileNames(
+        this,
+        tr("Import Assets"),
+        QString(),
+        tr("Supported Assets (*.obj *.fbx *.gltf *.glb *.png *.jpg *.jpeg *.tga *.hdr *.exr *.wav *.mp3 *.ogg *.lua *.hematerial *.hpscene *.hpprefab *.hui);;All Files (*)"));
+    if (files.isEmpty()) {
+        return;
+    }
+
+    const std::string destDir = m_currentPath.isEmpty()
+        ? assetMgr.GetAssetRoot()
+        : assetMgr.ToAbsolutePath(m_currentPath.toStdString());
+
+    int imported = 0;
+    QStringList failures;
+    for (const QString& src : files) {
+        const QFileInfo info(src);
+        std::filesystem::path dest = std::filesystem::path(destDir) / info.fileName().toStdString();
+        if (std::filesystem::exists(dest)) {
+            auto result = QMessageBox::question(
+                this,
+                tr("Overwrite?"),
+                tr("\"%1\" already exists in this folder. Overwrite it?").arg(info.fileName()),
+                QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel,
+                QMessageBox::No);
+            if (result == QMessageBox::Cancel) {
+                break;
+            }
+            if (result != QMessageBox::Yes) {
+                continue;
+            }
+            std::error_code removeEc;
+            std::filesystem::remove(dest, removeEc);
+        }
+
+        std::error_code ec;
+        std::filesystem::copy_file(src.toStdString(), dest, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            failures << QString("%1 (%2)").arg(info.fileName(), QString::fromStdString(ec.message()));
+        } else {
+            ++imported;
+        }
+    }
+
+    Refresh();
+    if (!failures.isEmpty()) {
+        QMessageBox::warning(this, tr("Import"),
+            tr("Imported %1 file(s).\n\nFailed:\n%2").arg(imported).arg(failures.join('\n')));
+    } else {
+        m_statusLabel->setText(tr("Imported %1 file(s)").arg(imported));
+    }
+}
+
+void AssetBrowserWidget::duplicateAsset(const QString& relativePath, bool isDirectory)
+{
+    if (relativePath.isEmpty() || isDirectory) {
+        return;
+    }
+
+    auto& assetMgr = AssetManager::GetInstance();
+    std::filesystem::path src(assetMgr.ToAbsolutePath(relativePath.toStdString()));
+    const std::string stem = src.stem().string();
+    const std::string ext = src.extension().string();
+    std::filesystem::path dest;
+    int suffix = 1;
+    do {
+        dest = src.parent_path() / (stem + "_Copy" + (suffix > 1 ? std::to_string(suffix) : "") + ext);
+        ++suffix;
+    } while (std::filesystem::exists(dest) && suffix < 1000);
+
+    std::error_code ec;
+    std::filesystem::copy_file(src, dest, ec);
+    if (ec) {
+        QMessageBox::critical(this, tr("Duplicate"),
+            tr("Could not duplicate asset:\n%1").arg(QString::fromStdString(ec.message())));
+        return;
+    }
+
+    Refresh();
+    m_statusLabel->setText(tr("Duplicated: %1").arg(QString::fromStdString(dest.filename().string())));
+}
+
+void AssetBrowserWidget::copyAssetPath(const QString& relativePath)
+{
+    if (relativePath.isEmpty()) {
+        return;
+    }
+    const QString projectPath = ToProjectRelativeAssetPath(relativePath);
+    if (QClipboard* clipboard = QApplication::clipboard()) {
+        clipboard->setText(projectPath);
+        m_statusLabel->setText(tr("Copied path: %1").arg(projectPath));
+    }
+}
+
+QModelIndex AssetBrowserWidget::findFolderIndexByPath(const QString& relativePath) const
+{
+    if (!m_folderModel) {
+        return {};
+    }
+
+    std::function<QModelIndex(const QModelIndex&)> walk;
+    walk = [&](const QModelIndex& parent) -> QModelIndex {
+        const int rows = m_folderModel->rowCount(parent);
+        for (int r = 0; r < rows; ++r) {
+            QModelIndex idx = m_folderModel->index(r, 0, parent);
+            const QString path = idx.data(RelativePathRole).toString();
+            if (path == relativePath) {
+                return idx;
+            }
+            QModelIndex child = walk(idx);
+            if (child.isValid()) {
+                return child;
+            }
+        }
+        return {};
+    };
+
+    return walk(QModelIndex());
+}
+
+void AssetBrowserWidget::syncFolderTreeSelection()
+{
+    if (!m_folderTree || !m_folderModel) {
+        return;
+    }
+
+    QModelIndex target;
+    if (m_currentPath.isEmpty()) {
+        target = m_folderModel->index(0, 0);
+    } else {
+        target = findFolderIndexByPath(m_currentPath);
+    }
+
+    if (target.isValid()) {
+        m_folderTree->blockSignals(true);
+        m_folderTree->setCurrentIndex(target);
+        m_folderTree->expand(target);
+        m_folderTree->scrollTo(target);
+        m_folderTree->blockSignals(false);
+    }
 }
 
 } // namespace QtEditor

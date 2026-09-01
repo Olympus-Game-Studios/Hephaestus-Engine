@@ -114,10 +114,10 @@ bool PlayModeManager::StartPlayMode() {
         m_runtimeCamera.posX = camTransform.position.x;
         m_runtimeCamera.posY = camTransform.position.y;
         m_runtimeCamera.posZ = camTransform.position.z;
-        // Transform stores rotation in degrees; runtime camera uses radians
-        m_runtimeCamera.pitch = RuntimeCameraState::DegToRad(camTransform.rotation.x);
-        m_runtimeCamera.yaw   = RuntimeCameraState::DegToRad(camTransform.rotation.y);
-        m_runtimeCamera.roll  = RuntimeCameraState::DegToRad(camTransform.rotation.z);
+        // TransformComponent stores Euler rotation in radians; runtime camera also uses radians.
+        m_runtimeCamera.pitch = camTransform.rotation.x;
+        m_runtimeCamera.yaw   = camTransform.rotation.y;
+        m_runtimeCamera.roll  = camTransform.rotation.z;
         m_runtimeCamera.nearPlane = camComp.nearPlane;
         m_runtimeCamera.farPlane  = camComp.farPlane;
         m_runtimeCamera.fov       = camComp.fov;

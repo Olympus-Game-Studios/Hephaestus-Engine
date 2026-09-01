@@ -1,11 +1,6 @@
 /**
  * @file EditorUndoCommand.cpp
- * @brief Implementation of snapshot-based undo for the Qt editor.
- *
- * The undo system works by serialising the entire scene to a JSON string
- * before each edit.  On undo the snapshot is deserialised back, restoring
- * the full scene state.  This matches the ImGui editor's approach exactly
- * (see EditorDocument::PushUndoSnapshot).
+ * @brief Snapshot-based undo/redo for the Qt editor.
  */
 
 #if HEPHAESTUS_EDITOR_QT_UI
@@ -39,10 +34,58 @@ static std::unordered_map<const Scene*, std::vector<UndoSnapshot>>& GetUndoStack
     return s_stacks;
 }
 
+static std::unordered_map<const Scene*, std::vector<UndoSnapshot>>& GetRedoStacks()
+{
+    static std::unordered_map<const Scene*, std::vector<UndoSnapshot>> s_stacks;
+    return s_stacks;
+}
+
 static std::unordered_map<const Scene*, EditorUndoManager::CustomPushHandler>& GetCustomHandlers()
 {
     static std::unordered_map<const Scene*, EditorUndoManager::CustomPushHandler> s_handlers;
     return s_handlers;
+}
+
+static void TrimStack(std::vector<UndoSnapshot>& stack)
+{
+    while (stack.size() > MAX_UNDO_SNAPSHOTS) {
+        stack.erase(stack.begin());
+    }
+}
+
+static bool CaptureCurrentScene(Scene* scene, UndoSnapshot& outSnap, const std::string& label)
+{
+    SceneSerializer serializer(*scene);
+    std::string data = serializer.SerializeToString();
+    if (data.empty()) {
+        return false;
+    }
+    outSnap.label = label;
+    outSnap.sceneData = std::move(data);
+    outSnap.prefabPath.clear();
+    outSnap.prefabBackup.clear();
+    return true;
+}
+
+static bool ApplySnapshot(EditorContext* ctx, Scene* scene, UndoSnapshot& snap, std::string& outError)
+{
+    if (!snap.prefabPath.empty() && !snap.prefabBackup.empty()) {
+        std::ofstream out(snap.prefabPath, std::ios::trunc);
+        if (out.is_open()) {
+            out << snap.prefabBackup;
+            out.close();
+            PrefabOverrideSystem::InvalidateAssetCache(snap.prefabPath);
+        }
+    }
+
+    if (!SceneSerializer::DeserializeFromString(*scene, snap.sceneData)) {
+        outError = "Failed to deserialize undo/redo snapshot";
+        return false;
+    }
+
+    ctx->ClearSelection();
+    ctx->MarkDirty();
+    return true;
 }
 
 void EditorUndoManager::SetCustomPushHandler(Scene* scene, CustomPushHandler handler)
@@ -60,6 +103,7 @@ void EditorUndoManager::ClearCustomPushHandler(Scene* scene)
     }
     GetCustomHandlers().erase(scene);
     GetUndoStacks().erase(scene);
+    GetRedoStacks().erase(scene);
 }
 
 void EditorUndoManager::PushSnapshot(EditorContext* ctx, const std::string& label)
@@ -74,18 +118,16 @@ void EditorUndoManager::PushSnapshot(EditorContext* ctx, const std::string& labe
         return;
     }
 
-    SceneSerializer serializer(*scene);
-    std::string data = serializer.SerializeToString();
-    if (data.empty()) {
+    UndoSnapshot snap;
+    if (!CaptureCurrentScene(scene, snap, label)) {
         std::cerr << "[EditorUndoManager] Failed to serialize scene for undo snapshot\n";
         return;
     }
 
     auto& stack = GetUndoStacks()[scene];
-    if (stack.size() >= MAX_UNDO_SNAPSHOTS) {
-        stack.erase(stack.begin());
-    }
-    stack.push_back({ label, std::move(data), {}, {} });
+    stack.push_back(std::move(snap));
+    TrimStack(stack);
+    GetRedoStacks()[scene].clear();
 }
 
 void EditorUndoManager::PushSnapshotWithPrefabBackup(EditorContext* ctx, const std::string& label,
@@ -123,25 +165,60 @@ bool EditorUndoManager::Undo(EditorContext* ctx, std::string& outError)
         return false;
     }
 
-    UndoSnapshot snap = std::move(stack.back());
-    stack.pop_back();
-
-    if (!snap.prefabPath.empty() && !snap.prefabBackup.empty()) {
-        std::ofstream out(snap.prefabPath, std::ios::trunc);
-        if (out.is_open()) {
-            out << snap.prefabBackup;
-            out.close();
-            PrefabOverrideSystem::InvalidateAssetCache(snap.prefabPath);
-        }
-    }
-
-    if (!SceneSerializer::DeserializeFromString(*scene, snap.sceneData)) {
-        outError = "Failed to deserialize undo snapshot";
+    UndoSnapshot current;
+    if (!CaptureCurrentScene(scene, current, "Before undo")) {
+        outError = "Failed to capture current scene for redo";
         return false;
     }
 
-    ctx->ClearSelection();
-    ctx->MarkDirty();
+    UndoSnapshot snap = std::move(stack.back());
+    stack.pop_back();
+
+    if (!ApplySnapshot(ctx, scene, snap, outError)) {
+        return false;
+    }
+
+    auto& redo = GetRedoStacks()[scene];
+    redo.push_back(std::move(current));
+    TrimStack(redo);
+    return true;
+}
+
+bool EditorUndoManager::Redo(EditorContext* ctx, std::string& outError)
+{
+    if (!ctx || !ctx->HasActiveScene()) {
+        outError = "No active scene";
+        return false;
+    }
+
+    Scene* scene = ctx->GetActiveScene();
+    if (GetCustomHandlers().count(scene) > 0) {
+        outError = "Use the Prefab Editor redo command.";
+        return false;
+    }
+
+    auto& redo = GetRedoStacks()[scene];
+    if (redo.empty()) {
+        outError = "Nothing to redo";
+        return false;
+    }
+
+    UndoSnapshot current;
+    if (!CaptureCurrentScene(scene, current, "Before redo")) {
+        outError = "Failed to capture current scene for undo";
+        return false;
+    }
+
+    UndoSnapshot snap = std::move(redo.back());
+    redo.pop_back();
+
+    if (!ApplySnapshot(ctx, scene, snap, outError)) {
+        return false;
+    }
+
+    auto& stack = GetUndoStacks()[scene];
+    stack.push_back(std::move(current));
+    TrimStack(stack);
     return true;
 }
 
@@ -156,6 +233,19 @@ bool EditorUndoManager::CanUndo(EditorContext* ctx)
     }
     auto it = GetUndoStacks().find(scene);
     return it != GetUndoStacks().end() && !it->second.empty();
+}
+
+bool EditorUndoManager::CanRedo(EditorContext* ctx)
+{
+    if (!ctx || !ctx->HasActiveScene()) {
+        return false;
+    }
+    Scene* scene = ctx->GetActiveScene();
+    if (GetCustomHandlers().count(scene) > 0) {
+        return false;
+    }
+    auto it = GetRedoStacks().find(scene);
+    return it != GetRedoStacks().end() && !it->second.empty();
 }
 
 } // namespace QtEditor

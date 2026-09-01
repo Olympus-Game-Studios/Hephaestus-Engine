@@ -13,6 +13,7 @@
 #include <QProcess>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QtGlobal>
 
 namespace {
 
@@ -459,8 +460,14 @@ bool LauncherProjectManager::CreateProject(const QString& projectName,
     QDir().mkpath(projectDir.filePath(QStringLiteral(".hephaestus")));
     QDir().mkpath(projectDir.filePath(QStringLiteral("assets/scenes")));
     QDir().mkpath(projectDir.filePath(QStringLiteral("assets/textures")));
-    if (!CopyDefaultHDRIToProject(projectDirPath, outError)) {
-        return false;
+    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/scripts")));
+    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/materials")));
+    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/prefabs")));
+    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/ui")));
+    QString hdriError;
+    if (!CopyDefaultHDRIToProject(projectDirPath, &hdriError)) {
+        // HDRI is optional convenience content — never fail project creation.
+        qWarning("CreateProject: default HDRI copy skipped: %s", qPrintable(hdriError));
     }
 
     LauncherProject project;

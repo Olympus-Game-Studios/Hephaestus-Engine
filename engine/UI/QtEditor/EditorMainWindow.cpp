@@ -37,6 +37,8 @@
 #include "../../Scene/PrefabComponentIO.h"
 #include "../../ToolsCommon/EngineContext.h"
 #include "../../ToolsCommon/VersionInfo.h"
+#include "../../ToolsCommon/PathUtils.h"
+#include "../../ToolsCommon/JsonUtils.h"
 #include "../../Assets/AssetManager.h"
 #include "../../Assets/AssetTypes.h"
 #include "../../Assets/ModelImporter.h"
@@ -78,6 +80,13 @@
 #include <QActionGroup>
 #include <QFrame>
 #include <QGridLayout>
+#include <QSettings>
+#include <QShortcut>
+#include <QClipboard>
+#include <QInputDialog>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QDateTime>
 #include <QStyle>
 #include <QMenu>
 #include <QCursor>
@@ -433,6 +442,20 @@ EditorMainWindow::EditorMainWindow(QWidget* parent)
     EngineLog::Info("EditorMainWindow: central viewport widget ready");
     setupStatusBar();
     applyUnifiedStyle();
+
+    // Restore previous window geometry / dock layout when available.
+    {
+        QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
+        const QByteArray geometry = settings.value(QStringLiteral("mainWindow/geometry")).toByteArray();
+        const QByteArray state = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
+        if (!geometry.isEmpty()) {
+            restoreGeometry(geometry);
+        }
+        if (!state.isEmpty()) {
+            restoreState(state);
+        }
+    }
+
     EngineLog::Info("EditorMainWindow: UI construction complete (window not shown yet)");
 }
 
@@ -478,6 +501,18 @@ void EditorMainWindow::closeEvent(QCloseEvent* event)
 {
     EngineLog::Info("EditorMainWindow close event");
     std::cout << "[EditorMainWindow] Close event received\n";
+
+    if (!promptSaveDirtyScene()) {
+        event->ignore();
+        return;
+    }
+
+    // Persist dock layout and window geometry for the next session.
+    {
+        QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
+        settings.setValue(QStringLiteral("mainWindow/geometry"), saveGeometry());
+        settings.setValue(QStringLiteral("mainWindow/state"), saveState());
+    }
 
     // Close all prefab editor windows
     if (m_prefabEditorManager) {
@@ -576,10 +611,13 @@ void EditorMainWindow::setupMenuBar()
     QAction* undoAction = editMenu->addAction(tr("&Undo"));
     undoAction->setShortcut(QKeySequence::Undo);
     connect(undoAction, &QAction::triggered, this, &EditorMainWindow::onUndo);
+    m_undoAction = undoAction;
 
     QAction* redoAction = editMenu->addAction(tr("&Redo"));
     redoAction->setShortcut(QKeySequence::Redo);
     connect(redoAction, &QAction::triggered, this, &EditorMainWindow::onRedo);
+    m_redoAction = redoAction;
+    updateUndoRedoActions();
 
     editMenu->addSeparator();
 
@@ -899,13 +937,8 @@ void EditorMainWindow::setupTopToolbar()
         settingsBtn->setText(tr("Settings"));
         settingsBtn->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
         settingsBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        connect(settingsBtn, &QToolButton::clicked, this, [this]() {
-            QMenu menu(this);
-            menu.addAction(tr("Editor Settings"));
-            menu.addAction(tr("Viewport Preferences"));
-            menu.addAction(tr("Input Controls"));
-            menu.exec(QCursor::pos());
-        });
+        settingsBtn->setToolTip(tr("Open editor and project settings (Ctrl+,)"));
+        connect(settingsBtn, &QToolButton::clicked, this, &EditorMainWindow::onOpenSettings);
         rightLayout->addWidget(settingsBtn);
 
         auto* projectBtn = new QToolButton(rightSection);
@@ -973,6 +1006,51 @@ void EditorMainWindow::setupDockWidgets()
     // Context menu
     connect(m_outlinerTree, &QTreeWidget::customContextMenuRequested,
             this, &EditorMainWindow::onOutlinerContextMenu);
+
+    // Context-aware outliner shortcuts (active only when the tree has focus)
+    auto* deleteShortcut = new QShortcut(QKeySequence::Delete, m_outlinerTree);
+    deleteShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(deleteShortcut, &QShortcut::activated, this, [this]() {
+        if (!m_engine || (m_outlinerSearch && m_outlinerSearch->hasFocus())) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasSelection()) return;
+        deleteEntityFromOutliner(ctx->GetSelectedEntity());
+    });
+
+    auto* renameShortcut = new QShortcut(Qt::Key_F2, m_outlinerTree);
+    renameShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(renameShortcut, &QShortcut::activated, this, [this]() {
+        if (!m_engine || (m_outlinerSearch && m_outlinerSearch->hasFocus())) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx || !ctx->HasSelection()) return;
+        renameEntityInOutliner(ctx->GetSelectedEntity());
+    });
+
+    auto* duplicateShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_D), m_outlinerTree);
+    duplicateShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(duplicateShortcut, &QShortcut::activated, this, &EditorMainWindow::onDuplicateEntity);
+
+    auto* selectAllShortcut = new QShortcut(QKeySequence::SelectAll, m_outlinerTree);
+    selectAllShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(selectAllShortcut, &QShortcut::activated, this, [this]() {
+        if (!m_outlinerTree || (m_outlinerSearch && m_outlinerSearch->hasFocus())) return;
+        m_outlinerTree->selectAll();
+        // Deselect non-entity root row if selected
+        if (QTreeWidgetItem* root = m_outlinerTree->topLevelItem(0)) {
+            root->setSelected(false);
+        }
+    });
+
+    auto* escapeShortcut = new QShortcut(Qt::Key_Escape, m_outlinerTree);
+    escapeShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(escapeShortcut, &QShortcut::activated, this, [this]() {
+        if (!m_engine || (m_outlinerSearch && m_outlinerSearch->hasFocus())) return;
+        if (auto* ctx = m_engine->GetEditorContext()) {
+            ctx->ClearSelection();
+            m_outlinerTree->clearSelection();
+            refreshDetailsPanel();
+        }
+    });
 
     // Handle drag & drop reparenting
     connect(m_outlinerTree, &OutlinerTreeWidget::itemsDropped, this, [this]() {
@@ -1097,9 +1175,11 @@ void EditorMainWindow::setupDockWidgets()
 
         m_visibilityBtn = new QToolButton();
         m_visibilityBtn->setIcon(style()->standardIcon(QStyle::SP_FileDialogContentsView));
-        m_visibilityBtn->setToolTip(tr("Entity visibility toggle"));
+        m_visibilityBtn->setToolTip(tr("Toggle mesh renderer visibility"));
         m_visibilityBtn->setCheckable(true);
         m_visibilityBtn->setChecked(true);
+        m_visibilityBtn->setEnabled(false);
+        connect(m_visibilityBtn, &QToolButton::toggled, this, &EditorMainWindow::onVisibilityToggled);
         headerRow->addWidget(m_visibilityBtn);
 
         m_lockCheck = new QCheckBox(tr("Lock"));
@@ -1127,6 +1207,20 @@ void EditorMainWindow::setupDockWidgets()
     nameLayout->addRow(tr("Name:"), m_nameEdit);
     m_detailsLayout->addLayout(nameLayout);
     
+    // Capture undo before the first character of a Details rename session.
+    connect(m_nameEdit, &QLineEdit::textEdited, this, [this](const QString&) {
+        if (m_updatingDetails || !m_engine) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx) return;
+        if (!m_nameEdit->property("undoPushed").toBool()) {
+            EditorUndoManager::PushSnapshot(ctx, "Rename entity");
+            m_nameEdit->setProperty("undoPushed", true);
+            updateUndoRedoActions();
+        }
+    });
+    connect(m_nameEdit, &QLineEdit::editingFinished, this, [this]() {
+        m_nameEdit->setProperty("undoPushed", false);
+    });
     connect(m_nameEdit, &QLineEdit::textChanged, this, &EditorMainWindow::onNameChanged);
 
     m_prefabBar = new PrefabInstanceBar(m_detailsWidget);
@@ -1317,16 +1411,25 @@ void EditorMainWindow::setupDockWidgets()
     connect(m_posX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onPositionChanged);
     connect(m_posY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onPositionChanged);
     connect(m_posZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onPositionChanged);
-    
+    connect(m_posX, &QDoubleSpinBox::editingFinished, this, &EditorMainWindow::endCoalescedTransformUndo);
+    connect(m_posY, &QDoubleSpinBox::editingFinished, this, &EditorMainWindow::endCoalescedTransformUndo);
+    connect(m_posZ, &QDoubleSpinBox::editingFinished, this, &EditorMainWindow::endCoalescedTransformUndo);
+
     // Connect rotation spinbox signals
     connect(m_rotX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onRotationChanged);
     connect(m_rotY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onRotationChanged);
     connect(m_rotZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onRotationChanged);
-    
+    connect(m_rotX, &QDoubleSpinBox::editingFinished, this, &EditorMainWindow::endCoalescedTransformUndo);
+    connect(m_rotY, &QDoubleSpinBox::editingFinished, this, &EditorMainWindow::endCoalescedTransformUndo);
+    connect(m_rotZ, &QDoubleSpinBox::editingFinished, this, &EditorMainWindow::endCoalescedTransformUndo);
+
     // Connect scale spinbox signals
     connect(m_scaleX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onScaleChanged);
     connect(m_scaleY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onScaleChanged);
     connect(m_scaleZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onScaleChanged);
+    connect(m_scaleX, &QDoubleSpinBox::editingFinished, this, &EditorMainWindow::endCoalescedTransformUndo);
+    connect(m_scaleY, &QDoubleSpinBox::editingFinished, this, &EditorMainWindow::endCoalescedTransformUndo);
+    connect(m_scaleZ, &QDoubleSpinBox::editingFinished, this, &EditorMainWindow::endCoalescedTransformUndo);
 
     m_transformGroup->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_transformGroup, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
@@ -1674,27 +1777,54 @@ void EditorMainWindow::setupCentralWidget()
     const QSize tbIconSize(14, 14);
     const QColor tbIconTint(QStringLiteral("#C8CDD5"));
 
-    // Left: Perspective combo
+    // Left: Perspective combo (camera framing helpers — orthographic modes deferred)
     m_viewPerspectiveCombo = new QComboBox(m_viewportToolbar);
     m_viewPerspectiveCombo->addItems({ tr("Perspective"), tr("Front"), tr("Top"), tr("Right") });
     m_viewPerspectiveCombo->setMinimumContentsLength(10);
     m_viewPerspectiveCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_viewPerspectiveCombo->setToolTip(tr("Snap the editor camera to a common viewing angle"));
+    connect(m_viewPerspectiveCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (!m_engine) return;
+        auto* ctx = m_engine->GetEditorContext();
+        if (!ctx) return;
+        auto& cam = ctx->GetCamera();
+        float yaw = cam.yawDeg;
+        float pitch = cam.pitchDeg;
+        switch (index) {
+            case 1: // Front
+                yaw = -90.0f;
+                pitch = 0.0f;
+                break;
+            case 2: // Top
+                yaw = -90.0f;
+                pitch = -89.0f;
+                break;
+            case 3: // Right
+                yaw = 0.0f;
+                pitch = 0.0f;
+                break;
+            default: // Perspective — leave orientation as-is
+                return;
+        }
+        cam.yawDeg = yaw;
+        cam.pitchDeg = pitch;
+        if (auto* controller = m_engine->GetCameraController()) {
+            controller->yawDeg = yaw;
+            controller->pitchDeg = pitch;
+        }
+        statusBar()->showMessage(tr("Camera view: %1").arg(m_viewPerspectiveCombo->currentText()), 2000);
+    });
     tbLayout->addWidget(m_viewPerspectiveCombo);
 
-    // Left: Lit / Unlit / Wireframe
+    // Left: Lit only for now — unlit/wireframe need renderer support
     m_viewModeBtn = new QToolButton(m_viewportToolbar);
     m_viewModeBtn->setAutoRaise(true);
     m_viewModeBtn->setIcon(makeCameraModeGlyphIcon(tbIconSize, tbIconTint));
     m_viewModeBtn->setIconSize(tbIconSize);
     m_viewModeBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_viewModeBtn->setText(tr("Lit"));
-    m_viewModeBtn->setPopupMode(QToolButton::InstantPopup);
-    m_viewModeBtn->setCursor(Qt::PointingHandCursor);
-    auto* modeMenu = new QMenu(m_viewModeBtn);
-    modeMenu->addAction(tr("Lit"),       [this]() { m_viewModeBtn->setText(tr("Lit")); });
-    modeMenu->addAction(tr("Unlit"),     [this]() { m_viewModeBtn->setText(tr("Unlit")); });
-    modeMenu->addAction(tr("Wireframe"), [this]() { m_viewModeBtn->setText(tr("Wireframe")); });
-    m_viewModeBtn->setMenu(modeMenu);
+    m_viewModeBtn->setToolTip(tr("Shading mode (Lit). Unlit and Wireframe are not available yet."));
+    m_viewModeBtn->setEnabled(false);
     tbLayout->addWidget(m_viewModeBtn);
 
     auto makeSep = [this]() {
@@ -2432,6 +2562,25 @@ void EditorMainWindow::onFrameRendered(float dt)
 
     // Keep transform fields synchronized with viewport gizmo edits and other runtime transform updates.
     syncTransformFieldsFromScene();
+
+    // Keep toolbar gizmo mode/space in sync with viewport keyboard shortcuts (W/E/R/Q/X).
+    if (m_engine) {
+        if (auto* ctx = m_engine->GetEditorContext()) {
+            const GizmoMode mode = ctx->GetGizmoMode();
+            if (m_translateAction) m_translateAction->setChecked(mode == GizmoMode::Translate);
+            if (m_rotateAction) m_rotateAction->setChecked(mode == GizmoMode::Rotate);
+            if (m_scaleAction) m_scaleAction->setChecked(mode == GizmoMode::Scale);
+            if (m_worldLocalBtn) {
+                const bool local = ctx->GetGizmoSpace() == GizmoSpace::Local;
+                if (m_worldLocalBtn->isChecked() != local) {
+                    m_worldLocalBtn->blockSignals(true);
+                    m_worldLocalBtn->setChecked(local);
+                    m_worldLocalBtn->setText(local ? tr("Local") : tr("World"));
+                    m_worldLocalBtn->blockSignals(false);
+                }
+            }
+        }
+    }
     
     // Update FPS display every 30 frames
     if (m_frameCount % 30 == 0) {
@@ -2592,6 +2741,13 @@ void EditorMainWindow::rebuildOutliner()
         if (!hasParent) {
             populateOutlinerItem(sceneRoot, entity);
         }
+    }
+
+    if (sceneRoot->childCount() == 0) {
+        auto* hint = new QTreeWidgetItem(sceneRoot);
+        hint->setText(0, tr("No entities — use + Add Entity or Add Actors"));
+        hint->setFlags(hint->flags() & ~Qt::ItemIsSelectable & ~Qt::ItemIsDragEnabled);
+        hint->setForeground(0, QBrush(QColor(140, 148, 160)));
     }
 
     restoreOutlinerTreeSelection();
@@ -3028,6 +3184,12 @@ void EditorMainWindow::clearDetailsPanel()
     m_entityIdLabel->setText(tr("(No selection)"));
     m_addComponentBtn->setEnabled(false);
     m_deleteEntityBtn->setEnabled(false);
+    if (m_visibilityBtn) {
+        m_visibilityBtn->blockSignals(true);
+        m_visibilityBtn->setChecked(true);
+        m_visibilityBtn->setEnabled(false);
+        m_visibilityBtn->blockSignals(false);
+    }
     
     // Destroy legacy component inspectors
     if (m_lightInspector) {
@@ -3095,12 +3257,32 @@ void EditorMainWindow::refreshDetailsPanel()
     m_updatingDetails = true;
     blockDetailSignals(true);
     
-    // Entity ID
-    m_entityIdLabel->setText(QString("#%1").arg(static_cast<uint32_t>(entity)));
+    // Entity ID / multi-select hint
+    const size_t selectionCount = ctx->GetSelectedEntities().size();
+    if (selectionCount > 1 && !(m_detailsLocked && m_lockedEntity != entt::null)) {
+        m_entityIdLabel->setText(tr("%1 entities selected (showing primary #%2)")
+            .arg(static_cast<int>(selectionCount))
+            .arg(static_cast<uint32_t>(entity)));
+    } else {
+        m_entityIdLabel->setText(QString("#%1").arg(static_cast<uint32_t>(entity)));
+    }
 
     // Enable action buttons
     m_addComponentBtn->setEnabled(true);
     m_deleteEntityBtn->setEnabled(true);
+
+    // Visibility toggle (MeshRenderer)
+    if (m_visibilityBtn) {
+        const bool hasMesh = registry.all_of<MeshRendererComponent>(entity);
+        m_visibilityBtn->setEnabled(hasMesh);
+        m_visibilityBtn->blockSignals(true);
+        if (hasMesh) {
+            m_visibilityBtn->setChecked(registry.get<MeshRendererComponent>(entity).visible);
+        } else {
+            m_visibilityBtn->setChecked(true);
+        }
+        m_visibilityBtn->blockSignals(false);
+    }
 
     // Name
     m_nameEdit->setEnabled(true);
@@ -3192,7 +3374,7 @@ void EditorMainWindow::onPositionChanged()
     
     if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) return;
 
-    EditorUndoManager::PushSnapshot(ctx, "Move entity");
+    beginCoalescedTransformUndo("Move entity");
     
     auto& transform = registry.get<TransformComponent>(entity);
     transform.position.x = static_cast<float>(m_posX->value());
@@ -3215,7 +3397,7 @@ void EditorMainWindow::onRotationChanged()
     
     if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) return;
 
-    EditorUndoManager::PushSnapshot(ctx, "Rotate entity");
+    beginCoalescedTransformUndo("Rotate entity");
     
     auto& transform = registry.get<TransformComponent>(entity);
     
@@ -3241,7 +3423,7 @@ void EditorMainWindow::onScaleChanged()
     
     if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) return;
 
-    EditorUndoManager::PushSnapshot(ctx, "Scale entity");
+    beginCoalescedTransformUndo("Scale entity");
     
     auto& transform = registry.get<TransformComponent>(entity);
     transform.scale.x = static_cast<float>(m_scaleX->value());
@@ -3249,6 +3431,53 @@ void EditorMainWindow::onScaleChanged()
     transform.scale.z = static_cast<float>(m_scaleZ->value());
     
     ctx->MarkDirty();
+}
+
+void EditorMainWindow::beginCoalescedTransformUndo(const char* label)
+{
+    if (m_transformUndoActive || !m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx) return;
+    EditorUndoManager::PushSnapshot(ctx, label ? label : "Transform");
+    m_transformUndoActive = true;
+    updateUndoRedoActions();
+}
+
+void EditorMainWindow::endCoalescedTransformUndo()
+{
+    m_transformUndoActive = false;
+}
+
+void EditorMainWindow::updateUndoRedoActions()
+{
+    bool canUndo = false;
+    bool canRedo = false;
+    if (m_engine) {
+        auto* ctx = m_engine->GetEditorContext();
+        if (ctx) {
+            canUndo = EditorUndoManager::CanUndo(ctx);
+            canRedo = EditorUndoManager::CanRedo(ctx);
+        }
+    }
+    if (m_undoAction) m_undoAction->setEnabled(canUndo);
+    if (m_redoAction) m_redoAction->setEnabled(canRedo);
+}
+
+void EditorMainWindow::onVisibilityToggled(bool visible)
+{
+    if (m_updatingDetails || !m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+
+    Scene* scene = ctx->GetActiveScene();
+    auto& registry = scene->GetRegistry();
+    entt::entity entity = ctx->GetSelectedEntity();
+    if (!registry.valid(entity) || !registry.all_of<MeshRendererComponent>(entity)) return;
+
+    EditorUndoManager::PushSnapshot(ctx, "Toggle visibility");
+    registry.get<MeshRendererComponent>(entity).visible = visible;
+    ctx->MarkDirty();
+    updateUndoRedoActions();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3424,20 +3653,98 @@ bool EditorMainWindow::promptSaveDirtyScene()
 
 void EditorMainWindow::onNewProject()
 {
-    // TODO: Implement project creation wizard
-    QMessageBox::information(this, tr("New Project"),
-        tr("Project creation is not yet implemented.\n\n"
-           "To create a project manually:\n"
-           "1. Create a folder for your project\n"
-           "2. Create a 'project.heproject' file with JSON:\n"
-           "   {\n"
-           "     \"formatVersion\": 1,\n"
-           "     \"name\": \"YourProjectName\",\n"
-           "     \"description\": \"...\",\n"
-           "     \"engineVersion\": \"%1\"\n"
-           "   }\n"
-           "3. Use File → Open Project... to open it")
-           .arg(Hephaestus::Tools::VersionInfo::EngineVersion()));
+    if (!promptSaveDirtyScene()) {
+        return;
+    }
+
+    QString startDir = QDir::homePath();
+    if (m_projectContext && m_projectContext->HasProject()) {
+        startDir = QString::fromStdString(m_projectContext->GetProjectRootDir());
+        QFileInfo info(startDir);
+        startDir = info.absolutePath();
+    }
+
+    QString location = QFileDialog::getExistingDirectory(this, tr("Choose Project Location"), startDir);
+    if (location.isEmpty()) {
+        return;
+    }
+
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("New Project"),
+        tr("Project name:"), QLineEdit::Normal, tr("MyHephaestusProject"), &ok);
+    if (!ok || name.trimmed().isEmpty()) {
+        return;
+    }
+    name = name.trimmed();
+
+    QDir baseDir(location);
+    const QString projectDirPath = baseDir.filePath(name);
+    if (QDir(projectDirPath).exists()) {
+        QMessageBox::warning(this, tr("New Project"),
+            tr("A folder already exists at:\n%1").arg(projectDirPath));
+        return;
+    }
+
+    if (!QDir().mkpath(projectDirPath)) {
+        QMessageBox::critical(this, tr("New Project"),
+            tr("Could not create project folder:\n%1").arg(projectDirPath));
+        return;
+    }
+
+    QDir projectDir(projectDirPath);
+    QDir().mkpath(projectDir.filePath(QStringLiteral(".hephaestus")));
+    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/scenes")));
+    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/textures")));
+    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/scripts")));
+    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/materials")));
+    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/prefabs")));
+    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/ui")));
+
+    // Copy default HDRI when available; never fail project creation for missing HDRI.
+    {
+        const QString srcHdri = QDir(Hephaestus::Tools::PathUtils::ExecutableDir())
+            .filePath(QStringLiteral(".engine/hdris/studio_garden_1k.hdr"));
+        const QString dstHdri = projectDir.filePath(QStringLiteral(".engine/hdris/studio_garden_1k.hdr"));
+        if (QFileInfo::exists(srcHdri)) {
+            QDir().mkpath(QFileInfo(dstHdri).absolutePath());
+            if (!QFile::exists(dstHdri)) {
+                QFile::copy(srcHdri, dstHdri);
+            }
+        } else {
+            statusBar()->showMessage(tr("Default HDRI not found; project created without it."), 5000);
+        }
+    }
+
+    QFile defaultScene(projectDir.filePath(QStringLiteral("assets/scenes/default.hpscene")));
+    if (defaultScene.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        defaultScene.write("{\n  \"version\": 1,\n  \"name\": \"DefaultScene\",\n  \"entities\": []\n}\n");
+        defaultScene.close();
+    }
+
+    QJsonObject root;
+    root.insert(QStringLiteral("formatVersion"), 1);
+    root.insert(QStringLiteral("name"), name);
+    root.insert(QStringLiteral("description"), QStringLiteral("New Hephaestus project"));
+    root.insert(QStringLiteral("engineVersion"), Hephaestus::Tools::VersionInfo::EngineVersion());
+    root.insert(QStringLiteral("defaultScene"), QStringLiteral("assets/scenes/default.hpscene"));
+    root.insert(QStringLiteral("created"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+
+    const QString projectFile = projectDir.filePath(QStringLiteral("project.heproject"));
+    if (!Hephaestus::Tools::JsonUtils::WriteJsonObject(projectFile, root)) {
+        QMessageBox::critical(this, tr("New Project"),
+            tr("Could not write project file:\n%1").arg(projectFile));
+        return;
+    }
+    Hephaestus::Tools::JsonUtils::WriteJsonObject(
+        projectDir.filePath(QStringLiteral(".hephaestus/project.heproject")), root);
+
+    if (!openProjectFile(projectFile)) {
+        QMessageBox::warning(this, tr("New Project"),
+            tr("Project was created but failed to open:\n%1").arg(projectFile));
+        return;
+    }
+
+    statusBar()->showMessage(tr("Created project: %1").arg(name), 4000);
 }
 
 void EditorMainWindow::onOpenProject()
@@ -3764,21 +4071,32 @@ void EditorMainWindow::onUndo()
 
     std::string error;
     if (EditorUndoManager::Undo(ctx, error)) {
-        // Scene was deserialized from snapshot — mesh handles are now invalid.
-        // Rebuild GPU mesh handles from the restored meshAssetPath values.
         m_engine->RebuildSceneMeshes();
         rebuildOutliner();
         refreshDetailsPanel();
         statusBar()->showMessage(tr("Undo"), 2000);
     } else {
-        statusBar()->showMessage(QString::fromStdString("Undo: " + error), 2000);
+        QMessageBox::warning(this, tr("Undo"), QString::fromStdString(error));
     }
+    updateUndoRedoActions();
 }
 
 void EditorMainWindow::onRedo()
 {
-    // Redo not yet implemented (the engine uses a LIFO-only undo stack)
-    statusBar()->showMessage(tr("Redo (not yet implemented)"), 2000);
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx) return;
+
+    std::string error;
+    if (EditorUndoManager::Redo(ctx, error)) {
+        m_engine->RebuildSceneMeshes();
+        rebuildOutliner();
+        refreshDetailsPanel();
+        statusBar()->showMessage(tr("Redo"), 2000);
+    } else {
+        statusBar()->showMessage(QString::fromStdString("Redo: " + error), 2000);
+    }
+    updateUndoRedoActions();
 }
 
 void EditorMainWindow::onCopyEntity()

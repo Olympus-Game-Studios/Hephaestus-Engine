@@ -6,6 +6,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "EnvironmentInspector.h"
+#include "EditorUndoCommand.h"
 
 #include "../../Core/EditorContext.h"
 #include "../../Scene/Scene.h"
@@ -258,6 +259,7 @@ void EnvironmentInspector::connectSignals()
 
 void EnvironmentInspector::Refresh()
 {
+    setProperty("undoPushed", false);
     if (!m_ctx || !m_ctx->HasActiveScene()) return;
 
     auto& reg = m_ctx->GetActiveScene()->GetRegistry();
@@ -307,6 +309,11 @@ void EnvironmentInspector::applyToComponent()
 
     auto& reg = m_ctx->GetActiveScene()->GetRegistry();
     if (!reg.valid(m_entity) || !reg.all_of<EnvironmentComponent>(m_entity)) return;
+
+    if (!property("undoPushed").toBool()) {
+        EditorUndoManager::PushSnapshot(m_ctx, "Edit environment");
+        setProperty("undoPushed", true);
+    }
 
     auto& env = reg.get<EnvironmentComponent>(m_entity);
 

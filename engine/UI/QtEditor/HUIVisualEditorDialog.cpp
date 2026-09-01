@@ -1433,6 +1433,23 @@ private:
         m_hierarchyTree->setDefaultDropAction(Qt::MoveAction);
         m_hierarchyTree->setSelectionMode(QAbstractItemView::SingleSelection);
         m_hierarchyTree->header()->setStretchLastSection(true);
+        m_hierarchyTree->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(m_hierarchyTree, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+            QTreeWidgetItem* item = m_hierarchyTree->itemAt(pos);
+            if (item) {
+                m_hierarchyTree->setCurrentItem(item);
+            }
+            QMenu menu(m_hierarchyTree);
+            menu.addAction(tr("Duplicate"), this, [this]() { duplicateSelected(); });
+            menu.addAction(tr("Delete"), this, [this]() { deleteSelected(); });
+            menu.addSeparator();
+            menu.addAction(tr("Group"), this, [this]() { groupSelectedWidgets(); });
+            menu.addAction(tr("Ungroup"), this, [this]() { ungroupSelectedWidgets(); });
+            menu.addSeparator();
+            menu.addAction(tr("Bring Forward"), this, [this]() { bringForwardSelection(); });
+            menu.addAction(tr("Send Backward"), this, [this]() { sendBackwardSelection(); });
+            menu.exec(m_hierarchyTree->viewport()->mapToGlobal(pos));
+        });
         leftLayout->addWidget(m_hierarchyTree, 2);
 
         auto* paletteLabel = new QLabel(tr("Palette"), leftPanel);

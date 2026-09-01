@@ -11,6 +11,7 @@
 
 #include "QtEditorEngine.h"
 #include "AppConfig.h"
+#include "EditorUndoCommand.h"
 #include "../../Audio/AudioEngine.h"
 #include "../../Core/EngineLog.h"
 #include "../../Gfx/VulkanDevice.h"
@@ -744,6 +745,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                     int hoveredAxis = -1;
                     if (m_frameRenderer->CheckGizmoHover(px, py, viewMatrix, projMatrix, hoveredAxis)) {
                         Ray gizmoRay = buildRayFromScreen(px, py, viewMatrix, projMatrix);
+                        EditorUndoManager::PushSnapshot(&m_editorContext, "Gizmo transform");
                         m_frameRenderer->GetGizmo()->BeginDrag(gizmoRay, hoveredAxis);
                         m_gizmoDragging = true;
                         m_gizmoActiveAxis = hoveredAxis;

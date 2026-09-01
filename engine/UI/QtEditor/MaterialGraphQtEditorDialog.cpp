@@ -35,6 +35,7 @@
 #include <QGraphicsView>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QImage>
 #include <QLabel>
@@ -1328,7 +1329,42 @@ protected:
                 highlightNode(nodeItem->nodeId());
             });
             connect(rename, &QAction::triggered, this, [this, nodeItem]() {
-                highlightNode(nodeItem->nodeId());
+                Node* node = m_graph->FindNode(nodeItem->nodeId());
+                if (!node) {
+                    return;
+                }
+                bool ok = false;
+                const QString current = QString::fromStdString(node->displayName);
+                const QString next = QInputDialog::getText(
+                    nullptr,
+                    QObject::tr("Rename Node"),
+                    QObject::tr("Display name:"),
+                    QLineEdit::Normal,
+                    current,
+                    &ok);
+                if (!ok) {
+                    return;
+                }
+                const std::string oldName = node->displayName;
+                const std::string newName = next.trimmed().isEmpty() ? oldName : next.trimmed().toStdString();
+                if (oldName == newName) {
+                    return;
+                }
+                const NodeID nodeId = node->id;
+                m_undo->push(new EditNodePropertyCommand(
+                    [this, nodeId, oldName]() {
+                        if (Node* n = m_graph->FindNode(nodeId)) {
+                            n->displayName = oldName;
+                            updateNodeTitle(nodeId, QString::fromStdString(oldName));
+                        }
+                    },
+                    [this, nodeId, newName]() {
+                        if (Node* n = m_graph->FindNode(nodeId)) {
+                            n->displayName = newName;
+                            updateNodeTitle(nodeId, QString::fromStdString(newName));
+                        }
+                    },
+                    QObject::tr("Rename Node")));
             });
         } else if (hit->type() == PinItem::Type) {
             PinItem* pin = static_cast<PinItem*>(hit);
@@ -1753,6 +1789,10 @@ private:
         m_applyButton = new QPushButton(QObject::tr("Apply"), this);
         m_compileButton = new QPushButton(QObject::tr("Compile"), this);
         m_addNodeButton = new QPushButton(QObject::tr("Add Node"), this);
+        auto* undoButton = new QPushButton(QObject::tr("Undo"), this);
+        auto* redoButton = new QPushButton(QObject::tr("Redo"), this);
+        undoButton->setObjectName(QStringLiteral("MaterialUndoButton"));
+        redoButton->setObjectName(QStringLiteral("MaterialRedoButton"));
         m_viewButton = new QToolButton(this);
         m_viewButton->setText(QObject::tr("Reset View"));
         m_snapCheck = new QCheckBox(QObject::tr("Snap"), this);
@@ -1764,6 +1804,8 @@ private:
         toolbar->addWidget(m_applyButton);
         toolbar->addWidget(m_compileButton);
         toolbar->addWidget(m_addNodeButton);
+        toolbar->addWidget(undoButton);
+        toolbar->addWidget(redoButton);
         toolbar->addWidget(m_viewButton);
         toolbar->addWidget(m_snapCheck);
         toolbar->addStretch(1);
@@ -1938,6 +1980,16 @@ private:
 
         new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Z), this, [this]() { m_undo->undo(); });
         new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y), this, [this]() { m_undo->redo(); });
+        if (auto* undoButton = findChild<QPushButton*>(QStringLiteral("MaterialUndoButton"))) {
+            connect(undoButton, &QPushButton::clicked, this, [this]() { m_undo->undo(); });
+            connect(m_undo, &QUndoStack::canUndoChanged, undoButton, &QPushButton::setEnabled);
+            undoButton->setEnabled(m_undo->canUndo());
+        }
+        if (auto* redoButton = findChild<QPushButton*>(QStringLiteral("MaterialRedoButton"))) {
+            connect(redoButton, &QPushButton::clicked, this, [this]() { m_undo->redo(); });
+            connect(m_undo, &QUndoStack::canRedoChanged, redoButton, &QPushButton::setEnabled);
+            redoButton->setEnabled(m_undo->canRedo());
+        }
         new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_D), this, [this]() { m_graphScene->duplicateSelected(); });
         new QShortcut(QKeySequence(Qt::Key_Delete), this, [this]() { m_graphScene->removeSelected(); });
         new QShortcut(QKeySequence(Qt::Key_F), this, [this]() { m_graphScene->focusSelection(); });

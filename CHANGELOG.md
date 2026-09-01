@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-09-01: Editor UX/QOL polish pass: scene/prefab redo stacks, coalesced transform undo, Outliner shortcuts (Delete/F2/Ctrl+D/Esc/Ctrl+A), dock/window layout persistence, Asset Browser Import/Duplicate/Copy Path/Prefab+Audio filters/clickable breadcrumbs/folder sync, Material Graph Undo/Redo toolbar + real node Rename, HUI hierarchy context menu, in-editor New Project wizard, launcher open-last-project-on-startup, and `docs/editor/UX_QOL_AUDIT.md`.
 - 2026-08-31: Lua `Scene.instantiate(path, opts)` / `Scene.destroy(entity)` for runtime prefab spawn/destroy. Instantiate resolves project-relative paths, applies optional root `position`/`rotation` (degrees) and merges `vars` onto instance `LuaScriptComponent` maps before `onAwake`. Destroy is deferred until the end of the script Update tick; Update snapshots script entities before iterating so mid-tick spawns are safe.
 - 2026-08-31: `PrefabSystemTests` `InstantiatePoseAndVars` covering root pose application and spawn-var merge onto prefab Lua scripts.
 - 2026-08-31: Lua entity userdata methods (`GetTransform`/`GetName`/`SetName`/`IsValid`/`GetCamera`/`Call`) operate on the receiver entity rather than the running script entity. Added `Scene.findAllWithPrefix` and `Scene::FindEntitiesWithNamePrefix`.
@@ -22,12 +23,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-09-01: Asset Browser new Lua scripts use `onAwake`/`onUpdate`/`onDestroy`. Launcher/editor project creation also seeds `assets/scripts`, `materials`, `prefabs`, and `ui`, and treats default HDRI copy failures as non-fatal. Viewport Lit/Unlit/Wireframe stub menu replaced with a clear Lit-only control; perspective combo snaps common camera views. Updated `Documentation/Features/EDITOR_SHORTCUTS.md` for Qt behaviour.
 - 2026-09-01: Boomer-Shooter Player prefab uses `.engine/meshes/Capsule.glb` for visuals with the existing capsule collider; `Player.lua` mouse look prefers host mouse delta and re-asserts cursor capture each frame.
 - 2026-09-01: Boomer-Shooter `Player.lua` mouse look now follows `scripts/fp-controller.lua` (position-based deltas, yaw convention, always-on capture). Player prefab remains a capsule collider with updated look sensitivity defaults.
 - 2026-08-28: Prefab Editor Inspector is no longer read-only labels; it hosts the same component inspectors as the Scene Editor against the preview entity and syncs edits back into the `PrefabAsset`.
 
 ### Fixed
 
+- 2026-09-01: Closing the main editor window now prompts to save dirty scenes; play-mode scene cameras no longer double-convert radians; Details visibility toggles `MeshRendererComponent.visible`; Settings toolbar opens real settings; gizmo drag/rename/light/environment edits push undo; undo/redo actions enable/disable correctly.
 - 2026-09-01: Dynamic Jolt bodies now use swept linear-cast collision quality, and the FPS character motor clears downward velocity while grounded, preventing intermittent capsule tunneling and contact-driven floor penetration during movement.
 - 2026-09-01: Boomer-Shooter Player keeps its rotationally symmetric physics capsule upright instead of rotating the body for camera yaw, and aligns the collider/visual bottoms to the entity origin to prevent ground clipping and restore grounded probes.
 - 2026-09-01: Runtime HUD rendering in the Qt editor now uses an owned frameless translucent tool overlay aligned to the Vulkan viewport, avoiding native-child stacking that hid non-native UI widgets while preserving transparent backgrounds.

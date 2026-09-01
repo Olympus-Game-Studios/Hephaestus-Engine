@@ -4,18 +4,8 @@
  * @file EditorUndoCommand.h
  * @brief Lightweight undo/redo system for the Qt editor.
  *
- * Uses a QUndoStack-compatible approach built on top of the existing
- * EditorDocument snapshot system.  Each undoable action creates a command
- * that captures a *before* snapshot and (if needed) an *after* snapshot.
- *
- * Two flavours:
- *   1. Snapshot-based undo — serialises the whole scene before the action;
- *      undo restores that snapshot.  Simple and matches the ImGui behaviour.
- *   2. Fine-grained undo — captures a lambda pair (do/undo) for individual
- *      property changes.  More efficient; optional.
- *
- * The Qt Details panel calls PushUndoSnapshot() on the active EditorDocument
- * before mutating ECS state, keeping the behavior identical to the ImGui path.
+ * Snapshot-based undo/redo serialises the whole scene before each action.
+ * Redo is cleared whenever a new snapshot is pushed after undoing.
  */
 
 #if HEPHAESTUS_EDITOR_QT_UI
@@ -33,26 +23,12 @@ class EditorContext;
 
 namespace QtEditor {
 
-// ---------------------------------------------------------------------------
-// EditorUndoManager — thin wrapper to push snapshot undo through EditorDocument
-// ---------------------------------------------------------------------------
-
-/**
- * @brief Manages undo for the Qt editor by delegating to the existing
- *        EditorDocument::PushUndoSnapshot() / Undo() mechanism.
- *
- * Usage from any inspector:
- *   EditorUndoManager::PushSnapshot(m_ctx, "Change light color");
- *   // ... modify component ...
- *   m_ctx->MarkDirty();
- */
 class EditorUndoManager
 {
 public:
     /**
      * Push a full-scene undo snapshot before an edit.
-     * @param ctx     Editor context (used to reach the active document).
-     * @param label   Human-readable description (for future redo UI).
+     * Clears the redo stack for the active scene.
      */
     static void PushSnapshot(EditorContext* ctx, const std::string& label = "");
 
@@ -65,17 +41,17 @@ public:
                                              const std::string& prefabBackup);
 
     /**
-     * Execute undo — restores the last snapshot.
-     * @param ctx     Editor context.
-     * @param outError  Receives an error message on failure.
-     * @return true on success.
+     * Undo — restores the last snapshot and pushes the current state onto redo.
      */
     static bool Undo(EditorContext* ctx, std::string& outError);
 
     /**
-     * Returns true if there is at least one undo snapshot available.
+     * Redo — restores the last redo snapshot and pushes the current state onto undo.
      */
+    static bool Redo(EditorContext* ctx, std::string& outError);
+
     static bool CanUndo(EditorContext* ctx);
+    static bool CanRedo(EditorContext* ctx);
 
     using CustomPushHandler = std::function<void(const std::string& label)>;
     static void SetCustomPushHandler(Scene* scene, CustomPushHandler handler);

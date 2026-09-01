@@ -143,6 +143,24 @@ LauncherWindow::LauncherWindow(QWidget* parent)
     m_projectRescanTimer->start();
 
     RefreshProjectsAsync();
+
+    // One-shot: honor "Open last project on startup" after the window is shown.
+    if (m_settings.openLastProjectOnStartup && !m_settings.lastOpenedProject.isEmpty()) {
+        QTimer::singleShot(0, this, [this]() {
+            if (!m_settings.openLastProjectOnStartup || m_settings.lastOpenedProject.isEmpty()) {
+                return;
+            }
+            const int row = m_projectModel.RowForProjectPath(m_settings.lastOpenedProject);
+            if (row < 0) {
+                if (m_scanStatusLabel) {
+                    m_scanStatusLabel->setText(
+                        QStringLiteral("Last project not found: %1").arg(m_settings.lastOpenedProject));
+                }
+                return;
+            }
+            OpenProject(m_projectModel.index(row, 0));
+        });
+    }
 }
 
 void LauncherWindow::BuildUiRoot()

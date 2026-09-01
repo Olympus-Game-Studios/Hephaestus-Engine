@@ -36,6 +36,9 @@ public:
 
     void PushUndoSnapshot();
     bool Undo(std::string& outError);
+    bool Redo(std::string& outError);
+    bool CanUndo() const;
+    bool CanRedo() const;
     void ClearUndo();
 
 protected:
@@ -46,6 +49,7 @@ protected:
     std::string displayName_;
     bool dirty_ = false;
     std::vector<std::string> undoStack_;
+    std::vector<std::string> redoStack_;
 };
 
 class SceneDocument : public EditorDocument {

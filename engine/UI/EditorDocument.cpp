@@ -142,6 +142,7 @@ void EditorDocument::PushUndoSnapshot() {
         undoStack_.erase(undoStack_.begin());
     }
     undoStack_.push_back(std::move(snapshot));
+    redoStack_.clear();
 }
 
 bool EditorDocument::Undo(std::string& outError) {
@@ -149,13 +150,52 @@ bool EditorDocument::Undo(std::string& outError) {
         outError = "Nothing to undo.";
         return false;
     }
+    std::string current = SerializeForUndo();
     std::string snapshot = std::move(undoStack_.back());
     undoStack_.pop_back();
-    return DeserializeFromUndo(snapshot, outError);
+    if (!DeserializeFromUndo(snapshot, outError)) {
+        return false;
+    }
+    if (!current.empty()) {
+        if (redoStack_.size() >= kUndoLimit) {
+            redoStack_.erase(redoStack_.begin());
+        }
+        redoStack_.push_back(std::move(current));
+    }
+    return true;
+}
+
+bool EditorDocument::Redo(std::string& outError) {
+    if (redoStack_.empty()) {
+        outError = "Nothing to redo.";
+        return false;
+    }
+    std::string current = SerializeForUndo();
+    std::string snapshot = std::move(redoStack_.back());
+    redoStack_.pop_back();
+    if (!DeserializeFromUndo(snapshot, outError)) {
+        return false;
+    }
+    if (!current.empty()) {
+        if (undoStack_.size() >= kUndoLimit) {
+            undoStack_.erase(undoStack_.begin());
+        }
+        undoStack_.push_back(std::move(current));
+    }
+    return true;
+}
+
+bool EditorDocument::CanUndo() const {
+    return !undoStack_.empty();
+}
+
+bool EditorDocument::CanRedo() const {
+    return !redoStack_.empty();
 }
 
 void EditorDocument::ClearUndo() {
     undoStack_.clear();
+    redoStack_.clear();
 }
 
 SceneDocument::SceneDocument(Scene* scene) : scene_(scene) {

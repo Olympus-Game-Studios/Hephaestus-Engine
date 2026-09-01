@@ -6,6 +6,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "LightInspector.h"
+#include "EditorUndoCommand.h"
 
 #include "../../Core/EditorContext.h"
 #include "../../Scene/Scene.h"
@@ -339,6 +340,7 @@ void LightInspector::connectSignals()
 
 void LightInspector::Refresh()
 {
+    setProperty("undoPushed", false);
     if (!m_ctx || !m_ctx->HasActiveScene()) return;
 
     auto& reg = m_ctx->GetActiveScene()->GetRegistry();
@@ -411,6 +413,11 @@ void LightInspector::applyToComponent()
 
     auto& reg = m_ctx->GetActiveScene()->GetRegistry();
     if (!reg.valid(m_entity) || !reg.all_of<LightComponent>(m_entity)) return;
+
+    if (!property("undoPushed").toBool()) {
+        EditorUndoManager::PushSnapshot(m_ctx, "Edit light");
+        setProperty("undoPushed", true);
+    }
 
     auto& lc = reg.get<LightComponent>(m_entity);
 

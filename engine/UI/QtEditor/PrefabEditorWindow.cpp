@@ -47,6 +47,8 @@ PrefabEditorWindow::PrefabEditorWindow(const QString& prefabPath,
     EditorUndoManager::SetCustomPushHandler(m_previewScene.get(), [this](const std::string&) {
         if (m_document) {
             m_document->PushUndoSnapshot();
+            if (m_undoAction) m_undoAction->setEnabled(m_document->CanUndo());
+            if (m_redoAction) m_redoAction->setEnabled(m_document->CanRedo());
         }
     });
 
@@ -202,7 +204,7 @@ void PrefabEditorWindow::setupToolbar() {
 
     m_redoAction = m_toolbar->addAction(tr("Redo"));
     m_redoAction->setShortcut(QKeySequence::Redo);
-    m_redoAction->setEnabled(false);  // Redo stack not yet implemented
+    m_redoAction->setEnabled(false);
     connect(m_redoAction, &QAction::triggered, this, &PrefabEditorWindow::onRedo);
 
     m_toolbar->addSeparator();
@@ -554,10 +556,30 @@ void PrefabEditorWindow::onUndo() {
     } else {
         m_inspectorPanel->Clear();
     }
+    if (m_undoAction) m_undoAction->setEnabled(m_document->CanUndo());
+    if (m_redoAction) m_redoAction->setEnabled(m_document->CanRedo());
 }
 
 void PrefabEditorWindow::onRedo() {
-    statusBar()->showMessage(tr("Redo not yet implemented"), 3000);
+    if (!m_document) return;
+    std::string previous = m_selectedNodeId;
+    std::string error;
+    if (!m_document->Redo(error)) {
+        statusBar()->showMessage(tr("Redo: %1").arg(QString::fromStdString(error)), 3000);
+        return;
+    }
+    rebuildHierarchy();
+    updateWindowTitle();
+    if (m_engine) {
+        m_engine->RebuildSceneMeshes();
+    }
+    if (!previous.empty()) {
+        selectNode(previous);
+    } else {
+        m_inspectorPanel->Clear();
+    }
+    if (m_undoAction) m_undoAction->setEnabled(m_document->CanUndo());
+    if (m_redoAction) m_redoAction->setEnabled(m_document->CanRedo());
 }
 
 void PrefabEditorWindow::onFrameSelected() {
