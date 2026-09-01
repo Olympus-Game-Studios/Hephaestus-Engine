@@ -83,6 +83,13 @@ public:
      */
     void SetOpenAssetCallback(OpenAssetCallback callback);
 
+    /// Model roles used by the contents / folder views (also used by drag helpers).
+    enum ItemDataRole {
+        RelativePathRole = Qt::UserRole + 1,
+        AssetTypeRole,
+        IsDirectoryRole
+    };
+
 signals:
     /**
      * @brief Emitted when the user wants to open an asset.
@@ -135,13 +142,6 @@ private:
     void deleteAsset(const QString& relativePath, bool isDirectory);
     void renameAsset(const QString& relativePath, bool isDirectory);
     void showInExplorer(const QString& relativePath);
-
-    // Data roles for items
-    enum ItemDataRole {
-        RelativePathRole = Qt::UserRole + 1,
-        AssetTypeRole,
-        IsDirectoryRole
-    };
 
     // Main window reference for opening assets
     EditorMainWindow* m_mainWindow = nullptr;

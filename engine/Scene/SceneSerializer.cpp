@@ -1936,7 +1936,7 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
 
             PrefabAsset asset;
             std::string prefabError;
-            if (!PrefabSerializer::Deserialize(asset, instanceData.prefabPath, prefabError)) {
+            if (!PrefabOverrideSystem::LoadAsset(instanceData.prefabPath, asset, prefabError)) {
                 std::cerr << "[SceneSerializer] Missing prefab '" << instanceData.prefabPath
                           << "': " << prefabError << "\n";
                 PrefabOverrideSystem::CreateMissingStub(scene, instanceData, prefabError);

@@ -212,6 +212,7 @@ set(ENGINE_CORE_SOURCES
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/JoltPhysicsEngine.cpp
     engine/Physics/JoltPhysicsSystem.cpp
+    engine/Physics/CharacterMotor.cpp
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
     engine/Scene/Json.cpp
@@ -325,6 +326,7 @@ add_executable(HephaestusEngine
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/JoltPhysicsEngine.cpp
     engine/Physics/JoltPhysicsSystem.cpp
+    engine/Physics/CharacterMotor.cpp
     engine/Scene/Scene.cpp
     engine/Scene/Entity.cpp
     engine/Scene/Json.cpp

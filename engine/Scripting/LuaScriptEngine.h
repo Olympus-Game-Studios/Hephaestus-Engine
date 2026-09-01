@@ -61,6 +61,7 @@ struct PhysicsRaycastHit {
     float distance = 0.0f;
     Vec3 point{0.0f, 0.0f, 0.0f};
     Vec3 normal{0.0f, 1.0f, 0.0f};
+    uint32_t entityId = std::numeric_limits<uint32_t>::max(); // max = no entity mapping
 };
 
 struct PhysicsBinding {
@@ -70,6 +71,9 @@ struct PhysicsBinding {
     std::function<bool(uint32_t entityId, const Vec3& velocity, bool activate)> setAngularVelocity;
     std::function<bool(uint32_t entityId, const Vec3& rotationEuler, bool activate)> setRotation;
     std::function<bool(uint32_t entityId, const Vec3& origin, const Vec3& direction, float maxDistance, PhysicsRaycastHit& outHit)> raycast;
+    std::function<bool(uint32_t entityId)> isGrounded;
+    std::function<bool(uint32_t entityId, float wishX, float wishZ, float speed)> move;
+    std::function<bool(uint32_t entityId, float impulse)> jump;
 };
 
 /**
@@ -270,6 +274,23 @@ private:
     std::vector<uint32_t> m_ActiveUpdateOrder;
     std::vector<std::filesystem::path> m_SearchPaths;
 
+    struct PendingSpawn {
+        std::string prefabPath;
+        bool hasPosition = false;
+        Vec3 position{0.0f, 0.0f, 0.0f};
+        bool hasRotation = false;
+        Vec3 rotationDegrees{0.0f, 0.0f, 0.0f};
+        std::unordered_map<std::string, PropertyValue> vars;
+    };
+
+    struct PendingDestroy {
+        uint32_t entityId = 0;
+    };
+
+    std::vector<PendingSpawn> m_PendingSpawns;
+    std::vector<PendingDestroy> m_PendingDestroys;
+    bool m_UpdatingScripts = false;
+
     uint32_t m_CurrentEntityId = std::numeric_limits<uint32_t>::max();
     float m_CurrentDeltaTime = 0.0f;
 
@@ -336,9 +357,17 @@ private:
     bool CurrentEntityValid() const;
 
     void LogLuaError(const std::string& context);
-    
+
     // Setup the "this" global for OOP-style script access
     void SetupThisForEntity(uint32_t entityId);
+
+    void PushEntityUserdata(lua_State* L, uint32_t entityId);
+    std::filesystem::path ResolvePrefabPath(const std::string& prefabPath) const;
+    Entity ExecuteSpawn(const PendingSpawn& spawn);
+    void ExecuteDestroy(uint32_t entityId);
+    void FlushDeferredSceneOps();
+    void ClearDeferredSceneOps();
+    PropertyValue ParsePropertyValueFromLua(lua_State* L, int index);
 
     // Lua callback helpers
     static int Lua_Transform_getPosition(lua_State* L);
@@ -379,6 +408,9 @@ private:
     static int Lua_Physics_setAngularVelocity(lua_State* L);
     static int Lua_Physics_setRotation(lua_State* L);
     static int Lua_Physics_raycast(lua_State* L);
+    static int Lua_Physics_isGrounded(lua_State* L);
+    static int Lua_Physics_move(lua_State* L);
+    static int Lua_Physics_jump(lua_State* L);
 
     static int Lua_Audio_isAvailable(lua_State* L);
     static int Lua_Audio_play(lua_State* L);
@@ -518,11 +550,16 @@ private:
     static int Lua_CameraObj_IsActive(lua_State* L);
     static int Lua_CameraObj_SetActive(lua_State* L);
 
-    // Scene camera queries
+    // Scene camera queries + spawn/destroy
     static int Lua_Scene_FindFirstCamera(lua_State* L);
     static int Lua_Scene_FindCameras(lua_State* L);
     static int Lua_Scene_SetActiveCamera(lua_State* L);
     static int Lua_Scene_GetActiveCamera(lua_State* L);
+    static int Lua_Scene_Instantiate(lua_State* L);
+    static int Lua_Scene_Destroy(lua_State* L);
+    static int Lua_Scene_FindAllWithPrefix(lua_State* L);
+
+    static int Lua_This_Call(lua_State* L);
 
     void RegisterApplicationBindings();
     void RegisterThisBindings();

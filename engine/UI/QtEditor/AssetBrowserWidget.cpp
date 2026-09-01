@@ -8,6 +8,7 @@
 #include "AssetBrowserWidget.h"
 #include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "EditorMainWindow.h"
+#include "AddActorsPanel.h"
 #include "../HephaestusUI/HUIAsset.h"
 #include "../../Assets/AssetManager.h"
 #include "../../Assets/AssetTypes.h"
@@ -31,11 +32,93 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QProcess>
+#include <QDrag>
+#include <QMimeData>
+#include <QPainter>
+#include <QFileInfo>
 #include <iostream>
 #include <fstream>
 
 namespace Hephaestus {
 namespace QtEditor {
+
+namespace {
+
+QString ToProjectRelativeAssetPath(const QString& relativeFromAssetRoot)
+{
+    QString path = relativeFromAssetRoot;
+    path.replace('\\', '/');
+    if (!path.startsWith(QStringLiteral("assets/"), Qt::CaseInsensitive) &&
+        !path.startsWith(QStringLiteral(".engine/"), Qt::CaseInsensitive)) {
+        path = QStringLiteral("assets/") + path;
+    }
+    return path;
+}
+
+/**
+ * Asset browser contents view that can drag Prefab / StaticMesh assets into the viewport.
+ */
+class DraggableAssetListView : public QListView
+{
+public:
+    using QListView::QListView;
+
+protected:
+    void startDrag(Qt::DropActions /*supportedActions*/) override
+    {
+        QModelIndex index = currentIndex();
+        if (!index.isValid()) {
+            return;
+        }
+
+        const bool isDirectory = index.data(AssetBrowserWidget::IsDirectoryRole).toBool();
+        if (isDirectory) {
+            return;
+        }
+
+        const AssetType assetType =
+            static_cast<AssetType>(index.data(AssetBrowserWidget::AssetTypeRole).toInt());
+        if (assetType != AssetType::Prefab && assetType != AssetType::StaticMesh) {
+            return;
+        }
+
+        const QString relativePath = index.data(AssetBrowserWidget::RelativePathRole).toString();
+        if (relativePath.isEmpty()) {
+            return;
+        }
+
+        SpawnableEntry entry;
+        entry.kind = (assetType == AssetType::Prefab)
+            ? SpawnableEntry::Kind::Prefab
+            : SpawnableEntry::Kind::Mesh;
+        entry.displayName = QFileInfo(relativePath).completeBaseName();
+        entry.assetPath = ToProjectRelativeAssetPath(relativePath);
+        entry.icon = index.data(Qt::DecorationRole).value<QIcon>();
+
+        auto* mimeData = new QMimeData();
+        mimeData->setData(kSpawnableMimeType, entry.toMimePayload());
+
+        auto* drag = new QDrag(this);
+        drag->setMimeData(mimeData);
+
+        QPixmap pixmap(180, 36);
+        pixmap.fill(QColor(37, 39, 45, 220));
+        {
+            QPainter p(&pixmap);
+            p.setPen(QColor(230, 232, 235));
+            p.setFont(font());
+            if (!entry.icon.isNull()) {
+                entry.icon.paint(&p, 4, 4, 28, 28);
+            }
+            p.drawText(36, 0, 140, 36, Qt::AlignVCenter | Qt::AlignLeft, entry.displayName);
+        }
+        drag->setPixmap(pixmap);
+        drag->setHotSpot(QPoint(12, 18));
+        drag->exec(Qt::CopyAction);
+    }
+};
+
+} // namespace
 
 AssetBrowserWidget::AssetBrowserWidget(EditorMainWindow* mainWindow, QWidget* parent)
     : QWidget(parent)
@@ -226,7 +309,7 @@ void AssetBrowserWidget::setupUI()
     QVBoxLayout* contentsLayout = new QVBoxLayout(m_contentsPanel);
     contentsLayout->setContentsMargins(0, 0, 0, 0);
 
-    m_contentsView = new QListView(m_contentsPanel);
+    m_contentsView = new DraggableAssetListView(m_contentsPanel);
     m_contentsModel = new QStandardItemModel(this);
     m_contentsView->setModel(m_contentsModel);
     m_contentsView->setViewMode(QListView::IconMode);
@@ -238,6 +321,9 @@ void AssetBrowserWidget::setupUI()
     m_contentsView->setUniformItemSizes(true);
     m_contentsView->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_contentsView->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_contentsView->setDragEnabled(true);
+    m_contentsView->setDragDropMode(QAbstractItemView::DragOnly);
+    m_contentsView->setDefaultDropAction(Qt::CopyAction);
     m_contentsView->setMinimumHeight(0);
     m_contentsView->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_contentsView, &QListView::doubleClicked, this, &AssetBrowserWidget::onContentsDoubleClicked);
@@ -628,6 +714,21 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
             menu.addAction(style()->standardIcon(QStyle::SP_DialogOpenButton), tr("Open"), [this, relativePath]() {
                 emit assetOpenRequested(relativePath);
             });
+            if (assetType == AssetType::Prefab) {
+                menu.addAction(tr("Instantiate in Scene"), [this, relativePath]() {
+                    SpawnableEntry entry;
+                    entry.kind = SpawnableEntry::Kind::Prefab;
+                    entry.displayName = QFileInfo(relativePath).completeBaseName();
+                    entry.assetPath = ToProjectRelativeAssetPath(relativePath);
+                    if (m_mainWindow) {
+                        m_mainWindow->spawnFromAssetBrowser(entry.toMimePayload());
+                    }
+                });
+            } else if (assetType == AssetType::StaticMesh) {
+                menu.addAction(tr("Spawn in Scene"), [this, relativePath]() {
+                    emit meshSpawnRequested(relativePath);
+                });
+            }
             if (assetType == AssetType::UILayout) {
                 menu.addAction(tr("Open in IDE"), [this, relativePath]() {
                     emit assetOpenInIDERequested(relativePath);

@@ -40,11 +40,11 @@ class EditorMainWindow;
  * into the viewport to spawn the corresponding entity/actor.
  */
 struct SpawnableEntry {
-    enum class Kind { Mesh, Light, Camera };
+    enum class Kind { Mesh, Light, Camera, Prefab };
 
     Kind    kind        = Kind::Mesh;
     QString displayName;          ///< Human-readable name (e.g. "Cube", "Point Light")
-    QString assetPath;            ///< Relative to runtime assets root (for Mesh/Camera)
+    QString assetPath;            ///< Project-relative path (for Mesh/Camera/Prefab)
     QString typeId;               ///< For Light or future types (e.g. "DirectionalLight")
     QIcon   icon;                 ///< Optional icon (placeholder for now)
 

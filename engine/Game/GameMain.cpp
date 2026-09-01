@@ -60,6 +60,7 @@
 // Physics
 #include "../Physics/JoltPhysicsEngine.h"
 #include "../Physics/JoltPhysicsSystem.h"
+#include "../Physics/CharacterMotor.h"
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
@@ -75,6 +76,7 @@
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
 #include "../Scene/SceneSerializer.h"
+#include "../Scene/PrefabOverrideSystem.h"
 #include "../Scene/Transform.h"
 
 // Scripting
@@ -1423,6 +1425,11 @@ int main(int argc, char* argv[]) {
 
     HP_LOG(Info, "Loading scene: " + scenePath.string());
 
+    // Resolve portable prefab paths (assets/prefabs/...) against the project root
+    // before scene deserialize, otherwise instances become Missing Prefab stubs.
+    SetProjectRootFromScene(scenePath);
+    PrefabOverrideSystem::SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
+
     std::string loadError;
     if (!SceneSerializer::Deserialize(scene, scenePath.string(), loadError)) {
         Bootstrap::ShowFatalError("Scene Load Error",
@@ -1442,7 +1449,9 @@ int main(int argc, char* argv[]) {
     
     // Detect project root from the scene file so mesh/asset paths resolve
     // correctly even when the game runs from a different directory.
-    SetProjectRootFromScene(scenePath);
+    if (g_ProjectRoot.empty()) {
+        SetProjectRootFromScene(scenePath);
+    }
 
     // Load HDRI from scene's EnvironmentComponent
     auto envView = scene.GetEntitiesWith<EnvironmentComponent>();
@@ -1611,55 +1620,39 @@ int main(int argc, char* argv[]) {
         return true;
     };
 
-    physicsBinding.raycast = [&scene, &joltPhysicsEngine, &physicsSystem](
+    physicsBinding.raycast = [&physicsSystem](
                                 uint32_t entityId, const Vec3& origin, const Vec3& direction, float maxDistance,
                                 PhysicsRaycastHit& outHit) -> bool {
-        entt::entity handle = static_cast<entt::entity>(entityId);
-        JPH::BodyID ignoreBody = physicsSystem.GetBodyID(handle);
-
-        Vec3 dir = direction;
-        float lenSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
-        if (lenSq < 1e-8f || maxDistance <= 0.0f) {
+        Physics::RaycastHit hit{};
+        const bool ok = physicsSystem.Raycast(
+            static_cast<entt::entity>(entityId), origin, direction, maxDistance, hit);
+        if (!ok) {
             return false;
         }
-        float invLen = 1.0f / std::sqrt(lenSq);
-        dir.x *= invLen;
-        dir.y *= invLen;
-        dir.z *= invLen;
 
-        JPH::Vec3 start(origin.x, origin.y, origin.z);
-        JPH::Vec3 end(origin.x + dir.x * maxDistance,
-                      origin.y + dir.y * maxDistance,
-                      origin.z + dir.z * maxDistance);
-        JPH::RRayCast ray(JPH::RVec3(start), JPH::Vec3(end - start));
-
-#ifdef RayCastResult
-#undef RayCastResult
-#endif
-
-        JPH::RayCastResult rayCastResult;
-        auto& query = joltPhysicsEngine.GetPhysicsSystem()->GetNarrowPhaseQuery();
-
-        bool hit = false;
-        if (!ignoreBody.IsInvalid()) {
-            JPH::IgnoreSingleBodyFilter filter(ignoreBody);
-            hit = query.CastRay(ray, rayCastResult, {}, {}, filter);
-        } else {
-            hit = query.CastRay(ray, rayCastResult);
-        }
-
-        if (!hit) {
-            outHit.hit = false;
-            return true;
-        }
-
-        outHit.hit = true;
-        outHit.distance = rayCastResult.mFraction * maxDistance;
-        outHit.point = Vec3(origin.x + dir.x * outHit.distance,
-                            origin.y + dir.y * outHit.distance,
-                            origin.z + dir.z * outHit.distance);
-        outHit.normal = Vec3(0.0f, 1.0f, 0.0f);
+        outHit.hit = hit.hit;
+        outHit.distance = hit.distance;
+        outHit.point = hit.point;
+        outHit.normal = hit.normal;
+        outHit.entityId = (hit.entity != entt::null)
+            ? static_cast<uint32_t>(hit.entity)
+            : std::numeric_limits<uint32_t>::max();
         return true;
+    };
+
+    physicsBinding.isGrounded = [&joltPhysicsEngine, &physicsSystem](uint32_t entityId) -> bool {
+        return Physics::CharacterMotor::IsGrounded(
+            joltPhysicsEngine, physicsSystem, static_cast<entt::entity>(entityId));
+    };
+
+    physicsBinding.move = [&joltPhysicsEngine, &physicsSystem](uint32_t entityId, float wishX, float wishZ, float speed) -> bool {
+        return Physics::CharacterMotor::Move(
+            joltPhysicsEngine, physicsSystem, static_cast<entt::entity>(entityId), wishX, wishZ, speed);
+    };
+
+    physicsBinding.jump = [&joltPhysicsEngine, &physicsSystem](uint32_t entityId, float impulse) -> bool {
+        return Physics::CharacterMotor::Jump(
+            joltPhysicsEngine, physicsSystem, static_cast<entt::entity>(entityId), impulse);
     };
 
     luaEngine.SetPhysicsBinding(std::move(physicsBinding));
@@ -2653,6 +2646,7 @@ int main(int argc, char* argv[]) {
         // Update scripts
 #if HEPHAESTUS_GAME_SCRIPTING
         luaEngine.Update(scene, deltaTime);
+        luaEngine.LateUpdate(scene, deltaTime);
 #endif
 
     uiSystem.Update(uiContext);

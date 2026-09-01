@@ -31,6 +31,7 @@ public:
 
     // Scene queries
     Entity FindEntityByName(const std::string& name);
+    std::vector<Entity> FindEntitiesWithNamePrefix(const std::string& prefix);
     template<typename... Components>
     auto GetEntitiesWith() {
         return m_Registry.view<Components...>();

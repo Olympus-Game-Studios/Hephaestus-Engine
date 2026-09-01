@@ -21,11 +21,13 @@
 #include "../../Scene/Scene.h"
 #include "../../Scene/Components.h"
 #include "../../Scene/Entity.h"
+#include "../../Scene/PrefabOverrideSystem.h"
 #include "../../Assets/MeshAsset.h"
 #include "../../Assets/ModelImporter.h"
 #include "../../Core/ProjectContext.h"
 #include "../../Physics/JoltPhysicsEngine.h"
 #include "../../Physics/JoltPhysicsSystem.h"
+#include "../../Physics/CharacterMotor.h"
 #include "../../Scripting/LuaScriptEngine.h"
 #include "../../Scripting/ScriptEngine.h"
 #include "../../Scripting/LuaScriptComponent.h"
@@ -861,6 +863,11 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             // Track for Lua input
             m_runtimeMouseX = static_cast<double>(event.x);
             m_runtimeMouseY = static_cast<double>(event.y);
+            if (!m_playModeManager.IsEditor() &&
+                !(m_viewport && m_viewport->IsCursorCaptured())) {
+                m_runtimeMouseDeltaX += static_cast<double>(deltaX);
+                m_runtimeMouseDeltaY += static_cast<double>(deltaY);
+            }
 
             if (m_gizmoDragging) {
                 if (!canInteractWithGizmo()) {
@@ -1014,6 +1021,15 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         m_inputState.altDown = (event.modifiers & 0x08000000) != 0;
         m_inputState.shiftDown = (event.modifiers & 0x02000000) != 0;
         m_inputState.ctrlDown = (event.modifiers & 0x04000000) != 0;
+
+        // Escape exits play mode in the editor (releases cursor clip so Stop is reachable).
+        if (event.key == 0x01000000 && !m_playModeManager.IsEditor()) { // Qt::Key_Escape
+            if (m_viewport && m_viewport->IsCursorCaptured()) {
+                m_viewport->ReleaseCursor();
+            }
+            m_playModeManager.RequestStop();
+            break;
+        }
         
         // Handle F key for focus
         if (event.key == 0x46) { // Qt::Key_F
@@ -1057,10 +1073,9 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         
     case InputEvent::Type::FocusOut:
         m_inputState.viewportFocused = false;
-        // Release cursor and reset input state when losing focus
-        if (m_viewport && m_viewport->IsCursorCaptured()) {
-            m_viewport->ReleaseCursor();
-        }
+        // QtViewportWindow suspends an active capture itself on focus loss and
+        // restores it on focus return. Releasing it here discarded that state
+        // and could leave FPS look uncaptured after an embedded-window focus hop.
         endGizmoDrag();
         resetInputState();
         break;
@@ -1171,6 +1186,8 @@ void QtEditorEngine::resetInputState()
     // Reset runtime key/mouse tracking
     for (int i = 0; i < kMaxTrackedKeys; ++i) m_runtimeKeys[i] = false;
     for (int i = 0; i < kMaxTrackedMouse; ++i) m_runtimeMouseButtons[i] = false;
+    m_runtimeMouseDeltaX = 0.0;
+    m_runtimeMouseDeltaY = 0.0;
 }
 
 void QtEditorEngine::populateRuntimeInputState()
@@ -1191,13 +1208,25 @@ void QtEditorEngine::populateRuntimeInputState()
         ris.mouseButtons[i] = m_runtimeMouseButtons[i];
     }
 
-    // Copy mouse position and compute deltas
-    double prevX = ris.mouseX;
-    double prevY = ris.mouseY;
+    // Copy mouse position and consume all deltas accumulated since the last
+    // script tick. Comparing frame-to-frame positions loses motion when Qt
+    // emits several captured/warp events between render ticks.
+    if (m_viewport && m_viewport->IsCursorCaptured()) {
+        float capturedDeltaX = 0.0f;
+        float capturedDeltaY = 0.0f;
+        if (m_viewport->ConsumeCapturedMouseDelta(capturedDeltaX, capturedDeltaY)) {
+            m_runtimeMouseDeltaX += static_cast<double>(capturedDeltaX);
+            m_runtimeMouseDeltaY += static_cast<double>(capturedDeltaY);
+            m_runtimeMouseX = static_cast<double>(m_viewport->GetVirtualMouseX());
+            m_runtimeMouseY = static_cast<double>(m_viewport->GetVirtualMouseY());
+        }
+    }
     ris.mouseX = m_runtimeMouseX;
     ris.mouseY = m_runtimeMouseY;
-    ris.mouseDeltaX = m_runtimeMouseX - prevX;
-    ris.mouseDeltaY = m_runtimeMouseY - prevY;
+    ris.mouseDeltaX = m_runtimeMouseDeltaX;
+    ris.mouseDeltaY = m_runtimeMouseDeltaY;
+    m_runtimeMouseDeltaX = 0.0;
+    m_runtimeMouseDeltaY = 0.0;
 
     syncViewportCursorCapture();
 }
@@ -1214,8 +1243,13 @@ void QtEditorEngine::syncViewportCursorCapture()
         RuntimeUIState* rui = FindRuntimeUIState(this);
         const bool uiCursor = rui && rui->system &&
             rui->system->GetCursorMode() == Hephaestus::HephaestusUI::CursorMode::UI;
+        const bool gameCursor = rui && rui->system &&
+            rui->system->GetCursorMode() == Hephaestus::HephaestusUI::CursorMode::Game;
         if (uiCursor) {
             wantCapture = false;
+        } else if (gameCursor) {
+            // FPS / game look: capture whenever UI reports Game mode.
+            wantCapture = true;
         } else if (m_luaScriptEngine &&
                    m_luaScriptEngine->GetRuntimeInputState().cursorModeRequest == 1) {
             wantCapture = true;
@@ -1228,6 +1262,8 @@ void QtEditorEngine::syncViewportCursorCapture()
         if (!wasCaptured && m_viewport->IsCursorCaptured()) {
             m_runtimeMouseX = static_cast<double>(m_viewport->GetVirtualMouseX());
             m_runtimeMouseY = static_cast<double>(m_viewport->GetVirtualMouseY());
+            m_runtimeMouseDeltaX = 0.0;
+            m_runtimeMouseDeltaY = 0.0;
             m_lastMouseX = static_cast<float>(m_runtimeMouseX);
             m_lastMouseY = static_cast<float>(m_runtimeMouseY);
             m_hasLastMousePos = true;
@@ -1806,6 +1842,8 @@ void QtEditorEngine::SetProjectRoot(const std::string& projectRoot)
     std::cout << "[QtEditorEngine] Project root set to: " << m_projectRoot << "\n";
     std::cout << "[QtEditorEngine] Asset root set to: " << m_assetRoot << "\n";
 
+    PrefabOverrideSystem::SetProjectRoot(std::filesystem::path(m_projectRoot));
+
     // Keep Lua search paths in sync so relative script paths keep resolving.
     if (m_luaScriptEngine) {
         m_luaScriptEngine->SetProjectRoot(std::filesystem::path(m_projectRoot));
@@ -2341,47 +2379,49 @@ void QtEditorEngine::StartPlayMode()
         m_luaScriptEngine->SetProjectRoot(projectRootPath);
         m_luaScriptEngine->SetAudioEngine(m_audioEngine.get());
 
-        // Set camera binding that routes through PlayModeManager
-        CameraBinding camBinding;
-        camBinding.setActive = [this](bool active) {
-            m_playModeManager.SetScriptCameraActive(active);
-        };
-        camBinding.isActive = [this]() -> bool {
-            return m_playModeManager.IsScriptCameraActive();
-        };
-        camBinding.setPosition = [this](const Vec3& pos) {
-            auto& cam = m_playModeManager.GetRuntimeCamera();
-            cam.posX = pos.x;
-            cam.posY = pos.y;
-            cam.posZ = pos.z;
-        };
-        camBinding.getPosition = [this]() -> Vec3 {
-            const auto& cam = m_playModeManager.GetRuntimeCamera();
-            return Vec3(cam.posX, cam.posY, cam.posZ);
-        };
-        camBinding.setRotation = [this](const Vec3& rot) {
-            auto& cam = m_playModeManager.GetRuntimeCamera();
-            cam.pitch = rot.x;  // radians
-            cam.yaw   = rot.y;
-            cam.roll  = rot.z;
-        };
-        camBinding.getRotation = [this]() -> Vec3 {
-            const auto& cam = m_playModeManager.GetRuntimeCamera();
-            return Vec3(cam.pitch, cam.yaw, cam.roll);
-        };
-        camBinding.translate = [this](const Vec3& delta) {
-            auto& cam = m_playModeManager.GetRuntimeCamera();
-            cam.posX += delta.x;
-            cam.posY += delta.y;
-            cam.posZ += delta.z;
-        };
-        m_luaScriptEngine->SetCameraBinding(camBinding);
     } else {
         // Re-associate with current scene
         m_luaScriptEngine->Initialize(scene, m_glfwWindow);
         m_luaScriptEngine->SetProjectRoot(projectRootPath);
         m_luaScriptEngine->SetAudioEngine(m_audioEngine.get());
     }
+
+    // Rebind every play session. Initialize() resets simulation state and the
+    // binding must always target this editor's current PlayModeManager.
+    CameraBinding camBinding;
+    camBinding.setActive = [this](bool active) {
+        m_playModeManager.SetScriptCameraActive(active);
+    };
+    camBinding.isActive = [this]() -> bool {
+        return m_playModeManager.IsScriptCameraActive();
+    };
+    camBinding.setPosition = [this](const Vec3& pos) {
+        auto& cam = m_playModeManager.GetRuntimeCamera();
+        cam.posX = pos.x;
+        cam.posY = pos.y;
+        cam.posZ = pos.z;
+    };
+    camBinding.getPosition = [this]() -> Vec3 {
+        const auto& cam = m_playModeManager.GetRuntimeCamera();
+        return Vec3(cam.posX, cam.posY, cam.posZ);
+    };
+    camBinding.setRotation = [this](const Vec3& rot) {
+        auto& cam = m_playModeManager.GetRuntimeCamera();
+        cam.pitch = rot.x;
+        cam.yaw = rot.y;
+        cam.roll = rot.z;
+    };
+    camBinding.getRotation = [this]() -> Vec3 {
+        const auto& cam = m_playModeManager.GetRuntimeCamera();
+        return Vec3(cam.pitch, cam.yaw, cam.roll);
+    };
+    camBinding.translate = [this](const Vec3& delta) {
+        auto& cam = m_playModeManager.GetRuntimeCamera();
+        cam.posX += delta.x;
+        cam.posY += delta.y;
+        cam.posZ += delta.z;
+    };
+    m_luaScriptEngine->SetCameraBinding(std::move(camBinding));
     m_luaScriptEngine->SetUIBindings(runtimeUI.system.get(), runtimeUI.context.get(), runtimeUI.renderer.get());
 
     // Provide Jolt physics callbacks to Lua scripts in Qt play mode.
@@ -2487,56 +2527,50 @@ void QtEditorEngine::StartPlayMode()
 
     physicsBinding.raycast = [this](uint32_t entityId, const Vec3& origin, const Vec3& direction,
                                     float maxDistance, PhysicsRaycastHit& outHit) -> bool {
-        if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine || !m_editorContext.HasActiveScene()) {
+        if (!m_physicsInitialized || !m_joltPhysicsSystem) {
             return false;
         }
 
-        entt::entity handle = static_cast<entt::entity>(entityId);
-        JPH::BodyID ignoreBody = m_joltPhysicsSystem->GetBodyID(handle);
-
-        Vec3 dir = direction;
-        float lenSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
-        if (lenSq < 1e-8f || maxDistance <= 0.0f) {
+        Physics::RaycastHit hit{};
+        const bool ok = m_joltPhysicsSystem->Raycast(
+            static_cast<entt::entity>(entityId), origin, direction, maxDistance, hit);
+        if (!ok) {
             return false;
         }
-        float invLen = 1.0f / std::sqrt(lenSq);
-        dir.x *= invLen;
-        dir.y *= invLen;
-        dir.z *= invLen;
 
-        JPH::Vec3 start(origin.x, origin.y, origin.z);
-        JPH::Vec3 end(origin.x + dir.x * maxDistance,
-                      origin.y + dir.y * maxDistance,
-                      origin.z + dir.z * maxDistance);
-        JPH::RRayCast ray(JPH::RVec3(start), JPH::Vec3(end - start));
-
-    #ifdef RayCastResult
-    #undef RayCastResult
-    #endif
-
-        JPH::RayCastResult rayCastResult;
-        auto& query = m_joltPhysicsEngine->GetPhysicsSystem()->GetNarrowPhaseQuery();
-
-        bool hit = false;
-        if (!ignoreBody.IsInvalid()) {
-            JPH::IgnoreSingleBodyFilter filter(ignoreBody);
-            hit = query.CastRay(ray, rayCastResult, {}, {}, filter);
-        } else {
-            hit = query.CastRay(ray, rayCastResult);
-        }
-
-        if (!hit) {
-            outHit.hit = false;
-            return true;
-        }
-
-        outHit.hit = true;
-        outHit.distance = rayCastResult.mFraction * maxDistance;
-        outHit.point = Vec3(origin.x + dir.x * outHit.distance,
-                            origin.y + dir.y * outHit.distance,
-                            origin.z + dir.z * outHit.distance);
-        outHit.normal = Vec3(0.0f, 1.0f, 0.0f);
+        outHit.hit = hit.hit;
+        outHit.distance = hit.distance;
+        outHit.point = hit.point;
+        outHit.normal = hit.normal;
+        outHit.entityId = (hit.entity != entt::null)
+            ? static_cast<uint32_t>(hit.entity)
+            : std::numeric_limits<uint32_t>::max();
         return true;
+    };
+
+    physicsBinding.isGrounded = [this](uint32_t entityId) -> bool {
+        if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine) {
+            return false;
+        }
+        return Physics::CharacterMotor::IsGrounded(
+            *m_joltPhysicsEngine, *m_joltPhysicsSystem, static_cast<entt::entity>(entityId));
+    };
+
+    physicsBinding.move = [this](uint32_t entityId, float wishX, float wishZ, float speed) -> bool {
+        if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine) {
+            return false;
+        }
+        return Physics::CharacterMotor::Move(
+            *m_joltPhysicsEngine, *m_joltPhysicsSystem, static_cast<entt::entity>(entityId),
+            wishX, wishZ, speed);
+    };
+
+    physicsBinding.jump = [this](uint32_t entityId, float impulse) -> bool {
+        if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine) {
+            return false;
+        }
+        return Physics::CharacterMotor::Jump(
+            *m_joltPhysicsEngine, *m_joltPhysicsSystem, static_cast<entt::entity>(entityId), impulse);
     };
 
     m_luaScriptEngine->SetPhysicsBinding(std::move(physicsBinding));
@@ -2699,6 +2733,16 @@ const std::vector<::Hephaestus::HephaestusUI::UIDrawCommand>& QtEditorEngine::Ge
         return kEmpty;
     }
     return runtimeUI->renderer->GetDrawCommands();
+}
+
+bool QtEditorEngine::IsRuntimeUICursorMode() const
+{
+    if (m_playModeManager.IsEditor()) {
+        return false;
+    }
+    RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
+    return runtimeUI && runtimeUI->system &&
+           runtimeUI->system->GetCursorMode() == Hephaestus::HephaestusUI::CursorMode::UI;
 }
 
 } // namespace QtEditor

@@ -113,6 +113,9 @@ public:
      */
     bool StartEngine();
 
+    /// Spawn a mesh/prefab/actor from Asset Browser (context menu). Uses camera-forward placement.
+    void spawnFromAssetBrowser(const QByteArray& spawnPayload);
+
 protected:
     void closeEvent(QCloseEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;

@@ -7,8 +7,17 @@
 
 #include "JoltPhysicsEngine.h"
 #include "../Scene/Scene.h"
+#include "../Core/Math.h"
 
 namespace Physics {
+
+struct RaycastHit {
+    bool hit = false;
+    float distance = 0.0f;
+    Vec3 point{0.0f, 0.0f, 0.0f};
+    Vec3 normal{0.0f, 1.0f, 0.0f};
+    entt::entity entity = entt::null;
+};
 
 /**
  * @class JoltPhysicsSystem
@@ -38,6 +47,13 @@ public:
 
     // Get physics body ID from entity
     JPH::BodyID GetBodyID(entt::entity entity) const;
+
+    // Reverse lookup body -> entity
+    entt::entity GetEntityForBody(JPH::BodyID bodyId) const;
+
+    // World raycast; optionally ignores a single entity's body. Fills outHit.
+    bool Raycast(entt::entity ignoreEntity, const Vec3& origin, const Vec3& direction,
+                 float maxDistance, RaycastHit& outHit) const;
 
     // Enable/disable the system
     void SetEnabled(bool enabled) { m_Enabled = enabled; }

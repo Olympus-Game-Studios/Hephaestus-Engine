@@ -146,6 +146,10 @@ end
 - `this:GetName()` → `string|nil`
 - `this:SetName(name)`
 - `this:IsValid()` → `boolean`
+- `this:GetCamera()` → camera object or nil
+- `this:Call(functionName, ...)` → `boolean` — calls a named function in **this entity's** script environment (e.g. `hit.entity:Call("onDamage", 25)`). Extra args are forwarded (numbers recommended).
+
+Entity userdata returned from `Scene.instantiate`, `Scene.findAllWithPrefix`, `Physics.raycast`, or camera queries uses the same methods; they operate on the **receiver**, not the currently running script.
 
 **Transform object methods:**
 
@@ -295,18 +299,54 @@ local dt = Time.deltaTime()
 
 Use `Time.deltaTime()` whenever you need the most recent frame delta outside of `onUpdate` parameters (for example inside utility modules).
 
-### Scene Queries (Coming Soon)
+### Scene spawn, destroy, and queries
 
 ```lua
--- Find all entities with a tag
-local entities = scene:findEntitiesWithTag("Enemy")
+-- Spawn a prefab (optional pose + script vars applied before onAwake)
+local enemy = Scene.instantiate("assets/prefabs/Enemy.hpprefab", {
+  position = { x = 4, y = 1, z = -8 },
+  rotation = { x = 0, y = 45, z = 0 }, -- degrees
+  vars = { health = 40, moveSpeed = 3.5 }
+})
 
--- Get entity by name
-local player = scene:findEntityByName("Player")
+-- Destroy a prefab instance or entity (queued until end of script Update)
+Scene.destroy(enemy)
 
--- Cast rays
-local hit, distance = scene:raycast(origin, direction, maxDistance)
+-- Find spawn markers / living enemies by name prefix
+local points = Scene.findAllWithPrefix("EnemySpawn")
+local enemies = Scene.findAllWithPrefix("Enemy")
 ```
+
+Also available:
+
+- `Scene.FindFirstCamera()` / `Scene.FindCameras()` / `Scene.GetActiveCamera()` / `Scene.SetActiveCamera(entity)`
+
+### Physics
+
+```lua
+-- Hitscan (ignores the calling entity's body when possible)
+local hit = Physics.raycast(ox, oy, oz, dx, dy, dz, maxDistance)
+if hit then
+  -- hit.point, hit.normal, hit.distance, hit.entity (userdata or nil)
+  if hit.entity then
+    hit.entity:Call("onDamage", 25)
+  end
+end
+
+-- Basic FPS capsule motor (current script entity must have a rigid body)
+if Physics.isGrounded() then
+  Physics.jump(5.5)
+end
+Physics.move(wishX, wishZ, 6.0) -- world XZ wish; preserves Y (gravity/jump)
+Physics.setRotation(0, yawRadians, 0)
+```
+
+Available helpers:
+
+- `Physics.isAvailable()` / `Physics.hasBody()`
+- `Physics.getLinearVelocity()` / `Physics.setLinearVelocity(x,y,z)` / `Physics.setAngularVelocity(...)` / `Physics.setRotation(rx,ry,rz)` (radians)
+- `Physics.raycast(ox,oy,oz,dx,dy,dz,maxDistance)` → hit table or `nil`
+- `Physics.isGrounded()` / `Physics.move(wishX, wishZ, speed)` / `Physics.jump(impulse)`
 
 ## Performance Considerations
 

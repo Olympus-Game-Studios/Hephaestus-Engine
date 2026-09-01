@@ -219,6 +219,11 @@ public:
     const std::vector<::Hephaestus::HephaestusUI::UIDrawCommand>& GetRuntimeUIDrawCommands() const;
 
     /**
+     * @brief True when play-mode UI wants a free cursor (menus), not FPS capture.
+     */
+    bool IsRuntimeUICursorMode() const;
+
+    /**
      * @brief Get the PlayModeManager for external queries.
      */
     Hephaestus::PlayModeManager* GetPlayModeManager() { return &m_playModeManager; }
@@ -296,6 +301,8 @@ private:
     bool m_runtimeMouseButtons[kMaxTrackedMouse] = {};
     double m_runtimeMouseX = 0.0;
     double m_runtimeMouseY = 0.0;
+    double m_runtimeMouseDeltaX = 0.0;
+    double m_runtimeMouseDeltaY = 0.0;
 
     // Vulkan resources (owned by main.cpp in legacy mode, but we need our own here)
     VkInstance m_instance = VK_NULL_HANDLE;

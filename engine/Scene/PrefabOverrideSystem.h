@@ -26,6 +26,13 @@ public:
 
     static bool LoadAsset(const std::string& path, PrefabAsset& out, std::string& error);
     static void InvalidateAssetCache(const std::string& path = {});
+
+    /// Project root used to resolve portable prefab paths (e.g. assets/prefabs/X.hpprefab).
+    static void SetProjectRoot(const std::filesystem::path& projectRoot);
+    static const std::filesystem::path& GetProjectRoot();
+    /// Resolve a portable or absolute prefab path to an existing (or write-target) file path.
+    static std::filesystem::path ResolveAssetFilePath(const std::string& path, bool forWrite = false);
+
     static const PrefabNode* FindAssetNode(const PrefabAsset& asset, const std::string& nodeId);
     static const PrefabComponentEntry* FindAssetComponent(const PrefabNode& node, const std::string& type);
 

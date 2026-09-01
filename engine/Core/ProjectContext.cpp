@@ -5,6 +5,7 @@
 
 #include "ProjectContext.h"
 #include "../Scene/Json.h"
+#include "../Scene/PrefabOverrideSystem.h"
 #include "../Assets/AssetManager.h"
 
 #include <fstream>
@@ -90,6 +91,8 @@ bool ProjectContext::LoadProject(const std::string& projectFilePath, std::string
     assetMgr.SetAssetRoot(m_assetRootDir);
     assetMgr.Refresh();
 
+    PrefabOverrideSystem::SetProjectRoot(fs::path(m_projectRootDir));
+
     // Synchronise built-in engine assets into <projectRoot>/.engine/
     SyncEngineAssets();
 
@@ -117,6 +120,8 @@ void ProjectContext::CloseProject()
 
     // Clear AssetManager
     Hephaestus::AssetManager::GetInstance().Clear();
+    PrefabOverrideSystem::SetProjectRoot({});
+    PrefabOverrideSystem::InvalidateAssetCache();
 
     // Notify listeners
     if (m_onProjectChanged) {

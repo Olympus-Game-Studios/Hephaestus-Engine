@@ -189,6 +189,19 @@ Entity Scene::FindEntityByName(const std::string& name)
     return {};
 }
 
+std::vector<Entity> Scene::FindEntitiesWithNamePrefix(const std::string& prefix)
+{
+    std::vector<Entity> result;
+    auto view = m_Registry.view<TagComponent>();
+    for (auto entity : view) {
+        auto& tag = view.get<TagComponent>(entity);
+        if (prefix.empty() || tag.tag.rfind(prefix, 0) == 0) {
+            result.emplace_back(entity, this);
+        }
+    }
+    return result;
+}
+
 Entity Scene::GetSelectedEntity()
 {
     if (m_PrimarySelected != entt::null && m_Registry.valid(m_PrimarySelected)) {

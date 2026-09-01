@@ -5,10 +5,12 @@
 namespace Hephaestus::HephaestusUI {
 
 UIPanel::UIPanel() {
-    m_LocalStyle.backgroundColor = {0.08f, 0.08f, 0.08f, 0.9f};
-    m_LocalStyle.borderColor = {0.35f, 0.35f, 0.35f, 1.0f};
-    m_LocalStyle.borderWidth = 1.0f;
-    m_LocalStyle.cornerRadius = 4.0f;
+    // Transparent by default so HUD roots (Stretch + no fill) do not obscure the 3D view.
+    // Opaque menus should set an explicit backgroundColor in .hui / SetLocalStyle.
+    m_LocalStyle.backgroundColor = UIColor::Transparent();
+    m_LocalStyle.borderColor = UIColor::Transparent();
+    m_LocalStyle.borderWidth = 0.0f;
+    m_LocalStyle.cornerRadius = 0.0f;
 }
 
 void UIPanel::OnEmitDrawCommands(UIRenderer& renderer) const {

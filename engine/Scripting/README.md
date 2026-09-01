@@ -84,6 +84,9 @@ Transform.rotate(0, 45, 0)
 ✅ OOP-style API with `this` binding  
 ✅ Transform, Input, Camera, and Entity access  
 ✅ Audio playback control from Lua (`.wav` and `.mp3`)  
+✅ Runtime prefab spawn/destroy (`Scene.instantiate` / `Scene.destroy`)  
+✅ Entity handle methods + `entity:Call` + `Scene.findAllWithPrefix`  
+✅ Physics raycast hit entity + basic FPS motor (`move` / `jump` / `isGrounded`)  
 ✅ No recompilation required - instant iteration  
 ✅ Automatic hot-reload on script changes  
 ✅ Console logging for debugging  
@@ -183,6 +186,27 @@ end
 local mousePos = Input.getMousePosition()  -- Returns {x, y}
 ```
 
+### Scene / Physics (gameplay)
+
+```lua
+local enemy = Scene.instantiate("assets/prefabs/Enemy.hpprefab", {
+  position = { x = 0, y = 1, z = 0 },
+  vars = { health = 40, moveSpeed = 3.5 }
+})
+local spawns = Scene.findAllWithPrefix("EnemySpawn")
+Scene.destroy(enemy)
+
+local hit = Physics.raycast(ox, oy, oz, dx, dy, dz, 80)
+if hit and hit.entity then
+  hit.entity:Call("onDamage", 25)
+end
+
+Physics.move(wishX, wishZ, 6.0)
+if Physics.isGrounded() then
+  Physics.jump(5.5)
+end
+```
+
 ### Audio
 
 ```lua
@@ -201,7 +225,7 @@ Audio.resume(music)
 Audio.stop(music)
 ```
 
-Available helpers:
+Available helpers (Audio):
 
 - `Audio.isAvailable()` → `boolean`
 - `Audio.play(path, loop=false, volume=1.0)` → `handle` (`0` on failure)

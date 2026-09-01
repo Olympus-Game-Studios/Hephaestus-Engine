@@ -52,13 +52,13 @@ int toQtAlign(Hephaestus::HephaestusUI::UITextAlignment alignment, bool wordWrap
 } // namespace
 
 RuntimeUIOverlayWidget::RuntimeUIOverlayWidget(QWidget* parent)
-    : QWidget(parent)
+    : QWidget(parent, Qt::Tool | Qt::FramelessWindowHint |
+                      Qt::NoDropShadowWindowHint | Qt::WindowDoesNotAcceptFocus)
 {
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
-    setAttribute(Qt::WA_DontCreateNativeAncestors, true);
-    setAttribute(Qt::WA_NativeWindow, true);
     setAttribute(Qt::WA_TranslucentBackground, true);
+    setAttribute(Qt::WA_ShowWithoutActivating, true);
     setAutoFillBackground(false);
     setMouseTracking(true);
 }
@@ -152,8 +152,14 @@ void RuntimeUIOverlayWidget::paintEvent(QPaintEvent* event)
             QColor border = toQColor(drawRect.borderColor);
             border.setAlphaF(clamp01(border.alphaF() * drawRect.opacity));
 
-            painter.setBrush(fill);
-            if (drawRect.borderWidth > 0.0f) {
+            const bool drawFill = fill.alpha() > 0;
+            const bool drawBorder = drawRect.borderWidth > 0.0f && border.alpha() > 0;
+            if (!drawFill && !drawBorder) {
+                continue;
+            }
+
+            painter.setBrush(drawFill ? QBrush(fill) : Qt::NoBrush);
+            if (drawBorder) {
                 QPen pen(border);
                 pen.setWidthF(drawRect.borderWidth);
                 painter.setPen(pen);

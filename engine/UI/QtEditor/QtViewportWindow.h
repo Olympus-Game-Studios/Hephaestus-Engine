@@ -149,6 +149,14 @@ public:
     float GetVirtualMouseY() const { return static_cast<float>(m_virtualMouseY); }
 
     /**
+     * @brief Consume relative OS cursor motion while captured.
+     *
+     * Polling avoids lost QMouseEvent delivery when the embedded native
+     * viewport is covered by a transparent Qt runtime-UI sibling.
+     */
+    bool ConsumeCapturedMouseDelta(float& deltaX, float& deltaY);
+
+    /**
      * @brief Set whether warp-generated mouse moves should be ignored.
      */
     void SetIgnoreNextMouseMove(bool ignore) {

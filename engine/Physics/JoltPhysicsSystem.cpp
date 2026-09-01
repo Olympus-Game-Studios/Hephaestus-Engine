@@ -2,11 +2,18 @@
 #include "../Scene/Components.h"
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Math/Float3.h>
 
 #include "../Assets/MeshAsset.h"
@@ -597,12 +604,20 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
     bodySettings.mGravityFactor = rigidBody.UsesGravity() ? 1.0f : 0.0f;
     
     if (!treatAsStatic) {
+        // Dynamic gameplay bodies can cross thin geometry between discrete
+        // steps during frame spikes. Linear casting keeps their swept shape
+        // in the collision query and prevents intermittent floor tunneling.
+        bodySettings.mMotionQuality = JPH::EMotionQuality::LinearCast;
+
         const float targetMass = std::max(rigidBody.mass, 0.001f);
         bodySettings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
         JPH::MassProperties massProps = shape->GetMassProperties();
         massProps.ScaleToMass(targetMass);
         if (rigidBody.freezeRotation) {
-            massProps.mInertia = JPH::Mat44::sZero();
+            bodySettings.mAllowedDOFs =
+                JPH::EAllowedDOFs::TranslationX |
+                JPH::EAllowedDOFs::TranslationY |
+                JPH::EAllowedDOFs::TranslationZ;
         }
         bodySettings.mMassPropertiesOverride = massProps;
     }
@@ -650,6 +665,86 @@ void JoltPhysicsSystem::DestroyRigidBody(JPH::BodyID bodyId) {
 JPH::BodyID JoltPhysicsSystem::GetBodyID(entt::entity entity) const {
     auto it = m_EntityToBodyMap.find(entity);
     return it != m_EntityToBodyMap.end() ? it->second : JPH::BodyID();
+}
+
+entt::entity JoltPhysicsSystem::GetEntityForBody(JPH::BodyID bodyId) const {
+    if (bodyId.IsInvalid()) {
+        return entt::null;
+    }
+    auto it = m_BodyToEntityMap.find(bodyId.GetIndex());
+    return it != m_BodyToEntityMap.end() ? it->second : entt::null;
+}
+
+bool JoltPhysicsSystem::Raycast(entt::entity ignoreEntity, const Vec3& origin, const Vec3& direction,
+                                float maxDistance, RaycastHit& outHit) const {
+    outHit = RaycastHit{};
+
+    JPH::PhysicsSystem* physicsSystem = m_PhysicsEngine.GetPhysicsSystem();
+    if (!physicsSystem || maxDistance <= 0.0f) {
+        return false;
+    }
+
+    Vec3 dir = direction;
+    float lenSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
+    if (lenSq < 1e-8f) {
+        return false;
+    }
+    float invLen = 1.0f / std::sqrt(lenSq);
+    dir.x *= invLen;
+    dir.y *= invLen;
+    dir.z *= invLen;
+
+    JPH::Vec3 start(origin.x, origin.y, origin.z);
+    JPH::Vec3 end(origin.x + dir.x * maxDistance,
+                  origin.y + dir.y * maxDistance,
+                  origin.z + dir.z * maxDistance);
+    JPH::RRayCast ray(JPH::RVec3(start), JPH::Vec3(end - start));
+
+#ifdef RayCastResult
+#undef RayCastResult
+#endif
+
+    JPH::RayCastResult rayCastResult;
+    const JPH::NarrowPhaseQuery& query = physicsSystem->GetNarrowPhaseQuery();
+
+    JPH::BodyID ignoreBody;
+    if (ignoreEntity != entt::null) {
+        ignoreBody = GetBodyID(ignoreEntity);
+    }
+
+    bool hit = false;
+    if (!ignoreBody.IsInvalid()) {
+        JPH::IgnoreSingleBodyFilter filter(ignoreBody);
+        hit = query.CastRay(ray, rayCastResult, {}, {}, filter);
+    } else {
+        hit = query.CastRay(ray, rayCastResult);
+    }
+
+    if (!hit) {
+        outHit.hit = false;
+        return true;
+    }
+
+    outHit.hit = true;
+    outHit.distance = rayCastResult.mFraction * maxDistance;
+    outHit.point = Vec3(origin.x + dir.x * outHit.distance,
+                        origin.y + dir.y * outHit.distance,
+                        origin.z + dir.z * outHit.distance);
+    outHit.entity = GetEntityForBody(rayCastResult.mBodyID);
+    outHit.normal = Vec3(0.0f, 1.0f, 0.0f);
+
+    {
+        JPH::BodyLockRead lock(physicsSystem->GetBodyLockInterface(), rayCastResult.mBodyID);
+        if (lock.Succeeded()) {
+            const JPH::Body& body = lock.GetBody();
+            JPH::Vec3 n = body.GetWorldSpaceSurfaceNormal(
+                rayCastResult.mSubShapeID2,
+                JPH::RVec3(outHit.point.x, outHit.point.y, outHit.point.z));
+            outHit.normal = Vec3(n.GetX(), n.GetY(), n.GetZ());
+        }
+    }
+
+    return true;
 }
 
 void JoltPhysicsSystem::ClearAllBodies() {

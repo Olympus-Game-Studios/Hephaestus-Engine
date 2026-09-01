@@ -286,7 +286,46 @@ void AddActorsPanel::buildCategories()
         m_categories.push_back(std::move(cat));
     }
 
-    // ── 3-8. Future placeholders (empty) ────────────────────────────────
+    // ── 3. Prefabs ──────────────────────────────────────────────────────
+    {
+        SpawnableCategory cat;
+        cat.name = tr("Prefabs");
+
+        namespace fs = std::filesystem;
+        fs::path prefabDir;
+        if (!m_projectRoot.empty()) {
+            fs::path candidate = fs::path(m_projectRoot) / "assets" / "prefabs";
+            if (fs::is_directory(candidate)) {
+                prefabDir = candidate;
+            }
+        }
+
+        if (!prefabDir.empty() && fs::is_directory(prefabDir)) {
+            QIcon prefabIcon = makePlaceholderIcon(QChar('P'), QColor(140, 100, 220));
+            for (auto& entry : fs::directory_iterator(prefabDir)) {
+                if (!entry.is_regular_file()) continue;
+                auto ext = entry.path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                if (ext != ".hpprefab" && ext != ".hpblueprint") continue;
+
+                SpawnableEntry se;
+                se.kind = SpawnableEntry::Kind::Prefab;
+                se.displayName = QString::fromStdString(entry.path().stem().string());
+                se.assetPath = QStringLiteral("assets/prefabs/") +
+                               QString::fromStdString(entry.path().filename().string());
+                se.icon = prefabIcon;
+                cat.entries.push_back(std::move(se));
+            }
+            std::sort(cat.entries.begin(), cat.entries.end(),
+                      [](const SpawnableEntry& a, const SpawnableEntry& b) {
+                          return a.displayName.toLower() < b.displayName.toLower();
+                      });
+        }
+
+        m_categories.push_back(std::move(cat));
+    }
+
+    // ── 4-9. Future placeholders (empty) ────────────────────────────────
     for (const char* name : { "Audio", "Volumes", "Environment", "FX", "UI", "Gameplay" }) {
         SpawnableCategory cat;
         cat.name = QString::fromUtf8(name);

@@ -20,6 +20,10 @@
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Components.h"
+#include "../Scene/PrefabAsset.h"
+#include "../Scene/PrefabInstantiator.h"
+#include "../Scene/PrefabOverrideSystem.h"
+#include "../Scene/PrefabComponentIO.h"
 #include "../Core/Math.h"
 #include <iostream>
 #include <fstream>
@@ -31,6 +35,7 @@
 #include <limits>
 #include <utility>
 #include <functional>
+#include <cmath>
 
 #include <GLFW/glfw3.h>
 
@@ -298,13 +303,27 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
 
     m_Scene = &scene;
     m_ActiveUpdateOrder.clear();
+    m_UpdatingScripts = true;
 
     auto& registry = scene.GetRegistry();
     std::unordered_set<uint32_t> activeIds;
 
-    auto view = registry.view<LuaScriptComponent>();
-    for (auto entityHandle : view) {
-        auto& component = view.get<LuaScriptComponent>(entityHandle);
+    // Snapshot entity handles before iterating so Scene.instantiate/destroy during
+    // onUpdate cannot invalidate the live EnTT view.
+    std::vector<entt::entity> scriptEntities;
+    {
+        auto view = registry.view<LuaScriptComponent>();
+        scriptEntities.reserve(view.size());
+        for (auto entityHandle : view) {
+            scriptEntities.push_back(entityHandle);
+        }
+    }
+
+    for (auto entityHandle : scriptEntities) {
+        if (!registry.valid(entityHandle) || !registry.all_of<LuaScriptComponent>(entityHandle)) {
+            continue;
+        }
+        auto& component = registry.get<LuaScriptComponent>(entityHandle);
         uint32_t entityId = static_cast<uint32_t>(entityHandle);
 
         if (!component.enabled || (component.scriptPath.empty() && component.scriptSource.empty())) {
@@ -349,6 +368,9 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
     for (uint32_t entityId : toRemove) {
         DestroyInstance(entityId, true);
     }
+
+    m_UpdatingScripts = false;
+    FlushDeferredSceneOps();
 #else
     (void)scene;
     (void)deltaTime;
@@ -433,6 +455,9 @@ void LuaScriptEngine::OnSimulationStopped() {
     // Drop all cached instances so the next Play start always rebuilds from scene data.
     m_ScriptInstances.clear();
     m_ActiveUpdateOrder.clear();
+
+    // Drop deferred spawn/destroy — Stop restores the scene snapshot.
+    ClearDeferredSceneOps();
 
     // Destroy all managed HUI instances so nothing leaks between sessions
     destroyAllHUIInstances();
@@ -775,6 +800,15 @@ void LuaScriptEngine::RegisterPhysicsBindings() {
     lua_pushcfunction(m_State, Lua_Physics_raycast);
     lua_setfield(m_State, -2, "raycast");
 
+    lua_pushcfunction(m_State, Lua_Physics_isGrounded);
+    lua_setfield(m_State, -2, "isGrounded");
+
+    lua_pushcfunction(m_State, Lua_Physics_move);
+    lua_setfield(m_State, -2, "move");
+
+    lua_pushcfunction(m_State, Lua_Physics_jump);
+    lua_setfield(m_State, -2, "jump");
+
     lua_setglobal(m_State, "Physics");
 #endif
 }
@@ -963,6 +997,63 @@ int LuaScriptEngine::Lua_Physics_raycast(lua_State* L) {
     lua_setfield(L, -2, "z");
     lua_setfield(L, -2, "normal");
 
+    if (hit.entityId != std::numeric_limits<uint32_t>::max()) {
+        engine->PushEntityUserdata(L, hit.entityId);
+        lua_setfield(L, -2, "entity");
+    } else {
+        lua_pushnil(L);
+        lua_setfield(L, -2, "entity");
+    }
+
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Physics_isGrounded(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_PhysicsBinding.isGrounded) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_pushboolean(L, engine->m_PhysicsBinding.isGrounded(engine->m_CurrentEntityId));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Physics_move(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_PhysicsBinding.move) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    float wishX = static_cast<float>(luaL_checknumber(L, 1));
+    float wishZ = static_cast<float>(luaL_checknumber(L, 2));
+    float speed = static_cast<float>(luaL_checknumber(L, 3));
+    lua_pushboolean(L, engine->m_PhysicsBinding.move(engine->m_CurrentEntityId, wishX, wishZ, speed));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Physics_jump(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_PhysicsBinding.jump) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    float impulse = static_cast<float>(luaL_checknumber(L, 1));
+    lua_pushboolean(L, engine->m_PhysicsBinding.jump(engine->m_CurrentEntityId, impulse));
     return 1;
 #else
     (void)L;
@@ -1197,6 +1288,13 @@ bool LuaScriptEngine::LoadScriptForInstance(ScriptInstance& instance, const LuaS
     lua_pushglobaltable(m_State);
     lua_setfield(m_State, -2, "__index");
     lua_setmetatable(m_State, envIndex);
+
+    // Seed serialized/spawn variables before the chunk executes so top-level
+    // declarations such as `local speed = speed or 3.5` see their overrides.
+    for (const auto& [key, value] : component.variables) {
+        PushPropertyValue(value);
+        lua_setfield(m_State, envIndex, key.c_str());
+    }
 
     if (luaL_loadbuffer(m_State, code.c_str(), code.size(), debugName.c_str()) != LUA_OK) {
         LogLuaError("loading " + debugName);
@@ -2195,6 +2293,9 @@ void LuaScriptEngine::RegisterThisBindings() {
     
     lua_pushcfunction(m_State, Lua_This_GetCamera);
     lua_setfield(m_State, -2, "GetCamera");
+
+    lua_pushcfunction(m_State, Lua_This_Call);
+    lua_setfield(m_State, -2, "Call");
     
     // Set __index to self for method lookup
     lua_pushvalue(m_State, -1);
@@ -2258,22 +2359,323 @@ void LuaScriptEngine::SetupThisForEntity(uint32_t entityId) {
 #endif
 }
 
+void LuaScriptEngine::PushEntityUserdata(lua_State* L, uint32_t entityId) {
+#if LUA_AVAILABLE
+    if (!L) {
+        return;
+    }
+    uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
+    *pEntityId = entityId;
+    luaL_getmetatable(L, "HephaestusEntity");
+    lua_setmetatable(L, -2);
+#else
+    (void)L;
+    (void)entityId;
+#endif
+}
+
+std::filesystem::path LuaScriptEngine::ResolvePrefabPath(const std::string& prefabPath) const {
+    namespace fs = std::filesystem;
+    if (prefabPath.empty()) {
+        return {};
+    }
+
+    fs::path path(prefabPath);
+    std::error_code ec;
+    if (path.is_absolute() && fs::exists(path, ec)) {
+        return path.lexically_normal();
+    }
+
+    auto tryPath = [&](const fs::path& candidate) -> fs::path {
+        if (!candidate.empty() && fs::exists(candidate, ec)) {
+            return candidate.lexically_normal();
+        }
+        return {};
+    };
+
+    if (!m_ProjectRoot.empty()) {
+        fs::path resolved = tryPath(m_ProjectRoot / path);
+        if (!resolved.empty()) {
+            return resolved;
+        }
+        resolved = tryPath(m_ProjectRoot / "assets" / path);
+        if (!resolved.empty()) {
+            return resolved;
+        }
+        // If path already starts with assets/, projectRoot / path is enough
+    }
+
+    for (const auto& search : m_SearchPaths) {
+        fs::path resolved = tryPath(search / path);
+        if (!resolved.empty()) {
+            return resolved;
+        }
+    }
+
+    fs::path cwd = tryPath(fs::current_path() / path);
+    if (!cwd.empty()) {
+        return cwd;
+    }
+    return {};
+}
+
+PropertyValue LuaScriptEngine::ParsePropertyValueFromLua(lua_State* L, int index) {
+#if LUA_AVAILABLE
+    if (!L) {
+        return PropertyValue{};
+    }
+    index = lua_absindex(L, index);
+    const int type = lua_type(L, index);
+    if (type == LUA_TNIL) {
+        return PropertyValue{};
+    }
+    if (type == LUA_TBOOLEAN) {
+        return PropertyValue(lua_toboolean(L, index) != 0);
+    }
+    if (type == LUA_TNUMBER) {
+        return PropertyValue(lua_tonumber(L, index));
+    }
+    if (type == LUA_TSTRING) {
+        return PropertyValue(std::string(lua_tostring(L, index)));
+    }
+    if (type == LUA_TTABLE) {
+        // Prefer vec3 if x/y/z present
+        lua_getfield(L, index, "x");
+        const bool hasX = lua_isnumber(L, -1) != 0;
+        double x = hasX ? lua_tonumber(L, -1) : 0.0;
+        lua_pop(L, 1);
+        lua_getfield(L, index, "y");
+        const bool hasY = lua_isnumber(L, -1) != 0;
+        double y = hasY ? lua_tonumber(L, -1) : 0.0;
+        lua_pop(L, 1);
+        lua_getfield(L, index, "z");
+        const bool hasZ = lua_isnumber(L, -1) != 0;
+        double z = hasZ ? lua_tonumber(L, -1) : 0.0;
+        lua_pop(L, 1);
+        lua_getfield(L, index, "w");
+        const bool hasW = lua_isnumber(L, -1) != 0;
+        double w = hasW ? lua_tonumber(L, -1) : 0.0;
+        lua_pop(L, 1);
+
+        if (hasX && hasY && hasZ && hasW) {
+            return PropertyValue(Vec4(static_cast<float>(x), static_cast<float>(y),
+                                      static_cast<float>(z), static_cast<float>(w)));
+        }
+        if (hasX && hasY && hasZ) {
+            return PropertyValue(Vec3(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)));
+        }
+        if (hasX && hasY) {
+            return PropertyValue(Vec2(static_cast<float>(x), static_cast<float>(y)));
+        }
+
+        // Generic object map (string keys)
+        PropertyValue::Object obj;
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0) {
+            if (lua_type(L, -2) == LUA_TSTRING) {
+                const char* key = lua_tostring(L, -2);
+                if (key) {
+                    obj.emplace(key, ParsePropertyValueFromLua(L, -1));
+                }
+            }
+            lua_pop(L, 1);
+        }
+        if (!obj.empty()) {
+            return PropertyValue(std::move(obj));
+        }
+    }
+    return PropertyValue{};
+#else
+    (void)L;
+    (void)index;
+    return PropertyValue{};
+#endif
+}
+
+Entity LuaScriptEngine::ExecuteSpawn(const PendingSpawn& spawn) {
+    if (!m_Scene || spawn.prefabPath.empty()) {
+        return {};
+    }
+
+    const std::filesystem::path resolved = ResolvePrefabPath(spawn.prefabPath);
+    if (resolved.empty()) {
+        std::cerr << "[Lua] Scene.instantiate: prefab not found: " << spawn.prefabPath << "\n";
+        return {};
+    }
+
+    PrefabAsset asset;
+    std::string error;
+    const std::string pathKey = resolved.generic_string();
+    if (!PrefabOverrideSystem::LoadAsset(pathKey, asset, error)) {
+        // Also try the original relative path key for cache/deserialize
+        if (!PrefabOverrideSystem::LoadAsset(spawn.prefabPath, asset, error)) {
+            std::cerr << "[Lua] Scene.instantiate: failed to load prefab '" << spawn.prefabPath
+                      << "': " << error << "\n";
+            return {};
+        }
+    }
+
+    PrefabInstantiateOptions options;
+    options.prefabPath = spawn.prefabPath;
+    options.attachInstanceComponent = true;
+    Entity root = PrefabInstantiator::Instantiate(*m_Scene, asset, options);
+    if (!root) {
+        std::cerr << "[Lua] Scene.instantiate: PrefabInstantiator returned null\n";
+        return {};
+    }
+
+    if (root.HasComponent<TransformComponent>()) {
+        auto& transform = root.GetComponent<TransformComponent>();
+        if (spawn.hasPosition) {
+            transform.position = spawn.position;
+        }
+        if (spawn.hasRotation) {
+            transform.SetRotationDegrees(spawn.rotationDegrees);
+        }
+        if (root.HasComponent<PrefabInstanceComponent>()) {
+            auto& inst = root.GetComponent<PrefabInstanceComponent>();
+            PrefabComponentIO::CopyLocalTransform(inst.rootTransform, transform);
+            inst.hasRootTransform = true;
+        }
+    }
+
+    if (!spawn.vars.empty()) {
+        // Merge vars onto every LuaScriptComponent in the prefab instance hierarchy.
+        std::vector<entt::entity> instanceEntities;
+        instanceEntities.push_back(static_cast<entt::entity>(root));
+        if (root.HasComponent<TransformComponent>()) {
+            std::function<void(Entity)> collect = [&](Entity entity) {
+                if (!entity || !entity.HasComponent<TransformComponent>()) {
+                    return;
+                }
+                for (entt::entity childHandle : entity.GetComponent<TransformComponent>().children) {
+                    Entity child(childHandle, m_Scene);
+                    if (!child) {
+                        continue;
+                    }
+                    instanceEntities.push_back(childHandle);
+                    collect(child);
+                }
+            };
+            collect(root);
+        }
+
+        for (entt::entity handle : instanceEntities) {
+            Entity entity(handle, m_Scene);
+            if (!entity || !entity.HasComponent<LuaScriptComponent>()) {
+                continue;
+            }
+            auto& lua = entity.GetComponent<LuaScriptComponent>();
+            for (const auto& [key, value] : spawn.vars) {
+                lua.variables[key] = value;
+            }
+        }
+    }
+
+    // Prefab instantiation creates CPU-side MeshRenderer components after the
+    // host's scene mesh upload pass. Reuse an already-uploaded handle for the
+    // same asset so common runtime-spawned prefabs become visible immediately.
+    auto spawnedRenderers = m_Scene->GetEntitiesWith<MeshRendererComponent>();
+    for (entt::entity spawnedHandle : spawnedRenderers) {
+        Entity spawnedEntity(spawnedHandle, m_Scene);
+        if (!spawnedEntity || !spawnedEntity.HasComponent<PrefabNodeComponent>()) {
+            continue;
+        }
+        Entity instanceRoot = PrefabOverrideSystem::FindInstanceRoot(*m_Scene, spawnedEntity);
+        if (!instanceRoot || static_cast<entt::entity>(instanceRoot) != static_cast<entt::entity>(root)) {
+            continue;
+        }
+
+        auto& spawnedRenderer = spawnedEntity.GetComponent<MeshRendererComponent>();
+        if (spawnedRenderer.HasValidMesh() || spawnedRenderer.meshAssetPath.empty()) {
+            continue;
+        }
+        for (entt::entity candidateHandle : spawnedRenderers) {
+            if (candidateHandle == spawnedHandle) {
+                continue;
+            }
+            auto& candidate = m_Scene->GetRegistry().get<MeshRendererComponent>(candidateHandle);
+            if (candidate.HasValidMesh() &&
+                candidate.meshAssetPath == spawnedRenderer.meshAssetPath) {
+                spawnedRenderer.meshHandle = candidate.meshHandle;
+                spawnedRenderer.submeshCount = candidate.submeshCount;
+                spawnedRenderer.materialIndices = candidate.materialIndices;
+                break;
+            }
+        }
+    }
+
+    return root;
+}
+
+void LuaScriptEngine::ExecuteDestroy(uint32_t entityId) {
+    if (!m_Scene) {
+        return;
+    }
+    Entity entity = MakeEntity(entityId);
+    if (!entity) {
+        return;
+    }
+
+    // If this is a prefab instance child, destroy from the instance root.
+    Entity destroyTarget = entity;
+    if (entity.HasComponent<PrefabNodeComponent>() && !entity.HasComponent<PrefabInstanceComponent>()) {
+        Entity root = PrefabOverrideSystem::FindInstanceRoot(*m_Scene, entity);
+        if (root) {
+            destroyTarget = root;
+        }
+    }
+
+    if (destroyTarget.HasComponent<PrefabInstanceComponent>()) {
+        PrefabInstantiator::DestroyInstance(*m_Scene, destroyTarget);
+    } else {
+        m_Scene->DestroyEntity(destroyTarget);
+    }
+}
+
+void LuaScriptEngine::FlushDeferredSceneOps() {
+    // Destrovers first, then spawns (plan order).
+    std::vector<PendingDestroy> destroys = std::move(m_PendingDestroys);
+    m_PendingDestroys.clear();
+    for (const PendingDestroy& pending : destroys) {
+        ExecuteDestroy(pending.entityId);
+    }
+
+    std::vector<PendingSpawn> spawns = std::move(m_PendingSpawns);
+    m_PendingSpawns.clear();
+    for (const PendingSpawn& pending : spawns) {
+        ExecuteSpawn(pending);
+    }
+}
+
+void LuaScriptEngine::ClearDeferredSceneOps() {
+    m_PendingSpawns.clear();
+    m_PendingDestroys.clear();
+}
+
 int LuaScriptEngine::Lua_This_GetTransform(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->CurrentEntityValid()) {
+    if (!engine) {
         lua_pushnil(L);
         return 1;
     }
-    
-    // Create transform userdata containing the entity ID
+
+    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    if (!selfId) {
+        lua_pushnil(L);
+        return 1;
+    }
+    Entity entity = engine->MakeEntity(*selfId);
+    if (!entity || !entity.HasComponent<TransformComponent>()) {
+        lua_pushnil(L);
+        return 1;
+    }
+
     uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
-    *pEntityId = engine->m_CurrentEntityId;
-    
-    // Set its metatable to "HephaestusTransform"
+    *pEntityId = *selfId;
     luaL_getmetatable(L, "HephaestusTransform");
     lua_setmetatable(L, -2);
-    
     return 1;
 #else
     (void)L;
@@ -2284,11 +2686,16 @@ int LuaScriptEngine::Lua_This_GetTransform(lua_State* L) {
 int LuaScriptEngine::Lua_This_GetName(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->CurrentEntityValid()) {
+    if (!engine) {
         lua_pushnil(L);
         return 1;
     }
-    TagComponent* tag = engine->GetTag(engine->m_CurrentEntityId);
+    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    if (!selfId) {
+        lua_pushnil(L);
+        return 1;
+    }
+    TagComponent* tag = engine->GetTag(*selfId);
     if (!tag) {
         lua_pushnil(L);
         return 1;
@@ -2304,14 +2711,18 @@ int LuaScriptEngine::Lua_This_GetName(lua_State* L) {
 int LuaScriptEngine::Lua_This_SetName(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->CurrentEntityValid()) {
+    if (!engine) {
         return 0;
     }
-    const char* name = luaL_checkstring(L, 2); // Index 2 because self is at index 1
+    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    if (!selfId) {
+        return 0;
+    }
+    const char* name = luaL_checkstring(L, 2);
     if (!name) {
         return 0;
     }
-    Entity entity = engine->MakeEntity(engine->m_CurrentEntityId);
+    Entity entity = engine->MakeEntity(*selfId);
     if (!entity) {
         return 0;
     }
@@ -2330,8 +2741,97 @@ int LuaScriptEngine::Lua_This_SetName(lua_State* L) {
 int LuaScriptEngine::Lua_This_IsValid(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    bool valid = engine && engine->CurrentEntityValid();
+    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    bool valid = engine && selfId && static_cast<bool>(engine->MakeEntity(*selfId));
     lua_pushboolean(L, valid);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_This_Call(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_State) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    if (!selfId) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    const char* functionName = luaL_checkstring(L, 2);
+    if (!functionName || functionName[0] == 0) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    // Capture arg count before looking up the function (stack: self, name, args...)
+    const int argCount = lua_gettop(L) - 2;
+
+    auto it = engine->m_ScriptInstances.find(*selfId);
+    if (it == engine->m_ScriptInstances.end() || !it->second.valid ||
+        it->second.environmentRef == kInvalidRef) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    ScriptInstance& instance = it->second;
+    Entity entity = engine->MakeEntity(*selfId);
+    if (!entity) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, instance.environmentRef);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    lua_getfield(L, -1, functionName);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_remove(L, -2); // drop env; stack: self, name, args..., fn
+
+    // Move fn to index 3 (after name): self, name, fn, args...
+    lua_insert(L, 3);
+    // Remove self and name so stack is: fn, args...
+    lua_remove(L, 1);
+    lua_remove(L, 1);
+
+    uint32_t previousEntity = engine->m_CurrentEntityId;
+    float previousDelta = engine->m_CurrentDeltaTime;
+    engine->m_CurrentEntityId = instance.entityId;
+    engine->SetupThisForEntity(instance.entityId);
+
+    if (lua_pcall(L, argCount, 0, 0) != LUA_OK) {
+        engine->LogLuaError(functionName);
+        engine->m_CurrentEntityId = previousEntity;
+        engine->m_CurrentDeltaTime = previousDelta;
+        if (previousEntity != kInvalidEntityId) {
+            engine->SetupThisForEntity(previousEntity);
+        }
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    engine->m_CurrentEntityId = previousEntity;
+    engine->m_CurrentDeltaTime = previousDelta;
+    if (previousEntity != kInvalidEntityId) {
+        engine->SetupThisForEntity(previousEntity);
+    }
+
+    lua_pushboolean(L, true);
     return 1;
 #else
     (void)L;
@@ -2645,25 +3145,27 @@ int LuaScriptEngine::Lua_TransformObj_Rotate(lua_State* L) {
 int LuaScriptEngine::Lua_This_GetCamera(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->CurrentEntityValid()) {
+    if (!engine) {
         lua_pushnil(L);
         return 1;
     }
-    
-    Entity entity = engine->MakeEntity(engine->m_CurrentEntityId);
+
+    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    if (!selfId) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    Entity entity = engine->MakeEntity(*selfId);
     if (!entity || !entity.HasComponent<CameraComponent>()) {
         lua_pushnil(L);
         return 1;
     }
-    
-    // Create camera userdata containing the entity ID
+
     uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
-    *pEntityId = engine->m_CurrentEntityId;
-    
-    // Set its metatable to "HephaestusCamera"
+    *pEntityId = *selfId;
     luaL_getmetatable(L, "HephaestusCamera");
     lua_setmetatable(L, -2);
-    
     return 1;
 #else
     (void)L;
@@ -3060,6 +3562,15 @@ void LuaScriptEngine::RegisterSceneBindings() {
     
     lua_pushcfunction(m_State, Lua_Scene_SetActiveCamera);
     lua_setfield(m_State, -2, "SetActiveCamera");
+
+    lua_pushcfunction(m_State, Lua_Scene_Instantiate);
+    lua_setfield(m_State, -2, "instantiate");
+
+    lua_pushcfunction(m_State, Lua_Scene_Destroy);
+    lua_setfield(m_State, -2, "destroy");
+
+    lua_pushcfunction(m_State, Lua_Scene_FindAllWithPrefix);
+    lua_setfield(m_State, -2, "findAllWithPrefix");
     
     lua_setglobal(m_State, "Scene");
     
@@ -3095,6 +3606,135 @@ void LuaScriptEngine::RegisterSceneBindings() {
     lua_setfield(m_State, -2, "__index");
     
     lua_pop(m_State, 1);
+#endif
+}
+
+int LuaScriptEngine::Lua_Scene_Instantiate(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_Scene || !engine->m_State) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const char* pathCStr = luaL_checkstring(L, 1);
+    if (!pathCStr || pathCStr[0] == '\0') {
+        std::cerr << "[Lua] Scene.instantiate: path required\n";
+        lua_pushnil(L);
+        return 1;
+    }
+
+    PendingSpawn spawn;
+    spawn.prefabPath = pathCStr;
+
+    if (lua_istable(L, 2)) {
+        lua_getfield(L, 2, "position");
+        if (lua_istable(L, -1)) {
+            PropertyValue posVal = engine->ParsePropertyValueFromLua(L, -1);
+            if (posVal.IsVec3()) {
+                spawn.hasPosition = true;
+                spawn.position = *posVal.AsVec3();
+            }
+        }
+        lua_pop(L, 1);
+
+        lua_getfield(L, 2, "rotation");
+        if (lua_istable(L, -1)) {
+            PropertyValue rotVal = engine->ParsePropertyValueFromLua(L, -1);
+            if (rotVal.IsVec3()) {
+                spawn.hasRotation = true;
+                spawn.rotationDegrees = *rotVal.AsVec3();
+            }
+        }
+        lua_pop(L, 1);
+
+        lua_getfield(L, 2, "vars");
+        if (lua_istable(L, -1)) {
+            PropertyValue varsVal = engine->ParsePropertyValueFromLua(L, -1);
+            if (varsVal.IsObject()) {
+                spawn.vars = *varsVal.AsObject();
+            }
+        }
+        lua_pop(L, 1);
+    }
+
+    // Spawn immediately so the caller receives a live entity handle. Script Update
+    // snapshots its entity list first, so adding LuaScriptComponents mid-tick is safe.
+    // Destroy remains deferred via the queue.
+    Entity root = engine->ExecuteSpawn(spawn);
+    if (!root) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    engine->PushEntityUserdata(L, static_cast<uint32_t>(root));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Scene_Destroy(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_Scene) {
+        return 0;
+    }
+
+    uint32_t entityId = 0;
+    if (lua_isuserdata(L, 1)) {
+        uint32_t* pEntityId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+        if (pEntityId) {
+            entityId = *pEntityId;
+        }
+    } else if (lua_isnumber(L, 1)) {
+        entityId = static_cast<uint32_t>(lua_tonumber(L, 1));
+    }
+
+    if (entityId == 0 && !lua_isuserdata(L, 1)) {
+        // Also accept "this" global style when userdata is nil - no-op
+        return 0;
+    }
+
+    if (engine->m_UpdatingScripts) {
+        PendingDestroy pending;
+        pending.entityId = entityId;
+        engine->m_PendingDestroys.push_back(pending);
+    } else {
+        engine->ExecuteDestroy(entityId);
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Scene_FindAllWithPrefix(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_Scene) {
+        lua_newtable(L);
+        return 1;
+    }
+
+    const char* prefix = luaL_optstring(L, 1, "");
+    const std::string prefixStr = prefix ? prefix : "";
+
+    lua_newtable(L);
+    int index = 1;
+    for (Entity entity : engine->m_Scene->FindEntitiesWithNamePrefix(prefixStr)) {
+        if (!entity) {
+            continue;
+        }
+        engine->PushEntityUserdata(L, static_cast<uint32_t>(entity));
+        lua_rawseti(L, -2, index++);
+    }
+    return 1;
+#else
+    (void)L;
+    return 0;
 #endif
 }
 

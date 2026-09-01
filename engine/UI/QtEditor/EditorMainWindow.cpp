@@ -494,6 +494,13 @@ void EditorMainWindow::closeEvent(QCloseEvent* event)
 
 void EditorMainWindow::keyPressEvent(QKeyEvent* event)
 {
+    // Escape exits play mode even if the viewport does not have focus.
+    if (event->key() == Qt::Key_Escape && m_engine && m_engine->IsPlaying()) {
+        m_engine->StopPlayMode();
+        event->accept();
+        return;
+    }
+
     // Forward key events to the engine during play mode so Lua scripts receive input
     // even when the viewport doesn't have direct keyboard focus.
     if (m_engine && m_engine->IsPlaying()) {
@@ -1560,6 +1567,12 @@ void EditorMainWindow::setupDockWidgets()
                                           cam.positionY + fy * kSpawnDistance,
                                           cam.positionZ + fz * kSpawnDistance);
                 transform.rotation = Vec3(0.0f, 0.0f, 0.0f);
+                const std::string meshStem = meshPath.stem().string();
+                if (meshStem == "Capsule" || meshStem == "Cylinder") {
+                    // Built-in procedural meshes are authored along +Z; the
+                    // engine world and Jolt primitives use +Y as up.
+                    transform.rotation.x = 1.57079632679f;
+                }
                 transform.scale    = Vec3(1.0f, 1.0f, 1.0f);
 
                 // Select the newly created entity, mark dirty, refresh UI
@@ -1808,11 +1821,12 @@ void EditorMainWindow::setupCentralWidget()
     areaLayout->setSpacing(0);
     areaLayout->addWidget(m_viewportContainer, 0, 0);
 
-    m_runtimeUIOverlay = new RuntimeUIOverlayWidget(viewportArea);
+    // A QWidget sibling cannot reliably stack above createWindowContainer's
+    // native Vulkan child on Windows. Use an owned translucent tool window and
+    // keep it aligned to the viewport in onFrameRendered().
+    m_runtimeUIOverlay = new RuntimeUIOverlayWidget(this);
     m_runtimeUIOverlay->setObjectName("RuntimeUIOverlay");
     m_runtimeUIOverlay->setVisible(false);
-    m_runtimeUIOverlay->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    areaLayout->addWidget(m_runtimeUIOverlay, 0, 0);
 
     // Bottom-left stats overlay (shown when Stats is toggled on)
     {
@@ -2235,7 +2249,8 @@ bool EditorMainWindow::initializeEngine()
             const auto& runtimeUICommands = m_engine->GetRuntimeUIDrawCommands();
             const bool showUI = (playing || paused) && !runtimeUICommands.empty();
             m_runtimeUIOverlay->setVisible(showUI);
-            m_runtimeUIOverlay->SetMouseEventsEnabled(showUI);
+            m_runtimeUIOverlay->SetMouseEventsEnabled(
+                showUI && m_engine->IsRuntimeUICursorMode());
             if (showUI) {
                 m_runtimeUIOverlay->SetDrawCommands(runtimeUICommands);
                 m_runtimeUIOverlay->raise();
@@ -2396,11 +2411,19 @@ void EditorMainWindow::onFrameRendered(float dt)
     m_frameCount++;
 
     if (m_runtimeUIOverlay && m_engine) {
+        if (m_viewportContainer) {
+            const QPoint globalTopLeft = m_viewportContainer->mapToGlobal(QPoint(0, 0));
+            m_runtimeUIOverlay->setGeometry(
+                QRect(globalTopLeft, m_viewportContainer->size()));
+        }
         const auto& runtimeUICommands = m_engine->GetRuntimeUIDrawCommands();
         const bool showRuntimeUI = (m_engine->IsPlaying() || m_engine->IsPaused()) &&
                                    !runtimeUICommands.empty();
         m_runtimeUIOverlay->setVisible(showRuntimeUI);
-        m_runtimeUIOverlay->SetMouseEventsEnabled(showRuntimeUI);
+        // Only route mouse to the overlay in UI cursor mode (menus). Game/FPS
+        // cursor capture must keep events on the viewport.
+        m_runtimeUIOverlay->SetMouseEventsEnabled(
+            showRuntimeUI && m_engine->IsRuntimeUICursorMode());
         m_runtimeUIOverlay->SetDrawCommands(runtimeUICommands);
         if (showRuntimeUI) {
             m_runtimeUIOverlay->raise();
@@ -4504,6 +4527,15 @@ bool EditorMainWindow::eventFilter(QObject* watched, QEvent* event)
 // Spawn entity from an Add Actors drop onto the viewport
 // ─────────────────────────────────────────────────────────────────────────────
 
+void EditorMainWindow::spawnFromAssetBrowser(const QByteArray& spawnPayload)
+{
+    QPoint dropPos(0, 0);
+    if (m_viewportContainer) {
+        dropPos = m_viewportContainer->rect().center();
+    }
+    handleViewportSpawnDrop(spawnPayload, dropPos);
+}
+
 void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, const QPoint& dropPos)
 {
     std::cout << "[SpawnDrop] === handleViewportSpawnDrop START ===\n";
@@ -4661,6 +4693,10 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         auto& tc = created.GetComponent<TransformComponent>();
         tc.position = spawnPos;
         tc.rotation = Vec3(0.0f, 0.0f, 0.0f);
+        const std::string meshStem = meshPath.stem().string();
+        if (meshStem == "Capsule" || meshStem == "Cylinder") {
+            tc.rotation.x = 1.57079632679f;
+        }
         tc.scale    = Vec3(1.0f, 1.0f, 1.0f);
 
         std::cout << "[SpawnDrop] Selecting entity...\n"; std::cout.flush();
@@ -4770,6 +4806,89 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         tc.position = spawnPos;
         tc.rotation = Vec3(0.0f, 0.0f, 0.0f);
         tc.scale    = Vec3(1.0f, 1.0f, 1.0f);
+
+        ctx->SetSelectionChangedCallback(nullptr);
+        ctx->SelectEntity(static_cast<entt::entity>(created));
+        ctx->SetSelectionChangedCallback([this](entt::entity) {
+            refreshDetailsPanel();
+        });
+        break;
+    }
+
+    case SpawnableEntry::Kind::Prefab: {
+        namespace fs = std::filesystem;
+        std::string portablePath = entry.assetPath.toStdString();
+        if (portablePath.rfind("assets/", 0) != 0 && portablePath.rfind(".engine/", 0) != 0) {
+            portablePath = "assets/" + portablePath;
+        }
+
+        fs::path prefabAbs;
+        if (m_projectContext && m_projectContext->HasProject()) {
+            prefabAbs = fs::path(m_projectContext->GetProjectRootDir()) / portablePath;
+        }
+        if (prefabAbs.empty() || !fs::exists(prefabAbs)) {
+            auto& assetMgr = AssetManager::GetInstance();
+            if (assetMgr.HasValidAssetRoot()) {
+                std::string rel = entry.assetPath.toStdString();
+                if (rel.rfind("assets/", 0) == 0) {
+                    rel = rel.substr(7);
+                }
+                prefabAbs = fs::path(assetMgr.ToAbsolutePath(rel));
+            }
+        }
+        if (prefabAbs.empty() || !fs::exists(prefabAbs)) {
+            statusBar()->showMessage(tr("Prefab not found: %1").arg(entry.assetPath), 3000);
+            std::cout << "[SpawnDrop] ABORT: prefab not found: " << portablePath << "\n";
+            return;
+        }
+
+        PrefabAsset asset;
+        std::string loadError;
+        if (!PrefabOverrideSystem::LoadAsset(prefabAbs.generic_string(), asset, loadError) &&
+            !PrefabOverrideSystem::LoadAsset(portablePath, asset, loadError)) {
+            statusBar()->showMessage(
+                tr("Failed to load prefab: %1").arg(QString::fromStdString(loadError)), 3000);
+            return;
+        }
+
+        PrefabInstantiateOptions options;
+        options.prefabPath = portablePath;
+        options.attachInstanceComponent = true;
+        Entity created = PrefabInstantiator::Instantiate(*scene, asset, options);
+        if (!created) {
+            statusBar()->showMessage(tr("Failed to instantiate prefab."), 3000);
+            return;
+        }
+
+        // Keep a unique root name when the scene already has an entity with this tag.
+        if (created.HasComponent<TagComponent>()) {
+            auto& tag = created.GetComponent<TagComponent>();
+            std::string rootName = tag.tag.empty() ? baseName : tag.tag;
+            std::string unique = rootName;
+            int suffix = 1;
+            while (true) {
+                Entity existing = scene->FindEntityByName(unique);
+                if (!existing || static_cast<entt::entity>(existing) == static_cast<entt::entity>(created)) {
+                    break;
+                }
+                unique = rootName + " (" + std::to_string(suffix++) + ")";
+            }
+            tag.tag = unique;
+            entityName = unique;
+        }
+
+        if (created.HasComponent<TransformComponent>()) {
+            auto& tc = created.GetComponent<TransformComponent>();
+            tc.position = spawnPos;
+            if (created.HasComponent<PrefabInstanceComponent>()) {
+                auto& inst = created.GetComponent<PrefabInstanceComponent>();
+                PrefabComponentIO::CopyLocalTransform(inst.rootTransform, tc);
+                inst.hasRootTransform = true;
+                inst.prefabPath = portablePath;
+            }
+        }
+
+        m_engine->RebuildSceneMeshes();
 
         ctx->SetSelectionChangedCallback(nullptr);
         ctx->SelectEntity(static_cast<entt::entity>(created));

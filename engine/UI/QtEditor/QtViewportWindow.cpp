@@ -428,6 +428,28 @@ void QtViewportWindow::restoreCapturedCursorVisuals()
 #endif
 }
 
+bool QtViewportWindow::ConsumeCapturedMouseDelta(float& deltaX, float& deltaY)
+{
+    deltaX = 0.0f;
+    deltaY = 0.0f;
+    if (!m_cursorCaptured || m_captureSuspended || width() <= 0 || height() <= 0) {
+        return false;
+    }
+
+    const QPoint centerLocal = viewportCenterLocal();
+    const QPoint centerGlobal = mapToGlobal(centerLocal);
+    const QPoint cursorGlobal = QCursor::pos();
+    deltaX = static_cast<float>(cursorGlobal.x() - centerGlobal.x());
+    deltaY = static_cast<float>(cursorGlobal.y() - centerGlobal.y());
+
+    if (deltaX != 0.0f || deltaY != 0.0f) {
+        m_virtualMouseX += static_cast<double>(deltaX);
+        m_virtualMouseY += static_cast<double>(deltaY);
+        recenterCursor();
+    }
+    return true;
+}
+
 void QtViewportWindow::CaptureCursor()
 {
     if (m_cursorCaptured) {
@@ -459,8 +481,8 @@ void QtViewportWindow::CaptureCursor()
     m_captureSuspended = false;
 
     requestActivate();
-    // Start look from the click position. Warping to center here makes the
-    // first samples undo themselves. Recenter only when near the clip edge.
+    // Captured play-mode look is sampled relative to the center once per frame.
+    recenterCursor();
     
     std::cout << "[QtViewport] Cursor captured\n";
 }

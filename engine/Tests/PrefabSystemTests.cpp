@@ -11,6 +11,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <string>
@@ -515,6 +516,84 @@ bool TestLegacyBlueprint(const fs::path& repoRoot) {
     return ok;
 }
 
+bool TestInstantiatePoseAndVars(const fs::path& outDir) {
+    Scene scratch("Scratch");
+    Entity root, shade;
+    if (!BuildLampHierarchy(scratch, root, shade)) {
+        return Check(false, "failed to build lamp hierarchy for pose/vars");
+    }
+
+    PrefabAsset asset;
+    const fs::path prefabPath = outDir / "LampPoseVars.hpprefab";
+    if (!SavePrefabFromHierarchy(scratch, root, prefabPath, asset)) {
+        return Check(false, "failed to save lamp prefab for pose/vars");
+    }
+
+    Scene scene("PoseVars");
+    PrefabInstantiateOptions options;
+    options.prefabPath = prefabPath.generic_string();
+    options.attachInstanceComponent = true;
+    Entity instance = PrefabInstantiator::Instantiate(scene, asset, options);
+    bool ok = true;
+    ok &= Check(static_cast<bool>(instance), "instantiate returned root");
+    if (!instance) {
+        return ok;
+    }
+
+    const Vec3 posePos(4.0f, 1.5f, -8.0f);
+    const Vec3 poseRotDeg(0.0f, 45.0f, 0.0f);
+    ok &= Check(instance.HasComponent<TransformComponent>(), "root has transform");
+    if (instance.HasComponent<TransformComponent>()) {
+        auto& transform = instance.GetComponent<TransformComponent>();
+        transform.position = posePos;
+        transform.SetRotationDegrees(poseRotDeg);
+        ok &= Check(Near(transform.position.x, 4.0f) && Near(transform.position.y, 1.5f) &&
+                        Near(transform.position.z, -8.0f),
+                    "root pose position applied");
+        Vec3 deg = transform.GetRotationDegrees();
+        ok &= Check(Near(deg.y, 45.0f), "root pose rotation degrees applied");
+    }
+
+    // Merge spawn vars onto every LuaScriptComponent in the instance.
+    std::function<void(Entity)> mergeVars = [&](Entity entity) {
+        if (!entity) {
+            return;
+        }
+        if (entity.HasComponent<LuaScriptComponent>()) {
+            auto& lua = entity.GetComponent<LuaScriptComponent>();
+            lua.variables["health"] = PropertyValue(40.0);
+            lua.variables["moveSpeed"] = PropertyValue(3.5);
+        }
+        if (!entity.HasComponent<TransformComponent>()) {
+            return;
+        }
+        for (entt::entity childHandle : entity.GetComponent<TransformComponent>().children) {
+            mergeVars(Entity(childHandle, &scene));
+        }
+    };
+    mergeVars(instance);
+
+    Entity shadeEntity = FindChildByTag(scene, instance, "Shade");
+    ok &= Check(static_cast<bool>(shadeEntity), "shade child present");
+    if (shadeEntity && shadeEntity.HasComponent<LuaScriptComponent>()) {
+        const auto& vars = shadeEntity.GetComponent<LuaScriptComponent>().variables;
+        auto health = vars.find("health");
+        auto speed = vars.find("moveSpeed");
+        auto glow = vars.find("glow");
+        ok &= Check(health != vars.end() && health->second.IsNumber() &&
+                        Near(static_cast<float>(*health->second.AsNumber()), 40.0f),
+                    "spawn var health merged");
+        ok &= Check(speed != vars.end() && speed->second.IsNumber() &&
+                        Near(static_cast<float>(*speed->second.AsNumber()), 3.5f),
+                    "spawn var moveSpeed merged");
+        ok &= Check(glow != vars.end(), "prefab default glow var preserved");
+    } else {
+        ok &= Check(false, "shade has LuaScriptComponent for vars");
+    }
+
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -545,6 +624,7 @@ int main(int argc, char** argv) {
     run("CreateFromSelectionAndUnpack", TestCreateFromSelectionAndUnpack, outDir);
     run("MissingPrefab", TestMissingPrefab, outDir);
     run("LegacyBlueprint", TestLegacyBlueprint, repoRoot);
+    run("InstantiatePoseAndVars", TestInstantiatePoseAndVars, outDir);
 
     if (failed > 0) {
         std::cerr << failed << " prefab test(s) failed\n";

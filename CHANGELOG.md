@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-08-31: Lua `Scene.instantiate(path, opts)` / `Scene.destroy(entity)` for runtime prefab spawn/destroy. Instantiate resolves project-relative paths, applies optional root `position`/`rotation` (degrees) and merges `vars` onto instance `LuaScriptComponent` maps before `onAwake`. Destroy is deferred until the end of the script Update tick; Update snapshots script entities before iterating so mid-tick spawns are safe.
+- 2026-08-31: `PrefabSystemTests` `InstantiatePoseAndVars` covering root pose application and spawn-var merge onto prefab Lua scripts.
+- 2026-08-31: Lua entity userdata methods (`GetTransform`/`GetName`/`SetName`/`IsValid`/`GetCamera`/`Call`) operate on the receiver entity rather than the running script entity. Added `Scene.findAllWithPrefix` and `Scene::FindEntitiesWithNamePrefix`.
+- 2026-08-31: `JoltPhysicsSystem::Raycast` / `GetEntityForBody` return hit entity id and world-space surface normal; Lua `Physics.raycast` exposes `entity`, `point`, `normal`, and `distance`. Editor and game hosts share the centralized raycast path.
+- 2026-08-31: `Physics::CharacterMotor` with Lua `Physics.isGrounded` / `move` / `jump` for basic FPS capsule locomotion. Packaged runtime (`GameMain`) now calls `LateUpdate` after `Update`.
+- 2026-08-31: Boomer-Shooter project gameplay starter content: `Player`/`Enemy` prefabs, `Player`/`Enemy`/`Director` Lua scripts, optional `Hud.hui`, and a minimal `default.hpscene` with Player instance, Director, `EnemySpawn*` markers, and a physics floor stub (no authored arena).
+- 2026-08-31: Documented Lua gameplay APIs in `LUA_SCRIPTING_GUIDE.md` and `engine/Scripting/README.md` (`Scene.instantiate`/`destroy`/`findAllWithPrefix`, entity `Call`, raycast hit entity, FPS motor).
 - 2026-08-28: Production prefab instance workflow: automatic property-path override tracking (`PrefabOverrideSystem` / `PrefabComponentIO`), Inspector override indicators with Revert/Apply, Apply to Prefab (with confirmation for Apply All), reliable Refresh that reapplies overrides, Create Prefab From Selection capturing all prefab-supported components, Unpack that bakes overrides into ordinary entities, missing-prefab stubs that do not fail scene load, and Prefab Editor reuse of Scene Inspector widgets for live component authoring.
 - 2026-08-28: Scene serialization stores prefab instance `rootTransform` separately from child overrides. Prefab children remain omitted from `entities[]`.
 - 2026-08-28: Sample prefab `assets/prefabs/Lamp.hpprefab`. Legacy `assets/blueprints/Player.hpblueprint` continues to load.
@@ -15,10 +22,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-09-01: Boomer-Shooter Player prefab uses `.engine/meshes/Capsule.glb` for visuals with the existing capsule collider; `Player.lua` mouse look prefers host mouse delta and re-asserts cursor capture each frame.
+- 2026-09-01: Boomer-Shooter `Player.lua` mouse look now follows `scripts/fp-controller.lua` (position-based deltas, yaw convention, always-on capture). Player prefab remains a capsule collider with updated look sensitivity defaults.
 - 2026-08-28: Prefab Editor Inspector is no longer read-only labels; it hosts the same component inspectors as the Scene Editor against the preview entity and syncs edits back into the `PrefabAsset`.
 
 ### Fixed
 
+- 2026-09-01: Dynamic Jolt bodies now use swept linear-cast collision quality, and the FPS character motor clears downward velocity while grounded, preventing intermittent capsule tunneling and contact-driven floor penetration during movement.
+- 2026-09-01: Boomer-Shooter Player keeps its rotationally symmetric physics capsule upright instead of rotating the body for camera yaw, and aligns the collider/visual bottoms to the entity origin to prevent ground clipping and restore grounded probes.
+- 2026-09-01: Runtime HUD rendering in the Qt editor now uses an owned frameless translucent tool overlay aligned to the Vulkan viewport, avoiding native-child stacking that hid non-native UI widgets while preserving transparent backgrounds.
+- 2026-09-01: Qt editor play mode now samples captured cursor displacement directly each script frame, preserving FPS mouse look when transparent runtime HUD widgets prevent the embedded native viewport from receiving mouse-move events.
+- 2026-09-01: Runtime prefab spawn variables are injected before Lua chunk execution so top-level local defaults honor overrides, and newly instantiated renderers reuse matching uploaded mesh handles so Boomer-Shooter enemies are visible immediately.
+- 2026-09-01: Qt play-mode HUD routing now keeps mouse events on the viewport in Game cursor mode, suspended capture survives embedded-window focus changes, script camera callbacks are rebound on every play session, and Player camera rotation no longer depends on transform-position lookup.
+- 2026-09-01: Boomer-Shooter play mode now consumes accumulated Qt mouse motion for reliable FPS look, uses Jolt allowed-DOF constraints for true `freezeRotation`, spawns built-in capsule/cylinder meshes upright, restores the Player prefab as an upright capsule controller, and excludes `EnemySpawn*` markers from Director live-enemy counts.
+- 2026-09-01: Editor play mode captures the cursor whenever HephaestusUI cursor mode is `Game` (not only when `cursorModeRequest` is set), so FPS mouse look works after `UI.setCursorMode(CursorMode.Game)`.
+- 2026-09-01: Prefab load/save and scene deserialize resolve portable paths (`assets/prefabs/...`) against the project root instead of the process CWD, so dragged prefab instances no longer become Missing Prefab stubs.
+- 2026-09-01: Runtime HUD overlay no longer forces a native HWND (which composited opaque on Windows). Transparent panel fills are skipped when painting, and `UIPanel` defaults to a transparent background.
+- 2026-09-01: Escape exits editor play mode and releases viewport cursor capture so the Stop button is reachable again. Overlay mouse routing only enables in UI cursor mode.
+- 2026-09-01: Prefabs can be placed into the active scene by dragging from the Asset Browser or Add Actors → Prefabs onto the viewport (also via Asset Browser context menu **Instantiate in Scene**).
+- 2026-08-31: Include Jolt `BodyFilter.h` in `JoltPhysicsSystem.cpp` for `IgnoreSingleBodyFilter` used by centralized raycasts.
 - 2026-08-28: Prefab instance transforms and component edits in the Scene Editor are recorded as overrides (or as instance `rootTransform` for the root) so they survive save/reload and Refresh.
 
 ## [2026.8.27]

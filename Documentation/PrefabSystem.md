@@ -154,6 +154,13 @@ Apply All asks for confirmation because it affects every instance.
 
 ## 6. Editor workflows
 
+### Place Prefab in Scene
+
+- Drag a `.hpprefab` from the Asset Browser onto the viewport, or from **Add Actors → Prefabs**
+- Or right-click the prefab in the Asset Browser and choose **Instantiate in Scene**
+
+Placement is in front of the editor camera. The instance records `rootTransform` and is undoable.
+
 ### Create Prefab From Selection
 
 Outliner action on a **non-prefab** entity.

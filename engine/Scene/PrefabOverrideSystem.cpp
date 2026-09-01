@@ -22,6 +22,11 @@ std::unordered_map<std::string, PrefabAsset>& AssetCache() {
     return cache;
 }
 
+std::filesystem::path& ProjectRootStorage() {
+    static std::filesystem::path root;
+    return root;
+}
+
 std::string NormalizePathKey(const std::string& path) {
     std::string key = fs::path(path).generic_string();
     std::replace(key.begin(), key.end(), '\\', '/');
@@ -186,14 +191,79 @@ void CaptureLiveParentAndRoot(Scene& scene, Entity root, PrefabInstanceComponent
 }
 
 bool SaveAsset(const PrefabAsset& asset, const std::string& path, std::string& error) {
-    if (!PrefabSerializer::Serialize(asset, path, error)) {
+    const fs::path resolved = PrefabOverrideSystem::ResolveAssetFilePath(path, true);
+    if (!PrefabSerializer::Serialize(asset, resolved, error)) {
         return false;
     }
     PrefabOverrideSystem::InvalidateAssetCache(path);
+    PrefabOverrideSystem::InvalidateAssetCache(resolved.generic_string());
     return true;
 }
 
 } // namespace
+
+void PrefabOverrideSystem::SetProjectRoot(const std::filesystem::path& projectRoot) {
+    ProjectRootStorage() = projectRoot.empty() ? fs::path{} : projectRoot.lexically_normal();
+}
+
+const std::filesystem::path& PrefabOverrideSystem::GetProjectRoot() {
+    return ProjectRootStorage();
+}
+
+std::filesystem::path PrefabOverrideSystem::ResolveAssetFilePath(const std::string& path, bool forWrite) {
+    if (path.empty()) {
+        return {};
+    }
+
+    fs::path input(path);
+    std::error_code ec;
+
+    if (input.is_absolute()) {
+        return input.lexically_normal();
+    }
+
+    auto tryExisting = [&](const fs::path& candidate) -> fs::path {
+        if (!candidate.empty() && fs::exists(candidate, ec)) {
+            return candidate.lexically_normal();
+        }
+        return {};
+    };
+
+    const fs::path& root = ProjectRootStorage();
+    if (!root.empty()) {
+        fs::path fromRoot = tryExisting(root / input);
+        if (!fromRoot.empty()) {
+            return fromRoot;
+        }
+
+        // Accept keys that omit the assets/ prefix (Asset Browser relative paths).
+        const std::string generic = NormalizePathKey(path);
+        if (generic.rfind("assets/", 0) != 0 && generic.rfind(".engine/", 0) != 0) {
+            fromRoot = tryExisting(root / "assets" / input);
+            if (!fromRoot.empty()) {
+                return fromRoot;
+            }
+        }
+
+        if (forWrite) {
+            if (generic.rfind("assets/", 0) == 0 || generic.rfind(".engine/", 0) == 0) {
+                return (root / input).lexically_normal();
+            }
+            return (root / "assets" / input).lexically_normal();
+        }
+    }
+
+    fs::path fromCwd = tryExisting(fs::current_path(ec) / input);
+    if (!fromCwd.empty()) {
+        return fromCwd;
+    }
+
+    // Last resort: return as-is (absolute if possible) so callers get a clear open error.
+    if (forWrite && !root.empty()) {
+        return (root / input).lexically_normal();
+    }
+    return input.lexically_normal();
+}
 
 Entity PrefabOverrideSystem::FindInstanceRoot(Scene& scene, Entity entity) {
     if (!entity) {
@@ -259,13 +329,33 @@ bool PrefabOverrideSystem::LoadAsset(const std::string& path, PrefabAsset& out, 
         return true;
     }
 
-    PrefabAsset loaded;
-    if (!PrefabSerializer::Deserialize(loaded, path, error)) {
-        if (!PrefabSerializer::Deserialize(loaded, fs::path(path), error)) {
-            return false;
+    const fs::path resolved = ResolveAssetFilePath(path, false);
+    const std::string resolvedKey = NormalizePathKey(resolved.generic_string());
+    if (!resolvedKey.empty() && resolvedKey != key) {
+        auto resolvedIt = cache.find(resolvedKey);
+        if (resolvedIt != cache.end()) {
+            cache[key] = resolvedIt->second;
+            out = resolvedIt->second;
+            error.clear();
+            return true;
         }
     }
+
+    PrefabAsset loaded;
+    std::string loadError;
+    bool ok = PrefabSerializer::Deserialize(loaded, resolved, loadError);
+    if (!ok && fs::path(path) != resolved) {
+        ok = PrefabSerializer::Deserialize(loaded, fs::path(path), loadError);
+    }
+    if (!ok) {
+        error = loadError.empty() ? "Unable to open prefab file." : loadError;
+        return false;
+    }
+
     cache[key] = loaded;
+    if (!resolvedKey.empty()) {
+        cache[resolvedKey] = loaded;
+    }
     out = loaded;
     error.clear();
     return true;
