@@ -6,10 +6,12 @@
 #include "../MaterialEditor/MaterialGraphEvaluator.h"
 #include "../MaterialEditor/MaterialNodeDefinitions.h"
 #include "../MaterialEditor/MaterialShaderGenerator.h"
+#include "../MaterialEditor/TextureDiscovery.h"
 #include "QtEditorEngine.h"
 #include "QtViewportWindow.h"
 
 #include "../../Assets/AssetManager.h"
+#include "../../Assets/AssetPathPolicy.h"
 #include "../../Scene/Scene.h"
 
 #include <QAbstractItemView>
@@ -2977,7 +2979,16 @@ private:
                 const QString file = QFileDialog::getOpenFileName(this, QObject::tr("Choose Texture"),
                     QFileInfo(m_absolutePath).absolutePath(), QObject::tr("Textures (*.png *.jpg *.jpeg *.tga *.dds *.ktx *.bmp);;All Files (*.*)"));
                 if (file.isEmpty()) return;
-                path->setText(file);
+                std::string portable = file.toStdString();
+                const std::string projectRoot = Hephaestus::AssetManager::GetInstance().GetProjectRoot();
+                if (!projectRoot.empty()) {
+                    portable = MaterialEditor::GetRelativeTexturePath(
+                        std::filesystem::path(projectRoot),
+                        std::filesystem::path(file.toStdString()));
+                } else {
+                    portable = Hephaestus::AssetPathPolicy::ToPortableKey({}, file.toStdString());
+                }
+                path->setText(QString::fromStdString(portable));
                 commitPath();
             });
             connect(reset, &QPushButton::clicked, this, [path, commitPath]() {

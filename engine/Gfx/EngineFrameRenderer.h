@@ -42,6 +42,23 @@ class Scene;
 namespace Hephaestus {
 
 /**
+ * @brief Camera projection mode for rendering.
+ */
+enum class ProjectionMode {
+    Perspective = 0,
+    Orthographic = 1
+};
+
+/**
+ * @brief Viewport shading mode (editor view modes).
+ */
+enum class ViewShadingMode {
+    Lit = 0,
+    Unlit = 1,
+    Wireframe = 2
+};
+
+/**
  * @brief Camera data for rendering - platform agnostic.
  */
 struct RenderCamera {
@@ -52,6 +69,9 @@ struct RenderCamera {
     float pitchDeg = 0.0f;
     float nearPlane = 0.1f;
     float farPlane = 10000.0f;
+    float fovDeg = 60.0f;
+    float orthoHalfExtent = 10.0f;
+    ProjectionMode projectionMode = ProjectionMode::Perspective;
     
     // Helper to compute forward direction
     void GetForwardDirection(float& outX, float& outY, float& outZ) const;
@@ -77,6 +97,7 @@ struct FrameRenderConfig {
     bool isEditorMode = false;      // Editor sets true; game / standalone defaults off
     bool isPlaying = false;
     bool isPaused = false;
+    ViewShadingMode shadingMode = ViewShadingMode::Lit;
     
     // Clear color (used if no skybox)
     float clearColorR = 0.1f;
@@ -280,6 +301,9 @@ public:
     VulkanSwapchain* GetSwapchain() const { return m_swapchain; }
     VulkanPipeline* GetPipeline() const { return m_pipeline.get(); }
 
+    /** True when a wireframe graphics pipeline was created (requires fillModeNonSolid). */
+    bool SupportsWireframe() const;
+
 private:
     // Initialization helpers
     bool createPipeline();
@@ -291,7 +315,8 @@ private:
     bool createBillboardResources();
 
     // Per-frame helpers
-    void updateCameraUBO(uint32_t imageIndex, const RenderCamera& camera);
+    void updateCameraUBO(uint32_t imageIndex, const RenderCamera& camera,
+                         const FrameRenderConfig& config);
     void updateLightingUBO(uint32_t imageIndex, Scene* scene, const RenderCamera& camera);
     void recordShadowPass(VkCommandBuffer cmd, Scene* scene, const RenderCamera& camera,
                           const FrameRenderConfig& config);

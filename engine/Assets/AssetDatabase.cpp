@@ -1,4 +1,5 @@
 #include "AssetDatabase.h"
+#include "AssetPathPolicy.h"
 
 #include <chrono>
 #include <fstream>
@@ -233,16 +234,13 @@ std::filesystem::path AssetDatabase::GetProjectRoot() const {
 
 std::string AssetDatabase::NormalizeSourcePath(const std::filesystem::path& sourcePath,
                                                const std::filesystem::path& projectRoot) {
-    std::filesystem::path normalized = sourcePath.lexically_normal();
-    if (projectRoot.empty()) {
-        return normalized.generic_string();
+    const std::string raw = sourcePath.generic_string();
+    const std::string portable =
+        Hephaestus::AssetPathPolicy::ToPortableKey(projectRoot, raw);
+    if (!portable.empty()) {
+        return portable;
     }
-    std::error_code ec;
-    std::filesystem::path relative = std::filesystem::relative(normalized, projectRoot, ec);
-    if (!ec && !relative.empty() && relative.generic_string().find("..") == std::string::npos) {
-        return relative.generic_string();
-    }
-    return normalized.generic_string();
+    return Hephaestus::AssetPathPolicy::NormalizeSeparators(raw);
 }
 
 AssetFingerprint AssetDatabase::BuildFastFingerprint(const std::filesystem::path& sourcePath) {

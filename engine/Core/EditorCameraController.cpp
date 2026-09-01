@@ -104,6 +104,13 @@ void EditorCameraController::OnMouseMove(float deltaX, float deltaY, const Camer
 void EditorCameraController::OnMouseWheel(float delta, const CameraInputState& input)
 {
     (void)input;
+
+    if (orthographic) {
+        // Zoom by adjusting ortho half-extent (smaller = zoom in)
+        const float factor = std::exp(-delta * wheelZoomSensitivity * 0.15f);
+        orthoHalfExtent = std::clamp(orthoHalfExtent * factor, 0.05f, 5000.0f);
+        return;
+    }
     
     // Wheel always does dolly/zoom - move along view direction
     updateDolly(delta * wheelZoomSensitivity);
@@ -119,22 +126,35 @@ void EditorCameraController::FocusOnPoint(float pointX, float pointY, float poin
     orbitPivotX = pointX;
     orbitPivotY = pointY;
     orbitPivotZ = pointZ;
-    
-    // Calculate view distance based on radius and FOV
-    float fovRad = fovDeg * DEG_TO_RAD;
-    float distance = (radius * 2.5f) / std::tan(fovRad * 0.5f);
-    if (distance < 1.0f) {
-        distance = 5.0f; // Minimum distance
+
+    if (orthographic) {
+        // Frame selection in ortho by fitting half-extent to bounds radius
+        orthoHalfExtent = std::max(radius * 1.25f, 0.5f);
+        // Keep a comfortable viewing distance along the look axis
+        float distance = std::max(radius * 3.0f, 5.0f);
+        orbitDistance = distance;
+        float fx, fy, fz;
+        GetForward(fx, fy, fz);
+        positionX = pointX - fx * distance;
+        positionY = pointY - fy * distance;
+        positionZ = pointZ - fz * distance;
+    } else {
+        // Calculate view distance based on radius and FOV
+        float fovRad = fovDeg * DEG_TO_RAD;
+        float distance = (radius * 2.5f) / std::tan(fovRad * 0.5f);
+        if (distance < 1.0f) {
+            distance = 5.0f; // Minimum distance
+        }
+        orbitDistance = distance;
+        
+        // Position camera behind the current view direction from pivot
+        float fx, fy, fz;
+        GetForward(fx, fy, fz);
+        
+        positionX = pointX - fx * distance;
+        positionY = pointY - fy * distance;
+        positionZ = pointZ - fz * distance;
     }
-    orbitDistance = distance;
-    
-    // Position camera behind the current view direction from pivot
-    float fx, fy, fz;
-    GetForward(fx, fy, fz);
-    
-    positionX = pointX - fx * distance;
-    positionY = pointY - fy * distance;
-    positionZ = pointZ - fz * distance;
     
     // Recalculate yaw/pitch to look at pivot
     float dx = pointX - positionX;
@@ -236,6 +256,10 @@ void EditorCameraController::BuildRenderCamera(RenderCamera& outCamera) const
     outCamera.pitchDeg = pitchDeg;
     outCamera.nearPlane = nearPlane;
     outCamera.farPlane = farPlane;
+    outCamera.fovDeg = fovDeg;
+    outCamera.orthoHalfExtent = orthoHalfExtent;
+    outCamera.projectionMode = orthographic ? ProjectionMode::Orthographic
+                                            : ProjectionMode::Perspective;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -328,6 +352,12 @@ void EditorCameraController::updatePan(float deltaX, float deltaY)
 
 void EditorCameraController::updateDolly(float delta)
 {
+    if (orthographic) {
+        const float factor = std::exp(-delta * 0.15f);
+        orthoHalfExtent = std::clamp(orthoHalfExtent * factor, 0.05f, 5000.0f);
+        return;
+    }
+
     // Move along view direction (forward/back)
     float fx, fy, fz;
     GetForward(fx, fy, fz);

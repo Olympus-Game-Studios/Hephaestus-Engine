@@ -124,6 +124,8 @@ void SettingsSchemaRegistry::RegisterBuiltins()
             QString()),
         MakeDef("project.info.defaultScene", "projectInfo", "Project Info", "defaultScene", "Default Scene", SettingControlType::String,
             QString()),
+        MakeDef("project.info.lastScene", "projectInfo", "Project Info", "lastScene", "Last Scene", SettingControlType::String,
+            QString()),
 
         MakeDef("project.rendering.defaultSkybox", "rendering", "Rendering", "defaultSkybox", "Default Skybox", SettingControlType::Path,
             QString()),

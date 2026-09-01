@@ -78,6 +78,7 @@ struct EditorViewportSettings {
     bool showShadows = true;
     bool showSkybox = true;
     bool showLightBillboards = true;
+    int shadingMode = 0; // 0=Lit, 1=Unlit, 2=Wireframe (matches ViewShadingMode)
 };
 
 /**

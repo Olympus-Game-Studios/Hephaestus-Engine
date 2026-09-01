@@ -250,6 +250,43 @@ void ProjectContext::ClearRecentProjects()
     SaveRecentProjectsToFile();
 }
 
+void ProjectContext::RemoveRecentProject(const std::string& projectFilePath)
+{
+    namespace fs = std::filesystem;
+    std::string normalizedPath = fs::absolute(projectFilePath).string();
+    std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
+
+    auto it = std::remove_if(m_recentProjects.begin(), m_recentProjects.end(),
+                             [&](const std::string& entry) {
+                                 std::string e = entry;
+                                 std::replace(e.begin(), e.end(), '\\', '/');
+                                 return e == normalizedPath || e == projectFilePath;
+                             });
+    if (it == m_recentProjects.end()) {
+        return;
+    }
+    m_recentProjects.erase(it, m_recentProjects.end());
+    SaveRecentProjectsToFile();
+}
+
+size_t ProjectContext::RemoveMissingRecentProjects()
+{
+    namespace fs = std::filesystem;
+    const size_t before = m_recentProjects.size();
+    m_recentProjects.erase(
+        std::remove_if(m_recentProjects.begin(), m_recentProjects.end(),
+                       [](const std::string& entry) {
+                           std::error_code ec;
+                           return !fs::exists(entry, ec);
+                       }),
+        m_recentProjects.end());
+    const size_t removed = before - m_recentProjects.size();
+    if (removed > 0) {
+        SaveRecentProjectsToFile();
+    }
+    return removed;
+}
+
 std::string ProjectContext::getDefaultSettingsPath() const
 {
     namespace fs = std::filesystem;

@@ -268,6 +268,10 @@ void VulkanDevice::createLogicalDevice() {
   VkPhysicalDeviceFeatures features{};
   features.samplerAnisotropy = VK_TRUE;
   features.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
+  m_fillModeNonSolid = supportedFeatures.fillModeNonSolid == VK_TRUE;
+  if (m_fillModeNonSolid) {
+    features.fillModeNonSolid = VK_TRUE;
+  }
   VkDeviceCreateInfo ci{};
   ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
   ci.queueCreateInfoCount = static_cast<uint32_t>(qInfos.size());

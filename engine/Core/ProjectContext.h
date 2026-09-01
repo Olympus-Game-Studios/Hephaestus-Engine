@@ -132,6 +132,17 @@ public:
     void ClearRecentProjects();
 
     /**
+     * @brief Remove one recent project entry by path (normalized comparison).
+     */
+    void RemoveRecentProject(const std::string& projectFilePath);
+
+    /**
+     * @brief Drop recent entries whose .heproject file no longer exists.
+     * @return Number of entries removed
+     */
+    size_t RemoveMissingRecentProjects();
+
+    /**
      * @brief Load recent projects from persistent storage.
      * @param filePath Path to the settings file (or empty for default)
      */

@@ -594,8 +594,15 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
 
         float aspect = static_cast<float>(m_swapchain->extent.width) /
                        static_cast<float>(m_swapchain->extent.height);
-        projMatrix = Mat4::Perspective(60.0f * 3.14159265f / 180.0f,
-                                       aspect, cam.nearPlane, cam.farPlane);
+        if (cam.projectionMode == Hephaestus::ProjectionMode::Orthographic) {
+            const float halfH = std::max(cam.orthoHalfExtent, 0.01f);
+            const float halfW = halfH * aspect;
+            projMatrix = Mat4::Orthographic(-halfW, halfW, -halfH, halfH, cam.nearPlane, cam.farPlane);
+        } else {
+            const float fovDeg = (cam.fovDeg > 0.1f) ? cam.fovDeg : 60.0f;
+            projMatrix = Mat4::Perspective(fovDeg * 3.14159265f / 180.0f,
+                                           aspect, cam.nearPlane, cam.farPlane);
+        }
         return true;
     };
 
@@ -1524,9 +1531,25 @@ void QtEditorEngine::renderFrame()
     m_renderConfig.renderGrid = viewportSettings.showGrid && m_playModeManager.IsEditor();
     m_renderConfig.renderGizmo = viewportSettings.showGizmo && !m_playModeManager.ShouldSuppressEditorInteraction();
     m_renderConfig.renderOutlines = viewportSettings.showSelectionOutline && !m_playModeManager.ShouldSuppressEditorInteraction();
-    m_renderConfig.renderShadows = viewportSettings.showShadows;
+    m_renderConfig.renderShadows = viewportSettings.showShadows
+        && (m_camera.projectionMode != Hephaestus::ProjectionMode::Orthographic);
     m_renderConfig.renderSkybox = viewportSettings.showSkybox;
     m_renderConfig.renderBillboards = viewportSettings.showLightBillboards && !m_playModeManager.ShouldSuppressEditorInteraction();
+
+    // Viewport shading mode (Lit / Unlit / Wireframe)
+    switch (viewportSettings.shadingMode) {
+        case 1:
+            m_renderConfig.shadingMode = Hephaestus::ViewShadingMode::Unlit;
+            break;
+        case 2:
+            m_renderConfig.shadingMode = (m_frameRenderer && m_frameRenderer->SupportsWireframe())
+                ? Hephaestus::ViewShadingMode::Wireframe
+                : Hephaestus::ViewShadingMode::Lit;
+            break;
+        default:
+            m_renderConfig.shadingMode = Hephaestus::ViewShadingMode::Lit;
+            break;
+    }
     
     // Sync selection for outline rendering
     m_renderConfig.selectedEntity = static_cast<uint32_t>(m_editorContext.GetSelectedEntity());
@@ -1583,8 +1606,16 @@ void QtEditorEngine::renderFrame()
             
             float aspect = static_cast<float>(m_swapchain->extent.width) / 
                            static_cast<float>(m_swapchain->extent.height);
-            Mat4 projMatrix = Mat4::Perspective(60.0f * 3.14159265f / 180.0f, 
+            Mat4 projMatrix;
+            if (cam.projectionMode == Hephaestus::ProjectionMode::Orthographic) {
+                const float halfH = std::max(cam.orthoHalfExtent, 0.01f);
+                const float halfW = halfH * aspect;
+                projMatrix = Mat4::Orthographic(-halfW, halfW, -halfH, halfH, cam.nearPlane, cam.farPlane);
+            } else {
+                const float fovDeg = (cam.fovDeg > 0.1f) ? cam.fovDeg : 60.0f;
+                projMatrix = Mat4::Perspective(fovDeg * 3.14159265f / 180.0f,
                                                  aspect, cam.nearPlane, cam.farPlane);
+            }
             
             m_frameRenderer->UpdateGizmoState(
                 static_cast<uint32_t>(selectedEntity),

@@ -2,6 +2,7 @@
 
 #include "../../ToolsCommon/JsonUtils.h"
 #include "../../ToolsCommon/PathUtils.h"
+#include "../../ToolsCommon/ProjectCreationService.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -16,9 +17,6 @@
 #include <QtGlobal>
 
 namespace {
-
-constexpr const char* DEFAULT_ENGINE_HDRI_SOURCE = "assets/textures/hdris/studio_garden_1k.hdr";
-constexpr const char* DEFAULT_PROJECT_HDRI_PATH = ".engine/hdris/studio_garden_1k.hdr";
 
 QString FirstExistingFile(const QStringList& candidates)
 {
@@ -61,47 +59,6 @@ QJsonObject BuildProjectJson(const Hephaestus::Launcher::LauncherProject& projec
     root[QStringLiteral("tags")] = tags;
 
     return root;
-}
-
-bool CopyDefaultHDRIToProject(const QString& projectDirPath, QString* outError)
-{
-    const QString srcPath = QDir(Hephaestus::Tools::PathUtils::ExecutableDir()).filePath(QString::fromUtf8(DEFAULT_ENGINE_HDRI_SOURCE));
-    const QFileInfo srcInfo(srcPath);
-    if (!srcInfo.exists() || !srcInfo.isFile()) {
-        if (outError) {
-            *outError = QStringLiteral("Default HDRI source not found: %1").arg(srcPath);
-        }
-        return false;
-    }
-
-    const QString dstPath = QDir(projectDirPath).filePath(QString::fromUtf8(DEFAULT_PROJECT_HDRI_PATH));
-    const QFileInfo dstInfo(dstPath);
-    if (!QDir().mkpath(dstInfo.absolutePath())) {
-        if (outError) {
-            *outError = QStringLiteral("Failed to create HDRI folder: %1").arg(dstInfo.absolutePath());
-        }
-        return false;
-    }
-
-    if (dstInfo.exists() && dstInfo.size() == srcInfo.size()) {
-        return true;
-    }
-
-    if (dstInfo.exists() && !QFile::remove(dstInfo.absoluteFilePath())) {
-        if (outError) {
-            *outError = QStringLiteral("Failed to replace default HDRI: %1").arg(dstInfo.absoluteFilePath());
-        }
-        return false;
-    }
-
-    if (!QFile::copy(srcInfo.absoluteFilePath(), dstPath)) {
-        if (outError) {
-            *outError = QStringLiteral("Failed to copy default HDRI to project: %1").arg(dstPath);
-        }
-        return false;
-    }
-
-    return true;
 }
 
 QJsonObject BuildProjectIndexEntry(const Hephaestus::Launcher::LauncherProject& project)
@@ -424,81 +381,28 @@ bool LauncherProjectManager::CreateProject(const QString& projectName,
                                            LauncherProject* outProject,
                                            QString* outError)
 {
-    if (projectName.trimmed().isEmpty()) {
-        if (outError) {
-            *outError = QStringLiteral("Project name is required.");
-        }
+    Hephaestus::Tools::ProjectCreationService::Result created;
+    if (!Hephaestus::Tools::ProjectCreationService::CreateBlankProject(
+            locationFolder, projectName, engineVersion, createDefaultScene, &created, outError)) {
         return false;
-    }
-
-    QDir baseDir(locationFolder);
-    if (!baseDir.exists()) {
-        if (!QDir().mkpath(locationFolder)) {
-            if (outError) {
-                *outError = QStringLiteral("Failed to create location folder: %1").arg(locationFolder);
-            }
-            return false;
-        }
-    }
-
-    const QString projectDirPath = baseDir.filePath(projectName);
-    QDir projectDir(projectDirPath);
-    if (projectDir.exists()) {
-        if (outError) {
-            *outError = QStringLiteral("Project folder already exists: %1").arg(projectDirPath);
-        }
-        return false;
-    }
-
-    if (!QDir().mkpath(projectDirPath)) {
-        if (outError) {
-            *outError = QStringLiteral("Failed to create project folder: %1").arg(projectDirPath);
-        }
-        return false;
-    }
-
-    QDir().mkpath(projectDir.filePath(QStringLiteral(".hephaestus")));
-    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/scenes")));
-    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/textures")));
-    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/scripts")));
-    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/materials")));
-    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/prefabs")));
-    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/ui")));
-    QString hdriError;
-    if (!CopyDefaultHDRIToProject(projectDirPath, &hdriError)) {
-        // HDRI is optional convenience content — never fail project creation.
-        qWarning("CreateProject: default HDRI copy skipped: %s", qPrintable(hdriError));
     }
 
     LauncherProject project;
-    project.projectDir = projectDirPath;
-    project.projectFilePath = ProjectFilePathForNewProject(projectDirPath);
-    project.name = projectName;
-    project.description = QStringLiteral("New Hephaestus project");
-    project.engineVersion = engineVersion.isEmpty() ? QStringLiteral("1.0.0") : engineVersion;
-    project.favorite = false;
-    project.tags = {QStringLiteral("New")};
-    project.created = QDateTime::currentDateTime();
-    project.lastModified = project.created;
-
-    if (createDefaultScene) {
-        QFile defaultScene(projectDir.filePath(QStringLiteral("assets/scenes/default.hpscene")));
-        if (defaultScene.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            defaultScene.write("{\n  \"version\": 1,\n  \"name\": \"DefaultScene\",\n  \"entities\": []\n}\n");
-            defaultScene.close();
-        }
+    if (!ReadProject(created.projectFilePath, &project)) {
+        // Fallback metadata if read fails for any reason
+        project.projectDir = created.projectDir;
+        project.projectFilePath = created.projectFilePath;
+        project.name = projectName.trimmed();
+        project.description = QStringLiteral("New Hephaestus project");
+        project.engineVersion = engineVersion.isEmpty() ? QStringLiteral("1.0.0") : engineVersion;
+        project.favorite = false;
+        project.tags = {QStringLiteral("New")};
+        project.created = QDateTime::currentDateTime();
+        project.lastModified = project.created;
     }
-
-    const QJsonObject root = BuildProjectJson(project);
-    if (!Hephaestus::Tools::JsonUtils::WriteJsonObject(project.projectFilePath, root)) {
-        if (outError) {
-            *outError = QStringLiteral("Failed to create project file: %1").arg(project.projectFilePath);
-        }
-        return false;
+    if (project.tags.isEmpty()) {
+        project.tags = {QStringLiteral("New")};
     }
-
-    const QString legacyPath = projectDir.filePath(QStringLiteral(".hephaestus/project.heproject"));
-    Hephaestus::Tools::JsonUtils::WriteJsonObject(legacyPath, root);
 
     if (outProject) {
         *outProject = project;

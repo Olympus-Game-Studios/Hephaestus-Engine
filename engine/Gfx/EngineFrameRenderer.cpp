@@ -32,7 +32,7 @@ struct alignas(16) UniformBufferObject {
     Mat4 view;
     Mat4 proj;
     Vec3 viewPos;
-    float padding1;
+    float shadingMode; // 0 = Lit, 1 = Unlit
 };
 
 struct alignas(16) MaterialUBO {
@@ -126,6 +126,11 @@ void RenderCamera::GetForwardDirection(float& outX, float& outY, float& outZ) co
     outX = std::cos(yawR) * std::cos(pitchR);
     outY = std::sin(pitchR);
     outZ = std::sin(yawR) * std::cos(pitchR);
+}
+
+bool EngineFrameRenderer::SupportsWireframe() const
+{
+    return m_pipeline && m_pipeline->HasWireframePipeline();
 }
 
 // ============================================================================
@@ -384,7 +389,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     vkResetFences(m_device->device, 1, &m_inFlightFences[m_currentFrame]);
     
     // Update uniform buffers
-    updateCameraUBO(imageIndex, camera);
+    updateCameraUBO(imageIndex, camera, config);
     if (scene) {
         updateLightingUBO(imageIndex, scene, camera);
     }
@@ -567,7 +572,8 @@ bool EngineFrameRenderer::createPipeline()
 {
     try {
         m_pipeline = std::make_unique<VulkanPipeline>();
-        m_pipeline->Init(m_device->device, m_swapchain->renderPass, m_swapchain->extent);
+        const bool enableWireframe = m_device && m_device->SupportsFillModeNonSolid();
+        m_pipeline->Init(m_device->device, m_swapchain->renderPass, m_swapchain->extent, enableWireframe);
         return true;
     } catch (const std::exception& e) {
         std::cerr << "[EngineFrameRenderer] Pipeline creation failed: " << e.what() << "\n";
@@ -1436,7 +1442,8 @@ bool EngineFrameRenderer::createBillboardResources()
 // Private: Per-Frame Updates
 // ============================================================================
 
-void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamera& camera)
+void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamera& camera,
+                                         const FrameRenderConfig& config)
 {
     constexpr float DEG_TO_RAD = 3.1415926535f / 180.0f;
     
@@ -1459,9 +1466,17 @@ void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamer
     uint32_t safeHeight = std::max(m_swapchain->extent.height, 1u);
     float aspect = static_cast<float>(safeWidth) / static_cast<float>(safeHeight);
     
-    ubo.proj = Mat4::Perspective(60.0f * DEG_TO_RAD, aspect, camera.nearPlane, camera.farPlane);
+    if (camera.projectionMode == ProjectionMode::Orthographic) {
+        const float halfH = std::max(camera.orthoHalfExtent, 0.01f);
+        const float halfW = halfH * aspect;
+        ubo.proj = Mat4::Orthographic(-halfW, halfW, -halfH, halfH, camera.nearPlane, camera.farPlane);
+    } else {
+        const float fovDeg = (camera.fovDeg > 0.1f) ? camera.fovDeg : 60.0f;
+        ubo.proj = Mat4::Perspective(fovDeg * DEG_TO_RAD, aspect, camera.nearPlane, camera.farPlane);
+    }
     ubo.viewPos = position;
-    ubo.padding1 = 0.0f;
+    // Wireframe still uses Lit/Unlit shading branch; polygon mode is selected per draw.
+    ubo.shadingMode = (config.shadingMode == ViewShadingMode::Unlit) ? 1.0f : 0.0f;
     
     void* mapped = nullptr;
     vmaMapMemory(m_device->allocator, m_uniformBuffers[imageIndex].allocation, &mapped);
@@ -2463,8 +2478,9 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 continue;
             }
 
-            // Select pipeline based on per-object backface culling setting
-            VkPipeline desiredPipeline = m_pipeline->GetPipeline(renderer.backfaceCulling);
+            // Select pipeline based on per-object backface culling and viewport shading mode
+            const bool wantWireframe = (config.shadingMode == ViewShadingMode::Wireframe);
+            VkPipeline desiredPipeline = m_pipeline->GetPipeline(renderer.backfaceCulling, wantWireframe);
             if (desiredPipeline == VK_NULL_HANDLE) {
                 skippedCount++;
                 continue;

@@ -1,4 +1,5 @@
 #include "TextureDiscovery.h"
+#include "../../Assets/AssetPathPolicy.h"
 
 #include <algorithm>
 #include <cctype>
@@ -72,12 +73,7 @@ std::vector<std::string> DiscoverProjectTextures(const std::filesystem::path& pr
 }
 
 std::string GetRelativeTexturePath(const std::filesystem::path& projectRoot, const std::filesystem::path& fullPath) {
-    try {
-        std::filesystem::path relPath = std::filesystem::relative(fullPath, projectRoot);
-        return relPath.generic_string();
-    } catch (const std::filesystem::filesystem_error&) {
-        return fullPath.generic_string();
-    }
+    return Hephaestus::AssetPathPolicy::ToPortableKey(projectRoot, fullPath.generic_string());
 }
 
 } // namespace MaterialEditor

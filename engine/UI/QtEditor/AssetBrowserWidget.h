@@ -88,7 +88,8 @@ public:
     enum ItemDataRole {
         RelativePathRole = Qt::UserRole + 1,
         AssetTypeRole,
-        IsDirectoryRole
+        IsDirectoryRole,
+        SearchResultRole
     };
 
 signals:
@@ -145,7 +146,9 @@ private:
     void copyAssetPath(const QString& relativePath);
     void deleteAsset(const QString& relativePath, bool isDirectory);
     void renameAsset(const QString& relativePath, bool isDirectory);
+    void findAssetReferences(const QString& relativePath);
     void showInExplorer(const QString& relativePath);
+    void showInFolder(const QString& relativePath);
     void syncFolderTreeSelection();
     QModelIndex findFolderIndexByPath(const QString& relativePath) const;
 

@@ -20,6 +20,9 @@ public:
     uint32_t graphicsFamily = UINT32_MAX;
     uint32_t presentFamily  = UINT32_MAX;
 
+    /** True when the logical device enabled fillModeNonSolid (wireframe rasterization). */
+    bool SupportsFillModeNonSolid() const { return m_fillModeNonSolid; }
+
     // Legacy GLFW-based initialization (runtime/legacy editor path)
     void Init(GLFWwindow* window, VkInstance instance);
     
@@ -44,4 +47,6 @@ private:
     void findQueueFamilies(VkPhysicalDevice pd);
     void createLogicalDevice();
     void createCommandPool();
+
+    bool m_fillModeNonSolid = false;
 };

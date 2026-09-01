@@ -13,7 +13,7 @@ layout(std140, set = 0, binding = 0) uniform UBO {
     mat4 view;
     mat4 proj;
     vec3 viewPos;
-    float padding1;
+    float shadingMode; // 0 = Lit, 1 = Unlit (Wireframe uses polygon mode)
 } ubo;
 
 // Material properties (set via push constants or additional descriptor sets)
@@ -300,6 +300,20 @@ void main() {
         vec4 texColor = texture(materialTextures[index], texCoord);
         albedo = texColor.rgb * material.albedo * fragColor;
     }
+
+    float opacity = clamp(material.opacity, 0.0, 1.0);
+    if (opacity < clamp(material.opacityMask, 0.0, 1.0)) {
+        discard;
+    }
+
+    // Unlit viewport mode: albedo (+ emissive), skip lighting / tonemap path mirrors lit gamma
+    if (ubo.shadingMode > 0.5) {
+        vec3 unlit = albedo + material.emissive * material.emissiveStrength;
+        unlit = unlit / (unlit + vec3(1.0));
+        unlit = pow(unlit, vec3(1.0 / 2.2));
+        outColor = vec4(unlit, opacity);
+        return;
+    }
     
     // Normal map (world space - for now, not using tangent space)
     // A better implementation would transform from tangent space
@@ -343,10 +357,6 @@ void main() {
         metallic = texMetallic * material.metallic; // Blend with base value
     }
     metallic = clamp(metallic, 0.0, 1.0);
-    float opacity = clamp(material.opacity, 0.0, 1.0);
-    if (opacity < clamp(material.opacityMask, 0.0, 1.0)) {
-        discard;
-    }
     
     // Calculate F0 (base reflectivity)
     // Dielectrics have F0 around 0.04, metals use albedo as F0

@@ -41,7 +41,7 @@ VkShaderModule VulkanPipeline::createShaderModule(const std::vector<char>& code)
     return module;
 }
 
-void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext)
+void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool enableWireframe)
 {
     device = dev;
     renderPass = rp;
@@ -241,9 +241,10 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext)
     dyn.pDynamicStates = dynamics;
     basePci.pDynamicState = &dyn;
 
-    auto buildPipeline = [&](VkCullModeFlags cullMode) -> VkPipeline {
+    auto buildPipeline = [&](VkCullModeFlags cullMode, VkPolygonMode polygonMode) -> VkPipeline {
         VkPipelineRasterizationStateCreateInfo raster = rasterBase;
         raster.cullMode = cullMode;
+        raster.polygonMode = polygonMode;
 
         VkGraphicsPipelineCreateInfo pipelineCI = basePci;
         pipelineCI.pRasterizationState = &raster;
@@ -255,8 +256,13 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext)
         return handle;
     };
 
-    pipeline = buildPipeline(VK_CULL_MODE_NONE);
-    pipelineBackface = buildPipeline(VK_CULL_MODE_FRONT_BIT);
+    pipeline = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_FILL);
+    pipelineBackface = buildPipeline(VK_CULL_MODE_FRONT_BIT, VK_POLYGON_MODE_FILL);
+
+    if (enableWireframe) {
+        pipelineWireframe = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_LINE);
+        pipelineWireframeBackface = buildPipeline(VK_CULL_MODE_FRONT_BIT, VK_POLYGON_MODE_LINE);
+    }
 
     vkDestroyShaderModule(device, vertShader, nullptr);
     vkDestroyShaderModule(device, fragShader, nullptr);
@@ -383,6 +389,14 @@ void VulkanPipeline::Cleanup()
         vkDestroyPipeline(device, outlinePipeline, nullptr);
         outlinePipeline = VK_NULL_HANDLE;
     }
+    if (pipelineWireframeBackface) {
+        vkDestroyPipeline(device, pipelineWireframeBackface, nullptr);
+        pipelineWireframeBackface = VK_NULL_HANDLE;
+    }
+    if (pipelineWireframe) {
+        vkDestroyPipeline(device, pipelineWireframe, nullptr);
+        pipelineWireframe = VK_NULL_HANDLE;
+    }
     if (pipelineBackface) {
         vkDestroyPipeline(device, pipelineBackface, nullptr);
         pipelineBackface = VK_NULL_HANDLE;
@@ -402,8 +416,17 @@ void VulkanPipeline::Cleanup()
     ownsDescriptorSetLayout = true;
 }
 
-VkPipeline VulkanPipeline::GetPipeline(bool backfaceCullingEnabled) const
+VkPipeline VulkanPipeline::GetPipeline(bool backfaceCullingEnabled, bool wireframe) const
 {
+    if (wireframe) {
+        if (backfaceCullingEnabled && pipelineWireframeBackface != VK_NULL_HANDLE) {
+            return pipelineWireframeBackface;
+        }
+        if (pipelineWireframe != VK_NULL_HANDLE) {
+            return pipelineWireframe;
+        }
+        // Fall back to filled pipeline if wireframe was not created
+    }
     if (backfaceCullingEnabled && pipelineBackface != VK_NULL_HANDLE) {
         return pipelineBackface;
     }

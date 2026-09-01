@@ -195,8 +195,14 @@ set(ENGINE_CORE_SOURCES
     engine/Assets/AssetDatabase.cpp
     engine/Assets/AssetImporters.cpp
     engine/Assets/AssetManager.cpp
+    engine/Assets/AssetPathPolicy.cpp
+    engine/Assets/AssetReferenceIndex.cpp
+    engine/Assets/OpenDocumentRegistry.cpp
+    engine/Assets/AssetOperationService.cpp
     engine/Assets/DerivedDataCache.cpp
+    engine/Assets/EditorAssetPipeline.cpp
     engine/Assets/FileWatcher.cpp
+    engine/Assets/RecoveryStore.cpp
     engine/Assets/ReimportManager.cpp
     engine/Core/EditorContext.cpp
     engine/Core/EditorCameraController.cpp
@@ -284,6 +290,8 @@ if(HEPHAESTUS_USE_QT AND Qt6_FOUND)
         engine/ToolsCommon/EngineSettingsManager.cpp
         engine/ToolsCommon/ProjectSettingsManager.h
         engine/ToolsCommon/ProjectSettingsManager.cpp
+        engine/ToolsCommon/ProjectCreationService.h
+        engine/ToolsCommon/ProjectCreationService.cpp
         engine/ToolsCommon/VersionInfo.h
         engine/ToolsCommon/VersionInfo.cpp
     )
@@ -312,8 +320,14 @@ add_executable(HephaestusEngine
     engine/Assets/AssetDatabase.cpp
     engine/Assets/AssetImporters.cpp
     engine/Assets/AssetManager.cpp
+    engine/Assets/AssetPathPolicy.cpp
+    engine/Assets/AssetReferenceIndex.cpp
+    engine/Assets/OpenDocumentRegistry.cpp
+    engine/Assets/AssetOperationService.cpp
     engine/Assets/DerivedDataCache.cpp
+    engine/Assets/EditorAssetPipeline.cpp
     engine/Assets/FileWatcher.cpp
+    engine/Assets/RecoveryStore.cpp
     engine/Assets/ReimportManager.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
@@ -474,8 +488,14 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/RuntimeUIOverlayWidget.h
             engine/UI/QtEditor/AssetBrowserWidget.cpp
             engine/UI/QtEditor/AssetBrowserWidget.h
+            engine/UI/QtEditor/AssetDependencyDialog.cpp
+            engine/UI/QtEditor/AssetDependencyDialog.h
+            engine/UI/QtEditor/EditorAssetServices.cpp
+            engine/UI/QtEditor/EditorAssetServices.h
             engine/UI/QtEditor/EditorAssetActions.cpp
             engine/UI/QtEditor/EditorAssetActions.h
+            engine/UI/QtEditor/TextureViewerDialog.cpp
+            engine/UI/QtEditor/TextureViewerDialog.h
             engine/UI/QtEditor/HUIVisualEditorDialog.cpp
             engine/UI/QtEditor/HUIVisualEditorDialog.h
             engine/UI/QtEditor/MaterialGraphQtEditorDialog.cpp
@@ -503,6 +523,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/BuildSettingsDialog.h
             engine/UI/QtEditor/AboutDialog.cpp
             engine/UI/QtEditor/AboutDialog.h
+            engine/UI/QtEditor/EditorNotificationService.cpp
+            engine/UI/QtEditor/EditorNotificationService.h
             engine/UI/QtEditor/PrefabEditorWindow.cpp
             engine/UI/QtEditor/PrefabEditorWindow.h
             engine/UI/QtEditor/PrefabEditorManager.cpp
@@ -930,6 +952,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
         engine/UI/MaterialEditor/MaterialShaderGenerator.cpp
         engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
+        engine/Assets/AssetPathPolicy.cpp
     )
 
     target_include_directories(MaterialCompatibilityTests PRIVATE
@@ -953,6 +976,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         engine/Scene/PrefabComponentIO.cpp
         engine/Scene/PrefabOverrideSystem.cpp
         engine/Scene/SceneSerializer.cpp
+        engine/Assets/AssetPathPolicy.cpp
         engine/Scripting/ScriptBase.cpp
     )
 
@@ -966,5 +990,114 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         NAME PrefabSystemWorkflow
         COMMAND PrefabSystemTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
+
+    add_executable(AssetPathPolicyTests
+        engine/Tests/AssetPathPolicyTests.cpp
+        engine/Assets/AssetPathPolicy.cpp
+    )
+
+    target_include_directories(AssetPathPolicyTests PRIVATE
+        engine
+        extern
+    )
+
+    add_test(
+        NAME AssetPathPolicy
+        COMMAND AssetPathPolicyTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(AssetReferenceIndexTests
+        engine/Tests/AssetReferenceIndexTests.cpp
+        engine/Assets/AssetReferenceIndex.cpp
+        engine/Assets/AssetPathPolicy.cpp
+    )
+
+    target_include_directories(AssetReferenceIndexTests PRIVATE
+        engine
+        extern
+    )
+
+    add_test(
+        NAME AssetReferenceIndex
+        COMMAND AssetReferenceIndexTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(AssetOperationTransactionTests
+        engine/Tests/AssetOperationTransactionTests.cpp
+        engine/Assets/AssetOperationService.cpp
+        engine/Assets/OpenDocumentRegistry.cpp
+        engine/Assets/AssetReferenceIndex.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Assets/AssetManager.cpp
+    )
+
+    target_include_directories(AssetOperationTransactionTests PRIVATE
+        engine
+        extern
+    )
+
+    add_test(
+        NAME AssetOperationTransaction
+        COMMAND AssetOperationTransactionTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(RecoveryStoreTests
+        engine/Tests/RecoveryStoreTests.cpp
+        engine/Assets/RecoveryStore.cpp
+    )
+
+    target_include_directories(RecoveryStoreTests PRIVATE
+        engine
+        extern
+    )
+
+    add_test(
+        NAME RecoveryStore
+        COMMAND RecoveryStoreTests
+    )
+
+    if(TARGET HephaestusToolsCommon)
+        add_executable(ProjectCreationTests
+            engine/Tests/ProjectCreationTests.cpp
+        )
+        target_link_libraries(ProjectCreationTests PRIVATE HephaestusToolsCommon Qt6::Core)
+        target_include_directories(ProjectCreationTests PRIVATE
+            engine
+            "${CMAKE_BINARY_DIR}/generated"
+        )
+        add_test(
+            NAME ProjectCreationLayout
+            COMMAND ProjectCreationTests
+        )
+    endif()
+
+    add_executable(EditorLogicSmokeTests
+        engine/Tests/EditorLogicSmokeTests.cpp
+        engine/Assets/AssetPathPolicy.cpp
+    )
+    target_include_directories(EditorLogicSmokeTests PRIVATE
+        engine
+        extern
+    )
+    add_test(
+        NAME EditorLogicSmoke
+        COMMAND EditorLogicSmokeTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+endif()
+
+# Optional narrow Qt Test harness (off by default — requires Qt6 Test module)
+option(HEPHAESTUS_BUILD_QT_TESTS "Build optional Qt Test editor harness" OFF)
+if(HEPHAESTUS_BUILD_QT_TESTS AND HEPHAESTUS_USE_QT AND Qt6_FOUND)
+    find_package(Qt6 COMPONENTS Test QUIET)
+    if(Qt6Test_FOUND)
+        add_executable(EditorQtSmokeTests
+            engine/Tests/EditorQtSmokeTests.cpp
+        )
+        target_link_libraries(EditorQtSmokeTests PRIVATE Qt6::Test Qt6::Widgets)
+        target_include_directories(EditorQtSmokeTests PRIVATE engine)
+        add_test(NAME EditorQtSmoke COMMAND EditorQtSmokeTests)
+    else()
+        message(STATUS "HEPHAESTUS_BUILD_QT_TESTS=ON but Qt6 Test not found; skipping")
+    endif()
 endif()
 

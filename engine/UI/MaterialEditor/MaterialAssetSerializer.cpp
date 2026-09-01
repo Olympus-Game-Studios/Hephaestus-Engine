@@ -1,5 +1,6 @@
 #include "MaterialAssetSerializer.h"
 #include "MaterialNodeDefinitions.h"
+#include "../../Assets/AssetPathPolicy.h"
 
 #include <fstream>
 #include <unordered_set>
@@ -320,15 +321,15 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
         root["reflectionStrength"] = material.reflectionStrength;
     }
     root["useAlbedoTexture"] = material.useAlbedoTexture;
-    root["albedoTexturePath"] = material.albedoTexturePath;
+    root["albedoTexturePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, material.albedoTexturePath);
     root["useNormalTexture"] = material.useNormalTexture;
-    root["normalTexturePath"] = material.normalTexturePath;
+    root["normalTexturePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, material.normalTexturePath);
     root["useRoughnessTexture"] = material.useRoughnessTexture;
-    root["roughnessTexturePath"] = material.roughnessTexturePath;
+    root["roughnessTexturePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, material.roughnessTexturePath);
     root["useMetallicTexture"] = material.useMetallicTexture;
-    root["metallicTexturePath"] = material.metallicTexturePath;
+    root["metallicTexturePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, material.metallicTexturePath);
     root["useAoTexture"] = material.useAoTexture;
-    root["aoTexturePath"] = material.aoTexturePath;
+    root["aoTexturePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, material.aoTexturePath);
     root["useWorldAlignedTexture"] = material.useWorldAlignedTexture;
     root["worldTextureScale"] = material.worldTextureScale;
 
@@ -349,7 +350,7 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
             nodeJson["displayName"] = node.displayName;
             nodeJson["scalar"] = node.scalar;
             nodeJson["color"] = { node.color.x, node.color.y, node.color.z };
-            nodeJson["resourcePath"] = node.resourcePath;
+            nodeJson["resourcePath"] = Hephaestus::AssetPathPolicy::ToPortableKey({}, node.resourcePath);
             nodeJson["worldAlignedScale"] = node.worldAlignedScale;
             if (!node.parameterName.empty()) nodeJson["parameterName"] = node.parameterName;
             if (!node.operation.empty()) nodeJson["operation"] = node.operation;

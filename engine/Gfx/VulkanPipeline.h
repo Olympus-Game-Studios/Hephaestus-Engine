@@ -13,15 +13,20 @@ struct VulkanPipeline {
     VkPipelineLayout layout{};
     VkPipeline pipeline{};
     VkPipeline pipelineBackface{};
+    VkPipeline pipelineWireframe{};
+    VkPipeline pipelineWireframeBackface{};
     VkPipeline outlinePipeline{};
     bool ownsDescriptorSetLayout = true;
 
-    void Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext);
+    void Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool enableWireframe = false);
     void CreateBillboardPipeline(VkDevice dev, VkRenderPass rp, VkExtent2D ext, VkDescriptorSetLayout descLayout);
     void CreateOutlinePipeline();
     void Cleanup();
 
-    VkPipeline GetPipeline(bool backfaceCullingEnabled) const;
+    VkPipeline GetPipeline(bool backfaceCullingEnabled, bool wireframe = false) const;
+    bool HasWireframePipeline() const {
+        return pipelineWireframe != VK_NULL_HANDLE;
+    }
 
 private:
     VkShaderModule createShaderModule(const std::vector<char>& code);

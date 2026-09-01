@@ -88,6 +88,8 @@ public:
     float fovDeg = 60.0f;
     float nearPlane = 0.1f;
     float farPlane = 10000.0f;
+    float orthoHalfExtent = 10.0f;
+    bool orthographic = false;
     
     // Movement settings
     float baseMoveSpeed = 5.0f;

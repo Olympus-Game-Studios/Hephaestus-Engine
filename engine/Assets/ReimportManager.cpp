@@ -6,12 +6,9 @@
 
 ReimportManager::ReimportManager(AssetDatabase& db, DerivedDataCache& ddc)
     : db_(db), ddc_(ddc) {
+    // FileWatcher / auto-reimport is opt-in; EditorAssetPipeline uses manual reimport only.
     watcher_.SetDebounce(std::chrono::milliseconds(500));
     watcher_.SetStabilityWait(std::chrono::milliseconds(200));
-
-    watcher_.Start(&db_, [this](const std::string& assetId, const std::filesystem::path&) {
-        RequestReimport(assetId, ReimportPolicy::Auto);
-    });
 
     worker_ = std::thread(&ReimportManager::WorkerLoop, this);
 }
@@ -183,8 +180,11 @@ void ReimportManager::WorkerLoop() {
             completed.result.success = false;
             completed.result.message = "No importer available";
             completed.result.changedAssetIds = {record.assetId};
-            std::lock_guard<std::mutex> lock(completedMutex_);
-            completed_.push_back(std::move(completed));
+            {
+                std::lock_guard<std::mutex> lock(completedMutex_);
+                completed_.push_back(completed);
+            }
+            NotifyAssetReimported(completed);
             continue;
         }
 
@@ -207,8 +207,11 @@ void ReimportManager::WorkerLoop() {
             record.lastImportTime = static_cast<uint64_t>(std::time(nullptr));
             db_.UpdateRecord(record);
 
-            std::lock_guard<std::mutex> lock(completedMutex_);
-            completed_.push_back(std::move(completed));
+            {
+                std::lock_guard<std::mutex> lock(completedMutex_);
+                completed_.push_back(completed);
+            }
+            NotifyAssetReimported(completed);
             continue;
         }
 
@@ -236,8 +239,11 @@ void ReimportManager::WorkerLoop() {
         completed.result.success = true;
         completed.result.message = "Reimported";
 
-        std::lock_guard<std::mutex> lock(completedMutex_);
-        completed_.push_back(std::move(completed));
+        {
+            std::lock_guard<std::mutex> lock(completedMutex_);
+            completed_.push_back(completed);
+        }
+        NotifyAssetReimported(completed);
     }
 }
 

@@ -9,9 +9,12 @@
 #include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "EditorMainWindow.h"
 #include "AddActorsPanel.h"
+#include "AssetDependencyDialog.h"
+#include "EditorAssetServices.h"
 #include "../HephaestusUI/HUIAsset.h"
 #include "../../Assets/AssetManager.h"
 #include "../../Assets/AssetTypes.h"
+#include "../../Assets/EditorAssetPipeline.h"
 #include "../../Core/ProjectContext.h"
 #include "../../Scene/PrefabAsset.h"
 #include "../../Scene/PrefabSerializer.h"
@@ -38,6 +41,8 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QClipboard>
+#include <QRegularExpression>
+#include <QTimer>
 #include <QShortcut>
 #include <iostream>
 #include <fstream>
@@ -261,10 +266,12 @@ void AssetBrowserWidget::setupUI()
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_toolbar->addWidget(spacer);
 
-    // Search box (optional - placeholder for future)
+    // Search box — empty query browses current folder; non-empty searches project-wide
     m_searchBox = new QLineEdit(this);
-    m_searchBox->setPlaceholderText(tr("Search assets..."));
-    m_searchBox->setMaximumWidth(200);
+    m_searchBox->setPlaceholderText(tr("Search project..."));
+    m_searchBox->setMaximumWidth(220);
+    m_searchBox->setClearButtonEnabled(true);
+    m_searchBox->setToolTip(tr("Search all project assets by name or path. Clear to return to folder browse."));
     connect(m_searchBox, &QLineEdit::textChanged, this, [this](const QString&) {
         rebuildContentsView();
     });
@@ -467,10 +474,9 @@ void AssetBrowserWidget::rebuildContentsView()
         return;
     }
 
-    auto entries = assetMgr.ListDirectory(m_currentPath.toStdString());
-
     const QString query = m_searchBox ? m_searchBox->text().trimmed() : QString();
     const QString filter = m_filterCombo ? m_filterCombo->currentText() : tr("All");
+    const bool projectWideSearch = !query.isEmpty();
 
     auto matchesFilter = [&](AssetType type, bool isDirectory) {
         if (filter == tr("All") || isDirectory) return true;
@@ -503,13 +509,74 @@ void AssetBrowserWidget::rebuildContentsView()
         }
     };
 
+    auto parentFolderOf = [](const QString& relativePath) -> QString {
+        const int slash = relativePath.lastIndexOf(QLatin1Char('/'));
+        if (slash <= 0) {
+            return QString();
+        }
+        return relativePath.left(slash);
+    };
+
+    if (projectWideSearch) {
+        // Project-wide search uses AssetManager's recursive index (files only).
+        const auto allAssets = assetMgr.GetAllAssets();
+        const QStringList tokens = query.split(QRegularExpression(QStringLiteral("\\s+")),
+                                               Qt::SkipEmptyParts);
+        int matchCount = 0;
+        for (const auto& asset : allAssets) {
+            if (asset.isDirectory) {
+                continue;
+            }
+            const AssetType type = asset.type;
+            if (!matchesFilter(type, false)) {
+                continue;
+            }
+
+            const QString name = QString::fromStdString(asset.name);
+            const QString rel = QString::fromStdString(asset.relativePath).replace('\\', '/');
+            bool matches = tokens.isEmpty();
+            if (!matches) {
+                matches = true;
+                for (const QString& token : tokens) {
+                    if (!name.contains(token, Qt::CaseInsensitive) &&
+                        !rel.contains(token, Qt::CaseInsensitive)) {
+                        matches = false;
+                        break;
+                    }
+                }
+            }
+            if (!matches) {
+                continue;
+            }
+
+            const QString folder = parentFolderOf(rel);
+            const QString location = folder.isEmpty() ? tr("assets/") : (QStringLiteral("assets/") + folder);
+            QStandardItem* item = new QStandardItem();
+            item->setText(QString("%1\n%2  ·  %3")
+                              .arg(name, typeBadge(type, false), location));
+            item->setIcon(getAssetIcon(static_cast<int>(type), false));
+            item->setData(rel, RelativePathRole);
+            item->setData(static_cast<int>(type), AssetTypeRole);
+            item->setData(false, IsDirectoryRole);
+            item->setData(true, SearchResultRole);
+            item->setToolTip(QStringLiteral("assets/%1").arg(rel));
+            item->setEditable(false);
+            m_contentsModel->appendRow(item);
+            ++matchCount;
+        }
+
+        if (m_statusLabel) {
+            m_statusLabel->setText(tr("Search: %1 result(s) project-wide").arg(matchCount));
+        }
+        return;
+    }
+
+    auto entries = assetMgr.ListDirectory(m_currentPath.toStdString());
+
     for (const auto& entry : entries) {
         const QString name = QString::fromStdString(entry.name);
         const AssetType type = static_cast<AssetType>(entry.type);
 
-        if (!query.isEmpty() && !name.contains(query, Qt::CaseInsensitive)) {
-            continue;
-        }
         if (!matchesFilter(type, entry.isDirectory)) {
             continue;
         }
@@ -520,6 +587,7 @@ void AssetBrowserWidget::rebuildContentsView()
         item->setData(QString::fromStdString(entry.relativePath), RelativePathRole);
         item->setData(static_cast<int>(entry.type), AssetTypeRole);
         item->setData(entry.isDirectory, IsDirectoryRole);
+        item->setData(false, SearchResultRole);
         item->setEditable(false);
         
         m_contentsModel->appendRow(item);
@@ -780,6 +848,47 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
                     emit assetOpenInIDERequested(relativePath);
                 });
             }
+            if (assetType == AssetType::Texture ||
+                assetType == AssetType::StaticMesh ||
+                assetType == AssetType::Audio) {
+                menu.addAction(tr("Reimport"), [this, relativePath]() {
+                    if (!m_mainWindow) {
+                        return;
+                    }
+                    auto* pipeline = m_mainWindow->GetAssetPipeline();
+                    if (!pipeline || !pipeline->IsInitialized()) {
+                        QMessageBox::information(this, tr("Reimport"),
+                            tr("Open a project before reimporting assets."));
+                        return;
+                    }
+                    auto& assetMgr = AssetManager::GetInstance();
+                    const std::filesystem::path abs(
+                        assetMgr.ToAbsolutePath(relativePath.toStdString()));
+                    const auto result = pipeline->RequestReimportByPath(abs, ReimportPolicy::Manual);
+                    m_statusLabel->setText(result.success
+                        ? tr("Queued reimport: %1").arg(QFileInfo(relativePath).fileName())
+                        : tr("Reimport failed: %1").arg(QString::fromStdString(result.message)));
+                });
+                menu.addAction(tr("Reimport All Changed"), [this]() {
+                    if (!m_mainWindow) {
+                        return;
+                    }
+                    auto* pipeline = m_mainWindow->GetAssetPipeline();
+                    if (!pipeline || !pipeline->IsInitialized()) {
+                        QMessageBox::information(this, tr("Reimport"),
+                            tr("Open a project before reimporting assets."));
+                        return;
+                    }
+                    const auto result = pipeline->ReimportAllChanged();
+                    if (result.changedAssetIds.empty()) {
+                        m_statusLabel->setText(tr("No changed assets to reimport"));
+                    } else {
+                        m_statusLabel->setText(
+                            tr("Queued reimport for %1 changed asset(s)")
+                                .arg(static_cast<int>(result.changedAssetIds.size())));
+                    }
+                });
+            }
             menu.addSeparator();
         }
 
@@ -793,8 +902,10 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
             menu.addAction(tr("Copy Asset Path"), [this, relativePath]() {
                 copyAssetPath(relativePath);
             });
+            menu.addAction(tr("Find References..."), [this, relativePath]() {
+                findAssetReferences(relativePath);
+            });
             menu.addAction(tr("Open Source Externally"), [this, relativePath]() {
-                showInExplorer(relativePath);
                 auto& assetMgr = AssetManager::GetInstance();
                 const QString abs = QString::fromStdString(assetMgr.ToAbsolutePath(relativePath.toStdString()));
                 QDesktopServices::openUrl(QUrl::fromLocalFile(abs));
@@ -807,12 +918,34 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
         deleteAct->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
 
         menu.addSeparator();
+        menu.addAction(tr("Show in Folder"), [this, relativePath]() {
+            showInFolder(relativePath);
+        });
         menu.addAction(tr("Show in Explorer"), [this, relativePath]() {
             showInExplorer(relativePath);
         });
     } else {
         showCreateMenu(menu, m_currentPath);
         menu.addSeparator();
+        if (m_mainWindow) {
+            menu.addAction(tr("Reimport All Changed"), [this]() {
+                auto* pipeline = m_mainWindow->GetAssetPipeline();
+                if (!pipeline || !pipeline->IsInitialized()) {
+                    QMessageBox::information(this, tr("Reimport"),
+                        tr("Open a project before reimporting assets."));
+                    return;
+                }
+                const auto result = pipeline->ReimportAllChanged();
+                if (result.changedAssetIds.empty()) {
+                    m_statusLabel->setText(tr("No changed assets to reimport"));
+                } else {
+                    m_statusLabel->setText(
+                        tr("Queued reimport for %1 changed asset(s)")
+                            .arg(static_cast<int>(result.changedAssetIds.size())));
+                }
+            });
+            menu.addSeparator();
+        }
         menu.addAction(tr("Show in Explorer"), [this]() {
             showInExplorer(m_currentPath);
         });
@@ -1129,6 +1262,48 @@ void AssetBrowserWidget::deleteAsset(const QString& relativePath, bool isDirecto
 {
     if (relativePath.isEmpty()) return;
 
+    auto& services = EditorAssetServices::Instance();
+    if (services.HasProject()) {
+        const QString portable = ToProjectRelativeAssetPath(relativePath);
+        auto& ops = services.Operations();
+        const auto preflight = ops.Preflight(portable.toStdString(), std::string());
+        const int referrerCount = static_cast<int>(preflight.referrers.size());
+
+        QString message;
+        if (isDirectory) {
+            message = tr("Move this folder to the project trash?\n\n%1")
+                          .arg(portable);
+        } else if (referrerCount > 0) {
+            message = tr("Move this asset to trash?\n\n%1\n\n"
+                         "Warning: %2 document(s) still reference it. "
+                         "References will not be rewritten.")
+                          .arg(portable)
+                          .arg(referrerCount);
+        } else {
+            message = tr("Move this asset to trash?\n\n%1\n\n"
+                         "You can restore it later from .hephaestus/trash.")
+                          .arg(portable);
+        }
+
+        auto result = QMessageBox::question(this, tr("Delete Asset"), message,
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (result != QMessageBox::Yes) {
+            return;
+        }
+
+        const auto op = ops.MoveToTrash(portable.toStdString());
+        if (!op.success) {
+            QMessageBox::critical(this, tr("Delete Asset"),
+                tr("Failed to move to trash:\n%1").arg(QString::fromStdString(op.error)));
+            return;
+        }
+
+        std::cout << "[AssetBrowser] Trashed: " << portable.toStdString()
+                  << " opId=" << op.opId << "\n";
+        Refresh();
+        return;
+    }
+
     QString typeName = isDirectory ? tr("folder") : tr("file");
     auto result = QMessageBox::question(this, tr("Delete Asset"),
         tr("Are you sure you want to delete this %1?\n\n%2\n\nThis cannot be undone.")
@@ -1178,6 +1353,33 @@ void AssetBrowserWidget::renameAsset(const QString& relativePath, bool isDirecto
         return;
     }
 
+    auto& services = EditorAssetServices::Instance();
+    if (services.HasProject() && !isDirectory) {
+        const QString oldPortable = ToProjectRelativeAssetPath(relativePath);
+        const QString newRelative = QString::fromStdString(
+            std::filesystem::relative(newAbsPath, assetMgr.GetAssetRoot()).generic_string());
+        const QString newPortable = ToProjectRelativeAssetPath(newRelative);
+
+        const auto op = services.Operations().RenameAsset(
+            oldPortable.toStdString(), newPortable.toStdString());
+        if (!op.success) {
+            QMessageBox::critical(this, tr("Rename"),
+                tr("Failed to rename:\n%1").arg(QString::fromStdString(op.error)));
+            return;
+        }
+        if (!op.warnings.empty()) {
+            QString warn;
+            for (const auto& w : op.warnings) {
+                warn += QString::fromStdString(w) + QLatin1Char('\n');
+            }
+            QMessageBox::warning(this, tr("Rename"), warn.trimmed());
+        }
+        std::cout << "[AssetBrowser] Renamed (service): " << oldPortable.toStdString()
+                  << " -> " << newPortable.toStdString() << "\n";
+        Refresh();
+        return;
+    }
+
     std::error_code ec;
     std::filesystem::rename(oldAbsPath, newAbsPath, ec);
     if (ec) {
@@ -1188,6 +1390,74 @@ void AssetBrowserWidget::renameAsset(const QString& relativePath, bool isDirecto
 
     std::cout << "[AssetBrowser] Renamed: " << oldAbsPath.string() << " -> " << newAbsPath.string() << "\n";
     Refresh();
+}
+
+void AssetBrowserWidget::findAssetReferences(const QString& relativePath)
+{
+    if (relativePath.isEmpty()) {
+        return;
+    }
+
+    auto& services = EditorAssetServices::Instance();
+    if (!services.HasProject()) {
+        QMessageBox::information(this, tr("Find References"),
+            tr("Open a project to find asset references."));
+        return;
+    }
+
+    const QString portable = ToProjectRelativeAssetPath(relativePath);
+    AssetDependencyDialog dialog(&services.ReferenceIndex(), portable, this);
+    dialog.SetOpenOrRevealCallback([this](const QString& portablePath) {
+        QString path = portablePath;
+        path.replace('\\', '/');
+        if (path.startsWith(QStringLiteral("assets/"), Qt::CaseInsensitive)) {
+            path = path.mid(QStringLiteral("assets/").size());
+        }
+        showInFolder(path);
+    });
+    dialog.exec();
+}
+
+void AssetBrowserWidget::showInFolder(const QString& relativePath)
+{
+    QString path = relativePath;
+    path.replace('\\', '/');
+    if (path.isEmpty()) {
+        NavigateTo(QString());
+        return;
+    }
+
+    // Clear search so folder browse mode restores
+    if (m_searchBox && !m_searchBox->text().isEmpty()) {
+        m_searchBox->blockSignals(true);
+        m_searchBox->clear();
+        m_searchBox->blockSignals(false);
+    }
+
+    const int slash = path.lastIndexOf(QLatin1Char('/'));
+    const QString folder = (slash >= 0) ? path.left(slash) : QString();
+    const QString fileName = (slash >= 0) ? path.mid(slash + 1) : path;
+
+    NavigateTo(folder);
+
+    // Select the asset in the contents view when present
+    if (!m_contentsModel || fileName.isEmpty()) {
+        return;
+    }
+    for (int row = 0; row < m_contentsModel->rowCount(); ++row) {
+        QStandardItem* item = m_contentsModel->item(row);
+        if (!item) {
+            continue;
+        }
+        const QString itemPath = item->data(RelativePathRole).toString().replace('\\', '/');
+        if (itemPath == path || itemPath.endsWith(QLatin1Char('/') + fileName) ||
+            itemPath == fileName) {
+            const QModelIndex idx = m_contentsModel->indexFromItem(item);
+            m_contentsView->setCurrentIndex(idx);
+            m_contentsView->scrollTo(idx);
+            break;
+        }
+    }
 }
 
 void AssetBrowserWidget::showInExplorer(const QString& relativePath)
@@ -1260,6 +1530,11 @@ void AssetBrowserWidget::importAssets()
             failures << QString("%1 (%2)").arg(info.fileName(), QString::fromStdString(ec.message()));
         } else {
             ++imported;
+            if (m_mainWindow) {
+                if (auto* pipeline = m_mainWindow->GetAssetPipeline()) {
+                    pipeline->RegisterCopiedAsset(dest);
+                }
+            }
         }
     }
 

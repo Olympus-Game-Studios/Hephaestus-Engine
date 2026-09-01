@@ -256,6 +256,8 @@ void PlayModeManager::ApplyRuntimeCameraToRender(RenderCamera& out) const {
     out.pitchDeg  = RuntimeCameraState::RadToDeg(m_runtimeCamera.pitch);
     out.nearPlane = m_runtimeCamera.nearPlane;
     out.farPlane  = m_runtimeCamera.farPlane;
+    out.fovDeg    = m_runtimeCamera.fov > 0.1f ? m_runtimeCamera.fov : 60.0f;
+    out.projectionMode = ProjectionMode::Perspective;
 }
 
 void PlayModeManager::SaveEditorCamera(const EditorCamera& cam) {

@@ -33,13 +33,17 @@
 #include <QFrame>
 #include <QPlainTextEdit>
 #include <QProcess>
+#include <QTimer>
 #include "BuildSettingsDialog.h"
 #include <memory>
 #include <vector>
 #include <entt/entt.hpp>
 
+#include "../../Assets/RecoveryStore.h"
 #include "../../ToolsCommon/EngineSettingsManager.h"
 #include "../../ToolsCommon/ProjectSettingsManager.h"
+
+class EditorAssetPipeline;
 
 namespace Hephaestus {
 
@@ -64,6 +68,7 @@ class RuntimeUIOverlayWidget;
 class LightInspector;
 class EnvironmentInspector;
 class ComponentInspector;
+class EditorNotificationService;
 
 /**
  * QTreeWidget subclass that emits a signal after drag-and-drop operations.
@@ -115,6 +120,8 @@ public:
 
     /// Spawn a mesh/prefab/actor from Asset Browser (context menu). Uses camera-forward placement.
     void spawnFromAssetBrowser(const QByteArray& spawnPayload);
+
+    EditorAssetPipeline* GetAssetPipeline() { return m_assetPipeline.get(); }
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -218,6 +225,16 @@ private:
     void refreshAssetBrowser();
     bool promptSaveDirtyScene();  // Returns true if OK to proceed, false if cancelled
     bool openProjectFile(const QString& filepath);
+    void pollAssetReimports();
+
+    void setupRecoveryTimers();
+    void startRecoverySessionTimers();
+    void stopRecoverySession();
+    void promptPendingRecovery();
+    void onRecoveryHeartbeat();
+    void onAutosaveTick();
+    void writeRecoverySnapshot();
+    int autosaveIntervalSeconds() const;
 
     // Dock widgets
     QDockWidget* m_outlinerDock = nullptr;
@@ -303,11 +320,23 @@ private:
     QFrame* m_overlayBottomLeft = nullptr;
     QComboBox* m_viewPerspectiveCombo = nullptr;
     QToolButton* m_viewModeBtn = nullptr;
+    QAction* m_viewModeLitAction = nullptr;
+    QAction* m_viewModeUnlitAction = nullptr;
+    QAction* m_viewModeWireframeAction = nullptr;
     QToolButton* m_viewGridBtn = nullptr;
     QToolButton* m_viewStatsBtn = nullptr;
     QLabel* m_overlayFpsLabel = nullptr;
     QLabel* m_overlayDrawCallsLabel = nullptr;
     QLabel* m_overlayRamLabel = nullptr;
+
+    // Last free perspective camera (restored when leaving ortho standard views)
+    bool m_hasSavedPerspectiveCamera = false;
+    float m_savedPerspPosX = 0.0f;
+    float m_savedPerspPosY = 2.0f;
+    float m_savedPerspPosZ = 5.0f;
+    float m_savedPerspYaw = -90.0f;
+    float m_savedPerspPitch = -15.0f;
+    float m_savedPerspOrthoHalfExtent = 10.0f;
 
     // Engine integration
     std::unique_ptr<QtEditorEngine> m_engine;
@@ -331,9 +360,18 @@ private:
     // Project menu
     QMenu* m_recentProjectsMenu = nullptr;
     std::unique_ptr<ProjectContext> m_projectContext;
+    std::unique_ptr<EditorAssetPipeline> m_assetPipeline;
+    QTimer* m_assetReimportTimer = nullptr;
 
     Tools::EngineSettingsManager m_engineSettingsManager;
     std::unique_ptr<Tools::ProjectSettingsManager> m_projectSettingsManager;
+
+    // Crash recovery / autosave
+    RecoveryStore m_recoveryStore;
+    EditorNotificationService* m_notifications = nullptr;
+    QTimer* m_recoveryHeartbeatTimer = nullptr;
+    QTimer* m_autosaveTimer = nullptr;
+    bool m_recoveryBusy = false;
 };
 
 } // namespace QtEditor

@@ -9,6 +9,7 @@
 #include "EditorMainWindow.h"
 #include "HUIVisualEditorDialog.h"
 #include "MaterialGraphQtEditorDialog.h"
+#include "TextureViewerDialog.h"
 #include "../../Assets/AssetManager.h"
 
 #include <QDesktopServices>
@@ -77,8 +78,7 @@ bool EditorAssetActions::OpenByType(const QString& absolutePath, AssetType type)
             return openText(absolutePath);
 
         case AssetType::Texture:
-            // Could open a texture viewer in the future
-            showNotImplemented("Texture viewer", absolutePath);
+            TextureViewerDialog::Open(m_mainWindow, absolutePath);
             return true;
 
         case AssetType::StaticMesh:

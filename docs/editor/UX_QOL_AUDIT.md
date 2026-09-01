@@ -97,6 +97,8 @@ See implementation sections below and `CHANGELOG.md` `[Unreleased]` entries date
 
 ## Intentionally Deferred Larger Improvements
 
+The Phase 1 polish pass deferred the items below. **Phase 2 implementation status is recorded in the next section** — do not treat this list as current backlog without reading it.
+
 1. Reference-aware asset move/rename across all serialized formats
 2. Renderer view modes (Lit/Unlit/Wireframe/Ortho) as real pipelines
 3. Toast notification center (status bar remains primary non-modal feedback)
@@ -108,11 +110,56 @@ See implementation sections below and `CHANGELOG.md` `[Unreleased]` entries date
 
 ---
 
+## Validated Next UX/QOL Phase (2026-09-01)
+
+Code-verified planning and Phase 2 implementation notes. Authored asset identity remains **path-based** (`assets/…`, `.engine/…`, `scripts/…`, `builtin://…`). A global GUID migration is **not** planned; importer `assetId` stays provenance-only in `.hephaestus/assetdb.json`.
+
+### Confirmed findings (pre-Phase-2)
+
+- `AssetManager` already recursively indexes assets; Asset Browser search was folder-local only.
+- `ReimportManager` / `AssetDatabase` / DDC compiled but were unwired; DDC is still not a runtime load path.
+- No autosave/recovery existed; `engine.general.autosaveInterval` was schema-only.
+- Viewport was perspective + Lit-only (misleading controls clarified in Phase 1).
+- Texture open was a not-implemented stub; no Qt Test harness existed.
+- Absolute in-project paths could persist (material browse, prefab overrides); Boomer-Shooter Capsule absolute override was a known portability risk.
+
+### Priority ranking (Phase 2)
+
+**Priority A (foundations — implemented in this phase):** portable `AssetPathPolicy`; project-wide Asset Browser search; `AssetReferenceIndex`; scene `RecoveryStore` + editor wiring; safe rename/move/trash via `AssetOperationService`; headless tests for path/index/ops/recovery.
+
+**Priority B (implemented in this phase):** manual reimport (`EditorAssetPipeline`); dependency inspector dialog; `EditorNotificationService`; Lit/Unlit/Wireframe; orthographic standard views; `TextureViewerDialog`; unified `ProjectCreationService`; recent-project prune/remove/reveal; optional `HEPHAESTUS_BUILD_QT_TESTS`.
+
+**Priority C (still deferred):** automatic FileWatcher reimport; DDC-first runtime loading; filesystem Ctrl+Z; large notification center; template gallery / sample gameplay packs; advanced renderer diagnostics (normals/depth/etc.); project-wide GUID migration.
+
+### Phase sequence delivered
+
+1. **2A** — `AssetPathPolicy`, recursive search, reference index, scene recovery snapshots  
+2. **2B** — dependency UI, open-document registry, transactional rename/move, trash/restore, notifications  
+3. **2C** — manual reimport wiring (no auto-watch)  
+4. **2D** — viewport modes, ortho views, texture viewer  
+5. **2E** — project creation service, recent-projects management, expanded CTest + optional Qt Test  
+
+### Validation gates
+
+- Headless: `AssetPathPolicyTests`, `AssetReferenceIndexTests`, `AssetOperationTransactionTests`, `RecoveryStoreTests`, `ProjectCreationTests`, `EditorLogicSmokeTests`, plus existing material/prefab tests  
+- Manual: relocate/clone project resolves portable keys; reimport preserves references; recovery restore does not overwrite real `.hpscene` until Save; Wireframe disabled when unsupported  
+
+### Still deferred after Phase 2
+
+- Auto-reimport / FileWatcher default-on  
+- Multi-document recovery for every prefab/material/HUI surface (scene recovery is live; registry exists for extension)  
+- Template gallery and First/Third-person starters  
+- Advanced viewport diagnostics  
+- Global GUID authored references  
+
+---
+
 ## Architecture Guardrails Observed
 
 - Qt remains the only editor UI touched
 - Reused `EditorContext`, `EditorUndoManager`, `EditorDocument`, `EditorAssetActions`, `PrefabEditorManager`, launcher create patterns via ToolsCommon helpers
 - No renderer architecture rewrite, no asset format breakage, no prefab schema changes
+- Phase 2 extends Assets / QtEditor / ToolsCommon incrementally; no competing parallel asset databases for authored content
 
 ---
 
@@ -132,3 +179,18 @@ See implementation sections below and `CHANGELOG.md` `[Unreleased]` entries date
 | HUI hierarchy context menu | Implemented |
 | Editor New Project + launcher open-last | Implemented |
 | CreateProject HDRI non-fatal + extra folders | Implemented |
+
+## Implementation Outcomes (Phase 2)
+
+| Area | Result |
+|------|--------|
+| Portable `AssetPathPolicy` + save-time normalization | Implemented |
+| Project-wide Asset Browser search + Show in Folder | Implemented |
+| `AssetReferenceIndex` + Find References dialog | Implemented |
+| Scene recovery autosave + crash prompt | Implemented |
+| Safe rename/move + trash/restore | Implemented |
+| Manual reimport pipeline UI | Implemented |
+| Texture viewer | Implemented |
+| Lit/Unlit/Wireframe + ortho views | Implemented |
+| `ProjectCreationService` + recent-projects management | Implemented |
+| Headless tests + optional Qt Test harness | Implemented |

@@ -12,6 +12,7 @@
 #include "AssetBrowserWidget.h"
 #include "AddActorsPanel.h"
 #include "EditorAssetActions.h"
+#include "EditorAssetServices.h"
 #include "PrefabEditorManager.h"
 #include "PrefabEditorWindow.h"
 #include "PrefabInstanceBar.h"
@@ -26,11 +27,13 @@
 #include "EditorUndoCommand.h"
 #include "BuildSettingsDialog.h"
 #include "RuntimeUIOverlayWidget.h"
+#include "EditorNotificationService.h"
 #include "../Shared/SettingsWindow.h"
 
 #include "../../Core/EditorContext.h"
 #include "../../Core/EngineLog.h"
 #include "../../Core/ProjectContext.h"
+#include "../../Scene/SceneSerializer.h"
 #include "../../Scene/PrefabSerializer.h"
 #include "../../Scene/PrefabInstantiator.h"
 #include "../../Scene/PrefabOverrideSystem.h"
@@ -39,8 +42,10 @@
 #include "../../ToolsCommon/VersionInfo.h"
 #include "../../ToolsCommon/PathUtils.h"
 #include "../../ToolsCommon/JsonUtils.h"
+#include "../../ToolsCommon/ProjectCreationService.h"
 #include "../../Assets/AssetManager.h"
 #include "../../Assets/AssetTypes.h"
+#include "../../Assets/EditorAssetPipeline.h"
 #include "../../Assets/ModelImporter.h"
 #include "../../Assets/MeshAsset.h"
 #include "../../Scene/Scene.h"
@@ -92,6 +97,11 @@
 #include <QCursor>
 #include <QPainter>
 #include <QInputDialog>
+#include <QTimer>
+#include <QPushButton>
+#include <QProcess>
+#include <QDesktopServices>
+#include <QUrl>
 #include <iostream>
 #include <cmath>
 #include <fstream>
@@ -443,6 +453,11 @@ EditorMainWindow::EditorMainWindow(QWidget* parent)
     setupStatusBar();
     applyUnifiedStyle();
 
+    m_notifications = new EditorNotificationService(this);
+    m_notifications->SetStatusBar(statusBar());
+    m_notifications->SetToastAnchor(this);
+    setupRecoveryTimers();
+
     // Restore previous window geometry / dock layout when available.
     {
         QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
@@ -457,13 +472,23 @@ EditorMainWindow::EditorMainWindow(QWidget* parent)
     }
 
     EngineLog::Info("EditorMainWindow: UI construction complete (window not shown yet)");
+
+    m_assetPipeline = std::make_unique<EditorAssetPipeline>();
+    m_assetReimportTimer = new QTimer(this);
+    m_assetReimportTimer->setInterval(250);
+    connect(m_assetReimportTimer, &QTimer::timeout, this, &EditorMainWindow::pollAssetReimports);
 }
 
 EditorMainWindow::~EditorMainWindow()
 {
-    // Engine cleanup happens in its destructor via unique_ptr
     EngineLog::Info("EditorMainWindow destructor");
     std::cout << "[EditorMainWindow] Destructor called\n";
+    if (m_assetReimportTimer) {
+        m_assetReimportTimer->stop();
+    }
+    if (m_assetPipeline) {
+        m_assetPipeline->Shutdown();
+    }
 }
 
 bool EditorMainWindow::StartEngine()
@@ -506,6 +531,8 @@ void EditorMainWindow::closeEvent(QCloseEvent* event)
         event->ignore();
         return;
     }
+
+    stopRecoverySession();
 
     // Persist dock layout and window geometry for the next session.
     {
@@ -1777,54 +1804,149 @@ void EditorMainWindow::setupCentralWidget()
     const QSize tbIconSize(14, 14);
     const QColor tbIconTint(QStringLiteral("#C8CDD5"));
 
-    // Left: Perspective combo (camera framing helpers — orthographic modes deferred)
+    // Left: Perspective / orthographic standard views
     m_viewPerspectiveCombo = new QComboBox(m_viewportToolbar);
-    m_viewPerspectiveCombo->addItems({ tr("Perspective"), tr("Front"), tr("Top"), tr("Right") });
+    m_viewPerspectiveCombo->addItems({
+        tr("Perspective"),
+        tr("Front"),
+        tr("Back"),
+        tr("Left"),
+        tr("Right"),
+        tr("Top"),
+        tr("Bottom")
+    });
     m_viewPerspectiveCombo->setMinimumContentsLength(10);
     m_viewPerspectiveCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    m_viewPerspectiveCombo->setToolTip(tr("Snap the editor camera to a common viewing angle"));
+    m_viewPerspectiveCombo->setToolTip(tr("Camera projection and standard orthographic views"));
     connect(m_viewPerspectiveCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         if (!m_engine) return;
-        auto* ctx = m_engine->GetEditorContext();
-        if (!ctx) return;
-        auto& cam = ctx->GetCamera();
-        float yaw = cam.yawDeg;
-        float pitch = cam.pitchDeg;
-        switch (index) {
-            case 1: // Front
-                yaw = -90.0f;
-                pitch = 0.0f;
-                break;
-            case 2: // Top
-                yaw = -90.0f;
-                pitch = -89.0f;
-                break;
-            case 3: // Right
-                yaw = 0.0f;
-                pitch = 0.0f;
-                break;
-            default: // Perspective — leave orientation as-is
-                return;
-        }
-        cam.yawDeg = yaw;
-        cam.pitchDeg = pitch;
-        if (auto* controller = m_engine->GetCameraController()) {
+        auto* controller = m_engine->GetCameraController();
+        if (!controller) return;
+
+        auto savePerspectiveCamera = [&]() {
+            m_savedPerspPosX = controller->positionX;
+            m_savedPerspPosY = controller->positionY;
+            m_savedPerspPosZ = controller->positionZ;
+            m_savedPerspYaw = controller->yawDeg;
+            m_savedPerspPitch = controller->pitchDeg;
+            m_savedPerspOrthoHalfExtent = controller->orthoHalfExtent;
+            m_hasSavedPerspectiveCamera = true;
+        };
+
+        auto applyOrientation = [&](float yaw, float pitch) {
             controller->yawDeg = yaw;
             controller->pitchDeg = pitch;
+            if (auto* ctx = m_engine->GetEditorContext()) {
+                auto& cam = ctx->GetCamera();
+                cam.yawDeg = yaw;
+                cam.pitchDeg = pitch;
+            }
+        };
+
+        if (index == 0) {
+            // Restore last free perspective camera
+            controller->orthographic = false;
+            if (m_hasSavedPerspectiveCamera) {
+                controller->positionX = m_savedPerspPosX;
+                controller->positionY = m_savedPerspPosY;
+                controller->positionZ = m_savedPerspPosZ;
+                controller->yawDeg = m_savedPerspYaw;
+                controller->pitchDeg = m_savedPerspPitch;
+                controller->orthoHalfExtent = m_savedPerspOrthoHalfExtent;
+                if (auto* ctx = m_engine->GetEditorContext()) {
+                    auto& cam = ctx->GetCamera();
+                    cam.positionX = m_savedPerspPosX;
+                    cam.positionY = m_savedPerspPosY;
+                    cam.positionZ = m_savedPerspPosZ;
+                    cam.yawDeg = m_savedPerspYaw;
+                    cam.pitchDeg = m_savedPerspPitch;
+                }
+            }
+        } else {
+            if (!controller->orthographic) {
+                savePerspectiveCamera();
+            }
+            controller->orthographic = true;
+            float yaw = controller->yawDeg;
+            float pitch = controller->pitchDeg;
+            switch (index) {
+                case 1: // Front (-Z)
+                    yaw = -90.0f;
+                    pitch = 0.0f;
+                    break;
+                case 2: // Back (+Z)
+                    yaw = 90.0f;
+                    pitch = 0.0f;
+                    break;
+                case 3: // Left (-X)
+                    yaw = 180.0f;
+                    pitch = 0.0f;
+                    break;
+                case 4: // Right (+X)
+                    yaw = 0.0f;
+                    pitch = 0.0f;
+                    break;
+                case 5: // Top
+                    yaw = -90.0f;
+                    pitch = -89.0f;
+                    break;
+                case 6: // Bottom
+                    yaw = -90.0f;
+                    pitch = 89.0f;
+                    break;
+                default:
+                    break;
+            }
+            applyOrientation(yaw, pitch);
         }
         statusBar()->showMessage(tr("Camera view: %1").arg(m_viewPerspectiveCombo->currentText()), 2000);
     });
     tbLayout->addWidget(m_viewPerspectiveCombo);
 
-    // Left: Lit only for now — unlit/wireframe need renderer support
+    // Left: Lit / Unlit / Wireframe shading modes
     m_viewModeBtn = new QToolButton(m_viewportToolbar);
     m_viewModeBtn->setAutoRaise(true);
     m_viewModeBtn->setIcon(makeCameraModeGlyphIcon(tbIconSize, tbIconTint));
     m_viewModeBtn->setIconSize(tbIconSize);
     m_viewModeBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_viewModeBtn->setText(tr("Lit"));
-    m_viewModeBtn->setToolTip(tr("Shading mode (Lit). Unlit and Wireframe are not available yet."));
-    m_viewModeBtn->setEnabled(false);
+    m_viewModeBtn->setToolTip(tr("Viewport shading mode"));
+    m_viewModeBtn->setPopupMode(QToolButton::InstantPopup);
+    m_viewModeBtn->setEnabled(true);
+    {
+        auto* shadingMenu = new QMenu(m_viewModeBtn);
+        m_viewModeLitAction = shadingMenu->addAction(tr("Lit"));
+        m_viewModeUnlitAction = shadingMenu->addAction(tr("Unlit"));
+        m_viewModeWireframeAction = shadingMenu->addAction(tr("Wireframe"));
+        m_viewModeLitAction->setCheckable(true);
+        m_viewModeUnlitAction->setCheckable(true);
+        m_viewModeWireframeAction->setCheckable(true);
+        m_viewModeLitAction->setChecked(true);
+        auto* shadingGroup = new QActionGroup(shadingMenu);
+        shadingGroup->setExclusive(true);
+        shadingGroup->addAction(m_viewModeLitAction);
+        shadingGroup->addAction(m_viewModeUnlitAction);
+        shadingGroup->addAction(m_viewModeWireframeAction);
+        m_viewModeBtn->setMenu(shadingMenu);
+
+        auto applyShadingMode = [this](int mode, const QString& label) {
+            m_viewModeBtn->setText(label);
+            if (!m_engine) return;
+            if (auto* ctx = m_engine->GetEditorContext()) {
+                ctx->GetViewportSettings().shadingMode = mode;
+            }
+            statusBar()->showMessage(tr("Shading: %1").arg(label), 2000);
+        };
+        connect(m_viewModeLitAction, &QAction::triggered, this, [applyShadingMode]() {
+            applyShadingMode(0, QObject::tr("Lit"));
+        });
+        connect(m_viewModeUnlitAction, &QAction::triggered, this, [applyShadingMode]() {
+            applyShadingMode(1, QObject::tr("Unlit"));
+        });
+        connect(m_viewModeWireframeAction, &QAction::triggered, this, [applyShadingMode]() {
+            applyShadingMode(2, QObject::tr("Wireframe"));
+        });
+    }
     tbLayout->addWidget(m_viewModeBtn);
 
     auto makeSep = [this]() {
@@ -2495,6 +2617,16 @@ void EditorMainWindow::onViewportReady()
     
     if (m_engine->AttachToViewport(m_viewportWindow)) {
         m_engine->StartRenderLoop();
+
+        // Gate Wireframe shading on device/pipeline capability
+        if (m_viewModeWireframeAction) {
+            const bool wireOk = m_engine->GetFrameRenderer()
+                && m_engine->GetFrameRenderer()->SupportsWireframe();
+            m_viewModeWireframeAction->setEnabled(wireOk);
+            if (!wireOk) {
+                m_viewModeWireframeAction->setToolTip(tr("Wireframe requires GPU fillModeNonSolid support"));
+            }
+        }
         
         // Setup callbacks after engine is ready
         setupEditorCallbacks();
@@ -3635,10 +3767,12 @@ bool EditorMainWindow::promptSaveDirtyScene()
     auto* ctx = m_engine->GetEditorContext();
     if (!ctx || !ctx->IsDirty()) return true;
 
+    m_recoveryBusy = true;
     auto result = QMessageBox::question(this, tr("Unsaved Changes"),
         tr("The current scene has unsaved changes. Do you want to save before continuing?"),
         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
         QMessageBox::Save);
+    m_recoveryBusy = false;
 
     if (result == QMessageBox::Save) {
         onSaveLevel();
@@ -3677,71 +3811,24 @@ void EditorMainWindow::onNewProject()
     }
     name = name.trimmed();
 
-    QDir baseDir(location);
-    const QString projectDirPath = baseDir.filePath(name);
-    if (QDir(projectDirPath).exists()) {
-        QMessageBox::warning(this, tr("New Project"),
-            tr("A folder already exists at:\n%1").arg(projectDirPath));
-        return;
-    }
-
-    if (!QDir().mkpath(projectDirPath)) {
+    Hephaestus::Tools::ProjectCreationService::Result created;
+    QString error;
+    if (!Hephaestus::Tools::ProjectCreationService::CreateBlankProject(
+            location, name, Hephaestus::Tools::VersionInfo::EngineVersion(), true, &created, &error)) {
         QMessageBox::critical(this, tr("New Project"),
-            tr("Could not create project folder:\n%1").arg(projectDirPath));
+            error.isEmpty() ? tr("Failed to create project.") : error);
         return;
     }
 
-    QDir projectDir(projectDirPath);
-    QDir().mkpath(projectDir.filePath(QStringLiteral(".hephaestus")));
-    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/scenes")));
-    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/textures")));
-    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/scripts")));
-    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/materials")));
-    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/prefabs")));
-    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/ui")));
-
-    // Copy default HDRI when available; never fail project creation for missing HDRI.
-    {
-        const QString srcHdri = QDir(Hephaestus::Tools::PathUtils::ExecutableDir())
-            .filePath(QStringLiteral(".engine/hdris/studio_garden_1k.hdr"));
-        const QString dstHdri = projectDir.filePath(QStringLiteral(".engine/hdris/studio_garden_1k.hdr"));
-        if (QFileInfo::exists(srcHdri)) {
-            QDir().mkpath(QFileInfo(dstHdri).absolutePath());
-            if (!QFile::exists(dstHdri)) {
-                QFile::copy(srcHdri, dstHdri);
-            }
-        } else {
-            statusBar()->showMessage(tr("Default HDRI not found; project created without it."), 5000);
-        }
-    }
-
-    QFile defaultScene(projectDir.filePath(QStringLiteral("assets/scenes/default.hpscene")));
-    if (defaultScene.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        defaultScene.write("{\n  \"version\": 1,\n  \"name\": \"DefaultScene\",\n  \"entities\": []\n}\n");
-        defaultScene.close();
-    }
-
-    QJsonObject root;
-    root.insert(QStringLiteral("formatVersion"), 1);
-    root.insert(QStringLiteral("name"), name);
-    root.insert(QStringLiteral("description"), QStringLiteral("New Hephaestus project"));
-    root.insert(QStringLiteral("engineVersion"), Hephaestus::Tools::VersionInfo::EngineVersion());
-    root.insert(QStringLiteral("defaultScene"), QStringLiteral("assets/scenes/default.hpscene"));
-    root.insert(QStringLiteral("created"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
-
-    const QString projectFile = projectDir.filePath(QStringLiteral("project.heproject"));
-    if (!Hephaestus::Tools::JsonUtils::WriteJsonObject(projectFile, root)) {
-        QMessageBox::critical(this, tr("New Project"),
-            tr("Could not write project file:\n%1").arg(projectFile));
-        return;
-    }
-    Hephaestus::Tools::JsonUtils::WriteJsonObject(
-        projectDir.filePath(QStringLiteral(".hephaestus/project.heproject")), root);
-
-    if (!openProjectFile(projectFile)) {
+    if (!openProjectFile(created.projectFilePath)) {
         QMessageBox::warning(this, tr("New Project"),
-            tr("Project was created but failed to open:\n%1").arg(projectFile));
+            tr("Project was created but failed to open:\n%1").arg(created.projectFilePath));
         return;
+    }
+
+    if (m_projectSettingsManager && !created.defaultSceneRelativePath.isEmpty()) {
+        Hephaestus::Tools::ProjectCreationService::SetLastSceneRelative(
+            *m_projectSettingsManager, created.defaultSceneRelativePath);
     }
 
     statusBar()->showMessage(tr("Created project: %1").arg(name), 4000);
@@ -3782,9 +3869,18 @@ void EditorMainWindow::onCloseProject()
         return;
     }
 
+    stopRecoverySession();
+
     // Close the project
+    if (m_assetReimportTimer) {
+        m_assetReimportTimer->stop();
+    }
+    if (m_assetPipeline) {
+        m_assetPipeline->Shutdown();
+    }
     m_projectContext->CloseProject();
     m_projectSettingsManager.reset();
+    EditorAssetServices::Instance().OnProjectClosed();
 
     // Clear the scene
     if (m_engine) {
@@ -3843,6 +3939,13 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
         QString::fromStdString(m_projectContext->GetProjectRootDir()));
     m_projectSettingsManager->Load();
 
+    if (m_assetPipeline) {
+        m_assetPipeline->Initialize(m_projectContext->GetProjectRootDir());
+    }
+    if (m_assetReimportTimer) {
+        m_assetReimportTimer->start();
+    }
+
     if (m_engine) {
         if (auto* frameRenderer = m_engine->GetFrameRenderer()) {
             frameRenderer->SetProjectRoot(m_projectContext->GetProjectRootDir());
@@ -3851,6 +3954,8 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
 
     statusBar()->showMessage(tr("Project opened: %1").arg(
         QString::fromStdString(m_projectContext->GetProjectName())), 5000);
+
+    EditorAssetServices::Instance().OnProjectOpened(m_projectContext->GetProjectRootDir());
 
     updateWindowTitle();
     refreshAssetBrowser();
@@ -3917,7 +4022,266 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
         }
     }
 
+    // Begin recovery session after a successful project open.
+    if (m_recoveryStore.HasActiveSession()) {
+        m_recoveryStore.EndSessionClean();
+    }
+    if (m_recoveryStore.BeginSession(m_projectContext->GetProjectRootDir())) {
+        startRecoverySessionTimers();
+        if (m_recoveryStore.HasPendingRecovery()) {
+            promptPendingRecovery();
+        }
+    } else {
+        if (m_recoveryHeartbeatTimer) {
+            m_recoveryHeartbeatTimer->stop();
+        }
+        if (m_autosaveTimer) {
+            m_autosaveTimer->stop();
+        }
+    }
+
     return true;
+}
+
+void EditorMainWindow::pollAssetReimports()
+{
+    if (!m_assetPipeline || !m_assetPipeline->IsInitialized()) {
+        return;
+    }
+
+    const auto completed = m_assetPipeline->DrainCompleted();
+    if (completed.empty()) {
+        return;
+    }
+
+    bool anyMesh = false;
+    bool anySuccess = false;
+    for (const auto& item : completed) {
+        if (item.result.success) {
+            anySuccess = true;
+        }
+        if (item.assetType == AssetType::StaticMesh) {
+            anyMesh = true;
+            const QString name = QString::fromStdString(item.sourcePath.filename().string());
+            if (item.result.success) {
+                statusBar()->showMessage(tr("Mesh reimported: %1").arg(name), 4000);
+            } else {
+                statusBar()->showMessage(
+                    tr("Mesh reimport failed: %1 — %2")
+                        .arg(name, QString::fromStdString(item.result.message)),
+                    5000);
+            }
+        } else if (!item.result.success) {
+            statusBar()->showMessage(
+                tr("Reimport failed: %1")
+                    .arg(QString::fromStdString(item.result.message)),
+                4000);
+        }
+    }
+
+    if (anySuccess) {
+        AssetManager::GetInstance().Refresh();
+        if (m_assetBrowser) {
+            m_assetBrowser->Refresh();
+        }
+    }
+
+    // Full GPU mesh reload is best-effort; refresh + status covers the common case.
+    if (anyMesh && anySuccess && m_engine) {
+        m_engine->RebuildSceneMeshes();
+    }
+}
+
+void EditorMainWindow::setupRecoveryTimers()
+{
+    if (!m_recoveryHeartbeatTimer) {
+        m_recoveryHeartbeatTimer = new QTimer(this);
+        connect(m_recoveryHeartbeatTimer, &QTimer::timeout,
+                this, &EditorMainWindow::onRecoveryHeartbeat);
+    }
+    if (!m_autosaveTimer) {
+        m_autosaveTimer = new QTimer(this);
+        connect(m_autosaveTimer, &QTimer::timeout,
+                this, &EditorMainWindow::onAutosaveTick);
+    }
+}
+
+void EditorMainWindow::startRecoverySessionTimers()
+{
+    setupRecoveryTimers();
+    if (m_recoveryHeartbeatTimer) {
+        m_recoveryHeartbeatTimer->start(30000);
+    }
+    if (m_autosaveTimer) {
+        m_autosaveTimer->start(autosaveIntervalSeconds() * 1000);
+    }
+}
+
+void EditorMainWindow::stopRecoverySession()
+{
+    if (m_recoveryHeartbeatTimer) {
+        m_recoveryHeartbeatTimer->stop();
+    }
+    if (m_autosaveTimer) {
+        m_autosaveTimer->stop();
+    }
+    if (m_recoveryStore.HasActiveSession()) {
+        m_recoveryStore.EndSessionClean();
+    }
+}
+
+int EditorMainWindow::autosaveIntervalSeconds() const
+{
+    int interval = m_engineSettingsManager.Value(
+        QStringLiteral("engine.general.autosaveInterval")).toInt();
+    if (interval <= 0) {
+        interval = 120;
+    }
+    return interval;
+}
+
+void EditorMainWindow::onRecoveryHeartbeat()
+{
+    if (!m_recoveryStore.HasActiveSession()) {
+        return;
+    }
+    m_recoveryStore.Heartbeat();
+}
+
+void EditorMainWindow::onAutosaveTick()
+{
+    writeRecoverySnapshot();
+
+    if (m_autosaveTimer) {
+        const int ms = autosaveIntervalSeconds() * 1000;
+        if (m_autosaveTimer->interval() != ms) {
+            m_autosaveTimer->setInterval(ms);
+        }
+    }
+}
+
+void EditorMainWindow::writeRecoverySnapshot()
+{
+    if (m_recoveryBusy || !m_recoveryStore.HasActiveSession()) {
+        return;
+    }
+    if (!m_engine || m_engine->IsPlaying()) {
+        return;
+    }
+
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->IsDirty() || !ctx->HasActiveScene()) {
+        return;
+    }
+
+    Scene* scene = ctx->GetActiveScene();
+    if (!scene) {
+        return;
+    }
+
+    SceneSerializer serializer(*scene);
+    const std::string content = serializer.SerializeToString();
+    if (content.empty()) {
+        return;
+    }
+
+    const std::string& scenePath = ctx->GetScenePath();
+    const std::string documentId = scenePath.empty() ? "unsaved_scene" : scenePath;
+    const std::string id = m_recoveryStore.WriteSceneSnapshot(documentId, scenePath, content);
+    if (id.empty()) {
+        return;
+    }
+
+    m_recoveryStore.Prune(5);
+    if (m_notifications) {
+        m_notifications->ShowInfo(tr("Recovery snapshot saved"));
+    }
+}
+
+void EditorMainWindow::promptPendingRecovery()
+{
+    const auto candidates = m_recoveryStore.ListRecoveryCandidates();
+    if (candidates.empty()) {
+        m_recoveryStore.DiscardAll();
+        return;
+    }
+
+    QStringList lines;
+    lines.reserve(static_cast<int>(candidates.size()));
+    for (const auto& candidate : candidates) {
+        const QString source = candidate.sourcePath.empty()
+            ? QString::fromStdString(candidate.documentId)
+            : QString::fromStdString(candidate.sourcePath);
+        lines << tr("%1 — %2")
+                    .arg(source, QString::fromStdString(candidate.timestamp));
+    }
+
+    m_recoveryBusy = true;
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(tr("Recover Unsaved Work"));
+    box.setText(tr("The previous editor session ended unexpectedly. "
+                   "Restore a recovery snapshot into the active scene "
+                   "(does not overwrite the scene file on disk)?"));
+    box.setInformativeText(lines.join(QLatin1Char('\n')));
+    auto* restoreBtn = box.addButton(tr("Restore"), QMessageBox::AcceptRole);
+    auto* discardBtn = box.addButton(tr("Discard"), QMessageBox::DestructiveRole);
+    box.setDefaultButton(restoreBtn);
+    box.exec();
+    m_recoveryBusy = false;
+
+    if (box.clickedButton() == discardBtn) {
+        m_recoveryStore.DiscardAll();
+        if (m_notifications) {
+            m_notifications->ShowInfo(tr("Recovery snapshots discarded"));
+        }
+        return;
+    }
+
+    if (box.clickedButton() != restoreBtn) {
+        return;
+    }
+
+    // Prefer newest snapshot (WriteSceneSnapshot appends).
+    const RecoveryCandidate& chosen = candidates.back();
+    const auto content = m_recoveryStore.LoadSnapshotContent(chosen.id);
+    if (!content) {
+        if (m_notifications) {
+            m_notifications->ShowError(tr("Failed to load recovery snapshot"));
+        }
+        return;
+    }
+
+    if (!m_engine) {
+        return;
+    }
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx) {
+        return;
+    }
+    if (!ctx->HasActiveScene()) {
+        ctx->NewScene("Recovered Scene");
+    }
+    Scene* scene = ctx->GetActiveScene();
+    if (!scene) {
+        return;
+    }
+
+    if (!SceneSerializer::DeserializeFromString(*scene, *content)) {
+        if (m_notifications) {
+            m_notifications->ShowError(tr("Failed to restore recovery snapshot"));
+        }
+        return;
+    }
+
+    ctx->MarkDirty();
+    m_engine->RebuildSceneMeshes();
+    m_recoveryStore.DiscardAll();
+    updateWindowTitle();
+    rebuildOutliner();
+    if (m_notifications) {
+        m_notifications->ShowInfo(tr("Recovery snapshot restored (unsaved)"));
+    }
 }
 
 void EditorMainWindow::onClearRecentProjects()
@@ -3939,6 +4303,9 @@ void EditorMainWindow::rebuildRecentProjectsMenu()
 
     m_recentProjectsMenu->clear();
 
+    // Drop missing entries so the menu stays accurate
+    m_projectContext->RemoveMissingRecentProjects();
+
     const auto& recentProjects = m_projectContext->GetRecentProjects();
     
     if (recentProjects.empty()) {
@@ -3946,20 +4313,45 @@ void EditorMainWindow::rebuildRecentProjectsMenu()
         emptyAction->setEnabled(false);
     } else {
         for (const auto& projectPath : recentProjects) {
-            // Extract project name from path for display
             std::filesystem::path path(projectPath);
             QString displayName = QString::fromStdString(path.parent_path().filename().string());
             if (displayName.isEmpty()) {
                 displayName = QString::fromStdString(path.filename().string());
             }
             
-            QAction* action = m_recentProjectsMenu->addAction(displayName);
-            action->setToolTip(QString::fromStdString(projectPath));
-            action->setData(QString::fromStdString(projectPath));
-            connect(action, &QAction::triggered, this, &EditorMainWindow::onOpenRecentProject);
+            QMenu* projectMenu = m_recentProjectsMenu->addMenu(displayName);
+            projectMenu->setToolTip(QString::fromStdString(projectPath));
+
+            QAction* openAction = projectMenu->addAction(tr("Open"));
+            openAction->setData(QString::fromStdString(projectPath));
+            connect(openAction, &QAction::triggered, this, &EditorMainWindow::onOpenRecentProject);
+
+            QAction* revealAction = projectMenu->addAction(tr("Show in Explorer"));
+            connect(revealAction, &QAction::triggered, this, [projectPath]() {
+                const QString native = QDir::toNativeSeparators(QString::fromStdString(projectPath));
+#ifdef _WIN32
+                QProcess::startDetached("explorer", {"/select,", native});
+#else
+                QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(native).absolutePath()));
+#endif
+            });
+
+            QAction* removeAction = projectMenu->addAction(tr("Remove from List"));
+            connect(removeAction, &QAction::triggered, this, [this, projectPath]() {
+                m_projectContext->RemoveRecentProject(projectPath);
+                rebuildRecentProjectsMenu();
+                statusBar()->showMessage(tr("Removed from recent projects"), 2000);
+            });
         }
         
         m_recentProjectsMenu->addSeparator();
+
+        QAction* pruneAction = m_recentProjectsMenu->addAction(tr("Remove Missing Projects"));
+        connect(pruneAction, &QAction::triggered, this, [this]() {
+            const size_t removed = m_projectContext->RemoveMissingRecentProjects();
+            rebuildRecentProjectsMenu();
+            statusBar()->showMessage(tr("Removed %1 missing project(s)").arg(static_cast<qulonglong>(removed)), 2500);
+        });
         
         QAction* clearAction = m_recentProjectsMenu->addAction(tr("Clear Recent Projects"));
         connect(clearAction, &QAction::triggered, this, &EditorMainWindow::onClearRecentProjects);

@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <queue>
 #include <unordered_map>

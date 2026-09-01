@@ -7,6 +7,7 @@
 #include "PrefabInstantiator.h"
 #include "PrefabOverrideSystem.h"
 #include "PrefabComponentIO.h"
+#include "../Assets/AssetPathPolicy.h"
 #include "../Scripting/ScriptComponent.h"
 #include "../Scripting/ScriptRegistry.h"
 
@@ -14,6 +15,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -24,6 +26,7 @@
 #include <locale>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <vector>
 
@@ -365,37 +368,23 @@ static std::string ToLowerCase(const std::string& s)
     return result;
 }
 
-// Normalize an asset path for portable serialization.
-// Converts absolute paths to project-relative by finding known directory
-// markers (assets/, scripts/) in the path, using forward slashes.
+// Normalize an asset path for portable serialization via AssetPathPolicy.
+// Absolute in-project paths become assets/... /.engine/... / scripts/... keys.
 static std::string NormalizeAssetPathForSave(const std::string& rawPath)
 {
     if (rawPath.empty() || rawPath.rfind("builtin://", 0) == 0) {
         return rawPath;
     }
 
-    namespace fs = std::filesystem;
-    fs::path p(rawPath);
-    if (!p.is_absolute()) {
-        // Already relative — just ensure forward slashes for portability
-        return p.generic_string();
-    }
-
-    // Convert to generic (forward-slash) string and look for known markers
-    std::string generic = p.generic_string();
-
-    // Use rfind to find the last occurrence of known project directory markers
-    static const std::string markers[] = { "/assets/", "/scripts/" };
-    for (const auto& marker : markers) {
-        auto pos = generic.rfind(marker);
-        if (pos != std::string::npos) {
-            // Return from the marker onward (e.g. "assets/meshes/player.glb")
-            return generic.substr(pos + 1);
-        }
+    const std::string portable =
+        Hephaestus::AssetPathPolicy::ToPortableKey(std::filesystem::path{}, rawPath);
+    if (Hephaestus::AssetPathPolicy::IsPortableKey(portable) ||
+        !std::filesystem::path(portable).is_absolute()) {
+        return portable;
     }
 
     // Fallback: return just the filename to avoid baking in machine-specific paths
-    return p.filename().generic_string();
+    return std::filesystem::path(rawPath).filename().generic_string();
 }
 
 static EnvironmentComponent::BackgroundType ParseBackgroundType(const JsonValue& value)
@@ -2344,18 +2333,31 @@ std::string SceneSerializer::SerializeToString() const
 
 bool SceneSerializer::DeserializeFromString(Scene& scene, const std::string& data)
 {
-    // For simplicity, we'll write to a temp file and use the existing deserialize
-    // In production, you'd parse the string directly
-    std::filesystem::path tempPath = std::filesystem::temp_directory_path() / "hephaestus_snapshot.hpscene";
-    std::ofstream tempFile(tempPath, std::ios::binary | std::ios::trunc);
-    if (!tempFile.is_open()) {
-        return false;
+    // Unique temp path avoids races when multiple deserializations run concurrently.
+    // (Shared fixed name previously clobbered peer callers.)
+    namespace fs = std::filesystem;
+    const auto stamp = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    const auto unique = std::to_string(stamp) + "_" +
+                        std::to_string(reinterpret_cast<std::uintptr_t>(&data));
+    const fs::path tempPath =
+        fs::temp_directory_path() / ("hephaestus_snapshot_" + unique + ".hpscene");
+
+    {
+        std::ofstream tempFile(tempPath, std::ios::binary | std::ios::trunc);
+        if (!tempFile.is_open()) {
+            return false;
+        }
+        tempFile.write(data.data(), static_cast<std::streamsize>(data.size()));
+        if (!tempFile.good()) {
+            tempFile.close();
+            fs::remove(tempPath);
+            return false;
+        }
     }
-    tempFile << data;
-    tempFile.close();
-    
-    bool result = Deserialize(scene, tempPath);
-    std::filesystem::remove(tempPath);
+
+    const bool result = Deserialize(scene, tempPath);
+    std::error_code ec;
+    fs::remove(tempPath, ec);
     return result;
 }
 
