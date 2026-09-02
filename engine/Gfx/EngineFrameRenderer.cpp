@@ -268,11 +268,12 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
     
     // Editor viewport grid (optional; omitted in standalone game runtime)
 #ifndef HEPHAESTUS_GAME_RUNTIME
+    // Editor-only resources are compiled out of the packaged runtime. Per-frame
+    // visibility remains controlled by FrameRenderConfig for editor and play modes.
     if (!createGridResources()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create grid resources (grid will be disabled)\n";
     }
-#endif
-    
+
     // Create outline resources (optional, failure doesn't prevent init)
     if (!createOutlineResources()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create outline resources (outlines will be disabled)\n";
@@ -282,8 +283,7 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
     if (!createIdPickerResources()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create ID picker resources (picking will be disabled)\n";
     }
-    
-#ifndef HEPHAESTUS_GAME_RUNTIME
+
     // Create gizmo resources (optional, failure doesn't prevent init)
     if (!createGizmoResources()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create gizmo resources (gizmo will be disabled)\n";
@@ -293,12 +293,12 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
     if (!createLightGizmoResources()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create light gizmo resources (light gizmos will be disabled)\n";
     }
-#endif
-    
+
     // Create billboard resources (optional, failure doesn't prevent init)
     if (!createBillboardResources()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create billboard resources (light icons will be disabled)\n";
     }
+#endif
 
     // Create skybox resources (optional, failure doesn't prevent init)
     if (!createSkyboxResources()) {
