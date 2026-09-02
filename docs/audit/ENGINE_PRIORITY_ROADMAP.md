@@ -42,9 +42,9 @@ Related: [ENGINE_AUDIT_INDEX.md](ENGINE_AUDIT_INDEX.md), [GENRE_READINESS.md](GE
 | | |
 |--|--|
 | **Why it matters** | All sample gameplay binds GLFW key names. No rebind, no controller, no UI vs game contexts except cursor mode. |
-| **Current maturity** | 2 |
-| **What exists** | Lua `Input.*` poll; `RuntimeInputState` for Qt play mode |
-| **What to add** | Action/axis map asset, contexts, dead zones, gamepad via GLFW (already in GLFW, unused) |
+| **Current maturity** | 3 |
+| **What exists** | Shared `InputSystem`; `.hpinput` action/axis maps; Lua edges/axes; packaged player-zero GLFW gamepad; Project Settings authoring |
+| **What to add** | Contexts in a later schema, runtime rebind capture/overrides, Qt-native gamepad adapter, rumble/multi-controller |
 | **Unlocks** | Settings screens, controller games, less brittle FPS scripts |
 | **Dependencies** | Optional HUI for rebind UI later |
 | **Risk** | Low–medium |

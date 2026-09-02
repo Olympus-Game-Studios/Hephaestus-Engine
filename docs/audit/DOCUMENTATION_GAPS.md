@@ -41,7 +41,7 @@ Audit of **first-party docs vs implementation** (2026-09-02, `72a4dd7`). This fi
 | `Documentation/README.md` | Reorg notes; Reference/Tutorials empty |
 | `Documentation/Architecture/ECS_*` | May predate prefab instance model |
 | `engine/Scripting/README.md` | Mix of accurate API and stale “future UI bindings” / hot-reload confusion |
-| `Documentation/Scripting/LUA_SCRIPTING_GUIDE.md` | Roadmap still lists Input/Scene as future; they exist. Hot-reload “Planned” vs mtime reload in code. Triggers documented as unimplemented (correct). |
+| `Documentation/Scripting/LUA_SCRIPTING_GUIDE.md` | Input actions are current; Scene transitions remain future. Hot-reload “Planned” still conflicts with mtime reload in code. Triggers documented as unimplemented (correct). |
 | Comments in `EditorContext.h`, `PlayModeManager.h`, `AssetManager.h`, `GameMain.cpp` | “Legacy ImGui editor” |
 | `Documentation/Integration/IMGUIZMO_INTEGRATION.md` | Gizmos are Vulkan `VulkanGizmo`, not ImGuizmo in the Qt path |
 | `Documentation/Archive/C++_scripting_legacy/**` | Correctly archived, but live `ScriptEngine` still runs |

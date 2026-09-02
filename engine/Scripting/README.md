@@ -175,8 +175,19 @@ transform:Rotate(0, 45, 0)    -- Rotate 45 degrees around Y
 ### Input
 
 ```lua
-if Input.isKeyPressed("W") then
-    -- W key is held down
+local forward = Input.getAxis("MoveForward")
+local right = Input.getAxis("MoveRight")
+
+if Input.isActionPressed("Jump") then
+    -- Rising edge
+end
+
+if Input.isActionDown("Sprint") then
+    -- Held
+end
+
+if Input.isActionReleased("Interact") then
+    -- Falling edge
 end
 
 if Input.isMouseButtonPressed(0) then
@@ -185,6 +196,9 @@ end
 
 local mousePos = Input.getMousePosition()  -- Returns {x, y}
 ```
+
+Action and axis bindings are authored in the project's `.hpinput` v1 profile.
+`Input.isKeyPressed` remains available with its legacy held behavior.
 
 ### Scene / Physics (gameplay)
 

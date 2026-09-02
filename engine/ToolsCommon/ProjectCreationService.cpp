@@ -4,6 +4,7 @@
 #include "PathUtils.h"
 #include "ProjectSettingsManager.h"
 #include "VersionInfo.h"
+#include "../Input/InputMap.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -109,6 +110,19 @@ bool ProjectCreationService::CreateBlankProject(const QString& parentDir,
     QDir().mkpath(projectDir.filePath(QStringLiteral("assets/materials")));
     QDir().mkpath(projectDir.filePath(QStringLiteral("assets/prefabs")));
     QDir().mkpath(projectDir.filePath(QStringLiteral("assets/ui")));
+    QDir().mkpath(projectDir.filePath(QStringLiteral("assets/input")));
+
+    std::string inputMapError;
+    const QString inputMapPath =
+        projectDir.filePath(QStringLiteral("assets/input/Default.hpinput"));
+    if (!Hephaestus::InputMap::CreateDefault().Save(
+            std::filesystem::path(inputMapPath.toStdWString()), inputMapError)) {
+        if (outError) {
+            *outError = QStringLiteral("Failed to create default input map: %1")
+                            .arg(QString::fromStdString(inputMapError));
+        }
+        return false;
+    }
 
     // HDRI is optional convenience content — never fail project creation.
     QString hdriWarning;

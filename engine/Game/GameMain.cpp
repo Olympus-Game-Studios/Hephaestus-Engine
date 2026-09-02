@@ -40,6 +40,7 @@
 
 #include "AppConfig.h"
 #include "Core/RuntimeBootstrap.h"
+#include "../Input/InputSystem.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -137,6 +138,7 @@ struct GameConfig {
     bool vsync = true;
     std::string scenePath;
     std::string projectName;
+    std::string inputProfile = "assets/input/Default.hpinput";
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -149,6 +151,8 @@ static fs::path g_ProjectRoot;   // Detected from scene file / .heproject
 static fs::path g_ProjectAssets; // g_ProjectRoot / "assets"
 static GameConfig g_Config;
 static GameCamera* g_GameCameraPtr = nullptr; // For Lua camera binding
+static double g_ScrollDeltaX = 0.0;
+static double g_ScrollDeltaY = 0.0;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Mesh Library for Runtime
@@ -241,9 +245,9 @@ static void FramebufferResizeCallback(GLFWwindow* /*window*/, int /*width*/, int
     g_FramebufferResized = true;
 }
 
-static void ScrollCallback(GLFWwindow* /*window*/, double /*xoffset*/, double yoffset) {
-    // Handle scroll for camera zoom, etc.
-    (void)yoffset;
+static void ScrollCallback(GLFWwindow* /*window*/, double xoffset, double yoffset) {
+    g_ScrollDeltaX += xoffset;
+    g_ScrollDeltaY += yoffset;
 }
 
 static fs::path DetectProjectRoot(const fs::path& startPath) {
@@ -424,6 +428,8 @@ static void LoadConfigFile(GameConfig& config) {
             config.scenePath = value;
         } else if (key == "project_name") {
             config.projectName = value;
+        } else if (key == "input_profile") {
+            config.inputProfile = value;
         }
     }
 
@@ -718,6 +724,23 @@ int main(int argc, char* argv[]) {
     
     Bootstrap::EndStage(InitStage::SceneLoad, true);
 
+    Hephaestus::InputSystem inputSystem;
+    if (g_Config.inputProfile.empty() || g_Config.inputProfile == "Default") {
+        g_Config.inputProfile = "assets/input/Default.hpinput";
+    }
+    fs::path inputProfilePath = g_Config.inputProfile;
+    if (inputProfilePath.is_relative()) {
+        inputProfilePath = (!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot) /
+                           inputProfilePath;
+    }
+    std::string inputError;
+    if (inputSystem.LoadMap(inputProfilePath, inputError)) {
+        HP_LOG(Info, "Loaded input profile: " + inputProfilePath.string());
+    } else {
+        inputSystem.SetMap(Hephaestus::InputMap::CreateDefault());
+        HP_LOG(Warning, inputError + "; using built-in default input map");
+    }
+
     // ── Physics ───────────────────────────────────
     Bootstrap::BeginStage(InitStage::Physics);
     
@@ -748,6 +771,7 @@ int main(int argc, char* argv[]) {
         luaEngine.Initialize(&scene, window);
         // Set project root so script search paths resolve correctly on any device
         luaEngine.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
+        luaEngine.SetInputSystem(&inputSystem);
         luaEngine.SetAudioEngine(&audioEngine);
         luaEngine.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);
         HP_LOG(Info, "Lua scripting engine initialized");
@@ -1417,6 +1441,9 @@ int main(int argc, char* argv[]) {
 
     auto lastTime = std::chrono::high_resolution_clock::now();
     std::array<bool, 3> uiMousePressed = {false, false, false};
+    double lastCursorX = 0.0;
+    double lastCursorY = 0.0;
+    bool hasLastCursorPosition = false;
     bool recreateSwapchain = false;
 
     Hephaestus::FrameRenderConfig renderConfig{};
@@ -1454,12 +1481,53 @@ int main(int argc, char* argv[]) {
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
         lastTime = currentTime;
 
-        uiContext.SetDeltaTimeSeconds(deltaTime);
-        uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
+        inputSystem.BeginFrame();
+        for (int key = GLFW_KEY_SPACE; key <= GLFW_KEY_LAST; ++key) {
+            const int state = glfwGetKey(window, key);
+            inputSystem.SetKeyState(key, state == GLFW_PRESS || state == GLFW_REPEAT);
+        }
+        for (int button = 0; button <= GLFW_MOUSE_BUTTON_LAST; ++button) {
+            inputSystem.SetMouseButtonState(
+                button, glfwGetMouseButton(window, button) == GLFW_PRESS);
+        }
 
         double cursorX = 0.0;
         double cursorY = 0.0;
         glfwGetCursorPos(window, &cursorX, &cursorY);
+        inputSystem.SetMousePosition(cursorX, cursorY);
+        inputSystem.SetMouseDelta(
+            hasLastCursorPosition ? cursorX - lastCursorX : 0.0,
+            hasLastCursorPosition ? cursorY - lastCursorY : 0.0);
+        lastCursorX = cursorX;
+        lastCursorY = cursorY;
+        hasLastCursorPosition = true;
+        inputSystem.AddScrollDelta(g_ScrollDeltaX, g_ScrollDeltaY);
+        g_ScrollDeltaX = 0.0;
+        g_ScrollDeltaY = 0.0;
+
+        GLFWgamepadstate gamepadState{};
+        const bool gamepadConnected =
+            glfwJoystickIsGamepad(GLFW_JOYSTICK_1) == GLFW_TRUE &&
+            glfwGetGamepadState(GLFW_JOYSTICK_1, &gamepadState) == GLFW_TRUE;
+        inputSystem.SetGamepadConnected(gamepadConnected);
+        if (gamepadConnected) {
+            for (int button = 0; button <= GLFW_GAMEPAD_BUTTON_LAST; ++button) {
+                inputSystem.SetGamepadButtonState(
+                    button, gamepadState.buttons[button] == GLFW_PRESS);
+            }
+            for (int axis = 0; axis <= GLFW_GAMEPAD_AXIS_LAST; ++axis) {
+                float value = gamepadState.axes[axis];
+                if (axis == GLFW_GAMEPAD_AXIS_LEFT_TRIGGER ||
+                    axis == GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER) {
+                    value = (value + 1.0f) * 0.5f;
+                }
+                inputSystem.SetGamepadAxisState(axis, value);
+            }
+        }
+
+        uiContext.SetDeltaTimeSeconds(deltaTime);
+        uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
+
         const HUI::UIVec2 mousePos{static_cast<float>(cursorX), static_cast<float>(cursorY)};
         uiContext.QueueMouseMove(mousePos);
 

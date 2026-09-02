@@ -186,6 +186,14 @@ set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "Disable Jolt warnings-as-errors in super
 set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "Use dynamic MSVC runtime" FORCE)
 add_subdirectory(extern/JoltPhysics/Build)
 
+# Shared gameplay input core used by the Qt editor, packaged runtime, launcher
+# settings UI, and focused headless tests.
+add_library(HephaestusInputCore STATIC
+    engine/Input/InputMap.cpp
+    engine/Input/InputSystem.cpp
+)
+target_include_directories(HephaestusInputCore PUBLIC engine extern extern/glfw/include)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared Engine Sources (used by both Editor and Game)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -314,7 +322,7 @@ if(HEPHAESTUS_USE_QT AND Qt6_FOUND)
         engine/ToolsCommon/VersionInfo.cpp
     )
 
-    target_link_libraries(HephaestusToolsCommon PUBLIC Qt6::Core)
+    target_link_libraries(HephaestusToolsCommon PUBLIC Qt6::Core HephaestusInputCore)
     target_include_directories(HephaestusToolsCommon PUBLIC engine "${CMAKE_BINARY_DIR}/generated")
     target_compile_definitions(HephaestusToolsCommon PUBLIC
         $<$<BOOL:${HEPHAESTUS_USE_SHARED_ASSETS}>:HEPHAESTUS_USE_SHARED_ASSETS=1>
@@ -444,7 +452,7 @@ elseif(APPLE)
 endif()
 
 target_include_directories(HephaestusEngine PRIVATE engine "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore)
+target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore HephaestusInputCore)
 if(LUA_FOUND)
     if(TARGET Lua::Lua)
         target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt Lua::Lua)
@@ -568,6 +576,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/PrefabInstanceBar.h
             engine/UI/Shared/SettingsWindow.cpp
             engine/UI/Shared/SettingsWindow.h
+            engine/UI/Shared/InputMapEditorWidget.cpp
+            engine/UI/Shared/InputMapEditorWidget.h
         )
 
         target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets)
@@ -644,6 +654,8 @@ add_executable(HephaestusLauncher
     engine/UI/Launcher/LauncherWindow.cpp
     engine/UI/Shared/SettingsWindow.h
     engine/UI/Shared/SettingsWindow.cpp
+    engine/UI/Shared/InputMapEditorWidget.h
+    engine/UI/Shared/InputMapEditorWidget.cpp
 )
 
 if(NOT HEPHAESTUS_USE_SHARED_ASSETS)
@@ -664,6 +676,7 @@ set_target_properties(HephaestusLauncher PROPERTIES
 target_link_libraries(HephaestusLauncher PRIVATE
     Qt6::Widgets
     HephaestusToolsCommon
+    HephaestusInputCore
 )
 
 if(TARGET Qt6::Concurrent)
@@ -775,7 +788,7 @@ if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND)
     endif()
 endif()
 
-target_link_libraries(HephaestusGame PRIVATE ${GAME_LINK_LIBS})
+target_link_libraries(HephaestusGame PRIVATE ${GAME_LINK_LIBS} HephaestusInputCore)
 
 # Windows: link dbghelp for crash handler
 if(WIN32)
@@ -1103,6 +1116,16 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME AssetPathPolicy
         COMMAND AssetPathPolicyTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(InputSystemTests
+        engine/Tests/InputSystemTests.cpp
+    )
+    target_link_libraries(InputSystemTests PRIVATE HephaestusInputCore)
+    target_include_directories(InputSystemTests PRIVATE engine extern)
+    add_test(
+        NAME InputSystem
+        COMMAND InputSystemTests
     )
 
     add_executable(AssetReferenceIndexTests

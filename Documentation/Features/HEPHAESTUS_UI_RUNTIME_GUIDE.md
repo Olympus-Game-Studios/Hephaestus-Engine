@@ -157,7 +157,7 @@ local mode = UI.getCursorMode()   -- "ui" or "game"
 
 When `CursorMode` changes the host (Qt editor or GLFW runtime) must react:
 
-- **Qt editor**: `populateRuntimeInputState()` already honours the underlying `cursorModeRequest`. The editor camera controller is suppressed when the runtime UI is in `CursorMode::UI` to prevent fly-mode interference.
+- **Qt editor**: `populateGameplayInput()` honours the shared `InputSystem` cursor request. The editor camera controller is suppressed when the runtime UI is in `CursorMode::UI` to prevent fly-mode interference.
 - **GLFW runtime**: the Lua binding calls `glfwSetInputMode` directly. Script-driven camera controllers should check `UI.getCursorMode()` and skip mouse-look when in UI mode.
 
 Cursor mode resets to `Game` when play mode stops or `UISystem::ClearScreens()` is called.

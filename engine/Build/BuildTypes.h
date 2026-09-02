@@ -50,6 +50,7 @@ struct BuildRequest {
     std::string company;
     std::string engineVersion = "unknown";
     std::string startupScene;
+    std::string inputProfile = "assets/input/Default.hpinput";
     WindowSettings window;
     BuildConfiguration configuration = BuildConfiguration::Development;
     BuildAction action = BuildAction::Package;

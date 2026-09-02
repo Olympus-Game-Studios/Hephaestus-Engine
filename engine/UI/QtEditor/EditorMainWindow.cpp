@@ -5520,6 +5520,12 @@ void EditorMainWindow::onOpenSettings()
         connect(m_settingsWindow, &QObject::destroyed, this, [this]() {
             m_settingsWindow = nullptr;
         });
+        connect(m_settingsWindow, &Hephaestus::UI::SettingsWindow::settingsApplied,
+                this, [this]() {
+            if (m_projectSettingsManager) {
+                m_projectSettingsManager->Load();
+            }
+        });
     }
 
     m_settingsWindow->ConfigureContext(Hephaestus::EngineContext::Editor, hasProject, projectRoot);
@@ -5849,12 +5855,15 @@ void EditorMainWindow::startBuild(Build::BuildAction requestedAction)
     QString version = QStringLiteral("0.1.0");
     QString company;
     QString applicationIcon;
+    QString inputProfile = QStringLiteral("assets/input/Default.hpinput");
     if (m_projectSettingsManager) {
         startupScene =
             m_projectSettingsManager->Value(QStringLiteral("project.info.defaultScene")).toString();
         version = m_projectSettingsManager->Value(QStringLiteral("project.info.version")).toString();
         company =
             m_projectSettingsManager->Value(QStringLiteral("project.info.companyName")).toString();
+        inputProfile =
+            m_projectSettingsManager->Value(QStringLiteral("project.input.defaultInputProfile")).toString();
         defaults.windowTitle =
             m_projectSettingsManager->Value(QStringLiteral("project.build.windowTitle")).toString();
         defaults.fullscreen =
@@ -5959,6 +5968,7 @@ void EditorMainWindow::startBuild(Build::BuildAction requestedAction)
     request.company = company.toStdString();
     request.engineVersion = Tools::VersionInfo::EngineVersion().toStdString();
     request.startupScene = selected.startScene.toStdString();
+    request.inputProfile = inputProfile.toStdString();
     request.configuration = selected.configuration;
     request.action = selected.action;
     request.validateFirst = selected.validateFirst;

@@ -1,4 +1,5 @@
 #include "SettingsWindow.h"
+#include "InputMapEditorWidget.h"
 
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -28,6 +29,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <filesystem>
 
 namespace {
 
@@ -155,6 +157,8 @@ void SettingsWindow::BuildUi()
 void SettingsWindow::RebuildTabs()
 {
     m_tabs->clear();
+    m_inputMapEditor = nullptr;
+    m_inputProfileEdit = nullptr;
     m_engineTab = TabUi();
     m_projectTab = TabUi();
 
@@ -328,6 +332,48 @@ QWidget* SettingsWindow::BuildEditor(const Hephaestus::Tools::SettingDefinition&
 {
     using Hephaestus::Tools::SettingControlType;
 
+    if (definition.id == QStringLiteral("project.input.defaultInputProfile") &&
+        tab.key == QStringLiteral("project")) {
+        auto* container = new QWidget();
+        auto* root = new QVBoxLayout(container);
+        root->setContentsMargins(0, 0, 0, 0);
+        root->setSpacing(6);
+
+        auto* pathRow = new QHBoxLayout();
+        m_inputProfileEdit = new QLineEdit(value.toString(), container);
+        m_inputProfileEdit->setObjectName(QStringLiteral("inputProfilePath"));
+        auto* reload = new QPushButton(QStringLiteral("Reload"), container);
+        pathRow->addWidget(m_inputProfileEdit, 1);
+        pathRow->addWidget(reload);
+        root->addLayout(pathRow);
+
+        m_inputMapEditor = new InputMapEditorWidget(container);
+        root->addWidget(m_inputMapEditor);
+        QString loadError;
+        m_inputMapEditor->Load(
+            std::filesystem::path(m_projectRoot.toStdWString()),
+            value.toString(), &loadError);
+
+        connect(m_inputProfileEdit, &QLineEdit::textChanged, this,
+                [this, key = tab.key, id = definition.id](const QString& text) {
+            PendingForTab(key)[id] = text;
+            UpdateDirtyState();
+        });
+        connect(reload, &QPushButton::clicked, this, [this]() {
+            if (!m_inputMapEditor || !m_inputProfileEdit) return;
+            QString error;
+            if (!m_inputMapEditor->Load(
+                    std::filesystem::path(m_projectRoot.toStdWString()),
+                    m_inputProfileEdit->text(), &error)) {
+                QMessageBox::warning(this, QStringLiteral("Input Map"),
+                                     error.isEmpty() ? QStringLiteral("Could not load input map.") : error);
+            }
+            UpdateDirtyState();
+        });
+        m_inputMapEditor->SetChangedCallback([this]() { UpdateDirtyState(); });
+        return container;
+    }
+
     if (definition.controlType == SettingControlType::Bool) {
         auto* check = new QCheckBox();
         check->setChecked(value.toBool());
@@ -500,6 +546,18 @@ void SettingsWindow::PopulateTabValues(TabUi& tab, const QHash<QString, QVariant
         }
         case SettingControlType::String:
         default: {
+            if (def.id == QStringLiteral("project.input.defaultInputProfile")) {
+                if (auto* line = editor->findChild<QLineEdit*>(QStringLiteral("inputProfilePath"))) {
+                    line->setText(value.toString());
+                }
+                if (m_inputMapEditor) {
+                    QString error;
+                    m_inputMapEditor->Load(
+                        std::filesystem::path(m_projectRoot.toStdWString()),
+                        value.toString(), &error);
+                }
+                break;
+            }
             if (auto* combo = editor->findChild<QComboBox*>(QStringLiteral("defaultSceneCombo"))) {
                 RefreshDefaultSceneEditor(editor, value.toString(), tab.key);
                 const QString desired = value.toString().trimmed().replace('\\', '/');
@@ -642,6 +700,9 @@ void SettingsWindow::UpdateDirtyState()
                 break;
             }
         }
+        if (m_inputMapEditor && m_inputMapEditor->IsDirty()) {
+            m_projectDirty = true;
+        }
     }
 
     m_applyButton->setEnabled(m_engineDirty || m_projectDirty);
@@ -673,6 +734,7 @@ bool SettingsWindow::TryCloseWithUnsavedPrompt()
 
 bool SettingsWindow::ApplyChanges()
 {
+    const bool hadChanges = m_engineDirty || m_projectDirty;
     if (m_engineDirty) {
         m_engineManager.SetValues(m_enginePending);
         if (!m_engineManager.Save()) {
@@ -686,6 +748,22 @@ bool SettingsWindow::ApplyChanges()
     }
 
     if (m_projectDirty && m_projectManager) {
+        if (m_inputMapEditor && m_inputMapEditor->IsDirty()) {
+            QString error;
+            const QString profile = m_inputProfileEdit
+                ? m_inputProfileEdit->text()
+                : m_projectPending.value(
+                      QStringLiteral("project.input.defaultInputProfile"),
+                      QStringLiteral("assets/input/Default.hpinput")).toString();
+            if (!m_inputMapEditor->Save(
+                    std::filesystem::path(m_projectRoot.toStdWString()),
+                    profile, &error)) {
+                QMessageBox::critical(
+                    this, QStringLiteral("Save Failed"),
+                    error.isEmpty() ? QStringLiteral("Failed to save the input map.") : error);
+                return false;
+            }
+        }
         m_projectManager->SetValues(m_projectPending);
         if (!m_projectManager->Save()) {
             QMessageBox::critical(this,
@@ -698,6 +776,9 @@ bool SettingsWindow::ApplyChanges()
     }
 
     UpdateDirtyState();
+    if (hadChanges) {
+        emit settingsApplied();
+    }
     return true;
 }
 

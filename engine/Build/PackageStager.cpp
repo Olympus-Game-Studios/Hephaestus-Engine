@@ -355,6 +355,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
         << "\nwindow_title = "
         << (request.window.title.empty() ? request.productName : request.window.title)
         << "\nscene = " << startup
+        << "\ninput_profile = " << request.inputProfile
         << "\n\n[Display]\nwindow_width = " << request.window.width
         << "\nwindow_height = " << request.window.height << "\nfullscreen = "
         << (request.window.fullscreen ? "true" : "false") << "\nvsync = "

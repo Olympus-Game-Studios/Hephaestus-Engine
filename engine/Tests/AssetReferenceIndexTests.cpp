@@ -110,6 +110,13 @@ bool TestSceneAndPrefabIndex(const fs::path& project) {
   "defaultScene": "assets/scenes/Demo.hpscene",
   "lastScene": "assets/scenes/Demo.hpscene"
 })");
+    WriteText(project / ".hephaestus" / "project_settings.json", R"({
+  "input": {
+    "defaultInputProfile": "assets/input/Default.hpinput"
+  }
+})");
+    WriteText(project / "assets" / "input" / "Default.hpinput",
+              R"({"version":1,"actions":[],"axes":[]})");
 
     // Non-indexed Lua body must not create references.
     WriteText(project / "assets" / "scripts" / "Demo.lua",
@@ -168,6 +175,12 @@ bool TestSceneAndPrefabIndex(const fs::path& project) {
     const auto projectDeps = index.GetDependencies("project.heproject");
     ok &= Check(ContainsRef(projectDeps, AssetReferenceFieldKind::DefaultScene, "assets/scenes/Demo.hpscene"),
                 "heproject defaultScene");
+    const auto inputProfileRefs =
+        index.GetReferrers("assets/input/Default.hpinput");
+    ok &= Check(ContainsRef(inputProfileRefs,
+                            AssetReferenceFieldKind::DefaultInputProfile,
+                            "assets/input/Default.hpinput"),
+                "project settings default input profile");
 
     // Lua file content must not appear as a referrer source for the fake texture.
     const auto luaNoise = index.GetReferrers("assets/textures/should_not_index.png");

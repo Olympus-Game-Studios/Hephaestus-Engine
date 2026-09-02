@@ -33,6 +33,7 @@ enum class AssetReferenceFieldKind {
     Controller,
     DefaultScene,
     LastScene,
+    DefaultInputProfile,
     NestedAssetPath, ///< Heuristic assets/-like string (advisory)
     Unknown
 };

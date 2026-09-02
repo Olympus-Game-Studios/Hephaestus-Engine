@@ -49,8 +49,8 @@ Maturity: 0 Missing … 5 Advanced. Do not treat this table as a feature checkli
 | Audio | 2D play/loop/volume | 2 | Functional but incomplete | WinMM MCI; WAV/MP3 |
 | Audio | 3D / mixer / buses | 0 | Missing | — |
 | Animation | Skeletal / clips / graphs | 0 | Missing | Vertex has no joints/weights |
-| Input | Keyboard/mouse poll | 2 | Functional but incomplete | GLFW names + Qt `RuntimeInputState` |
-| Input | Actions / rebind / gamepad | 0 | Missing | GLFW gamepad unused by engine |
+| Input | Keyboard/mouse state | 3 | Usable | Shared Qt/GLFW `InputSystem`; legacy raw polls retained |
+| Input | Actions / axes / gamepad | 3 | Usable foundation | `.hpinput` v1 + packaged player-zero gamepad; contexts/rebind/Qt gamepad deferred |
 | Assets | Path policy + reference index | 4 | Strong | Path identity by design |
 | Assets | Import mesh/texture/audio | 3 | Usable | ASCII FBX only; no skins |
 | Assets | DDC + auto-reimport | 2 | Functional but incomplete | Manual reimport; watcher off |

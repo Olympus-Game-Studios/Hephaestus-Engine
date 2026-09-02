@@ -26,6 +26,7 @@
 // Forward declarations
 class Entity;
 class Scene;
+namespace Hephaestus { class InputSystem; }
 struct GLFWwindow;
 struct LuaScriptComponent;
 struct TransformComponent;
@@ -74,45 +75,6 @@ struct PhysicsBinding {
     std::function<bool(uint32_t entityId)> isGrounded;
     std::function<bool(uint32_t entityId, float wishX, float wishZ, float speed)> move;
     std::function<bool(uint32_t entityId, float impulse)> jump;
-};
-
-/**
- * Platform-independent input state that the host (Qt editor, etc.) can populate
- * each frame so Lua scripts receive correct Input.* values even without GLFW.
- */
-struct RuntimeInputState {
-    /// Bitfield indexed by GLFW key codes (0..GLFW_KEY_LAST).
-    /// true = pressed this frame.
-    static constexpr int kMaxKeys = 512;
-    bool keys[kMaxKeys] = {};
-
-    /// Mouse buttons indexed by GLFW mouse button codes (0..7).
-    static constexpr int kMaxMouseButtons = 8;
-    bool mouseButtons[kMaxMouseButtons] = {};
-
-    /// Cursor position in viewport pixels.
-    double mouseX = 0.0;
-    double mouseY = 0.0;
-
-    /// Mouse movement delta (pixels) since last frame.
-    double mouseDeltaX = 0.0;
-    double mouseDeltaY = 0.0;
-
-    /// Cursor mode requested by Lua scripts.
-    /// 0 = normal, 1 = disabled (captured + hidden + infinite movement)
-    int cursorModeRequest = 0;
-
-    /// Set to true each frame the host has populated these fields.
-    bool valid = false;
-
-    void Reset() {
-        for (int i = 0; i < kMaxKeys; ++i) keys[i] = false;
-        for (int i = 0; i < kMaxMouseButtons; ++i) mouseButtons[i] = false;
-        mouseX = mouseY = 0.0;
-        mouseDeltaX = mouseDeltaY = 0.0;
-        cursorModeRequest = 0;
-        valid = false;
-    }
 };
 
 /**
@@ -212,12 +174,9 @@ public:
      */
     void SetPhysicsBinding(PhysicsBinding binding);
 
-    /**
-     * Provide a platform-independent input state for environments without GLFW.
-     * The host must call this each frame BEFORE Update() to keep keys fresh.
-     */
-    void SetRuntimeInputState(const RuntimeInputState& state);
-    RuntimeInputState& GetRuntimeInputState() { return m_RuntimeInput; }
+    /// Provide the shared input system populated by the current host.
+    void SetInputSystem(Hephaestus::InputSystem* inputSystem);
+    Hephaestus::InputSystem* GetInputSystem() const { return m_InputSystem; }
 
     using QuitRequestCallback = std::function<void()>;
     void SetQuitRequestCallback(QuitRequestCallback cb) { m_QuitRequestCallback = std::move(cb); }
@@ -241,15 +200,13 @@ private:
     std::filesystem::path m_ProjectRoot;
     CameraBinding m_CameraBinding{};
     PhysicsBinding m_PhysicsBinding{};
-    RuntimeInputState m_RuntimeInput{};
+    Hephaestus::InputSystem* m_InputSystem = nullptr;
+    std::unordered_set<std::string> m_MissingInputNames;
     QuitRequestCallback m_QuitRequestCallback;
     AudioEngine* m_AudioEngine = nullptr;
     Hephaestus::HephaestusUI::UISystem* m_UISystem = nullptr;
     Hephaestus::HephaestusUI::UIContext* m_UIContext = nullptr;
     Hephaestus::HephaestusUI::UIRenderer* m_UIRenderer = nullptr;
-    double m_LastMouseX = 0.0;
-    double m_LastMouseY = 0.0;
-    bool m_HasLastMousePos = false;
     int m_CurrentCursorMode = 0; // 0=normal, 1=disabled
 
     struct ScriptInstance {
@@ -387,6 +344,12 @@ private:
     static int Lua_Input_isMouseButtonPressed(lua_State* L);
     static int Lua_Input_getMousePosition(lua_State* L);
     static int Lua_Input_getMouseDelta(lua_State* L);
+    static int Lua_Input_getScrollDelta(lua_State* L);
+    static int Lua_Input_isActionDown(lua_State* L);
+    static int Lua_Input_isActionPressed(lua_State* L);
+    static int Lua_Input_isActionReleased(lua_State* L);
+    static int Lua_Input_getAxis(lua_State* L);
+    static int Lua_Input_isGamepadConnected(lua_State* L);
     static int Lua_Input_setCursorMode(lua_State* L);
 
     static int Lua_Time_deltaTime(lua_State* L);

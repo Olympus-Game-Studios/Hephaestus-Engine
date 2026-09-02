@@ -111,6 +111,9 @@ AssetReferenceFieldKind FieldKindFromKey(const std::string& key) {
     if (key == "lastScene") {
         return AssetReferenceFieldKind::LastScene;
     }
+    if (key == "defaultInputProfile") {
+        return AssetReferenceFieldKind::DefaultInputProfile;
+    }
     return AssetReferenceFieldKind::Unknown;
 }
 
@@ -154,7 +157,8 @@ bool AllowKeyForExtension(const std::string& ext, const std::string& key) {
     }
     if (ext == ".heproject" || ext == ".json") {
         return kind == AssetReferenceFieldKind::DefaultScene ||
-               kind == AssetReferenceFieldKind::LastScene;
+               kind == AssetReferenceFieldKind::LastScene ||
+               kind == AssetReferenceFieldKind::DefaultInputProfile;
     }
     return false;
 }
@@ -518,6 +522,8 @@ const char* ToString(AssetReferenceFieldKind kind) {
         return "DefaultScene";
     case AssetReferenceFieldKind::LastScene:
         return "LastScene";
+    case AssetReferenceFieldKind::DefaultInputProfile:
+        return "DefaultInputProfile";
     case AssetReferenceFieldKind::NestedAssetPath:
         return "NestedAssetPath";
     case AssetReferenceFieldKind::Unknown:

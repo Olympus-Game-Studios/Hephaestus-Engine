@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-09-02: Stage 7B1 gameplay input foundation adds shared action/axis state, validated `.hpinput` v1 profiles, Lua edge/axis APIs, Qt Play keyboard/mouse adaptation, packaged GLFW gamepad polling, Project Settings mapping authoring, seeded project defaults, packaging support, and focused tests.
 - 2026-09-02: Follow-up issue drafts define packaged HephaestusUI presentation and Play Mode/runtime camera-policy parity outside Stage 7A1.
 - 2026-09-02: Repository-wide capability and maturity audit under `docs/audit/` (index, capability matrix, roadmap, architecture risks, documentation gaps, genre readiness, and per-subsystem reports). Documentation only; no engine behaviour changes.
 - 2026-09-02: Stage 6C/D shipping polish adds named file-count package progress, explicit confirmed package cleanup, CLI `--clean-output`, and locked-output retry or alternate-output actions.
@@ -62,6 +63,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-09-02: Project Settings Apply now refreshes the editor's build-settings cache, and input-profile references participate in asset dependency tracking and safe path rewrites.
 - 2026-09-02: Packaged runtime resize now preserves configured VSync and routes swapchain recreation through the shared renderer lifecycle.
 - 2026-09-02: Qt Build Project now persists VSync defaults and reports unused assets as non-destructive dynamic-loading advisories.
 - 2026-09-02: Runtime discovery now distinguishes source checkouts from distributed Editors, keeps artifacts from one deterministic runtime root, reports Development-to-Release fallback, skips compiler probing when a prebuilt player exists, and detects locked package binaries before staging.

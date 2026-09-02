@@ -81,14 +81,16 @@ Urgency: **Now** / **Near** / **Later**. Likelihood and impact are qualitative.
 **Evidence**
 
 - `PlayModeManager` snapshots scenes for Qt play.
-- Qt-specific `RuntimeInputState`, `RuntimeUIOverlayWidget`, cursor capture workarounds (changelog FPS mouse-look vs HUD).
+- Shared `InputSystem` now removes the former Qt-only input-state shim, but
+  `RuntimeUIOverlayWidget` and Qt cursor-capture workarounds remain host-specific.
 - `EditorOnlyComponent`, hide/isolate/lock sidecars.
 
 **Impact:** Play-in-editor bugs that do not reproduce in `HephaestusGame` and vice versa.
 
 **Likelihood:** Already documented in changelog (HUD stacking, mouse delta).
 
-**Recommended response:** Shared host interface for input, UI overlay, and Lua binding setup used by both Qt and GameMain.
+**Recommended response:** Keep the shared input core; extend the same host-adapter
+boundary to UI overlay and Lua binding setup used by both Qt and GameMain.
 
 **Urgency:** Near
 

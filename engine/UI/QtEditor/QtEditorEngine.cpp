@@ -37,14 +37,16 @@
 #include "../HephaestusUI/UIRenderer.h"
 
 #include <QCoreApplication>
-#include <GLFW/glfw3.h>  // For GLFW key code constants used by RuntimeInputState
+#include <GLFW/glfw3.h>  // Shared physical key/button numbering
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <nlohmann/json.hpp>
 
 #include <iostream>
 #include <vector>
 #include <stdexcept>
 #include <filesystem>
+#include <fstream>
 #include <cmath>
 #include <algorithm>
 #include <string>
@@ -713,7 +715,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         else if (event.button == 2) m_inputState.rmbDown = true;  // Qt::RightButton
         else if (event.button == 4) m_inputState.mmbDown = true;  // Qt::MiddleButton
         
-        // Track for Lua RuntimeInputState
+        // Track for shared gameplay input
         {
             int glfwBtn = QtMouseButtonToGLFW(event.button);
             if (glfwBtn >= 0 && glfwBtn < kMaxTrackedMouse) {
@@ -903,7 +905,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             runtimeUIState->context->QueueMouseRelease(uiPos, event.button);
         }
         
-        // Track for Lua RuntimeInputState (right/middle release)
+        // Track for shared gameplay input (right/middle release)
         if (event.button != 1) {
             int glfwBtn = QtMouseButtonToGLFW(event.button);
             if (glfwBtn >= 0 && glfwBtn < kMaxTrackedMouse)
@@ -1186,6 +1188,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         
     case InputEvent::Type::MouseWheel:
         m_inputState.wheelDelta = event.wheelDelta;
+        m_runtimeScrollDeltaY += static_cast<double>(event.wheelDelta);
         if (!isRuntimeUICursorMode()) {
             bool rmbHeld = (event.button & 2) != 0 || m_inputState.rmbDown;
             if (rmbHeld && m_cameraController.IsFlyModeActive()) {
@@ -1467,7 +1470,7 @@ void QtEditorEngine::updateKeyState(int key, bool pressed)
     default: break;
     }
 
-    // Also track for Lua RuntimeInputState (all keys, GLFW codes)
+    // Also track for shared gameplay input (all keys, GLFW codes)
     int glfwKey = QtKeyToGLFW(key);
     if (glfwKey >= 0 && glfwKey < kMaxTrackedKeys) {
         m_runtimeKeys[glfwKey] = pressed;
@@ -1511,29 +1514,24 @@ void QtEditorEngine::resetInputState()
     for (int i = 0; i < kMaxTrackedMouse; ++i) m_runtimeMouseButtons[i] = false;
     m_runtimeMouseDeltaX = 0.0;
     m_runtimeMouseDeltaY = 0.0;
+    m_runtimeScrollDeltaY = 0.0;
+    m_gameplayInput.Reset();
 }
 
-void QtEditorEngine::populateRuntimeInputState()
+void QtEditorEngine::populateGameplayInput()
 {
-    if (!m_luaScriptEngine) return;
+    m_gameplayInput.BeginFrame();
 
-    RuntimeInputState& ris = m_luaScriptEngine->GetRuntimeInputState();
-    ris.valid = true;
-
-    // Copy key states
-    static_assert(kMaxTrackedKeys <= RuntimeInputState::kMaxKeys, "key array size mismatch");
     for (int i = 0; i < kMaxTrackedKeys; ++i) {
-        ris.keys[i] = m_runtimeKeys[i];
+        m_gameplayInput.SetKeyState(i, m_runtimeKeys[i]);
     }
 
-    // Copy mouse button states
-    for (int i = 0; i < kMaxTrackedMouse && i < RuntimeInputState::kMaxMouseButtons; ++i) {
-        ris.mouseButtons[i] = m_runtimeMouseButtons[i];
+    for (int i = 0; i < kMaxTrackedMouse; ++i) {
+        m_gameplayInput.SetMouseButtonState(i, m_runtimeMouseButtons[i]);
     }
 
-    // Copy mouse position and consume all deltas accumulated since the last
-    // script tick. Comparing frame-to-frame positions loses motion when Qt
-    // emits several captured/warp events between render ticks.
+    // Consume all deltas accumulated since the last script tick. Comparing
+    // frame-to-frame positions loses captured/warp events between render ticks.
     if (m_viewport && m_viewport->IsCursorCaptured()) {
         float capturedDeltaX = 0.0f;
         float capturedDeltaY = 0.0f;
@@ -1544,12 +1542,15 @@ void QtEditorEngine::populateRuntimeInputState()
             m_runtimeMouseY = static_cast<double>(m_viewport->GetVirtualMouseY());
         }
     }
-    ris.mouseX = m_runtimeMouseX;
-    ris.mouseY = m_runtimeMouseY;
-    ris.mouseDeltaX = m_runtimeMouseDeltaX;
-    ris.mouseDeltaY = m_runtimeMouseDeltaY;
+    m_gameplayInput.SetMousePosition(m_runtimeMouseX, m_runtimeMouseY);
+    m_gameplayInput.SetMouseDelta(m_runtimeMouseDeltaX, m_runtimeMouseDeltaY);
+    m_gameplayInput.AddScrollDelta(0.0, m_runtimeScrollDeltaY);
+    // GLFW joystick polling is intentionally confined to the GLFW runtime.
+    // Qt Play still receives the same keyboard/mouse action map.
+    m_gameplayInput.SetGamepadConnected(false);
     m_runtimeMouseDeltaX = 0.0;
     m_runtimeMouseDeltaY = 0.0;
+    m_runtimeScrollDeltaY = 0.0;
 
     syncViewportCursorCapture();
 }
@@ -1573,8 +1574,7 @@ void QtEditorEngine::syncViewportCursorCapture()
         } else if (gameCursor) {
             // FPS / game look: capture whenever UI reports Game mode.
             wantCapture = true;
-        } else if (m_luaScriptEngine &&
-                   m_luaScriptEngine->GetRuntimeInputState().cursorModeRequest == 1) {
+        } else if (m_gameplayInput.GetCursorModeRequest() == 1) {
             wantCapture = true;
         }
     }
@@ -1590,13 +1590,8 @@ void QtEditorEngine::syncViewportCursorCapture()
             m_lastMouseX = static_cast<float>(m_runtimeMouseX);
             m_lastMouseY = static_cast<float>(m_runtimeMouseY);
             m_hasLastMousePos = true;
-            if (m_luaScriptEngine) {
-                RuntimeInputState& ris = m_luaScriptEngine->GetRuntimeInputState();
-                ris.mouseX = m_runtimeMouseX;
-                ris.mouseY = m_runtimeMouseY;
-                ris.mouseDeltaX = 0.0;
-                ris.mouseDeltaY = 0.0;
-            }
+            m_gameplayInput.SetMousePosition(m_runtimeMouseX, m_runtimeMouseY);
+            m_gameplayInput.SetMouseDelta(0.0, 0.0);
         }
     } else {
         m_viewport->ReleaseCursor();
@@ -1825,7 +1820,7 @@ void QtEditorEngine::onTick()
     const bool isPlayOrPause = !m_playModeManager.IsEditor();
 
     if (isPlaying) {
-        populateRuntimeInputState();
+        populateGameplayInput();
         if (m_audioEngine && m_editorContext.HasActiveScene()) {
             Scene* activeScene = m_editorContext.GetActiveScene();
             UpdateAudioSourcesForScene(*activeScene, *m_audioEngine);
@@ -2313,6 +2308,7 @@ void QtEditorEngine::SetProjectRoot(const std::string& projectRoot)
     std::cout << "[QtEditorEngine] Project root set to: " << m_projectRoot << "\n";
     std::cout << "[QtEditorEngine] Asset root set to: " << m_assetRoot << "\n";
 
+    loadProjectInputMap();
     PrefabOverrideSystem::SetProjectRoot(std::filesystem::path(m_projectRoot));
 
     // Keep Lua search paths in sync so relative script paths keep resolving.
@@ -2321,6 +2317,45 @@ void QtEditorEngine::SetProjectRoot(const std::string& projectRoot)
     }
     if (m_audioEngine) {
         m_audioEngine->SetProjectRoot(std::filesystem::path(m_projectRoot));
+    }
+}
+
+void QtEditorEngine::loadProjectInputMap()
+{
+    if (m_projectRoot.empty()) {
+        m_gameplayInput.SetMap(InputMap::CreateDefault());
+        return;
+    }
+
+    namespace fs = std::filesystem;
+    std::string profile = "assets/input/Default.hpinput";
+    const fs::path settingsPath =
+        fs::path(m_projectRoot) / ".hephaestus" / "project_settings.json";
+    std::ifstream input(settingsPath, std::ios::binary);
+    if (input) {
+        try {
+            nlohmann::json settings;
+            input >> settings;
+            profile = settings.value("input", nlohmann::json::object())
+                          .value("defaultInputProfile", profile);
+        } catch (const std::exception& error) {
+            std::cerr << "[QtEditorEngine] Could not read input profile setting: "
+                      << error.what() << '\n';
+        }
+    }
+    if (profile.empty() || profile == "Default") {
+        profile = "assets/input/Default.hpinput";
+    }
+
+    fs::path profilePath(profile);
+    if (profilePath.is_relative()) {
+        profilePath = fs::path(m_projectRoot) / profilePath;
+    }
+    std::string error;
+    if (!m_gameplayInput.LoadMap(profilePath, error)) {
+        m_gameplayInput.SetMap(InputMap::CreateDefault());
+        std::cerr << "[QtEditorEngine] " << error
+                  << "; using built-in default input map\n";
     }
 }
 
@@ -2843,6 +2878,9 @@ void QtEditorEngine::StartPlayMode()
     m_editorGizmoVisibleBeforePlay = m_editorContext.GetViewportSettings().showGizmo;
     m_editorContext.GetViewportSettings().showGizmo = false;
 
+    loadProjectInputMap();
+    m_gameplayInput.Reset();
+
     // ── Initialize Lua script engine if not yet created ────────────────────
     if (!m_luaScriptEngine) {
         m_luaScriptEngine = std::make_unique<LuaScriptEngine>();
@@ -2856,6 +2894,8 @@ void QtEditorEngine::StartPlayMode()
         m_luaScriptEngine->SetProjectRoot(projectRootPath);
         m_luaScriptEngine->SetAudioEngine(m_audioEngine.get());
     }
+    m_luaScriptEngine->SetInputSystem(&m_gameplayInput);
+    populateGameplayInput();
 
     // Rebind every play session. Initialize() resets simulation state and the
     // binding must always target this editor's current PlayModeManager.

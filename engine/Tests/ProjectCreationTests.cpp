@@ -63,11 +63,14 @@ bool TestCreateBlankProjectLayout()
     pass &= Check(DirExists(project, QStringLiteral("assets/materials")), "assets/materials/");
     pass &= Check(DirExists(project, QStringLiteral("assets/prefabs")), "assets/prefabs/");
     pass &= Check(DirExists(project, QStringLiteral("assets/ui")), "assets/ui/");
+    pass &= Check(DirExists(project, QStringLiteral("assets/input")), "assets/input/");
     pass &= Check(FileExists(project, QStringLiteral("project.heproject")), "project.heproject");
     pass &= Check(FileExists(project, QStringLiteral(".hephaestus/project.heproject")),
                   ".hephaestus/project.heproject");
     pass &= Check(FileExists(project, QStringLiteral("assets/scenes/default.hpscene")),
                   "assets/scenes/default.hpscene");
+    pass &= Check(FileExists(project, QStringLiteral("assets/input/Default.hpinput")),
+                  "assets/input/Default.hpinput");
     pass &= Check(result.defaultSceneRelativePath == QStringLiteral("assets/scenes/default.hpscene"),
                   "defaultSceneRelativePath");
 

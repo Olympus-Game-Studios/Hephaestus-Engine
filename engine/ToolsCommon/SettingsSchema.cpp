@@ -137,7 +137,7 @@ void SettingsSchemaRegistry::RegisterBuiltins()
             true),
 
         MakeDef("project.input.defaultInputProfile", "input", "Input", "defaultInputProfile", "Default Input Profile", SettingControlType::String,
-            QStringLiteral("Default")),
+            QStringLiteral("assets/input/Default.hpinput")),
         MakeDef("project.input.mouseSensitivityDefault", "input", "Input", "mouseSensitivityDefault", "Mouse Sensitivity Default", SettingControlType::Float,
             1.0, 0.1, 10.0),
 

@@ -25,6 +25,7 @@
 #include "../Scene/PrefabOverrideSystem.h"
 #include "../Scene/PrefabComponentIO.h"
 #include "../Core/Math.h"
+#include "../Input/InputSystem.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -74,66 +75,9 @@ namespace {
     }
 
     int TranslateKey(const std::string& input) {
-        if (input.empty()) {
-            return GLFW_KEY_UNKNOWN;
-        }
-
-        if (input.size() == 1) {
-            unsigned char ch = static_cast<unsigned char>(input[0]);
-            if (std::isalpha(ch)) {
-                return GLFW_KEY_A + (static_cast<int>(std::toupper(ch)) - 'A');
-            }
-            if (std::isdigit(ch)) {
-                return GLFW_KEY_0 + (static_cast<int>(ch) - '0');
-            }
-        }
-
-        static const std::unordered_map<std::string, int> kKeyTable = {
-            {"SPACE", GLFW_KEY_SPACE},
-            {"ENTER", GLFW_KEY_ENTER},
-            {"RETURN", GLFW_KEY_ENTER},
-            {"ESC", GLFW_KEY_ESCAPE},
-            {"ESCAPE", GLFW_KEY_ESCAPE},
-            {"TAB", GLFW_KEY_TAB},
-            {"BACKSPACE", GLFW_KEY_BACKSPACE},
-            {"LEFT", GLFW_KEY_LEFT},
-            {"RIGHT", GLFW_KEY_RIGHT},
-            {"UP", GLFW_KEY_UP},
-            {"DOWN", GLFW_KEY_DOWN},
-            {"SHIFT", GLFW_KEY_LEFT_SHIFT},
-            {"LEFT_SHIFT", GLFW_KEY_LEFT_SHIFT},
-            {"RIGHT_SHIFT", GLFW_KEY_RIGHT_SHIFT},
-            {"CTRL", GLFW_KEY_LEFT_CONTROL},
-            {"CONTROL", GLFW_KEY_LEFT_CONTROL},
-            {"LEFT_CTRL", GLFW_KEY_LEFT_CONTROL},
-            {"RIGHT_CTRL", GLFW_KEY_RIGHT_CONTROL},
-            {"ALT", GLFW_KEY_LEFT_ALT},
-            {"LEFT_ALT", GLFW_KEY_LEFT_ALT},
-            {"RIGHT_ALT", GLFW_KEY_RIGHT_ALT},
-            {"SUPER", GLFW_KEY_LEFT_SUPER},
-            {"LMB", GLFW_MOUSE_BUTTON_LEFT},
-            {"RMB", GLFW_MOUSE_BUTTON_RIGHT},
-            {"MMB", GLFW_MOUSE_BUTTON_MIDDLE},
-            {"F1", GLFW_KEY_F1},
-            {"F2", GLFW_KEY_F2},
-            {"F3", GLFW_KEY_F3},
-            {"F4", GLFW_KEY_F4},
-            {"F5", GLFW_KEY_F5},
-            {"F6", GLFW_KEY_F6},
-            {"F7", GLFW_KEY_F7},
-            {"F8", GLFW_KEY_F8},
-            {"F9", GLFW_KEY_F9},
-            {"F10", GLFW_KEY_F10},
-            {"F11", GLFW_KEY_F11},
-            {"F12", GLFW_KEY_F12}
-        };
-
-        std::string upper = ToUpper(input);
-        auto it = kKeyTable.find(upper);
-        if (it != kKeyTable.end()) {
-            return it->second;
-        }
-        return GLFW_KEY_UNKNOWN;
+        const int key = Hephaestus::ResolveInputControl(
+            Hephaestus::InputBindingType::Keyboard, input);
+        return key >= 0 ? key : GLFW_KEY_UNKNOWN;
     }
 
     int TranslateMouseButton(lua_State* L, int index) {
@@ -422,13 +366,14 @@ void LuaScriptEngine::OnSimulationStopped() {
 
     // Restore cursor mode to normal
     if (m_CurrentCursorMode != 0) {
-        m_RuntimeInput.cursorModeRequest = 0;
+        if (m_InputSystem) {
+            m_InputSystem->SetCursorModeRequest(0);
+        }
         if (m_Window) {
             glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             glfwSetInputMode(m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
         }
         m_CurrentCursorMode = 0;
-        m_HasLastMousePos = false;
     }
 
     if (m_CameraBinding.setActive) {
@@ -496,6 +441,8 @@ void LuaScriptEngine::Shutdown() {
 #endif
     m_Scene = nullptr;
     m_Window = nullptr;
+    m_InputSystem = nullptr;
+    m_MissingInputNames.clear();
     m_ActiveUpdateOrder.clear();
 }
 
@@ -507,8 +454,9 @@ void LuaScriptEngine::SetPhysicsBinding(PhysicsBinding binding) {
     m_PhysicsBinding = std::move(binding);
 }
 
-void LuaScriptEngine::SetRuntimeInputState(const RuntimeInputState& state) {
-    m_RuntimeInput = state;
+void LuaScriptEngine::SetInputSystem(Hephaestus::InputSystem* inputSystem) {
+    m_InputSystem = inputSystem;
+    m_MissingInputNames.clear();
 }
 
 void LuaScriptEngine::SetAudioEngine(AudioEngine* audioEngine) {
@@ -695,6 +643,24 @@ void LuaScriptEngine::RegisterInputBindings() {
 
     lua_pushcfunction(m_State, Lua_Input_getMouseDelta);
     lua_setfield(m_State, -2, "getMouseDelta");
+
+    lua_pushcfunction(m_State, Lua_Input_getScrollDelta);
+    lua_setfield(m_State, -2, "getScrollDelta");
+
+    lua_pushcfunction(m_State, Lua_Input_isActionDown);
+    lua_setfield(m_State, -2, "isActionDown");
+
+    lua_pushcfunction(m_State, Lua_Input_isActionPressed);
+    lua_setfield(m_State, -2, "isActionPressed");
+
+    lua_pushcfunction(m_State, Lua_Input_isActionReleased);
+    lua_setfield(m_State, -2, "isActionReleased");
+
+    lua_pushcfunction(m_State, Lua_Input_getAxis);
+    lua_setfield(m_State, -2, "getAxis");
+
+    lua_pushcfunction(m_State, Lua_Input_isGamepadConnected);
+    lua_setfield(m_State, -2, "isGamepadConnected");
 
     lua_pushcfunction(m_State, Lua_Input_setCursorMode);
     lua_setfield(m_State, -2, "setCursorMode");
@@ -1926,7 +1892,7 @@ int LuaScriptEngine::Lua_Entity_setName(lua_State* L) {
 int LuaScriptEngine::Lua_Input_isKeyPressed(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine) {
+    if (!engine || !engine->m_InputSystem) {
         lua_pushboolean(L, false);
         return 1;
     }
@@ -1944,21 +1910,8 @@ int LuaScriptEngine::Lua_Input_isKeyPressed(lua_State* L) {
         return 1;
     }
 
-    // Prefer RuntimeInputState (works in both GLFW and Qt paths)
-    if (engine->m_RuntimeInput.valid) {
-        bool pressed = (key >= 0 && key < RuntimeInputState::kMaxKeys)
-                       ? engine->m_RuntimeInput.keys[key] : false;
-        lua_pushboolean(L, pressed);
-        return 1;
-    }
-
-    // Fallback: GLFW direct query
-    if (engine->m_Window) {
-        int state = glfwGetKey(engine->m_Window, key);
-        lua_pushboolean(L, state == GLFW_PRESS || state == GLFW_REPEAT);
-    } else {
-        lua_pushboolean(L, false);
-    }
+    // Compatibility API: despite its name, isKeyPressed retains held semantics.
+    lua_pushboolean(L, engine->m_InputSystem->IsKeyDown(key));
     return 1;
 #else
     (void)L;
@@ -1969,7 +1922,7 @@ int LuaScriptEngine::Lua_Input_isKeyPressed(lua_State* L) {
 int LuaScriptEngine::Lua_Input_isMouseButtonPressed(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine) {
+    if (!engine || !engine->m_InputSystem) {
         lua_pushboolean(L, false);
         return 1;
     }
@@ -1980,21 +1933,7 @@ int LuaScriptEngine::Lua_Input_isMouseButtonPressed(lua_State* L) {
         return 1;
     }
 
-    // Prefer RuntimeInputState
-    if (engine->m_RuntimeInput.valid) {
-        bool pressed = (button >= 0 && button < RuntimeInputState::kMaxMouseButtons)
-                       ? engine->m_RuntimeInput.mouseButtons[button] : false;
-        lua_pushboolean(L, pressed);
-        return 1;
-    }
-
-    // Fallback: GLFW direct query
-    if (engine->m_Window) {
-        int state = glfwGetMouseButton(engine->m_Window, button);
-        lua_pushboolean(L, state == GLFW_PRESS);
-    } else {
-        lua_pushboolean(L, false);
-    }
+    lua_pushboolean(L, engine->m_InputSystem->IsMouseButtonDown(button));
     return 1;
 #else
     (void)L;
@@ -2005,29 +1944,15 @@ int LuaScriptEngine::Lua_Input_isMouseButtonPressed(lua_State* L) {
 int LuaScriptEngine::Lua_Input_getMousePosition(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine) {
-        lua_pushnil(L);
-        return 1;
-    }
-
-    double x = 0.0;
-    double y = 0.0;
-
-    // Prefer RuntimeInputState
-    if (engine->m_RuntimeInput.valid) {
-        x = engine->m_RuntimeInput.mouseX;
-        y = engine->m_RuntimeInput.mouseY;
-    } else if (engine->m_Window) {
-        glfwGetCursorPos(engine->m_Window, &x, &y);
-    } else {
+    if (!engine || !engine->m_InputSystem) {
         lua_pushnil(L);
         return 1;
     }
 
     lua_newtable(L);
-    lua_pushnumber(L, x);
+    lua_pushnumber(L, engine->m_InputSystem->GetMouseX());
     lua_setfield(L, -2, "x");
-    lua_pushnumber(L, y);
+    lua_pushnumber(L, engine->m_InputSystem->GetMouseY());
     lua_setfield(L, -2, "y");
     return 1;
 #else
@@ -2039,40 +1964,110 @@ int LuaScriptEngine::Lua_Input_getMousePosition(lua_State* L) {
 int LuaScriptEngine::Lua_Input_getMouseDelta(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine) {
-        lua_newtable(L);
-        lua_pushnumber(L, 0.0);
-        lua_setfield(L, -2, "x");
-        lua_pushnumber(L, 0.0);
-        lua_setfield(L, -2, "y");
-        return 1;
-    }
-
-    double dx = 0.0;
-    double dy = 0.0;
-
-    // RuntimeInputState path (Qt editor): host provides deltas
-    if (engine->m_RuntimeInput.valid) {
-        dx = engine->m_RuntimeInput.mouseDeltaX;
-        dy = engine->m_RuntimeInput.mouseDeltaY;
-    } else if (engine->m_Window) {
-        // GLFW path: compute deltas from absolute position
-        double mx = 0.0, my = 0.0;
-        glfwGetCursorPos(engine->m_Window, &mx, &my);
-        if (engine->m_HasLastMousePos) {
-            dx = mx - engine->m_LastMouseX;
-            dy = my - engine->m_LastMouseY;
-        }
-        engine->m_LastMouseX = mx;
-        engine->m_LastMouseY = my;
-        engine->m_HasLastMousePos = true;
-    }
-
     lua_newtable(L);
-    lua_pushnumber(L, dx);
+    lua_pushnumber(L, engine && engine->m_InputSystem
+        ? engine->m_InputSystem->GetMouseDeltaX() : 0.0);
     lua_setfield(L, -2, "x");
-    lua_pushnumber(L, dy);
+    lua_pushnumber(L, engine && engine->m_InputSystem
+        ? engine->m_InputSystem->GetMouseDeltaY() : 0.0);
     lua_setfield(L, -2, "y");
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Input_getScrollDelta(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_newtable(L);
+    lua_pushnumber(L, engine && engine->m_InputSystem
+        ? engine->m_InputSystem->GetScrollDeltaX() : 0.0);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, engine && engine->m_InputSystem
+        ? engine->m_InputSystem->GetScrollDeltaY() : 0.0);
+    lua_setfield(L, -2, "y");
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Input_isActionDown(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const char* name = luaL_checkstring(L, 1);
+    const bool known = engine && engine->m_InputSystem &&
+        engine->m_InputSystem->HasAction(name ? name : "");
+    if (engine && !known && engine->m_MissingInputNames.insert(name ? name : "").second) {
+        std::cerr << "[Lua] Unknown input action: " << (name ? name : "") << '\n';
+    }
+    lua_pushboolean(L, known && engine->m_InputSystem->IsActionDown(name));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Input_isActionPressed(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const char* name = luaL_checkstring(L, 1);
+    const bool known = engine && engine->m_InputSystem &&
+        engine->m_InputSystem->HasAction(name ? name : "");
+    if (engine && !known && engine->m_MissingInputNames.insert(name ? name : "").second) {
+        std::cerr << "[Lua] Unknown input action: " << (name ? name : "") << '\n';
+    }
+    lua_pushboolean(L, known && engine->m_InputSystem->IsActionPressed(name));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Input_isActionReleased(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const char* name = luaL_checkstring(L, 1);
+    const bool known = engine && engine->m_InputSystem &&
+        engine->m_InputSystem->HasAction(name ? name : "");
+    if (engine && !known && engine->m_MissingInputNames.insert(name ? name : "").second) {
+        std::cerr << "[Lua] Unknown input action: " << (name ? name : "") << '\n';
+    }
+    lua_pushboolean(L, known && engine->m_InputSystem->IsActionReleased(name));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Input_getAxis(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const char* name = luaL_checkstring(L, 1);
+    const bool known = engine && engine->m_InputSystem &&
+        engine->m_InputSystem->HasAxis(name ? name : "");
+    if (engine && !known && engine->m_MissingInputNames.insert(name ? name : "").second) {
+        std::cerr << "[Lua] Unknown input axis: " << (name ? name : "") << '\n';
+    }
+    lua_pushnumber(L, known ? engine->m_InputSystem->GetAxis(name) : 0.0f);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Input_isGamepadConnected(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushboolean(L, engine && engine->m_InputSystem &&
+        engine->m_InputSystem->IsGamepadConnected());
     return 1;
 #else
     (void)L;
@@ -2102,8 +2097,10 @@ int LuaScriptEngine::Lua_Input_setCursorMode(lua_State* L) {
     }
 
     // Always store the request so the host picks it up on the next tick
-    // (covers calls made during onAwake before the first populateRuntimeInputState).
-    engine->m_RuntimeInput.cursorModeRequest = newMode;
+    // (covers calls made during onAwake before the first host input tick).
+    if (engine->m_InputSystem) {
+        engine->m_InputSystem->SetCursorModeRequest(newMode);
+    }
 
     // GLFW runtime: apply immediately since there is no host tick to consume the request
     if (engine->m_Window) {
@@ -2116,7 +2113,6 @@ int LuaScriptEngine::Lua_Input_setCursorMode(lua_State* L) {
             glfwSetInputMode(engine->m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
         }
 
-        engine->m_HasLastMousePos = false;
     }
 
     engine->m_CurrentCursorMode = newMode;
@@ -4758,9 +4754,11 @@ int LuaScriptEngine::Lua_UI_setCursorMode(lua_State* L) {
     }
 
     // Always store the request so the host picks it up on the next tick
-    // (covers calls made during onAwake before the first populateRuntimeInputState).
+    // (covers calls made during onAwake before the first host input tick).
     const int legacyMode = (mode == "ui") ? 0 : 1;
-    engine->m_RuntimeInput.cursorModeRequest = legacyMode;
+    if (engine->m_InputSystem) {
+        engine->m_InputSystem->SetCursorModeRequest(legacyMode);
+    }
 
     // GLFW runtime: apply immediately since there is no host tick to consume the request
     if (engine->m_Window) {
@@ -4771,7 +4769,6 @@ int LuaScriptEngine::Lua_UI_setCursorMode(lua_State* L) {
         } else if (legacyMode == 0) {
             glfwSetInputMode(engine->m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
         }
-        engine->m_HasLastMousePos = false;
     }
     engine->m_CurrentCursorMode = legacyMode;
 

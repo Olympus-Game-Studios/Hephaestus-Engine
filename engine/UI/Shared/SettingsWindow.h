@@ -19,6 +19,8 @@ class QWidget;
 
 namespace Hephaestus::UI {
 
+class InputMapEditorWidget;
+
 class SettingsWindow : public QDialog {
     Q_OBJECT
 
@@ -28,6 +30,9 @@ public:
     void ConfigureContext(Hephaestus::EngineContext context,
                           bool hasOpenProject,
                           const QString& projectRoot = QString());
+
+signals:
+    void settingsApplied();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -96,6 +101,8 @@ private:
 
     TabUi m_engineTab;
     TabUi m_projectTab;
+    InputMapEditorWidget* m_inputMapEditor = nullptr;
+    QLineEdit* m_inputProfileEdit = nullptr;
 };
 
 } // namespace Hephaestus::UI

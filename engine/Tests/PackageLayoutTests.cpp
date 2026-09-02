@@ -62,6 +62,8 @@ int main() {
     Write(project / "assets" / "prefabs" / "Ship.hpprefab", "{}");
     Write(project / "assets" / "ui" / "Hud.hui", "{}");
     Write(project / "assets" / "audio" / "engine.wav", "audio");
+    Write(project / "assets" / "input" / "Default.hpinput",
+          R"({"version":1,"actions":[],"axes":[]})");
     Write(project / "scripts" / "boot.lua", "return true");
     Write(project / ".engine" / "meshes" / "project.mesh", "mesh");
     Write(project / ".engine" / "hdris" / "project.hdr", "project hdri");
@@ -106,6 +108,8 @@ int main() {
                 "HUI documents are packaged");
     ok &= Check(fs::exists(package / "assets" / "audio" / "engine.wav"),
                 "audio is packaged");
+    ok &= Check(fs::exists(package / "assets" / "input" / "Default.hpinput"),
+                "input map is packaged");
     ok &= Check(fs::exists(package / "scripts" / "boot.lua"), "scripts are packaged");
     ok &= Check(fs::exists(package / ".engine" / "meshes" / "builtin.mesh"),
                 "engine meshes are packaged");
@@ -134,6 +138,8 @@ int main() {
                               std::istreambuf_iterator<char>());
         ok &= Check(ini.find("scene = assets/scenes/Main.hpscene") != std::string::npos,
                     "game.ini records the startup scene");
+        ok &= Check(ini.find("input_profile = assets/input/Default.hpinput") != std::string::npos,
+                    "game.ini records the input profile");
         ok &= Check(ini.find("version =") == std::string::npos &&
                     ini.find("company =") == std::string::npos &&
                     ini.find("resizable=") == std::string::npos,

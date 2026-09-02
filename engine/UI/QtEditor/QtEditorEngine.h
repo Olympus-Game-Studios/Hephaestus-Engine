@@ -35,6 +35,7 @@
 #include "../../Core/EditorCameraController.h"
 #include "../../Scene/SceneAuthoring.h"
 #include "../../Core/PlayModeManager.h"
+#include "../../Input/InputSystem.h"
 
 // Forward declarations (avoid including heavy engine headers)
 class VulkanDevice;
@@ -294,7 +295,8 @@ private:
     // Input helper methods
     void updateKeyState(int key, bool pressed);
     void resetInputState();
-    void populateRuntimeInputState();
+    void populateGameplayInput();
+    void loadProjectInputMap();
     void syncViewportCursorCapture();
     void captureGizmoMultiDragWorldStarts(Scene* scene);
     void clearGizmoMultiDragWorldStarts();
@@ -319,6 +321,8 @@ private:
     double m_runtimeMouseY = 0.0;
     double m_runtimeMouseDeltaX = 0.0;
     double m_runtimeMouseDeltaY = 0.0;
+    double m_runtimeScrollDeltaY = 0.0;
+    Hephaestus::InputSystem m_gameplayInput;
 
     // Vulkan resources (owned by main.cpp in legacy mode, but we need our own here)
     VkInstance m_instance = VK_NULL_HANDLE;

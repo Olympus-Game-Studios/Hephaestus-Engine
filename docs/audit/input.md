@@ -1,11 +1,11 @@
 # Input audit
 
-**Overall: 2 / 5 (Raw poll, not an input system)**  
-Runtime 2 · Editor 2 · Lua 2 · Tests 0
+**Overall: 3 / 5 (Action/axis foundation)**
+Runtime 3 · Editor 3 · Lua 3 · Tests 3
 
-Developers talk to **GLFW key names** (and a Qt-filled `RuntimeInputState` in editor play). There is **no** `InputManager`, action map, rebind UI, or engine gamepad API.
-
-GLFW itself supports joysticks/gamepads; **engine code does not call them** (matches only in `extern/glfw`).
+Gameplay reads a shared `InputSystem` populated by either the Qt Play host or GLFW
+runtime. Project-owned `.hpinput` v1 assets define action and one-dimensional axis
+bindings. The Project Settings Input page edits the selected profile.
 
 ---
 
@@ -13,25 +13,31 @@ GLFW itself supports joysticks/gamepads; **engine code does not call them** (mat
 
 - **Exists:** Yes
 - **Maturity:** 2
-- **Lua:** `Input.isKeyPressed`, `isMouseButtonPressed`, `getMousePosition`, `getMouseDelta`, `setCursorMode`
-- **Packaged game:** GLFW window on `LuaScriptEngine`
-- **Editor play:** Host copies keys/mouse/delta into `RuntimeInputState` because the Qt overlay can steal mouse move (changelog FPS look fixes)
-- **Limitation:** Held poll only — no pressed/released edges unless scripts edge-detect
+- **Lua:** action down/pressed/released, axes, raw compatibility polls, position,
+  delta, wheel, and cursor mode
+- **Packaged game:** GLFW host populates the shared input frame before scripts
+- **Editor play:** Qt host populates the same input frame and preserves captured deltas
+- **Compatibility:** legacy `Input.isKeyPressed` intentionally retains held semantics
 
 ---
 
 ## Gamepad / hotplug / vibration / dead zones / multi-controller
 
-- **Exists:** No engine API
-- **Maturity:** 0
+- **Exists:** Player-zero GLFW gamepad in packaged runtime
+- **Maturity:** 2
+- **Supported:** Standard GLFW buttons/axes, disconnect reset, per-binding deadzones
+- **Limitation:** Qt Play gamepad, rebinding capture, vibration, and multi-controller
+  assignment remain follow-ups
 
 ---
 
 ## Action / axis mapping / contexts / rebinding / serialization
 
-- **Exists:** No
-- **Maturity:** 0
-- Cursor **Game vs UI** is the only context (`UI.setCursorMode` / `Input.setCursorMode`)
+- **Exists:** `.hpinput` v1 JSON, actions, 1D axes, multiple scaled bindings,
+  validation, round-trip tests, Project Settings authoring
+- **Maturity:** 3
+- **Contexts:** intentionally absent from v1; add only with a later schema when runtime
+  context behavior is implemented
 
 ---
 
@@ -47,8 +53,9 @@ GLFW itself supports joysticks/gamepads; **engine code does not call them** (mat
 
 ## Lua / settings
 
-- No project input-map asset
-- Settings screens cannot offer rebind without a new system
+- New projects receive `assets/input/Default.hpinput`
+- `project.input.defaultInputProfile` selects the portable profile path
+- Unknown Lua action/axis names return safe defaults and warn once
 
 ---
 
@@ -61,10 +68,13 @@ GLFW itself supports joysticks/gamepads; **engine code does not call them** (mat
 
 ## Verdict
 
-**Usable for WASD + mouse look prototypes. Not a reusable input architecture.**
+**Reusable keyboard/mouse and packaged-gamepad action mapping is available. Contexts,
+runtime rebinding, Qt gamepad parity, and richer axis types remain future work.**
 
 ---
 
 ## Recommended next step
 
-Action/axis assets + GLFW gamepad state + dead zone. Keep Lua `Input.isActionPressed("Jump")`. Rebind UI after HUI sliders/fields. Do not bind gameplay to Qt keys in packaged games.
+Add `.hpinput` v2 contexts when their runtime semantics are implemented, then add
+capture-based rebinding and Qt-native gamepad polling without changing the shared
+`InputSystem`.

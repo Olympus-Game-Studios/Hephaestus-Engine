@@ -208,8 +208,19 @@ Available helpers:
 ### Input
 
 ```lua
-if Input.isKeyPressed("W") then
-    engine_log("W key pressed!")
+local moveForward = Input.getAxis("MoveForward")
+local moveRight = Input.getAxis("MoveRight")
+
+if Input.isActionPressed("Jump") then
+    engine_log("Jump started")
+end
+
+if Input.isActionDown("Sprint") then
+    engine_log("Sprint is held")
+end
+
+if Input.isActionReleased("Interact") then
+    engine_log("Interact was released")
 end
 
 if Input.isMouseButtonPressed(0) then
@@ -225,11 +236,23 @@ end
 
 Available helpers:
 
-- `Input.isKeyPressed(key)` → `boolean` (string name or key code)
+- `Input.isActionDown(name)` → `boolean` (held)
+- `Input.isActionPressed(name)` → `boolean` (rising edge for one frame)
+- `Input.isActionReleased(name)` → `boolean` (falling edge for one frame)
+- `Input.getAxis(name)` → `number` (combined scaled bindings)
+- `Input.isGamepadConnected()` → `boolean` (player-zero gamepad)
+- `Input.isKeyPressed(key)` → `boolean` (legacy held behavior; string name or key code)
 - `Input.isMouseButtonPressed(button)` → `boolean`
 - `Input.getMousePosition()` → `{ x, y }` (window pixels)
 - `Input.getMouseDelta()` → `{ x, y }` (pixels since last frame)
+- `Input.getScrollDelta()` → `{ x, y }` (wheel movement since last frame)
 - `Input.setCursorMode(mode)` — low-level cursor control (`"normal"` or `"disabled"`)
+
+Action and axis names come from the project's `.hpinput` v1 profile, selected under
+**Project Settings → Input**. Bindings support keyboard keys, mouse buttons/delta/wheel,
+and gamepad buttons/axes with scales and deadzones. `.hpinput` v1 does not define input
+contexts. Packaged games poll the player-zero GLFW gamepad; Qt Play Mode currently uses
+the same mappings for keyboard and mouse, with Qt gamepad polling tracked separately.
 
 ### Cursor Mode (UI ↔ Game)
 
@@ -493,7 +516,7 @@ This approach lets you write all gameplay logic in Lua while keeping engine syst
 
 - [ ] Full Entity/Component bindings
 - [ ] Scene query functions
-- [ ] Input system bindings
+- [x] Action/axis input system bindings
 - [ ] Coroutines for time-based logic
 - [ ] Hot-reload during gameplay
 - [ ] Lua debugger integration
