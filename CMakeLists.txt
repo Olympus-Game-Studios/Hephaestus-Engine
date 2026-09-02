@@ -214,7 +214,6 @@ set(ENGINE_CORE_SOURCES
     engine/Gfx/VulkanSwapchain.cpp
     engine/Gfx/VulkanPipeline.cpp
     engine/Gfx/VulkanTexture.cpp
-    engine/Gfx/VulkanSkybox.cpp
     engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/JoltPhysicsEngine.cpp
@@ -353,7 +352,6 @@ add_executable(HephaestusEngine
     engine/Gfx/VulkanTexture.cpp
     engine/Gfx/VulkanGizmo.cpp
     engine/Gfx/VulkanLightGizmo.cpp
-    engine/Gfx/VulkanSkybox.cpp
     engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/JoltPhysicsEngine.cpp

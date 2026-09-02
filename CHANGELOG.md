@@ -42,6 +42,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-09-02: `HephaestusGame` now hosts the authoritative `EngineFrameRenderer` for scene rendering, materials, lighting, cascaded shadows, HDRI, synchronization, and presentation while preserving GLFW runtime lifecycle and packaged asset resolution.
 - 2026-09-02: Shared lighting now consistently honors authored attenuation, transformed local-forward spot directions, disabled lights, and the active camera FOV for cascaded shadows.
 - 2026-09-02: `EngineFrameRenderer` now rebuilds swapchain-dependent pipelines, per-image resources, synchronization, descriptors, and configured editor overlays after resize while preserving material textures and VSync.
 - 2026-09-02: Packaged runtime builds no longer initialize editor-only grid, picking, outline, gizmo, or billboard GPU resources in `EngineFrameRenderer`.
@@ -60,6 +61,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-09-02: Packaged runtime resize now preserves configured VSync and routes swapchain recreation through the shared renderer lifecycle.
 - 2026-09-02: Qt Build Project now persists VSync defaults and reports unused assets as non-destructive dynamic-loading advisories.
 - 2026-09-02: Runtime discovery now distinguishes source checkouts from distributed Editors, keeps artifacts from one deterministic runtime root, reports Development-to-Release fallback, skips compiler probing when a prebuilt player exists, and detects locked package binaries before staging.
 - 2026-09-02: Packaged runtime accepts either Lua DLL name, treats `game.ini` as the authoritative package marker, avoids source-tree Lua fallbacks, and applies the configured VSync present mode.

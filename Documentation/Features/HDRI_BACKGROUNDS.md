@@ -39,7 +39,7 @@ The Hephaestus Engine now supports HDRI (High Dynamic Range Imaging) backgrounds
 
 ### New Components
 - `EnvironmentComponent`: Stores environment settings (background type, color, HDRI path, intensity)
-- `VulkanSkybox`: Renders environment maps as a skybox
+- `EngineFrameRenderer`: Owns and renders the shared editor/runtime skybox
 - `VulkanTexture::LoadHDRFromFile()`: Loads HDR images with floating-point precision
 
 ### Shaders
@@ -48,6 +48,7 @@ The Hephaestus Engine now supports HDRI (High Dynamic Range Imaging) backgrounds
 
 ### Architecture
 - Environment entity is automatically created with the scene
+- `EngineFrameRenderer` resolves and loads the environment HDRI from the active scene
 - Skybox renders after scene objects but before outlines
 - Uses depth testing with `LESS_OR_EQUAL` to render at maximum depth
 - Automatic tone mapping and gamma correction for HDR content
