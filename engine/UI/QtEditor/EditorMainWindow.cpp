@@ -666,6 +666,60 @@ void EditorMainWindow::setupMenuBar()
     m_settingsAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+,")));
     connect(m_settingsAction, &QAction::triggered, this, &EditorMainWindow::onOpenSettings);
 
+    QMenu* sceneMenu = menuBar->addMenu(tr("&Scene"));
+    QAction* hideSelectedAction = sceneMenu->addAction(tr("Hide Selected"));
+    hideSelectedAction->setShortcut(Qt::Key_H);
+    connect(hideSelectedAction, &QAction::triggered,
+            this, &EditorMainWindow::hideSelectedInEditor);
+    QAction* isolateSelectedAction = sceneMenu->addAction(tr("Isolate Selected"));
+    isolateSelectedAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_H));
+    connect(isolateSelectedAction, &QAction::triggered,
+            this, &EditorMainWindow::isolateSelectedInEditor);
+    QAction* showAllAction = sceneMenu->addAction(tr("Show All / Exit Isolation"));
+    showAllAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_H));
+    connect(showAllAction, &QAction::triggered, this, [this]() {
+        if (!m_engine) return;
+        if (auto* ctx = m_engine->GetEditorContext()) {
+            ctx->ShowAllEditorEntities();
+            saveEditorViewState();
+            rebuildOutliner();
+        }
+    });
+    QAction* lockSelectedAction = sceneMenu->addAction(tr("Lock / Unlock Selected"));
+    connect(lockSelectedAction, &QAction::triggered,
+            this, &EditorMainWindow::toggleLockSelectedInEditor);
+    sceneMenu->addSeparator();
+    QMenu* alignMenu = sceneMenu->addMenu(tr("Align to Active"));
+    alignMenu->addAction(tr("X"), [this]() { alignSelection(0); });
+    alignMenu->addAction(tr("Y"), [this]() { alignSelection(1); });
+    alignMenu->addAction(tr("Z"), [this]() { alignSelection(2); });
+    QMenu* distributeMenu = sceneMenu->addMenu(tr("Distribute Evenly"));
+    distributeMenu->addAction(tr("X"), [this]() { distributeSelection(0); });
+    distributeMenu->addAction(tr("Y"), [this]() { distributeSelection(1); });
+    distributeMenu->addAction(tr("Z"), [this]() { distributeSelection(2); });
+    QAction* dropAction = sceneMenu->addAction(tr("Drop Selected to Ground"));
+    dropAction->setShortcut(Qt::Key_End);
+    connect(dropAction, &QAction::triggered,
+            this, &EditorMainWindow::dropSelectionToGround);
+    sceneMenu->addAction(tr("Create Empty Parent"),
+                         this, &EditorMainWindow::createEmptyParentForSelection);
+    sceneMenu->addAction(tr("Frame All"), [this]() {
+        if (m_engine) m_engine->FocusAll();
+    });
+    QMenu* bookmarksMenu = sceneMenu->addMenu(tr("Camera Bookmarks"));
+    for (int slot = 1; slot <= 9; ++slot) {
+        QAction* recall = bookmarksMenu->addAction(
+            tr("Recall %1").arg(slot),
+            [this, slot]() { recallCameraBookmark(slot); });
+        recall->setShortcut(
+            QKeySequence(QStringLiteral("Alt+%1").arg(slot)));
+        QAction* save = bookmarksMenu->addAction(
+            tr("Save %1").arg(slot),
+            [this, slot]() { saveCameraBookmark(slot); });
+        save->setShortcut(
+            QKeySequence(QStringLiteral("Ctrl+Alt+%1").arg(slot)));
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // View Menu
     // ─────────────────────────────────────────────────────────────────────────
@@ -884,8 +938,9 @@ void EditorMainWindow::setupTopToolbar()
         centerLayout->addWidget(m_snapToggleBtn);
 
         m_snapValueCombo = new QComboBox(centerSection);
-        m_snapValueCombo->addItems({ tr("0.1"), tr("0.25"), tr("0.5"), tr("1.0"), tr("5.0"), tr("15°") });
-        m_snapValueCombo->setCurrentIndex(3);
+        m_snapValueCombo->addItems({ tr("0.01"), tr("0.1"), tr("0.25"), tr("0.5"),
+                                     tr("1"), tr("5"), tr("10"), tr("50"), tr("100") });
+        m_snapValueCombo->setCurrentText(tr("1"));
         centerLayout->addWidget(m_snapValueCombo);
 
         m_cameraSpeedCombo = new QComboBox(centerSection);
@@ -893,20 +948,46 @@ void EditorMainWindow::setupTopToolbar()
         m_cameraSpeedCombo->setCurrentIndex(1);
         centerLayout->addWidget(m_cameraSpeedCombo);
 
-        connect(m_translateAction, &QAction::triggered, this, [this]() {
+        auto updateSnapChoices = [this](GizmoMode mode) {
+            if (!m_snapValueCombo) return;
+            m_snapValueCombo->blockSignals(true);
+            m_snapValueCombo->clear();
+            if (mode == GizmoMode::Rotate) {
+                m_snapValueCombo->addItems(
+                    {tr("1°"), tr("5°"), tr("10°"), tr("15°"),
+                     tr("30°"), tr("45°"), tr("90°")});
+                m_snapValueCombo->setCurrentText(tr("15°"));
+            } else if (mode == GizmoMode::Scale) {
+                m_snapValueCombo->addItems(
+                    {tr("0.01"), tr("0.05"), tr("0.1"),
+                     tr("0.25"), tr("0.5"), tr("1")});
+                m_snapValueCombo->setCurrentText(tr("0.1"));
+            } else {
+                m_snapValueCombo->addItems(
+                    {tr("0.01"), tr("0.1"), tr("0.25"), tr("0.5"),
+                     tr("1"), tr("5"), tr("10"), tr("50"), tr("100")});
+                m_snapValueCombo->setCurrentText(tr("1"));
+            }
+            m_snapValueCombo->blockSignals(false);
+        };
+
+        connect(m_translateAction, &QAction::triggered, this, [this, updateSnapChoices]() {
             if (m_engine) {
                 if (auto* ctx = m_engine->GetEditorContext()) ctx->SetGizmoMode(GizmoMode::Translate);
             }
+            updateSnapChoices(GizmoMode::Translate);
         });
-        connect(m_rotateAction, &QAction::triggered, this, [this]() {
+        connect(m_rotateAction, &QAction::triggered, this, [this, updateSnapChoices]() {
             if (m_engine) {
                 if (auto* ctx = m_engine->GetEditorContext()) ctx->SetGizmoMode(GizmoMode::Rotate);
             }
+            updateSnapChoices(GizmoMode::Rotate);
         });
-        connect(m_scaleAction, &QAction::triggered, this, [this]() {
+        connect(m_scaleAction, &QAction::triggered, this, [this, updateSnapChoices]() {
             if (m_engine) {
                 if (auto* ctx = m_engine->GetEditorContext()) ctx->SetGizmoMode(GizmoMode::Scale);
             }
+            updateSnapChoices(GizmoMode::Scale);
         });
 
         connect(m_snapToggleBtn, &QToolButton::toggled, this, [this](bool checked) {
@@ -925,18 +1006,19 @@ void EditorMainWindow::setupTopToolbar()
             if (!ok || !m_engine) return;
             if (auto* ctx = m_engine->GetEditorContext()) {
                 auto& snap = ctx->GetSnapSettings();
-                snap.translateSnap = value;
-                snap.scaleSnap = std::max(0.01f, value * 0.1f);
-                snap.rotateSnapDeg = std::max(1.0f, value);
+                switch (ctx->GetGizmoMode()) {
+                    case GizmoMode::Rotate: snap.rotateSnapDeg = value; break;
+                    case GizmoMode::Scale: snap.scaleSnap = value; break;
+                    default: snap.translateSnap = value; break;
+                }
             }
         });
 
         connect(m_cameraSpeedCombo, &QComboBox::currentIndexChanged, this, [this](int idx) {
             static const float speeds[] = { 2.5f, 5.0f, 10.0f, 20.0f };
             if (idx < 0 || idx >= 4 || !m_engine) return;
-            if (auto* ctx = m_engine->GetEditorContext()) {
-                ctx->GetCamera().moveSpeed = speeds[idx];
-            }
+            if (auto* camera = m_engine->GetCameraController())
+                camera->baseMoveSpeed = speeds[idx];
         });
 
         m_topToolbar->addWidget(centerSection);
@@ -1101,10 +1183,10 @@ void EditorMainWindow::setupDockWidgets()
                 if (!child) continue;
 
                 if (parentEntity == entt::null) {
-                    scene->RemoveParent(child);
+                    scene->RemoveParent(child, true);
                 } else {
                     Entity parent(parentEntity, scene);
-                    if (parent) scene->SetParent(child, parent);
+                    if (parent) scene->SetParent(child, parent, true);
                 }
                 syncParents(childItem, childEntity);
             }
@@ -1119,7 +1201,7 @@ void EditorMainWindow::setupDockWidgets()
                 if (!data.isValid()) continue;
                 entt::entity childEntity = static_cast<entt::entity>(data.toUInt());
                 Entity child(childEntity, scene);
-                if (child) scene->RemoveParent(child);
+                if (child) scene->RemoveParent(child, true);
                 syncParents(childItem, childEntity);
             }
         }
@@ -1130,12 +1212,40 @@ void EditorMainWindow::setupDockWidgets()
 
     connect(m_outlinerSearch, &QLineEdit::textChanged, this, [this](const QString& text) {
         auto filterItem = [&](auto&& self, QTreeWidgetItem* item) -> bool {
-            bool selfMatch = item->text(0).contains(text, Qt::CaseInsensitive);
+            const QString query = text.trimmed();
+            bool selfMatch = item->text(0).contains(query, Qt::CaseInsensitive);
+            const QVariant data = item->data(0, Qt::UserRole);
+            if (data.isValid() && m_engine) {
+                auto* ctx = m_engine->GetEditorContext();
+                if (ctx && ctx->HasActiveScene()) {
+                    const entt::entity entity =
+                        static_cast<entt::entity>(data.toUInt());
+                    auto& registry = ctx->GetActiveScene()->GetRegistry();
+                    if (query.startsWith("component:", Qt::CaseInsensitive)) {
+                        const QString type = query.mid(10).trimmed().toLower();
+                        selfMatch =
+                            (type == "light" && registry.all_of<LightComponent>(entity)) ||
+                            (type == "camera" && registry.all_of<CameraComponent>(entity)) ||
+                            (type == "mesh" && registry.all_of<MeshRendererComponent>(entity)) ||
+                            (type == "audio" && registry.all_of<AudioSourceComponent>(entity));
+                    } else if (query.startsWith("prefab:", Qt::CaseInsensitive)) {
+                        const QString prefabQuery = query.mid(7).trimmed();
+                        selfMatch = registry.all_of<PrefabInstanceComponent>(entity) &&
+                            QString::fromStdString(
+                                registry.get<PrefabInstanceComponent>(entity).prefabPath)
+                                .contains(prefabQuery, Qt::CaseInsensitive);
+                    } else if (query.compare("hidden:", Qt::CaseInsensitive) == 0) {
+                        selfMatch = ctx->IsEditorHidden(entity);
+                    } else if (query.compare("locked:", Qt::CaseInsensitive) == 0) {
+                        selfMatch = ctx->IsEditorLocked(entity);
+                    }
+                }
+            }
             bool childMatch = false;
             for (int i = 0; i < item->childCount(); ++i) {
                 childMatch = self(self, item->child(i)) || childMatch;
             }
-            bool visible = text.trimmed().isEmpty() || selfMatch || childMatch;
+            bool visible = query.isEmpty() || selfMatch || childMatch;
             item->setHidden(!visible);
             return visible;
         };
@@ -1209,8 +1319,9 @@ void EditorMainWindow::setupDockWidgets()
         connect(m_visibilityBtn, &QToolButton::toggled, this, &EditorMainWindow::onVisibilityToggled);
         headerRow->addWidget(m_visibilityBtn);
 
-        m_lockCheck = new QCheckBox(tr("Lock"));
-        m_lockCheck->setToolTip(tr("Lock prevents selection changes from altering the Details view"));
+        m_lockCheck = new QCheckBox(tr("Pin Inspector"));
+        m_lockCheck->setToolTip(
+            tr("Pin this entity in the Details view; this does not lock viewport editing"));
         connect(m_lockCheck, &QCheckBox::toggled, this, [this](bool checked) {
             m_detailsLocked = checked;
             if (checked && m_engine) {
@@ -2036,6 +2147,7 @@ void EditorMainWindow::setupCentralWidget()
     snapBtn->setCheckable(true);
     snapBtn->setCursor(Qt::PointingHandCursor);
     tbLayout->addWidget(snapBtn);
+    snapBtn->setVisible(false); // Main toolbar owns the single snap control.
     connect(snapBtn, &QToolButton::toggled, this, [this](bool checked) {
         if (m_snapToggleBtn) m_snapToggleBtn->setChecked(checked);
     });
@@ -2045,6 +2157,7 @@ void EditorMainWindow::setupCentralWidget()
     snapValue->addItems({ tr("0.1"), tr("0.5"), tr("1.0"), tr("5.0"), tr("15\u00B0") });
     snapValue->setCurrentIndex(2);
     tbLayout->addWidget(snapValue);
+    snapValue->setVisible(false);
     connect(snapValue, &QComboBox::currentTextChanged, this, [this](const QString& value) {
         if (m_snapValueCombo) m_snapValueCombo->setCurrentText(value);
     });
@@ -2101,9 +2214,11 @@ void EditorMainWindow::setupCentralWidget()
         m_overlayFpsLabel       = new QLabel(tr("FPS 0.0"), statsFrame);
         m_overlayDrawCallsLabel = new QLabel(tr("Draw 0"),  statsFrame);
         m_overlayRamLabel       = new QLabel(tr("RAM --"),  statsFrame);
+        m_overlaySceneLabel     = new QLabel(tr("Entities 0 | Meshes 0 | Lights 0 | Tris 0"), statsFrame);
         statsLayout->addWidget(m_overlayFpsLabel);
         statsLayout->addWidget(m_overlayDrawCallsLabel);
         statsLayout->addWidget(m_overlayRamLabel);
+        statsLayout->addWidget(m_overlaySceneLabel);
         oLayout->addWidget(statsFrame);
 
         m_overlayBottomLeft = overlay;
@@ -2455,6 +2570,17 @@ bool EditorMainWindow::initializeEngine()
 {
     EngineLog::Info("initializeEngine: creating QtEditorEngine");
     m_engine = std::make_unique<QtEditorEngine>(this);
+    if (auto* context = m_engine->GetEditorContext()) {
+        const bool snapDefault = m_engineSettingsManager.Value(
+            QStringLiteral("engine.editor.gridSnappingDefault")).toBool();
+        context->GetSnapSettings().enableSnap = snapDefault;
+        if (m_snapToggleBtn) m_snapToggleBtn->setChecked(snapDefault);
+    }
+    if (auto* camera = m_engine->GetCameraController()) {
+        const float speed = m_engineSettingsManager.Value(
+            QStringLiteral("engine.editor.cameraSpeedDefault")).toFloat();
+        if (speed > 0.0f) camera->baseMoveSpeed = speed;
+    }
     
     // Set up viewport rendering toggles now that engine context is available
     setupViewportRenderingToggles();
@@ -2541,6 +2667,7 @@ void EditorMainWindow::setupEditorCallbacks()
         rebuildOutliner();
         clearDetailsPanel();
         updateWindowTitle();
+        loadEditorViewState();
     });
 
     // When selection changes, refresh details
@@ -2559,6 +2686,26 @@ void EditorMainWindow::setupEditorCallbacks()
         }
         syncPrefabOverridesForSelection();
     });
+
+    connect(m_engine.get(), &QtEditorEngine::sceneHierarchyChanged,
+            this, [this]() {
+                rebuildOutliner();
+                refreshDetailsPanel();
+            },
+            Qt::UniqueConnection);
+    connect(m_engine.get(), &QtEditorEngine::deleteSelectionRequested,
+            this, &EditorMainWindow::deleteSelectedEntities,
+            Qt::UniqueConnection);
+    connect(m_engine.get(), &QtEditorEngine::viewportContextMenuRequested,
+            this, &EditorMainWindow::showViewportContextMenu,
+            Qt::UniqueConnection);
+    connect(m_engine.get(), &QtEditorEngine::cameraSpeedChanged,
+            this, [this](float speed) {
+                statusBar()->showMessage(
+                    tr("Viewport camera speed: %1").arg(speed, 0, 'f', 2),
+                    1500);
+            },
+            Qt::UniqueConnection);
 }
 
 void EditorMainWindow::setupViewportRenderingToggles()
@@ -2579,7 +2726,7 @@ void EditorMainWindow::setupViewportRenderingToggles()
     if (!viewMenu) return;
     
     viewMenu->addSeparator();
-    QMenu* viewportMenu = viewMenu->addMenu(tr("Viewport Rendering"));
+    QMenu* viewportMenu = viewMenu->addMenu(tr("Overlays"));
     
     auto& vs = ctx->GetViewportSettings();
     
@@ -2598,6 +2745,13 @@ void EditorMainWindow::setupViewportRenderingToggles()
     addToggle(tr("Selection Outline"), vs.showSelectionOutline);
     addToggle(tr("Skybox"), vs.showSkybox);
     addToggle(tr("Light Billboards"), vs.showLightBillboards);
+    QAction* statsAction = viewportMenu->addAction(tr("Statistics"));
+    statsAction->setCheckable(true);
+    statsAction->setChecked(m_viewStatsBtn && m_viewStatsBtn->isChecked());
+    connect(statsAction, &QAction::toggled, this, [this](bool checked) {
+        if (m_viewStatsBtn) m_viewStatsBtn->setChecked(checked);
+        if (m_overlayBottomLeft) m_overlayBottomLeft->setVisible(checked);
+    });
 }
 
 void EditorMainWindow::onViewportReady()
@@ -2741,6 +2895,37 @@ void EditorMainWindow::onFrameRendered(float dt)
         if (m_overlayBottomLeft && m_overlayBottomLeft->isVisible()) {
             if (m_overlayDrawCallsLabel) m_overlayDrawCallsLabel->setText(QString("Draw %1").arg(drawCalls));
             if (m_overlayRamLabel) m_overlayRamLabel->setText(ramUsage);
+            if (m_overlaySceneLabel && m_engine) {
+                auto* ctx = m_engine->GetEditorContext();
+                auto* renderer = m_engine->GetFrameRenderer();
+                if (ctx && ctx->HasActiveScene() && renderer) {
+                    auto& registry = ctx->GetActiveScene()->GetRegistry();
+                    auto tags = registry.view<TagComponent>();
+                    auto meshes = registry.view<MeshRendererComponent>();
+                    auto lights = registry.view<LightComponent>();
+                    uint64_t triangles = 0;
+                    for (entt::entity entity : meshes) {
+                        const auto& meshComponent =
+                            registry.get<MeshRendererComponent>(entity);
+                        if (const MeshGPU* mesh = renderer->GetMesh(
+                                meshComponent.meshHandle)) {
+                            triangles += mesh->indexCount / 3;
+                        }
+                    }
+                    const auto entityCount =
+                        static_cast<qulonglong>(std::distance(tags.begin(), tags.end()));
+                    const auto meshCount =
+                        static_cast<qulonglong>(std::distance(meshes.begin(), meshes.end()));
+                    const auto lightCount =
+                        static_cast<qulonglong>(std::distance(lights.begin(), lights.end()));
+                    m_overlaySceneLabel->setText(
+                        tr("Entities %1 | Meshes %2 | Lights %3 | Tris %4")
+                            .arg(entityCount)
+                            .arg(meshCount)
+                            .arg(lightCount)
+                            .arg(static_cast<qulonglong>(triangles)));
+                }
+            }
         }
         if (m_statusRam) m_statusRam->setText(ramUsage);
     }
@@ -2770,6 +2955,7 @@ void EditorMainWindow::syncTransformFieldsFromScene()
 
     Scene* scene = ctx->GetActiveScene();
     auto& registry = scene->GetRegistry();
+    m_outlinerTree->setUpdatesEnabled(false);
     if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) {
         return;
     }
@@ -2837,6 +3023,20 @@ void EditorMainWindow::onEngineError(const QString& message)
 
 void EditorMainWindow::rebuildOutliner()
 {
+    if (m_outlinerTree && m_outlinerTree->topLevelItemCount() > 0) {
+        m_expandedOutlinerEntities.clear();
+        QTreeWidgetItemIterator existing(m_outlinerTree);
+        while (*existing) {
+            QTreeWidgetItem* item = *existing;
+            const QVariant data = item->data(0, Qt::UserRole);
+            if (data.isValid() && item->isExpanded()) {
+                m_expandedOutlinerEntities.insert(data.toUInt());
+            }
+            ++existing;
+        }
+        m_hasOutlinerExpansionState = true;
+    }
+
     // Block signals while clearing to prevent itemSelectionChanged from
     // firing onOutlinerSelectionChanged → ClearSelection during rebuild.
     m_outlinerTree->blockSignals(true);
@@ -2883,6 +3083,7 @@ void EditorMainWindow::rebuildOutliner()
     }
 
     restoreOutlinerTreeSelection();
+    m_outlinerTree->setUpdatesEnabled(true);
 }
 
 void EditorMainWindow::populateOutlinerItem(QTreeWidgetItem* parent, entt::entity entity)
@@ -2903,6 +3104,16 @@ void EditorMainWindow::populateOutlinerItem(QTreeWidgetItem* parent, entt::entit
     QTreeWidgetItem* item = new QTreeWidgetItem(parent);
     item->setText(0, QString::fromStdString(name));
     item->setData(0, Qt::UserRole, static_cast<uint32_t>(entity));
+    if (ctx->IsEditorHidden(entity)) {
+        item->setForeground(0, QBrush(QColor(120, 126, 138)));
+        item->setToolTip(0, tr("Hidden in editor"));
+    }
+    if (ctx->IsEditorLocked(entity)) {
+        QFont lockedFont = item->font(0);
+        lockedFont.setItalic(true);
+        item->setFont(0, lockedFont);
+        item->setToolTip(0, tr("Locked in editor (selectable from Outliner only)"));
+    }
 
     // Set icon based on entity type
     if (registry.all_of<PrefabInstanceComponent>(entity)) {
@@ -2932,7 +3143,9 @@ void EditorMainWindow::populateOutlinerItem(QTreeWidgetItem* parent, entt::entit
         }
     }
     
-    item->setExpanded(true);
+    item->setExpanded(!m_hasOutlinerExpansionState ||
+                      m_expandedOutlinerEntities.contains(
+                          static_cast<uint32_t>(entity)));
 }
 
 void EditorMainWindow::onOutlinerSelectionChanged()
@@ -3071,6 +3284,14 @@ void EditorMainWindow::onOutlinerContextMenu(const QPoint& pos)
             }
         }
     }
+    if (entity != entt::null && m_engine) {
+        if (auto* ctx = m_engine->GetEditorContext()) {
+            const auto selected = ctx->GetSelectedEntities();
+            if (std::find(selected.begin(), selected.end(), entity) == selected.end()) {
+                ctx->SelectEntity(entity);
+            }
+        }
+    }
 
     // "New Folder" - always available
     if (isFolder || isEnv) {
@@ -3089,6 +3310,35 @@ void EditorMainWindow::onOutlinerContextMenu(const QPoint& pos)
         });
         menu.addAction(tr("Move to Root"), [this, entity]() {
             reparentEntityToRoot(entity);
+        });
+        menu.addAction(tr("Duplicate"), this, &EditorMainWindow::onDuplicateEntity);
+        menu.addAction(tr("Focus in Viewport"), [this, entity]() {
+            if (!m_engine) return;
+            if (auto* ctx = m_engine->GetEditorContext()) {
+                ctx->SelectEntity(entity);
+                m_engine->FocusOnSelection();
+            }
+        });
+        menu.addAction(tr("Hide in Editor"), this,
+                       &EditorMainWindow::hideSelectedInEditor);
+        menu.addAction(tr("Isolate"), this,
+                       &EditorMainWindow::isolateSelectedInEditor);
+        menu.addAction(tr("Lock / Unlock"), this,
+                       &EditorMainWindow::toggleLockSelectedInEditor);
+        menu.addAction(tr("Select Hierarchy"), [this, entity]() {
+            if (!m_engine) return;
+            auto* ctx = m_engine->GetEditorContext();
+            if (!ctx || !ctx->HasActiveScene()) return;
+            Scene* scene = ctx->GetActiveScene();
+            std::vector<entt::entity> hierarchy;
+            std::function<void(Entity)> collect = [&](Entity current) {
+                if (!current) return;
+                hierarchy.push_back(static_cast<entt::entity>(current));
+                for (Entity child : scene->GetChildren(current)) collect(child);
+            };
+            collect(Entity(entity, scene));
+            if (!hierarchy.empty())
+                ctx->SelectEntities(hierarchy, hierarchy.front());
         });
 
         // Prefab actions
@@ -3231,6 +3481,33 @@ void EditorMainWindow::deleteEntityFromOutliner(entt::entity entity)
     clearDetailsPanel();
 }
 
+void EditorMainWindow::deleteSelectedEntities()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+
+    const std::vector<entt::entity> selected = ctx->GetSelectedEntities();
+    if (selected.empty()) return;
+
+    Scene* scene = ctx->GetActiveScene();
+    EditorUndoManager::PushSnapshot(ctx, "Delete selected entities");
+    ctx->ClearSelection();
+    for (entt::entity handle : selected) {
+        Entity entity(handle, scene);
+        if (entity && !entity.HasComponent<EnvironmentComponent>()) {
+            if (entity.HasComponent<PrefabInstanceComponent>()) {
+                PrefabInstantiator::DestroyInstance(*scene, entity);
+            } else {
+                scene->DestroyEntity(entity);
+            }
+        }
+    }
+    ctx->MarkDirty();
+    rebuildOutliner();
+    clearDetailsPanel();
+}
+
 void EditorMainWindow::reparentEntityToRoot(entt::entity entity)
 {
     if (!m_engine) return;
@@ -3242,7 +3519,7 @@ void EditorMainWindow::reparentEntityToRoot(entt::entity entity)
     if (!e) return;
 
     EditorUndoManager::PushSnapshot(ctx, "Move to root");
-    scene->RemoveParent(e);
+    scene->RemoveParent(e, true);
     ctx->MarkDirty();
     rebuildOutliner();
 }
@@ -3610,6 +3887,440 @@ void EditorMainWindow::onVisibilityToggled(bool visible)
     registry.get<MeshRendererComponent>(entity).visible = visible;
     ctx->MarkDirty();
     updateUndoRedoActions();
+}
+
+void EditorMainWindow::loadEditorViewState()
+{
+    m_editorViewState = {};
+    m_editorViewStatePath.clear();
+    if (!m_engine || !m_projectContext || !m_projectContext->HasProject()) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+
+    const std::string sceneKey = ctx->GetScenePath().empty()
+        ? std::string("unsaved:") + ctx->GetActiveScene()->GetName()
+        : ctx->GetScenePath();
+    m_editorViewStatePath = EditorViewState::StatePath(
+        std::filesystem::path(m_projectContext->GetProjectRootDir()), sceneKey);
+    m_editorViewState.Load(m_editorViewStatePath);
+    ctx->SetEditorStateIds(m_editorViewState.hiddenEntities,
+                           m_editorViewState.lockedEntities);
+    rebuildOutliner();
+}
+
+void EditorMainWindow::saveEditorViewState()
+{
+    if (!m_engine || m_editorViewStatePath.empty()) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx) return;
+    m_editorViewState.hiddenEntities = ctx->GetEditorHiddenIds();
+    m_editorViewState.lockedEntities = ctx->GetEditorLockedIds();
+    m_editorViewState.Save(m_editorViewStatePath);
+}
+
+void EditorMainWindow::hideSelectedInEditor()
+{
+    QWidget* focus = QApplication::focusWidget();
+    if (focus && (qobject_cast<QLineEdit*>(focus) ||
+                  focus->inherits("QAbstractSpinBox") ||
+                  focus->inherits("QTextEdit") ||
+                  focus->inherits("QPlainTextEdit"))) {
+        return;
+    }
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx) return;
+    for (entt::entity entity : ctx->GetSelectedEntities()) {
+        ctx->SetEditorHidden(entity, true);
+    }
+    ctx->ClearSelection();
+    saveEditorViewState();
+    rebuildOutliner();
+    refreshDetailsPanel();
+}
+
+void EditorMainWindow::isolateSelectedInEditor()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx) return;
+    if (ctx->IsIsolationActive()) {
+        ctx->ExitIsolation();
+    } else {
+        ctx->IsolateEntities(ctx->GetSelectedEntities());
+    }
+    rebuildOutliner();
+}
+
+void EditorMainWindow::toggleLockSelectedInEditor()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx) return;
+    const std::vector<entt::entity> selected = ctx->GetSelectedEntities();
+    if (selected.empty()) return;
+    const bool lock = std::any_of(
+        selected.begin(), selected.end(),
+        [ctx](entt::entity entity) { return !ctx->IsEditorLocked(entity); });
+    for (entt::entity entity : selected) {
+        ctx->SetEditorLocked(entity, lock);
+    }
+    saveEditorViewState();
+    rebuildOutliner();
+}
+
+void EditorMainWindow::alignSelection(int axis)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    const auto selected = ctx->GetSelectedEntities();
+    if (selected.size() < 2) return;
+    Scene* scene = ctx->GetActiveScene();
+    Entity active(ctx->GetSelectedEntity(), scene);
+    if (!active) return;
+    const Mat4 activeWorld = scene->GetWorldTransform(active);
+    const float target = activeWorld.m[12 + axis];
+
+    EditorUndoManager::PushSnapshot(ctx, "Align selection");
+    for (entt::entity handle : selected) {
+        Entity entity(handle, scene);
+        if (!entity || handle == ctx->GetSelectedEntity()) continue;
+        Mat4 world = scene->GetWorldTransform(entity);
+        world.m[12 + axis] = target;
+        Entity parent = scene->GetParent(entity);
+        const Mat4 local = parent
+            ? Mat4::Multiply(Mat4::Invert(scene->GetWorldTransform(parent)), world)
+            : world;
+        entity.GetComponent<TransformComponent>().SetFromMatrix(local);
+    }
+    ctx->MarkDirty();
+}
+
+void EditorMainWindow::distributeSelection(int axis)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    auto selected = ctx->GetSelectedEntities();
+    if (selected.size() < 3) return;
+    Scene* scene = ctx->GetActiveScene();
+    std::sort(selected.begin(), selected.end(), [scene, axis](entt::entity a, entt::entity b) {
+        return scene->GetWorldTransform(Entity(a, scene)).m[12 + axis] <
+               scene->GetWorldTransform(Entity(b, scene)).m[12 + axis];
+    });
+    const float first =
+        scene->GetWorldTransform(Entity(selected.front(), scene)).m[12 + axis];
+    const float last =
+        scene->GetWorldTransform(Entity(selected.back(), scene)).m[12 + axis];
+    const std::vector<float> targets =
+        SceneAuthoring::EvenlySpacedValues(first, last, selected.size());
+
+    EditorUndoManager::PushSnapshot(ctx, "Distribute selection");
+    for (size_t i = 1; i + 1 < selected.size(); ++i) {
+        Entity entity(selected[i], scene);
+        Mat4 world = scene->GetWorldTransform(entity);
+        world.m[12 + axis] = targets[i];
+        Entity parent = scene->GetParent(entity);
+        const Mat4 local = parent
+            ? Mat4::Multiply(Mat4::Invert(scene->GetWorldTransform(parent)), world)
+            : world;
+        entity.GetComponent<TransformComponent>().SetFromMatrix(local);
+    }
+    ctx->MarkDirty();
+}
+
+void EditorMainWindow::dropSelectionToGround()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    const auto selected = ctx->GetSelectedEntities();
+    if (selected.empty()) return;
+    Scene* scene = ctx->GetActiveScene();
+    std::unordered_set<entt::entity> ignored(selected.begin(), selected.end());
+
+    EditorUndoManager::PushSnapshot(ctx, "Drop selection to ground");
+    bool changed = false;
+    for (entt::entity handle : selected) {
+        Entity entity(handle, scene);
+        if (!entity || !entity.HasComponent<MeshRendererComponent>()) continue;
+        const auto& renderer = entity.GetComponent<MeshRendererComponent>();
+        const Mat4 world = scene->GetWorldTransform(entity);
+        const AABB bounds = SceneAuthoring::TransformBounds(renderer.localBounds, world);
+        const Ray ray(Vec3(bounds.Center().x, bounds.min.y - 0.001f, bounds.Center().z),
+                      Vec3(0, -1, 0));
+        SceneAuthoring::SceneRaycastHit hit;
+        if (!SceneAuthoring::RaycastBounds(*scene, ray, hit, ignored)) continue;
+        Mat4 droppedWorld = world;
+        droppedWorld.m[13] = hit.point.y + (world.m[13] - bounds.min.y);
+        Entity parent = scene->GetParent(entity);
+        const Mat4 local = parent
+            ? Mat4::Multiply(Mat4::Invert(scene->GetWorldTransform(parent)), droppedWorld)
+            : droppedWorld;
+        entity.GetComponent<TransformComponent>().SetFromMatrix(local);
+        changed = true;
+    }
+    if (changed) ctx->MarkDirty();
+    else EditorUndoManager::DiscardLastSnapshot(ctx);
+}
+
+void EditorMainWindow::createEmptyParentForSelection()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    const auto selected = ctx->GetSelectedEntities();
+    if (selected.empty()) return;
+    Scene* scene = ctx->GetActiveScene();
+    Vec3 center(0, 0, 0);
+    for (entt::entity handle : selected) {
+        const Mat4 world = scene->GetWorldTransform(Entity(handle, scene));
+        center = vadd(center, Vec3(world.m[12], world.m[13], world.m[14]));
+    }
+    center = vscale(center, 1.0f / static_cast<float>(selected.size()));
+
+    EditorUndoManager::PushSnapshot(ctx, "Create empty parent");
+    Entity parent = scene->CreateEntity("Group");
+    parent.GetComponent<TransformComponent>().position = center;
+    for (entt::entity handle : selected) {
+        Entity child(handle, scene);
+        if (child && child != parent) scene->SetParent(child, parent, true);
+    }
+    ctx->SelectEntity(static_cast<entt::entity>(parent));
+    ctx->MarkDirty();
+    rebuildOutliner();
+}
+
+void EditorMainWindow::showViewportContextMenu(float x, float y)
+{
+    if (!m_engine) return;
+    QMenu menu(this);
+    auto* ctx = m_engine->GetEditorContext();
+    const bool hasSelection = ctx && ctx->HasSelection();
+    QAction* focus = menu.addAction(tr("Focus Selected"), [this]() {
+        if (m_engine) m_engine->FocusOnSelection();
+    });
+    focus->setEnabled(hasSelection);
+    QAction* duplicate = menu.addAction(tr("Duplicate"), this,
+                                        &EditorMainWindow::onDuplicateEntity);
+    duplicate->setEnabled(hasSelection);
+    QAction* remove = menu.addAction(tr("Delete"), this,
+                                     &EditorMainWindow::deleteSelectedEntities);
+    remove->setEnabled(hasSelection);
+    menu.addSeparator();
+    QAction* hide = menu.addAction(tr("Hide Selected"), this,
+                                   &EditorMainWindow::hideSelectedInEditor);
+    hide->setEnabled(hasSelection);
+    QAction* isolate = menu.addAction(tr("Isolate Selected"), this,
+                                      &EditorMainWindow::isolateSelectedInEditor);
+    isolate->setEnabled(hasSelection);
+    QAction* drop = menu.addAction(tr("Drop to Ground"), this,
+                                   &EditorMainWindow::dropSelectionToGround);
+    drop->setEnabled(hasSelection);
+    QAction* group = menu.addAction(tr("Create Empty Parent"), this,
+                                    &EditorMainWindow::createEmptyParentForSelection);
+    group->setEnabled(hasSelection);
+
+    QMenu* create = menu.addMenu(tr("Create"));
+    const QPoint dropPoint(static_cast<int>(x), static_cast<int>(y));
+    auto addSpawn = [this, create, dropPoint](
+                        const QString& label, SpawnableEntry entry) {
+        create->addAction(label, [this, entry, dropPoint]() {
+            handleViewportSpawnDrop(entry.toMimePayload(), dropPoint);
+        });
+    };
+    for (const QString& primitive : {QStringLiteral("Cube"),
+                                     QStringLiteral("Sphere"),
+                                     QStringLiteral("Plane")}) {
+        SpawnableEntry entry;
+        entry.kind = SpawnableEntry::Kind::Mesh;
+        entry.displayName = primitive;
+        entry.assetPath = QStringLiteral(".engine/meshes/") + primitive +
+                          QStringLiteral(".glb");
+        addSpawn(primitive, entry);
+    }
+    for (const auto& light : {
+             std::pair<QString, QString>{tr("Directional Light"), "DirectionalLight"},
+             std::pair<QString, QString>{tr("Point Light"), "PointLight"},
+             std::pair<QString, QString>{tr("Spot Light"), "SpotLight"}}) {
+        SpawnableEntry entry;
+        entry.kind = SpawnableEntry::Kind::Light;
+        entry.displayName = light.first;
+        entry.typeId = light.second;
+        addSpawn(light.first, entry);
+    }
+    SpawnableEntry camera;
+    camera.kind = SpawnableEntry::Kind::Camera;
+    camera.displayName = tr("Camera");
+    addSpawn(tr("Camera"), camera);
+
+    create->addAction(tr("Empty Entity"), [this, dropPoint]() {
+        if (!m_engine) return;
+        auto* context = m_engine->GetEditorContext();
+        if (!context || !context->HasActiveScene()) return;
+        EditorUndoManager::PushSnapshot(context, "Create empty entity");
+        Entity entity = context->GetActiveScene()->CreateEntity("Entity");
+        SceneAuthoring::SceneRaycastHit hit;
+        if (m_engine->RaycastViewport(dropPoint.x(), dropPoint.y(), hit)) {
+            entity.GetComponent<TransformComponent>().position = hit.point;
+        }
+        context->SelectEntity(static_cast<entt::entity>(entity));
+        context->MarkDirty();
+        rebuildOutliner();
+    });
+    create->addAction(tr("Audio Source"), [this, dropPoint]() {
+        if (!m_engine) return;
+        auto* context = m_engine->GetEditorContext();
+        if (!context || !context->HasActiveScene()) return;
+        EditorUndoManager::PushSnapshot(context, "Create audio source");
+        Entity entity = context->GetActiveScene()->CreateEntity("Audio Source");
+        entity.AddComponent<AudioSourceComponent>();
+        SceneAuthoring::SceneRaycastHit hit;
+        if (m_engine->RaycastViewport(dropPoint.x(), dropPoint.y(), hit)) {
+            entity.GetComponent<TransformComponent>().position = hit.point;
+        }
+        context->SelectEntity(static_cast<entt::entity>(entity));
+        context->MarkDirty();
+        rebuildOutliner();
+    });
+    menu.exec(QCursor::pos());
+}
+
+void EditorMainWindow::replaceSelectionWithAsset(const QByteArray& spawnPayload)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    const auto selected = ctx->GetSelectedEntities();
+    if (selected.empty()) return;
+    const SpawnableEntry entry = SpawnableEntry::fromMimePayload(spawnPayload);
+    Scene* scene = ctx->GetActiveScene();
+
+    if (entry.kind == SpawnableEntry::Kind::Mesh) {
+        EditorUndoManager::PushSnapshot(ctx, "Replace selected mesh");
+        for (entt::entity handle : selected) {
+            Entity entity(handle, scene);
+            if (!entity) continue;
+            auto& renderer = entity.HasComponent<MeshRendererComponent>()
+                ? entity.GetComponent<MeshRendererComponent>()
+                : entity.AddComponent<MeshRendererComponent>();
+            renderer.meshAssetPath = entry.assetPath.toStdString();
+            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+            renderer.meshImported = true;
+        }
+        m_engine->RebuildSceneMeshes();
+        ctx->MarkDirty();
+        refreshDetailsPanel();
+        return;
+    }
+    if (entry.kind != SpawnableEntry::Kind::Prefab) return;
+
+    bool hasUniqueData = false;
+    for (entt::entity handle : selected) {
+        Entity entity(handle, scene);
+        hasUniqueData = hasUniqueData ||
+            (entity && (entity.HasComponent<LuaScriptComponent>() ||
+                        entity.HasComponent<LightComponent>() ||
+                        entity.HasComponent<AudioSourceComponent>()));
+    }
+    if (hasUniqueData && QMessageBox::question(
+            this, tr("Replace Selected"),
+            tr("Some selected entities contain scripts, lights, or audio. "
+               "Replacing them with a prefab will remove that unique data. Continue?"),
+            QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) {
+        return;
+    }
+
+    PrefabAsset asset;
+    std::string error;
+    if (!PrefabOverrideSystem::LoadAsset(entry.assetPath.toStdString(), asset, error)) {
+        QMessageBox::warning(this, tr("Replace Selected"),
+                             QString::fromStdString(error));
+        return;
+    }
+    EditorUndoManager::PushSnapshot(ctx, "Replace selected with prefab");
+    std::vector<entt::entity> replacements;
+    for (entt::entity handle : selected) {
+        Entity source(handle, scene);
+        if (!source) continue;
+        const TransformComponent sourceTransform =
+            source.GetComponent<TransformComponent>();
+        const std::string sourceName = source.GetComponent<TagComponent>().tag;
+        Entity parent = scene->GetParent(source);
+
+        PrefabInstantiateOptions options;
+        options.prefabPath = entry.assetPath.toStdString();
+        options.parent = parent ? static_cast<entt::entity>(parent) : entt::null;
+        options.attachInstanceComponent = true;
+        Entity replacement = PrefabInstantiator::Instantiate(*scene, asset, options);
+        if (!replacement) continue;
+        PrefabComponentIO::CopyLocalTransform(
+            replacement.GetComponent<TransformComponent>(), sourceTransform);
+        if (source.HasComponent<PrefabInstanceComponent>())
+            PrefabInstantiator::DestroyInstance(*scene, source);
+        else
+            scene->DestroyEntity(source);
+        replacement.GetComponent<TagComponent>().tag = sourceName;
+        if (replacement.HasComponent<PrefabInstanceComponent>()) {
+            auto& instance = replacement.GetComponent<PrefabInstanceComponent>();
+            PrefabComponentIO::CopyLocalTransform(
+                instance.rootTransform,
+                replacement.GetComponent<TransformComponent>());
+            instance.hasRootTransform = true;
+        }
+        replacements.push_back(static_cast<entt::entity>(replacement));
+    }
+    if (!replacements.empty()) {
+        ctx->SelectEntities(replacements, replacements.back());
+        ctx->MarkDirty();
+        m_engine->RebuildSceneMeshes();
+        rebuildOutliner();
+        refreshDetailsPanel();
+    }
+}
+
+void EditorMainWindow::saveCameraBookmark(int slot)
+{
+    if (!m_engine || slot < 1 || slot > 9) return;
+    auto* camera = m_engine->GetCameraController();
+    if (!camera) return;
+    EditorCameraBookmark bookmark;
+    bookmark.positionX = camera->positionX;
+    bookmark.positionY = camera->positionY;
+    bookmark.positionZ = camera->positionZ;
+    bookmark.yawDeg = camera->yawDeg;
+    bookmark.pitchDeg = camera->pitchDeg;
+    bookmark.orthographic = camera->orthographic;
+    bookmark.orthoHalfExtent = camera->orthoHalfExtent;
+    m_editorViewState.bookmarks[slot] = bookmark;
+    saveEditorViewState();
+    statusBar()->showMessage(tr("Saved camera bookmark %1").arg(slot), 2000);
+}
+
+void EditorMainWindow::recallCameraBookmark(int slot)
+{
+    if (!m_engine) return;
+    const auto it = m_editorViewState.bookmarks.find(slot);
+    if (it == m_editorViewState.bookmarks.end()) {
+        statusBar()->showMessage(tr("Camera bookmark %1 is empty").arg(slot), 2000);
+        return;
+    }
+    auto* camera = m_engine->GetCameraController();
+    const EditorCameraBookmark& bookmark = it->second;
+    camera->positionX = bookmark.positionX;
+    camera->positionY = bookmark.positionY;
+    camera->positionZ = bookmark.positionZ;
+    camera->yawDeg = bookmark.yawDeg;
+    camera->pitchDeg = bookmark.pitchDeg;
+    camera->orthographic = bookmark.orthographic;
+    camera->orthoHalfExtent = bookmark.orthoHalfExtent;
+    if (m_viewPerspectiveCombo) {
+        m_viewPerspectiveCombo->blockSignals(true);
+        m_viewPerspectiveCombo->setCurrentIndex(bookmark.orthographic ? 1 : 0);
+        m_viewPerspectiveCombo->blockSignals(false);
+    }
+    statusBar()->showMessage(tr("Recalled camera bookmark %1").arg(slot), 2000);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4535,18 +5246,24 @@ void EditorMainWindow::onDuplicateEntity()
     if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
 
     Scene* scene = ctx->GetActiveScene();
-    Entity selected(ctx->GetSelectedEntity(), scene);
-    if (!selected) return;
-
     EditorUndoManager::PushSnapshot(ctx, "Duplicate entity");
-    scene->CopyEntityToClipboard(selected);
-    Entity duplicated = scene->PasteClipboard();
-    if (duplicated) {
-        ctx->SelectEntity(duplicated);
+    const std::vector<Entity> duplicates =
+        scene->DuplicateEntities(ctx->GetSelectedEntities(), true);
+    if (!duplicates.empty()) {
+        std::vector<entt::entity> handles;
+        handles.reserve(duplicates.size());
+        for (const Entity& duplicate : duplicates) {
+            handles.push_back(static_cast<entt::entity>(duplicate));
+        }
+        ctx->SelectEntities(handles, handles.back());
         ctx->MarkDirty();
         rebuildOutliner();
         refreshDetailsPanel();
-        statusBar()->showMessage(tr("Entity duplicated"), 2000);
+        statusBar()->showMessage(
+            tr("%1 entit%2 duplicated")
+                .arg(static_cast<int>(duplicates.size()))
+                .arg(duplicates.size() == 1 ? tr("y") : tr("ies")),
+            2000);
     }
 }
 
@@ -5224,8 +5941,24 @@ bool EditorMainWindow::eventFilter(QObject* watched, QEvent* event)
             if (de->mimeData()->hasFormat(kSpawnableMimeType)) {
                 QByteArray payload = de->mimeData()->data(kSpawnableMimeType);
                 QPoint dropPos = de->position().toPoint();
+                entt::entity previousSelection = entt::null;
+                if (m_engine) {
+                    if (auto* ctx = m_engine->GetEditorContext()) {
+                        previousSelection = ctx->GetSelectedEntity();
+                    }
+                }
                 de->acceptProposedAction();
                 handleViewportSpawnDrop(payload, dropPos);
+                if (m_engine) {
+                    if (auto* ctx = m_engine->GetEditorContext();
+                        ctx && ctx->HasSelection() &&
+                        ctx->GetSelectedEntity() != previousSelection) {
+                        m_engine->BeginPlacement(ctx->GetSelectedEntity());
+                        statusBar()->showMessage(
+                            tr("Placement preview: click to place, Shift+click to repeat, Esc to cancel"),
+                            5000);
+                    }
+                }
                 return true;
             }
         }
@@ -5286,6 +6019,19 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
     Vec3 spawnPos(cam.positionX + fx * kSpawnDistance,
                   cam.positionY + fy * kSpawnDistance,
                   cam.positionZ + fz * kSpawnDistance);
+    SceneAuthoring::SceneRaycastHit placementHit;
+    const bool hasPlacementHit =
+        m_engine->RaycastViewport(static_cast<float>(dropPos.x()),
+                                  static_cast<float>(dropPos.y()),
+                                  placementHit);
+    if (hasPlacementHit) {
+        spawnPos = placementHit.point;
+    }
+    const auto& snapSettings = ctx->GetSnapSettings();
+    if (snapSettings.enableSnap) {
+        spawnPos = SceneAuthoring::SnapVector(spawnPos,
+                                              snapSettings.translateSnap);
+    }
 
     // ── Push undo ───────────────────────────────────────────────────────────
     EditorUndoManager::PushSnapshot(ctx, "Add Actor: " + entry.displayName.toStdString());
@@ -5402,6 +6148,9 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
 
         auto& tc = created.GetComponent<TransformComponent>();
         tc.position = spawnPos;
+        if (hasPlacementHit && placementHit.normal.y > 0.5f) {
+            tc.position.y += -bounds.min.y;
+        }
         tc.rotation = Vec3(0.0f, 0.0f, 0.0f);
         const std::string meshStem = meshPath.stem().string();
         if (meshStem == "Capsule" || meshStem == "Cylinder") {
@@ -5516,6 +6265,23 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         tc.position = spawnPos;
         tc.rotation = Vec3(0.0f, 0.0f, 0.0f);
         tc.scale    = Vec3(1.0f, 1.0f, 1.0f);
+
+        ctx->SetSelectionChangedCallback(nullptr);
+        ctx->SelectEntity(static_cast<entt::entity>(created));
+        ctx->SetSelectionChangedCallback([this](entt::entity) {
+            refreshDetailsPanel();
+        });
+        break;
+    }
+
+    case SpawnableEntry::Kind::Audio: {
+        Entity created = scene->CreateEntity(entityName);
+        if (!created) break;
+
+        AudioSourceComponent source;
+        source.clipPath = entry.assetPath.toStdString();
+        created.AddComponent<AudioSourceComponent>(source);
+        created.GetComponent<TransformComponent>().position = spawnPos;
 
         ctx->SetSelectionChangedCallback(nullptr);
         ctx->SelectEntity(static_cast<entt::entity>(created));

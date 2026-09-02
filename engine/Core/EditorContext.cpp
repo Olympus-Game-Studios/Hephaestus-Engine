@@ -44,6 +44,9 @@ void EditorContext::NewScene(const std::string& name)
     
     // Create new scene
     m_activeScene = std::make_unique<Scene>(name);
+    m_editorHidden.clear();
+    m_editorLocked.clear();
+    m_isolated.clear();
     m_scenePath.clear();
     m_isDirty = false;
     
@@ -81,6 +84,9 @@ bool EditorContext::LoadScene(const std::string& filepath)
     
     // Success - swap in the new scene
     m_activeScene = std::move(newScene);
+    m_editorHidden.clear();
+    m_editorLocked.clear();
+    m_isolated.clear();
     m_scenePath = filepath;
     m_isDirty = false;
     
@@ -317,6 +323,38 @@ void EditorContext::ClearDirty()
             m_onDirtyChanged(false);
         }
     }
+}
+
+void EditorContext::SetEditorHidden(entt::entity entity, bool hidden)
+{
+    const uint32_t id = static_cast<uint32_t>(entity);
+    if (hidden) m_editorHidden.insert(id);
+    else m_editorHidden.erase(id);
+}
+
+void EditorContext::SetEditorLocked(entt::entity entity, bool locked)
+{
+    const uint32_t id = static_cast<uint32_t>(entity);
+    if (locked) m_editorLocked.insert(id);
+    else m_editorLocked.erase(id);
+}
+
+void EditorContext::IsolateEntities(const std::vector<entt::entity>& entities)
+{
+    m_isolated.clear();
+    for (entt::entity entity : entities) {
+        if (entity != entt::null) {
+            m_isolated.insert(static_cast<uint32_t>(entity));
+        }
+    }
+}
+
+void EditorContext::SetEditorStateIds(std::unordered_set<uint32_t> hidden,
+                                      std::unordered_set<uint32_t> locked)
+{
+    m_editorHidden = std::move(hidden);
+    m_editorLocked = std::move(locked);
+    m_isolated.clear();
 }
 
 } // namespace Hephaestus

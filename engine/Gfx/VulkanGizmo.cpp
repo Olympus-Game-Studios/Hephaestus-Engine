@@ -111,6 +111,25 @@ void VulkanGizmo::GenerateTranslateGeometry(VkDevice device, VmaAllocator alloca
     AddArrow(vertices, indices, Vec3(0, 1, 0), m_TranslateLength, m_AxisThickness * 0.5f, Vec3(0, 1, 0));
     // Z axis - Blue
     AddArrow(vertices, indices, Vec3(0, 0, 1), m_TranslateLength, m_AxisThickness * 0.5f, Vec3(0, 0, 1));
+    // Center handle for free movement in the camera-facing plane.
+    AddCube(vertices, indices, Vec3(0, 0, 0),
+            m_UniformScaleCubeSize * 0.8f, Vec3(0.9f, 0.9f, 0.9f));
+    auto addPlane = [&](const Vec3& a, const Vec3& b, const Vec3& color) {
+        const uint16_t base = static_cast<uint16_t>(vertices.size());
+        const Vec3 normal = vnorm(vcross(a, b));
+        const float inner = 0.35f;
+        const float outer = 0.70f;
+        vertices.push_back({vadd(vscale(a, inner), vscale(b, inner)), normal, color});
+        vertices.push_back({vadd(vscale(a, outer), vscale(b, inner)), normal, color});
+        vertices.push_back({vadd(vscale(a, outer), vscale(b, outer)), normal, color});
+        vertices.push_back({vadd(vscale(a, inner), vscale(b, outer)), normal, color});
+        indices.insert(indices.end(), {base, static_cast<uint16_t>(base + 1),
+            static_cast<uint16_t>(base + 2), base,
+            static_cast<uint16_t>(base + 2), static_cast<uint16_t>(base + 3)});
+    };
+    addPlane(Vec3(1,0,0), Vec3(0,1,0), Vec3(0.8f, 0.8f, 0.1f));
+    addPlane(Vec3(1,0,0), Vec3(0,0,1), Vec3(0.8f, 0.1f, 0.8f));
+    addPlane(Vec3(0,1,0), Vec3(0,0,1), Vec3(0.1f, 0.8f, 0.8f));
 
     m_TranslateGeo.indexCount = static_cast<uint32_t>(indices.size());
 
@@ -642,8 +661,8 @@ int VulkanGizmo::CheckHover(const Ray& ray) const {
             }
         }
 
-        // Check center cube for uniform scale (only in Scale mode)
-        if (m_Mode == Mode::Scale) {
+        // Check center cube for uniform scale or free translation.
+        if (m_Mode == Mode::Scale || m_Mode == Mode::Translate) {
             float cubeDist = vlen(vsub(m_GizmoOrigin, ray.origin));
             Vec3 toOrigin = vsub(m_GizmoOrigin, ray.origin);
             float t = vdot(toOrigin, ray.direction);
@@ -657,6 +676,27 @@ int VulkanGizmo::CheckHover(const Ray& ray) const {
                 }
             }
         }
+        if (m_Mode == Mode::Translate && bestAxis < 0) {
+            const int axisPairs[3][2] = {{0, 1}, {0, 2}, {1, 2}};
+            const int normalAxes[3] = {2, 1, 0};
+            for (int plane = 0; plane < 3; ++plane) {
+                Vec3 hit;
+                if (!IntersectPlane(ray, m_GizmoOrigin,
+                                    m_AxisDirections[normalAxes[plane]], hit)) {
+                    continue;
+                }
+                const Vec3 offset = vsub(hit, m_GizmoOrigin);
+                const float u = vdot(offset,
+                    m_AxisDirections[axisPairs[plane][0]]) / m_CurrentScale;
+                const float v = vdot(offset,
+                    m_AxisDirections[axisPairs[plane][1]]) / m_CurrentScale;
+                if (u >= 0.30f && u <= 0.78f &&
+                    v >= 0.30f && v <= 0.78f) {
+                    bestAxis = 4 + plane; // 4=XY, 5=XZ, 6=YZ
+                    break;
+                }
+            }
+        }
     }
 
     return bestAxis;
@@ -667,7 +707,7 @@ void VulkanGizmo::SetHoveredAxis(int axis) {
 }
 
 void VulkanGizmo::BeginDrag(const Ray& ray, int axis) {
-    if (!m_StateValid || axis < 0 || axis > 3) return; // 0-2 = per-axis, 3 = uniform
+    if (!m_StateValid || axis < 0 || axis > 6) return;
 
     m_IsDragging = true;
     m_ActiveAxis = axis;
@@ -711,6 +751,16 @@ void VulkanGizmo::BeginDrag(const Ray& ray, int axis) {
         }
     }
 
+    if (m_Mode == Mode::Translate && axis == 3) {
+        const Vec3 viewNormal = vnorm(vsub(m_GizmoOrigin, m_CameraPos));
+        IntersectPlane(ray, m_GizmoOrigin, viewNormal, m_FreeMoveStartPoint);
+    } else if (m_Mode == Mode::Translate && axis >= 4) {
+        const int normalAxis = axis == 4 ? 2 : (axis == 5 ? 1 : 0);
+        m_DragPlaneNormal = m_AxisDirections[normalAxis];
+        IntersectPlane(ray, m_GizmoOrigin, m_DragPlaneNormal,
+                       m_FreeMoveStartPoint);
+    }
+
     if (m_Mode == Mode::Rotate) {
         Vec3 hitPoint;
         if (IntersectPlane(ray, m_GizmoOrigin, m_DragAxisDir, hitPoint)) {
@@ -724,7 +774,7 @@ void VulkanGizmo::BeginDrag(const Ray& ray, int axis) {
     }
 }
 
-Mat4 VulkanGizmo::HandleDrag(const Ray& ray) {
+Mat4 VulkanGizmo::HandleDrag(const Ray& ray, bool bypassSnap) {
     if (!m_IsDragging) {
         return m_ObjectTransform;
     }
@@ -736,8 +786,48 @@ Mat4 VulkanGizmo::HandleDrag(const Ray& ray) {
         float distance = 0.0f;
         if (ClosestPointOnAxis(ray, m_DragStartPosition, m_DragAxisDir, axisParam, distance, false)) {
             float delta = axisParam - m_DragStartAxisParam;
+            if (m_SnapEnabled && !bypassSnap && m_SnapIncrement > 0.0f) {
+                delta = std::round(delta / m_SnapIncrement) * m_SnapIncrement;
+            }
             Vec3 newPosition = vadd(m_DragStartPosition, vscale(m_DragAxisDir, delta));
 
+            result = m_DragStartTransform;
+            result.m[12] = newPosition.x;
+            result.m[13] = newPosition.y;
+            result.m[14] = newPosition.z;
+        }
+    } else if (m_ActiveAxis == 3 && m_Mode == Mode::Translate) {
+        const Vec3 viewNormal = vnorm(vsub(m_GizmoOrigin, m_CameraPos));
+        Vec3 point;
+        if (IntersectPlane(ray, m_GizmoOrigin, viewNormal, point)) {
+            Vec3 newPosition = vadd(m_DragStartPosition,
+                                    vsub(point, m_FreeMoveStartPoint));
+            if (m_SnapEnabled && !bypassSnap && m_SnapIncrement > 0.0f) {
+                newPosition.x = std::round(newPosition.x / m_SnapIncrement) * m_SnapIncrement;
+                newPosition.y = std::round(newPosition.y / m_SnapIncrement) * m_SnapIncrement;
+                newPosition.z = std::round(newPosition.z / m_SnapIncrement) * m_SnapIncrement;
+            }
+            result = m_DragStartTransform;
+            result.m[12] = newPosition.x;
+            result.m[13] = newPosition.y;
+            result.m[14] = newPosition.z;
+        }
+    } else if (m_ActiveAxis >= 4 && m_ActiveAxis <= 6 &&
+               m_Mode == Mode::Translate) {
+        Vec3 point;
+        if (IntersectPlane(ray, m_GizmoOrigin, m_DragPlaneNormal, point)) {
+            Vec3 delta = vsub(point, m_FreeMoveStartPoint);
+            if (m_SnapEnabled && !bypassSnap && m_SnapIncrement > 0.0f) {
+                const int firstAxis = m_ActiveAxis == 6 ? 1 : 0;
+                const int secondAxis = m_ActiveAxis == 4 ? 1 : 2;
+                float first = vdot(delta, m_AxisDirections[firstAxis]);
+                float second = vdot(delta, m_AxisDirections[secondAxis]);
+                first = std::round(first / m_SnapIncrement) * m_SnapIncrement;
+                second = std::round(second / m_SnapIncrement) * m_SnapIncrement;
+                delta = vadd(vscale(m_AxisDirections[firstAxis], first),
+                             vscale(m_AxisDirections[secondAxis], second));
+            }
+            const Vec3 newPosition = vadd(m_DragStartPosition, delta);
             result = m_DragStartTransform;
             result.m[12] = newPosition.x;
             result.m[13] = newPosition.y;
@@ -765,6 +855,11 @@ Mat4 VulkanGizmo::HandleDrag(const Ray& ray) {
                 scaleX = std::max(0.01f, m_DragStartScale.x * ratio);
                 scaleY = std::max(0.01f, m_DragStartScale.y * ratio);
                 scaleZ = std::max(0.01f, m_DragStartScale.z * ratio);
+                if (m_SnapEnabled && !bypassSnap && m_SnapIncrement > 0.0f) {
+                    scaleX = std::max(0.01f, std::round(scaleX / m_SnapIncrement) * m_SnapIncrement);
+                    scaleY = std::max(0.01f, std::round(scaleY / m_SnapIncrement) * m_SnapIncrement);
+                    scaleZ = std::max(0.01f, std::round(scaleZ / m_SnapIncrement) * m_SnapIncrement);
+                }
             }
         } else {
             // Per-axis scale
@@ -778,6 +873,13 @@ Mat4 VulkanGizmo::HandleDrag(const Ray& ray) {
                     case 0: scaleX = std::max(0.01f, m_DragStartScale.x * ratio); break;
                     case 1: scaleY = std::max(0.01f, m_DragStartScale.y * ratio); break;
                     case 2: scaleZ = std::max(0.01f, m_DragStartScale.z * ratio); break;
+                }
+                if (m_SnapEnabled && !bypassSnap && m_SnapIncrement > 0.0f) {
+                    switch (m_ActiveAxis) {
+                        case 0: scaleX = std::max(0.01f, std::round(scaleX / m_SnapIncrement) * m_SnapIncrement); break;
+                        case 1: scaleY = std::max(0.01f, std::round(scaleY / m_SnapIncrement) * m_SnapIncrement); break;
+                        case 2: scaleZ = std::max(0.01f, std::round(scaleZ / m_SnapIncrement) * m_SnapIncrement); break;
+                    }
                 }
             }
         }
@@ -807,6 +909,10 @@ Mat4 VulkanGizmo::HandleDrag(const Ray& ray) {
                     Vec3 crossVec = vcross(m_RotationStartVector, currentVec);
                     float sine = vdot(crossVec, m_DragAxisDir);
                     float angle = std::atan2(sine, dot);
+                    if (m_SnapEnabled && !bypassSnap && m_SnapIncrement > 0.0f) {
+                        const float incrementRad = m_SnapIncrement * 3.1415926535f / 180.0f;
+                        angle = std::round(angle / incrementRad) * incrementRad;
+                    }
 
                     Mat4 toOrigin = Mat4::Translation(vscale(m_GizmoOrigin, -1.0f));
                     Mat4 back = Mat4::Translation(m_GizmoOrigin);
@@ -826,8 +932,19 @@ void VulkanGizmo::EndDrag() {
     m_ActiveAxis = -1;
 }
 
+Mat4 VulkanGizmo::CancelDrag() {
+    const Mat4 start = m_DragStartTransform;
+    EndDrag();
+    return start;
+}
+
 float VulkanGizmo::CalculateGizmoScale(const Vec3& gizmoPos, const Vec3& cameraPos,
                                       const Mat4& projMatrix) const {
+    if (std::abs(projMatrix.m[15] - 1.0f) < 0.001f &&
+        std::abs(projMatrix.m[5]) > 1e-5f) {
+        const float halfHeight = 1.0f / std::abs(projMatrix.m[5]);
+        return std::max(halfHeight * 2.0f * m_ScreenScaleFactor, 0.001f);
+    }
     float distance = vlen(vsub(gizmoPos, cameraPos));
     float f = std::abs(projMatrix.m[5]);
     if (f > 1e-5f) {

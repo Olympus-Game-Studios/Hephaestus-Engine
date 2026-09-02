@@ -50,3 +50,4 @@ build/
 hephaestus.log
 **/hephaestus.log
 logs/
+**/.hephaestus/editor/

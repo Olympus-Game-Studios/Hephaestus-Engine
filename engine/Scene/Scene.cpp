@@ -1,5 +1,11 @@
 #include "Scene.h"
+#include "PrefabComponentIO.h"
+#include "PrefabInstantiator.h"
+#include "PrefabOverrideSystem.h"
 #include <algorithm>
+#include <cctype>
+#include <functional>
+#include <unordered_set>
 #include <vector>
 
 // ── Editor-only: auto-attach billboard icon when a LightComponent is created ──
@@ -78,7 +84,7 @@ void Scene::DestroyEntity(Entity entity)
     m_Registry.destroy(entity.m_EntityHandle);
 }
 
-void Scene::SetParent(Entity child, Entity parent)
+void Scene::SetParent(Entity child, Entity parent, bool preserveWorldTransform)
 {
     if (!child || !parent || child == parent)
         return;
@@ -91,6 +97,7 @@ void Scene::SetParent(Entity child, Entity parent)
         current = GetParent(current);
     }
 
+    const Mat4 childWorld = preserveWorldTransform ? GetWorldTransform(child) : Mat4::Identity();
     auto& childTransform = child.GetComponent<TransformComponent>();
 
     // Remove from old parent
@@ -111,13 +118,19 @@ void Scene::SetParent(Entity child, Entity parent)
     childTransform.parent = parent.m_EntityHandle;
     auto& parentTransform = parent.GetComponent<TransformComponent>();
     parentTransform.children.push_back(child.m_EntityHandle);
+
+    if (preserveWorldTransform) {
+        const Mat4 parentWorld = GetWorldTransform(parent);
+        childTransform.SetFromMatrix(Mat4::Multiply(Mat4::Invert(parentWorld), childWorld));
+    }
 }
 
-void Scene::RemoveParent(Entity child)
+void Scene::RemoveParent(Entity child, bool preserveWorldTransform)
 {
     if (!child || !child.HasComponent<TransformComponent>())
         return;
 
+    const Mat4 childWorld = preserveWorldTransform ? GetWorldTransform(child) : Mat4::Identity();
     auto& childTransform = child.GetComponent<TransformComponent>();
     
     if (childTransform.parent != entt::null) {
@@ -132,6 +145,9 @@ void Scene::RemoveParent(Entity child)
             }
         }
         childTransform.parent = entt::null;
+        if (preserveWorldTransform) {
+            childTransform.SetFromMatrix(childWorld);
+        }
     }
 }
 
@@ -494,4 +510,139 @@ Entity Scene::PasteClipboard()
 
     SetSelectedEntity(e);
     return e;
+}
+
+std::vector<Entity> Scene::DuplicateEntities(const std::vector<entt::entity>& entities,
+                                             bool preserveParent)
+{
+    std::vector<entt::entity> roots;
+    std::unordered_set<entt::entity> seen;
+    roots.reserve(entities.size());
+
+    for (entt::entity handle : entities) {
+        Entity source(handle, this);
+        if (!source) {
+            continue;
+        }
+
+        if (source.HasComponent<PrefabNodeComponent>()) {
+            Entity prefabRoot = PrefabOverrideSystem::FindInstanceRoot(*this, source);
+            if (prefabRoot) {
+                source = prefabRoot;
+                handle = static_cast<entt::entity>(prefabRoot);
+            }
+        }
+
+        bool hasSelectedAncestor = false;
+        for (Entity parent = GetParent(source); parent; parent = GetParent(parent)) {
+            if (std::find(entities.begin(), entities.end(),
+                          static_cast<entt::entity>(parent)) != entities.end()) {
+                hasSelectedAncestor = true;
+                break;
+            }
+        }
+        if (!hasSelectedAncestor && seen.insert(handle).second) {
+            roots.push_back(handle);
+        }
+    }
+
+    auto uniqueName = [this](const std::string& original) {
+        std::string base = original.empty() ? "Entity" : original;
+        const size_t suffixStart = base.rfind(" (");
+        if (suffixStart != std::string::npos && base.back() == ')') {
+            const std::string number =
+                base.substr(suffixStart + 2, base.size() - suffixStart - 3);
+            if (!number.empty() &&
+                std::all_of(number.begin(), number.end(),
+                            [](unsigned char c) { return std::isdigit(c) != 0; })) {
+                base.resize(suffixStart);
+            }
+        }
+        std::string candidate = base;
+        int suffix = 1;
+        while (FindEntityByName(candidate)) {
+            candidate = base + " (" + std::to_string(suffix++) + ")";
+        }
+        return candidate;
+    };
+
+    std::function<Entity(Entity, Entity)> duplicateOne;
+    duplicateOne = [&](Entity source, Entity newParent) -> Entity {
+        if (source.HasComponent<PrefabInstanceComponent>()) {
+            const auto& sourceInstance = source.GetComponent<PrefabInstanceComponent>();
+            PrefabAsset asset;
+            std::string error;
+            if (!PrefabOverrideSystem::LoadAsset(sourceInstance.prefabPath, asset, error)) {
+                return {};
+            }
+
+            PrefabInstanceComponent instanceCopy = sourceInstance;
+            instanceCopy.instanceId.clear();
+            instanceCopy.parent = newParent
+                ? static_cast<entt::entity>(newParent)
+                : entt::null;
+
+            PrefabInstantiateOptions options;
+            options.prefabPath = sourceInstance.prefabPath;
+            options.parent = instanceCopy.parent;
+            options.instanceData = &instanceCopy;
+            Entity duplicate = PrefabInstantiator::Instantiate(*this, asset, options);
+            if (duplicate && duplicate.HasComponent<TagComponent>()) {
+                duplicate.GetComponent<TagComponent>().tag =
+                    uniqueName(source.GetComponent<TagComponent>().tag);
+            }
+            return duplicate;
+        }
+
+        const std::string sourceName = source.HasComponent<TagComponent>()
+            ? source.GetComponent<TagComponent>().tag
+            : std::string("Entity");
+        Entity duplicate = CreateEntity(uniqueName(sourceName));
+
+        if (source.HasComponent<TransformComponent>()) {
+            PrefabComponentIO::CopyLocalTransform(
+                duplicate.GetComponent<TransformComponent>(),
+                source.GetComponent<TransformComponent>());
+        }
+
+        std::vector<PrefabComponentEntry> components;
+        if (PrefabComponentIO::CaptureFromEntity(source, components)) {
+            for (const PrefabComponentEntry& component : components) {
+                PrefabComponentIO::ApplyEntry(duplicate, component);
+            }
+        }
+
+        if (source.HasComponent<AudioSourceComponent>()) {
+            AudioSourceComponent audio = source.GetComponent<AudioSourceComponent>();
+            audio.runtimeHandle = 0;
+            audio.runtimeStarted = false;
+            audio.runtimeLastClip.clear();
+            duplicate.AddComponent<AudioSourceComponent>(audio);
+        }
+        if (source.HasComponent<FolderComponent>()) {
+            duplicate.AddComponent<FolderComponent>(
+                source.GetComponent<FolderComponent>());
+        }
+
+        if (newParent) {
+            SetParent(duplicate, newParent);
+        }
+
+        for (Entity child : GetChildren(source)) {
+            duplicateOne(child, duplicate);
+        }
+        return duplicate;
+    };
+
+    std::vector<Entity> duplicates;
+    duplicates.reserve(roots.size());
+    for (entt::entity handle : roots) {
+        Entity source(handle, this);
+        Entity parent = preserveParent ? GetParent(source) : Entity{};
+        Entity duplicate = duplicateOne(source, parent);
+        if (duplicate) {
+            duplicates.push_back(duplicate);
+        }
+    }
+    return duplicates;
 }

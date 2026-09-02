@@ -52,6 +52,8 @@ public:
 
     static bool CanUndo(EditorContext* ctx);
     static bool CanRedo(EditorContext* ctx);
+    static void DiscardLastSnapshot(EditorContext* ctx);
+    static bool RestoreAndDiscardLastSnapshot(EditorContext* ctx, std::string& outError);
 
     using CustomPushHandler = std::function<void(const std::string& label)>;
     static void SetCustomPushHandler(Scene* scene, CustomPushHandler handler);

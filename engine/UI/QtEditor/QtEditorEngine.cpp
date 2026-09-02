@@ -673,6 +673,11 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         if (!m_editorContext.HasActiveScene()) {
             return false;
         }
+        if (m_editorContext.GetSelectedEntity() != entt::null &&
+            m_editorContext.IsEditorLocked(
+                m_editorContext.GetSelectedEntity())) {
+            return false;
+        }
         const auto& viewportSettings = m_editorContext.GetViewportSettings();
         if (!viewportSettings.showGizmo) {
             return false;
@@ -726,6 +731,34 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         m_inputState.mouseY = event.y;
         m_runtimeMouseX = static_cast<double>(event.x);
         m_runtimeMouseY = static_cast<double>(event.y);
+        if (event.button == 2) {
+            m_rmbPressX = event.x;
+            m_rmbPressY = event.y;
+            m_rmbMoved = false;
+        }
+
+        if (event.button == 1 && m_placementPreview != entt::null) {
+            Scene* scene = m_editorContext.GetActiveScene();
+            if (scene && scene->GetRegistry().valid(m_placementPreview)) {
+                scene->GetRegistry().remove<EditorOnlyComponent>(m_placementPreview);
+                m_editorContext.MarkDirty();
+                const bool repeat = m_inputState.shiftDown;
+                const entt::entity committed = m_placementPreview;
+                m_placementPreview = entt::null;
+                if (repeat) {
+                    EditorUndoManager::PushSnapshot(
+                        &m_editorContext, "Repeat placement");
+                    const auto duplicates =
+                        scene->DuplicateEntities({committed}, true);
+                    if (!duplicates.empty()) {
+                        BeginPlacement(
+                            static_cast<entt::entity>(duplicates.front()));
+                    }
+                }
+                emit sceneHierarchyChanged();
+            }
+            break;
+        }
 
         RuntimeUIState* runtimeUIState = FindRuntimeUIState(this);
         if (!m_playModeManager.IsEditor() && runtimeUIState && runtimeUIState->context &&
@@ -735,7 +768,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             runtimeUIState->context->QueueMousePress(uiPos, event.button);
         }
 
-        if (event.button == 1 && !m_inputState.altDown && !m_inputState.rmbDown) {
+        if (event.button == 1 && !m_inputState.rmbDown) {
             // Save press position for picking (release may drift due to jitter)
             m_pickPressX = event.x;
             m_pickPressY = event.y;
@@ -752,7 +785,29 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                     int hoveredAxis = -1;
                     if (m_frameRenderer->CheckGizmoHover(px, py, viewMatrix, projMatrix, hoveredAxis)) {
                         Ray gizmoRay = buildRayFromScreen(px, py, viewMatrix, projMatrix);
-                        EditorUndoManager::PushSnapshot(&m_editorContext, "Gizmo transform");
+                        EditorUndoManager::PushSnapshot(
+                            &m_editorContext,
+                            m_inputState.altDown ? "Duplicate and transform" : "Gizmo transform");
+                        if (m_inputState.altDown) {
+                            Scene* scene = m_editorContext.GetActiveScene();
+                            if (scene) {
+                                const std::vector<Entity> duplicates =
+                                    scene->DuplicateEntities(
+                                        m_editorContext.GetSelectedEntities(), true);
+                                std::vector<entt::entity> duplicateHandles;
+                                duplicateHandles.reserve(duplicates.size());
+                                for (const Entity& duplicate : duplicates) {
+                                    duplicateHandles.push_back(
+                                        static_cast<entt::entity>(duplicate));
+                                }
+                                if (!duplicateHandles.empty()) {
+                                    m_editorContext.SelectEntities(
+                                        duplicateHandles, duplicateHandles.back());
+                                    m_editorContext.MarkDirty();
+                                    emit sceneHierarchyChanged();
+                                }
+                            }
+                        }
                         m_frameRenderer->GetGizmo()->BeginDrag(gizmoRay, hoveredAxis);
                         m_gizmoDragging = true;
                         m_gizmoActiveAxis = hoveredAxis;
@@ -767,7 +822,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         }
         
         // Notify camera controller (suppressed when Lua UI has cursor unlocked)
-        if (!isRuntimeUICursorMode()) {
+        if (!m_gizmoDragging && !isRuntimeUICursorMode()) {
             m_cameraController.OnMousePress(event.button, m_inputState);
         }
         syncViewportCursorCapture();
@@ -781,6 +836,9 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
     }
         
     case InputEvent::Type::MouseRelease: {
+        const bool openContextMenu =
+            event.button == 2 && !m_rmbMoved &&
+            m_playModeManager.IsEditor();
         // Update button state
         if (event.button == 1) {
             m_inputState.lmbDown = false;
@@ -792,6 +850,16 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
 
             if (m_gizmoDragging) {
                 endGizmoDrag();
+                break;
+            }
+            if (m_marqueeSelecting) {
+                const bool ctrlHeld = (event.modifiers & 0x04000000) != 0;
+                const bool shiftHeld = (event.modifiers & 0x02000000) != 0;
+                selectEntitiesInViewportRect(
+                    m_pickPressX, m_pickPressY,
+                    event.x, event.y, shiftHeld, ctrlHeld);
+                m_marqueeSelecting = false;
+                m_pickPressValid = false;
                 break;
             }
             
@@ -808,6 +876,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
 
                 const bool ctrlHeld = (event.modifiers & 0x04000000) != 0;  // Qt::ControlModifier
                 const bool shiftHeld = (event.modifiers & 0x02000000) != 0; // Qt::ShiftModifier
+                const bool altHeld = (event.modifiers & 0x08000000) != 0; // Qt::AltModifier
 
                 const uint32_t pixX = static_cast<uint32_t>(px + 0.5f);
                 const uint32_t pixY = static_cast<uint32_t>(py + 0.5f);
@@ -817,6 +886,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                 } else {
                     m_viewportPickCtrlHeld = ctrlHeld;
                     m_viewportPickShiftHeld = shiftHeld;
+                    m_viewportPickAltHeld = altHeld;
                     m_viewportPickWaitingReadback = true;
                     m_frameRenderer->PickEntityAt(pixX, pixY);
                 }
@@ -844,6 +914,9 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             m_cameraController.OnMouseRelease(event.button, m_inputState);
         }
         syncViewportCursorCapture();
+        if (openContextMenu) {
+            emit viewportContextMenuRequested(event.x, event.y);
+        }
         break;
     }
         
@@ -872,10 +945,69 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
             // Track for Lua input
             m_runtimeMouseX = static_cast<double>(event.x);
             m_runtimeMouseY = static_cast<double>(event.y);
+            if (m_inputState.rmbDown) {
+                const float rdx = event.x - m_rmbPressX;
+                const float rdy = event.y - m_rmbPressY;
+                if (rdx * rdx + rdy * rdy > 16.0f) m_rmbMoved = true;
+            }
+
+            if (m_placementPreview != entt::null) {
+                Scene* scene = m_editorContext.GetActiveScene();
+                if (scene && scene->GetRegistry().valid(m_placementPreview)) {
+                    std::unordered_set<entt::entity> ignored{m_placementPreview};
+                    SceneAuthoring::SceneRaycastHit hit;
+                    if (RaycastViewport(event.x, event.y, hit, ignored)) {
+                        Entity preview(m_placementPreview, scene);
+                        Mat4 world = scene->GetWorldTransform(preview);
+                        Vec3 position = hit.point;
+                        if (preview.HasComponent<MeshRendererComponent>()) {
+                            const AABB bounds = SceneAuthoring::TransformBounds(
+                                preview.GetComponent<MeshRendererComponent>().localBounds,
+                                world);
+                            const Vec3 half = bounds.HalfSize();
+                            const float support =
+                                std::abs(hit.normal.x) * half.x +
+                                std::abs(hit.normal.y) * half.y +
+                                std::abs(hit.normal.z) * half.z;
+                            position = vsub(
+                                vadd(hit.point, vscale(hit.normal, support)),
+                                vsub(bounds.Center(),
+                                     Vec3(world.m[12], world.m[13], world.m[14])));
+                        }
+                        const auto& snap = m_editorContext.GetSnapSettings();
+                        if (snap.enableSnap && !m_inputState.ctrlDown) {
+                            position = SceneAuthoring::SnapVector(
+                                position, snap.translateSnap);
+                        }
+                        world.m[12] = position.x;
+                        world.m[13] = position.y;
+                        world.m[14] = position.z;
+                        Entity parent = scene->GetParent(preview);
+                        const Mat4 local = parent
+                            ? Mat4::Multiply(
+                                Mat4::Invert(scene->GetWorldTransform(parent)),
+                                world)
+                            : world;
+                        preview.GetComponent<TransformComponent>().SetFromMatrix(local);
+                    }
+                }
+                break;
+            }
             if (!m_playModeManager.IsEditor() &&
                 !(m_viewport && m_viewport->IsCursorCaptured())) {
                 m_runtimeMouseDeltaX += static_cast<double>(deltaX);
                 m_runtimeMouseDeltaY += static_cast<double>(deltaY);
+            }
+
+            if (m_inputState.lmbDown && m_pickPressValid &&
+                !m_inputState.altDown && !m_gizmoDragging) {
+                const float dx = event.x - m_pickPressX;
+                const float dy = event.y - m_pickPressY;
+                if (dx * dx + dy * dy > 36.0f) {
+                    m_marqueeSelecting = true;
+                    m_marqueeCurrentX = event.x;
+                    m_marqueeCurrentY = event.y;
+                }
             }
 
             if (m_gizmoDragging) {
@@ -895,7 +1027,55 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                                 float py = event.y;
                                 toPixelCoords(event.x, event.y, px, py);
                                 Ray gizmoRay = buildRayFromScreen(px, py, viewMatrix, projMatrix);
-                                const Mat4 newWorldPrimary = m_frameRenderer->GetGizmo()->HandleDrag(gizmoRay);
+                                const auto& snap = m_editorContext.GetSnapSettings();
+                                float snapIncrement = snap.translateSnap;
+                                if (m_editorContext.GetGizmoMode() == Hephaestus::GizmoMode::Rotate) {
+                                    snapIncrement = snap.rotateSnapDeg;
+                                } else if (m_editorContext.GetGizmoMode() == Hephaestus::GizmoMode::Scale) {
+                                    snapIncrement = snap.scaleSnap;
+                                }
+                                m_frameRenderer->GetGizmo()->SetSnapSettings(
+                                    snap.enableSnap, snapIncrement);
+                                Mat4 newWorldPrimary =
+                                    m_frameRenderer->GetGizmo()->HandleDrag(
+                                        gizmoRay, m_inputState.ctrlDown);
+                                if (m_editorContext.GetGizmoMode() ==
+                                        Hephaestus::GizmoMode::Translate &&
+                                    m_inputState.shiftDown) {
+                                    std::unordered_set<entt::entity> ignored;
+                                    for (entt::entity selected :
+                                         m_editorContext.GetSelectedEntities()) {
+                                        ignored.insert(selected);
+                                    }
+                                    SceneAuthoring::SceneRaycastHit surfaceHit;
+                                    if (RaycastViewport(event.x, event.y,
+                                                        surfaceHit, ignored)) {
+                                        Entity primary(selectedEntity, scene);
+                                        if (primary.HasComponent<MeshRendererComponent>()) {
+                                            const AABB bounds =
+                                                SceneAuthoring::TransformBounds(
+                                                    primary.GetComponent<MeshRendererComponent>().localBounds,
+                                                    newWorldPrimary);
+                                            const Vec3 half = bounds.HalfSize();
+                                            const float support =
+                                                std::abs(surfaceHit.normal.x) * half.x +
+                                                std::abs(surfaceHit.normal.y) * half.y +
+                                                std::abs(surfaceHit.normal.z) * half.z;
+                                            const Vec3 desiredCenter = vadd(
+                                                surfaceHit.point,
+                                                vscale(surfaceHit.normal, support));
+                                            const Vec3 delta = vsub(
+                                                desiredCenter, bounds.Center());
+                                            newWorldPrimary.m[12] += delta.x;
+                                            newWorldPrimary.m[13] += delta.y;
+                                            newWorldPrimary.m[14] += delta.z;
+                                        } else {
+                                            newWorldPrimary.m[12] = surfaceHit.point.x;
+                                            newWorldPrimary.m[13] = surfaceHit.point.y;
+                                            newWorldPrimary.m[14] = surfaceHit.point.z;
+                                        }
+                                    }
+                                }
 
                                 if (!m_gizmoDragEntityWorldStart.empty()) {
                                     const Mat4 invPrimaryStart = Mat4::Invert(m_gizmoDragPrimaryWorldStart);
@@ -1016,6 +1196,7 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
                 float newSpeed = std::clamp(m_cameraController.baseMoveSpeed * speedScale, minMoveSpeed, maxMoveSpeed);
                 m_cameraController.baseMoveSpeed = newSpeed;
                 m_editorContext.GetCamera().moveSpeed = newSpeed;
+                emit cameraSpeedChanged(newSpeed);
                 break;
             }
             m_cameraController.OnMouseWheel(event.wheelDelta, m_inputState);
@@ -1030,6 +1211,50 @@ void QtEditorEngine::OnViewportInput(const InputEvent& event)
         m_inputState.altDown = (event.modifiers & 0x08000000) != 0;
         m_inputState.shiftDown = (event.modifiers & 0x02000000) != 0;
         m_inputState.ctrlDown = (event.modifiers & 0x04000000) != 0;
+
+        if (event.key == 0x01000000 && m_placementPreview != entt::null) {
+            m_placementPreview = entt::null;
+            std::string error;
+            EditorUndoManager::RestoreAndDiscardLastSnapshot(
+                &m_editorContext, error);
+            emit sceneHierarchyChanged();
+            break;
+        }
+        if (event.key == 0x01000000 && m_gizmoDragging) { // Escape
+            endGizmoDrag();
+            std::string error;
+            EditorUndoManager::RestoreAndDiscardLastSnapshot(
+                &m_editorContext, error);
+            emit sceneHierarchyChanged();
+            break;
+        }
+        if (event.key == 0x01000007 && // Qt::Key_Delete
+            !m_playModeManager.ShouldSuppressEditorInteraction()) {
+            emit deleteSelectionRequested();
+            break;
+        }
+        if (event.key == 0x60 && // Qt::Key_QuoteLeft
+            !m_playModeManager.ShouldSuppressEditorInteraction()) {
+            std::unordered_set<entt::entity> ignored;
+            for (entt::entity selected : m_editorContext.GetSelectedEntities()) {
+                ignored.insert(selected);
+            }
+            SceneAuthoring::SceneRaycastHit hit;
+            if (!RaycastViewport(m_lastMouseX, m_lastMouseY, hit, ignored)) {
+                ignored.clear();
+                RaycastViewport(m_lastMouseX, m_lastMouseY, hit, ignored);
+            }
+            if (hit.entity != entt::null) {
+                Entity target(hit.entity, m_editorContext.GetActiveScene());
+                if (target.HasComponent<PrefabNodeComponent>()) {
+                    Entity root = PrefabOverrideSystem::FindInstanceRoot(
+                        *m_editorContext.GetActiveScene(), target);
+                    if (root) hit.entity = static_cast<entt::entity>(root);
+                }
+                m_editorContext.SelectEntity(hit.entity);
+            }
+            break;
+        }
 
         // Escape exits play mode in the editor (releases cursor clip so Stop is reachable).
         if (event.key == 0x01000000 && !m_playModeManager.IsEditor()) { // Qt::Key_Escape
@@ -1131,6 +1356,16 @@ void QtEditorEngine::captureGizmoMultiDragWorldStarts(Scene* scene)
     if (!capturedPrimary) {
         m_gizmoDragEntityWorldStart.clear();
         m_gizmoDragPrimaryWorldStart = Mat4::Identity();
+    } else if (m_gizmoDragEntityWorldStart.size() > 1) {
+        Vec3 center(0, 0, 0);
+        for (const auto& [_, world] : m_gizmoDragEntityWorldStart) {
+            center = vadd(center, Vec3(world.m[12], world.m[13], world.m[14]));
+        }
+        center = vscale(
+            center, 1.0f / static_cast<float>(m_gizmoDragEntityWorldStart.size()));
+        m_gizmoDragPrimaryWorldStart.m[12] = center.x;
+        m_gizmoDragPrimaryWorldStart.m[13] = center.y;
+        m_gizmoDragPrimaryWorldStart.m[14] = center.z;
     }
 }
 
@@ -1138,6 +1373,85 @@ void QtEditorEngine::clearGizmoMultiDragWorldStarts()
 {
     m_gizmoDragEntityWorldStart.clear();
     m_gizmoDragPrimaryWorldStart = Mat4::Identity();
+}
+
+void QtEditorEngine::selectEntitiesInViewportRect(
+    float x0, float y0, float x1, float y1, bool add, bool toggle)
+{
+    Scene* scene = m_editorContext.GetActiveScene();
+    if (!scene || !m_viewport) return;
+
+    const float left = std::min(x0, x1);
+    const float right = std::max(x0, x1);
+    const float top = std::min(y0, y1);
+    const float bottom = std::max(y0, y1);
+    const float width = std::max(1, m_viewport->width());
+    const float height = std::max(1, m_viewport->height());
+
+    const auto& camera = m_camera;
+    const float yaw = camera.yawDeg * 3.14159265f / 180.0f;
+    const float pitch = camera.pitchDeg * 3.14159265f / 180.0f;
+    const Vec3 cameraPosition(camera.positionX, camera.positionY, camera.positionZ);
+    const Vec3 forward = vnorm(Vec3(std::cos(pitch) * std::cos(yaw),
+                                    std::sin(pitch),
+                                    std::cos(pitch) * std::sin(yaw)));
+    const Mat4 view = Mat4::LookAt(cameraPosition,
+                                   vadd(cameraPosition, forward),
+                                   Vec3(0, 1, 0));
+    const float aspect = width / height;
+    const Mat4 projection = camera.projectionMode == ProjectionMode::Orthographic
+        ? Mat4::Orthographic(-camera.orthoHalfExtent * aspect,
+                             camera.orthoHalfExtent * aspect,
+                             -camera.orthoHalfExtent,
+                             camera.orthoHalfExtent,
+                             camera.nearPlane, camera.farPlane)
+        : Mat4::Perspective(camera.fovDeg * 3.14159265f / 180.0f,
+                            aspect, camera.nearPlane, camera.farPlane);
+    const Mat4 viewProjection = Mat4::Multiply(projection, view);
+
+    std::vector<entt::entity> inside;
+    std::unordered_set<entt::entity> seen;
+    auto meshView = scene->GetRegistry().view<TransformComponent, MeshRendererComponent>();
+    for (entt::entity handle : meshView) {
+        if (m_editorContext.IsEditorHidden(handle) ||
+            m_editorContext.IsEditorLocked(handle)) continue;
+        Entity entity(handle, scene);
+        const auto& renderer = meshView.get<MeshRendererComponent>(handle);
+        const AABB bounds = SceneAuthoring::TransformBounds(
+            renderer.localBounds, scene->GetWorldTransform(entity));
+        const Vec3 corners[] = {
+            {bounds.min.x,bounds.min.y,bounds.min.z}, {bounds.max.x,bounds.min.y,bounds.min.z},
+            {bounds.min.x,bounds.max.y,bounds.min.z}, {bounds.max.x,bounds.max.y,bounds.min.z},
+            {bounds.min.x,bounds.min.y,bounds.max.z}, {bounds.max.x,bounds.min.y,bounds.max.z},
+            {bounds.min.x,bounds.max.y,bounds.max.z}, {bounds.max.x,bounds.max.y,bounds.max.z}
+        };
+        float minX = width, minY = height, maxX = 0.0f, maxY = 0.0f;
+        for (const Vec3& corner : corners) {
+            const Vec3 ndc = Mat4::TransformPoint(viewProjection, corner);
+            const float sx = (ndc.x + 1.0f) * 0.5f * width;
+            const float sy = (ndc.y + 1.0f) * 0.5f * height;
+            minX = std::min(minX, sx); maxX = std::max(maxX, sx);
+            minY = std::min(minY, sy); maxY = std::max(maxY, sy);
+        }
+        if (minX >= left && maxX <= right && minY >= top && maxY <= bottom) {
+            if (entity.HasComponent<PrefabNodeComponent>()) {
+                Entity root = PrefabOverrideSystem::FindInstanceRoot(*scene, entity);
+                if (root) handle = static_cast<entt::entity>(root);
+            }
+            if (seen.insert(handle).second) inside.push_back(handle);
+        }
+    }
+
+    std::vector<entt::entity> result =
+        (add || toggle) ? m_editorContext.GetSelectedEntities()
+                        : std::vector<entt::entity>{};
+    for (entt::entity handle : inside) {
+        auto it = std::find(result.begin(), result.end(), handle);
+        if (toggle && it != result.end()) result.erase(it);
+        else if (it == result.end()) result.push_back(handle);
+    }
+    if (result.empty()) m_editorContext.ClearSelection();
+    else m_editorContext.SelectEntities(result, result.back());
 }
 
 void QtEditorEngine::updateKeyState(int key, bool pressed)
@@ -1297,44 +1611,6 @@ void QtEditorEngine::FocusOnSelection()
     
     Scene* scene = m_editorContext.GetActiveScene();
 
-    // ── Initialize physics (Qt path) and configure project root ───────────
-    if (!m_joltPhysicsEngine) {
-        m_joltPhysicsEngine = std::make_unique<Physics::JoltPhysicsEngine>();
-        try {
-            m_joltPhysicsEngine->Initialize();
-            m_joltPhysicsSystem = std::make_unique<Physics::JoltPhysicsSystem>(*m_joltPhysicsEngine);
-            m_physicsInitialized = true;
-            std::cout << "[QtEditorEngine] Physics engine initialized\n";
-        } catch (const std::exception& e) {
-            m_physicsInitialized = false;
-            std::cerr << "[QtEditorEngine] Failed to initialize physics engine: " << e.what() << "\n";
-        }
-    }
-
-    if (m_physicsInitialized && m_joltPhysicsSystem) {
-        std::filesystem::path projectRoot;
-        const std::string& scenePathStr = m_editorContext.GetScenePath();
-        if (!scenePathStr.empty()) {
-            std::filesystem::path cursor = std::filesystem::path(scenePathStr).parent_path();
-            while (!cursor.empty() && cursor.has_filename() && cursor.filename() != "assets") {
-                std::filesystem::path parent = cursor.parent_path();
-                if (parent == cursor) {
-                    break;
-                }
-                cursor = parent;
-            }
-            if (!cursor.empty() && cursor.has_filename() && cursor.filename() == "assets") {
-                projectRoot = cursor.parent_path();
-            }
-        }
-        if (projectRoot.empty()) {
-            projectRoot = std::filesystem::current_path();
-        }
-
-        m_joltPhysicsSystem->SetProjectRoot(projectRoot);
-        m_joltPhysicsSystem->ClearAllBodies();
-        m_joltPhysicsSystem->SetEnabled(true);
-    }
     entt::entity selected = m_editorContext.GetSelectedEntity();
     
     float focusX = 0.0f;
@@ -1373,6 +1649,127 @@ void QtEditorEngine::FocusOnSelection()
     m_cameraController.FocusOnPoint(focusX, focusY, focusZ, focusRadius);
     std::cout << "[QtEditorEngine] Focused on point (" << focusX << ", " << focusY << ", " << focusZ 
               << ") radius=" << focusRadius << "\n";
+}
+
+void QtEditorEngine::FocusAll()
+{
+    Scene* scene = m_editorContext.GetActiveScene();
+    if (!scene) return;
+    bool hasBounds = false;
+    AABB combined;
+    auto view = scene->GetRegistry().view<TransformComponent, MeshRendererComponent>();
+    for (entt::entity handle : view) {
+        if (m_editorContext.IsEditorHidden(handle)) continue;
+        Entity entity(handle, scene);
+        const auto& renderer = view.get<MeshRendererComponent>(handle);
+        const AABB bounds = SceneAuthoring::TransformBounds(
+            renderer.localBounds, scene->GetWorldTransform(entity));
+        if (!hasBounds) {
+            combined = bounds;
+            hasBounds = true;
+        } else {
+            combined.min.x = std::min(combined.min.x, bounds.min.x);
+            combined.min.y = std::min(combined.min.y, bounds.min.y);
+            combined.min.z = std::min(combined.min.z, bounds.min.z);
+            combined.max.x = std::max(combined.max.x, bounds.max.x);
+            combined.max.y = std::max(combined.max.y, bounds.max.y);
+            combined.max.z = std::max(combined.max.z, bounds.max.z);
+        }
+    }
+    if (!hasBounds) {
+        m_cameraController.FocusOnPoint(0, 0, 0, 5.0f);
+        return;
+    }
+    const Vec3 center = combined.Center();
+    const Vec3 size = vsub(combined.max, combined.min);
+    const float radius = std::max(0.5f, vlen(size) * 0.5f);
+    m_cameraController.FocusOnPoint(center.x, center.y, center.z, radius);
+}
+
+bool QtEditorEngine::RaycastViewport(
+    float x, float y, Hephaestus::SceneAuthoring::SceneRaycastHit& outHit,
+    const std::unordered_set<entt::entity>& ignored)
+{
+    Scene* scene = m_editorContext.GetActiveScene();
+    if (!scene || !m_swapchain || m_swapchain->extent.width == 0 ||
+        m_swapchain->extent.height == 0) {
+        return false;
+    }
+
+    const auto& cam = m_camera;
+    const float yaw = cam.yawDeg * 3.14159265f / 180.0f;
+    const float pitch = cam.pitchDeg * 3.14159265f / 180.0f;
+    const Vec3 cameraPosition(cam.positionX, cam.positionY, cam.positionZ);
+    const Vec3 forward = vnorm(Vec3(std::cos(pitch) * std::cos(yaw),
+                                    std::sin(pitch),
+                                    std::cos(pitch) * std::sin(yaw)));
+    const Mat4 view = Mat4::LookAt(cameraPosition,
+                                   vadd(cameraPosition, forward),
+                                   Vec3(0, 1, 0));
+    const float aspect = static_cast<float>(m_swapchain->extent.width) /
+                         static_cast<float>(m_swapchain->extent.height);
+    Mat4 projection;
+    if (cam.projectionMode == Hephaestus::ProjectionMode::Orthographic) {
+        const float halfHeight = std::max(cam.orthoHalfExtent, 0.01f);
+        const float halfWidth = halfHeight * aspect;
+        projection = Mat4::Orthographic(-halfWidth, halfWidth,
+                                        -halfHeight, halfHeight,
+                                        cam.nearPlane, cam.farPlane);
+    } else {
+        projection = Mat4::Perspective(cam.fovDeg * 3.14159265f / 180.0f,
+                                       aspect, cam.nearPlane, cam.farPlane);
+    }
+
+    const float viewportWidth = m_viewport
+        ? static_cast<float>(m_viewport->width())
+        : static_cast<float>(m_swapchain->extent.width);
+    const float viewportHeight = m_viewport
+        ? static_cast<float>(m_viewport->height())
+        : static_cast<float>(m_swapchain->extent.height);
+    const float pixelX = x * static_cast<float>(m_swapchain->extent.width) /
+                         std::max(viewportWidth, 1.0f);
+    const float pixelY = y * static_cast<float>(m_swapchain->extent.height) /
+                         std::max(viewportHeight, 1.0f);
+    const Vec3 nearNdc(2.0f * pixelX / m_swapchain->extent.width - 1.0f,
+                       2.0f * pixelY / m_swapchain->extent.height - 1.0f,
+                       0.0f);
+    const Vec3 farNdc(nearNdc.x, nearNdc.y, 1.0f);
+    const Mat4 inverseProjection = Mat4::Invert(projection);
+    const Mat4 inverseView = Mat4::Invert(view);
+    const Vec3 nearWorld = Mat4::TransformPoint(
+        inverseView, Mat4::TransformPoint(inverseProjection, nearNdc));
+    const Vec3 farWorld = Mat4::TransformPoint(
+        inverseView, Mat4::TransformPoint(inverseProjection, farNdc));
+    const Ray ray(nearWorld, vnorm(vsub(farWorld, nearWorld)));
+    if (Hephaestus::SceneAuthoring::RaycastBounds(
+            *scene, ray, outHit, ignored)) {
+        return true;
+    }
+    if (std::abs(ray.direction.y) > 1e-6f) {
+        const float distance = -ray.origin.y / ray.direction.y;
+        if (distance >= 0.0f) {
+            outHit.entity = entt::null;
+            outHit.point = ray.at(distance);
+            outHit.normal = Vec3(0, 1, 0);
+            outHit.distance = distance;
+            return true;
+        }
+    }
+    return false;
+}
+
+void QtEditorEngine::BeginPlacement(entt::entity previewEntity)
+{
+    Scene* scene = m_editorContext.GetActiveScene();
+    if (!scene || previewEntity == entt::null ||
+        !scene->GetRegistry().valid(previewEntity)) {
+        return;
+    }
+    m_placementPreview = previewEntity;
+    if (!scene->GetRegistry().all_of<EditorOnlyComponent>(previewEntity)) {
+        scene->GetRegistry().emplace<EditorOnlyComponent>(previewEntity);
+    }
+    m_editorContext.SelectEntity(previewEntity);
 }
 
 void QtEditorEngine::onTick()
@@ -1561,6 +1958,15 @@ void QtEditorEngine::renderFrame()
             m_renderConfig.selectedEntities.push_back(static_cast<uint32_t>(e));
         }
     }
+    m_renderConfig.editorHiddenEntities.assign(
+        m_editorContext.GetEditorHiddenIds().begin(),
+        m_editorContext.GetEditorHiddenIds().end());
+    m_renderConfig.editorLockedEntities.assign(
+        m_editorContext.GetEditorLockedIds().begin(),
+        m_editorContext.GetEditorLockedIds().end());
+    m_renderConfig.editorIsolatedEntities.assign(
+        m_editorContext.GetIsolatedIds().begin(),
+        m_editorContext.GetIsolatedIds().end());
     
     // Sync gizmo settings
     m_renderConfig.gizmoMode = static_cast<int>(m_editorContext.GetGizmoMode());
@@ -1589,6 +1995,28 @@ void QtEditorEngine::renderFrame()
         Entity entity(selectedEntity, scene);
         if (entity.HasComponent<TransformComponent>()) {
             Mat4 worldTransform = scene->GetWorldTransform(entity);
+            const auto selected = m_editorContext.GetSelectedEntities();
+            if (selected.size() > 1) {
+                Vec3 center(0, 0, 0);
+                size_t count = 0;
+                for (entt::entity handle : selected) {
+                    Entity selectedEntityHandle(handle, scene);
+                    if (!selectedEntityHandle ||
+                        !selectedEntityHandle.HasComponent<TransformComponent>()) continue;
+                    const Mat4 selectedWorld =
+                        scene->GetWorldTransform(selectedEntityHandle);
+                    center = vadd(center, Vec3(selectedWorld.m[12],
+                                               selectedWorld.m[13],
+                                               selectedWorld.m[14]));
+                    ++count;
+                }
+                if (count > 0) {
+                    center = vscale(center, 1.0f / static_cast<float>(count));
+                    worldTransform.m[12] = center.x;
+                    worldTransform.m[13] = center.y;
+                    worldTransform.m[14] = center.z;
+                }
+            }
             
             // Build view and projection matrices from camera
             const auto& cam = m_camera;
@@ -1682,6 +2110,16 @@ void QtEditorEngine::tryApplyCompletedViewportPick()
     entt::entity picked = entt::null;
     if (raw != UINT32_MAX && raw != static_cast<uint32_t>(-1)) {
         picked = static_cast<entt::entity>(raw);
+    }
+    Scene* scene = m_editorContext.GetActiveScene();
+    if (!m_viewportPickAltHeld && scene && picked != entt::null &&
+        scene->GetRegistry().valid(picked)) {
+        Entity pickedEntity(picked, scene);
+        if (pickedEntity.HasComponent<PrefabNodeComponent>()) {
+            Entity root = PrefabOverrideSystem::FindInstanceRoot(
+                *scene, pickedEntity);
+            if (root) picked = static_cast<entt::entity>(root);
+        }
     }
     m_editorContext.SelectFromViewportClick(picked, m_viewportPickCtrlHeld, m_viewportPickShiftHeld);
     m_viewportPickWaitingReadback = false;

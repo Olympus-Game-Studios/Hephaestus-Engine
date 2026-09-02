@@ -21,8 +21,8 @@ public:
     void DestroyEntity(Entity entity);
 
     // Entity hierarchy management
-    void SetParent(Entity child, Entity parent);
-    void RemoveParent(Entity child);
+    void SetParent(Entity child, Entity parent, bool preserveWorldTransform = false);
+    void RemoveParent(Entity child, bool preserveWorldTransform = false);
     Entity GetParent(Entity entity);
     std::vector<Entity> GetChildren(Entity entity);
 
@@ -57,6 +57,13 @@ public:
     void CopyEntityToClipboard(Entity entity);
     bool HasClipboardEntity() const;
     Entity PasteClipboard();
+
+    /**
+     * Duplicate selected roots with their hierarchy. Prefab instance roots are
+     * re-instantiated so the copies remain linked instances.
+     */
+    std::vector<Entity> DuplicateEntities(const std::vector<entt::entity>& entities,
+                                          bool preserveParent = true);
 
     // Registry access (for advanced usage)
     entt::registry& GetRegistry() { return m_Registry; }

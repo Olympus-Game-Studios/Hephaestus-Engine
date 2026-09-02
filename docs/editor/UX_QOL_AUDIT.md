@@ -194,3 +194,24 @@ Code-verified planning and Phase 2 implementation notes. Authored asset identity
 | Lit/Unlit/Wireframe + ortho views | Implemented |
 | `ProjectCreationService` + recent-projects management | Implemented |
 | Headless tests + optional Qt Test harness | Implemented |
+
+## Implementation Outcomes (Phase 3)
+
+| Area | Result |
+|------|--------|
+| AABB viewport scene query + surface placement | Implemented |
+| Placement preview, click/Shift-repeat/Escape cancel | Implemented |
+| Translate/rotate/scale snapping + drag bypass | Implemented |
+| Hierarchy- and prefab-aware duplicate + Alt-drag | Implemented |
+| World-preserving editor reparenting | Implemented |
+| Center/free translate handle + gizmo cancel | Implemented |
+| Marquee, prefab-root pick, viewport Delete/context menu | Implemented |
+| User-local hide/isolate/lock + camera bookmarks | Implemented |
+| Outliner expansion persistence and authoring filters | Implemented |
+| Align/distribute, drop, surface snap, group, replace | Implemented |
+| Frame All, audio placement, scene statistics, selection cycling | Implemented |
+| Headless scene-authoring regression tests | Implemented |
+
+Phase 3 editor-only state is stored below `.hephaestus/editor/scenes/` and is
+excluded from source control. Runtime `MeshRendererComponent.visible` remains
+gameplay data and is not changed by editor hide/isolate commands.

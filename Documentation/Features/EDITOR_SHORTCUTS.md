@@ -17,6 +17,12 @@ Shortcuts are context-aware: they do not override text-field editing when focus 
 | `Ctrl+C` | Copy Entity |
 | `Ctrl+V` | Paste Entity |
 | `Ctrl+D` | Duplicate Entity |
+| `H` | Hide selected entities in the editor |
+| `Shift+H` | Isolate selected / exit isolation |
+| `Ctrl+H` | Show all / exit isolation |
+| `End` | Drop selected entities to ground |
+| `Alt+1` … `Alt+9` | Recall camera bookmark |
+| `Ctrl+Alt+1` … `Ctrl+Alt+9` | Save camera bookmark |
 | `Ctrl+,` | Settings |
 | `Esc` | Stop Play Mode (while playing) |
 
@@ -44,8 +50,18 @@ Active when the viewport has focus / mouse interaction:
 | `Q` | Hide gizmo / selection tool |
 | `X` | Toggle World / Local space |
 | `F` | Focus selected |
+| `Delete` | Delete selection |
+| `Alt` + gizmo drag | Duplicate and transform selection |
+| `Ctrl` during gizmo drag | Temporarily bypass snapping |
+| `Shift` during translate drag | Surface snap |
+| `` ` `` | Cycle to the next object under the cursor |
 | `RMB + WASD` | Fly camera |
-| `Mouse wheel` | Adjust camera speed |
+| `RMB + Mouse wheel` | Adjust fly-camera speed |
+| Drag empty viewport | Marquee-select fully enclosed objects |
+
+Dragging a mesh, prefab, or audio asset into the viewport starts a placement
+preview. Click to commit, `Shift+click` to place another copy, or `Esc` to
+cancel.
 
 ## Prefab Editor
 
@@ -88,4 +104,6 @@ Active when the viewport has focus / mouse interaction:
 
 - Scene and Prefab undo are snapshot-based with a bounded redo stack.
 - Continuous transform scrubbing and gizmo drags coalesce into a single undo entry where possible.
-- Lit/Unlit/Wireframe shading modes are not yet wired to the renderer; the viewport shows Lit only.
+- Lit/Unlit/Wireframe and perspective/orthographic viewport modes are live.
+- Editor hide/lock state and camera bookmarks are stored under
+  `.hephaestus/editor/` and do not alter runtime scene visibility.

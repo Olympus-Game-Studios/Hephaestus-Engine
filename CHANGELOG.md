@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-09-02: Phase 3 scene-authoring workflow: surface-aware viewport placement previews with repeat/cancel, real per-mode transform snapping, hierarchy/prefab-aware multi-duplicate and Alt-drag, marquee and prefab-root selection, editor-only hide/isolate/lock sidecars, align/distribute/drop/group/replace commands, viewport context creation, audio placement, camera bookmarks, scene statistics, and `SceneAuthoringTests`.
 - 2026-09-01: Phase 2 editor foundations: `AssetPathPolicy` (portable `assets/` / `.engine/` / `scripts/` / `builtin://` keys), project-wide Asset Browser search with Show in Folder, recent-projects remove/prune/reveal, `EditorLogicSmokeTests`, and optional `HEPHAESTUS_BUILD_QT_TESTS` harness. Updated `docs/editor/UX_QOL_AUDIT.md` with validated Phase 2 priorities and outcomes.
 - 2026-09-01: Viewport shading modes Lit/Unlit/Wireframe: `ViewShadingMode` on `FrameRenderConfig`, Unlit via `triangle.frag` UBO `shadingMode`, optional wireframe pipelines when `fillModeNonSolid` is available, and a live Lit/Unlit/Wireframe toolbar menu.
 - 2026-09-01: Orthographic editor views: `RenderCamera` projection mode / FOV / ortho half-extent, centralized view/proj in `updateCameraUBO`, Perspective/Front/Back/Left/Right/Top/Bottom combo with free-camera restore, ortho wheel zoom + FocusOnSelection framing, shadows disabled in ortho.
@@ -34,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-09-02: Scene reparenting can preserve world transforms; Scene Editor duplication preserves parents, hierarchies, supported components, and linked prefab instances. Outliner rebuilds retain expansion state and support component, prefab, hidden, and locked filters.
 - 2026-09-01: Scene/material save paths and material texture browse normalize through `AssetPathPolicy`; material `.hematerial` texture `resourcePath` fields are rewritten to portable keys on save.
 - 2026-09-01: `ReimportManager` no longer starts FileWatcher/auto-reimport in its constructor; `WorkerLoop` calls `NotifyAssetReimported` after each completed job is queued.
 - 2026-09-01: Viewport Lit/Unlit/Wireframe and Perspective/ortho standard views are live (renderer + toolbar). Launcher/editor New Project share `ProjectCreationService`. Asset Browser new Lua scripts use `onAwake`/`onUpdate`/`onDestroy`. Launcher/editor project creation also seeds `assets/scripts`, `materials`, `prefabs`, and `ui`, and treats default HDRI copy failures as non-fatal. Updated `Documentation/Features/EDITOR_SHORTCUTS.md` for Qt behaviour.
@@ -43,6 +45,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-09-02: Transform snap controls now affect gizmo translation, rotation, and scale with Ctrl bypass; Escape restores and discards active gizmo/placement edits; focusing a selection no longer initializes editor physics as a hidden side effect.
 - 2026-09-01: `TextureDiscovery.cpp` include path for `AssetPathPolicy.h` corrected (`../../Assets/`).
 - 2026-09-01: `SceneSerializer::DeserializeFromString` uses a unique temp file per call instead of a shared `hephaestus_snapshot.hpscene` path, avoiding concurrent clobber races.
 - 2026-09-01: Closing the main editor window now prompts to save dirty scenes; play-mode scene cameras no longer double-convert radians; Details visibility toggles `MeshRendererComponent.visible`; Settings toolbar opens real settings; gizmo drag/rename/light/environment edits push undo; undo/redo actions enable/disable correctly.

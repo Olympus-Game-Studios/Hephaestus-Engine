@@ -18,6 +18,7 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <memory>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -32,6 +33,7 @@
 #include "../HephaestusUI/UIRenderer.h"
 #include "../../Core/EditorContext.h"
 #include "../../Core/EditorCameraController.h"
+#include "../../Scene/SceneAuthoring.h"
 #include "../../Core/PlayModeManager.h"
 
 // Forward declarations (avoid including heavy engine headers)
@@ -162,6 +164,13 @@ public:
      * Computes bounds if mesh is present, otherwise uses entity position.
      */
     void FocusOnSelection();
+    void FocusAll();
+    void BeginPlacement(entt::entity previewEntity);
+
+    /// Raycast scene mesh bounds from viewport-local coordinates.
+    bool RaycastViewport(float x, float y,
+                         Hephaestus::SceneAuthoring::SceneRaycastHit& outHit,
+                         const std::unordered_set<entt::entity>& ignored = {});
 
     /**
      * @brief Get the camera controller for external configuration.
@@ -236,6 +245,11 @@ public:
                            const std::filesystem::path& sourcePath, bool imported);
 
 signals:
+    void sceneHierarchyChanged();
+    void deleteSelectionRequested();
+    void viewportContextMenuRequested(float x, float y);
+    void cameraSpeedChanged(float speed);
+
     /**
      * @brief Emitted when engine initialization completes.
      * @param success true if initialization succeeded.
@@ -284,6 +298,8 @@ private:
     void syncViewportCursorCapture();
     void captureGizmoMultiDragWorldStarts(Scene* scene);
     void clearGizmoMultiDragWorldStarts();
+    void selectEntitiesInViewportRect(float x0, float y0, float x1, float y1,
+                                      bool add, bool toggle);
 
     EngineState m_state = EngineState::Uninitialized;
     bool m_builtinMeshesCreated = false;
@@ -367,11 +383,19 @@ private:
     bool m_viewportPickWaitingReadback = false;
     bool m_viewportPickCtrlHeld = false;
     bool m_viewportPickShiftHeld = false;
+    bool m_viewportPickAltHeld = false;
 
     /** Mouse press position saved for picking (use press, not release, to avoid jitter). */
     float m_pickPressX = 0.0f;
     float m_pickPressY = 0.0f;
     bool  m_pickPressValid = false;
+    bool m_marqueeSelecting = false;
+    float m_marqueeCurrentX = 0.0f;
+    float m_marqueeCurrentY = 0.0f;
+    float m_rmbPressX = 0.0f;
+    float m_rmbPressY = 0.0f;
+    bool m_rmbMoved = false;
+    entt::entity m_placementPreview = entt::null;
 };
 
 } // namespace QtEditor

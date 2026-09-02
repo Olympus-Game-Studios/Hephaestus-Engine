@@ -201,6 +201,7 @@ set(ENGINE_CORE_SOURCES
     engine/Assets/AssetOperationService.cpp
     engine/Assets/DerivedDataCache.cpp
     engine/Assets/EditorAssetPipeline.cpp
+    engine/Assets/EditorViewState.cpp
     engine/Assets/FileWatcher.cpp
     engine/Assets/RecoveryStore.cpp
     engine/Assets/ReimportManager.cpp
@@ -220,6 +221,7 @@ set(ENGINE_CORE_SOURCES
     engine/Physics/JoltPhysicsSystem.cpp
     engine/Physics/CharacterMotor.cpp
     engine/Scene/Scene.cpp
+    engine/Scene/SceneAuthoring.cpp
     engine/Scene/Entity.cpp
     engine/Scene/Json.cpp
     engine/Scene/PrefabSerializer.cpp
@@ -328,6 +330,7 @@ add_executable(HephaestusEngine
     engine/Assets/EditorAssetPipeline.cpp
     engine/Assets/FileWatcher.cpp
     engine/Assets/RecoveryStore.cpp
+    engine/Assets/EditorViewState.cpp
     engine/Assets/ReimportManager.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
@@ -342,6 +345,7 @@ add_executable(HephaestusEngine
     engine/Physics/JoltPhysicsSystem.cpp
     engine/Physics/CharacterMotor.cpp
     engine/Scene/Scene.cpp
+    engine/Scene/SceneAuthoring.cpp
     engine/Scene/Entity.cpp
     engine/Scene/Json.cpp
     engine/Scene/PrefabSerializer.cpp
@@ -989,6 +993,31 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME PrefabSystemWorkflow
         COMMAND PrefabSystemTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(SceneAuthoringTests
+        engine/Tests/SceneAuthoringTests.cpp
+        engine/Assets/EditorViewState.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/SceneAuthoring.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_include_directories(SceneAuthoringTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME SceneAuthoringWorkflow
+        COMMAND SceneAuthoringTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
     add_executable(AssetPathPolicyTests

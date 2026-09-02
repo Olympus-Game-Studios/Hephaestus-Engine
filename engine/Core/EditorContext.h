@@ -16,6 +16,7 @@
 #include <string>
 #include <memory>
 #include <functional>
+#include <unordered_set>
 #include <vector>
 #include <entt/entt.hpp>
 
@@ -251,6 +252,24 @@ public:
     EditorViewportSettings& GetViewportSettings() { return m_viewportSettings; }
     const EditorViewportSettings& GetViewportSettings() const { return m_viewportSettings; }
 
+    bool IsEditorHidden(entt::entity entity) const {
+        return m_editorHidden.contains(static_cast<uint32_t>(entity));
+    }
+    bool IsEditorLocked(entt::entity entity) const {
+        return m_editorLocked.contains(static_cast<uint32_t>(entity));
+    }
+    void SetEditorHidden(entt::entity entity, bool hidden);
+    void SetEditorLocked(entt::entity entity, bool locked);
+    void ShowAllEditorEntities() { m_editorHidden.clear(); m_isolated.clear(); }
+    void IsolateEntities(const std::vector<entt::entity>& entities);
+    void ExitIsolation() { m_isolated.clear(); }
+    bool IsIsolationActive() const { return !m_isolated.empty(); }
+    const std::unordered_set<uint32_t>& GetEditorHiddenIds() const { return m_editorHidden; }
+    const std::unordered_set<uint32_t>& GetEditorLockedIds() const { return m_editorLocked; }
+    const std::unordered_set<uint32_t>& GetIsolatedIds() const { return m_isolated; }
+    void SetEditorStateIds(std::unordered_set<uint32_t> hidden,
+                           std::unordered_set<uint32_t> locked);
+
     // ─────────────────────────────────────────────────────────────────────────
     // Callbacks (for UI updates)
     // ─────────────────────────────────────────────────────────────────────────
@@ -275,6 +294,9 @@ private:
     
     // Viewport settings
     EditorViewportSettings m_viewportSettings;
+    std::unordered_set<uint32_t> m_editorHidden;
+    std::unordered_set<uint32_t> m_editorLocked;
+    std::unordered_set<uint32_t> m_isolated;
 
     // Callbacks
     SceneChangedCallback m_onSceneChanged;

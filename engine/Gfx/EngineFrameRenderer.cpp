@@ -102,9 +102,32 @@ static bool MeshAllowsHiddenEditorOutline(const MeshRendererComponent& renderer,
         && !config.isPlaying;
 }
 
-static bool MeshIncludedInIdPick(const MeshRendererComponent& renderer,
-                                 const FrameRenderConfig& config)
+static bool ContainsEntityId(const std::vector<uint32_t>& ids, uint32_t id)
 {
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+static bool IsEditorEntityVisible(uint32_t entityId,
+                                  const FrameRenderConfig& config)
+{
+    if (!config.isEditorMode || config.isPlaying) {
+        return true;
+    }
+    if (ContainsEntityId(config.editorHiddenEntities, entityId)) {
+        return false;
+    }
+    return config.editorIsolatedEntities.empty() ||
+           ContainsEntityId(config.editorIsolatedEntities, entityId);
+}
+
+static bool MeshIncludedInIdPick(const MeshRendererComponent& renderer,
+                                 const FrameRenderConfig& config,
+                                 uint32_t entityId)
+{
+    if (!IsEditorEntityVisible(entityId, config) ||
+        ContainsEntityId(config.editorLockedEntities, entityId)) {
+        return false;
+    }
     if (config.isPlaying && renderer.hideInGame) {
         return false;
     }
@@ -1733,6 +1756,7 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
         
         for (auto entity : meshView) {
             auto& meshComp = meshView.get<MeshRendererComponent>(entity);
+            if (!IsEditorEntityVisible(static_cast<uint32_t>(entity), config)) continue;
             if (!meshComp.HasValidMesh() || !meshComp.visible) continue;
             if (config.isPlaying && meshComp.hideInGame) continue;
             if (meshComp.meshHandle >= m_meshLibrary.size()) continue;
@@ -2452,6 +2476,10 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             Entity entity(entityHandle, scene);
             auto& transform = entity.GetComponent<TransformComponent>();
             auto& renderer = entity.GetComponent<MeshRendererComponent>();
+            if (!IsEditorEntityVisible(static_cast<uint32_t>(entityHandle), config)) {
+                skippedCount++;
+                continue;
+            }
             
             if (!renderer.visible) {
                 skippedCount++;
@@ -2703,6 +2731,7 @@ void EngineFrameRenderer::recordOutlines(VkCommandBuffer cmd, uint32_t imageInde
 
     auto meshView = registry.view<TransformComponent, MeshRendererComponent>();
     for (auto ent : meshView) {
+        if (!IsEditorEntityVisible(static_cast<uint32_t>(ent), config)) continue;
         const auto& meshComp = meshView.get<MeshRendererComponent>(ent);
         const bool hiddenOutline = MeshAllowsHiddenEditorOutline(meshComp, config);
         const bool selectedVisible = isSelected(ent) && meshComp.visible;
@@ -4506,7 +4535,8 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
         auto& transform = entity.GetComponent<TransformComponent>();
         auto& renderer = entity.GetComponent<MeshRendererComponent>();
         
-        if (!MeshIncludedInIdPick(renderer, config)) continue;
+        if (!MeshIncludedInIdPick(renderer, config,
+                                  static_cast<uint32_t>(entityHandle))) continue;
         if (!renderer.HasValidMesh() || renderer.meshHandle >= m_meshLibrary.size()) continue;
         
         MeshGPU& mesh = m_meshLibrary[renderer.meshHandle];
@@ -4560,6 +4590,9 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
         auto& reg = scene->GetRegistry();
         auto iconView = reg.view<TransformComponent, EditorIconComponent>();
         for (auto ent : iconView) {
+            const uint32_t entityId = static_cast<uint32_t>(ent);
+            if (!IsEditorEntityVisible(entityId, config) ||
+                ContainsEntityId(config.editorLockedEntities, entityId)) continue;
             auto& icon = reg.get<EditorIconComponent>(ent);
             if (!icon.visible) continue;
 

@@ -36,10 +36,13 @@
 #include <QTimer>
 #include "BuildSettingsDialog.h"
 #include <memory>
+#include <filesystem>
+#include <unordered_set>
 #include <vector>
 #include <entt/entt.hpp>
 
 #include "../../Assets/RecoveryStore.h"
+#include "../../Assets/EditorViewState.h"
 #include "../../ToolsCommon/EngineSettingsManager.h"
 #include "../../ToolsCommon/ProjectSettingsManager.h"
 
@@ -120,6 +123,9 @@ public:
 
     /// Spawn a mesh/prefab/actor from Asset Browser (context menu). Uses camera-forward placement.
     void spawnFromAssetBrowser(const QByteArray& spawnPayload);
+    void replaceFromAssetBrowser(const QByteArray& spawnPayload) {
+        replaceSelectionWithAsset(spawnPayload);
+    }
 
     EditorAssetPipeline* GetAssetPipeline() { return m_assetPipeline.get(); }
 
@@ -150,6 +156,7 @@ private:
     void onOutlinerContextMenu(const QPoint& pos);
     void createFolderInOutliner(entt::entity parentEntity);
     void deleteEntityFromOutliner(entt::entity entity);
+    void deleteSelectedEntities();
     void reparentEntityToRoot(entt::entity entity);
     void renameEntityInOutliner(entt::entity entity);
 
@@ -235,6 +242,19 @@ private:
     void onAutosaveTick();
     void writeRecoverySnapshot();
     int autosaveIntervalSeconds() const;
+    void loadEditorViewState();
+    void saveEditorViewState();
+    void hideSelectedInEditor();
+    void isolateSelectedInEditor();
+    void toggleLockSelectedInEditor();
+    void alignSelection(int axis);
+    void distributeSelection(int axis);
+    void dropSelectionToGround();
+    void createEmptyParentForSelection();
+    void showViewportContextMenu(float x, float y);
+    void replaceSelectionWithAsset(const QByteArray& spawnPayload);
+    void saveCameraBookmark(int slot);
+    void recallCameraBookmark(int slot);
 
     // Dock widgets
     QDockWidget* m_outlinerDock = nullptr;
@@ -262,6 +282,8 @@ private:
     QPushButton* m_addEntityBtn = nullptr;
     QPushButton* m_addFolderBtn = nullptr;
     OutlinerTreeWidget* m_outlinerTree = nullptr;
+    std::unordered_set<uint32_t> m_expandedOutlinerEntities;
+    bool m_hasOutlinerExpansionState = false;
 
     // Details panel (inspector)
     QWidget* m_detailsWidget = nullptr;
@@ -328,6 +350,7 @@ private:
     QLabel* m_overlayFpsLabel = nullptr;
     QLabel* m_overlayDrawCallsLabel = nullptr;
     QLabel* m_overlayRamLabel = nullptr;
+    QLabel* m_overlaySceneLabel = nullptr;
 
     // Last free perspective camera (restored when leaving ortho standard views)
     bool m_hasSavedPerspectiveCamera = false;
@@ -372,6 +395,8 @@ private:
     QTimer* m_recoveryHeartbeatTimer = nullptr;
     QTimer* m_autosaveTimer = nullptr;
     bool m_recoveryBusy = false;
+    EditorViewState m_editorViewState;
+    std::filesystem::path m_editorViewStatePath;
 };
 
 } // namespace QtEditor

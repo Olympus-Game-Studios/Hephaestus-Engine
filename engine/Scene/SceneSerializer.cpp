@@ -498,7 +498,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
     std::vector<entt::entity> entities;
     auto taggedEntities = registry.view<TagComponent>();
     for (entt::entity entity : taggedEntities) {
-        if (registry.any_of<PrefabNodeComponent>(entity)) {
+        if (registry.any_of<PrefabNodeComponent, EditorOnlyComponent>(entity)) {
             continue;
         }
         entities.push_back(entity);
@@ -1974,7 +1974,7 @@ std::string SceneSerializer::SerializeToString() const
     std::vector<entt::entity> entities;
     auto taggedEntities = registry.view<TagComponent>();
     for (entt::entity entity : taggedEntities) {
-        if (registry.any_of<PrefabNodeComponent>(entity)) {
+        if (registry.any_of<PrefabNodeComponent, EditorOnlyComponent>(entity)) {
             continue;
         }
         entities.push_back(entity);

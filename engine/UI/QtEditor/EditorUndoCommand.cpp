@@ -248,6 +248,40 @@ bool EditorUndoManager::CanRedo(EditorContext* ctx)
     return it != GetRedoStacks().end() && !it->second.empty();
 }
 
+void EditorUndoManager::DiscardLastSnapshot(EditorContext* ctx)
+{
+    if (!ctx || !ctx->HasActiveScene()) {
+        return;
+    }
+    Scene* scene = ctx->GetActiveScene();
+    if (GetCustomHandlers().count(scene) > 0) {
+        return;
+    }
+    auto it = GetUndoStacks().find(scene);
+    if (it != GetUndoStacks().end() && !it->second.empty()) {
+        it->second.pop_back();
+    }
+}
+
+bool EditorUndoManager::RestoreAndDiscardLastSnapshot(EditorContext* ctx,
+                                                      std::string& outError)
+{
+    if (!ctx || !ctx->HasActiveScene()) {
+        outError = "No active scene";
+        return false;
+    }
+    Scene* scene = ctx->GetActiveScene();
+    auto& stack = GetUndoStacks()[scene];
+    if (stack.empty()) {
+        outError = "Nothing to cancel";
+        return false;
+    }
+    UndoSnapshot snapshot = std::move(stack.back());
+    stack.pop_back();
+    GetRedoStacks()[scene].clear();
+    return ApplySnapshot(ctx, scene, snapshot, outError);
+}
+
 } // namespace QtEditor
 } // namespace Hephaestus
 

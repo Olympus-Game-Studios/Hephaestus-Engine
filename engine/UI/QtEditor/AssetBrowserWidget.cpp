@@ -86,7 +86,9 @@ protected:
 
         const AssetType assetType =
             static_cast<AssetType>(index.data(AssetBrowserWidget::AssetTypeRole).toInt());
-        if (assetType != AssetType::Prefab && assetType != AssetType::StaticMesh) {
+        if (assetType != AssetType::Prefab &&
+            assetType != AssetType::StaticMesh &&
+            assetType != AssetType::Audio) {
             return;
         }
 
@@ -96,9 +98,11 @@ protected:
         }
 
         SpawnableEntry entry;
-        entry.kind = (assetType == AssetType::Prefab)
+        entry.kind = assetType == AssetType::Prefab
             ? SpawnableEntry::Kind::Prefab
-            : SpawnableEntry::Kind::Mesh;
+            : (assetType == AssetType::Audio
+                ? SpawnableEntry::Kind::Audio
+                : SpawnableEntry::Kind::Mesh);
         entry.displayName = QFileInfo(relativePath).completeBaseName();
         entry.assetPath = ToProjectRelativeAssetPath(relativePath);
         entry.icon = index.data(Qt::DecorationRole).value<QIcon>();
@@ -838,9 +842,25 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
                         m_mainWindow->spawnFromAssetBrowser(entry.toMimePayload());
                     }
                 });
+                menu.addAction(tr("Replace Selected With Prefab"), [this, relativePath]() {
+                    if (!m_mainWindow) return;
+                    SpawnableEntry entry;
+                    entry.kind = SpawnableEntry::Kind::Prefab;
+                    entry.displayName = QFileInfo(relativePath).completeBaseName();
+                    entry.assetPath = ToProjectRelativeAssetPath(relativePath);
+                    m_mainWindow->replaceFromAssetBrowser(entry.toMimePayload());
+                });
             } else if (assetType == AssetType::StaticMesh) {
                 menu.addAction(tr("Spawn in Scene"), [this, relativePath]() {
                     emit meshSpawnRequested(relativePath);
+                });
+                menu.addAction(tr("Replace Selected Mesh"), [this, relativePath]() {
+                    if (!m_mainWindow) return;
+                    SpawnableEntry entry;
+                    entry.kind = SpawnableEntry::Kind::Mesh;
+                    entry.displayName = QFileInfo(relativePath).completeBaseName();
+                    entry.assetPath = ToProjectRelativeAssetPath(relativePath);
+                    m_mainWindow->replaceFromAssetBrowser(entry.toMimePayload());
                 });
             }
             if (assetType == AssetType::UILayout) {

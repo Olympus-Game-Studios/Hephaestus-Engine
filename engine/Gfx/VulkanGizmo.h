@@ -94,8 +94,13 @@ public:
 
     // Drag helpers
     void BeginDrag(const Ray& ray, int axis);
-    Mat4 HandleDrag(const Ray& ray);
+    Mat4 HandleDrag(const Ray& ray, bool bypassSnap = false);
     void EndDrag();
+    Mat4 CancelDrag();
+    void SetSnapSettings(bool enabled, float increment) {
+        m_SnapEnabled = enabled;
+        m_SnapIncrement = increment;
+    }
     bool IsDragging() const { return m_IsDragging; }
 
 private:
@@ -170,8 +175,12 @@ private:
     float m_DragStartAxisParam = 0.0f;
     Vec3 m_DragStartScale = Vec3(1, 1, 1);
     Vec3 m_RotationStartVector = Vec3(1, 0, 0);
+    Vec3 m_FreeMoveStartPoint = Vec3(0, 0, 0);
+    Vec3 m_DragPlaneNormal = Vec3(0, 1, 0);
     bool m_RotationStartValid = false;
     float m_UniformDragStartDistance = 1.0f; // For uniform scale: initial screen-plane distance
+    bool m_SnapEnabled = false;
+    float m_SnapIncrement = 1.0f;
 
     // Tuning constants
     const float m_TranslateLength = 1.6f;
