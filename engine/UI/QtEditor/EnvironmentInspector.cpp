@@ -7,7 +7,11 @@
 
 #include "EnvironmentInspector.h"
 #include "EditorUndoCommand.h"
+#include "AssetPickerDialog.h"
+#include "AssetReferenceEditor.h"
 
+#include "../../Assets/AssetPathPolicy.h"
+#include "../../Assets/AssetManager.h"
 #include "../../Core/EditorContext.h"
 #include "../../Scene/Scene.h"
 #include "../../Scene/Components.h"
@@ -66,11 +70,9 @@ static QPushButton* makeResetBtn(QWidget* parent)
 // ---------------------------------------------------------------------------
 
 EnvironmentInspector::EnvironmentInspector(EditorContext* ctx, entt::entity entity, QWidget* parent)
-    : QGroupBox(tr("Environment"), parent)
-    , m_ctx(ctx)
-    , m_entity(entity)
+    : ComponentInspector(tr("Environment"), ctx, entity, parent)
 {
-    setCheckable(false);
+    SetTypeName("Environment");
     buildUI();
     connectSignals();
     Refresh();
@@ -228,25 +230,35 @@ void EnvironmentInspector::connectSignals()
 {
     connect(m_modeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
         applyToComponent();
+        EndEdit();
         updateModeVisibility();
     });
     connect(m_solidColorBtn, &QPushButton::clicked, this, &EnvironmentInspector::pickSolidColor);
     connect(m_hdriChooseBtn, &QPushButton::clicked, this, &EnvironmentInspector::browseHDRI);
     connect(m_hdriReloadBtn, &QPushButton::clicked, this, &EnvironmentInspector::reloadHDRI);
     connect(m_hdriIntensitySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
+    connect(m_hdriIntensitySpin, &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
     connect(m_reflectionIntensitySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
+    connect(m_reflectionIntensitySpin, &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
     connect(m_rotationYawSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
-    connect(m_useAsIBLCheck, &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
+    connect(m_rotationYawSpin, &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
+    connect(m_useAsIBLCheck, &QCheckBox::toggled, this, [this](bool) {
+        applyToComponent();
+        EndEdit();
+    });
 
     connect(m_enableRenderDistCheck, &QCheckBox::toggled, this, [this](bool checked) {
         m_renderDistGroup->setVisible(checked);
         applyToComponent();
+        EndEdit();
     });
     connect(m_infiniteRenderDistCheck, &QCheckBox::toggled, this, [this](bool checked) {
         m_renderDistSpin->setEnabled(!checked);
         applyToComponent();
+        EndEdit();
     });
     connect(m_renderDistSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
+    connect(m_renderDistSpin, &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
 
     connect(m_resetIntensityBtn, &QPushButton::clicked, this, &EnvironmentInspector::resetIntensity);
     connect(m_resetReflectionIntensityBtn, &QPushButton::clicked, this, &EnvironmentInspector::resetReflectionIntensity);
@@ -259,6 +271,7 @@ void EnvironmentInspector::connectSignals()
 
 void EnvironmentInspector::Refresh()
 {
+    EndEdit();
     setProperty("undoPushed", false);
     if (!m_ctx || !m_ctx->HasActiveScene()) return;
 
@@ -306,30 +319,19 @@ void EnvironmentInspector::Refresh()
 void EnvironmentInspector::applyToComponent()
 {
     if (m_updating || !m_ctx || !m_ctx->HasActiveScene()) return;
-
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity) || !reg.all_of<EnvironmentComponent>(m_entity)) return;
-
-    if (!property("undoPushed").toBool()) {
-        EditorUndoManager::PushSnapshot(m_ctx, "Edit environment");
-        setProperty("undoPushed", true);
-    }
-
-    auto& env = reg.get<EnvironmentComponent>(m_entity);
-
-    env.type = static_cast<EnvironmentComponent::BackgroundType>(m_modeCombo->currentData().toInt());
-    env.solidColor = qcolorToVec3(m_currentSolidColor);
-    env.hdriPath = m_hdriPathEdit->text().toStdString();
-    env.hdriIntensity = static_cast<float>(m_hdriIntensitySpin->value());
-    env.reflectionIntensity = static_cast<float>(m_reflectionIntensitySpin->value());
-    env.rotationYaw = static_cast<float>(m_rotationYawSpin->value());
-    env.useAsIBL = m_useAsIBLCheck->isChecked();
-
-    env.enableRenderDistance = m_enableRenderDistCheck->isChecked();
-    env.infiniteRenderDistance = m_infiniteRenderDistCheck->isChecked();
-    env.renderDistance = static_cast<float>(m_renderDistSpin->value());
-
-    m_ctx->MarkDirty();
+    BeginEdit("Edit environment");
+    ForEachTarget<EnvironmentComponent>([&](EnvironmentComponent& env, entt::entity) {
+        env.type = static_cast<EnvironmentComponent::BackgroundType>(m_modeCombo->currentData().toInt());
+        env.solidColor = qcolorToVec3(m_currentSolidColor);
+        env.hdriPath = m_hdriPathEdit->text().toStdString();
+        env.hdriIntensity = static_cast<float>(m_hdriIntensitySpin->value());
+        env.reflectionIntensity = static_cast<float>(m_reflectionIntensitySpin->value());
+        env.rotationYaw = static_cast<float>(m_rotationYawSpin->value());
+        env.useAsIBL = m_useAsIBLCheck->isChecked();
+        env.enableRenderDistance = m_enableRenderDistCheck->isChecked();
+        env.infiniteRenderDistance = m_infiniteRenderDistCheck->isChecked();
+        env.renderDistance = static_cast<float>(m_renderDistSpin->value());
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -373,15 +375,11 @@ void EnvironmentInspector::pickSolidColor()
 
 void EnvironmentInspector::browseHDRI()
 {
-    QString startDir = m_hdriPathEdit->text().isEmpty() ? QString("assets/textures") : m_hdriPathEdit->text();
-    QString filepath = QFileDialog::getOpenFileName(this, tr("Choose HDR/EXR Environment"),
-        startDir,
-        tr("HDR Images (*.hdr *.exr);;All Files (*)"));
-
-    if (filepath.isEmpty()) return;
-
-    m_hdriPathEdit->setText(filepath);
+    auto chosen = AssetPickerDialog::Choose(AssetType::Texture, this, m_hdriPathEdit->text());
+    if (!chosen.has_value()) return;
+    m_hdriPathEdit->setText(chosen.value());
     applyToComponent();
+    EndEdit();
 }
 
 void EnvironmentInspector::reloadHDRI()

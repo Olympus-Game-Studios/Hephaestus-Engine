@@ -10,8 +10,8 @@
 
 #if HEPHAESTUS_EDITOR_QT_UI
 
-#include <QWidget>
-#include <QGroupBox>
+#include "ComponentInspector.h"
+
 #include <QComboBox>
 #include <QCheckBox>
 #include <QDoubleSpinBox>
@@ -19,7 +19,6 @@
 #include <QLineEdit>
 #include <QLabel>
 #include <QColor>
-#include <entt/entt.hpp>
 
 // Forward declarations
 struct EnvironmentComponent;
@@ -33,7 +32,7 @@ namespace QtEditor {
 /**
  * @brief Collapsible inspector section for EnvironmentComponent.
  */
-class EnvironmentInspector : public QGroupBox
+class EnvironmentInspector : public ComponentInspector
 {
     Q_OBJECT
 
@@ -41,8 +40,7 @@ public:
     explicit EnvironmentInspector(EditorContext* ctx, entt::entity entity, QWidget* parent = nullptr);
     ~EnvironmentInspector() override = default;
 
-    /** Re-read values from the component into the UI. */
-    void Refresh();
+    void Refresh() override;
 
 private:
     void buildUI();
@@ -59,12 +57,6 @@ private:
     void resetReflectionIntensity();
     void resetRotation();
 
-    // Context
-    EditorContext* m_ctx = nullptr;
-    entt::entity  m_entity = entt::null;
-    bool          m_updating = false;
-
-    // Mode
     QComboBox*      m_modeCombo = nullptr;
 
     // Solid color

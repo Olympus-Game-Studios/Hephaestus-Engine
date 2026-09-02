@@ -15,8 +15,12 @@
 #include "MeshRendererInspector.h"
 #include "EditorUndoCommand.h"
 #include "MaterialGraphQtEditorDialog.h"
+#include "AssetPickerDialog.h"
+#include "InspectorMime.h"
+#include "PropertyEditors.h"
 
 #include "../../Assets/AssetManager.h"
+#include "../../Assets/AssetPathPolicy.h"
 #include "../../Assets/AssetTypes.h"
 #include "../../Core/EditorContext.h"
 #include "../../Scene/Scene.h"
@@ -48,6 +52,27 @@ namespace QtEditor {
  * Ensure the appliedMaterialPaths vector has at least `count` entries.
  * Newly-added entries are empty strings ("No Material").
  */
+static bool PathMissing(const std::string& portable)
+{
+    if (portable.empty()) return false;
+    auto& assets = AssetManager::GetInstance();
+    if (assets.GetAssetInfo(portable)) return false;
+    if (portable.rfind("assets/", 0) == 0 && assets.GetAssetInfo(portable.substr(7))) {
+        return false;
+    }
+    const auto resolved = std::filesystem::path(assets.ToAbsolutePath(
+        portable.rfind("assets/", 0) == 0 ? portable.substr(7) : portable));
+    return !std::filesystem::exists(resolved);
+}
+
+static QString ToPortableAsset(const QString& raw)
+{
+    auto& assets = AssetManager::GetInstance();
+    std::string portable = AssetPathPolicy::ToPortableKey(assets.GetProjectRoot(), raw.toStdString());
+    if (portable.empty()) portable = raw.toStdString();
+    return QString::fromStdString(portable);
+}
+
 static void EnsureMaterialSlots(MeshRendererComponent& mr)
 {
     int need = std::max(mr.submeshCount, 1);
@@ -112,10 +137,8 @@ void MeshRendererInspector::buildUI()
     form->addRow(QString(), m_backfaceCullCheck);
 
     // Mesh asset path (read-only)
-    m_meshPathEdit = new QLineEdit();
-    m_meshPathEdit->setReadOnly(true);
-    m_meshPathEdit->setPlaceholderText(tr("(None)"));
-    m_meshPathEdit->setToolTip(tr("Mesh asset path (drag a mesh from Asset Browser to assign)"));
+    m_meshPathEdit = new AssetReferenceEditor(QString(), AssetType::StaticMesh);
+    m_meshPathEdit->setAllowEmpty(true);
     form->addRow(tr("Mesh:"), m_meshPathEdit);
 
     mainLayout->addLayout(form);
@@ -164,10 +187,28 @@ void MeshRendererInspector::connectSignals()
             m_showHiddenOutlineCheck->setVisible(!checked);
         }
         applyToComponent();
+        EndEdit();
     });
-    connect(m_showHiddenOutlineCheck, &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
-    connect(m_hideInGameCheck,   &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
-    connect(m_backfaceCullCheck, &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
+    connect(m_showHiddenOutlineCheck, &QCheckBox::toggled, this, [this](bool) {
+        applyToComponent();
+        EndEdit();
+    });
+    connect(m_hideInGameCheck, &QCheckBox::toggled, this, [this](bool) {
+        applyToComponent();
+        EndEdit();
+    });
+    connect(m_backfaceCullCheck, &QCheckBox::toggled, this, [this](bool) {
+        applyToComponent();
+        EndEdit();
+    });
+    connect(m_meshPathEdit, &AssetReferenceEditor::pathEdited, this, [this](const QString& path) {
+        if (m_updating) return;
+        BeginEdit("Assign mesh");
+        ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) {
+            mr.meshAssetPath = path.toStdString();
+        });
+        EndEdit();
+    });
 
     // Add Mesh Collider
     connect(m_addColliderBtn, &QPushButton::clicked, this, [this]() {
@@ -176,9 +217,10 @@ void MeshRendererInspector::connectSignals()
         if (!reg.valid(m_entity)) return;
 
         EditorUndoManager::PushSnapshot(m_ctx, "Add Mesh Collider");
-
-        if (!reg.all_of<MeshColliderComponent>(m_entity)) {
-            reg.emplace<MeshColliderComponent>(m_entity);
+        for (entt::entity entity : m_targets) {
+            if (reg.valid(entity) && !reg.all_of<MeshColliderComponent>(entity)) {
+                reg.emplace<MeshColliderComponent>(entity);
+            }
         }
         m_ctx->MarkDirty();
         // The parent Details panel will re-create inspectors on next refresh
@@ -192,14 +234,14 @@ void MeshRendererInspector::connectSignals()
         if (!reg.valid(m_entity)) return;
 
         EditorUndoManager::PushSnapshot(m_ctx, "Remove MeshRenderer");
-
-        if (reg.all_of<MeshRendererComponent>(m_entity)) {
-            reg.remove<MeshRendererComponent>(m_entity);
-        }
-        if (reg.all_of<MaterialComponent>(m_entity)) {
-            reg.remove<MaterialComponent>(m_entity);
-        }
-        m_ctx->MarkDirty();
+        ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent&, entt::entity entity) {
+            if (reg.all_of<MeshRendererComponent>(entity)) {
+                reg.remove<MeshRendererComponent>(entity);
+            }
+            if (reg.all_of<MaterialComponent>(entity)) {
+                reg.remove<MaterialComponent>(entity);
+            }
+        });
         emit componentRemoved(m_entity, "MeshRenderer");
     });
 }
@@ -210,27 +252,15 @@ bool MeshRendererInspector::eventFilter(QObject* watched, QEvent* event)
         return ComponentInspector::eventFilter(watched, event);
     }
 
-    auto isMaterialPath = [](QString path) {
-        path.replace('\\', '/');
-        const QString ext = QFileInfo(path).suffix().toLower();
-        return ext == "hematerial" || ext == "hpmat" || ext == "material" || ext == "mat";
-    };
-
-    auto extractPath = [](const QMimeData* mime) {
-        if (!mime) return QString();
-        if (mime->hasUrls() && !mime->urls().isEmpty()) {
-            return mime->urls().front().toLocalFile();
-        }
-        if (mime->hasText()) {
-            return mime->text().trimmed();
-        }
-        return QString();
+    auto extractDrop = [](const QMimeData* mime, InspectorAssetDrop& out) {
+        return ExtractInspectorAssetDrop(mime, out);
     };
 
     if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove) {
         auto* dragEvent = static_cast<QDragMoveEvent*>(event);
-        const QString path = extractPath(dragEvent->mimeData());
-        if (isMaterialPath(path)) {
+        InspectorAssetDrop drop;
+        if (extractDrop(dragEvent->mimeData(), drop) &&
+            AssetTypeCompatible(AssetType::Material, drop.type)) {
             dragEvent->acceptProposedAction();
             return true;
         }
@@ -238,8 +268,9 @@ bool MeshRendererInspector::eventFilter(QObject* watched, QEvent* event)
 
     if (event->type() == QEvent::Drop) {
         auto* dropEvent = static_cast<QDropEvent*>(event);
-        QString path = extractPath(dropEvent->mimeData());
-        if (!isMaterialPath(path)) {
+        InspectorAssetDrop drop;
+        if (!extractDrop(dropEvent->mimeData(), drop) ||
+            !AssetTypeCompatible(AssetType::Material, drop.type)) {
             return false;
         }
 
@@ -248,12 +279,7 @@ bool MeshRendererInspector::eventFilter(QObject* watched, QEvent* event)
             return false;
         }
 
-        path.replace('\\', '/');
-        const QString assetRoot = QString::fromStdString(AssetManager::GetInstance().GetAssetRoot()).replace('\\', '/');
-        if (!assetRoot.isEmpty() && path.startsWith(assetRoot + "/", Qt::CaseInsensitive)) {
-            path = path.mid(assetRoot.size() + 1);
-        }
-        setMaterialForSlot(row, path);
+        setMaterialForSlot(row, drop.portablePath);
         rebuildMaterialSlots();
         dropEvent->acceptProposedAction();
         return true;
@@ -268,37 +294,40 @@ bool MeshRendererInspector::eventFilter(QObject* watched, QEvent* event)
 
 void MeshRendererInspector::Refresh()
 {
-    if (!m_ctx || !m_ctx->HasActiveScene()) return;
-
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity) || !reg.all_of<MeshRendererComponent>(m_entity)) return;
-
-    auto& mr = reg.get<MeshRendererComponent>(m_entity);
+    EndEdit();
+    MixedBool visible, outline, hideInGame, cull;
+    MixedString meshPath;
+    VisitTargets<MeshRendererComponent>([&](const MeshRendererComponent& mr, entt::entity) {
+        AccumulateBool(visible, mr.visible);
+        AccumulateBool(outline, mr.showHiddenOutline);
+        AccumulateBool(hideInGame, mr.hideInGame);
+        AccumulateBool(cull, mr.backfaceCulling);
+        AccumulateString(meshPath, mr.meshAssetPath);
+    });
+    if (!visible.present) return;
 
     m_updating = true;
     blockAllSignals(true);
-
-    m_visibleCheck->setChecked(mr.visible);
-    m_showHiddenOutlineCheck->setChecked(mr.showHiddenOutline);
-    m_showHiddenOutlineCheck->setVisible(!mr.visible);
-    m_hideInGameCheck->setChecked(mr.hideInGame);
-    m_backfaceCullCheck->setChecked(mr.backfaceCulling);
-
-    // Mesh path
-    if (!mr.meshAssetPath.empty()) {
-        m_meshPathEdit->setText(QString::fromStdString(mr.meshAssetPath));
-    } else if (mr.meshHandle != MeshRendererComponent::InvalidMesh) {
-        m_meshPathEdit->setText(tr("Built-in mesh"));
+    SetCheckFromMixed(m_visibleCheck, visible);
+    SetCheckFromMixed(m_showHiddenOutlineCheck, outline);
+    m_showHiddenOutlineCheck->setVisible(!visible.mixed && !visible.value);
+    SetCheckFromMixed(m_hideInGameCheck, hideInGame);
+    SetCheckFromMixed(m_backfaceCullCheck, cull);
+    if (meshPath.mixed) {
+        m_meshPathEdit->setPath(QString(), true, false);
     } else {
-        m_meshPathEdit->clear();
+        m_meshPathEdit->setPath(QString::fromStdString(meshPath.value), false,
+                                PathMissing(meshPath.value));
     }
-
-    // Show/hide "Add Mesh Collider" button
-    m_addColliderBtn->setVisible(!reg.all_of<MeshColliderComponent>(m_entity));
-
+    bool allHaveCollider = true;
+    VisitTargets<MeshRendererComponent>([&](const MeshRendererComponent&, entt::entity entity) {
+        if (!m_ctx->GetActiveScene()->GetRegistry().all_of<MeshColliderComponent>(entity)) {
+            allHaveCollider = false;
+        }
+    });
+    m_addColliderBtn->setVisible(!allHaveCollider);
     blockAllSignals(false);
     m_updating = false;
-
     rebuildMaterialSlots();
 }
 
@@ -370,16 +399,9 @@ void MeshRendererInspector::rebuildMaterialSlots()
         assignBtn->setFixedHeight(22);
         assignBtn->setToolTip(tr("Choose a material file for this slot."));
         connect(assignBtn, &QPushButton::clicked, this, [this, i]() {
-            const QString file = QFileDialog::getOpenFileName(this, tr("Assign Material"), QString::fromStdString(AssetManager::GetInstance().GetAssetRoot()),
-                tr("Materials (*.hematerial *.hpmat *.material *.mat);;All Files (*.*)"));
-            if (file.isEmpty()) return;
-            QString normalized = file;
-            normalized.replace('\\', '/');
-            const QString assetRoot = QString::fromStdString(AssetManager::GetInstance().GetAssetRoot()).replace('\\', '/');
-            if (!assetRoot.isEmpty() && normalized.startsWith(assetRoot + "/", Qt::CaseInsensitive)) {
-                normalized = normalized.mid(assetRoot.size() + 1);
-            }
-            setMaterialForSlot(i, normalized);
+            auto chosen = AssetPickerDialog::Choose(AssetType::Material, this, QString());
+            if (!chosen.has_value()) return;
+            setMaterialForSlot(i, chosen.value());
             rebuildMaterialSlots();
         });
 
@@ -509,75 +531,54 @@ QString MeshRendererInspector::normalizeMaterialPathForSelection(const std::stri
 void MeshRendererInspector::setMaterialForSlot(int slot, const QString& materialPath)
 {
     if (!m_ctx || !m_ctx->HasActiveScene()) return;
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity) || !reg.all_of<MeshRendererComponent>(m_entity)) return;
-
-    auto& mr = reg.get<MeshRendererComponent>(m_entity);
-    EnsureMaterialSlots(mr);
-
-    if (slot >= static_cast<int>(mr.appliedMaterialPaths.size())) return;
-
-    const std::string newPath = materialPath.toStdString();
-    if (mr.appliedMaterialPaths[slot] == newPath) {
-        return;
-    }
-
-    EditorUndoManager::PushSnapshot(m_ctx, "Assign material slot " + std::to_string(slot));
-    mr.appliedMaterialPaths[slot] = newPath;
-
-    if (newPath.empty() && slot < static_cast<int>(mr.materialIndices.size())) {
-        mr.materialIndices[slot] = -1;
-    }
-
-    m_ctx->MarkDirty();
+    const QString portable = ToPortableAsset(materialPath);
+    const std::string newPath = portable.toStdString();
+    BeginEdit("Assign material slot");
+    ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) {
+        EnsureMaterialSlots(mr);
+        if (slot >= static_cast<int>(mr.appliedMaterialPaths.size())) return;
+        mr.appliedMaterialPaths[slot] = newPath;
+        if (newPath.empty() && slot < static_cast<int>(mr.materialIndices.size())) {
+            mr.materialIndices[slot] = -1;
+        }
+    });
+    EndEdit();
 }
-
-// ---------------------------------------------------------------------------
-// Assign / Clear material on a slot
-// ---------------------------------------------------------------------------
 
 void MeshRendererInspector::clearMaterial(int slot)
 {
     if (!m_ctx || !m_ctx->HasActiveScene()) return;
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity) || !reg.all_of<MeshRendererComponent>(m_entity)) return;
-
-    EditorUndoManager::PushSnapshot(m_ctx, "Clear material slot " + std::to_string(slot));
-
-    auto& mr = reg.get<MeshRendererComponent>(m_entity);
-    EnsureMaterialSlots(mr);
-
-    if (slot < static_cast<int>(mr.appliedMaterialPaths.size())) {
-        mr.appliedMaterialPaths[slot] = "";
+    BeginEdit("Clear material slot");
+    ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) {
+        EnsureMaterialSlots(mr);
+        if (slot < static_cast<int>(mr.appliedMaterialPaths.size())) {
+            mr.appliedMaterialPaths[slot].clear();
+        }
         if (slot < static_cast<int>(mr.materialIndices.size())) {
             mr.materialIndices[slot] = -1;
         }
-    }
-
-    m_ctx->MarkDirty();
+    });
+    EndEdit();
     rebuildMaterialSlots();
 }
-
-// ---------------------------------------------------------------------------
-// Apply (UI → component)
-// ---------------------------------------------------------------------------
 
 void MeshRendererInspector::applyToComponent()
 {
     if (m_updating || !m_ctx || !m_ctx->HasActiveScene()) return;
-
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity) || !reg.all_of<MeshRendererComponent>(m_entity)) return;
-
-    EditorUndoManager::PushSnapshot(m_ctx, "Edit MeshRenderer");
-
-    auto& mr = reg.get<MeshRendererComponent>(m_entity);
-    mr.visible        = m_visibleCheck->isChecked();
-    mr.showHiddenOutline = m_showHiddenOutlineCheck->isChecked();
-    mr.hideInGame     = m_hideInGameCheck->isChecked();
-    mr.backfaceCulling = m_backfaceCullCheck->isChecked();
-
-    m_ctx->MarkDirty();
+    BeginEdit("Edit MeshRenderer");
+    bool value = false;
+    if (TryReadCheck(m_visibleCheck, value)) {
+        ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) { mr.visible = value; });
+    }
+    if (TryReadCheck(m_showHiddenOutlineCheck, value)) {
+        ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) { mr.showHiddenOutline = value; });
+    }
+    if (TryReadCheck(m_hideInGameCheck, value)) {
+        ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) { mr.hideInGame = value; });
+    }
+    if (TryReadCheck(m_backfaceCullCheck, value)) {
+        ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) { mr.backfaceCulling = value; });
+    }
 }
 
 // ---------------------------------------------------------------------------

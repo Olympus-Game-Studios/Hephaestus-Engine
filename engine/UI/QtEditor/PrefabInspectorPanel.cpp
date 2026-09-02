@@ -2,13 +2,18 @@
 
 #include "PrefabInspectorPanel.h"
 #include "ComponentInspector.h"
-#include "LightInspector.h"
-
+#include "AddComponentPopup.h"
+#include "../../UI/InspectorSelectionModel.h"
 #include "../../Core/EditorContext.h"
 
 #include <QApplication>
 #include <QCursor>
 #include <QAbstractSpinBox>
+
+namespace {
+constexpr float kRadToDeg = 180.0f / 3.14159265358979f;
+constexpr float kDegToRad = 3.14159265358979f / 180.0f;
+}
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -115,18 +120,21 @@ PrefabInspectorPanel::PrefabInspectorPanel(QWidget* parent)
     );
     connect(m_addComponentBtn, &QPushButton::clicked, this, [this]() {
         if (m_currentNodeId.empty()) return;
-        QMenu menu(this);
-        QStringList types = {
-            "MeshRenderer", "Material", "Light", "Camera",
-            "RigidBody", "PhysicsShape", "MeshCollider",
-            "ScriptComponent", "LuaScript"
-        };
-        for (const auto& type : types) {
-            menu.addAction(type, this, [this, type]() {
-                emit addComponentRequested(m_currentNodeId, type.toStdString());
-            });
+        std::vector<AddComponentItem> items;
+        for (const auto& desc : InspectorAddableComponents()) {
+            if (QLatin1String(desc.id) == QLatin1String("Environment")) continue;
+            AddComponentItem item;
+            item.id = QString::fromUtf8(desc.id);
+            item.displayName = QString::fromUtf8(desc.displayName);
+            item.category = QString::fromUtf8(desc.category);
+            items.push_back(item);
         }
-        menu.exec(QCursor::pos());
+        auto* popup = new AddComponentPopup(this);
+        popup->setAttribute(Qt::WA_DeleteOnClose);
+        connect(popup, &AddComponentPopup::componentChosen, this, [this](const QString& typeId) {
+            emit addComponentRequested(m_currentNodeId, typeId.toStdString());
+        });
+        popup->Present(QCursor::pos(), items);
     });
     m_contentLayout->addWidget(m_addComponentBtn);
     m_contentLayout->addStretch(1);
@@ -147,12 +155,17 @@ void PrefabInspectorPanel::buildTransformGroup() {
     tLayout->addWidget(makeVec3Row(tr("Pos"), m_posX, m_posY, m_posZ, m_transformGroup));
     tLayout->addWidget(makeVec3Row(tr("Rot"), m_rotX, m_rotY, m_rotZ, m_transformGroup));
     tLayout->addWidget(makeVec3Row(tr("Scl"), m_scaleX, m_scaleY, m_scaleZ, m_transformGroup));
+    m_rotX->setSuffix(QString::fromUtf8("\xC2\xB0"));
+    m_rotY->setSuffix(QString::fromUtf8("\xC2\xB0"));
+    m_rotZ->setSuffix(QString::fromUtf8("\xC2\xB0"));
 
     auto emitTransform = [this]() {
         if (m_updatingUI || m_currentNodeId.empty()) return;
         TransformComponent t;
         t.position = { (float)m_posX->value(), (float)m_posY->value(), (float)m_posZ->value() };
-        t.rotation = { (float)m_rotX->value(), (float)m_rotY->value(), (float)m_rotZ->value() };
+        t.rotation = { (float)m_rotX->value() * kDegToRad,
+                       (float)m_rotY->value() * kDegToRad,
+                       (float)m_rotZ->value() * kDegToRad };
         t.scale = { (float)m_scaleX->value(), (float)m_scaleY->value(), (float)m_scaleZ->value() };
         emit transformChanged(m_currentNodeId, t);
     };
@@ -188,9 +201,9 @@ void PrefabInspectorPanel::ShowEntity(EditorContext* ctx, Scene* previewScene, E
     m_posX->setValue(transform.position.x);
     m_posY->setValue(transform.position.y);
     m_posZ->setValue(transform.position.z);
-    m_rotX->setValue(transform.rotation.x);
-    m_rotY->setValue(transform.rotation.y);
-    m_rotZ->setValue(transform.rotation.z);
+    m_rotX->setValue(transform.rotation.x * kRadToDeg);
+    m_rotY->setValue(transform.rotation.y * kRadToDeg);
+    m_rotZ->setValue(transform.rotation.z * kRadToDeg);
     m_scaleX->setValue(transform.scale.x);
     m_scaleY->setValue(transform.scale.y);
     m_scaleZ->setValue(transform.scale.z);
@@ -232,9 +245,9 @@ void PrefabInspectorPanel::RefreshTransform(const TransformComponent& transform)
     m_posX->setValue(transform.position.x);
     m_posY->setValue(transform.position.y);
     m_posZ->setValue(transform.position.z);
-    m_rotX->setValue(transform.rotation.x);
-    m_rotY->setValue(transform.rotation.y);
-    m_rotZ->setValue(transform.rotation.z);
+    m_rotX->setValue(transform.rotation.x * kRadToDeg);
+    m_rotY->setValue(transform.rotation.y * kRadToDeg);
+    m_rotZ->setValue(transform.rotation.z * kRadToDeg);
     m_scaleX->setValue(transform.scale.x);
     m_scaleY->setValue(transform.scale.y);
     m_scaleZ->setValue(transform.scale.z);
@@ -261,12 +274,6 @@ void PrefabInspectorPanel::buildLiveComponentUI(EditorContext* ctx, Scene* previ
 
     auto& registry = previewScene->GetRegistry();
     const entt::entity handle = static_cast<entt::entity>(entity);
-
-    if (entity.HasComponent<LightComponent>()) {
-        m_lightInspector = new LightInspector(ctx, handle, m_componentsContainer);
-        m_componentsLayout->addWidget(m_lightInspector);
-        m_componentWidgets.push_back(m_lightInspector);
-    }
 
     auto inspectors = ComponentInspectorRegistry::Instance().CreateInspectors(
         ctx, handle, registry, m_componentsContainer);
@@ -299,7 +306,6 @@ void PrefabInspectorPanel::clearComponentWidgets() {
         delete w;
     }
     m_componentWidgets.clear();
-    m_lightInspector = nullptr;
 }
 
 void PrefabInspectorPanel::blockTransformSignals(bool block) {

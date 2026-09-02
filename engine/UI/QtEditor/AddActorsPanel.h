@@ -40,7 +40,7 @@ class EditorMainWindow;
  * into the viewport to spawn the corresponding entity/actor.
  */
 struct SpawnableEntry {
-    enum class Kind { Mesh, Light, Camera, Prefab, Audio };
+    enum class Kind { Mesh, Light, Camera, Prefab, Audio, Material, Script, Texture, UILayout };
 
     Kind    kind        = Kind::Mesh;
     QString displayName;          ///< Human-readable name (e.g. "Cube", "Point Light")

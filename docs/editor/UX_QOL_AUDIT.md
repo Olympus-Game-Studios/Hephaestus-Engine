@@ -215,3 +215,20 @@ Code-verified planning and Phase 2 implementation notes. Authored asset identity
 Phase 3 editor-only state is stored below `.hephaestus/editor/scenes/` and is
 excluded from source control. Runtime `MeshRendererComponent.visible` remains
 gameplay data and is not changed by editor hide/isolate commands.
+
+## Implementation Outcomes (Phase 4)
+
+| Area | Result |
+|------|--------|
+| One Inspector widget tree for multi-select | Implemented |
+| Mixed numerics/bools/enums/assets (no fake committed strings) | Implemented |
+| Local transform multi-edit + per-axis mixed + coalesced undo | Implemented |
+| Searchable Add Component + batch add/remove + AudioSource | Implemented |
+| Light/Environment migrated into `ComponentInspectorRegistry` | Implemented |
+| Component copy/paste/reset/remove context menus | Implemented |
+| `AssetReferenceEditor` / picker / typed Asset Browser MIME | Implemented |
+| Prefab Apply remains single-instance; Revert vs Reset wording | Implemented |
+| Prefab Editor rotation in degrees + searchable Add Component | Implemented |
+| Headless `InspectorEditTests` | Implemented |
+
+Numeric Inspector fields stay local-first. World-space numeric TRS, universal ECS `enabled`, Lua variable reflection, and extra Inspector search language remain deferred.

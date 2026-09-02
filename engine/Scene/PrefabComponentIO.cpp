@@ -575,6 +575,41 @@ void ApplyLuaScript(LuaScriptComponent& lua, const JsonValue& data, bool enabled
     }
 }
 
+void CaptureAudioSource(const AudioSourceComponent& audio, JsonValue& data) {
+    data = MakeObject();
+    data.objectValue["clipPath"] = MakeString(audio.clipPath);
+    data.objectValue["enabled"] = MakeBool(audio.enabled);
+    data.objectValue["playOnStart"] = MakeBool(audio.playOnStart);
+    data.objectValue["loop"] = MakeBool(audio.loop);
+    data.objectValue["volume"] = MakeNumber(audio.volume);
+}
+
+void ApplyAudioSource(AudioSourceComponent& audio, const JsonValue& data, bool enabled) {
+    audio.enabled = enabled;
+    if (!data.IsObject()) {
+        return;
+    }
+    if (const JsonValue* clipValue = data.Find("clipPath")) {
+        if (clipValue->IsString()) {
+            audio.clipPath = clipValue->AsString();
+        }
+    }
+    if (const JsonValue* enabledValue = data.Find("enabled")) {
+        audio.enabled = ParseBoolLike(*enabledValue, audio.enabled);
+    }
+    if (const JsonValue* playValue = data.Find("playOnStart")) {
+        audio.playOnStart = ParseBoolLike(*playValue, audio.playOnStart);
+    }
+    if (const JsonValue* loopValue = data.Find("loop")) {
+        audio.loop = ParseBoolLike(*loopValue, audio.loop);
+    }
+    if (const JsonValue* volumeValue = data.Find("volume")) {
+        if (volumeValue->IsNumber()) {
+            audio.volume = static_cast<float>(volumeValue->AsNumber());
+        }
+    }
+}
+
 void CaptureScriptComponent(const ScriptComponent& script, JsonValue& data) {
     data = MakeObject();
     JsonValue names = MakeArray();
@@ -915,6 +950,12 @@ bool CaptureComponent(Entity entity, const std::string& type, PrefabComponentEnt
         CaptureScriptComponent(entity.GetComponent<ScriptComponent>(), out.data);
         return true;
     }
+    if (type == "AudioSource" && entity.HasComponent<AudioSourceComponent>()) {
+        const auto& audio = entity.GetComponent<AudioSourceComponent>();
+        out.enabled = audio.enabled;
+        CaptureAudioSource(audio, out.data);
+        return true;
+    }
     return false;
 }
 
@@ -1033,6 +1074,13 @@ bool ApplyComponentJson(Entity entity, const std::string& type, const JsonValue&
         ApplyScriptComponent(script, data);
         return true;
     }
+    if (type == "AudioSource") {
+        auto& audio = entity.HasComponent<AudioSourceComponent>()
+            ? entity.GetComponent<AudioSourceComponent>()
+            : entity.AddComponent<AudioSourceComponent>();
+        ApplyAudioSource(audio, data, enabled);
+        return true;
+    }
     return false;
 }
 
@@ -1053,6 +1101,7 @@ bool HasComponent(Entity entity, const std::string& type) {
     if (type == "Camera") return entity.HasComponent<CameraComponent>();
     if (type == "LuaScript") return entity.HasComponent<LuaScriptComponent>();
     if (type == "ScriptComponent") return entity.HasComponent<ScriptComponent>();
+    if (type == "AudioSource") return entity.HasComponent<AudioSourceComponent>();
     return false;
 }
 
@@ -1080,6 +1129,7 @@ bool RemoveComponent(Entity entity, const std::string& type) {
     else if (type == "Camera") entity.RemoveComponent<CameraComponent>();
     else if (type == "LuaScript") entity.RemoveComponent<LuaScriptComponent>();
     else if (type == "ScriptComponent") entity.RemoveComponent<ScriptComponent>();
+    else if (type == "AudioSource") entity.RemoveComponent<AudioSourceComponent>();
     else return false;
     return true;
 }
@@ -1087,7 +1137,7 @@ bool RemoveComponent(Entity entity, const std::string& type) {
 const std::vector<std::string>& SupportedTypes() {
     static const std::vector<std::string> kTypes = {
         "MeshRenderer", "MeshCollider", "PhysicsShape", "RigidBody",
-        "Material", "Light", "Camera", "LuaScript", "ScriptComponent"
+        "Material", "Light", "Camera", "LuaScript", "ScriptComponent", "AudioSource"
     };
     return kTypes;
 }

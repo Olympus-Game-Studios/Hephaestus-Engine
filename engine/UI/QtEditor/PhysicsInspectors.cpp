@@ -7,6 +7,7 @@
 
 #include "PhysicsInspectors.h"
 #include "EditorUndoCommand.h"
+#include "PropertyEditors.h"
 
 #include "../../Core/EditorContext.h"
 #include "../../Scene/Scene.h"
@@ -33,9 +34,7 @@ static QPushButton* makeResetBtn(QWidget* parent)
 static QDoubleSpinBox* makeDoubleSpin(double min, double max, double step, int decimals)
 {
     auto* sb = new QDoubleSpinBox();
-    sb->setRange(min, max);
-    sb->setSingleStep(step);
-    sb->setDecimals(decimals);
+    ConfigureMixedSpin(sb, min, max, step, decimals);
     sb->setMinimumWidth(60);
     return sb;
 }
@@ -143,25 +142,44 @@ void RigidBodyInspector::connectSignals()
     connect(m_staticCheck,    &QCheckBox::toggled, this, [this](bool) {
         updateDynamicFieldsVisibility();
         applyToComponent();
+        EndEdit();
     });
     connect(m_triggerCheck,   &QCheckBox::toggled, this, [this](bool) {
         updateDynamicFieldsVisibility();
         applyToComponent();
+        EndEdit();
     });
-    connect(m_gravityCheck,   &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
-    connect(m_freezeRotCheck, &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
+    connect(m_gravityCheck, &QCheckBox::toggled, this, [this](bool) {
+        applyToComponent();
+        EndEdit();
+    });
+    connect(m_freezeRotCheck, &QCheckBox::toggled, this, [this](bool) {
+        applyToComponent();
+        EndEdit();
+    });
     connect(m_massSpin,      QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
+    connect(m_massSpin,      &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
     connect(m_linearDampSpin,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
+    connect(m_linearDampSpin,&QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
     connect(m_angularDampSpin,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
+    connect(m_angularDampSpin,&QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
     connect(m_frictionSpin,  QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
+    connect(m_frictionSpin,  &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
     connect(m_restitutionSpin,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
+    connect(m_restitutionSpin,&QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
     connect(m_linVelX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
     connect(m_linVelY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
     connect(m_linVelZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
     connect(m_angVelX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
     connect(m_angVelY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
     connect(m_angVelZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
-    connect(m_debugDrawCheck, &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
+    for (auto* spin : {m_linVelX, m_linVelY, m_linVelZ, m_angVelX, m_angVelY, m_angVelZ}) {
+        connect(spin, &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
+    }
+    connect(m_debugDrawCheck, &QCheckBox::toggled, this, [this](bool) {
+        applyToComponent();
+        EndEdit();
+    });
 
     // Presets
     connect(m_presetPlayerBtn, &QPushButton::clicked, this, [this]() { applyPreset(true); });
@@ -174,110 +192,138 @@ void RigidBodyInspector::connectSignals()
         if (!reg.valid(m_entity)) return;
 
         EditorUndoManager::PushSnapshot(m_ctx, "Remove RigidBody");
-        if (reg.all_of<RigidBodyComponent>(m_entity)) reg.remove<RigidBodyComponent>(m_entity);
-        m_ctx->MarkDirty();
+        ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent&, entt::entity entity) {
+            if (reg.all_of<RigidBodyComponent>(entity)) {
+                reg.remove<RigidBodyComponent>(entity);
+            }
+        });
         emit componentRemoved(m_entity, "RigidBody");
     });
 }
 
 void RigidBodyInspector::Refresh()
 {
-    if (!m_ctx || !m_ctx->HasActiveScene()) return;
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity) || !reg.all_of<RigidBodyComponent>(m_entity)) return;
-
-    const auto& rb = reg.get<RigidBodyComponent>(m_entity);
+    EndEdit();
+    MixedBool isStatic, isTrigger, useGravity, freezeRot, debugDraw;
+    MixedScalar mass, linDamp, angDamp, friction, restitution;
+    MixedScalar linX, linY, linZ, angX, angY, angZ;
+    VisitTargets<RigidBodyComponent>([&](const RigidBodyComponent& rb, entt::entity) {
+        AccumulateBool(isStatic, rb.isStatic);
+        AccumulateBool(isTrigger, rb.isTrigger);
+        AccumulateBool(useGravity, rb.useGravity);
+        AccumulateBool(freezeRot, rb.freezeRotation);
+        AccumulateBool(debugDraw, rb.debugDraw);
+        AccumulateScalar(mass, rb.mass);
+        AccumulateScalar(linDamp, rb.linearDamping);
+        AccumulateScalar(angDamp, rb.angularDamping);
+        AccumulateScalar(friction, rb.friction);
+        AccumulateScalar(restitution, rb.restitution);
+        AccumulateScalar(linX, rb.linearVelocity.x);
+        AccumulateScalar(linY, rb.linearVelocity.y);
+        AccumulateScalar(linZ, rb.linearVelocity.z);
+        AccumulateScalar(angX, rb.angularVelocity.x);
+        AccumulateScalar(angY, rb.angularVelocity.y);
+        AccumulateScalar(angZ, rb.angularVelocity.z);
+    });
+    if (!mass.present) return;
 
     m_updating = true;
     blockAllSignals(true);
-
-    m_staticCheck->setChecked(rb.isStatic);
-    m_triggerCheck->setChecked(rb.isTrigger);
-    m_gravityCheck->setChecked(rb.useGravity);
-    m_freezeRotCheck->setChecked(rb.freezeRotation);
-    m_massSpin->setValue(static_cast<double>(rb.mass));
-    m_linearDampSpin->setValue(static_cast<double>(rb.linearDamping));
-    m_angularDampSpin->setValue(static_cast<double>(rb.angularDamping));
-    m_frictionSpin->setValue(static_cast<double>(rb.friction));
-    m_restitutionSpin->setValue(static_cast<double>(rb.restitution));
-    m_linVelX->setValue(static_cast<double>(rb.linearVelocity.x));
-    m_linVelY->setValue(static_cast<double>(rb.linearVelocity.y));
-    m_linVelZ->setValue(static_cast<double>(rb.linearVelocity.z));
-    m_angVelX->setValue(static_cast<double>(rb.angularVelocity.x));
-    m_angVelY->setValue(static_cast<double>(rb.angularVelocity.y));
-    m_angVelZ->setValue(static_cast<double>(rb.angularVelocity.z));
-    m_debugDrawCheck->setChecked(rb.debugDraw);
-
+    SetCheckFromMixed(m_staticCheck, isStatic);
+    SetCheckFromMixed(m_triggerCheck, isTrigger);
+    SetCheckFromMixed(m_gravityCheck, useGravity);
+    SetCheckFromMixed(m_freezeRotCheck, freezeRot);
+    SetSpinFromMixed(m_massSpin, mass);
+    SetSpinFromMixed(m_linearDampSpin, linDamp);
+    SetSpinFromMixed(m_angularDampSpin, angDamp);
+    SetSpinFromMixed(m_frictionSpin, friction);
+    SetSpinFromMixed(m_restitutionSpin, restitution);
+    SetSpinFromMixed(m_linVelX, linX);
+    SetSpinFromMixed(m_linVelY, linY);
+    SetSpinFromMixed(m_linVelZ, linZ);
+    SetSpinFromMixed(m_angVelX, angX);
+    SetSpinFromMixed(m_angVelY, angY);
+    SetSpinFromMixed(m_angVelZ, angZ);
+    SetCheckFromMixed(m_debugDrawCheck, debugDraw);
     blockAllSignals(false);
     m_updating = false;
-
     updateDynamicFieldsVisibility();
 }
 
 void RigidBodyInspector::applyToComponent()
 {
     if (m_updating || !m_ctx || !m_ctx->HasActiveScene()) return;
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity) || !reg.all_of<RigidBodyComponent>(m_entity)) return;
+    BeginEdit("Edit RigidBody");
 
-    EditorUndoManager::PushSnapshot(m_ctx, "Edit RigidBody");
+    auto writeBool = [&](QCheckBox* box, bool RigidBodyComponent::* field) {
+        bool value = false;
+        if (!TryReadCheck(box, value)) return;
+        ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
+            rb.*field = value;
+        });
+    };
+    writeBool(m_staticCheck, &RigidBodyComponent::isStatic);
+    writeBool(m_triggerCheck, &RigidBodyComponent::isTrigger);
+    writeBool(m_gravityCheck, &RigidBodyComponent::useGravity);
+    writeBool(m_freezeRotCheck, &RigidBodyComponent::freezeRotation);
+    writeBool(m_debugDrawCheck, &RigidBodyComponent::debugDraw);
 
-    auto& rb = reg.get<RigidBodyComponent>(m_entity);
-    rb.isStatic       = m_staticCheck->isChecked();
-    rb.isTrigger      = m_triggerCheck->isChecked();
-    rb.useGravity     = m_gravityCheck->isChecked();
-    rb.freezeRotation = m_freezeRotCheck->isChecked();
-    rb.mass           = static_cast<float>(m_massSpin->value());
-    rb.linearDamping  = static_cast<float>(m_linearDampSpin->value());
-    rb.angularDamping = static_cast<float>(m_angularDampSpin->value());
-    rb.friction       = static_cast<float>(m_frictionSpin->value());
-    rb.restitution    = static_cast<float>(m_restitutionSpin->value());
-    rb.linearVelocity = Vec3(
-        static_cast<float>(m_linVelX->value()),
-        static_cast<float>(m_linVelY->value()),
-        static_cast<float>(m_linVelZ->value()));
-    rb.angularVelocity = Vec3(
-        static_cast<float>(m_angVelX->value()),
-        static_cast<float>(m_angVelY->value()),
-        static_cast<float>(m_angVelZ->value()));
-    rb.debugDraw = m_debugDrawCheck->isChecked();
+    auto writeScalar = [&](QDoubleSpinBox* spin, float RigidBodyComponent::* field) {
+        double value = 0.0;
+        if (!TryReadSpin(spin, value)) return;
+        ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
+            rb.*field = static_cast<float>(value);
+        });
+    };
+    writeScalar(m_massSpin, &RigidBodyComponent::mass);
+    writeScalar(m_linearDampSpin, &RigidBodyComponent::linearDamping);
+    writeScalar(m_angularDampSpin, &RigidBodyComponent::angularDamping);
+    writeScalar(m_frictionSpin, &RigidBodyComponent::friction);
+    writeScalar(m_restitutionSpin, &RigidBodyComponent::restitution);
 
-    // Enforce static constraints (matches ImGui behavior)
-    if (rb.isStatic || rb.isTrigger) {
-        rb.mass = 0.0f;
-        rb.useGravity = false;
-    } else if (rb.mass <= 0.0f) {
-        rb.mass = 1.0f;
-    }
+    auto writeAxis = [&](QDoubleSpinBox* spin, Vec3 RigidBodyComponent::* field, int axis) {
+        double value = 0.0;
+        if (!TryReadSpin(spin, value)) return;
+        ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
+            WriteVec3Axis(rb.*field, axis, static_cast<float>(value));
+        });
+    };
+    writeAxis(m_linVelX, &RigidBodyComponent::linearVelocity, 0);
+    writeAxis(m_linVelY, &RigidBodyComponent::linearVelocity, 1);
+    writeAxis(m_linVelZ, &RigidBodyComponent::linearVelocity, 2);
+    writeAxis(m_angVelX, &RigidBodyComponent::angularVelocity, 0);
+    writeAxis(m_angVelY, &RigidBodyComponent::angularVelocity, 1);
+    writeAxis(m_angVelZ, &RigidBodyComponent::angularVelocity, 2);
 
-    m_ctx->MarkDirty();
+    ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
+        if (rb.isStatic || rb.isTrigger) {
+            rb.mass = 0.0f;
+            rb.useGravity = false;
+        } else if (rb.mass <= 0.0f) {
+            rb.mass = 1.0f;
+        }
+    });
 }
 
 void RigidBodyInspector::applyPreset(bool isPlayer)
 {
     if (!m_ctx || !m_ctx->HasActiveScene()) return;
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity) || !reg.all_of<RigidBodyComponent>(m_entity)) return;
-
     EditorUndoManager::PushSnapshot(m_ctx, isPlayer ? "Preset: Player" : "Preset: Ground");
-
-    auto& rb = reg.get<RigidBodyComponent>(m_entity);
-
-    if (isPlayer) {
-        rb.isStatic = false; rb.isTrigger = false;
-        rb.useGravity = true; rb.freezeRotation = true;
-        rb.mass = 80.0f;
-        rb.linearDamping = 0.1f; rb.angularDamping = 0.5f;
-        rb.friction = 0.6f; rb.restitution = 0.0f;
-    } else {
-        rb.isStatic = true; rb.isTrigger = false;
-        rb.useGravity = false; rb.freezeRotation = false;
-        rb.mass = 0.0f;
-        rb.linearDamping = 0.0f; rb.angularDamping = 0.0f;
-        rb.friction = 0.5f; rb.restitution = 0.0f;
-    }
-
-    m_ctx->MarkDirty();
+    ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
+        if (isPlayer) {
+            rb.isStatic = false; rb.isTrigger = false;
+            rb.useGravity = true; rb.freezeRotation = true;
+            rb.mass = 80.0f;
+            rb.linearDamping = 0.1f; rb.angularDamping = 0.5f;
+            rb.friction = 0.6f; rb.restitution = 0.0f;
+        } else {
+            rb.isStatic = true; rb.isTrigger = false;
+            rb.useGravity = false; rb.freezeRotation = false;
+            rb.mass = 0.0f;
+            rb.linearDamping = 0.0f; rb.angularDamping = 0.0f;
+            rb.friction = 0.5f; rb.restitution = 0.0f;
+        }
+    });
     Refresh();
 }
 
@@ -355,11 +401,15 @@ void MeshColliderInspector::buildUI()
 
 void MeshColliderInspector::connectSignals()
 {
-    connect(m_enabledCheck,   &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
-    connect(m_staticCheck,    &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
-    connect(m_triggerCheck,   &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
-    connect(m_complexCheck,   &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
-    connect(m_debugDrawCheck, &QCheckBox::toggled, this, [this](bool) { applyToComponent(); });
+    auto applyBool = [this](bool) {
+        applyToComponent();
+        EndEdit();
+    };
+    connect(m_enabledCheck,   &QCheckBox::toggled, this, applyBool);
+    connect(m_staticCheck,    &QCheckBox::toggled, this, applyBool);
+    connect(m_triggerCheck,   &QCheckBox::toggled, this, applyBool);
+    connect(m_complexCheck,   &QCheckBox::toggled, this, applyBool);
+    connect(m_debugDrawCheck, &QCheckBox::toggled, this, applyBool);
 
     connect(m_removeBtn, &QPushButton::clicked, this, [this]() {
         if (!m_ctx || !m_ctx->HasActiveScene()) return;
@@ -367,30 +417,37 @@ void MeshColliderInspector::connectSignals()
         if (!reg.valid(m_entity)) return;
 
         EditorUndoManager::PushSnapshot(m_ctx, "Remove MeshCollider");
-        if (reg.all_of<MeshColliderComponent>(m_entity)) reg.remove<MeshColliderComponent>(m_entity);
-        m_ctx->MarkDirty();
+        ForEachTarget<MeshColliderComponent>([&](MeshColliderComponent&, entt::entity entity) {
+            if (reg.all_of<MeshColliderComponent>(entity)) {
+                reg.remove<MeshColliderComponent>(entity);
+            }
+        });
         emit componentRemoved(m_entity, "MeshCollider");
     });
 }
 
 void MeshColliderInspector::Refresh()
 {
-    if (!m_ctx || !m_ctx->HasActiveScene()) return;
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity) || !reg.all_of<MeshColliderComponent>(m_entity)) return;
-
-    const auto& mc = reg.get<MeshColliderComponent>(m_entity);
-
+    EndEdit();
+    MixedBool enabled, isStatic, isTrigger, complex, debugDraw;
+    int contacts = 0;
+    VisitTargets<MeshColliderComponent>([&](const MeshColliderComponent& mc, entt::entity) {
+        AccumulateBool(enabled, mc.enabled);
+        AccumulateBool(isStatic, mc.isStatic);
+        AccumulateBool(isTrigger, mc.isTrigger);
+        AccumulateBool(complex, mc.useComplexCollision);
+        AccumulateBool(debugDraw, mc.debugDraw);
+        contacts = static_cast<int>(mc.contacts.size());
+    });
+    if (!enabled.present) return;
     m_updating = true;
     blockAllSignals(true);
-
-    m_enabledCheck->setChecked(mc.enabled);
-    m_staticCheck->setChecked(mc.isStatic);
-    m_triggerCheck->setChecked(mc.isTrigger);
-    m_complexCheck->setChecked(mc.useComplexCollision);
-    m_debugDrawCheck->setChecked(mc.debugDraw);
-    m_contactsLabel->setText(tr("Contacts: %1").arg(mc.contacts.size()));
-
+    SetCheckFromMixed(m_enabledCheck, enabled);
+    SetCheckFromMixed(m_staticCheck, isStatic);
+    SetCheckFromMixed(m_triggerCheck, isTrigger);
+    SetCheckFromMixed(m_complexCheck, complex);
+    SetCheckFromMixed(m_debugDrawCheck, debugDraw);
+    m_contactsLabel->setText(tr("Contacts: %1").arg(contacts));
     blockAllSignals(false);
     m_updating = false;
 }
@@ -398,19 +455,19 @@ void MeshColliderInspector::Refresh()
 void MeshColliderInspector::applyToComponent()
 {
     if (m_updating || !m_ctx || !m_ctx->HasActiveScene()) return;
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity) || !reg.all_of<MeshColliderComponent>(m_entity)) return;
-
-    EditorUndoManager::PushSnapshot(m_ctx, "Edit MeshCollider");
-
-    auto& mc = reg.get<MeshColliderComponent>(m_entity);
-    mc.enabled             = m_enabledCheck->isChecked();
-    mc.isStatic            = m_staticCheck->isChecked();
-    mc.isTrigger           = m_triggerCheck->isChecked();
-    mc.useComplexCollision = m_complexCheck->isChecked();
-    mc.debugDraw           = m_debugDrawCheck->isChecked();
-
-    m_ctx->MarkDirty();
+    BeginEdit("Edit MeshCollider");
+    auto writeBool = [&](QCheckBox* box, bool MeshColliderComponent::* field) {
+        bool value = false;
+        if (!TryReadCheck(box, value)) return;
+        ForEachTarget<MeshColliderComponent>([&](MeshColliderComponent& mc, entt::entity) {
+            mc.*field = value;
+        });
+    };
+    writeBool(m_enabledCheck, &MeshColliderComponent::enabled);
+    writeBool(m_staticCheck, &MeshColliderComponent::isStatic);
+    writeBool(m_triggerCheck, &MeshColliderComponent::isTrigger);
+    writeBool(m_complexCheck, &MeshColliderComponent::useComplexCollision);
+    writeBool(m_debugDrawCheck, &MeshColliderComponent::debugDraw);
 }
 
 void MeshColliderInspector::blockAllSignals(bool block)
@@ -497,6 +554,7 @@ void PhysicsShapeInspector::connectSignals()
         autoFitToMeshBounds(newType);
         updateShapeFieldsVisibility();
         applyToComponent();
+        EndEdit();
     });
 
     auto onChange = [this]() { applyToComponent(); };
@@ -509,6 +567,10 @@ void PhysicsShapeInspector::connectSignals()
     connect(m_offX,          QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
     connect(m_offY,          QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
     connect(m_offZ,          QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [onChange](double) { onChange(); });
+    for (auto* spin : {m_extX, m_extY, m_extZ, m_radiusSpin, m_capHeightSpin,
+                       m_capRadiusSpin, m_offX, m_offY, m_offZ}) {
+        connect(spin, &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
+    }
 
     connect(m_removeBtn, &QPushButton::clicked, this, [this]() {
         if (!m_ctx || !m_ctx->HasActiveScene()) return;
@@ -516,73 +578,97 @@ void PhysicsShapeInspector::connectSignals()
         if (!reg.valid(m_entity)) return;
 
         EditorUndoManager::PushSnapshot(m_ctx, "Remove PhysicsShape");
-        if (reg.all_of<PhysicsShapeComponent>(m_entity)) reg.remove<PhysicsShapeComponent>(m_entity);
-        m_ctx->MarkDirty();
+        ForEachTarget<PhysicsShapeComponent>([&](PhysicsShapeComponent&, entt::entity entity) {
+            if (reg.all_of<PhysicsShapeComponent>(entity)) {
+                reg.remove<PhysicsShapeComponent>(entity);
+            }
+        });
         emit componentRemoved(m_entity, "PhysicsShape");
     });
 }
 
 void PhysicsShapeInspector::Refresh()
 {
-    if (!m_ctx || !m_ctx->HasActiveScene()) return;
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity) || !reg.all_of<PhysicsShapeComponent>(m_entity)) return;
-
-    const auto& ps = reg.get<PhysicsShapeComponent>(m_entity);
+    EndEdit();
+    MixedScalar extX, extY, extZ, radius, height, offX, offY, offZ;
+    int firstType = -1;
+    bool mixedType = false;
+    VisitTargets<PhysicsShapeComponent>([&](const PhysicsShapeComponent& ps, entt::entity) {
+        AccumulateScalar(extX, ps.extents.x);
+        AccumulateScalar(extY, ps.extents.y);
+        AccumulateScalar(extZ, ps.extents.z);
+        AccumulateScalar(radius, ps.radius);
+        AccumulateScalar(height, ps.height);
+        AccumulateScalar(offX, ps.offset.x);
+        AccumulateScalar(offY, ps.offset.y);
+        AccumulateScalar(offZ, ps.offset.z);
+        const int t = static_cast<int>(ps.type);
+        if (firstType < 0) firstType = t;
+        else if (firstType != t) mixedType = true;
+    });
+    if (!extX.present) return;
 
     m_updating = true;
     blockAllSignals(true);
-
-    // Shape type
-    int idx = 0;
-    switch (ps.type) {
-        case PhysicsShapeType::Box:     idx = 0; break;
-        case PhysicsShapeType::Sphere:  idx = 1; break;
-        case PhysicsShapeType::Capsule: idx = 2; break;
-        default: idx = 0; break;
-    }
-    m_shapeCombo->setCurrentIndex(idx);
-
-    m_extX->setValue(static_cast<double>(ps.extents.x));
-    m_extY->setValue(static_cast<double>(ps.extents.y));
-    m_extZ->setValue(static_cast<double>(ps.extents.z));
-    m_radiusSpin->setValue(static_cast<double>(ps.radius));
-    m_capHeightSpin->setValue(static_cast<double>(ps.height));
-    m_capRadiusSpin->setValue(static_cast<double>(ps.radius));
-    m_offX->setValue(static_cast<double>(ps.offset.x));
-    m_offY->setValue(static_cast<double>(ps.offset.y));
-    m_offZ->setValue(static_cast<double>(ps.offset.z));
-
+    SetComboFromMixed(m_shapeCombo, mixedType, firstType);
+    SetSpinFromMixed(m_extX, extX);
+    SetSpinFromMixed(m_extY, extY);
+    SetSpinFromMixed(m_extZ, extZ);
+    SetSpinFromMixed(m_radiusSpin, radius);
+    SetSpinFromMixed(m_capHeightSpin, height);
+    SetSpinFromMixed(m_capRadiusSpin, radius);
+    SetSpinFromMixed(m_offX, offX);
+    SetSpinFromMixed(m_offY, offY);
+    SetSpinFromMixed(m_offZ, offZ);
     blockAllSignals(false);
     m_updating = false;
-
     updateShapeFieldsVisibility();
 }
 
 void PhysicsShapeInspector::applyToComponent()
 {
     if (m_updating || !m_ctx || !m_ctx->HasActiveScene()) return;
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity) || !reg.all_of<PhysicsShapeComponent>(m_entity)) return;
-
-    EditorUndoManager::PushSnapshot(m_ctx, "Edit PhysicsShape");
-
-    auto& ps = reg.get<PhysicsShapeComponent>(m_entity);
-    ps.type = static_cast<PhysicsShapeType>(m_shapeCombo->currentData().toInt());
-    ps.extents = Vec3(
-        static_cast<float>(m_extX->value()),
-        static_cast<float>(m_extY->value()),
-        static_cast<float>(m_extZ->value()));
-    ps.radius = (ps.type == PhysicsShapeType::Capsule)
-        ? static_cast<float>(m_capRadiusSpin->value())
-        : static_cast<float>(m_radiusSpin->value());
-    ps.height = static_cast<float>(m_capHeightSpin->value());
-    ps.offset = Vec3(
-        static_cast<float>(m_offX->value()),
-        static_cast<float>(m_offY->value()),
-        static_cast<float>(m_offZ->value()));
-
-    m_ctx->MarkDirty();
+    BeginEdit("Edit PhysicsShape");
+    int type = 0;
+    if (TryReadCombo(m_shapeCombo, type)) {
+        ForEachTarget<PhysicsShapeComponent>([&](PhysicsShapeComponent& ps, entt::entity) {
+            ps.type = static_cast<PhysicsShapeType>(type);
+        });
+    }
+    auto writeExtent = [&](QDoubleSpinBox* spin, int axis) {
+        double value = 0.0;
+        if (!TryReadSpin(spin, value)) return;
+        ForEachTarget<PhysicsShapeComponent>([&](PhysicsShapeComponent& ps, entt::entity) {
+            WriteVec3Axis(ps.extents, axis, static_cast<float>(value));
+        });
+    };
+    writeExtent(m_extX, 0);
+    writeExtent(m_extY, 1);
+    writeExtent(m_extZ, 2);
+    double radius = 0.0, height = 0.0;
+    const bool editingCapsule =
+        m_shapeCombo->currentData().toInt() == static_cast<int>(PhysicsShapeType::Capsule);
+    QDoubleSpinBox* radiusEditor = editingCapsule ? m_capRadiusSpin : m_radiusSpin;
+    if (TryReadSpin(radiusEditor, radius)) {
+        ForEachTarget<PhysicsShapeComponent>([&](PhysicsShapeComponent& ps, entt::entity) {
+            ps.radius = static_cast<float>(radius);
+        });
+    }
+    if (TryReadSpin(m_capHeightSpin, height)) {
+        ForEachTarget<PhysicsShapeComponent>([&](PhysicsShapeComponent& ps, entt::entity) {
+            ps.height = static_cast<float>(height);
+        });
+    }
+    auto writeOff = [&](QDoubleSpinBox* spin, int axis) {
+        double value = 0.0;
+        if (!TryReadSpin(spin, value)) return;
+        ForEachTarget<PhysicsShapeComponent>([&](PhysicsShapeComponent& ps, entt::entity) {
+            WriteVec3Axis(ps.offset, axis, static_cast<float>(value));
+        });
+    };
+    writeOff(m_offX, 0);
+    writeOff(m_offY, 1);
+    writeOff(m_offZ, 2);
 }
 
 void PhysicsShapeInspector::updateShapeFieldsVisibility()

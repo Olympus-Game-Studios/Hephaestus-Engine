@@ -6,37 +6,30 @@
  *
  * Architecture:
  *   Each ECS component type that needs a Details panel section registers
- *   a factory via ComponentInspectorRegistry::Register<ComponentType>().
- *   The Details panel calls CreateInspectors() for the selected entity;
- *   each matching factory produces a QGroupBox-based widget that reads
- *   from and writes to the ECS component directly.
- *
- * To add a new component inspector:
- *   1.  Create a class that inherits ComponentInspector.
- *   2.  Implement buildUI(), connectSignals(), Refresh(), applyToComponent().
- *   3.  In EditorMainWindow::initializeEngine() (or a setup function),
- *       call ComponentInspectorRegistry::Register<YourComponent>(factory).
+ *   a factory via ComponentInspectorRegistry.
+ *   Inspectors bind to the shared-component intersection of the current
+ *   selection (one widget tree, never one inspector per entity).
  */
 
 #if HEPHAESTUS_EDITOR_QT_UI
 
+#include "EditorUndoCommand.h"
+
+#include "../../Core/EditorContext.h"
+#include "../../Scene/Scene.h"
+
 #include <QGroupBox>
-#include <QVBoxLayout>
+#include <QMenu>
+#include <algorithm>
 #include <entt/entt.hpp>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
-#include <memory>
 
 namespace Hephaestus {
 
-class EditorContext;
-
 namespace QtEditor {
-
-// ---------------------------------------------------------------------------
-// ComponentInspector — base widget for any component section in Details panel
-// ---------------------------------------------------------------------------
 
 class ComponentInspector : public QGroupBox
 {
@@ -50,54 +43,85 @@ public:
         : QGroupBox(title, parent)
         , m_ctx(ctx)
         , m_entity(entity)
-    {}
+    {
+        if (entity != entt::null) {
+            m_targets.push_back(entity);
+        }
+    }
 
     ~ComponentInspector() override = default;
 
-    /** Re-read component values into widgets. */
     virtual void Refresh() = 0;
 
-    /** Return the entity this inspector is bound to. */
     entt::entity GetEntity() const { return m_entity; }
+    const std::vector<entt::entity>& Targets() const { return m_targets; }
+    void SetTypeName(const std::string& typeName) { m_typeName = typeName; }
+    const std::string& TypeName() const { return m_typeName; }
+
+    void SetTargets(std::vector<entt::entity> targets)
+    {
+        m_targets = std::move(targets);
+        if (!m_targets.empty()) {
+            m_entity = m_targets.front();
+        }
+        EndEdit();
+        Refresh();
+    }
+
+    void BeginEdit(const char* label)
+    {
+        if (m_editActive || !m_ctx) return;
+        EditorUndoManager::PushSnapshot(m_ctx, label ? label : "Edit component");
+        m_editActive = true;
+    }
+
+    void EndEdit() { m_editActive = false; }
+
+    template<typename T, typename Fn>
+    void VisitTargets(Fn&& fn)
+    {
+        if (!m_ctx || !m_ctx->HasActiveScene()) return;
+        auto& reg = m_ctx->GetActiveScene()->GetRegistry();
+        for (entt::entity entity : m_targets) {
+            if (!reg.valid(entity) || !reg.all_of<T>(entity)) continue;
+            fn(reg.get<T>(entity), entity);
+        }
+    }
+
+    template<typename T, typename Fn>
+    void ForEachTarget(Fn&& fn)
+    {
+        VisitTargets<T>(std::forward<Fn>(fn));
+        if (m_ctx) m_ctx->MarkDirty();
+    }
 
 signals:
-    /** Emitted when this inspector wants to remove the component. */
     void componentRemoved(entt::entity entity, const QString& componentName);
+    void copyComponentRequested(const QString& typeName);
+    void pasteValuesRequested(const QString& typeName);
+    void resetComponentRequested(const QString& typeName);
 
 protected:
     EditorContext* m_ctx    = nullptr;
     entt::entity   m_entity = entt::null;
-    bool           m_updating = false;   // guard against re-entrant writes
+    std::vector<entt::entity> m_targets;
+    std::string m_typeName;
+    bool m_updating = false;
+    bool m_editActive = false;
 };
-
-// ---------------------------------------------------------------------------
-// Factory type: (EditorContext*, entity, parentWidget) -> inspector widget
-// ---------------------------------------------------------------------------
 
 using InspectorFactory = std::function<
     ComponentInspector*(EditorContext*, entt::entity, QWidget*)>;
 
-/**
- * @brief Predicate that tests whether an entity should show this inspector.
- *        Typically checks registry.all_of<ComponentType>(entity).
- */
 using InspectorPredicate = std::function<
     bool(const entt::registry&, entt::entity)>;
 
-// ---------------------------------------------------------------------------
-// Registration entry
-// ---------------------------------------------------------------------------
-
 struct InspectorEntry {
-    std::string       name;       // e.g. "MeshRenderer"
-    int               order;      // sort key (lower = higher in panel)
+    std::string       name;
+    int               order;
     InspectorPredicate predicate;
     InspectorFactory   factory;
 };
-
-// ---------------------------------------------------------------------------
-// ComponentInspectorRegistry — singleton that stores available factories
-// ---------------------------------------------------------------------------
 
 class ComponentInspectorRegistry
 {
@@ -108,52 +132,53 @@ public:
         return s_instance;
     }
 
-    /**
-     * Register an inspector factory.
-     *
-     * @param name       Human-readable component name (must be unique).
-     * @param order      Sort position in Details panel (0 = top).
-     * @param predicate  Returns true if entity has the component.
-     * @param factory    Creates the inspector widget.
-     */
     void Register(const std::string& name, int order,
                   InspectorPredicate predicate, InspectorFactory factory)
     {
         m_entries.push_back({ name, order, std::move(predicate), std::move(factory) });
     }
 
-    /**
-     * Create inspector widgets for every component the entity has.
-     * Returned in sorted order.
-     */
     std::vector<ComponentInspector*> CreateInspectors(
         EditorContext* ctx, entt::entity entity, const entt::registry& reg,
         QWidget* parent) const
     {
-        // Collect matching entries
+        return CreateInspectors(ctx, std::vector<entt::entity>{ entity }, reg, parent);
+    }
+
+    std::vector<ComponentInspector*> CreateInspectors(
+        EditorContext* ctx, const std::vector<entt::entity>& entities,
+        const entt::registry& reg, QWidget* parent) const
+    {
         std::vector<const InspectorEntry*> matching;
         for (auto& e : m_entries) {
-            if (e.predicate(reg, entity)) {
+            bool all = !entities.empty();
+            for (entt::entity entity : entities) {
+                if (!e.predicate(reg, entity)) {
+                    all = false;
+                    break;
+                }
+            }
+            if (all) {
                 matching.push_back(&e);
             }
         }
-        // Sort by order
         std::sort(matching.begin(), matching.end(),
                   [](const InspectorEntry* a, const InspectorEntry* b) {
                       return a->order < b->order;
                   });
-        // Build widgets
         std::vector<ComponentInspector*> out;
         out.reserve(matching.size());
+        const entt::entity primary = entities.empty() ? entt::null : entities.front();
         for (auto* e : matching) {
-            if (auto* w = e->factory(ctx, entity, parent)) {
+            if (auto* w = e->factory(ctx, primary, parent)) {
+                w->SetTypeName(e->name);
+                w->SetTargets(entities);
                 out.push_back(w);
             }
         }
         return out;
     }
 
-    /** Names of all registered inspectors (for "Add Component" filtering). */
     std::vector<std::string> GetRegisteredNames() const
     {
         std::vector<std::string> names;

@@ -45,6 +45,7 @@
 #include "../../Assets/EditorViewState.h"
 #include "../../ToolsCommon/EngineSettingsManager.h"
 #include "../../ToolsCommon/ProjectSettingsManager.h"
+#include "../../UI/InspectorSelectionModel.h"
 
 class EditorAssetPipeline;
 
@@ -166,7 +167,14 @@ private:
     void blockDetailSignals(bool block);
     void rebuildComponentInspectors();
     void showAddComponentMenu();
+    void applyBatchAddComponent(const QString& typeId);
     void onComponentRemoved(entt::entity entity, const QString& name);
+    InspectorSelectionModel resolveInspectorSelection();
+    void copyInspectorComponent(const std::string& type);
+    void pasteInspectorComponentValues(const std::string& type);
+    void resetInspectorComponent(const std::string& type);
+    void removeInspectorComponent(const std::string& type);
+    ComponentInspector* focusedComponentInspector() const;
     void handleDragDrop(const QString& assetPath, const QString& targetField);
     void handleViewportSpawnDrop(const QByteArray& spawnPayload, const QPoint& dropPos);
     void syncPrefabOverridesForSelection();
@@ -310,6 +318,10 @@ private:
     // Header/controls
     QLabel*      m_entityIconLabel  = nullptr;
     QLabel*      m_entityIdLabel    = nullptr;
+    QLabel*      m_detailsSharedHint = nullptr;
+    QLabel*      m_detailsAdvancedId = nullptr;
+    QLabel*      m_detailsEmptyHint  = nullptr;
+    QLabel*      m_detailsPartialHint = nullptr;
     QToolButton* m_visibilityBtn    = nullptr;
     QCheckBox*   m_lockCheck        = nullptr;
     QPushButton* m_addComponentBtn  = nullptr;

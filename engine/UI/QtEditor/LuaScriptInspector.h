@@ -19,9 +19,9 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "ComponentInspector.h"
+#include "AssetReferenceEditor.h"
 
 #include <QCheckBox>
-#include <QLineEdit>
 #include <QPushButton>
 #include <QLabel>
 
@@ -42,13 +42,10 @@ private:
     void buildUI();
     void connectSignals();
     void applyToComponent();
-    void browseScript();
     void blockAllSignals(bool block);
 
-    // Widgets
-    QLineEdit*   m_pathEdit     = nullptr;
+    AssetReferenceEditor* m_pathEdit = nullptr;
     QCheckBox*   m_enabledCheck = nullptr;
-    QPushButton* m_browseBtn    = nullptr;
     QPushButton* m_removeBtn    = nullptr;
 };
 

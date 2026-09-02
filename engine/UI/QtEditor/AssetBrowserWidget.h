@@ -73,6 +73,8 @@ public:
      * @param relativePath Relative path from asset root (empty = root)
      */
     void NavigateTo(const QString& relativePath);
+    void FindReferences(const QString& relativePath);
+    void RevealAsset(const QString& relativePath);
 
     /**
      * @brief Get current directory path.

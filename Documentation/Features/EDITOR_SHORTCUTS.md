@@ -38,6 +38,20 @@ Active when the Outliner tree has focus (not the search box):
 | `Ctrl+A` | Select all entities |
 | `Esc` | Clear selection |
 
+## Details (Inspector)
+
+Active when a component inspector has focus (does not steal `Ctrl+C` entity copy):
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+Shift+C` | Copy component |
+| `Ctrl+Shift+V` | Paste component values onto the selection |
+| `Ctrl+Shift+R` | Reset component to constructor defaults |
+
+Numeric Inspector fields remain **local** transform values. The Details World/Local control is labelled **Gizmo space** and only syncs the viewport gizmo.
+
+Component headers offer Copy / Paste Values / Reset to Default / Remove. Prefab instances also show Revert; Apply to Prefab is hidden for multi-select or mixed prefab sources.
+
 ## Viewport
 
 Active when the viewport has focus / mouse interaction:

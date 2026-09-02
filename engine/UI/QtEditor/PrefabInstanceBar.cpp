@@ -57,7 +57,9 @@ PrefabInstanceBar::PrefabInstanceBar(QWidget* parent)
     connect(this, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         QMenu menu(this);
         menu.addAction(tr("Revert Node"), this, [this]() { emit revertNodeRequested(); });
-        menu.addAction(tr("Apply Node to Prefab"), this, [this]() { emit applyNodeRequested(); });
+        auto* applyNode = menu.addAction(
+            tr("Apply Node to Prefab"), this, [this]() { emit applyNodeRequested(); });
+        applyNode->setEnabled(m_applyEnabled);
         menu.exec(mapToGlobal(pos));
     });
 
@@ -148,6 +150,7 @@ void PrefabInstanceBar::rebuildOverrideList()
         revertBtn->setFixedHeight(18);
         auto* applyBtn = new QPushButton(tr("Apply"), row);
         applyBtn->setFixedHeight(18);
+        applyBtn->setEnabled(m_applyEnabled);
         const QString component = QString::fromStdString(ref.component);
         const QString property = QString::fromStdString(ref.property);
         connect(revertBtn, &QPushButton::clicked, this, [this, component, property]() {
@@ -166,8 +169,29 @@ void PrefabInstanceBar::rebuildOverrideList()
     }
 
     m_revertAllBtn->setEnabled(!inst.missingPrefab && PrefabOverrideSystem::HasAnyOverride(inst));
-    m_applyAllBtn->setEnabled(!inst.missingPrefab && PrefabOverrideSystem::HasAnyOverride(inst));
+    m_applyAllBtn->setEnabled(m_applyEnabled && !inst.missingPrefab && PrefabOverrideSystem::HasAnyOverride(inst));
     m_openBtn->setEnabled(!inst.prefabPath.empty());
+}
+
+void PrefabInstanceBar::SetApplyEnabled(bool enabled)
+{
+    if (m_applyEnabled == enabled) {
+        return;
+    }
+    m_applyEnabled = enabled;
+    if (!enabled) {
+        m_applyAllBtn->setEnabled(false);
+        m_applyAllBtn->setToolTip(
+            tr("Apply to Prefab is disabled for mixed prefab sources or multi-select."));
+        for (auto* button : m_overrideContainer->findChildren<QPushButton*>()) {
+            if (button->text() == tr("Apply")) {
+                button->setEnabled(false);
+            }
+        }
+        return;
+    }
+    m_applyAllBtn->setToolTip(QString());
+    rebuildOverrideList();
 }
 
 } // namespace QtEditor

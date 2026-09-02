@@ -377,6 +377,8 @@ add_executable(HephaestusEngine
     engine/UI/HephaestusUI/UITheme.cpp
     engine/UI/HephaestusUI/UIVerticalBox.cpp
     engine/UI/EditorDocument.cpp
+    engine/UI/InspectorSelectionModel.cpp
+    engine/UI/ComponentClipboard.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
@@ -509,6 +511,18 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/EnvironmentInspector.cpp
             engine/UI/QtEditor/EnvironmentInspector.h
             engine/UI/QtEditor/ComponentInspector.h
+            engine/UI/QtEditor/PropertyEditors.cpp
+            engine/UI/QtEditor/PropertyEditors.h
+            engine/UI/QtEditor/InspectorMime.cpp
+            engine/UI/QtEditor/InspectorMime.h
+            engine/UI/QtEditor/AssetPickerDialog.cpp
+            engine/UI/QtEditor/AssetPickerDialog.h
+            engine/UI/QtEditor/AssetReferenceEditor.cpp
+            engine/UI/QtEditor/AssetReferenceEditor.h
+            engine/UI/QtEditor/AddComponentPopup.cpp
+            engine/UI/QtEditor/AddComponentPopup.h
+            engine/UI/QtEditor/AudioSourceInspector.cpp
+            engine/UI/QtEditor/AudioSourceInspector.h
             engine/UI/QtEditor/EditorUndoCommand.cpp
             engine/UI/QtEditor/EditorUndoCommand.h
             engine/UI/QtEditor/MeshRendererInspector.cpp
@@ -1018,6 +1032,31 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME SceneAuthoringWorkflow
         COMMAND SceneAuthoringTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(InspectorEditTests
+        engine/Tests/InspectorEditTests.cpp
+        engine/UI/InspectorSelectionModel.cpp
+        engine/UI/ComponentClipboard.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_include_directories(InspectorEditTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME InspectorEditWorkflow
+        COMMAND InspectorEditTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
     add_executable(AssetPathPolicyTests

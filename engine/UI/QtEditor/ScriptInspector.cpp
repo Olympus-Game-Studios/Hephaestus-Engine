@@ -17,6 +17,7 @@
 
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <algorithm>
 #include <iostream>
 
 namespace Hephaestus {
@@ -29,6 +30,7 @@ namespace QtEditor {
 ScriptInspector::ScriptInspector(EditorContext* ctx, entt::entity entity, QWidget* parent)
     : ComponentInspector(tr("Scripts"), ctx, entity, parent)
 {
+    SetTypeName("ScriptComponent");
     buildUI();
     connectSignals();
     Refresh();
@@ -91,12 +93,12 @@ void ScriptInspector::connectSignals()
         if (!reg.valid(m_entity)) return;
 
         EditorUndoManager::PushSnapshot(m_ctx, "Remove ScriptComponent");
-
-        if (reg.all_of<ScriptComponent>(m_entity)) {
-            reg.remove<ScriptComponent>(m_entity);
-        }
-        m_ctx->MarkDirty();
-        emit componentRemoved(m_entity, "Scripts");
+        ForEachTarget<ScriptComponent>([&](ScriptComponent&, entt::entity entity) {
+            if (reg.all_of<ScriptComponent>(entity)) {
+                reg.remove<ScriptComponent>(entity);
+            }
+        });
+        emit componentRemoved(m_entity, "ScriptComponent");
     });
 }
 
@@ -175,34 +177,26 @@ void ScriptInspector::attachScript()
     }
 
     if (!m_ctx || !m_ctx->HasActiveScene()) return;
-    auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-    if (!reg.valid(m_entity)) return;
-
     EditorUndoManager::PushSnapshot(m_ctx, "Attach script " + scriptName.toStdString());
+    int attached = 0;
+    ForEachTarget<ScriptComponent>([&](ScriptComponent& sc, entt::entity entity) {
+        Entity entityWrapper(entity, m_ctx->GetActiveScene());
+        auto scriptPtr = ScriptRegistry::CreateScript(
+            scriptName.toStdString(), entityWrapper, m_ctx->GetActiveScene());
+        if (scriptPtr) {
+            sc.AddScript(scriptPtr, scriptName.toStdString());
+            ++attached;
+        }
+    });
 
-    // Ensure ScriptComponent exists
-    if (!reg.all_of<ScriptComponent>(m_entity)) {
-        reg.emplace<ScriptComponent>(m_entity);
-    }
-
-    auto& sc = reg.get<ScriptComponent>(m_entity);
-
-    // Create script instance
-    Entity entityWrapper(m_entity, m_ctx->GetActiveScene());
-    auto scriptPtr = ScriptRegistry::CreateScript(
-        scriptName.toStdString(), entityWrapper, m_ctx->GetActiveScene());
-
-    if (scriptPtr) {
-        sc.AddScript(scriptPtr, scriptName.toStdString());
-        m_statusLabel->setText(tr("Attached '%1'").arg(scriptName));
+    if (attached > 0) {
+        m_statusLabel->setText(tr("Attached '%1' to %2 entities").arg(scriptName).arg(attached));
         m_statusLabel->setStyleSheet("color: green; font-size: 10px;");
     } else {
         m_statusLabel->setText(tr("Failed to create '%1'").arg(scriptName));
         m_statusLabel->setStyleSheet("color: red; font-size: 10px;");
     }
     m_statusLabel->setVisible(true);
-
-    m_ctx->MarkDirty();
     rebuildScriptList();
 }
 
@@ -216,14 +210,17 @@ void ScriptInspector::removeScript(int index)
     auto& reg = m_ctx->GetActiveScene()->GetRegistry();
     if (!reg.valid(m_entity) || !reg.all_of<ScriptComponent>(m_entity)) return;
 
+    const auto& primary = reg.get<ScriptComponent>(m_entity);
+    if (index < 0 || index >= static_cast<int>(primary.scriptNames.size())) return;
+    const std::string scriptName = primary.scriptNames[static_cast<size_t>(index)];
+
     EditorUndoManager::PushSnapshot(m_ctx, "Remove script");
-
-    auto& sc = reg.get<ScriptComponent>(m_entity);
-    if (index >= 0 && index < static_cast<int>(sc.GetScriptCount())) {
-        sc.RemoveScript(static_cast<size_t>(index));
-    }
-
-    m_ctx->MarkDirty();
+    ForEachTarget<ScriptComponent>([&](ScriptComponent& sc, entt::entity) {
+        const auto it = std::find(sc.scriptNames.begin(), sc.scriptNames.end(), scriptName);
+        if (it != sc.scriptNames.end()) {
+            sc.RemoveScript(static_cast<size_t>(std::distance(sc.scriptNames.begin(), it)));
+        }
+    });
     rebuildScriptList();
 }
 

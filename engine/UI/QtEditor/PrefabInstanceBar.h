@@ -25,6 +25,7 @@ public:
 
     void Bind(EditorContext* ctx, entt::entity entity);
     void Clear();
+    void SetApplyEnabled(bool enabled);
     bool IsBound() const { return m_entity != entt::null; }
 
 signals:
@@ -53,6 +54,7 @@ private:
     QPushButton* m_applyAllBtn = nullptr;
     QPushButton* m_refreshBtn = nullptr;
     QPushButton* m_openBtn = nullptr;
+    bool m_applyEnabled = true;
 };
 
 } // namespace QtEditor

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-09-02: Phase 4 Inspector UX: `InspectorSelectionModel` mixed-value/batch helpers, searchable Add Component popup, `AudioSource` inspector + prefab IO, shared Qt property widgets (`Numeric`/`Vec3`/`Bool`/`Enum`/`Color`), `AssetReferenceEditor` + `AssetPickerDialog`, component clipboard, and `InspectorEditTests`.
 - 2026-09-02: Phase 3 scene-authoring workflow: surface-aware viewport placement previews with repeat/cancel, real per-mode transform snapping, hierarchy/prefab-aware multi-duplicate and Alt-drag, marquee and prefab-root selection, editor-only hide/isolate/lock sidecars, align/distribute/drop/group/replace commands, viewport context creation, audio placement, camera bookmarks, scene statistics, and `SceneAuthoringTests`.
 - 2026-09-01: Phase 2 editor foundations: `AssetPathPolicy` (portable `assets/` / `.engine/` / `scripts/` / `builtin://` keys), project-wide Asset Browser search with Show in Folder, recent-projects remove/prune/reveal, `EditorLogicSmokeTests`, and optional `HEPHAESTUS_BUILD_QT_TESTS` harness. Updated `docs/editor/UX_QOL_AUDIT.md` with validated Phase 2 priorities and outcomes.
 - 2026-09-01: Viewport shading modes Lit/Unlit/Wireframe: `ViewShadingMode` on `FrameRenderConfig`, Unlit via `triangle.frag` UBO `shadingMode`, optional wireframe pipelines when `fillModeNonSolid` is available, and a live Lit/Unlit/Wireframe toolbar menu.
@@ -35,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-09-02: Details Inspector multi-edits the current selection (one shared widget tree, mixed axes/name, coalesced undo). Light/Environment/AudioSource use the component registry. Asset Browser drags attach portable MIME for materials/scripts/textures/UI. Prefab Apply stays single-instance; Prefab Editor rotation is degrees with searchable Add Component.
 - 2026-09-02: Scene reparenting can preserve world transforms; Scene Editor duplication preserves parents, hierarchies, supported components, and linked prefab instances. Outliner rebuilds retain expansion state and support component, prefab, hidden, and locked filters.
 - 2026-09-01: Scene/material save paths and material texture browse normalize through `AssetPathPolicy`; material `.hematerial` texture `resourcePath` fields are rewritten to portable keys on save.
 - 2026-09-01: `ReimportManager` no longer starts FileWatcher/auto-reimport in its constructor; `WorkerLoop` calls `NotifyAssetReimported` after each completed job is queued.
@@ -45,6 +47,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-09-02: Details Delete uses the full selection; Pin Inspector reports when the pinned entity is gone instead of silently unlocking; selection no longer disables Outliner repainting; Inspector refresh no longer creates edits or dirties the scene; component gestures now close their undo-coalescing sessions; prefab Apply controls correctly re-enable when returning to one instance.
 - 2026-09-02: Transform snap controls now affect gizmo translation, rotation, and scale with Ctrl bypass; Escape restores and discards active gizmo/placement edits; focusing a selection no longer initializes editor physics as a hidden side effect.
 - 2026-09-01: `TextureDiscovery.cpp` include path for `AssetPathPolicy.h` corrected (`../../Assets/`).
 - 2026-09-01: `SceneSerializer::DeserializeFromString` uses a unique temp file per call instead of a shared `hephaestus_snapshot.hpscene` path, avoiding concurrent clobber races.

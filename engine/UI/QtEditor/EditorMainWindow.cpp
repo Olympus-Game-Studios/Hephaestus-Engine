@@ -24,6 +24,10 @@
 #include "LuaScriptInspector.h"
 #include "PhysicsInspectors.h"
 #include "CameraInspector.h"
+#include "AudioSourceInspector.h"
+#include "AddComponentPopup.h"
+#include "PropertyEditors.h"
+#include "AssetReferenceEditor.h"
 #include "EditorUndoCommand.h"
 #include "BuildSettingsDialog.h"
 #include "RuntimeUIOverlayWidget.h"
@@ -53,7 +57,12 @@
 #include "../../Scene/Entity.h"
 #include "../../Scripting/ScriptComponent.h"
 #include "../../Scripting/LuaScriptComponent.h"
+#include "../../UI/InspectorSelectionModel.h"
+#include "../../UI/ComponentClipboard.h"
+#include "../../Assets/AssetPathPolicy.h"
+#include "../../Assets/AssetReferenceIndex.h"
 
+#include <QClipboard>
 #include <QApplication>
 #include <QMenuBar>
 #include <QMenu>
@@ -561,6 +570,26 @@ void EditorMainWindow::keyPressEvent(QKeyEvent* event)
         m_engine->StopPlayMode();
         event->accept();
         return;
+    }
+
+    if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) &&
+        focusedComponentInspector()) {
+        const std::string type = focusedComponentInspector()->TypeName();
+        if (event->key() == Qt::Key_C) {
+            copyInspectorComponent(type);
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_V) {
+            pasteInspectorComponentValues(type);
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_R) {
+            resetInspectorComponent(type);
+            event->accept();
+            return;
+        }
     }
 
     // Forward key events to the engine during play mode so Lua scripts receive input
@@ -1304,7 +1333,7 @@ void EditorMainWindow::setupDockWidgets()
         m_entityIconLabel->setObjectName("DetailsEntityIcon");
         headerRow->addWidget(m_entityIconLabel);
 
-        m_entityIdLabel = new QLabel(tr("(No selection)"));
+        m_entityIdLabel = new QLabel(tr("Select an entity to inspect."));
         m_entityIdLabel->setObjectName("DetailsEntityId");
         headerRow->addWidget(m_entityIdLabel);
 
@@ -1334,6 +1363,23 @@ void EditorMainWindow::setupDockWidgets()
         headerRow->addWidget(m_lockCheck);
 
         m_detailsLayout->addLayout(headerRow);
+
+        m_detailsSharedHint = new QLabel();
+        m_detailsSharedHint->setObjectName("DetailsSharedHint");
+        m_detailsSharedHint->setStyleSheet("color: #9DA3AE; font-size: 8pt;");
+        m_detailsSharedHint->hide();
+        m_detailsLayout->addWidget(m_detailsSharedHint);
+
+        m_detailsAdvancedId = new QLabel();
+        m_detailsAdvancedId->setObjectName("DetailsAdvancedId");
+        m_detailsAdvancedId->setStyleSheet("color: #6E7380; font-size: 8pt;");
+        m_detailsAdvancedId->hide();
+        m_detailsLayout->addWidget(m_detailsAdvancedId);
+
+        m_detailsEmptyHint = new QLabel(tr("Select an entity to inspect."));
+        m_detailsEmptyHint->setWordWrap(true);
+        m_detailsEmptyHint->setStyleSheet("color: #9DA3AE;");
+        m_detailsLayout->addWidget(m_detailsEmptyHint);
     }
 
     // Name field
@@ -1439,10 +1485,11 @@ void EditorMainWindow::setupDockWidgets()
     transformControlsLayout->setSpacing(6);
 
     auto* detailsSpaceBtn = new QToolButton(transformControls);
-    detailsSpaceBtn->setText(tr("World"));
+    detailsSpaceBtn->setText(tr("Gizmo: World"));
     detailsSpaceBtn->setCheckable(true);
+    detailsSpaceBtn->setToolTip(tr("Gizmo space only. Numeric transform fields always show local values."));
     connect(detailsSpaceBtn, &QToolButton::toggled, this, [this, detailsSpaceBtn](bool checked) {
-        detailsSpaceBtn->setText(checked ? tr("Local") : tr("World"));
+        detailsSpaceBtn->setText(checked ? tr("Gizmo: Local") : tr("Gizmo: World"));
         if (m_worldLocalBtn && m_worldLocalBtn->isChecked() != checked) {
             m_worldLocalBtn->setChecked(checked);
         }
@@ -1467,9 +1514,7 @@ void EditorMainWindow::setupDockWidgets()
 
         auto createSpinBox = [&](QDoubleSpinBox*& sb) {
             sb = new QDoubleSpinBox();
-            sb->setRange(min, max);
-            sb->setSingleStep(step);
-            sb->setDecimals(decimals);
+            ConfigureMixedSpin(sb, min, max, step, decimals);
             sb->setMinimumWidth(50);
             rowLayout->addWidget(sb);
         };
@@ -1486,6 +1531,9 @@ void EditorMainWindow::setupDockWidgets()
     
     // Rotation (degrees)
     QWidget* rotRow = createVec3Row(m_rotX, m_rotY, m_rotZ, -360.0, 360.0, 1.0, 2);
+    m_rotX->setSuffix(QString::fromUtf8("\xC2\xB0"));
+    m_rotY->setSuffix(QString::fromUtf8("\xC2\xB0"));
+    m_rotZ->setSuffix(QString::fromUtf8("\xC2\xB0"));
     transformLayout->addRow(tr("Rotation:"), rotRow);
     
     // Scale
@@ -1617,21 +1665,7 @@ void EditorMainWindow::setupDockWidgets()
         m_deleteEntityBtn = new QPushButton(tr("Delete Entity"));
         m_deleteEntityBtn->setObjectName("DangerActionButton");
         m_deleteEntityBtn->setEnabled(false);
-        connect(m_deleteEntityBtn, &QPushButton::clicked, this, [this]() {
-            if (!m_engine) return;
-            auto* ctx = m_engine->GetEditorContext();
-            if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
-
-            EditorUndoManager::PushSnapshot(ctx, "Delete entity");
-
-            entt::entity entity = ctx->GetSelectedEntity();
-            ctx->ClearSelection();
-            ctx->GetActiveScene()->DestroyEntity(Entity(entity, ctx->GetActiveScene()));
-            ctx->MarkDirty();
-
-            rebuildOutliner();
-            clearDetailsPanel();
-        });
+        connect(m_deleteEntityBtn, &QPushButton::clicked, this, &EditorMainWindow::deleteSelectedEntities);
         actionRow->addWidget(m_deleteEntityBtn);
 
         m_detailsLayout->addLayout(actionRow);
@@ -1639,6 +1673,12 @@ void EditorMainWindow::setupDockWidgets()
 
     // Add stretch to push everything to top
     m_detailsLayout->addStretch();
+
+    m_detailsPartialHint = new QLabel();
+    m_detailsPartialHint->setWordWrap(true);
+    m_detailsPartialHint->setStyleSheet("color: #9DA3AE; font-size: 8pt;");
+    m_detailsPartialHint->hide();
+    m_detailsLayout->addWidget(m_detailsPartialHint);
 
     m_detailsScrollArea->setWidget(m_detailsWidget);
     m_detailsDock->setWidget(m_detailsScrollArea);
@@ -2942,20 +2982,17 @@ void EditorMainWindow::syncTransformFieldsFromScene()
         return;
     }
 
-    entt::entity entity = entt::null;
-    if (m_detailsLocked && m_lockedEntity != entt::null) {
-        entity = m_lockedEntity;
-    } else if (ctx->HasSelection()) {
-        entity = ctx->GetSelectedEntity();
-    }
-
-    if (entity == entt::null) {
+    const InspectorSelectionModel model = resolveInspectorSelection();
+    // Multi-selection fields deliberately retain their mixed-axis display.
+    // Selection changes rebuild those values; this per-frame path is only
+    // needed to follow gizmo edits on a single inspected entity.
+    if (model.Count() != 1) {
         return;
     }
 
+    const entt::entity entity = model.primary;
     Scene* scene = ctx->GetActiveScene();
     auto& registry = scene->GetRegistry();
-    m_outlinerTree->setUpdatesEnabled(false);
     if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) {
         return;
     }
@@ -3572,7 +3609,7 @@ void EditorMainWindow::clearDetailsPanel()
     blockDetailSignals(true);
     
     m_nameEdit->clear();
-    m_nameEdit->setPlaceholderText(tr("(No selection)"));
+    m_nameEdit->setPlaceholderText(tr("Select an entity to inspect."));
     m_nameEdit->setEnabled(false);
     
     m_posX->setValue(0.0);
@@ -3590,7 +3627,14 @@ void EditorMainWindow::clearDetailsPanel()
         m_prefabBar->Clear();
     }
 
-    m_entityIdLabel->setText(tr("(No selection)"));
+    m_entityIdLabel->setText(tr("Select an entity to inspect."));
+    if (m_detailsSharedHint) m_detailsSharedHint->hide();
+    if (m_detailsAdvancedId) m_detailsAdvancedId->hide();
+    if (m_detailsEmptyHint) {
+        m_detailsEmptyHint->setText(tr("Select an entity to inspect."));
+        m_detailsEmptyHint->show();
+    }
+    if (m_detailsPartialHint) m_detailsPartialHint->hide();
     m_addComponentBtn->setEnabled(false);
     m_deleteEntityBtn->setEnabled(false);
     if (m_visibilityBtn) {
@@ -3636,108 +3680,183 @@ void EditorMainWindow::refreshDetailsPanel()
         return;
     }
 
-    // Lock support: if locked, show the locked entity instead of current selection
-    entt::entity entity = entt::null;
-    if (m_detailsLocked && m_lockedEntity != entt::null) {
-        entity = m_lockedEntity;
-    } else if (ctx->HasSelection()) {
-        entity = ctx->GetSelectedEntity();
-    } else {
+    Scene* scene = ctx->GetActiveScene();
+    auto& registry = scene->GetRegistry();
+    InspectorSelectionModel model = resolveInspectorSelection();
+
+    if (model.pinnedMissing) {
+        m_updatingDetails = true;
+        blockDetailSignals(true);
+        m_entityIdLabel->setText(tr("Pinned entity no longer exists."));
+        if (m_detailsSharedHint) m_detailsSharedHint->hide();
+        if (m_detailsAdvancedId) m_detailsAdvancedId->hide();
+        if (m_detailsEmptyHint) {
+            m_detailsEmptyHint->setText(tr("Pinned entity no longer exists."));
+            m_detailsEmptyHint->show();
+        }
+        if (m_detailsPartialHint) m_detailsPartialHint->hide();
+        m_nameEdit->clear();
+        m_nameEdit->setEnabled(false);
+        m_transformGroup->setEnabled(false);
+        m_addComponentBtn->setEnabled(false);
+        m_deleteEntityBtn->setEnabled(false);
+        if (m_visibilityBtn) m_visibilityBtn->setEnabled(false);
+        if (m_prefabBar) m_prefabBar->Clear();
+        for (auto* insp : m_componentInspectors) {
+            m_detailsLayout->removeWidget(insp);
+            delete insp;
+        }
+        m_componentInspectors.clear();
+        if (m_lightInspector) {
+            m_detailsLayout->removeWidget(m_lightInspector);
+            delete m_lightInspector;
+            m_lightInspector = nullptr;
+        }
+        if (m_environmentInspector) {
+            m_detailsLayout->removeWidget(m_environmentInspector);
+            delete m_environmentInspector;
+            m_environmentInspector = nullptr;
+        }
+        blockDetailSignals(false);
+        m_updatingDetails = false;
+        return;
+    }
+
+    if (model.Empty()) {
         clearDetailsPanel();
         return;
     }
-    
-    Scene* scene = ctx->GetActiveScene();
-    auto& registry = scene->GetRegistry();
-    
-    if (!registry.valid(entity)) {
-        if (m_detailsLocked) {
-            // Locked entity was deleted — unlock
-            m_detailsLocked = false;
-            m_lockedEntity = entt::null;
-            m_lockCheck->blockSignals(true);
-            m_lockCheck->setChecked(false);
-            m_lockCheck->blockSignals(false);
-        }
+
+    const entt::entity entity = model.primary;
+    if (entity == entt::null || !registry.valid(entity)) {
         clearDetailsPanel();
         return;
     }
     
     m_updatingDetails = true;
     blockDetailSignals(true);
-    
-    // Entity ID / multi-select hint
-    const size_t selectionCount = ctx->GetSelectedEntities().size();
-    if (selectionCount > 1 && !(m_detailsLocked && m_lockedEntity != entt::null)) {
-        m_entityIdLabel->setText(tr("%1 entities selected (showing primary #%2)")
-            .arg(static_cast<int>(selectionCount))
-            .arg(static_cast<uint32_t>(entity)));
+
+    if (m_detailsEmptyHint) m_detailsEmptyHint->hide();
+
+    const size_t selectionCount = model.Count();
+    if (selectionCount > 1) {
+        m_entityIdLabel->setText(tr("%1 entities selected").arg(static_cast<int>(selectionCount)));
+        if (m_detailsSharedHint) {
+            m_detailsSharedHint->setText(tr("Showing shared properties."));
+            m_detailsSharedHint->show();
+        }
+        if (m_detailsAdvancedId) {
+            m_detailsAdvancedId->setText(tr("Primary #%1").arg(static_cast<uint32_t>(entity)));
+            m_detailsAdvancedId->show();
+        }
     } else {
-        m_entityIdLabel->setText(QString("#%1").arg(static_cast<uint32_t>(entity)));
+        MixedString name;
+        if (registry.all_of<TagComponent>(entity)) {
+            AccumulateString(name, registry.get<TagComponent>(entity).tag);
+        }
+        m_entityIdLabel->setText(name.present
+            ? QString::fromStdString(name.value)
+            : tr("Entity"));
+        if (m_detailsSharedHint) m_detailsSharedHint->hide();
+        if (m_detailsAdvancedId) {
+            m_detailsAdvancedId->setText(QString("#%1").arg(static_cast<uint32_t>(entity)));
+            m_detailsAdvancedId->show();
+        }
     }
 
-    // Enable action buttons
     m_addComponentBtn->setEnabled(true);
     m_deleteEntityBtn->setEnabled(true);
+    if (selectionCount > 1) {
+        m_deleteEntityBtn->setText(tr("Delete Entities"));
+    } else {
+        m_deleteEntityBtn->setText(tr("Delete Entity"));
+    }
 
-    // Visibility toggle (MeshRenderer)
+    MixedBool vis;
+    int meshCount = 0;
+    for (entt::entity handle : model.entities) {
+        if (registry.valid(handle) && registry.all_of<MeshRendererComponent>(handle)) {
+            ++meshCount;
+            AccumulateBool(vis, registry.get<MeshRendererComponent>(handle).visible);
+        }
+    }
     if (m_visibilityBtn) {
-        const bool hasMesh = registry.all_of<MeshRendererComponent>(entity);
-        m_visibilityBtn->setEnabled(hasMesh);
+        m_visibilityBtn->setEnabled(meshCount > 0);
         m_visibilityBtn->blockSignals(true);
-        if (hasMesh) {
-            m_visibilityBtn->setChecked(registry.get<MeshRendererComponent>(entity).visible);
+        if (!vis.present || vis.mixed) {
+            m_visibilityBtn->setChecked(false);
         } else {
-            m_visibilityBtn->setChecked(true);
+            m_visibilityBtn->setChecked(vis.value);
         }
         m_visibilityBtn->blockSignals(false);
     }
 
-    // Name
+    MixedString name;
+    for (entt::entity handle : model.entities) {
+        if (registry.valid(handle) && registry.all_of<TagComponent>(handle)) {
+            AccumulateString(name, registry.get<TagComponent>(handle).tag);
+        }
+    }
     m_nameEdit->setEnabled(true);
-    if (registry.all_of<TagComponent>(entity)) {
-        auto& tag = registry.get<TagComponent>(entity);
-        m_nameEdit->setText(QString::fromStdString(tag.tag));
+    if (!name.present || name.mixed) {
+        m_nameEdit->clear();
+        m_nameEdit->setPlaceholderText(QString::fromUtf8("\xE2\x80\x94 Mixed \xE2\x80\x94"));
     } else {
-        m_nameEdit->setText(QString("Entity %1").arg(static_cast<uint32_t>(entity)));
+        m_nameEdit->setPlaceholderText(tr("Name"));
+        m_nameEdit->setText(QString::fromStdString(name.value));
     }
     
-    // Transform
-    m_transformGroup->setEnabled(true);
-    if (registry.all_of<TransformComponent>(entity)) {
-        auto& transform = registry.get<TransformComponent>(entity);
-        
-        m_posX->setValue(transform.position.x);
-        m_posY->setValue(transform.position.y);
-        m_posZ->setValue(transform.position.z);
-        
-        // Convert radians to degrees for display
-        constexpr float RAD_TO_DEG = 180.0f / 3.14159265358979f;
-        m_rotX->setValue(transform.rotation.x * RAD_TO_DEG);
-        m_rotY->setValue(transform.rotation.y * RAD_TO_DEG);
-        m_rotZ->setValue(transform.rotation.z * RAD_TO_DEG);
-        
-        m_scaleX->setValue(transform.scale.x);
-        m_scaleY->setValue(transform.scale.y);
-        m_scaleZ->setValue(transform.scale.z);
-    } else {
-        // No transform component - show defaults
-        m_posX->setValue(0.0);
-        m_posY->setValue(0.0);
-        m_posZ->setValue(0.0);
-        m_rotX->setValue(0.0);
-        m_rotY->setValue(0.0);
-        m_rotZ->setValue(0.0);
-        m_scaleX->setValue(1.0);
-        m_scaleY->setValue(1.0);
-        m_scaleZ->setValue(1.0);
-        m_transformGroup->setEnabled(false);
+    std::vector<Vec3> positions;
+    std::vector<Vec3> rotations;
+    std::vector<Vec3> scales;
+    positions.reserve(model.entities.size());
+    rotations.reserve(model.entities.size());
+    scales.reserve(model.entities.size());
+    int transformCount = 0;
+    constexpr float RAD_TO_DEG = 180.0f / 3.14159265358979f;
+    for (entt::entity handle : model.entities) {
+        if (!registry.valid(handle) || !registry.all_of<TransformComponent>(handle)) continue;
+        ++transformCount;
+        const auto& transform = registry.get<TransformComponent>(handle);
+        positions.push_back(transform.position);
+        rotations.push_back(Vec3(transform.rotation.x * RAD_TO_DEG,
+                                 transform.rotation.y * RAD_TO_DEG,
+                                 transform.rotation.z * RAD_TO_DEG));
+        scales.push_back(transform.scale);
+    }
+    m_transformGroup->setEnabled(transformCount > 0);
+    if (transformCount > 0) {
+        SetSpinFromMixed(m_posX, MixVec3(positions).x);
+        SetSpinFromMixed(m_posY, MixVec3(positions).y);
+        SetSpinFromMixed(m_posZ, MixVec3(positions).z);
+        const MixedVec3Axes mixedRot = MixVec3(rotations);
+        SetSpinFromMixed(m_rotX, mixedRot.x);
+        SetSpinFromMixed(m_rotY, mixedRot.y);
+        SetSpinFromMixed(m_rotZ, mixedRot.z);
+        const MixedVec3Axes mixedScale = MixVec3(scales);
+        SetSpinFromMixed(m_scaleX, mixedScale.x);
+        SetSpinFromMixed(m_scaleY, mixedScale.y);
+        SetSpinFromMixed(m_scaleZ, mixedScale.z);
+    }
+
+    const auto partial = model.PartialComponents(registry);
+    if (m_detailsPartialHint) {
+        if (!partial.empty()) {
+            QStringList names;
+            for (const auto& type : partial) {
+                names.push_back(QString::fromStdString(InspectorDisplayName(type)));
+            }
+            m_detailsPartialHint->setText(
+                tr("Some selected entities also contain: %1").arg(names.join(tr(", "))));
+            m_detailsPartialHint->show();
+        } else {
+            m_detailsPartialHint->hide();
+        }
     }
     
     blockDetailSignals(false);
     m_updatingDetails = false;
 
-    // ── Rebuild all component inspectors ─────────────────────────────────
     rebuildComponentInspectors();
     updatePrefabInspectorUi();
 }
@@ -3747,98 +3866,110 @@ void EditorMainWindow::onNameChanged(const QString& text)
     if (m_updatingDetails || !m_engine) return;
     
     auto* ctx = m_engine->GetEditorContext();
-    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
-    
+    if (!ctx || !ctx->HasActiveScene()) return;
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
+
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty() && m_nameEdit->placeholderText().contains(QString::fromUtf8("\xE2\x80\x94"))) {
+        return;
+    }
+
     Scene* scene = ctx->GetActiveScene();
     auto& registry = scene->GetRegistry();
-    entt::entity entity = ctx->GetSelectedEntity();
-    
-    if (!registry.valid(entity)) return;
-    
-    // Update TagComponent
-    if (registry.all_of<TagComponent>(entity)) {
-        auto& tag = registry.get<TagComponent>(entity);
-        tag.tag = text.toStdString();
-    } else {
-        registry.emplace<TagComponent>(entity, text.toStdString());
+    for (entt::entity entity : model.entities) {
+        if (!registry.valid(entity)) continue;
+        if (registry.all_of<TagComponent>(entity)) {
+            registry.get<TagComponent>(entity).tag = trimmed.toStdString();
+        } else {
+            registry.emplace<TagComponent>(entity, trimmed.toStdString());
+        }
+        if (QTreeWidgetItem* row = findOutlinerItemForEntity(entity)) {
+            row->setText(0, trimmed);
+        }
     }
-    
     ctx->MarkDirty();
-
-    if (QTreeWidgetItem* row = findOutlinerItemForEntity(entity)) {
-        row->setText(0, text);
-    }
 }
 
 void EditorMainWindow::onPositionChanged()
 {
     if (m_updatingDetails || !m_engine) return;
-    
     auto* ctx = m_engine->GetEditorContext();
-    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
-    
+    if (!ctx || !ctx->HasActiveScene()) return;
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
+
+    double x = 0.0, y = 0.0, z = 0.0;
+    const bool hasX = TryReadSpin(m_posX, x);
+    const bool hasY = TryReadSpin(m_posY, y);
+    const bool hasZ = TryReadSpin(m_posZ, z);
+    if (!hasX && !hasY && !hasZ) return;
+
     Scene* scene = ctx->GetActiveScene();
     auto& registry = scene->GetRegistry();
-    entt::entity entity = ctx->GetSelectedEntity();
-    
-    if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) return;
-
     beginCoalescedTransformUndo("Move entity");
-    
-    auto& transform = registry.get<TransformComponent>(entity);
-    transform.position.x = static_cast<float>(m_posX->value());
-    transform.position.y = static_cast<float>(m_posY->value());
-    transform.position.z = static_cast<float>(m_posZ->value());
-    
+    for (entt::entity entity : model.entities) {
+        if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) continue;
+        auto& transform = registry.get<TransformComponent>(entity);
+        if (hasX) transform.position.x = static_cast<float>(x);
+        if (hasY) transform.position.y = static_cast<float>(y);
+        if (hasZ) transform.position.z = static_cast<float>(z);
+    }
     ctx->MarkDirty();
 }
 
 void EditorMainWindow::onRotationChanged()
 {
     if (m_updatingDetails || !m_engine) return;
-    
     auto* ctx = m_engine->GetEditorContext();
-    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
-    
+    if (!ctx || !ctx->HasActiveScene()) return;
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
+
+    double x = 0.0, y = 0.0, z = 0.0;
+    const bool hasX = TryReadSpin(m_rotX, x);
+    const bool hasY = TryReadSpin(m_rotY, y);
+    const bool hasZ = TryReadSpin(m_rotZ, z);
+    if (!hasX && !hasY && !hasZ) return;
+
     Scene* scene = ctx->GetActiveScene();
     auto& registry = scene->GetRegistry();
-    entt::entity entity = ctx->GetSelectedEntity();
-    
-    if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) return;
-
-    beginCoalescedTransformUndo("Rotate entity");
-    
-    auto& transform = registry.get<TransformComponent>(entity);
-    
-    // Convert degrees to radians
     constexpr float DEG_TO_RAD = 3.14159265358979f / 180.0f;
-    transform.rotation.x = static_cast<float>(m_rotX->value()) * DEG_TO_RAD;
-    transform.rotation.y = static_cast<float>(m_rotY->value()) * DEG_TO_RAD;
-    transform.rotation.z = static_cast<float>(m_rotZ->value()) * DEG_TO_RAD;
-    
+    beginCoalescedTransformUndo("Rotate entity");
+    for (entt::entity entity : model.entities) {
+        if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) continue;
+        auto& transform = registry.get<TransformComponent>(entity);
+        if (hasX) transform.rotation.x = static_cast<float>(x) * DEG_TO_RAD;
+        if (hasY) transform.rotation.y = static_cast<float>(y) * DEG_TO_RAD;
+        if (hasZ) transform.rotation.z = static_cast<float>(z) * DEG_TO_RAD;
+    }
     ctx->MarkDirty();
 }
 
 void EditorMainWindow::onScaleChanged()
 {
     if (m_updatingDetails || !m_engine) return;
-    
     auto* ctx = m_engine->GetEditorContext();
-    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
-    
+    if (!ctx || !ctx->HasActiveScene()) return;
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
+
+    double x = 0.0, y = 0.0, z = 0.0;
+    const bool hasX = TryReadSpin(m_scaleX, x);
+    const bool hasY = TryReadSpin(m_scaleY, y);
+    const bool hasZ = TryReadSpin(m_scaleZ, z);
+    if (!hasX && !hasY && !hasZ) return;
+
     Scene* scene = ctx->GetActiveScene();
     auto& registry = scene->GetRegistry();
-    entt::entity entity = ctx->GetSelectedEntity();
-    
-    if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) return;
-
     beginCoalescedTransformUndo("Scale entity");
-    
-    auto& transform = registry.get<TransformComponent>(entity);
-    transform.scale.x = static_cast<float>(m_scaleX->value());
-    transform.scale.y = static_cast<float>(m_scaleY->value());
-    transform.scale.z = static_cast<float>(m_scaleZ->value());
-    
+    for (entt::entity entity : model.entities) {
+        if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) continue;
+        auto& transform = registry.get<TransformComponent>(entity);
+        if (hasX) transform.scale.x = static_cast<float>(x);
+        if (hasY) transform.scale.y = static_cast<float>(y);
+        if (hasZ) transform.scale.z = static_cast<float>(z);
+    }
     ctx->MarkDirty();
 }
 
@@ -3876,15 +4007,18 @@ void EditorMainWindow::onVisibilityToggled(bool visible)
 {
     if (m_updatingDetails || !m_engine) return;
     auto* ctx = m_engine->GetEditorContext();
-    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+    if (!ctx || !ctx->HasActiveScene()) return;
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
 
     Scene* scene = ctx->GetActiveScene();
     auto& registry = scene->GetRegistry();
-    entt::entity entity = ctx->GetSelectedEntity();
-    if (!registry.valid(entity) || !registry.all_of<MeshRendererComponent>(entity)) return;
-
     EditorUndoManager::PushSnapshot(ctx, "Toggle visibility");
-    registry.get<MeshRendererComponent>(entity).visible = visible;
+    for (entt::entity entity : model.entities) {
+        if (registry.valid(entity) && registry.all_of<MeshRendererComponent>(entity)) {
+            registry.get<MeshRendererComponent>(entity).visible = visible;
+        }
+    }
     ctx->MarkDirty();
     updateUndoRedoActions();
 }
@@ -5554,7 +5688,7 @@ void EditorMainWindow::registerComponentInspectors()
         });
 
     // ── Scripts (C++) (order 40) ────────────────────────────────────────
-    reg.Register("Scripts", 40,
+    reg.Register("ScriptComponent", 40,
         [](const entt::registry& r, entt::entity e) {
             return r.all_of<ScriptComponent>(e);
         },
@@ -5571,6 +5705,33 @@ void EditorMainWindow::registerComponentInspectors()
             return new LuaScriptInspector(ctx, e, parent);
         });
 
+    // ── Light (order 8) ─────────────────────────────────────────────────
+    reg.Register("Light", 8,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<LightComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new LightInspector(ctx, e, parent);
+        });
+
+    // ── Environment (order 9) ───────────────────────────────────────────
+    reg.Register("Environment", 9,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<EnvironmentComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new EnvironmentInspector(ctx, e, parent);
+        });
+
+    // ── AudioSource (order 42) ──────────────────────────────────────────
+    reg.Register("AudioSource", 42,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<AudioSourceComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new AudioSourceInspector(ctx, e, parent);
+        });
+
     // ── Camera (order 50) ───────────────────────────────────────────────
     reg.Register("Camera", 50,
         [](const entt::registry& r, entt::entity e) {
@@ -5579,17 +5740,11 @@ void EditorMainWindow::registerComponentInspectors()
         [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
             return new CameraInspector(ctx, e, parent);
         });
-
-    // NOTE: LightInspector and EnvironmentInspector are still created
-    // via the legacy path (m_lightInspector / m_environmentInspector)
-    // because they pre-date the registry.  They could be migrated here
-    // in a future refactor.
 }
 
 /**
- * Rebuild all component inspectors for the currently viewed entity.
- * Removes old inspector widgets, creates new ones via the registry,
- * and also creates legacy Light/Environment inspectors.
+ * Rebuild all component inspectors for the currently viewed selection.
+ * One widget tree for the shared-component intersection.
  */
 void EditorMainWindow::rebuildComponentInspectors()
 {
@@ -5599,16 +5754,9 @@ void EditorMainWindow::rebuildComponentInspectors()
 
     Scene* scene = ctx->GetActiveScene();
     auto& registry = scene->GetRegistry();
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
 
-    entt::entity entity = entt::null;
-    if (m_detailsLocked && m_lockedEntity != entt::null)
-        entity = m_lockedEntity;
-    else if (ctx->HasSelection())
-        entity = ctx->GetSelectedEntity();
-
-    if (entity == entt::null || !registry.valid(entity)) return;
-
-    // --- Remove old inspectors ---
     if (m_lightInspector) {
         m_detailsLayout->removeWidget(m_lightInspector);
         delete m_lightInspector;
@@ -5625,8 +5773,7 @@ void EditorMainWindow::rebuildComponentInspectors()
     }
     m_componentInspectors.clear();
 
-    // Find the stretch item index (insert before the final stretch)
-    int stretchIndex = m_detailsLayout->count(); // fallback: end
+    int stretchIndex = m_detailsLayout->count();
     for (int i = 0; i < m_detailsLayout->count(); ++i) {
         QLayoutItem* item = m_detailsLayout->itemAt(i);
         if (item && item->spacerItem()) {
@@ -5635,30 +5782,41 @@ void EditorMainWindow::rebuildComponentInspectors()
         }
     }
 
-    // --- Legacy inspectors (Light, Environment) ---
-    if (registry.all_of<LightComponent>(entity)) {
-        m_lightInspector = new LightInspector(ctx, entity, m_detailsWidget);
-        m_detailsLayout->insertWidget(stretchIndex, m_lightInspector);
-        decoratePrefabComponentInspector(m_lightInspector, "Light");
-        ++stretchIndex;
+    std::vector<entt::entity> targets = model.entities;
+    const auto primaryIt = std::find(targets.begin(), targets.end(), model.primary);
+    if (primaryIt != targets.end() && primaryIt != targets.begin()) {
+        std::rotate(targets.begin(), primaryIt, std::next(primaryIt));
     }
-    if (registry.all_of<EnvironmentComponent>(entity)) {
-        m_environmentInspector = new EnvironmentInspector(ctx, entity, m_detailsWidget);
-        m_detailsLayout->insertWidget(stretchIndex, m_environmentInspector);
-        ++stretchIndex;
-    }
-
-    // --- Registry-based inspectors ---
     auto inspectors = ComponentInspectorRegistry::Instance().CreateInspectors(
-        ctx, entity, registry, m_detailsWidget);
+        ctx, targets, registry, m_detailsWidget);
 
     for (auto* insp : inspectors) {
-        // Wire up the componentRemoved signal so the panel refreshes
         connect(insp, &ComponentInspector::componentRemoved,
                 this, &EditorMainWindow::onComponentRemoved);
+        connect(insp, &ComponentInspector::copyComponentRequested, this,
+                [this](const QString& typeName) { copyInspectorComponent(typeName.toStdString()); });
+        connect(insp, &ComponentInspector::pasteValuesRequested, this,
+                [this](const QString& typeName) { pasteInspectorComponentValues(typeName.toStdString()); });
+        connect(insp, &ComponentInspector::resetComponentRequested, this,
+                [this](const QString& typeName) { resetInspectorComponent(typeName.toStdString()); });
 
         m_detailsLayout->insertWidget(stretchIndex, insp);
-        decoratePrefabComponentInspector(insp, insp->title().toStdString());
+        decoratePrefabComponentInspector(insp, insp->TypeName());
+        for (auto* field : insp->findChildren<AssetReferenceEditor*>()) {
+            connect(field, &AssetReferenceEditor::openRequested, this, [this](const QString& path) {
+                if (m_assetActions) m_assetActions->Open(path);
+            });
+            connect(field, &AssetReferenceEditor::revealRequested, this, [this](const QString& path) {
+                if (m_assetBrowser) m_assetBrowser->RevealAsset(path);
+            });
+            connect(field, &AssetReferenceEditor::findReferencesRequested, this, [this](const QString& path) {
+                if (m_assetBrowser) m_assetBrowser->FindReferences(path);
+            });
+            connect(field, &AssetReferenceEditor::copyPathRequested, this, [this](const QString& path) {
+                QApplication::clipboard()->setText(path);
+                statusBar()->showMessage(tr("Copied %1").arg(path), 2000);
+            });
+        }
         ++stretchIndex;
         m_componentInspectors.push_back(insp);
     }
@@ -5685,136 +5843,208 @@ void EditorMainWindow::showAddComponentMenu()
 {
     if (!m_engine) return;
     auto* ctx = m_engine->GetEditorContext();
-    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+    if (!ctx || !ctx->HasActiveScene()) return;
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
 
-    auto& reg = ctx->GetActiveScene()->GetRegistry();
-    entt::entity entity = ctx->GetSelectedEntity();
-    if (!reg.valid(entity)) return;
-
-    QMenu menu(tr("Add Component"), this);
-
-    // MeshRenderer
-    if (!reg.all_of<MeshRendererComponent>(entity)) {
-        menu.addAction(tr("Mesh Renderer"), [this, ctx, entity, &reg]() {
-            EditorUndoManager::PushSnapshot(ctx, "Add MeshRenderer");
-            reg.emplace<MeshRendererComponent>(entity);
-            if (!reg.all_of<MaterialComponent>(entity))
-                reg.emplace<MaterialComponent>(entity);
-            ctx->MarkDirty();
-            refreshDetailsPanel();
-        });
-    }
-
-    // Light
-    if (!reg.all_of<LightComponent>(entity)) {
-        menu.addAction(tr("Light"), [this, ctx, entity, &reg]() {
-            EditorUndoManager::PushSnapshot(ctx, "Add Light");
-            reg.emplace<LightComponent>(entity);
-            ctx->MarkDirty();
-            refreshDetailsPanel();
-        });
-    }
-
-    // Camera
-    if (!reg.all_of<CameraComponent>(entity)) {
-        menu.addAction(tr("Camera"), [this, ctx, entity, &reg]() {
-            EditorUndoManager::PushSnapshot(ctx, "Add Camera");
-            reg.emplace<CameraComponent>(entity);
-            ctx->MarkDirty();
-            refreshDetailsPanel();
-        });
-    }
-
-    menu.addSeparator();
-
-    // Rigid Body
-    if (!reg.all_of<RigidBodyComponent>(entity)) {
-        menu.addAction(tr("Rigid Body"), [this, ctx, entity, &reg]() {
-            EditorUndoManager::PushSnapshot(ctx, "Add RigidBody");
-            reg.emplace<RigidBodyComponent>(entity);
-            // Auto-add PhysicsShape if missing, and auto-fit to mesh bounds
-            if (!reg.all_of<PhysicsShapeComponent>(entity)) {
-                auto& shape = reg.emplace<PhysicsShapeComponent>(entity);
-                if (reg.all_of<MeshRendererComponent>(entity)) {
-                    const auto& renderer = reg.get<MeshRendererComponent>(entity);
-                    Vec3 mn = renderer.localBounds.min;
-                    Vec3 mx = renderer.localBounds.max;
-                    Vec3 half((mx.x - mn.x) * 0.5f,
-                              (mx.y - mn.y) * 0.5f,
-                              (mx.z - mn.z) * 0.5f);
-                    shape.type = PhysicsShapeType::Box;
-                    shape.extents = Vec3(std::max(half.x, 0.001f),
-                                         std::max(half.y, 0.001f),
-                                         std::max(half.z, 0.001f));
-                    // Offset is left at zero — the physics system automatically
-                    // applies the mesh bounds center offset at body creation time.
-                    shape.offset = Vec3(0.0f, 0.0f, 0.0f);
-                }
+    Scene* scene = ctx->GetActiveScene();
+    auto& reg = scene->GetRegistry();
+    std::vector<AddComponentItem> items;
+    for (const auto& desc : InspectorAddableComponents()) {
+        AddComponentItem item;
+        item.id = QString::fromUtf8(desc.id);
+        item.displayName = QString::fromUtf8(desc.displayName);
+        item.category = QString::fromUtf8(desc.category);
+        if (item.id == QLatin1String("RigidBody")) {
+            item.displayName = tr("Rigid Body (also adds Physics Shape)");
+        }
+        int present = 0;
+        for (entt::entity entity : model.entities) {
+            if (InspectorEntityHasComponent(reg, entity, desc.id)) {
+                ++present;
             }
+        }
+        item.alreadyPresent = present == static_cast<int>(model.Count());
+        if (desc.sceneUnique && CountComponentsInScene(*scene, desc.id) > 0) {
+            item.disabled = true;
+            item.disabledReason = tr("This scene already has an Environment.");
+        }
+        items.push_back(item);
+    }
+
+    auto* popup = new AddComponentPopup(this);
+    popup->setAttribute(Qt::WA_DeleteOnClose);
+    connect(popup, &AddComponentPopup::componentChosen, this, &EditorMainWindow::applyBatchAddComponent);
+    popup->Present(m_addComponentBtn->mapToGlobal(QPoint(0, m_addComponentBtn->height())), items);
+}
+
+InspectorSelectionModel EditorMainWindow::resolveInspectorSelection()
+{
+    InspectorSelectionModel empty;
+    if (!m_engine) return empty;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return empty;
+    return InspectorSelectionModel::Resolve(
+        ctx->GetSelectedEntities(),
+        ctx->GetSelectedEntity(),
+        m_detailsLocked,
+        m_lockedEntity,
+        &ctx->GetActiveScene()->GetRegistry());
+}
+
+ComponentInspector* EditorMainWindow::focusedComponentInspector() const
+{
+    for (QWidget* widget = QApplication::focusWidget(); widget; widget = widget->parentWidget()) {
+        if (auto* inspector = qobject_cast<ComponentInspector*>(widget)) {
+            return inspector;
+        }
+    }
+    return nullptr;
+}
+
+void EditorMainWindow::applyBatchAddComponent(const QString& typeId)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
+
+    const std::string type = typeId.toStdString();
+    EditorUndoManager::PushSnapshot(ctx, std::string("Add ") + type);
+    const BatchComponentResult result = BatchAddComponent(*ctx->GetActiveScene(), model.entities, type);
+    ctx->MarkDirty();
+    refreshDetailsPanel();
+    rebuildOutliner();
+
+    const QString display = QString::fromStdString(InspectorDisplayName(type));
+    QString message = tr("Added %1 to %2 of %3")
+        .arg(display)
+        .arg(result.added)
+        .arg(result.Requested());
+    if (result.skippedExisting > 0) {
+        message += tr(" (%1 already had it)").arg(result.skippedExisting);
+    }
+    if (result.skippedUnique > 0) {
+        message += tr(" (%1 skipped: unique component)").arg(result.skippedUnique);
+    }
+    statusBar()->showMessage(message, 4000);
+    if (m_notifications) {
+        m_notifications->ShowInfo(message);
+    }
+}
+
+void EditorMainWindow::copyInspectorComponent(const std::string& type)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
+    Entity entity(model.primary, ctx->GetActiveScene());
+    if (!ComponentClipboard::Instance().CopyFrom(entity, type)) {
+        statusBar()->showMessage(tr("Could not copy component"), 2500);
+        return;
+    }
+    statusBar()->showMessage(tr("Copied %1").arg(QString::fromStdString(InspectorDisplayName(type))), 2000);
+}
+
+void EditorMainWindow::pasteInspectorComponentValues(const std::string& type)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    auto& clip = ComponentClipboard::Instance();
+    if (!clip.HasComponent()) {
+        statusBar()->showMessage(tr("Component clipboard is empty"), 2500);
+        return;
+    }
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
+    if (!type.empty() && clip.Type() != type &&
+        InspectorDisplayName(clip.Type()) != InspectorDisplayName(type)) {
+        statusBar()->showMessage(tr("Clipboard holds %1, not %2")
+            .arg(QString::fromStdString(InspectorDisplayName(clip.Type())))
+            .arg(QString::fromStdString(InspectorDisplayName(type))), 3000);
+        return;
+    }
+    EditorUndoManager::PushSnapshot(ctx, "Paste component values");
+    const int applied = clip.PasteValues(*ctx->GetActiveScene(), model.entities);
+    ctx->MarkDirty();
+    refreshDetailsPanel();
+    statusBar()->showMessage(tr("Pasted values on %1 entities").arg(applied), 2500);
+}
+
+void EditorMainWindow::resetInspectorComponent(const std::string& type)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
+    EditorUndoManager::PushSnapshot(ctx, std::string("Reset ") + type);
+    for (entt::entity handle : model.entities) {
+        Entity entity(handle, ctx->GetActiveScene());
+        if (!entity) continue;
+        PrefabComponentIO::RemoveComponent(entity, type);
+        if (type == "AudioSource" && entity.HasComponent<AudioSourceComponent>()) {
+            entity.RemoveComponent<AudioSourceComponent>();
+        }
+        if (type == "Environment" && entity.HasComponent<EnvironmentComponent>()) {
+            entity.RemoveComponent<EnvironmentComponent>();
+        }
+        BatchAddComponent(*ctx->GetActiveScene(), { handle }, type);
+    }
+    ctx->MarkDirty();
+    refreshDetailsPanel();
+    statusBar()->showMessage(tr("Reset %1 to defaults").arg(QString::fromStdString(InspectorDisplayName(type))), 2500);
+}
+
+void EditorMainWindow::removeInspectorComponent(const std::string& type)
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
+    Scene* scene = ctx->GetActiveScene();
+    auto& reg = scene->GetRegistry();
+
+    if (type == "PhysicsShape") {
+        bool stillHasBody = false;
+        for (entt::entity handle : model.entities) {
+            if (reg.valid(handle) && reg.all_of<RigidBodyComponent>(handle) &&
+                InspectorEntityHasComponent(reg, handle, "PhysicsShape")) {
+                stillHasBody = true;
+                break;
+            }
+        }
+        if (stillHasBody) {
+            auto choice = QMessageBox::question(this, tr("Remove Physics Shape"),
+                tr("Some selected entities still have a Rigid Body. Remove both Rigid Body and Physics Shape?"),
+                QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
+            if (choice == QMessageBox::Cancel) return;
+            EditorUndoManager::PushSnapshot(ctx, "Remove PhysicsShape");
+            if (choice == QMessageBox::Yes) {
+                BatchRemoveComponent(*scene, model.entities, "RigidBody");
+            }
+            BatchRemoveComponent(*scene, model.entities, "PhysicsShape");
             ctx->MarkDirty();
             refreshDetailsPanel();
-        });
+            rebuildOutliner();
+            return;
+        }
     }
 
-    // Physics Shape
-    if (!reg.all_of<PhysicsShapeComponent>(entity)) {
-        menu.addAction(tr("Physics Shape"), [this, ctx, entity, &reg]() {
-            EditorUndoManager::PushSnapshot(ctx, "Add PhysicsShape");
-            reg.emplace<PhysicsShapeComponent>(entity);
-            ctx->MarkDirty();
-            refreshDetailsPanel();
-        });
-    }
-
-    // Mesh Collider
-    if (!reg.all_of<MeshColliderComponent>(entity)) {
-        menu.addAction(tr("Mesh Collider"), [this, ctx, entity, &reg]() {
-            EditorUndoManager::PushSnapshot(ctx, "Add MeshCollider");
-            reg.emplace<MeshColliderComponent>(entity);
-            ctx->MarkDirty();
-            refreshDetailsPanel();
-        });
-    }
-
-    menu.addSeparator();
-
-    // Scripts (C++)
-    if (!reg.all_of<ScriptComponent>(entity)) {
-        menu.addAction(tr("Script Component"), [this, ctx, entity, &reg]() {
-            EditorUndoManager::PushSnapshot(ctx, "Add ScriptComponent");
-            reg.emplace<ScriptComponent>(entity);
-            ctx->MarkDirty();
-            refreshDetailsPanel();
-        });
-    }
-
-    // Lua Script
-    if (!reg.all_of<LuaScriptComponent>(entity)) {
-        menu.addAction(tr("Lua Script"), [this, ctx, entity, &reg]() {
-            EditorUndoManager::PushSnapshot(ctx, "Add LuaScript");
-            reg.emplace<LuaScriptComponent>(entity);
-            ctx->MarkDirty();
-            refreshDetailsPanel();
-        });
-    }
-
-    menu.addSeparator();
-
-    // Environment (typically only one per scene, but allow adding)
-    if (!reg.all_of<EnvironmentComponent>(entity)) {
-        menu.addAction(tr("Environment"), [this, ctx, entity, &reg]() {
-            EditorUndoManager::PushSnapshot(ctx, "Add Environment");
-            reg.emplace<EnvironmentComponent>(entity);
-            ctx->MarkDirty();
-            refreshDetailsPanel();
-        });
-    }
-
-    if (menu.isEmpty()) {
-        menu.addAction(tr("(All components already present)"))->setEnabled(false);
-    }
-
-    menu.exec(m_addComponentBtn->mapToGlobal(QPoint(0, m_addComponentBtn->height())));
+    EditorUndoManager::PushSnapshot(ctx, std::string("Remove ") + type);
+    const BatchComponentResult result = BatchRemoveComponent(*scene, model.entities, type);
+    ctx->MarkDirty();
+    refreshDetailsPanel();
+    rebuildOutliner();
+    statusBar()->showMessage(tr("Removed %1 from %2 of %3")
+        .arg(QString::fromStdString(InspectorDisplayName(type)))
+        .arg(result.added)
+        .arg(result.Requested()), 3000);
 }
 
 /**
@@ -6405,6 +6635,12 @@ void EditorMainWindow::syncPrefabOverridesForSelection()
     Scene* scene = ctx->GetActiveScene();
 
     std::vector<entt::entity> entities = ctx->GetSelectedEntities();
+    InspectorSelectionModel model = resolveInspectorSelection();
+    for (entt::entity handle : model.entities) {
+        if (std::find(entities.begin(), entities.end(), handle) == entities.end()) {
+            entities.push_back(handle);
+        }
+    }
     if (entities.empty() && ctx->HasSelection()) {
         entities.push_back(ctx->GetSelectedEntity());
     }
@@ -6426,34 +6662,49 @@ void EditorMainWindow::updatePrefabInspectorUi()
         return;
     }
 
-    entt::entity entity = entt::null;
-    if (m_detailsLocked && m_lockedEntity != entt::null) {
-        entity = m_lockedEntity;
-    } else if (ctx->HasSelection()) {
-        entity = ctx->GetSelectedEntity();
-    }
-    if (entity == entt::null) {
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) {
         m_prefabBar->Clear();
         return;
     }
 
+    const entt::entity entity = model.primary;
     m_prefabBar->Bind(ctx, entity);
 
     Scene* scene = ctx->GetActiveScene();
-    Entity ent(entity, scene);
+    std::string sharedPath;
+    bool mixedSources = false;
+    int instanceCount = 0;
+    for (entt::entity handle : model.entities) {
+        Entity ent(handle, scene);
+        if (!ent || !PrefabOverrideSystem::IsPrefabInstanceEntity(ent)) continue;
+        ++instanceCount;
+        auto* inst = PrefabOverrideSystem::TryGetInstance(*scene, ent);
+        if (!inst) continue;
+        if (sharedPath.empty()) {
+            sharedPath = inst->prefabPath;
+        } else if (sharedPath != inst->prefabPath) {
+            mixedSources = true;
+        }
+    }
+    m_prefabBar->SetApplyEnabled(!mixedSources && instanceCount <= 1);
+
     auto styleSpin = [](QDoubleSpinBox* box, bool overridden) {
         if (!box) return;
         box->setStyleSheet(overridden ? QStringLiteral("QDoubleSpinBox { border-left: 2px solid #c9a227; }") : QString());
     };
 
     bool pos = false, rot = false, scl = false;
-    if (ent && PrefabOverrideSystem::IsPrefabInstanceEntity(ent) && !PrefabOverrideSystem::IsInstanceRoot(ent)) {
-        if (auto* inst = PrefabOverrideSystem::TryGetInstance(*scene, ent)) {
-            const auto* node = PrefabOverrideSystem::TryGetNode(ent);
-            if (node) {
-                pos = PrefabOverrideSystem::IsPropertyOverridden(*inst, node->nodeId, "Transform", "position");
-                rot = PrefabOverrideSystem::IsPropertyOverridden(*inst, node->nodeId, "Transform", "rotation");
-                scl = PrefabOverrideSystem::IsPropertyOverridden(*inst, node->nodeId, "Transform", "scale");
+    for (entt::entity handle : model.entities) {
+        Entity ent(handle, scene);
+        if (ent && PrefabOverrideSystem::IsPrefabInstanceEntity(ent) && !PrefabOverrideSystem::IsInstanceRoot(ent)) {
+            if (auto* inst = PrefabOverrideSystem::TryGetInstance(*scene, ent)) {
+                const auto* node = PrefabOverrideSystem::TryGetNode(ent);
+                if (node) {
+                    pos = pos || PrefabOverrideSystem::IsPropertyOverridden(*inst, node->nodeId, "Transform", "position");
+                    rot = rot || PrefabOverrideSystem::IsPropertyOverridden(*inst, node->nodeId, "Transform", "rotation");
+                    scl = scl || PrefabOverrideSystem::IsPropertyOverridden(*inst, node->nodeId, "Transform", "scale");
+                }
             }
         }
     }
@@ -6466,10 +6717,10 @@ void EditorMainWindow::decoratePrefabComponentInspector(QWidget* widget, const s
 {
     if (!widget || !m_engine) return;
     auto* ctx = m_engine->GetEditorContext();
-    if (!ctx || !ctx->HasActiveScene() || !ctx->HasSelection()) return;
+    if (!ctx || !ctx->HasActiveScene()) return;
+    InspectorSelectionModel model = resolveInspectorSelection();
+    if (model.Empty()) return;
     Scene* scene = ctx->GetActiveScene();
-    Entity entity(ctx->GetSelectedEntity(), scene);
-    if (!entity || !PrefabOverrideSystem::IsPrefabInstanceEntity(entity)) return;
 
     std::string type = componentName;
     if (type == "Mesh Renderer") type = "MeshRenderer";
@@ -6477,26 +6728,62 @@ void EditorMainWindow::decoratePrefabComponentInspector(QWidget* widget, const s
     else if (type == "Rigid Body") type = "RigidBody";
     else if (type == "Physics Shape") type = "PhysicsShape";
     else if (type == "Scripts") type = "ScriptComponent";
-    else if (type == "Lua Scripts") type = "LuaScript";
+    else if (type == "Lua Scripts" || type == "Lua Script") type = "LuaScript";
+    else if (type == "Audio Source") type = "AudioSource";
 
-    auto* inst = PrefabOverrideSystem::TryGetInstance(*scene, entity);
-    const auto* node = PrefabOverrideSystem::TryGetNode(entity);
-    const bool overridden = inst && node && PrefabOverrideSystem::IsComponentOverridden(*inst, node->nodeId, type);
+    bool overridden = false;
+    bool anyInstance = false;
+    std::string sharedPath;
+    bool mixedSources = false;
+    for (entt::entity handle : model.entities) {
+        Entity entity(handle, scene);
+        if (!entity || !PrefabOverrideSystem::IsPrefabInstanceEntity(entity)) continue;
+        anyInstance = true;
+        auto* inst = PrefabOverrideSystem::TryGetInstance(*scene, entity);
+        const auto* node = PrefabOverrideSystem::TryGetNode(entity);
+        if (inst && node && PrefabOverrideSystem::IsComponentOverridden(*inst, node->nodeId, type)) {
+            overridden = true;
+        }
+        if (inst) {
+            if (sharedPath.empty()) sharedPath = inst->prefabPath;
+            else if (sharedPath != inst->prefabPath) mixedSources = true;
+        }
+    }
     if (overridden) {
         widget->setStyleSheet(widget->styleSheet() +
             QStringLiteral(" QGroupBox { border-left: 2px solid #c9a227; }"));
     }
 
+    const bool allowApply = anyInstance && model.Count() == 1 && !mixedSources;
+    const bool allowRevert = anyInstance;
+
     widget->setContextMenuPolicy(Qt::CustomContextMenu);
     QObject::connect(widget, &QWidget::customContextMenuRequested, widget,
-        [this, widget, type, entityHandle = ctx->GetSelectedEntity()](const QPoint& pos) {
+        [this, widget, type, allowApply, allowRevert](const QPoint& pos) {
             QMenu menu(widget);
-            menu.addAction(tr("Revert Component"), this, [this, type, entityHandle]() {
-                runPrefabRevert(entityHandle, type, "");
+            menu.addAction(tr("Copy Component"), this, [this, type]() { copyInspectorComponent(type); });
+            auto* pasteAct = menu.addAction(tr("Paste Values"), this, [this, type]() {
+                pasteInspectorComponentValues(type);
             });
-            menu.addAction(tr("Apply Component to Prefab"), this, [this, type, entityHandle]() {
-                runPrefabApply(entityHandle, type, "", false);
-            });
+            pasteAct->setEnabled(ComponentClipboard::Instance().HasComponent() &&
+                (ComponentClipboard::Instance().Type() == type ||
+                 InspectorDisplayName(ComponentClipboard::Instance().Type()) == InspectorDisplayName(type)));
+            menu.addAction(tr("Reset to Default"), this, [this, type]() { resetInspectorComponent(type); });
+            menu.addSeparator();
+            if (allowRevert) {
+                menu.addAction(tr("Revert Component"), this, [this, type]() {
+                    InspectorSelectionModel model = resolveInspectorSelection();
+                    if (!model.Empty()) runPrefabRevert(model.primary, type, "");
+                });
+            }
+            if (allowApply) {
+                menu.addAction(tr("Apply Component to Prefab"), this, [this, type]() {
+                    InspectorSelectionModel model = resolveInspectorSelection();
+                    if (!model.Empty()) runPrefabApply(model.primary, type, "", false);
+                });
+            }
+            menu.addSeparator();
+            menu.addAction(tr("Remove Component"), this, [this, type]() { removeInspectorComponent(type); });
             menu.exec(widget->mapToGlobal(pos));
         });
 }

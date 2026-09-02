@@ -29,7 +29,6 @@ class EditorContext;
 namespace QtEditor {
 
 class ComponentInspector;
-class LightInspector;
 
 class PrefabInspectorPanel : public QWidget
 {
@@ -81,7 +80,6 @@ private:
     QVBoxLayout* m_componentsLayout = nullptr;
     QPushButton* m_addComponentBtn = nullptr;
     std::vector<QWidget*> m_componentWidgets;
-    LightInspector* m_lightInspector = nullptr;
 
     std::string m_currentNodeId;
     bool m_updatingUI = false;

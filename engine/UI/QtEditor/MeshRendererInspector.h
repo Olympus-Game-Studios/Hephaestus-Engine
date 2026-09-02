@@ -20,10 +20,10 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "ComponentInspector.h"
+#include "AssetReferenceEditor.h"
 
 #include <QCheckBox>
 #include <QLabel>
-#include <QLineEdit>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QFormLayout>
@@ -67,7 +67,7 @@ private:
     QCheckBox*      m_showHiddenOutlineCheck = nullptr;
     QCheckBox*      m_hideInGameCheck  = nullptr;
     QCheckBox*      m_backfaceCullCheck = nullptr;
-    QLineEdit*      m_meshPathEdit     = nullptr;
+    AssetReferenceEditor* m_meshPathEdit = nullptr;
     QTableWidget*   m_materialTable    = nullptr;
     QPushButton*    m_addColliderBtn   = nullptr;
     QPushButton*    m_removeBtn        = nullptr;

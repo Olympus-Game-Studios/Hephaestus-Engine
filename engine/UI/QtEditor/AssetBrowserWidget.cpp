@@ -6,6 +6,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "AssetBrowserWidget.h"
+#include "InspectorMime.h"
 #include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "EditorMainWindow.h"
 #include "AddActorsPanel.h"
@@ -88,7 +89,11 @@ protected:
             static_cast<AssetType>(index.data(AssetBrowserWidget::AssetTypeRole).toInt());
         if (assetType != AssetType::Prefab &&
             assetType != AssetType::StaticMesh &&
-            assetType != AssetType::Audio) {
+            assetType != AssetType::Audio &&
+            assetType != AssetType::Material &&
+            assetType != AssetType::Script &&
+            assetType != AssetType::Texture &&
+            assetType != AssetType::UILayout) {
             return;
         }
 
@@ -98,17 +103,22 @@ protected:
         }
 
         SpawnableEntry entry;
-        entry.kind = assetType == AssetType::Prefab
-            ? SpawnableEntry::Kind::Prefab
-            : (assetType == AssetType::Audio
-                ? SpawnableEntry::Kind::Audio
-                : SpawnableEntry::Kind::Mesh);
+        switch (assetType) {
+            case AssetType::Prefab: entry.kind = SpawnableEntry::Kind::Prefab; break;
+            case AssetType::Audio: entry.kind = SpawnableEntry::Kind::Audio; break;
+            case AssetType::Material: entry.kind = SpawnableEntry::Kind::Material; break;
+            case AssetType::Script: entry.kind = SpawnableEntry::Kind::Script; break;
+            case AssetType::Texture: entry.kind = SpawnableEntry::Kind::Texture; break;
+            case AssetType::UILayout: entry.kind = SpawnableEntry::Kind::UILayout; break;
+            default: entry.kind = SpawnableEntry::Kind::Mesh; break;
+        }
         entry.displayName = QFileInfo(relativePath).completeBaseName();
         entry.assetPath = ToProjectRelativeAssetPath(relativePath);
         entry.icon = index.data(Qt::DecorationRole).value<QIcon>();
 
         auto* mimeData = new QMimeData();
         mimeData->setData(kSpawnableMimeType, entry.toMimePayload());
+        AttachInspectorAssetMime(mimeData, entry.assetPath, assetType);
 
         auto* drag = new QDrag(this);
         drag->setMimeData(mimeData);
@@ -185,6 +195,21 @@ void AssetBrowserWidget::NavigateTo(const QString& relativePath)
     updateBreadcrumb();
     updateStatusBar();
     syncFolderTreeSelection();
+}
+
+void AssetBrowserWidget::FindReferences(const QString& relativePath)
+{
+    findAssetReferences(relativePath);
+}
+
+void AssetBrowserWidget::RevealAsset(const QString& relativePath)
+{
+    QString path = relativePath;
+    path.replace('\\', '/');
+    if (path.startsWith(QStringLiteral("assets/"), Qt::CaseInsensitive)) {
+        path = path.mid(QStringLiteral("assets/").size());
+    }
+    showInFolder(path);
 }
 
 void AssetBrowserWidget::SetOpenAssetCallback(OpenAssetCallback callback)
