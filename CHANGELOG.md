@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-09-02: Repository-wide capability and maturity audit under `docs/audit/` (index, capability matrix, roadmap, architecture risks, documentation gaps, genre readiness, and per-subsystem reports). Documentation only; no engine behaviour changes.
 - 2026-09-02: Stage 6C/D shipping polish adds named file-count package progress, explicit confirmed package cleanup, CLI `--clean-output`, and locked-output retry or alternate-output actions.
 - 2026-09-02: Stage 6 portability fixture, `RuntimeLocatorTests`, `BuildServiceTests`, and a repeatable relocated-package launch gate covering Lua, HUI, audio, physics, shaders, HDRI, manifests, and source-tree independence.
 - 2026-09-02: Stage 6 build and shipping pipeline: shared non-Qt `HephaestusBuildCore`, project validation with actionable asset/path diagnostics, transactional package staging, Windows x64 runtime/dependency collection, package manifests/notices/size reports/ZIP archives, and the `HephaestusBuild` headless CLI.
