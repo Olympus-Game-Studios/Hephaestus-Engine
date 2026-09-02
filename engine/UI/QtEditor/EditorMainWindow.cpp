@@ -110,6 +110,7 @@
 #include <QPushButton>
 #include <QProcess>
 #include <QDesktopServices>
+#include <QSignalBlocker>
 #include <QUrl>
 #include <iostream>
 #include <cmath>
@@ -1359,6 +1360,7 @@ void EditorMainWindow::setupDockWidgets()
                     m_lockedEntity = ctx->GetSelectedEntity();
                 }
             }
+            refreshDetailsPanel();
         });
         headerRow->addWidget(m_lockCheck);
 
@@ -1405,7 +1407,7 @@ void EditorMainWindow::setupDockWidgets()
     connect(m_nameEdit, &QLineEdit::editingFinished, this, [this]() {
         m_nameEdit->setProperty("undoPushed", false);
     });
-    connect(m_nameEdit, &QLineEdit::textChanged, this, &EditorMainWindow::onNameChanged);
+    connect(m_nameEdit, &QLineEdit::textEdited, this, &EditorMainWindow::onNameChanged);
 
     m_prefabBar = new PrefabInstanceBar(m_detailsWidget);
     m_detailsLayout->addWidget(m_prefabBar);
@@ -3074,11 +3076,10 @@ void EditorMainWindow::rebuildOutliner()
         m_hasOutlinerExpansionState = true;
     }
 
-    // Block signals while clearing to prevent itemSelectionChanged from
-    // firing onOutlinerSelectionChanged → ClearSelection during rebuild.
-    m_outlinerTree->blockSignals(true);
+    // Keep selection signals blocked for the entire rebuild. Unblocking after
+    // clear() can dispatch an empty-selection notification before restoration.
+    const QSignalBlocker outlinerSignals(m_outlinerTree);
     m_outlinerTree->clear();
-    m_outlinerTree->blockSignals(false);
     
     if (!m_engine) return;
     auto* ctx = m_engine->GetEditorContext();
@@ -3256,7 +3257,7 @@ void EditorMainWindow::restoreOutlinerTreeSelection()
 
     const entt::entity primary = ctx->GetSelectedEntity();
 
-    m_outlinerTree->blockSignals(true);
+    const QSignalBlocker outlinerSignals(m_outlinerTree);
     m_outlinerTree->clearSelection();
     QTreeWidgetItem* primaryItem = nullptr;
     QTreeWidgetItemIterator it(m_outlinerTree);
@@ -3277,7 +3278,6 @@ void EditorMainWindow::restoreOutlinerTreeSelection()
     if (primaryItem != nullptr) {
         m_outlinerTree->setCurrentItem(primaryItem);
     }
-    m_outlinerTree->blockSignals(false);
 }
 
 QTreeWidgetItem* EditorMainWindow::findOutlinerItemForEntity(entt::entity entity)
@@ -5759,16 +5759,22 @@ void EditorMainWindow::rebuildComponentInspectors()
 
     if (m_lightInspector) {
         m_detailsLayout->removeWidget(m_lightInspector);
+        m_lightInspector->blockSignals(true);
+        m_lightInspector->disconnect(this);
         delete m_lightInspector;
         m_lightInspector = nullptr;
     }
     if (m_environmentInspector) {
         m_detailsLayout->removeWidget(m_environmentInspector);
+        m_environmentInspector->blockSignals(true);
+        m_environmentInspector->disconnect(this);
         delete m_environmentInspector;
         m_environmentInspector = nullptr;
     }
     for (auto* insp : m_componentInspectors) {
         m_detailsLayout->removeWidget(insp);
+        insp->blockSignals(true);
+        insp->disconnect(this);
         delete insp;
     }
     m_componentInspectors.clear();

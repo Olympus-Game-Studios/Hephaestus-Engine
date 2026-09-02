@@ -47,7 +47,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- 2026-09-02: Details Delete uses the full selection; Pin Inspector reports when the pinned entity is gone instead of silently unlocking; selection no longer disables Outliner repainting; Inspector refresh no longer creates edits or dirties the scene; component gestures now close their undo-coalescing sessions; prefab Apply controls correctly re-enable when returning to one instance.
+- 2026-09-02: Details Delete uses the full selection; Pin Inspector updates immediately and reports missing pinned entities; selection no longer disables Outliner repainting or gets cleared during rebuilds; Inspector refresh no longer creates edits or dirties the scene; component gestures now close their undo-coalescing sessions; prefab Apply controls correctly re-enable when returning to one instance.
 - 2026-09-02: Transform snap controls now affect gizmo translation, rotation, and scale with Ctrl bypass; Escape restores and discards active gizmo/placement edits; focusing a selection no longer initializes editor physics as a hidden side effect.
 - 2026-09-01: `TextureDiscovery.cpp` include path for `AssetPathPolicy.h` corrected (`../../Assets/`).
 - 2026-09-01: `SceneSerializer::DeserializeFromString` uses a unique temp file per call instead of a shared `hephaestus_snapshot.hpscene` path, avoiding concurrent clobber races.

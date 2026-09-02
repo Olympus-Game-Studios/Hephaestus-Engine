@@ -91,6 +91,7 @@ public:
     template<typename T, typename Fn>
     void ForEachTarget(Fn&& fn)
     {
+        if (m_updating) return;
         VisitTargets<T>(std::forward<Fn>(fn));
         if (m_ctx) m_ctx->MarkDirty();
     }

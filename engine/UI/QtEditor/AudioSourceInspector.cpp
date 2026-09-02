@@ -110,7 +110,8 @@ void AudioSourceInspector::Refresh()
     m_playOnStart->setFromMixed(play);
     m_loop->setFromMixed(loop);
     m_volume->setFromMixed(volume);
-    m_clip->setPath(QString::fromStdString(clip.value), clip.mixed, PathMissing(clip.value));
+    const std::string clipPath = clip.present ? clip.value : std::string();
+    m_clip->setPath(QString::fromStdString(clipPath), clip.mixed, PathMissing(clipPath));
     m_updating = false;
 }
 
