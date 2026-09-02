@@ -353,6 +353,7 @@ private:
 
     // Cleanup helpers
     void cleanupSwapchainResources();
+    void cleanupBillboardResources();
     void destroyAllResources();
 
 private:

@@ -330,37 +330,67 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     // Handle pending resize
     if (m_swapchainDirty) {
         vkDeviceWaitIdle(m_device->device);
-        
-        // Recreate sync objects to guarantee clean state after swapchain recreation.
-        // Previous frame's semaphores/fences may be in intermediate states that
-        // cannot be recovered by vkDeviceWaitIdle alone (e.g. a binary semaphore
-        // left signaled after a failed submit, or a fence reset but never submitted).
-        m_currentFrame = 0;
-        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-            vkDestroySemaphore(m_device->device, m_imageAvailableSemaphores[i], nullptr);
-            vkDestroySemaphore(m_device->device, m_renderFinishedSemaphores[i], nullptr);
-            vkDestroyFence(m_device->device, m_inFlightFences[i], nullptr);
-            
-            VkSemaphoreCreateInfo semInfo{};
-            semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-            vkCreateSemaphore(m_device->device, &semInfo, nullptr, &m_imageAvailableSemaphores[i]);
-            vkCreateSemaphore(m_device->device, &semInfo, nullptr, &m_renderFinishedSemaphores[i]);
-            
-            VkFenceCreateInfo fenceInfo{};
-            fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-            fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-            vkCreateFence(m_device->device, &fenceInfo, nullptr, &m_inFlightFences[i]);
-        }
-        m_imagesInFlight.assign(m_swapchain->images.size(), VK_NULL_HANDLE);
 
-        // Recreate ID picker at new swapchain dimensions
-        if (m_idPicker.initialized) {
-            cleanupIdPickerResources();
-            if (!createIdPickerResources()) {
-                std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate ID picker after resize\n";
+        const size_t previousImageCount = m_commandBuffers.size();
+        const bool recreateSkyboxDescriptors =
+            previousImageCount != m_swapchain->images.size();
+
+        cleanupSwapchainResources();
+
+        if (!createPipeline() ||
+            !createSyncObjects() ||
+            !createCommandBuffers() ||
+            !createUniformBuffers()) {
+            std::cerr << "[EngineFrameRenderer] Failed to recreate core swapchain resources\n";
+            return false;
+        }
+
+        if (recreateSkyboxDescriptors) {
+            m_skybox.Cleanup(m_device->allocator, m_device->device);
+            m_lastSkyboxPath.clear();
+            if (!createSkyboxResources()) {
+                std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate skybox resources\n";
+            }
+        } else if (m_skybox.initialized) {
+            m_skybox.Recreate(m_device->device, m_swapchain->renderPass, m_swapchain->extent);
+        }
+
+        if (!createDescriptorSets()) {
+            std::cerr << "[EngineFrameRenderer] Failed to recreate descriptor sets\n";
+            return false;
+        }
+        for (auto& pending : m_pendingTextureSlotUpdates) {
+            for (uint32_t slotIndex = 0;
+                 slotIndex < static_cast<uint32_t>(m_materialTextureSlots.size());
+                 ++slotIndex) {
+                if (m_materialTextureSlots[slotIndex].valid) {
+                    pending.push_back(slotIndex);
+                }
             }
         }
-        
+
+#ifndef HEPHAESTUS_GAME_RUNTIME
+        if (!createGridResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate grid resources\n";
+        }
+        if (!createOutlineResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate outline resources\n";
+        }
+        if (!createIdPickerResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate ID picker resources\n";
+        }
+        if (!createGizmoResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate gizmo resources\n";
+        }
+        if (!createLightGizmoResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate light gizmo resources\n";
+        }
+        if (!createBillboardResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate billboard resources\n";
+        }
+#endif
+
+        m_currentFrame = 0;
         m_swapchainDirty = false;
     }
     
@@ -2887,7 +2917,100 @@ bool EngineFrameRenderer::CheckGizmoHover(float screenX, float screenY, const Ma
 
 void EngineFrameRenderer::cleanupSwapchainResources()
 {
-    // Cleanup resources that depend on swapchain size
+    if (!m_device || !m_device->device) return;
+
+#ifndef HEPHAESTUS_GAME_RUNTIME
+    cleanupBillboardResources();
+    cleanupGizmoResources();
+    cleanupLightGizmoResources();
+    cleanupIdPickerResources();
+    cleanupOutlineResources();
+    m_editorGrid.Cleanup(m_device->device);
+#endif
+
+    if (m_descriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(m_device->device, m_descriptorPool, nullptr);
+        m_descriptorPool = VK_NULL_HANDLE;
+    }
+    m_descriptorSets.clear();
+    m_pendingTextureSlotUpdates.clear();
+
+    for (auto& buffer : m_uniformBuffers) {
+        buffer.Destroy(m_device->allocator);
+    }
+    for (auto& buffer : m_lightingBuffers) {
+        buffer.Destroy(m_device->allocator);
+    }
+    for (auto& buffer : m_materialBuffers) {
+        buffer.Destroy(m_device->allocator);
+    }
+    m_uniformBuffers.clear();
+    m_lightingBuffers.clear();
+    m_materialBuffers.clear();
+
+    if (!m_commandBuffers.empty()) {
+        vkFreeCommandBuffers(m_device->device, m_device->commandPool,
+            static_cast<uint32_t>(m_commandBuffers.size()), m_commandBuffers.data());
+        m_commandBuffers.clear();
+    }
+
+    for (auto semaphore : m_imageAvailableSemaphores) {
+        vkDestroySemaphore(m_device->device, semaphore, nullptr);
+    }
+    for (auto semaphore : m_renderFinishedSemaphores) {
+        vkDestroySemaphore(m_device->device, semaphore, nullptr);
+    }
+    for (auto fence : m_inFlightFences) {
+        vkDestroyFence(m_device->device, fence, nullptr);
+    }
+    m_imageAvailableSemaphores.clear();
+    m_renderFinishedSemaphores.clear();
+    m_inFlightFences.clear();
+    m_imagesInFlight.clear();
+
+    if (m_pipeline) {
+        m_pipeline->Cleanup();
+        m_pipeline.reset();
+    }
+}
+
+void EngineFrameRenderer::cleanupBillboardResources()
+{
+    if (!m_device || !m_device->device) return;
+
+    if (m_billboardIdPipeline.pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(m_device->device, m_billboardIdPipeline.pipeline, nullptr);
+        m_billboardIdPipeline.pipeline = VK_NULL_HANDLE;
+    }
+    if (m_billboardIdPipeline.layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(m_device->device, m_billboardIdPipeline.layout, nullptr);
+        m_billboardIdPipeline.layout = VK_NULL_HANDLE;
+    }
+    m_billboardIdPipeline.initialized = false;
+
+    if (m_billboardPipeline.pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(m_device->device, m_billboardPipeline.pipeline, nullptr);
+        m_billboardPipeline.pipeline = VK_NULL_HANDLE;
+    }
+    if (m_billboardPipeline.layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(m_device->device, m_billboardPipeline.layout, nullptr);
+        m_billboardPipeline.layout = VK_NULL_HANDLE;
+    }
+    if (m_billboardPipeline.descriptorLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(m_device->device, m_billboardPipeline.descriptorLayout, nullptr);
+        m_billboardPipeline.descriptorLayout = VK_NULL_HANDLE;
+    }
+    if (m_billboardDescriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(m_device->device, m_billboardDescriptorPool, nullptr);
+        m_billboardDescriptorPool = VK_NULL_HANDLE;
+    }
+    m_billboardDescriptorSets_Point.clear();
+    m_billboardDescriptorSets_Spot.clear();
+    m_billboardDescriptorSets_Directional.clear();
+    m_pointLightTexture.Destroy(m_device->allocator, m_device->device);
+    m_spotLightTexture.Destroy(m_device->allocator, m_device->device);
+    m_directionalLightTexture.Destroy(m_device->allocator, m_device->device);
+    m_billboardPipeline.initialized = false;
 }
 
 void EngineFrameRenderer::destroyAllResources()
@@ -2959,41 +3082,7 @@ void EngineFrameRenderer::destroyAllResources()
     m_meshLibrary.clear();
     m_meshLibraryLookup.clear();
     
-    // Cleanup billboard resources
-    if (m_billboardPipeline.pipeline != VK_NULL_HANDLE) {
-        vkDestroyPipeline(m_device->device, m_billboardPipeline.pipeline, nullptr);
-        m_billboardPipeline.pipeline = VK_NULL_HANDLE;
-    }
-    if (m_billboardPipeline.layout != VK_NULL_HANDLE) {
-        vkDestroyPipelineLayout(m_device->device, m_billboardPipeline.layout, nullptr);
-        m_billboardPipeline.layout = VK_NULL_HANDLE;
-    }
-    if (m_billboardPipeline.descriptorLayout != VK_NULL_HANDLE) {
-        vkDestroyDescriptorSetLayout(m_device->device, m_billboardPipeline.descriptorLayout, nullptr);
-        m_billboardPipeline.descriptorLayout = VK_NULL_HANDLE;
-    }
-    if (m_billboardDescriptorPool != VK_NULL_HANDLE) {
-        vkDestroyDescriptorPool(m_device->device, m_billboardDescriptorPool, nullptr);
-        m_billboardDescriptorPool = VK_NULL_HANDLE;
-    }
-    m_billboardDescriptorSets_Point.clear();
-    m_billboardDescriptorSets_Spot.clear();
-    m_billboardDescriptorSets_Directional.clear();
-    m_pointLightTexture.Destroy(m_device->allocator, m_device->device);
-    m_spotLightTexture.Destroy(m_device->allocator, m_device->device);
-    m_directionalLightTexture.Destroy(m_device->allocator, m_device->device);
-    m_billboardPipeline.initialized = false;
-
-    // Cleanup billboard ID pipeline
-    if (m_billboardIdPipeline.pipeline != VK_NULL_HANDLE) {
-        vkDestroyPipeline(m_device->device, m_billboardIdPipeline.pipeline, nullptr);
-        m_billboardIdPipeline.pipeline = VK_NULL_HANDLE;
-    }
-    if (m_billboardIdPipeline.layout != VK_NULL_HANDLE) {
-        vkDestroyPipelineLayout(m_device->device, m_billboardIdPipeline.layout, nullptr);
-        m_billboardIdPipeline.layout = VK_NULL_HANDLE;
-    }
-    m_billboardIdPipeline.initialized = false;
+    cleanupBillboardResources();
 
     // Cleanup editor grid
     m_editorGrid.Cleanup(m_device->device);
