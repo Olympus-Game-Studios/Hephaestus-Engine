@@ -71,12 +71,14 @@ static VkImageView createImageView(VkDevice device, VkImage image, VkFormat form
     return iv;
 }
 
-void VulkanSwapchain::Init(VkPhysicalDevice phys, VkDevice dev, VkSurfaceKHR surf, GLFWwindow* window, VmaAllocator alloc)
+void VulkanSwapchain::Init(VkPhysicalDevice phys, VkDevice dev, VkSurfaceKHR surf, GLFWwindow* window,
+                           VmaAllocator alloc, bool vsync)
 {
     physicalDevice = phys;
     device = dev;
     surface = surf;
     allocator = alloc;
+    m_vsync = vsync;
 
     // ── Choose extent (window size) from GLFW ────────────────────────────────────
     int width, height;
@@ -126,7 +128,18 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
     vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, nullptr);
     std::vector<VkPresentModeKHR> presentModes(presentModeCount);
     vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, presentModes.data());
-    VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR; // guaranteed available
+    VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR; // VSync, guaranteed available
+    if (!m_vsync) {
+        const auto mailbox = std::find(presentModes.begin(), presentModes.end(),
+                                       VK_PRESENT_MODE_MAILBOX_KHR);
+        const auto immediate = std::find(presentModes.begin(), presentModes.end(),
+                                         VK_PRESENT_MODE_IMMEDIATE_KHR);
+        if (mailbox != presentModes.end()) {
+            presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+        } else if (immediate != presentModes.end()) {
+            presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+        }
+    }
 
     // ── Create swapchain ───────────────────────────────────────────────
     VkSwapchainCreateInfoKHR swapInfo{};
@@ -290,7 +303,7 @@ void VulkanSwapchain::Recreate(GLFWwindow* window)
 
     Cleanup();
     // Re-init with same device/surface/allocator
-    Init(physicalDevice, device, surface, window, allocator);
+    Init(physicalDevice, device, surface, window, allocator, m_vsync);
 }
 
 void VulkanSwapchain::RecreateFromNativeSurface(uint32_t width, uint32_t height)

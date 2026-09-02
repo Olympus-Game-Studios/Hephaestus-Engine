@@ -32,10 +32,11 @@
 #include <QToolButton>
 #include <QFrame>
 #include <QPlainTextEdit>
-#include <QProcess>
+#include <QThread>
 #include <QTimer>
 #include "BuildSettingsDialog.h"
 #include <memory>
+#include <atomic>
 #include <filesystem>
 #include <unordered_set>
 #include <vector>
@@ -48,8 +49,13 @@
 #include "../../UI/InspectorSelectionModel.h"
 
 class EditorAssetPipeline;
+class QProcess;
 
 namespace Hephaestus {
+
+namespace Build {
+class BuildService;
+}
 
 namespace UI {
 class SettingsWindow;
@@ -215,6 +221,11 @@ private slots:
 
     // Build
     void onBuildProject();
+    void onValidateProject();
+    void onPackageAndRun();
+    void onRunLastPackage();
+    void onCleanPackage();
+    void startBuild(Hephaestus::Build::BuildAction action, bool clean = false);
 
     // Engine callbacks
     void onViewportReady();
@@ -338,9 +349,12 @@ private:
     // Build output
     QDockWidget* m_buildOutputDock = nullptr;
     QPlainTextEdit* m_buildOutputText = nullptr;
-    QProcess* m_buildProcess = nullptr;
+    QTreeWidget* m_buildProblems = nullptr;
+    QThread* m_buildThread = nullptr;
+    QProcess* m_buildProcess = nullptr; // Legacy exporter state; removed after Stage 6 migration settles.
     QToolButton* m_buildBtn = nullptr;
-    bool m_buildExportPhase = false; // false = compile, true = export
+    bool m_buildExportPhase = false;
+    std::shared_ptr<std::atomic_bool> m_buildCancel;
     BuildSettings m_lastBuildSettings;
 
     // Add Actors panel

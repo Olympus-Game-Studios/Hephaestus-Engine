@@ -61,8 +61,10 @@
 #include "../../UI/ComponentClipboard.h"
 #include "../../Assets/AssetPathPolicy.h"
 #include "../../Assets/AssetReferenceIndex.h"
+#include "../../Build/BuildService.h"
 
 #include <QClipboard>
+#include <QTextCursor>
 #include <QApplication>
 #include <QMenuBar>
 #include <QMenu>
@@ -88,6 +90,7 @@
 #include <QMimeData>
 #include <QScrollArea>
 #include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
 #include <QToolBar>
 #include <QToolButton>
@@ -101,6 +104,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDateTime>
+#include <QTime>
 #include <QStyle>
 #include <QMenu>
 #include <QCursor>
@@ -537,6 +541,21 @@ void EditorMainWindow::closeEvent(QCloseEvent* event)
     EngineLog::Info("EditorMainWindow close event");
     std::cout << "[EditorMainWindow] Close event received\n";
 
+    if (m_buildThread && m_buildThread->isRunning()) {
+        const auto choice = QMessageBox::question(
+            this, tr("Package in progress"),
+            tr("A package operation is still running. Cancel it and close the editor?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (choice != QMessageBox::Yes) {
+            event->ignore();
+            return;
+        }
+        if (m_buildCancel) {
+            m_buildCancel->store(true);
+        }
+        m_buildThread->wait();
+    }
+
     if (!promptSaveDirtyScene()) {
         event->ignore();
         return;
@@ -749,6 +768,16 @@ void EditorMainWindow::setupMenuBar()
         save->setShortcut(
             QKeySequence(QStringLiteral("Ctrl+Alt+%1").arg(slot)));
     }
+
+    QMenu* buildMenu = menuBar->addMenu(tr("&Build"));
+    buildMenu->addAction(tr("Validate Project"), this, &EditorMainWindow::onValidateProject);
+    QAction* packageProjectAction =
+        buildMenu->addAction(tr("Package Project"), this, &EditorMainWindow::onBuildProject);
+    packageProjectAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+B")));
+    buildMenu->addAction(tr("Package && Run"), this, &EditorMainWindow::onPackageAndRun);
+    buildMenu->addSeparator();
+    buildMenu->addAction(tr("Run Last Package"), this, &EditorMainWindow::onRunLastPackage);
+    buildMenu->addAction(tr("Clean Package"), this, &EditorMainWindow::onCleanPackage);
 
     // ─────────────────────────────────────────────────────────────────────────
     // View Menu
@@ -1069,7 +1098,21 @@ void EditorMainWindow::setupTopToolbar()
         m_buildBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         m_buildBtn->setIconSize(buildIconSize);
         m_buildBtn->setFixedHeight(34);
+        auto* buildMenu = new QMenu(m_buildBtn);
+        QAction* validateAction = buildMenu->addAction(tr("Validate Project"));
+        QAction* packageAction = buildMenu->addAction(tr("Package"));
+        QAction* packageRunAction = buildMenu->addAction(tr("Package && Run"));
+        buildMenu->addSeparator();
+        QAction* runLastAction = buildMenu->addAction(tr("Run Last Package"));
+        QAction* cleanAction = buildMenu->addAction(tr("Clean Package"));
+        m_buildBtn->setMenu(buildMenu);
+        m_buildBtn->setPopupMode(QToolButton::MenuButtonPopup);
         connect(m_buildBtn, &QToolButton::clicked, this, &EditorMainWindow::onBuildProject);
+        connect(validateAction, &QAction::triggered, this, &EditorMainWindow::onValidateProject);
+        connect(packageAction, &QAction::triggered, this, &EditorMainWindow::onBuildProject);
+        connect(packageRunAction, &QAction::triggered, this, &EditorMainWindow::onPackageAndRun);
+        connect(runLastAction, &QAction::triggered, this, &EditorMainWindow::onRunLastPackage);
+        connect(cleanAction, &QAction::triggered, this, &EditorMainWindow::onCleanPackage);
         rightLayout->addWidget(m_buildBtn);
 
         auto* settingsBtn = new QToolButton(rightSection);
@@ -1882,11 +1925,75 @@ void EditorMainWindow::setupDockWidgets()
     m_buildOutputDock->setObjectName("BuildOutputDock");
     m_buildOutputDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
 
-    m_buildOutputText = new QPlainTextEdit(m_buildOutputDock);
+    auto* buildOutputWidget = new QWidget(m_buildOutputDock);
+    auto* buildOutputLayout = new QVBoxLayout(buildOutputWidget);
+    buildOutputLayout->setContentsMargins(0, 0, 0, 0);
+    buildOutputLayout->setSpacing(2);
+
+    auto* buildTools = new QWidget(buildOutputWidget);
+    auto* buildToolsLayout = new QHBoxLayout(buildTools);
+    buildToolsLayout->setContentsMargins(4, 2, 4, 2);
+    auto* buildSearch = new QLineEdit(buildTools);
+    buildSearch->setPlaceholderText(tr("Search build output"));
+    auto* findNext = new QPushButton(tr("Find Next"), buildTools);
+    auto* copyLog = new QPushButton(tr("Copy All"), buildTools);
+    auto* clearLog = new QPushButton(tr("Clear"), buildTools);
+    buildToolsLayout->addWidget(buildSearch, 1);
+    buildToolsLayout->addWidget(findNext);
+    buildToolsLayout->addWidget(copyLog);
+    buildToolsLayout->addWidget(clearLog);
+    buildOutputLayout->addWidget(buildTools);
+
+    m_buildProblems = new QTreeWidget(buildOutputWidget);
+    m_buildProblems->setHeaderLabels({tr("Severity"), tr("Problem"), tr("Asset")});
+    m_buildProblems->setRootIsDecorated(false);
+    m_buildProblems->setMaximumHeight(170);
+    m_buildProblems->hide();
+    m_buildProblems->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_buildProblems, &QTreeWidget::itemDoubleClicked, this,
+            [this](QTreeWidgetItem* item, int) {
+        const QString path = item ? item->data(0, Qt::UserRole).toString() : QString();
+        if (!path.isEmpty() && m_assetBrowser) {
+            m_assetBrowser->RevealAsset(path);
+            m_assetBrowserDock->show();
+            m_assetBrowserDock->raise();
+        }
+    });
+    connect(m_buildProblems, &QTreeWidget::customContextMenuRequested, this,
+            [this](const QPoint& position) {
+        QTreeWidgetItem* item = m_buildProblems->itemAt(position);
+        const QString path = item ? item->data(0, Qt::UserRole).toString() : QString();
+        if (path.isEmpty()) return;
+        QMenu menu(this);
+        menu.addAction(tr("Open"), [this, path]() {
+            if (m_assetActions) m_assetActions->Open(path);
+        });
+        menu.addAction(tr("Reveal in Asset Browser"), [this, path]() {
+            if (m_assetBrowser) m_assetBrowser->RevealAsset(path);
+        });
+        menu.addAction(tr("Find References"), [this, path]() {
+            if (m_assetBrowser) m_assetBrowser->FindReferences(path);
+        });
+        menu.exec(m_buildProblems->viewport()->mapToGlobal(position));
+    });
+    buildOutputLayout->addWidget(m_buildProblems);
+
+    m_buildOutputText = new QPlainTextEdit(buildOutputWidget);
     m_buildOutputText->setReadOnly(true);
     m_buildOutputText->setFont(QFont("Consolas", 9));
     m_buildOutputText->setMaximumBlockCount(5000);
-    m_buildOutputDock->setWidget(m_buildOutputText);
+    buildOutputLayout->addWidget(m_buildOutputText, 1);
+    connect(findNext, &QPushButton::clicked, this, [this, buildSearch]() {
+        if (!m_buildOutputText->find(buildSearch->text())) {
+            m_buildOutputText->moveCursor(QTextCursor::Start);
+            m_buildOutputText->find(buildSearch->text());
+        }
+    });
+    connect(copyLog, &QPushButton::clicked, this, [this]() {
+        QApplication::clipboard()->setText(m_buildOutputText->toPlainText());
+    });
+    connect(clearLog, &QPushButton::clicked, m_buildOutputText, &QPlainTextEdit::clear);
+    m_buildOutputDock->setWidget(buildOutputWidget);
 
     addDockWidget(Qt::BottomDockWidgetArea, m_buildOutputDock);
     tabifyDockWidget(m_assetBrowserDock, m_buildOutputDock);
@@ -5437,6 +5544,8 @@ void EditorMainWindow::onAbout()
 
 void EditorMainWindow::onBuildProject()
 {
+    startBuild(Build::BuildAction::Package);
+#if 0 // Replaced by the shared Stage 6 BuildService; retained temporarily for migration reference.
     // Don't start another build while one is running
     if (m_buildProcess && m_buildProcess->state() != QProcess::NotRunning) {
         statusBar()->showMessage(tr("Build already in progress..."), 3000);
@@ -5639,6 +5748,335 @@ void EditorMainWindow::onBuildProject()
     m_buildProcess->setWorkingDirectory(engineRoot.absolutePath());
     m_buildProcess->setProcessChannelMode(QProcess::MergedChannels);
     m_buildProcess->start("cmake", {"--build", "build", "--config", "Release", "--target", "HephaestusGame"});
+#endif
+}
+
+void EditorMainWindow::onValidateProject()
+{
+    startBuild(Build::BuildAction::Validate);
+}
+
+void EditorMainWindow::onPackageAndRun()
+{
+    startBuild(Build::BuildAction::PackageAndRun);
+}
+
+void EditorMainWindow::onRunLastPackage()
+{
+    QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
+    if (!m_projectContext || !m_projectContext->HasProject()) {
+        QMessageBox::information(this, tr("Run Last Package"),
+                                 tr("Open a project first."));
+        return;
+    }
+    const QString currentProject =
+        QString::fromStdString(m_projectContext->GetProjectRootDir());
+    const QString projectKey = QString::number(qHash(currentProject));
+    const QString executable =
+        settings.value(QStringLiteral("build/lastExecutable/") + projectKey).toString();
+    if (executable.isEmpty() || !QFileInfo::exists(executable)) {
+        QMessageBox::information(this, tr("Run Last Package"),
+                                 tr("No previous package was found."));
+        return;
+    }
+    const QDateTime packagedAt =
+        settings.value(QStringLiteral("build/lastTimestamp/") + projectKey).toDateTime();
+    bool changedSincePackage = false;
+    if (m_projectContext && m_projectContext->HasProject() && packagedAt.isValid()) {
+        const QString root = QString::fromStdString(m_projectContext->GetProjectRootDir());
+        QDirIterator it(QDir(root).filePath(QStringLiteral("assets")), QDir::Files,
+                        QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            if (it.fileInfo().lastModified().toUTC() > packagedAt) {
+                changedSincePackage = true;
+                break;
+            }
+        }
+    }
+    if (changedSincePackage &&
+        QMessageBox::question(this, tr("Run Last Package"),
+                              tr("Project assets changed after the last successful package. "
+                                 "Run the older package anyway?"),
+                              QMessageBox::Yes | QMessageBox::No,
+                              QMessageBox::No) != QMessageBox::Yes) {
+        return;
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(executable));
+}
+
+void EditorMainWindow::onCleanPackage()
+{
+    startBuild(Build::BuildAction::Package, true);
+}
+
+void EditorMainWindow::startBuild(Build::BuildAction requestedAction, bool clean)
+{
+    if (m_buildThread && m_buildThread->isRunning()) {
+        if (m_buildCancel) {
+            m_buildCancel->store(true);
+            m_buildOutputText->appendPlainText(tr("[Info] Cancelling package operation..."));
+            m_buildBtn->setEnabled(false);
+        }
+        return;
+    }
+    if (!m_projectContext || !m_projectContext->HasProject()) {
+        QMessageBox::information(this, tr("Build Project"),
+                                 tr("Open a project before validating or packaging."));
+        return;
+    }
+
+    const QString projectRoot =
+        QString::fromStdString(m_projectContext->GetProjectRootDir());
+    QString projectName = QString::fromStdString(m_projectContext->GetProjectName());
+    if (projectName.trimmed().isEmpty()) {
+        projectName = QStringLiteral("HephaestusGame");
+    }
+
+    QStringList sceneFiles;
+    QDirIterator sceneIterator(QDir(projectRoot).filePath(QStringLiteral("assets/scenes")),
+                               {QStringLiteral("*.hpscene")}, QDir::Files,
+                               QDirIterator::Subdirectories);
+    while (sceneIterator.hasNext()) {
+        sceneIterator.next();
+        sceneFiles.push_back(
+            QDir(projectRoot).relativeFilePath(sceneIterator.filePath()).replace('\\', '/'));
+    }
+    sceneFiles.sort(Qt::CaseInsensitive);
+
+    BuildSettings defaults;
+    QString startupScene;
+    QString version = QStringLiteral("0.1.0");
+    QString company;
+    QString applicationIcon;
+    if (m_projectSettingsManager) {
+        startupScene =
+            m_projectSettingsManager->Value(QStringLiteral("project.info.defaultScene")).toString();
+        version = m_projectSettingsManager->Value(QStringLiteral("project.info.version")).toString();
+        company =
+            m_projectSettingsManager->Value(QStringLiteral("project.info.companyName")).toString();
+        defaults.windowTitle =
+            m_projectSettingsManager->Value(QStringLiteral("project.build.windowTitle")).toString();
+        defaults.fullscreen =
+            m_projectSettingsManager->Value(QStringLiteral("project.build.fullscreenDefault")).toBool();
+        applicationIcon =
+            m_projectSettingsManager->Value(QStringLiteral("project.build.applicationIcon")).toString();
+        const QString configuration =
+            m_projectSettingsManager->Value(QStringLiteral("project.build.defaultConfiguration")).toString();
+        defaults.configuration = configuration == QStringLiteral("Release")
+            ? Build::BuildConfiguration::Release
+            : Build::BuildConfiguration::Development;
+        const QStringList resolution =
+            m_projectSettingsManager->Value(QStringLiteral("project.build.defaultResolution"))
+                .toString().split('x');
+        if (resolution.size() == 2) {
+            defaults.windowWidth = resolution[0].toInt();
+            defaults.windowHeight = resolution[1].toInt();
+        }
+    }
+    defaults.validateFirst = defaults.configuration == Build::BuildConfiguration::Release;
+    defaults.action = requestedAction;
+
+    QSettings userSettings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
+    const QString outputRoot = userSettings.value(
+        QStringLiteral("build/outputRoot/") + QString::number(qHash(projectRoot)),
+        QDir(projectRoot).filePath(QStringLiteral("Builds"))).toString();
+
+    BuildSettingsDialog dialog(projectName, sceneFiles, startupScene, outputRoot, defaults, this);
+    connect(&dialog, &BuildSettingsDialog::openStartupSceneRequested, this,
+            [this](const QString& path) {
+        if (!path.isEmpty() && m_assetActions) {
+            m_assetActions->Open(path);
+        }
+    });
+    connect(&dialog, &BuildSettingsDialog::revealStartupSceneRequested, this,
+            [this](const QString& path) {
+        if (!path.isEmpty() && m_assetBrowser) {
+            m_assetBrowser->RevealAsset(path);
+            m_assetBrowserDock->show();
+            m_assetBrowserDock->raise();
+        }
+    });
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    BuildSettings selected = dialog.GetSettings();
+    if (requestedAction != Build::BuildAction::Package) {
+        selected.action = requestedAction;
+    }
+
+    if (m_projectSettingsManager) {
+        m_projectSettingsManager->SetValue(
+            QStringLiteral("project.info.defaultScene"), selected.startScene);
+        m_projectSettingsManager->SetValue(
+            QStringLiteral("project.build.defaultConfiguration"),
+            selected.configuration == Build::BuildConfiguration::Release
+                ? QStringLiteral("Release") : QStringLiteral("Development"));
+        m_projectSettingsManager->SetValue(
+            QStringLiteral("project.build.windowTitle"), selected.windowTitle);
+        m_projectSettingsManager->SetValue(
+            QStringLiteral("project.build.defaultResolution"),
+            QStringLiteral("%1x%2").arg(selected.windowWidth).arg(selected.windowHeight));
+        m_projectSettingsManager->SetValue(
+            QStringLiteral("project.build.fullscreenDefault"), selected.fullscreen);
+        m_projectSettingsManager->Save();
+    }
+    userSettings.setValue(
+        QStringLiteral("build/outputRoot/") + QString::number(qHash(projectRoot)),
+        selected.outputDirectory);
+
+    QDir engineRoot(QCoreApplication::applicationDirPath());
+    for (int depth = 0; depth < 5 &&
+         !QFileInfo::exists(engineRoot.filePath(QStringLiteral("CMakeLists.txt"))); ++depth) {
+        if (!engineRoot.cdUp()) {
+            break;
+        }
+    }
+
+    Build::BuildRequest request;
+    request.projectRoot = std::filesystem::path(projectRoot.toStdWString());
+    request.engineRoot = std::filesystem::path(engineRoot.absolutePath().toStdWString());
+    request.runtimeSearchRoot =
+        std::filesystem::path(QCoreApplication::applicationDirPath().toStdWString());
+    request.outputRoot = std::filesystem::path(selected.outputDirectory.toStdWString());
+    request.productName = projectName.toStdString();
+    request.version = version.toStdString();
+    request.company = company.toStdString();
+    request.engineVersion = Tools::VersionInfo::EngineVersion().toStdString();
+    request.startupScene = selected.startScene.toStdString();
+    request.configuration = selected.configuration;
+    request.action = selected.action;
+    request.validateFirst = selected.validateFirst;
+    request.createZip = selected.createZip;
+    request.reportUnusedAssets = selected.reportUnusedAssets;
+    request.clean = clean;
+    request.incremental = !clean;
+    request.window.title = selected.windowTitle.toStdString();
+    request.window.width = selected.windowWidth;
+    request.window.height = selected.windowHeight;
+    request.window.fullscreen = selected.fullscreen;
+    request.window.vsync = selected.vsync;
+    if (!applicationIcon.trimmed().isEmpty()) {
+        const std::filesystem::path icon(applicationIcon.toStdWString());
+        request.applicationIcon = icon.is_absolute()
+            ? icon : request.projectRoot / icon;
+    }
+
+    m_buildOutputDock->show();
+    m_buildOutputDock->raise();
+    m_buildOutputText->clear();
+    m_buildProblems->clear();
+    m_buildProblems->hide();
+    m_buildCancel = std::make_shared<std::atomic_bool>(false);
+    const auto cancelFlag = m_buildCancel;
+    request.isCancelled = [cancelFlag]() { return cancelFlag->load(); };
+    request.onLog = [this](const std::string& message) {
+        QMetaObject::invokeMethod(this, [this, message]() {
+            m_buildOutputText->appendPlainText(
+                QStringLiteral("[%1] %2")
+                    .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")),
+                         QString::fromStdString(message)));
+        }, Qt::QueuedConnection);
+    };
+    request.onProgress = [this](float, const std::string& stage) {
+        QMetaObject::invokeMethod(this, [this, stage]() {
+            statusBar()->showMessage(QString::fromStdString(stage));
+        }, Qt::QueuedConnection);
+    };
+
+    m_buildBtn->setText(tr("Cancel"));
+    m_buildBtn->setEnabled(true);
+    if (m_notifications) {
+        m_notifications->ShowProgress(tr("Preparing package..."));
+    }
+    const bool openOutput = selected.openOutputFolder;
+    m_buildThread = QThread::create([this, request, openOutput]() {
+        Build::BuildService service;
+        Build::BuildResult result = service.execute(request);
+        QMetaObject::invokeMethod(this, [this, result = std::move(result), openOutput,
+                                         projectRoot = request.projectRoot]() mutable {
+            m_buildBtn->setText(tr("Build"));
+            m_buildBtn->setEnabled(true);
+            m_buildProblems->clear();
+            for (const auto& problem : result.problems) {
+                const QString severity =
+                    problem.severity == Build::ProblemSeverity::Error ? tr("Error") :
+                    problem.severity == Build::ProblemSeverity::Warning ? tr("Warning") :
+                                                                          tr("Info");
+                auto* item = new QTreeWidgetItem(
+                    {severity, QString::fromStdString(problem.message),
+                     QString::fromStdString(problem.assetPath)});
+                item->setToolTip(1, QString::fromStdString(problem.detail));
+                item->setData(0, Qt::UserRole, QString::fromStdString(problem.assetPath));
+                m_buildProblems->addTopLevelItem(item);
+                m_buildOutputText->appendPlainText(
+                    QStringLiteral("[%1] [%2] %3%4")
+                        .arg(severity,
+                             QString::fromStdString(problem.code),
+                             QString::fromStdString(problem.message),
+                             problem.detail.empty()
+                                 ? QString()
+                                 : QStringLiteral(": ") +
+                                       QString::fromStdString(problem.detail)));
+            }
+            m_buildProblems->setVisible(m_buildProblems->topLevelItemCount() > 0);
+            if (result.success) {
+                if (!result.outputPath.empty()) {
+                    QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
+                    const QString projectKey = QString::number(
+                        qHash(QString::fromStdWString(projectRoot.wstring())));
+                    settings.setValue(QStringLiteral("build/lastOutput/") + projectKey,
+                                      QString::fromStdWString(result.outputPath.wstring()));
+                    settings.setValue(QStringLiteral("build/lastExecutable/") + projectKey,
+                                      QString::fromStdWString(result.executablePath.wstring()));
+                    settings.setValue(QStringLiteral("build/lastTimestamp/") + projectKey,
+                                      QDateTime::currentDateTimeUtc());
+                }
+                const QString message = result.outputPath.empty()
+                    ? tr("Project validation completed")
+                    : tr("Package completed: %1")
+                          .arg(QString::fromStdWString(result.outputPath.wstring()));
+                if (result.packageBytes > 0) {
+                    m_buildOutputText->appendPlainText(
+                        tr("Package size: %1 MB")
+                            .arg(static_cast<double>(result.packageBytes) /
+                                 (1024.0 * 1024.0), 0, 'f', 2));
+                    if (!result.largestFiles.empty()) {
+                        m_buildOutputText->appendPlainText(tr("Largest packaged files:"));
+                        for (const auto& file : result.largestFiles) {
+                            m_buildOutputText->appendPlainText(
+                                tr("  %1 — %2 MB")
+                                    .arg(QString::fromStdString(file.path))
+                                    .arg(static_cast<double>(file.bytes) /
+                                         (1024.0 * 1024.0), 0, 'f', 2));
+                        }
+                    }
+                }
+                if (m_notifications) m_notifications->CompleteProgress(message);
+                if (openOutput && !result.outputPath.empty()) {
+                    QDesktopServices::openUrl(QUrl::fromLocalFile(
+                        QString::fromStdWString(result.outputPath.wstring())));
+                }
+            } else if (result.cancelled) {
+                if (m_notifications) m_notifications->CompleteProgress(tr("Packaging cancelled"));
+            } else {
+                if (m_notifications) m_notifications->ShowError(tr("Packaging failed"));
+            }
+            std::error_code logError;
+            const auto logDirectory = projectRoot / ".hephaestus" / "build";
+            std::filesystem::create_directories(logDirectory, logError);
+            if (!logError) {
+                std::ofstream latestLog(logDirectory / "latest.log",
+                                        std::ios::binary | std::ios::trunc);
+                latestLog << m_buildOutputText->toPlainText().toStdString();
+            }
+        }, Qt::QueuedConnection);
+    });
+    connect(m_buildThread, &QThread::finished, this, [this]() {
+        m_buildThread = nullptr;
+    });
+    connect(m_buildThread, &QThread::finished, m_buildThread, &QObject::deleteLater);
+    m_buildThread->start();
 }
 
 /**

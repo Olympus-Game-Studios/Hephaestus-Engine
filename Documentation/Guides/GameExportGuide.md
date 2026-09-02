@@ -8,14 +8,13 @@ The Hephaestus Engine now has two separate build targets:
 
 1. **HephaestusEngine.exe** (Editor)
    - Full editor with UI, asset browser, inspector, outliner
-   - Uses ImGui, ImGuizmo, ImNodes for editor interface
-   - Uses Ultralight for HTML-based panels (optional)
+   - Uses Qt Widgets for the editor interface
    - Project manager, material editor, etc.
 
 2. **HephaestusGame.exe** (Game Runtime)
    - Minimal standalone runtime for shipped games
    - No editor UI - just game execution
-   - No Ultralight dependency (by default)
+   - No Qt/editor dependency
    - Smaller executable size
    - Includes crash handling and logging
 
@@ -42,31 +41,30 @@ cmake --build build --config Release --target HephaestusEngine
 | `HEPHAESTUS_BUILD_EDITOR` | ON | Build the editor (HephaestusEngine.exe) |
 | `HEPHAESTUS_BUILD_GAME` | ON | Build the game runtime (HephaestusGame.exe) |
 | `HEPHAESTUS_GAME_SCRIPTING` | ON | Enable Lua scripting in game runtime |
-| `HEPHAESTUS_GAME_USE_ULTRALIGHT` | OFF | Enable Ultralight UI in game runtime (rare) |
-| `HEPHAESTUS_USE_ULTRALIGHT` | ON | Enable Ultralight for the editor |
+| `HEPHAESTUS_USE_QT` | ON | Enable the Qt editor UI |
 
-## Exporting a Game
+## Packaging a Game
 
 ### Option 1: From the Editor
 
 1. Open your project in the editor
 2. Load the scene you want to export
-3. Click the **Export** button in the toolbar
-4. The export will be created in `YourProject/dist/YourProject_export/`
+3. Set **Project Settings > Startup Scene**
+4. Open **Build > Package**
+5. Choose Development or Release and an output directory
+6. Select **Package** or **Package & Run**
 
-### Option 2: Using the Export Script
+Release packages are validated before the previous successful package is
+transactionally replaced. The package includes all project assets so Lua and
+other dynamically selected content is not accidentally omitted.
+
+### Option 2: Using the build CLI
 
 ```powershell
-# From the engine root directory
-.\tools\export_game.ps1 -ProjectPath "path/to/your/project" -ProjectName "MyGame"
-
-# With options
-.\tools\export_game.ps1 `
-    -ProjectPath "." `
-    -ProjectName "MyAwesomeGame" `
-    -OutputPath "C:\Builds\MyGame" `
-    -Configuration "Release" `
-    -CreateZip
+.\build\Release\HephaestusBuild.exe `
+    --project "path\to\project" `
+    --config Release `
+    --output "C:\Builds"
 ```
 
 ## Exported Package Structure
@@ -74,10 +72,11 @@ cmake --build build --config Release --target HephaestusEngine
 ```
 MyGame/
 ├── MyGame.exe              # Renamed game runtime
-├── lua.dll                 # Lua scripting (if enabled)
+├── lua54.dll               # Lua scripting
 ├── game.ini                # Game configuration
-├── RunGame.bat             # Launcher script
-├── export_manifest.txt     # Package contents list
+├── build_manifest.json     # Package metadata and contents
+├── export_manifest.txt     # Compatibility package marker
+├── ThirdPartyNotices.txt   # Redistributed dependency notices
 ├── assets/
 │   ├── scenes/
 │   │   └── MainLevel.hpscene
@@ -145,15 +144,14 @@ Crash files are saved to the `crashes/` folder next to the executable.
 
 ## Troubleshooting
 
-### "lua.dll not found"
-Make sure Lua is installed via vcpkg or the DLL is copied to the game folder:
-```bash
-vcpkg install lua:x64-windows
-```
+### "lua54.dll not found"
+Re-package the project. The packager copies the Lua runtime automatically and
+reports a blocking error when it is unavailable.
 
 ### "Failed to create Vulkan instance"
 - Ensure graphics drivers are up to date
-- Verify Vulkan SDK is installed or `vulkan-1.dll` is available
+- Ensure the GPU driver includes the Vulkan runtime. Packaged games do not
+  require the Vulkan SDK.
 
 ### Game crashes immediately
 1. Check `logs/runtime.log` for startup progress

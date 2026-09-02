@@ -258,7 +258,6 @@ set(EDITOR_ONLY_SOURCES
     engine/Core/main.cpp
     engine/Gfx/VulkanGizmo.cpp
     engine/Gfx/VulkanLightGizmo.cpp
-    engine/Scene/SceneExporter.cpp
     engine/UI/EditorDocument.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
@@ -273,6 +272,24 @@ set(GAME_RUNTIME_SOURCES
     engine/Game/GameMain.cpp
     engine/Core/RuntimeBootstrap.cpp
 )
+
+# Shared non-Qt project validation and packaging pipeline used by the editor
+# and headless CLI. Keep compiler/process orchestration out of Qt UI code.
+add_library(HephaestusBuildCore STATIC
+    engine/Build/BuildManifest.cpp
+    engine/Build/BuildService.cpp
+    engine/Build/PackageStager.cpp
+    engine/Build/ProjectValidator.cpp
+    engine/Build/RuntimeLocator.cpp
+    engine/Assets/AssetPathPolicy.cpp
+    engine/Assets/AssetReferenceIndex.cpp
+)
+target_include_directories(HephaestusBuildCore PUBLIC engine extern)
+
+add_executable(HephaestusBuildCli engine/BuildCli.cpp)
+target_link_libraries(HephaestusBuildCli PRIVATE HephaestusBuildCore)
+target_include_directories(HephaestusBuildCli PRIVATE engine extern "${CMAKE_BINARY_DIR}/generated")
+set_target_properties(HephaestusBuildCli PROPERTIES OUTPUT_NAME "HephaestusBuild")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HephaestusToolsCommon (shared launcher/editor utilities)
@@ -322,8 +339,6 @@ add_executable(HephaestusEngine
     engine/Assets/AssetDatabase.cpp
     engine/Assets/AssetImporters.cpp
     engine/Assets/AssetManager.cpp
-    engine/Assets/AssetPathPolicy.cpp
-    engine/Assets/AssetReferenceIndex.cpp
     engine/Assets/OpenDocumentRegistry.cpp
     engine/Assets/AssetOperationService.cpp
     engine/Assets/DerivedDataCache.cpp
@@ -353,7 +368,6 @@ add_executable(HephaestusEngine
     engine/Scene/PrefabComponentIO.cpp
     engine/Scene/PrefabOverrideSystem.cpp
     engine/Scene/SceneSerializer.cpp
-    engine/Scene/SceneExporter.cpp
     engine/Scripting/ScriptBase.cpp
     engine/Scripting/ScriptEngine.cpp
     engine/Scripting/LuaScriptEngine.cpp
@@ -432,6 +446,7 @@ elseif(APPLE)
 endif()
 
 target_include_directories(HephaestusEngine PRIVATE engine "${CMAKE_BINARY_DIR}/generated")
+target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore)
 if(LUA_FOUND)
     if(TARGET Lua::Lua)
         target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt Lua::Lua)
@@ -713,6 +728,16 @@ add_executable(HephaestusGame
     ${GAME_RUNTIME_SOURCES}
 )
 
+set(HEPHAESTUS_GAME_ICON "" CACHE FILEPATH
+    "Optional .ico file embedded when rebuilding HephaestusGame")
+if(WIN32 AND HEPHAESTUS_GAME_ICON AND EXISTS "${HEPHAESTUS_GAME_ICON}")
+    set(APP_ICON_PATH "${HEPHAESTUS_GAME_ICON}")
+    set(GAME_ICON_RC "${CMAKE_BINARY_DIR}/HephaestusGame_icon.rc")
+    configure_file(engine/Core/HephaestusEngine.rc.in "${GAME_ICON_RC}" @ONLY)
+    target_sources(HephaestusGame PRIVATE "${GAME_ICON_RC}")
+    set_source_files_properties("${GAME_ICON_RC}" PROPERTIES GENERATED TRUE)
+endif()
+
 # Game runtime compile definitions
 target_compile_definitions(HephaestusGame PRIVATE
     HEPHAESTUS_GAME_RUNTIME=1
@@ -910,6 +935,7 @@ if(TARGET HephaestusGame)
         BUNDLE DESTINATION .
     )
 endif()
+install(TARGETS HephaestusBuildCli RUNTIME DESTINATION .)
 
 # Install launcher
 if(TARGET HephaestusLauncher)
@@ -923,6 +949,15 @@ endif()
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/shaders/
     DESTINATION shaders
     FILES_MATCHING PATTERN "*.spv"
+)
+install(DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/shaders/"
+    DESTINATION shaders
+    OPTIONAL
+    FILES_MATCHING PATTERN "*.spv"
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/.engine/meshes/
+    DESTINATION .engine/meshes
+    OPTIONAL
 )
 
 # Install assets
@@ -1150,6 +1185,26 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME EditorLogicSmoke
         COMMAND EditorLogicSmokeTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(ProjectValidationTests
+        engine/Tests/ProjectValidationTests.cpp
+    )
+    target_link_libraries(ProjectValidationTests PRIVATE HephaestusBuildCore)
+    target_include_directories(ProjectValidationTests PRIVATE engine extern)
+    add_test(
+        NAME ProjectValidation
+        COMMAND ProjectValidationTests
+    )
+
+    add_executable(PackageLayoutTests
+        engine/Tests/PackageLayoutTests.cpp
+    )
+    target_link_libraries(PackageLayoutTests PRIVATE HephaestusBuildCore)
+    target_include_directories(PackageLayoutTests PRIVATE engine extern)
+    add_test(
+        NAME PackageLayout
+        COMMAND PackageLayoutTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 endif()
 

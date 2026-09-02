@@ -1083,8 +1083,11 @@ void LuaScriptEngine::RebuildSearchPaths() {
     add(current / "assets" / "scripts");
     add(current / "assets");
 
-    // Source tree paths (dev builds only)
-    add(current / "engine" / "Game" / "scripts");
+    // Source-tree fallbacks are development-only. A packaged game is rooted by
+    // game.ini and must never resolve scripts from a parent engine checkout.
+    if (!std::filesystem::exists(current / "game.ini")) {
+        add(current / "engine" / "Game" / "scripts");
+    }
 }
 
 void LuaScriptEngine::AddSearchPath(const std::filesystem::path& path) {

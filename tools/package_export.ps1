@@ -42,7 +42,7 @@ $optionalFiles = @()
 
 # 1. Check for runtime executable
 Write-Info "Checking for runtime executable..."
-$exePatterns = @("HephaestusEngine.exe", "*.exe", "HephaestusRuntime.exe")
+$exePatterns = @("$ProjectName.exe", "HephaestusGame.exe", "*.exe")
 $foundExe = $null
 
 foreach ($pattern in $exePatterns) {

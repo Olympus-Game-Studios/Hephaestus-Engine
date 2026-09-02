@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-09-02: Stage 6 build and shipping pipeline: shared non-Qt `HephaestusBuildCore`, project validation with actionable asset/path diagnostics, transactional package staging, Windows x64 runtime/dependency collection, package manifests/notices/size reports/ZIP archives, and the `HephaestusBuild` headless CLI.
+- 2026-09-02: Qt Build Project workflow with Development/Release presets, persisted startup scene and runtime settings, Validate/Package/Package & Run/Run Last/Clean actions, cancellation, structured Problems, searchable raw logs, package notifications, and `Ctrl+Shift+B`.
+- 2026-09-02: `ProjectValidationTests` and `PackageLayoutTests` cover broken references, malformed content, portable layout, content types, exclusions, manifests, and preservation of the previous successful package.
 - 2026-09-02: Phase 4 Inspector UX: `InspectorSelectionModel` mixed-value/batch helpers, searchable Add Component popup, `AudioSource` inspector + prefab IO, shared Qt property widgets (`Numeric`/`Vec3`/`Bool`/`Enum`/`Color`), `AssetReferenceEditor` + `AssetPickerDialog`, component clipboard, and `InspectorEditTests`.
 - 2026-09-02: Phase 3 scene-authoring workflow: surface-aware viewport placement previews with repeat/cancel, real per-mode transform snapping, hierarchy/prefab-aware multi-duplicate and Alt-drag, marquee and prefab-root selection, editor-only hide/isolate/lock sidecars, align/distribute/drop/group/replace commands, viewport context creation, audio placement, camera bookmarks, scene statistics, and `SceneAuthoringTests`.
 - 2026-09-01: Phase 2 editor foundations: `AssetPathPolicy` (portable `assets/` / `.engine/` / `scripts/` / `builtin://` keys), project-wide Asset Browser search with Show in Folder, recent-projects remove/prune/reveal, `EditorLogicSmokeTests`, and optional `HEPHAESTUS_BUILD_QT_TESTS` harness. Updated `docs/editor/UX_QOL_AUDIT.md` with validated Phase 2 priorities and outcomes.
@@ -36,6 +39,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-09-02: Game distribution now packages the generic player with all project assets, Lua, compiled shaders, builtin meshes, runtime metadata, and verified third-party notices without requiring project-specific compilation or editor-only `.hephaestus` state.
+- 2026-09-02: Project Build settings now expose only supported Windows x64 targets, use `defaultScene` as the persisted Startup Scene, and keep personal package output paths in user-local editor settings.
 - 2026-09-02: Details Inspector multi-edits the current selection (one shared widget tree, mixed axes/name, coalesced undo). Light/Environment/AudioSource use the component registry. Asset Browser drags attach portable MIME for materials/scripts/textures/UI. Prefab Apply stays single-instance; Prefab Editor rotation is degrees with searchable Add Component.
 - 2026-09-02: Scene reparenting can preserve world transforms; Scene Editor duplication preserves parents, hierarchies, supported components, and linked prefab instances. Outliner rebuilds retain expansion state and support component, prefab, hidden, and locked filters.
 - 2026-09-01: Scene/material save paths and material texture browse normalize through `AssetPathPolicy`; material `.hematerial` texture `resourcePath` fields are rewritten to portable keys on save.
@@ -47,6 +52,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-09-02: Packaged runtime accepts either Lua DLL name, treats `game.ini` as the authoritative package marker, avoids source-tree Lua fallbacks, and applies the configured VSync present mode.
+- 2026-09-02: Packaging no longer deletes the last successful output before completion, and application-icon rebuilds restore the shared generic runtime afterward.
 - 2026-09-02: Details Delete uses the full selection; Pin Inspector updates immediately and reports missing pinned entities; selection no longer disables Outliner repainting or gets cleared during rebuilds; Inspector refresh no longer creates edits or dirties the scene; component gestures now close their undo-coalescing sessions; prefab Apply controls correctly re-enable when returning to one instance.
 - 2026-09-02: Transform snap controls now affect gizmo translation, rotation, and scale with Ctrl bypass; Escape restores and discards active gizmo/placement edits; focusing a selection no longer initializes editor physics as a hidden side effect.
 - 2026-09-01: `TextureDiscovery.cpp` include path for `AssetPathPolicy.h` corrected (`../../Assets/`).

@@ -24,6 +24,7 @@ Shortcuts are context-aware: they do not override text-field editing when focus 
 | `Alt+1` … `Alt+9` | Recall camera bookmark |
 | `Ctrl+Alt+1` … `Ctrl+Alt+9` | Save camera bookmark |
 | `Ctrl+,` | Settings |
+| `Ctrl+Shift+B` | Package Project |
 | `Esc` | Stop Play Mode (while playing) |
 
 ## Outliner (Scene Hierarchy)

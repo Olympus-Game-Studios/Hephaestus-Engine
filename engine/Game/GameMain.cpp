@@ -1219,7 +1219,9 @@ int main(int argc, char* argv[]) {
     Bootstrap::BeginStage(InitStage::Bootstrap);
     
 #if HEPHAESTUS_GAME_SCRIPTING
-    std::vector<std::string> requiredDlls = {"lua54.dll"};
+    std::vector<std::string> requiredDlls = {
+        fs::exists(g_RuntimeRoot / "lua54.dll") ? "lua54.dll" : "lua.dll"
+    };
 #else
     std::vector<std::string> requiredDlls = {};
 #endif
@@ -1365,7 +1367,8 @@ int main(int argc, char* argv[]) {
     // Swapchain
     VulkanSwapchain swap;
     try {
-        swap.Init(vkdev.physicalDevice, vkdev.device, vkdev.surface, window, vkdev.allocator);
+        swap.Init(vkdev.physicalDevice, vkdev.device, vkdev.surface, window, vkdev.allocator,
+                  g_Config.vsync);
     } catch (const std::exception& e) {
         Bootstrap::ShowFatalError("Renderer Error",
             std::string("Failed to create swapchain:\n") + e.what());

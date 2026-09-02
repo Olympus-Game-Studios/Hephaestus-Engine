@@ -1,0 +1,383 @@
+#include "Build/PackageStager.h"
+
+#include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <ctime>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
+#include <set>
+#include <sstream>
+
+namespace Hephaestus::Build {
+namespace {
+
+bool Cancelled(const BuildRequest& request) {
+    return request.isCancelled && request.isCancelled();
+}
+
+void Problem(PackageStageResult& result, ProblemSeverity severity, std::string code,
+             std::string message, std::string detail = {}) {
+    result.problems.push_back(
+        {severity, std::move(code), std::move(message), std::move(detail)});
+}
+
+bool SameFile(const std::filesystem::path& left, const std::filesystem::path& right) {
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(right, ec) ||
+        std::filesystem::file_size(left, ec) != std::filesystem::file_size(right, ec) || ec) {
+        return false;
+    }
+    std::ifstream a(left, std::ios::binary);
+    std::ifstream b(right, std::ios::binary);
+    constexpr std::size_t BUFFER_SIZE = 64 * 1024;
+    char leftBuffer[BUFFER_SIZE];
+    char rightBuffer[BUFFER_SIZE];
+    while (a && b) {
+        a.read(leftBuffer, sizeof(leftBuffer));
+        b.read(rightBuffer, sizeof(rightBuffer));
+        if (a.gcount() != b.gcount() ||
+            !std::equal(leftBuffer, leftBuffer + a.gcount(), rightBuffer)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CopyOne(const std::filesystem::path& source,
+             const std::filesystem::path& destination,
+             const std::filesystem::path& previous,
+             bool incremental,
+             std::string& error) {
+    std::error_code ec;
+    std::filesystem::create_directories(destination.parent_path(), ec);
+    if (ec) {
+        error = "Could not create " + destination.parent_path().generic_string() + ": " + ec.message();
+        return false;
+    }
+    const auto copySource =
+        incremental && !previous.empty() && SameFile(source, previous) ? previous : source;
+    std::filesystem::copy_file(copySource, destination,
+                               std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) {
+        error = "Could not copy " + source.generic_string() + ": " + ec.message();
+        return false;
+    }
+    return true;
+}
+
+bool CopyTree(const std::filesystem::path& source,
+              const std::filesystem::path& destination,
+              const std::filesystem::path& previous,
+              const BuildRequest& request,
+              PackageStageResult& result) {
+    std::error_code ec;
+    if (!std::filesystem::exists(source, ec)) {
+        return true;
+    }
+    std::vector<std::filesystem::path> files;
+    for (std::filesystem::recursive_directory_iterator it(
+             source, std::filesystem::directory_options::skip_permission_denied, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (it->is_regular_file(ec) && !it->is_symlink(ec)) {
+            files.push_back(it->path());
+        }
+    }
+    if (ec) {
+        Problem(result, ProblemSeverity::Error, "PACKAGE_TRAVERSAL_FAILED",
+                "Could not traverse package source", source.generic_string() + ": " + ec.message());
+        return false;
+    }
+    std::sort(files.begin(), files.end());
+    for (const auto& file : files) {
+        if (Cancelled(request)) {
+            result.cancelled = true;
+            return false;
+        }
+        const auto relative = file.lexically_relative(source);
+        std::string error;
+        if (!CopyOne(file, destination / relative, previous / relative,
+                     request.incremental && !request.clean, error)) {
+            Problem(result, ProblemSeverity::Error, "PACKAGE_COPY_FAILED",
+                    "Could not copy package file", error);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool WriteText(const std::filesystem::path& path, const std::string& text,
+               PackageStageResult& result) {
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    if (!stream) {
+        Problem(result, ProblemSeverity::Error, "PACKAGE_WRITE_FAILED",
+                "Could not write package metadata", path.generic_string());
+        return false;
+    }
+    stream << text;
+    return static_cast<bool>(stream);
+}
+
+std::vector<FileSizeEntry> Inventory(const std::filesystem::path& root) {
+    std::vector<FileSizeEntry> files;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (it->is_regular_file(ec)) {
+            files.push_back({it->path().lexically_relative(root).generic_string(),
+                             it->file_size(ec)});
+        }
+    }
+    std::sort(files.begin(), files.end(),
+              [](const auto& a, const auto& b) { return a.path < b.path; });
+    return files;
+}
+
+std::string LicenseNotices(const std::filesystem::path& engineRoot) {
+    const std::vector<std::filesystem::path> licenses = {
+        engineRoot / "extern" / "JoltPhysics" / "LICENSE",
+        engineRoot / "extern" / "glfw" / "LICENSE.md",
+        engineRoot / "extern" / "entt" / "LICENSE"
+    };
+    std::ostringstream output;
+    output << "Hephaestus third-party notices\n\n";
+    output << "Notice review required: Lua, Vulkan headers/loader, VMA, nlohmann/json, "
+              "stb, and the Microsoft Visual C++ runtime do not have complete "
+              "standalone notice metadata in this repository.\n\n";
+    for (const auto& license : licenses) {
+        std::ifstream stream(license, std::ios::binary);
+        if (!stream) {
+            continue;
+        }
+        output << "===== " << license.lexically_relative(engineRoot).generic_string()
+               << " =====\n";
+        output << stream.rdbuf() << "\n\n";
+    }
+    return output.str();
+}
+
+std::string PowerShellLiteral(std::string value) {
+    std::size_t position = 0;
+    while ((position = value.find('\'', position)) != std::string::npos) {
+        value.insert(position, "'");
+        position += 2;
+    }
+    return "'" + value + "'";
+}
+
+std::string UtcTimestamp() {
+    const std::time_t now = std::chrono::system_clock::to_time_t(
+        std::chrono::system_clock::now());
+    std::tm utc{};
+#ifdef _WIN32
+    gmtime_s(&utc, &now);
+#else
+    gmtime_r(&now, &utc);
+#endif
+    std::ostringstream stream;
+    stream << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+    return stream.str();
+}
+
+} // namespace
+
+std::string PackageStager::sanitizeProductName(const std::string& productName) {
+    std::string result;
+    result.reserve(productName.size());
+    for (unsigned char character : productName) {
+        if (std::isalnum(character) || character == '-' || character == '_') {
+            result.push_back(static_cast<char>(character));
+        } else if (std::isspace(character) && !result.empty() && result.back() != '_') {
+            result.push_back('_');
+        }
+    }
+    while (!result.empty() && (result.back() == '_' || result.back() == '.')) {
+        result.pop_back();
+    }
+    if (result.empty()) {
+        return "HephaestusGame";
+    }
+    std::string upper = result;
+    std::transform(upper.begin(), upper.end(), upper.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    static const std::set<std::string> reserved = {
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5",
+        "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4",
+        "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    };
+    if (reserved.contains(upper)) {
+        result.insert(result.begin(), '_');
+    }
+    return result;
+}
+
+PackageStageResult PackageStager::stage(const BuildRequest& request,
+                                        const RuntimeArtifacts& runtime) const {
+    PackageStageResult result;
+    const std::string product = sanitizeProductName(request.productName);
+    const auto output = request.outputRoot / product;
+    const auto staging = request.outputRoot / ("." + product + "_building");
+    const auto backup = request.outputRoot / ("." + product + "_previous");
+    result.outputPath = output;
+
+    std::error_code ec;
+    std::filesystem::create_directories(request.outputRoot, ec);
+    std::filesystem::remove_all(staging, ec);
+    ec.clear();
+    std::filesystem::create_directories(staging, ec);
+    if (ec) {
+        Problem(result, ProblemSeverity::Error, "PACKAGE_STAGE_CREATE_FAILED",
+                "Could not create transactional staging directory", ec.message());
+        return result;
+    }
+
+    const auto fail = [&]() {
+        std::error_code cleanupError;
+        std::filesystem::remove_all(staging, cleanupError);
+        return result;
+    };
+
+    if (Cancelled(request)) {
+        result.cancelled = true;
+        return fail();
+    }
+    if (!CopyTree(request.projectRoot / "assets", staging / "assets", output / "assets",
+                  request, result) ||
+        !CopyTree(request.projectRoot / "scripts", staging / "scripts", output / "scripts",
+                  request, result) ||
+        !CopyTree(request.engineRoot / ".engine" / "meshes", staging / ".engine" / "meshes",
+                  output / ".engine" / "meshes", request, result) ||
+        !CopyTree(request.projectRoot / ".engine" / "meshes", staging / ".engine" / "meshes",
+                  output / ".engine" / "meshes", request, result) ||
+        !CopyTree(runtime.shadersDirectory, staging / "shaders", output / "shaders",
+                  request, result)) {
+        return fail();
+    }
+
+    std::string copyError;
+    const auto executable = staging / (product + ".exe");
+    if (!CopyOne(runtime.executable, executable, output / (product + ".exe"),
+                 request.incremental && !request.clean, copyError) ||
+        !CopyOne(runtime.luaLibrary, staging / "lua54.dll", output / "lua54.dll",
+                 request.incremental && !request.clean, copyError)) {
+        Problem(result, ProblemSeverity::Error, "PACKAGE_RUNTIME_COPY_FAILED",
+                "Could not copy runtime prerequisite", copyError);
+        return fail();
+    }
+    const std::string startup = request.startupScene;
+    std::ostringstream ini;
+    ini << "[Game]\nproject_name = " << request.productName
+        << "\nwindow_title = "
+        << (request.window.title.empty() ? request.productName : request.window.title)
+        << "\nscene = " << startup
+        << "\nversion = " << request.version
+        << "\ncompany = " << request.company
+        << "\n\n[Display]\nwindow_width = " << request.window.width
+        << "\nwindow_height = " << request.window.height << "\nfullscreen = "
+        << (request.window.fullscreen ? "true" : "false") << "\nresizable="
+        << (request.window.resizable ? "true" : "false") << "\nvsync = "
+        << (request.window.vsync ? "true" : "false") << "\n";
+    if (!WriteText(staging / "game.ini", ini.str(), result) ||
+        !WriteText(staging / "README.txt",
+                   request.productName + " " + request.version +
+                   "\n\nRun " + product + ".exe to start the game.\n"
+                   "Requires Windows x64, a Vulkan-capable GPU with current drivers, "
+                   "and the Microsoft Visual C++ 2015-2022 x64 Redistributable.\n"
+                   "The Hephaestus Editor, engine source, CMake, and Vulkan SDK are "
+                   "not required to run this package.\n", result)) {
+        return fail();
+    }
+    const std::string notices = LicenseNotices(request.engineRoot);
+    if (!notices.empty() &&
+        !WriteText(staging / "ThirdPartyNotices.txt", notices, result)) {
+        return fail();
+    }
+    Problem(result, ProblemSeverity::Warning, "THIRD_PARTY_LICENSE_REVIEW_REQUIRED",
+            "Third-party notice metadata is incomplete",
+            "Review Lua, Vulkan, VMA, nlohmann/json, stb, and MSVC redistribution "
+            "requirements before a public release.");
+
+    BuildManifestData manifest;
+    manifest.productName = request.productName;
+    manifest.version = request.version;
+    manifest.company = request.company;
+    manifest.engineVersion = request.engineVersion;
+    manifest.configuration = ToString(request.configuration);
+    manifest.timestampUtc = UtcTimestamp();
+    manifest.startupScene = startup;
+    manifest.executable = product + ".exe";
+    manifest.files = Inventory(staging);
+    std::string manifestError;
+    if (!BuildManifest::writeJson(staging / "build_manifest.json", manifest, &manifestError) ||
+        !BuildManifest::writeExportList(staging / "export_manifest.txt", manifest, &manifestError)) {
+        Problem(result, ProblemSeverity::Error, "PACKAGE_MANIFEST_FAILED",
+                "Could not write package manifests", manifestError);
+        return fail();
+    }
+
+    if (Cancelled(request)) {
+        result.cancelled = true;
+        return fail();
+    }
+
+    std::filesystem::remove_all(backup, ec);
+    ec.clear();
+    if (std::filesystem::exists(output, ec)) {
+        std::filesystem::rename(output, backup, ec);
+        if (ec) {
+            Problem(result, ProblemSeverity::Error, "PACKAGE_OUTPUT_LOCKED",
+                    "Could not replace the previous package",
+                    "The packaged game may still be running, or a file is locked: " +
+                        ec.message());
+            return fail();
+        }
+    }
+    std::filesystem::rename(staging, output, ec);
+    if (ec) {
+        std::error_code restoreError;
+        if (std::filesystem::exists(backup, restoreError)) {
+            std::filesystem::rename(backup, output, restoreError);
+        }
+        Problem(result, ProblemSeverity::Error, "PACKAGE_COMMIT_FAILED",
+                "Could not commit the staged package", ec.message());
+        return fail();
+    }
+    std::filesystem::remove_all(backup, ec);
+
+    const auto inventory = Inventory(output);
+    result.packageBytes = 0;
+    for (const auto& file : inventory) {
+        result.packageBytes += file.bytes;
+    }
+    result.largestFiles = inventory;
+    std::sort(result.largestFiles.begin(), result.largestFiles.end(),
+              [](const auto& a, const auto& b) {
+                  return a.bytes != b.bytes ? a.bytes > b.bytes : a.path < b.path;
+              });
+    if (result.largestFiles.size() > 10) {
+        result.largestFiles.resize(10);
+    }
+    if (request.createZip) {
+#ifdef _WIN32
+        const auto zipPath = request.outputRoot / (product + ".zip");
+        const std::string command =
+            "powershell -NoProfile -NonInteractive -Command \"Compress-Archive -Path " +
+            PowerShellLiteral((output / "*").string()) + " -DestinationPath " +
+            PowerShellLiteral(zipPath.string()) + " -Force\"";
+        if (std::system(command.c_str()) != 0) {
+            Problem(result, ProblemSeverity::Warning, "PACKAGE_ZIP_FAILED",
+                    "The package succeeded but its ZIP archive could not be created",
+                    zipPath.generic_string());
+        }
+#else
+        Problem(result, ProblemSeverity::Warning, "PACKAGE_ZIP_UNSUPPORTED",
+                "ZIP creation is currently supported only on Windows");
+#endif
+    }
+    result.executablePath = output / (product + ".exe");
+    result.success = true;
+    return result;
+}
+
+} // namespace Hephaestus::Build

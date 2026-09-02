@@ -496,7 +496,8 @@ bool Bootstrap::IsPackagedBuild() {
     std::filesystem::path exeDir = GetExecutableDirectory();
     
     // Packaged builds have these markers
-    if (std::filesystem::exists(exeDir / "export_manifest.txt") ||
+    if (std::filesystem::exists(exeDir / "game.ini") ||
+        std::filesystem::exists(exeDir / "export_manifest.txt") ||
         std::filesystem::exists(exeDir / "PACKAGE_MANIFEST.txt") ||
         std::filesystem::exists(exeDir / "RunGame.bat")) {
         return true;

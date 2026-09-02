@@ -59,6 +59,8 @@ param(
     [switch]$DetailedLog = $false
 )
 
+Write-Warning "export_game.ps1 is deprecated. Use the editor Build > Package workflow or HephaestusBuild.exe. This compatibility path will be removed in a future release."
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper Functions
 # ─────────────────────────────────────────────────────────────────────────────

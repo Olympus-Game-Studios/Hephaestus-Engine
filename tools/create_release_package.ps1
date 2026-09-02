@@ -58,11 +58,29 @@ Write-Info "Copying executable..."
 Copy-Item (Join-Path $BuildDir "HephaestusEngine.exe") $OutputPath
 Write-Success "HephaestusEngine.exe"
 
-# Copy Lua DLL if present
-$luaDll = Join-Path $BuildDir "lua.dll"
-if (Test-Path $luaDll) {
-    Copy-Item $luaDll $OutputPath
-    Write-Success "lua.dll"
+# Include the generic player so projects can be packaged from this portable
+# editor without requiring CMake or an engine source checkout.
+$gameExe = Join-Path $BuildDir "HephaestusGame.exe"
+if (Test-Path $gameExe) {
+    Copy-Item $gameExe $OutputPath
+    Write-Success "HephaestusGame.exe"
+} else {
+    Write-Warn "HephaestusGame.exe is missing; this editor package cannot package games without developer tools"
+}
+$buildCli = Join-Path $BuildDir "HephaestusBuild.exe"
+if (Test-Path $buildCli) {
+    Copy-Item $buildCli $OutputPath
+    Write-Success "HephaestusBuild.exe"
+}
+
+# Normalize Lua's packaged filename to the name expected by game distributions.
+$luaDll = @(
+    (Join-Path $BuildDir "lua54.dll"),
+    (Join-Path $BuildDir "lua.dll")
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($luaDll) {
+    Copy-Item $luaDll (Join-Path $OutputPath "lua54.dll")
+    Write-Success "lua54.dll"
 }
 
 # Copy shaders
@@ -132,10 +150,11 @@ $packageType = if ($RuntimeMode) { "Runtime" } else { "Editor" }
 #
 # Required folder structure:
 #   HephaestusEngine.exe  - Main executable
+#   HephaestusGame.exe    - Generic game player used by Project > Package
 #   shaders/              - Compiled SPIR-V shaders
 #   assets/               - Game assets (textures, meshes, scenes)
 #   editor/               - Editor resources (icons, fonts)
-#   lua.dll               - Lua runtime (optional)
+#   lua54.dll             - Lua runtime used by packaged games
 #
 # System Requirements:
 #   - Windows 10/11 (64-bit)

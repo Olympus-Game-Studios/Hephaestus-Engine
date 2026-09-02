@@ -25,7 +25,8 @@ struct VulkanSwapchain {
     VkImageView depthImageView{};
 
     // Legacy GLFW-based initialization (runtime/legacy editor path)
-    void Init(VkPhysicalDevice phys, VkDevice dev, VkSurfaceKHR surf, GLFWwindow* window, VmaAllocator alloc);
+    void Init(VkPhysicalDevice phys, VkDevice dev, VkSurfaceKHR surf, GLFWwindow* window,
+              VmaAllocator alloc, bool vsync = true);
     void Recreate(GLFWwindow* window);
     
     // Native surface initialization for Qt editor (no GLFW dependency)
@@ -38,4 +39,5 @@ struct VulkanSwapchain {
 private:
     // Internal initialization shared by both paths
     void initInternal(uint32_t width, uint32_t height);
+    bool m_vsync = true;
 };
