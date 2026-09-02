@@ -1,6 +1,7 @@
 # Scene Export & Packaging Guide
 
-**Status:** ✅ Implemented  
+**Status:** Historical — superseded by the shared BuildService pipeline.
+**Current guide:** [`../Guides/GameExportGuide.md`](../Guides/GameExportGuide.md)
 **Issue:** [#2 - Editor export & packaging](https://github.com/Olympus-Game-Studios/Hephaestus-Engine/issues/2)  
 **Last Updated:** November 19, 2025
 

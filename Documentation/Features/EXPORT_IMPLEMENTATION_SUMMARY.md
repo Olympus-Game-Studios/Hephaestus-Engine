@@ -1,5 +1,8 @@
 # Implementation Summary: Export & Packaging System
 
+> Historical implementation summary. `SceneExporter` was retired after the
+> shared non-Qt BuildService became the canonical packaging pipeline.
+
 **Issue:** [#2 - Editor export & packaging](https://github.com/Olympus-Game-Studios/Hephaestus-Engine/issues/2)  
 **Status:** ✅ Complete  
 **Date:** November 19, 2025  

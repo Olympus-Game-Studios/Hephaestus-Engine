@@ -19,6 +19,7 @@ class PackageStager {
 public:
     PackageStageResult stage(const BuildRequest& request,
                              const RuntimeArtifacts& runtime) const;
+    PackageStageResult clean(const BuildRequest& request) const;
 
     static std::string sanitizeProductName(const std::string& productName);
 };

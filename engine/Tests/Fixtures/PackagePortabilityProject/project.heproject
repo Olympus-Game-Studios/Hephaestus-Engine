@@ -1,0 +1,7 @@
+{
+  "formatVersion": 1,
+  "name": "Stage 6 Portability",
+  "version": "1.0.0",
+  "companyName": "Hephaestus Tests",
+  "defaultScene": "assets/scenes/Portability.hpscene"
+}

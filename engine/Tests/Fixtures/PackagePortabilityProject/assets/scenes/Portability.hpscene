@@ -1,0 +1,162 @@
+{
+  "schema": "HephaestusScene",
+  "version": 1,
+  "name": "Stage6Portability",
+  "entityCount": 5,
+  "prefabInstanceCount": 1,
+  "prefabInstances": [
+    {
+      "prefabPath": "assets/prefabs/PortabilityLamp.hpprefab",
+      "prefabGuid": "stage6-portability-lamp",
+      "instanceId": "stage6-portability-instance",
+      "rootNodeId": "root",
+      "rootTransform": {
+        "position": [2.0, 1.0, 0.0],
+        "rotation": [0.0, 0.0, 0.0],
+        "scale": [1.0, 1.0, 1.0]
+      }
+    }
+  ],
+  "entities": [
+    {
+      "id": 1,
+      "name": "MainCamera",
+      "parent": null,
+      "components": {
+        "Transform": {
+          "position": [0.0, 2.5, 7.0],
+          "rotation": [-0.2, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "Camera": {
+          "fov": 60.0,
+          "nearPlane": 0.1,
+          "farPlane": 500.0,
+          "projection": "Perspective",
+          "isActive": true
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Environment",
+      "parent": null,
+      "components": {
+        "Environment": {
+          "type": "HDRI",
+          "hdriPath": ".engine/hdris/portability.hdr",
+          "hdriIntensity": 1.0,
+          "rotationYaw": 0.0,
+          "useAsIBL": true,
+          "reflectionIntensity": 1.0
+        }
+      }
+    },
+    {
+      "id": 3,
+      "name": "PhysicsCube",
+      "parent": null,
+      "components": {
+        "Transform": {
+          "position": [0.0, 2.0, 0.0],
+          "rotation": [0.0, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "MeshRenderer": {
+          "visible": true,
+          "hideInGame": false,
+          "meshSource": "builtin://cube",
+          "meshImported": false,
+          "submeshCount": 1,
+          "materialIndices": [0],
+          "appliedMaterialPaths": ["assets/materials/Portability.hematerial"],
+          "backfaceCulling": false
+        },
+        "PhysicsShape": {
+          "type": "Box",
+          "extents": [0.5, 0.5, 0.5],
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "RigidBody": {
+          "mass": 1.0,
+          "isStatic": false,
+          "isTrigger": false,
+          "useGravity": true,
+          "freezeRotation": false,
+          "friction": 0.5,
+          "restitution": 0.1
+        },
+        "LuaScript": {
+          "scriptPath": "scripts/portability.lua",
+          "functionOnAwake": "onAwake",
+          "functionOnUpdate": "onUpdate",
+          "functionOnDestroy": "onDestroy",
+          "enabled": true,
+          "variables": {}
+        },
+        "AudioSource": {
+          "clipPath": "assets/audio/portability.wav",
+          "enabled": true,
+          "playOnStart": true,
+          "loop": false,
+          "volume": 0.05
+        }
+      }
+    },
+    {
+      "id": 4,
+      "name": "Ground",
+      "parent": null,
+      "components": {
+        "Transform": {
+          "position": [0.0, -0.5, 0.0],
+          "rotation": [0.0, 0.0, 0.0],
+          "scale": [8.0, 0.5, 8.0]
+        },
+        "MeshRenderer": {
+          "visible": true,
+          "hideInGame": false,
+          "meshSource": "builtin://cube",
+          "meshImported": false,
+          "submeshCount": 1,
+          "materialIndices": [0],
+          "appliedMaterialPaths": ["assets/materials/Portability.hematerial"],
+          "backfaceCulling": false
+        },
+        "PhysicsShape": {
+          "type": "Box",
+          "extents": [4.0, 0.25, 4.0],
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "RigidBody": {
+          "mass": 0.0,
+          "isStatic": true,
+          "isTrigger": false,
+          "useGravity": false,
+          "freezeRotation": true,
+          "friction": 0.8,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "id": 5,
+      "name": "KeyLight",
+      "parent": null,
+      "components": {
+        "Transform": {
+          "position": [3.0, 6.0, 4.0],
+          "rotation": [-0.7, 0.4, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "Light": {
+          "type": "Directional",
+          "enabled": true,
+          "color": [1.0, 0.95, 0.85],
+          "intensity": 1.0,
+          "castsShadow": true
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "PortabilityMaterial",
+  "albedo": [1.0, 1.0, 1.0],
+  "metallic": 0.1,
+  "roughness": 0.55,
+  "ao": 1.0,
+  "emissive": [0.0, 0.0, 0.0],
+  "emissiveStrength": 0.0,
+  "reflectionStrength": 0.5,
+  "useAlbedoTexture": true,
+  "albedoTexturePath": "assets/textures/portability.ppm",
+  "useNormalTexture": false,
+  "normalTexturePath": "",
+  "useRoughnessTexture": false,
+  "roughnessTexturePath": "",
+  "useAoTexture": false,
+  "aoTexturePath": ""
+}

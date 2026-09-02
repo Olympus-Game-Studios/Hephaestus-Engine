@@ -1,5 +1,8 @@
 # Export & Packaging - Quick Reference
 
+> Historical reference. Use [Game Runtime and Export Guide](../Guides/GameExportGuide.md)
+> for the canonical BuildService-based workflow.
+
 ## Quick Export (2 Steps!)
 
 ### 1. Editor Export

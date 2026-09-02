@@ -22,7 +22,8 @@ void Usage() {
         << "  --engine-root <path>\n"
         << "  --icon <path-to-ico>\n"
         << "  --validate-only\n"
-        << "  --clean\n"
+        << "  --clean              Rebuild package without incremental reuse\n"
+        << "  --clean-output       Remove the current package and staging data\n"
         << "  --unused-report\n"
         << "  --zip\n";
 }
@@ -72,8 +73,8 @@ int main(int argc, char** argv) {
     using namespace Hephaestus::Build;
     BuildRequest request;
     request.engineVersion = HEPHAESTUS_VERSION_STRING;
-    request.engineRoot = std::filesystem::current_path();
     request.runtimeSearchRoot = ExecutableDirectory();
+    request.engineRoot = RuntimeLocator::discoverEngineRoot(request.runtimeSearchRoot);
     request.action = BuildAction::Package;
 
     for (int index = 1; index < argc; ++index) {
@@ -109,6 +110,8 @@ int main(int argc, char** argv) {
         } else if (argument == "--clean") {
             request.clean = true;
             request.incremental = false;
+        } else if (argument == "--clean-output") {
+            request.action = BuildAction::Clean;
         } else if (argument == "--unused-report") {
             request.reportUnusedAssets = true;
         } else if (argument == "--zip") {
@@ -130,7 +133,7 @@ int main(int argc, char** argv) {
     }
     request.projectRoot = std::filesystem::absolute(request.projectRoot);
     if (request.outputRoot.empty()) {
-        request.outputRoot = request.projectRoot / "Build";
+        request.outputRoot = request.projectRoot / "Builds";
     }
     LoadProjectMetadata(request);
     request.onLog = [](const std::string& message) { std::cout << message << '\n'; };

@@ -58,6 +58,12 @@ Write-Info "Copying executable..."
 Copy-Item (Join-Path $BuildDir "HephaestusEngine.exe") $OutputPath
 Write-Success "HephaestusEngine.exe"
 
+$launcherExe = Join-Path $BuildDir "HephaestusLauncher.exe"
+if (Test-Path $launcherExe) {
+    Copy-Item $launcherExe $OutputPath
+    Write-Success "HephaestusLauncher.exe"
+}
+
 # Include the generic player so projects can be packaged from this portable
 # editor without requiring CMake or an engine source checkout.
 $gameExe = Join-Path $BuildDir "HephaestusGame.exe"
@@ -71,6 +77,19 @@ $buildCli = Join-Path $BuildDir "HephaestusBuild.exe"
 if (Test-Path $buildCli) {
     Copy-Item $buildCli $OutputPath
     Write-Success "HephaestusBuild.exe"
+}
+
+# Copy the Qt runtime already deployed beside the built Editor/Launcher.
+Get-ChildItem $BuildDir -Filter "Qt6*.dll" -File | ForEach-Object {
+    Copy-Item $_.FullName $OutputPath
+    Write-Success $_.Name
+}
+foreach ($pluginDirectory in @("platforms", "iconengines")) {
+    $pluginSource = Join-Path $BuildDir $pluginDirectory
+    if (Test-Path $pluginSource) {
+        Copy-Item -Recurse $pluginSource (Join-Path $OutputPath $pluginDirectory)
+        Write-Success "$pluginDirectory/"
+    }
 }
 
 # Normalize Lua's packaged filename to the name expected by game distributions.
@@ -136,6 +155,20 @@ if (Test-Path $editorSource) {
     Write-Warn "No editor directory found"
 }
 
+# Copy builtin runtime content required when packaging without a source checkout.
+foreach ($engineContent in @("meshes", "hdris")) {
+    $engineContentSource = Join-Path $ProjectRoot ".engine\$engineContent"
+    if ($engineContent -eq "hdris" -and -not (Test-Path $engineContentSource)) {
+        $engineContentSource = Join-Path $ProjectRoot "assets\textures\hdris"
+    }
+    if (Test-Path $engineContentSource) {
+        $engineContentDest = Join-Path $OutputPath ".engine\$engineContent"
+        New-Item -ItemType Directory -Path (Split-Path $engineContentDest -Parent) -Force | Out-Null
+        Copy-Item -Recurse $engineContentSource $engineContentDest
+        Write-Success ".engine/$engineContent"
+    }
+}
+
 # Create README file (doesn't trigger runtime mode)
 $readmePath = Join-Path $OutputPath "README.txt"
 $packageType = if ($RuntimeMode) { "Runtime" } else { "Editor" }
@@ -154,6 +187,7 @@ $packageType = if ($RuntimeMode) { "Runtime" } else { "Editor" }
 #   shaders/              - Compiled SPIR-V shaders
 #   assets/               - Game assets (textures, meshes, scenes)
 #   editor/               - Editor resources (icons, fonts)
+#   .engine/              - Builtin meshes and HDRIs used by packaged projects
 #   lua54.dll             - Lua runtime used by packaged games
 #
 # System Requirements:

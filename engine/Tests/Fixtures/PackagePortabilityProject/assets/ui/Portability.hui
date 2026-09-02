@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "controller": "assets/ui/PortabilityUI.lua",
+  "root": {
+    "type": "Panel",
+    "id": "root",
+    "properties": {
+      "anchor": "Stretch"
+    },
+    "style": {
+      "backgroundColor": [0.0, 0.0, 0.0, 0.0]
+    },
+    "children": [
+      {
+        "type": "Text",
+        "id": "status",
+        "properties": {
+          "text": "Stage 6 standalone portability",
+          "position": [24, 24]
+        },
+        "style": {
+          "fontSize": 22,
+          "textColor": [1.0, 1.0, 1.0, 1.0]
+        }
+      }
+    ]
+  }
+}

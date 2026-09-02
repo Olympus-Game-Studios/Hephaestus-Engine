@@ -41,7 +41,7 @@ int main() {
     Write(root / ".hephaestus" / "project_settings.json",
           R"({"projectInfo":{"defaultScene":"assets/scenes/Main.hpscene"}})");
     Write(root / "assets" / "scenes" / "Main.hpscene",
-          R"({"entities":[{"meshAssetPath":"assets/meshes/missing.glb","scriptPath":"assets/scripts/missing.lua","clipPath":"assets/audio/music.ogg","albedoTexturePath":"C:/outside/missing.png"}]})");
+          R"({"entities":[{"meshSource":"assets/meshes/missing.glb","scriptPath":"assets/scripts/missing.lua","clipPath":"assets/audio/music.ogg","albedoTexturePath":"C:/outside/missing.png"}]})");
     Write(root / "assets" / "audio" / "music.ogg", "not real audio");
     Write(root / "assets" / "ui" / "Hud.hui",
           R"({"controller":"assets/scripts/missing-controller.lua","imageId":"assets/textures/missing-ui.png"})");

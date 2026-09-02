@@ -1,0 +1,33 @@
+{
+  "schema": "HephaestusPrefab",
+  "assetVersion": 1,
+  "guid": "stage6-portability-lamp",
+  "name": "PortabilityLamp",
+  "rootNodeId": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "PortabilityLamp",
+      "parentId": null,
+      "transform": {
+        "position": [0.0, 0.0, 0.0],
+        "rotation": [0.0, 0.0, 0.0],
+        "scale": [1.0, 1.0, 1.0]
+      },
+      "components": [
+        {
+          "type": "Light",
+          "enabled": true,
+          "data": {
+            "type": "Point",
+            "enabled": true,
+            "color": [0.4, 0.7, 1.0],
+            "intensity": 2.0,
+            "range": 8.0
+          }
+        }
+      ],
+      "exposed": []
+    }
+  ]
+}

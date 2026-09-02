@@ -959,6 +959,10 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/.engine/meshes/
     DESTINATION .engine/meshes
     OPTIONAL
 )
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/hdris/
+    DESTINATION .engine/hdris
+    OPTIONAL
+)
 
 # Install assets
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets/
@@ -984,12 +988,6 @@ if(EXISTS "$ENV{USERPROFILE}/vcpkg/installed/x64-windows/bin/lua.dll")
         DESTINATION .
     )
 endif()
-
-# Create a runtime marker file for auto-detection
-install(CODE "
-    file(WRITE \"\${CMAKE_INSTALL_PREFIX}/PACKAGE_MANIFEST.txt\" 
-         \"Hephaestus Engine Runtime Package\\nGenerated: ${CMAKE_CURRENT_TIMESTAMP}\\n\")
-")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Material compatibility tests
@@ -1195,6 +1193,26 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME ProjectValidation
         COMMAND ProjectValidationTests
+    )
+
+    add_executable(RuntimeLocatorTests
+        engine/Tests/RuntimeLocatorTests.cpp
+    )
+    target_link_libraries(RuntimeLocatorTests PRIVATE HephaestusBuildCore)
+    target_include_directories(RuntimeLocatorTests PRIVATE engine extern)
+    add_test(
+        NAME RuntimeLocator
+        COMMAND RuntimeLocatorTests
+    )
+
+    add_executable(BuildServiceTests
+        engine/Tests/BuildServiceTests.cpp
+    )
+    target_link_libraries(BuildServiceTests PRIVATE HephaestusBuildCore)
+    target_include_directories(BuildServiceTests PRIVATE engine extern)
+    add_test(
+        NAME BuildService
+        COMMAND BuildServiceTests
     )
 
     add_executable(PackageLayoutTests

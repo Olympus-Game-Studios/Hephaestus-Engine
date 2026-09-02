@@ -10,6 +10,13 @@
 #include <set>
 #include <sstream>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace Hephaestus::Build {
 namespace {
 
@@ -70,6 +77,7 @@ bool CopyOne(const std::filesystem::path& source,
 bool CopyTree(const std::filesystem::path& source,
               const std::filesystem::path& destination,
               const std::filesystem::path& previous,
+              const std::string& stageName,
               const BuildRequest& request,
               PackageStageResult& result) {
     std::error_code ec;
@@ -90,10 +98,19 @@ bool CopyTree(const std::filesystem::path& source,
         return false;
     }
     std::sort(files.begin(), files.end());
-    for (const auto& file : files) {
+    if (request.onProgress) {
+        request.onProgress(0.0F, stageName);
+    }
+    for (std::size_t index = 0; index < files.size(); ++index) {
+        const auto& file = files[index];
         if (Cancelled(request)) {
             result.cancelled = true;
             return false;
+        }
+        if (request.onProgress) {
+            request.onProgress(
+                0.0F, stageName + " " + std::to_string(index + 1) + " / " +
+                          std::to_string(files.size()));
         }
         const auto relative = file.lexically_relative(source);
         std::string error;
@@ -180,6 +197,24 @@ std::string UtcTimestamp() {
     return stream.str();
 }
 
+bool IsLockedForReplacement(const std::filesystem::path& path) {
+#ifdef _WIN32
+    if (!std::filesystem::is_regular_file(path)) {
+        return false;
+    }
+    const HANDLE handle = CreateFileW(
+        path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return true;
+    }
+    CloseHandle(handle);
+#else
+    (void)path;
+#endif
+    return false;
+}
+
 } // namespace
 
 std::string PackageStager::sanitizeProductName(const std::string& productName) {
@@ -212,6 +247,38 @@ std::string PackageStager::sanitizeProductName(const std::string& productName) {
     return result;
 }
 
+PackageStageResult PackageStager::clean(const BuildRequest& request) const {
+    PackageStageResult result;
+    const std::string product = sanitizeProductName(request.productName);
+    const auto output = request.outputRoot / product;
+    result.outputPath = output;
+
+    if (IsLockedForReplacement(output / (product + ".exe")) ||
+        IsLockedForReplacement(output / "lua54.dll") ||
+        IsLockedForReplacement(output / "lua.dll")) {
+        Problem(result, ProblemSeverity::Error, "PACKAGE_OUTPUT_LOCKED",
+                "Cannot clean the current package because a runtime file is in use",
+                "Stop the packaged game and try again.");
+        return result;
+    }
+
+    std::error_code ec;
+    for (const auto& path : {
+             request.outputRoot / ("." + product + "_building"),
+             request.outputRoot / ("." + product + "_previous"),
+             output}) {
+        std::filesystem::remove_all(path, ec);
+        if (ec) {
+            Problem(result, ProblemSeverity::Error, "PACKAGE_CLEAN_FAILED",
+                    "Could not remove package output",
+                    path.generic_string() + ": " + ec.message());
+            return result;
+        }
+    }
+    result.success = true;
+    return result;
+}
+
 PackageStageResult PackageStager::stage(const BuildRequest& request,
                                         const RuntimeArtifacts& runtime) const {
     PackageStageResult result;
@@ -221,6 +288,18 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
     const auto backup = request.outputRoot / ("." + product + "_previous");
     result.outputPath = output;
 
+    if (IsLockedForReplacement(output / (product + ".exe")) ||
+        IsLockedForReplacement(output / "lua54.dll") ||
+        IsLockedForReplacement(output / "lua.dll")) {
+        Problem(result, ProblemSeverity::Error, "PACKAGE_OUTPUT_LOCKED",
+                "Cannot replace the current package because a runtime file is in use",
+                "Stop the packaged game or choose a different output directory.");
+        return result;
+    }
+
+    if (request.onProgress) {
+        request.onProgress(0.0F, "Creating staging directory");
+    }
     std::error_code ec;
     std::filesystem::create_directories(request.outputRoot, ec);
     std::filesystem::remove_all(staging, ec);
@@ -243,15 +322,17 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
         return fail();
     }
     if (!CopyTree(request.projectRoot / "assets", staging / "assets", output / "assets",
-                  request, result) ||
+                  "Copying assets", request, result) ||
         !CopyTree(request.projectRoot / "scripts", staging / "scripts", output / "scripts",
-                  request, result) ||
+                  "Copying scripts", request, result) ||
         !CopyTree(request.engineRoot / ".engine" / "meshes", staging / ".engine" / "meshes",
-                  output / ".engine" / "meshes", request, result) ||
-        !CopyTree(request.projectRoot / ".engine" / "meshes", staging / ".engine" / "meshes",
-                  output / ".engine" / "meshes", request, result) ||
+                  output / ".engine" / "meshes", "Copying builtin meshes", request, result) ||
+        !CopyTree(request.engineRoot / ".engine" / "hdris", staging / ".engine" / "hdris",
+                  output / ".engine" / "hdris", "Copying builtin HDRIs", request, result) ||
+        !CopyTree(request.projectRoot / ".engine", staging / ".engine",
+                  output / ".engine", "Copying project runtime content", request, result) ||
         !CopyTree(runtime.shadersDirectory, staging / "shaders", output / "shaders",
-                  request, result)) {
+                  "Copying shaders", request, result)) {
         return fail();
     }
 
@@ -266,17 +347,17 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
         return fail();
     }
     const std::string startup = request.startupScene;
+    if (request.onProgress) {
+        request.onProgress(0.0F, "Writing configuration");
+    }
     std::ostringstream ini;
     ini << "[Game]\nproject_name = " << request.productName
         << "\nwindow_title = "
         << (request.window.title.empty() ? request.productName : request.window.title)
         << "\nscene = " << startup
-        << "\nversion = " << request.version
-        << "\ncompany = " << request.company
         << "\n\n[Display]\nwindow_width = " << request.window.width
         << "\nwindow_height = " << request.window.height << "\nfullscreen = "
-        << (request.window.fullscreen ? "true" : "false") << "\nresizable="
-        << (request.window.resizable ? "true" : "false") << "\nvsync = "
+        << (request.window.fullscreen ? "true" : "false") << "\nvsync = "
         << (request.window.vsync ? "true" : "false") << "\n";
     if (!WriteText(staging / "game.ini", ini.str(), result) ||
         !WriteText(staging / "README.txt",
@@ -297,6 +378,11 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
             "Third-party notice metadata is incomplete",
             "Review Lua, Vulkan, VMA, nlohmann/json, stb, and MSVC redistribution "
             "requirements before a public release.");
+    if (product != request.productName) {
+        Problem(result, ProblemSeverity::Warning, "PACKAGE_PRODUCT_NAME_SANITIZED",
+                "The product name was adjusted for a Windows filename",
+                request.productName + " -> " + product);
+    }
 
     BuildManifestData manifest;
     manifest.productName = request.productName;
@@ -321,6 +407,9 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
         return fail();
     }
 
+    if (request.onProgress) {
+        request.onProgress(0.0F, "Finalising package");
+    }
     std::filesystem::remove_all(backup, ec);
     ec.clear();
     if (std::filesystem::exists(output, ec)) {

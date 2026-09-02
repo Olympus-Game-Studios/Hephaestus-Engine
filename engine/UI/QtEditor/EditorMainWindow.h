@@ -49,7 +49,6 @@
 #include "../../UI/InspectorSelectionModel.h"
 
 class EditorAssetPipeline;
-class QProcess;
 
 namespace Hephaestus {
 
@@ -225,7 +224,7 @@ private slots:
     void onPackageAndRun();
     void onRunLastPackage();
     void onCleanPackage();
-    void startBuild(Hephaestus::Build::BuildAction action, bool clean = false);
+    void startBuild(Hephaestus::Build::BuildAction action);
 
     // Engine callbacks
     void onViewportReady();
@@ -351,11 +350,8 @@ private:
     QPlainTextEdit* m_buildOutputText = nullptr;
     QTreeWidget* m_buildProblems = nullptr;
     QThread* m_buildThread = nullptr;
-    QProcess* m_buildProcess = nullptr; // Legacy exporter state; removed after Stage 6 migration settles.
     QToolButton* m_buildBtn = nullptr;
-    bool m_buildExportPhase = false;
     std::shared_ptr<std::atomic_bool> m_buildCancel;
-    BuildSettings m_lastBuildSettings;
 
     // Add Actors panel
     AddActorsPanel* m_addActorsPanel = nullptr;

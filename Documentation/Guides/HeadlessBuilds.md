@@ -23,6 +23,12 @@ project assets; it does not compile project-specific gameplay code.
   --output C:\Builds `
   --clean `
   --zip
+
+# Explicitly remove the current package and temporary staging data
+.\build\Release\HephaestusBuild.exe `
+  --project C:\Projects\MyGame `
+  --output C:\Builds `
+  --clean-output
 ```
 
 Exit code `0` means validation or packaging succeeded. A non-zero exit code

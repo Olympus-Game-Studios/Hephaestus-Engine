@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <set>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -45,7 +44,58 @@ EditorProblem Missing(std::string code, std::string message, std::string detail)
     return {ProblemSeverity::Error, std::move(code), std::move(message), std::move(detail)};
 }
 
+std::filesystem::path FindLua(const std::filesystem::path& root) {
+    std::error_code ec;
+    for (const char* name : {"lua54.dll", "lua.dll"}) {
+        const auto candidate = root / name;
+        if (std::filesystem::is_regular_file(candidate, ec)) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
+RuntimeArtifacts ProbeRuntimeRoot(const std::filesystem::path& root) {
+    RuntimeArtifacts artifacts;
+    std::error_code ec;
+    const auto executable = root / "HephaestusGame.exe";
+    if (std::filesystem::is_regular_file(executable, ec)) {
+        artifacts.executable = executable;
+    }
+    if (HasSpirv(root / "shaders")) {
+        artifacts.shadersDirectory = root / "shaders";
+    }
+    artifacts.luaLibrary = FindLua(root);
+    return artifacts;
+}
+
+bool HasCMakeExecutable() {
+#ifdef _WIN32
+    wchar_t resolved[MAX_PATH]{};
+    return SearchPathW(nullptr, L"cmake.exe", nullptr, MAX_PATH, resolved, nullptr) > 0;
+#else
+    return std::system("command -v cmake >/dev/null 2>&1") == 0;
+#endif
+}
+
 } // namespace
+
+std::filesystem::path RuntimeLocator::discoverEngineRoot(
+    const std::filesystem::path& executableDirectory) {
+    std::filesystem::path candidate = executableDirectory;
+    std::error_code ec;
+    for (int depth = 0; depth < 5 && !candidate.empty(); ++depth) {
+        if (std::filesystem::is_regular_file(candidate / "CMakeLists.txt", ec)) {
+            return candidate;
+        }
+        const auto parent = candidate.parent_path();
+        if (parent == candidate) {
+            break;
+        }
+        candidate = parent;
+    }
+    return executableDirectory;
+}
 
 RuntimeLocationResult RuntimeLocator::locate(const std::filesystem::path& engineRoot,
                                              const std::filesystem::path& searchRoot,
@@ -56,59 +106,80 @@ RuntimeLocationResult RuntimeLocator::locate(const std::filesystem::path& engine
     std::vector<std::filesystem::path> roots;
     if (!searchRoot.empty()) {
         AddUnique(roots, searchRoot / config);
-        AddUnique(roots, searchRoot);
+        if (configuration == BuildConfiguration::Release) {
+            AddUnique(roots, searchRoot);
+        }
     }
-    if (!engineRoot.empty()) {
-        AddUnique(roots, engineRoot / "build" / config);
-        AddUnique(roots, engineRoot / "build");
-        AddUnique(roots, engineRoot / "bin" / config);
-        AddUnique(roots, engineRoot / "bin");
-        AddUnique(roots, engineRoot);
-    }
-
     std::error_code ec;
+    const bool hasSourceTree =
+        !engineRoot.empty() &&
+        std::filesystem::is_regular_file(engineRoot / "CMakeLists.txt", ec);
+    if (hasSourceTree) {
+        AddUnique(roots, engineRoot / "build" / config);
+        AddUnique(roots, engineRoot / "bin" / config);
+        AddUnique(roots, engineRoot / "build");
+        AddUnique(roots, engineRoot / "bin");
+    }
+
     for (const auto& root : roots) {
-        const auto executable = root / "HephaestusGame.exe";
-        if (result.artifacts.executable.empty() && std::filesystem::is_regular_file(executable, ec)) {
-            result.artifacts.executable = executable;
+        auto artifacts = ProbeRuntimeRoot(root);
+        if (artifacts.complete()) {
+            result.artifacts = std::move(artifacts);
+            return result;
         }
+    }
 
-        const std::filesystem::path shaderCandidates[] = {
-            root / "shaders", root / "assets" / "shaders", root.parent_path() / "shaders",
-            engineRoot / "shaders", engineRoot / "assets" / "shaders"
-        };
-        for (const auto& shaders : shaderCandidates) {
-            if (result.artifacts.shadersDirectory.empty() && HasSpirv(shaders)) {
-                result.artifacts.shadersDirectory = shaders;
+    if (configuration == BuildConfiguration::Development) {
+        std::vector<std::filesystem::path> releaseRoots;
+        if (!searchRoot.empty()) {
+            AddUnique(releaseRoots, searchRoot / "Release");
+            AddUnique(releaseRoots, searchRoot);
+        }
+        if (hasSourceTree) {
+            AddUnique(releaseRoots, engineRoot / "build" / "Release");
+            AddUnique(releaseRoots, engineRoot / "bin" / "Release");
+        }
+        for (const auto& root : releaseRoots) {
+            auto artifacts = ProbeRuntimeRoot(root);
+            if (artifacts.complete()) {
+                result.artifacts = std::move(artifacts);
+                result.problems.push_back(
+                    {ProblemSeverity::Warning, "BUILD_RUNTIME_RELEASE_FALLBACK",
+                     "Development runtime is unavailable; using the Release player",
+                     root.generic_string()});
+                return result;
             }
         }
+    }
 
-        const std::filesystem::path luaCandidates[] = {
-            root / "lua54.dll", root / "lua.dll", root.parent_path() / "lua54.dll",
-            root.parent_path() / "lua.dll", engineRoot / "extern" / "lua" / "lua54.dll",
-            engineRoot / "extern" / "lua" / "lua.dll"
-        };
-        for (const auto& lua : luaCandidates) {
-            if (result.artifacts.luaLibrary.empty() && std::filesystem::is_regular_file(lua, ec)) {
-                result.artifacts.luaLibrary = lua;
-            }
+    // Preserve partial diagnostics from the highest-priority location.
+    for (const auto& root : roots) {
+        auto artifacts = ProbeRuntimeRoot(root);
+        if (!artifacts.executable.empty() || !artifacts.shadersDirectory.empty() ||
+            !artifacts.luaLibrary.empty()) {
+            result.artifacts = std::move(artifacts);
+            break;
         }
     }
 
     if (result.artifacts.executable.empty()) {
         result.problems.push_back(Missing(
             "BUILD_RUNTIME_EXECUTABLE_MISSING", "HephaestusGame.exe was not found",
-            "Build the HephaestusGame target or set runtimeSearchRoot to its output directory."));
+            hasSourceTree
+                ? "Build the HephaestusGame target or provide a complete runtime directory."
+                : "This Editor distribution is missing its generic game player."));
     }
     if (result.artifacts.shadersDirectory.empty()) {
         result.problems.push_back(Missing(
             "BUILD_RUNTIME_SHADERS_MISSING", "Compiled runtime shaders were not found",
-            "A shaders directory containing at least one .spv file is required."));
+            hasSourceTree
+                ? "Build the Shaders target or provide a shaders directory beside the player."
+                : "This Editor distribution is missing compiled shaders beside the player."));
     }
     if (result.artifacts.luaLibrary.empty()) {
         result.problems.push_back(Missing(
             "BUILD_RUNTIME_LUA_MISSING", "Lua runtime library was not found",
-            "Expected lua54.dll or lua.dll beside the runtime or under extern/lua."));
+            "Expected lua54.dll or lua.dll beside HephaestusGame.exe."));
     }
     return result;
 }
@@ -122,6 +193,19 @@ bool CMakeRuntimeBuilder::build(const std::filesystem::path& engineRoot,
                                 const LogCallback& log,
                                 const CancellationCallback& cancelled) {
     if (cancelled && cancelled()) {
+        return false;
+    }
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(engineRoot / "CMakeLists.txt", ec)) {
+        if (log) {
+            log("Runtime build unavailable: engine source was not found");
+        }
+        return false;
+    }
+    if (!HasCMakeExecutable()) {
+        if (log) {
+            log("Runtime build unavailable: cmake was not found on PATH");
+        }
         return false;
     }
     const auto buildDirectory = m_buildDirectory.empty() ? engineRoot / "build" : m_buildDirectory;

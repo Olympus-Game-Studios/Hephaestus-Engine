@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-09-02: Stage 6C/D shipping polish adds named file-count package progress, explicit confirmed package cleanup, CLI `--clean-output`, and locked-output retry or alternate-output actions.
+- 2026-09-02: Stage 6 portability fixture, `RuntimeLocatorTests`, `BuildServiceTests`, and a repeatable relocated-package launch gate covering Lua, HUI, audio, physics, shaders, HDRI, manifests, and source-tree independence.
 - 2026-09-02: Stage 6 build and shipping pipeline: shared non-Qt `HephaestusBuildCore`, project validation with actionable asset/path diagnostics, transactional package staging, Windows x64 runtime/dependency collection, package manifests/notices/size reports/ZIP archives, and the `HephaestusBuild` headless CLI.
 - 2026-09-02: Qt Build Project workflow with Development/Release presets, persisted startup scene and runtime settings, Validate/Package/Package & Run/Run Last/Clean actions, cancellation, structured Problems, searchable raw logs, package notifications, and `Ctrl+Shift+B`.
 - 2026-09-02: `ProjectValidationTests` and `PackageLayoutTests` cover broken references, malformed content, portable layout, content types, exclusions, manifests, and preservation of the previous successful package.
@@ -39,6 +41,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-09-02: Retired the unused `SceneExporter` and legacy post-export packager; `export_game.ps1` is now a compatibility wrapper over the canonical shared BuildService CLI, and old export documents are marked historical.
+- 2026-09-02: Portable Editor distributions now include the launcher, generic player, build CLI, Lua, compiled shaders, builtin meshes, and HDRIs; game packages copy project `.engine` runtime content and write only runtime-supported `game.ini` keys.
 - 2026-09-02: Game distribution now packages the generic player with all project assets, Lua, compiled shaders, builtin meshes, runtime metadata, and verified third-party notices without requiring project-specific compilation or editor-only `.hephaestus` state.
 - 2026-09-02: Project Build settings now expose only supported Windows x64 targets, use `defaultScene` as the persisted Startup Scene, and keep personal package output paths in user-local editor settings.
 - 2026-09-02: Details Inspector multi-edits the current selection (one shared widget tree, mixed axes/name, coalesced undo). Light/Environment/AudioSource use the component registry. Asset Browser drags attach portable MIME for materials/scripts/textures/UI. Prefab Apply stays single-instance; Prefab Editor rotation is degrees with searchable Add Component.
@@ -52,6 +56,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-09-02: Qt Build Project now persists VSync defaults and reports unused assets as non-destructive dynamic-loading advisories.
+- 2026-09-02: Runtime discovery now distinguishes source checkouts from distributed Editors, keeps artifacts from one deterministic runtime root, reports Development-to-Release fallback, skips compiler probing when a prebuilt player exists, and detects locked package binaries before staging.
 - 2026-09-02: Packaged runtime accepts either Lua DLL name, treats `game.ini` as the authoritative package marker, avoids source-tree Lua fallbacks, and applies the configured VSync present mode.
 - 2026-09-02: Packaging no longer deletes the last successful output before completion, and application-icon rebuilds restore the shared generic runtime afterward.
 - 2026-09-02: Details Delete uses the full selection; Pin Inspector updates immediately and reports missing pinned entities; selection no longer disables Outliner repainting or gets cleared during rebuilds; Inspector refresh no longer creates edits or dirties the scene; component gestures now close their undo-coalescing sessions; prefab Apply controls correctly re-enable when returning to one instance.

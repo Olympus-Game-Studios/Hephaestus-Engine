@@ -18,7 +18,8 @@ enum class BuildConfiguration {
 enum class BuildAction {
     Validate,
     Package,
-    PackageAndRun
+    PackageAndRun,
+    Clean
 };
 
 struct WindowSettings {

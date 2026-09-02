@@ -58,6 +58,10 @@ Release packages are validated before the previous successful package is
 transactionally replaced. The package includes all project assets so Lua and
 other dynamically selected content is not accidentally omitted.
 
+**Build > Clean Package** explicitly removes the selected package plus
+transactional staging data after confirmation. Normal packaging does not clean
+or discard the last successful package first.
+
 ### Option 2: Using the build CLI
 
 ```powershell

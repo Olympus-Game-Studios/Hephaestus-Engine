@@ -31,6 +31,9 @@ public:
     RuntimeLocationResult locate(const std::filesystem::path& engineRoot,
                                  const std::filesystem::path& searchRoot,
                                  BuildConfiguration configuration) const;
+
+    static std::filesystem::path discoverEngineRoot(
+        const std::filesystem::path& executableDirectory);
 };
 
 class RuntimeBuilder {

@@ -1,0 +1,1 @@
+engine_log("STAGE6_HUI_CONTROLLER_LOADED")

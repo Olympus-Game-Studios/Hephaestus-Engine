@@ -337,7 +337,8 @@ std::vector<EditorProblem> ProjectValidator::findUnusedAssets(
         if (!Hephaestus::AssetPathPolicy::KeysEqual(key, startup) &&
             index.GetReferrers(key).empty()) {
             Add(problems, ProblemSeverity::Info, "ASSET_UNUSED_ADVISORY",
-                "Asset has no indexed referrers", {}, key);
+                "No structured references found; this asset may still be loaded dynamically",
+                "Informational only. Packaging still includes the entire assets directory.", key);
         }
     }
     return problems;

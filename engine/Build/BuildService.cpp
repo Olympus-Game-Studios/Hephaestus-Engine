@@ -56,6 +56,16 @@ BuildResult BuildService::execute(const BuildRequest& originalRequest) const {
     if (request.productName.empty()) {
         request.productName = request.projectRoot.filename().string();
     }
+    if (request.action == BuildAction::Clean) {
+        progress(0.0F, "Cleaning package");
+        PackageStager stager;
+        auto cleaned = stager.clean(request);
+        result.success = cleaned.success;
+        result.outputPath = cleaned.outputPath;
+        result.problems = std::move(cleaned.problems);
+        progress(1.0F, result.success ? "Package cleaned" : "Package clean failed");
+        return result;
+    }
     if (request.startupScene.empty()) {
         request.startupScene = ProjectValidator::determineStartupScene(request.projectRoot);
     }
@@ -130,6 +140,11 @@ BuildResult BuildService::execute(const BuildRequest& originalRequest) const {
                                located.problems.end());
         log("Packaging stopped because runtime prerequisites are missing");
         return result;
+    }
+    for (const auto& problem : located.problems) {
+        if (problem.severity != ProblemSeverity::Error) {
+            result.problems.push_back(problem);
+        }
     }
 
     progress(0.55F, "Staging package");

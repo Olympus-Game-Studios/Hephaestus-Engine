@@ -152,7 +152,9 @@ void SettingsSchemaRegistry::RegisterBuiltins()
         MakeDef("project.build.defaultResolution", "build", "Build", "defaultResolution", "Default Resolution", SettingControlType::Enum,
             QStringLiteral("1920x1080"), {}, {}, {QStringLiteral("1280x720"), QStringLiteral("1600x900"), QStringLiteral("1920x1080"), QStringLiteral("2560x1440")}),
         MakeDef("project.build.fullscreenDefault", "build", "Build", "fullscreenDefault", "Fullscreen Default", SettingControlType::Bool,
-            false)
+            false),
+        MakeDef("project.build.vsyncDefault", "build", "Build", "vsyncDefault", "VSync Default", SettingControlType::Bool,
+            true)
     };
 }
 
