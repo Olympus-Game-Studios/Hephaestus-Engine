@@ -1591,8 +1591,9 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 auto& transform = entity.GetComponent<TransformComponent>();
                 lightPos = transform.position;
                 
-                // Compute light direction from rotation for directional lights
-                if (light.type == LightType::Directional) {
+                // Match runtime semantics: directional and spot lights point
+                // along transformed local -Z.
+                if (light.type == LightType::Directional || light.type == LightType::Spot) {
                     Mat4 rotation = Mat4::RotationZ(transform.rotation.z);
                     rotation = Mat4::Multiply(Mat4::RotationY(transform.rotation.y), rotation);
                     rotation = Mat4::Multiply(Mat4::RotationX(transform.rotation.x), rotation);
@@ -1620,7 +1621,8 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                     uint32_t sw = std::max(m_swapchain->extent.width, 1u);
                     uint32_t sh = std::max(m_swapchain->extent.height, 1u);
                     float aspect = static_cast<float>(sw) / static_cast<float>(sh);
-                    float fovY = 60.0f * D2R;
+                    const float fovDeg = camera.fovDeg > 0.1f ? camera.fovDeg : 60.0f;
+                    float fovY = fovDeg * D2R;
                     
                     float maxRange = light.shadowAutoFit 
                         ? std::max(10.0f, std::min(camera.farPlane, light.shadowMaxDistance))
@@ -1652,14 +1654,16 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
             } else if (light.type == LightType::Point && pointLightIndex < 16) {
                 lightUBO.pointLightPositions[pointLightIndex] = {lightPos.x, lightPos.y, lightPos.z, light.range};
                 lightUBO.pointLightColors[pointLightIndex] = {light.color.x, light.color.y, light.color.z, light.intensity};
-                lightUBO.pointLightAttenuation[pointLightIndex] = {1.0f, 0.09f, 0.032f, 0.0f};
+                lightUBO.pointLightAttenuation[pointLightIndex] = {
+                    light.constant, light.linear, light.quadratic, 0.0f};
                 ++pointLightIndex;
             } else if (light.type == LightType::Spot && spotLightIndex < 16) {
                 lightUBO.spotLightPositions[spotLightIndex] = {lightPos.x, lightPos.y, lightPos.z, light.range};
-                lightUBO.spotLightDirections[spotLightIndex] = {light.direction.x, light.direction.y, 
-                                                                 light.direction.z, light.innerConeAngle};
+                lightUBO.spotLightDirections[spotLightIndex] = {
+                    lightDir.x, lightDir.y, lightDir.z, light.innerConeAngle};
                 lightUBO.spotLightColors[spotLightIndex] = {light.color.x, light.color.y, light.color.z, light.intensity};
-                lightUBO.spotLightAttenuation[spotLightIndex] = {1.0f, 0.09f, 0.032f, light.outerConeAngle};
+                lightUBO.spotLightAttenuation[spotLightIndex] = {
+                    light.constant, light.linear, light.quadratic, light.outerConeAngle};
                 ++spotLightIndex;
             }
         }
@@ -1710,7 +1714,8 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
             uint32_t sw = std::max(m_swapchain->extent.width, 1u);
             uint32_t sh = std::max(m_swapchain->extent.height, 1u);
             float aspect = static_cast<float>(sw) / static_cast<float>(sh);
-            float fovY = 60.0f * D2R;
+            const float fovDeg = camera.fovDeg > 0.1f ? camera.fovDeg : 60.0f;
+            float fovY = fovDeg * D2R;
             float maxRange = light.shadowAutoFit
                 ? std::max(10.0f, std::min(camera.farPlane, light.shadowMaxDistance))
                 : light.shadowDistance;

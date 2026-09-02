@@ -42,6 +42,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-09-02: Shared lighting now consistently honors authored attenuation, transformed local-forward spot directions, disabled lights, and the active camera FOV for cascaded shadows.
 - 2026-09-02: `EngineFrameRenderer` now rebuilds swapchain-dependent pipelines, per-image resources, synchronization, descriptors, and configured editor overlays after resize while preserving material textures and VSync.
 - 2026-09-02: Packaged runtime builds no longer initialize editor-only grid, picking, outline, gizmo, or billboard GPU resources in `EngineFrameRenderer`.
 - 2026-09-02: Retired the unused `SceneExporter` and legacy post-export packager; `export_game.ps1` is now a compatibility wrapper over the canonical shared BuildService CLI, and old export documents are marked historical.
