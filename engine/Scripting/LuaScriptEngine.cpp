@@ -34,6 +34,7 @@
 #include <unordered_map>
 #include <cctype>
 #include <limits>
+#include <string_view>
 #include <utility>
 #include <functional>
 #include <cmath>
@@ -90,6 +91,115 @@ namespace {
         if (upper == "RIGHT" || upper == "RMB") return GLFW_MOUSE_BUTTON_RIGHT;
         if (upper == "MIDDLE" || upper == "MMB") return GLFW_MOUSE_BUTTON_MIDDLE;
         return GLFW_MOUSE_BUTTON_LAST + 1; // invalid sentinel
+    }
+
+    enum class RuntimeExposeType {
+        Bool,
+        Integer,
+        Number,
+        String,
+        Vec2,
+        Vec3,
+        Color
+    };
+
+    int PushCallingEnvironment(lua_State* state) {
+        lua_Debug caller{};
+        if (!lua_getstack(state, 1, &caller) || !lua_getinfo(state, "f", &caller)) {
+            return luaL_error(state, "Expose.* must be called from a Lua script");
+        }
+
+        for (int index = 1;; ++index) {
+            const char* name = lua_getupvalue(state, -1, index);
+            if (!name) {
+                break;
+            }
+            if (std::string_view(name) == "_ENV" && lua_istable(state, -1)) {
+                lua_remove(state, -2);
+                return lua_gettop(state);
+            }
+            lua_pop(state, 1);
+        }
+
+        lua_pop(state, 1);
+        return luaL_error(state, "Expose.* could not resolve the script environment");
+    }
+
+    void CheckExposeArguments(lua_State* state, RuntimeExposeType type) {
+        const int expected = type == RuntimeExposeType::Vec2 ? 3 :
+            type == RuntimeExposeType::Vec3 ? 4 :
+            type == RuntimeExposeType::Color ? 5 : 2;
+        if (lua_gettop(state) != expected) {
+            luaL_error(state, "Expose declaration has the wrong number of arguments");
+        }
+        if (lua_type(state, 1) != LUA_TSTRING || lua_rawlen(state, 1) == 0) {
+            luaL_error(state, "Expose declaration name must be a non-empty string");
+        }
+
+        if (type == RuntimeExposeType::Bool && lua_type(state, 2) != LUA_TBOOLEAN) {
+            luaL_error(state, "Expose.bool default must be a boolean");
+        }
+        if (type == RuntimeExposeType::String && lua_type(state, 2) != LUA_TSTRING) {
+            luaL_error(state, "Expose.string default must be a string");
+        }
+        if (type == RuntimeExposeType::Integer && !lua_isinteger(state, 2)) {
+            luaL_error(state, "Expose.integer default must be an integer");
+        }
+        if (type == RuntimeExposeType::Number && lua_type(state, 2) != LUA_TNUMBER) {
+            luaL_error(state, "Expose.number default must be a number");
+        }
+        if (type == RuntimeExposeType::Vec2 ||
+            type == RuntimeExposeType::Vec3 ||
+            type == RuntimeExposeType::Color) {
+            for (int index = 2; index <= expected; ++index) {
+                if (lua_type(state, index) != LUA_TNUMBER) {
+                    luaL_error(state, "Expose vector and color defaults must be numbers");
+                }
+            }
+        }
+    }
+
+    void PushExposeDefault(lua_State* state, RuntimeExposeType type) {
+        if (type == RuntimeExposeType::Bool ||
+            type == RuntimeExposeType::Integer ||
+            type == RuntimeExposeType::Number ||
+            type == RuntimeExposeType::String) {
+            lua_pushvalue(state, 2);
+            return;
+        }
+
+        lua_newtable(state);
+        static constexpr const char* VECTOR_FIELDS[] = {"x", "y", "z", "w"};
+        const int count = type == RuntimeExposeType::Vec2 ? 2 :
+            type == RuntimeExposeType::Vec3 ? 3 : 4;
+        for (int index = 0; index < count; ++index) {
+            lua_pushvalue(state, index + 2);
+            lua_setfield(state, -2, VECTOR_FIELDS[index]);
+        }
+    }
+
+    int Lua_ExposeDeclare(lua_State* state) {
+        const auto type = static_cast<RuntimeExposeType>(lua_tointeger(state, lua_upvalueindex(1)));
+        CheckExposeArguments(state, type);
+
+        const int environmentIndex = PushCallingEnvironment(state);
+        lua_pushvalue(state, 1);
+        lua_rawget(state, environmentIndex);
+        const bool alreadySeeded = !lua_isnil(state, -1);
+        lua_pop(state, 1);
+        if (!alreadySeeded) {
+            lua_pushvalue(state, 1);
+            PushExposeDefault(state, type);
+            lua_rawset(state, environmentIndex);
+        }
+        lua_pop(state, 1);
+        return 0;
+    }
+
+    void SetExposeFunction(lua_State* state, const char* name, RuntimeExposeType type) {
+        lua_pushinteger(state, static_cast<lua_Integer>(type));
+        lua_pushcclosure(state, Lua_ExposeDeclare, 1);
+        lua_setfield(state, -2, name);
     }
 #endif
 }
@@ -568,6 +678,7 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterTransformBindings();
     RegisterInputBindings();
     RegisterUtilityBindings();
+    RegisterExposeBindings();
     RegisterApplicationBindings();
     RegisterCameraBindings();
     RegisterPhysicsBindings();
@@ -681,6 +792,20 @@ void LuaScriptEngine::RegisterUtilityBindings() {
     lua_pushcfunction(m_State, Lua_Time_deltaTime);
     lua_setfield(m_State, -2, "deltaTime");
     lua_setglobal(m_State, "Time");
+#endif
+}
+
+void LuaScriptEngine::RegisterExposeBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+    SetExposeFunction(m_State, "bool", RuntimeExposeType::Bool);
+    SetExposeFunction(m_State, "integer", RuntimeExposeType::Integer);
+    SetExposeFunction(m_State, "number", RuntimeExposeType::Number);
+    SetExposeFunction(m_State, "string", RuntimeExposeType::String);
+    SetExposeFunction(m_State, "vec2", RuntimeExposeType::Vec2);
+    SetExposeFunction(m_State, "vec3", RuntimeExposeType::Vec3);
+    SetExposeFunction(m_State, "color", RuntimeExposeType::Color);
+    lua_setglobal(m_State, "Expose");
 #endif
 }
 

@@ -280,6 +280,11 @@ private:
     void RegisterUtilityBindings();
 
     /**
+     * Register script parameter declarations
+     */
+    void RegisterExposeBindings();
+
+    /**
      * Register camera bindings
      */
     void RegisterCameraBindings();
