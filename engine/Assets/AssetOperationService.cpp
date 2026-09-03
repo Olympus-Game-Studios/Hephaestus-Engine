@@ -2,6 +2,7 @@
 
 #include "AssetManager.h"
 #include "AssetPathPolicy.h"
+#include "CharacterAsset.h"
 
 #include <chrono>
 #include <fstream>
@@ -544,6 +545,54 @@ AssetOperationResult AssetOperationService::executeRename(const AssetOperationPr
     }
 
     retargetOpenDocuments(preflight.oldPortablePath, preflight.newPortablePath);
+
+    if (CharacterOwnedSource::IsCharacterAssetPortableKey(preflight.oldPortablePath) ||
+        CharacterOwnedSource::IsCharacterAssetPortableKey(preflight.newPortablePath)) {
+        std::string relocateError;
+        if (!CharacterOwnedSource::RelocateAfterCharacterMove(GetProjectRoot(),
+                                                              preflight.oldPortablePath,
+                                                              preflight.newPortablePath,
+                                                              relocateError)) {
+            if (!backupRoot.empty()) {
+                std::string rollbackError;
+                rollbackFromBackup(backupRoot, &rollbackError);
+            }
+            result.error = relocateError.empty() ? "Failed to move character owned sources"
+                                                 : relocateError;
+            discardTransactionBackup(backupRoot);
+            refreshAssetManager();
+            rescanIndex();
+            return result;
+        }
+        AssetReferenceIndex* ownedIndex = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            ownedIndex = m_index;
+        }
+        if (ownedIndex) {
+            const std::string oldOwned =
+                CharacterOwnedSource::OwnedDirectoryPortableKey(preflight.oldPortablePath);
+            const std::string newOwned =
+                CharacterOwnedSource::OwnedDirectoryPortableKey(preflight.newPortablePath);
+            if (!oldOwned.empty() && oldOwned != newOwned) {
+                const auto ownedRewrite =
+                    ownedIndex->RewriteReferences(oldOwned + "/mesh.glb", newOwned + "/mesh.glb");
+                if (!ownedRewrite.success) {
+                    result.warnings.push_back("Owned mesh path rewrite reported errors");
+                }
+                const std::string oldLua =
+                    oldOwned + "/" +
+                    CharacterOwnedSource::ControllerScriptFileName(
+                        CharacterOwnedSource::CharacterStem(preflight.oldPortablePath));
+                const std::string newLua =
+                    newOwned + "/" +
+                    CharacterOwnedSource::ControllerScriptFileName(
+                        CharacterOwnedSource::CharacterStem(preflight.newPortablePath));
+                ownedIndex->RewriteReferences(oldLua, newLua);
+            }
+        }
+    }
+
     refreshAssetManager();
     rescanIndex();
     discardTransactionBackup(backupRoot);
@@ -717,6 +766,33 @@ AssetOperationResult AssetOperationService::MoveToTrash(const std::string& path)
     info.originalPortablePaths = {portable};
     info.referrerCount = static_cast<int>(referrers.size());
     info.note = "Moved to trash";
+
+    if (CharacterOwnedSource::IsCharacterAssetPortableKey(portable)) {
+        const std::string ownedDir = CharacterOwnedSource::OwnedDirectoryPortableKey(portable);
+        const auto ownedAbs = toAbsolute(ownedDir);
+        std::error_code ownedEc;
+        if (!ownedDir.empty() && std::filesystem::exists(ownedAbs, ownedEc)) {
+            const auto ownedPayload =
+                payloadDir / std::filesystem::path(AssetPathPolicy::NormalizeSeparators(ownedDir));
+            if (!ensureDir(ownedPayload.parent_path(), &error)) {
+                std::error_code restoreEc;
+                std::filesystem::rename(payloadTarget, absolute, restoreEc);
+                result.error = error;
+                return result;
+            }
+            std::filesystem::rename(ownedAbs, ownedPayload, ownedEc);
+            if (ownedEc) {
+                if (!copyPathRecursive(ownedAbs, ownedPayload, &error) ||
+                    !removePathRecursive(ownedAbs, &error)) {
+                    std::error_code restoreEc;
+                    std::filesystem::rename(payloadTarget, absolute, restoreEc);
+                    result.error = "Failed to move character owned sources into trash: " + error;
+                    return result;
+                }
+            }
+            info.originalPortablePaths.push_back(ownedDir);
+        }
+    }
 
     if (!writeTrashManifest(trashDir, info, referrers, &error)) {
         // Best-effort restore

@@ -25,6 +25,7 @@ AssetType AssetTypeFromInspectorKind(int kind)
         case SpawnableEntry::Kind::Script: return AssetType::Script;
         case SpawnableEntry::Kind::Texture: return AssetType::Texture;
         case SpawnableEntry::Kind::UILayout: return AssetType::UILayout;
+        case SpawnableEntry::Kind::Character: return AssetType::Character;
         default: return AssetType::Unknown;
     }
 }
@@ -98,6 +99,7 @@ void AttachInspectorAssetMime(QMimeData* mime, const QString& portablePath, Asse
         case AssetType::Script: entry.kind = SpawnableEntry::Kind::Script; break;
         case AssetType::Texture: entry.kind = SpawnableEntry::Kind::Texture; break;
         case AssetType::UILayout: entry.kind = SpawnableEntry::Kind::UILayout; break;
+        case AssetType::Character: entry.kind = SpawnableEntry::Kind::Character; break;
         default: entry.kind = SpawnableEntry::Kind::Mesh; break;
     }
     mime->setData(kSpawnableMimeType, entry.toMimePayload());

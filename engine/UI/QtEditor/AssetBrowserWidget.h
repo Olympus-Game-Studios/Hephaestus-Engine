@@ -145,6 +145,7 @@ private:
     void createNewPrefab(const QString& parentRelativePath);
     void createNewCharacter(const QString& parentRelativePath);
     void importAssets();
+    void importCharacter();
     void duplicateAsset(const QString& relativePath, bool isDirectory);
     void copyAssetPath(const QString& relativePath);
     void deleteAsset(const QString& relativePath, bool isDirectory);

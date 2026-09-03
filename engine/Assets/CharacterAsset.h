@@ -95,7 +95,24 @@ public:
 
     static bool IsOwnedSourcePortableKey(const std::string& portablePath);
 
+    static bool IsCharacterAssetPortableKey(const std::string& portablePath);
+
     static std::string CharacterStem(const std::string& characterPortablePath);
+
+    /** Rewrite skeleton/mesh/clip/controller paths that live under oldOwnedDir. */
+    static void RewriteOwnedDirectoryKeys(CharacterAsset& asset,
+                                          const std::string& oldOwnedDir,
+                                          const std::string& newOwnedDir);
+
+    /**
+     * After a .hpcharacter rename/move: relocate `.source/<Stem>/`, rewrite
+     * portable keys inside the character JSON, and rename the controller Lua
+     * when the stem changes.
+     */
+    static bool RelocateAfterCharacterMove(const std::filesystem::path& projectRoot,
+                                           const std::string& oldCharacterPortable,
+                                           const std::string& newCharacterPortable,
+                                           std::string& outError);
 };
 
 class CharacterSerializer {

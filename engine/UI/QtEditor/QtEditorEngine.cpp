@@ -26,6 +26,7 @@
 #include "../../Assets/MeshAsset.h"
 #include "../../Assets/ModelImporter.h"
 #include "../../Assets/SkeletalModelImporter.h"
+#include "../../Assets/CharacterRuntime.h"
 #include "../../Core/ProjectContext.h"
 #include "../../Physics/JoltPhysicsEngine.h"
 #include "../../Physics/JoltPhysicsSystem.h"
@@ -222,6 +223,7 @@ QtEditorEngine::QtEditorEngine(QObject* parent)
     connect(&m_renderTimer, &QTimer::timeout, this, &QtEditorEngine::onTick);
     
     m_frameTimer.start();
+    m_editorContext.SetRebuildSceneVisualsCallback([this]() { RebuildSceneMeshes(); });
 }
 
 QtEditorEngine::~QtEditorEngine()
@@ -2499,6 +2501,8 @@ void QtEditorEngine::RebuildSceneMeshes()
         m_frameRenderer->SetProjectRoot(projectRoot.string());
     }
 
+    Hephaestus::CharacterRuntime::BindScene(*scene, projectRoot, m_frameRenderer.get());
+
     // -----------------------------------------------------------------
     // Helper: resolve a mesh asset path (relative key) to an absolute
     // path on disk, trying multiple fallback locations.
@@ -2617,6 +2621,9 @@ void QtEditorEngine::RebuildSceneMeshes()
     for (auto entityHandle : renderView) {
         Entity entity(entityHandle, scene);
         auto& renderer = entity.GetComponent<MeshRendererComponent>();
+        if (IsRuntimeGeneratedVisual(renderer)) {
+            continue;
+        }
 
         std::string entityName = entity.HasComponent<TagComponent>()
                                      ? entity.GetComponent<TagComponent>().tag

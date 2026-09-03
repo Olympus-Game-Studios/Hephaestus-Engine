@@ -20,7 +20,10 @@
 #include "../../Scene/PrefabAsset.h"
 #include "../../Scene/PrefabSerializer.h"
 #include "../../Assets/CharacterAsset.h"
+#include "../../Assets/CharacterImport.h"
+#include "../../Assets/CharacterRuntime.h"
 #include "../../Assets/AssetPathPolicy.h"
+#include "CharacterImportDialog.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -95,7 +98,8 @@ protected:
             assetType != AssetType::Material &&
             assetType != AssetType::Script &&
             assetType != AssetType::Texture &&
-            assetType != AssetType::UILayout) {
+            assetType != AssetType::UILayout &&
+            assetType != AssetType::Character) {
             return;
         }
 
@@ -112,6 +116,7 @@ protected:
             case AssetType::Script: entry.kind = SpawnableEntry::Kind::Script; break;
             case AssetType::Texture: entry.kind = SpawnableEntry::Kind::Texture; break;
             case AssetType::UILayout: entry.kind = SpawnableEntry::Kind::UILayout; break;
+            case AssetType::Character: entry.kind = SpawnableEntry::Kind::Character; break;
             default: entry.kind = SpawnableEntry::Kind::Mesh; break;
         }
         entry.displayName = QFileInfo(relativePath).completeBaseName();
@@ -249,8 +254,11 @@ void AssetBrowserWidget::setupUI()
     m_toolbar->addWidget(m_viewToggleButton);
 
     m_importButton = new QPushButton(tr("Import"), this);
-    m_importButton->setToolTip(tr("Copy files into the current asset folder"));
-    connect(m_importButton, &QPushButton::clicked, this, &AssetBrowserWidget::importAssets);
+    auto* importMenu = new QMenu(m_importButton);
+    importMenu->addAction(tr("Import Assets…"), this, &AssetBrowserWidget::importAssets);
+    importMenu->addAction(tr("Import Character…"), this, &AssetBrowserWidget::importCharacter);
+    m_importButton->setMenu(importMenu);
+    m_importButton->setToolTip(tr("Copy files into the current asset folder, or import a GLB character"));
     m_toolbar->addWidget(m_importButton);
 
     m_filterCombo = new QComboBox(this);
@@ -893,15 +901,53 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
                     entry.assetPath = ToProjectRelativeAssetPath(relativePath);
                     m_mainWindow->replaceFromAssetBrowser(entry.toMimePayload());
                 });
+            } else if (assetType == AssetType::Character) {
+                menu.addAction(tr("Spawn in Scene"), [this, relativePath]() {
+                    if (!m_mainWindow) return;
+                    SpawnableEntry entry;
+                    entry.kind = SpawnableEntry::Kind::Character;
+                    entry.displayName = QFileInfo(relativePath).completeBaseName();
+                    entry.assetPath = ToProjectRelativeAssetPath(relativePath);
+                    m_mainWindow->spawnFromAssetBrowser(entry.toMimePayload());
+                });
+                menu.addAction(tr("Reimport Character…"), [this, relativePath]() {
+                    auto& assetMgr = AssetManager::GetInstance();
+                    const QString portable = ToProjectRelativeAssetPath(relativePath);
+                    const QString src = QFileDialog::getOpenFileName(
+                        this, tr("Reimport Character"), QString(), tr("GLB (*.glb)"));
+                    if (src.isEmpty()) {
+                        return;
+                    }
+                    std::string error;
+                    if (!Hephaestus::CharacterImporter::Reimport(
+                            assetMgr.GetProjectRoot(), portable.toStdString(),
+                            std::filesystem::path(src.toStdString()), error)) {
+                        QMessageBox::critical(this, tr("Reimport Character"),
+                            QString::fromStdString(error));
+                        return;
+                    }
+                    Hephaestus::CharacterRuntime::Invalidate(portable.toStdString());
+                    if (m_mainWindow) {
+                        m_mainWindow->rebuildSceneVisuals();
+                    }
+                    EditorAssetServices::Instance().ReferenceIndex().ScanProject(
+                        assetMgr.GetProjectRoot());
+                    m_statusLabel->setText(tr("Reimported %1").arg(QFileInfo(relativePath).fileName()));
+                    Refresh();
+                });
             }
             if (assetType == AssetType::UILayout) {
                 menu.addAction(tr("Open in IDE"), [this, relativePath]() {
                     emit assetOpenInIDERequested(relativePath);
                 });
             }
-            if (assetType == AssetType::Texture ||
-                assetType == AssetType::StaticMesh ||
-                assetType == AssetType::Audio) {
+            const QString portable = ToProjectRelativeAssetPath(relativePath);
+            const bool ownedSource =
+                Hephaestus::CharacterOwnedSource::IsOwnedSourcePortableKey(portable.toStdString());
+            if (!ownedSource &&
+                (assetType == AssetType::Texture ||
+                 assetType == AssetType::StaticMesh ||
+                 assetType == AssetType::Audio)) {
                 menu.addAction(tr("Reimport"), [this, relativePath]() {
                     if (!m_mainWindow) {
                         return;
@@ -1069,6 +1115,9 @@ void AssetBrowserWidget::showCreateMenu(QMenu& menu, const QString& targetDirect
 
     menu.addAction(style()->standardIcon(QStyle::SP_DirLinkIcon), tr("New Character"), [this, targetDirectory]() {
         createNewCharacter(targetDirectory);
+    });
+    menu.addAction(tr("Import Character…"), [this]() {
+        importCharacter();
     });
 }
 
@@ -1637,6 +1686,65 @@ void AssetBrowserWidget::importAssets()
     } else {
         m_statusLabel->setText(tr("Imported %1 file(s)").arg(imported));
     }
+}
+
+void AssetBrowserWidget::importCharacter()
+{
+    auto& assetMgr = AssetManager::GetInstance();
+    if (!assetMgr.HasValidAssetRoot()) {
+        QMessageBox::information(this, tr("Import Character"),
+                                 tr("Open a project before importing a character."));
+        return;
+    }
+
+    const QString src = QFileDialog::getOpenFileName(
+        this, tr("Import Character"), QString(), tr("GLB (*.glb)"));
+    if (src.isEmpty()) {
+        return;
+    }
+
+    std::filesystem::path destAbs;
+    if (m_currentPath.isEmpty()) {
+        destAbs = std::filesystem::path(assetMgr.ToAbsolutePath("characters"));
+    } else {
+        destAbs = std::filesystem::path(assetMgr.ToAbsolutePath(m_currentPath.toStdString()));
+    }
+
+    CharacterImportDialog dialog(std::filesystem::path(src.toStdString()),
+                                 assetMgr.GetProjectRoot(), destAbs, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    if (dialog.importAsStaticMesh()) {
+        importAssets();
+        return;
+    }
+
+    Hephaestus::CharacterImportRequest request;
+    request.sourceGlb = std::filesystem::path(src.toStdString());
+    request.projectRoot = assetMgr.GetProjectRoot();
+    request.destinationFolderAbs = dialog.destinationFolder();
+    request.characterName = dialog.characterName().toStdString();
+    request.createController = dialog.createController();
+
+    std::string portable;
+    std::string error;
+    if (!Hephaestus::CharacterImporter::Import(request, portable, error)) {
+        QMessageBox::critical(this, tr("Import Character"), QString::fromStdString(error));
+        return;
+    }
+
+    if (EditorAssetServices::Instance().HasProject()) {
+        EditorAssetServices::Instance().ReferenceIndex().ScanProject(assetMgr.GetProjectRoot());
+    }
+    Refresh();
+    const QString relative = QString::fromStdString(portable);
+    QString fromAssets = relative;
+    if (fromAssets.startsWith(QStringLiteral("assets/"))) {
+        fromAssets = fromAssets.mid(7);
+    }
+    RevealAsset(fromAssets);
+    m_statusLabel->setText(tr("Imported character: %1").arg(QFileInfo(relative).fileName()));
 }
 
 void AssetBrowserWidget::duplicateAsset(const QString& relativePath, bool isDirectory)

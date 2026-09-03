@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-09-03: Stage E character product workflow adds GLB-only Import Character, shared `CharacterRuntime` bind for editor and `HephaestusGame`, runtime-generated MeshRenderer (not serialized/prefab-captured/inspected), Character Inspector (clip/speed/materials/controller Expose), hidden `.source/` listing, companion owned-source rename/move/trash, two-case character reimport, and `CharacterWorkflowTests`.
 - 2026-09-03: Stage D clip playback adds glTF animation import, a CPU sampler in evaluation order, `CharacterComponent` play/loop/speed/pause/stop with same-frame Play commit, scene/prefab serialize of authored character fields, per-instance bone palettes, a gated two-pose `CrossFade`, and `CharacterPlaybackTests`.
 - 2026-09-03: Stage C rest-pose GPU skinning adds `SkinnedVertex` (joints/weights at locations 4–5), a 128-bone eval-index UBO, skinned vertex shaders for shadow/PBR/outline/ID passes, a `builtin://skinned_rest_fixture` dummy, and `SkinnedMeshTests`. Static meshes are unchanged.
 - 2026-09-03: Stage B skeletal glTF import adds `engine/Animation` skeleton identity vs topological evaluation order, `SkeletonSignature`, unnamed/duplicate bone rejection, a dedicated importer that does not bake static-mesh node TRS into skinned vertices, and `SkeletalImportTests` golden world-matrix fixtures.

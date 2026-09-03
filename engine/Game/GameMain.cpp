@@ -93,6 +93,7 @@
 #include "../Assets/MeshAsset.h"
 #include "../Assets/ModelImporter.h"
 #include "../Assets/SkeletalModelImporter.h"
+#include "../Assets/CharacterRuntime.h"
 #include "../Animation/CharacterPlayback.h"
 #include "../Gfx/Vertex.h"
 
@@ -1104,6 +1105,10 @@ int main(int argc, char* argv[]) {
     
     // ── Load Scene Meshes ─────────────────────────
     HP_LOG(Info, "Loading scene meshes...");
+    {
+        const fs::path characterRoot = !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot;
+        Hephaestus::CharacterRuntime::BindScene(scene, characterRoot, &frameRenderer);
+    }
     
     try {
         auto meshView = scene.GetEntitiesWith<MeshRendererComponent>();
@@ -1123,6 +1128,10 @@ int main(int argc, char* argv[]) {
                 }
                 
                 auto& renderer = entity.GetComponent<MeshRendererComponent>();
+                if (IsRuntimeGeneratedVisual(renderer)) {
+                    loadedCount++;
+                    continue;
+                }
                 
                 // Skip entities without mesh asset paths
                 if (renderer.meshAssetPath.empty()) {

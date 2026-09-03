@@ -278,6 +278,14 @@ public:
     void SetSelectionChangedCallback(SelectionChangedCallback cb) { m_onSelectionChanged = std::move(cb); }
     void SetDirtyChangedCallback(DirtyChangedCallback cb) { m_onDirtyChanged = std::move(cb); }
     void SetSceneEditedCallback(SceneEditedCallback cb) { m_onSceneEdited = std::move(cb); }
+    void SetRebuildSceneVisualsCallback(SceneEditedCallback cb) {
+        m_onRebuildVisuals = std::move(cb);
+    }
+    void RequestRebuildSceneVisuals() {
+        if (m_onRebuildVisuals) {
+            m_onRebuildVisuals();
+        }
+    }
 
 private:
     std::unique_ptr<Scene> m_activeScene;
@@ -303,6 +311,7 @@ private:
     SelectionChangedCallback m_onSelectionChanged;
     DirtyChangedCallback m_onDirtyChanged;
     SceneEditedCallback m_onSceneEdited;
+    SceneEditedCallback m_onRebuildVisuals;
 };
 
 } // namespace Hephaestus

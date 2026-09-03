@@ -715,7 +715,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             componentBlocks.push_back(oss.str());
         }
 
-        if (mesh) {
+        if (mesh && !IsRuntimeGeneratedVisual(mesh)) {
             std::ostringstream oss;
             oss.imbue(std::locale::classic());
             oss << "        \"MeshRenderer\": {\n";
@@ -2215,7 +2215,7 @@ std::string SceneSerializer::SerializeToString() const
             componentBlocks.push_back(oss.str());
         }
 
-        if (mesh) {
+        if (mesh && !IsRuntimeGeneratedVisual(mesh)) {
             std::ostringstream oss;
             oss.imbue(std::locale::classic());
             oss << "        \"MeshRenderer\": {\n";

@@ -63,6 +63,30 @@ bool AssetManager::HasValidAssetRoot() const {
 // Browsing API
 // ─────────────────────────────────────────────────────────────────────────────
 
+bool AssetManager::IsBrowserHiddenName(const std::string& name) {
+    return !name.empty() && name.front() == '.';
+}
+
+bool AssetManager::IsBrowserHiddenRelativePath(const std::string& relativePath) {
+    if (relativePath.empty()) {
+        return false;
+    }
+    size_t start = 0;
+    while (start < relativePath.size()) {
+        size_t slash = relativePath.find('/', start);
+        const size_t end = (slash == std::string::npos) ? relativePath.size() : slash;
+        const std::string part = relativePath.substr(start, end - start);
+        if (IsBrowserHiddenName(part)) {
+            return true;
+        }
+        if (slash == std::string::npos) {
+            break;
+        }
+        start = slash + 1;
+    }
+    return false;
+}
+
 std::vector<DirectoryEntry> AssetManager::ListDirectory(const std::string& relativePath) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     
@@ -87,9 +111,12 @@ std::vector<DirectoryEntry> AssetManager::ListDirectory(const std::string& relat
     
     for (const auto& entry : std::filesystem::directory_iterator(targetPath, ec)) {
         if (ec) continue;
-        
+
         DirectoryEntry dirEntry;
         dirEntry.name = entry.path().filename().string();
+        if (IsBrowserHiddenName(dirEntry.name)) {
+            continue;
+        }
         
         // Build relative path
         std::string relPath = relativePath.empty() 
@@ -243,6 +270,9 @@ std::vector<AssetInfo> AssetManager::GetAllAssets() const {
     result.reserve(m_assetIndex.size());
     
     for (const auto& [path, info] : m_assetIndex) {
+        if (IsBrowserHiddenRelativePath(path)) {
+            continue;
+        }
         result.push_back(info);
     }
     

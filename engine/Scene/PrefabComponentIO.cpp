@@ -1022,7 +1022,11 @@ bool CaptureComponent(Entity entity, const std::string& type, PrefabComponentEnt
     out.type = type;
     out.enabled = true;
     if (type == "MeshRenderer" && entity.HasComponent<MeshRendererComponent>()) {
-        CaptureMeshRenderer(entity.GetComponent<MeshRendererComponent>(), out.data);
+        const auto& mesh = entity.GetComponent<MeshRendererComponent>();
+        if (IsRuntimeGeneratedVisual(mesh)) {
+            return false;
+        }
+        CaptureMeshRenderer(mesh, out.data);
         return true;
     }
     if (type == "MeshCollider" && entity.HasComponent<MeshColliderComponent>()) {

@@ -25,6 +25,7 @@
 #include "PhysicsInspectors.h"
 #include "CameraInspector.h"
 #include "AudioSourceInspector.h"
+#include "CharacterInspector.h"
 #include "AddComponentPopup.h"
 #include "PropertyEditors.h"
 #include "AssetReferenceEditor.h"
@@ -61,6 +62,7 @@
 #include "../../UI/ComponentClipboard.h"
 #include "../../Assets/AssetPathPolicy.h"
 #include "../../Assets/AssetReferenceIndex.h"
+#include "../../Assets/CharacterRuntime.h"
 #include "../../Build/BuildService.h"
 
 #include <QClipboard>
@@ -6176,10 +6178,22 @@ void EditorMainWindow::registerComponentInspectors()
     // ── MeshRenderer (order 10) ─────────────────────────────────────────
     reg.Register("MeshRenderer", 10,
         [](const entt::registry& r, entt::entity e) {
-            return r.all_of<MeshRendererComponent>(e);
+            if (!r.all_of<MeshRendererComponent>(e)) {
+                return false;
+            }
+            return !IsRuntimeGeneratedVisual(r.get<MeshRendererComponent>(e));
         },
         [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
             return new MeshRendererInspector(ctx, e, parent);
+        });
+
+    // ── Character (order 12) ────────────────────────────────────────────
+    reg.Register("Character", 12,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<CharacterComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new CharacterInspector(ctx, e, parent);
         });
 
     // ── MeshCollider (order 20) ─────────────────────────────────────────
@@ -6728,6 +6742,13 @@ bool EditorMainWindow::eventFilter(QObject* watched, QEvent* event)
 // Spawn entity from an Add Actors drop onto the viewport
 // ─────────────────────────────────────────────────────────────────────────────
 
+void EditorMainWindow::rebuildSceneVisuals()
+{
+    if (m_engine) {
+        m_engine->RebuildSceneMeshes();
+    }
+}
+
 void EditorMainWindow::spawnFromAssetBrowser(const QByteArray& spawnPayload)
 {
     QPoint dropPos(0, 0);
@@ -7059,6 +7080,42 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         tc.rotation = Vec3(0.0f, 0.0f, 0.0f);
         tc.scale    = Vec3(1.0f, 1.0f, 1.0f);
 
+        ctx->SetSelectionChangedCallback(nullptr);
+        ctx->SelectEntity(static_cast<entt::entity>(created));
+        ctx->SetSelectionChangedCallback([this](entt::entity) {
+            refreshDetailsPanel();
+        });
+        break;
+    }
+
+    case SpawnableEntry::Kind::Character: {
+        std::string portablePath = entry.assetPath.toStdString();
+        if (portablePath.rfind("assets/", 0) != 0 && portablePath.rfind(".engine/", 0) != 0) {
+            portablePath = "assets/" + portablePath;
+        }
+        Entity created = scene->CreateEntity(entityName);
+        if (!created) {
+            break;
+        }
+        created.GetComponent<TransformComponent>().position = spawnPos;
+        auto& character = created.AddComponent<CharacterComponent>();
+        character.characterPath = portablePath;
+        std::filesystem::path root;
+        if (m_projectContext && m_projectContext->HasProject()) {
+            root = m_projectContext->GetProjectRootDir();
+        } else {
+            root = AssetManager::GetInstance().GetProjectRoot();
+        }
+        std::string bindError;
+        if (!Hephaestus::CharacterRuntime::BindEntity(created, root, true, bindError)) {
+            if (m_notifications) {
+                m_notifications->ShowError(tr("Character spawn: %1")
+                                               .arg(QString::fromStdString(bindError)));
+            }
+        }
+        if (m_engine) {
+            m_engine->RebuildSceneMeshes();
+        }
         ctx->SetSelectionChangedCallback(nullptr);
         ctx->SelectEntity(static_cast<entt::entity>(created));
         ctx->SetSelectionChangedCallback([this](entt::entity) {

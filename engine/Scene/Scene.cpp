@@ -401,7 +401,10 @@ void Scene::CopyEntityToClipboard(Entity entity)
     }
 
     if (entity.HasComponent<MeshRendererComponent>()) {
-        data.meshRenderer = entity.GetComponent<MeshRendererComponent>();
+        const MeshRendererComponent& mesh = entity.GetComponent<MeshRendererComponent>();
+        if (!IsRuntimeGeneratedVisual(mesh)) {
+            data.meshRenderer = mesh;
+        }
     }
 
     if (entity.HasComponent<MaterialComponent>()) {

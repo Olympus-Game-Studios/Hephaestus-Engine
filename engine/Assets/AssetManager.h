@@ -119,6 +119,12 @@ public:
      */
     std::vector<DirectoryEntry> ListDirectory(const std::string& relativePath = "") const;
 
+    /** True when a directory/file name should be hidden from the Asset Browser. */
+    static bool IsBrowserHiddenName(const std::string& name);
+
+    /** True when any path component is hidden (e.g. `.source`). */
+    static bool IsBrowserHiddenRelativePath(const std::string& relativePath);
+
     /**
      * @brief Get asset info for a relative path.
      * @param relativePath Path relative to asset root

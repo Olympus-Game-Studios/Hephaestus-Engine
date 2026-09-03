@@ -2,6 +2,7 @@
 
 #include "AssetPathPolicy.h"
 
+#include <cctype>
 #include <fstream>
 #include <iomanip>
 #include <locale>
@@ -143,6 +144,119 @@ bool CharacterOwnedSource::IsOwnedSourcePortableKey(const std::string& portableP
     const std::string normalized = NormalizeSeparators(portablePath);
     return normalized.find("/.source/") != std::string::npos ||
            normalized.rfind(".source/", 0) == 0;
+}
+
+bool CharacterOwnedSource::IsCharacterAssetPortableKey(const std::string& portablePath) {
+    const std::string normalized = NormalizeSeparators(portablePath);
+    const auto dot = normalized.find_last_of('.');
+    if (dot == std::string::npos) {
+        return false;
+    }
+    std::string ext = normalized.substr(dot);
+    for (char& c : ext) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return ext == ".hpcharacter";
+}
+
+void CharacterOwnedSource::RewriteOwnedDirectoryKeys(CharacterAsset& asset,
+                                                     const std::string& oldOwnedDir,
+                                                     const std::string& newOwnedDir) {
+    if (oldOwnedDir.empty() || oldOwnedDir == newOwnedDir) {
+        return;
+    }
+    auto rewrite = [&](std::string& value) {
+        if (value.size() < oldOwnedDir.size()) {
+            return;
+        }
+        if (value.compare(0, oldOwnedDir.size(), oldOwnedDir) != 0) {
+            return;
+        }
+        if (value.size() > oldOwnedDir.size() && value[oldOwnedDir.size()] != '/') {
+            return;
+        }
+        value = newOwnedDir + value.substr(oldOwnedDir.size());
+    };
+    rewrite(asset.skeleton.source);
+    rewrite(asset.mesh.source);
+    rewrite(asset.controller.scriptPath);
+    for (CharacterClipEntry& clip : asset.clips) {
+        rewrite(clip.source);
+    }
+}
+
+bool CharacterOwnedSource::RelocateAfterCharacterMove(const std::filesystem::path& projectRoot,
+                                                      const std::string& oldCharacterPortable,
+                                                      const std::string& newCharacterPortable,
+                                                      std::string& outError) {
+    outError.clear();
+    if (!IsCharacterAssetPortableKey(oldCharacterPortable) ||
+        !IsCharacterAssetPortableKey(newCharacterPortable)) {
+        return true;
+    }
+
+    const std::string oldOwned = OwnedDirectoryPortableKey(oldCharacterPortable);
+    const std::string newOwned = OwnedDirectoryPortableKey(newCharacterPortable);
+    const std::string oldStem = CharacterStem(oldCharacterPortable);
+    const std::string newStem = CharacterStem(newCharacterPortable);
+    const std::filesystem::path oldOwnedAbs =
+        AssetPathPolicy::ResolvePortableKey(projectRoot, oldOwned);
+    const std::filesystem::path newOwnedAbs =
+        AssetPathPolicy::ResolvePortableKey(projectRoot, newOwned);
+    const std::filesystem::path characterAbs =
+        AssetPathPolicy::ResolvePortableKey(projectRoot, newCharacterPortable);
+
+    std::error_code ec;
+    if (!oldOwned.empty() && oldOwned != newOwned && !oldOwnedAbs.empty() &&
+        std::filesystem::exists(oldOwnedAbs, ec)) {
+        if (!newOwnedAbs.empty() && std::filesystem::exists(newOwnedAbs, ec) &&
+            !std::filesystem::equivalent(oldOwnedAbs, newOwnedAbs, ec)) {
+            outError = "Owned source directory already exists: " + newOwned;
+            return false;
+        }
+        std::filesystem::create_directories(newOwnedAbs.parent_path(), ec);
+        std::filesystem::rename(oldOwnedAbs, newOwnedAbs, ec);
+        if (ec) {
+            outError = "Failed to move owned source directory: " + ec.message();
+            return false;
+        }
+    }
+
+    if (oldStem != newStem && !newOwnedAbs.empty()) {
+        const std::filesystem::path oldLua = newOwnedAbs / ControllerScriptFileName(oldStem);
+        const std::filesystem::path newLua = newOwnedAbs / ControllerScriptFileName(newStem);
+        if (std::filesystem::exists(oldLua, ec) && !std::filesystem::exists(newLua, ec)) {
+            std::filesystem::rename(oldLua, newLua, ec);
+            if (ec) {
+                outError = "Failed to rename controller script: " + ec.message();
+                return false;
+            }
+        }
+    }
+
+    if (characterAbs.empty() || !std::filesystem::exists(characterAbs, ec)) {
+        return true;
+    }
+
+    CharacterAsset asset;
+    if (!CharacterSerializer::Deserialize(asset, characterAbs, outError)) {
+        return false;
+    }
+    RewriteOwnedDirectoryKeys(asset, oldOwned, newOwned);
+    if (oldStem != newStem && !asset.controller.scriptPath.empty()) {
+        const std::string oldLuaName = ControllerScriptFileName(oldStem);
+        const std::string newLuaName = ControllerScriptFileName(newStem);
+        if (asset.controller.scriptPath.size() >= oldLuaName.size() &&
+            asset.controller.scriptPath.compare(
+                asset.controller.scriptPath.size() - oldLuaName.size(),
+                oldLuaName.size(), oldLuaName) == 0) {
+            asset.controller.scriptPath.replace(
+                asset.controller.scriptPath.size() - oldLuaName.size(),
+                oldLuaName.size(), newLuaName);
+        }
+    }
+    asset.name = newStem.empty() ? asset.name : newStem;
+    return CharacterSerializer::Serialize(asset, characterAbs, outError);
 }
 
 CharacterAsset CharacterSerializer::MakeEmpty(const std::string& name) {

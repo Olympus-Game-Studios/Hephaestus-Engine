@@ -1,6 +1,7 @@
 #include "Assets/AssetOperationService.h"
 #include "Assets/AssetPathPolicy.h"
 #include "Assets/AssetReferenceIndex.h"
+#include "Assets/CharacterAsset.h"
 #include "Assets/OpenDocumentRegistry.h"
 
 #include <algorithm>
@@ -184,6 +185,58 @@ bool TestOpenDocumentRetarget(const fs::path& project) {
     return ok;
 }
 
+bool TestCharacterCompanionRenameAndTrash(const fs::path& project) {
+    bool ok = true;
+    WriteText(project / "project.heproject", R"({ "name": "CharOps" })");
+    const fs::path character = project / "assets" / "characters" / "Cultist.hpcharacter";
+    std::string error;
+    ok &= Check(Hephaestus::CharacterSerializer::CreateNew(character, project, error),
+                "CreateNew character: " + error);
+    WriteText(project / "assets" / "characters" / ".source" / "Cultist" / "mesh.glb", "mesh");
+
+    AssetReferenceIndex index;
+    index.ScanProject(project);
+
+    AssetOperationService ops;
+    ops.SetProjectRoot(project);
+    ops.SetReferenceIndex(&index);
+
+    const auto renamed = ops.RenameAsset("assets/characters/Cultist.hpcharacter",
+                                         "assets/characters/Warrior.hpcharacter");
+    ok &= Check(renamed.success, "rename character: " + renamed.error);
+    ok &= Check(fs::exists(project / "assets" / "characters" / "Warrior.hpcharacter"),
+                "renamed json exists");
+    ok &= Check(!fs::exists(project / "assets" / "characters" / ".source" / "Cultist"),
+                "old owned dir removed");
+    ok &= Check(fs::exists(project / "assets" / "characters" / ".source" / "Warrior" / "mesh.glb"),
+                "owned dir followed stem");
+    ok &= Check(fs::exists(project / "assets" / "characters" / ".source" / "Warrior" /
+                           "WarriorCharacter.lua"),
+                "controller lua renamed");
+
+    Hephaestus::CharacterAsset loaded;
+    ok &= Check(Hephaestus::CharacterSerializer::Deserialize(
+                    loaded, project / "assets" / "characters" / "Warrior.hpcharacter", error),
+                "load renamed character: " + error);
+    ok &= Check(loaded.controller.scriptPath.find("WarriorCharacter.lua") != std::string::npos,
+                "controller path rewritten: " + loaded.controller.scriptPath);
+
+    const auto trashed = ops.MoveToTrash("assets/characters/Warrior.hpcharacter");
+    ok &= Check(trashed.success, "trash character: " + trashed.error);
+    ok &= Check(!fs::exists(project / "assets" / "characters" / "Warrior.hpcharacter"),
+                "trashed json gone");
+    ok &= Check(!fs::exists(project / "assets" / "characters" / ".source" / "Warrior"),
+                "trashed owned dir gone");
+
+    const auto restored = ops.RestoreFromTrash(trashed.opId);
+    ok &= Check(restored.success, "restore character: " + restored.error);
+    ok &= Check(fs::exists(project / "assets" / "characters" / "Warrior.hpcharacter"),
+                "restored json");
+    ok &= Check(fs::exists(project / "assets" / "characters" / ".source" / "Warrior" / "mesh.glb"),
+                "restored owned mesh");
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -203,6 +256,7 @@ int main(int argc, char** argv) {
     ok &= TestRenameRewritesReferrers(scratch / "RenameProj");
     ok &= TestTrashRestoreRoundTrip(scratch / "TrashProj");
     ok &= TestOpenDocumentRetarget(scratch / "DocsProj");
+    ok &= TestCharacterCompanionRenameAndTrash(scratch / "CharProj");
 
     if (!ok) {
         return 1;

@@ -113,9 +113,9 @@ Inspector / gizmo edit
 
 Supported capture types (via `PrefabComponentIO`, not a per-property switch in the editor):
 
-MeshRenderer, MeshCollider, PhysicsShape, RigidBody, Material, Light, Camera, LuaScript, ScriptComponent, plus Transform on **child** nodes.
+MeshRenderer (authored only; runtime-generated character visuals are omitted), MeshCollider, PhysicsShape, RigidBody, Material, Light, Camera, LuaScript, ScriptComponent, AudioSource, Character, plus Transform on **child** nodes.
 
-Lua exposed variables are stored in `scriptVars` (runtime `variables` are stripped from JSON diffs).
+Lua exposed variables are stored in `scriptVars` (runtime `variables` are stripped from JSON diffs). Character controller variables use the Character component’s `controllerVariables` / `authoredControllerVariables`. Character and LuaScript Apply/Revert independently; a gameplay `LuaScriptComponent` on the same entity is not the character controller.
 
 If a value matches the prefab again, the override is removed.
 
@@ -238,6 +238,8 @@ Re-saving a scene migrates `blueprintInstances` → `prefabInstances`. Re-saving
 - Unpack stripping metadata without losing values
 - Missing prefab stubs
 - Legacy `Player.hpblueprint` load
+- Instantiate pose/vars
+- Character + LuaScript coexistence is covered by `CharacterWorkflowTests` (runtime MeshRenderer omitted from capture; Character Apply does not clobber LuaScript)
 
 ---
 

@@ -134,6 +134,7 @@ public:
     }
 
     EditorAssetPipeline* GetAssetPipeline() { return m_assetPipeline.get(); }
+    void rebuildSceneVisuals();
 
 protected:
     void closeEvent(QCloseEvent* event) override;

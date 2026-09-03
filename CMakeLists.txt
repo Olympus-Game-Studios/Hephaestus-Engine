@@ -206,6 +206,9 @@ target_include_directories(HephaestusInputCore PUBLIC engine extern extern/glfw/
     engine/Assets/AssetPathPolicy.cpp
     engine/Assets/AssetReferenceIndex.cpp
     engine/Assets/CharacterAsset.cpp
+    engine/Assets/CharacterRuntime.cpp
+    engine/Assets/CharacterRuntimeGpu.cpp
+    engine/Assets/CharacterImport.cpp
     engine/Assets/SkeletalModelImporter.cpp
     engine/Animation/Skeleton.cpp
     engine/Animation/AnimationClip.cpp
@@ -355,6 +358,9 @@ add_executable(HephaestusEngine
     engine/Assets/AssetManager.cpp
     engine/Assets/OpenDocumentRegistry.cpp
     engine/Assets/CharacterAsset.cpp
+    engine/Assets/CharacterRuntime.cpp
+    engine/Assets/CharacterRuntimeGpu.cpp
+    engine/Assets/CharacterImport.cpp
     engine/Assets/SkeletalModelImporter.cpp
     engine/Animation/Skeleton.cpp
     engine/Animation/AnimationClip.cpp
@@ -566,6 +572,10 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/ScriptInspector.h
             engine/UI/QtEditor/LuaScriptInspector.cpp
             engine/UI/QtEditor/LuaScriptInspector.h
+            engine/UI/QtEditor/CharacterInspector.cpp
+            engine/UI/QtEditor/CharacterInspector.h
+            engine/UI/QtEditor/CharacterImportDialog.cpp
+            engine/UI/QtEditor/CharacterImportDialog.h
             engine/UI/QtEditor/PhysicsInspectors.cpp
             engine/UI/QtEditor/PhysicsInspectors.h
             engine/UI/QtEditor/CameraInspector.cpp
@@ -1272,6 +1282,37 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         COMMAND CharacterPlaybackTests
     )
 
+    add_executable(CharacterWorkflowTests
+        engine/Tests/CharacterWorkflowTests.cpp
+        engine/Assets/CharacterAsset.cpp
+        engine/Assets/CharacterRuntime.cpp
+        engine/Assets/CharacterImport.cpp
+        engine/Assets/SkeletalModelImporter.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Assets/AssetManager.cpp
+        engine/Animation/Skeleton.cpp
+        engine/Animation/AnimationClip.cpp
+        engine/Animation/CharacterPlayback.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_include_directories(CharacterWorkflowTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME CharacterWorkflow
+        COMMAND CharacterWorkflowTests
+    )
+
     add_executable(AssetOperationTransactionTests
         engine/Tests/AssetOperationTransactionTests.cpp
         engine/Assets/AssetOperationService.cpp
@@ -1279,6 +1320,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         engine/Assets/AssetReferenceIndex.cpp
         engine/Assets/AssetPathPolicy.cpp
         engine/Assets/AssetManager.cpp
+        engine/Assets/CharacterAsset.cpp
     )
 
     target_include_directories(AssetOperationTransactionTests PRIVATE

@@ -133,6 +133,8 @@ struct MeshRendererComponent {
     std::vector<int> materialIndices;
     std::vector<std::string> appliedMaterialPaths; // Tracks which material file is applied to each slot
     int submeshCount = 0; // Number of submeshes (material slots) in the imported mesh
+    /// Stamped only by CharacterRuntime bind. Never authored or serialized.
+    bool runtimeGenerated = false;
 
     MeshRendererComponent() 
         : localBounds(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f)) {}
@@ -188,6 +190,14 @@ struct MeshRendererComponent {
         return worldBounds;
     }
 };
+
+inline bool IsRuntimeGeneratedVisual(const MeshRendererComponent& mesh) {
+    return mesh.runtimeGenerated;
+}
+
+inline bool IsRuntimeGeneratedVisual(const MeshRendererComponent* mesh) {
+    return mesh && mesh->runtimeGenerated;
+}
 
 struct MeshColliderContact {
     entt::entity other{ entt::null };
