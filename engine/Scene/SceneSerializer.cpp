@@ -28,6 +28,7 @@
 #include <string>
 #include <system_error>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace
@@ -142,6 +143,20 @@ void WritePropertyValue(std::ostream& stream, const PropertyValue& value)
         stream << "}";
         return;
     }
+}
+
+void WriteStringSet(std::ostream& stream, const std::unordered_set<std::string>& values)
+{
+    std::vector<std::string> sorted(values.begin(), values.end());
+    std::sort(sorted.begin(), sorted.end());
+    stream << "[";
+    for (size_t index = 0; index < sorted.size(); ++index) {
+        if (index != 0) {
+            stream << ", ";
+        }
+        stream << "\"" << EscapeString(sorted[index]) << "\"";
+    }
+    stream << "]";
 }
 
 PropertyValue ParsePropertyValue(const JsonValue& value)
@@ -794,7 +809,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
                 oss << "\"" << EscapeString(key) << "\": ";
                 WritePropertyValue(oss, value);
             }
-            oss << "}\n";
+            oss << "},\n";
+            oss << "          \"authoredVariables\": ";
+            WriteStringSet(oss, script->authoredVariables);
+            oss << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1557,6 +1575,16 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     }
                 }
             }
+            if (const JsonValue* authoredValue = scriptObj->Find("authoredVariables")) {
+                script.authoredVariablesInitialized = true;
+                if (authoredValue->IsArray()) {
+                    for (const JsonValue& value : authoredValue->AsArray()) {
+                        if (value.IsString()) {
+                            script.authoredVariables.insert(value.AsString());
+                        }
+                    }
+                }
+            }
         }
 
         if (const JsonValue* audioObj = components->Find("AudioSource")) {
@@ -2253,7 +2281,10 @@ std::string SceneSerializer::SerializeToString() const
                 oss << "\"" << EscapeString(key) << "\": ";
                 WritePropertyValue(oss, value);
             }
-            oss << "}\n";
+            oss << "},\n";
+            oss << "          \"authoredVariables\": ";
+            WriteStringSet(oss, script->authoredVariables);
+            oss << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }

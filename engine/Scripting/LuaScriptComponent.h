@@ -2,6 +2,7 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "../Core/PropertyValue.h"
 
@@ -17,6 +18,8 @@ struct LuaScriptComponent {
     std::string functionOnDestroy;   // Function to call on destroy
     bool enabled = true;
     std::unordered_map<std::string, PropertyValue> variables; // Per-instance variables
+    std::unordered_set<std::string> authoredVariables; // Explicit values relative to Expose defaults
+    bool authoredVariablesInitialized = false; // Transient legacy migration state
 
     LuaScriptComponent() = default;
     LuaScriptComponent(const std::string& path) : scriptPath(path) {}

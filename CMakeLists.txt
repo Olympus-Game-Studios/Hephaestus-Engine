@@ -239,6 +239,8 @@ set(ENGINE_CORE_SOURCES
     engine/Scripting/ScriptBase.cpp
     engine/Scripting/ScriptEngine.cpp
     engine/Scripting/LuaScriptEngine.cpp
+    engine/Scripting/LuaExposeScanner.cpp
+    engine/Scripting/LuaScriptVariableReconciler.cpp
     engine/UI/HephaestusUI/HUIAsset.cpp
     engine/UI/HephaestusUI/UIButton.cpp
     engine/UI/HephaestusUI/UICanvas.cpp
@@ -377,6 +379,8 @@ add_executable(HephaestusEngine
     engine/Scripting/ScriptBase.cpp
     engine/Scripting/ScriptEngine.cpp
     engine/Scripting/LuaScriptEngine.cpp
+    engine/Scripting/LuaExposeScanner.cpp
+    engine/Scripting/LuaScriptVariableReconciler.cpp
     engine/UI/HephaestusUI/HUIAsset.cpp
     engine/UI/HephaestusUI/UIButton.cpp
     engine/UI/HephaestusUI/UICanvas.cpp
@@ -1136,6 +1140,17 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME LuaExposeScanner
         COMMAND LuaExposeScannerTests
+    )
+
+    add_executable(LuaScriptVariableTests
+        engine/Tests/LuaScriptVariableTests.cpp
+        engine/Scripting/LuaExposeScanner.cpp
+        engine/Scripting/LuaScriptVariableReconciler.cpp
+    )
+    target_include_directories(LuaScriptVariableTests PRIVATE engine extern)
+    add_test(
+        NAME LuaScriptVariables
+        COMMAND LuaScriptVariableTests
     )
 
     add_executable(AssetReferenceIndexTests

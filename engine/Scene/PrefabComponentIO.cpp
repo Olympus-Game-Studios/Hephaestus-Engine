@@ -545,6 +545,14 @@ void CaptureLuaScript(const LuaScriptComponent& lua, JsonValue& data) {
         vars.objectValue.emplace(key, PropertyToJson(value));
     }
     data.objectValue["variables"] = std::move(vars);
+    JsonValue authored = MakeArray();
+    std::vector<std::string> authoredNames(
+        lua.authoredVariables.begin(), lua.authoredVariables.end());
+    std::sort(authoredNames.begin(), authoredNames.end());
+    for (const std::string& name : authoredNames) {
+        authored.arrayValue.push_back(MakeString(name));
+    }
+    data.objectValue["authoredVariables"] = std::move(authored);
 }
 
 void ApplyLuaScript(LuaScriptComponent& lua, const JsonValue& data, bool enabled) {
@@ -570,6 +578,18 @@ void ApplyLuaScript(LuaScriptComponent& lua, const JsonValue& data, bool enabled
             lua.variables.clear();
             for (const auto& [key, entry] : varsValue->AsObject()) {
                 lua.variables.emplace(key, JsonToProperty(entry));
+            }
+        }
+    }
+    lua.authoredVariables.clear();
+    lua.authoredVariablesInitialized = false;
+    if (const JsonValue* authoredValue = data.Find("authoredVariables")) {
+        lua.authoredVariablesInitialized = true;
+        if (authoredValue->IsArray()) {
+            for (const JsonValue& entry : authoredValue->AsArray()) {
+                if (entry.IsString()) {
+                    lua.authoredVariables.insert(entry.AsString());
+                }
             }
         }
     }
