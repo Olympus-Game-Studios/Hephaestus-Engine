@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-09-03: Stage 7B2 Lua Inspector Variables adds statically scanned `Expose.bool/integer/number/string/vec2/vec3/color` declarations, native ordered Inspector editors, explicit script-relative authoring metadata, deterministic reload reconciliation, existing prefab `scriptVars` Apply/Revert integration, runtime and packaged-value parity, focused tests, and updated scripting templates/documentation.
 - 2026-09-02: Stage 7B1 gameplay input foundation adds shared action/axis state, validated `.hpinput` v1 profiles, Lua edge/axis APIs, Qt Play keyboard/mouse adaptation, packaged GLFW gamepad polling, Project Settings mapping authoring, seeded project defaults, packaging support, and focused tests.
 - 2026-09-02: Follow-up issue drafts define packaged HephaestusUI presentation and Play Mode/runtime camera-policy parity outside Stage 7A1.
 - 2026-09-02: Repository-wide capability and maturity audit under `docs/audit/` (index, capability matrix, roadmap, architecture risks, documentation gaps, genre readiness, and per-subsystem reports). Documentation only; no engine behaviour changes.

@@ -47,6 +47,47 @@ end
 
 Enter play mode - your Lua script runs automatically!
 
+## Inspector Parameters
+
+Declare designer-editable parameters at file scope with `Expose.*`:
+
+```lua
+Expose.number("moveSpeed", 5.0)
+Expose.integer("ammo", 30)
+Expose.bool("canSprint", true)
+Expose.string("doorId", "main_door")
+Expose.vec2("screenOffset", 0.0, 0.0)
+Expose.vec3("spawnOffset", 0.0, 1.0, 0.0)
+Expose.color("tint", 1.0, 0.8, 0.6, 1.0)
+
+function onUpdate(dt)
+    Transform.translate(0.0, 0.0, -moveSpeed * dt)
+end
+```
+
+The Lua Script Inspector scans these declarations without executing gameplay code and
+shows native bool, numeric, text, vector, and color editors in source order. Parameter
+names are normal Lua globals after declaration; no `Expose.get()` call is required.
+
+Defaults must be literals. Expressions such as
+`Expose.number("speed", BASE_SPEED * difficulty)` are rejected. Names must be unique:
+duplicate declarations are conflicts and prevent the script's parameter metadata from
+being used until corrected.
+
+Inspector edits participate in undo/redo, scene serialization, and prefab Apply/Revert.
+Values resolve in this order:
+
+- Normal scene entity: authored Inspector value, then Lua declaration default
+- Prefab instance: scene instance override, prefab-authored value, then Lua declaration default
+
+Replacing the script path starts with the new script's defaults and does not carry values
+from the previous script merely because names match. When the same script changes, explicit
+designer values remain, new declarations receive defaults, removed declarations are cleaned
+up, and incompatible type changes reset to the new default.
+
+Runtime changes to these globals remain runtime-only. Stopping Play Mode restores the
+authored scene values, and packaged games receive the same serialized values as Play Mode.
+
 ## Lifecycle Callbacks
 
 Lua scripts support these lifecycle functions:

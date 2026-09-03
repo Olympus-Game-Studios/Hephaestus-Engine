@@ -6,10 +6,10 @@
 --   - Accessing camera properties (FOV, near/far clip)
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- Script variables (can be exposed in editor)
-local moveSpeed = 5.0
-local rotateSpeed = 1.0
-local switchCooldown = 0.5  -- Seconds between camera switches
+-- Designer-editable parameters shown in the Inspector
+Expose.number("moveSpeed", 5.0)
+Expose.number("switchCooldown", 0.5)
+
 local lastSwitchTime = 0
 
 -- Called once when the entity is created

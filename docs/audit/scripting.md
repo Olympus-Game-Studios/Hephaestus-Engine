@@ -1,9 +1,9 @@
 # Scripting audit
 
 **Overall: 3 / 5 (Lua can run small-game logic)**  
-Runtime 3 · Editor 3 · API 3 · Tests 0
+Runtime 3 · Editor 4 · API 3 · Tests 2
 
-Lua is the **product language**. C++ scripting is deprecated in docs but **`ScriptEngine` is still constructed** on Qt play. There are **no** Lua automated tests.
+Lua is the **product language**. C++ scripting is deprecated in docs but **`ScriptEngine` is still constructed** on Qt play. Focused scanner, variable reconciliation, serialization, and prefab workflow tests cover Inspector parameters.
 
 ---
 
@@ -25,11 +25,11 @@ Lua is the **product language**. C++ scripting is deprecated in docs but **`Scri
 
 ## Editor / Inspector
 
-- `LuaScriptInspector`: **enabled + script path** (`AssetReferenceEditor`)
+- `LuaScriptInspector`: enabled, script path, and ordered typed `Expose.*` parameters
 - `variables` map exists and is applied into the environment (`ApplyVariablesToEnvironment`); spawn `vars` merge on instantiate
-- **No** Inspector UI for exposed variables
-- Asset Browser creates scripts with `onAwake`/`onUpdate`/`onDestroy` templates
-- **Maturity:** 3 attach · 1 variables UX
+- Static metadata scanning ignores comments/strings and never executes gameplay code in Edit Mode
+- Asset Browser creates scripts with an `Expose.number` example and `onAwake`/`onUpdate`/`onDestroy` templates
+- **Maturity:** 3 attach · 4 variables UX
 
 ---
 

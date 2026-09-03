@@ -1125,6 +1125,7 @@ void AssetBrowserWidget::createNewLuaScript(const QString& parentRelativePath)
     std::string scriptName = name.trimmed().toStdString();
     file << "-- " << scriptName << ".lua\n"
          << "-- Hephaestus Lua Script\n\n"
+         << "Expose.number(\"moveSpeed\", 5.0)\n\n"
          << "function onAwake()\n"
          << "    -- Called when the script starts (play mode)\n"
          << "end\n\n"
