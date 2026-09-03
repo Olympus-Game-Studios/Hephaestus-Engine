@@ -1,0 +1,1009 @@
+/**
+ * @file SkeletalModelImporter.cpp
+ * @brief glTF/GLB skin import. Vertices stay in mesh local space (no static TRS bake).
+ */
+
+#include "SkeletalModelImporter.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cctype>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#include <functional>
+#include <iterator>
+#include <nlohmann/json.hpp>
+#include <sstream>
+#include <unordered_map>
+
+using json = nlohmann::json;
+
+namespace Hephaestus {
+namespace {
+
+constexpr int kComponentByte = 5120;
+constexpr int kComponentUByte = 5121;
+constexpr int kComponentShort = 5122;
+constexpr int kComponentUShort = 5123;
+constexpr int kComponentUInt = 5125;
+constexpr int kComponentFloat = 5126;
+
+int ComponentSize(int componentType) {
+    switch (componentType) {
+    case kComponentByte:
+    case kComponentUByte:
+        return 1;
+    case kComponentShort:
+    case kComponentUShort:
+        return 2;
+    case kComponentUInt:
+    case kComponentFloat:
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+int TypeComponentCount(const std::string& type) {
+    if (type == "SCALAR") {
+        return 1;
+    }
+    if (type == "VEC2") {
+        return 2;
+    }
+    if (type == "VEC3") {
+        return 3;
+    }
+    if (type == "VEC4") {
+        return 4;
+    }
+    if (type == "MAT2") {
+        return 4;
+    }
+    if (type == "MAT3") {
+        return 9;
+    }
+    if (type == "MAT4") {
+        return 16;
+    }
+    return 0;
+}
+
+std::string TrimCopy(const std::string& value) {
+    size_t begin = 0;
+    while (begin < value.size() &&
+           std::isspace(static_cast<unsigned char>(value[begin]))) {
+        ++begin;
+    }
+    size_t end = value.size();
+    while (end > begin && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+        --end;
+    }
+    return value.substr(begin, end - begin);
+}
+
+std::string ToLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+float ReadGLTFNumber(const json& value) {
+    if (value.is_number_float()) {
+        return value.get<float>();
+    }
+    if (value.is_number_integer()) {
+        return static_cast<float>(value.get<std::int64_t>());
+    }
+    return 0.0f;
+}
+
+Mat4 Mat4FromGLTFQuaternion(float x, float y, float z, float w) {
+    float len = std::sqrt(x * x + y * y + z * z + w * w);
+    if (len > 0.0f) {
+        x /= len;
+        y /= len;
+        z /= len;
+        w /= len;
+    }
+
+    const float xx = x * x;
+    const float yy = y * y;
+    const float zz = z * z;
+    const float xy = x * y;
+    const float xz = x * z;
+    const float yz = y * z;
+    const float wx = w * x;
+    const float wy = w * y;
+    const float wz = w * z;
+
+    Mat4 r = Mat4::Identity();
+    r.m[0] = 1.0f - 2.0f * (yy + zz);
+    r.m[1] = 2.0f * (xy + wz);
+    r.m[2] = 2.0f * (xz - wy);
+    r.m[4] = 2.0f * (xy - wz);
+    r.m[5] = 1.0f - 2.0f * (xx + zz);
+    r.m[6] = 2.0f * (yz + wx);
+    r.m[8] = 2.0f * (xz + wy);
+    r.m[9] = 2.0f * (yz - wx);
+    r.m[10] = 1.0f - 2.0f * (xx + yy);
+    return r;
+}
+
+Mat4 GLTFNodeLocalMatrix(const json& node) {
+    if (node.contains("matrix") && node["matrix"].is_array() && node["matrix"].size() >= 16) {
+        Mat4 matrix = Mat4::Identity();
+        for (int i = 0; i < 16; ++i) {
+            matrix.m[i] = ReadGLTFNumber(node["matrix"][i]);
+        }
+        return matrix;
+    }
+
+    Vec3 translation(0.0f, 0.0f, 0.0f);
+    Vec3 scale(1.0f, 1.0f, 1.0f);
+    float qx = 0.0f;
+    float qy = 0.0f;
+    float qz = 0.0f;
+    float qw = 1.0f;
+
+    if (node.contains("translation") && node["translation"].is_array() &&
+        node["translation"].size() >= 3) {
+        translation.x = ReadGLTFNumber(node["translation"][0]);
+        translation.y = ReadGLTFNumber(node["translation"][1]);
+        translation.z = ReadGLTFNumber(node["translation"][2]);
+    }
+    if (node.contains("scale") && node["scale"].is_array() && node["scale"].size() >= 3) {
+        scale.x = ReadGLTFNumber(node["scale"][0]);
+        scale.y = ReadGLTFNumber(node["scale"][1]);
+        scale.z = ReadGLTFNumber(node["scale"][2]);
+    }
+    if (node.contains("rotation") && node["rotation"].is_array() &&
+        node["rotation"].size() >= 4) {
+        qx = ReadGLTFNumber(node["rotation"][0]);
+        qy = ReadGLTFNumber(node["rotation"][1]);
+        qz = ReadGLTFNumber(node["rotation"][2]);
+        qw = ReadGLTFNumber(node["rotation"][3]);
+    }
+
+    const Mat4 t = Mat4::Translation(translation);
+    const Mat4 r = Mat4FromGLTFQuaternion(qx, qy, qz, qw);
+    const Mat4 s = Mat4::Scale(scale);
+    return Mat4::Multiply(t, Mat4::Multiply(r, s));
+}
+
+bool LoadGlbOrGltf(const std::filesystem::path& path,
+                   json& root,
+                   std::vector<std::vector<uint8_t>>& buffers,
+                   std::string& errorMessage) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) {
+        errorMessage = "Failed to open character source: " + path.string();
+        return false;
+    }
+
+    const std::string ext = ToLower(path.extension().string());
+    if (ext == ".glb") {
+        uint32_t magic = 0;
+        file.read(reinterpret_cast<char*>(&magic), sizeof(uint32_t));
+        if (magic != 0x46546C67) {
+            errorMessage = "Not a GLB file";
+            return false;
+        }
+        uint32_t version = 0;
+        uint32_t fileLength = 0;
+        file.read(reinterpret_cast<char*>(&version), sizeof(uint32_t));
+        file.read(reinterpret_cast<char*>(&fileLength), sizeof(uint32_t));
+        (void)fileLength;
+        if (version != 2) {
+            errorMessage = "Only glTF 2.0 is supported";
+            return false;
+        }
+
+        uint32_t chunkLength = 0;
+        uint32_t chunkType = 0;
+        file.read(reinterpret_cast<char*>(&chunkLength), sizeof(uint32_t));
+        file.read(reinterpret_cast<char*>(&chunkType), sizeof(uint32_t));
+        if (chunkType != 0x4E4F534A) {
+            errorMessage = "Expected JSON chunk in GLB file";
+            return false;
+        }
+        std::string jsonContent(chunkLength, '\0');
+        file.read(jsonContent.data(), static_cast<std::streamsize>(chunkLength));
+        root = json::parse(jsonContent);
+
+        std::vector<uint8_t> binChunk;
+        if (file.peek() != EOF) {
+            uint32_t binLength = 0;
+            uint32_t binType = 0;
+            file.read(reinterpret_cast<char*>(&binLength), sizeof(uint32_t));
+            file.read(reinterpret_cast<char*>(&binType), sizeof(uint32_t));
+            if (binType != 0x004E4942) {
+                errorMessage = "Expected BIN chunk in GLB file";
+                return false;
+            }
+            binChunk.resize(binLength);
+            file.read(reinterpret_cast<char*>(binChunk.data()),
+                      static_cast<std::streamsize>(binLength));
+        }
+
+        const json bufferList = root.value("buffers", json::array());
+        buffers.resize(bufferList.size());
+        if (buffers.empty() && !binChunk.empty()) {
+            buffers.push_back(std::move(binChunk));
+        } else if (!buffers.empty()) {
+            buffers[0] = std::move(binChunk);
+        }
+        return true;
+    }
+
+    if (ext == ".gltf") {
+        std::string jsonContent((std::istreambuf_iterator<char>(file)),
+                                std::istreambuf_iterator<char>());
+        root = json::parse(jsonContent);
+        const json bufferList = root.value("buffers", json::array());
+        buffers.resize(bufferList.size());
+        for (size_t i = 0; i < bufferList.size(); ++i) {
+            const json& buffer = bufferList[i];
+            if (!buffer.contains("uri") || !buffer["uri"].is_string()) {
+                errorMessage = "glTF buffer is missing an external uri";
+                return false;
+            }
+            const std::string uri = buffer["uri"].get<std::string>();
+            if (uri.rfind("data:", 0) == 0) {
+                errorMessage = "Embedded data-URI buffers are not supported for characters";
+                return false;
+            }
+            const std::filesystem::path binPath = path.parent_path() / uri;
+            std::ifstream binFile(binPath, std::ios::binary);
+            if (!binFile.is_open()) {
+                errorMessage = "Failed to open external binary file: " + uri;
+                return false;
+            }
+            binFile.seekg(0, std::ios::end);
+            const auto binSize = static_cast<size_t>(binFile.tellg());
+            binFile.seekg(0, std::ios::beg);
+            buffers[i].resize(binSize);
+            binFile.read(reinterpret_cast<char*>(buffers[i].data()),
+                         static_cast<std::streamsize>(binSize));
+        }
+        return true;
+    }
+
+    errorMessage = "Character sources must be .glb or .gltf";
+    return false;
+}
+
+struct AccessorView {
+    const uint8_t* data = nullptr;
+    int count = 0;
+    int componentType = 0;
+    int componentCount = 0;
+    int stride = 0;
+    bool normalized = false;
+};
+
+bool OpenAccessor(const json& root,
+                  const std::vector<std::vector<uint8_t>>& buffers,
+                  int accessorIndex,
+                  AccessorView& outView,
+                  std::string& errorMessage) {
+    const json accessors = root.value("accessors", json::array());
+    if (accessorIndex < 0 || accessorIndex >= static_cast<int>(accessors.size())) {
+        errorMessage = "Accessor index out of range";
+        return false;
+    }
+    const json& accessor = accessors[accessorIndex];
+    if (accessor.contains("sparse")) {
+        errorMessage = "Sparse accessors are not supported for character import";
+        return false;
+    }
+    if (!accessor.contains("bufferView")) {
+        errorMessage = "Accessor is missing bufferView";
+        return false;
+    }
+    outView.count = accessor.value("count", 0);
+    outView.componentType = accessor.value("componentType", 0);
+    outView.normalized = accessor.value("normalized", false);
+    const std::string type = accessor.value("type", "");
+    outView.componentCount = TypeComponentCount(type);
+    const int elemSize = ComponentSize(outView.componentType);
+    if (outView.count <= 0 || outView.componentCount <= 0 || elemSize <= 0) {
+        errorMessage = "Unsupported accessor type";
+        return false;
+    }
+
+    const json bufferViews = root.value("bufferViews", json::array());
+    const int bufferViewIndex = accessor["bufferView"].get<int>();
+    if (bufferViewIndex < 0 || bufferViewIndex >= static_cast<int>(bufferViews.size())) {
+        errorMessage = "bufferView index out of range";
+        return false;
+    }
+    const json& bufferView = bufferViews[bufferViewIndex];
+    const int bufferIndex = bufferView.value("buffer", 0);
+    if (bufferIndex < 0 || bufferIndex >= static_cast<int>(buffers.size())) {
+        errorMessage = "buffer index out of range";
+        return false;
+    }
+    const int viewOffset = bufferView.value("byteOffset", 0);
+    const int accessorOffset = accessor.value("byteOffset", 0);
+    const int viewLength = bufferView.value("byteLength", 0);
+    const int packedStride = outView.componentCount * elemSize;
+    outView.stride = bufferView.value("byteStride", packedStride);
+    if (outView.stride < packedStride) {
+        errorMessage = "Invalid accessor byteStride";
+        return false;
+    }
+
+    const size_t start = static_cast<size_t>(viewOffset) + static_cast<size_t>(accessorOffset);
+    const size_t needed = start + static_cast<size_t>(outView.stride) * static_cast<size_t>(outView.count - 1) +
+                          static_cast<size_t>(packedStride);
+    if (start > buffers[static_cast<size_t>(bufferIndex)].size() ||
+        needed > buffers[static_cast<size_t>(bufferIndex)].size() ||
+        (viewLength > 0 && accessorOffset + packedStride > viewLength)) {
+        errorMessage = "Accessor data exceeds buffer size";
+        return false;
+    }
+    outView.data = buffers[static_cast<size_t>(bufferIndex)].data() + start;
+    return true;
+}
+
+float ReadNormalized(const AccessorView& view, int element, int component) {
+    const uint8_t* ptr = view.data + static_cast<size_t>(element) * static_cast<size_t>(view.stride) +
+                         static_cast<size_t>(component) * static_cast<size_t>(ComponentSize(view.componentType));
+    switch (view.componentType) {
+    case kComponentFloat: {
+        float value = 0.0f;
+        std::memcpy(&value, ptr, sizeof(float));
+        return value;
+    }
+    case kComponentUByte: {
+        const float raw = static_cast<float>(*ptr);
+        return view.normalized ? (raw / 255.0f) : raw;
+    }
+    case kComponentByte: {
+        const float raw = static_cast<float>(static_cast<int8_t>(*ptr));
+        return view.normalized ? std::max(raw / 127.0f, -1.0f) : raw;
+    }
+    case kComponentUShort: {
+        uint16_t raw = 0;
+        std::memcpy(&raw, ptr, sizeof(uint16_t));
+        return view.normalized ? (static_cast<float>(raw) / 65535.0f) : static_cast<float>(raw);
+    }
+    case kComponentShort: {
+        int16_t raw = 0;
+        std::memcpy(&raw, ptr, sizeof(int16_t));
+        const float value = static_cast<float>(raw);
+        return view.normalized ? std::max(value / 32767.0f, -1.0f) : value;
+    }
+    case kComponentUInt: {
+        uint32_t raw = 0;
+        std::memcpy(&raw, ptr, sizeof(uint32_t));
+        return static_cast<float>(raw);
+    }
+    default:
+        return 0.0f;
+    }
+}
+
+uint16_t ReadJointIndex(const AccessorView& view, int element, int component, std::string& errorMessage) {
+    const uint8_t* ptr = view.data + static_cast<size_t>(element) * static_cast<size_t>(view.stride) +
+                         static_cast<size_t>(component) * static_cast<size_t>(ComponentSize(view.componentType));
+    if (view.componentType == kComponentUByte) {
+        return *ptr;
+    }
+    if (view.componentType == kComponentUShort) {
+        uint16_t value = 0;
+        std::memcpy(&value, ptr, sizeof(uint16_t));
+        return value;
+    }
+    errorMessage = "JOINTS_0 must be UNSIGNED_BYTE or UNSIGNED_SHORT";
+    return 0;
+}
+
+bool ReadMat4Array(const json& root,
+                   const std::vector<std::vector<uint8_t>>& buffers,
+                   int accessorIndex,
+                   int expectedCount,
+                   std::vector<Mat4>& outMatrices,
+                   std::string& errorMessage) {
+    AccessorView view;
+    if (!OpenAccessor(root, buffers, accessorIndex, view, errorMessage)) {
+        return false;
+    }
+    if (view.componentType != kComponentFloat || view.componentCount != 16) {
+        errorMessage = "inverseBindMatrices must be FLOAT MAT4";
+        return false;
+    }
+    if (view.count < expectedCount) {
+        errorMessage = "inverseBindMatrices count is smaller than joints[]";
+        return false;
+    }
+    outMatrices.resize(static_cast<size_t>(expectedCount));
+    for (int i = 0; i < expectedCount; ++i) {
+        for (int e = 0; e < 16; ++e) {
+            outMatrices[static_cast<size_t>(i)].m[e] = ReadNormalized(view, i, e);
+        }
+    }
+    return true;
+}
+
+void ComputeNodeWorlds(const json& nodes,
+                       const std::vector<int>& nodeParent,
+                       std::vector<Mat4>& nodeLocal,
+                       std::vector<Mat4>& nodeWorld) {
+    const int count = static_cast<int>(nodes.size());
+    nodeLocal.resize(static_cast<size_t>(count), Mat4::Identity());
+    nodeWorld.resize(static_cast<size_t>(count), Mat4::Identity());
+    for (int i = 0; i < count; ++i) {
+        nodeLocal[static_cast<size_t>(i)] = GLTFNodeLocalMatrix(nodes[i]);
+    }
+
+    std::vector<char> computed(static_cast<size_t>(count), 0);
+    std::function<void(int)> ensure = [&](int index) {
+        if (index < 0 || computed[static_cast<size_t>(index)]) {
+            return;
+        }
+        const int parent = nodeParent[static_cast<size_t>(index)];
+        if (parent >= 0) {
+            ensure(parent);
+            nodeWorld[static_cast<size_t>(index)] =
+                Mat4::Multiply(nodeWorld[static_cast<size_t>(parent)],
+                               nodeLocal[static_cast<size_t>(index)]);
+        } else {
+            nodeWorld[static_cast<size_t>(index)] = nodeLocal[static_cast<size_t>(index)];
+        }
+        computed[static_cast<size_t>(index)] = 1;
+    };
+    for (int i = 0; i < count; ++i) {
+        ensure(i);
+    }
+}
+
+Mat4 ClosedLocal(int nodeIndex,
+                 int stopNode,
+                 const std::vector<int>& nodeParent,
+                 const std::vector<Mat4>& nodeLocal) {
+    Mat4 acc = Mat4::Identity();
+    int current = nodeIndex;
+    while (current >= 0 && current != stopNode) {
+        acc = Mat4::Multiply(nodeLocal[static_cast<size_t>(current)], acc);
+        current = nodeParent[static_cast<size_t>(current)];
+    }
+    return acc;
+}
+
+struct Influence {
+    uint16_t joint = 0;
+    float weight = 0.0f;
+};
+
+void ClampInfluences(std::vector<Influence>& influences, bool& clamped) {
+    influences.erase(std::remove_if(influences.begin(), influences.end(),
+                                    [](const Influence& inf) {
+                                        return inf.weight <= 1e-8f;
+                                    }),
+                     influences.end());
+    if (influences.size() > static_cast<size_t>(kMaxBoneInfluences)) {
+        std::sort(influences.begin(), influences.end(),
+                  [](const Influence& a, const Influence& b) { return a.weight > b.weight; });
+        influences.resize(static_cast<size_t>(kMaxBoneInfluences));
+        clamped = true;
+    }
+    float sum = 0.0f;
+    for (const Influence& inf : influences) {
+        sum += inf.weight;
+    }
+    if (sum <= 1e-8f) {
+        influences.clear();
+        influences.push_back({0, 1.0f});
+        return;
+    }
+    for (Influence& inf : influences) {
+        inf.weight /= sum;
+    }
+}
+
+bool ReadOptionalVecAttribute(const json& root,
+                              const std::vector<std::vector<uint8_t>>& buffers,
+                              const json& attributes,
+                              const char* name,
+                              int expectedCount,
+                              int expectedComponents,
+                              std::vector<float>& outValues,
+                              std::string& errorMessage) {
+    if (!attributes.contains(name)) {
+        return true;
+    }
+    AccessorView view;
+    if (!OpenAccessor(root, buffers, attributes[name].get<int>(), view, errorMessage)) {
+        return false;
+    }
+    if (view.componentCount != expectedComponents || view.count < expectedCount) {
+        errorMessage = std::string(name) + " accessor does not match POSITION count";
+        return false;
+    }
+    outValues.resize(static_cast<size_t>(expectedCount * expectedComponents));
+    for (int i = 0; i < expectedCount; ++i) {
+        for (int c = 0; c < expectedComponents; ++c) {
+            outValues[static_cast<size_t>(i * expectedComponents + c)] = ReadNormalized(view, i, c);
+        }
+    }
+    return true;
+}
+
+bool AppendSkinnedPrimitive(const json& root,
+                            const std::vector<std::vector<uint8_t>>& buffers,
+                            const json& primitive,
+                            const json& meshJson,
+                            float unitScale,
+                            const std::vector<int>& sourceJointToEval,
+                            SkeletalImportResult& outResult,
+                            std::string& errorMessage) {
+    if (primitive.contains("targets") && primitive["targets"].is_array() &&
+        !primitive["targets"].empty()) {
+        errorMessage = "Morph targets are not supported on character meshes.";
+        return false;
+    }
+    if (!primitive.contains("attributes") || !primitive["attributes"].contains("POSITION")) {
+        errorMessage = "Skinned primitive is missing POSITION";
+        return false;
+    }
+    const json& attributes = primitive["attributes"];
+    if (!attributes.contains("JOINTS_0") || !attributes.contains("WEIGHTS_0")) {
+        errorMessage = "Skinned primitive is missing JOINTS_0 / WEIGHTS_0";
+        return false;
+    }
+
+    AccessorView posView;
+    if (!OpenAccessor(root, buffers, attributes["POSITION"].get<int>(), posView, errorMessage)) {
+        return false;
+    }
+    if (posView.componentCount != 3) {
+        errorMessage = "POSITION must be VEC3";
+        return false;
+    }
+
+    AccessorView joint0;
+    AccessorView weight0;
+    if (!OpenAccessor(root, buffers, attributes["JOINTS_0"].get<int>(), joint0, errorMessage) ||
+        !OpenAccessor(root, buffers, attributes["WEIGHTS_0"].get<int>(), weight0, errorMessage)) {
+        return false;
+    }
+    if (joint0.componentCount != 4 || weight0.componentCount != 4 ||
+        joint0.count < posView.count || weight0.count < posView.count) {
+        errorMessage = "JOINTS_0 / WEIGHTS_0 must be VEC4 with POSITION count";
+        return false;
+    }
+
+    AccessorView joint1{};
+    AccessorView weight1{};
+    bool hasSet1 = attributes.contains("JOINTS_1") && attributes.contains("WEIGHTS_1");
+    if (hasSet1) {
+        if (!OpenAccessor(root, buffers, attributes["JOINTS_1"].get<int>(), joint1, errorMessage) ||
+            !OpenAccessor(root, buffers, attributes["WEIGHTS_1"].get<int>(), weight1, errorMessage)) {
+            return false;
+        }
+    }
+
+    std::vector<float> normals;
+    std::vector<float> uvs;
+    std::vector<float> colors;
+    if (!ReadOptionalVecAttribute(root, buffers, attributes, "NORMAL", posView.count, 3, normals,
+                                  errorMessage) ||
+        !ReadOptionalVecAttribute(root, buffers, attributes, "TEXCOORD_0", posView.count, 2, uvs,
+                                  errorMessage)) {
+        return false;
+    }
+    if (attributes.contains("COLOR_0")) {
+        if (!ReadOptionalVecAttribute(root, buffers, attributes, "COLOR_0", posView.count, 3, colors,
+                                      errorMessage)) {
+            AccessorView colorView;
+            std::string colorError;
+            if (!OpenAccessor(root, buffers, attributes["COLOR_0"].get<int>(), colorView, colorError) ||
+                colorView.componentCount != 4 || colorView.count < posView.count) {
+                return false;
+            }
+            errorMessage.clear();
+            colors.resize(static_cast<size_t>(posView.count * 3));
+            for (int i = 0; i < posView.count; ++i) {
+                colors[static_cast<size_t>(i * 3 + 0)] = ReadNormalized(colorView, i, 0);
+                colors[static_cast<size_t>(i * 3 + 1)] = ReadNormalized(colorView, i, 1);
+                colors[static_cast<size_t>(i * 3 + 2)] = ReadNormalized(colorView, i, 2);
+            }
+        }
+    }
+
+    std::vector<uint32_t> indices;
+    if (primitive.contains("indices")) {
+        AccessorView indexView;
+        if (!OpenAccessor(root, buffers, primitive["indices"].get<int>(), indexView, errorMessage)) {
+            return false;
+        }
+        indices.reserve(static_cast<size_t>(indexView.count));
+        for (int i = 0; i < indexView.count; ++i) {
+            indices.push_back(static_cast<uint32_t>(ReadNormalized(indexView, i, 0)));
+        }
+    } else {
+        indices.resize(static_cast<size_t>(posView.count));
+        for (int i = 0; i < posView.count; ++i) {
+            indices[static_cast<size_t>(i)] = static_cast<uint32_t>(i);
+        }
+    }
+
+    std::vector<SkinnedVertexData> unique(static_cast<size_t>(posView.count));
+    for (int i = 0; i < posView.count; ++i) {
+        SkinnedVertexData vert{};
+        const Vec3 pos = ConvertSkeletalPoint(
+            Vec3(ReadNormalized(posView, i, 0), ReadNormalized(posView, i, 1),
+                 ReadNormalized(posView, i, 2)),
+            unitScale);
+        vert.pos[0] = pos.x;
+        vert.pos[1] = pos.y;
+        vert.pos[2] = pos.z;
+        if (!normals.empty()) {
+            Vec3 n(normals[static_cast<size_t>(i * 3 + 0)],
+                   normals[static_cast<size_t>(i * 3 + 1)],
+                   normals[static_cast<size_t>(i * 3 + 2)]);
+            n = vnorm(n);
+            vert.normal[0] = n.x;
+            vert.normal[1] = n.y;
+            vert.normal[2] = n.z;
+        }
+        if (!uvs.empty()) {
+            vert.texCoord[0] = uvs[static_cast<size_t>(i * 2 + 0)];
+            vert.texCoord[1] = uvs[static_cast<size_t>(i * 2 + 1)];
+        }
+        if (!colors.empty()) {
+            vert.color[0] = colors[static_cast<size_t>(i * 3 + 0)];
+            vert.color[1] = colors[static_cast<size_t>(i * 3 + 1)];
+            vert.color[2] = colors[static_cast<size_t>(i * 3 + 2)];
+        }
+
+        std::vector<Influence> influences;
+        for (int c = 0; c < 4; ++c) {
+            std::string jointError;
+            const uint16_t sourceJoint = ReadJointIndex(joint0, i, c, jointError);
+            if (!jointError.empty()) {
+                errorMessage = jointError;
+                return false;
+            }
+            influences.push_back({sourceJoint, ReadNormalized(weight0, i, c)});
+        }
+        if (hasSet1) {
+            for (int c = 0; c < 4 && c < joint1.componentCount; ++c) {
+                std::string jointError;
+                const uint16_t sourceJoint = ReadJointIndex(joint1, i, c, jointError);
+                if (!jointError.empty()) {
+                    errorMessage = jointError;
+                    return false;
+                }
+                influences.push_back({sourceJoint, ReadNormalized(weight1, i, c)});
+            }
+        }
+        bool clamped = false;
+        ClampInfluences(influences, clamped);
+        if (clamped) {
+            outResult.clampedInfluences = true;
+        }
+        for (size_t k = 0; k < influences.size() && k < 4; ++k) {
+            const int source = static_cast<int>(influences[k].joint);
+            if (source < 0 || source >= static_cast<int>(sourceJointToEval.size()) ||
+                sourceJointToEval[static_cast<size_t>(source)] < 0) {
+                errorMessage = "Vertex joint index " + std::to_string(source) +
+                               " is outside skins[0].joints[]";
+                return false;
+            }
+            vert.joints[k] = static_cast<uint16_t>(sourceJointToEval[static_cast<size_t>(source)]);
+            vert.weights[k] = influences[k].weight;
+        }
+        unique[static_cast<size_t>(i)] = vert;
+    }
+
+    const uint32_t indexStart = static_cast<uint32_t>(outResult.indices.size());
+
+    Vec3 minBounds{};
+    Vec3 maxBounds{};
+    bool boundsInit = !outResult.vertices.empty();
+    if (boundsInit) {
+        minBounds = outResult.bounds.min;
+        maxBounds = outResult.bounds.max;
+    }
+
+    for (uint32_t idx : indices) {
+        if (idx >= unique.size()) {
+            errorMessage = "Index out of range";
+            return false;
+        }
+        const SkinnedVertexData& vert = unique[idx];
+        const Vec3 pos(vert.pos[0], vert.pos[1], vert.pos[2]);
+        if (!boundsInit) {
+            minBounds = pos;
+            maxBounds = pos;
+            boundsInit = true;
+        } else {
+            minBounds.x = std::min(minBounds.x, pos.x);
+            minBounds.y = std::min(minBounds.y, pos.y);
+            minBounds.z = std::min(minBounds.z, pos.z);
+            maxBounds.x = std::max(maxBounds.x, pos.x);
+            maxBounds.y = std::max(maxBounds.y, pos.y);
+            maxBounds.z = std::max(maxBounds.z, pos.z);
+        }
+        outResult.vertices.push_back(vert);
+        outResult.indices.push_back(static_cast<uint32_t>(outResult.vertices.size() - 1));
+    }
+
+    if (boundsInit) {
+        outResult.bounds = AABB(minBounds, maxBounds);
+    }
+
+    SkinnedSubmeshData submesh{};
+    submesh.indexOffset = indexStart;
+    submesh.indexCount = static_cast<uint32_t>(outResult.indices.size() - indexStart);
+    if (primitive.contains("material") && primitive["material"].is_number_integer()) {
+        submesh.materialSlot = primitive["material"].get<int>();
+    }
+    if (primitive.contains("name") && primitive["name"].is_string()) {
+        submesh.name = primitive["name"].get<std::string>();
+    } else if (meshJson.contains("name") && meshJson["name"].is_string()) {
+        submesh.name = meshJson["name"].get<std::string>();
+    }
+    outResult.submeshes.push_back(std::move(submesh));
+    return true;
+}
+
+bool ImportDocument(const json& root,
+                    const std::vector<std::vector<uint8_t>>& buffers,
+                    const SkeletalImportSettings& settings,
+                    SkeletalImportResult& outResult,
+                    std::string& errorMessage) {
+    outResult = SkeletalImportResult{};
+    if (!root.contains("skins") || !root["skins"].is_array() || root["skins"].empty()) {
+        errorMessage =
+            "Character source has no skin.\n\n"
+            "Import this file as a static mesh instead, or export a skinned armature.";
+        return false;
+    }
+    if (root["skins"].size() != 1) {
+        errorMessage = "Character sources must contain exactly one skin (found " +
+                       std::to_string(root["skins"].size()) + ").";
+        return false;
+    }
+    if (!root.contains("nodes") || !root["nodes"].is_array() || root["nodes"].empty()) {
+        errorMessage = "Character source has no nodes";
+        return false;
+    }
+
+    const json& skin = root["skins"][0];
+    if (!skin.contains("joints") || !skin["joints"].is_array() || skin["joints"].empty()) {
+        errorMessage = "Skin is missing joints[]";
+        return false;
+    }
+    const json& nodes = root["nodes"];
+    const int nodeCount = static_cast<int>(nodes.size());
+
+    std::vector<int> jointNodes;
+    jointNodes.reserve(skin["joints"].size());
+    for (const auto& joint : skin["joints"]) {
+        if (!joint.is_number_integer()) {
+            errorMessage = "Skin joints[] must be node indices";
+            return false;
+        }
+        const int nodeIndex = joint.get<int>();
+        if (nodeIndex < 0 || nodeIndex >= nodeCount) {
+            errorMessage = "Skin joint node index out of range";
+            return false;
+        }
+        jointNodes.push_back(nodeIndex);
+    }
+    if (static_cast<int>(jointNodes.size()) > kMaxCharacterBones) {
+        errorMessage = "Skeleton has " + std::to_string(jointNodes.size()) +
+                       " bones; maximum is " + std::to_string(kMaxCharacterBones) + ".";
+        return false;
+    }
+
+    std::vector<int> unnamed;
+    std::unordered_map<std::string, std::vector<int>> nameToJoints;
+    for (int source = 0; source < static_cast<int>(jointNodes.size()); ++source) {
+        const json& node = nodes[jointNodes[static_cast<size_t>(source)]];
+        std::string name;
+        if (node.contains("name") && node["name"].is_string()) {
+            name = TrimCopy(node["name"].get<std::string>());
+        }
+        if (name.empty()) {
+            unnamed.push_back(source);
+        } else {
+            nameToJoints[name].push_back(source);
+        }
+    }
+    if (!unnamed.empty()) {
+        errorMessage =
+            "Character skeleton contains unnamed bones.\n\n"
+            "Hephaestus requires stable bone names so animation compatibility can be verified.\n\n"
+            "Unnamed joints:\n";
+        for (int index : unnamed) {
+            errorMessage += "- Joint index " + std::to_string(index) + "\n";
+        }
+        errorMessage += "\nName these bones in the source rig and export the character again.";
+        return false;
+    }
+
+    std::vector<std::string> duplicates;
+    for (const auto& [name, indices] : nameToJoints) {
+        if (indices.size() > 1) {
+            duplicates.push_back(name);
+        }
+    }
+    if (!duplicates.empty()) {
+        std::sort(duplicates.begin(), duplicates.end());
+        errorMessage = "Character skeleton contains duplicate bone names.\n\n";
+        for (const std::string& name : duplicates) {
+            errorMessage += "- " + name + " (joint indices ";
+            const auto& indices = nameToJoints[name];
+            for (size_t i = 0; i < indices.size(); ++i) {
+                if (i > 0) {
+                    errorMessage += ", ";
+                }
+                errorMessage += std::to_string(indices[i]);
+            }
+            errorMessage += ")\n";
+        }
+        errorMessage += "\nRename these bones in the source rig so each name is unique.";
+        return false;
+    }
+
+    std::vector<int> nodeParent(static_cast<size_t>(nodeCount), -1);
+    for (int i = 0; i < nodeCount; ++i) {
+        const json& node = nodes[i];
+        if (!node.contains("children") || !node["children"].is_array()) {
+            continue;
+        }
+        for (const auto& child : node["children"]) {
+            if (!child.is_number_integer()) {
+                continue;
+            }
+            const int childIndex = child.get<int>();
+            if (childIndex >= 0 && childIndex < nodeCount) {
+                nodeParent[static_cast<size_t>(childIndex)] = i;
+            }
+        }
+    }
+
+    std::unordered_map<int, int> nodeToSource;
+    for (int source = 0; source < static_cast<int>(jointNodes.size()); ++source) {
+        nodeToSource[jointNodes[static_cast<size_t>(source)]] = source;
+    }
+
+    std::vector<Mat4> nodeLocal;
+    std::vector<Mat4> nodeWorld;
+    ComputeNodeWorlds(nodes, nodeParent, nodeLocal, nodeWorld);
+
+    int meshNode = -1;
+    int meshIndex = -1;
+    for (int i = 0; i < nodeCount; ++i) {
+        const json& node = nodes[i];
+        const bool hasSkin = node.contains("skin") && node["skin"].is_number_integer() &&
+                             node["skin"].get<int>() == 0;
+        const bool hasMesh = node.contains("mesh") && node["mesh"].is_number_integer();
+        if (hasSkin && hasMesh) {
+            if (meshNode >= 0) {
+                errorMessage = "Character sources must contain exactly one skinned mesh node.";
+                return false;
+            }
+            meshNode = i;
+            meshIndex = node["mesh"].get<int>();
+        }
+    }
+    if (meshNode < 0 || meshIndex < 0) {
+        errorMessage = "No node references both mesh and skins[0]";
+        return false;
+    }
+    if (!root.contains("meshes") || meshIndex >= static_cast<int>(root["meshes"].size())) {
+        errorMessage = "Skinned mesh index is out of range";
+        return false;
+    }
+
+    std::vector<Mat4> inverseBinds;
+    if (!skin.contains("inverseBindMatrices")) {
+        errorMessage = "Skin is missing inverseBindMatrices";
+        return false;
+    }
+    if (!ReadMat4Array(root, buffers, skin["inverseBindMatrices"].get<int>(),
+                       static_cast<int>(jointNodes.size()), inverseBinds, errorMessage)) {
+        return false;
+    }
+
+    Skeleton skeleton;
+    if (skin.contains("name") && skin["name"].is_string()) {
+        skeleton.skinName = TrimCopy(skin["name"].get<std::string>());
+    }
+    if (skeleton.skinName.empty()) {
+        skeleton.skinName = "Armature";
+    }
+
+    skeleton.bones.resize(jointNodes.size());
+    for (int source = 0; source < static_cast<int>(jointNodes.size()); ++source) {
+        const int nodeIndex = jointNodes[static_cast<size_t>(source)];
+        int parentSource = -1;
+        int ancestor = nodeParent[static_cast<size_t>(nodeIndex)];
+        int parentJointNode = -1;
+        while (ancestor >= 0) {
+            auto it = nodeToSource.find(ancestor);
+            if (it != nodeToSource.end()) {
+                parentSource = it->second;
+                parentJointNode = ancestor;
+                break;
+            }
+            ancestor = nodeParent[static_cast<size_t>(ancestor)];
+        }
+
+        SkeletonBone bone;
+        bone.name = TrimCopy(nodes[nodeIndex].value("name", ""));
+        bone.parentEval = parentSource;
+        bone.sourceJoint = source;
+        bone.localRest =
+            ConvertSkeletalMatrix(ClosedLocal(nodeIndex, parentJointNode, nodeParent, nodeLocal),
+                                  settings.unitScale);
+        bone.inverseBind = ConvertSkeletalMatrix(inverseBinds[static_cast<size_t>(source)],
+                                                 settings.unitScale);
+        skeleton.bones[static_cast<size_t>(source)] = std::move(bone);
+    }
+
+    if (!SkeletonBuilder::Finalize(skeleton, errorMessage)) {
+        return false;
+    }
+
+    const json& meshJson = root["meshes"][meshIndex];
+    if (!meshJson.contains("primitives") || !meshJson["primitives"].is_array() ||
+        meshJson["primitives"].empty()) {
+        errorMessage = "Skinned mesh has no primitives";
+        return false;
+    }
+
+    for (const auto& primitive : meshJson["primitives"]) {
+        if (!AppendSkinnedPrimitive(root, buffers, primitive, meshJson, settings.unitScale,
+                                    skeleton.sourceJointToEval, outResult, errorMessage)) {
+            return false;
+        }
+    }
+
+    outResult.skeleton = std::move(skeleton);
+    outResult.meshNodeWorld =
+        ConvertSkeletalMatrix(nodeWorld[static_cast<size_t>(meshNode)], settings.unitScale);
+
+    std::string restError;
+    if (!SkeletonBuilder::RestMatchesBind(outResult.skeleton, outResult.meshNodeWorld, 1e-3f,
+                                          restError)) {
+        outResult.restBindMismatch = true;
+        outResult.warnings.push_back(restError);
+    }
+    if (outResult.clampedInfluences) {
+        outResult.warnings.push_back(
+            "Some vertices had more than 4 bone influences; extra influences were dropped and "
+            "weights were renormalized.");
+    }
+    return true;
+}
+
+} // namespace
+
+bool SkeletalModelImporter::Load(const std::filesystem::path& path,
+                                 const SkeletalImportSettings& settings,
+                                 SkeletalImportResult& outResult,
+                                 std::string& outError) {
+    outError.clear();
+    json root;
+    std::vector<std::vector<uint8_t>> buffers;
+    try {
+        if (!LoadGlbOrGltf(path, root, buffers, outError)) {
+            return false;
+        }
+        return ImportDocument(root, buffers, settings, outResult, outError);
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to load character source: ") + ex.what();
+        return false;
+    }
+}
+
+} // namespace Hephaestus

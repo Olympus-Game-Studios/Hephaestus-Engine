@@ -19,6 +19,8 @@
 #include "../../Core/ProjectContext.h"
 #include "../../Scene/PrefabAsset.h"
 #include "../../Scene/PrefabSerializer.h"
+#include "../../Assets/CharacterAsset.h"
+#include "../../Assets/AssetPathPolicy.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -254,7 +256,7 @@ void AssetBrowserWidget::setupUI()
     m_filterCombo = new QComboBox(this);
     m_filterCombo->addItems({
         tr("All"), tr("Meshes"), tr("Textures"), tr("Materials"), tr("Scenes"),
-        tr("Scripts"), tr("UI Layouts"), tr("Prefabs"), tr("Audio")
+        tr("Scripts"), tr("UI Layouts"), tr("Prefabs"), tr("Characters"), tr("Audio")
     });
     connect(m_filterCombo, &QComboBox::currentTextChanged, this, [this](const QString&) {
         rebuildContentsView();
@@ -516,6 +518,7 @@ void AssetBrowserWidget::rebuildContentsView()
         if (filter == tr("Scripts")) return type == AssetType::Script;
         if (filter == tr("UI Layouts")) return type == AssetType::UILayout;
         if (filter == tr("Prefabs")) return type == AssetType::Prefab;
+        if (filter == tr("Characters")) return type == AssetType::Character;
         if (filter == tr("Audio")) return type == AssetType::Audio;
         return true;
     };
@@ -530,6 +533,7 @@ void AssetBrowserWidget::rebuildContentsView()
             case AssetType::Script: return QStringLiteral("[Script]");
             case AssetType::Audio: return QStringLiteral("[Audio]");
             case AssetType::Prefab: return QStringLiteral("[Prefab]");
+            case AssetType::Character: return QStringLiteral("[Character]");
             case AssetType::Shader: return QStringLiteral("[Shader]");
             case AssetType::Font: return QStringLiteral("[Font]");
             case AssetType::Text: return QStringLiteral("[Text]");
@@ -734,6 +738,8 @@ QIcon AssetBrowserWidget::getAssetIcon(int assetType, bool isDirectory) const
             return s->standardIcon(QStyle::SP_MediaVolume);
         case AssetType::Prefab:
             return s->standardIcon(QStyle::SP_VistaShield);
+        case AssetType::Character:
+            return s->standardIcon(QStyle::SP_DirLinkIcon);
         case AssetType::Shader:
             return s->standardIcon(QStyle::SP_TitleBarMenuButton);
         case AssetType::Font:
@@ -1060,6 +1066,10 @@ void AssetBrowserWidget::showCreateMenu(QMenu& menu, const QString& targetDirect
     menu.addAction(style()->standardIcon(QStyle::SP_VistaShield), tr("New Prefab"), [this, targetDirectory]() {
         createNewPrefab(targetDirectory);
     });
+
+    menu.addAction(style()->standardIcon(QStyle::SP_DirLinkIcon), tr("New Character"), [this, targetDirectory]() {
+        createNewCharacter(targetDirectory);
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1302,6 +1312,42 @@ void AssetBrowserWidget::createNewPrefab(const QString& parentRelativePath)
     const QString relativePath = parentRelativePath.isEmpty() ? fileName : parentRelativePath + "/" + fileName;
     emit assetOpenRequested(relativePath);
     std::cout << "[AssetBrowser] Created prefab: " << filePath.string() << "\n";
+}
+
+void AssetBrowserWidget::createNewCharacter(const QString& parentRelativePath)
+{
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("New Character"),
+                                         tr("Character name (without extension):"), QLineEdit::Normal,
+                                         tr("NewCharacter"), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+
+    auto& assetMgr = AssetManager::GetInstance();
+    std::string parentAbs = parentRelativePath.isEmpty()
+        ? assetMgr.GetAssetRoot()
+        : assetMgr.ToAbsolutePath(parentRelativePath.toStdString());
+
+    std::string characterName = name.trimmed().toStdString();
+    std::filesystem::path filePath = std::filesystem::path(parentAbs) / (characterName + ".hpcharacter");
+
+    if (std::filesystem::exists(filePath)) {
+        QMessageBox::warning(this, tr("New Character"), tr("A character with that name already exists."));
+        return;
+    }
+
+    std::string error;
+    const std::filesystem::path projectRoot(assetMgr.GetProjectRoot());
+    if (!Hephaestus::CharacterSerializer::CreateNew(filePath, projectRoot, error)) {
+        QMessageBox::critical(this, tr("New Character"),
+            tr("Failed to create character: %1").arg(QString::fromStdString(error)));
+        return;
+    }
+
+    Refresh();
+    const QString fileName = QString::fromStdString(characterName) + ".hpcharacter";
+    const QString relativePath = parentRelativePath.isEmpty() ? fileName : parentRelativePath + "/" + fileName;
+    emit assetOpenRequested(relativePath);
+    std::cout << "[AssetBrowser] Created character: " << filePath.string() << "\n";
 }
 
 void AssetBrowserWidget::deleteAsset(const QString& relativePath, bool isDirectory)

@@ -16,6 +16,8 @@ const char* ToString(DocumentKind kind) {
         return "Material";
     case DocumentKind::HUI:
         return "HUI";
+    case DocumentKind::Character:
+        return "Character";
     }
     return "Unknown";
 }

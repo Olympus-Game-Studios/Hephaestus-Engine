@@ -60,6 +60,10 @@ int main() {
     Write(project / "assets" / "materials" / "ship.hematerial", "{}");
     Write(project / "assets" / "textures" / "ship.png", "texture");
     Write(project / "assets" / "prefabs" / "Ship.hpprefab", "{}");
+    Write(project / "assets" / "characters" / "Cultist.hpcharacter", "{}");
+    Write(project / "assets" / "characters" / ".source" / "Cultist" / "mesh.glb", "mesh");
+    Write(project / "assets" / "characters" / ".source" / "Cultist" / "CultistCharacter.lua",
+          "function onUpdate(dt) end");
     Write(project / "assets" / "ui" / "Hud.hui", "{}");
     Write(project / "assets" / "audio" / "engine.wav", "audio");
     Write(project / "assets" / "input" / "Default.hpinput",
@@ -104,6 +108,13 @@ int main() {
                 "assets are packaged");
     ok &= Check(fs::exists(package / "assets" / "prefabs" / "Ship.hpprefab"),
                 "prefabs are packaged");
+    ok &= Check(fs::exists(package / "assets" / "characters" / "Cultist.hpcharacter"),
+                "character assets are packaged");
+    ok &= Check(fs::exists(package / "assets" / "characters" / ".source" / "Cultist" / "mesh.glb"),
+                "owned character sources are packaged");
+    ok &= Check(fs::exists(package / "assets" / "characters" / ".source" / "Cultist" /
+                           "CultistCharacter.lua"),
+                "owned character controller scripts are packaged");
     ok &= Check(fs::exists(package / "assets" / "ui" / "Hud.hui"),
                 "HUI documents are packaged");
     ok &= Check(fs::exists(package / "assets" / "audio" / "engine.wav"),

@@ -21,7 +21,8 @@ enum class DocumentKind {
     Scene,
     Prefab,
     Material,
-    HUI
+    HUI,
+    Character
 };
 
 const char* ToString(DocumentKind kind);

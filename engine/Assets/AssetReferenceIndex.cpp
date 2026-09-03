@@ -37,7 +37,7 @@ bool StartsWithInsensitive(const std::string& value, const std::string& prefix) 
 
 bool IsIndexableExtension(const std::string& ext) {
     return ext == ".hpscene" || ext == ".hpprefab" || ext == ".hematerial" ||
-           ext == ".hui" || ext == ".heproject" || ext == ".json";
+           ext == ".hui" || ext == ".hpcharacter" || ext == ".heproject" || ext == ".json";
 }
 
 bool LooksLikeAssetPath(const std::string& value) {
@@ -69,10 +69,10 @@ bool LooksLikeControllerPath(const std::string& value) {
 }
 
 AssetReferenceFieldKind FieldKindFromKey(const std::string& key) {
-    if (key == "meshSource") {
+    if (key == "meshSource" || key == "source") {
         return AssetReferenceFieldKind::MeshSource;
     }
-    if (key == "appliedMaterialPaths") {
+    if (key == "appliedMaterialPaths" || key == "material") {
         return AssetReferenceFieldKind::AppliedMaterialPath;
     }
     if (key == "albedoTexturePath" || key == "normalTexturePath" ||
@@ -92,6 +92,9 @@ AssetReferenceFieldKind FieldKindFromKey(const std::string& key) {
     }
     if (key == "prefabPath" || key == "blueprintPath") {
         return AssetReferenceFieldKind::PrefabPath;
+    }
+    if (key == "characterPath" || key == "sharedRig") {
+        return AssetReferenceFieldKind::CharacterPath;
     }
     if (key == "resourcePath") {
         return AssetReferenceFieldKind::ResourcePath;
@@ -122,6 +125,13 @@ bool IsKnownPathKey(const std::string& key) {
 }
 
 bool AllowKeyForExtension(const std::string& ext, const std::string& key) {
+    if (key == "source" || key == "material" || key == "sharedRig") {
+        return ext == ".hpcharacter";
+    }
+    if (key == "characterPath") {
+        return ext == ".hpscene" || ext == ".hpprefab";
+    }
+
     const AssetReferenceFieldKind kind = FieldKindFromKey(key);
     if (kind == AssetReferenceFieldKind::Unknown) {
         return false;
@@ -134,7 +144,8 @@ bool AllowKeyForExtension(const std::string& ext, const std::string& key) {
                kind == AssetReferenceFieldKind::ScriptPath ||
                kind == AssetReferenceFieldKind::ClipPath ||
                kind == AssetReferenceFieldKind::HdriPath ||
-               kind == AssetReferenceFieldKind::PrefabPath;
+               kind == AssetReferenceFieldKind::PrefabPath ||
+               kind == AssetReferenceFieldKind::CharacterPath;
     }
     if (ext == ".hpprefab") {
         return kind == AssetReferenceFieldKind::MeshSource ||
@@ -144,7 +155,14 @@ bool AllowKeyForExtension(const std::string& ext, const std::string& key) {
                kind == AssetReferenceFieldKind::ClipPath ||
                kind == AssetReferenceFieldKind::HdriPath ||
                kind == AssetReferenceFieldKind::PrefabPath ||
-               kind == AssetReferenceFieldKind::ResourcePath;
+               kind == AssetReferenceFieldKind::ResourcePath ||
+               kind == AssetReferenceFieldKind::CharacterPath;
+    }
+    if (ext == ".hpcharacter") {
+        return kind == AssetReferenceFieldKind::MeshSource ||
+               kind == AssetReferenceFieldKind::AppliedMaterialPath ||
+               kind == AssetReferenceFieldKind::ScriptPath ||
+               kind == AssetReferenceFieldKind::CharacterPath;
     }
     if (ext == ".hematerial") {
         return kind == AssetReferenceFieldKind::TexturePath ||
@@ -524,6 +542,8 @@ const char* ToString(AssetReferenceFieldKind kind) {
         return "LastScene";
     case AssetReferenceFieldKind::DefaultInputProfile:
         return "DefaultInputProfile";
+    case AssetReferenceFieldKind::CharacterPath:
+        return "CharacterPath";
     case AssetReferenceFieldKind::NestedAssetPath:
         return "NestedAssetPath";
     case AssetReferenceFieldKind::Unknown:
@@ -692,7 +712,8 @@ void AssetReferenceIndex::ScanProject(const std::filesystem::path& projectRoot) 
             }
             const auto& path = it->path();
             const std::string ext = ExtensionLower(path);
-            if (ext == ".hpscene" || ext == ".hpprefab" || ext == ".hematerial" || ext == ".hui") {
+            if (ext == ".hpscene" || ext == ".hpprefab" || ext == ".hematerial" ||
+                ext == ".hui" || ext == ".hpcharacter") {
                 scanDocumentUnlocked(path);
             }
         }

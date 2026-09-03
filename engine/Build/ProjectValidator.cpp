@@ -25,7 +25,7 @@ std::string Lower(std::string value) {
 bool IsDocument(const std::filesystem::path& path) {
     const std::string ext = Lower(path.extension().string());
     return ext == ".hpscene" || ext == ".hpprefab" || ext == ".hematerial" ||
-           ext == ".hui" || ext == ".hpinput";
+           ext == ".hui" || ext == ".hpcharacter" || ext == ".hpinput";
 }
 
 std::vector<std::filesystem::path> Documents(const std::filesystem::path& projectRoot) {
@@ -88,7 +88,8 @@ bool IsKnownReferenceKey(const std::string& key) {
         "roughnessTexturePath", "metallicTexturePath", "aoTexturePath", "scriptPath",
         "clipPath", "hdriPath", "hdrPath", "environmentPath", "skyboxPath", "skybox",
         "prefabPath", "blueprintPath", "resourcePath", "imageId", "backgroundImageId",
-        "controller", "defaultScene", "lastScene", "defaultInputProfile"
+        "controller", "defaultScene", "lastScene", "defaultInputProfile",
+        "source", "material", "characterPath", "sharedRig"
     };
     return keys.contains(key);
 }

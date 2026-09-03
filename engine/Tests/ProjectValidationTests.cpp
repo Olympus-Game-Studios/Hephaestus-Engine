@@ -46,6 +46,8 @@ int main() {
     Write(root / "assets" / "ui" / "Hud.hui",
           R"({"controller":"assets/scripts/missing-controller.lua","imageId":"assets/textures/missing-ui.png"})");
     Write(root / "assets" / "prefabs" / "Broken.hpprefab", "{ malformed");
+    Write(root / "assets" / "characters" / "Ghost.hpcharacter",
+          R"({"schema":"HephaestusCharacter","assetVersion":1,"skeleton":{"source":"assets/characters/.source/Ghost/mesh.glb"},"controller":{"scriptPath":"assets/characters/.source/Ghost/GhostCharacter.lua"}})");
 
     ProjectValidator validator;
     auto problems = validator.validate(root);

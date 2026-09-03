@@ -118,6 +118,25 @@ bool TestSceneAndPrefabIndex(const fs::path& project) {
     WriteText(project / "assets" / "input" / "Default.hpinput",
               R"({"version":1,"actions":[],"axes":[]})");
 
+    WriteText(project / "assets" / "characters" / "Cultist.hpcharacter", R"({
+  "schema": "HephaestusCharacter",
+  "assetVersion": 1,
+  "name": "Cultist",
+  "skeleton": {
+    "source": "assets/characters/.source/Cultist/mesh.glb",
+    "skin": "Armature",
+    "signature": ""
+  },
+  "mesh": {
+    "source": "assets/characters/.source/Cultist/mesh.glb",
+    "submeshes": [{ "name": "Body", "material": "assets/materials/Default.hematerial" }]
+  },
+  "controller": {
+    "scriptPath": "assets/characters/.source/Cultist/CultistCharacter.lua",
+    "enabled": true
+  }
+})");
+
     // Non-indexed Lua body must not create references.
     WriteText(project / "assets" / "scripts" / "Demo.lua",
               "local p = \"assets/textures/should_not_index.png\"\n");
@@ -181,6 +200,17 @@ bool TestSceneAndPrefabIndex(const fs::path& project) {
                             AssetReferenceFieldKind::DefaultInputProfile,
                             "assets/input/Default.hpinput"),
                 "project settings default input profile");
+
+    const auto characterDeps = index.GetDependencies("assets/characters/Cultist.hpcharacter");
+    ok &= Check(ContainsRef(characterDeps, AssetReferenceFieldKind::MeshSource,
+                            "assets/characters/.source/Cultist/mesh.glb"),
+                "character source");
+    ok &= Check(ContainsRef(characterDeps, AssetReferenceFieldKind::ScriptPath,
+                            "assets/characters/.source/Cultist/CultistCharacter.lua"),
+                "character controller scriptPath");
+    ok &= Check(ContainsRef(characterDeps, AssetReferenceFieldKind::AppliedMaterialPath,
+                            "assets/materials/Default.hematerial"),
+                "character submesh material");
 
     // Lua file content must not appear as a referrer source for the fake texture.
     const auto luaNoise = index.GetReferrers("assets/textures/should_not_index.png");

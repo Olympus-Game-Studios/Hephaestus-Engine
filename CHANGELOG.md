@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-09-03: Stage B skeletal glTF import adds `engine/Animation` skeleton identity vs topological evaluation order, `SkeletonSignature`, unnamed/duplicate bone rejection, a dedicated importer that does not bake static-mesh node TRS into skinned vertices, and `SkeletalImportTests` golden world-matrix fixtures.
+- 2026-09-03: Stage A of the `.hpcharacter` character asset system adds `AssetType::Character`, a versioned `HephaestusCharacter` JSON schema/serializer (source/skin/signature skeleton refs, owned `.source/<Stem>/` sidecar layout, controller `scriptPath`), Asset Browser New Character, reference-index/validator/packaging inclusion of owned sources, and `CharacterAssetTests`.
 - 2026-09-03: Stage 7B2 Lua Inspector Variables adds statically scanned `Expose.bool/integer/number/string/vec2/vec3/color` declarations, native ordered Inspector editors, explicit script-relative authoring metadata, deterministic reload reconciliation, existing prefab `scriptVars` Apply/Revert integration, runtime and packaged-value parity, focused tests, and updated scripting templates/documentation.
 - 2026-09-02: Stage 7B1 gameplay input foundation adds shared action/axis state, validated `.hpinput` v1 profiles, Lua edge/axis APIs, Qt Play keyboard/mouse adaptation, packaged GLFW gamepad polling, Project Settings mapping authoring, seeded project defaults, packaging support, and focused tests.
 - 2026-09-02: Follow-up issue drafts define packaged HephaestusUI presentation and Play Mode/runtime camera-policy parity outside Stage 7A1.

@@ -197,7 +197,7 @@ target_include_directories(HephaestusInputCore PUBLIC engine extern extern/glfw/
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared Engine Sources (used by both Editor and Game)
 # ─────────────────────────────────────────────────────────────────────────────
-set(ENGINE_CORE_SOURCES
+    set(ENGINE_CORE_SOURCES
     engine/Audio/AudioEngine.cpp
     engine/Assets/ModelImporter.cpp
     engine/Assets/AssetDatabase.cpp
@@ -205,6 +205,9 @@ set(ENGINE_CORE_SOURCES
     engine/Assets/AssetManager.cpp
     engine/Assets/AssetPathPolicy.cpp
     engine/Assets/AssetReferenceIndex.cpp
+    engine/Assets/CharacterAsset.cpp
+    engine/Assets/SkeletalModelImporter.cpp
+    engine/Animation/Skeleton.cpp
     engine/Assets/OpenDocumentRegistry.cpp
     engine/Assets/AssetOperationService.cpp
     engine/Assets/DerivedDataCache.cpp
@@ -349,6 +352,9 @@ add_executable(HephaestusEngine
     engine/Assets/AssetImporters.cpp
     engine/Assets/AssetManager.cpp
     engine/Assets/OpenDocumentRegistry.cpp
+    engine/Assets/CharacterAsset.cpp
+    engine/Assets/SkeletalModelImporter.cpp
+    engine/Animation/Skeleton.cpp
     engine/Assets/AssetOperationService.cpp
     engine/Assets/DerivedDataCache.cpp
     engine/Assets/EditorAssetPipeline.cpp
@@ -1182,6 +1188,35 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME AssetReferenceIndex
         COMMAND AssetReferenceIndexTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(CharacterAssetTests
+        engine/Tests/CharacterAssetTests.cpp
+        engine/Assets/CharacterAsset.cpp
+        engine/Assets/AssetReferenceIndex.cpp
+        engine/Assets/AssetPathPolicy.cpp
+    )
+    target_include_directories(CharacterAssetTests PRIVATE
+        engine
+        extern
+    )
+    add_test(
+        NAME CharacterAsset
+        COMMAND CharacterAssetTests
+    )
+
+    add_executable(SkeletalImportTests
+        engine/Tests/SkeletalImportTests.cpp
+        engine/Animation/Skeleton.cpp
+        engine/Assets/SkeletalModelImporter.cpp
+    )
+    target_include_directories(SkeletalImportTests PRIVATE
+        engine
+        extern
+    )
+    add_test(
+        NAME SkeletalImport
+        COMMAND SkeletalImportTests
     )
 
     add_executable(AssetOperationTransactionTests

@@ -95,6 +95,9 @@ bool EditorAssetActions::OpenByType(const QString& absolutePath, AssetType type)
         case AssetType::Prefab:
             return openPrefab(absolutePath);
 
+        case AssetType::Character:
+            return openCharacter(absolutePath);
+
         case AssetType::UILayout:
             return openHUI(absolutePath);
 
@@ -147,6 +150,15 @@ bool EditorAssetActions::openPrefab(const QString& absolutePath)
         QObject::tr("Cannot Open Prefab"),
         QObject::tr("Prefab editor callback not configured."));
     return false;
+}
+
+bool EditorAssetActions::openCharacter(const QString& absolutePath)
+{
+    QMessageBox::information(m_mainWindow,
+        QObject::tr("Character Editor"),
+        QObject::tr("The Character Editor is not available yet.\n\nFile: %1")
+            .arg(QFileInfo(absolutePath).fileName()));
+    return true;
 }
 
 bool EditorAssetActions::openMaterial(const QString& absolutePath)

@@ -18,6 +18,7 @@ enum class AssetType {
     Text,
     UILayout,
     InputMap,
+    Character,
 
     Blueprint = Prefab  // Legacy alias
 };
@@ -43,6 +44,7 @@ inline const char* ToString(AssetType type) {
         case AssetType::Text: return "Text";
         case AssetType::UILayout: return "UILayout";
         case AssetType::InputMap: return "InputMap";
+        case AssetType::Character: return "Character";
         default: return "Unknown";
     }
 }
@@ -62,6 +64,7 @@ inline AssetType AssetTypeFromString(const std::string& value) {
     if (value == "Text") return AssetType::Text;
     if (value == "UILayout") return AssetType::UILayout;
     if (value == "InputMap") return AssetType::InputMap;
+    if (value == "Character") return AssetType::Character;
     return AssetType::Unknown;
 }
 
@@ -112,6 +115,9 @@ inline AssetType AssetTypeFromExtension(const std::string& extension) {
         {".mp3", AssetType::Audio},
         {".flac", AssetType::Audio},
         
+        // Characters
+        {".hpcharacter", AssetType::Character},
+
         // Prefabs (and legacy blueprint extensions)
         {".hpprefab", AssetType::Prefab},
         {".hpblueprint", AssetType::Prefab},

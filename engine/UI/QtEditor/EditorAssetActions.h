@@ -62,6 +62,7 @@ public:
 private:
     bool openScene(const QString& absolutePath);
     bool openPrefab(const QString& absolutePath);
+    bool openCharacter(const QString& absolutePath);
     bool openMaterial(const QString& absolutePath);
     bool openHUI(const QString& absolutePath);
     bool openScript(const QString& absolutePath);
