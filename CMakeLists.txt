@@ -1128,6 +1128,16 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         COMMAND InputSystemTests
     )
 
+    add_executable(LuaExposeScannerTests
+        engine/Tests/LuaExposeScannerTests.cpp
+        engine/Scripting/LuaExposeScanner.cpp
+    )
+    target_include_directories(LuaExposeScannerTests PRIVATE engine extern)
+    add_test(
+        NAME LuaExposeScanner
+        COMMAND LuaExposeScannerTests
+    )
+
     add_executable(AssetReferenceIndexTests
         engine/Tests/AssetReferenceIndexTests.cpp
         engine/Assets/AssetReferenceIndex.cpp
