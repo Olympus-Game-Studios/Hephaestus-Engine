@@ -64,6 +64,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-09-03: Directional cascaded shadows now use a cascade-proportional depth range (so default bias no longer swallows contact shadows), world transforms for casters, and no shadow-pass culling; `triangle.vert` lighting UBO matches the fragment layout.
 - 2026-09-02: Project Settings Apply now refreshes the editor's build-settings cache, and input-profile references participate in asset dependency tracking and safe path rewrites.
 - 2026-09-02: Packaged runtime resize now preserves configured VSync and routes swapchain recreation through the shared renderer lifecycle.
 - 2026-09-02: Qt Build Project now persists VSync defaults and reports unused assets as non-destructive dynamic-loading advisories.

@@ -1151,8 +1151,10 @@ bool EngineFrameRenderer::createShadowResources()
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    // Match the main mesh pass: no culling so single-sided floors and
+    // imported meshes with either winding still write shadow depth.
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_TRUE;
     rasterizer.depthBiasConstantFactor = 1.5f;
     rasterizer.depthBiasSlopeFactor = 1.5f;
@@ -1808,10 +1810,9 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
                 currentIndexBuffer = mesh.indexBuffer.buffer;
             }
             
-            auto& transform = meshView.get<TransformComponent>(entity);
             ShadowPushConstants pc;
             pc.lightViewProj = cascadeVPs[cascade];
-            pc.model = transform.GetLocalMatrix();
+            pc.model = scene->GetWorldTransform(Entity(entity, scene));
             vkCmdPushConstants(cmd, m_directionalShadow.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
                               0, sizeof(pc), &pc);
             

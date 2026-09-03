@@ -471,21 +471,27 @@ inline Mat4 ComputeCascadeShadowVP(
         float d = vlen(vsub(c[i], center));
         if (d > radius) radius = d;
     }
+    // Keep a usable minimum so texel snapping and the ortho depth range stay finite.
+    if (radius < 0.5f) radius = 0.5f;
+
     // Round up to texel size for stability (assuming 2048 per cascade tile)
     float texelsPerUnit = 2048.0f / (radius * 2.0f);
     radius = std::ceil(radius * texelsPerUnit) / texelsPerUnit;
 
-    // Light view: look from behind the frustum toward its center
+    // Light view: look from behind the frustum toward its center.
+    // Depth range must stay proportional to the cascade radius. A huge fixed
+    // padding (e.g. +500/+1000) compresses contact shadows into a tiny NDC
+    // slice so the default 0.002 bias hides them entirely.
     Vec3 toLight = vscale(lightDir, -1.0f);
     Vec3 lUp(0.0f, 1.0f, 0.0f);
     if (std::abs(vdot(lightDir, lUp)) > 0.99f) lUp = Vec3(1.0f, 0.0f, 0.0f);
 
-    Vec3 lPos = vadd(center, vscale(toLight, radius + 500.0f));
+    const float extraTowardLight = std::max(radius, 10.0f);
+    Vec3 lPos = vadd(center, vscale(toLight, radius + extraTowardLight));
     Mat4 lv = Mat4::LookAt(lPos, center, lUp);
 
-    // Use bounding sphere as ortho extent for stability
     float nearZ = 0.1f;
-    float farZ = radius * 2.0f + 1000.0f;
+    float farZ = extraTowardLight + radius * 2.0f + 1.0f;
     Mat4 lp = Mat4::OrthographicShadow(-radius, radius, -radius, radius, nearZ, farZ);
 
     return Mat4::Multiply(lp, lv);

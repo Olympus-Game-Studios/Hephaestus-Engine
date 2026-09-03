@@ -21,6 +21,7 @@ layout(std140, set = 0, binding = 2) uniform LightingUBO {
     vec4 dirLightDirIntensity;      // xyz = direction, w = intensity
     vec4 dirLightColor;             // rgb = color, w = unused
     vec4 ambientColorIntensity;     // rgb = ambient color, w = ambient intensity
+    vec4 environmentReflectionParams;
     vec4 pointLightPositions[16];
     vec4 pointLightColors[16];
     vec4 pointLightAttenuation[16];
