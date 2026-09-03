@@ -83,7 +83,7 @@ Key parts:
 - CMake (>= 3.16 recommended).
 - Vulkan SDK (for headers, loader and validation tools). Set `VULKAN_SDK` environment variable via the SDK installer.
 - glslangValidator (usually included with the Vulkan SDK) to compile GLSL to SPIR-V.
-- Git (to clone repo and submodules if applicable).
+- Git (to clone the repo and submodules, including `extern/ufbx`). Use `git clone --recurse-submodules` or `git submodule update --init --recursive` after a plain clone.
 
 Optional but useful:
 - Python for small helper scripts.
@@ -125,6 +125,7 @@ The repository uses an out-of-source CMake build. From a PowerShell prompt run:
 
 ```powershell
 # from repo root
+git clone --recurse-submodules <repo-url>
 mkdir build; cd build
 cmake -S .. -B . -A x64 -DCMAKE_BUILD_TYPE=Release
 cmake --build . --config Release

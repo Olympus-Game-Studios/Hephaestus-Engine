@@ -3,7 +3,9 @@
 #include "CharacterImportDialog.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDialogButtonBox>
+#include <QObject>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -60,6 +62,21 @@ CharacterImportDialog::CharacterImportDialog(const std::filesystem::path& source
     m_controllerCheck = new QCheckBox(tr("Create character controller"), this);
     m_controllerCheck->setChecked(true);
     form->addRow(QString(), m_controllerCheck);
+
+    m_spaceCombo = new QComboBox(this);
+    m_spaceCombo->addItem(tr("Auto"), static_cast<int>(FbxSpaceConversion::Auto));
+    m_spaceCombo->addItem(tr("Adjust Transforms"), static_cast<int>(FbxSpaceConversion::AdjustTransforms));
+    m_spaceCombo->addItem(tr("Modify Geometry"), static_cast<int>(FbxSpaceConversion::ModifyGeometry));
+    form->addRow(tr("FBX Space Conversion:"), m_spaceCombo);
+    m_spaceCombo->setVisible(CharacterImporter::IsFbxPath(m_sourceGlb));
+    connect(m_spaceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) { refreshInspect(); });
+
+    m_stripNamespaceCheck = new QCheckBox(tr("Strip bone namespace (mixamorig:Name → Name)"), this);
+    m_stripNamespaceCheck->setChecked(false);
+    form->addRow(QString(), m_stripNamespaceCheck);
+    m_stripNamespaceCheck->setVisible(CharacterImporter::IsFbxPath(m_sourceGlb));
+    connect(m_stripNamespaceCheck, &QCheckBox::toggled, this, [this](bool) { refreshInspect(); });
     layout->addLayout(form);
 
     m_messages = new QTextEdit(this);
@@ -91,25 +108,40 @@ std::filesystem::path CharacterImportDialog::destinationFolder() const
     return std::filesystem::path(m_destEdit->text().toStdString());
 }
 
+SkeletalImportSettings CharacterImportDialog::importSettings() const
+{
+    SkeletalImportSettings settings;
+    if (m_spaceCombo) {
+        settings.fbxSpaceConversion =
+            static_cast<FbxSpaceConversion>(m_spaceCombo->currentData().toInt());
+    }
+    if (m_stripNamespaceCheck) {
+        settings.stripBoneNamespace = m_stripNamespaceCheck->isChecked();
+    }
+    return settings;
+}
+
 void CharacterImportDialog::refreshInspect()
 {
     m_sourceLabel->setText(QString::fromStdString(m_sourceGlb.generic_string()));
     std::string error;
-    const bool ok = CharacterImporter::Inspect(m_sourceGlb, m_inspect, error);
+    const bool ok = CharacterImporter::Inspect(m_sourceGlb, importSettings(), m_inspect, error);
     if (!ok) {
         m_statsLabel->setText(tr("Cannot import as a character."));
         m_messages->setPlainText(QString::fromStdString(error));
         m_importButton->setEnabled(false);
-        m_staticMeshButton->setVisible(CharacterImporter::IsGlbPath(m_sourceGlb));
+        m_staticMeshButton->setVisible(CharacterImporter::IsCharacterSourcePath(m_sourceGlb));
         return;
     }
 
-    m_statsLabel->setText(tr("Mesh %1  •  Skin %2  •  %3 bones  •  %4 clip(s)  •  %5 material slot(s)")
-                              .arg(QString::fromStdString(m_inspect.meshName))
-                              .arg(QString::fromStdString(m_inspect.skinName))
-                              .arg(m_inspect.boneCount)
-                              .arg(m_inspect.clipCount)
-                              .arg(m_inspect.materialSlotCount));
+    m_statsLabel->setText(
+        tr("Source %1  •  Mesh %2  •  Skin %3  •  %4 bones  •  %5 clip(s)  •  %6 material slot(s)")
+            .arg(QString::fromStdString(m_inspect.sourceFormat))
+            .arg(QString::fromStdString(m_inspect.meshName))
+            .arg(QString::fromStdString(m_inspect.skinName))
+            .arg(m_inspect.boneCount)
+            .arg(m_inspect.clipCount)
+            .arg(m_inspect.materialSlotCount));
     QStringList lines;
     for (const std::string& warning : m_inspect.warnings) {
         lines << QString::fromStdString(warning);

@@ -22,6 +22,7 @@
 #include "../../Assets/CharacterAsset.h"
 #include "../../Assets/CharacterImport.h"
 #include "../../Assets/CharacterRuntime.h"
+#include "../../Assets/FbxDocument.h"
 #include "../../Assets/AssetPathPolicy.h"
 #include "CharacterImportDialog.h"
 
@@ -914,7 +915,8 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
                     auto& assetMgr = AssetManager::GetInstance();
                     const QString portable = ToProjectRelativeAssetPath(relativePath);
                     const QString src = QFileDialog::getOpenFileName(
-                        this, tr("Reimport Character"), QString(), tr("GLB (*.glb)"));
+                        this, tr("Reimport Character"), QString(),
+                        tr("Character sources (*.glb *.fbx);;GLB (*.glb);;FBX (*.fbx)"));
                     if (src.isEmpty()) {
                         return;
                     }
@@ -1656,6 +1658,50 @@ void AssetBrowserWidget::importAssets()
     QStringList failures;
     for (const QString& src : files) {
         const QFileInfo info(src);
+        const std::filesystem::path srcPath = std::filesystem::path(src.toStdString());
+        if (Hephaestus::CharacterImporter::IsFbxPath(srcPath)) {
+            bool hasSkin = false;
+            std::string skinError;
+            if (Hephaestus::FbxFileContainsSkin(srcPath, hasSkin, skinError) && hasSkin) {
+                const auto choice = QMessageBox::question(
+                    this,
+                    tr("Skinned FBX"),
+                    tr("\"%1\" contains a skinned mesh. Import it as a Character instead of a static mesh?")
+                        .arg(info.fileName()),
+                    QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel,
+                    QMessageBox::Yes);
+                if (choice == QMessageBox::Cancel) {
+                    continue;
+                }
+                if (choice == QMessageBox::Yes) {
+                    std::filesystem::path destAbs;
+                    if (m_currentPath.isEmpty()) {
+                        destAbs = std::filesystem::path(assetMgr.ToAbsolutePath("characters"));
+                    } else {
+                        destAbs = std::filesystem::path(assetMgr.ToAbsolutePath(m_currentPath.toStdString()));
+                    }
+                    CharacterImportDialog dialog(srcPath, assetMgr.GetProjectRoot(), destAbs, this);
+                    if (dialog.exec() != QDialog::Accepted || dialog.importAsStaticMesh()) {
+                        continue;
+                    }
+                    Hephaestus::CharacterImportRequest request;
+                    request.sourceGlb = srcPath;
+                    request.projectRoot = assetMgr.GetProjectRoot();
+                    request.destinationFolderAbs = dialog.destinationFolder();
+                    request.characterName = dialog.characterName().toStdString();
+                    request.createController = dialog.createController();
+                    request.settings = dialog.importSettings();
+                    std::string portable;
+                    std::string error;
+                    if (!Hephaestus::CharacterImporter::Import(request, portable, error)) {
+                        failures << QString("%1 (%2)").arg(info.fileName(), QString::fromStdString(error));
+                    } else {
+                        ++imported;
+                    }
+                    continue;
+                }
+            }
+        }
         std::filesystem::path dest = std::filesystem::path(destDir) / info.fileName().toStdString();
         if (std::filesystem::exists(dest)) {
             auto result = QMessageBox::question(
@@ -1707,7 +1753,8 @@ void AssetBrowserWidget::importCharacter()
     }
 
     const QString src = QFileDialog::getOpenFileName(
-        this, tr("Import Character"), QString(), tr("GLB (*.glb)"));
+        this, tr("Import Character"), QString(),
+        tr("Character sources (*.glb *.fbx);;GLB (*.glb);;FBX (*.fbx)"));
     if (src.isEmpty()) {
         return;
     }
@@ -1735,6 +1782,7 @@ void AssetBrowserWidget::importCharacter()
     request.destinationFolderAbs = dialog.destinationFolder();
     request.characterName = dialog.characterName().toStdString();
     request.createController = dialog.createController();
+    request.settings = dialog.importSettings();
 
     std::string portable;
     std::string error;

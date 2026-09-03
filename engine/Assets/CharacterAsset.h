@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "FbxImportSettings.h"
+
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -17,6 +19,11 @@ namespace Hephaestus {
 struct CharacterImportSettings {
     float unitScale = 1.0f;
     bool preserveAuthoredEditsOnReimport = true;
+    FbxSpaceConversion fbxSpaceConversion = FbxSpaceConversion::Auto;
+    FbxSpaceConversion fbxSpaceConversionResolved = FbxSpaceConversion::ModifyGeometry;
+    bool fbxSpaceResolvedStored = false;
+    float animationSampleRate = 0.0f;
+    bool stripBoneNamespace = false;
 };
 
 struct CharacterSkeletonRef {

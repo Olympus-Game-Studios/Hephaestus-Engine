@@ -1,4 +1,5 @@
 #include "ModelImporter.h"
+#include "FbxStaticImporter.h"
 
 #include <fstream>
 #include <sstream>
@@ -19,11 +20,6 @@ using json = nlohmann::json;
 
 namespace ModelImporter {
 namespace {
-    struct FBXArrays {
-        std::vector<double> vertices;
-        std::vector<int> indices;
-    };
-
     struct GLTFPrimitiveResult {
         uint32_t indexOffset = 0;
         uint32_t indexCount = 0;
@@ -102,91 +98,6 @@ namespace {
             return std::string();
         }
         return line.substr(idx);
-    }
-
-    bool ExtractFBXArraySegment(const std::string& content, const std::string& key, std::string& outSegment) {
-        size_t keyPos = content.find(key);
-        if (keyPos == std::string::npos) {
-            return false;
-        }
-
-        size_t arrayPos = content.find("a:", keyPos);
-        if (arrayPos == std::string::npos) {
-            return false;
-        }
-        arrayPos += 2;
-
-        size_t start = content.find_first_not_of(" \t\r\n", arrayPos);
-        if (start == std::string::npos) {
-            return false;
-        }
-
-        size_t end = content.find('}', start);
-        if (end == std::string::npos) {
-            return false;
-        }
-
-        outSegment = content.substr(start, end - start);
-        return true;
-    }
-
-    template<typename T>
-    bool ParseFBXArrayValues(const std::string& segment, std::vector<T>& outValues) {
-        const char* ptr = segment.c_str();
-        const char* end = ptr + segment.size();
-
-        while (ptr < end) {
-            while (ptr < end && (std::isspace(static_cast<unsigned char>(*ptr)) || *ptr == ',' || *ptr == ';')) {
-                ++ptr;
-            }
-            if (ptr >= end) {
-                break;
-            }
-
-            char* next = nullptr;
-            if constexpr (std::is_same_v<T, double>) {
-                double value = std::strtod(ptr, &next);
-                if (next == ptr) {
-                    break;
-                }
-                outValues.push_back(value);
-            } else {
-                long value = std::strtol(ptr, &next, 10);
-                if (next == ptr) {
-                    break;
-                }
-                outValues.push_back(static_cast<T>(value));
-            }
-            ptr = next;
-        }
-
-        return !outValues.empty();
-    }
-
-    bool ParseFBXArrays(const std::string& content, FBXArrays& arrays, std::string& errorMessage) {
-        std::string verticesSegment;
-        if (!ExtractFBXArraySegment(content, "Vertices", verticesSegment)) {
-            errorMessage = "Vertices array not found in FBX file";
-            return false;
-        }
-
-        if (!ParseFBXArrayValues(verticesSegment, arrays.vertices)) {
-            errorMessage = "Failed to parse FBX vertex array";
-            return false;
-        }
-
-        std::string indicesSegment;
-        if (!ExtractFBXArraySegment(content, "PolygonVertexIndex", indicesSegment)) {
-            errorMessage = "PolygonVertexIndex array not found in FBX file";
-            return false;
-        }
-
-        if (!ParseFBXArrayValues(indicesSegment, arrays.indices)) {
-            errorMessage = "Failed to parse FBX index array";
-            return false;
-        }
-
-        return true;
     }
 
     bool AppendGLTFPrimitive(const json& primitive,
@@ -876,151 +787,9 @@ bool LoadOBJ(const std::filesystem::path& path, MeshData& outMesh, std::string& 
 }
 
 bool LoadFBX(const std::filesystem::path& path, MeshData& outMesh, std::string& errorMessage) {
-    outMesh.Clear();
-    errorMessage.clear();
-
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        errorMessage = "Failed to open FBX file";
-        return false;
-    }
-
-    std::string content;
-    file.seekg(0, std::ios::end);
-    content.resize(static_cast<size_t>(file.tellg()));
-    file.seekg(0, std::ios::beg);
-    if (!content.empty()) {
-        file.read(content.data(), static_cast<std::streamsize>(content.size()));
-    }
-    file.close();
-
-    if (content.empty()) {
-        errorMessage = "FBX file is empty";
-        return false;
-    }
-
-    if (content.size() >= 21 && content.compare(0, 21, "Kaydara FBX Binary") == 0) {
-        errorMessage = "Binary FBX files are not supported yet. Please export as ASCII.";
-        return false;
-    }
-
-    FBXArrays arrays;
-    if (!ParseFBXArrays(content, arrays, errorMessage)) {
-        return false;
-    }
-
-    if (arrays.vertices.size() % 3 != 0) {
-        errorMessage = "FBX vertex array is not divisible by 3";
-        return false;
-    }
-
-    size_t positionCount = arrays.vertices.size() / 3;
-    if (positionCount == 0) {
-        errorMessage = "FBX file contains no vertices";
-        return false;
-    }
-
-    std::vector<Vec3> positions(positionCount);
-    const float maxFloat = std::numeric_limits<float>::max();
-    Vec3 minBounds(maxFloat, maxFloat, maxFloat);
-    Vec3 maxBounds(-maxFloat, -maxFloat, -maxFloat);
-
-    for (size_t i = 0; i < positionCount; ++i) {
-        double x = arrays.vertices[i * 3 + 0];
-        double y = arrays.vertices[i * 3 + 1];
-        double z = arrays.vertices[i * 3 + 2];
-        Vec3 pos(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z));
-        positions[i] = pos;
-
-        minBounds.x = std::min(minBounds.x, pos.x);
-        minBounds.y = std::min(minBounds.y, pos.y);
-        minBounds.z = std::min(minBounds.z, pos.z);
-
-        maxBounds.x = std::max(maxBounds.x, pos.x);
-        maxBounds.y = std::max(maxBounds.y, pos.y);
-        maxBounds.z = std::max(maxBounds.z, pos.z);
-    }
-
-    std::vector<std::array<int, 3>> triangles;
-    triangles.reserve(arrays.indices.size() / 3);
-    std::vector<int> polygon;
-    polygon.reserve(8);
-
-    for (int rawIndex : arrays.indices) {
-        bool endOfPolygon = rawIndex < 0;
-        int actualIndex = endOfPolygon ? (-rawIndex - 1) : rawIndex;
-
-        if (actualIndex < 0 || static_cast<size_t>(actualIndex) >= positions.size()) {
-            errorMessage = "FBX index references out-of-range vertex";
-            return false;
-        }
-
-        polygon.push_back(actualIndex);
-
-        if (endOfPolygon) {
-            if (polygon.size() >= 3) {
-                for (size_t i = 1; i + 1 < polygon.size(); ++i) {
-                    triangles.push_back({ polygon[0], polygon[i], polygon[i + 1] });
-                }
-            }
-            polygon.clear();
-        }
-    }
-
-    if (!polygon.empty()) {
-        if (polygon.size() >= 3) {
-            for (size_t i = 1; i + 1 < polygon.size(); ++i) {
-                triangles.push_back({ polygon[0], polygon[i], polygon[i + 1] });
-            }
-        }
-        polygon.clear();
-    }
-
-    if (triangles.empty()) {
-        errorMessage = "FBX file contains no polygon data";
-        return false;
-    }
-
-    outMesh.bounds = AABB(minBounds, maxBounds);
-
-    for (const auto& tri : triangles) {
-        Vec3 p0 = positions[static_cast<size_t>(tri[0])];
-        Vec3 p1 = positions[static_cast<size_t>(tri[1])];
-        Vec3 p2 = positions[static_cast<size_t>(tri[2])];
-
-        Vec3 normal = vcross(vsub(p1, p0), vsub(p2, p0));
-        if (vlen(normal) < 1e-6f) {
-            normal = Vec3(0.0f, 1.0f, 0.0f);
-        } else {
-            normal = vnorm(normal);
-        }
-
-        const int triangleIndices[3] = { tri[0], tri[1], tri[2] };
-        for (int idx : triangleIndices) {
-            Vertex vert{};
-            Vec3 pos = positions[static_cast<size_t>(idx)];
-            vert.pos[0] = pos.x;
-            vert.pos[1] = pos.y;
-            vert.pos[2] = pos.z;
-
-            vert.normal[0] = normal.x;
-            vert.normal[1] = normal.y;
-            vert.normal[2] = normal.z;
-
-            vert.color[0] = 1.0f;
-            vert.color[1] = 1.0f;
-            vert.color[2] = 1.0f;
-
-            // Default texture coordinates for FBX (no UV data available yet)
-            vert.texCoord[0] = 0.0f;
-            vert.texCoord[1] = 0.0f;
-
-            outMesh.indices.push_back(static_cast<uint32_t>(outMesh.vertices.size()));
-            outMesh.vertices.push_back(vert);
-        }
-    }
-
-    return true;
+    Hephaestus::FbxStaticImportResult meta;
+    return Hephaestus::FbxStaticImporter::Load(
+        path, Hephaestus::FbxSpaceConversion::Auto, outMesh, meta, errorMessage);
 }
 
 bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string& errorMessage) {

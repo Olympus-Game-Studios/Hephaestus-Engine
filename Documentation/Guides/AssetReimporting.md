@@ -43,7 +43,7 @@ From the Asset Browser:
 - Right click → **Reimport**
 - **Reimport All Changed** button
 
-Character assets (`.hpcharacter`) use a separate path: right-click → **Reimport Character…** and pick a GLB. That pipeline validates skeleton compatibility before writing. Do not use static-mesh Reimport on owned `.source/<Stem>/mesh.glb` files.
+Character assets (`.hpcharacter`) use a separate path: right-click → **Reimport Character…** and pick a GLB or FBX. That pipeline validates skeleton compatibility before writing. Do not use static-mesh Reimport on owned `.source/<Stem>/mesh.glb` or `mesh.fbx` files.
 
 See [CharacterAssets.md](./CharacterAssets.md).
 

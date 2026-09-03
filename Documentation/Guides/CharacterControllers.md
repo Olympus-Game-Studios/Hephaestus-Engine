@@ -87,7 +87,7 @@ A controller syntax error does not stop gameplay Lua. Runtime `onUpdate` failure
 
 ## Cultist / YBot
 
-Sources live at `assets/Character/YBot` (FBX). Convert to GLB, then Import Character / Import Animation. Set clip ids to `Idle`, `Walk`, `Run`, `Shoot`, `Hurt`, `Death`. Assign `CultistCharacter.lua` on the Character component and `CultistAI.lua` on LuaScript. Details: [YBot README](../../assets/Character/YBot/README.md).
+Sources live at `assets/Character/YBot` (FBX). Import Character / Import Animation can use those FBX files directly (no Blender GLB conversion). Set clip ids to `Idle`, `Walk`, `Run`, `Shoot`, `Hurt`, `Death`. Assign `CultistCharacter.lua` on the Character component and `CultistAI.lua` on LuaScript. Details: [YBot README](../../assets/Character/YBot/README.md).
 
 ## Limitations
 

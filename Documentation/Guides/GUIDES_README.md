@@ -6,6 +6,7 @@ Files:
 
 - [CUSTOM_COMPONENTS_GUIDE.md](./CUSTOM_COMPONENTS_GUIDE.md) — How to create custom ECS components and systems.
 - [CharacterAssets.md](./CharacterAssets.md) — import, place, inspect, reimport, and package `.hpcharacter` assets.
+- [AssetImporting.md](./AssetImporting.md) — OBJ/glTF/FBX static meshes and character source formats.
 - [CharacterEditor.md](./CharacterEditor.md) — Character Editor preview, clips, sockets, materials, and save/live refresh.
 - [CharacterControllers.md](./CharacterControllers.md) — Runtime character controller Lua, Animator 1.0, sockets, and Cultist/YBot.
 - [ECS_GUIDE.md](./ECS_GUIDE.md) — Overview and usage of the engine's ECS and scene graph.

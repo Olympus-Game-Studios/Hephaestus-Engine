@@ -777,8 +777,20 @@ void CharacterEditorWindow::refreshInspector() {
     };
 
     if (m_selection.kind == CharacterEditorItemKind::Mesh) {
-        addLabel(tr("Source: %1").arg(QString::fromStdString(asset.mesh.source)));
-        addLabel(tr("Submeshes: %1").arg(asset.mesh.submeshes.size()));
+        const std::string source = asset.mesh.source.empty() ? asset.skeleton.source : asset.mesh.source;
+        QString format = tr("GLB");
+        if (source.size() >= 4 &&
+            (source.rfind(".fbx") == source.size() - 4 || source.rfind(".FBX") == source.size() - 4)) {
+            format = tr("FBX");
+        }
+        addLabel(tr("Source Format: %1").arg(format));
+        addLabel(tr("Mesh: %1").arg(QString::fromStdString(asset.mesh.source)));
+        addLabel(tr("Skeleton: %1").arg(QString::fromStdString(asset.skeleton.source)));
+        Entity preview = previewCharacter();
+        const int bones = preview ? preview.GetComponent<CharacterComponent>().skeleton.BoneCount() : 0;
+        addLabel(tr("Bones: %1").arg(bones));
+        addLabel(tr("Clips: %1").arg(asset.clips.size()));
+        addLabel(tr("Slots: %1").arg(asset.mesh.submeshes.size()));
         addLabel(tr("Signature: %1").arg(QString::fromStdString(asset.skeleton.signature)));
         auto* reveal = new QPushButton(tr("Reveal Source"), m_inspectorHost);
         connect(reveal, &QPushButton::clicked, this, [this, asset]() { revealPath(asset.mesh.source); });
@@ -992,11 +1004,11 @@ void CharacterEditorWindow::revealPath(const std::string& portable) {
 
 void CharacterEditorWindow::importAnimation() {
     if (!m_document || !m_document->HasMeshSource()) return;
-    const QString path = QFileDialog::getOpenFileName(this, tr("Import Animation"), QString(), tr("GLB (*.glb)"));
+    const QString path = QFileDialog::getOpenFileName(this, tr("Import Animation"), QString(),
+        tr("Character sources (*.glb *.fbx);;GLB (*.glb);;FBX (*.fbx)"));
     if (path.isEmpty()) return;
     std::string error;
-    SkeletalImportSettings settings;
-    settings.unitScale = m_document->GetAsset().import.unitScale;
+    SkeletalImportSettings settings = CharacterImporter::MakeSettings(m_document->GetAsset().import);
     Entity preview = previewCharacter();
     if (!preview) return;
     std::vector<AnimationClip> clips;
@@ -1027,7 +1039,8 @@ void CharacterEditorWindow::importAnimation() {
 }
 
 void CharacterEditorWindow::reimportCharacter() {
-    const QString path = QFileDialog::getOpenFileName(this, tr("Reimport Character"), QString(), tr("GLB (*.glb)"));
+    const QString path = QFileDialog::getOpenFileName(this, tr("Reimport Character"), QString(),
+        tr("Character sources (*.glb *.fbx);;GLB (*.glb);;FBX (*.fbx)"));
     if (path.isEmpty() || !m_document) return;
     std::string error;
     if (!CharacterImporter::Reimport(projectRoot(), m_document->GetPortablePath(),
@@ -1043,7 +1056,8 @@ void CharacterEditorWindow::reimportCharacter() {
 }
 
 void CharacterEditorWindow::assignSource() {
-    const QString path = QFileDialog::getOpenFileName(this, tr("Import Character Source"), QString(), tr("GLB (*.glb)"));
+    const QString path = QFileDialog::getOpenFileName(this, tr("Import Character Source"), QString(),
+        tr("Character sources (*.glb *.fbx);;GLB (*.glb);;FBX (*.fbx)"));
     if (path.isEmpty() || !m_document) return;
     std::string error;
     if (!CharacterImporter::AssignCharacterSource(projectRoot(), m_document->GetPortablePath(),

@@ -1,6 +1,6 @@
 /**
  * @file CharacterImport.cpp
- * @brief GLB character inspect, import, and transactional reimport.
+ * @brief Character inspect, import, and transactional reimport from GLB or FBX.
  */
 
 #include "CharacterImport.h"
@@ -225,21 +225,94 @@ std::string MakeUniqueClipId(const CharacterAsset& asset, const std::string& des
     return base + "_copy";
 }
 
+std::string OwnedMeshFileName(const std::filesystem::path& source) {
+    const std::string ext = ToLowerCopy(source.extension().string());
+    if (ext == ".fbx") {
+        return "mesh.fbx";
+    }
+    return "mesh.glb";
+}
+
+std::string CharacterSourceFilterError() {
+    return "Import Character requires a GLB or FBX file. Raw .gltf with external .bin / "
+           "images is not supported; export a GLB from the DCC tool, or use FBX.";
+}
+
+void ApplyPersistedImportSettings(CharacterAsset& asset,
+                                  const SkeletalImportSettings& requested,
+                                  const SkeletalImportResult& imported) {
+    asset.import.unitScale = requested.unitScale;
+    asset.import.fbxSpaceConversion = requested.fbxSpaceConversion;
+    asset.import.animationSampleRate = requested.animationSampleRate;
+    asset.import.stripBoneNamespace = requested.stripBoneNamespace;
+    if (imported.importedFromFbx) {
+        asset.import.fbxSpaceConversionResolved = imported.fbxResolvedSpaceConversion;
+        asset.import.fbxSpaceResolvedStored = true;
+    }
+}
+
+void RewriteMeshSourceKeys(CharacterAsset& asset,
+                           const std::string& oldKey,
+                           const std::string& newKey) {
+    if (oldKey.empty() || oldKey == newKey) {
+        asset.skeleton.source = newKey;
+        asset.mesh.source = newKey;
+        return;
+    }
+    if (asset.skeleton.source == oldKey) {
+        asset.skeleton.source = newKey;
+    }
+    if (asset.mesh.source == oldKey) {
+        asset.mesh.source = newKey;
+    }
+    for (CharacterClipEntry& clip : asset.clips) {
+        if (clip.source == oldKey) {
+            clip.source = newKey;
+        }
+    }
+}
+
 } // namespace
 
 bool CharacterImporter::IsGlbPath(const std::filesystem::path& path) {
     return EqualsInsensitive(path.extension().string(), ".glb");
 }
 
+bool CharacterImporter::IsFbxPath(const std::filesystem::path& path) {
+    return EqualsInsensitive(path.extension().string(), ".fbx");
+}
+
+bool CharacterImporter::IsCharacterSourcePath(const std::filesystem::path& path) {
+    return IsGlbPath(path) || IsFbxPath(path);
+}
+
+SkeletalImportSettings CharacterImporter::MakeSettings(const CharacterImportSettings& import) {
+    SkeletalImportSettings settings;
+    settings.unitScale = import.unitScale;
+    settings.animationSampleRate = import.animationSampleRate;
+    settings.stripBoneNamespace = import.stripBoneNamespace;
+    if (import.fbxSpaceResolvedStored) {
+        settings.fbxSpaceConversion = import.fbxSpaceConversionResolved;
+    } else {
+        settings.fbxSpaceConversion = import.fbxSpaceConversion;
+    }
+    return settings;
+}
+
 bool CharacterImporter::Inspect(const std::filesystem::path& sourceGlb,
+                                CharacterInspectResult& outResult,
+                                std::string& outError) {
+    return Inspect(sourceGlb, SkeletalImportSettings{}, outResult, outError);
+}
+
+bool CharacterImporter::Inspect(const std::filesystem::path& sourceGlb,
+                                const SkeletalImportSettings& settings,
                                 CharacterInspectResult& outResult,
                                 std::string& outError) {
     outResult = {};
     outError.clear();
-    if (!IsGlbPath(sourceGlb)) {
-        outError =
-            "Import Character requires a GLB file. Export a GLB from the DCC tool "
-            "(raw .gltf with external .bin / images is not supported).";
+    if (!IsCharacterSourcePath(sourceGlb)) {
+        outError = CharacterSourceFilterError();
         outResult.error = outError;
         return false;
     }
@@ -249,7 +322,6 @@ bool CharacterImporter::Inspect(const std::filesystem::path& sourceGlb,
         return false;
     }
 
-    SkeletalImportSettings settings;
     if (!SkeletalModelImporter::Load(sourceGlb, settings, outResult.imported, outError)) {
         outResult.error = outError;
         return false;
@@ -257,6 +329,7 @@ bool CharacterImporter::Inspect(const std::filesystem::path& sourceGlb,
 
     outResult.ok = true;
     outResult.canImport = true;
+    outResult.sourceFormat = IsFbxPath(sourceGlb) ? "FBX" : "GLB";
     outResult.skinName = outResult.imported.skeleton.skinName;
     outResult.boneCount = outResult.imported.skeleton.BoneCount();
     outResult.clipCount = static_cast<int>(outResult.imported.clips.size());
@@ -303,7 +376,7 @@ bool CharacterImporter::Import(const CharacterImportRequest& request,
     }
 
     CharacterInspectResult inspect;
-    if (!Inspect(request.sourceGlb, inspect, outError)) {
+    if (!Inspect(request.sourceGlb, request.settings, inspect, outError)) {
         return false;
     }
 
@@ -341,12 +414,12 @@ bool CharacterImporter::Import(const CharacterImportRequest& request,
         return false;
     }
 
-    const std::filesystem::path meshAbs = ownedAbs / "mesh.glb";
+    const std::filesystem::path meshAbs = ownedAbs / OwnedMeshFileName(request.sourceGlb);
     std::filesystem::copy_file(request.sourceGlb, meshAbs,
                                std::filesystem::copy_options::none, ec);
     if (ec) {
         std::filesystem::remove_all(ownedAbs, ec);
-        outError = "Failed to copy GLB: " + ec.message();
+        outError = "Failed to copy character source: " + ec.message();
         return false;
     }
 
@@ -363,6 +436,7 @@ bool CharacterImporter::Import(const CharacterImportRequest& request,
 
     CharacterAsset asset = BuildAssetFromImport(name, meshPortable, inspect.imported,
                                                 request.createController, controllerPortable);
+    ApplyPersistedImportSettings(asset, request.settings, inspect.imported);
     if (!CharacterSerializer::Serialize(asset, characterAbs, outError)) {
         std::filesystem::remove(characterAbs, ec);
         std::filesystem::remove_all(ownedAbs, ec);
@@ -378,11 +452,6 @@ bool CharacterImporter::Reimport(const std::filesystem::path& projectRoot,
                                  const std::filesystem::path& candidateGlb,
                                  std::string& outError) {
     outError.clear();
-    CharacterInspectResult inspect;
-    if (!Inspect(candidateGlb, inspect, outError)) {
-        return false;
-    }
-
     const std::filesystem::path characterAbs =
         AssetPathPolicy::ResolvePortableKey(projectRoot, portableCharacterPath);
     if (characterAbs.empty() || !std::filesystem::exists(characterAbs)) {
@@ -395,9 +464,15 @@ bool CharacterImporter::Reimport(const std::filesystem::path& projectRoot,
         return false;
     }
 
+    const SkeletalImportSettings settings = MakeSettings(asset.import);
+    CharacterInspectResult inspect;
+    if (!Inspect(candidateGlb, settings, inspect, outError)) {
+        return false;
+    }
+
     const std::string meshKey =
         !asset.mesh.source.empty() ? asset.mesh.source : asset.skeleton.source;
-    const std::filesystem::path ownedMeshAbs =
+    std::filesystem::path ownedMeshAbs =
         AssetPathPolicy::ResolvePortableKey(projectRoot, meshKey);
 
     std::error_code ec;
@@ -408,7 +483,7 @@ bool CharacterImporter::Reimport(const std::filesystem::path& projectRoot,
     if (ownedExists && !candidateIsOwned) {
         SkeletalImportResult previous;
         std::string previousError;
-        if (!SkeletalModelImporter::Load(ownedMeshAbs, {}, previous, previousError)) {
+        if (!SkeletalModelImporter::Load(ownedMeshAbs, settings, previous, previousError)) {
             outError = "Could not load the existing owned character mesh.\n" + previousError;
             return false;
         }
@@ -431,12 +506,25 @@ bool CharacterImporter::Reimport(const std::filesystem::path& projectRoot,
         }
     }
 
+    std::string destMeshKey = meshKey;
+    std::filesystem::path destMeshAbs = ownedMeshAbs;
+    if (!candidateIsOwned && !ownedMeshAbs.empty()) {
+        const std::string newName = OwnedMeshFileName(candidateGlb);
+        destMeshAbs = ownedMeshAbs.parent_path() / newName;
+        destMeshKey = AssetPathPolicy::ToPortableKey(projectRoot, destMeshAbs.generic_string());
+    }
+
     const std::string previousJson = CharacterSerializer::SerializeToString(asset);
     const bool preserve = asset.import.preserveAuthoredEditsOnReimport;
+    RewriteMeshSourceKeys(asset, meshKey, destMeshKey);
     asset.skeleton.skin = inspect.imported.skeleton.skinName;
     asset.skeleton.signature = inspect.imported.skeleton.signature;
+    if (inspect.imported.importedFromFbx) {
+        asset.import.fbxSpaceConversionResolved = inspect.imported.fbxResolvedSpaceConversion;
+        asset.import.fbxSpaceResolvedStored = true;
+    }
     MergeSubmeshesFromImport(asset, inspect.imported);
-    MergeClipsFromImport(asset, inspect.imported, meshKey, preserve);
+    MergeClipsFromImport(asset, inspect.imported, destMeshKey, preserve);
     if (asset.defaults.animation.empty() || !preserve) {
         asset.defaults.animation = ChooseDefaultAnimation(asset.clips);
     } else {
@@ -457,30 +545,33 @@ bool CharacterImporter::Reimport(const std::filesystem::path& projectRoot,
     }
 
     if (!candidateIsOwned) {
-        if (ownedMeshAbs.empty()) {
+        if (destMeshAbs.empty()) {
             AtomicWriteText(characterAbs, previousJson, outError);
             outError = "Character has no owned mesh path to update.";
             return false;
         }
         const std::filesystem::path tmp =
-            std::filesystem::path(ownedMeshAbs.native() + std::filesystem::path(".tmp").native());
+            std::filesystem::path(destMeshAbs.native() + std::filesystem::path(".tmp").native());
         std::filesystem::copy_file(candidateGlb, tmp,
                                    std::filesystem::copy_options::overwrite_existing, ec);
         if (ec) {
             AtomicWriteText(characterAbs, previousJson, outError);
-            outError = "Failed to copy replacement GLB: " + ec.message();
+            outError = "Failed to copy replacement character source: " + ec.message();
             return false;
         }
-        std::filesystem::rename(tmp, ownedMeshAbs, ec);
+        std::filesystem::rename(tmp, destMeshAbs, ec);
         if (ec) {
-            std::filesystem::remove(ownedMeshAbs, ec);
-            std::filesystem::rename(tmp, ownedMeshAbs, ec);
+            std::filesystem::remove(destMeshAbs, ec);
+            std::filesystem::rename(tmp, destMeshAbs, ec);
             if (ec) {
                 std::filesystem::remove(tmp, ec);
                 AtomicWriteText(characterAbs, previousJson, outError);
-                outError = "Failed to replace owned mesh.glb: " + ec.message();
+                outError = "Failed to replace owned character mesh: " + ec.message();
                 return false;
             }
+        }
+        if (ownedExists && destMeshAbs != ownedMeshAbs) {
+            std::filesystem::remove(ownedMeshAbs, ec);
         }
     }
 
@@ -515,7 +606,7 @@ bool CharacterImporter::AssignCharacterSource(const std::filesystem::path& proje
     }
 
     CharacterInspectResult inspect;
-    if (!Inspect(sourceGlb, inspect, outError)) {
+    if (!Inspect(sourceGlb, MakeSettings(asset.import), inspect, outError)) {
         return false;
     }
 
@@ -532,10 +623,10 @@ bool CharacterImporter::AssignCharacterSource(const std::filesystem::path& proje
         return false;
     }
 
-    const std::filesystem::path meshAbs = ownedAbs / "mesh.glb";
+    const std::filesystem::path meshAbs = ownedAbs / OwnedMeshFileName(sourceGlb);
     std::filesystem::copy_file(sourceGlb, meshAbs, std::filesystem::copy_options::overwrite_existing, ec);
     if (ec) {
-        outError = "Failed to copy GLB: " + ec.message();
+        outError = "Failed to copy character source: " + ec.message();
         return false;
     }
 
@@ -547,6 +638,7 @@ bool CharacterImporter::AssignCharacterSource(const std::filesystem::path& proje
     asset.mesh.source = meshPortable;
     MergeSubmeshesFromImport(asset, inspect.imported);
     MergeClipsFromImport(asset, inspect.imported, meshPortable, false);
+    ApplyPersistedImportSettings(asset, MakeSettings(asset.import), inspect.imported);
     asset.defaults.animation = ChooseDefaultAnimation(asset.clips);
     if (asset.defaults.playbackSpeed <= 0.0f) {
         asset.defaults.playbackSpeed = 1.0f;
@@ -570,10 +662,10 @@ bool CharacterImporter::ImportAnimationClips(const std::filesystem::path& projec
     outError.clear();
     outAddedClipIds.clear();
 
-    if (!IsGlbPath(sourceGlb)) {
+    if (!IsCharacterSourcePath(sourceGlb)) {
         outError =
-            "Import Animation requires a GLB file. Export a GLB from the DCC tool "
-            "(raw .gltf with external .bin / images is not supported).";
+            "Import Animation requires a GLB or FBX file. Raw .gltf with external .bin / "
+            "images is not supported.";
         return false;
     }
 
@@ -589,8 +681,7 @@ bool CharacterImporter::ImportAnimationClips(const std::filesystem::path& projec
         return false;
     }
 
-    SkeletalImportSettings settings;
-    settings.unitScale = asset.import.unitScale;
+    const SkeletalImportSettings settings = MakeSettings(asset.import);
     SkeletalImportResult characterImport;
     if (!SkeletalModelImporter::Load(meshAbs, settings, characterImport, outError)) {
         return false;
@@ -603,7 +694,7 @@ bool CharacterImporter::ImportAnimationClips(const std::filesystem::path& projec
         return false;
     }
     if (importedClips.empty()) {
-        outError = "No animation clips were found in the source GLB.";
+        outError = "No animation clips were found in the source file.";
         return false;
     }
 
@@ -621,7 +712,7 @@ bool CharacterImporter::ImportAnimationClips(const std::filesystem::path& projec
                 }
             }
             if (!found) {
-                outError = "Selected clip '" + wanted + "' was not found in the source GLB.";
+                outError = "Selected clip '" + wanted + "' was not found in the source file.";
                 return false;
             }
             chosen.push_back(*found);
@@ -645,10 +736,14 @@ bool CharacterImporter::ImportAnimationClips(const std::filesystem::path& projec
     if (stem.empty()) {
         stem = "anim";
     }
-    std::filesystem::path destAbs = ownedAbs / (stem + ".glb");
+    std::string ext = ToLowerCopy(sourceGlb.extension().string());
+    if (ext.empty()) {
+        ext = ".glb";
+    }
+    std::filesystem::path destAbs = ownedAbs / (stem + ext);
     int suffix = 2;
     while (std::filesystem::exists(destAbs, ec)) {
-        destAbs = ownedAbs / (stem + "_" + std::to_string(suffix) + ".glb");
+        destAbs = ownedAbs / (stem + "_" + std::to_string(suffix) + ext);
         ++suffix;
         if (suffix > 10000) {
             outError = "Failed to allocate a unique owned animation filename.";
@@ -657,7 +752,7 @@ bool CharacterImporter::ImportAnimationClips(const std::filesystem::path& projec
     }
     std::filesystem::copy_file(sourceGlb, destAbs, std::filesystem::copy_options::none, ec);
     if (ec) {
-        outError = "Failed to copy animation GLB: " + ec.message();
+        outError = "Failed to copy animation source: " + ec.message();
         return false;
     }
 

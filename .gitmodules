@@ -4,3 +4,6 @@
 [submodule "extern/JoltPhysics"]
 	path = extern/JoltPhysics
 	url = https://github.com/jrouwe/JoltPhysics.git
+[submodule "extern/ufbx"]
+	path = extern/ufbx
+	url = https://github.com/ufbx/ufbx.git

@@ -9,6 +9,7 @@
 #include <filesystem>
 
 class QCheckBox;
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -30,6 +31,7 @@ public:
     std::filesystem::path destinationFolder() const;
     bool createController() const { return m_createController; }
     bool importAsStaticMesh() const { return m_importAsStaticMesh; }
+    SkeletalImportSettings importSettings() const;
     const CharacterInspectResult& inspectResult() const { return m_inspect; }
 
 private:
@@ -49,6 +51,8 @@ private:
     QLineEdit* m_nameEdit = nullptr;
     QLineEdit* m_destEdit = nullptr;
     QCheckBox* m_controllerCheck = nullptr;
+    QComboBox* m_spaceCombo = nullptr;
+    QCheckBox* m_stripNamespaceCheck = nullptr;
     QPushButton* m_importButton = nullptr;
     QPushButton* m_staticMeshButton = nullptr;
 };

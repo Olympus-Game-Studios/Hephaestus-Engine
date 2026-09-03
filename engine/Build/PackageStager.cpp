@@ -155,7 +155,8 @@ std::string LicenseNotices(const std::filesystem::path& engineRoot) {
     const std::vector<std::filesystem::path> licenses = {
         engineRoot / "extern" / "JoltPhysics" / "LICENSE",
         engineRoot / "extern" / "glfw" / "LICENSE.md",
-        engineRoot / "extern" / "entt" / "LICENSE"
+        engineRoot / "extern" / "entt" / "LICENSE",
+        engineRoot / "extern" / "ufbx" / "LICENSE"
     };
     std::ostringstream output;
     output << "Hephaestus third-party notices\n\n";

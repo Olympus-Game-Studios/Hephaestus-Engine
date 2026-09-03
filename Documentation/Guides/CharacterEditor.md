@@ -2,7 +2,7 @@
 
 Designer-facing authoring and preview for `.hpcharacter` assets. This is not a gameplay sandbox and does not add animation graphs, blend spaces, IK, or retargeting. Runtime `this:GetAnimator()` / `this:GetCharacter()` live in Play Mode and `HephaestusGame`; see [CharacterControllers.md](./CharacterControllers.md).
 
-Open a character by double-clicking it in the Asset Browser, or **Open**. Empty New Character files show **Import Character Source** until a mesh GLB is assigned.
+Open a character by double-clicking it in the Asset Browser, or **Open**. Empty New Character files show **Import Character Source** until a mesh GLB or FBX is assigned.
 
 ## Preview
 
@@ -21,7 +21,7 @@ Inspector fields:
 - Loop, playback speed, trim start/end
 - **Set as Default** — asset default for *new* placements
 
-**Import Animation** copies a GLB into `.source/<Character>/` (never overwriting `mesh.glb`) and adds clip rows. Incompatible skeletons are refused with no metadata writes. Undo removes the clip rows; the copied GLB stays on disk so Redo can restore metadata.
+**Import Animation** copies a GLB or FBX into `.source/<Character>/` (never overwriting `mesh.glb` / `mesh.fbx`) and adds clip rows. Incompatible skeletons are refused with no metadata writes. Undo removes the clip rows; the copied source stays on disk so Redo can restore metadata.
 
 Duplicate creates a new unique clip id. Delete removes the row only.
 

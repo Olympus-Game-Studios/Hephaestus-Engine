@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(HephaestusEngine LANGUAGES CXX)
+project(HephaestusEngine LANGUAGES C CXX)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Application Details  (single source of truth — edit these, not C++ files)
@@ -38,6 +38,32 @@ if(APPLE)
 endif()
 
 add_subdirectory(extern/glfw)
+
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/ufbx/ufbx.h")
+    message(FATAL_ERROR
+        "ufbx is missing at extern/ufbx (required for FBX import). "
+        "Run: git submodule update --init --recursive")
+endif()
+add_library(ufbx STATIC extern/ufbx/ufbx.c)
+set_target_properties(ufbx PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
+target_include_directories(ufbx PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/extern/ufbx")
+target_compile_definitions(ufbx PRIVATE
+    UFBX_NO_SUBDIVISION
+    UFBX_NO_TESSELLATION
+    UFBX_NO_GEOMETRY_CACHE
+)
+
+function(hephaestus_target_ufbx target)
+    cmake_parse_arguments(FBX "STATIC;SKELETAL" "" "" ${ARGN})
+    target_link_libraries(${target} PRIVATE ufbx)
+    target_sources(${target} PRIVATE engine/Assets/FbxDocument.cpp)
+    if(FBX_STATIC)
+        target_sources(${target} PRIVATE engine/Assets/FbxStaticImporter.cpp)
+    endif()
+    if(FBX_SKELETAL)
+        target_sources(${target} PRIVATE engine/Assets/FbxSkeletalImporter.cpp)
+    endif()
+endfunction()
 
 # Lua scripting support - try to find it, but make it optional for now
 # Check for vcpkg installation first
@@ -200,6 +226,9 @@ target_include_directories(HephaestusInputCore PUBLIC engine extern extern/glfw/
     set(ENGINE_CORE_SOURCES
     engine/Audio/AudioEngine.cpp
     engine/Assets/ModelImporter.cpp
+    engine/Assets/FbxDocument.cpp
+    engine/Assets/FbxStaticImporter.cpp
+    engine/Assets/FbxSkeletalImporter.cpp
     engine/Assets/AssetDatabase.cpp
     engine/Assets/AssetImporters.cpp
     engine/Assets/AssetManager.cpp
@@ -354,6 +383,9 @@ add_executable(HephaestusEngine
     engine/Core/ProjectContext.cpp
     engine/Core/PlayModeManager.cpp
     engine/Assets/ModelImporter.cpp
+    engine/Assets/FbxDocument.cpp
+    engine/Assets/FbxStaticImporter.cpp
+    engine/Assets/FbxSkeletalImporter.cpp
     engine/Assets/AssetDatabase.cpp
     engine/Assets/AssetImporters.cpp
     engine/Assets/AssetManager.cpp
@@ -474,7 +506,7 @@ elseif(APPLE)
 endif()
 
 target_include_directories(HephaestusEngine PRIVATE engine "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore HephaestusInputCore)
+target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore HephaestusInputCore ufbx)
 if(LUA_FOUND)
     if(TARGET Lua::Lua)
         target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt Lua::Lua)
@@ -822,7 +854,7 @@ if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND)
     endif()
 endif()
 
-target_link_libraries(HephaestusGame PRIVATE ${GAME_LINK_LIBS} HephaestusInputCore)
+target_link_libraries(HephaestusGame PRIVATE ${GAME_LINK_LIBS} HephaestusInputCore ufbx)
 
 # Windows: link dbghelp for crash handler
 if(WIN32)
@@ -1166,6 +1198,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         extern/VMA
     )
     target_link_libraries(ModelImporterTests PRIVATE Vulkan::Vulkan)
+    hephaestus_target_ufbx(ModelImporterTests STATIC)
     add_test(
         NAME ModelImporter
         COMMAND ModelImporterTests ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1257,6 +1290,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         else()
             target_link_libraries(CharacterLuaTests PRIVATE ${LUA_LIBRARIES} glfw HephaestusInputCore)
         endif()
+        hephaestus_target_ufbx(CharacterLuaTests SKELETAL)
         if(WIN32)
             target_link_libraries(CharacterLuaTests PRIVATE winmm)
         endif()
@@ -1315,6 +1349,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         engine
         extern
     )
+    hephaestus_target_ufbx(SkeletalImportTests SKELETAL)
     add_test(
         NAME SkeletalImport
         COMMAND SkeletalImportTests
@@ -1332,6 +1367,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         extern/VMA
     )
     target_link_libraries(SkinnedMeshTests PRIVATE Vulkan::Vulkan)
+    hephaestus_target_ufbx(SkinnedMeshTests SKELETAL)
     add_test(
         NAME SkinnedMesh
         COMMAND SkinnedMeshTests
@@ -1359,6 +1395,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         extern
         extern/entt/single_include
     )
+    hephaestus_target_ufbx(CharacterPlaybackTests SKELETAL)
     add_test(
         NAME CharacterPlayback
         COMMAND CharacterPlaybackTests
@@ -1390,6 +1427,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         extern
         extern/entt/single_include
     )
+    hephaestus_target_ufbx(CharacterWorkflowTests SKELETAL)
     add_test(
         NAME CharacterWorkflow
         COMMAND CharacterWorkflowTests
@@ -1422,9 +1460,45 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         extern
         extern/entt/single_include
     )
+    hephaestus_target_ufbx(CharacterEditorTests SKELETAL)
     add_test(
         NAME CharacterEditor
         COMMAND CharacterEditorTests
+    )
+
+    add_executable(FbxImportTests
+        engine/Tests/FbxImportTests.cpp
+        engine/Assets/ModelImporter.cpp
+        engine/Assets/CharacterAsset.cpp
+        engine/Assets/CharacterImport.cpp
+        engine/Assets/CharacterRuntime.cpp
+        engine/Assets/SkeletalModelImporter.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Assets/AssetManager.cpp
+        engine/Animation/Skeleton.cpp
+        engine/Animation/AnimationClip.cpp
+        engine/Animation/CharacterPlayback.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_include_directories(FbxImportTests PRIVATE
+        engine
+        extern
+        extern/VMA
+        extern/entt/single_include
+    )
+    target_link_libraries(FbxImportTests PRIVATE Vulkan::Vulkan)
+    hephaestus_target_ufbx(FbxImportTests STATIC SKELETAL)
+    add_test(
+        NAME FbxImport
+        COMMAND FbxImportTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
     add_executable(AssetOperationTransactionTests

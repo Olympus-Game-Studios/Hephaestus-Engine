@@ -580,6 +580,11 @@ AssetOperationResult AssetOperationService::executeRename(const AssetOperationPr
                 if (!ownedRewrite.success) {
                     result.warnings.push_back("Owned mesh path rewrite reported errors");
                 }
+                const auto ownedFbxRewrite =
+                    ownedIndex->RewriteReferences(oldOwned + "/mesh.fbx", newOwned + "/mesh.fbx");
+                if (!ownedFbxRewrite.success) {
+                    result.warnings.push_back("Owned FBX mesh path rewrite reported errors");
+                }
                 const std::string oldLua =
                     oldOwned + "/" +
                     CharacterOwnedSource::ControllerScriptFileName(

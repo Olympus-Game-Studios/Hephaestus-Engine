@@ -1,6 +1,6 @@
 /**
  * @file CharacterImport.h
- * @brief GLB character inspect/import/reimport (shared by editor and tests).
+ * @brief Character inspect/import/reimport from GLB or FBX (shared by editor and tests).
  */
 
 #pragma once
@@ -24,6 +24,7 @@ struct CharacterInspectResult {
     int boneCount = 0;
     int clipCount = 0;
     int materialSlotCount = 0;
+    std::string sourceFormat;
     SkeletalImportResult imported;
 };
 
@@ -33,13 +34,21 @@ struct CharacterImportRequest {
     std::filesystem::path destinationFolderAbs;
     std::string characterName;
     bool createController = true;
+    SkeletalImportSettings settings;
 };
 
 class CharacterImporter {
 public:
     static bool IsGlbPath(const std::filesystem::path& path);
+    static bool IsFbxPath(const std::filesystem::path& path);
+    static bool IsCharacterSourcePath(const std::filesystem::path& path);
+    static SkeletalImportSettings MakeSettings(const CharacterImportSettings& import);
 
     static bool Inspect(const std::filesystem::path& sourceGlb,
+                        CharacterInspectResult& outResult,
+                        std::string& outError);
+    static bool Inspect(const std::filesystem::path& sourceGlb,
+                        const SkeletalImportSettings& settings,
                         CharacterInspectResult& outResult,
                         std::string& outError);
 
@@ -53,7 +62,7 @@ public:
                          std::string& outError);
 
     /**
-     * Assign the first owned mesh.glb to an empty .hpcharacter (New Character).
+     * Assign the first owned mesh.glb / mesh.fbx to an empty .hpcharacter (New Character).
      * Preserves the existing controller script path.
      */
     static bool AssignCharacterSource(const std::filesystem::path& projectRoot,

@@ -4,6 +4,7 @@
  */
 
 #include "SkeletalModelImporter.h"
+#include "FbxSkeletalImporter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -310,7 +311,7 @@ bool LoadGlbOrGltf(const std::filesystem::path& path,
         return true;
     }
 
-    errorMessage = "Character sources must be .glb or .gltf";
+    errorMessage = "Character sources must be .glb, .gltf, or .fbx";
     return false;
 }
 
@@ -1322,6 +1323,10 @@ bool SkeletalModelImporter::Load(const std::filesystem::path& path,
                                  SkeletalImportResult& outResult,
                                  std::string& outError) {
     outError.clear();
+    const std::string ext = ToLower(path.extension().string());
+    if (ext == ".fbx") {
+        return FbxSkeletalImporter::Load(path, settings, outResult, outError);
+    }
     json root;
     std::vector<std::vector<uint8_t>> buffers;
     try {
@@ -1342,6 +1347,10 @@ bool SkeletalModelImporter::LoadClips(const std::filesystem::path& path,
                                       std::string& outError) {
     outError.clear();
     outClips.clear();
+    const std::string ext = ToLower(path.extension().string());
+    if (ext == ".fbx") {
+        return FbxSkeletalImporter::LoadClips(path, settings, character, outClips, outError);
+    }
     json root;
     std::vector<std::vector<uint8_t>> buffers;
     try {

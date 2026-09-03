@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "FbxImportSettings.h"
 #include "../Animation/AnimationClip.h"
 #include "../Animation/Skeleton.h"
 
@@ -32,6 +33,9 @@ struct SkinnedSubmeshData {
 
 struct SkeletalImportSettings {
     float unitScale = 1.0f;
+    FbxSpaceConversion fbxSpaceConversion = FbxSpaceConversion::Auto;
+    float animationSampleRate = 0.0f;
+    bool stripBoneNamespace = false;
 };
 
 struct SkeletalImportResult {
@@ -45,6 +49,8 @@ struct SkeletalImportResult {
     std::vector<AnimationClip> clips;
     bool clampedInfluences = false;
     bool restBindMismatch = false;
+    bool importedFromFbx = false;
+    FbxSpaceConversion fbxResolvedSpaceConversion = FbxSpaceConversion::ModifyGeometry;
 };
 
 class SkeletalModelImporter {

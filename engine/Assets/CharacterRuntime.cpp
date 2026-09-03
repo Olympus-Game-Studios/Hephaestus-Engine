@@ -165,6 +165,11 @@ bool CharacterRuntime::Load(const std::filesystem::path& projectRoot,
 
     SkeletalImportSettings settings;
     settings.unitScale = asset.import.unitScale;
+    settings.animationSampleRate = asset.import.animationSampleRate;
+    settings.stripBoneNamespace = asset.import.stripBoneNamespace;
+    settings.fbxSpaceConversion = asset.import.fbxSpaceResolvedStored
+                                     ? asset.import.fbxSpaceConversionResolved
+                                     : asset.import.fbxSpaceConversion;
     SkeletalImportResult imported;
     if (!SkeletalModelImporter::Load(meshAbs, settings, imported, outError)) {
         return false;

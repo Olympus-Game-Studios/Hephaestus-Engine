@@ -1,6 +1,7 @@
 #include "CharacterDocument.h"
 
 #include "../Assets/AssetPathPolicy.h"
+#include "../Assets/CharacterImport.h"
 #include "../Assets/SkeletalModelImporter.h"
 #include "../Animation/AnimationClip.h"
 #include "../Animation/CharacterPlayback.h"
@@ -167,8 +168,7 @@ bool CharacterDocument::BindPreview(EngineFrameRenderer* renderer, bool applyAss
 
     const std::string meshKey =
         !asset_.mesh.source.empty() ? asset_.mesh.source : asset_.skeleton.source;
-    SkeletalImportSettings settings;
-    settings.unitScale = asset_.import.unitScale;
+    const SkeletalImportSettings settings = CharacterImporter::MakeSettings(asset_.import);
     for (const CharacterClipEntry& entry : asset_.clips) {
         if (entry.source.empty() || entry.source == meshKey) {
             continue;

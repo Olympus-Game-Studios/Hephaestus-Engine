@@ -1,23 +1,25 @@
 # YBot (Cultist) source
 
-Mixamo FBX sources for the Stage G Cultist vertical slice. Import Character accepts **GLB only**.
+Mixamo FBX sources for the Stage G Cultist vertical slice. Import Character accepts **GLB and FBX**.
 
-## Convert
+## Import (FBX, no conversion)
 
-Export from Blender (or another DCC) to GLB:
+Use the FBX files in this folder directly:
 
-- `Y-Bot.fbx` → mesh GLB (skin + rest pose)
+- `Y-Bot.fbx` — mesh + skin + rest pose
 - `Anims/YBot-Crouching-Idle.fbx` → Idle
 - `Anims/YBot-Walking.fbx` → Walk
 - `Anims/YBot-Jog-Forward.fbx` → Run
 - `Anims/YBot-Punching.fbx` → Shoot
 
+Space conversion: Mixamo is treated as **Modify Geometry** when Auto is selected. Leave **Strip bone namespace** off to keep `mixamorig:` names.
+
 There is no Hurt or Death take in this folder. Add those clips later, or leave `Play("Hurt")` / `Play("Death")` to fail safely (logged once).
 
-## Import
+## Steps
 
-1. Asset Browser → **Import Character…** and pick the mesh GLB. Name it `YBot` (destination `assets/characters/`).
-2. Open the character and **Import Animation** for each anim GLB. Do not overwrite `mesh.glb`.
+1. Asset Browser → **Import Character…** and pick `Y-Bot.fbx`. Name it `YBot` (destination `assets/characters/`). Owned source is `mesh.fbx`.
+2. Open the character and **Import Animation** for each anim FBX. Do not overwrite `mesh.fbx`.
 3. Set clip ids to `Idle`, `Walk`, `Run`, `Shoot` (and `Hurt` / `Death` if present). Loop Idle/Walk/Run; do not loop Shoot/Hurt/Death.
 4. Assign `assets/scripts/CultistCharacter.lua` as the controller (or keep the generated `.source/YBot/YBotCharacter.lua` and copy that script). Enable **Run Controller**.
 5. Optional: add socket `Weapon_R` on a right-hand bone.

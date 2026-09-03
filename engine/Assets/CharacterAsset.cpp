@@ -306,6 +306,14 @@ bool CharacterSerializer::DeserializeFromString(CharacterAsset& asset,
         asset.import.unitScale = ReadFloat(import, "unitScale", 1.0f);
         asset.import.preserveAuthoredEditsOnReimport =
             ReadBool(import, "preserveAuthoredEditsOnReimport", true);
+        asset.import.fbxSpaceConversion =
+            FbxSpaceConversionFromString(ReadString(import, "fbxSpaceConversion"));
+        asset.import.fbxSpaceConversionResolved =
+            FbxSpaceConversionFromString(ReadString(import, "fbxSpaceConversionResolved"));
+        asset.import.fbxSpaceResolvedStored =
+            ReadBool(import, "fbxSpaceResolvedStored", false);
+        asset.import.animationSampleRate = ReadFloat(import, "animationSampleRate", 0.0f);
+        asset.import.stripBoneNamespace = ReadBool(import, "stripBoneNamespace", false);
     }
 
     if (root.contains("skeleton") && root["skeleton"].is_object()) {
@@ -423,7 +431,16 @@ std::string CharacterSerializer::SerializeToString(const CharacterAsset& asset) 
     out << "  \"import\": {\n";
     out << "    \"unitScale\": " << FormatFloat(asset.import.unitScale) << ",\n";
     out << "    \"preserveAuthoredEditsOnReimport\": "
-        << (asset.import.preserveAuthoredEditsOnReimport ? "true" : "false") << "\n";
+        << (asset.import.preserveAuthoredEditsOnReimport ? "true" : "false") << ",\n";
+    out << "    \"fbxSpaceConversion\": "
+        << JsonString(FbxSpaceConversionToString(asset.import.fbxSpaceConversion)) << ",\n";
+    out << "    \"fbxSpaceConversionResolved\": "
+        << JsonString(FbxSpaceConversionToString(asset.import.fbxSpaceConversionResolved)) << ",\n";
+    out << "    \"fbxSpaceResolvedStored\": "
+        << (asset.import.fbxSpaceResolvedStored ? "true" : "false") << ",\n";
+    out << "    \"animationSampleRate\": " << FormatFloat(asset.import.animationSampleRate) << ",\n";
+    out << "    \"stripBoneNamespace\": "
+        << (asset.import.stripBoneNamespace ? "true" : "false") << "\n";
     out << "  },\n";
     out << "  \"skeleton\": {\n";
     out << "    \"source\": " << JsonString(asset.skeleton.source) << ",\n";
