@@ -55,14 +55,28 @@ namespace QtEditor {
 static bool PathMissing(const std::string& portable)
 {
     if (portable.empty()) return false;
+    if (portable.rfind("builtin://", 0) == 0) return false;
+
     auto& assets = AssetManager::GetInstance();
     if (assets.GetAssetInfo(portable)) return false;
     if (portable.rfind("assets/", 0) == 0 && assets.GetAssetInfo(portable.substr(7))) {
         return false;
     }
-    const auto resolved = std::filesystem::path(assets.ToAbsolutePath(
+
+    // Portable keys such as ".engine/meshes/Camera.glb" are project-relative.
+    // AssetManager::ToAbsolutePath() joins against the assets/ root, which
+    // produces a false missing warning for engine meshes that do load.
+    const std::filesystem::path projectRoot(assets.GetProjectRoot());
+    if (!projectRoot.empty()) {
+        const auto resolved = AssetPathPolicy::ResolvePortableKey(projectRoot, portable);
+        if (!resolved.empty() && std::filesystem::exists(resolved)) {
+            return false;
+        }
+    }
+
+    const auto assetResolved = std::filesystem::path(assets.ToAbsolutePath(
         portable.rfind("assets/", 0) == 0 ? portable.substr(7) : portable));
-    return !std::filesystem::exists(resolved);
+    return assetResolved.empty() || !std::filesystem::exists(assetResolved);
 }
 
 static QString ToPortableAsset(const QString& raw)

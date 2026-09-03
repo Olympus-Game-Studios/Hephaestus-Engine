@@ -35,6 +35,8 @@ namespace QtEditor {
 static bool PathMissing(const std::string& portable)
 {
     if (portable.empty()) return false;
+    if (portable.rfind("builtin://", 0) == 0) return false;
+
     auto& assets = AssetManager::GetInstance();
     if (assets.GetAssetInfo(portable)) return false;
     if (portable.rfind("assets/", 0) == 0 && assets.GetAssetInfo(portable.substr(7))) {
@@ -43,8 +45,17 @@ static bool PathMissing(const std::string& portable)
     if (portable.rfind("scripts/", 0) == 0 && assets.GetAssetInfo(portable)) {
         return false;
     }
-    const auto resolved = std::filesystem::path(assets.ToAbsolutePath(portable));
-    return !std::filesystem::exists(resolved);
+
+    const std::filesystem::path projectRoot(assets.GetProjectRoot());
+    if (!projectRoot.empty()) {
+        const auto resolved = AssetPathPolicy::ResolvePortableKey(projectRoot, portable);
+        if (!resolved.empty() && std::filesystem::exists(resolved)) {
+            return false;
+        }
+    }
+
+    const auto assetResolved = std::filesystem::path(assets.ToAbsolutePath(portable));
+    return assetResolved.empty() || !std::filesystem::exists(assetResolved);
 }
 
 struct MixedPropertyValue {

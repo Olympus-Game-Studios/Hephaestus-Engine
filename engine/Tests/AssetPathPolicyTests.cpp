@@ -75,6 +75,12 @@ bool TestProjectRelative(const fs::path& tempRoot) {
 
     const fs::path resolved = AssetPathPolicy::ResolvePortableKey(project, portable);
     ok &= Check(fs::equivalent(resolved, mesh), "resolve portable key");
+
+    const fs::path engineMesh = project / ".engine" / "meshes" / "Camera.glb";
+    const fs::path engineResolved =
+        AssetPathPolicy::ResolvePortableKey(project, ".engine/meshes/Camera.glb");
+    ok &= Check(engineResolved == engineMesh.lexically_normal(),
+                "resolve .engine mesh against project root, not assets/");
     return ok;
 }
 
