@@ -135,14 +135,20 @@ void CharacterImportDialog::refreshInspect()
     }
 
     m_statsLabel->setText(
-        tr("Source %1  •  Mesh %2  •  Skin %3  •  %4 bones  •  %5 clip(s)  •  %6 material slot(s)")
+        tr("Source %1  •  Skin %2  •  %3 bones  •  %4 clip(s)  •  %5 skinned mesh(es)  •  %6 material slot(s)")
             .arg(QString::fromStdString(m_inspect.sourceFormat))
-            .arg(QString::fromStdString(m_inspect.meshName))
             .arg(QString::fromStdString(m_inspect.skinName))
             .arg(m_inspect.boneCount)
             .arg(m_inspect.clipCount)
+            .arg(m_inspect.skinnedMeshCount)
             .arg(m_inspect.materialSlotCount));
     QStringList lines;
+    if (!m_inspect.skinnedMeshNames.empty()) {
+        lines << tr("Skinned Meshes: %1").arg(m_inspect.skinnedMeshCount);
+        for (const std::string& name : m_inspect.skinnedMeshNames) {
+            lines << QString::fromLatin1("  - ") + QString::fromStdString(name);
+        }
+    }
     for (const std::string& warning : m_inspect.warnings) {
         lines << QString::fromStdString(warning);
     }

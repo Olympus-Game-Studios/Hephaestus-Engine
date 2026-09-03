@@ -8,7 +8,7 @@ Open a character by double-clicking it in the Asset Browser, or **Open**. Empty 
 
 The window hosts an isolated preview scene (environment, light, character). Playback ticks only the preview character. Play Mode is not started.
 
-Use **Frame** / **Frame All** to fit the camera. **Show Skeleton** draws bone lines; **Bone Names** is reserved for a later overlay. Transform gizmos apply to the selected socket.
+Use **Frame** / **Frame All** to fit the camera around **all mesh parts**. **Show Skeleton** draws the one canonical skeleton; **Bone Names** is reserved for a later overlay. Transform gizmos apply to the selected socket. Animation playback deforms every part from the same pose.
 
 ## Animations
 
@@ -21,7 +21,7 @@ Inspector fields:
 - Loop, playback speed, trim start/end
 - **Set as Default** — asset default for *new* placements
 
-**Import Animation** copies a GLB or FBX into `.source/<Character>/` (never overwriting `mesh.glb` / `mesh.fbx`) and adds clip rows. Incompatible skeletons are refused with no metadata writes. Undo removes the clip rows; the copied source stays on disk so Redo can restore metadata.
+**Import Animation** copies a GLB or FBX into `.source/<Character>/` (never overwriting `mesh.glb` / `mesh.fbx`) and adds clip rows. Mixamo files often contain both `Take 001` (bind/rest) and `mixamo.com` (the actual take); select `mixamo.com` to preview locomotion. Duplicate take names from different files keep unique clip ids (`mixamo.com`, `mixamo.com_2`, …). Incompatible skeletons are refused with no metadata writes. Undo removes the clip rows; the copied source stays on disk so Redo can restore metadata.
 
 Duplicate creates a new unique clip id. Delete removes the row only.
 
@@ -33,11 +33,11 @@ Socket markers follow the current preview pose. The selected socket uses the sha
 
 ## Materials and controller
 
-Material slots open the Material Graph editor. The controller section stores enabled + script path on the asset. Exposed Lua values are authored on scene instances, not in the Character Editor. Preview does not run the controller; Play Mode and `HephaestusGame` do.
+Material slots are grouped by mesh part when a character has more than one skinned mesh. Slot names stay unique per part (`Body / Skin`, `Clothes / Fabric`). Opening a slot still uses the Material Graph editor. The controller section stores enabled + script path on the asset. Exposed Lua values are authored on scene instances, not in the Character Editor. Preview does not run the controller; Play Mode and `HephaestusGame` do.
 
 ## Reimport and save
 
-**Reimport Character** uses the Stage E skeleton-compatibility check. Incompatible sources fail with no writes. Compatible reimport refreshes mesh/clip curves and preserves authored clip ids, folders, loop/speed/trim, and material assignments by slot name.
+**Reimport Character** uses the Stage E skeleton-compatibility check. Incompatible sources fail with no writes. Compatible reimport refreshes mesh/clip curves and preserves authored clip ids, folders, loop/speed/trim, and material assignments by mesh-part + slot name. Extra compatible skinned meshes are kept; they are not discarded.
 
 Save writes `.hpcharacter`. Live scene instances reload through `CharacterRuntime` without overwriting instance default animation, playback speed, controller enabled/path/variables, or material overrides. Asset defaults apply to **new placements** only.
 

@@ -36,8 +36,10 @@ using Hephaestus::CharacterDocument;
 using Hephaestus::CharacterImportRequest;
 using Hephaestus::CharacterImporter;
 using Hephaestus::CharacterRuntime;
+using Hephaestus::CharacterRuntimeData;
 using Hephaestus::CharacterSerializer;
 using Hephaestus::CharacterSocket;
+using Hephaestus::FindClip;
 using Hephaestus::Skeleton;
 using Hephaestus::SkeletonBone;
 using Hephaestus::SkeletonBuilder;
@@ -83,7 +85,8 @@ void PadTo4(std::vector<uint8_t>& out, uint8_t pad) {
     }
 }
 
-bool WriteSkinnedGlb(const fs::path& path, const std::string& childName, const std::string& clipName) {
+bool WriteSkinnedGlb(const fs::path& path, const std::string& childName, const std::string& clipName,
+                    bool twoMeshes = false) {
     const float positions[] = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     const float normals[] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
     const uint16_t joints0[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -117,6 +120,8 @@ bool WriteSkinnedGlb(const fs::path& path, const std::string& childName, const s
     AppendBytes(bin, rotations, sizeof(rotations));
     PadTo4(bin, 0);
 
+    const std::string extraNode =
+        twoMeshes ? ",{\"name\":\"Clothes\",\"translation\":[0,0,0],\"mesh\":0,\"skin\":0}" : "";
     const std::string json =
         std::string("{\"asset\":{\"version\":\"2.0\"},\"scene\":0,") +
         "\"scenes\":[{\"nodes\":[0]}],"
@@ -124,7 +129,7 @@ bool WriteSkinnedGlb(const fs::path& path, const std::string& childName, const s
         "{\"name\":\"Root\",\"children\":[1]},"
         "{\"name\":\"" + childName + "\",\"translation\":[0,1,0],\"rotation\":[0,0," +
         std::to_string(kSqrtHalf) + "," + std::to_string(kSqrtHalf) + "]},"
-        "{\"translation\":[0,0,0],\"mesh\":0,\"skin\":0}"
+        "{\"name\":\"Body\",\"translation\":[0,0,0],\"mesh\":0,\"skin\":0}" + extraNode +
         "],"
         "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,"
         "\"JOINTS_0\":2,\"WEIGHTS_0\":3},\"indices\":4}]}],"
@@ -276,6 +281,60 @@ bool TestImportUndoLeavesGlb(const fs::path& project) {
     return ok;
 }
 
+bool TestDuplicateSourceClipNamesBind(const fs::path& project) {
+    bool ok = true;
+    std::string portable;
+    std::string error;
+    ok &= Check(ImportHero(project, portable, error), "import hero: " + error);
+
+    Scene scene("DupClips");
+    CharacterDocument doc(&scene);
+    doc.SetProjectRoot(project);
+    const fs::path assetPath = project / "assets" / "characters" / "Hero.hpcharacter";
+    ok &= Check(doc.OnOpen(assetPath, error), "open: " + error);
+
+    const fs::path jog = project / "jog.glb";
+    const fs::path walk = project / "walk.glb";
+    ok &= Check(WriteSkinnedGlb(jog, "Child", "mixamo.com"), "write jog glb");
+    ok &= Check(WriteSkinnedGlb(walk, "Child", "mixamo.com"), "write walk glb");
+
+    std::vector<std::string> addedJog;
+    ok &= Check(CharacterImporter::ImportAnimationClips(project, doc.GetAsset(), portable, jog,
+                                                        {"mixamo.com"}, {}, addedJog, error),
+                "import jog: " + error);
+    std::vector<std::string> addedWalk;
+    ok &= Check(CharacterImporter::ImportAnimationClips(project, doc.GetAsset(), portable, walk,
+                                                        {"mixamo.com"}, {}, addedWalk, error),
+                "import walk: " + error);
+    ok &= Check(!addedJog.empty() && !addedWalk.empty(), "both imports added clip ids");
+    ok &= Check(addedJog.front() != addedWalk.front(), "Mixamo takes get unique clip ids");
+    ok &= Check(doc.OnSave(error), "save authored clips: " + error);
+
+    CharacterRuntime::InvalidateAll();
+    CharacterRuntimeData data;
+    ok &= Check(CharacterRuntime::Load(project, portable, data, error), "load runtime: " + error);
+
+    int mixamoCount = 0;
+    for (const AnimationClip& clip : data.clips) {
+        if (clip.sourceClip == "mixamo.com" || clip.name == "mixamo.com") {
+            ++mixamoCount;
+        }
+    }
+    ok &= Check(mixamoCount == 2, "runtime keeps one clip per Mixamo source file");
+    ok &= Check(FindClip(data.clips, addedJog.front(), error) != nullptr,
+                "FindClip jog id: " + error);
+    ok &= Check(FindClip(data.clips, addedWalk.front(), error) != nullptr,
+                "FindClip walk id: " + error);
+
+    CharacterComponent character;
+    ok &= Check(CharacterAnimationSystem::BindRuntime(character, data.imported.skeleton, data.clips,
+                                                      error),
+                "bind: " + error);
+    ok &= Check(CharacterAnimationSystem::SampleAtTime(character, addedWalk.front(), 0.5f, error),
+                "sample unique Mixamo id: " + error);
+    return ok;
+}
+
 bool TestSampleAtTimeClamp() {
     bool ok = true;
     Skeleton skeleton;
@@ -393,6 +452,74 @@ bool TestBindEntityDoesNotClobber(const fs::path& project) {
     return ok;
 }
 
+bool TestMultiMeshDocument(const fs::path& project) {
+    bool ok = true;
+    const fs::path glb = project / "source.glb";
+    if (!WriteSkinnedGlb(glb, "Child", "Idle", true)) {
+        return Check(false, "write two-mesh glb");
+    }
+    CharacterImportRequest request;
+    request.sourceGlb = glb;
+    request.projectRoot = project;
+    request.destinationFolderAbs = project / "assets" / "characters";
+    request.characterName = "YBotLike";
+    request.createController = false;
+    std::string portable;
+    std::string error;
+    ok &= Check(CharacterImporter::Import(request, portable, error), "import two-mesh: " + error);
+
+    const fs::path assetPath = project / "assets" / "characters" / "YBotLike.hpcharacter";
+    Scene scene("MultiMeshEditor");
+    CharacterDocument doc(&scene);
+    doc.SetProjectRoot(project);
+    ok &= Check(doc.OnOpen(assetPath, error), "open multi-mesh: " + error);
+    bool hasBody = false;
+    bool hasClothes = false;
+    for (const auto& slot : doc.GetAsset().mesh.submeshes) {
+        if (slot.meshPart == "Body") {
+            hasBody = true;
+        }
+        if (slot.meshPart == "Clothes") {
+            hasClothes = true;
+        }
+    }
+    ok &= Check(hasBody && hasClothes, "document materials grouped by mesh part");
+
+    ok &= Check(doc.BindPreview(nullptr, true, false, error), "bind preview: " + error);
+    Entity preview = doc.FindPreviewCharacter();
+    ok &= Check(static_cast<bool>(preview) && preview.HasComponent<MeshRendererComponent>(),
+                "preview has runtime mesh");
+    if (preview && preview.HasComponent<MeshRendererComponent>()) {
+        ok &= Check(IsRuntimeGeneratedVisual(preview.GetComponent<MeshRendererComponent>()),
+                    "preview mesh is runtime-generated");
+    }
+
+    CharacterRuntimeData data;
+    ok &= Check(CharacterRuntime::Load(project, portable, data, error), "load runtime parts: " + error);
+    ok &= Check(data.imported.meshes.size() == 2, "preview source has two mesh parts");
+    if (preview && preview.HasComponent<MeshRendererComponent>()) {
+        ok &= Check(preview.GetComponent<MeshRendererComponent>().localBounds.max.x >=
+                        data.imported.bounds.max.x - 1e-4f,
+                    "preview bounds include all parts");
+    }
+
+    ok &= Check(doc.OnSave(error), "save multi-mesh: " + error);
+    CharacterAsset reloaded;
+    ok &= Check(CharacterSerializer::Deserialize(reloaded, assetPath, error), "reload: " + error);
+    bool reloadBody = false;
+    bool reloadClothes = false;
+    for (const auto& slot : reloaded.mesh.submeshes) {
+        if (slot.meshPart == "Body") {
+            reloadBody = true;
+        }
+        if (slot.meshPart == "Clothes") {
+            reloadClothes = true;
+        }
+    }
+    ok &= Check(reloadBody && reloadClothes, "meshPart survives save/reload");
+    return ok;
+}
+
 } // namespace
 
 int main() {
@@ -403,10 +530,12 @@ int main() {
     bool ok = true;
     ok &= TestDocumentDirtySave(root / "Doc");
     ok &= TestImportUndoLeavesGlb(root / "ImportUndo");
+    ok &= TestDuplicateSourceClipNamesBind(root / "DupClips");
     ok &= TestSampleAtTimeClamp();
     ok &= TestSocketParentKeepsLocal(root / "Sockets");
     ok &= TestReimportRefusal(root / "Reimport");
     ok &= TestBindEntityDoesNotClobber(root / "LiveBind");
+    ok &= TestMultiMeshDocument(root / "MultiMesh");
 
     CharacterRuntime::InvalidateAll();
     if (!ok) {

@@ -59,6 +59,9 @@ public:
     static std::string ComputeSignature(const Skeleton& skeleton);
     static SkeletonCompatibilityReport Compare(const Skeleton& character,
                                                const Skeleton& other);
+    /// True when every bone in `part` exists on `canonical` with the same parent
+    /// name and rest local transform. Subsets are allowed; extra bones are not.
+    static bool MapsOnto(const Skeleton& part, const Skeleton& canonical);
     static void EvaluateRestWorld(const Skeleton& skeleton, std::vector<Mat4>& outWorld);
     static void EvaluateWorld(const Skeleton& skeleton,
                               const std::vector<Mat4>& localPose,

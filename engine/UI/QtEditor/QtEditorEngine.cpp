@@ -2254,9 +2254,13 @@ void QtEditorEngine::createBuiltinMeshes()
         Hephaestus::SkeletalImportResult fixture;
         std::vector<Mat4> palette;
         Hephaestus::SkeletalModelImporter::BuildRestPoseFixture(fixture, palette);
-        std::vector<SkinnedVertex> verts(fixture.vertices.size());
-        for (size_t i = 0; i < fixture.vertices.size(); ++i) {
-            const auto& src = fixture.vertices[i];
+        if (fixture.meshes.empty()) {
+            return;
+        }
+        const Hephaestus::SkinnedMeshPart& part = fixture.meshes.front();
+        std::vector<SkinnedVertex> verts(part.vertices.size());
+        for (size_t i = 0; i < part.vertices.size(); ++i) {
+            const auto& src = part.vertices[i];
             std::memcpy(verts[i].pos, src.pos, sizeof(src.pos));
             std::memcpy(verts[i].normal, src.normal, sizeof(src.normal));
             std::memcpy(verts[i].color, src.color, sizeof(src.color));
@@ -2265,7 +2269,7 @@ void QtEditorEngine::createBuiltinMeshes()
             std::memcpy(verts[i].weights, src.weights, sizeof(src.weights));
         }
         std::vector<MeshData::Submesh> submeshes;
-        for (const auto& sub : fixture.submeshes) {
+        for (const auto& sub : part.submeshes) {
             MeshData::Submesh gpuSub{};
             gpuSub.indexOffset = sub.indexOffset;
             gpuSub.indexCount = sub.indexCount;
@@ -2274,7 +2278,7 @@ void QtEditorEngine::createBuiltinMeshes()
             submeshes.push_back(std::move(gpuSub));
         }
         const size_t handle = m_frameRenderer->AddSkinnedMesh(
-            "Skinned Rest Fixture", verts, fixture.indices, submeshes, fixture.bounds, palette,
+            "Skinned Rest Fixture", verts, part.indices, submeshes, fixture.bounds, palette,
             std::filesystem::path("builtin://skinned_rest_fixture"), false);
         if (handle != SIZE_MAX) {
             std::cout << "[QtEditorEngine] Builtin skinned rest fixture handle " << handle << "\n";

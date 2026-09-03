@@ -20,10 +20,12 @@ struct CharacterInspectResult {
     std::string error;
     std::vector<std::string> warnings;
     std::string meshName;
+    std::vector<std::string> skinnedMeshNames;
     std::string skinName;
     int boneCount = 0;
     int clipCount = 0;
     int materialSlotCount = 0;
+    int skinnedMeshCount = 0;
     std::string sourceFormat;
     SkeletalImportResult imported;
 };

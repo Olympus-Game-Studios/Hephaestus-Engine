@@ -86,8 +86,30 @@ bool TestRoundTripAndUnknownFields() {
     ok &= Check(loaded.skeleton.signature == "abc123", "signature");
     ok &= Check(loaded.mesh.submeshes.size() == 1 &&
                     loaded.mesh.submeshes[0].material ==
-                        "assets/materials/CultistBody.hematerial",
+                        "assets/materials/CultistBody.hematerial" &&
+                    loaded.mesh.submeshes[0].meshPart.empty(),
                 "submesh material");
+    CharacterAsset multi = asset;
+    multi.mesh.submeshes[0].meshPart = "Body";
+    CharacterAsset loadedMulti;
+    ok &= Check(CharacterSerializer::DeserializeFromString(
+                    loadedMulti, CharacterSerializer::SerializeToString(multi), error),
+                "meshPart round-trip");
+    ok &= Check(loadedMulti.mesh.submeshes[0].meshPart == "Body", "meshPart persisted");
+    const std::string legacy = R"({
+  "schema": "HephaestusCharacter",
+  "assetVersion": 1,
+  "name": "Legacy",
+  "skeleton": { "source": "a.glb", "skin": "Armature", "signature": "x" },
+  "mesh": { "source": "a.glb", "submeshes": [{ "name": "Skin", "material": "m.hematerial" }] }
+})";
+    CharacterAsset legacyAsset;
+    ok &= Check(CharacterSerializer::DeserializeFromString(legacyAsset, legacy, error),
+                "legacy single-mesh json: " + error);
+    ok &= Check(legacyAsset.mesh.submeshes.size() == 1 &&
+                    legacyAsset.mesh.submeshes[0].name == "Skin" &&
+                    legacyAsset.mesh.submeshes[0].meshPart.empty(),
+                "legacy slot has empty meshPart");
     ok &= Check(loaded.clips.size() == 1 && loaded.clips[0].id == "Locomotion/Idle",
                 "clip id");
     ok &= Check(loaded.controller.scriptPath == asset.controller.scriptPath,

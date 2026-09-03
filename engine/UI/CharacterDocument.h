@@ -16,6 +16,7 @@ class EngineFrameRenderer;
 enum class CharacterEditorItemKind {
     Character,
     Mesh,
+    MeshPart,
     Skeleton,
     Bone,
     Materials,

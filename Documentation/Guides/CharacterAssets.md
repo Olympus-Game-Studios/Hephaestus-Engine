@@ -8,9 +8,13 @@ In the Asset Browser:
 
 1. **Import → Import Character…** (or the folder context menu)
 2. Choose a **GLB** (`*.glb`) or **FBX** (`*.fbx`). Raw `.gltf` with external `.bin` / images is refused.
-3. Review source format, mesh, skeleton/skin, bone count, clips, slots, and warnings.
+3. Review source format, skeleton/skin, bone count, **skinned mesh parts**, clips, slots, and warnings.
 4. For FBX, pick space conversion (**Auto** / **Adjust Transforms** / **Modify Geometry**). Auto stores the resolved mode so later reimports do not re-detect. Optional **Strip bone namespace** turns `mixamorig:Hips` into `Hips`.
 5. Set the character name and destination folder. Duplicate names fail; nothing is overwritten.
+
+A character source may contain **one or more skinned mesh objects**. Import keeps every part that maps to the same canonical skeleton (for example Mixamo YBot body + helper geo). All parts share one skeleton, one animation pose, and one bone palette. Sources with multiple incompatible skeletons are refused.
+
+Do not delete extra skinned meshes in Blender first. Inspect lists every compatible part; Import Character 1.0 imports all of them.
 
 Output:
 
@@ -57,7 +61,7 @@ Right-click the `.hpcharacter` → **Reimport Character…** and pick a GLB or F
 - If the owned mesh was already overwritten, only the stored signature is compared. A detailed bone diff may be unavailable.
 - Changing extension (GLB ↔ FBX) replaces the owned file (`mesh.glb` ↔ `mesh.fbx`) and rewrites `mesh.source` / `skeleton.source` (and clip rows that pointed at the old mesh).
 
-Compatible reimport updates mesh/clip curves and slot names, preserves authored clip ids/folders/loop/speed/trim when `sourceClip` still exists, and preserves material assignments by slot name.
+Compatible reimport updates mesh/clip curves and slot names, preserves authored clip ids/folders/loop/speed/trim when `sourceClip` still exists, and preserves material assignments by **mesh part + slot name** (falling back to a unique slot name). Mesh-part count may change (1↔N) when the skeleton stays compatible.
 
 This path is not the static-mesh Reimport pipeline. Owned character sources must not be baked as static meshes. **Import Assets…** on a skinned FBX warns and offers Import as Character.
 
@@ -69,6 +73,6 @@ Packaging copies `assets/`, including owned `.source/` files the character JSON 
 
 ## Runtime
 
-Editor play mode and `HephaestusGame` both bind through `CharacterRuntime`: load `.hpcharacter`, import the owned GLB or FBX, `BindRuntime`, stamp the runtime MeshRenderer, upload a skinned GPU mesh. Missing sources set `lastError` and leave the entity selectable.
+Editor play mode and `HephaestusGame` both bind through `CharacterRuntime`: load `.hpcharacter`, import the owned GLB or FBX, `BindRuntime`, stamp the runtime MeshRenderer, upload **one skinned GPU mesh per imported part** that all share the character bone palette. Missing sources set `lastError` and leave the entity selectable.
 
 When Run Controller is on, the character controller Lua slot runs beside gameplay Lua. See [CharacterControllers.md](./CharacterControllers.md).

@@ -93,7 +93,9 @@ bool TestRestFixturePalette() {
     std::vector<Mat4> palette;
     SkeletalModelImporter::BuildRestPoseFixture(fixture, palette);
     bool ok = Check(fixture.skeleton.BoneCount() == 2, "fixture has two bones");
-    ok &= Check(!fixture.vertices.empty() && !fixture.indices.empty(), "fixture has geometry");
+    ok &= Check(!fixture.meshes.empty() && !fixture.meshes.front().vertices.empty() &&
+                    !fixture.meshes.front().indices.empty(),
+                "fixture has geometry");
     const SkeletonBone* root = fixture.skeleton.FindBone("Root");
     const SkeletonBone* child = fixture.skeleton.FindBone("Child");
     if (!Check(root && child, "fixture names")) {

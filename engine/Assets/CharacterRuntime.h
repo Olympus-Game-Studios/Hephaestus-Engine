@@ -43,6 +43,8 @@ public:
 
     static void Invalidate(const std::string& portableCharacterPath);
     static void InvalidateAll();
+    static void InvalidateGpuMeshes(EngineFrameRenderer* renderer,
+                                    const std::string& portableCharacterPath);
 
     /// Bind CPU playback state and stamp a runtime-generated MeshRenderer.
     /// Copies asset defaults onto the component only when applyAssetDefaults is true.

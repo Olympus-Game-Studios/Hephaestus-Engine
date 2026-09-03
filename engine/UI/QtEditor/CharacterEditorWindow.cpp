@@ -406,8 +406,6 @@ void CharacterEditorWindow::onViewportReady() {
         }
     });
     bindPreview(true);
-    if (m_engine) m_engine->RebuildSceneMeshes();
-    bindPreview(true);
     if (!m_framedOnce && m_document && m_document->HasMeshSource()) {
         m_engine->FocusAll();
         m_framedOnce = true;
@@ -698,17 +696,17 @@ void CharacterEditorWindow::onTreeSelectionChanged() {
     m_selection.index = item->data(0, kIndexRole).toInt();
     if (m_selection.kind == CharacterEditorItemKind::Clip) {
         m_previewClipId = m_selection.id;
+        if (const CharacterClipEntry* clip = m_document->FindClipById(m_previewClipId)) {
+            m_previewTime = clip->startTime;
+            m_timeline->setRange(std::max(clip->endTime, 0.001f), clip->startTime,
+                                 clip->endTime > clip->startTime ? clip->endTime : clip->startTime + 1.0f,
+                                 clip->startTime);
+        }
         Entity entity = previewCharacter();
         if (entity) {
             std::string error;
             CharacterAnimationSystem::SampleAtTime(entity.GetComponent<CharacterComponent>(),
                                                    m_previewClipId, m_previewTime, error);
-        }
-        if (const CharacterClipEntry* clip = m_document->FindClipById(m_previewClipId)) {
-            m_timeline->setRange(std::max(clip->endTime, 0.001f), clip->startTime,
-                                 clip->endTime > clip->startTime ? clip->endTime : clip->startTime + 1.0f,
-                                 clip->startTime);
-            m_previewTime = clip->startTime;
         }
     }
     m_gizmoDragging = false;
@@ -719,7 +717,21 @@ void CharacterEditorWindow::rebuildTree() {
     if (!m_tree || !m_document) return;
     m_tree->clear();
     const CharacterAsset& asset = m_document->GetAsset();
-    AddTop(m_tree, tr("Mesh"), CharacterEditorItemKind::Mesh);
+    auto* meshItem = AddTop(m_tree, tr("Mesh"), CharacterEditorItemKind::Mesh);
+    std::vector<std::string> meshPartNames;
+    for (const CharacterSubmeshSlot& slot : asset.mesh.submeshes) {
+        if (slot.meshPart.empty()) {
+            continue;
+        }
+        if (std::find(meshPartNames.begin(), meshPartNames.end(), slot.meshPart) ==
+            meshPartNames.end()) {
+            meshPartNames.push_back(slot.meshPart);
+        }
+    }
+    for (const std::string& partName : meshPartNames) {
+        AddItem(meshItem, QString::fromStdString(partName), CharacterEditorItemKind::MeshPart,
+                partName);
+    }
     auto* skeleton = AddTop(m_tree, tr("Skeleton"), CharacterEditorItemKind::Skeleton);
     Entity preview = previewCharacter();
     if (preview) {
@@ -736,9 +748,18 @@ void CharacterEditorWindow::rebuildTree() {
         }
     }
     auto* materials = AddTop(m_tree, tr("Materials"), CharacterEditorItemKind::Materials);
+    std::string currentPart;
+    QTreeWidgetItem* partItem = materials;
     for (int i = 0; i < static_cast<int>(asset.mesh.submeshes.size()); ++i) {
-        AddItem(materials, QString::fromStdString(asset.mesh.submeshes[static_cast<size_t>(i)].name),
-                CharacterEditorItemKind::MaterialSlot, asset.mesh.submeshes[static_cast<size_t>(i)].name, i);
+        const CharacterSubmeshSlot& slot = asset.mesh.submeshes[static_cast<size_t>(i)];
+        if (!slot.meshPart.empty() && slot.meshPart != currentPart) {
+            currentPart = slot.meshPart;
+            partItem = AddItem(materials, QString::fromStdString(currentPart),
+                               CharacterEditorItemKind::MeshPart, currentPart);
+        }
+        QTreeWidgetItem* parent = slot.meshPart.empty() ? materials : partItem;
+        AddItem(parent, QString::fromStdString(slot.name), CharacterEditorItemKind::MaterialSlot,
+                slot.name, i);
     }
     auto* anims = AddTop(m_tree, tr("Animations"), CharacterEditorItemKind::Animations);
     std::unordered_map<std::string, QTreeWidgetItem*> folders;
@@ -790,6 +811,17 @@ void CharacterEditorWindow::refreshInspector() {
         const int bones = preview ? preview.GetComponent<CharacterComponent>().skeleton.BoneCount() : 0;
         addLabel(tr("Bones: %1").arg(bones));
         addLabel(tr("Clips: %1").arg(asset.clips.size()));
+        addLabel(tr("Skinned Meshes: %1").arg([&]() {
+            int count = 0;
+            std::string last;
+            for (const CharacterSubmeshSlot& slot : asset.mesh.submeshes) {
+                if (!slot.meshPart.empty() && slot.meshPart != last) {
+                    last = slot.meshPart;
+                    ++count;
+                }
+            }
+            return count > 0 ? count : 1;
+        }()));
         addLabel(tr("Slots: %1").arg(asset.mesh.submeshes.size()));
         addLabel(tr("Signature: %1").arg(QString::fromStdString(asset.skeleton.signature)));
         auto* reveal = new QPushButton(tr("Reveal Source"), m_inspectorHost);
@@ -816,8 +848,21 @@ void CharacterEditorWindow::refreshInspector() {
             updateWindowTitle();
         });
         layout->addWidget(addSocket);
+    } else if (m_selection.kind == CharacterEditorItemKind::MeshPart) {
+        addLabel(tr("Mesh Part: %1").arg(QString::fromStdString(m_selection.id)));
+        int slotCount = 0;
+        for (const CharacterSubmeshSlot& slot : asset.mesh.submeshes) {
+            if (slot.meshPart == m_selection.id) {
+                ++slotCount;
+            }
+        }
+        addLabel(tr("Material slots: %1").arg(slotCount));
     } else if (m_selection.kind == CharacterEditorItemKind::MaterialSlot) {
         if (m_selection.index >= 0 && m_selection.index < static_cast<int>(asset.mesh.submeshes.size())) {
+            const CharacterSubmeshSlot& slot = asset.mesh.submeshes[static_cast<size_t>(m_selection.index)];
+            if (!slot.meshPart.empty()) {
+                addLabel(tr("Mesh Part: %1").arg(QString::fromStdString(slot.meshPart)));
+            }
             auto* mat = new AssetReferenceEditor(tr("Material"), AssetType::Material, m_inspectorHost);
             mat->setAllowEmpty(true);
             mat->setPath(QString::fromStdString(asset.mesh.submeshes[static_cast<size_t>(m_selection.index)].material));

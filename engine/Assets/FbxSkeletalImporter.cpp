@@ -70,33 +70,31 @@ ufbx_node* DeformingParent(ufbx_node* node,
     return nullptr;
 }
 
-bool FindSkinnedMesh(ufbx_scene* scene, ufbx_node*& outNode, ufbx_skin_deformer*& outSkin,
-                     std::string& outError) {
-    outNode = nullptr;
-    outSkin = nullptr;
-    int skinned = 0;
+struct FbxSkinnedMesh {
+    ufbx_node* node = nullptr;
+    ufbx_skin_deformer* skin = nullptr;
+};
+
+bool CollectSkinnedMeshes(ufbx_scene* scene, std::vector<FbxSkinnedMesh>& outMeshes,
+                          std::string& outError) {
+    outMeshes.clear();
     for (size_t i = 0; i < scene->nodes.count; ++i) {
         ufbx_node* node = scene->nodes.data[i];
         if (!node || !node->mesh || node->mesh->skin_deformers.count == 0) {
             continue;
         }
-        ++skinned;
-        outNode = node;
-        outSkin = node->mesh->skin_deformers.data[0];
+        FbxSkinnedMesh entry;
+        entry.node = node;
+        entry.skin = node->mesh->skin_deformers.data[0];
+        if (!entry.skin) {
+            continue;
+        }
+        outMeshes.push_back(entry);
     }
-    if (skinned == 0) {
+    if (outMeshes.empty()) {
         outError =
             "Character source has no skin.\n\n"
             "Import this file as a static mesh instead, or export a skinned armature.";
-        return false;
-    }
-    if (skinned != 1) {
-        outError = "Character sources must contain exactly one skin (found " +
-                   std::to_string(skinned) + ").";
-        return false;
-    }
-    if (!outSkin) {
-        outError = "Skin is missing clusters.";
         return false;
     }
     return true;
@@ -235,7 +233,8 @@ bool AppendSkinnedMesh(ufbx_node* meshNode,
                        const SkeletalImportSettings& settings,
                        const Skeleton& skeleton,
                        const std::unordered_map<ufbx_node*, int>& nodeToSource,
-                       SkeletalImportResult& outResult,
+                       SkinnedMeshPart& part,
+                       bool& clampedInfluences,
                        std::string& outError) {
     ufbx_mesh* mesh = meshNode->mesh;
     if (!mesh || !mesh->vertex_position.exists) {
@@ -253,13 +252,13 @@ bool AppendSkinnedMesh(ufbx_node* meshNode,
     Vec3 maxB(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(),
               -std::numeric_limits<float>::max());
 
-    const size_t partCount = mesh->material_parts.count > 0 ? mesh->material_parts.count : 1;
-    for (size_t partIx = 0; partIx < partCount; ++partIx) {
-        const ufbx_mesh_part* part =
+    const size_t materialPartCount = mesh->material_parts.count > 0 ? mesh->material_parts.count : 1;
+    for (size_t partIx = 0; partIx < materialPartCount; ++partIx) {
+        const ufbx_mesh_part* materialPart =
             mesh->material_parts.count > 0 ? &mesh->material_parts.data[partIx] : nullptr;
         SkinnedSubmeshData submesh;
-        submesh.indexOffset = static_cast<uint32_t>(outResult.indices.size());
-        submesh.materialSlot = static_cast<int>(outResult.submeshes.size());
+        submesh.indexOffset = static_cast<uint32_t>(part.indices.size());
+        submesh.materialSlot = static_cast<int>(part.submeshes.size());
         std::string slotName;
         ufbx_material* material = nullptr;
         if (meshNode->materials.count > partIx) {
@@ -278,10 +277,10 @@ bool AppendSkinnedMesh(ufbx_node* meshNode,
         }
         submesh.name = slotName.empty() ? "Submesh" : slotName;
 
-        const size_t faceCount = part ? part->num_faces : mesh->faces.count;
+        const size_t faceCount = materialPart ? materialPart->num_faces : mesh->faces.count;
         for (size_t fi = 0; fi < faceCount; ++fi) {
             const uint32_t faceIndex =
-                part ? part->face_indices.data[fi] : static_cast<uint32_t>(fi);
+                materialPart ? materialPart->face_indices.data[fi] : static_cast<uint32_t>(fi);
             const ufbx_face face = mesh->faces.data[faceIndex];
             if (face.num_indices < 3) {
                 continue;
@@ -333,14 +332,23 @@ bool AppendSkinnedMesh(ufbx_node* meshNode,
                             }
                             ufbx_node* boneNode =
                                 skin->clusters.data[weight.cluster_index]->bone_node;
+                            int eval = -1;
                             auto it = nodeToSource.find(boneNode);
-                            if (it == nodeToSource.end()) {
-                                outError = "Invalid skin cluster.";
+                            if (it != nodeToSource.end()) {
+                                eval = skeleton.sourceJointToEval.empty()
+                                           ? it->second
+                                           : skeleton.sourceJointToEval[static_cast<size_t>(it->second)];
+                            } else if (boneNode) {
+                                const SkeletonBone* named = skeleton.FindBone(
+                                    BoneName(boneNode, settings.stripBoneNamespace));
+                                if (named) {
+                                    eval = named->evalIndex;
+                                }
+                            }
+                            if (eval < 0) {
+                                outError = IncompatibleCharacterSkeletonsMessage();
                                 return false;
                             }
-                            const int eval = skeleton.sourceJointToEval.empty()
-                                                 ? it->second
-                                                 : skeleton.sourceJointToEval[static_cast<size_t>(it->second)];
                             influences.push_back(
                                 {static_cast<uint16_t>(eval), static_cast<float>(weight.weight)});
                         }
@@ -348,7 +356,7 @@ bool AppendSkinnedMesh(ufbx_node* meshNode,
                     bool clamped = false;
                     ClampInfluences(influences, clamped);
                     if (clamped) {
-                        outResult.clampedInfluences = true;
+                        clampedInfluences = true;
                     }
                     for (int i = 0; i < kMaxBoneInfluences; ++i) {
                         if (i < static_cast<int>(influences.size())) {
@@ -357,19 +365,19 @@ bool AppendSkinnedMesh(ufbx_node* meshNode,
                         }
                     }
 
-                    outResult.indices.push_back(static_cast<uint32_t>(outResult.vertices.size()));
-                    outResult.vertices.push_back(vert);
+                    part.indices.push_back(static_cast<uint32_t>(part.vertices.size()));
+                    part.vertices.push_back(vert);
                 }
             }
         }
         submesh.indexCount =
-            static_cast<uint32_t>(outResult.indices.size()) - submesh.indexOffset;
+            static_cast<uint32_t>(part.indices.size()) - submesh.indexOffset;
         if (submesh.indexCount > 0) {
-            outResult.submeshes.push_back(submesh);
+            part.submeshes.push_back(submesh);
         }
     }
-    outResult.bounds = AABB(minB, maxB);
-    if (outResult.vertices.empty()) {
+    part.bounds = AABB(minB, maxB);
+    if (part.vertices.empty()) {
         outError = "Unsupported geometry.";
         return false;
     }
@@ -512,7 +520,7 @@ bool BakeClips(ufbx_scene* scene,
         for (const SkeletonBone& bone : skeleton.bones) {
             ufbx_node* node = nullptr;
             for (const auto& entry : nodeToSource) {
-                if (entry.second == bone.sourceJoint || entry.second == bone.evalIndex) {
+                if (entry.second == bone.evalIndex) {
                     node = entry.first;
                     break;
                 }
@@ -673,27 +681,86 @@ bool FbxSkeletalImporter::Load(const std::filesystem::path& path,
         return false;
     }
     ufbx_scene* scene = document.Scene();
-    ufbx_node* meshNode = nullptr;
-    ufbx_skin_deformer* skin = nullptr;
-    if (!FindSkinnedMesh(scene, meshNode, skin, outError)) {
+    std::vector<FbxSkinnedMesh> skinnedMeshes;
+    if (!CollectSkinnedMeshes(scene, skinnedMeshes, outError)) {
         return false;
     }
 
-    std::unordered_map<ufbx_node*, int> nodeToSource;
-    std::unordered_set<ufbx_node*> deforming;
-    if (!BuildSkeleton(skin, settings, outResult.skeleton, nodeToSource, deforming, outError)) {
-        return false;
-    }
-    if (!AppendSkinnedMesh(meshNode, skin, settings, outResult.skeleton, nodeToSource, outResult,
+    struct BuiltSkin {
+        ufbx_skin_deformer* skin = nullptr;
+        Skeleton skeleton;
+        std::unordered_map<ufbx_node*, int> nodeToSource;
+        std::unordered_set<ufbx_node*> deforming;
+    };
+    std::vector<BuiltSkin> builtSkins;
+    for (const FbxSkinnedMesh& entry : skinnedMeshes) {
+        bool already = false;
+        for (const BuiltSkin& built : builtSkins) {
+            if (built.skin == entry.skin) {
+                already = true;
+                break;
+            }
+        }
+        if (already) {
+            continue;
+        }
+        BuiltSkin built;
+        built.skin = entry.skin;
+        if (!BuildSkeleton(entry.skin, settings, built.skeleton, built.nodeToSource, built.deforming,
                            outError)) {
+            return false;
+        }
+        builtSkins.push_back(std::move(built));
+    }
+    if (builtSkins.empty()) {
+        outError = "Skin is missing clusters.";
         return false;
     }
-    outResult.meshNodeWorld =
-        ConvertSkeletalMatrix(FbxDocument::ToMat4(meshNode->geometry_to_world), settings.unitScale);
 
+    size_t canonicalIndex = 0;
+    for (size_t i = 1; i < builtSkins.size(); ++i) {
+        if (SkeletonBuilder::MapsOnto(builtSkins[canonicalIndex].skeleton, builtSkins[i].skeleton)) {
+            canonicalIndex = i;
+        } else if (!SkeletonBuilder::MapsOnto(builtSkins[i].skeleton, builtSkins[canonicalIndex].skeleton)) {
+            outError = IncompatibleCharacterSkeletonsMessage();
+            return false;
+        }
+    }
+
+    BuiltSkin& canonical = builtSkins[canonicalIndex];
+    outResult.skeleton = canonical.skeleton;
+
+    size_t canonicalPartIndex = 0;
+    bool foundCanonicalPart = false;
+    for (const FbxSkinnedMesh& entry : skinnedMeshes) {
+        SkinnedMeshPart part;
+        part.name = FbxDocument::ToString(entry.node->name);
+        if (part.name.empty()) {
+            part.name = FbxDocument::ToString(entry.node->mesh->name);
+        }
+        if (part.name.empty()) {
+            part.name = "Mesh";
+        }
+        part.meshNodeWorld = ConvertSkeletalMatrix(
+            FbxDocument::ToMat4(entry.node->geometry_to_world), settings.unitScale);
+        if (!AppendSkinnedMesh(entry.node, entry.skin, settings, outResult.skeleton,
+                               canonical.nodeToSource, part, outResult.clampedInfluences, outError)) {
+            return false;
+        }
+        if (!foundCanonicalPart && entry.skin == canonical.skin) {
+            canonicalPartIndex = outResult.meshes.size();
+            foundCanonicalPart = true;
+        }
+        outResult.meshes.push_back(std::move(part));
+    }
+
+    SkeletalModelImporter::FinalizeImportedMeshParts(outResult, canonicalPartIndex);
+
+    const Mat4 restMeshWorld = outResult.meshes.empty()
+                                   ? Mat4::Identity()
+                                   : outResult.meshes[canonicalPartIndex].meshNodeWorld;
     std::string restError;
-    if (!SkeletonBuilder::RestMatchesBind(outResult.skeleton, outResult.meshNodeWorld, 1e-3f,
-                                          restError)) {
+    if (!SkeletonBuilder::RestMatchesBind(outResult.skeleton, restMeshWorld, 1e-3f, restError)) {
         outResult.restBindMismatch = true;
         outResult.warnings.push_back(restError);
     }
@@ -703,8 +770,21 @@ bool FbxSkeletalImporter::Load(const std::filesystem::path& path,
     outResult.warnings.push_back(
         "Hephaestus imports the resulting skeletal animation, not the author's DCC control rig.");
 
-    if (!BakeClips(scene, settings, outResult.skeleton, nodeToSource, deforming, outResult.clips,
-                   outError)) {
+    std::unordered_map<ufbx_node*, int> nodeToEval;
+    nodeToEval.reserve(canonical.nodeToSource.size());
+    for (const auto& entry : canonical.nodeToSource) {
+        const int source = entry.second;
+        int eval = -1;
+        if (source >= 0 &&
+            source < static_cast<int>(outResult.skeleton.sourceJointToEval.size())) {
+            eval = outResult.skeleton.sourceJointToEval[static_cast<size_t>(source)];
+        }
+        if (eval >= 0) {
+            nodeToEval[entry.first] = eval;
+        }
+    }
+    if (!BakeClips(scene, settings, outResult.skeleton, nodeToEval, canonical.deforming,
+                   outResult.clips, outError)) {
         return false;
     }
     outResult.importedFromFbx = true;
@@ -738,8 +818,6 @@ bool FbxSkeletalImporter::LoadClips(const std::filesystem::path& path,
             outError = FormatSkeletonIncompatibility(report);
             return false;
         }
-        outClips = std::move(imported.clips);
-        return true;
     }
     return BindClipsByName(scene, settings, character, outClips, outError);
 }

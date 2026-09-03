@@ -62,7 +62,8 @@ void PadTo4(std::vector<uint8_t>& out, uint8_t pad) {
     }
 }
 
-bool WriteSkinnedGlb(const fs::path& path, const std::string& childName, const std::string& clipName) {
+bool WriteSkinnedGlb(const fs::path& path, const std::string& childName, const std::string& clipName,
+                    bool twoMeshes = false) {
     const float positions[] = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     const float normals[] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
     const uint16_t joints0[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -96,6 +97,16 @@ bool WriteSkinnedGlb(const fs::path& path, const std::string& childName, const s
     AppendBytes(bin, rotations, sizeof(rotations));
     PadTo4(bin, 0);
 
+    const std::string extraNode =
+        twoMeshes ? ",{\"name\":\"Clothes\",\"translation\":[0,0,0],\"mesh\":1,\"skin\":0}" : "";
+    const std::string meshesJson = twoMeshes
+        ? "\"meshes\":["
+          "{\"name\":\"Body\",\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,"
+          "\"JOINTS_0\":2,\"WEIGHTS_0\":3},\"indices\":4}]},"
+          "{\"name\":\"Clothes\",\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,"
+          "\"JOINTS_0\":2,\"WEIGHTS_0\":3},\"indices\":4}]}],"
+        : "\"meshes\":[{\"name\":\"Body\",\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,"
+          "\"JOINTS_0\":2,\"WEIGHTS_0\":3},\"indices\":4}]}],";
     const std::string json =
         std::string("{\"asset\":{\"version\":\"2.0\"},\"scene\":0,") +
         "\"scenes\":[{\"nodes\":[0]}],"
@@ -103,10 +114,9 @@ bool WriteSkinnedGlb(const fs::path& path, const std::string& childName, const s
         "{\"name\":\"Root\",\"children\":[1]},"
         "{\"name\":\"" + childName + "\",\"translation\":[0,1,0],\"rotation\":[0,0," +
         std::to_string(kSqrtHalf) + "," + std::to_string(kSqrtHalf) + "]},"
-        "{\"translation\":[0,0,0],\"mesh\":0,\"skin\":0}"
-        "],"
-        "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,"
-        "\"JOINTS_0\":2,\"WEIGHTS_0\":3},\"indices\":4}]}],"
+        "{\"name\":\"Body\",\"translation\":[0,0,0],\"mesh\":0,\"skin\":0}" + extraNode +
+        "]," +
+        meshesJson +
         "\"skins\":[{\"name\":\"Armature\",\"joints\":[0,1],\"inverseBindMatrices\":5}],"
         "\"animations\":[{\"name\":\"" + clipName + "\",\"samplers\":[{\"input\":6,\"output\":7,"
         "\"interpolation\":\"LINEAR\"}],\"channels\":[{\"sampler\":0,\"target\":{"
@@ -416,6 +426,98 @@ bool TestPrefabCharacterLuaCoexistence(const fs::path& outDir) {
     return ok;
 }
 
+bool TestMultiMeshImportReimport(const fs::path& project) {
+    bool ok = true;
+    const fs::path one = project / "one.glb";
+    const fs::path two = project / "two.glb";
+    if (!WriteSkinnedGlb(one, "Child", "Idle", false) ||
+        !WriteSkinnedGlb(two, "Child", "Idle", true)) {
+        return Check(false, "write multi-mesh glbs");
+    }
+
+    CharacterInspectResult inspect;
+    std::string error;
+    ok &= Check(CharacterImporter::Inspect(two, inspect, error), "inspect two meshes: " + error);
+    ok &= Check(inspect.canImport, "two compatible meshes can import");
+    ok &= Check(inspect.skinnedMeshCount == 2, "inspect reports 2 skinned meshes");
+    ok &= Check(inspect.skinnedMeshNames.size() == 2, "inspect lists both names");
+
+    CharacterImportRequest request;
+    request.sourceGlb = two;
+    request.projectRoot = project;
+    request.destinationFolderAbs = project / "assets" / "characters";
+    request.characterName = "YBotLike";
+    request.createController = false;
+    std::string portable;
+    ok &= Check(CharacterImporter::Import(request, portable, error), "import two-mesh: " + error);
+
+    CharacterAsset asset;
+    ok &= Check(CharacterSerializer::Deserialize(
+                    asset, project / "assets" / "characters" / "YBotLike.hpcharacter", error),
+                "load two-mesh character: " + error);
+    ok &= Check(asset.mesh.submeshes.size() >= 2, "two material slots");
+    bool hasBody = false;
+    bool hasClothes = false;
+    for (const auto& slot : asset.mesh.submeshes) {
+        if (slot.meshPart == "Body") {
+            hasBody = true;
+        }
+        if (slot.meshPart == "Clothes") {
+            hasClothes = true;
+        }
+    }
+    ok &= Check(hasBody && hasClothes, "slots tagged with mesh part names");
+    for (auto& slot : asset.mesh.submeshes) {
+        if (slot.meshPart == "Body") {
+            slot.material = "assets/materials/Skin.hematerial";
+        }
+    }
+    ok &= Check(CharacterSerializer::Serialize(
+                    asset, project / "assets" / "characters" / "YBotLike.hpcharacter", error),
+                "persist Body material: " + error);
+
+    CharacterRuntimeData data;
+    CharacterRuntime::InvalidateAll();
+    ok &= Check(CharacterRuntime::Load(project, portable, data, error), "load runtime: " + error);
+    ok &= Check(data.imported.meshes.size() == 2, "runtime has two mesh parts");
+    ok &= Check(data.imported.skeleton.BoneCount() == 2, "one canonical skeleton");
+    const AABB combined = data.imported.bounds;
+    ok &= Check(combined.max.x >= data.imported.meshes[0].bounds.max.x, "combined bounds include part 0");
+
+    Scene scene("Multi");
+    Entity entity = scene.CreateEntity("YBotLike");
+    auto& character = entity.AddComponent<CharacterComponent>();
+    character.characterPath = portable;
+    character.defaultAnimation = "Idle";
+    character.playbackSpeed = 1.25f;
+    ok &= Check(CharacterRuntime::BindEntity(entity, project, false, error), "bind multi: " + error);
+    ok &= Check(character.playbackSpeed == 1.25f, "live bind did not clobber speed");
+    ok &= Check(entity.GetComponent<MeshRendererComponent>().localBounds.max.x >= combined.max.x - 1e-4f,
+                "entity bounds include all parts");
+
+    ok &= Check(CharacterImporter::Reimport(project, portable, one, error), "reimport 2→1: " + error);
+    CharacterRuntime::Invalidate(portable);
+    ok &= Check(CharacterRuntime::Load(project, portable, data, error), "load after 2→1: " + error);
+    ok &= Check(data.imported.meshes.size() == 1, "reimport 2→1 has one part");
+
+    ok &= Check(CharacterImporter::Reimport(project, portable, two, error), "reimport 1→2: " + error);
+    CharacterRuntime::Invalidate(portable);
+    ok &= Check(CharacterRuntime::Load(project, portable, data, error), "load after 1→2: " + error);
+    ok &= Check(data.imported.meshes.size() == 2, "reimport 1→2 restores two parts");
+    CharacterAsset after;
+    ok &= Check(CharacterSerializer::Deserialize(
+                    after, project / "assets" / "characters" / "YBotLike.hpcharacter", error),
+                "reload after 1→2: " + error);
+    bool bodyMaterialKept = false;
+    for (const auto& slot : after.mesh.submeshes) {
+        if (slot.meshPart == "Body" && slot.material == "assets/materials/Skin.hematerial") {
+            bodyMaterialKept = true;
+        }
+    }
+    ok &= Check(bodyMaterialKept, "Body material identity survived 2→1→2 reimport");
+    return ok;
+}
+
 } // namespace
 
 int main() {
@@ -429,6 +531,7 @@ int main() {
     ok &= TestReimportCases(root / "ReimportProj");
     ok &= TestHideSourceListing(root / "HideProj");
     ok &= TestPrefabCharacterLuaCoexistence(root / "PrefabProj");
+    ok &= TestMultiMeshImportReimport(root / "MultiMeshProj");
 
     CharacterRuntime::InvalidateAll();
     if (!ok) {

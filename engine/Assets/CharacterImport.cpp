@@ -154,22 +154,38 @@ void MergeClipsFromImport(CharacterAsset& asset,
 }
 
 void MergeSubmeshesFromImport(CharacterAsset& asset, const SkeletalImportResult& imported) {
+    std::unordered_map<std::string, std::string> materialsByIdentity;
     std::unordered_map<std::string, std::string> materialsByName;
+    std::unordered_map<std::string, int> nameCount;
     for (const CharacterSubmeshSlot& slot : asset.mesh.submeshes) {
         if (!slot.name.empty()) {
+            nameCount[slot.name] += 1;
             materialsByName[slot.name] = slot.material;
+        }
+        const std::string identity = CharacterSubmeshIdentity(slot);
+        if (!identity.empty()) {
+            materialsByIdentity[identity] = slot.material;
         }
     }
     asset.mesh.submeshes.clear();
-    for (const SkinnedSubmeshData& src : imported.submeshes) {
-        CharacterSubmeshSlot slot;
-        slot.name = src.name.empty() ? ("Slot" + std::to_string(asset.mesh.submeshes.size()))
-                                     : src.name;
-        const auto it = materialsByName.find(slot.name);
-        if (it != materialsByName.end()) {
-            slot.material = it->second;
+    for (const SkinnedMeshPart& part : imported.meshes) {
+        for (const SkinnedSubmeshData& src : part.submeshes) {
+            CharacterSubmeshSlot slot;
+            slot.meshPart = imported.meshes.size() > 1 ? part.name : std::string();
+            slot.name = src.name.empty() ? ("Slot" + std::to_string(asset.mesh.submeshes.size()))
+                                         : src.name;
+            const std::string identity = CharacterSubmeshIdentity(slot);
+            auto it = materialsByIdentity.find(identity);
+            if (it != materialsByIdentity.end()) {
+                slot.material = it->second;
+            } else if (nameCount[slot.name] == 1) {
+                const auto byName = materialsByName.find(slot.name);
+                if (byName != materialsByName.end()) {
+                    slot.material = byName->second;
+                }
+            }
+            asset.mesh.submeshes.push_back(std::move(slot));
         }
-        asset.mesh.submeshes.push_back(std::move(slot));
     }
 }
 
@@ -333,9 +349,15 @@ bool CharacterImporter::Inspect(const std::filesystem::path& sourceGlb,
     outResult.skinName = outResult.imported.skeleton.skinName;
     outResult.boneCount = outResult.imported.skeleton.BoneCount();
     outResult.clipCount = static_cast<int>(outResult.imported.clips.size());
-    outResult.materialSlotCount = static_cast<int>(outResult.imported.submeshes.size());
-    if (!outResult.imported.submeshes.empty()) {
-        outResult.meshName = outResult.imported.submeshes.front().name;
+    outResult.skinnedMeshCount = static_cast<int>(outResult.imported.meshes.size());
+    int slotCount = 0;
+    for (const SkinnedMeshPart& part : outResult.imported.meshes) {
+        outResult.skinnedMeshNames.push_back(part.name);
+        slotCount += static_cast<int>(part.submeshes.size());
+    }
+    outResult.materialSlotCount = slotCount;
+    if (!outResult.skinnedMeshNames.empty()) {
+        outResult.meshName = outResult.skinnedMeshNames.front();
     }
     if (outResult.meshName.empty()) {
         outResult.meshName = sourceGlb.stem().string();

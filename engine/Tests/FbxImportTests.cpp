@@ -13,6 +13,7 @@
 #include "Assets/ModelImporter.h"
 #include "Assets/SkeletalModelImporter.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -32,6 +33,7 @@ using Hephaestus::FbxStaticImportResult;
 using Hephaestus::SkeletalImportResult;
 using Hephaestus::SkeletalImportSettings;
 using Hephaestus::SkeletalModelImporter;
+using Hephaestus::SampleClip;
 using Hephaestus::SkeletonBone;
 
 namespace {
@@ -87,6 +89,7 @@ bool TestSkinnedRestAndHelpers(const fs::path& repoRoot) {
                                                 error),
                     "load skinned.fbx: " + error);
     ok &= Check(result.importedFromFbx, "importedFromFbx is set");
+    ok &= Check(result.meshes.size() == 1, "skinned.fbx has one mesh part");
     ok &= Check(result.skeleton.BoneCount() == 2, "helper Null is not a deforming bone");
     ok &= Check(FindBone(result.skeleton, "Root") != nullptr, "Root bone exists");
     ok &= Check(FindBone(result.skeleton, "Child") != nullptr, "Child bone exists");
@@ -157,6 +160,91 @@ bool TestOwnedMeshFbx(const fs::path& repoRoot) {
     return ok;
 }
 
+bool TestYBotMultiMesh(const fs::path& repoRoot) {
+    const fs::path ybot = repoRoot / "assets" / "Character" / "YBot" / "Y-Bot.fbx";
+    std::error_code ec;
+    if (!fs::exists(ybot, ec)) {
+        std::cout << "[SKIP] Y-Bot.fbx not present\n";
+        return true;
+    }
+    SkeletalImportResult result;
+    std::string error;
+    SkeletalImportSettings settings;
+    settings.fbxSpaceConversion = FbxSpaceConversion::Auto;
+    bool ok = Check(SkeletalModelImporter::Load(ybot, settings, result, error),
+                    "load Y-Bot.fbx: " + error);
+    ok &= Check(result.meshes.size() >= 2, "YBot imports multiple skinned mesh parts");
+    ok &= Check(result.skeleton.BoneCount() > 1, "YBot has a canonical skeleton");
+    for (const auto& part : result.meshes) {
+        ok &= Check(!part.vertices.empty() && !part.indices.empty(),
+                    "YBot part has geometry: " + part.name);
+    }
+    Hephaestus::CharacterInspectResult inspect;
+    ok &= Check(CharacterImporter::Inspect(ybot, inspect, error), "inspect YBot: " + error);
+    ok &= Check(inspect.canImport, "YBot inspect allows import");
+    ok &= Check(inspect.skinnedMeshCount >= 2, "inspect reports 2+ skinned meshes");
+    return ok;
+}
+
+bool TestYBotAnimationClips(const fs::path& repoRoot) {
+    const fs::path ybot = repoRoot / "assets" / "Character" / "YBot" / "Y-Bot.fbx";
+    const fs::path walk =
+        repoRoot / "assets" / "Character" / "YBot" / "Anims" / "YBot-Walking.fbx";
+    std::error_code ec;
+    if (!fs::exists(ybot, ec) || !fs::exists(walk, ec)) {
+        std::cout << "[SKIP] YBot animation FBX not present\n";
+        return true;
+    }
+    SkeletalImportResult character;
+    std::string error;
+    SkeletalImportSettings settings;
+    settings.fbxSpaceConversion = FbxSpaceConversion::Auto;
+    bool ok = Check(SkeletalModelImporter::Load(ybot, settings, character, error),
+                    "load Y-Bot.fbx: " + error);
+    std::vector<Hephaestus::AnimationClip> clips;
+    ok &= Check(SkeletalModelImporter::LoadClips(walk, settings, character.skeleton, clips, error),
+                "load YBot-Walking clips: " + error);
+
+    const Hephaestus::AnimationClip* take = nullptr;
+    for (const Hephaestus::AnimationClip& clip : clips) {
+        if (clip.sourceClip == "mixamo.com" || clip.name == "mixamo.com") {
+            take = &clip;
+            break;
+        }
+    }
+    if (!take && !clips.empty()) {
+        take = &clips.back();
+    }
+    ok &= Check(take != nullptr && !take->channels.empty(), "walking take has channels");
+    if (!take) {
+        return ok;
+    }
+
+    std::vector<Hephaestus::BoneLocalPose> startPose;
+    std::vector<Hephaestus::BoneLocalPose> midPose;
+    SampleClip(*take, character.skeleton, take->startTime, startPose);
+    const float mid =
+        take->startTime + 0.5f * std::max(0.001f, take->endTime - take->startTime);
+    SampleClip(*take, character.skeleton, mid, midPose);
+    bool moved = false;
+    const size_t n = std::min(startPose.size(), midPose.size());
+    for (size_t i = 0; i < n; ++i) {
+        const auto& a = startPose[i];
+        const auto& b = midPose[i];
+        if (std::abs(a.rotation.x - b.rotation.x) > 1e-3f ||
+            std::abs(a.rotation.y - b.rotation.y) > 1e-3f ||
+            std::abs(a.rotation.z - b.rotation.z) > 1e-3f ||
+            std::abs(a.translation.x - b.translation.x) > 1e-3f ||
+            std::abs(a.translation.y - b.translation.y) > 1e-3f ||
+            std::abs(a.translation.z - b.translation.z) > 1e-3f) {
+            moved = true;
+            break;
+        }
+    }
+    ok &= Check(moved, "YBot walking pose changes across the clip");
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -171,6 +259,8 @@ int main(int argc, char** argv) {
     ok &= TestSkinnedRestAndHelpers(repoRoot);
     ok &= TestLinearBake(repoRoot);
     ok &= TestOwnedMeshFbx(repoRoot);
+    ok &= TestYBotMultiMesh(repoRoot);
+    ok &= TestYBotAnimationClips(repoRoot);
     if (ok) {
         std::cout << "FBX import tests passed.\n";
         return 0;

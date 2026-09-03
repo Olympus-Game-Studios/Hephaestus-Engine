@@ -5449,7 +5449,7 @@ void EditorMainWindow::setupProjectCallbacks()
                                                                  characterAbs.generic_string());
                 Hephaestus::CharacterRuntime::Invalidate(portable);
                 if (auto* renderer = m_engine->GetFrameRenderer()) {
-                    renderer->InvalidateMesh(portable);
+                    Hephaestus::CharacterRuntime::InvalidateGpuMeshes(renderer, portable);
                 }
                 rebuildSceneVisuals();
                 refreshDetailsPanel();

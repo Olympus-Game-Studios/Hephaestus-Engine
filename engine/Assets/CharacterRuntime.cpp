@@ -10,6 +10,7 @@
 #include <cctype>
 #include <fstream>
 #include <mutex>
+#include <unordered_map>
 
 namespace Hephaestus {
 namespace {
@@ -44,34 +45,72 @@ std::uint64_t FileFingerprint(const std::filesystem::path& path) {
     return (static_cast<std::uint64_t>(size) * 1315423911ull) ^ ticks;
 }
 
-void ApplyAuthoredClipMetadata(const CharacterAsset& asset, std::vector<AnimationClip>& clips) {
-    for (AnimationClip& clip : clips) {
-        const CharacterClipEntry* authored = nullptr;
-        for (const CharacterClipEntry& entry : asset.clips) {
-            if (!entry.sourceClip.empty() && entry.sourceClip == clip.sourceClip) {
-                authored = &entry;
-                break;
-            }
-            if (!entry.sourceClip.empty() && entry.sourceClip == clip.name) {
-                authored = &entry;
-                break;
-            }
-            if (!entry.id.empty() && (entry.id == clip.id || entry.id == clip.name)) {
-                authored = &entry;
-                break;
-            }
+const AnimationClip* FindImportedClip(const std::vector<AnimationClip>& imported,
+                                      const CharacterClipEntry& entry) {
+    const std::string wanted = !entry.sourceClip.empty() ? entry.sourceClip : entry.id;
+    for (const AnimationClip& clip : imported) {
+        const std::string sourceName = clip.sourceClip.empty() ? clip.name : clip.sourceClip;
+        if (sourceName == wanted || clip.name == wanted || clip.id == wanted) {
+            return &clip;
         }
-        if (!authored) {
+    }
+    return nullptr;
+}
+
+void ApplyClipEntry(const CharacterClipEntry& entry, AnimationClip& clip) {
+    if (!entry.id.empty()) {
+        clip.id = entry.id;
+    }
+    clip.loop = entry.loop;
+    clip.speed = entry.speed;
+    clip.startTime = entry.startTime;
+    clip.endTime = entry.endTime;
+}
+
+std::vector<AnimationClip> BindAuthoredClips(const CharacterAsset& asset,
+                                             const std::string& meshKey,
+                                             const std::filesystem::path& projectRoot,
+                                             const SkeletalImportSettings& settings,
+                                             const Skeleton& characterSkeleton,
+                                             const std::vector<AnimationClip>& meshClips,
+                                             std::vector<std::string>& warnings) {
+    if (asset.clips.empty()) {
+        return meshClips;
+    }
+
+    std::unordered_map<std::string, std::vector<AnimationClip>> clipsBySource;
+    clipsBySource[meshKey] = meshClips;
+
+    std::vector<AnimationClip> clips;
+    clips.reserve(asset.clips.size());
+    for (const CharacterClipEntry& entry : asset.clips) {
+        const std::string sourceKey = entry.source.empty() ? meshKey : entry.source;
+        if (clipsBySource.find(sourceKey) == clipsBySource.end()) {
+            const std::filesystem::path extraAbs =
+                AssetPathPolicy::ResolvePortableKey(projectRoot, sourceKey);
+            std::vector<AnimationClip> extra;
+            std::string extraError;
+            if (extraAbs.empty() || !std::filesystem::exists(extraAbs)) {
+                warnings.push_back("Missing extra animation source: " + sourceKey);
+            } else if (!SkeletalModelImporter::LoadClips(extraAbs, settings, characterSkeleton, extra,
+                                                         extraError)) {
+                warnings.push_back("Failed to load extra animation source '" + sourceKey +
+                                   "': " + extraError);
+            }
+            clipsBySource[sourceKey] = std::move(extra);
+        }
+        const AnimationClip* found = FindImportedClip(clipsBySource[sourceKey], entry);
+        if (!found) {
+            warnings.push_back("Animation clip '" +
+                               (entry.id.empty() ? entry.sourceClip : entry.id) +
+                               "' was not found in " + sourceKey + ".");
             continue;
         }
-        if (!authored->id.empty()) {
-            clip.id = authored->id;
-        }
-        clip.loop = authored->loop;
-        clip.speed = authored->speed;
-        clip.startTime = authored->startTime;
-        clip.endTime = authored->endTime;
+        AnimationClip bound = *found;
+        ApplyClipEntry(entry, bound);
+        clips.push_back(std::move(bound));
     }
+    return clips;
 }
 
 void ApplyMaterials(CharacterComponent& character,
@@ -184,29 +223,10 @@ bool CharacterRuntime::Load(const std::filesystem::path& projectRoot,
         return false;
     }
 
-    std::vector<AnimationClip> clips = imported.clips;
     std::vector<std::string> dataWarnings;
-    for (const CharacterClipEntry& entry : asset.clips) {
-        if (entry.source.empty() || entry.source == meshKey) {
-            continue;
-        }
-        const std::filesystem::path extraAbs =
-            AssetPathPolicy::ResolvePortableKey(projectRoot, entry.source);
-        if (extraAbs.empty() || !std::filesystem::exists(extraAbs)) {
-            dataWarnings.push_back("Missing extra animation source: " + entry.source);
-            continue;
-        }
-        std::vector<AnimationClip> extra;
-        std::string extraError;
-        if (SkeletalModelImporter::LoadClips(extraAbs, settings, imported.skeleton, extra,
-                                             extraError)) {
-            clips.insert(clips.end(), extra.begin(), extra.end());
-        } else {
-            dataWarnings.push_back("Failed to load extra animation source '" + entry.source +
-                                   "': " + extraError);
-        }
-    }
-    ApplyAuthoredClipMetadata(asset, clips);
+    std::vector<AnimationClip> clips =
+        BindAuthoredClips(asset, meshKey, projectRoot, settings, imported.skeleton, imported.clips,
+                          dataWarnings);
 
     CharacterRuntimeData data;
     data.asset = std::move(asset);

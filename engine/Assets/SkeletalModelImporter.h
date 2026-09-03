@@ -31,6 +31,15 @@ struct SkinnedSubmeshData {
     std::string name;
 };
 
+struct SkinnedMeshPart {
+    std::string name;
+    std::vector<SkinnedVertexData> vertices;
+    std::vector<uint32_t> indices;
+    std::vector<SkinnedSubmeshData> submeshes;
+    AABB bounds{};
+    Mat4 meshNodeWorld = Mat4::Identity();
+};
+
 struct SkeletalImportSettings {
     float unitScale = 1.0f;
     FbxSpaceConversion fbxSpaceConversion = FbxSpaceConversion::Auto;
@@ -40,11 +49,8 @@ struct SkeletalImportSettings {
 
 struct SkeletalImportResult {
     Skeleton skeleton;
-    std::vector<SkinnedVertexData> vertices;
-    std::vector<uint32_t> indices;
-    std::vector<SkinnedSubmeshData> submeshes;
+    std::vector<SkinnedMeshPart> meshes;
     AABB bounds{};
-    Mat4 meshNodeWorld = Mat4::Identity();
     std::vector<std::string> warnings;
     std::vector<AnimationClip> clips;
     bool clampedInfluences = false;
@@ -52,6 +58,12 @@ struct SkeletalImportResult {
     bool importedFromFbx = false;
     FbxSpaceConversion fbxResolvedSpaceConversion = FbxSpaceConversion::ModifyGeometry;
 };
+
+inline const char* IncompatibleCharacterSkeletonsMessage() {
+    return "Character source contains multiple incompatible skeletons.\n\n"
+           "Hephaestus Character Multi-Mesh 1.0 requires all skinned mesh parts to use one "
+           "canonical skeleton.";
+}
 
 class SkeletalModelImporter {
 public:
@@ -71,6 +83,9 @@ public:
     /// Two-bone rest-pose dummy used to exercise GPU skinning in editor and game.
     static void BuildRestPoseFixture(SkeletalImportResult& outResult,
                                      std::vector<Mat4>& outPalette);
+
+    /// Unique-ify part names, bake extra parts into the canonical bind space, combine bounds.
+    static void FinalizeImportedMeshParts(SkeletalImportResult& result, size_t canonicalPartIndex);
 };
 
 } // namespace Hephaestus

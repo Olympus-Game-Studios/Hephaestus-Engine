@@ -243,6 +243,9 @@ public:
     /** Destroy GPU mesh data keyed by source/alias so the next upload recreates it. */
     void InvalidateMesh(const std::string& sourceKey);
 
+    /** Wait until in-flight frames finish. Required before destroying GPU meshes. */
+    void WaitGpuIdle();
+
     /**
      * @brief Get total mesh count.
      */

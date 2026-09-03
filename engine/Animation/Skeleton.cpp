@@ -294,6 +294,33 @@ SkeletonCompatibilityReport SkeletonBuilder::Compare(const Skeleton& character,
     return report;
 }
 
+bool SkeletonBuilder::MapsOnto(const Skeleton& part, const Skeleton& canonical) {
+    if (part.BoneCount() <= 0 || canonical.BoneCount() <= 0) {
+        return false;
+    }
+    const auto canonicalRecords = IdentityRecords(canonical);
+    std::unordered_map<std::string, const IdentityRecord*> canonicalByName;
+    for (const auto& rec : canonicalRecords) {
+        canonicalByName[rec.name] = &rec;
+    }
+    const auto partRecords = IdentityRecords(part);
+    for (const auto& rec : partRecords) {
+        auto it = canonicalByName.find(rec.name);
+        if (it == canonicalByName.end()) {
+            return false;
+        }
+        if (it->second->parentName != rec.parentName) {
+            return false;
+        }
+        for (int e = 0; e < 16; ++e) {
+            if (std::abs(it->second->localRest.m[e] - rec.localRest.m[e]) > 1e-3f) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 void SkeletonBuilder::EvaluateWorld(const Skeleton& skeleton,
                                     const std::vector<Mat4>& localPose,
                                     std::vector<Mat4>& outWorld) {

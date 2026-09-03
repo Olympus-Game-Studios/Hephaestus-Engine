@@ -17,6 +17,8 @@
 #include "../../Scripting/LuaScriptVariableReconciler.h"
 
 #include <QFormLayout>
+#include <QFont>
+#include <QLabel>
 #include <QMessageBox>
 #include <algorithm>
 #include <fstream>
@@ -273,13 +275,13 @@ void CharacterInspector::applyCharacterPath(const QString& path)
         const bool usedAssetController =
             previous.empty() || character.controllerScriptPath == previousAsset.controller.scriptPath;
 
-        std::unordered_map<std::string, std::string> materialsByName;
+        std::unordered_map<std::string, std::string> materialsByIdentity;
         if (!firstAssign) {
             for (size_t i = 0; i < previousAsset.mesh.submeshes.size(); ++i) {
                 const std::string value = i < character.materialOverrides.size()
                                               ? character.materialOverrides[i]
                                               : std::string();
-                materialsByName[previousAsset.mesh.submeshes[i].name] = value;
+                materialsByIdentity[CharacterSubmeshIdentity(previousAsset.mesh.submeshes[i])] = value;
             }
         }
 
@@ -305,8 +307,8 @@ void CharacterInspector::applyCharacterPath(const QString& path)
             }
             character.materialOverrides.assign(incoming.mesh.submeshes.size(), {});
             for (size_t i = 0; i < incoming.mesh.submeshes.size(); ++i) {
-                const auto it = materialsByName.find(incoming.mesh.submeshes[i].name);
-                if (it != materialsByName.end()) {
+                const auto it = materialsByIdentity.find(CharacterSubmeshIdentity(incoming.mesh.submeshes[i]));
+                if (it != materialsByIdentity.end()) {
                     character.materialOverrides[i] = it->second;
                 }
             }
@@ -376,12 +378,20 @@ void CharacterInspector::rebuildMaterialSlots(const CharacterAsset* asset,
         m_materialsLayout->addWidget(new QLabel(tr("No material slots."), m_materialsGroup));
         return;
     }
+    std::string currentPart;
     for (size_t i = 0; i < asset->mesh.submeshes.size(); ++i) {
         const CharacterSubmeshSlot& slot = asset->mesh.submeshes[i];
+        if (!slot.meshPart.empty() && slot.meshPart != currentPart) {
+            currentPart = slot.meshPart;
+            auto* header = new QLabel(QString::fromStdString(currentPart), m_materialsGroup);
+            QFont font = header->font();
+            font.setBold(true);
+            header->setFont(font);
+            m_materialsLayout->addWidget(header);
+        }
         m_slotNames.push_back(slot.name);
-        auto* editor = new AssetReferenceEditor(
-            QString::fromStdString(slot.name.empty() ? ("Slot " + std::to_string(i)) : slot.name),
-            AssetType::Material, m_materialsGroup);
+        const QString label = QString::fromStdString(slot.name.empty() ? ("Slot " + std::to_string(i)) : slot.name);
+        auto* editor = new AssetReferenceEditor(label, AssetType::Material, m_materialsGroup);
         editor->setAllowEmpty(true);
         const std::string overridePath =
             i < character.materialOverrides.size() ? character.materialOverrides[i] : std::string();

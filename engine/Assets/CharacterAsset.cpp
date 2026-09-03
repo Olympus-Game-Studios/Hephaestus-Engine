@@ -334,6 +334,7 @@ bool CharacterSerializer::DeserializeFromString(CharacterAsset& asset,
                 CharacterSubmeshSlot slot;
                 slot.name = ReadString(entry, "name");
                 slot.material = ReadString(entry, "material");
+                slot.meshPart = ReadString(entry, "meshPart");
                 asset.mesh.submeshes.push_back(std::move(slot));
             }
         }
@@ -454,7 +455,8 @@ std::string CharacterSerializer::SerializeToString(const CharacterAsset& asset) 
         const auto& slot = asset.mesh.submeshes[i];
         out << "      {\n";
         out << "        \"name\": " << JsonString(slot.name) << ",\n";
-        out << "        \"material\": " << JsonString(slot.material) << "\n";
+        out << "        \"material\": " << JsonString(slot.material) << ",\n";
+        out << "        \"meshPart\": " << JsonString(slot.meshPart) << "\n";
         out << "      }";
         if (i + 1 < asset.mesh.submeshes.size()) {
             out << ",";

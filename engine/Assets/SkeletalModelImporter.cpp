@@ -810,7 +810,8 @@ bool AppendSkinnedPrimitive(const json& root,
                             const json& meshJson,
                             float unitScale,
                             const std::vector<int>& sourceJointToEval,
-                            SkeletalImportResult& outResult,
+                            SkinnedMeshPart& part,
+                            bool& clampedInfluences,
                             std::string& errorMessage) {
     if (primitive.contains("targets") && primitive["targets"].is_array() &&
         !primitive["targets"].empty()) {
@@ -956,14 +957,14 @@ bool AppendSkinnedPrimitive(const json& root,
         bool clamped = false;
         ClampInfluences(influences, clamped);
         if (clamped) {
-            outResult.clampedInfluences = true;
+            clampedInfluences = true;
         }
         for (size_t k = 0; k < influences.size() && k < 4; ++k) {
             const int source = static_cast<int>(influences[k].joint);
             if (source < 0 || source >= static_cast<int>(sourceJointToEval.size()) ||
                 sourceJointToEval[static_cast<size_t>(source)] < 0) {
                 errorMessage = "Vertex joint index " + std::to_string(source) +
-                               " is outside skins[0].joints[]";
+                               " is outside the skin joints[] array";
                 return false;
             }
             vert.joints[k] = static_cast<uint16_t>(sourceJointToEval[static_cast<size_t>(source)]);
@@ -972,14 +973,14 @@ bool AppendSkinnedPrimitive(const json& root,
         unique[static_cast<size_t>(i)] = vert;
     }
 
-    const uint32_t indexStart = static_cast<uint32_t>(outResult.indices.size());
+    const uint32_t indexStart = static_cast<uint32_t>(part.indices.size());
 
     Vec3 minBounds{};
     Vec3 maxBounds{};
-    bool boundsInit = !outResult.vertices.empty();
+    bool boundsInit = !part.vertices.empty();
     if (boundsInit) {
-        minBounds = outResult.bounds.min;
-        maxBounds = outResult.bounds.max;
+        minBounds = part.bounds.min;
+        maxBounds = part.bounds.max;
     }
 
     for (uint32_t idx : indices) {
@@ -1001,61 +1002,65 @@ bool AppendSkinnedPrimitive(const json& root,
             maxBounds.y = std::max(maxBounds.y, pos.y);
             maxBounds.z = std::max(maxBounds.z, pos.z);
         }
-        outResult.vertices.push_back(vert);
-        outResult.indices.push_back(static_cast<uint32_t>(outResult.vertices.size() - 1));
+        part.vertices.push_back(vert);
+        part.indices.push_back(static_cast<uint32_t>(part.vertices.size() - 1));
     }
 
     if (boundsInit) {
-        outResult.bounds = AABB(minBounds, maxBounds);
+        part.bounds = AABB(minBounds, maxBounds);
     }
 
     SkinnedSubmeshData submesh{};
     submesh.indexOffset = indexStart;
-    submesh.indexCount = static_cast<uint32_t>(outResult.indices.size() - indexStart);
-    if (primitive.contains("material") && primitive["material"].is_number_integer()) {
-        submesh.materialSlot = primitive["material"].get<int>();
-    }
+    submesh.indexCount = static_cast<uint32_t>(part.indices.size() - indexStart);
+    submesh.materialSlot = static_cast<int>(part.submeshes.size());
     if (primitive.contains("name") && primitive["name"].is_string()) {
         submesh.name = primitive["name"].get<std::string>();
     } else if (meshJson.contains("name") && meshJson["name"].is_string()) {
         submesh.name = meshJson["name"].get<std::string>();
     }
-    outResult.submeshes.push_back(std::move(submesh));
+    if (submesh.name.empty()) {
+        submesh.name = "Submesh";
+    }
+    part.submeshes.push_back(std::move(submesh));
     return true;
 }
 
-bool ImportDocument(const json& root,
-                    const std::vector<std::vector<uint8_t>>& buffers,
-                    const SkeletalImportSettings& settings,
-                    SkeletalImportResult& outResult,
-                    std::string& errorMessage) {
-    outResult = SkeletalImportResult{};
-    if (!root.contains("skins") || !root["skins"].is_array() || root["skins"].empty()) {
-        errorMessage =
-            "Character source has no skin.\n\n"
-            "Import this file as a static mesh instead, or export a skinned armature.";
-        return false;
-    }
-    if (root["skins"].size() != 1) {
-        errorMessage = "Character sources must contain exactly one skin (found " +
-                       std::to_string(root["skins"].size()) + ").";
-        return false;
-    }
-    if (!root.contains("nodes") || !root["nodes"].is_array() || root["nodes"].empty()) {
-        errorMessage = "Character source has no nodes";
-        return false;
-    }
+struct GltfSkinnedNode {
+    int nodeIndex = -1;
+    int meshIndex = -1;
+    int skinIndex = -1;
+};
 
-    const json& skin = root["skins"][0];
+struct GltfBuiltSkin {
+    int skinIndex = -1;
+    Skeleton skeleton;
+    std::vector<int> jointNodes;
+    std::unordered_map<int, int> nodeToSource;
+};
+
+bool BuildGltfSkeleton(const json& root,
+                       const std::vector<std::vector<uint8_t>>& buffers,
+                       const json& nodes,
+                       const std::vector<int>& nodeParent,
+                       const std::vector<Mat4>& nodeLocal,
+                       int skinIndex,
+                       const SkeletalImportSettings& settings,
+                       GltfBuiltSkin& outSkin,
+                       std::string& errorMessage) {
+    outSkin = {};
+    outSkin.skinIndex = skinIndex;
+    if (skinIndex < 0 || skinIndex >= static_cast<int>(root["skins"].size())) {
+        errorMessage = "Skinned node references an invalid skin index";
+        return false;
+    }
+    const json& skin = root["skins"][skinIndex];
     if (!skin.contains("joints") || !skin["joints"].is_array() || skin["joints"].empty()) {
         errorMessage = "Skin is missing joints[]";
         return false;
     }
-    const json& nodes = root["nodes"];
     const int nodeCount = static_cast<int>(nodes.size());
-
-    std::vector<int> jointNodes;
-    jointNodes.reserve(skin["joints"].size());
+    outSkin.jointNodes.reserve(skin["joints"].size());
     for (const auto& joint : skin["joints"]) {
         if (!joint.is_number_integer()) {
             errorMessage = "Skin joints[] must be node indices";
@@ -1066,18 +1071,18 @@ bool ImportDocument(const json& root,
             errorMessage = "Skin joint node index out of range";
             return false;
         }
-        jointNodes.push_back(nodeIndex);
+        outSkin.jointNodes.push_back(nodeIndex);
     }
-    if (static_cast<int>(jointNodes.size()) > kMaxCharacterBones) {
-        errorMessage = "Skeleton has " + std::to_string(jointNodes.size()) +
+    if (static_cast<int>(outSkin.jointNodes.size()) > kMaxCharacterBones) {
+        errorMessage = "Skeleton has " + std::to_string(outSkin.jointNodes.size()) +
                        " bones; maximum is " + std::to_string(kMaxCharacterBones) + ".";
         return false;
     }
 
     std::vector<int> unnamed;
     std::unordered_map<std::string, std::vector<int>> nameToJoints;
-    for (int source = 0; source < static_cast<int>(jointNodes.size()); ++source) {
-        const json& node = nodes[jointNodes[static_cast<size_t>(source)]];
+    for (int source = 0; source < static_cast<int>(outSkin.jointNodes.size()); ++source) {
+        const json& node = nodes[outSkin.jointNodes[static_cast<size_t>(source)]];
         std::string name;
         if (node.contains("name") && node["name"].is_string()) {
             name = TrimCopy(node["name"].get<std::string>());
@@ -1124,55 +1129,8 @@ bool ImportDocument(const json& root,
         return false;
     }
 
-    std::vector<int> nodeParent(static_cast<size_t>(nodeCount), -1);
-    for (int i = 0; i < nodeCount; ++i) {
-        const json& node = nodes[i];
-        if (!node.contains("children") || !node["children"].is_array()) {
-            continue;
-        }
-        for (const auto& child : node["children"]) {
-            if (!child.is_number_integer()) {
-                continue;
-            }
-            const int childIndex = child.get<int>();
-            if (childIndex >= 0 && childIndex < nodeCount) {
-                nodeParent[static_cast<size_t>(childIndex)] = i;
-            }
-        }
-    }
-
-    std::unordered_map<int, int> nodeToSource;
-    for (int source = 0; source < static_cast<int>(jointNodes.size()); ++source) {
-        nodeToSource[jointNodes[static_cast<size_t>(source)]] = source;
-    }
-
-    std::vector<Mat4> nodeLocal;
-    std::vector<Mat4> nodeWorld;
-    ComputeNodeWorlds(nodes, nodeParent, nodeLocal, nodeWorld);
-
-    int meshNode = -1;
-    int meshIndex = -1;
-    for (int i = 0; i < nodeCount; ++i) {
-        const json& node = nodes[i];
-        const bool hasSkin = node.contains("skin") && node["skin"].is_number_integer() &&
-                             node["skin"].get<int>() == 0;
-        const bool hasMesh = node.contains("mesh") && node["mesh"].is_number_integer();
-        if (hasSkin && hasMesh) {
-            if (meshNode >= 0) {
-                errorMessage = "Character sources must contain exactly one skinned mesh node.";
-                return false;
-            }
-            meshNode = i;
-            meshIndex = node["mesh"].get<int>();
-        }
-    }
-    if (meshNode < 0 || meshIndex < 0) {
-        errorMessage = "No node references both mesh and skins[0]";
-        return false;
-    }
-    if (!root.contains("meshes") || meshIndex >= static_cast<int>(root["meshes"].size())) {
-        errorMessage = "Skinned mesh index is out of range";
-        return false;
+    for (int source = 0; source < static_cast<int>(outSkin.jointNodes.size()); ++source) {
+        outSkin.nodeToSource[outSkin.jointNodes[static_cast<size_t>(source)]] = source;
     }
 
     std::vector<Mat4> inverseBinds;
@@ -1181,7 +1139,7 @@ bool ImportDocument(const json& root,
         return false;
     }
     if (!ReadMat4Array(root, buffers, skin["inverseBindMatrices"].get<int>(),
-                       static_cast<int>(jointNodes.size()), inverseBinds, errorMessage)) {
+                       static_cast<int>(outSkin.jointNodes.size()), inverseBinds, errorMessage)) {
         return false;
     }
 
@@ -1193,15 +1151,15 @@ bool ImportDocument(const json& root,
         skeleton.skinName = "Armature";
     }
 
-    skeleton.bones.resize(jointNodes.size());
-    for (int source = 0; source < static_cast<int>(jointNodes.size()); ++source) {
-        const int nodeIndex = jointNodes[static_cast<size_t>(source)];
+    skeleton.bones.resize(outSkin.jointNodes.size());
+    for (int source = 0; source < static_cast<int>(outSkin.jointNodes.size()); ++source) {
+        const int nodeIndex = outSkin.jointNodes[static_cast<size_t>(source)];
         int parentSource = -1;
         int ancestor = nodeParent[static_cast<size_t>(nodeIndex)];
         int parentJointNode = -1;
         while (ancestor >= 0) {
-            auto it = nodeToSource.find(ancestor);
-            if (it != nodeToSource.end()) {
+            auto it = outSkin.nodeToSource.find(ancestor);
+            if (it != outSkin.nodeToSource.end()) {
                 parentSource = it->second;
                 parentJointNode = ancestor;
                 break;
@@ -1236,28 +1194,183 @@ bool ImportDocument(const json& root,
     if (!SkeletonBuilder::Finalize(skeleton, errorMessage)) {
         return false;
     }
+    outSkin.skeleton = std::move(skeleton);
+    return true;
+}
 
-    const json& meshJson = root["meshes"][meshIndex];
-    if (!meshJson.contains("primitives") || !meshJson["primitives"].is_array() ||
-        meshJson["primitives"].empty()) {
-        errorMessage = "Skinned mesh has no primitives";
+bool MapSkinJointsToCanonical(const json& nodes,
+                              const GltfBuiltSkin& skin,
+                              const Skeleton& canonical,
+                              std::vector<int>& outSourceToCanonicalEval,
+                              std::string& errorMessage) {
+    outSourceToCanonicalEval.assign(skin.jointNodes.size(), -1);
+    for (int source = 0; source < static_cast<int>(skin.jointNodes.size()); ++source) {
+        const int nodeIndex = skin.jointNodes[static_cast<size_t>(source)];
+        const std::string name = TrimCopy(nodes[nodeIndex].value("name", ""));
+        const SkeletonBone* bone = canonical.FindBone(name);
+        if (!bone) {
+            errorMessage = IncompatibleCharacterSkeletonsMessage();
+            return false;
+        }
+        outSourceToCanonicalEval[static_cast<size_t>(source)] = bone->evalIndex;
+    }
+    return true;
+}
+
+bool ImportDocument(const json& root,
+                    const std::vector<std::vector<uint8_t>>& buffers,
+                    const SkeletalImportSettings& settings,
+                    SkeletalImportResult& outResult,
+                    std::string& errorMessage) {
+    outResult = SkeletalImportResult{};
+    if (!root.contains("skins") || !root["skins"].is_array() || root["skins"].empty()) {
+        errorMessage =
+            "Character source has no skin.\n\n"
+            "Import this file as a static mesh instead, or export a skinned armature.";
+        return false;
+    }
+    if (!root.contains("nodes") || !root["nodes"].is_array() || root["nodes"].empty()) {
+        errorMessage = "Character source has no nodes";
         return false;
     }
 
-    for (const auto& primitive : meshJson["primitives"]) {
-        if (!AppendSkinnedPrimitive(root, buffers, primitive, meshJson, settings.unitScale,
-                                    skeleton.sourceJointToEval, outResult, errorMessage)) {
+    const json& nodes = root["nodes"];
+    const int nodeCount = static_cast<int>(nodes.size());
+    std::vector<int> nodeParent(static_cast<size_t>(nodeCount), -1);
+    for (int i = 0; i < nodeCount; ++i) {
+        const json& node = nodes[i];
+        if (!node.contains("children") || !node["children"].is_array()) {
+            continue;
+        }
+        for (const auto& child : node["children"]) {
+            if (!child.is_number_integer()) {
+                continue;
+            }
+            const int childIndex = child.get<int>();
+            if (childIndex >= 0 && childIndex < nodeCount) {
+                nodeParent[static_cast<size_t>(childIndex)] = i;
+            }
+        }
+    }
+
+    std::vector<Mat4> nodeLocal;
+    std::vector<Mat4> nodeWorld;
+    ComputeNodeWorlds(nodes, nodeParent, nodeLocal, nodeWorld);
+
+    std::vector<GltfSkinnedNode> skinnedNodes;
+    for (int i = 0; i < nodeCount; ++i) {
+        const json& node = nodes[i];
+        const bool hasSkin = node.contains("skin") && node["skin"].is_number_integer();
+        const bool hasMesh = node.contains("mesh") && node["mesh"].is_number_integer();
+        if (!hasSkin || !hasMesh) {
+            continue;
+        }
+        GltfSkinnedNode entry;
+        entry.nodeIndex = i;
+        entry.meshIndex = node["mesh"].get<int>();
+        entry.skinIndex = node["skin"].get<int>();
+        skinnedNodes.push_back(entry);
+    }
+    if (skinnedNodes.empty()) {
+        errorMessage = "No node references both a mesh and a skin";
+        return false;
+    }
+
+    std::unordered_map<int, GltfBuiltSkin> builtSkins;
+    for (const GltfSkinnedNode& entry : skinnedNodes) {
+        if (builtSkins.count(entry.skinIndex) > 0) {
+            continue;
+        }
+        GltfBuiltSkin built;
+        if (!BuildGltfSkeleton(root, buffers, nodes, nodeParent, nodeLocal, entry.skinIndex,
+                               settings, built, errorMessage)) {
+            return false;
+        }
+        builtSkins[entry.skinIndex] = std::move(built);
+    }
+
+    int canonicalSkinIndex = skinnedNodes.front().skinIndex;
+    for (const auto& [skinIndex, built] : builtSkins) {
+        const GltfBuiltSkin& canonical = builtSkins[canonicalSkinIndex];
+        if (skinIndex == canonicalSkinIndex) {
+            continue;
+        }
+        if (SkeletonBuilder::MapsOnto(canonical.skeleton, built.skeleton)) {
+            canonicalSkinIndex = skinIndex;
+        } else if (!SkeletonBuilder::MapsOnto(built.skeleton, canonical.skeleton)) {
+            errorMessage = IncompatibleCharacterSkeletonsMessage();
             return false;
         }
     }
 
-    outResult.skeleton = std::move(skeleton);
-    outResult.meshNodeWorld =
-        ConvertSkeletalMatrix(nodeWorld[static_cast<size_t>(meshNode)], settings.unitScale);
+    const GltfBuiltSkin& canonicalSkin = builtSkins[canonicalSkinIndex];
+    outResult.skeleton = canonicalSkin.skeleton;
 
+    size_t canonicalPartIndex = 0;
+    bool foundCanonicalPart = false;
+    for (const GltfSkinnedNode& entry : skinnedNodes) {
+        if (!root.contains("meshes") ||
+            entry.meshIndex < 0 ||
+            entry.meshIndex >= static_cast<int>(root["meshes"].size())) {
+            errorMessage = "Skinned mesh index is out of range";
+            return false;
+        }
+        const json& meshJson = root["meshes"][entry.meshIndex];
+        if (!meshJson.contains("primitives") || !meshJson["primitives"].is_array() ||
+            meshJson["primitives"].empty()) {
+            errorMessage = "Skinned mesh has no primitives";
+            return false;
+        }
+
+        auto skinIt = builtSkins.find(entry.skinIndex);
+        if (skinIt == builtSkins.end()) {
+            errorMessage = IncompatibleCharacterSkeletonsMessage();
+            return false;
+        }
+        std::vector<int> sourceToCanonicalEval;
+        if (!MapSkinJointsToCanonical(nodes, skinIt->second, outResult.skeleton,
+                                      sourceToCanonicalEval, errorMessage)) {
+            return false;
+        }
+
+        SkinnedMeshPart part;
+        if (nodes[entry.nodeIndex].contains("name") &&
+            nodes[entry.nodeIndex]["name"].is_string()) {
+            part.name = TrimCopy(nodes[entry.nodeIndex]["name"].get<std::string>());
+        }
+        if (part.name.empty() && meshJson.contains("name") && meshJson["name"].is_string()) {
+            part.name = TrimCopy(meshJson["name"].get<std::string>());
+        }
+        if (part.name.empty()) {
+            part.name = "Mesh";
+        }
+        part.meshNodeWorld = ConvertSkeletalMatrix(nodeWorld[static_cast<size_t>(entry.nodeIndex)],
+                                                   settings.unitScale);
+        for (const auto& primitive : meshJson["primitives"]) {
+            if (!AppendSkinnedPrimitive(root, buffers, primitive, meshJson, settings.unitScale,
+                                        sourceToCanonicalEval, part, outResult.clampedInfluences,
+                                        errorMessage)) {
+                return false;
+            }
+        }
+        if (part.vertices.empty()) {
+            errorMessage = "Skinned mesh has no geometry";
+            return false;
+        }
+        if (!foundCanonicalPart && entry.skinIndex == canonicalSkinIndex) {
+            canonicalPartIndex = outResult.meshes.size();
+            foundCanonicalPart = true;
+        }
+        outResult.meshes.push_back(std::move(part));
+    }
+
+    SkeletalModelImporter::FinalizeImportedMeshParts(outResult, canonicalPartIndex);
+
+    const Mat4 restMeshWorld = outResult.meshes.empty()
+                                   ? Mat4::Identity()
+                                   : outResult.meshes[canonicalPartIndex].meshNodeWorld;
     std::string restError;
-    if (!SkeletonBuilder::RestMatchesBind(outResult.skeleton, outResult.meshNodeWorld, 1e-3f,
-                                          restError)) {
+    if (!SkeletonBuilder::RestMatchesBind(outResult.skeleton, restMeshWorld, 1e-3f, restError)) {
         outResult.restBindMismatch = true;
         outResult.warnings.push_back(restError);
     }
@@ -1268,15 +1381,16 @@ bool ImportDocument(const json& root,
     }
 
     std::string animError;
-    if (!ImportAnimations(root, buffers, settings, outResult.skeleton, nodes, nodeToSource,
-                          outResult.clips, outResult.warnings, animError) &&
+    if (!ImportAnimations(root, buffers, settings, outResult.skeleton, nodes,
+                          canonicalSkin.nodeToSource, outResult.clips, outResult.warnings,
+                          animError) &&
         !animError.empty()) {
         outResult.warnings.push_back(animError);
     }
     return true;
 }
 
-void AppendBox(SkeletalImportResult& result, const Vec3& minP, const Vec3& maxP, uint16_t bone) {
+void AppendBox(SkinnedMeshPart& part, const Vec3& minP, const Vec3& maxP, uint16_t bone) {
     const Vec3 nrm[6] = {
         Vec3(0, 0, 1), Vec3(0, 0, -1), Vec3(1, 0, 0),
         Vec3(-1, 0, 0), Vec3(0, 1, 0), Vec3(0, -1, 0)
@@ -1291,7 +1405,7 @@ void AppendBox(SkeletalImportResult& result, const Vec3& minP, const Vec3& maxP,
         {0, 1, 2, 3}, {5, 4, 7, 6}, {1, 5, 6, 2},
         {4, 0, 3, 7}, {3, 2, 6, 7}, {4, 5, 1, 0}
     };
-    const uint32_t base = static_cast<uint32_t>(result.vertices.size());
+    const uint32_t base = static_cast<uint32_t>(part.vertices.size());
     for (int f = 0; f < 6; ++f) {
         for (int i = 0; i < 4; ++i) {
             SkinnedVertexData vert{};
@@ -1304,16 +1418,64 @@ void AppendBox(SkeletalImportResult& result, const Vec3& minP, const Vec3& maxP,
             vert.normal[2] = nrm[f].z;
             vert.joints[0] = bone;
             vert.weights[0] = 1.0f;
-            result.vertices.push_back(vert);
+            part.vertices.push_back(vert);
         }
         const uint32_t q = base + static_cast<uint32_t>(f * 4);
-        result.indices.push_back(q);
-        result.indices.push_back(q + 1);
-        result.indices.push_back(q + 2);
-        result.indices.push_back(q);
-        result.indices.push_back(q + 2);
-        result.indices.push_back(q + 3);
+        part.indices.push_back(q);
+        part.indices.push_back(q + 1);
+        part.indices.push_back(q + 2);
+        part.indices.push_back(q);
+        part.indices.push_back(q + 2);
+        part.indices.push_back(q + 3);
     }
+}
+
+bool MatrixNearIdentity(const Mat4& m) {
+    const Mat4 id = Mat4::Identity();
+    for (int i = 0; i < 16; ++i) {
+        if (std::abs(m.m[i] - id.m[i]) > 1e-5f) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void BakePartIntoCanonicalBind(SkinnedMeshPart& part, const Mat4& canonicalMeshWorld) {
+    const Mat4 relative = Mat4::Multiply(Mat4::Invert(canonicalMeshWorld), part.meshNodeWorld);
+    if (MatrixNearIdentity(relative)) {
+        part.meshNodeWorld = canonicalMeshWorld;
+        return;
+    }
+    Vec3 minB{};
+    Vec3 maxB{};
+    bool init = false;
+    for (SkinnedVertexData& vert : part.vertices) {
+        const Vec3 p = Mat4::TransformPoint(relative, Vec3(vert.pos[0], vert.pos[1], vert.pos[2]));
+        Vec3 n = Mat4::TransformDirection(relative, Vec3(vert.normal[0], vert.normal[1], vert.normal[2]));
+        n = vnorm(n);
+        vert.pos[0] = p.x;
+        vert.pos[1] = p.y;
+        vert.pos[2] = p.z;
+        vert.normal[0] = n.x;
+        vert.normal[1] = n.y;
+        vert.normal[2] = n.z;
+        if (!init) {
+            minB = p;
+            maxB = p;
+            init = true;
+        } else {
+            minB.x = std::min(minB.x, p.x);
+            minB.y = std::min(minB.y, p.y);
+            minB.z = std::min(minB.z, p.z);
+            maxB.x = std::max(maxB.x, p.x);
+            maxB.y = std::max(maxB.y, p.y);
+            maxB.z = std::max(maxB.z, p.z);
+        }
+    }
+    if (init) {
+        part.bounds = AABB(minB, maxB);
+    }
+    part.meshNodeWorld = canonicalMeshWorld;
 }
 
 } // namespace
@@ -1366,8 +1528,6 @@ bool SkeletalModelImporter::LoadClips(const std::filesystem::path& path,
                     outError = FormatSkeletonIncompatibility(report);
                     return false;
                 }
-                outClips = std::move(imported.clips);
-                return true;
             }
         }
         if (!root.contains("nodes") || !root["nodes"].is_array()) {
@@ -1426,15 +1586,58 @@ void SkeletalModelImporter::BuildRestPoseFixture(SkeletalImportResult& outResult
     const uint16_t childEval =
         static_cast<uint16_t>(childBone ? childBone->evalIndex : 1);
 
-    AppendBox(outResult, Vec3(-0.18f, 0.0f, -0.18f), Vec3(0.18f, 1.0f, 0.18f), rootEval);
-    AppendBox(outResult, Vec3(-0.14f, 1.0f, -0.14f), Vec3(0.14f, 2.0f, 0.14f), childEval);
-    outResult.bounds = AABB(Vec3(-0.18f, 0.0f, -0.18f), Vec3(0.18f, 2.0f, 0.18f));
+    SkinnedMeshPart part;
+    part.name = "Body";
+    AppendBox(part, Vec3(-0.18f, 0.0f, -0.18f), Vec3(0.18f, 1.0f, 0.18f), rootEval);
+    AppendBox(part, Vec3(-0.14f, 1.0f, -0.14f), Vec3(0.14f, 2.0f, 0.14f), childEval);
+    part.bounds = AABB(Vec3(-0.18f, 0.0f, -0.18f), Vec3(0.18f, 2.0f, 0.18f));
     SkinnedSubmeshData sub{};
-    sub.indexCount = static_cast<uint32_t>(outResult.indices.size());
+    sub.indexCount = static_cast<uint32_t>(part.indices.size());
     sub.name = "Body";
-    outResult.submeshes.push_back(sub);
+    part.submeshes.push_back(sub);
+    outResult.bounds = part.bounds;
+    outResult.meshes.push_back(std::move(part));
     outResult.skeleton = std::move(skeleton);
     SkeletonBuilder::FillRestBonePalette(outResult.skeleton, outPalette);
+}
+
+void SkeletalModelImporter::FinalizeImportedMeshParts(SkeletalImportResult& result,
+                                                      size_t canonicalPartIndex) {
+    if (result.meshes.empty()) {
+        result.bounds = AABB{};
+        return;
+    }
+    if (canonicalPartIndex >= result.meshes.size()) {
+        canonicalPartIndex = 0;
+    }
+    std::unordered_map<std::string, int> nameCount;
+    for (SkinnedMeshPart& part : result.meshes) {
+        if (part.name.empty()) {
+            part.name = "Mesh";
+        }
+        const int count = ++nameCount[part.name];
+        if (count > 1) {
+            part.name += "_" + std::to_string(count);
+        }
+    }
+    const Mat4 canonicalWorld = result.meshes[canonicalPartIndex].meshNodeWorld;
+    for (size_t i = 0; i < result.meshes.size(); ++i) {
+        if (i == canonicalPartIndex) {
+            continue;
+        }
+        BakePartIntoCanonicalBind(result.meshes[i], canonicalWorld);
+    }
+    AABB combined = result.meshes.front().bounds;
+    for (size_t i = 1; i < result.meshes.size(); ++i) {
+        const AABB& b = result.meshes[i].bounds;
+        combined.min.x = std::min(combined.min.x, b.min.x);
+        combined.min.y = std::min(combined.min.y, b.min.y);
+        combined.min.z = std::min(combined.min.z, b.min.z);
+        combined.max.x = std::max(combined.max.x, b.max.x);
+        combined.max.y = std::max(combined.max.y, b.max.y);
+        combined.max.z = std::max(combined.max.z, b.max.z);
+    }
+    result.bounds = combined;
 }
 
 } // namespace Hephaestus

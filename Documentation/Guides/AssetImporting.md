@@ -22,6 +22,7 @@ Materials: FBX 1.0 preserves material **slot identity** only. Assign `.hemateria
 
 - Owned copy is `mesh.glb` or `mesh.fbx` under `.source/<Name>/`
 - Canonical bones are deforming skin joints; helper/Null ancestors are folded into rest pose
+- Multiple skinned meshes in one file import as one character when they share a compatible skeleton
 - Animation stacks are baked to Linear T/R/S (`ufbx_bake_anim`)
 - Bone names are preserved (`mixamorig:` stays unless Strip bone namespace is on)
 

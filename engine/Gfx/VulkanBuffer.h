@@ -35,7 +35,10 @@ struct VulkanBuffer {
     }
 
     void Destroy(VmaAllocator allocator) {
-        if (buffer)
+        if (buffer) {
             vmaDestroyBuffer(allocator, buffer, allocation);
+            buffer = VK_NULL_HANDLE;
+            allocation = VK_NULL_HANDLE;
+        }
     }
 };

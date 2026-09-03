@@ -133,6 +133,9 @@ struct MeshRendererComponent {
     std::vector<int> materialIndices;
     std::vector<std::string> appliedMaterialPaths; // Tracks which material file is applied to each slot
     int submeshCount = 0; // Number of submeshes (material slots) in the imported mesh
+    /// Runtime-only GPU handles for extra skinned mesh parts (part 0 is meshHandle).
+    /// Never authored or serialized.
+    std::vector<size_t> meshPartHandles;
     /// Stamped only by CharacterRuntime bind. Never authored or serialized.
     bool runtimeGenerated = false;
 
@@ -197,6 +200,16 @@ inline bool IsRuntimeGeneratedVisual(const MeshRendererComponent& mesh) {
 
 inline bool IsRuntimeGeneratedVisual(const MeshRendererComponent* mesh) {
     return mesh && mesh->runtimeGenerated;
+}
+
+inline std::vector<size_t> RuntimeMeshPartHandles(const MeshRendererComponent& mesh) {
+    if (!mesh.meshPartHandles.empty()) {
+        return mesh.meshPartHandles;
+    }
+    if (mesh.HasValidMesh()) {
+        return {mesh.meshHandle};
+    }
+    return {};
 }
 
 struct MeshColliderContact {

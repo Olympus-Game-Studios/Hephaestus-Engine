@@ -17,6 +17,7 @@
 
 namespace fs = std::filesystem;
 using Hephaestus::kMaxCharacterBones;
+using Hephaestus::SkinnedMeshPart;
 using Hephaestus::SkeletalImportResult;
 using Hephaestus::SkeletalImportSettings;
 using Hephaestus::SkeletalModelImporter;
@@ -94,6 +95,8 @@ struct GoldenOptions {
     const char* rootName = "Root";
     const char* childName = "Child";
     bool extraSkin = false;
+    bool extraSkinnedNode = false;
+    bool secondSkinPermuted = false;
     bool morphTargets = false;
     bool extraInfluence = false;
     bool identityIbm = false;
@@ -207,8 +210,13 @@ bool WriteGoldenGlb(const fs::path& path, const GoldenOptions& options) {
                     jointRootName + "\"rotation\":[" + std::to_string(kSqrtHalf) + ",0,0," +
                     std::to_string(kSqrtHalf) + "],\"children\":[1]}," + childNode +
                     ","
-                    "{\"translation\":[0,0,2],\"mesh\":0,\"skin\":0}"
-                    "]";
+                    "{\"translation\":[0,0,2],\"mesh\":0,\"skin\":0,\"name\":\"Body\"}";
+        if (options.extraSkinnedNode || options.secondSkinPermuted) {
+            const int skinIx = options.secondSkinPermuted ? 1 : 0;
+            nodesJson += ",{\"name\":\"Clothes\",\"translation\":[0,0,2],\"mesh\":0,\"skin\":" +
+                         std::to_string(skinIx) + "}";
+        }
+        nodesJson += "]";
         sceneNodes = "[0]";
     }
 
@@ -234,6 +242,9 @@ bool WriteGoldenGlb(const fs::path& path, const GoldenOptions& options) {
                         ",\"inverseBindMatrices\":5}";
     if (options.extraSkin) {
         skins += ",{\"joints\":" + jointsJson + ",\"inverseBindMatrices\":5}";
+    }
+    if (options.secondSkinPermuted) {
+        skins += ",{\"name\":\"ArmatureB\",\"joints\":[1,0],\"inverseBindMatrices\":5}";
     }
     skins += "]";
 
@@ -359,12 +370,13 @@ bool TestGoldenWorldMatrices(const fs::path& scratch) {
     ok &= Check(MatricesClose(restWorld[static_cast<size_t>(child->evalIndex)], ExpectedChildWorld()),
                 "Child rest world is RotX(90)*T(0,1,0)*RotZ(90); got " +
                     Mat4Dump(restWorld[static_cast<size_t>(child->evalIndex)]));
-    ok &= Check(MatricesClose(result.meshNodeWorld, ExpectedMeshWorld()),
+    ok &= Check(MatricesClose(result.meshes.front().meshNodeWorld, ExpectedMeshWorld()),
                 "mesh node world is T(0,0,2)");
 
-    ok &= Check(result.vertices.size() >= 3, "imported vertices");
+    ok &= Check(result.meshes.size() == 1 && result.meshes.front().vertices.size() >= 3,
+                "imported vertices");
     bool foundLocalX = false;
-    for (const auto& vert : result.vertices) {
+    for (const auto& vert : result.meshes.front().vertices) {
         if (AlmostEqual(vert.pos[0], 1.0f) && AlmostEqual(vert.pos[1], 0.0f) &&
             AlmostEqual(vert.pos[2], 0.0f)) {
             foundLocalX = true;
@@ -409,8 +421,9 @@ bool TestPermutedJointsSameSignature(const fs::path& scratch) {
                 "eval order stays Root then Child after joints[] permute");
     ok &= Check(root->sourceJoint == 1 && child->sourceJoint == 0,
                 "sourceJoint follows permuted joints[]");
-    ok &= Check(!rb.vertices.empty() && rb.vertices[0].joints[0] ==
-                                            static_cast<uint16_t>(child->evalIndex),
+    ok &= Check(!rb.meshes.empty() && !rb.meshes.front().vertices.empty() &&
+                    rb.meshes.front().vertices[0].joints[0] ==
+                        static_cast<uint16_t>(child->evalIndex),
                 "vertex JOINTS_0 value 0 remaps to Child palette after permute");
     return ok;
 }
@@ -472,18 +485,205 @@ bool TestDuplicateNamesFail(const fs::path& scratch) {
     return ok;
 }
 
-bool TestMultipleSkinsFail(const fs::path& scratch) {
+bool TestUnusedExtraSkinIgnored(const fs::path& scratch) {
     GoldenOptions options;
     options.extraSkin = true;
-    const fs::path path = scratch / "two_skins.glb";
+    const fs::path path = scratch / "unused_skin.glb";
     if (!WriteGoldenGlb(path, options)) {
-        return Check(false, "write two skins glb");
+        return Check(false, "write unused extra skin glb");
     }
     SkeletalImportResult result;
     std::string error;
-    return Check(!SkeletalModelImporter::Load(path, {}, result, error),
-                 "multiple skins must fail") &&
-           Check(error.find("exactly one skin") != std::string::npos, "multiple-skin message");
+    bool ok = Check(SkeletalModelImporter::Load(path, {}, result, error),
+                    "unused extra skins[] entry is ignored: " + error);
+    ok &= Check(result.meshes.size() == 1, "one referenced skinned mesh");
+    return ok;
+}
+
+bool TestTwoCompatibleSkinnedMeshes(const fs::path& scratch) {
+    GoldenOptions options;
+    options.extraSkinnedNode = true;
+    const fs::path path = scratch / "two_meshes.glb";
+    if (!WriteGoldenGlb(path, options)) {
+        return Check(false, "write two mesh glb");
+    }
+    SkeletalImportResult result;
+    std::string error;
+    bool ok = Check(SkeletalModelImporter::Load(path, {}, result, error),
+                    "two compatible meshes: " + error);
+    ok &= Check(result.meshes.size() == 2, "imported two mesh parts");
+    ok &= Check(result.skeleton.BoneCount() == 2, "one canonical skeleton");
+    if (result.meshes.size() == 2) {
+        ok &= Check(result.meshes[0].name == "Body", "first part Body");
+        ok &= Check(result.meshes[1].name == "Clothes", "second part Clothes");
+        ok &= Check(!result.meshes[0].vertices.empty() && !result.meshes[1].vertices.empty(),
+                    "each part has independent vertices");
+        ok &= Check(result.meshes[0].vertices[0].joints[0] == result.meshes[1].vertices[0].joints[0],
+                    "both parts use the same palette joint index");
+    }
+    return ok;
+}
+
+bool TestPermutedSecondSkinMapsToCanonical(const fs::path& scratch) {
+    GoldenOptions options;
+    options.secondSkinPermuted = true;
+    const fs::path path = scratch / "permuted_second_skin.glb";
+    if (!WriteGoldenGlb(path, options)) {
+        return Check(false, "write permuted second skin glb");
+    }
+    SkeletalImportResult result;
+    std::string error;
+    bool ok = Check(SkeletalModelImporter::Load(path, {}, result, error),
+                    "permuted second skin: " + error);
+    ok &= Check(result.meshes.size() == 2, "two parts");
+    const SkeletonBone* child = Find(result.skeleton, "Child");
+    if (!Check(child, "Child bone")) {
+        return false;
+    }
+    if (result.meshes.size() == 2 && !result.meshes[1].vertices.empty()) {
+        ok &= Check(result.meshes[1].vertices[0].joints[0] ==
+                        static_cast<uint16_t>(child->evalIndex),
+                    "second part JOINTS_0=0 remaps through permuted skin joints[] to Child");
+    }
+    return ok;
+}
+
+bool WriteIncompatibleTwoRigGlb(const fs::path& path) {
+    GoldenOptions base;
+    if (!WriteGoldenGlb(path, base)) {
+        return false;
+    }
+    const float positions[] = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    const float normals[] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
+    const uint16_t joints0[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    const float weights0[] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+    const uint16_t indices[] = {0, 1, 2};
+    Mat4 ibmRoot = Mat4::Multiply(Mat4::Invert(ExpectedRootWorld()), ExpectedMeshWorld());
+    Mat4 ibmChild = Mat4::Multiply(Mat4::Invert(ExpectedChildWorld()), ExpectedMeshWorld());
+    Mat4 ibmCreature = Mat4::Identity();
+
+    std::vector<uint8_t> bin;
+    AppendBytes(bin, positions, sizeof(positions));
+    const uint32_t nrmOff = static_cast<uint32_t>(bin.size());
+    AppendBytes(bin, normals, sizeof(normals));
+    const uint32_t j0Off = static_cast<uint32_t>(bin.size());
+    AppendBytes(bin, joints0, sizeof(joints0));
+    const uint32_t w0Off = static_cast<uint32_t>(bin.size());
+    AppendBytes(bin, weights0, sizeof(weights0));
+    const uint32_t idxOff = static_cast<uint32_t>(bin.size());
+    AppendBytes(bin, indices, sizeof(indices));
+    PadTo4(bin, 0);
+    const uint32_t ibmOff = static_cast<uint32_t>(bin.size());
+    AppendBytes(bin, ibmRoot.m, sizeof(ibmRoot.m));
+    AppendBytes(bin, ibmChild.m, sizeof(ibmChild.m));
+    const uint32_t ibmCreatureOff = static_cast<uint32_t>(bin.size());
+    AppendBytes(bin, ibmCreature.m, sizeof(ibmCreature.m));
+    PadTo4(bin, 0);
+
+    const std::string json =
+        std::string("{\"asset\":{\"version\":\"2.0\"},\"scene\":0,") +
+        "\"scenes\":[{\"nodes\":[0,3]}],"
+        "\"nodes\":["
+        "{\"name\":\"Root\",\"rotation\":[" +
+        std::to_string(kSqrtHalf) + ",0,0," + std::to_string(kSqrtHalf) +
+        "],\"children\":[1]},"
+        "{\"name\":\"Child\",\"translation\":[0,1,0]},"
+        "{\"name\":\"Body\",\"translation\":[0,0,2],\"mesh\":0,\"skin\":0},"
+        "{\"name\":\"Creature\"},"
+        "{\"name\":\"CreatureMesh\",\"mesh\":1,\"skin\":1}"
+        "],"
+        "\"meshes\":["
+        "{\"name\":\"Body\",\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"JOINTS_0\":2,\"WEIGHTS_0\":3},\"indices\":4}]},"
+        "{\"name\":\"CreatureMesh\",\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"JOINTS_0\":2,\"WEIGHTS_0\":3},\"indices\":4}]}"
+        "],"
+        "\"skins\":["
+        "{\"name\":\"Armature\",\"joints\":[0,1],\"inverseBindMatrices\":5},"
+        "{\"name\":\"CreatureRig\",\"joints\":[3],\"inverseBindMatrices\":6}"
+        "],"
+        "\"accessors\":["
+        "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+        "{\"bufferView\":2,\"componentType\":5123,\"count\":3,\"type\":\"VEC4\"},"
+        "{\"bufferView\":3,\"componentType\":5126,\"count\":3,\"type\":\"VEC4\"},"
+        "{\"bufferView\":4,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
+        "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"MAT4\"},"
+        "{\"bufferView\":6,\"componentType\":5126,\"count\":1,\"type\":\"MAT4\"}"
+        "],"
+        "\"bufferViews\":["
+        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+        "{\"buffer\":0,\"byteOffset\":" +
+        std::to_string(nrmOff) + ",\"byteLength\":36},"
+        "{\"buffer\":0,\"byteOffset\":" +
+        std::to_string(j0Off) + ",\"byteLength\":24},"
+        "{\"buffer\":0,\"byteOffset\":" +
+        std::to_string(w0Off) + ",\"byteLength\":48},"
+        "{\"buffer\":0,\"byteOffset\":" +
+        std::to_string(idxOff) + ",\"byteLength\":6},"
+        "{\"buffer\":0,\"byteOffset\":" +
+        std::to_string(ibmOff) + ",\"byteLength\":128},"
+        "{\"buffer\":0,\"byteOffset\":" +
+        std::to_string(ibmCreatureOff) + ",\"byteLength\":64}"
+        "],"
+        "\"buffers\":[{\"byteLength\":" +
+        std::to_string(bin.size()) + "}]}";
+
+    std::vector<uint8_t> jsonBytes(json.begin(), json.end());
+    PadTo4(jsonBytes, static_cast<uint8_t>(' '));
+    std::vector<uint8_t> file;
+    const uint32_t magic = 0x46546C67;
+    const uint32_t version = 2;
+    const uint32_t jsonLen = static_cast<uint32_t>(jsonBytes.size());
+    const uint32_t jsonType = 0x4E4F534A;
+    const uint32_t binLen = static_cast<uint32_t>(bin.size());
+    const uint32_t binType = 0x004E4942;
+    const uint32_t length = 12 + 8 + jsonLen + 8 + binLen;
+    AppendBytes(file, &magic, 4);
+    AppendBytes(file, &version, 4);
+    AppendBytes(file, &length, 4);
+    AppendBytes(file, &jsonLen, 4);
+    AppendBytes(file, &jsonType, 4);
+    file.insert(file.end(), jsonBytes.begin(), jsonBytes.end());
+    AppendBytes(file, &binLen, 4);
+    AppendBytes(file, &binType, 4);
+    file.insert(file.end(), bin.begin(), bin.end());
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        return false;
+    }
+    out.write(reinterpret_cast<const char*>(file.data()),
+              static_cast<std::streamsize>(file.size()));
+    return static_cast<bool>(out);
+}
+
+bool TestIncompatibleSkeletonGroups(const fs::path& scratch) {
+    const fs::path path = scratch / "two_rigs.glb";
+    if (!WriteIncompatibleTwoRigGlb(path)) {
+        return Check(false, "write incompatible two-rig glb");
+    }
+    SkeletalImportResult result;
+    std::string error;
+    const bool loaded = SkeletalModelImporter::Load(path, {}, result, error);
+    bool ok = Check(!loaded, "incompatible skeleton groups must fail");
+    ok &= Check(error.find("multiple incompatible skeletons") != std::string::npos,
+                "incompatible skeleton error text");
+    return ok;
+}
+
+bool TestCombinedBounds() {
+    SkeletalImportResult result;
+    SkinnedMeshPart a;
+    a.name = "A";
+    a.bounds = AABB(Vec3(-1, 0, 0), Vec3(0, 1, 0));
+    SkinnedMeshPart b;
+    b.name = "B";
+    b.bounds = AABB(Vec3(0, 0, 0), Vec3(2, 3, 1));
+    result.meshes.push_back(a);
+    result.meshes.push_back(b);
+    SkeletalModelImporter::FinalizeImportedMeshParts(result, 0);
+    bool ok = Check(result.bounds.min.x <= -1.0f && result.bounds.max.x >= 2.0f, "combined x");
+    ok &= Check(result.bounds.max.y >= 3.0f, "combined y");
+    ok &= Check(result.meshes[0].name == "A" && result.meshes[1].name == "B", "names preserved");
+    return ok;
 }
 
 bool TestMorphTargetsFail(const fs::path& scratch) {
@@ -511,13 +711,14 @@ bool TestInfluenceClamp(const fs::path& scratch) {
     std::string error;
     bool ok = Check(SkeletalModelImporter::Load(path, {}, result, error), "load clamp: " + error);
     ok &= Check(result.clampedInfluences, "clampedInfluences flag");
-    ok &= Check(!result.vertices.empty(), "clamp mesh has vertices");
-    if (!result.vertices.empty()) {
+    ok &= Check(!result.meshes.empty() && !result.meshes.front().vertices.empty(),
+                "clamp mesh has vertices");
+    if (!result.meshes.empty() && !result.meshes.front().vertices.empty()) {
         float sum = 0.0f;
         int nonzero = 0;
         for (int i = 0; i < 4; ++i) {
-            sum += result.vertices[0].weights[i];
-            if (result.vertices[0].weights[i] > 1e-6f) {
+            sum += result.meshes.front().vertices[0].weights[i];
+            if (result.meshes.front().vertices[0].weights[i] > 1e-6f) {
                 ++nonzero;
             }
         }
@@ -540,7 +741,8 @@ bool TestRestBindMismatch(const fs::path& scratch) {
                     "load mismatch ibm: " + error);
     ok &= Check(result.restBindMismatch, "restBindMismatch detected");
     std::string restError;
-    ok &= Check(!SkeletonBuilder::RestMatchesBind(result.skeleton, result.meshNodeWorld, 1e-3f,
+    ok &= Check(!SkeletonBuilder::RestMatchesBind(result.skeleton,
+                                                  result.meshes.front().meshNodeWorld, 1e-3f,
                                                   restError),
                 "RestMatchesBind rejects identity IBM");
     return ok;
@@ -606,6 +808,11 @@ bool TestFinalizeAndCompare() {
     SkeletonBuilder::Finalize(rest, ignore);
     report = SkeletonBuilder::Compare(character, rest);
     ok &= Check(report.restPoseMismatch && !report.compatible, "Compare rest-pose mismatch");
+
+    ok &= Check(SkeletonBuilder::MapsOnto(missing, character), "subset maps onto canonical");
+    ok &= Check(!SkeletonBuilder::MapsOnto(character, missing), "canonical does not map onto subset");
+    ok &= Check(SkeletonBuilder::MapsOnto(character, character), "identity maps onto self");
+    ok &= Check(!SkeletonBuilder::MapsOnto(extra, character), "extra bones do not map onto canonical");
     return ok;
 }
 
@@ -623,7 +830,11 @@ int main() {
     ok &= TestNonJointAncestorBaked(root);
     ok &= TestUnnamedJointsFail(root);
     ok &= TestDuplicateNamesFail(root);
-    ok &= TestMultipleSkinsFail(root);
+    ok &= TestUnusedExtraSkinIgnored(root);
+    ok &= TestTwoCompatibleSkinnedMeshes(root);
+    ok &= TestPermutedSecondSkinMapsToCanonical(root);
+    ok &= TestIncompatibleSkeletonGroups(root);
+    ok &= TestCombinedBounds();
     ok &= TestMorphTargetsFail(root);
     ok &= TestInfluenceClamp(root);
     ok &= TestRestBindMismatch(root);

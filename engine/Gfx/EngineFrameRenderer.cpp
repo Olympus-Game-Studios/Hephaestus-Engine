@@ -152,6 +152,11 @@ static bool ContainsEntityId(const std::vector<uint32_t>& ids, uint32_t id)
     return std::find(ids.begin(), ids.end(), id) != ids.end();
 }
 
+static std::vector<size_t> MeshHandlesForDraw(const MeshRendererComponent& renderer)
+{
+    return RuntimeMeshPartHandles(renderer);
+}
+
 static bool IsEditorEntityVisible(uint32_t entityId,
                                   const FrameRenderConfig& config)
 {
@@ -750,6 +755,13 @@ void EngineFrameRenderer::AddMeshAlias(const std::string& aliasKey, size_t handl
     m_meshLibraryLookup.emplace(aliasKey, handle);
 }
 
+void EngineFrameRenderer::WaitGpuIdle()
+{
+    if (m_device && m_device->device) {
+        vkDeviceWaitIdle(m_device->device);
+    }
+}
+
 void EngineFrameRenderer::InvalidateMesh(const std::string& sourceKey)
 {
     if (sourceKey.empty()) {
@@ -768,7 +780,12 @@ void EngineFrameRenderer::InvalidateMesh(const std::string& sourceKey)
         }
     }
     if (handle < m_meshLibrary.size() && m_device) {
-        m_meshLibrary[handle].Destroy(m_device->allocator);
+        MeshGPU& mesh = m_meshLibrary[handle];
+        if (mesh.boneDescriptorSet != VK_NULL_HANDLE && m_skinned.bonePool != VK_NULL_HANDLE) {
+            vkFreeDescriptorSets(m_device->device, m_skinned.bonePool, 1, &mesh.boneDescriptorSet);
+            mesh.boneDescriptorSet = VK_NULL_HANDLE;
+        }
+        mesh.Destroy(m_device->allocator);
     }
 }
 
@@ -2659,45 +2676,48 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
             if (!IsEditorEntityVisible(static_cast<uint32_t>(entity), config)) continue;
             if (!meshComp.HasValidMesh() || !meshComp.visible) continue;
             if (config.isPlaying && meshComp.hideInGame) continue;
-            if (meshComp.meshHandle >= m_meshLibrary.size()) continue;
-            
-            const MeshGPU& mesh = m_meshLibrary[meshComp.meshHandle];
+
             const CharacterComponent* character = registry.try_get<CharacterComponent>(entity);
-            VkDescriptorSet boneSet = resolveSkinnedBoneSet(entity, character, mesh);
-            const bool skinned = mesh.skinned && boneSet != VK_NULL_HANDLE &&
-                                 m_skinned.shadowPipeline != VK_NULL_HANDLE;
-            if (skinned != usingSkinnedShadow) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                  skinned ? m_skinned.shadowPipeline : m_directionalShadow.pipeline);
-                currentVertexBuffer = VK_NULL_HANDLE;
-                currentIndexBuffer = VK_NULL_HANDLE;
-                usingSkinnedShadow = skinned;
+            const std::vector<size_t> handles = MeshHandlesForDraw(meshComp);
+            for (size_t handle : handles) {
+                if (handle >= m_meshLibrary.size()) continue;
+                const MeshGPU& mesh = m_meshLibrary[handle];
+                VkDescriptorSet boneSet = resolveSkinnedBoneSet(entity, character, mesh);
+                const bool skinned = mesh.skinned && boneSet != VK_NULL_HANDLE &&
+                                     m_skinned.shadowPipeline != VK_NULL_HANDLE;
+                if (skinned != usingSkinnedShadow) {
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      skinned ? m_skinned.shadowPipeline : m_directionalShadow.pipeline);
+                    currentVertexBuffer = VK_NULL_HANDLE;
+                    currentIndexBuffer = VK_NULL_HANDLE;
+                    usingSkinnedShadow = skinned;
+                }
+                if (skinned) {
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skinned.shadowLayout,
+                                            0, 1, &boneSet, 0, nullptr);
+                }
+
+                if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
+                    VkDeviceSize offset = 0;
+                    vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, &offset);
+                    currentVertexBuffer = mesh.vertexBuffer.buffer;
+                }
+                if (mesh.indexBuffer.buffer != currentIndexBuffer) {
+                    vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+                    currentIndexBuffer = mesh.indexBuffer.buffer;
+                }
+
+                ShadowPushConstants pc;
+                pc.lightViewProj = cascadeVPs[cascade];
+                pc.model = scene->GetWorldTransform(Entity(entity, scene));
+                const VkPipelineLayout shadowLayout =
+                    skinned ? m_skinned.shadowLayout : m_directionalShadow.pipelineLayout;
+                vkCmdPushConstants(cmd, shadowLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                                  0, sizeof(pc), &pc);
+
+                vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+                shadowMeshCount++;
             }
-            if (skinned) {
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skinned.shadowLayout,
-                                        0, 1, &boneSet, 0, nullptr);
-            }
-            
-            if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
-                VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, &offset);
-                currentVertexBuffer = mesh.vertexBuffer.buffer;
-            }
-            if (mesh.indexBuffer.buffer != currentIndexBuffer) {
-                vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-                currentIndexBuffer = mesh.indexBuffer.buffer;
-            }
-            
-            ShadowPushConstants pc;
-            pc.lightViewProj = cascadeVPs[cascade];
-            pc.model = scene->GetWorldTransform(Entity(entity, scene));
-            const VkPipelineLayout shadowLayout =
-                skinned ? m_skinned.shadowLayout : m_directionalShadow.pipelineLayout;
-            vkCmdPushConstants(cmd, shadowLayout, VK_SHADER_STAGE_VERTEX_BIT,
-                              0, sizeof(pc), &pc);
-            
-            vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
-            shadowMeshCount++;
         }
     }
     
@@ -3419,84 +3439,80 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 skippedCount++;
                 continue;
             }
-            if (!renderer.HasValidMesh() || renderer.meshHandle >= m_meshLibrary.size()) {
-                skippedCount++;
-                continue;
-            }
-            
-            MeshGPU& mesh = m_meshLibrary[renderer.meshHandle];
-            if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
-                mesh.indexBuffer.buffer == VK_NULL_HANDLE) {
-                if (debugPrint) {
-                    std::cout << "[EngineFrameRenderer] Skipping mesh: indexCount=" << mesh.indexCount 
-                              << " vertexBuffer=" << (void*)mesh.vertexBuffer.buffer 
-                              << " indexBuffer=" << (void*)mesh.indexBuffer.buffer << "\n";
-                }
+            if (!renderer.HasValidMesh()) {
                 skippedCount++;
                 continue;
             }
 
-            // Select pipeline based on per-object backface culling and viewport shading mode
-            const bool wantWireframe = (config.shadingMode == ViewShadingMode::Wireframe);
             const CharacterComponent* character = entity.HasComponent<CharacterComponent>()
                 ? &entity.GetComponent<CharacterComponent>()
                 : nullptr;
-            VkDescriptorSet boneSet = resolveSkinnedBoneSet(entityHandle, character, mesh);
-            const bool skinned = mesh.skinned && boneSet != VK_NULL_HANDLE &&
-                                 m_skinned.pipeline != VK_NULL_HANDLE;
-            VkPipeline desiredPipeline = skinned
-                ? getSkinnedPipeline(renderer.backfaceCulling, wantWireframe)
-                : m_pipeline->GetPipeline(renderer.backfaceCulling, wantWireframe);
-            if (desiredPipeline == VK_NULL_HANDLE) {
-                skippedCount++;
-                continue;
-            }
-            if (desiredPipeline != currentPipeline) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
-                currentPipeline = desiredPipeline;
-            }
-            currentDrawLayout = skinned ? m_skinned.pipelineLayout : m_pipeline->layout;
-            currentBoneSet = skinned ? boneSet : VK_NULL_HANDLE;
-            
-            // Bind vertex buffer if different
-            if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
-                VkBuffer vb = mesh.vertexBuffer.buffer;
-                VkDeviceSize vbOffset = 0;
-                vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
-                currentVertexBuffer = vb;
-            }
-            
-            // Bind index buffer if different
-            if (mesh.indexBuffer.buffer != currentIndexBuffer) {
-                vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-                currentIndexBuffer = mesh.indexBuffer.buffer;
-            }
-            
-            // Push model matrix
-            Mat4 modelMatrix = scene->GetWorldTransform(entity);
-            vkCmdPushConstants(cmd, currentDrawLayout, VK_SHADER_STAGE_VERTEX_BIT, 
-                              0, sizeof(Mat4), modelMatrix.m);
-
-            // Get entity name for debug
-            const char* entityName = nullptr;
-            if (entity.HasComponent<TagComponent>()) {
-                entityName = entity.GetComponent<TagComponent>().tag.c_str();
-            }
-
-            // ── Per-submesh material draw ─────────────────
-            if (mesh.submeshes.empty()) {
-                // Single-submesh mesh: resolve material for slot 0
-                const MaterialComponent* mat = resolveMaterialForSlot(entity, renderer, 0);
-                drawWithMaterial(mat, 0, mesh.indexCount, entityName, 0, 0);
-            } else {
-                // Multi-submesh mesh: each submesh has its own materialSlot
-                for (size_t si = 0; si < mesh.submeshes.size(); ++si) {
-                    const auto& submesh = mesh.submeshes[si];
-                    if (submesh.indexCount == 0) continue;
-                    const MaterialComponent* mat = resolveMaterialForSlot(entity, renderer, submesh.materialSlot);
-                    drawWithMaterial(mat, submesh.indexOffset, submesh.indexCount, 
-                                    entityName, static_cast<int>(si), submesh.materialSlot);
+            const std::vector<size_t> handles = MeshHandlesForDraw(renderer);
+            bool drewAny = false;
+            for (size_t handle : handles) {
+                if (handle >= m_meshLibrary.size()) {
+                    continue;
                 }
+                MeshGPU& mesh = m_meshLibrary[handle];
+                if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
+                    mesh.indexBuffer.buffer == VK_NULL_HANDLE) {
+                    continue;
+                }
+
+                const bool wantWireframe = (config.shadingMode == ViewShadingMode::Wireframe);
+                VkDescriptorSet boneSet = resolveSkinnedBoneSet(entityHandle, character, mesh);
+                const bool skinned = mesh.skinned && boneSet != VK_NULL_HANDLE &&
+                                     m_skinned.pipeline != VK_NULL_HANDLE;
+                VkPipeline desiredPipeline = skinned
+                    ? getSkinnedPipeline(renderer.backfaceCulling, wantWireframe)
+                    : m_pipeline->GetPipeline(renderer.backfaceCulling, wantWireframe);
+                if (desiredPipeline == VK_NULL_HANDLE) {
+                    continue;
+                }
+                if (desiredPipeline != currentPipeline) {
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
+                    currentPipeline = desiredPipeline;
+                }
+                currentDrawLayout = skinned ? m_skinned.pipelineLayout : m_pipeline->layout;
+                currentBoneSet = skinned ? boneSet : VK_NULL_HANDLE;
+
+                if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
+                    VkBuffer vb = mesh.vertexBuffer.buffer;
+                    VkDeviceSize vbOffset = 0;
+                    vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
+                    currentVertexBuffer = vb;
+                }
+
+                if (mesh.indexBuffer.buffer != currentIndexBuffer) {
+                    vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+                    currentIndexBuffer = mesh.indexBuffer.buffer;
+                }
+
+                Mat4 modelMatrix = scene->GetWorldTransform(entity);
+                vkCmdPushConstants(cmd, currentDrawLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                                  0, sizeof(Mat4), modelMatrix.m);
+
+                const char* entityName = nullptr;
+                if (entity.HasComponent<TagComponent>()) {
+                    entityName = entity.GetComponent<TagComponent>().tag.c_str();
+                }
+
+                if (mesh.submeshes.empty()) {
+                    const MaterialComponent* mat = resolveMaterialForSlot(entity, renderer, 0);
+                    drawWithMaterial(mat, 0, mesh.indexCount, entityName, 0, 0);
+                } else {
+                    for (size_t si = 0; si < mesh.submeshes.size(); ++si) {
+                        const auto& submesh = mesh.submeshes[si];
+                        if (submesh.indexCount == 0) continue;
+                        const MaterialComponent* mat = resolveMaterialForSlot(entity, renderer, submesh.materialSlot);
+                        drawWithMaterial(mat, submesh.indexOffset, submesh.indexCount,
+                                        entityName, static_cast<int>(si), submesh.materialSlot);
+                    }
+                }
+                drewAny = true;
+            }
+            if (!drewAny) {
+                skippedCount++;
             }
         }
         
@@ -3662,46 +3678,50 @@ void EngineFrameRenderer::recordOutlines(VkCommandBuffer cmd, uint32_t imageInde
     };
 
     auto drawOutline = [&](entt::entity ent, const MeshRendererComponent& meshComp, bool depthMaskFirst) {
-        if (!meshComp.HasValidMesh() || meshComp.meshHandle >= m_meshLibrary.size()) return;
-        const MeshGPU& mesh = m_meshLibrary[meshComp.meshHandle];
-        if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
-            mesh.indexBuffer.buffer == VK_NULL_HANDLE) return;
-
+        if (!meshComp.HasValidMesh()) return;
         Entity entity(ent, scene);
         Mat4 modelMatrix = scene->GetWorldTransform(entity);
         const CharacterComponent* character = entity.HasComponent<CharacterComponent>()
             ? &entity.GetComponent<CharacterComponent>()
             : nullptr;
-        VkDescriptorSet boneSet = resolveSkinnedBoneSet(ent, character, mesh);
-        const bool skinned = mesh.skinned && boneSet != VK_NULL_HANDLE &&
-                             m_skinned.outlinePipeline != VK_NULL_HANDLE;
-        if (skinned) {
-            auto bindSkinned = [&](VkPipeline pipe, float expand) {
-                if (pipe == VK_NULL_HANDLE) return;
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
-                uint32_t dynamicOffset = 0;
-                VkDescriptorSet sets[] = {m_descriptorSets[imageIndex], boneSet};
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skinned.outlineLayout,
-                                        0, 2, sets, 1, &dynamicOffset);
-                OutlineRenderer::OutlinePushConstants pc{};
-                pc.model = modelMatrix;
-                pc.expand = expand;
-                vkCmdPushConstants(cmd, m_skinned.outlineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                                   sizeof(pc), &pc);
-                VkDeviceSize offsets[] = {0};
-                vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, offsets);
-                vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
-            };
-            if (depthMaskFirst) {
-                bindSkinned(m_skinned.outlineMaskPipeline, 0.0f);
+        const std::vector<size_t> handles = MeshHandlesForDraw(meshComp);
+        for (size_t handle : handles) {
+            if (handle >= m_meshLibrary.size()) continue;
+            const MeshGPU& mesh = m_meshLibrary[handle];
+            if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
+                mesh.indexBuffer.buffer == VK_NULL_HANDLE) continue;
+
+            VkDescriptorSet boneSet = resolveSkinnedBoneSet(ent, character, mesh);
+            const bool skinned = mesh.skinned && boneSet != VK_NULL_HANDLE &&
+                                 m_skinned.outlinePipeline != VK_NULL_HANDLE;
+            if (skinned) {
+                auto bindSkinned = [&](VkPipeline pipe, float expand) {
+                    if (pipe == VK_NULL_HANDLE) return;
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+                    uint32_t dynamicOffset = 0;
+                    VkDescriptorSet sets[] = {m_descriptorSets[imageIndex], boneSet};
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skinned.outlineLayout,
+                                            0, 2, sets, 1, &dynamicOffset);
+                    OutlineRenderer::OutlinePushConstants pc{};
+                    pc.model = modelMatrix;
+                    pc.expand = expand;
+                    vkCmdPushConstants(cmd, m_skinned.outlineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                       sizeof(pc), &pc);
+                    VkDeviceSize offsets[] = {0};
+                    vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, offsets);
+                    vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+                    vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+                };
+                if (depthMaskFirst) {
+                    bindSkinned(m_skinned.outlineMaskPipeline, 0.0f);
+                }
+                bindSkinned(m_skinned.outlinePipeline, 1.0f);
+                continue;
             }
-            bindSkinned(m_skinned.outlinePipeline, 1.0f);
-            return;
+            m_outlineRenderer.Draw(cmd, m_descriptorSets[imageIndex],
+                                   mesh.vertexBuffer.buffer, mesh.indexBuffer.buffer,
+                                   mesh.indexCount, modelMatrix, depthMaskFirst);
         }
-        m_outlineRenderer.Draw(cmd, m_descriptorSets[imageIndex],
-                               mesh.vertexBuffer.buffer, mesh.indexBuffer.buffer,
-                               mesh.indexCount, modelMatrix, depthMaskFirst);
     };
 
     auto meshView = registry.view<TransformComponent, MeshRendererComponent>();
@@ -5035,8 +5055,9 @@ void EngineFrameRenderer::recordDebugOverlay(VkCommandBuffer cmd, uint32_t image
     m_debugOverlay.vertexCount = needed;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_debugOverlay.pipeline);
+    uint32_t dynamicOffset = 0;
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_debugOverlay.pipelineLayout, 0, 1,
-                            &m_descriptorSets[imageIndex], 0, nullptr);
+                            &m_descriptorSets[imageIndex], 1, &dynamicOffset);
     VulkanGizmo::GizmoPushConstants pc{};
     pc.model = Mat4::Identity();
     pc.state = Vec4(-1, -1, 1, 0);
@@ -5811,62 +5832,63 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
         
         if (!MeshIncludedInIdPick(renderer, config,
                                   static_cast<uint32_t>(entityHandle))) continue;
-        if (!renderer.HasValidMesh() || renderer.meshHandle >= m_meshLibrary.size()) continue;
-        
-        MeshGPU& mesh = m_meshLibrary[renderer.meshHandle];
-        if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
-            mesh.indexBuffer.buffer == VK_NULL_HANDLE) continue;
+        if (!renderer.HasValidMesh()) continue;
 
         const CharacterComponent* character = entity.HasComponent<CharacterComponent>()
             ? &entity.GetComponent<CharacterComponent>()
             : nullptr;
-        VkDescriptorSet boneSet = resolveSkinnedBoneSet(entityHandle, character, mesh);
-        const bool skinned = mesh.skinned && boneSet != VK_NULL_HANDLE &&
-                             m_skinned.idPipeline != VK_NULL_HANDLE;
-        VkPipeline desiredPipeline = skinned
-            ? (renderer.backfaceCulling ? m_skinned.idPipelineBackface : m_skinned.idPipeline)
-            : (renderer.backfaceCulling ? m_idPicker.pipelineBackface : m_idPicker.pipeline);
-        if (desiredPipeline == VK_NULL_HANDLE) continue;
-        if (desiredPipeline != currentPipeline) {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
-            currentPipeline = desiredPipeline;
+        const std::vector<size_t> handles = MeshHandlesForDraw(renderer);
+        for (size_t handle : handles) {
+            if (handle >= m_meshLibrary.size()) continue;
+            MeshGPU& mesh = m_meshLibrary[handle];
+            if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
+                mesh.indexBuffer.buffer == VK_NULL_HANDLE) continue;
+
+            VkDescriptorSet boneSet = resolveSkinnedBoneSet(entityHandle, character, mesh);
+            const bool skinned = mesh.skinned && boneSet != VK_NULL_HANDLE &&
+                                 m_skinned.idPipeline != VK_NULL_HANDLE;
+            VkPipeline desiredPipeline = skinned
+                ? (renderer.backfaceCulling ? m_skinned.idPipelineBackface : m_skinned.idPipeline)
+                : (renderer.backfaceCulling ? m_idPicker.pipelineBackface : m_idPicker.pipeline);
+            if (desiredPipeline == VK_NULL_HANDLE) continue;
+            if (desiredPipeline != currentPipeline) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
+                currentPipeline = desiredPipeline;
+            }
+            const VkPipelineLayout idLayout = skinned ? m_skinned.idLayout : m_idPicker.pipelineLayout;
+            if (skinned) {
+                uint32_t dynOff = 0;
+                VkDescriptorSet sets[] = {m_descriptorSets[imageIndex], boneSet};
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, idLayout,
+                                        0, 2, sets, 1, &dynOff);
+            } else {
+                uint32_t dynOff = 0;
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, idLayout,
+                                        0, 1, &m_descriptorSets[imageIndex], 1, &dynOff);
+            }
+
+            if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
+                VkBuffer vb = mesh.vertexBuffer.buffer;
+                VkDeviceSize vbOffset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
+                currentVertexBuffer = vb;
+            }
+
+            if (mesh.indexBuffer.buffer != currentIndexBuffer) {
+                vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+                currentIndexBuffer = mesh.indexBuffer.buffer;
+            }
+
+            IdPicker::IdPushConstants pc;
+            pc.model = scene->GetWorldTransform(entity);
+            pc.entityId = static_cast<uint32_t>(entityHandle);
+
+            vkCmdPushConstants(cmd, idLayout,
+                              VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                              0, sizeof(IdPicker::IdPushConstants), &pc);
+
+            vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
         }
-        const VkPipelineLayout idLayout = skinned ? m_skinned.idLayout : m_idPicker.pipelineLayout;
-        if (skinned) {
-            uint32_t dynOff = 0;
-            VkDescriptorSet sets[] = {m_descriptorSets[imageIndex], boneSet};
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, idLayout,
-                                    0, 2, sets, 1, &dynOff);
-        } else {
-            uint32_t dynOff = 0;
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, idLayout,
-                                    0, 1, &m_descriptorSets[imageIndex], 1, &dynOff);
-        }
-        
-        // Bind vertex buffer if different
-        if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
-            VkBuffer vb = mesh.vertexBuffer.buffer;
-            VkDeviceSize vbOffset = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
-            currentVertexBuffer = vb;
-        }
-        
-        // Bind index buffer if different
-        if (mesh.indexBuffer.buffer != currentIndexBuffer) {
-            vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-            currentIndexBuffer = mesh.indexBuffer.buffer;
-        }
-        
-        // Push model matrix and entity ID
-        IdPicker::IdPushConstants pc;
-        pc.model = scene->GetWorldTransform(entity);
-        pc.entityId = static_cast<uint32_t>(entityHandle);
-        
-        vkCmdPushConstants(cmd, idLayout, 
-                          VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                          0, sizeof(IdPicker::IdPushConstants), &pc);
-        
-        vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
     }
 
     // ── Billboard ID pass: render editor icon billboards into the ID buffer ──

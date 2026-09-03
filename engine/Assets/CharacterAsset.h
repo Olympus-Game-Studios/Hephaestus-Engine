@@ -35,7 +35,15 @@ struct CharacterSkeletonRef {
 struct CharacterSubmeshSlot {
     std::string name;
     std::string material;
+    std::string meshPart; ///< Empty on legacy single-mesh assets.
 };
+
+inline std::string CharacterSubmeshIdentity(const CharacterSubmeshSlot& slot) {
+    if (slot.meshPart.empty()) {
+        return slot.name;
+    }
+    return slot.meshPart + "/" + slot.name;
+}
 
 struct CharacterMeshRef {
     std::string source;
