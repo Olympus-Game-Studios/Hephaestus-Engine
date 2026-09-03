@@ -973,7 +973,7 @@ void CharacterEditorWindow::refreshInspector() {
             QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(abs.generic_string())));
         });
         layout->addWidget(script);
-        addLabel(tr("Exposed properties are authored on scene instances. Stage F does not run the controller in preview."));
+        addLabel(tr("Exposed properties are authored on scene instances. Preview does not run the controller; Play Mode does."));
     } else if (m_selection.kind == CharacterEditorItemKind::Animations) {
         auto* importBtn = new QPushButton(tr("Import Animation"), m_inspectorHost);
         connect(importBtn, &QPushButton::clicked, this, [this]() { importAnimation(); });

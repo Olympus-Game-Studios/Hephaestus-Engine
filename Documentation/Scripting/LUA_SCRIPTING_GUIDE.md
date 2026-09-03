@@ -117,6 +117,10 @@ end
 function onDisable()
 end
 
+-- Non-looping clip finished after pose eval (controller then gameplay)
+function onAnimationFinished(clipId)
+end
+
 -- Physics collisions (when implemented)
 function onTriggerEnter(other)
 end
@@ -128,7 +132,7 @@ function onTriggerExit(other)
 end
 ```
 
-`onAwake` runs once when the script is first loaded for play; `onEnable` is invoked immediately afterwards and whenever a disabled script is re-enabled. `onDisable` and `onDestroy` fire when play mode stops, the script is detached, or the entity is removed.
+`onAwake` runs once when the script is first loaded for play; `onEnable` is invoked immediately afterwards and whenever a disabled script is re-enabled. `onDisable` and `onDestroy` fire when play mode stops, the script is detached, or the entity is removed. `onAnimationFinished(clipId)` runs after character pose eval for non-looping clips (controller slot first, then gameplay).
 
 ## C++ Bindings
 
@@ -188,7 +192,10 @@ end
 - `this:SetName(name)`
 - `this:IsValid()` → `boolean`
 - `this:GetCamera()` → camera object or nil
-- `this:Call(functionName, ...)` → `boolean` — calls a named function in **this entity's** script environment (e.g. `hit.entity:Call("onDamage", 25)`). Extra args are forwarded (numbers recommended).
+- `this:GetAnimator()` → animator object or nil (requires `CharacterComponent`)
+- `this:GetCharacter()` → character object or nil (requires `CharacterComponent`)
+- `this:Call(functionName, ...)` → `boolean` — calls a named function in **this entity's gameplay** script environment (e.g. `hit.entity:Call("onDamage", 25)`). Extra args are forwarded (numbers recommended). Does **not** call the character controller.
+- `this:CallController(functionName, ...)` → `boolean` — calls a named function on this entity's **character controller** slot only.
 
 Entity userdata returned from `Scene.instantiate`, `Scene.findAllWithPrefix`, `Physics.raycast`, or camera queries uses the same methods; they operate on the **receiver**, not the currently running script.
 
@@ -202,6 +209,23 @@ Entity userdata returned from `Scene.instantiate`, `Scene.findAllWithPrefix`, `P
 - `transform:Rotate(rx, ry, rz)` (relative rotation)
 - `transform:GetScale()` → `{ x, y, z }`
 - `transform:SetScale(scale)` or `transform:SetScale(sx, sy, sz)`
+
+**Animator object methods** (clip ids, not display names):
+
+- `animator:Play(clipId)` / `animator:CrossFade(clipId, duration)`
+- `animator:Pause()` / `animator:Resume()` / `animator:Stop()`
+- `animator:SetSpeed(speed)` — runtime multiplier `> 0`; use `Pause()` to freeze
+- `animator:IsPlaying()` / `animator:IsPlaying(clipId)`
+- `animator:GetCurrentAnimation()` / `animator:GetTime()` / `animator:GetDuration()` / `animator:GetDuration(clipId)`
+
+During CrossFade, queries use the destination clip. Repeated Play of the current unpaused clip is a no-op; Play of a finished clip restarts. Locomotion may CrossFade every frame; Shoot/Hurt/Death must Play once on state entry.
+
+**Character object methods:**
+
+- `character:GetSocket(name)` — animated world space
+- `character:GetSocketLocal(name)` — animated model space (not the authored bone-local offset)
+
+Both return `{ position, rotation }` or `nil`. Socket queries in `onLateUpdate` see this frame's pose. Full slot/tick/Cultist details: [CharacterControllers.md](../Guides/CharacterControllers.md).
 
 ### Functional-Style API (Global Tables)
 

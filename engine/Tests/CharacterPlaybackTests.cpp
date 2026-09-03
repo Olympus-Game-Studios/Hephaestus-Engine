@@ -6,6 +6,7 @@
 #include "Animation/AnimationClip.h"
 #include "Animation/CharacterPlayback.h"
 #include "Animation/Skeleton.h"
+#include "Assets/CharacterAsset.h"
 #include "Assets/SkeletalModelImporter.h"
 #include "Scene/CharacterComponent.h"
 #include "Scene/Components.h"
@@ -30,6 +31,7 @@ using Hephaestus::AnimationInterpolation;
 using Hephaestus::AnimationPath;
 using Hephaestus::BoneLocalPose;
 using Hephaestus::CharacterAnimationSystem;
+using Hephaestus::CharacterSocket;
 using Hephaestus::SkeletalImportResult;
 using Hephaestus::SkeletalModelImporter;
 using Hephaestus::Skeleton;
@@ -124,6 +126,18 @@ AnimationClip MakeRun(const Skeleton& skeleton) {
     channel.times = {0.0f, 1.0f};
     channel.vectors = {Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, 2.0f, 0.0f)};
     clip.channels.push_back(channel);
+    return clip;
+}
+
+AnimationClip MakeDeath(const Skeleton& skeleton) {
+    AnimationClip clip;
+    clip.name = "Death";
+    clip.id = "Death";
+    clip.sourceClip = "Death";
+    clip.skeletonSignature = skeleton.signature;
+    clip.duration = 0.5f;
+    clip.endTime = 0.5f;
+    clip.loop = false;
     return clip;
 }
 
@@ -395,6 +409,136 @@ bool TestSceneSerializeCharacter() {
     return ok;
 }
 
+bool TestRepeatedPlayDoesNotRestart() {
+    bool ok = true;
+    Skeleton skeleton;
+    std::string error;
+    ok &= Check(MakeTwoBoneSkeleton(skeleton, error), "skeleton");
+    CharacterComponent character;
+    ok &= Check(CharacterAnimationSystem::BindRuntime(character, skeleton, {MakeIdle(skeleton)}, error),
+                "bind");
+    ok &= Check(AlmostEqual(character.player.speed, 1.0f), "runtime speed defaults to 1");
+    ok &= Check(CharacterAnimationSystem::Play(character, "Idle", error), "play Idle");
+    CharacterAnimationSystem::TickEntity(character, 0.0f);
+    CharacterAnimationSystem::TickEntity(character, 0.25f);
+    const float timeAfterAdvance = character.player.time;
+    ok &= Check(timeAfterAdvance > 0.1f, "time advanced");
+    ok &= Check(CharacterAnimationSystem::Play(character, "Idle", error), "repeated Play Idle");
+    ok &= Check(!character.player.hasPendingPlay, "repeated Play is a no-op");
+    CharacterAnimationSystem::TickEntity(character, 0.0f);
+    ok &= Check(AlmostEqual(character.player.time, timeAfterAdvance), "repeated Play did not restart");
+    return ok;
+}
+
+bool TestRepeatedCrossFadeDoesNotRestart() {
+    bool ok = true;
+    Skeleton skeleton;
+    std::string error;
+    ok &= Check(MakeTwoBoneSkeleton(skeleton, error), "skeleton");
+    CharacterComponent character;
+    ok &= Check(CharacterAnimationSystem::BindRuntime(
+                    character, skeleton, {MakeIdle(skeleton), MakeRun(skeleton)}, error),
+                "bind");
+    ok &= Check(CharacterAnimationSystem::Play(character, "Run", error), "play Run");
+    CharacterAnimationSystem::TickEntity(character, 0.0f);
+    ok &= Check(CharacterAnimationSystem::CrossFade(character, "Idle", 0.4f, error), "crossfade Idle");
+    CharacterAnimationSystem::TickEntity(character, 0.0f);
+    ok &= Check(character.player.currentClip == "Idle", "fade destination is current clip");
+    ok &= Check(character.player.fading, "fading after CrossFade");
+    ok &= Check(CharacterAnimationSystem::CrossFade(character, "Idle", 0.4f, error),
+                "repeated CrossFade Idle");
+    ok &= Check(!character.player.hasPendingFade, "repeated CrossFade is a no-op");
+    CharacterAnimationSystem::TickEntity(character, 0.1f);
+    ok &= Check(character.player.fading, "still fading");
+    ok &= Check(character.player.fadeElapsed > 0.05f, "fade progress was not reset");
+    return ok;
+}
+
+bool TestSetSpeedLockdown() {
+    bool ok = true;
+    Skeleton skeleton;
+    std::string error;
+    ok &= Check(MakeTwoBoneSkeleton(skeleton, error), "skeleton");
+    CharacterComponent character;
+    character.playbackSpeed = 2.0f;
+    AnimationClip idle = MakeIdle(skeleton);
+    idle.speed = 1.0f;
+    ok &= Check(CharacterAnimationSystem::BindRuntime(character, skeleton, {idle}, error), "bind");
+    ok &= Check(AlmostEqual(character.player.speed, 1.0f), "bind does not copy playbackSpeed into player.speed");
+    ok &= Check(CharacterAnimationSystem::Play(character, "Idle", error), "play");
+    CharacterAnimationSystem::TickEntity(character, 0.0f);
+    CharacterAnimationSystem::TickEntity(character, 0.1f);
+    ok &= Check(AlmostEqual(character.player.time, 0.2f, 0.02f), "rate = dt * 1 * playbackSpeed * clip.speed");
+    ok &= Check(CharacterAnimationSystem::SetSpeed(character, 1.5f), "SetSpeed 1.5");
+    ok &= Check(AlmostEqual(character.player.speed, 1.5f), "runtime speed is 1.5");
+    CharacterAnimationSystem::Stop(character);
+    ok &= Check(AlmostEqual(character.player.speed, 1.5f), "Stop preserves runtime speed");
+    ok &= Check(CharacterAnimationSystem::Play(character, "Idle", error), "play after stop");
+    ok &= Check(AlmostEqual(character.player.speed, 1.5f), "Play preserves runtime speed");
+    ok &= Check(!CharacterAnimationSystem::SetSpeed(character, 0.0f), "SetSpeed 0 is rejected");
+    ok &= Check(!CharacterAnimationSystem::SetSpeed(character, -1.0f), "SetSpeed negative is rejected");
+    ok &= Check(AlmostEqual(character.player.speed, 1.5f), "rejected SetSpeed leaves previous value");
+    ok &= Check(CharacterAnimationSystem::BindRuntime(character, skeleton, {idle}, error), "rebind");
+    ok &= Check(AlmostEqual(character.player.speed, 1.0f), "BindRuntime resets runtime speed");
+    return ok;
+}
+
+bool TestCompletionFlags() {
+    bool ok = true;
+    Skeleton skeleton;
+    std::string error;
+    ok &= Check(MakeTwoBoneSkeleton(skeleton, error), "skeleton");
+    CharacterComponent character;
+    ok &= Check(CharacterAnimationSystem::BindRuntime(
+                    character, skeleton, {MakeIdle(skeleton), MakeDeath(skeleton)}, error),
+                "bind");
+    ok &= Check(CharacterAnimationSystem::Play(character, "Death", error), "play Death");
+    CharacterAnimationSystem::TickEntity(character, 0.0f);
+    CharacterAnimationSystem::TickEntity(character, 0.5f);
+    ok &= Check(character.player.finishedThisFrame, "non-looping clip finished this frame");
+    ok &= Check(character.player.finishedClip == "Death", "finished clip id");
+    ok &= Check(!character.player.playing, "not playing after finish");
+    CharacterAnimationSystem::TickEntity(character, 0.016f);
+    ok &= Check(!character.player.finishedThisFrame, "finished flag does not repeat");
+    ok &= Check(character.player.currentClip == "Death", "finished clip remains current");
+
+    ok &= Check(CharacterAnimationSystem::Play(character, "Idle", error), "play looping Idle");
+    CharacterAnimationSystem::TickEntity(character, 0.0f);
+    CharacterAnimationSystem::TickEntity(character, 1.5f);
+    ok &= Check(!character.player.finishedThisFrame, "looping clip does not finish");
+    ok &= Check(character.player.playing, "looping clip still playing");
+
+    ok &= Check(CharacterAnimationSystem::Play(character, "Death", error), "replay Death");
+    CharacterAnimationSystem::TickEntity(character, 0.0f);
+    ok &= Check(character.player.playing, "Play of finished clip restarts");
+    character.playbackSpeed = 50.0f;
+    CharacterAnimationSystem::TickEntity(character, 0.1f);
+    ok &= Check(character.player.finishedThisFrame, "high speed still finishes once");
+    return ok;
+}
+
+bool TestEvaluateSocketModelSpace() {
+    bool ok = true;
+    Skeleton skeleton;
+    std::string error;
+    ok &= Check(MakeTwoBoneSkeleton(skeleton, error), "skeleton");
+    CharacterComponent character;
+    ok &= Check(CharacterAnimationSystem::BindRuntime(
+                    character, skeleton, {MakeIdle(skeleton)}, error),
+                "bind");
+    CharacterSocket socket;
+    socket.name = "Weapon_R";
+    socket.bone = "Child";
+    socket.position[1] = 1.0f;
+    Mat4 model{};
+    ok &= Check(Hephaestus::EvaluateSocketWorld(character, socket, model, error),
+                "evaluate socket: " + error);
+    ok &= Check(AlmostEqual(model.m[12], 0.0f) && AlmostEqual(model.m[13], 2.0f) &&
+                    AlmostEqual(model.m[14], 0.0f),
+                "socket model space is bone world times local offset, not the authored (0,1,0)");
+    return ok;
+}
+
 } // namespace
 
 int main() {
@@ -406,6 +550,11 @@ int main() {
     ok &= TestIncompatibleClipRefused();
     ok &= TestCrossFadeMidpoint();
     ok &= TestSceneSerializeCharacter();
+    ok &= TestRepeatedPlayDoesNotRestart();
+    ok &= TestRepeatedCrossFadeDoesNotRestart();
+    ok &= TestSetSpeedLockdown();
+    ok &= TestCompletionFlags();
+    ok &= TestEvaluateSocketModelSpace();
     if (ok) {
         std::cout << "Character playback tests passed.\n";
         return 0;

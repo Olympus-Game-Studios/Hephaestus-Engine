@@ -24,6 +24,9 @@
 #include "../Scene/PrefabInstantiator.h"
 #include "../Scene/PrefabOverrideSystem.h"
 #include "../Scene/PrefabComponentIO.h"
+#include "../Assets/CharacterRuntime.h"
+#include "../Animation/CharacterPlayback.h"
+#include "../Scene/CharacterComponent.h"
 #include "../Core/Math.h"
 #include "../Input/InputSystem.h"
 #include <iostream>
@@ -328,21 +331,71 @@ bool LuaScriptEngine::CallFunction(const std::string& functionName) {
 #endif
 }
 
+LuaScriptInstanceKey LuaScriptEngine::MakeInstanceKey(uint32_t entityId, LuaScriptSlot slot) {
+    LuaScriptInstanceKey key;
+    key.entityId = entityId;
+    key.slot = slot;
+    return key;
+}
+
+LuaScriptEngine::ScriptInstance* LuaScriptEngine::FindInstance(uint32_t entityId, LuaScriptSlot slot) {
+    auto it = m_ScriptInstances.find(MakeInstanceKey(entityId, slot));
+    if (it == m_ScriptInstances.end()) {
+        return nullptr;
+    }
+    return &it->second;
+}
+
 bool LuaScriptEngine::CallEntityFunction(const std::string& functionName, Entity entity) {
 #if LUA_AVAILABLE
     if (!entity) {
         return false;
     }
     uint32_t entityId = static_cast<uint32_t>(entity);
-    auto it = m_ScriptInstances.find(entityId);
-    if (it == m_ScriptInstances.end()) {
+    ScriptInstance* instance = FindInstance(entityId, LuaScriptSlot::Gameplay);
+    if (!instance) {
         return false;
     }
-    return CallInstanceFunctionByName(it->second, functionName, entity, 0.0f, false);
+    return CallInstanceFunctionByName(*instance, functionName, entity, 0.0f, false);
 #else
     (void)functionName;
     (void)entity;
     return false;
+#endif
+}
+
+void LuaScriptEngine::AwakeInstanceIfNeeded(Scene& scene, entt::entity entityHandle, ScriptInstance& instance) {
+#if LUA_AVAILABLE
+    if (instance.awakeCalled) {
+        return;
+    }
+    Entity entity(entityHandle, &scene);
+    if (instance.onAwakeRef != kInvalidRef) {
+        CallInstanceFunction(instance, instance.onAwakeRef, entity, 0.0f, false);
+    }
+    instance.awakeCalled = true;
+    CallInstanceFunction(instance, instance.onEnableRef, entity, 0.0f, false);
+#else
+    (void)scene;
+    (void)entityHandle;
+    (void)instance;
+#endif
+}
+
+void LuaScriptEngine::UpdateInstance(Scene& scene, entt::entity entityHandle, ScriptInstance& instance, float deltaTime) {
+#if LUA_AVAILABLE
+    Entity entity(entityHandle, &scene);
+    m_ActiveUpdateOrder.push_back(MakeInstanceKey(instance.entityId, instance.slot));
+    if (!CallInstanceFunction(instance, instance.onUpdateRef, entity, deltaTime, true)) {
+        if (!instance.functionErrorLogged && instance.onUpdateRef != kInvalidRef) {
+            instance.functionErrorLogged = true;
+        }
+    }
+#else
+    (void)scene;
+    (void)entityHandle;
+    (void)instance;
+    (void)deltaTime;
 #endif
 }
 
@@ -353,17 +406,15 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
         return;
     }
 
-    std::cout << "[Lua] Update called with " << scene.GetRegistry().view<LuaScriptComponent>().size() << " entities with LuaScriptComponent" << std::endl;
-
     m_Scene = &scene;
     m_ActiveUpdateOrder.clear();
     m_UpdatingScripts = true;
 
     auto& registry = scene.GetRegistry();
-    std::unordered_set<uint32_t> activeIds;
+    std::unordered_set<LuaScriptInstanceKey, LuaScriptInstanceKeyHash> activeKeys;
+    std::vector<entt::entity> gameplayReady;
+    std::vector<entt::entity> controllerReady;
 
-    // Snapshot entity handles before iterating so Scene.instantiate/destroy during
-    // onUpdate cannot invalidate the live EnTT view.
     std::vector<entt::entity> scriptEntities;
     {
         auto view = registry.view<LuaScriptComponent>();
@@ -378,49 +429,120 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
             continue;
         }
         auto& component = registry.get<LuaScriptComponent>(entityHandle);
-        uint32_t entityId = static_cast<uint32_t>(entityHandle);
+        const LuaScriptInstanceKey key = MakeInstanceKey(static_cast<uint32_t>(entityHandle),
+                                                         LuaScriptSlot::Gameplay);
 
         if (!component.enabled || (component.scriptPath.empty() && component.scriptSource.empty())) {
-            DestroyInstance(entityId, true);
+            DestroyInstance(key, true);
             continue;
         }
 
-        ScriptInstance* instance = EnsureInstance(scene, entityHandle, component);
+        ScriptInstance* instance = EnsureInstance(scene, entityHandle, component, LuaScriptSlot::Gameplay);
         if (!instance || !instance->valid) {
             continue;
         }
+        gameplayReady.push_back(entityHandle);
+        activeKeys.insert(key);
+    }
 
-        Entity entity(entityHandle, &scene);
-        if (!instance->awakeCalled) {
-            if (CallInstanceFunction(*instance, instance->onAwakeRef, entity, 0.0f, false)) {
-                instance->awakeCalled = true;
-                std::cout << "[Lua] onAwake called successfully for entity " << entityId << std::endl;
-            } else {
-                std::cerr << "[Lua] onAwake failed or not found for entity " << entityId << std::endl;
-            }
-            CallInstanceFunction(*instance, instance->onEnableRef, entity, 0.0f, false);
-        }
-
-        activeIds.insert(entityId);
-        m_ActiveUpdateOrder.push_back(entityId);
-        if (!CallInstanceFunction(*instance, instance->onUpdateRef, entity, deltaTime, true)) {
-            std::cerr << "[Lua] onUpdate failed or not found for entity " << entityId << std::endl;
+    std::vector<entt::entity> characterEntities;
+    {
+        auto view = registry.view<CharacterComponent>();
+        characterEntities.reserve(view.size());
+        for (auto entityHandle : view) {
+            characterEntities.push_back(entityHandle);
         }
     }
 
-    std::vector<uint32_t> toRemove;
+    for (auto entityHandle : characterEntities) {
+        if (!registry.valid(entityHandle) || !registry.all_of<CharacterComponent>(entityHandle)) {
+            continue;
+        }
+        auto& character = registry.get<CharacterComponent>(entityHandle);
+        const LuaScriptInstanceKey key = MakeInstanceKey(static_cast<uint32_t>(entityHandle),
+                                                         LuaScriptSlot::CharacterController);
+
+        if (!character.runController || character.controllerScriptPath.empty()) {
+            DestroyInstance(key, true);
+            continue;
+        }
+
+        LuaScriptComponent view;
+        view.scriptPath = character.controllerScriptPath;
+        view.variables = character.controllerVariables;
+        view.enabled = character.runController;
+
+        ScriptInstance* instance = EnsureInstance(scene, entityHandle, view, LuaScriptSlot::CharacterController);
+        if (!instance || !instance->valid) {
+            continue;
+        }
+        controllerReady.push_back(entityHandle);
+        activeKeys.insert(key);
+    }
+
+    for (auto entityHandle : gameplayReady) {
+        if (!registry.valid(entityHandle)) {
+            continue;
+        }
+        ScriptInstance* instance = FindInstance(static_cast<uint32_t>(entityHandle), LuaScriptSlot::Gameplay);
+        if (instance) {
+            AwakeInstanceIfNeeded(scene, entityHandle, *instance);
+        }
+    }
+    for (auto entityHandle : controllerReady) {
+        if (!registry.valid(entityHandle)) {
+            continue;
+        }
+        ScriptInstance* instance = FindInstance(static_cast<uint32_t>(entityHandle), LuaScriptSlot::CharacterController);
+        if (instance) {
+            AwakeInstanceIfNeeded(scene, entityHandle, *instance);
+        }
+    }
+    for (auto entityHandle : gameplayReady) {
+        if (!registry.valid(entityHandle)) {
+            continue;
+        }
+        ScriptInstance* instance = FindInstance(static_cast<uint32_t>(entityHandle), LuaScriptSlot::Gameplay);
+        if (instance) {
+            UpdateInstance(scene, entityHandle, *instance, deltaTime);
+        }
+    }
+    for (auto entityHandle : controllerReady) {
+        if (!registry.valid(entityHandle)) {
+            continue;
+        }
+        ScriptInstance* instance = FindInstance(static_cast<uint32_t>(entityHandle), LuaScriptSlot::CharacterController);
+        if (instance) {
+            UpdateInstance(scene, entityHandle, *instance, deltaTime);
+        }
+    }
+
+    std::vector<LuaScriptInstanceKey> toRemove;
     toRemove.reserve(m_ScriptInstances.size());
-    for (const auto& [entityId, instance] : m_ScriptInstances) {
-        entt::entity handle = static_cast<entt::entity>(entityId);
-        bool stillValid = registry.valid(handle) && registry.all_of<LuaScriptComponent>(handle);
-        bool stillActive = activeIds.find(entityId) != activeIds.end();
-        if (!stillValid || !stillActive) {
-            toRemove.push_back(entityId);
+    for (const auto& [key, instance] : m_ScriptInstances) {
+        entt::entity handle = static_cast<entt::entity>(key.entityId);
+        if (!registry.valid(handle)) {
+            toRemove.push_back(key);
+            continue;
+        }
+        if (activeKeys.find(key) != activeKeys.end()) {
+            continue;
+        }
+        if (key.slot == LuaScriptSlot::Gameplay) {
+            const bool stillGameplay = registry.all_of<LuaScriptComponent>(handle);
+            if (!stillGameplay) {
+                toRemove.push_back(key);
+            }
+        } else {
+            const bool stillCharacter = registry.all_of<CharacterComponent>(handle);
+            if (!stillCharacter) {
+                toRemove.push_back(key);
+            }
         }
     }
 
-    for (uint32_t entityId : toRemove) {
-        DestroyInstance(entityId, true);
+    for (const LuaScriptInstanceKey& key : toRemove) {
+        DestroyInstance(key, true);
     }
 
     m_UpdatingScripts = false;
@@ -438,8 +560,8 @@ void LuaScriptEngine::LateUpdate(Scene& scene, float deltaTime) {
     }
 
     m_Scene = &scene;
-    for (uint32_t entityId : m_ActiveUpdateOrder) {
-        auto it = m_ScriptInstances.find(entityId);
+    for (const LuaScriptInstanceKey& key : m_ActiveUpdateOrder) {
+        auto it = m_ScriptInstances.find(key);
         if (it == m_ScriptInstances.end()) {
             continue;
         }
@@ -447,13 +569,64 @@ void LuaScriptEngine::LateUpdate(Scene& scene, float deltaTime) {
         if (!instance.valid) {
             continue;
         }
-        Entity entity(static_cast<entt::entity>(entityId), &scene);
+        Entity entity(static_cast<entt::entity>(key.entityId), &scene);
         CallInstanceFunction(instance, instance.onLateUpdateRef, entity, deltaTime, true);
     }
     m_ActiveUpdateOrder.clear();
 #else
     (void)scene;
     (void)deltaTime;
+#endif
+}
+
+void LuaScriptEngine::DispatchAnimationFinished(Scene& scene) {
+#if LUA_AVAILABLE
+    if (!m_State) {
+        return;
+    }
+    m_Scene = &scene;
+    auto& registry = scene.GetRegistry();
+    auto view = registry.view<CharacterComponent>();
+    for (auto entityHandle : view) {
+        CharacterComponent& character = view.get<CharacterComponent>(entityHandle);
+        if (!character.player.finishedThisFrame || character.player.finishedClip.empty()) {
+            continue;
+        }
+        const uint32_t entityId = static_cast<uint32_t>(entityHandle);
+        Entity entity(entityHandle, &scene);
+        const LuaScriptSlot slots[] = {LuaScriptSlot::CharacterController, LuaScriptSlot::Gameplay};
+        for (LuaScriptSlot slot : slots) {
+            ScriptInstance* instance = FindInstance(entityId, slot);
+            if (!instance || !instance->valid) {
+                continue;
+            }
+            if (instance->onAnimationFinishedRef == kInvalidRef) {
+                continue;
+            }
+            lua_rawgeti(m_State, LUA_REGISTRYINDEX, instance->onAnimationFinishedRef);
+            if (!lua_isfunction(m_State, -1)) {
+                lua_pop(m_State, 1);
+                continue;
+            }
+            uint32_t previousEntity = m_CurrentEntityId;
+            float previousDelta = m_CurrentDeltaTime;
+            m_CurrentEntityId = entityId;
+            SetupThisForEntity(entityId);
+            lua_pushstring(m_State, character.player.finishedClip.c_str());
+            if (lua_pcall(m_State, 1, 0, 0) != LUA_OK) {
+                LogLuaError("onAnimationFinished");
+            }
+            m_CurrentEntityId = previousEntity;
+            m_CurrentDeltaTime = previousDelta;
+            if (previousEntity != kInvalidEntityId) {
+                SetupThisForEntity(previousEntity);
+            }
+            (void)entity;
+        }
+        character.player.finishedThisFrame = false;
+    }
+#else
+    (void)scene;
 #endif
 }
 
@@ -490,11 +663,11 @@ void LuaScriptEngine::OnSimulationStopped() {
         m_CameraBinding.setActive(false);
     }
 
-    for (auto& [entityId, instance] : m_ScriptInstances) {
+    for (auto& [key, instance] : m_ScriptInstances) {
         if (!instance.valid || instance.environmentRef == kInvalidRef) {
             continue;
         }
-        Entity entity(static_cast<entt::entity>(entityId), m_Scene);
+        Entity entity(static_cast<entt::entity>(key.entityId), m_Scene);
         if (!entity) {
             continue;
         }
@@ -506,6 +679,7 @@ void LuaScriptEngine::OnSimulationStopped() {
         instance.awakeCalled = false;
         instance.valid = false;
         instance.errorLogged = false;
+        instance.functionErrorLogged = false;
     }
     // Drop all cached instances so the next Play start always rebuilds from scene data.
     m_ScriptInstances.clear();
@@ -524,7 +698,7 @@ void LuaScriptEngine::OnEntityDestroyed(Entity entity) {
     if (!entity) {
         return;
     }
-    DestroyInstance(static_cast<uint32_t>(entity), true);
+    DestroyAllSlotsForEntity(static_cast<uint32_t>(entity), true);
 #else
     (void)entity;
 #endif
@@ -533,9 +707,9 @@ void LuaScriptEngine::OnEntityDestroyed(Entity entity) {
 void LuaScriptEngine::Shutdown() {
 #if LUA_AVAILABLE
     if (m_State) {
-        for (auto& [entityId, instance] : m_ScriptInstances) {
+        for (auto& [key, instance] : m_ScriptInstances) {
             if (instance.valid && instance.environmentRef != kInvalidRef && m_Scene) {
-                Entity entity(static_cast<entt::entity>(entityId), m_Scene);
+                Entity entity(static_cast<entt::entity>(key.entityId), m_Scene);
                 if (entity) {
                     CallInstanceFunction(instance, instance.onDisableRef, entity, 0.0f, false);
                     CallInstanceFunction(instance, instance.onDestroyRef, entity, 0.0f, false);
@@ -1191,11 +1365,16 @@ void LuaScriptEngine::AddSearchPath(const std::filesystem::path& path) {
     }
 }
 
-LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene, entt::entity entityHandle, LuaScriptComponent& component) {
+LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene,
+                                                                 entt::entity entityHandle,
+                                                                 LuaScriptComponent& component,
+                                                                 LuaScriptSlot slot) {
 #if LUA_AVAILABLE
     uint32_t entityId = static_cast<uint32_t>(entityHandle);
-    ScriptInstance& instance = m_ScriptInstances[entityId];
+    const LuaScriptInstanceKey key = MakeInstanceKey(entityId, slot);
+    ScriptInstance& instance = m_ScriptInstances[key];
     instance.entityId = entityId;
+    instance.slot = slot;
 
     if (component.scriptPath.empty() && component.scriptSource.empty()) {
         return nullptr;
@@ -1221,6 +1400,8 @@ LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene, e
         instance.awakeCalled = false;
         instance.valid = false;
         instance.errorLogged = false;
+        instance.functionErrorLogged = false;
+        instance.lastBindingError.clear();
     }
 
     if (hasEmbeddedSource) {
@@ -1297,16 +1478,16 @@ LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene, e
 #endif
 }
 
-void LuaScriptEngine::DestroyInstance(uint32_t entityId, bool callOnDestroy) {
+void LuaScriptEngine::DestroyInstance(LuaScriptInstanceKey key, bool callOnDestroy) {
 #if LUA_AVAILABLE
-    auto it = m_ScriptInstances.find(entityId);
+    auto it = m_ScriptInstances.find(key);
     if (it == m_ScriptInstances.end()) {
         return;
     }
 
     ScriptInstance& instance = it->second;
     if (callOnDestroy && instance.valid && instance.environmentRef != kInvalidRef && m_Scene) {
-        Entity entity(static_cast<entt::entity>(entityId), m_Scene);
+        Entity entity(static_cast<entt::entity>(key.entityId), m_Scene);
         if (entity) {
             if (instance.awakeCalled) {
                 CallInstanceFunction(instance, instance.onDisableRef, entity, 0.0f, false);
@@ -1318,9 +1499,14 @@ void LuaScriptEngine::DestroyInstance(uint32_t entityId, bool callOnDestroy) {
     ReleaseInstanceResources(instance);
     m_ScriptInstances.erase(it);
 #else
-    (void)entityId;
+    (void)key;
     (void)callOnDestroy;
 #endif
+}
+
+void LuaScriptEngine::DestroyAllSlotsForEntity(uint32_t entityId, bool callOnDestroy) {
+    DestroyInstance(MakeInstanceKey(entityId, LuaScriptSlot::Gameplay), callOnDestroy);
+    DestroyInstance(MakeInstanceKey(entityId, LuaScriptSlot::CharacterController), callOnDestroy);
 }
 
 void LuaScriptEngine::ReleaseInstanceResources(ScriptInstance& instance) {
@@ -1342,10 +1528,13 @@ void LuaScriptEngine::ReleaseInstanceResources(ScriptInstance& instance) {
     unref(instance.onLateUpdateRef);
     unref(instance.onDisableRef);
     unref(instance.onDestroyRef);
+    unref(instance.onAnimationFinishedRef);
     unref(instance.environmentRef);
 
     instance.valid = false;
     instance.awakeCalled = false;
+    instance.functionErrorLogged = false;
+    instance.lastBindingError.clear();
 #else
     (void)instance;
 #endif
@@ -1428,6 +1617,7 @@ bool LuaScriptEngine::LoadScriptForInstance(ScriptInstance& instance, const LuaS
     instance.onLateUpdateRef = FetchFunctionRef(instance.environmentRef, "onLateUpdate");
     instance.onDisableRef = FetchFunctionRef(instance.environmentRef, "onDisable");
     instance.onDestroyRef = FetchFunctionRef(instance.environmentRef, destroyName);
+    instance.onAnimationFinishedRef = FetchFunctionRef(instance.environmentRef, "onAnimationFinished");
 
     instance.valid = instance.environmentRef != kInvalidRef;
     instance.awakeCalled = false;
@@ -2418,8 +2608,17 @@ void LuaScriptEngine::RegisterThisBindings() {
     lua_pushcfunction(m_State, Lua_This_GetCamera);
     lua_setfield(m_State, -2, "GetCamera");
 
+    lua_pushcfunction(m_State, Lua_This_GetAnimator);
+    lua_setfield(m_State, -2, "GetAnimator");
+
+    lua_pushcfunction(m_State, Lua_This_GetCharacter);
+    lua_setfield(m_State, -2, "GetCharacter");
+
     lua_pushcfunction(m_State, Lua_This_Call);
     lua_setfield(m_State, -2, "Call");
+
+    lua_pushcfunction(m_State, Lua_This_CallController);
+    lua_setfield(m_State, -2, "CallController");
     
     // Set __index to self for method lookup
     lua_pushvalue(m_State, -1);
@@ -2458,6 +2657,40 @@ void LuaScriptEngine::RegisterThisBindings() {
     lua_pushvalue(m_State, -1);
     lua_setfield(m_State, -2, "__index");
     
+    lua_pop(m_State, 1);
+
+    luaL_newmetatable(m_State, "HephaestusAnimator");
+    lua_pushcfunction(m_State, Lua_Animator_Play);
+    lua_setfield(m_State, -2, "Play");
+    lua_pushcfunction(m_State, Lua_Animator_CrossFade);
+    lua_setfield(m_State, -2, "CrossFade");
+    lua_pushcfunction(m_State, Lua_Animator_Pause);
+    lua_setfield(m_State, -2, "Pause");
+    lua_pushcfunction(m_State, Lua_Animator_Resume);
+    lua_setfield(m_State, -2, "Resume");
+    lua_pushcfunction(m_State, Lua_Animator_Stop);
+    lua_setfield(m_State, -2, "Stop");
+    lua_pushcfunction(m_State, Lua_Animator_SetSpeed);
+    lua_setfield(m_State, -2, "SetSpeed");
+    lua_pushcfunction(m_State, Lua_Animator_IsPlaying);
+    lua_setfield(m_State, -2, "IsPlaying");
+    lua_pushcfunction(m_State, Lua_Animator_GetCurrentAnimation);
+    lua_setfield(m_State, -2, "GetCurrentAnimation");
+    lua_pushcfunction(m_State, Lua_Animator_GetTime);
+    lua_setfield(m_State, -2, "GetTime");
+    lua_pushcfunction(m_State, Lua_Animator_GetDuration);
+    lua_setfield(m_State, -2, "GetDuration");
+    lua_pushvalue(m_State, -1);
+    lua_setfield(m_State, -2, "__index");
+    lua_pop(m_State, 1);
+
+    luaL_newmetatable(m_State, "HephaestusCharacter");
+    lua_pushcfunction(m_State, Lua_Character_GetSocket);
+    lua_setfield(m_State, -2, "GetSocket");
+    lua_pushcfunction(m_State, Lua_Character_GetSocketLocal);
+    lua_setfield(m_State, -2, "GetSocketLocal");
+    lua_pushvalue(m_State, -1);
+    lua_setfield(m_State, -2, "__index");
     lua_pop(m_State, 1);
 #endif
 }
@@ -2875,7 +3108,7 @@ int LuaScriptEngine::Lua_This_IsValid(lua_State* L) {
 #endif
 }
 
-int LuaScriptEngine::Lua_This_Call(lua_State* L) {
+int LuaScriptEngine::CallNamedOnSlot(lua_State* L, LuaScriptSlot slot) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
     if (!engine || !engine->m_State) {
@@ -2895,24 +3128,21 @@ int LuaScriptEngine::Lua_This_Call(lua_State* L) {
         return 1;
     }
 
-    // Capture arg count before looking up the function (stack: self, name, args...)
     const int argCount = lua_gettop(L) - 2;
 
-    auto it = engine->m_ScriptInstances.find(*selfId);
-    if (it == engine->m_ScriptInstances.end() || !it->second.valid ||
-        it->second.environmentRef == kInvalidRef) {
+    ScriptInstance* instance = engine->FindInstance(*selfId, slot);
+    if (!instance || !instance->valid || instance->environmentRef == kInvalidRef) {
         lua_pushboolean(L, false);
         return 1;
     }
 
-    ScriptInstance& instance = it->second;
     Entity entity = engine->MakeEntity(*selfId);
     if (!entity) {
         lua_pushboolean(L, false);
         return 1;
     }
 
-    lua_rawgeti(L, LUA_REGISTRYINDEX, instance.environmentRef);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, instance->environmentRef);
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         lua_pushboolean(L, false);
@@ -2925,18 +3155,16 @@ int LuaScriptEngine::Lua_This_Call(lua_State* L) {
         lua_pushboolean(L, false);
         return 1;
     }
-    lua_remove(L, -2); // drop env; stack: self, name, args..., fn
+    lua_remove(L, -2);
 
-    // Move fn to index 3 (after name): self, name, fn, args...
     lua_insert(L, 3);
-    // Remove self and name so stack is: fn, args...
     lua_remove(L, 1);
     lua_remove(L, 1);
 
     uint32_t previousEntity = engine->m_CurrentEntityId;
     float previousDelta = engine->m_CurrentDeltaTime;
-    engine->m_CurrentEntityId = instance.entityId;
-    engine->SetupThisForEntity(instance.entityId);
+    engine->m_CurrentEntityId = instance->entityId;
+    engine->SetupThisForEntity(instance->entityId);
 
     if (lua_pcall(L, argCount, 0, 0) != LUA_OK) {
         engine->LogLuaError(functionName);
@@ -2956,6 +3184,401 @@ int LuaScriptEngine::Lua_This_Call(lua_State* L) {
     }
 
     lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    (void)slot;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_This_Call(lua_State* L) {
+    return CallNamedOnSlot(L, LuaScriptSlot::Gameplay);
+}
+
+int LuaScriptEngine::Lua_This_CallController(lua_State* L) {
+    return CallNamedOnSlot(L, LuaScriptSlot::CharacterController);
+}
+
+CharacterComponent* LuaScriptEngine::CharacterFromLuaSelf(lua_State* L, const char* meta) {
+#if LUA_AVAILABLE
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_testudata(L, 1, meta));
+    if (!pEntityId) {
+        return nullptr;
+    }
+    Entity entity = MakeEntity(*pEntityId);
+    if (!entity || !entity.HasComponent<CharacterComponent>()) {
+        return nullptr;
+    }
+    return &entity.GetComponent<CharacterComponent>();
+#else
+    (void)L;
+    (void)meta;
+    return nullptr;
+#endif
+}
+
+void LuaScriptEngine::LogBindingError(ScriptInstance* instance, const std::string& message) {
+    if (instance && instance->lastBindingError == message) {
+        return;
+    }
+    if (instance) {
+        instance->lastBindingError = message;
+    }
+    std::cerr << "[Lua] " << message << std::endl;
+}
+
+void LuaScriptEngine::LogBindingErrorForEntity(uint32_t entityId, const std::string& message) {
+    ScriptInstance* instance = FindInstance(entityId, LuaScriptSlot::CharacterController);
+    if (!instance) {
+        instance = FindInstance(entityId, LuaScriptSlot::Gameplay);
+    }
+    LogBindingError(instance, message);
+}
+
+namespace {
+
+void PushVec3Table(lua_State* L, const Vec3& value) {
+#if LUA_AVAILABLE
+    lua_newtable(L);
+    lua_pushnumber(L, value.x);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, value.y);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, value.z);
+    lua_setfield(L, -2, "z");
+#else
+    (void)L;
+    (void)value;
+#endif
+}
+
+} // namespace
+
+int LuaScriptEngine::Lua_This_GetAnimator(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushnil(L);
+        return 1;
+    }
+    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    if (!selfId) {
+        lua_pushnil(L);
+        return 1;
+    }
+    Entity entity = engine->MakeEntity(*selfId);
+    if (!entity || !entity.HasComponent<CharacterComponent>()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
+    *pEntityId = *selfId;
+    luaL_getmetatable(L, "HephaestusAnimator");
+    lua_setmetatable(L, -2);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_This_GetCharacter(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushnil(L);
+        return 1;
+    }
+    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    if (!selfId) {
+        lua_pushnil(L);
+        return 1;
+    }
+    Entity entity = engine->MakeEntity(*selfId);
+    if (!entity || !entity.HasComponent<CharacterComponent>()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
+    *pEntityId = *selfId;
+    luaL_getmetatable(L, "HephaestusCharacter");
+    lua_setmetatable(L, -2);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_Play(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine->CharacterFromLuaSelf(L, "HephaestusAnimator");
+    const char* clipId = luaL_checkstring(L, 2);
+    if (!character || !clipId) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    std::string error;
+    const bool ok = Hephaestus::CharacterAnimationSystem::Play(*character, clipId, error);
+    if (!ok) {
+        uint32_t* id = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusAnimator"));
+        engine->LogBindingErrorForEntity(id ? *id : 0, error);
+    }
+    lua_pushboolean(L, ok);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_CrossFade(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine->CharacterFromLuaSelf(L, "HephaestusAnimator");
+    const char* clipId = luaL_checkstring(L, 2);
+    const float duration = static_cast<float>(luaL_checknumber(L, 3));
+    if (!character || !clipId) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    std::string error;
+    const bool ok = Hephaestus::CharacterAnimationSystem::CrossFade(*character, clipId, duration, error);
+    if (!ok) {
+        uint32_t* id = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusAnimator"));
+        engine->LogBindingErrorForEntity(id ? *id : 0, error);
+    }
+    lua_pushboolean(L, ok);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_Pause(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    if (character) {
+        Hephaestus::CharacterAnimationSystem::Pause(*character);
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_Resume(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    if (character) {
+        Hephaestus::CharacterAnimationSystem::Resume(*character);
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_Stop(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    if (character) {
+        Hephaestus::CharacterAnimationSystem::Stop(*character);
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_SetSpeed(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine->CharacterFromLuaSelf(L, "HephaestusAnimator");
+    const float speed = static_cast<float>(luaL_checknumber(L, 2));
+    if (!character) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const bool ok = Hephaestus::CharacterAnimationSystem::SetSpeed(*character, speed);
+    if (!ok) {
+        uint32_t* id = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusAnimator"));
+        engine->LogBindingErrorForEntity(id ? *id : 0,
+                                "Animator:SetSpeed requires a speed greater than 0. Use Pause() to freeze.");
+    }
+    lua_pushboolean(L, ok);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_IsPlaying(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    if (!character) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const bool playing = character->player.playing && !character->player.paused;
+    if (lua_gettop(L) < 2 || lua_isnoneornil(L, 2)) {
+        lua_pushboolean(L, playing);
+        return 1;
+    }
+    const char* clipId = lua_tostring(L, 2);
+    if (!clipId) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    std::string error;
+    const Hephaestus::AnimationClip* clip = Hephaestus::FindClip(character->clips, clipId, error);
+    const std::string resolved = clip ? (clip->id.empty() ? clip->name : clip->id) : std::string();
+    lua_pushboolean(L, playing && !resolved.empty() && character->player.currentClip == resolved);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_GetCurrentAnimation(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    if (!character || character->player.currentClip.empty()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, character->player.currentClip.c_str());
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_GetTime(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    lua_pushnumber(L, character ? character->player.time : 0.0);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_GetDuration(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    if (!character) {
+        lua_pushnumber(L, 0.0);
+        return 1;
+    }
+    std::string error;
+    const Hephaestus::AnimationClip* clip = nullptr;
+    if (lua_gettop(L) >= 2 && !lua_isnoneornil(L, 2)) {
+        const char* clipId = lua_tostring(L, 2);
+        if (clipId) {
+            clip = Hephaestus::FindClip(character->clips, clipId, error);
+        }
+    } else if (!character->player.currentClip.empty()) {
+        clip = Hephaestus::FindClip(character->clips, character->player.currentClip, error);
+    }
+    if (!clip) {
+        lua_pushnumber(L, 0.0);
+        return 1;
+    }
+    lua_pushnumber(L, (std::max)(0.0f, Hephaestus::ClipRangeEnd(*clip) - Hephaestus::ClipRangeStart(*clip)));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+bool LuaScriptEngine::PushSocketTable(lua_State* L, uint32_t entityId, const char* socketName, bool sceneWorld) {
+#if LUA_AVAILABLE
+    Entity entity = MakeEntity(entityId);
+    if (!entity || !entity.HasComponent<CharacterComponent>() || !socketName) {
+        lua_pushnil(L);
+        return false;
+    }
+    CharacterComponent& character = entity.GetComponent<CharacterComponent>();
+    Hephaestus::CharacterSocket socket;
+    std::string error;
+    if (!Hephaestus::CharacterRuntime::FindSocket(character.characterPath, socketName, socket, error)) {
+        LogBindingErrorForEntity(entityId, error);
+        lua_pushnil(L);
+        return false;
+    }
+    Mat4 model{};
+    if (!Hephaestus::EvaluateSocketWorld(character, socket, model, error)) {
+        LogBindingErrorForEntity(entityId, error);
+        lua_pushnil(L);
+        return false;
+    }
+    Mat4 result = model;
+    if (sceneWorld && m_Scene) {
+        result = Mat4::Multiply(m_Scene->GetWorldTransform(entity), model);
+    }
+    TransformComponent decomposed;
+    decomposed.SetFromMatrix(result);
+    lua_newtable(L);
+    PushVec3Table(L, decomposed.position);
+    lua_setfield(L, -2, "position");
+    PushVec3Table(L, decomposed.rotation);
+    lua_setfield(L, -2, "rotation");
+    return true;
+#else
+    (void)L;
+    (void)entityId;
+    (void)socketName;
+    (void)sceneWorld;
+    return false;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_GetSocket(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusCharacter"));
+    const char* name = luaL_checkstring(L, 2);
+    if (!engine || !pEntityId || !name) {
+        lua_pushnil(L);
+        return 1;
+    }
+    engine->PushSocketTable(L, *pEntityId, name, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_GetSocketLocal(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusCharacter"));
+    const char* name = luaL_checkstring(L, 2);
+    if (!engine || !pEntityId || !name) {
+        lua_pushnil(L);
+        return 1;
+    }
+    engine->PushSocketTable(L, *pEntityId, name, false);
     return 1;
 #else
     (void)L;

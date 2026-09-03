@@ -1,6 +1,6 @@
 /**
  * @file CharacterComponent.h
- * @brief Designer-facing Character ECS component. Controller Lua is Stage G.
+ * @brief Designer-facing Character ECS component. Controller Lua runs through LuaScriptSlot::CharacterController.
  */
 
 #pragma once

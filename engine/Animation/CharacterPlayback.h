@@ -32,7 +32,7 @@ public:
     static void Pause(CharacterComponent& character);
     static void Resume(CharacterComponent& character);
     static void Stop(CharacterComponent& character);
-    static void SetSpeed(CharacterComponent& character, float speed);
+    static bool SetSpeed(CharacterComponent& character, float speed);
 
     /// Sample `clipId` at absolute clip time (clamped to authored trim) and rebuild pose/palette.
     static bool SampleAtTime(CharacterComponent& character,

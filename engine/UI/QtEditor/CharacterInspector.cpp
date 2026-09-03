@@ -116,7 +116,7 @@ void CharacterInspector::buildUI()
     m_controllerEdit->setAllowEmpty(true);
     layout->addWidget(m_controllerEdit);
     m_controllerNote = new QLabel(
-        tr("Character controller scripts are authored here. Play/CrossFade Lua APIs land in a later animation-scripting stage."),
+        tr("Character controller scripts run in Play Mode and HephaestusGame when Run Controller is enabled."),
         this);
     m_controllerNote->setWordWrap(true);
     m_controllerNote->setStyleSheet(QStringLiteral("color: #8a8a8a;"));

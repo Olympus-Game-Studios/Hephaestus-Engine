@@ -10,6 +10,7 @@
 #include "../Scene/Scene.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace Hephaestus {
 namespace {
@@ -123,7 +124,16 @@ bool CharacterAnimationSystem::Play(CharacterComponent& character,
     if (!EnsureCompatible(character, *clip, outError)) {
         return false;
     }
-    character.player.RequestPlay(clip->id.empty() ? clip->name : clip->id);
+    const std::string resolvedId = clip->id.empty() ? clip->name : clip->id;
+    AnimationPlayer& player = character.player;
+    if (player.hasPendingPlay && player.pendingClip == resolvedId) {
+        return true;
+    }
+    if (player.currentClip == resolvedId && player.playing && !player.paused && !player.fading &&
+        !player.hasPendingPlay && !player.hasPendingFade) {
+        return true;
+    }
+    character.player.RequestPlay(resolvedId);
     return true;
 }
 
@@ -143,7 +153,22 @@ bool CharacterAnimationSystem::CrossFade(CharacterComponent& character,
     if (!EnsureCompatible(character, *clip, outError)) {
         return false;
     }
-    character.player.RequestCrossFade(clip->id.empty() ? clip->name : clip->id, duration);
+    const std::string resolvedId = clip->id.empty() ? clip->name : clip->id;
+    if (duration < 0.0f) {
+        duration = 0.0f;
+    }
+    if (duration <= 1e-4f) {
+        return Play(character, name, outError);
+    }
+    AnimationPlayer& player = character.player;
+    if (player.hasPendingFade && player.pendingFadeClip == resolvedId) {
+        return true;
+    }
+    if (player.currentClip == resolvedId && player.playing && !player.paused &&
+        !player.hasPendingPlay) {
+        return true;
+    }
+    character.player.RequestCrossFade(resolvedId, duration);
     return true;
 }
 
@@ -155,8 +180,12 @@ void CharacterAnimationSystem::Resume(CharacterComponent& character) {
     character.player.Resume();
 }
 
-void CharacterAnimationSystem::SetSpeed(CharacterComponent& character, float speed) {
+bool CharacterAnimationSystem::SetSpeed(CharacterComponent& character, float speed) {
+    if (!(speed > 0.0f) || !std::isfinite(speed)) {
+        return false;
+    }
     character.player.SetSpeed(speed);
+    return true;
 }
 
 void CharacterAnimationSystem::Stop(CharacterComponent& character) {

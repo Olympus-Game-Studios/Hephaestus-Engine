@@ -1202,6 +1202,78 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         COMMAND LuaScriptVariableTests
     )
 
+    if(LUA_FOUND)
+        add_executable(CharacterLuaTests
+            engine/Tests/CharacterLuaTests.cpp
+            engine/Scripting/LuaScriptEngine.cpp
+            engine/Scripting/LuaExposeScanner.cpp
+            engine/Scripting/LuaScriptVariableReconciler.cpp
+            engine/Scripting/ScriptBase.cpp
+            engine/Audio/AudioEngine.cpp
+            engine/Assets/CharacterAsset.cpp
+            engine/Assets/CharacterRuntime.cpp
+            engine/Assets/SkeletalModelImporter.cpp
+            engine/Assets/AssetPathPolicy.cpp
+            engine/Animation/Skeleton.cpp
+            engine/Animation/AnimationClip.cpp
+            engine/Animation/CharacterPlayback.cpp
+            engine/Scene/Json.cpp
+            engine/Scene/Entity.cpp
+            engine/Scene/Scene.cpp
+            engine/Scene/PrefabSerializer.cpp
+            engine/Scene/PrefabInstantiator.cpp
+            engine/Scene/PrefabComponentIO.cpp
+            engine/Scene/PrefabOverrideSystem.cpp
+            engine/Scene/SceneSerializer.cpp
+            engine/UI/HephaestusUI/HUIAsset.cpp
+            engine/UI/HephaestusUI/UIButton.cpp
+            engine/UI/HephaestusUI/UICanvas.cpp
+            engine/UI/HephaestusUI/UIContext.cpp
+            engine/UI/HephaestusUI/UIElement.cpp
+            engine/UI/HephaestusUI/UIFont.cpp
+            engine/UI/HephaestusUI/UIGridLayout.cpp
+            engine/UI/HephaestusUI/UIHorizontalBox.cpp
+            engine/UI/HephaestusUI/UIImage.cpp
+            engine/UI/HephaestusUI/UIInputRouter.cpp
+            engine/UI/HephaestusUI/UILayout.cpp
+            engine/UI/HephaestusUI/UIPanel.cpp
+            engine/UI/HephaestusUI/UIRenderer.cpp
+            engine/UI/HephaestusUI/UIScreen.cpp
+            engine/UI/HephaestusUI/UISimpleMenuExample.cpp
+            engine/UI/HephaestusUI/UISystem.cpp
+            engine/UI/HephaestusUI/UIText.cpp
+            engine/UI/HephaestusUI/UITheme.cpp
+            engine/UI/HephaestusUI/UIVerticalBox.cpp
+        )
+        target_include_directories(CharacterLuaTests PRIVATE
+            engine
+            extern
+            extern/entt/single_include
+            ${LUA_INCLUDE_DIR}
+        )
+        target_compile_definitions(CharacterLuaTests PRIVATE LUA_AVAILABLE=1)
+        if(TARGET Lua::Lua)
+            target_link_libraries(CharacterLuaTests PRIVATE Lua::Lua glfw HephaestusInputCore)
+        else()
+            target_link_libraries(CharacterLuaTests PRIVATE ${LUA_LIBRARIES} glfw HephaestusInputCore)
+        endif()
+        if(WIN32)
+            target_link_libraries(CharacterLuaTests PRIVATE winmm)
+        endif()
+        add_test(
+            NAME CharacterLua
+            COMMAND CharacterLuaTests
+        )
+        if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
+            get_filename_component(LUA_DLL_NAME "${LUA_DLL_PATH}" NAME)
+            add_custom_command(TARGET CharacterLuaTests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${LUA_DLL_PATH}"
+                    "$<TARGET_FILE_DIR:CharacterLuaTests>/${LUA_DLL_NAME}"
+            )
+        endif()
+    endif()
+
     add_executable(AssetReferenceIndexTests
         engine/Tests/AssetReferenceIndexTests.cpp
         engine/Assets/AssetReferenceIndex.cpp

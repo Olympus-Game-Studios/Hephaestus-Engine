@@ -1,6 +1,6 @@
 # Character Assets
 
-Stage E product workflow for `.hpcharacter` files. Timeline, clip folders, and play preview live in the [Character Editor](./CharacterEditor.md). This is not the gameplay `GetAnimator()` Lua API.
+Stage E product workflow for `.hpcharacter` files. Timeline, clip folders, and play preview live in the [Character Editor](./CharacterEditor.md). Runtime `GetAnimator()` / controller Lua is documented in [CharacterControllers.md](./CharacterControllers.md).
 
 ## Import
 
@@ -46,7 +46,7 @@ The Character Inspector edits instance data:
 
 The first time an asset is assigned (including spawn), asset defaults copy onto the component. Later Inspector edits stick even if the `.hpcharacter` file’s defaults change on disk. Replacing the asset keeps the current clip if that id still exists, materials by slot name, and a controller path the instance had overridden.
 
-Controller scripts are authored here. They do not run until a later animation-scripting stage.
+Controller scripts are authored here. They run in Play Mode and `HephaestusGame` when **Run Controller** is enabled. The Character Editor preview does not execute them. See [CharacterControllers.md](./CharacterControllers.md).
 
 ## Reimport
 
@@ -68,3 +68,5 @@ Packaging copies `assets/`, including owned `.source/` files the character JSON 
 ## Runtime
 
 Editor play mode and `HephaestusGame` both bind through `CharacterRuntime`: load `.hpcharacter`, import the owned GLB, `BindRuntime`, stamp the runtime MeshRenderer, upload a skinned GPU mesh. Missing sources set `lastError` and leave the entity selectable.
+
+When Run Controller is on, the character controller Lua slot runs beside gameplay Lua. See [CharacterControllers.md](./CharacterControllers.md).

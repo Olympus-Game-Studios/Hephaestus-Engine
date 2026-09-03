@@ -31,6 +31,7 @@ struct GLFWwindow;
 struct LuaScriptComponent;
 struct TransformComponent;
 struct TagComponent;
+struct CharacterComponent;
 class AudioEngine;
 
 namespace Hephaestus::HephaestusUI {
@@ -63,6 +64,26 @@ struct PhysicsRaycastHit {
     Vec3 point{0.0f, 0.0f, 0.0f};
     Vec3 normal{0.0f, 1.0f, 0.0f};
     uint32_t entityId = std::numeric_limits<uint32_t>::max(); // max = no entity mapping
+};
+
+enum class LuaScriptSlot : uint8_t {
+    Gameplay = 0,
+    CharacterController = 1
+};
+
+struct LuaScriptInstanceKey {
+    uint32_t entityId = 0;
+    LuaScriptSlot slot = LuaScriptSlot::Gameplay;
+
+    bool operator==(const LuaScriptInstanceKey& other) const noexcept {
+        return entityId == other.entityId && slot == other.slot;
+    }
+};
+
+struct LuaScriptInstanceKeyHash {
+    std::size_t operator()(const LuaScriptInstanceKey& key) const noexcept {
+        return (static_cast<std::size_t>(key.entityId) << 1) ^ static_cast<std::size_t>(key.slot);
+    }
 };
 
 struct PhysicsBinding {
@@ -133,6 +154,11 @@ public:
      * Late update active Lua scripts (onLateUpdate)
      */
     void LateUpdate(Scene& scene, float deltaTime);
+
+    /**
+     * Dispatch onAnimationFinished after CharacterAnimationSystem::Tick.
+     */
+    void DispatchAnimationFinished(Scene& scene);
 
     /**
      * Notify engine that play mode just started
@@ -211,6 +237,7 @@ private:
 
     struct ScriptInstance {
         uint32_t entityId = 0;
+        LuaScriptSlot slot = LuaScriptSlot::Gameplay;
         std::string userPath;
         std::filesystem::path resolvedPath;
         std::filesystem::file_time_type lastWriteTime{};
@@ -222,13 +249,16 @@ private:
         int onLateUpdateRef = -1;
         int onDisableRef = -1;
         int onDestroyRef = -1;
+        int onAnimationFinishedRef = -1;
         bool awakeCalled = false;
         bool valid = false;
         bool errorLogged = false;
+        bool functionErrorLogged = false;
+        std::string lastBindingError;
     };
 
-    std::unordered_map<uint32_t, ScriptInstance> m_ScriptInstances;
-    std::vector<uint32_t> m_ActiveUpdateOrder;
+    std::unordered_map<LuaScriptInstanceKey, ScriptInstance, LuaScriptInstanceKeyHash> m_ScriptInstances;
+    std::vector<LuaScriptInstanceKey> m_ActiveUpdateOrder;
     std::vector<std::filesystem::path> m_SearchPaths;
 
     struct PendingSpawn {
@@ -303,8 +333,20 @@ private:
     void RebuildSearchPaths();
     void AddSearchPath(const std::filesystem::path& path);
 
-    ScriptInstance* EnsureInstance(Scene& scene, entt::entity entityHandle, LuaScriptComponent& component);
-    void DestroyInstance(uint32_t entityId, bool callOnDestroy);
+    static LuaScriptInstanceKey MakeInstanceKey(uint32_t entityId, LuaScriptSlot slot);
+    ScriptInstance* FindInstance(uint32_t entityId, LuaScriptSlot slot);
+    ScriptInstance* EnsureInstance(Scene& scene,
+                                   entt::entity entityHandle,
+                                   LuaScriptComponent& component,
+                                   LuaScriptSlot slot);
+    void DestroyInstance(LuaScriptInstanceKey key, bool callOnDestroy);
+    void DestroyAllSlotsForEntity(uint32_t entityId, bool callOnDestroy);
+    void AwakeInstanceIfNeeded(Scene& scene, entt::entity entityHandle, ScriptInstance& instance);
+    void UpdateInstance(Scene& scene, entt::entity entityHandle, ScriptInstance& instance, float deltaTime);
+    bool PushSocketTable(lua_State* L, uint32_t entityId, const char* socketName, bool sceneWorld);
+    void LogBindingError(ScriptInstance* instance, const std::string& message);
+    void LogBindingErrorForEntity(uint32_t entityId, const std::string& message);
+    CharacterComponent* CharacterFromLuaSelf(lua_State* L, const char* meta);
     void ReleaseInstanceResources(ScriptInstance& instance);
     bool LoadScriptForInstance(ScriptInstance& instance, const LuaScriptComponent& component, Entity entity);
     void ApplyVariablesToEnvironment(ScriptInstance& instance, const LuaScriptComponent& component);
@@ -528,6 +570,24 @@ private:
     static int Lua_Scene_FindAllWithPrefix(lua_State* L);
 
     static int Lua_This_Call(lua_State* L);
+    static int Lua_This_CallController(lua_State* L);
+    static int CallNamedOnSlot(lua_State* L, LuaScriptSlot slot);
+    static int Lua_This_GetAnimator(lua_State* L);
+    static int Lua_This_GetCharacter(lua_State* L);
+
+    static int Lua_Animator_Play(lua_State* L);
+    static int Lua_Animator_CrossFade(lua_State* L);
+    static int Lua_Animator_Pause(lua_State* L);
+    static int Lua_Animator_Resume(lua_State* L);
+    static int Lua_Animator_Stop(lua_State* L);
+    static int Lua_Animator_SetSpeed(lua_State* L);
+    static int Lua_Animator_IsPlaying(lua_State* L);
+    static int Lua_Animator_GetCurrentAnimation(lua_State* L);
+    static int Lua_Animator_GetTime(lua_State* L);
+    static int Lua_Animator_GetDuration(lua_State* L);
+
+    static int Lua_Character_GetSocket(lua_State* L);
+    static int Lua_Character_GetSocketLocal(lua_State* L);
 
     void RegisterApplicationBindings();
     void RegisterThisBindings();

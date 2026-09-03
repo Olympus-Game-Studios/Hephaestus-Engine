@@ -231,6 +231,7 @@ void PlayModeManager::Tick(float dt) {
         CharacterAnimationSystem::Tick(*m_scene, dt);
     }
     if (m_luaEngine && m_scene) {
+        m_luaEngine->DispatchAnimationFinished(*m_scene);
         m_luaEngine->LateUpdate(*m_scene, dt);
     }
 }

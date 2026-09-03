@@ -62,6 +62,11 @@ public:
                           const std::filesystem::path& projectRoot,
                           EngineFrameRenderer* renderer);
 
+    static bool FindSocket(const std::string& portableCharacterPath,
+                           const std::string& socketName,
+                           CharacterSocket& outSocket,
+                           std::string& outError);
+
 private:
     static std::unordered_map<std::string, CharacterRuntimeData> s_cache;
 };

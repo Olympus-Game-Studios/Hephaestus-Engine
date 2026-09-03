@@ -332,6 +332,11 @@ bool TestPrefabCharacterLuaCoexistence(const fs::path& outDir) {
     character.characterPath = "assets/characters/Cultist.hpcharacter";
     character.defaultAnimation = "Idle";
     character.playbackSpeed = 1.1f;
+    character.runController = true;
+    character.controllerScriptPath = "assets/scripts/CultistCharacter.lua";
+    character.controllerVariables["WalkThreshold"] = PropertyValue(0.1);
+    character.authoredControllerVariables.insert("WalkThreshold");
+    character.authoredControllerVariablesInitialized = true;
     auto& lua = entity.AddComponent<LuaScriptComponent>();
     lua.scriptPath = "assets/scripts/EnemyAI.lua";
     lua.variables["health"] = PropertyValue(10.0);
@@ -352,6 +357,14 @@ bool TestPrefabCharacterLuaCoexistence(const fs::path& outDir) {
     }
     ok &= Check(instance.HasComponent<CharacterComponent>(), "prefab instance has Character");
     ok &= Check(instance.HasComponent<LuaScriptComponent>(), "prefab instance has LuaScript");
+    if (instance.HasComponent<CharacterComponent>()) {
+        const auto& captured = instance.GetComponent<CharacterComponent>();
+        ok &= Check(captured.runController, "prefab keeps runController");
+        ok &= Check(captured.controllerScriptPath == "assets/scripts/CultistCharacter.lua",
+                    "prefab keeps controllerScriptPath");
+        ok &= Check(captured.controllerVariables.count("WalkThreshold") == 1,
+                    "prefab keeps controllerVariables");
+    }
     ok &= Check(!instance.HasComponent<MeshRendererComponent>() ||
                     IsRuntimeGeneratedVisual(instance.GetComponent<MeshRendererComponent>()),
                 "prefab capture did not author a designer MeshRenderer");
@@ -394,8 +407,11 @@ bool TestPrefabCharacterLuaCoexistence(const fs::path& outDir) {
                     "lua path not clobbered by character apply");
     }
     if (afterApply && afterApply.HasComponent<CharacterComponent>()) {
-        ok &= Check(afterApply.GetComponent<CharacterComponent>().defaultAnimation == "Run",
-                    "applied defaultAnimation is Run");
+        const auto& applied = afterApply.GetComponent<CharacterComponent>();
+        ok &= Check(applied.defaultAnimation == "Run", "applied defaultAnimation is Run");
+        ok &= Check(applied.controllerScriptPath == "assets/scripts/CultistCharacter.lua",
+                    "controller path not clobbered by Character apply");
+        ok &= Check(applied.runController, "runController not clobbered by Character apply");
     }
     return ok;
 }

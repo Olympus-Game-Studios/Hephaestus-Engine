@@ -277,7 +277,6 @@ bool CharacterRuntime::BindEntity(Entity entity,
         character.lastError = outError;
         return false;
     }
-    CharacterAnimationSystem::SetSpeed(character, character.playbackSpeed);
 
     auto& mesh = entity.HasComponent<MeshRendererComponent>()
                      ? entity.GetComponent<MeshRendererComponent>()
@@ -289,6 +288,35 @@ bool CharacterRuntime::BindEntity(Entity entity,
     ApplyMaterials(character, data.asset, mesh);
     character.lastError.clear();
     return true;
+}
+
+bool CharacterRuntime::FindSocket(const std::string& portableCharacterPath,
+                                  const std::string& socketName,
+                                  CharacterSocket& outSocket,
+                                  std::string& outError) {
+    outError.clear();
+    if (portableCharacterPath.empty()) {
+        outError = "Character path is empty.";
+        return false;
+    }
+    if (socketName.empty()) {
+        outError = "Socket name is empty.";
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(g_cacheMutex);
+    auto it = s_cache.find(portableCharacterPath);
+    if (it == s_cache.end()) {
+        outError = "Character runtime is not loaded.";
+        return false;
+    }
+    for (const CharacterSocket& socket : it->second.asset.sockets) {
+        if (socket.name == socketName) {
+            outSocket = socket;
+            return true;
+        }
+    }
+    outError = "Socket '" + socketName + "' was not found.";
+    return false;
 }
 
 } // namespace Hephaestus

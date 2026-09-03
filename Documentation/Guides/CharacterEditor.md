@@ -1,6 +1,6 @@
 # Character Editor
 
-Designer-facing authoring and preview for `.hpcharacter` assets. This is not a gameplay sandbox and does not add animation graphs, blend spaces, IK, retargeting, or Lua `GetAnimator` APIs.
+Designer-facing authoring and preview for `.hpcharacter` assets. This is not a gameplay sandbox and does not add animation graphs, blend spaces, IK, or retargeting. Runtime `this:GetAnimator()` / `this:GetCharacter()` live in Play Mode and `HephaestusGame`; see [CharacterControllers.md](./CharacterControllers.md).
 
 Open a character by double-clicking it in the Asset Browser, or **Open**. Empty New Character files show **Import Character Source** until a mesh GLB is assigned.
 
@@ -33,7 +33,7 @@ Socket markers follow the current preview pose. The selected socket uses the sha
 
 ## Materials and controller
 
-Material slots open the Material Graph editor. The controller section stores enabled + script path on the asset. Exposed Lua values are authored on scene instances, not in the Character Editor. Preview does not run the controller.
+Material slots open the Material Graph editor. The controller section stores enabled + script path on the asset. Exposed Lua values are authored on scene instances, not in the Character Editor. Preview does not run the controller; Play Mode and `HephaestusGame` do.
 
 ## Reimport and save
 
@@ -46,3 +46,4 @@ Trash of an open character prompts to save/close the editor window first. Rename
 ## Related
 
 - [CharacterAssets.md](./CharacterAssets.md) — import, place, inspect, reimport, and package workflow
+- [CharacterControllers.md](./CharacterControllers.md) — Play Mode / HephaestusGame controller Lua and Animator 1.0

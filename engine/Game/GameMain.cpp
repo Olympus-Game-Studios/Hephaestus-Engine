@@ -1597,6 +1597,7 @@ int main(int argc, char* argv[]) {
 #endif
         Hephaestus::CharacterAnimationSystem::Tick(scene, deltaTime);
 #if HEPHAESTUS_GAME_SCRIPTING
+        luaEngine.DispatchAnimationFinished(scene);
         luaEngine.LateUpdate(scene, deltaTime);
 #endif
 
