@@ -1122,6 +1122,21 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         COMMAND AssetPathPolicyTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
+    add_executable(ModelImporterTests
+        engine/Tests/ModelImporterTests.cpp
+        engine/Assets/ModelImporter.cpp
+    )
+    target_include_directories(ModelImporterTests PRIVATE
+        engine
+        extern
+        extern/VMA
+    )
+    target_link_libraries(ModelImporterTests PRIVATE Vulkan::Vulkan)
+    add_test(
+        NAME ModelImporter
+        COMMAND ModelImporterTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
     add_executable(InputSystemTests
         engine/Tests/InputSystemTests.cpp
     )

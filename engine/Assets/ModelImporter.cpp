@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <type_traits>
 #include <array>
+#include <cstdint>
 #include <iostream>
 #include <nlohmann/json.hpp>
 
@@ -384,6 +385,303 @@ namespace {
         }
         if (primitive.contains("name") && primitive["name"].is_string()) {
             outResult.name = primitive["name"].get<std::string>();
+        }
+        return true;
+    }
+
+    float ReadGLTFNumber(const json& value) {
+        if (value.is_number_float()) {
+            return value.get<float>();
+        }
+        if (value.is_number_integer()) {
+            return static_cast<float>(value.get<std::int64_t>());
+        }
+        return 0.0f;
+    }
+
+    Mat4 Mat4FromGLTFQuaternion(float x, float y, float z, float w) {
+        float len = std::sqrt(x * x + y * y + z * z + w * w);
+        if (len > 0.0f) {
+            x /= len;
+            y /= len;
+            z /= len;
+            w /= len;
+        }
+
+        const float xx = x * x;
+        const float yy = y * y;
+        const float zz = z * z;
+        const float xy = x * y;
+        const float xz = x * z;
+        const float yz = y * z;
+        const float wx = w * x;
+        const float wy = w * y;
+        const float wz = w * z;
+
+        Mat4 r = Mat4::Identity();
+        r.m[0] = 1.0f - 2.0f * (yy + zz);
+        r.m[1] = 2.0f * (xy + wz);
+        r.m[2] = 2.0f * (xz - wy);
+        r.m[4] = 2.0f * (xy - wz);
+        r.m[5] = 1.0f - 2.0f * (xx + zz);
+        r.m[6] = 2.0f * (yz + wx);
+        r.m[8] = 2.0f * (xz + wy);
+        r.m[9] = 2.0f * (yz - wx);
+        r.m[10] = 1.0f - 2.0f * (xx + yy);
+        return r;
+    }
+
+    Mat4 GLTFNodeLocalMatrix(const json& node) {
+        if (node.contains("matrix") && node["matrix"].is_array() && node["matrix"].size() >= 16) {
+            Mat4 matrix = Mat4::Identity();
+            for (int i = 0; i < 16; ++i) {
+                matrix.m[i] = ReadGLTFNumber(node["matrix"][i]);
+            }
+            return matrix;
+        }
+
+        Vec3 translation(0.0f, 0.0f, 0.0f);
+        Vec3 scale(1.0f, 1.0f, 1.0f);
+        float qx = 0.0f;
+        float qy = 0.0f;
+        float qz = 0.0f;
+        float qw = 1.0f;
+
+        if (node.contains("translation") && node["translation"].is_array() && node["translation"].size() >= 3) {
+            translation.x = ReadGLTFNumber(node["translation"][0]);
+            translation.y = ReadGLTFNumber(node["translation"][1]);
+            translation.z = ReadGLTFNumber(node["translation"][2]);
+        }
+        if (node.contains("scale") && node["scale"].is_array() && node["scale"].size() >= 3) {
+            scale.x = ReadGLTFNumber(node["scale"][0]);
+            scale.y = ReadGLTFNumber(node["scale"][1]);
+            scale.z = ReadGLTFNumber(node["scale"][2]);
+        }
+        if (node.contains("rotation") && node["rotation"].is_array() && node["rotation"].size() >= 4) {
+            qx = ReadGLTFNumber(node["rotation"][0]);
+            qy = ReadGLTFNumber(node["rotation"][1]);
+            qz = ReadGLTFNumber(node["rotation"][2]);
+            qw = ReadGLTFNumber(node["rotation"][3]);
+        }
+
+        const Mat4 t = Mat4::Translation(translation);
+        const Mat4 r = Mat4FromGLTFQuaternion(qx, qy, qz, qw);
+        const Mat4 s = Mat4::Scale(scale);
+        return Mat4::Multiply(t, Mat4::Multiply(r, s));
+    }
+
+    bool FindMeshWorldMatrixRecursive(const json& nodes,
+                                      int nodeIndex,
+                                      const Mat4& parentWorld,
+                                      int meshIndex,
+                                      Mat4& outWorld) {
+        if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes.size())) {
+            return false;
+        }
+
+        const json& node = nodes[nodeIndex];
+        const Mat4 world = Mat4::Multiply(parentWorld, GLTFNodeLocalMatrix(node));
+        if (node.contains("mesh") && node["mesh"].is_number_integer() &&
+            node["mesh"].get<int>() == meshIndex) {
+            outWorld = world;
+            return true;
+        }
+
+        if (node.contains("children") && node["children"].is_array()) {
+            for (const auto& child : node["children"]) {
+                if (!child.is_number_integer()) {
+                    continue;
+                }
+                if (FindMeshWorldMatrixRecursive(nodes, child.get<int>(), world, meshIndex, outWorld)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    bool FindMeshWorldMatrix(const json& root, int meshIndex, Mat4& outWorld) {
+        outWorld = Mat4::Identity();
+        if (!root.contains("nodes") || !root["nodes"].is_array()) {
+            return false;
+        }
+
+        const json& nodes = root["nodes"];
+        if (root.contains("scenes") && root["scenes"].is_array() && !root["scenes"].empty()) {
+            int sceneIndex = 0;
+            if (root.contains("scene") && root["scene"].is_number_integer()) {
+                sceneIndex = root["scene"].get<int>();
+            }
+            if (sceneIndex < 0 || sceneIndex >= static_cast<int>(root["scenes"].size())) {
+                sceneIndex = 0;
+            }
+            const json& scene = root["scenes"][sceneIndex];
+            if (scene.contains("nodes") && scene["nodes"].is_array()) {
+                for (const auto& idx : scene["nodes"]) {
+                    if (!idx.is_number_integer()) {
+                        continue;
+                    }
+                    if (FindMeshWorldMatrixRecursive(nodes, idx.get<int>(), Mat4::Identity(),
+                                                     meshIndex, outWorld)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        for (int i = 0; i < static_cast<int>(nodes.size()); ++i) {
+            const json& node = nodes[i];
+            if (node.contains("mesh") && node["mesh"].is_number_integer() &&
+                node["mesh"].get<int>() == meshIndex) {
+                outWorld = GLTFNodeLocalMatrix(node);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool IsIdentityMatrix(const Mat4& matrix) {
+        const Mat4 identity = Mat4::Identity();
+        for (int i = 0; i < 16; ++i) {
+            if (std::abs(matrix.m[i] - identity.m[i]) > 1e-6f) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    Vec3 TransformNormal(const Mat4& world, const Vec3& normal) {
+        const float a00 = world.m[0];
+        const float a10 = world.m[1];
+        const float a20 = world.m[2];
+        const float a01 = world.m[4];
+        const float a11 = world.m[5];
+        const float a21 = world.m[6];
+        const float a02 = world.m[8];
+        const float a12 = world.m[9];
+        const float a22 = world.m[10];
+
+        const float c00 = a11 * a22 - a12 * a21;
+        const float c01 = a12 * a20 - a10 * a22;
+        const float c02 = a10 * a21 - a11 * a20;
+        const float c10 = a02 * a21 - a01 * a22;
+        const float c11 = a00 * a22 - a02 * a20;
+        const float c12 = a01 * a20 - a00 * a21;
+        const float c20 = a01 * a12 - a02 * a11;
+        const float c21 = a02 * a10 - a00 * a12;
+        const float c22 = a00 * a11 - a01 * a10;
+        const float det = a00 * c00 + a01 * c01 + a02 * c02;
+        if (std::abs(det) < 1e-12f) {
+            return vnorm(Mat4::TransformDirection(world, normal));
+        }
+        const float invDet = 1.0f / det;
+        const Vec3 transformed(
+            (c00 * normal.x + c01 * normal.y + c02 * normal.z) * invDet,
+            (c10 * normal.x + c11 * normal.y + c12 * normal.z) * invDet,
+            (c20 * normal.x + c21 * normal.y + c22 * normal.z) * invDet);
+        return vnorm(transformed);
+    }
+
+    void BakeNodeTransform(MeshData& mesh, const Mat4& world) {
+        if (mesh.vertices.empty() || IsIdentityMatrix(world)) {
+            return;
+        }
+
+        Vec3 minBounds{};
+        Vec3 maxBounds{};
+        bool boundsInitialized = false;
+        for (Vertex& vert : mesh.vertices) {
+            Vec3 pos(vert.pos[0], vert.pos[1], vert.pos[2]);
+            Vec3 nrm(vert.normal[0], vert.normal[1], vert.normal[2]);
+            pos = Mat4::TransformPoint(world, pos);
+            nrm = TransformNormal(world, nrm);
+            vert.pos[0] = pos.x;
+            vert.pos[1] = pos.y;
+            vert.pos[2] = pos.z;
+            vert.normal[0] = nrm.x;
+            vert.normal[1] = nrm.y;
+            vert.normal[2] = nrm.z;
+            if (!boundsInitialized) {
+                minBounds = pos;
+                maxBounds = pos;
+                boundsInitialized = true;
+            } else {
+                minBounds.x = std::min(minBounds.x, pos.x);
+                minBounds.y = std::min(minBounds.y, pos.y);
+                minBounds.z = std::min(minBounds.z, pos.z);
+                maxBounds.x = std::max(maxBounds.x, pos.x);
+                maxBounds.y = std::max(maxBounds.y, pos.y);
+                maxBounds.z = std::max(maxBounds.z, pos.z);
+            }
+        }
+        if (boundsInitialized) {
+            mesh.bounds = AABB(minBounds, maxBounds);
+        }
+    }
+
+    bool LoadGLTFDocument(const json& root,
+                          const std::vector<uint8_t>& binaryData,
+                          MeshData& outMesh,
+                          std::string& errorMessage) {
+        if (!root.contains("meshes") || root["meshes"].empty()) {
+            errorMessage = "No meshes found in glTF file";
+            return false;
+        }
+
+        const auto& mesh = root["meshes"][0];
+        if (!mesh.contains("primitives") || mesh["primitives"].empty()) {
+            errorMessage = "No primitives found in mesh";
+            return false;
+        }
+
+        if (!root.contains("accessors")) {
+            errorMessage = "No accessors found in glTF file";
+            return false;
+        }
+
+        const auto& accessors = root["accessors"];
+        const auto& bufferViews = root.value("bufferViews", json::array());
+
+        Vec3 minBounds{};
+        Vec3 maxBounds{};
+        bool boundsInitialized = false;
+        outMesh.submeshes.clear();
+
+        for (const auto& primitive : mesh["primitives"]) {
+            GLTFPrimitiveResult primResult{};
+            if (!AppendGLTFPrimitive(primitive, accessors, bufferViews, binaryData,
+                                     outMesh, minBounds, maxBounds,
+                                     boundsInitialized, errorMessage, primResult)) {
+                return false;
+            }
+            if (primResult.indexCount > 0) {
+                MeshData::Submesh submesh{};
+                submesh.indexOffset = primResult.indexOffset;
+                submesh.indexCount = primResult.indexCount;
+                submesh.materialSlot = primResult.materialSlot;
+                submesh.name = primResult.name;
+                outMesh.submeshes.push_back(std::move(submesh));
+            }
+        }
+
+        if (boundsInitialized) {
+            outMesh.bounds = AABB(minBounds, maxBounds);
+        } else {
+            outMesh.bounds = AABB();
+        }
+
+        Mat4 world = Mat4::Identity();
+        if (FindMeshWorldMatrix(root, 0, world)) {
+            BakeNodeTransform(outMesh, world);
+        }
+
+        std::cout << "[ModelImporter] glTF load complete: verts=" << outMesh.vertices.size()
+                  << ", indices=" << outMesh.indices.size()
+                  << ", submeshes=" << outMesh.submeshes.size() << std::endl;
+        for (size_t i = 0; i < outMesh.submeshes.size(); ++i) {
+            const auto& sub = outMesh.submeshes[i];
+            std::cout << "[ModelImporter]   submesh[" << i << "]: slot=" << sub.materialSlot
+                      << " offset=" << sub.indexOffset << " count=" << sub.indexCount << std::endl;
         }
         return true;
     }
@@ -792,65 +1090,7 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
             file.read(reinterpret_cast<char*>(binaryData.data()), binChunkLength);
 
             json root = json::parse(jsonContent);
-            
-            // Extract mesh data
-            if (!root.contains("meshes") || root["meshes"].empty()) {
-                errorMessage = "No meshes found in glTF file";
-                return false;
-            }
-
-            const auto& mesh = root["meshes"][0];
-            if (!mesh.contains("primitives") || mesh["primitives"].empty()) {
-                errorMessage = "No primitives found in mesh";
-                return false;
-            }
-
-            if (!root.contains("accessors")) {
-                errorMessage = "No accessors found in glTF file";
-                return false;
-            }
-
-            const auto& accessors = root["accessors"];
-            const auto& bufferViews = root.value("bufferViews", json::array());
-
-            Vec3 minBounds{};
-            Vec3 maxBounds{};
-            bool boundsInitialized = false;
-            outMesh.submeshes.clear();
-
-            for (const auto& primitive : mesh["primitives"]) {
-                GLTFPrimitiveResult primResult{};
-                if (!AppendGLTFPrimitive(primitive, accessors, bufferViews, binaryData,
-                                         outMesh, minBounds, maxBounds,
-                                         boundsInitialized, errorMessage, primResult)) {
-                    return false;
-                }
-                if (primResult.indexCount > 0) {
-                    MeshData::Submesh submesh{};
-                    submesh.indexOffset = primResult.indexOffset;
-                    submesh.indexCount = primResult.indexCount;
-                    submesh.materialSlot = primResult.materialSlot;
-                    submesh.name = primResult.name;
-                    outMesh.submeshes.push_back(std::move(submesh));
-                }
-            }
-
-            if (boundsInitialized) {
-                outMesh.bounds = AABB(minBounds, maxBounds);
-            } else {
-                outMesh.bounds = AABB();
-            }
-
-            std::cout << "[ModelImporter] glTF load complete: verts=" << outMesh.vertices.size()
-                      << ", indices=" << outMesh.indices.size()
-                      << ", submeshes=" << outMesh.submeshes.size() << std::endl;
-            for (size_t i = 0; i < outMesh.submeshes.size(); ++i) {
-                const auto& sub = outMesh.submeshes[i];
-                std::cout << "[ModelImporter]   submesh[" << i << "]: slot=" << sub.materialSlot
-                          << " offset=" << sub.indexOffset << " count=" << sub.indexCount << std::endl;
-            }
-
-            return true;
+            return LoadGLTFDocument(root, binaryData, outMesh, errorMessage);
         }
         else if (ext == ".gltf") {
             // For .gltf files, read as text and parse JSON
@@ -886,56 +1126,8 @@ bool LoadGLTF(const std::filesystem::path& path, MeshData& outMesh, std::string&
                     errorMessage = "No binary data found in glTF file";
                     return false;
                 }
-                
-                // Same parsing logic as .glb
-                if (!root.contains("meshes") || root["meshes"].empty()) {
-                    errorMessage = "No meshes found in glTF file";
-                    return false;
-                }
 
-                const auto& mesh = root["meshes"][0];
-                if (!mesh.contains("primitives") || mesh["primitives"].empty()) {
-                    errorMessage = "No primitives found in mesh";
-                    return false;
-                }
-
-                if (!root.contains("accessors")) {
-                    errorMessage = "No accessors found in glTF file";
-                    return false;
-                }
-
-                const auto& accessors = root["accessors"];
-                const auto& bufferViews = root.value("bufferViews", json::array());
-
-                Vec3 minBounds{};
-                Vec3 maxBounds{};
-                bool boundsInitialized = false;
-                outMesh.submeshes.clear();
-
-                for (const auto& primitive : mesh["primitives"]) {
-                    GLTFPrimitiveResult primResult{};
-                    if (!AppendGLTFPrimitive(primitive, accessors, bufferViews, binaryData,
-                                             outMesh, minBounds, maxBounds,
-                                             boundsInitialized, errorMessage, primResult)) {
-                        return false;
-                    }
-                    if (primResult.indexCount > 0) {
-                        MeshData::Submesh submesh{};
-                        submesh.indexOffset = primResult.indexOffset;
-                        submesh.indexCount = primResult.indexCount;
-                        submesh.materialSlot = primResult.materialSlot;
-                        submesh.name = primResult.name;
-                        outMesh.submeshes.push_back(std::move(submesh));
-                    }
-                }
-
-                if (boundsInitialized) {
-                    outMesh.bounds = AABB(minBounds, maxBounds);
-                } else {
-                    outMesh.bounds = AABB();
-                }
-
-                return true;
+                return LoadGLTFDocument(root, binaryData, outMesh, errorMessage);
             }
             
             errorMessage = "No buffers found in glTF file";
