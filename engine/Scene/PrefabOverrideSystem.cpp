@@ -85,7 +85,28 @@ void StripRuntimeKeys(const std::string& type, JsonValue& data) {
     }
     if (type == "LuaScript") {
         data.objectValue.erase("variables");
+        data.objectValue.erase("authoredVariables");
     }
+}
+
+void MarkScriptVariableAuthored(JsonValue& data, const std::string& property) {
+    if (!data.IsObject()) {
+        return;
+    }
+    JsonValue* authored = nullptr;
+    auto existing = data.objectValue.find("authoredVariables");
+    if (existing == data.objectValue.end() || !existing->second.IsArray()) {
+        data.objectValue["authoredVariables"] = PrefabComponentIO::MakeArray();
+        authored = &data.objectValue["authoredVariables"];
+    } else {
+        authored = &existing->second;
+    }
+    for (const JsonValue& value : authored->arrayValue) {
+        if (value.IsString() && value.AsString() == property) {
+            return;
+        }
+    }
+    authored->arrayValue.push_back(PrefabComponentIO::MakeString(property));
 }
 
 PropertyValue TransformProperty(const TransformComponent& transform, const std::string& property) {
@@ -840,6 +861,7 @@ bool PrefabOverrideSystem::ApplyPropertyToPrefab(Scene& scene, Entity entity, co
         }
         if (it != vars.end()) {
             variables.objectValue[property] = PrefabComponentIO::PropertyToJson(it->second);
+            MarkScriptVariableAuthored(luaEntry->data, property);
         }
         luaEntry->data.objectValue["variables"] = std::move(variables);
     } else {
@@ -912,6 +934,11 @@ bool PrefabOverrideSystem::ApplyComponentToPrefab(Scene& scene, Entity entity, c
         if (!PrefabComponentIO::CaptureComponent(entity, component, live)) {
             error = "Component is not present on the entity.";
             return false;
+        }
+        if (component == "LuaScript" && entity.HasComponent<LuaScriptComponent>()) {
+            for (const auto& [name, _] : entity.GetComponent<LuaScriptComponent>().variables) {
+                MarkScriptVariableAuthored(live.data, name);
+            }
         }
         if (PrefabComponentEntry* existing = MutableFindComponent(*assetNode, component)) {
             *existing = live;

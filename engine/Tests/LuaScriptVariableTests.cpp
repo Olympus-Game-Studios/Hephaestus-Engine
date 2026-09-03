@@ -114,6 +114,34 @@ bool TestLegacyMigration()
                  "legacy value becomes explicitly authored");
 }
 
+bool TestSceneAndPrefabPrecedence()
+{
+    const auto declaration = LuaExposeScanner::Scan(R"(Expose.number("speed", 5.0))");
+
+    LuaScriptComponent sceneEntity;
+    sceneEntity.variables["speed"] = PropertyValue(6.0);
+    sceneEntity.authoredVariables.insert("speed");
+    sceneEntity.authoredVariablesInitialized = true;
+    LuaScriptVariableReconciler::OnScriptSourceChanged(
+        sceneEntity, nullptr, declaration);
+
+    LuaScriptComponent prefabInstance;
+    prefabInstance.variables["speed"] = PropertyValue(8.0);
+    prefabInstance.authoredVariables.insert("speed"); // Prefab asset authored value is 6.
+    prefabInstance.authoredVariablesInitialized = true;
+    std::unordered_map<std::string, PropertyValue> instanceOverrides;
+    instanceOverrides["speed"] = PropertyValue(8.0);
+    LuaScriptVariableReconciler::OnScriptSourceChanged(
+        prefabInstance, nullptr, declaration, &instanceOverrides);
+
+    return Check(NumberEquals(sceneEntity, "speed", 6.0),
+                 "normal scene authoring wins over declaration default") &&
+           Check(NumberEquals(prefabInstance, "speed", 8.0),
+                 "prefab instance override wins over prefab-authored value") &&
+           Check(instanceOverrides.count("speed") == 1,
+                 "prefab instance precedence retains scriptVars override");
+}
+
 } // namespace
 
 int main()
@@ -123,6 +151,7 @@ int main()
     ok &= TestSourceReload();
     ok &= TestDefaultFollowingAndOverrides();
     ok &= TestLegacyMigration();
+    ok &= TestSceneAndPrefabPrecedence();
     if (ok) {
         std::cout << "LuaScriptVariableTests passed\n";
         return 0;

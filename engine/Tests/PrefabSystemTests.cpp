@@ -91,6 +91,8 @@ bool BuildLampHierarchy(Scene& scene, Entity& outRoot, Entity& outShade) {
     auto& lua = outShade.AddComponent<LuaScriptComponent>();
     lua.scriptPath = "assets/scripts/Lamp.lua";
     lua.variables["glow"] = PropertyValue(1.0);
+    lua.authoredVariables.insert("glow");
+    lua.authoredVariablesInitialized = true;
     return true;
 }
 
@@ -389,6 +391,127 @@ bool TestApplyAndRevert(const fs::path& outDir) {
     return ok;
 }
 
+bool TestLuaScriptApplyAndRevert(const fs::path& outDir) {
+    Scene scratch("Scratch");
+    Entity root, shade;
+    if (!BuildLampHierarchy(scratch, root, shade)) {
+        return Check(false, "failed to build hierarchy for Lua apply test");
+    }
+    PrefabAsset asset;
+    const fs::path prefabPath = outDir / "LampLuaApply.hpprefab";
+    if (!SavePrefabFromHierarchy(scratch, root, prefabPath, asset)) {
+        return Check(false, "failed to save prefab for Lua apply test");
+    }
+
+    Scene scene("LuaApply");
+    Entity instanceA = InstantiateAt(scene, asset, prefabPath.generic_string(), Vec3(1, 0, 0));
+    Entity instanceB = InstantiateAt(scene, asset, prefabPath.generic_string(), Vec3(2, 0, 0));
+    Entity shadeA = FindChildByTag(scene, instanceA, "Shade");
+    if (!instanceA || !instanceB || !shadeA) {
+        return Check(false, "instantiate Lua apply fixtures");
+    }
+
+    shadeA.GetComponent<LuaScriptComponent>().variables["glow"] = PropertyValue(4.0);
+    PrefabOverrideSystem::SyncEntityOverrides(scene, shadeA);
+    const std::string nodeId = shadeA.GetComponent<PrefabNodeComponent>().nodeId;
+    bool ok = true;
+    ok &= Check(PrefabOverrideSystem::IsPropertyOverridden(
+                    instanceA.GetComponent<PrefabInstanceComponent>(), nodeId, "LuaScript", "glow"),
+                "Lua variable override recorded");
+
+    std::string error;
+    if (!PrefabOverrideSystem::ApplyPropertyToPrefab(
+            scene, shadeA, "LuaScript", "glow", error)) {
+        std::cerr << error << "\n";
+        return Check(false, "apply Lua variable to prefab");
+    }
+
+    Entity refreshedA;
+    Entity refreshedB;
+    auto instances = scene.GetEntitiesWith<PrefabInstanceComponent>();
+    for (entt::entity handle : instances) {
+        Entity entity(handle, &scene);
+        if (Near(entity.GetComponent<TransformComponent>().position.x, 1.0f)) refreshedA = entity;
+        if (Near(entity.GetComponent<TransformComponent>().position.x, 2.0f)) refreshedB = entity;
+    }
+    Entity refreshedShadeA = FindChildByTag(scene, refreshedA, "Shade");
+    Entity refreshedShadeB = FindChildByTag(scene, refreshedB, "Shade");
+    auto hasGlow = [](Entity entity, double expected) {
+        if (!entity || !entity.HasComponent<LuaScriptComponent>()) return false;
+        const auto& variables = entity.GetComponent<LuaScriptComponent>().variables;
+        const auto value = variables.find("glow");
+        return value != variables.end() && value->second.IsNumber() &&
+            *value->second.AsNumber() == expected;
+    };
+    ok &= Check(hasGlow(refreshedShadeA, 4.0), "source instance receives applied Lua value");
+    ok &= Check(hasGlow(refreshedShadeB, 4.0), "other instance receives applied Lua value");
+    if (refreshedA && refreshedShadeA) {
+        ok &= Check(!PrefabOverrideSystem::IsPropertyOverridden(
+                        refreshedA.GetComponent<PrefabInstanceComponent>(),
+                        refreshedShadeA.GetComponent<PrefabNodeComponent>().nodeId,
+                        "LuaScript", "glow"),
+                    "applied Lua override cleared");
+    }
+
+    PrefabAsset appliedAsset;
+    if (!PrefabSerializer::Deserialize(appliedAsset, prefabPath, error)) {
+        return Check(false, "reload applied Lua prefab");
+    }
+    bool authored = false;
+    for (const PrefabNode& node : appliedAsset.nodes) {
+        if (node.name != "Shade") continue;
+        for (const PrefabComponentEntry& component : node.components) {
+            if (component.type != "LuaScript") continue;
+            if (const JsonValue* values = component.data.Find("authoredVariables")) {
+                for (const JsonValue& value : values->AsArray()) {
+                    authored = authored || (value.IsString() && value.AsString() == "glow");
+                }
+            }
+        }
+    }
+    ok &= Check(authored, "applied prefab value is authored relative to script default");
+
+    if (refreshedShadeA) {
+        refreshedShadeA.GetComponent<LuaScriptComponent>().variables["glow"] = PropertyValue(9.0);
+        PrefabOverrideSystem::SyncEntityOverrides(scene, refreshedShadeA);
+        ok &= Check(PrefabOverrideSystem::RevertProperty(
+                        scene, refreshedShadeA, "LuaScript", "glow"),
+                    "revert Lua variable");
+        ok &= Check(hasGlow(refreshedShadeA, 4.0), "Lua revert restores prefab value");
+    }
+    return ok;
+}
+
+bool TestLuaAuthoredSceneRoundtrip(const fs::path&) {
+    Scene scene("LuaAuthored");
+    Entity entity = scene.CreateEntity("Controller");
+    auto& script = entity.AddComponent<LuaScriptComponent>();
+    script.scriptPath = "assets/scripts/Controller.lua";
+    script.variables["speed"] = PropertyValue(7.0);
+    script.authoredVariables.insert("speed");
+    script.authoredVariablesInitialized = true;
+
+    const std::string snapshot = SceneSerializer(scene).SerializeToString();
+    Scene loaded("LoadedLuaAuthored");
+    bool ok = true;
+    ok &= Check(SceneSerializer::DeserializeFromString(loaded, snapshot),
+                "deserialize authored Lua scene snapshot");
+    Entity loadedEntity = FindByTag(loaded, "Controller");
+    ok &= Check(static_cast<bool>(loadedEntity), "authored Lua entity survives snapshot");
+    if (loadedEntity && loadedEntity.HasComponent<LuaScriptComponent>()) {
+        const auto& loadedScript = loadedEntity.GetComponent<LuaScriptComponent>();
+        ok &= Check(loadedScript.authoredVariablesInitialized,
+                    "authored metadata presence survives snapshot");
+        ok &= Check(loadedScript.authoredVariables.count("speed") == 1,
+                    "authored Lua key survives snapshot");
+        const auto speed = loadedScript.variables.find("speed");
+        ok &= Check(speed != loadedScript.variables.end() && speed->second.IsNumber() &&
+                        *speed->second.AsNumber() == 7.0,
+                    "authored Lua value survives snapshot");
+    }
+    return ok;
+}
+
 bool TestCreateFromSelectionAndUnpack(const fs::path& outDir) {
     Scene scene("Create");
     Entity root, shade;
@@ -621,6 +744,8 @@ int main(int argc, char** argv) {
     run("SceneRoundtripAndTransforms", TestSceneRoundtripAndTransforms, outDir);
     run("RefreshKeepsOverride", TestRefreshKeepsOverride, outDir);
     run("ApplyAndRevert", TestApplyAndRevert, outDir);
+    run("LuaScriptApplyAndRevert", TestLuaScriptApplyAndRevert, outDir);
+    run("LuaAuthoredSceneRoundtrip", TestLuaAuthoredSceneRoundtrip, outDir);
     run("CreateFromSelectionAndUnpack", TestCreateFromSelectionAndUnpack, outDir);
     run("MissingPrefab", TestMissingPrefab, outDir);
     run("LegacyBlueprint", TestLegacyBlueprint, repoRoot);
