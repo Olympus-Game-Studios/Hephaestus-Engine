@@ -208,6 +208,8 @@ target_include_directories(HephaestusInputCore PUBLIC engine extern extern/glfw/
     engine/Assets/CharacterAsset.cpp
     engine/Assets/SkeletalModelImporter.cpp
     engine/Animation/Skeleton.cpp
+    engine/Animation/AnimationClip.cpp
+    engine/Animation/CharacterPlayback.cpp
     engine/Assets/OpenDocumentRegistry.cpp
     engine/Assets/AssetOperationService.cpp
     engine/Assets/DerivedDataCache.cpp
@@ -355,6 +357,8 @@ add_executable(HephaestusEngine
     engine/Assets/CharacterAsset.cpp
     engine/Assets/SkeletalModelImporter.cpp
     engine/Animation/Skeleton.cpp
+    engine/Animation/AnimationClip.cpp
+    engine/Animation/CharacterPlayback.cpp
     engine/Assets/AssetOperationService.cpp
     engine/Assets/DerivedDataCache.cpp
     engine/Assets/EditorAssetPipeline.cpp
@@ -842,20 +846,24 @@ if (GLSLC_EXECUTABLE)
     set(SHADER_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle_skinned.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/billboard.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/billboard.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/billboard_id.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/billboard_id.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/entityid.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/entityid.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/entityid_skinned.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/outline.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/outline.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/outline_skinned.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/skybox.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/skybox.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap_skinned.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.frag
     )
@@ -1208,6 +1216,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_executable(SkeletalImportTests
         engine/Tests/SkeletalImportTests.cpp
         engine/Animation/Skeleton.cpp
+        engine/Animation/AnimationClip.cpp
         engine/Assets/SkeletalModelImporter.cpp
     )
     target_include_directories(SkeletalImportTests PRIVATE
@@ -1217,6 +1226,50 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME SkeletalImport
         COMMAND SkeletalImportTests
+    )
+
+    add_executable(SkinnedMeshTests
+        engine/Tests/SkinnedMeshTests.cpp
+        engine/Animation/Skeleton.cpp
+        engine/Animation/AnimationClip.cpp
+        engine/Assets/SkeletalModelImporter.cpp
+    )
+    target_include_directories(SkinnedMeshTests PRIVATE
+        engine
+        extern
+        extern/VMA
+    )
+    target_link_libraries(SkinnedMeshTests PRIVATE Vulkan::Vulkan)
+    add_test(
+        NAME SkinnedMesh
+        COMMAND SkinnedMeshTests
+    )
+
+    add_executable(CharacterPlaybackTests
+        engine/Tests/CharacterPlaybackTests.cpp
+        engine/Animation/Skeleton.cpp
+        engine/Animation/AnimationClip.cpp
+        engine/Animation/CharacterPlayback.cpp
+        engine/Assets/SkeletalModelImporter.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_include_directories(CharacterPlaybackTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME CharacterPlayback
+        COMMAND CharacterPlaybackTests
     )
 
     add_executable(AssetOperationTransactionTests

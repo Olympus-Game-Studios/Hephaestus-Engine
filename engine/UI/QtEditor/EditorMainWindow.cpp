@@ -4381,6 +4381,13 @@ void EditorMainWindow::showViewportContextMenu(float x, float y)
                           QStringLiteral(".glb");
         addSpawn(primitive, entry);
     }
+    {
+        SpawnableEntry entry;
+        entry.kind = SpawnableEntry::Kind::Mesh;
+        entry.displayName = tr("Skinned Rest Fixture");
+        entry.assetPath = QStringLiteral("builtin://skinned_rest_fixture");
+        addSpawn(entry.displayName, entry);
+    }
     for (const auto& light : {
              std::pair<QString, QString>{tr("Directional Light"), "DirectionalLight"},
              std::pair<QString, QString>{tr("Point Light"), "PointLight"},
@@ -6806,6 +6813,41 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         if (!frameRenderer) {
             statusBar()->showMessage(tr("Renderer not ready."), 3000);
             return;
+        }
+        namespace fs = std::filesystem;
+        const std::string assetPath = entry.assetPath.toStdString();
+        if (assetPath.rfind("builtin://", 0) == 0) {
+            size_t meshHandle = frameRenderer->GetMeshHandle(assetPath);
+            if (meshHandle == SIZE_MAX) {
+                statusBar()->showMessage(tr("Builtin mesh not loaded: %1").arg(entry.assetPath), 3000);
+                return;
+            }
+            MeshGPU* meshGPU = frameRenderer->GetMesh(meshHandle);
+            int subCount = (meshGPU && !meshGPU->submeshes.empty())
+                ? static_cast<int>(meshGPU->submeshes.size()) : 1;
+            AABB bounds = meshGPU ? meshGPU->bounds : AABB{};
+            Entity created = scene->CreateEntity(entityName);
+            if (!created) {
+                statusBar()->showMessage(tr("Failed to create entity."), 3000);
+                return;
+            }
+            auto& renderer = created.AddComponent<MeshRendererComponent>();
+            renderer.SetMesh(meshHandle, bounds, assetPath, false, subCount);
+            renderer.materialIndices.assign(static_cast<size_t>(subCount), -1);
+            renderer.appliedMaterialPaths.resize(static_cast<size_t>(subCount));
+            created.AddComponent<MaterialComponent>(Vec3(0.75f, 0.55f, 0.35f));
+            auto& tc = created.GetComponent<TransformComponent>();
+            tc.position = spawnPos;
+            if (hasPlacementHit && placementHit.normal.y > 0.5f) {
+                tc.position.y += -bounds.min.y;
+            }
+            ctx->SetSelectionChangedCallback(nullptr);
+            ctx->SelectEntity(static_cast<entt::entity>(created));
+            ctx->SetSelectionChangedCallback([this](entt::entity) {
+                refreshDetailsPanel();
+            });
+            ctx->MarkDirty();
+            break;
         }
         // Resolve the mesh file against the project root.
         // The asset path stored by AddActorsPanel is e.g. ".engine/meshes/Cube.glb"

@@ -10,6 +10,7 @@
 
 // Forward include for Lua scripting
 #include "../Scripting/LuaScriptComponent.h"
+#include "CharacterComponent.h"
 #include "../Core/PropertyValue.h"
 
 // ═══════════════════════════════════════════════════════════════

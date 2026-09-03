@@ -24,6 +24,10 @@ struct SkeletonBone {
     int evalIndex = -1;      ///< Parent-before-child evaluation / GPU palette index
     Mat4 localRest = Mat4::Identity();
     Mat4 inverseBind = Mat4::Identity();
+    Mat4 restPrefix = Mat4::Identity(); ///< Non-joint ancestors; identity when parent is a joint
+    Vec3 restTranslation{0.0f, 0.0f, 0.0f};
+    Vec4 restRotation{0.0f, 0.0f, 0.0f, 1.0f}; ///< glTF xyzw
+    Vec3 restScale{1.0f, 1.0f, 1.0f};
 };
 
 struct SkeletonCompatibilityReport {
@@ -64,6 +68,12 @@ public:
                                 const Mat4& meshNodeWorld,
                                 float epsilon,
                                 std::string& outError);
+    /// boneMats[eval] = restWorld[eval] * inverseBind[eval], padded to kMaxCharacterBones with identity.
+    static void FillRestBonePalette(const Skeleton& skeleton, std::vector<Mat4>& outPalette);
+    /// boneMats[eval] = world[eval] * inverseBind[eval], padded to kMaxCharacterBones with identity.
+    static void FillBonePalette(const Skeleton& skeleton,
+                                const std::vector<Mat4>& world,
+                                std::vector<Mat4>& outPalette);
 };
 
 Mat4 ConvertSkeletalMatrix(const Mat4& gltfMatrix, float unitScale);

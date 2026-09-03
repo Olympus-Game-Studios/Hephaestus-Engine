@@ -173,6 +173,45 @@ Mat4 GLTFNodeLocalMatrix(const json& node) {
     return Mat4::Multiply(t, Mat4::Multiply(r, s));
 }
 
+struct NodeTrs {
+    Vec3 translation{0.0f, 0.0f, 0.0f};
+    Vec4 rotation{0.0f, 0.0f, 0.0f, 1.0f};
+    Vec3 scale{1.0f, 1.0f, 1.0f};
+    bool hasTrs = false;
+};
+
+NodeTrs ExtractNodeTrs(const json& node) {
+    NodeTrs trs;
+    if (node.contains("matrix") && node["matrix"].is_array() && node["matrix"].size() >= 16) {
+        return trs;
+    }
+    if (node.contains("translation") && node["translation"].is_array() &&
+        node["translation"].size() >= 3) {
+        trs.translation.x = ReadGLTFNumber(node["translation"][0]);
+        trs.translation.y = ReadGLTFNumber(node["translation"][1]);
+        trs.translation.z = ReadGLTFNumber(node["translation"][2]);
+        trs.hasTrs = true;
+    }
+    if (node.contains("scale") && node["scale"].is_array() && node["scale"].size() >= 3) {
+        trs.scale.x = ReadGLTFNumber(node["scale"][0]);
+        trs.scale.y = ReadGLTFNumber(node["scale"][1]);
+        trs.scale.z = ReadGLTFNumber(node["scale"][2]);
+        trs.hasTrs = true;
+    }
+    if (node.contains("rotation") && node["rotation"].is_array() &&
+        node["rotation"].size() >= 4) {
+        trs.rotation.x = ReadGLTFNumber(node["rotation"][0]);
+        trs.rotation.y = ReadGLTFNumber(node["rotation"][1]);
+        trs.rotation.z = ReadGLTFNumber(node["rotation"][2]);
+        trs.rotation.w = ReadGLTFNumber(node["rotation"][3]);
+        trs.hasTrs = true;
+    }
+    if (!node.contains("matrix")) {
+        trs.hasTrs = true;
+    }
+    return trs;
+}
+
 bool LoadGlbOrGltf(const std::filesystem::path& path,
                    json& root,
                    std::vector<std::vector<uint8_t>>& buffers,
@@ -426,6 +465,237 @@ bool ReadMat4Array(const json& root,
             outMatrices[static_cast<size_t>(i)].m[e] = ReadNormalized(view, i, e);
         }
     }
+    return true;
+}
+
+bool ReadFloatScalars(const json& root,
+                      const std::vector<std::vector<uint8_t>>& buffers,
+                      int accessorIndex,
+                      std::vector<float>& outValues,
+                      std::string& errorMessage) {
+    AccessorView view;
+    if (!OpenAccessor(root, buffers, accessorIndex, view, errorMessage)) {
+        return false;
+    }
+    if (view.componentType != kComponentFloat || view.componentCount != 1) {
+        errorMessage = "Animation input times must be FLOAT SCALAR";
+        return false;
+    }
+    outValues.resize(static_cast<size_t>(view.count));
+    for (int i = 0; i < view.count; ++i) {
+        outValues[static_cast<size_t>(i)] = ReadNormalized(view, i, 0);
+    }
+    return true;
+}
+
+bool ReadVec3Array(const json& root,
+                   const std::vector<std::vector<uint8_t>>& buffers,
+                   int accessorIndex,
+                   int expectedCount,
+                   std::vector<Vec3>& outValues,
+                   std::string& errorMessage) {
+    AccessorView view;
+    if (!OpenAccessor(root, buffers, accessorIndex, view, errorMessage)) {
+        return false;
+    }
+    if (view.componentType != kComponentFloat || view.componentCount != 3) {
+        errorMessage = "Animation translation/scale must be FLOAT VEC3";
+        return false;
+    }
+    if (view.count < expectedCount) {
+        errorMessage = "Animation output count does not match input times";
+        return false;
+    }
+    outValues.resize(static_cast<size_t>(expectedCount));
+    for (int i = 0; i < expectedCount; ++i) {
+        outValues[static_cast<size_t>(i)] = Vec3(ReadNormalized(view, i, 0),
+                                                 ReadNormalized(view, i, 1),
+                                                 ReadNormalized(view, i, 2));
+    }
+    return true;
+}
+
+bool ReadVec4Array(const json& root,
+                   const std::vector<std::vector<uint8_t>>& buffers,
+                   int accessorIndex,
+                   int expectedCount,
+                   std::vector<Vec4>& outValues,
+                   std::string& errorMessage) {
+    AccessorView view;
+    if (!OpenAccessor(root, buffers, accessorIndex, view, errorMessage)) {
+        return false;
+    }
+    if (view.componentType != kComponentFloat || view.componentCount != 4) {
+        errorMessage = "Animation rotation must be FLOAT VEC4";
+        return false;
+    }
+    if (view.count < expectedCount) {
+        errorMessage = "Animation output count does not match input times";
+        return false;
+    }
+    outValues.resize(static_cast<size_t>(expectedCount));
+    for (int i = 0; i < expectedCount; ++i) {
+        outValues[static_cast<size_t>(i)] = Vec4(ReadNormalized(view, i, 0),
+                                                 ReadNormalized(view, i, 1),
+                                                 ReadNormalized(view, i, 2),
+                                                 ReadNormalized(view, i, 3));
+    }
+    return true;
+}
+
+int NodeToEval(const json& nodes,
+               int nodeIndex,
+               const Skeleton& skeleton,
+               const std::unordered_map<int, int>& nodeToSource) {
+    auto it = nodeToSource.find(nodeIndex);
+    if (it != nodeToSource.end()) {
+        if (it->second >= 0 && it->second < static_cast<int>(skeleton.sourceJointToEval.size())) {
+            return skeleton.sourceJointToEval[static_cast<size_t>(it->second)];
+        }
+    }
+    if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes.size())) {
+        return -1;
+    }
+    const json& node = nodes[nodeIndex];
+    if (!node.contains("name") || !node["name"].is_string()) {
+        return -1;
+    }
+    const SkeletonBone* bone = skeleton.FindBone(TrimCopy(node["name"].get<std::string>()));
+    return bone ? bone->evalIndex : -1;
+}
+
+bool ImportAnimations(const json& root,
+                      const std::vector<std::vector<uint8_t>>& buffers,
+                      const SkeletalImportSettings& settings,
+                      const Skeleton& skeleton,
+                      const json& nodes,
+                      const std::unordered_map<int, int>& nodeToSource,
+                      std::vector<AnimationClip>& outClips,
+                      std::vector<std::string>& warnings,
+                      std::string& errorMessage) {
+    outClips.clear();
+    if (!root.contains("animations") || !root["animations"].is_array()) {
+        return true;
+    }
+
+    for (const json& animation : root["animations"]) {
+        AnimationClip clip;
+        if (animation.contains("name") && animation["name"].is_string()) {
+            clip.name = TrimCopy(animation["name"].get<std::string>());
+        }
+        if (clip.name.empty()) {
+            clip.name = "Clip" + std::to_string(outClips.size());
+        }
+        clip.id = clip.name;
+        clip.sourceClip = clip.name;
+        clip.skeletonSignature = skeleton.signature;
+        clip.loop = true;
+        clip.speed = 1.0f;
+
+        if (!animation.contains("channels") || !animation["channels"].is_array() ||
+            !animation.contains("samplers") || !animation["samplers"].is_array()) {
+            warnings.push_back("Animation '" + clip.name + "' is missing channels or samplers.");
+            continue;
+        }
+
+        const json& samplers = animation["samplers"];
+        bool clipOk = true;
+        std::string clipError;
+        for (const json& channelJson : animation["channels"]) {
+            if (!channelJson.contains("sampler") || !channelJson["sampler"].is_number_integer() ||
+                !channelJson.contains("target") || !channelJson["target"].is_object()) {
+                continue;
+            }
+            const int samplerIndex = channelJson["sampler"].get<int>();
+            if (samplerIndex < 0 || samplerIndex >= static_cast<int>(samplers.size())) {
+                clipOk = false;
+                clipError = "sampler index out of range";
+                break;
+            }
+            const json& target = channelJson["target"];
+            if (!target.contains("node") || !target["node"].is_number_integer()) {
+                continue;
+            }
+            const std::string path = target.value("path", "");
+            if (path == "weights") {
+                warnings.push_back("Animation '" + clip.name +
+                                   "' morph-weight channels are ignored.");
+                continue;
+            }
+
+            AnimationChannel channel;
+            if (path == "translation") {
+                channel.path = AnimationPath::Translation;
+            } else if (path == "rotation") {
+                channel.path = AnimationPath::Rotation;
+            } else if (path == "scale") {
+                channel.path = AnimationPath::Scale;
+            } else {
+                continue;
+            }
+
+            channel.evalBone = NodeToEval(nodes, target["node"].get<int>(), skeleton, nodeToSource);
+            if (channel.evalBone < 0) {
+                continue;
+            }
+
+            const json& sampler = samplers[samplerIndex];
+            const std::string interpolation =
+                ToLower(sampler.value("interpolation", "LINEAR"));
+            if (interpolation == "cubicspline") {
+                clipOk = false;
+                clipError = "CUBICSPLINE interpolation is not supported in Animation 1.0";
+                break;
+            }
+            channel.interpolation = (interpolation == "step") ? AnimationInterpolation::Step
+                                                              : AnimationInterpolation::Linear;
+            if (!sampler.contains("input") || !sampler.contains("output")) {
+                clipOk = false;
+                clipError = "sampler is missing input/output";
+                break;
+            }
+            if (!ReadFloatScalars(root, buffers, sampler["input"].get<int>(), channel.times,
+                                  clipError)) {
+                clipOk = false;
+                break;
+            }
+            const int keyCount = static_cast<int>(channel.times.size());
+            if (channel.path == AnimationPath::Rotation) {
+                if (!ReadVec4Array(root, buffers, sampler["output"].get<int>(), keyCount,
+                                   channel.rotations, clipError)) {
+                    clipOk = false;
+                    break;
+                }
+            } else {
+                if (!ReadVec3Array(root, buffers, sampler["output"].get<int>(), keyCount,
+                                   channel.vectors, clipError)) {
+                    clipOk = false;
+                    break;
+                }
+                if (channel.path == AnimationPath::Translation) {
+                    for (Vec3& value : channel.vectors) {
+                        value = ConvertSkeletalPoint(value, settings.unitScale);
+                    }
+                }
+            }
+            for (float t : channel.times) {
+                clip.duration = std::max(clip.duration, t);
+            }
+            clip.channels.push_back(std::move(channel));
+        }
+
+        if (!clipOk) {
+            warnings.push_back("Animation '" + clip.name + "' was skipped: " + clipError);
+            continue;
+        }
+        if (clip.channels.empty()) {
+            warnings.push_back("Animation '" + clip.name + "' has no skeleton channels.");
+            continue;
+        }
+        clip.endTime = clip.duration;
+        outClips.push_back(std::move(clip));
+    }
+    errorMessage.clear();
     return true;
 }
 
@@ -947,6 +1217,18 @@ bool ImportDocument(const json& root,
                                   settings.unitScale);
         bone.inverseBind = ConvertSkeletalMatrix(inverseBinds[static_cast<size_t>(source)],
                                                  settings.unitScale);
+        const int parentOfJoint = nodeParent[static_cast<size_t>(nodeIndex)];
+        const NodeTrs trs = ExtractNodeTrs(nodes[nodeIndex]);
+        if (trs.hasTrs) {
+            bone.restPrefix = ConvertSkeletalMatrix(
+                ClosedLocal(parentOfJoint, parentJointNode, nodeParent, nodeLocal),
+                settings.unitScale);
+            bone.restTranslation = ConvertSkeletalPoint(trs.translation, settings.unitScale);
+            bone.restRotation = trs.rotation;
+            bone.restScale = trs.scale;
+        } else {
+            bone.restPrefix = bone.localRest;
+        }
         skeleton.bones[static_cast<size_t>(source)] = std::move(bone);
     }
 
@@ -983,7 +1265,54 @@ bool ImportDocument(const json& root,
             "Some vertices had more than 4 bone influences; extra influences were dropped and "
             "weights were renormalized.");
     }
+
+    std::string animError;
+    if (!ImportAnimations(root, buffers, settings, outResult.skeleton, nodes, nodeToSource,
+                          outResult.clips, outResult.warnings, animError) &&
+        !animError.empty()) {
+        outResult.warnings.push_back(animError);
+    }
     return true;
+}
+
+void AppendBox(SkeletalImportResult& result, const Vec3& minP, const Vec3& maxP, uint16_t bone) {
+    const Vec3 nrm[6] = {
+        Vec3(0, 0, 1), Vec3(0, 0, -1), Vec3(1, 0, 0),
+        Vec3(-1, 0, 0), Vec3(0, 1, 0), Vec3(0, -1, 0)
+    };
+    const Vec3 corners[8] = {
+        Vec3(minP.x, minP.y, maxP.z), Vec3(maxP.x, minP.y, maxP.z),
+        Vec3(maxP.x, maxP.y, maxP.z), Vec3(minP.x, maxP.y, maxP.z),
+        Vec3(minP.x, minP.y, minP.z), Vec3(maxP.x, minP.y, minP.z),
+        Vec3(maxP.x, maxP.y, minP.z), Vec3(minP.x, maxP.y, minP.z)
+    };
+    const int faces[6][4] = {
+        {0, 1, 2, 3}, {5, 4, 7, 6}, {1, 5, 6, 2},
+        {4, 0, 3, 7}, {3, 2, 6, 7}, {4, 5, 1, 0}
+    };
+    const uint32_t base = static_cast<uint32_t>(result.vertices.size());
+    for (int f = 0; f < 6; ++f) {
+        for (int i = 0; i < 4; ++i) {
+            SkinnedVertexData vert{};
+            const Vec3& p = corners[faces[f][i]];
+            vert.pos[0] = p.x;
+            vert.pos[1] = p.y;
+            vert.pos[2] = p.z;
+            vert.normal[0] = nrm[f].x;
+            vert.normal[1] = nrm[f].y;
+            vert.normal[2] = nrm[f].z;
+            vert.joints[0] = bone;
+            vert.weights[0] = 1.0f;
+            result.vertices.push_back(vert);
+        }
+        const uint32_t q = base + static_cast<uint32_t>(f * 4);
+        result.indices.push_back(q);
+        result.indices.push_back(q + 1);
+        result.indices.push_back(q + 2);
+        result.indices.push_back(q);
+        result.indices.push_back(q + 2);
+        result.indices.push_back(q + 3);
+    }
 }
 
 } // namespace
@@ -1004,6 +1333,99 @@ bool SkeletalModelImporter::Load(const std::filesystem::path& path,
         outError = std::string("Failed to load character source: ") + ex.what();
         return false;
     }
+}
+
+bool SkeletalModelImporter::LoadClips(const std::filesystem::path& path,
+                                      const SkeletalImportSettings& settings,
+                                      const Skeleton& character,
+                                      std::vector<AnimationClip>& outClips,
+                                      std::string& outError) {
+    outError.clear();
+    outClips.clear();
+    json root;
+    std::vector<std::vector<uint8_t>> buffers;
+    try {
+        if (!LoadGlbOrGltf(path, root, buffers, outError)) {
+            return false;
+        }
+        if (root.contains("skins") && root["skins"].is_array() && !root["skins"].empty()) {
+            SkeletalImportResult imported;
+            if (ImportDocument(root, buffers, settings, imported, outError)) {
+                const SkeletonCompatibilityReport report =
+                    SkeletonBuilder::Compare(character, imported.skeleton);
+                if (!report.compatible) {
+                    outError = FormatSkeletonIncompatibility(report);
+                    return false;
+                }
+                outClips = std::move(imported.clips);
+                return true;
+            }
+        }
+        if (!root.contains("nodes") || !root["nodes"].is_array()) {
+            if (outError.empty()) {
+                outError = "Animation source has no nodes";
+            }
+            return false;
+        }
+        std::unordered_map<int, int> nodeToSource;
+        std::vector<std::string> warnings;
+        std::string animError;
+        if (!ImportAnimations(root, buffers, settings, character, root["nodes"], nodeToSource,
+                              outClips, warnings, animError)) {
+            outError = animError.empty() ? "Failed to import animation clips" : animError;
+            return false;
+        }
+        outError.clear();
+        return true;
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to load animation source: ") + ex.what();
+        return false;
+    }
+}
+
+void SkeletalModelImporter::BuildRestPoseFixture(SkeletalImportResult& outResult,
+                                                 std::vector<Mat4>& outPalette) {
+    outResult = SkeletalImportResult{};
+    Skeleton skeleton;
+    skeleton.skinName = "Armature";
+    SkeletonBone root;
+    root.name = "Root";
+    root.parentEval = -1;
+    root.sourceJoint = 0;
+    root.localRest = Mat4::Identity();
+    root.inverseBind = Mat4::Identity();
+    root.restTranslation = Vec3(0.0f, 0.0f, 0.0f);
+    root.restRotation = Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    root.restScale = Vec3(1.0f, 1.0f, 1.0f);
+    SkeletonBone child;
+    child.name = "Child";
+    child.parentEval = 0;
+    child.sourceJoint = 1;
+    child.localRest = Mat4::Translation(Vec3(0.0f, 1.0f, 0.0f));
+    child.inverseBind = Mat4::Translation(Vec3(0.0f, -1.0f, 0.0f));
+    child.restTranslation = Vec3(0.0f, 1.0f, 0.0f);
+    child.restRotation = Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    child.restScale = Vec3(1.0f, 1.0f, 1.0f);
+    skeleton.bones = {root, child};
+    std::string error;
+    SkeletonBuilder::Finalize(skeleton, error);
+
+    const SkeletonBone* rootBone = skeleton.FindBone("Root");
+    const SkeletonBone* childBone = skeleton.FindBone("Child");
+    const uint16_t rootEval =
+        static_cast<uint16_t>(rootBone ? rootBone->evalIndex : 0);
+    const uint16_t childEval =
+        static_cast<uint16_t>(childBone ? childBone->evalIndex : 1);
+
+    AppendBox(outResult, Vec3(-0.18f, 0.0f, -0.18f), Vec3(0.18f, 1.0f, 0.18f), rootEval);
+    AppendBox(outResult, Vec3(-0.14f, 1.0f, -0.14f), Vec3(0.14f, 2.0f, 0.14f), childEval);
+    outResult.bounds = AABB(Vec3(-0.18f, 0.0f, -0.18f), Vec3(0.18f, 2.0f, 0.18f));
+    SkinnedSubmeshData sub{};
+    sub.indexCount = static_cast<uint32_t>(outResult.indices.size());
+    sub.name = "Body";
+    outResult.submeshes.push_back(sub);
+    outResult.skeleton = std::move(skeleton);
+    SkeletonBuilder::FillRestBonePalette(outResult.skeleton, outPalette);
 }
 
 } // namespace Hephaestus

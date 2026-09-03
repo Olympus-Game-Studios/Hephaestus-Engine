@@ -159,6 +159,110 @@ void WriteStringSet(std::ostream& stream, const std::unordered_set<std::string>&
     stream << "]";
 }
 
+PropertyValue ParsePropertyValue(const JsonValue& value);
+static bool ParseBoolLike(const JsonValue& value, bool fallback);
+static std::string NormalizeAssetPathForSave(const std::string& rawPath);
+
+std::string WriteCharacterComponentJson(const CharacterComponent& character)
+{
+    std::ostringstream oss;
+    oss.imbue(std::locale::classic());
+    oss << "        \"Character\": {\n";
+    oss << "          \"characterPath\": \""
+        << EscapeString(NormalizeAssetPathForSave(character.characterPath)) << "\",\n";
+    oss << "          \"defaultAnimation\": \"" << EscapeString(character.defaultAnimation)
+        << "\",\n";
+    oss << "          \"playbackSpeed\": " << FormatFloat(character.playbackSpeed) << ",\n";
+    oss << "          \"runController\": " << (character.runController ? "true" : "false") << ",\n";
+    oss << "          \"controllerScriptPath\": \""
+        << EscapeString(NormalizeAssetPathForSave(character.controllerScriptPath)) << "\",\n";
+    oss << "          \"controllerVariables\": {";
+    size_t varIndex = 0;
+    for (const auto& [key, value] : character.controllerVariables) {
+        if (varIndex++) {
+            oss << ", ";
+        }
+        oss << "\"" << EscapeString(key) << "\": ";
+        WritePropertyValue(oss, value);
+    }
+    oss << "},\n";
+    oss << "          \"authoredControllerVariables\": ";
+    WriteStringSet(oss, character.authoredControllerVariables);
+    oss << ",\n";
+    oss << "          \"materialOverrides\": [";
+    for (size_t i = 0; i < character.materialOverrides.size(); ++i) {
+        if (i) {
+            oss << ", ";
+        }
+        oss << "\"" << EscapeString(NormalizeAssetPathForSave(character.materialOverrides[i]))
+            << "\"";
+    }
+    oss << "]\n";
+    oss << "        }";
+    return oss.str();
+}
+
+bool ApplyCharacterJson(CharacterComponent& character, const JsonValue& data, std::string& outError)
+{
+    if (!data.IsObject()) {
+        outError = "Character component is not an object.";
+        return false;
+    }
+    if (const JsonValue* pathValue = data.Find("characterPath")) {
+        if (pathValue->IsString()) {
+            character.characterPath = pathValue->AsString();
+        }
+    }
+    if (const JsonValue* animValue = data.Find("defaultAnimation")) {
+        if (animValue->IsString()) {
+            character.defaultAnimation = animValue->AsString();
+        }
+    }
+    if (const JsonValue* speedValue = data.Find("playbackSpeed")) {
+        if (speedValue->IsNumber()) {
+            character.playbackSpeed = static_cast<float>(speedValue->AsNumber());
+        }
+    }
+    if (const JsonValue* runValue = data.Find("runController")) {
+        character.runController = ParseBoolLike(*runValue, character.runController);
+    }
+    if (const JsonValue* scriptValue = data.Find("controllerScriptPath")) {
+        if (scriptValue->IsString()) {
+            character.controllerScriptPath = scriptValue->AsString();
+        }
+    }
+    if (const JsonValue* varsValue = data.Find("controllerVariables")) {
+        if (varsValue->IsObject()) {
+            character.controllerVariables.clear();
+            for (const auto& [key, value] : varsValue->AsObject()) {
+                character.controllerVariables.emplace(key, ParsePropertyValue(value));
+            }
+        }
+    }
+    if (const JsonValue* authoredValue = data.Find("authoredControllerVariables")) {
+        character.authoredControllerVariablesInitialized = true;
+        character.authoredControllerVariables.clear();
+        if (authoredValue->IsArray()) {
+            for (const JsonValue& value : authoredValue->AsArray()) {
+                if (value.IsString()) {
+                    character.authoredControllerVariables.insert(value.AsString());
+                }
+            }
+        }
+    }
+    if (const JsonValue* materialsValue = data.Find("materialOverrides")) {
+        if (materialsValue->IsArray()) {
+            character.materialOverrides.clear();
+            for (const JsonValue& value : materialsValue->AsArray()) {
+                if (value.IsString()) {
+                    character.materialOverrides.push_back(value.AsString());
+                }
+            }
+        }
+    }
+    return true;
+}
+
 PropertyValue ParsePropertyValue(const JsonValue& value)
 {
     if (value.IsBool()) {
@@ -581,6 +685,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         const ScriptComponent* scriptComponent = registry.try_get<ScriptComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
         const AudioSourceComponent* audio = registry.try_get<AudioSourceComponent>(handle);
+        const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
         const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
@@ -828,6 +933,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"volume\": " << FormatFloat(audio->volume) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
+        }
+
+        if (character) {
+            componentBlocks.push_back(WriteCharacterComponentJson(*character));
         }
 
         if (selection) {
@@ -1618,6 +1727,13 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             audio.runtimeLastClip.clear();
         }
 
+        if (const JsonValue* characterObj = components->Find("Character")) {
+            auto& character = entity.AddComponent<CharacterComponent>();
+            if (!ApplyCharacterJson(character, *characterObj, outError)) {
+                return false;
+            }
+        }
+
         if (const JsonValue* selectionObj = components->Find("Selection")) {
             if (!selectionObj->IsObject()) {
                 outError = "Selection component is not an object.";
@@ -2069,7 +2185,8 @@ std::string SceneSerializer::SerializeToString() const
         const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
         const AudioSourceComponent* audio = registry.try_get<AudioSourceComponent>(handle);
-    const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
+        const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
+        const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
         const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
 
@@ -2300,6 +2417,10 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"volume\": " << FormatFloat(audio->volume) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
+        }
+
+        if (character) {
+            componentBlocks.push_back(WriteCharacterComponentJson(*character));
         }
 
         if (selection) {

@@ -377,6 +377,7 @@ struct ClipboardEntityData {
     std::optional<PhysicsShapeComponent> physicsShape;
     std::optional<RigidBodyComponent> rigidBody;
     std::optional<CameraComponent> camera;
+    std::optional<CharacterComponent> character;
 };
 }
 
@@ -429,6 +430,20 @@ void Scene::CopyEntityToClipboard(Entity entity)
 
     if (entity.HasComponent<CameraComponent>()) {
         data.camera = entity.GetComponent<CameraComponent>();
+    }
+
+    if (entity.HasComponent<CharacterComponent>()) {
+        CharacterComponent copy = entity.GetComponent<CharacterComponent>();
+        copy.runtimeReady = false;
+        copy.skeleton = {};
+        copy.clips.clear();
+        copy.player = {};
+        copy.localPoses.clear();
+        copy.localMatrices.clear();
+        copy.worldPose.clear();
+        copy.bonePalette.clear();
+        copy.lastError.clear();
+        data.character = std::move(copy);
     }
 
     s_EntityClipboard = data;
@@ -506,6 +521,10 @@ Entity Scene::PasteClipboard()
 
     if (data.camera) {
         e.AddComponent<CameraComponent>(*data.camera);
+    }
+
+    if (data.character) {
+        e.AddComponent<CharacterComponent>(*data.character);
     }
 
     SetSelectedEntity(e);

@@ -12,6 +12,7 @@
 #include "../Scripting/ScriptEngine.h"
 #include "../Scripting/LuaScriptComponent.h"
 #include "../Gfx/EngineFrameRenderer.h"
+#include "../Animation/CharacterPlayback.h"
 #include "EditorContext.h"
 
 #include <iostream>
@@ -225,6 +226,11 @@ void PlayModeManager::Tick(float dt) {
     // ── Update Lua scripts ─────────────────────────────────────────────────
     if (m_luaEngine && m_scene) {
         m_luaEngine->Update(*m_scene, dt);
+    }
+    if (m_scene) {
+        CharacterAnimationSystem::Tick(*m_scene, dt);
+    }
+    if (m_luaEngine && m_scene) {
         m_luaEngine->LateUpdate(*m_scene, dt);
     }
 }

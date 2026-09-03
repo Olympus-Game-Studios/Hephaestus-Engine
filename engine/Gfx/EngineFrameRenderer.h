@@ -201,6 +201,18 @@ public:
     size_t AddMesh(MeshGPU mesh);
 
     /**
+     * @brief Upload a skinned mesh (rest-pose bone UBO, eval/palette joint indices).
+     */
+    size_t AddSkinnedMesh(const std::string& name,
+                          const std::vector<SkinnedVertex>& vertices,
+                          const std::vector<uint32_t>& indices,
+                          const std::vector<MeshData::Submesh>& submeshes,
+                          const AABB& bounds,
+                          const std::vector<Mat4>& bonePalette,
+                          const std::filesystem::path& sourcePath,
+                          bool imported = false);
+
+    /**
      * @brief Get mesh by handle.
      * @param handle Mesh handle from AddMesh
      * @return Pointer to mesh or nullptr if invalid
@@ -316,6 +328,18 @@ private:
     bool createDescriptorSets();
     bool createShadowResources();
     bool createBillboardResources();
+    bool createSkinnedBoneLayout();
+    bool createSkinnedMainPipelines();
+    bool createSkinnedShadowPipeline();
+    bool createSkinnedOutlinePipelines();
+    bool createSkinnedIdPipelines();
+    void cleanupSkinnedGraphicsPipelines();
+    void cleanupSkinnedResources();
+    void allocateSkinnedBoneDescriptor(MeshGPU& mesh);
+    VkDescriptorSet resolveSkinnedBoneSet(entt::entity entity, const CharacterComponent* character,
+                                          const MeshGPU& mesh);
+    void destroyCharacterBonePalettes();
+    VkPipeline getSkinnedPipeline(bool backfaceCulling, bool wireframe) const;
 
     // Per-frame helpers
     void updateCameraUBO(uint32_t imageIndex, const RenderCamera& camera,
@@ -398,6 +422,32 @@ private:
     // Mesh library
     std::vector<MeshGPU> m_meshLibrary;
     std::unordered_map<std::string, size_t> m_meshLibraryLookup;
+
+    struct SkinnedPass {
+        bool layoutReady = false;
+        VkDescriptorSetLayout boneSetLayout = VK_NULL_HANDLE;
+        VkDescriptorPool bonePool = VK_NULL_HANDLE;
+        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipeline pipelineBackface = VK_NULL_HANDLE;
+        VkPipeline pipelineWireframe = VK_NULL_HANDLE;
+        VkPipeline pipelineWireframeBackface = VK_NULL_HANDLE;
+        VkPipelineLayout shadowLayout = VK_NULL_HANDLE;
+        VkPipeline shadowPipeline = VK_NULL_HANDLE;
+        VkPipelineLayout outlineLayout = VK_NULL_HANDLE;
+        VkPipeline outlinePipeline = VK_NULL_HANDLE;
+        VkPipeline outlineMaskPipeline = VK_NULL_HANDLE;
+        VkPipelineLayout idLayout = VK_NULL_HANDLE;
+        VkPipeline idPipeline = VK_NULL_HANDLE;
+        VkPipeline idPipelineBackface = VK_NULL_HANDLE;
+    };
+    SkinnedPass m_skinned;
+
+    struct CharacterBoneGpu {
+        VulkanBuffer buffer;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+    };
+    std::unordered_map<uint32_t, CharacterBoneGpu> m_characterBonePalettes;
 
     // Material texture slots
     struct MaterialTextureSlot {

@@ -92,6 +92,9 @@
 // Assets
 #include "../Assets/MeshAsset.h"
 #include "../Assets/ModelImporter.h"
+#include "../Assets/SkeletalModelImporter.h"
+#include "../Animation/CharacterPlayback.h"
+#include "../Gfx/Vertex.h"
 
 // stb_image is already included via ModelImporter or elsewhere
 // Do not re-define STB_IMAGE_IMPLEMENTATION here
@@ -1067,6 +1070,37 @@ int main(int argc, char* argv[]) {
     if (builtinSphereHandle != SIZE_MAX) {
         HP_LOG(Info, "  Loaded builtin sphere mesh at handle " + std::to_string(builtinSphereHandle));
     }
+
+    {
+        Hephaestus::SkeletalImportResult fixture;
+        std::vector<Mat4> palette;
+        Hephaestus::SkeletalModelImporter::BuildRestPoseFixture(fixture, palette);
+        std::vector<SkinnedVertex> verts(fixture.vertices.size());
+        for (size_t i = 0; i < fixture.vertices.size(); ++i) {
+            const auto& src = fixture.vertices[i];
+            std::memcpy(verts[i].pos, src.pos, sizeof(src.pos));
+            std::memcpy(verts[i].normal, src.normal, sizeof(src.normal));
+            std::memcpy(verts[i].color, src.color, sizeof(src.color));
+            std::memcpy(verts[i].texCoord, src.texCoord, sizeof(src.texCoord));
+            std::memcpy(verts[i].joints, src.joints, sizeof(src.joints));
+            std::memcpy(verts[i].weights, src.weights, sizeof(src.weights));
+        }
+        std::vector<MeshData::Submesh> submeshes;
+        for (const auto& sub : fixture.submeshes) {
+            MeshData::Submesh gpuSub{};
+            gpuSub.indexOffset = sub.indexOffset;
+            gpuSub.indexCount = sub.indexCount;
+            gpuSub.materialSlot = sub.materialSlot;
+            gpuSub.name = sub.name;
+            submeshes.push_back(std::move(gpuSub));
+        }
+        const size_t handle = frameRenderer.AddSkinnedMesh(
+            "Skinned Rest Fixture", verts, fixture.indices, submeshes, fixture.bounds, palette,
+            fs::path("builtin://skinned_rest_fixture"), false);
+        if (handle != SIZE_MAX) {
+            HP_LOG(Info, "  Loaded builtin skinned rest fixture at handle " + std::to_string(handle));
+        }
+    }
     
     // ── Load Scene Meshes ─────────────────────────
     HP_LOG(Info, "Loading scene meshes...");
@@ -1551,6 +1585,9 @@ int main(int argc, char* argv[]) {
         // Update scripts
 #if HEPHAESTUS_GAME_SCRIPTING
         luaEngine.Update(scene, deltaTime);
+#endif
+        Hephaestus::CharacterAnimationSystem::Tick(scene, deltaTime);
+#if HEPHAESTUS_GAME_SCRIPTING
         luaEngine.LateUpdate(scene, deltaTime);
 #endif
 

@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "../Animation/AnimationClip.h"
 #include "../Animation/Skeleton.h"
 
 #include <filesystem>
@@ -41,6 +42,7 @@ struct SkeletalImportResult {
     AABB bounds{};
     Mat4 meshNodeWorld = Mat4::Identity();
     std::vector<std::string> warnings;
+    std::vector<AnimationClip> clips;
     bool clampedInfluences = false;
     bool restBindMismatch = false;
 };
@@ -51,6 +53,18 @@ public:
                      const SkeletalImportSettings& settings,
                      SkeletalImportResult& outResult,
                      std::string& outError);
+
+    /// Import animation clips from a GLB and bind them to `character` by bone name.
+    /// Files with a skin must be skeleton-compatible; unnamed/duplicate joints fail.
+    static bool LoadClips(const std::filesystem::path& path,
+                          const SkeletalImportSettings& settings,
+                          const Skeleton& character,
+                          std::vector<AnimationClip>& outClips,
+                          std::string& outError);
+
+    /// Two-bone rest-pose dummy used to exercise GPU skinning in editor and game.
+    static void BuildRestPoseFixture(SkeletalImportResult& outResult,
+                                     std::vector<Mat4>& outPalette);
 };
 
 } // namespace Hephaestus

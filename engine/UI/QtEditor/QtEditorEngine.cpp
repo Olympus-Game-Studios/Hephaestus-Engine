@@ -25,6 +25,7 @@
 #include "../../Scene/PrefabOverrideSystem.h"
 #include "../../Assets/MeshAsset.h"
 #include "../../Assets/ModelImporter.h"
+#include "../../Assets/SkeletalModelImporter.h"
 #include "../../Core/ProjectContext.h"
 #include "../../Physics/JoltPhysicsEngine.h"
 #include "../../Physics/JoltPhysicsSystem.h"
@@ -49,6 +50,7 @@
 #include <fstream>
 #include <cmath>
 #include <algorithm>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 
@@ -2239,6 +2241,37 @@ void QtEditorEngine::createBuiltinMeshes()
     sphereMesh.bounds = AABB(Vec3(-radius, -radius, -radius), Vec3(radius, radius, radius));
 
     uploadMeshToGPU("Default Sphere", sphereMesh, std::filesystem::path("builtin://sphere"), false);
+
+    {
+        Hephaestus::SkeletalImportResult fixture;
+        std::vector<Mat4> palette;
+        Hephaestus::SkeletalModelImporter::BuildRestPoseFixture(fixture, palette);
+        std::vector<SkinnedVertex> verts(fixture.vertices.size());
+        for (size_t i = 0; i < fixture.vertices.size(); ++i) {
+            const auto& src = fixture.vertices[i];
+            std::memcpy(verts[i].pos, src.pos, sizeof(src.pos));
+            std::memcpy(verts[i].normal, src.normal, sizeof(src.normal));
+            std::memcpy(verts[i].color, src.color, sizeof(src.color));
+            std::memcpy(verts[i].texCoord, src.texCoord, sizeof(src.texCoord));
+            std::memcpy(verts[i].joints, src.joints, sizeof(src.joints));
+            std::memcpy(verts[i].weights, src.weights, sizeof(src.weights));
+        }
+        std::vector<MeshData::Submesh> submeshes;
+        for (const auto& sub : fixture.submeshes) {
+            MeshData::Submesh gpuSub{};
+            gpuSub.indexOffset = sub.indexOffset;
+            gpuSub.indexCount = sub.indexCount;
+            gpuSub.materialSlot = sub.materialSlot;
+            gpuSub.name = sub.name;
+            submeshes.push_back(std::move(gpuSub));
+        }
+        const size_t handle = m_frameRenderer->AddSkinnedMesh(
+            "Skinned Rest Fixture", verts, fixture.indices, submeshes, fixture.bounds, palette,
+            std::filesystem::path("builtin://skinned_rest_fixture"), false);
+        if (handle != SIZE_MAX) {
+            std::cout << "[QtEditorEngine] Builtin skinned rest fixture handle " << handle << "\n";
+        }
+    }
 
     m_builtinMeshesCreated = true;
     std::cout << "[QtEditorEngine] Builtin meshes created\n";

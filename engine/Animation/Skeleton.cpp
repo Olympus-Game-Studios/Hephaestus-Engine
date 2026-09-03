@@ -358,4 +358,24 @@ bool SkeletonBuilder::RestMatchesBind(const Skeleton& skeleton,
     return false;
 }
 
+void SkeletonBuilder::FillBonePalette(const Skeleton& skeleton,
+                                      const std::vector<Mat4>& world,
+                                      std::vector<Mat4>& outPalette) {
+    outPalette.assign(static_cast<size_t>(kMaxCharacterBones), Mat4::Identity());
+    const int count = skeleton.BoneCount();
+    for (int i = 0; i < count && i < kMaxCharacterBones; ++i) {
+        const Mat4& boneWorld = (i < static_cast<int>(world.size()))
+                                    ? world[static_cast<size_t>(i)]
+                                    : Mat4::Identity();
+        outPalette[static_cast<size_t>(i)] =
+            Mat4::Multiply(boneWorld, skeleton.bones[static_cast<size_t>(i)].inverseBind);
+    }
+}
+
+void SkeletonBuilder::FillRestBonePalette(const Skeleton& skeleton, std::vector<Mat4>& outPalette) {
+    std::vector<Mat4> restWorld;
+    EvaluateRestWorld(skeleton, restWorld);
+    FillBonePalette(skeleton, restWorld, outPalette);
+}
+
 } // namespace Hephaestus

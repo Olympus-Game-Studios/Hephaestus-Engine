@@ -655,6 +655,99 @@ void ApplyScriptComponent(ScriptComponent& script, const JsonValue& data) {
     }
 }
 
+void CaptureCharacter(const CharacterComponent& character, JsonValue& data) {
+    data = MakeObject();
+    if (!character.characterPath.empty()) {
+        data.objectValue["characterPath"] = MakeString(character.characterPath);
+    }
+    if (!character.defaultAnimation.empty()) {
+        data.objectValue["defaultAnimation"] = MakeString(character.defaultAnimation);
+    }
+    data.objectValue["playbackSpeed"] = MakeNumber(character.playbackSpeed);
+    data.objectValue["runController"] = MakeBool(character.runController);
+    if (!character.controllerScriptPath.empty()) {
+        data.objectValue["controllerScriptPath"] = MakeString(character.controllerScriptPath);
+    }
+    JsonValue vars = MakeObject();
+    for (const auto& [key, value] : character.controllerVariables) {
+        vars.objectValue.emplace(key, PropertyToJson(value));
+    }
+    data.objectValue["controllerVariables"] = std::move(vars);
+    JsonValue authored = MakeArray();
+    std::vector<std::string> authoredNames(
+        character.authoredControllerVariables.begin(),
+        character.authoredControllerVariables.end());
+    std::sort(authoredNames.begin(), authoredNames.end());
+    for (const std::string& name : authoredNames) {
+        authored.arrayValue.push_back(MakeString(name));
+    }
+    data.objectValue["authoredControllerVariables"] = std::move(authored);
+    JsonValue materials = MakeArray();
+    for (const std::string& path : character.materialOverrides) {
+        materials.arrayValue.push_back(MakeString(path));
+    }
+    data.objectValue["materialOverrides"] = std::move(materials);
+}
+
+void ApplyCharacter(CharacterComponent& character, const JsonValue& data) {
+    if (!data.IsObject()) {
+        return;
+    }
+    if (const JsonValue* pathValue = data.Find("characterPath")) {
+        if (pathValue->IsString()) {
+            character.characterPath = pathValue->AsString();
+        }
+    }
+    if (const JsonValue* animValue = data.Find("defaultAnimation")) {
+        if (animValue->IsString()) {
+            character.defaultAnimation = animValue->AsString();
+        }
+    }
+    if (const JsonValue* speedValue = data.Find("playbackSpeed")) {
+        if (speedValue->IsNumber()) {
+            character.playbackSpeed = static_cast<float>(speedValue->AsNumber());
+        }
+    }
+    if (const JsonValue* runValue = data.Find("runController")) {
+        character.runController = ParseBoolLike(*runValue, character.runController);
+    }
+    if (const JsonValue* scriptValue = data.Find("controllerScriptPath")) {
+        if (scriptValue->IsString()) {
+            character.controllerScriptPath = scriptValue->AsString();
+        }
+    }
+    if (const JsonValue* varsValue = data.Find("controllerVariables")) {
+        if (varsValue->IsObject()) {
+            character.controllerVariables.clear();
+            for (const auto& [key, entry] : varsValue->AsObject()) {
+                character.controllerVariables.emplace(key, JsonToProperty(entry));
+            }
+        }
+    }
+    character.authoredControllerVariables.clear();
+    character.authoredControllerVariablesInitialized = false;
+    if (const JsonValue* authoredValue = data.Find("authoredControllerVariables")) {
+        character.authoredControllerVariablesInitialized = true;
+        if (authoredValue->IsArray()) {
+            for (const JsonValue& entry : authoredValue->AsArray()) {
+                if (entry.IsString()) {
+                    character.authoredControllerVariables.insert(entry.AsString());
+                }
+            }
+        }
+    }
+    if (const JsonValue* materialsValue = data.Find("materialOverrides")) {
+        if (materialsValue->IsArray()) {
+            character.materialOverrides.clear();
+            for (const JsonValue& entry : materialsValue->AsArray()) {
+                if (entry.IsString()) {
+                    character.materialOverrides.push_back(entry.AsString());
+                }
+            }
+        }
+    }
+}
+
 } // namespace
 
 JsonValue MakeNull() {
@@ -976,6 +1069,10 @@ bool CaptureComponent(Entity entity, const std::string& type, PrefabComponentEnt
         CaptureAudioSource(audio, out.data);
         return true;
     }
+    if (type == "Character" && entity.HasComponent<CharacterComponent>()) {
+        CaptureCharacter(entity.GetComponent<CharacterComponent>(), out.data);
+        return true;
+    }
     return false;
 }
 
@@ -1101,6 +1198,13 @@ bool ApplyComponentJson(Entity entity, const std::string& type, const JsonValue&
         ApplyAudioSource(audio, data, enabled);
         return true;
     }
+    if (type == "Character") {
+        auto& character = entity.HasComponent<CharacterComponent>()
+            ? entity.GetComponent<CharacterComponent>()
+            : entity.AddComponent<CharacterComponent>();
+        ApplyCharacter(character, data);
+        return true;
+    }
     return false;
 }
 
@@ -1122,6 +1226,7 @@ bool HasComponent(Entity entity, const std::string& type) {
     if (type == "LuaScript") return entity.HasComponent<LuaScriptComponent>();
     if (type == "ScriptComponent") return entity.HasComponent<ScriptComponent>();
     if (type == "AudioSource") return entity.HasComponent<AudioSourceComponent>();
+    if (type == "Character") return entity.HasComponent<CharacterComponent>();
     return false;
 }
 
@@ -1150,6 +1255,7 @@ bool RemoveComponent(Entity entity, const std::string& type) {
     else if (type == "LuaScript") entity.RemoveComponent<LuaScriptComponent>();
     else if (type == "ScriptComponent") entity.RemoveComponent<ScriptComponent>();
     else if (type == "AudioSource") entity.RemoveComponent<AudioSourceComponent>();
+    else if (type == "Character") entity.RemoveComponent<CharacterComponent>();
     else return false;
     return true;
 }
@@ -1157,7 +1263,7 @@ bool RemoveComponent(Entity entity, const std::string& type) {
 const std::vector<std::string>& SupportedTypes() {
     static const std::vector<std::string> kTypes = {
         "MeshRenderer", "MeshCollider", "PhysicsShape", "RigidBody",
-        "Material", "Light", "Camera", "LuaScript", "ScriptComponent", "AudioSource"
+        "Material", "Light", "Camera", "LuaScript", "ScriptComponent", "AudioSource", "Character"
     };
     return kTypes;
 }

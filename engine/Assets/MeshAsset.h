@@ -40,12 +40,20 @@ struct MeshGPU {
     std::vector<MeshData::Submesh> submeshes;
     AABB bounds{};
     bool imported = false;
+    bool skinned = false;
+    uint32_t boneCount = 0;
+    VulkanBuffer boneBuffer;
+    VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE;
 
     void Destroy(VmaAllocator allocator) {
         vertexBuffer.Destroy(allocator);
         indexBuffer.Destroy(allocator);
+        boneBuffer.Destroy(allocator);
         vertexCount = 0;
         indexCount = 0;
+        boneCount = 0;
+        skinned = false;
+        boneDescriptorSet = VK_NULL_HANDLE;
         submeshes.clear();
         imported = false;
         sourceKey.clear();
