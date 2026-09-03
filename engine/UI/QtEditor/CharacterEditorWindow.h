@@ -71,6 +71,7 @@ private slots:
     void onToggleSkeleton(bool enabled);
     void onToggleBoneNames(bool enabled);
     void onTreeSelectionChanged();
+    void onAnimTreeSelectionChanged();
     void onPlayPause();
     void onStop();
     void onScrub(float time);
@@ -90,17 +91,20 @@ private:
     void registerOpenDocument();
     void unregisterOpenDocument();
     void rebuildTree();
+    void rebuildAnimationTree();
     void refreshInspector();
     void bindPreview(bool forceGpu);
     void applyPreviewPlayback(float dt);
     void updateDebugOverlay();
     void syncSocketGizmo();
     void pullSocketGizmo();
+    void applyTreeItemSelection(QTreeWidgetItem* item);
     CharacterEditorSelection currentSelection() const;
     void selectKind(CharacterEditorItemKind kind, const std::string& id = {}, int index = -1);
     std::filesystem::path projectRoot() const;
     void revealPath(const std::string& portable);
     void importAnimation();
+    void createAnimationFolder();
     void reimportCharacter();
     void assignSource();
     Entity previewCharacter() const;
@@ -116,8 +120,10 @@ private:
 
     QDockWidget* m_treeDock = nullptr;
     QDockWidget* m_inspectorDock = nullptr;
+    QDockWidget* m_animationsDock = nullptr;
     QDockWidget* m_timelineDock = nullptr;
     QTreeWidget* m_tree = nullptr;
+    QTreeWidget* m_animTree = nullptr;
     QWidget* m_inspectorHost = nullptr;
     CharacterTimelineWidget* m_timeline = nullptr;
 

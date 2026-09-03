@@ -12,7 +12,7 @@ Use **Frame** / **Frame All** to fit the camera around **all mesh parts**. **Sho
 
 ## Animations
 
-The Character tree lists clips and folders. Select a clip to play, pause, stop, or scrub the timeline.
+The **Animations** dock is tabbed with Inspector on the right. It lists clips and folders (they are not in the Character tree). **Import Animation** and **Create Folder** sit at the top of that tab. Select a clip to play, pause, stop, or scrub the timeline; clip fields appear in Inspector.
 
 Inspector fields:
 
@@ -23,7 +23,7 @@ Inspector fields:
 
 **Import Animation** copies a GLB or FBX into `.source/<Character>/` (never overwriting `mesh.glb` / `mesh.fbx`) and adds clip rows. Mixamo files often contain both `Take 001` (bind/rest) and `mixamo.com` (the actual take); select `mixamo.com` to preview locomotion. Duplicate take names from different files keep unique clip ids (`mixamo.com`, `mixamo.com_2`, …). Incompatible skeletons are refused with no metadata writes. Undo removes the clip rows; the copied source stays on disk so Redo can restore metadata.
 
-Duplicate creates a new unique clip id. Delete removes the row only.
+Duplicate creates a new unique clip id. Delete removes the row only. Both are available from the Animations list context menu.
 
 ## Sockets
 

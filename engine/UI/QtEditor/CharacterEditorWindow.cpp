@@ -37,6 +37,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QStackedLayout>
 #include <QStatusBar>
 #include <QStyle>
@@ -74,10 +75,12 @@ QTreeWidgetItem* AddItem(QTreeWidgetItem* parent, const QString& text, Character
     return item;
 }
 
-QTreeWidgetItem* AddTop(QTreeWidget* tree, const QString& text, CharacterEditorItemKind kind) {
+QTreeWidgetItem* AddTop(QTreeWidget* tree, const QString& text, CharacterEditorItemKind kind,
+                        const std::string& id = {}) {
     auto* item = new QTreeWidgetItem(tree);
     item->setText(0, text);
     item->setData(0, kKindRole, static_cast<int>(kind));
+    item->setData(0, kIdRole, QString::fromStdString(id));
     return item;
 }
 
@@ -256,6 +259,7 @@ void CharacterEditorWindow::setupViewport() {
 
 void CharacterEditorWindow::setupDocks() {
     m_treeDock = new QDockWidget(tr("Character"), this);
+    m_treeDock->setObjectName("CharacterTreeDock");
     m_tree = new QTreeWidget(m_treeDock);
     m_tree->setHeaderHidden(true);
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -265,40 +269,6 @@ void CharacterEditorWindow::setupDocks() {
         if (!item || !m_document) return;
         const auto kind = static_cast<CharacterEditorItemKind>(item->data(0, kKindRole).toInt());
         QMenu menu(this);
-        if (kind == CharacterEditorItemKind::Animations || kind == CharacterEditorItemKind::Folder) {
-            menu.addAction(tr("Import Animation"), this, [this]() { importAnimation(); });
-            menu.addAction(tr("Create Folder"), this, [this]() {
-                const QString name = QInputDialog::getText(this, tr("Folder"), tr("Name"));
-                std::string error;
-                if (!name.isEmpty()) m_document->AddAnimationFolder(name.toStdString(), error);
-                rebuildTree();
-                updateWindowTitle();
-            });
-        }
-        if (kind == CharacterEditorItemKind::Folder) {
-            menu.addAction(tr("Delete Folder"), this, [this, item]() {
-                std::string error;
-                m_document->DeleteEmptyAnimationFolder(item->data(0, kIdRole).toString().toStdString(), error);
-                if (!error.empty()) QMessageBox::warning(this, tr("Folder"), QString::fromStdString(error));
-                rebuildTree();
-                updateWindowTitle();
-            });
-        }
-        if (kind == CharacterEditorItemKind::Clip) {
-            menu.addAction(tr("Duplicate"), this, [this, item]() {
-                std::string id, error;
-                m_document->DuplicateClip(item->data(0, kIdRole).toString().toStdString(), id, error);
-                rebuildTree();
-                updateWindowTitle();
-            });
-            menu.addAction(tr("Delete"), this, [this, item]() {
-                std::string error;
-                m_document->DeleteClip(item->data(0, kIdRole).toString().toStdString(), error);
-                rebuildTree();
-                refreshInspector();
-                updateWindowTitle();
-            });
-        }
         if (kind == CharacterEditorItemKind::Sockets || kind == CharacterEditorItemKind::Bone) {
             menu.addAction(tr("Add Socket"), this, [this, item, kind]() {
                 std::string bone;
@@ -329,6 +299,7 @@ void CharacterEditorWindow::setupDocks() {
     addDockWidget(Qt::LeftDockWidgetArea, m_treeDock);
 
     m_inspectorDock = new QDockWidget(tr("Inspector"), this);
+    m_inspectorDock->setObjectName("CharacterInspectorDock");
     auto* scroll = new QScrollArea(m_inspectorDock);
     scroll->setWidgetResizable(true);
     m_inspectorHost = new QWidget(scroll);
@@ -336,6 +307,69 @@ void CharacterEditorWindow::setupDocks() {
     scroll->setWidget(m_inspectorHost);
     m_inspectorDock->setWidget(scroll);
     addDockWidget(Qt::RightDockWidgetArea, m_inspectorDock);
+
+    m_animationsDock = new QDockWidget(tr("Animations"), this);
+    m_animationsDock->setObjectName("CharacterAnimationsDock");
+    auto* animHost = new QWidget(m_animationsDock);
+    auto* animLayout = new QVBoxLayout(animHost);
+    animLayout->setContentsMargins(8, 8, 8, 8);
+    auto* animButtons = new QHBoxLayout();
+    auto* importBtn = new QPushButton(tr("Import Animation"), animHost);
+    connect(importBtn, &QPushButton::clicked, this, &CharacterEditorWindow::importAnimation);
+    auto* folderBtn = new QPushButton(tr("Create Folder"), animHost);
+    connect(folderBtn, &QPushButton::clicked, this, &CharacterEditorWindow::createAnimationFolder);
+    animButtons->addWidget(importBtn);
+    animButtons->addWidget(folderBtn);
+    animButtons->addStretch();
+    animLayout->addLayout(animButtons);
+    m_animTree = new QTreeWidget(animHost);
+    m_animTree->setHeaderHidden(true);
+    m_animTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_animTree, &QTreeWidget::itemSelectionChanged, this,
+            &CharacterEditorWindow::onAnimTreeSelectionChanged);
+    connect(m_animTree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        if (!m_document) return;
+        QTreeWidgetItem* item = m_animTree->itemAt(pos);
+        QMenu menu(this);
+        menu.addAction(tr("Import Animation"), this, &CharacterEditorWindow::importAnimation);
+        menu.addAction(tr("Create Folder"), this, &CharacterEditorWindow::createAnimationFolder);
+        if (item) {
+            const auto kind = static_cast<CharacterEditorItemKind>(item->data(0, kKindRole).toInt());
+            if (kind == CharacterEditorItemKind::Folder) {
+                menu.addAction(tr("Delete Folder"), this, [this, item]() {
+                    std::string error;
+                    m_document->DeleteEmptyAnimationFolder(
+                        item->data(0, kIdRole).toString().toStdString(), error);
+                    if (!error.empty()) {
+                        QMessageBox::warning(this, tr("Folder"), QString::fromStdString(error));
+                    }
+                    rebuildAnimationTree();
+                    updateWindowTitle();
+                });
+            }
+            if (kind == CharacterEditorItemKind::Clip) {
+                menu.addAction(tr("Duplicate"), this, [this, item]() {
+                    std::string id, error;
+                    m_document->DuplicateClip(item->data(0, kIdRole).toString().toStdString(), id, error);
+                    rebuildAnimationTree();
+                    updateWindowTitle();
+                });
+                menu.addAction(tr("Delete"), this, [this, item]() {
+                    std::string error;
+                    m_document->DeleteClip(item->data(0, kIdRole).toString().toStdString(), error);
+                    rebuildAnimationTree();
+                    refreshInspector();
+                    updateWindowTitle();
+                });
+            }
+        }
+        menu.exec(m_animTree->mapToGlobal(pos));
+    });
+    animLayout->addWidget(m_animTree, 1);
+    m_animationsDock->setWidget(animHost);
+    addDockWidget(Qt::RightDockWidgetArea, m_animationsDock);
+    tabifyDockWidget(m_inspectorDock, m_animationsDock);
+    m_animationsDock->raise();
 
     m_timelineDock = new QDockWidget(tr("Playback"), this);
     auto* timelineHost = new QWidget(m_timelineDock);
@@ -687,10 +721,8 @@ void CharacterEditorWindow::pullSocketGizmo() {
 
 CharacterEditorSelection CharacterEditorWindow::currentSelection() const { return m_selection; }
 
-void CharacterEditorWindow::onTreeSelectionChanged() {
-    QList<QTreeWidgetItem*> items = m_tree->selectedItems();
-    if (items.isEmpty()) return;
-    QTreeWidgetItem* item = items.front();
+void CharacterEditorWindow::applyTreeItemSelection(QTreeWidgetItem* item) {
+    if (!item || !m_document) return;
     m_selection.kind = static_cast<CharacterEditorItemKind>(item->data(0, kKindRole).toInt());
     m_selection.id = item->data(0, kIdRole).toString().toStdString();
     m_selection.index = item->data(0, kIndexRole).toInt();
@@ -698,9 +730,11 @@ void CharacterEditorWindow::onTreeSelectionChanged() {
         m_previewClipId = m_selection.id;
         if (const CharacterClipEntry* clip = m_document->FindClipById(m_previewClipId)) {
             m_previewTime = clip->startTime;
-            m_timeline->setRange(std::max(clip->endTime, 0.001f), clip->startTime,
-                                 clip->endTime > clip->startTime ? clip->endTime : clip->startTime + 1.0f,
-                                 clip->startTime);
+            if (m_timeline) {
+                m_timeline->setRange(std::max(clip->endTime, 0.001f), clip->startTime,
+                                     clip->endTime > clip->startTime ? clip->endTime : clip->startTime + 1.0f,
+                                     clip->startTime);
+            }
         }
         Entity entity = previewCharacter();
         if (entity) {
@@ -710,11 +744,35 @@ void CharacterEditorWindow::onTreeSelectionChanged() {
         }
     }
     m_gizmoDragging = false;
+}
+
+void CharacterEditorWindow::onTreeSelectionChanged() {
+    QList<QTreeWidgetItem*> items = m_tree->selectedItems();
+    if (items.isEmpty()) return;
+    applyTreeItemSelection(items.front());
+    if (m_animTree) {
+        QSignalBlocker blocker(m_animTree);
+        m_animTree->clearSelection();
+    }
+    if (m_inspectorDock) m_inspectorDock->raise();
+    refreshInspector();
+}
+
+void CharacterEditorWindow::onAnimTreeSelectionChanged() {
+    if (!m_animTree) return;
+    QList<QTreeWidgetItem*> items = m_animTree->selectedItems();
+    if (items.isEmpty()) return;
+    applyTreeItemSelection(items.front());
+    if (m_tree) {
+        QSignalBlocker blocker(m_tree);
+        m_tree->clearSelection();
+    }
     refreshInspector();
 }
 
 void CharacterEditorWindow::rebuildTree() {
     if (!m_tree || !m_document) return;
+    QSignalBlocker blocker(m_tree);
     m_tree->clear();
     const CharacterAsset& asset = m_document->GetAsset();
     auto* meshItem = AddTop(m_tree, tr("Mesh"), CharacterEditorItemKind::Mesh);
@@ -761,23 +819,51 @@ void CharacterEditorWindow::rebuildTree() {
         AddItem(parent, QString::fromStdString(slot.name), CharacterEditorItemKind::MaterialSlot,
                 slot.name, i);
     }
-    auto* anims = AddTop(m_tree, tr("Animations"), CharacterEditorItemKind::Animations);
-    std::unordered_map<std::string, QTreeWidgetItem*> folders;
-    for (const std::string& folder : asset.animationFolders) {
-        folders[folder] = AddItem(anims, QString::fromStdString(folder), CharacterEditorItemKind::Folder, folder);
-    }
-    for (const CharacterClipEntry& clip : asset.clips) {
-        QTreeWidgetItem* parent = anims;
-        if (!clip.folder.empty() && folders.count(clip.folder)) parent = folders[clip.folder];
-        const QString label = QString::fromStdString(clip.displayName.empty() ? clip.id : clip.displayName);
-        AddItem(parent, label, CharacterEditorItemKind::Clip, clip.id);
-    }
     auto* sockets = AddTop(m_tree, tr("Sockets"), CharacterEditorItemKind::Sockets);
     for (const CharacterSocket& socket : asset.sockets) {
         AddItem(sockets, QString::fromStdString(socket.name), CharacterEditorItemKind::Socket, socket.name);
     }
     AddTop(m_tree, tr("Controller"), CharacterEditorItemKind::Controller);
     m_tree->expandAll();
+    rebuildAnimationTree();
+}
+
+void CharacterEditorWindow::rebuildAnimationTree() {
+    if (!m_animTree || !m_document) return;
+    const std::string selectedId =
+        (m_selection.kind == CharacterEditorItemKind::Clip ||
+         m_selection.kind == CharacterEditorItemKind::Folder)
+            ? m_selection.id
+            : std::string{};
+    const CharacterEditorItemKind selectedKind = m_selection.kind;
+    QSignalBlocker blocker(m_animTree);
+    m_animTree->clear();
+    const CharacterAsset& asset = m_document->GetAsset();
+    std::unordered_map<std::string, QTreeWidgetItem*> folders;
+    QTreeWidgetItem* restore = nullptr;
+    for (const std::string& folder : asset.animationFolders) {
+        QTreeWidgetItem* item =
+            AddTop(m_animTree, QString::fromStdString(folder), CharacterEditorItemKind::Folder, folder);
+        folders[folder] = item;
+        if (selectedKind == CharacterEditorItemKind::Folder && selectedId == folder) {
+            restore = item;
+        }
+    }
+    for (const CharacterClipEntry& clip : asset.clips) {
+        QTreeWidgetItem* parent = nullptr;
+        if (!clip.folder.empty() && folders.count(clip.folder)) parent = folders[clip.folder];
+        const QString label = QString::fromStdString(clip.displayName.empty() ? clip.id : clip.displayName);
+        QTreeWidgetItem* item = parent
+            ? AddItem(parent, label, CharacterEditorItemKind::Clip, clip.id)
+            : AddTop(m_animTree, label, CharacterEditorItemKind::Clip, clip.id);
+        if (selectedKind == CharacterEditorItemKind::Clip && selectedId == clip.id) {
+            restore = item;
+        }
+    }
+    m_animTree->expandAll();
+    if (restore) {
+        m_animTree->setCurrentItem(restore);
+    }
 }
 
 void CharacterEditorWindow::refreshInspector() {
@@ -885,7 +971,7 @@ void CharacterEditorWindow::refreshInspector() {
             connect(name, &QLineEdit::editingFinished, this, [this, name]() {
                 std::string error;
                 m_document->SetClipDisplayName(m_selection.id, name->text().toStdString(), error);
-                rebuildTree();
+                rebuildAnimationTree();
                 updateWindowTitle();
             });
             layout->addWidget(new QLabel(tr("Name"), m_inspectorHost));
@@ -894,7 +980,7 @@ void CharacterEditorWindow::refreshInspector() {
             connect(folder, &QLineEdit::editingFinished, this, [this, folder]() {
                 std::string error;
                 m_document->SetClipFolder(m_selection.id, folder->text().toStdString(), error);
-                rebuildTree();
+                rebuildAnimationTree();
                 updateWindowTitle();
             });
             layout->addWidget(new QLabel(tr("Folder"), m_inspectorHost));
@@ -1031,10 +1117,6 @@ void CharacterEditorWindow::refreshInspector() {
         });
         layout->addWidget(script);
         addLabel(tr("Exposed properties are authored on scene instances. Preview does not run the controller; Play Mode does."));
-    } else if (m_selection.kind == CharacterEditorItemKind::Animations) {
-        auto* importBtn = new QPushButton(tr("Import Animation"), m_inspectorHost);
-        connect(importBtn, &QPushButton::clicked, this, [this]() { importAnimation(); });
-        layout->addWidget(importBtn);
     }
     layout->addStretch();
     m_refreshingInspector = false;
@@ -1079,7 +1161,35 @@ void CharacterEditorWindow::importAnimation() {
     m_document->MarkAuthoredChanged();
     CharacterRuntime::Invalidate(m_document->GetPortablePath());
     bindPreview(false);
-    rebuildTree();
+    if (!added.empty()) {
+        m_selection.kind = CharacterEditorItemKind::Clip;
+        m_selection.id = added.front();
+        m_selection.index = -1;
+    }
+    rebuildAnimationTree();
+    if (m_animTree && m_animTree->currentItem()) {
+        applyTreeItemSelection(m_animTree->currentItem());
+    }
+    if (m_animationsDock) m_animationsDock->raise();
+    refreshInspector();
+    updateWindowTitle();
+}
+
+void CharacterEditorWindow::createAnimationFolder() {
+    if (!m_document) return;
+    const QString name = QInputDialog::getText(this, tr("Folder"), tr("Name"));
+    if (name.isEmpty()) return;
+    std::string error;
+    if (!m_document->AddAnimationFolder(name.toStdString(), error)) {
+        if (!error.empty()) {
+            QMessageBox::warning(this, tr("Folder"), QString::fromStdString(error));
+        }
+        return;
+    }
+    m_selection.kind = CharacterEditorItemKind::Folder;
+    m_selection.id = name.toStdString();
+    m_selection.index = -1;
+    rebuildAnimationTree();
     updateWindowTitle();
 }
 

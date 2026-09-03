@@ -54,6 +54,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-09-04: Character Editor moves clips and folders out of the left Character tree into an Animations dock tabbed with Inspector, with Import Animation and Create Folder on that tab.
 - 2026-09-02: `HephaestusGame` now hosts the authoritative `EngineFrameRenderer` for scene rendering, materials, lighting, cascaded shadows, HDRI, synchronization, and presentation while preserving GLFW runtime lifecycle and packaged asset resolution.
 - 2026-09-02: Shared lighting now consistently honors authored attenuation, transformed local-forward spot directions, disabled lights, and the active camera FOV for cascaded shadows.
 - 2026-09-02: `EngineFrameRenderer` now rebuilds swapchain-dependent pipelines, per-image resources, synchronization, descriptors, and configured editor overlays after resize while preserving material textures and VSync.
