@@ -1,6 +1,6 @@
 # Character Assets
 
-Stage E product workflow for `.hpcharacter` files. This is not the Character Editor (timeline, clip folders, play preview) and not the gameplay `GetAnimator()` Lua API.
+Stage E product workflow for `.hpcharacter` files. Timeline, clip folders, and play preview live in the [Character Editor](./CharacterEditor.md). This is not the gameplay `GetAnimator()` Lua API.
 
 ## Import
 

@@ -59,7 +59,8 @@ std::vector<MeshData::Submesh> ToSubmeshes(const SkeletalImportResult& imported)
 bool CharacterRuntime::UploadVisual(Entity entity,
                                     const std::filesystem::path& projectRoot,
                                     EngineFrameRenderer* renderer,
-                                    std::string& outError) {
+                                    std::string& outError,
+                                    bool forceReload) {
     outError.clear();
     if (!renderer) {
         return true;
@@ -81,6 +82,9 @@ bool CharacterRuntime::UploadVisual(Entity entity,
     }
 
     const std::string key = character.characterPath;
+    if (forceReload) {
+        renderer->InvalidateMesh(key);
+    }
     size_t handle = renderer->GetMeshHandle(key);
     if (handle == SIZE_MAX) {
         std::vector<Mat4> palette;

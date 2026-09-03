@@ -11,6 +11,7 @@
 enum class EditorDocumentType {
     Scene,
     Prefab,
+    Character,
 
     Blueprint = Prefab  // Legacy alias
 };

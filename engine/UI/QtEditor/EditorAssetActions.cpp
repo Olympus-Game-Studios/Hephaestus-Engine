@@ -127,6 +127,11 @@ void EditorAssetActions::SetOpenPrefabCallback(OpenPrefabCallback callback)
     m_openPrefabCallback = std::move(callback);
 }
 
+void EditorAssetActions::SetOpenCharacterCallback(OpenCharacterCallback callback)
+{
+    m_openCharacterCallback = std::move(callback);
+}
+
 bool EditorAssetActions::openScene(const QString& absolutePath)
 {
     if (m_loadSceneCallback) {
@@ -154,11 +159,14 @@ bool EditorAssetActions::openPrefab(const QString& absolutePath)
 
 bool EditorAssetActions::openCharacter(const QString& absolutePath)
 {
-    QMessageBox::information(m_mainWindow,
-        QObject::tr("Character Editor"),
-        QObject::tr("The Character Editor is not available yet.\n\nFile: %1")
-            .arg(QFileInfo(absolutePath).fileName()));
-    return true;
+    if (m_openCharacterCallback) {
+        return m_openCharacterCallback(absolutePath);
+    }
+
+    QMessageBox::warning(m_mainWindow,
+        QObject::tr("Cannot Open Character"),
+        QObject::tr("Character editor callback not configured."));
+    return false;
 }
 
 bool EditorAssetActions::openMaterial(const QString& absolutePath)

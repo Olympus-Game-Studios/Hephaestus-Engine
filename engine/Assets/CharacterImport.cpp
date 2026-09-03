@@ -203,6 +203,28 @@ bool AtomicWriteText(const std::filesystem::path& dest,
     return true;
 }
 
+std::string MakeUniqueClipId(const CharacterAsset& asset, const std::string& desired) {
+    std::string base = desired.empty() ? "Clip" : desired;
+    auto exists = [&](const std::string& id) {
+        for (const CharacterClipEntry& clip : asset.clips) {
+            if (clip.id == id) {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (!exists(base)) {
+        return base;
+    }
+    for (int i = 2; i < 10000; ++i) {
+        const std::string candidate = base + "_" + std::to_string(i);
+        if (!exists(candidate)) {
+            return candidate;
+        }
+    }
+    return base + "_copy";
+}
+
 } // namespace
 
 bool CharacterImporter::IsGlbPath(const std::filesystem::path& path) {
@@ -463,6 +485,212 @@ bool CharacterImporter::Reimport(const std::filesystem::path& projectRoot,
     }
 
     CharacterRuntime::Invalidate(portableCharacterPath);
+    return true;
+}
+
+bool CharacterImporter::AssignCharacterSource(const std::filesystem::path& projectRoot,
+                                              const std::string& portableCharacterPath,
+                                              const std::filesystem::path& sourceGlb,
+                                              std::string& outError) {
+    outError.clear();
+    CharacterAsset asset;
+    const std::filesystem::path characterAbs =
+        AssetPathPolicy::ResolvePortableKey(projectRoot, portableCharacterPath);
+    if (characterAbs.empty() || !std::filesystem::exists(characterAbs)) {
+        outError = "Character asset not found: " + portableCharacterPath;
+        return false;
+    }
+    if (!CharacterSerializer::Deserialize(asset, characterAbs, outError)) {
+        return false;
+    }
+
+    const std::string meshKey =
+        !asset.mesh.source.empty() ? asset.mesh.source : asset.skeleton.source;
+    const std::filesystem::path ownedMeshAbs =
+        AssetPathPolicy::ResolvePortableKey(projectRoot, meshKey);
+    std::error_code ec;
+    const bool ownedExists = !ownedMeshAbs.empty() && std::filesystem::exists(ownedMeshAbs, ec);
+    if (ownedExists) {
+        return Reimport(projectRoot, portableCharacterPath, sourceGlb, outError);
+    }
+
+    CharacterInspectResult inspect;
+    if (!Inspect(sourceGlb, inspect, outError)) {
+        return false;
+    }
+
+    const std::string ownedDir = CharacterOwnedSource::OwnedDirectoryPortableKey(portableCharacterPath);
+    const std::filesystem::path ownedAbs =
+        AssetPathPolicy::ResolvePortableKey(projectRoot, ownedDir);
+    if (ownedAbs.empty()) {
+        outError = "Failed to resolve owned source directory.";
+        return false;
+    }
+    std::filesystem::create_directories(ownedAbs, ec);
+    if (ec) {
+        outError = "Failed to create owned source directory: " + ec.message();
+        return false;
+    }
+
+    const std::filesystem::path meshAbs = ownedAbs / "mesh.glb";
+    std::filesystem::copy_file(sourceGlb, meshAbs, std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) {
+        outError = "Failed to copy GLB: " + ec.message();
+        return false;
+    }
+
+    const std::string meshPortable =
+        AssetPathPolicy::ToPortableKey(projectRoot, meshAbs.generic_string());
+    asset.skeleton.source = meshPortable;
+    asset.skeleton.skin = inspect.imported.skeleton.skinName;
+    asset.skeleton.signature = inspect.imported.skeleton.signature;
+    asset.mesh.source = meshPortable;
+    MergeSubmeshesFromImport(asset, inspect.imported);
+    MergeClipsFromImport(asset, inspect.imported, meshPortable, false);
+    asset.defaults.animation = ChooseDefaultAnimation(asset.clips);
+    if (asset.defaults.playbackSpeed <= 0.0f) {
+        asset.defaults.playbackSpeed = 1.0f;
+    }
+
+    if (!AtomicWriteText(characterAbs, CharacterSerializer::SerializeToString(asset), outError)) {
+        return false;
+    }
+    CharacterRuntime::Invalidate(portableCharacterPath);
+    return true;
+}
+
+bool CharacterImporter::ImportAnimationClips(const std::filesystem::path& projectRoot,
+                                             CharacterAsset& asset,
+                                             const std::string& portableCharacterPath,
+                                             const std::filesystem::path& sourceGlb,
+                                             const std::vector<std::string>& selectedSourceClips,
+                                             const std::string& destinationFolder,
+                                             std::vector<std::string>& outAddedClipIds,
+                                             std::string& outError) {
+    outError.clear();
+    outAddedClipIds.clear();
+
+    if (!IsGlbPath(sourceGlb)) {
+        outError =
+            "Import Animation requires a GLB file. Export a GLB from the DCC tool "
+            "(raw .gltf with external .bin / images is not supported).";
+        return false;
+    }
+
+    const std::string meshKey =
+        !asset.mesh.source.empty() ? asset.mesh.source : asset.skeleton.source;
+    if (meshKey.empty()) {
+        outError = "Assign a character mesh before importing animation clips.";
+        return false;
+    }
+    const std::filesystem::path meshAbs = AssetPathPolicy::ResolvePortableKey(projectRoot, meshKey);
+    if (meshAbs.empty() || !std::filesystem::exists(meshAbs)) {
+        outError = "Character source mesh is missing: " + meshKey;
+        return false;
+    }
+
+    SkeletalImportSettings settings;
+    settings.unitScale = asset.import.unitScale;
+    SkeletalImportResult characterImport;
+    if (!SkeletalModelImporter::Load(meshAbs, settings, characterImport, outError)) {
+        return false;
+    }
+
+    std::vector<AnimationClip> importedClips;
+    if (!SkeletalModelImporter::LoadClips(sourceGlb, settings, characterImport.skeleton, importedClips,
+                                          outError)) {
+        outError = "Animation cannot be imported.\n\nSkeleton incompatibility detected.\n" + outError;
+        return false;
+    }
+    if (importedClips.empty()) {
+        outError = "No animation clips were found in the source GLB.";
+        return false;
+    }
+
+    std::vector<AnimationClip> chosen;
+    if (selectedSourceClips.empty()) {
+        chosen = importedClips;
+    } else {
+        for (const std::string& wanted : selectedSourceClips) {
+            const AnimationClip* found = nullptr;
+            for (const AnimationClip& clip : importedClips) {
+                const std::string sourceName = clip.sourceClip.empty() ? clip.name : clip.sourceClip;
+                if (sourceName == wanted || clip.name == wanted || clip.id == wanted) {
+                    found = &clip;
+                    break;
+                }
+            }
+            if (!found) {
+                outError = "Selected clip '" + wanted + "' was not found in the source GLB.";
+                return false;
+            }
+            chosen.push_back(*found);
+        }
+    }
+    if (chosen.empty()) {
+        outError = "No animation clips were selected.";
+        return false;
+    }
+
+    const std::string ownedDir = CharacterOwnedSource::OwnedDirectoryPortableKey(portableCharacterPath);
+    const std::filesystem::path ownedAbs = AssetPathPolicy::ResolvePortableKey(projectRoot, ownedDir);
+    if (ownedAbs.empty()) {
+        outError = "Failed to resolve owned source directory.";
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(ownedAbs, ec);
+
+    std::string stem = sourceGlb.stem().string();
+    if (stem.empty()) {
+        stem = "anim";
+    }
+    std::filesystem::path destAbs = ownedAbs / (stem + ".glb");
+    int suffix = 2;
+    while (std::filesystem::exists(destAbs, ec)) {
+        destAbs = ownedAbs / (stem + "_" + std::to_string(suffix) + ".glb");
+        ++suffix;
+        if (suffix > 10000) {
+            outError = "Failed to allocate a unique owned animation filename.";
+            return false;
+        }
+    }
+    std::filesystem::copy_file(sourceGlb, destAbs, std::filesystem::copy_options::none, ec);
+    if (ec) {
+        outError = "Failed to copy animation GLB: " + ec.message();
+        return false;
+    }
+
+    const std::string clipSourcePortable =
+        AssetPathPolicy::ToPortableKey(projectRoot, destAbs.generic_string());
+    if (!destinationFolder.empty()) {
+        bool folderKnown = false;
+        for (const std::string& folder : asset.animationFolders) {
+            if (folder == destinationFolder) {
+                folderKnown = true;
+                break;
+            }
+        }
+        if (!folderKnown) {
+            asset.animationFolders.push_back(destinationFolder);
+        }
+    }
+
+    for (const AnimationClip& clip : chosen) {
+        CharacterClipEntry entry;
+        const std::string sourceName = clip.sourceClip.empty() ? clip.name : clip.sourceClip;
+        entry.id = MakeUniqueClipId(asset, clip.id.empty() ? sourceName : clip.id);
+        entry.displayName = clip.name.empty() ? sourceName : clip.name;
+        entry.folder = destinationFolder;
+        entry.source = clipSourcePortable;
+        entry.sourceClip = sourceName;
+        entry.loop = true;
+        entry.speed = 1.0f;
+        entry.startTime = 0.0f;
+        entry.endTime = clip.endTime > 0.0f ? clip.endTime : clip.duration;
+        outAddedClipIds.push_back(entry.id);
+        asset.clips.push_back(std::move(entry));
+    }
     return true;
 }
 

@@ -32,6 +32,7 @@
 #endif
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
+#include "../Core/EditorDebugDraw.h"
 
 // Forward declarations
 class VulkanDevice;
@@ -116,6 +117,9 @@ struct FrameRenderConfig {
     int gizmoSpace = 0;     // 0=World, 1=Local
     bool enableSnap = false;
     float snapValue = 1.0f; // Current snap value based on mode
+
+    std::vector<EditorDebugLine> debugLines;
+    std::vector<EditorDebugPoint> debugPoints;
 };
 
 /**
@@ -235,6 +239,9 @@ public:
      * path and a portable relative path such as "assets/meshes/Cube.glb".
      */
     void AddMeshAlias(const std::string& aliasKey, size_t handle);
+
+    /** Destroy GPU mesh data keyed by source/alias so the next upload recreates it. */
+    void InvalidateMesh(const std::string& sourceKey);
 
     /**
      * @brief Get total mesh count.
@@ -356,7 +363,9 @@ private:
     void recordOutlines(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene, 
                         const FrameRenderConfig& config);
     void recordGrid(VkCommandBuffer cmd, uint32_t imageIndex, const FrameRenderConfig& config);
+    void recordDebugOverlay(VkCommandBuffer cmd, uint32_t imageIndex, const FrameRenderConfig& config);
     bool createGridResources();
+    bool createDebugOverlayResources();
     bool createOutlineResources();
     void cleanupOutlineResources();
     
@@ -614,6 +623,18 @@ private:
         void Cleanup(VkDevice device);
     };
     EditorGrid m_editorGrid;
+
+#ifndef HEPHAESTUS_GAME_RUNTIME
+    struct DebugOverlay {
+        bool initialized = false;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+        VulkanBuffer vertexBuffer;
+        uint32_t vertexCapacity = 0;
+        uint32_t vertexCount = 0;
+    };
+    DebugOverlay m_debugOverlay;
+#endif
 
     // Entity ID picker for viewport selection
     struct IdPicker {

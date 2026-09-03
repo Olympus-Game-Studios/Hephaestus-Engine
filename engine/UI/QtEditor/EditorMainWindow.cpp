@@ -15,6 +15,8 @@
 #include "EditorAssetServices.h"
 #include "PrefabEditorManager.h"
 #include "PrefabEditorWindow.h"
+#include "CharacterEditorManager.h"
+#include "CharacterEditorWindow.h"
 #include "PrefabInstanceBar.h"
 #include "LightInspector.h"
 #include "EnvironmentInspector.h"
@@ -572,9 +574,12 @@ void EditorMainWindow::closeEvent(QCloseEvent* event)
         settings.setValue(QStringLiteral("mainWindow/state"), saveState());
     }
 
-    // Close all prefab editor windows
+    // Close all prefab and character editor windows
     if (m_prefabEditorManager) {
         m_prefabEditorManager->CloseAll();
+    }
+    if (m_characterEditorManager) {
+        m_characterEditorManager->CloseAll();
     }
 
     // Stop and cleanup the engine before closing
@@ -1745,6 +1750,7 @@ void EditorMainWindow::setupDockWidgets()
     // Create asset actions handler
     m_assetActions = std::make_unique<EditorAssetActions>(this);
     m_prefabEditorManager = std::make_unique<PrefabEditorManager>(this, this);
+    m_characterEditorManager = std::make_unique<CharacterEditorManager>(this, this);
 
     // Connect asset browser to actions
     connect(m_assetBrowser, &AssetBrowserWidget::assetOpenRequested,
@@ -4832,6 +4838,13 @@ void EditorMainWindow::onCloseProject()
 
     stopRecoverySession();
 
+    if (m_characterEditorManager) {
+        m_characterEditorManager->CloseAll();
+    }
+    if (m_prefabEditorManager) {
+        m_prefabEditorManager->CloseAll();
+    }
+
     // Close the project
     if (m_assetReimportTimer) {
         m_assetReimportTimer->stop();
@@ -5388,6 +5401,12 @@ void EditorMainWindow::setupProjectCallbacks()
             auto* window = m_prefabEditorManager->OpenPrefab(absolutePath);
             return window != nullptr;
         });
+
+        m_assetActions->SetOpenCharacterCallback([this](const QString& absolutePath) -> bool {
+            if (!m_characterEditorManager) return false;
+            auto* window = m_characterEditorManager->OpenCharacter(absolutePath);
+            return window != nullptr;
+        });
     }
 
     // Wire up prefab-saved notifications to refresh scene instances
@@ -5409,6 +5428,33 @@ void EditorMainWindow::setupProjectCallbacks()
                     tr("Refreshed %1 prefab instance(s)").arg(refreshed), 3000);
             }
         });
+    }
+
+    if (m_characterEditorManager) {
+        m_characterEditorManager->SetCharacterSavedNotification(
+            [this](const std::filesystem::path& characterAbs) {
+                if (!m_engine) return;
+                auto* ctx = m_engine->GetEditorContext();
+                if (!ctx) return;
+                Scene* scene = ctx->GetActiveScene();
+                if (!scene) return;
+
+                std::filesystem::path projectRoot;
+                if (m_projectContext && m_projectContext->HasProject()) {
+                    projectRoot = m_projectContext->GetProjectRootDir();
+                }
+                const std::string portable = projectRoot.empty()
+                    ? characterAbs.generic_string()
+                    : Hephaestus::AssetPathPolicy::ToPortableKey(projectRoot,
+                                                                 characterAbs.generic_string());
+                Hephaestus::CharacterRuntime::Invalidate(portable);
+                if (auto* renderer = m_engine->GetFrameRenderer()) {
+                    renderer->InvalidateMesh(portable);
+                }
+                rebuildSceneVisuals();
+                refreshDetailsPanel();
+                statusBar()->showMessage(tr("Character asset saved. Live instances refreshed."), 3000);
+            });
     }
 }
 
@@ -6747,6 +6793,14 @@ void EditorMainWindow::rebuildSceneVisuals()
     if (m_engine) {
         m_engine->RebuildSceneMeshes();
     }
+}
+
+bool EditorMainWindow::requestCloseOpenCharacter(const QString& absolutePath)
+{
+    if (!m_characterEditorManager) {
+        return true;
+    }
+    return m_characterEditorManager->RequestCloseWindow(absolutePath);
 }
 
 void EditorMainWindow::spawnFromAssetBrowser(const QByteArray& spawnPayload)

@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -38,6 +39,7 @@ using OpenDocumentSaveCallback =
     std::function<bool(const OpenDocumentInfo& doc, std::string* errorOut)>;
 using OpenDocumentRetargetCallback =
     std::function<void(const OpenDocumentInfo& before, const OpenDocumentInfo& after)>;
+using OpenDocumentListenerId = std::uint64_t;
 
 /**
  * @brief Registry of currently open authored documents.
@@ -70,8 +72,15 @@ public:
     std::vector<OpenDocumentInfo> ListAll() const;
     std::vector<OpenDocumentInfo> ListDirty() const;
 
+    /** Replace save listeners with a single callback (test/compat helper). */
     void SetSaveCallback(OpenDocumentSaveCallback callback);
+    OpenDocumentListenerId AddSaveListener(OpenDocumentSaveCallback callback);
+    void RemoveSaveListener(OpenDocumentListenerId id);
+
+    /** Replace retarget listeners with a single callback (test/compat helper). */
     void SetRetargetNotificationCallback(OpenDocumentRetargetCallback callback);
+    OpenDocumentListenerId AddRetargetListener(OpenDocumentRetargetCallback callback);
+    void RemoveRetargetListener(OpenDocumentListenerId id);
 
     /**
      * Invoke save callback for a dirty document if configured.
@@ -85,11 +94,21 @@ private:
                               const std::string& absoluteOrPortablePath,
                               bool dirty) const;
 
+    struct SaveListener {
+        OpenDocumentListenerId id = 0;
+        OpenDocumentSaveCallback callback;
+    };
+    struct RetargetListener {
+        OpenDocumentListenerId id = 0;
+        OpenDocumentRetargetCallback callback;
+    };
+
     mutable std::mutex m_mutex;
     std::filesystem::path m_projectRoot;
     std::vector<OpenDocumentInfo> m_documents;
-    OpenDocumentSaveCallback m_saveCallback;
-    OpenDocumentRetargetCallback m_retargetCallback;
+    std::vector<SaveListener> m_saveListeners;
+    std::vector<RetargetListener> m_retargetListeners;
+    OpenDocumentListenerId m_nextListenerId = 1;
 };
 
 } // namespace Hephaestus

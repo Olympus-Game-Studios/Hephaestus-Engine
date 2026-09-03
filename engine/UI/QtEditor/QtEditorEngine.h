@@ -21,6 +21,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <functional>
 #include <vulkan/vulkan.h>
 
 #include <entt/entt.hpp>
@@ -183,6 +184,15 @@ public:
      */
     Hephaestus::EngineFrameRenderer* GetFrameRenderer() { return m_frameRenderer.get(); }
 
+    void SetPreRenderCallback(std::function<void(float dt)> callback) {
+        m_preRenderCallback = std::move(callback);
+    }
+
+    void SetDebugOverlay(std::vector<EditorDebugLine> lines, std::vector<EditorDebugPoint> points) {
+        m_debugLines = std::move(lines);
+        m_debugPoints = std::move(points);
+    }
+
     // ── Play Mode API ─────────────────────────────────────────────────────
 
     /**
@@ -332,6 +342,9 @@ private:
     
     // Shared frame renderer
     std::unique_ptr<Hephaestus::EngineFrameRenderer> m_frameRenderer;
+    std::function<void(float dt)> m_preRenderCallback;
+    std::vector<EditorDebugLine> m_debugLines;
+    std::vector<EditorDebugPoint> m_debugPoints;
     
     // Editor context - single source of truth for scene, selection, etc.
     Hephaestus::EditorContext m_editorContext;

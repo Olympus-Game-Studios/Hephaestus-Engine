@@ -28,6 +28,7 @@ class PrefabEditorManager;
 
 using LoadSceneCallback = std::function<bool(const QString& absolutePath)>;
 using OpenPrefabCallback = std::function<bool(const QString& absolutePath)>;
+using OpenCharacterCallback = std::function<bool(const QString& absolutePath)>;
 
 /**
  * @brief Central handler for opening assets from the browser.
@@ -58,6 +59,7 @@ public:
 
     void SetLoadSceneCallback(LoadSceneCallback callback);
     void SetOpenPrefabCallback(OpenPrefabCallback callback);
+    void SetOpenCharacterCallback(OpenCharacterCallback callback);
 
 private:
     bool openScene(const QString& absolutePath);
@@ -74,6 +76,7 @@ private:
     EditorMainWindow* m_mainWindow = nullptr;
     LoadSceneCallback m_loadSceneCallback;
     OpenPrefabCallback m_openPrefabCallback;
+    OpenCharacterCallback m_openCharacterCallback;
 };
 
 } // namespace QtEditor

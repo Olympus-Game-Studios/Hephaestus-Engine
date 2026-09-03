@@ -327,6 +327,9 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
     if (!createGridResources()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create grid resources (grid will be disabled)\n";
     }
+    if (!createDebugOverlayResources()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create debug overlay resources\n";
+    }
 
     // Create outline resources (optional, failure doesn't prevent init)
     if (!createOutlineResources()) {
@@ -433,6 +436,9 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
 #ifndef HEPHAESTUS_GAME_RUNTIME
         if (!createGridResources()) {
             std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate grid resources\n";
+        }
+        if (!createDebugOverlayResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate debug overlay resources\n";
         }
         if (!createOutlineResources()) {
             std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate outline resources\n";
@@ -742,6 +748,28 @@ void EngineFrameRenderer::AddMeshAlias(const std::string& aliasKey, size_t handl
     if (aliasKey.empty() || handle >= m_meshLibrary.size()) return;
     // Only insert if the key is not already mapped
     m_meshLibraryLookup.emplace(aliasKey, handle);
+}
+
+void EngineFrameRenderer::InvalidateMesh(const std::string& sourceKey)
+{
+    if (sourceKey.empty()) {
+        return;
+    }
+    auto it = m_meshLibraryLookup.find(sourceKey);
+    if (it == m_meshLibraryLookup.end()) {
+        return;
+    }
+    const size_t handle = it->second;
+    for (auto lookup = m_meshLibraryLookup.begin(); lookup != m_meshLibraryLookup.end();) {
+        if (lookup->second == handle) {
+            lookup = m_meshLibraryLookup.erase(lookup);
+        } else {
+            ++lookup;
+        }
+    }
+    if (handle < m_meshLibrary.size() && m_device) {
+        m_meshLibrary[handle].Destroy(m_device->allocator);
+    }
 }
 
 // ============================================================================
@@ -3510,6 +3538,11 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     if (config.isEditorMode && config.renderGrid && !config.isPlaying) {
         recordGrid(cmd, imageIndex, config);
     }
+#ifndef HEPHAESTUS_GAME_RUNTIME
+    if (config.isEditorMode && !config.isPlaying) {
+        recordDebugOverlay(cmd, imageIndex, config);
+    }
+#endif
     
     // Render billboard icons for lights and other editor icons (before outlines/gizmo)  
 #ifndef HEPHAESTUS_GAME_RUNTIME
@@ -3840,6 +3873,18 @@ void EngineFrameRenderer::cleanupSwapchainResources()
     cleanupIdPickerResources();
     cleanupOutlineResources();
     m_editorGrid.Cleanup(m_device->device);
+    if (m_debugOverlay.pipeline) {
+        vkDestroyPipeline(m_device->device, m_debugOverlay.pipeline, nullptr);
+        m_debugOverlay.pipeline = VK_NULL_HANDLE;
+    }
+    if (m_debugOverlay.pipelineLayout) {
+        vkDestroyPipelineLayout(m_device->device, m_debugOverlay.pipelineLayout, nullptr);
+        m_debugOverlay.pipelineLayout = VK_NULL_HANDLE;
+    }
+    m_debugOverlay.vertexBuffer.Destroy(m_device->allocator);
+    m_debugOverlay.initialized = false;
+    m_debugOverlay.vertexCount = 0;
+    m_debugOverlay.vertexCapacity = 0;
 #endif
 
     if (m_descriptorPool != VK_NULL_HANDLE) {
@@ -4785,6 +4830,230 @@ bool EngineFrameRenderer::createGridResources()
     
     return m_editorGrid.initialized;
 }
+
+#ifndef HEPHAESTUS_GAME_RUNTIME
+bool EngineFrameRenderer::createDebugOverlayResources()
+{
+    if (m_debugOverlay.initialized) {
+        return true;
+    }
+    if (!m_device || !m_swapchain || !m_pipeline) {
+        return false;
+    }
+
+    auto loadShader = [this](const std::string& name) -> VkShaderModule {
+        const std::string candidates[] = {
+            "shaders/" + name,
+            "../shaders/" + name,
+            "build/Release/shaders/" + name,
+            "../build/Release/shaders/" + name
+        };
+        for (const auto& path : candidates) {
+            std::ifstream file(path, std::ios::ate | std::ios::binary);
+            if (!file.is_open()) {
+                continue;
+            }
+            const size_t fileSize = static_cast<size_t>(file.tellg());
+            std::vector<char> code(fileSize);
+            file.seekg(0);
+            file.read(code.data(), static_cast<std::streamsize>(fileSize));
+            VkShaderModuleCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            createInfo.codeSize = code.size();
+            createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+            VkShaderModule module = VK_NULL_HANDLE;
+            if (vkCreateShaderModule(m_device->device, &createInfo, nullptr, &module) == VK_SUCCESS) {
+                return module;
+            }
+        }
+        return VK_NULL_HANDLE;
+    };
+
+    VkShaderModule vert = loadShader("gizmo.vert.spv");
+    VkShaderModule frag = loadShader("gizmo.frag.spv");
+    if (!vert || !frag) {
+        if (vert) {
+            vkDestroyShaderModule(m_device->device, vert, nullptr);
+        }
+        if (frag) {
+            vkDestroyShaderModule(m_device->device, frag, nullptr);
+        }
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vert;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = frag;
+    stages[1].pName = "main";
+
+    auto bindDesc = GizmoVertex::getBindingDescription();
+    auto attrDesc = GizmoVertex::getAttributeDescriptions();
+    VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    vi.vertexBindingDescriptionCount = 1;
+    vi.pVertexBindingDescriptions = &bindDesc;
+    vi.vertexAttributeDescriptionCount = static_cast<uint32_t>(attrDesc.size());
+    vi.pVertexAttributeDescriptions = attrDesc.data();
+
+    VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+
+    VkPipelineViewportStateCreateInfo vpState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    vpState.viewportCount = 1;
+    vpState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.cullMode = VK_CULL_MODE_NONE;
+    raster.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    raster.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    ds.depthTestEnable = VK_FALSE;
+    ds.depthWriteEnable = VK_FALSE;
+    ds.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+
+    VkPipelineColorBlendAttachmentState cba{};
+    cba.colorWriteMask = 0xF;
+    VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    blend.attachmentCount = 1;
+    blend.pAttachments = &cba;
+
+    VkPushConstantRange pcr{};
+    pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    pcr.size = sizeof(VulkanGizmo::GizmoPushConstants);
+
+    VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &m_pipeline->descriptorSetLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &pcr;
+    if (vkCreatePipelineLayout(m_device->device, &plci, nullptr, &m_debugOverlay.pipelineLayout) !=
+        VK_SUCCESS) {
+        vkDestroyShaderModule(m_device->device, vert, nullptr);
+        vkDestroyShaderModule(m_device->device, frag, nullptr);
+        return false;
+    }
+
+    VkDynamicState dynStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynState{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynState.dynamicStateCount = 2;
+    dynState.pDynamicStates = dynStates;
+
+    VkGraphicsPipelineCreateInfo pci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    pci.stageCount = 2;
+    pci.pStages = stages;
+    pci.pVertexInputState = &vi;
+    pci.pInputAssemblyState = &ia;
+    pci.pViewportState = &vpState;
+    pci.pRasterizationState = &raster;
+    pci.pMultisampleState = &ms;
+    pci.pDepthStencilState = &ds;
+    pci.pColorBlendState = &blend;
+    pci.pDynamicState = &dynState;
+    pci.layout = m_debugOverlay.pipelineLayout;
+    pci.renderPass = m_swapchain->renderPass;
+
+    const VkResult pipeResult =
+        vkCreateGraphicsPipelines(m_device->device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                  &m_debugOverlay.pipeline);
+    vkDestroyShaderModule(m_device->device, vert, nullptr);
+    vkDestroyShaderModule(m_device->device, frag, nullptr);
+    if (pipeResult != VK_SUCCESS) {
+        return false;
+    }
+
+    m_debugOverlay.initialized = true;
+    return true;
+}
+
+void EngineFrameRenderer::recordDebugOverlay(VkCommandBuffer cmd, uint32_t imageIndex,
+                                             const FrameRenderConfig& config)
+{
+    if (!m_debugOverlay.initialized || !m_debugOverlay.pipeline || !m_device) {
+        return;
+    }
+    if (config.debugLines.empty() && config.debugPoints.empty()) {
+        return;
+    }
+
+    std::vector<GizmoVertex> vertices;
+    vertices.reserve(config.debugLines.size() * 2 + config.debugPoints.size() * 6);
+    auto pushLine = [&](const Vec3& a, const Vec3& b, const Vec3& color) {
+        GizmoVertex va{};
+        va.position = a;
+        va.normal = Vec3(0, 1, 0);
+        va.color = color;
+        GizmoVertex vb = va;
+        vb.position = b;
+        vertices.push_back(va);
+        vertices.push_back(vb);
+    };
+    for (const EditorDebugLine& line : config.debugLines) {
+        pushLine(line.a, line.b, line.color);
+    }
+    for (const EditorDebugPoint& point : config.debugPoints) {
+        const float s = std::max(0.005f, point.size);
+        pushLine(Vec3(point.p.x - s, point.p.y, point.p.z),
+                 Vec3(point.p.x + s, point.p.y, point.p.z), point.color);
+        pushLine(Vec3(point.p.x, point.p.y - s, point.p.z),
+                 Vec3(point.p.x, point.p.y + s, point.p.z), point.color);
+        pushLine(Vec3(point.p.x, point.p.y, point.p.z - s),
+                 Vec3(point.p.x, point.p.y, point.p.z + s), point.color);
+    }
+    if (vertices.empty()) {
+        return;
+    }
+
+    const uint32_t needed = static_cast<uint32_t>(vertices.size());
+    if (needed > m_debugOverlay.vertexCapacity) {
+        m_debugOverlay.vertexBuffer.Destroy(m_device->allocator);
+        const uint32_t cap = std::max(needed, 256u);
+        m_debugOverlay.vertexBuffer.Create(m_device->allocator,
+                                           sizeof(GizmoVertex) * cap,
+                                           VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                           VMA_MEMORY_USAGE_CPU_TO_GPU);
+        m_debugOverlay.vertexCapacity = cap;
+    }
+
+    void* mapped = nullptr;
+    if (vmaMapMemory(m_device->allocator, m_debugOverlay.vertexBuffer.allocation, &mapped) !=
+        VK_SUCCESS) {
+        return;
+    }
+    std::memcpy(mapped, vertices.data(), sizeof(GizmoVertex) * vertices.size());
+    vmaFlushAllocation(m_device->allocator, m_debugOverlay.vertexBuffer.allocation, 0,
+                       VK_WHOLE_SIZE);
+    vmaUnmapMemory(m_device->allocator, m_debugOverlay.vertexBuffer.allocation);
+    m_debugOverlay.vertexCount = needed;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_debugOverlay.pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_debugOverlay.pipelineLayout, 0, 1,
+                            &m_descriptorSets[imageIndex], 0, nullptr);
+    VulkanGizmo::GizmoPushConstants pc{};
+    pc.model = Mat4::Identity();
+    pc.state = Vec4(-1, -1, 1, 0);
+    vkCmdPushConstants(cmd, m_debugOverlay.pipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &m_debugOverlay.vertexBuffer.buffer, &offset);
+    vkCmdDraw(cmd, m_debugOverlay.vertexCount, 1, 0, 0);
+}
+#else
+bool EngineFrameRenderer::createDebugOverlayResources() {
+    return true;
+}
+
+void EngineFrameRenderer::recordDebugOverlay(VkCommandBuffer /*cmd*/, uint32_t /*imageIndex*/,
+                                             const FrameRenderConfig& /*config*/) {}
+#endif
 
 // ============================================================================
 // Selection Outline Renderer Implementation

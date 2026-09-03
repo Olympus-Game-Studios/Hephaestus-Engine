@@ -128,7 +128,7 @@ bool OpenDocumentRegistry::RetargetPath(const std::string& oldAbsoluteOrPortable
 
     OpenDocumentInfo before;
     OpenDocumentInfo after;
-    OpenDocumentRetargetCallback callback;
+    std::vector<OpenDocumentRetargetCallback> listeners;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         const std::string oldKey = makeLookupKey(oldAbsoluteOrPortablePath);
@@ -139,7 +139,12 @@ bool OpenDocumentRegistry::RetargetPath(const std::string& oldAbsoluteOrPortable
             before = doc;
             after = makeInfo(doc.kind, newAbsoluteOrPortablePath, doc.dirty);
             doc = after;
-            callback = m_retargetCallback;
+            listeners.reserve(m_retargetListeners.size());
+            for (const auto& listener : m_retargetListeners) {
+                if (listener.callback) {
+                    listeners.push_back(listener.callback);
+                }
+            }
             break;
         }
     }
@@ -147,7 +152,7 @@ bool OpenDocumentRegistry::RetargetPath(const std::string& oldAbsoluteOrPortable
     if (before.portablePath.empty() && before.absolutePath.empty()) {
         return false;
     }
-    if (callback) {
+    for (const auto& callback : listeners) {
         callback(before, after);
     }
     return true;
@@ -185,23 +190,69 @@ std::vector<OpenDocumentInfo> OpenDocumentRegistry::ListDirty() const {
     return dirty;
 }
 
+OpenDocumentListenerId OpenDocumentRegistry::AddSaveListener(OpenDocumentSaveCallback callback) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const OpenDocumentListenerId id = m_nextListenerId++;
+    m_saveListeners.push_back({id, std::move(callback)});
+    return id;
+}
+
+void OpenDocumentRegistry::RemoveSaveListener(OpenDocumentListenerId id) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_saveListeners.erase(std::remove_if(m_saveListeners.begin(), m_saveListeners.end(),
+                                         [id](const SaveListener& listener) {
+                                             return listener.id == id;
+                                         }),
+                          m_saveListeners.end());
+}
+
 void OpenDocumentRegistry::SetSaveCallback(OpenDocumentSaveCallback callback) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_saveCallback = std::move(callback);
+    m_saveListeners.clear();
+    if (callback) {
+        const OpenDocumentListenerId id = m_nextListenerId++;
+        m_saveListeners.push_back({id, std::move(callback)});
+    }
+}
+
+OpenDocumentListenerId OpenDocumentRegistry::AddRetargetListener(OpenDocumentRetargetCallback callback) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const OpenDocumentListenerId id = m_nextListenerId++;
+    m_retargetListeners.push_back({id, std::move(callback)});
+    return id;
+}
+
+void OpenDocumentRegistry::RemoveRetargetListener(OpenDocumentListenerId id) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_retargetListeners.erase(std::remove_if(m_retargetListeners.begin(),
+                                             m_retargetListeners.end(),
+                                             [id](const RetargetListener& listener) {
+                                                 return listener.id == id;
+                                             }),
+                              m_retargetListeners.end());
 }
 
 void OpenDocumentRegistry::SetRetargetNotificationCallback(OpenDocumentRetargetCallback callback) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_retargetCallback = std::move(callback);
+    m_retargetListeners.clear();
+    if (callback) {
+        const OpenDocumentListenerId id = m_nextListenerId++;
+        m_retargetListeners.push_back({id, std::move(callback)});
+    }
 }
 
 bool OpenDocumentRegistry::RequestSave(const std::string& absoluteOrPortablePath,
                                        std::string* errorOut) {
     OpenDocumentInfo info;
-    OpenDocumentSaveCallback callback;
+    std::vector<OpenDocumentSaveCallback> listeners;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        callback = m_saveCallback;
+        listeners.reserve(m_saveListeners.size());
+        for (const auto& listener : m_saveListeners) {
+            if (listener.callback) {
+                listeners.push_back(listener.callback);
+            }
+        }
         const std::string key = makeLookupKey(absoluteOrPortablePath);
         for (const auto& doc : m_documents) {
             if (AssetPathPolicy::KeysEqual(makeLookupKey(doc.portablePath), key)) {
@@ -217,13 +268,19 @@ bool OpenDocumentRegistry::RequestSave(const std::string& absoluteOrPortablePath
         }
         return false;
     }
-    if (!callback) {
+    if (listeners.empty()) {
         if (errorOut) {
             *errorOut = "No save callback configured";
         }
         return false;
     }
-    return callback(info, errorOut);
+    for (const auto& callback : listeners) {
+        std::string localError;
+        if (callback(info, errorOut ? errorOut : &localError)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace Hephaestus

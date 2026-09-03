@@ -1890,6 +1890,10 @@ void QtEditorEngine::onTick()
     // ── Push play/pause state into render config ───────────────────────────
     m_renderConfig.isPlaying = isPlayOrPause;
     m_renderConfig.isPaused  = isPaused;
+
+    if (m_preRenderCallback) {
+        m_preRenderCallback(dt);
+    }
     
     renderFrame();
     
@@ -1972,6 +1976,8 @@ void QtEditorEngine::renderFrame()
     m_renderConfig.gizmoSpace = static_cast<int>(m_editorContext.GetGizmoSpace());
     const auto& snapSettings = m_editorContext.GetSnapSettings();
     m_renderConfig.enableSnap = snapSettings.enableSnap;
+    m_renderConfig.debugLines = m_debugLines;
+    m_renderConfig.debugPoints = m_debugPoints;
     // Set snap value based on current gizmo mode
     switch (m_editorContext.GetGizmoMode()) {
         case Hephaestus::GizmoMode::Translate:

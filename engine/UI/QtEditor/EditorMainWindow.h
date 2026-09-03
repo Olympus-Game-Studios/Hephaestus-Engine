@@ -72,6 +72,7 @@ class AssetBrowserWidget;
 class AddActorsPanel;
 class EditorAssetActions;
 class PrefabEditorManager;
+class CharacterEditorManager;
 class PrefabInstanceBar;
 class RuntimeUIOverlayWidget;
 class LightInspector;
@@ -135,6 +136,7 @@ public:
 
     EditorAssetPipeline* GetAssetPipeline() { return m_assetPipeline.get(); }
     void rebuildSceneVisuals();
+    bool requestCloseOpenCharacter(const QString& absolutePath);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -344,6 +346,7 @@ private:
     AssetBrowserWidget* m_assetBrowser = nullptr;
     std::unique_ptr<EditorAssetActions> m_assetActions;
     std::unique_ptr<PrefabEditorManager> m_prefabEditorManager;
+    std::unique_ptr<CharacterEditorManager> m_characterEditorManager;
     UI::SettingsWindow* m_settingsWindow = nullptr;
 
     // Build output

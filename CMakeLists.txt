@@ -276,6 +276,7 @@ set(EDITOR_ONLY_SOURCES
     engine/Gfx/VulkanGizmo.cpp
     engine/Gfx/VulkanLightGizmo.cpp
     engine/UI/EditorDocument.cpp
+    engine/UI/CharacterDocument.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
@@ -417,6 +418,7 @@ add_executable(HephaestusEngine
     engine/UI/HephaestusUI/UITheme.cpp
     engine/UI/HephaestusUI/UIVerticalBox.cpp
     engine/UI/EditorDocument.cpp
+    engine/UI/CharacterDocument.cpp
     engine/UI/InspectorSelectionModel.cpp
     engine/UI/ComponentClipboard.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
@@ -592,6 +594,14 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/PrefabEditorWindow.h
             engine/UI/QtEditor/PrefabEditorManager.cpp
             engine/UI/QtEditor/PrefabEditorManager.h
+            engine/UI/QtEditor/CharacterEditorWindow.cpp
+            engine/UI/QtEditor/CharacterEditorWindow.h
+            engine/UI/QtEditor/CharacterEditorManager.cpp
+            engine/UI/QtEditor/CharacterEditorManager.h
+            engine/UI/QtEditor/CharacterTimelineWidget.cpp
+            engine/UI/QtEditor/CharacterTimelineWidget.h
+            engine/UI/QtEditor/CharacterAnimationImportDialog.cpp
+            engine/UI/QtEditor/CharacterAnimationImportDialog.h
             engine/UI/QtEditor/PrefabHierarchyPanel.cpp
             engine/UI/QtEditor/PrefabHierarchyPanel.h
             engine/UI/QtEditor/PrefabInspectorPanel.cpp
@@ -1311,6 +1321,38 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME CharacterWorkflow
         COMMAND CharacterWorkflowTests
+    )
+
+    add_executable(CharacterEditorTests
+        engine/Tests/CharacterEditorTests.cpp
+        engine/Assets/CharacterAsset.cpp
+        engine/Assets/CharacterRuntime.cpp
+        engine/Assets/CharacterImport.cpp
+        engine/Assets/SkeletalModelImporter.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Animation/Skeleton.cpp
+        engine/Animation/AnimationClip.cpp
+        engine/Animation/CharacterPlayback.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Scripting/ScriptBase.cpp
+        engine/UI/EditorDocument.cpp
+        engine/UI/CharacterDocument.cpp
+    )
+    target_include_directories(CharacterEditorTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME CharacterEditor
+        COMMAND CharacterEditorTests
     )
 
     add_executable(AssetOperationTransactionTests

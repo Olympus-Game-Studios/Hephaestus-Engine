@@ -26,6 +26,7 @@ struct CharacterComponent {
     std::vector<std::string> materialOverrides;
 
     bool runtimeReady = false;
+    bool suppressAutoPlay = false;
     Hephaestus::Skeleton skeleton;
     std::vector<Hephaestus::AnimationClip> clips;
     Hephaestus::AnimationPlayer player;

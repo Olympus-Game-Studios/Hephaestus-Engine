@@ -180,6 +180,7 @@ bool CharacterRuntime::Load(const std::filesystem::path& projectRoot,
     }
 
     std::vector<AnimationClip> clips = imported.clips;
+    std::vector<std::string> dataWarnings;
     for (const CharacterClipEntry& entry : asset.clips) {
         if (entry.source.empty() || entry.source == meshKey) {
             continue;
@@ -187,6 +188,7 @@ bool CharacterRuntime::Load(const std::filesystem::path& projectRoot,
         const std::filesystem::path extraAbs =
             AssetPathPolicy::ResolvePortableKey(projectRoot, entry.source);
         if (extraAbs.empty() || !std::filesystem::exists(extraAbs)) {
+            dataWarnings.push_back("Missing extra animation source: " + entry.source);
             continue;
         }
         std::vector<AnimationClip> extra;
@@ -194,6 +196,9 @@ bool CharacterRuntime::Load(const std::filesystem::path& projectRoot,
         if (SkeletalModelImporter::LoadClips(extraAbs, settings, imported.skeleton, extra,
                                              extraError)) {
             clips.insert(clips.end(), extra.begin(), extra.end());
+        } else {
+            dataWarnings.push_back("Failed to load extra animation source '" + entry.source +
+                                   "': " + extraError);
         }
     }
     ApplyAuthoredClipMetadata(asset, clips);
@@ -204,6 +209,7 @@ bool CharacterRuntime::Load(const std::filesystem::path& projectRoot,
     data.clips = std::move(clips);
     data.portablePath = portableCharacterPath;
     data.fingerprint = characterStamp ^ FileFingerprint(meshAbs);
+    data.warnings = std::move(dataWarnings);
 
     {
         std::lock_guard<std::mutex> lock(g_cacheMutex);

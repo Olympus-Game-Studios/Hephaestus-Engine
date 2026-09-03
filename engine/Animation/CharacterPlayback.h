@@ -6,6 +6,8 @@
 #pragma once
 
 #include "AnimationClip.h"
+#include "../Assets/CharacterAsset.h"
+#include "../Core/EditorDebugDraw.h"
 
 #include <string>
 #include <vector>
@@ -32,11 +34,31 @@ public:
     static void Stop(CharacterComponent& character);
     static void SetSpeed(CharacterComponent& character, float speed);
 
+    /// Sample `clipId` at absolute clip time (clamped to authored trim) and rebuild pose/palette.
+    static bool SampleAtTime(CharacterComponent& character,
+                             const std::string& clipId,
+                             float time,
+                             std::string& outError);
+
+    /// Rebuild local/world/palette from the current player time (or rest pose).
+    static void EvaluatePose(CharacterComponent& character);
+
     /// Commit pending Play/CrossFade, advance (except the commit frame), evaluate pose.
     static void TickEntity(CharacterComponent& character, float deltaTime);
 
     /// Play-mode host tick. Runs after gameplay Lua onUpdate and before LateUpdate.
     static void Tick(Scene& scene, float deltaTime);
 };
+
+Mat4 ComposeSocketLocal(const CharacterSocket& socket);
+bool EvaluateSocketWorld(const CharacterComponent& character,
+                         const CharacterSocket& socket,
+                         Mat4& outWorld,
+                         std::string& outError);
+void DecomposeSocketLocal(const Mat4& local, CharacterSocket& socket);
+void FillSkeletonDebugOverlay(const CharacterComponent& character,
+                              const std::string& selectedBone,
+                              std::vector<EditorDebugLine>& outLines,
+                              std::vector<EditorDebugPoint>& outPoints);
 
 } // namespace Hephaestus

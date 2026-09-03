@@ -29,6 +29,7 @@ struct CharacterRuntimeData {
     std::vector<AnimationClip> clips;
     std::string portablePath;
     std::uint64_t fingerprint = 0;
+    std::vector<std::string> warnings;
 };
 
 std::string ChooseDefaultAnimation(const std::vector<CharacterClipEntry>& clips);
@@ -54,7 +55,8 @@ public:
     static bool UploadVisual(Entity entity,
                              const std::filesystem::path& projectRoot,
                              EngineFrameRenderer* renderer,
-                             std::string& outError);
+                             std::string& outError,
+                             bool forceReload = false);
 
     static bool BindScene(Scene& scene,
                           const std::filesystem::path& projectRoot,

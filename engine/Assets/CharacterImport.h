@@ -52,6 +52,28 @@ public:
                          const std::filesystem::path& candidateGlb,
                          std::string& outError);
 
+    /**
+     * Assign the first owned mesh.glb to an empty .hpcharacter (New Character).
+     * Preserves the existing controller script path.
+     */
+    static bool AssignCharacterSource(const std::filesystem::path& projectRoot,
+                                      const std::string& portableCharacterPath,
+                                      const std::filesystem::path& sourceGlb,
+                                      std::string& outError);
+
+    /**
+     * Copy a GLB into the character owned-source folder and append selected clip
+     * metadata to `asset`. Does not write the .hpcharacter file.
+     */
+    static bool ImportAnimationClips(const std::filesystem::path& projectRoot,
+                                     CharacterAsset& asset,
+                                     const std::string& portableCharacterPath,
+                                     const std::filesystem::path& sourceGlb,
+                                     const std::vector<std::string>& selectedSourceClips,
+                                     const std::string& destinationFolder,
+                                     std::vector<std::string>& outAddedClipIds,
+                                     std::string& outError);
+
     static CharacterAsset BuildAssetFromImport(const std::string& name,
                                                const std::string& meshPortable,
                                                const SkeletalImportResult& imported,

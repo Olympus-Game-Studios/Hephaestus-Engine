@@ -1432,6 +1432,15 @@ void AssetBrowserWidget::deleteAsset(const QString& relativePath, bool isDirecto
             return;
         }
 
+        if (!isDirectory && portable.endsWith(QLatin1String(".hpcharacter"), Qt::CaseInsensitive)) {
+            auto& assetMgr = AssetManager::GetInstance();
+            const QString abs = QString::fromStdString(
+                assetMgr.ToAbsolutePath(relativePath.toStdString()));
+            if (m_mainWindow && !m_mainWindow->requestCloseOpenCharacter(abs)) {
+                return;
+            }
+        }
+
         const auto op = ops.MoveToTrash(portable.toStdString());
         if (!op.success) {
             QMessageBox::critical(this, tr("Delete Asset"),
