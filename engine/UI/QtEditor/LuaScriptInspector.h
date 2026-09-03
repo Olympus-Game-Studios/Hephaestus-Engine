@@ -20,10 +20,13 @@
 
 #include "ComponentInspector.h"
 #include "AssetReferenceEditor.h"
+#include "../../Scripting/LuaExposeMetadata.h"
 
 #include <QCheckBox>
+#include <QGroupBox>
 #include <QPushButton>
 #include <QLabel>
+#include <QVBoxLayout>
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -43,10 +46,19 @@ private:
     void connectSignals();
     void applyToComponent();
     void blockAllSignals(bool block);
+    void clearParameterWidgets();
+    void rebuildParameterWidgets(const LuaExposeScanResult& scan);
+    void applyParameterValue(const std::string& name, const PropertyValue& value);
+    void resetParameterValue(const LuaExposedField& field);
+    bool isParameterOverridden(const std::string& name) const;
 
     AssetReferenceEditor* m_pathEdit = nullptr;
     QCheckBox*   m_enabledCheck = nullptr;
+    QGroupBox* m_parametersGroup = nullptr;
+    QVBoxLayout* m_parametersLayout = nullptr;
     QPushButton* m_removeBtn    = nullptr;
+    LuaExposeScanResult m_scanResult;
+    std::string m_scannedPath;
 };
 
 } // namespace QtEditor

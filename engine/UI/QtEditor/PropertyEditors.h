@@ -107,6 +107,25 @@ private:
     bool m_updating = false;
 };
 
+class Vec2PropertyEditor : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit Vec2PropertyEditor(const QString& label, QWidget* parent = nullptr);
+    void setRange(double min, double max);
+    void setDecimals(int decimals);
+    void setSingleStep(double step);
+    void setFromMixed(const MixedScalar& x, const MixedScalar& y);
+    void setValue(const Vec2& value);
+
+signals:
+    void axisEdited(int axis, double value);
+    void editingFinished();
+
+private:
+    NumericPropertyEditor* m_axes[2] = {};
+};
+
 class BoolPropertyEditor : public QWidget
 {
     Q_OBJECT
@@ -123,6 +142,21 @@ signals:
 
 private:
     QCheckBox* m_check = nullptr;
+};
+
+class StringPropertyEditor : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit StringPropertyEditor(const QString& label, QWidget* parent = nullptr);
+    void setValue(const QString& value, bool mixed);
+
+signals:
+    void valueEdited(const QString& value);
+    void editingFinished();
+
+private:
+    QLineEdit* m_edit = nullptr;
 };
 
 class EnumPropertyEditor : public QWidget
@@ -166,6 +200,24 @@ private:
     QLineEdit* m_hex = nullptr;
     QColor m_srgb;
     bool m_mixed = false;
+};
+
+class ColorRgbaPropertyEditor : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit ColorRgbaPropertyEditor(const QString& label, QWidget* parent = nullptr);
+    void setValue(const Vec4& value, bool mixed);
+
+signals:
+    void valueEdited(const Vec4& value);
+    void editingFinished();
+
+private:
+    ColorPropertyEditor* m_color = nullptr;
+    NumericPropertyEditor* m_alpha = nullptr;
+    Vec4 m_value{1.0f, 1.0f, 1.0f, 1.0f};
+    bool m_updating = false;
 };
 
 } // namespace QtEditor

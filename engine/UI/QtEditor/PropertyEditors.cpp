@@ -336,6 +336,53 @@ void Vec3PropertyEditor::setValue(const Vec3& value)
     m_axes[2]->setValue(value.z);
 }
 
+Vec2PropertyEditor::Vec2PropertyEditor(const QString& label, QWidget* parent)
+    : QWidget(parent)
+{
+    auto* layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+    if (!label.isEmpty()) {
+        layout->addWidget(new QLabel(label, this));
+    }
+    const QString axes[2] = {QStringLiteral("X"), QStringLiteral("Y")};
+    for (int index = 0; index < 2; ++index) {
+        m_axes[index] = new NumericPropertyEditor(axes[index], this);
+        layout->addWidget(m_axes[index], 1);
+        connect(m_axes[index], &NumericPropertyEditor::valueEdited, this,
+                [this, index](double value) { emit axisEdited(index, value); });
+        connect(m_axes[index], &NumericPropertyEditor::editingFinished,
+                this, &Vec2PropertyEditor::editingFinished);
+    }
+}
+
+void Vec2PropertyEditor::setRange(double min, double max)
+{
+    for (auto* axis : m_axes) axis->setRange(min, max);
+}
+
+void Vec2PropertyEditor::setDecimals(int decimals)
+{
+    for (auto* axis : m_axes) axis->setDecimals(decimals);
+}
+
+void Vec2PropertyEditor::setSingleStep(double step)
+{
+    for (auto* axis : m_axes) axis->setSingleStep(step);
+}
+
+void Vec2PropertyEditor::setFromMixed(const MixedScalar& x, const MixedScalar& y)
+{
+    m_axes[0]->setFromMixed(x);
+    m_axes[1]->setFromMixed(y);
+}
+
+void Vec2PropertyEditor::setValue(const Vec2& value)
+{
+    m_axes[0]->setValue(value.x);
+    m_axes[1]->setValue(value.y);
+}
+
 BoolPropertyEditor::BoolPropertyEditor(const QString& label, QWidget* parent)
     : QWidget(parent)
 {
@@ -362,6 +409,28 @@ void BoolPropertyEditor::setValue(bool value)
     m_check->setTristate(false);
     m_check->setChecked(value);
     m_check->setTristate(true);
+}
+
+StringPropertyEditor::StringPropertyEditor(const QString& label, QWidget* parent)
+    : QWidget(parent)
+{
+    auto* layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+    if (!label.isEmpty()) {
+        layout->addWidget(new QLabel(label, this));
+    }
+    m_edit = new QLineEdit(this);
+    layout->addWidget(m_edit, 1);
+    connect(m_edit, &QLineEdit::textEdited, this, &StringPropertyEditor::valueEdited);
+    connect(m_edit, &QLineEdit::editingFinished, this, &StringPropertyEditor::editingFinished);
+}
+
+void StringPropertyEditor::setValue(const QString& value, bool mixed)
+{
+    const QSignalBlocker blocker(m_edit);
+    m_edit->setText(mixed ? QString() : value);
+    m_edit->setPlaceholderText(mixed ? EmDash() : QString());
 }
 
 EnumPropertyEditor::EnumPropertyEditor(const QString& label, QWidget* parent)
@@ -472,6 +541,50 @@ void ColorPropertyEditor::applyHex()
     m_mixed = false;
     refreshSwatch();
     emit colorEdited(linearRgb());
+}
+
+ColorRgbaPropertyEditor::ColorRgbaPropertyEditor(const QString& label, QWidget* parent)
+    : QWidget(parent)
+{
+    auto* layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+    m_color = new ColorPropertyEditor(label, this);
+    m_alpha = new NumericPropertyEditor(QStringLiteral("A"), this);
+    m_alpha->setRange(0.0, 1.0);
+    m_alpha->setDecimals(3);
+    m_alpha->setSingleStep(0.01);
+    layout->addWidget(m_color, 1);
+    layout->addWidget(m_alpha);
+
+    connect(m_color, &ColorPropertyEditor::colorEdited, this, [this](const Vec3& rgb) {
+        if (m_updating) return;
+        m_value.x = rgb.x;
+        m_value.y = rgb.y;
+        m_value.z = rgb.z;
+        emit valueEdited(m_value);
+        emit editingFinished();
+    });
+    connect(m_alpha, &NumericPropertyEditor::valueEdited, this, [this](double alpha) {
+        if (m_updating) return;
+        m_value.w = static_cast<float>(alpha);
+        emit valueEdited(m_value);
+    });
+    connect(m_alpha, &NumericPropertyEditor::editingFinished,
+            this, &ColorRgbaPropertyEditor::editingFinished);
+}
+
+void ColorRgbaPropertyEditor::setValue(const Vec4& value, bool mixed)
+{
+    m_updating = true;
+    m_value = value;
+    m_color->setLinearRgb(Vec3(value.x, value.y, value.z), mixed);
+    if (mixed) {
+        m_alpha->setMixed(true);
+    } else {
+        m_alpha->setValue(value.w);
+    }
+    m_updating = false;
 }
 
 } // namespace QtEditor
