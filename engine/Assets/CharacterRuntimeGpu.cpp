@@ -7,6 +7,8 @@
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
 
+#include <vector>
+
 namespace Hephaestus {
 namespace {
 
@@ -179,13 +181,24 @@ bool CharacterRuntime::BindScene(Scene& scene,
                                  const std::filesystem::path& projectRoot,
                                  EngineFrameRenderer* renderer) {
     bool ok = true;
+    std::vector<entt::entity> entities;
     auto view = scene.GetEntitiesWith<CharacterComponent>();
+    entities.reserve(view.size());
     for (auto handle : view) {
+        entities.push_back(handle);
+    }
+    for (auto handle : entities) {
         Entity entity(handle, &scene);
-        std::string error;
-        if (!BindEntity(entity, projectRoot, false, error)) {
-            ok = false;
+        if (!entity || !entity.HasComponent<CharacterComponent>()) {
             continue;
+        }
+        auto& character = entity.GetComponent<CharacterComponent>();
+        std::string error;
+        if (!character.runtimeReady) {
+            if (!BindEntity(entity, projectRoot, false, error)) {
+                ok = false;
+                continue;
+            }
         }
         if (!UploadVisual(entity, projectRoot, renderer, error)) {
             ok = false;

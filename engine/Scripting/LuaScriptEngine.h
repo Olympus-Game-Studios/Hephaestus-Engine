@@ -26,7 +26,10 @@
 // Forward declarations
 class Entity;
 class Scene;
-namespace Hephaestus { class InputSystem; }
+namespace Hephaestus {
+class InputSystem;
+class EngineFrameRenderer;
+}
 struct GLFWwindow;
 struct LuaScriptComponent;
 struct TransformComponent;
@@ -186,6 +189,11 @@ public:
     void SetProjectRoot(const std::filesystem::path& rootPath);
 
     /**
+     * Renderer used to upload Character visuals when Scene.instantiate spawns a prefab.
+     */
+    void SetFrameRenderer(Hephaestus::EngineFrameRenderer* renderer);
+
+    /**
      * Shutdown and cleanup
      */
     void Shutdown();
@@ -224,6 +232,7 @@ private:
     Scene* m_Scene = nullptr;
     GLFWwindow* m_Window = nullptr;
     std::filesystem::path m_ProjectRoot;
+    Hephaestus::EngineFrameRenderer* m_FrameRenderer = nullptr;
     CameraBinding m_CameraBinding{};
     PhysicsBinding m_PhysicsBinding{};
     Hephaestus::InputSystem* m_InputSystem = nullptr;

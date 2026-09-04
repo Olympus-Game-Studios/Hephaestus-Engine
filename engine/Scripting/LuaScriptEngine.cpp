@@ -41,6 +41,7 @@
 #include <utility>
 #include <functional>
 #include <cmath>
+#include <exception>
 
 #include <GLFW/glfw3.h>
 
@@ -268,6 +269,10 @@ void LuaScriptEngine::SetWindow(GLFWwindow* window) {
 void LuaScriptEngine::SetProjectRoot(const std::filesystem::path& rootPath) {
     m_ProjectRoot = rootPath.lexically_normal();
     RebuildSearchPaths();
+}
+
+void LuaScriptEngine::SetFrameRenderer(Hephaestus::EngineFrameRenderer* renderer) {
+    m_FrameRenderer = renderer;
 }
 
 bool LuaScriptEngine::LoadScript(const std::string& filepath) {
@@ -547,6 +552,18 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
 
     m_UpdatingScripts = false;
     FlushDeferredSceneOps();
+
+    // Bind characters spawned this tick after Lua returns. Doing FBX load / GPU
+    // upload inside Scene.instantiate (Director onUpdate) can abort the spawn.
+    if (!m_ProjectRoot.empty()) {
+        try {
+            Hephaestus::CharacterRuntime::BindScene(scene, m_ProjectRoot, m_FrameRenderer);
+        } catch (const std::exception& ex) {
+            std::cerr << "[Lua] Character bind after spawn failed: " << ex.what() << "\n";
+        } catch (...) {
+            std::cerr << "[Lua] Character bind after spawn failed\n";
+        }
+    }
 #else
     (void)scene;
     (void)deltaTime;
@@ -1200,6 +1217,11 @@ int LuaScriptEngine::Lua_Physics_setRotation(lua_State* L) {
     }
 
     bool ok = engine->m_PhysicsBinding.setRotation(engine->m_CurrentEntityId, Vec3(x, y, z), activate);
+    if (ok) {
+        if (TransformComponent* transform = engine->GetTransform(engine->m_CurrentEntityId)) {
+            transform->rotation = Vec3(x, y, z);
+        }
+    }
     lua_pushboolean(L, ok);
     return 1;
 #else

@@ -269,11 +269,14 @@ bool CharacterRuntime::BindEntity(Entity entity,
         character.runtimeReady = false;
         character.lastError = "Character asset is not assigned.";
         outError = character.lastError;
-        auto& emptyMesh = entity.HasComponent<MeshRendererComponent>()
-                              ? entity.GetComponent<MeshRendererComponent>()
-                              : entity.AddComponent<MeshRendererComponent>();
-        emptyMesh.runtimeGenerated = true;
-        emptyMesh.meshAssetPath.clear();
+        if (!entity.HasComponent<MeshRendererComponent>() ||
+            IsRuntimeGeneratedVisual(entity.GetComponent<MeshRendererComponent>())) {
+            auto& emptyMesh = entity.HasComponent<MeshRendererComponent>()
+                                  ? entity.GetComponent<MeshRendererComponent>()
+                                  : entity.AddComponent<MeshRendererComponent>();
+            emptyMesh.runtimeGenerated = true;
+            emptyMesh.meshAssetPath.clear();
+        }
         return false;
     }
 
@@ -281,11 +284,14 @@ bool CharacterRuntime::BindEntity(Entity entity,
     if (!Load(projectRoot, character.characterPath, data, outError)) {
         character.runtimeReady = false;
         character.lastError = outError;
-        auto& failedMesh = entity.HasComponent<MeshRendererComponent>()
-                               ? entity.GetComponent<MeshRendererComponent>()
-                               : entity.AddComponent<MeshRendererComponent>();
-        failedMesh.runtimeGenerated = true;
-        failedMesh.meshAssetPath = character.characterPath;
+        if (!entity.HasComponent<MeshRendererComponent>() ||
+            IsRuntimeGeneratedVisual(entity.GetComponent<MeshRendererComponent>())) {
+            auto& failedMesh = entity.HasComponent<MeshRendererComponent>()
+                                   ? entity.GetComponent<MeshRendererComponent>()
+                                   : entity.AddComponent<MeshRendererComponent>();
+            failedMesh.runtimeGenerated = true;
+            failedMesh.meshAssetPath = character.characterPath;
+        }
         return false;
     }
 

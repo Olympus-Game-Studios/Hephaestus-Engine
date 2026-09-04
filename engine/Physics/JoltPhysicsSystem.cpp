@@ -430,7 +430,7 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
         // at the geometric center, so the physics shape must be shifted to align.
         Vec3 meshCenter(0.0f, 0.0f, 0.0f);
         Vec3 meshHalf(0.5f, 0.5f, 0.5f);
-        if (meshRenderer) {
+        if (meshRenderer && !sceneEntity.HasComponent<CharacterComponent>()) {
             Vec3 mn = meshRenderer->localBounds.min;
             Vec3 mx = meshRenderer->localBounds.max;
             meshCenter = Vec3((mn.x + mx.x) * 0.5f,
@@ -614,10 +614,19 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
         JPH::MassProperties massProps = shape->GetMassProperties();
         massProps.ScaleToMass(targetMass);
         if (rigidBody.freezeRotation) {
-            bodySettings.mAllowedDOFs =
-                JPH::EAllowedDOFs::TranslationX |
-                JPH::EAllowedDOFs::TranslationY |
-                JPH::EAllowedDOFs::TranslationZ;
+            if (sceneEntity.HasComponent<CharacterComponent>()) {
+                // Keep capsules upright but allow authored yaw (Physics.setRotation).
+                bodySettings.mAllowedDOFs =
+                    JPH::EAllowedDOFs::TranslationX |
+                    JPH::EAllowedDOFs::TranslationY |
+                    JPH::EAllowedDOFs::TranslationZ |
+                    JPH::EAllowedDOFs::RotationY;
+            } else {
+                bodySettings.mAllowedDOFs =
+                    JPH::EAllowedDOFs::TranslationX |
+                    JPH::EAllowedDOFs::TranslationY |
+                    JPH::EAllowedDOFs::TranslationZ;
+            }
         }
         bodySettings.mMassPropertiesOverride = massProps;
     }
@@ -1082,6 +1091,11 @@ void JoltPhysicsSystem::IntegrateMeshColliders(Scene& scene) {
             continue;
         }
         
+        const auto& meshCollider = meshColliderEntity.GetComponent<MeshColliderComponent>();
+        if (!meshCollider.enabled) {
+            continue;
+        }
+
         auto& meshColliderTransform = meshColliderEntity.GetComponent<TransformComponent>();
         if (!meshColliderEntity.HasComponent<MeshRendererComponent>()) {
             continue;
@@ -1194,9 +1208,11 @@ void JoltPhysicsSystem::IntegrateMeshColliders(Scene& scene) {
             // Minimum collision radius to prevent tunneling
             collisionRadius = std::max(collisionRadius, 0.25f);
             
-            // Get current position
-            JPH::RVec3 currentJoltPos = bodyInterface.GetCenterOfMassPosition(bodyId);
-            Vec3 bodyCenter(currentJoltPos.GetX(), currentJoltPos.GetY(), currentJoltPos.GetZ());
+            // Sphere test uses COM (matches GetLocalBounds of offset capsules).
+            // SetPosition writes body origin, so the push must be applied to origin.
+            JPH::RVec3 currentOrigin = bodyInterface.GetPosition(bodyId);
+            JPH::RVec3 currentCom = bodyInterface.GetCenterOfMassPosition(bodyId);
+            Vec3 bodyCenter(currentCom.GetX(), currentCom.GetY(), currentCom.GetZ());
             
             // Build body AABB with collision margin
             const float collisionMargin = 0.05f;
@@ -1273,13 +1289,15 @@ void JoltPhysicsSystem::IntegrateMeshColliders(Scene& scene) {
                     averagePush = vscale(averagePush, maxPushDistance / pushLen);
                 }
                 
-                // Apply position correction
-                JPH::RVec3 newPos(
-                    bodyCenter.x + averagePush.x,
-                    bodyCenter.y + averagePush.y,
-                    bodyCenter.z + averagePush.z
+                // Apply the same world-space correction to the body origin.
+                // Writing COM through SetPosition teleports offset capsules upward each tick.
+                JPH::RVec3 newOrigin(
+                    currentOrigin.GetX() + averagePush.x,
+                    currentOrigin.GetY() + averagePush.y,
+                    currentOrigin.GetZ() + averagePush.z
                 );
-                bodyInterface.SetPosition(bodyId, newPos, JPH::EActivation::Activate);
+                bodyInterface.SetPosition(bodyId, newOrigin, JPH::EActivation::Activate);
+                SyncTransformFromPhysics(scene, dynamicHandle, bodyId);
                 
                 // Cancel velocity into the collision surface
                 JPH::Vec3 currentVel = bodyInterface.GetLinearVelocity(bodyId);

@@ -2359,6 +2359,7 @@ void QtEditorEngine::SetProjectRoot(const std::string& projectRoot)
     // Keep Lua search paths in sync so relative script paths keep resolving.
     if (m_luaScriptEngine) {
         m_luaScriptEngine->SetProjectRoot(std::filesystem::path(m_projectRoot));
+        m_luaScriptEngine->SetFrameRenderer(m_frameRenderer.get());
     }
     if (m_audioEngine) {
         m_audioEngine->SetProjectRoot(std::filesystem::path(m_projectRoot));
@@ -2936,12 +2937,14 @@ void QtEditorEngine::StartPlayMode()
         m_luaScriptEngine = std::make_unique<LuaScriptEngine>();
         m_luaScriptEngine->Initialize(scene, m_glfwWindow);
         m_luaScriptEngine->SetProjectRoot(projectRootPath);
+        m_luaScriptEngine->SetFrameRenderer(m_frameRenderer.get());
         m_luaScriptEngine->SetAudioEngine(m_audioEngine.get());
 
     } else {
         // Re-associate with current scene
         m_luaScriptEngine->Initialize(scene, m_glfwWindow);
         m_luaScriptEngine->SetProjectRoot(projectRootPath);
+        m_luaScriptEngine->SetFrameRenderer(m_frameRenderer.get());
         m_luaScriptEngine->SetAudioEngine(m_audioEngine.get());
     }
     m_luaScriptEngine->SetInputSystem(&m_gameplayInput);
@@ -3152,6 +3155,9 @@ void QtEditorEngine::StartPlayMode()
     m_playModeManager.SetLogCallback([](const std::string& msg) {
         std::cout << msg << std::endl;
     });
+
+    // Prefab JSON edits are otherwise stuck in LoadAsset cache from the last Play.
+    PrefabOverrideSystem::InvalidateAssetCache();
 
     // Start!
     m_playModeManager.StartPlayMode();

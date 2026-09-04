@@ -60,6 +60,8 @@ public:
                              std::string& outError,
                              bool forceReload = false);
 
+    /// Bind any CharacterComponent that is not runtime-ready, then upload visuals.
+    /// Already-bound entities are not rebound so clip playback is preserved.
     static bool BindScene(Scene& scene,
                           const std::filesystem::path& projectRoot,
                           EngineFrameRenderer* renderer);

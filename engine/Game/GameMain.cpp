@@ -775,6 +775,7 @@ int main(int argc, char* argv[]) {
         luaEngine.Initialize(&scene, window);
         // Set project root so script search paths resolve correctly on any device
         luaEngine.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
+        luaEngine.SetFrameRenderer(&frameRenderer);
         luaEngine.SetInputSystem(&inputSystem);
         luaEngine.SetAudioEngine(&audioEngine);
         luaEngine.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);

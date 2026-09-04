@@ -70,6 +70,30 @@ struct alignas(16) MaterialUBO {
 
 constexpr VkDeviceSize kBoneUboSize = 128 * sizeof(Mat4);
 
+// Mixamo-style characters often have the pivot at the hips. Lift the mesh so
+// feet sit on the entity origin without moving the physics capsule. Use the
+// current pose (Idle/Walk) because bind-pose bounds miss planted feet.
+static Mat4 CharacterAwareModelMatrix(Scene* scene, Entity entity, const MeshRendererComponent& mesh)
+{
+    Mat4 model = scene->GetWorldTransform(entity);
+    if (!mesh.runtimeGenerated) {
+        return model;
+    }
+    float minY = mesh.localBounds.min.y;
+    if (entity.HasComponent<CharacterComponent>()) {
+        const CharacterComponent& character = entity.GetComponent<CharacterComponent>();
+        if (character.runtimeReady) {
+            for (const Mat4& pose : character.worldPose) {
+                minY = std::min(minY, pose.m[13]);
+            }
+        }
+    }
+    if (minY >= -1.0e-3f) {
+        return model;
+    }
+    return Mat4::Multiply(model, Mat4::Translation(Vec3(0.0f, -minY, 0.0f)));
+}
+
 static VkShaderModule LoadSpvModule(VkDevice device, const std::string& name) {
     const std::string candidates[] = {
         "shaders/" + name,
@@ -2709,7 +2733,7 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
 
                 ShadowPushConstants pc;
                 pc.lightViewProj = cascadeVPs[cascade];
-                pc.model = scene->GetWorldTransform(Entity(entity, scene));
+                pc.model = CharacterAwareModelMatrix(scene, Entity(entity, scene), meshComp);
                 const VkPipelineLayout shadowLayout =
                     skinned ? m_skinned.shadowLayout : m_directionalShadow.pipelineLayout;
                 vkCmdPushConstants(cmd, shadowLayout, VK_SHADER_STAGE_VERTEX_BIT,
@@ -3488,7 +3512,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                     currentIndexBuffer = mesh.indexBuffer.buffer;
                 }
 
-                Mat4 modelMatrix = scene->GetWorldTransform(entity);
+                Mat4 modelMatrix = CharacterAwareModelMatrix(scene, entity, renderer);
                 vkCmdPushConstants(cmd, currentDrawLayout, VK_SHADER_STAGE_VERTEX_BIT,
                                   0, sizeof(Mat4), modelMatrix.m);
 
@@ -3680,7 +3704,7 @@ void EngineFrameRenderer::recordOutlines(VkCommandBuffer cmd, uint32_t imageInde
     auto drawOutline = [&](entt::entity ent, const MeshRendererComponent& meshComp, bool depthMaskFirst) {
         if (!meshComp.HasValidMesh()) return;
         Entity entity(ent, scene);
-        Mat4 modelMatrix = scene->GetWorldTransform(entity);
+        Mat4 modelMatrix = CharacterAwareModelMatrix(scene, entity, meshComp);
         const CharacterComponent* character = entity.HasComponent<CharacterComponent>()
             ? &entity.GetComponent<CharacterComponent>()
             : nullptr;
@@ -5880,7 +5904,7 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
             }
 
             IdPicker::IdPushConstants pc;
-            pc.model = scene->GetWorldTransform(entity);
+            pc.model = CharacterAwareModelMatrix(scene, entity, renderer);
             pc.entityId = static_cast<uint32_t>(entityHandle);
 
             vkCmdPushConstants(cmd, idLayout,

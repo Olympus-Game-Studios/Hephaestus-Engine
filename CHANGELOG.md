@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-09-04: Scene.instantiate binds newly spawned CharacterComponents (CPU playback + GPU upload) without rebinding already-playing instances, so runtime-spawned character prefabs animate instead of appearing as unbound capsules.
 - 2026-09-04: Character Editor Import Animation names clips in the import dialog (Mixamo `mixamo.com` / `Take 001` default to the source file name). Clips can be renamed after import (F2, double-click, Inspector Name), which updates the clip id used by playback and controllers.
 - 2026-09-03: Character Multi-Mesh Support 1.0 lets a `.hpcharacter` own one canonical skeleton and 1..N compatible skinned mesh parts (GLB and FBX), sharing one pose and bone palette. Inspect lists every part; incompatible skeleton groups fail; YBot-style multi-mesh FBX imports without Blender cleanup; Character Editor materials group by mesh part; reimport preserves `meshPart`+slot identity.
 - 2026-09-03: FBX Import 1.0 adds ufbx (`extern/ufbx` v0.23.0) for static meshes and `.hpcharacter` sources: `FbxDocument` / `FbxStaticImporter` / `FbxSkeletalImporter`, owned `mesh.fbx`, Linear `ufbx_bake_anim` clips, helper-node folding, Auto/Adjust/Modify space conversion (authored + resolved persisted), Import Character/Animation/Reimport FBX filters, skinned-FBX Import Assets warning, `FbxImportTests`, and [AssetImporting.md](Documentation/Guides/AssetImporting.md).
@@ -55,6 +56,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-09-04: Boomer-Shooter Enemy prefab uses `Enemy1.hpcharacter` (Idle/Walk controller) instead of a cube mesh; `Enemy.lua` still owns chase/damage while locomotion clips play from `Enemy1Character.lua`.
 - 2026-09-04: Character Editor moves clips and folders out of the left Character tree into an Animations dock tabbed with Inspector, with Import Animation and Create Folder on that tab.
 - 2026-09-02: `HephaestusGame` now hosts the authoritative `EngineFrameRenderer` for scene rendering, materials, lighting, cascaded shadows, HDRI, synchronization, and presentation while preserving GLFW runtime lifecycle and packaged asset resolution.
 - 2026-09-02: Shared lighting now consistently honors authored attenuation, transformed local-forward spot directions, disabled lights, and the active camera FOV for cascaded shadows.
@@ -75,6 +77,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-09-04: MeshCollider CPU resolution applies its push to the Jolt body origin instead of writing center-of-mass through `SetPosition`, so offset character capsules no longer hop into the air and fall every tick. Transform is re-synced after the correction. FloorStub in Boomer-Shooter now uses a static complex MeshCollider so Jolt owns a mesh matching the visual cube.
+- 2026-09-04: Enemy capsule uses cylinder height 1.0 + radius 0.4 (total 1.8m, offset 0.9) so the collider matches a standing YBot instead of a 2.6m Player-style capsule. Character draw lift now uses the current pose's lowest bone, not only bind-pose mesh bounds.
+- 2026-09-04: Character capsules with `freezeRotation` keep pitch/roll locked but allow yaw so `Physics.setRotation` can face a target. `Physics.setRotation` also writes the entity Transform the same frame. Character meshes whose bounds sit below the origin (Mixamo hip pivot) are lifted onto the entity origin at draw time, and character colliders use the authored capsule offset instead of mesh-bounds centering.
+- 2026-09-04: Runtime-spawned character prefabs bind after Lua Update instead of inside `Scene.instantiate`, so Director `onUpdate` is not aborted by FBX/GPU upload. Failed binds keep an authored MeshRenderer.
+- 2026-09-04: Play Mode clears the prefab asset cache on start so disk edits to `.hpprefab` files (such as Enemy) apply without restarting the editor.
 - 2026-09-04: CharacterEditorTests compile against the single `CharacterClipImportChoice` Import Animation overload (MSVC no longer sees an ambiguous `{"Walk"}` brace call).
 - 2026-09-03: Character Editor skeleton overlay no longer crashes on open. Debug-line draws now bind the camera/material descriptor set with the required dynamic UBO offset.
 - 2026-09-03: Extra Mixamo animation FBXs now play in the Character Editor. Runtime bind matches clips by source file plus take name (so `mixamo.com` / `mixamo.com_2` stay distinct), extra FBX/GLB takes remap onto the character skeleton by bone name, and FBX bake looks up joints by eval index after Finalize.
