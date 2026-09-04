@@ -3,14 +3,14 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "../../Animation/AnimationClip.h"
+#include "../../Assets/CharacterImport.h"
 
 #include <QDialog>
 #include <QString>
-#include <filesystem>
 #include <string>
 #include <vector>
 
-class QListWidget;
+class QTableWidget;
 class QComboBox;
 
 namespace Hephaestus {
@@ -22,13 +22,14 @@ class CharacterAnimationImportDialog : public QDialog
 public:
     CharacterAnimationImportDialog(const std::vector<AnimationClip>& clips,
                                    const std::vector<std::string>& folders,
+                                   const QString& sourceStem,
                                    QWidget* parent = nullptr);
 
-    std::vector<std::string> selectedSourceClips() const;
+    std::vector<CharacterClipImportChoice> selectedClips() const;
     QString destinationFolder() const;
 
 private:
-    QListWidget* m_list = nullptr;
+    QTableWidget* m_table = nullptr;
     QComboBox* m_folder = nullptr;
 };
 

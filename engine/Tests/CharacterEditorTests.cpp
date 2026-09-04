@@ -32,6 +32,7 @@ using Hephaestus::AnimationPath;
 using Hephaestus::CharacterAnimationSystem;
 using Hephaestus::CharacterAsset;
 using Hephaestus::CharacterClipEntry;
+using Hephaestus::CharacterClipImportChoice;
 using Hephaestus::CharacterDocument;
 using Hephaestus::CharacterImportRequest;
 using Hephaestus::CharacterImporter;
@@ -242,6 +243,47 @@ bool TestDocumentDirtySave(const fs::path& project) {
     return ok;
 }
 
+bool TestClipRenameAndImportNames(const fs::path& project) {
+    bool ok = true;
+    std::string portable;
+    std::string error;
+    ok &= Check(ImportHero(project, portable, error), "import hero: " + error);
+    const fs::path assetPath = project / "assets" / "characters" / "Hero.hpcharacter";
+
+    Scene scene("ClipRename");
+    CharacterDocument doc(&scene);
+    doc.SetProjectRoot(project);
+    ok &= Check(doc.OnOpen(assetPath, error), "open: " + error);
+
+    const fs::path walkGlb = project / "YBot-Walking.glb";
+    ok &= Check(WriteSkinnedGlb(walkGlb, "Child", "mixamo.com"), "write mixamo glb");
+    doc.BeginAuthoredEdit();
+    CharacterClipImportChoice choice;
+    choice.sourceClip = "mixamo.com";
+    choice.name = "Walk";
+    std::vector<std::string> added;
+    ok &= Check(CharacterImporter::ImportAnimationClips(project, doc.GetAsset(), portable, walkGlb,
+                                                        std::vector<CharacterClipImportChoice>{choice},
+                                                        {}, added, error),
+                "import named Walk: " + error);
+    doc.MarkAuthoredChanged();
+    ok &= Check(!added.empty() && added.front() == "Walk", "import name becomes clip id");
+    const CharacterClipEntry* walk = doc.FindClipById("Walk");
+    ok &= Check(walk != nullptr && walk->displayName == "Walk" && walk->sourceClip == "mixamo.com",
+                "Walk keeps Mixamo source take");
+
+    std::string newId;
+    ok &= Check(doc.RenameClip("Walk", "Jog", newId, error), "rename clip: " + error);
+    ok &= Check(newId == "Jog", "rename returns new id");
+    ok &= Check(doc.FindClipById("Walk") == nullptr, "old clip id is gone");
+    const CharacterClipEntry* jog = doc.FindClipById("Jog");
+    ok &= Check(jog != nullptr && jog->displayName == "Jog" && jog->sourceClip == "mixamo.com",
+                "renamed clip keeps source take");
+    ok &= Check(!doc.RenameClip("Jog", "Idle", newId, error), "duplicate clip name is refused");
+    ok &= Check(doc.FindClipById("Jog") != nullptr, "refused rename leaves Jog in place");
+    return ok;
+}
+
 bool TestImportUndoLeavesGlb(const fs::path& project) {
     bool ok = true;
     std::string portable;
@@ -259,7 +301,8 @@ bool TestImportUndoLeavesGlb(const fs::path& project) {
     doc.BeginAuthoredEdit();
     std::vector<std::string> added;
     ok &= Check(CharacterImporter::ImportAnimationClips(project, doc.GetAsset(), portable, walkGlb,
-                                                        {"Walk"}, "Locomotion", added, error),
+                                                        std::vector<CharacterClipImportChoice>{{"Walk", {}}},
+                                                        "Locomotion", added, error),
                 "import compatible Walk: " + error);
     doc.MarkAuthoredChanged();
     ok &= Check(!added.empty() && doc.FindClipById(added.front()) != nullptr, "Walk clip metadata added");
@@ -271,7 +314,8 @@ bool TestImportUndoLeavesGlb(const fs::path& project) {
     const size_t clipCount = doc.GetAsset().clips.size();
     std::vector<std::string> refused;
     ok &= Check(!CharacterImporter::ImportAnimationClips(project, doc.GetAsset(), portable, badGlb,
-                                                         {"Run"}, {}, refused, error),
+                                                         std::vector<CharacterClipImportChoice>{{"Run", {}}},
+                                                         {}, refused, error),
                 "incompatible import refused");
     ok &= Check(doc.GetAsset().clips.size() == clipCount, "refused import does not add clips");
 
@@ -300,11 +344,13 @@ bool TestDuplicateSourceClipNamesBind(const fs::path& project) {
 
     std::vector<std::string> addedJog;
     ok &= Check(CharacterImporter::ImportAnimationClips(project, doc.GetAsset(), portable, jog,
-                                                        {"mixamo.com"}, {}, addedJog, error),
+                                                        std::vector<CharacterClipImportChoice>{{"mixamo.com", {}}},
+                                                        {}, addedJog, error),
                 "import jog: " + error);
     std::vector<std::string> addedWalk;
     ok &= Check(CharacterImporter::ImportAnimationClips(project, doc.GetAsset(), portable, walk,
-                                                        {"mixamo.com"}, {}, addedWalk, error),
+                                                        std::vector<CharacterClipImportChoice>{{"mixamo.com", {}}},
+                                                        {}, addedWalk, error),
                 "import walk: " + error);
     ok &= Check(!addedJog.empty() && !addedWalk.empty(), "both imports added clip ids");
     ok &= Check(addedJog.front() != addedWalk.front(), "Mixamo takes get unique clip ids");
@@ -529,6 +575,7 @@ int main() {
 
     bool ok = true;
     ok &= TestDocumentDirtySave(root / "Doc");
+    ok &= TestClipRenameAndImportNames(root / "ClipRename");
     ok &= TestImportUndoLeavesGlb(root / "ImportUndo");
     ok &= TestDuplicateSourceClipNamesBind(root / "DupClips");
     ok &= TestSampleAtTimeClamp();

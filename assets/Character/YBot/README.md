@@ -19,8 +19,8 @@ There is no Hurt or Death take in this folder. Add those clips later, or leave `
 ## Steps
 
 1. Asset Browser → **Import Character…** and pick `Y-Bot.fbx`. Name it `YBot` (destination `assets/characters/`). Owned source is `mesh.fbx`.
-2. Open the character and **Import Animation** for each anim FBX. Do not overwrite `mesh.fbx`.
-3. Set clip ids to `Idle`, `Walk`, `Run`, `Shoot` (and `Hurt` / `Death` if present). Loop Idle/Walk/Run; do not loop Shoot/Hurt/Death.
+2. Open the character and **Import Animation** for each anim FBX. Do not overwrite `mesh.fbx`. Mixamo takes named `mixamo.com` default to the file name (`YBot-Walking`); edit **Name** in the dialog to `Idle` / `Walk` / `Run` / `Shoot`, or rename later with F2.
+3. Loop Idle/Walk/Run; do not loop Shoot/Hurt/Death.
 4. Assign `assets/scripts/CultistCharacter.lua` as the controller (or keep the generated `.source/YBot/YBotCharacter.lua` and copy that script). Enable **Run Controller**.
 5. Optional: add socket `Weapon_R` on a right-hand bone.
 6. Place the character, add `LuaScriptComponent` with `assets/scripts/CultistAI.lua`, Create Prefab From Selection as `CultistEnemy`.

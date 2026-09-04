@@ -44,6 +44,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QTreeWidget>
+#include <QAbstractItemView>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -325,8 +326,10 @@ void CharacterEditorWindow::setupDocks() {
     m_animTree = new QTreeWidget(animHost);
     m_animTree->setHeaderHidden(true);
     m_animTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_animTree->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::DoubleClicked);
     connect(m_animTree, &QTreeWidget::itemSelectionChanged, this,
             &CharacterEditorWindow::onAnimTreeSelectionChanged);
+    connect(m_animTree, &QTreeWidget::itemChanged, this, &CharacterEditorWindow::onAnimTreeItemChanged);
     connect(m_animTree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         if (!m_document) return;
         QTreeWidgetItem* item = m_animTree->itemAt(pos);
@@ -348,6 +351,7 @@ void CharacterEditorWindow::setupDocks() {
                 });
             }
             if (kind == CharacterEditorItemKind::Clip) {
+                menu.addAction(tr("Rename"), this, [this, item]() { m_animTree->editItem(item, 0); });
                 menu.addAction(tr("Duplicate"), this, [this, item]() {
                     std::string id, error;
                     m_document->DuplicateClip(item->data(0, kIdRole).toString().toStdString(), id, error);
@@ -770,6 +774,37 @@ void CharacterEditorWindow::onAnimTreeSelectionChanged() {
     refreshInspector();
 }
 
+void CharacterEditorWindow::onAnimTreeItemChanged(QTreeWidgetItem* item, int) {
+    if (!item || !m_document) return;
+    const auto kind = static_cast<CharacterEditorItemKind>(item->data(0, kKindRole).toInt());
+    if (kind != CharacterEditorItemKind::Clip) return;
+    const std::string oldId = item->data(0, kIdRole).toString().toStdString();
+    const std::string typed = item->text(0).trimmed().toStdString();
+    if (const CharacterClipEntry* clip = m_document->FindClipById(oldId)) {
+        if (typed == clip->displayName) {
+            return;
+        }
+    }
+    std::string newId;
+    std::string error;
+    if (!m_document->RenameClip(oldId, typed, newId, error)) {
+        if (!error.empty()) {
+            QMessageBox::warning(this, tr("Rename"), QString::fromStdString(error));
+        }
+        rebuildAnimationTree();
+        return;
+    }
+    m_selection.kind = CharacterEditorItemKind::Clip;
+    m_selection.id = newId;
+    m_selection.index = -1;
+    if (m_previewClipId == oldId) {
+        m_previewClipId = newId;
+    }
+    rebuildAnimationTree();
+    refreshInspector();
+    updateWindowTitle();
+}
+
 void CharacterEditorWindow::rebuildTree() {
     if (!m_tree || !m_document) return;
     QSignalBlocker blocker(m_tree);
@@ -856,6 +891,7 @@ void CharacterEditorWindow::rebuildAnimationTree() {
         QTreeWidgetItem* item = parent
             ? AddItem(parent, label, CharacterEditorItemKind::Clip, clip.id)
             : AddTop(m_animTree, label, CharacterEditorItemKind::Clip, clip.id);
+        item->setFlags(item->flags() | Qt::ItemIsEditable);
         if (selectedKind == CharacterEditorItemKind::Clip && selectedId == clip.id) {
             restore = item;
         }
@@ -967,15 +1003,29 @@ void CharacterEditorWindow::refreshInspector() {
     } else if (m_selection.kind == CharacterEditorItemKind::Clip) {
         CharacterClipEntry* clip = m_document->FindClipById(m_selection.id);
         if (clip) {
-            auto* name = new QLineEdit(QString::fromStdString(clip->displayName), m_inspectorHost);
+            auto* name = new QLineEdit(QString::fromStdString(clip->id), m_inspectorHost);
             connect(name, &QLineEdit::editingFinished, this, [this, name]() {
+                const std::string typed = name->text().trimmed().toStdString();
+                if (typed == m_selection.id) return;
                 std::string error;
-                m_document->SetClipDisplayName(m_selection.id, name->text().toStdString(), error);
+                std::string newId;
+                if (!m_document->RenameClip(m_selection.id, typed, newId, error)) {
+                    if (!error.empty()) {
+                        QMessageBox::warning(this, tr("Rename"), QString::fromStdString(error));
+                    }
+                    refreshInspector();
+                    return;
+                }
+                if (m_previewClipId == m_selection.id) {
+                    m_previewClipId = newId;
+                }
+                m_selection.id = newId;
                 rebuildAnimationTree();
                 updateWindowTitle();
             });
             layout->addWidget(new QLabel(tr("Name"), m_inspectorHost));
             layout->addWidget(name);
+            addLabel(tr("Used as the clip id for playback and controllers."));
             auto* folder = new QLineEdit(QString::fromStdString(clip->folder), m_inspectorHost);
             connect(folder, &QLineEdit::editingFinished, this, [this, folder]() {
                 std::string error;
@@ -985,7 +1035,6 @@ void CharacterEditorWindow::refreshInspector() {
             });
             layout->addWidget(new QLabel(tr("Folder"), m_inspectorHost));
             layout->addWidget(folder);
-            addLabel(tr("Clip ID (read-only): %1").arg(QString::fromStdString(clip->id)));
             addLabel(tr("Source: %1").arg(QString::fromStdString(clip->source)));
             addLabel(tr("Source Clip: %1").arg(QString::fromStdString(clip->sourceClip)));
             auto* loop = new BoolPropertyEditor(tr("Loop"), m_inspectorHost);
@@ -1146,14 +1195,15 @@ void CharacterEditorWindow::importAnimation() {
                                  .arg(QString::fromStdString(error)));
         return;
     }
-    CharacterAnimationImportDialog dialog(clips, m_document->GetAsset().animationFolders, this);
+    CharacterAnimationImportDialog dialog(clips, m_document->GetAsset().animationFolders,
+                                          QFileInfo(path).completeBaseName(), this);
     if (dialog.exec() != QDialog::Accepted) return;
     m_document->BeginAuthoredEdit();
     std::vector<std::string> added;
     if (!CharacterImporter::ImportAnimationClips(projectRoot(), m_document->GetAsset(),
                                                  m_document->GetPortablePath(),
                                                  std::filesystem::path(path.toStdString()),
-                                                 dialog.selectedSourceClips(),
+                                                 dialog.selectedClips(),
                                                  dialog.destinationFolder().toStdString(), added, error)) {
         QMessageBox::warning(this, tr("Import Animation"), QString::fromStdString(error));
         return;

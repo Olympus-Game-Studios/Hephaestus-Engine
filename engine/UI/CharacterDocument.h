@@ -72,6 +72,8 @@ public:
     const CharacterSocket* FindSocketByName(const std::string& name) const;
 
     bool SetClipDisplayName(const std::string& clipId, const std::string& displayName, std::string& outError);
+    bool RenameClip(const std::string& clipId, const std::string& newName, std::string& outNewId,
+                    std::string& outError);
     bool SetClipFolder(const std::string& clipId, const std::string& folder, std::string& outError);
     bool SetClipLoop(const std::string& clipId, bool loop, std::string& outError);
     bool SetClipSpeed(const std::string& clipId, float speed, std::string& outError);

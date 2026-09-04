@@ -16,12 +16,13 @@ The **Animations** dock is tabbed with Inspector on the right. It lists clips an
 
 Inspector fields:
 
-- **Name** and **Folder** — organization only
-- **Clip ID** — read-only. Scene and prefab references use this id. Stage F does not rewrite clip ids.
+- **Name** — clip id used by playback, `Play()`, and controllers. Rename with F2, double-click, the list context menu, or this field. Duplicate names are refused. Existing scene/prefab instance clip references are not rewritten.
+- **Folder** — organization only
+- **Source Clip** — the take name inside the GLB/FBX (often `mixamo.com`); this is not the authored clip id
 - Loop, playback speed, trim start/end
 - **Set as Default** — asset default for *new* placements
 
-**Import Animation** copies a GLB or FBX into `.source/<Character>/` (never overwriting `mesh.glb` / `mesh.fbx`) and adds clip rows. Mixamo files often contain both `Take 001` (bind/rest) and `mixamo.com` (the actual take); select `mixamo.com` to preview locomotion. Duplicate take names from different files keep unique clip ids (`mixamo.com`, `mixamo.com_2`, …). Incompatible skeletons are refused with no metadata writes. Undo removes the clip rows; the copied source stays on disk so Redo can restore metadata.
+**Import Animation** copies a GLB or FBX into `.source/<Character>/` (never overwriting `mesh.glb` / `mesh.fbx`) and adds clip rows. The import dialog has an editable **Name** per take. Generic Mixamo takes (`mixamo.com`, `Take 001`) default to the source file name (`YBot-Walking.fbx` → `YBot-Walking`); `Take 001` is unchecked when a `mixamo.com` take is present. Duplicate take names from different files keep unique clip ids if the authored names collide (`Walk`, `Walk_2`, …). Incompatible skeletons are refused with no metadata writes. Undo removes the clip rows; the copied source stays on disk so Redo can restore metadata.
 
 Duplicate creates a new unique clip id. Delete removes the row only. Both are available from the Animations list context menu.
 

@@ -677,7 +677,7 @@ bool CharacterImporter::ImportAnimationClips(const std::filesystem::path& projec
                                              CharacterAsset& asset,
                                              const std::string& portableCharacterPath,
                                              const std::filesystem::path& sourceGlb,
-                                             const std::vector<std::string>& selectedSourceClips,
+                                             const std::vector<CharacterClipImportChoice>& selectedClips,
                                              const std::string& destinationFolder,
                                              std::vector<std::string>& outAddedClipIds,
                                              std::string& outError) {
@@ -721,24 +721,27 @@ bool CharacterImporter::ImportAnimationClips(const std::filesystem::path& projec
     }
 
     std::vector<AnimationClip> chosen;
-    if (selectedSourceClips.empty()) {
-        chosen = importedClips;
-    } else {
-        for (const std::string& wanted : selectedSourceClips) {
-            const AnimationClip* found = nullptr;
-            for (const AnimationClip& clip : importedClips) {
-                const std::string sourceName = clip.sourceClip.empty() ? clip.name : clip.sourceClip;
-                if (sourceName == wanted || clip.name == wanted || clip.id == wanted) {
-                    found = &clip;
-                    break;
-                }
+    std::vector<std::string> chosenNames;
+    if (selectedClips.empty()) {
+        outError = "No animation clips were selected.";
+        return false;
+    }
+    for (const CharacterClipImportChoice& choice : selectedClips) {
+        const std::string& wanted = choice.sourceClip;
+        const AnimationClip* found = nullptr;
+        for (const AnimationClip& clip : importedClips) {
+            const std::string sourceName = clip.sourceClip.empty() ? clip.name : clip.sourceClip;
+            if (sourceName == wanted || clip.name == wanted || clip.id == wanted) {
+                found = &clip;
+                break;
             }
-            if (!found) {
-                outError = "Selected clip '" + wanted + "' was not found in the source file.";
-                return false;
-            }
-            chosen.push_back(*found);
         }
+        if (!found) {
+            outError = "Selected clip '" + wanted + "' was not found in the source file.";
+            return false;
+        }
+        chosen.push_back(*found);
+        chosenNames.push_back(choice.name);
     }
     if (chosen.empty()) {
         outError = "No animation clips were selected.";
@@ -793,11 +796,17 @@ bool CharacterImporter::ImportAnimationClips(const std::filesystem::path& projec
         }
     }
 
-    for (const AnimationClip& clip : chosen) {
+    for (size_t i = 0; i < chosen.size(); ++i) {
+        const AnimationClip& clip = chosen[i];
         CharacterClipEntry entry;
         const std::string sourceName = clip.sourceClip.empty() ? clip.name : clip.sourceClip;
-        entry.id = MakeUniqueClipId(asset, clip.id.empty() ? sourceName : clip.id);
-        entry.displayName = clip.name.empty() ? sourceName : clip.name;
+        const std::string desiredName = chosenNames[i].empty()
+            ? (clip.id.empty() ? sourceName : clip.id)
+            : chosenNames[i];
+        entry.id = MakeUniqueClipId(asset, desiredName);
+        entry.displayName = chosenNames[i].empty()
+            ? (clip.name.empty() ? sourceName : clip.name)
+            : chosenNames[i];
         entry.folder = destinationFolder;
         entry.source = clipSourcePortable;
         entry.sourceClip = sourceName;

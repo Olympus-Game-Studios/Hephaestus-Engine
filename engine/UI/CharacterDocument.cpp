@@ -311,6 +311,77 @@ bool CharacterDocument::SetClipDisplayName(const std::string& clipId, const std:
     return true;
 }
 
+bool CharacterDocument::RenameClip(const std::string& clipId, const std::string& newName,
+                                   std::string& outNewId, std::string& outError) {
+    outNewId.clear();
+    CharacterClipEntry* clip = FindClipById(clipId);
+    if (!clip) {
+        outError = "Clip not found.";
+        return false;
+    }
+    std::string trimmed = newName;
+    while (!trimmed.empty() && (trimmed.front() == ' ' || trimmed.front() == '\t')) {
+        trimmed.erase(trimmed.begin());
+    }
+    while (!trimmed.empty() && (trimmed.back() == ' ' || trimmed.back() == '\t')) {
+        trimmed.pop_back();
+    }
+    if (trimmed.empty()) {
+        outError = "Clip name cannot be empty.";
+        return false;
+    }
+    if (trimmed == clip->id) {
+        outNewId = clip->id;
+        if (trimmed != clip->displayName) {
+            BeginAuthoredEdit();
+            clip->displayName = trimmed;
+            MarkAuthoredChanged();
+        }
+        return true;
+    }
+    if (trimmed != clip->id && ClipIdExists(asset_, trimmed)) {
+        outError = "A clip named '" + trimmed + "' already exists.";
+        return false;
+    }
+    const std::string oldId = clip->id;
+    BeginAuthoredEdit();
+    clip->id = trimmed;
+    clip->displayName = trimmed;
+    if (asset_.defaults.animation == oldId) {
+        asset_.defaults.animation = trimmed;
+    }
+    Entity preview = FindPreviewCharacter();
+    if (preview && preview.HasComponent<CharacterComponent>()) {
+        auto& character = preview.GetComponent<CharacterComponent>();
+        if (character.defaultAnimation == oldId) {
+            character.defaultAnimation = trimmed;
+        }
+        if (character.player.currentClip == oldId) {
+            character.player.currentClip = trimmed;
+        }
+        if (character.player.pendingClip == oldId) {
+            character.player.pendingClip = trimmed;
+        }
+        if (character.player.fadeFromClip == oldId) {
+            character.player.fadeFromClip = trimmed;
+        }
+        if (character.player.pendingFadeClip == oldId) {
+            character.player.pendingFadeClip = trimmed;
+        }
+        if (character.player.finishedClip == oldId) {
+            character.player.finishedClip = trimmed;
+        }
+        for (AnimationClip& runtimeClip : character.clips) {
+            if (runtimeClip.id == oldId) {
+                runtimeClip.id = trimmed;
+            }
+        }
+    }
+    MarkAuthoredChanged();
+    outNewId = trimmed;
+    return true;
+}
+
 bool CharacterDocument::SetClipFolder(const std::string& clipId, const std::string& folder,
                                       std::string& outError) {
     CharacterClipEntry* clip = FindClipById(clipId);

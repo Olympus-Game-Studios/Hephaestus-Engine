@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-09-04: Character Editor Import Animation names clips in the import dialog (Mixamo `mixamo.com` / `Take 001` default to the source file name). Clips can be renamed after import (F2, double-click, Inspector Name), which updates the clip id used by playback and controllers.
 - 2026-09-03: Character Multi-Mesh Support 1.0 lets a `.hpcharacter` own one canonical skeleton and 1..N compatible skinned mesh parts (GLB and FBX), sharing one pose and bone palette. Inspect lists every part; incompatible skeleton groups fail; YBot-style multi-mesh FBX imports without Blender cleanup; Character Editor materials group by mesh part; reimport preserves `meshPart`+slot identity.
 - 2026-09-03: FBX Import 1.0 adds ufbx (`extern/ufbx` v0.23.0) for static meshes and `.hpcharacter` sources: `FbxDocument` / `FbxStaticImporter` / `FbxSkeletalImporter`, owned `mesh.fbx`, Linear `ufbx_bake_anim` clips, helper-node folding, Auto/Adjust/Modify space conversion (authored + resolved persisted), Import Character/Animation/Reimport FBX filters, skinned-FBX Import Assets warning, `FbxImportTests`, and [AssetImporting.md](Documentation/Guides/AssetImporting.md).
 - 2026-09-03: Stage G Lua animation API adds a `LuaScriptSlot::CharacterController` beside gameplay Lua, `this:GetAnimator()` / `this:GetCharacter()` / `this:CallController()`, Play/CrossFade no-op guards, destination-clip CrossFade queries, `SetSpeed` lock-down (runtime multiplier `> 0`, `Pause()` to freeze), world and animated-model socket queries, `onAnimationFinished` after pose eval, Cultist/YBot controller+AI scripts, `CharacterLuaTests`, and [CharacterControllers.md](Documentation/Guides/CharacterControllers.md).
@@ -74,6 +75,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-09-04: CharacterEditorTests compile against the single `CharacterClipImportChoice` Import Animation overload (MSVC no longer sees an ambiguous `{"Walk"}` brace call).
 - 2026-09-03: Character Editor skeleton overlay no longer crashes on open. Debug-line draws now bind the camera/material descriptor set with the required dynamic UBO offset.
 - 2026-09-03: Extra Mixamo animation FBXs now play in the Character Editor. Runtime bind matches clips by source file plus take name (so `mixamo.com` / `mixamo.com_2` stay distinct), extra FBX/GLB takes remap onto the character skeleton by bone name, and FBX bake looks up joints by eval index after Finalize.
 - 2026-09-03: Opening a Character Editor preview no longer destroys in-flight skinned GPU meshes. `InvalidateGpuMeshes` waits for the GPU, `VulkanBuffer::Destroy` clears handles, and Character Editor open binds the preview once.

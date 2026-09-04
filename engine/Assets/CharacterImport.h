@@ -39,6 +39,11 @@ struct CharacterImportRequest {
     SkeletalImportSettings settings;
 };
 
+struct CharacterClipImportChoice {
+    std::string sourceClip;
+    std::string name; ///< Authored clip id and display name. Empty keeps the source take name.
+};
+
 class CharacterImporter {
 public:
     static bool IsGlbPath(const std::filesystem::path& path);
@@ -75,12 +80,13 @@ public:
     /**
      * Copy a GLB into the character owned-source folder and append selected clip
      * metadata to `asset`. Does not write the .hpcharacter file.
+     * `choice.name` is the authored clip id and display name; empty keeps the source take name.
      */
     static bool ImportAnimationClips(const std::filesystem::path& projectRoot,
                                      CharacterAsset& asset,
                                      const std::string& portableCharacterPath,
                                      const std::filesystem::path& sourceGlb,
-                                     const std::vector<std::string>& selectedSourceClips,
+                                     const std::vector<CharacterClipImportChoice>& selectedClips,
                                      const std::string& destinationFolder,
                                      std::vector<std::string>& outAddedClipIds,
                                      std::string& outError);

@@ -72,6 +72,7 @@ private slots:
     void onToggleBoneNames(bool enabled);
     void onTreeSelectionChanged();
     void onAnimTreeSelectionChanged();
+    void onAnimTreeItemChanged(QTreeWidgetItem* item, int column);
     void onPlayPause();
     void onStop();
     void onScrub(float time);
