@@ -46,6 +46,10 @@ bool RemoveComponent(Entity entity, const std::string& type);
 
 const std::vector<std::string>& SupportedTypes();
 
+// MeshRenderer/Light/Camera/AudioSource get independent transforms in the Prefab
+// Editor hierarchy (Unreal SceneComponent-style child nodes).
+bool IsHierarchySceneComponent(const std::string& type);
+
 bool TransformsEqual(const TransformComponent& a, const TransformComponent& b, float epsilon = kEpsilon);
 void CopyLocalTransform(TransformComponent& dst, const TransformComponent& src);
 

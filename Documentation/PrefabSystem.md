@@ -194,6 +194,8 @@ Dedicated Qt window (`PrefabEditorWindow`) with hierarchy, 3D viewport, gizmos, 
 - Inspector hosts the same `ComponentInspector` widgets (and `LightInspector`) as the Scene Editor, bound to the preview entity
 - Edits update the preview immediately, sync into `PrefabAsset`, and rebuild meshes
 - Save writes the asset and notifies the Scene Editor to refresh instances
+- Hierarchy lists child nodes and the components on each node. **Add Component** (hierarchy header, context menu, toolbar, or Inspector) uses the searchable component popup
+- MeshRenderer, Light, Camera, and AudioSource are added as child nodes with their own transforms (Unreal Blueprint-style). Other types attach to the selected node. MeshRenderer also adds Material; RigidBody also adds PhysicsShape
 
 You can add/remove components, assign meshes/materials, and edit physics, lights, cameras, and Lua data.
 
@@ -239,6 +241,7 @@ Re-saving a scene migrates `blueprintInstances` → `prefabInstances`. Re-saving
 - Missing prefab stubs
 - Legacy `Player.hpblueprint` load
 - Instantiate pose/vars
+- Hierarchy scene-component classification (MeshRenderer/Light/Camera/AudioSource vs node-attached types)
 - Character + LuaScript coexistence is covered by `CharacterWorkflowTests` (runtime MeshRenderer omitted from capture; Character Apply does not clobber LuaScript)
 
 ---

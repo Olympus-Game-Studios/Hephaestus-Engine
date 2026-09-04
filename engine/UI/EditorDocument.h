@@ -95,7 +95,10 @@ public:
     const PrefabAsset& GetAsset() const { return asset_; }
 
     bool SyncNodeFromEntity(Entity entity);
-    bool AddChildNode(const std::string& parentId, const std::string& nameHint, Entity* outEntity = nullptr);
+    bool AddChildNode(const std::string& parentId, const std::string& nameHint, Entity* outEntity = nullptr,
+                      std::string* outNodeId = nullptr);
+    bool AddHierarchyComponent(const std::string& nodeId, const std::string& type,
+                               std::string* outTargetNodeId = nullptr);
     bool DeleteNode(const std::string& nodeId);
     bool ReparentNode(const std::string& nodeId, const std::string& newParentId);
 
@@ -117,6 +120,9 @@ private:
     PrefabNode* FindNodeById(const std::string& nodeId);
     Entity FindEntityByNodeId(const std::string& nodeId);
     std::string GenerateNodeId() const;
+    std::string MakeUniqueChildName(const std::string& parentId, const std::string& baseName) const;
+    bool NodeHasComponent(const PrefabNode& node, Entity entity, const std::string& type) const;
+    bool AttachComponentToNode(PrefabNode& node, Entity entity, const std::string& type);
 
     Scene* scene_ = nullptr;
     PrefabAsset asset_;

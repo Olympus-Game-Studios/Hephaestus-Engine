@@ -74,6 +74,7 @@ private slots:
     // Hierarchy callbacks
     void onHierarchySelectionChanged(const std::string& nodeId);
     void onHierarchyAddChild(const std::string& parentNodeId);
+    void onHierarchyAddComponent(const std::string& nodeId);
     void onHierarchyDeleteNode(const std::string& nodeId);
     void onHierarchyDuplicateNode(const std::string& nodeId);
     void onHierarchyRenameNode(const std::string& nodeId);
@@ -115,6 +116,7 @@ private:
 
     // Hierarchy helpers
     void rebuildHierarchy();
+    void presentAddComponentPopup(const std::string& nodeId, const QPoint& globalPos);
 
     // Lifecycle
     void shutdownEngine();

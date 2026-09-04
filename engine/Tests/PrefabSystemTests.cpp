@@ -717,6 +717,19 @@ bool TestInstantiatePoseAndVars(const fs::path& outDir) {
     return ok;
 }
 
+bool TestHierarchySceneComponentTypes(const fs::path&) {
+    bool ok = true;
+    ok &= Check(PrefabComponentIO::IsHierarchySceneComponent("MeshRenderer"), "MeshRenderer is a hierarchy scene component");
+    ok &= Check(PrefabComponentIO::IsHierarchySceneComponent("Light"), "Light is a hierarchy scene component");
+    ok &= Check(PrefabComponentIO::IsHierarchySceneComponent("Camera"), "Camera is a hierarchy scene component");
+    ok &= Check(PrefabComponentIO::IsHierarchySceneComponent("AudioSource"), "AudioSource is a hierarchy scene component");
+    ok &= Check(!PrefabComponentIO::IsHierarchySceneComponent("RigidBody"), "RigidBody stays on the selected node");
+    ok &= Check(!PrefabComponentIO::IsHierarchySceneComponent("Character"), "Character stays on the selected node");
+    ok &= Check(!PrefabComponentIO::IsHierarchySceneComponent("LuaScript"), "LuaScript stays on the selected node");
+    ok &= Check(!PrefabComponentIO::IsHierarchySceneComponent("PhysicsShape"), "PhysicsShape stays on the selected node");
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -750,6 +763,7 @@ int main(int argc, char** argv) {
     run("MissingPrefab", TestMissingPrefab, outDir);
     run("LegacyBlueprint", TestLegacyBlueprint, repoRoot);
     run("InstantiatePoseAndVars", TestInstantiatePoseAndVars, outDir);
+    run("HierarchySceneComponentTypes", TestHierarchySceneComponentTypes, outDir);
 
     if (failed > 0) {
         std::cerr << failed << " prefab test(s) failed\n";

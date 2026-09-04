@@ -7,13 +7,16 @@
 #include "EditorUndoCommand.h"
 #include "QtViewportWindow.h"
 #include "QtEditorEngine.h"
+#include "AddComponentPopup.h"
 
 #include "../../Scene/Components.h"
 #include "../../Scene/PrefabComponentIO.h"
+#include "../../UI/InspectorSelectionModel.h"
 
 #include <QMessageBox>
 #include <QFileInfo>
 #include <QApplication>
+#include <QCursor>
 #include <QStyle>
 #include <QStatusBar>
 #include <QInputDialog>
@@ -266,7 +269,7 @@ void PrefabEditorWindow::setupToolbar() {
     connect(m_addChildAction, &QAction::triggered, this, &PrefabEditorWindow::onAddChildNode);
 
     m_addComponentAction = m_toolbar->addAction(tr("+ Component"));
-    m_addComponentAction->setToolTip(tr("Add component to selected node"));
+    m_addComponentAction->setToolTip(tr("Add a component to the selected hierarchy node"));
     connect(m_addComponentAction, &QAction::triggered, this, &PrefabEditorWindow::onAddComponent);
 }
 
@@ -322,6 +325,10 @@ void PrefabEditorWindow::setupConnections() {
             this, &PrefabEditorWindow::onHierarchySelectionChanged);
     connect(m_hierarchyPanel, &PrefabHierarchyPanel::addChildRequested,
             this, &PrefabEditorWindow::onHierarchyAddChild);
+    connect(m_hierarchyPanel, &PrefabHierarchyPanel::addComponentRequested,
+            this, &PrefabEditorWindow::onHierarchyAddComponent);
+    connect(m_hierarchyPanel, &PrefabHierarchyPanel::removeComponentRequested,
+            this, &PrefabEditorWindow::onInspectorRemoveComponent);
     connect(m_hierarchyPanel, &PrefabHierarchyPanel::deleteNodeRequested,
             this, &PrefabEditorWindow::onHierarchyDeleteNode);
     connect(m_hierarchyPanel, &PrefabHierarchyPanel::duplicateNodeRequested,
@@ -612,23 +619,58 @@ void PrefabEditorWindow::onAddChildNode() {
 }
 
 void PrefabEditorWindow::onAddComponent() {
-    if (m_selectedNodeId.empty()) {
+    std::string nodeId = m_selectedNodeId;
+    if (nodeId.empty() && m_document) {
+        nodeId = m_document->GetAsset().rootNodeId;
+    }
+    if (nodeId.empty()) {
         statusBar()->showMessage(tr("Select a node first"), 3000);
         return;
     }
+    presentAddComponentPopup(nodeId, QCursor::pos());
+}
 
-    QMenu menu(this);
-    QStringList types = {
-        "MeshRenderer", "Material", "Light", "Camera",
-        "RigidBody", "PhysicsShape", "MeshCollider",
-        "ScriptComponent", "LuaScript"
-    };
-    for (const auto& type : types) {
-        menu.addAction(type, this, [this, type]() {
-            onInspectorAddComponent(m_selectedNodeId, type.toStdString());
-        });
+void PrefabEditorWindow::onHierarchyAddComponent(const std::string& nodeId) {
+    if (nodeId.empty()) return;
+    presentAddComponentPopup(nodeId, QCursor::pos());
+}
+
+void PrefabEditorWindow::presentAddComponentPopup(const std::string& nodeId, const QPoint& globalPos) {
+    if (!m_document || nodeId.empty()) return;
+
+    const PrefabNode* node = nullptr;
+    for (const auto& n : m_document->GetAsset().nodes) {
+        if (n.id == nodeId) { node = &n; break; }
     }
-    menu.exec(QCursor::pos());
+    if (!node) return;
+
+    Entity entity = findEntityByNodeId(nodeId);
+    std::vector<AddComponentItem> items;
+    for (const auto& desc : InspectorAddableComponents()) {
+        if (QLatin1String(desc.id) == QLatin1String("Environment")) continue;
+        AddComponentItem item;
+        item.id = QString::fromUtf8(desc.id);
+        item.displayName = QString::fromUtf8(desc.displayName);
+        item.category = QString::fromUtf8(desc.category);
+        const bool sceneComponent = PrefabComponentIO::IsHierarchySceneComponent(desc.id);
+        if (!sceneComponent) {
+            bool present = entity && PrefabComponentIO::HasComponent(entity, desc.id);
+            if (!present) {
+                for (const auto& entry : node->components) {
+                    if (entry.type == desc.id) { present = true; break; }
+                }
+            }
+            item.alreadyPresent = present;
+        }
+        items.push_back(item);
+    }
+
+    auto* popup = new AddComponentPopup(this);
+    popup->setAttribute(Qt::WA_DeleteOnClose);
+    connect(popup, &AddComponentPopup::componentChosen, this, [this, nodeId](const QString& typeId) {
+        onInspectorAddComponent(nodeId, typeId.toStdString());
+    });
+    popup->Present(globalPos, items);
 }
 
 // ── Gizmo Tool Selection ──
@@ -847,41 +889,21 @@ void PrefabEditorWindow::onInspectorAddComponent(const std::string& nodeId,
     if (!m_document) return;
     m_document->PushUndoSnapshot();
 
-    Entity entity = findEntityByNodeId(nodeId);
-    if (entity) {
-        if (!PrefabComponentIO::AddComponent(entity, componentType)) {
-            statusBar()->showMessage(
-                tr("Component '%1' already exists").arg(QString::fromStdString(componentType)), 3000);
-            return;
-        }
-        m_document->SyncNodeFromEntity(entity);
-    } else {
-        auto& asset = m_document->GetAsset();
-        for (auto& node : asset.nodes) {
-            if (node.id == nodeId) {
-                bool exists = false;
-                for (const auto& c : node.components) {
-                    if (c.type == componentType) { exists = true; break; }
-                }
-                if (exists) {
-                    statusBar()->showMessage(
-                        tr("Component '%1' already exists").arg(QString::fromStdString(componentType)), 3000);
-                    return;
-                }
-
-                PrefabComponentEntry entry;
-                entry.type = componentType;
-                entry.enabled = true;
-                entry.data.type = JsonValue::Type::Object;
-                node.components.push_back(std::move(entry));
-                break;
-            }
-        }
-        m_document->RebuildPreview();
+    std::string targetNodeId;
+    if (!m_document->AddHierarchyComponent(nodeId, componentType, &targetNodeId)) {
+        statusBar()->showMessage(
+            tr("Could not add '%1' (already present or unsupported)")
+                .arg(QString::fromStdString(componentType)), 3000);
+        return;
     }
 
     m_document->SetDirty(true);
-    refreshInspectorForSelection();
+    rebuildHierarchy();
+    if (!targetNodeId.empty()) {
+        selectNode(targetNodeId);
+    } else {
+        refreshInspectorForSelection();
+    }
     updateWindowTitle();
     if (m_engine) m_engine->RebuildSceneMeshes();
 }
@@ -910,6 +932,7 @@ void PrefabEditorWindow::onInspectorRemoveComponent(const std::string& nodeId,
     }
 
     m_document->SetDirty(true);
+    rebuildHierarchy();
     refreshInspectorForSelection();
     updateWindowTitle();
     if (m_engine) m_engine->RebuildSceneMeshes();
@@ -924,8 +947,10 @@ void PrefabEditorWindow::selectNode(const std::string& nodeId) {
 
     m_suppressSelectionSync = true;
 
-    // Sync to hierarchy
-    m_hierarchyPanel->SetSelectedNodeId(nodeId);
+    // Keep a component-row selection if it already belongs to this node.
+    if (m_hierarchyPanel->GetSelectedNodeId() != nodeId) {
+        m_hierarchyPanel->SetSelectedNodeId(nodeId);
+    }
 
     // Sync to viewport (select the preview entity)
     syncSelectionToViewport();

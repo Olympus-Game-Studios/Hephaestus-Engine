@@ -45,10 +45,13 @@ public:
     void Rebuild(const PrefabAsset& asset, const std::string& selectedNodeId);
     void SetSelectedNodeId(const std::string& nodeId);
     std::string GetSelectedNodeId() const;
+    std::string GetSelectedComponentType() const;
 
 signals:
     void selectionChanged(const std::string& nodeId);
     void addChildRequested(const std::string& parentNodeId);
+    void addComponentRequested(const std::string& nodeId);
+    void removeComponentRequested(const std::string& nodeId, const std::string& componentType);
     void deleteNodeRequested(const std::string& nodeId);
     void duplicateNodeRequested(const std::string& nodeId);
     void renameNodeRequested(const std::string& nodeId);
@@ -60,12 +63,16 @@ private slots:
     void onSelectionChanged();
     void onContextMenu(const QPoint& pos);
     void onItemsDropped();
+    void onAddComponentClicked();
 
 private:
     void populateItem(QTreeWidgetItem* parent, const PrefabAsset& asset,
                       const std::string& nodeId, const std::string& selectedNodeId);
+    void appendComponentItems(QTreeWidgetItem* nodeItem, const PrefabNode& node);
+    QTreeWidgetItem* selectedItem() const;
 
     PrefabHierarchyTree* m_tree = nullptr;
+    QPushButton* m_addComponentBtn = nullptr;
     std::string m_rootNodeId;
 };
 

@@ -17,6 +17,12 @@
 namespace {
 constexpr size_t kUndoLimit = 32;
 
+std::string HierarchyComponentNodeName(const std::string& type) {
+    if (type == "MeshRenderer") return "Mesh Renderer";
+    if (type == "AudioSource") return "Audio Source";
+    return type;
+}
+
 JsonValue MakeNull() {
     JsonValue v;
     v.type = JsonValue::Type::Null;
@@ -460,7 +466,8 @@ bool PrefabDocument::SyncNodeFromEntity(Entity entity) {
     return true;
 }
 
-bool PrefabDocument::AddChildNode(const std::string& parentId, const std::string& nameHint, Entity* outEntity) {
+bool PrefabDocument::AddChildNode(const std::string& parentId, const std::string& nameHint, Entity* outEntity,
+                                  std::string* outNodeId) {
     PrefabNode* parentNode = FindNodeById(parentId);
     if (!parentNode) {
         return false;
@@ -471,6 +478,10 @@ bool PrefabDocument::AddChildNode(const std::string& parentId, const std::string
     node.name = nameHint.empty() ? "Prefab Node" : nameHint;
     node.parentId = parentNode->id;
     node.localTransform = TransformComponent();
+
+    if (outNodeId) {
+        *outNodeId = node.id;
+    }
 
     asset_.nodes.push_back(node);
 
@@ -489,6 +500,162 @@ bool PrefabDocument::AddChildNode(const std::string& parentId, const std::string
     }
 
     dirty_ = true;
+    return true;
+}
+
+std::string PrefabDocument::MakeUniqueChildName(const std::string& parentId, const std::string& baseName) const {
+    std::unordered_set<std::string> used;
+    for (const auto& node : asset_.nodes) {
+        const bool isChild = (node.parentId == parentId) ||
+            (parentId == asset_.rootNodeId && node.parentId.empty() && node.id != parentId);
+        if (isChild) {
+            used.insert(node.name);
+        }
+    }
+    if (!used.count(baseName)) {
+        return baseName;
+    }
+    for (int i = 1; i < 1000; ++i) {
+        const std::string candidate = baseName + std::to_string(i);
+        if (!used.count(candidate)) {
+            return candidate;
+        }
+    }
+    return baseName + "Copy";
+}
+
+bool PrefabDocument::NodeHasComponent(const PrefabNode& node, Entity entity, const std::string& type) const {
+    if (entity && PrefabComponentIO::HasComponent(entity, type)) {
+        return true;
+    }
+    for (const auto& entry : node.components) {
+        if (entry.type == type) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PrefabDocument::AttachComponentToNode(PrefabNode& node, Entity entity, const std::string& type) {
+    auto addCompanion = [&](const std::string& companionType) {
+        if (entity) {
+            if (!PrefabComponentIO::HasComponent(entity, companionType)) {
+                PrefabComponentIO::AddComponent(entity, companionType);
+            }
+        } else {
+            bool exists = false;
+            for (const auto& entry : node.components) {
+                if (entry.type == companionType) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                PrefabComponentEntry companion;
+                companion.type = companionType;
+                companion.enabled = true;
+                companion.data = PrefabComponentIO::MakeObject();
+                node.components.push_back(std::move(companion));
+            }
+        }
+    };
+
+    if (entity) {
+        if (!PrefabComponentIO::AddComponent(entity, type)) {
+            return false;
+        }
+        if (type == "MeshRenderer") {
+            addCompanion("Material");
+        }
+        if (type == "RigidBody") {
+            addCompanion("PhysicsShape");
+        }
+        return SyncNodeFromEntity(entity);
+    }
+
+    if (NodeHasComponent(node, {}, type)) {
+        return false;
+    }
+
+    PrefabComponentEntry entry;
+    entry.type = type;
+    entry.enabled = true;
+    entry.data = PrefabComponentIO::MakeObject();
+    node.components.push_back(std::move(entry));
+    if (type == "MeshRenderer") {
+        addCompanion("Material");
+    }
+    if (type == "RigidBody") {
+        addCompanion("PhysicsShape");
+    }
+    dirty_ = true;
+    RebuildPreview();
+    return true;
+}
+
+bool PrefabDocument::AddHierarchyComponent(const std::string& nodeId, const std::string& type,
+                                           std::string* outTargetNodeId) {
+    PrefabNode* node = FindNodeById(nodeId);
+    if (!node) {
+        return false;
+    }
+
+    bool supported = false;
+    for (const auto& supportedType : PrefabComponentIO::SupportedTypes()) {
+        if (supportedType == type) {
+            supported = true;
+            break;
+        }
+    }
+    if (!supported) {
+        return false;
+    }
+
+    Entity entity = FindEntityByNodeId(nodeId);
+    const bool existsOnNode = NodeHasComponent(*node, entity, type);
+    const bool sceneComponent = PrefabComponentIO::IsHierarchySceneComponent(type);
+
+    std::string targetId = nodeId;
+    if (sceneComponent && (existsOnNode || !node->components.empty())) {
+        const std::string childName = MakeUniqueChildName(nodeId, HierarchyComponentNodeName(type));
+        Entity childEntity;
+        std::string childId;
+        if (!AddChildNode(nodeId, childName, &childEntity, &childId)) {
+            return false;
+        }
+        PrefabNode* childNode = FindNodeById(childId);
+        if (!childNode) {
+            return false;
+        }
+        if (!AttachComponentToNode(*childNode, childEntity, type)) {
+            return false;
+        }
+        // SyncNodeFromEntity infers parent from the preview entity. If that parent
+        // was missing, restore the authored parent so the new node is not promoted
+        // to root.
+        childNode = FindNodeById(childId);
+        if (childNode && childNode->parentId.empty()) {
+            childNode->parentId = nodeId;
+            if (asset_.rootNodeId == childId) {
+                asset_.rootNodeId = nodeId;
+            }
+        }
+        if (outTargetNodeId) {
+            *outTargetNodeId = childId;
+        }
+        return true;
+    }
+
+    if (existsOnNode) {
+        return false;
+    }
+
+    if (!AttachComponentToNode(*node, entity, type)) {
+        return false;
+    }
+    if (outTargetNodeId) {
+        *outTargetNodeId = targetId;
+    }
     return true;
 }
 

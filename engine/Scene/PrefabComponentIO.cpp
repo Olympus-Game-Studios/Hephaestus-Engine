@@ -1272,6 +1272,10 @@ const std::vector<std::string>& SupportedTypes() {
     return kTypes;
 }
 
+bool IsHierarchySceneComponent(const std::string& type) {
+    return type == "MeshRenderer" || type == "Light" || type == "Camera" || type == "AudioSource";
+}
+
 bool TransformsEqual(const TransformComponent& a, const TransformComponent& b, float epsilon) {
     auto veq = [epsilon](const Vec3& lhs, const Vec3& rhs) {
         return std::abs(lhs.x - rhs.x) <= epsilon &&

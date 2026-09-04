@@ -1,10 +1,20 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "PrefabHierarchyPanel.h"
+#include "../../UI/InspectorSelectionModel.h"
 #include <QHeaderView>
+#include <QHBoxLayout>
+#include <QColor>
 
 namespace Hephaestus {
 namespace QtEditor {
+
+namespace {
+constexpr int kKindRole = Qt::UserRole + 1;
+constexpr int kComponentTypeRole = Qt::UserRole + 2;
+constexpr int kKindNode = 0;
+constexpr int kKindComponent = 1;
+}
 
 PrefabHierarchyPanel::PrefabHierarchyPanel(QWidget* parent)
     : QWidget(parent)
@@ -13,10 +23,28 @@ PrefabHierarchyPanel::PrefabHierarchyPanel(QWidget* parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    auto* header = new QLabel(tr("Hierarchy"), this);
+    auto* headerRow = new QWidget(this);
+    auto* headerLayout = new QHBoxLayout(headerRow);
+    headerLayout->setContentsMargins(0, 0, 0, 0);
+    headerLayout->setSpacing(0);
+
+    auto* header = new QLabel(tr("Hierarchy"), headerRow);
     header->setStyleSheet("QLabel { font-weight: bold; padding: 6px 8px; "
                           "background: #2a2a2a; border-bottom: 1px solid #3a3a3a; }");
-    layout->addWidget(header);
+    headerLayout->addWidget(header, 1);
+
+    m_addComponentBtn = new QPushButton(tr("+ Add"), headerRow);
+    m_addComponentBtn->setToolTip(tr("Add a component to the selected node"));
+    m_addComponentBtn->setCursor(Qt::PointingHandCursor);
+    m_addComponentBtn->setStyleSheet(
+        "QPushButton { padding: 6px 10px; font-weight: bold; background: #2a4a2a; "
+        "border: none; border-bottom: 1px solid #3a3a3a; }"
+        "QPushButton:hover { background: #3a5a3a; }"
+        "QPushButton:pressed { background: #2a3a2a; }");
+    connect(m_addComponentBtn, &QPushButton::clicked,
+            this, &PrefabHierarchyPanel::onAddComponentClicked);
+    headerLayout->addWidget(m_addComponentBtn);
+    layout->addWidget(headerRow);
 
     m_tree = new PrefabHierarchyTree(this);
     m_tree->setHeaderHidden(true);
@@ -89,9 +117,38 @@ void PrefabHierarchyPanel::SetSelectedNodeId(const std::string& nodeId) {
 }
 
 std::string PrefabHierarchyPanel::GetSelectedNodeId() const {
+    auto* item = selectedItem();
+    if (!item) return {};
+    return item->data(0, Qt::UserRole).toString().toStdString();
+}
+
+std::string PrefabHierarchyPanel::GetSelectedComponentType() const {
+    auto* item = selectedItem();
+    if (!item || item->data(0, kKindRole).toInt() != kKindComponent) return {};
+    return item->data(0, kComponentTypeRole).toString().toStdString();
+}
+
+QTreeWidgetItem* PrefabHierarchyPanel::selectedItem() const {
     auto items = m_tree->selectedItems();
-    if (items.isEmpty()) return {};
-    return items.first()->data(0, Qt::UserRole).toString().toStdString();
+    if (items.isEmpty()) return nullptr;
+    return items.first();
+}
+
+void PrefabHierarchyPanel::appendComponentItems(QTreeWidgetItem* nodeItem, const PrefabNode& node) {
+    if (!nodeItem) return;
+    for (const auto& entry : node.components) {
+        if (entry.type.empty()) continue;
+        auto* componentItem = new QTreeWidgetItem(nodeItem);
+        const std::string display = InspectorDisplayName(entry.type);
+        componentItem->setText(0, QString::fromUtf8("\xE2\x80\xA2 ") + QString::fromStdString(display));
+        componentItem->setToolTip(0, tr("Component on %1")
+            .arg(QString::fromStdString(node.name)));
+        componentItem->setForeground(0, QColor("#9aa0a6"));
+        componentItem->setData(0, Qt::UserRole, QString::fromStdString(node.id));
+        componentItem->setData(0, kKindRole, kKindComponent);
+        componentItem->setData(0, kComponentTypeRole, QString::fromStdString(entry.type));
+        componentItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    }
 }
 
 void PrefabHierarchyPanel::populateItem(QTreeWidgetItem* parent, const PrefabAsset& asset,
@@ -112,6 +169,7 @@ void PrefabHierarchyPanel::populateItem(QTreeWidgetItem* parent, const PrefabAss
     }
     item->setText(0, displayName);
     item->setData(0, Qt::UserRole, QString::fromStdString(node->id));
+    item->setData(0, kKindRole, kKindNode);
     item->setFlags(item->flags() | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled);
 
     if (nodeId == selectedNodeId) {
@@ -128,6 +186,8 @@ void PrefabHierarchyPanel::populateItem(QTreeWidgetItem* parent, const PrefabAss
             populateItem(item, asset, child.id, selectedNodeId);
         }
     }
+
+    appendComponentItems(item, *node);
 }
 
 void PrefabHierarchyPanel::onSelectionChanged() {
@@ -140,14 +200,37 @@ void PrefabHierarchyPanel::onSelectionChanged() {
     emit selectionChanged(nodeId);
 }
 
+void PrefabHierarchyPanel::onAddComponentClicked() {
+    std::string nodeId = GetSelectedNodeId();
+    if (nodeId.empty()) {
+        nodeId = m_rootNodeId;
+    }
+    if (nodeId.empty()) return;
+    emit addComponentRequested(nodeId);
+}
+
 void PrefabHierarchyPanel::onContextMenu(const QPoint& pos) {
     auto* item = m_tree->itemAt(pos);
     if (!item) return;
 
     std::string nodeId = item->data(0, Qt::UserRole).toString().toStdString();
+    const bool isComponent = item->data(0, kKindRole).toInt() == kKindComponent;
     bool isRoot = (nodeId == m_rootNodeId);
 
     QMenu menu(this);
+
+    if (isComponent) {
+        const std::string type = item->data(0, kComponentTypeRole).toString().toStdString();
+        menu.addAction(tr("Remove Component"), this, [this, nodeId, type]() {
+            emit removeComponentRequested(nodeId, type);
+        });
+        menu.exec(m_tree->mapToGlobal(pos));
+        return;
+    }
+
+    menu.addAction(tr("Add Component"), this, [this, nodeId]() {
+        emit addComponentRequested(nodeId);
+    });
 
     menu.addAction(tr("Add Child Node"), this, [this, nodeId]() {
         emit addChildRequested(nodeId);
@@ -186,11 +269,19 @@ void PrefabHierarchyPanel::onItemsDropped() {
     if (items.isEmpty()) return;
 
     auto* draggedItem = items.first();
+    if (draggedItem->data(0, kKindRole).toInt() == kKindComponent) {
+        return;
+    }
     std::string nodeId = draggedItem->data(0, Qt::UserRole).toString().toStdString();
 
     std::string newParentId;
     if (auto* parentItem = draggedItem->parent()) {
         newParentId = parentItem->data(0, Qt::UserRole).toString().toStdString();
+        if (parentItem->data(0, kKindRole).toInt() == kKindComponent) {
+            if (auto* owner = parentItem->parent()) {
+                newParentId = owner->data(0, Qt::UserRole).toString().toStdString();
+            }
+        }
     } else {
         newParentId = m_rootNodeId;
     }
