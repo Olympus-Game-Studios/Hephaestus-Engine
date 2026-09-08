@@ -24,7 +24,7 @@ if ([string]::IsNullOrWhiteSpace($EngineRoot)) {
 }
 $buildConfiguration = if ($Configuration -eq "Debug") { "Development" } else { "Release" }
 $toolCandidates = @(
-    (Join-Path $EngineRoot "build\$Configuration\HephaestusBuild.exe"),
+    (Join-Path $EngineRoot "build\$Configuration\tools\HephaestusBuild.exe"),
     (Join-Path $PSScriptRoot "HephaestusBuild.exe")
 )
 $buildTool = $toolCandidates | Where-Object { Test-Path $_ -PathType Leaf } |

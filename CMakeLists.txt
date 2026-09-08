@@ -336,7 +336,12 @@ target_include_directories(HephaestusBuildCore PUBLIC engine extern)
 add_executable(HephaestusBuildCli engine/BuildCli.cpp)
 target_link_libraries(HephaestusBuildCli PRIVATE HephaestusBuildCore)
 target_include_directories(HephaestusBuildCli PRIVATE engine extern "${CMAKE_BINARY_DIR}/generated")
-set_target_properties(HephaestusBuildCli PROPERTIES OUTPUT_NAME "HephaestusBuild")
+set_target_properties(HephaestusBuildCli PROPERTIES
+    OUTPUT_NAME "HephaestusBuild"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tools"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release/tools"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug/tools"
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HephaestusToolsCommon (shared launcher/editor utilities)
@@ -1016,7 +1021,7 @@ if(TARGET HephaestusGame)
         BUNDLE DESTINATION .
     )
 endif()
-install(TARGETS HephaestusBuildCli RUNTIME DESTINATION .)
+install(TARGETS HephaestusBuildCli RUNTIME DESTINATION tools)
 
 # Install launcher
 if(TARGET HephaestusLauncher)
@@ -1620,4 +1625,20 @@ if(HEPHAESTUS_BUILD_QT_TESTS AND HEPHAESTUS_USE_QT AND Qt6_FOUND)
         message(STATUS "HEPHAESTUS_BUILD_QT_TESTS=ON but Qt6 Test not found; skipping")
     endif()
 endif()
+
+# Keep test runners out of the editor/runtime output directory.  This preserves
+# a clean Release root for the three user-facing executables while leaving the
+# tests directly buildable and discoverable by CTest.
+get_property(HEPHAESTUS_DIRECTORY_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(HEPHAESTUS_TARGET IN LISTS HEPHAESTUS_DIRECTORY_TARGETS)
+    if(HEPHAESTUS_TARGET MATCHES "Tests$")
+        set_target_properties(${HEPHAESTUS_TARGET} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release/tests"
+            RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug/tests"
+        )
+    endif()
+endforeach()
+unset(HEPHAESTUS_DIRECTORY_TARGETS)
+unset(HEPHAESTUS_TARGET)
 

@@ -10,8 +10,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
     $BuildDirectory = Join-Path $repoRoot "build\$Configuration"
 }
-$buildTool = Join-Path $BuildDirectory "HephaestusBuild.exe"
-$runtimeRoot = Split-Path -Parent $buildTool
+$buildTool = Join-Path $BuildDirectory "tools\HephaestusBuild.exe"
+$runtimeRoot = Split-Path -Parent (Split-Path -Parent $buildTool)
 $project = Join-Path $repoRoot "engine\Tests\Fixtures\PackagePortabilityProject"
 
 if (-not (Test-Path $buildTool -PathType Leaf)) {

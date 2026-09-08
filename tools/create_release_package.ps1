@@ -73,10 +73,12 @@ if (Test-Path $gameExe) {
 } else {
     Write-Warn "HephaestusGame.exe is missing; this editor package cannot package games without developer tools"
 }
-$buildCli = Join-Path $BuildDir "HephaestusBuild.exe"
+$buildCli = Join-Path $BuildDir "tools\HephaestusBuild.exe"
 if (Test-Path $buildCli) {
-    Copy-Item $buildCli $OutputPath
-    Write-Success "HephaestusBuild.exe"
+    $toolsOutput = Join-Path $OutputPath "tools"
+    New-Item -ItemType Directory -Path $toolsOutput -Force | Out-Null
+    Copy-Item $buildCli $toolsOutput
+    Write-Success "tools/HephaestusBuild.exe"
 }
 
 # Copy the Qt runtime already deployed beside the built Editor/Launcher.
