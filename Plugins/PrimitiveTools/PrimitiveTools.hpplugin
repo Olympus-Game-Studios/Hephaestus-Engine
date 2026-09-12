@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "apiVersion": 1,
+  "id": "com.hephaestus.primitive-tools",
+  "name": "Primitive Tools",
+  "description": "Representative scene-authoring tools and custom asset integration.",
+  "author": "Hephaestus Engine",
+  "pluginVersion": "1.0.0",
+  "engineVersion": ">=2026.9.0",
+  "type": "editor",
+  "entry": "bin/HephaestusPrimitiveTools.dll",
+  "content": "Content",
+  "icon": "Resources/primitive-tools.svg"
+}

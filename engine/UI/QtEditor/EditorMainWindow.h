@@ -56,6 +56,10 @@ namespace Build {
 class BuildService;
 }
 
+namespace Plugins {
+class PluginSystem;
+}
+
 namespace UI {
 class SettingsWindow;
 }
@@ -79,6 +83,8 @@ class LightInspector;
 class EnvironmentInspector;
 class ComponentInspector;
 class EditorNotificationService;
+class EditorPluginHost;
+class PluginManagerDialog;
 
 /**
  * QTreeWidget subclass that emits a signal after drag-and-drop operations.
@@ -137,6 +143,7 @@ public:
     EditorAssetPipeline* GetAssetPipeline() { return m_assetPipeline.get(); }
     void rebuildSceneVisuals();
     bool requestCloseOpenCharacter(const QString& absolutePath);
+    EditorPluginHost* PluginHost() const { return m_pluginHost.get(); }
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -214,6 +221,7 @@ private slots:
     void onPasteEntity();
     void onDuplicateEntity();
     void onOpenSettings();
+    void onOpenPlugins();
     void updateUndoRedoActions();
     void beginCoalescedTransformUndo(const char* label);
     void endCoalescedTransformUndo();
@@ -347,6 +355,8 @@ private:
     std::unique_ptr<EditorAssetActions> m_assetActions;
     std::unique_ptr<PrefabEditorManager> m_prefabEditorManager;
     std::unique_ptr<CharacterEditorManager> m_characterEditorManager;
+    std::unique_ptr<EditorPluginHost> m_pluginHost;
+    std::unique_ptr<Hephaestus::Plugins::PluginSystem> m_pluginSystem;
     UI::SettingsWindow* m_settingsWindow = nullptr;
 
     // Build output

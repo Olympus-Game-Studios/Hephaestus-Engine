@@ -9,6 +9,7 @@
 #include "InspectorMime.h"
 #include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "EditorMainWindow.h"
+#include "EditorPluginHost.h"
 #include "AddActorsPanel.h"
 #include "AssetDependencyDialog.h"
 #include "EditorAssetServices.h"
@@ -618,14 +619,25 @@ void AssetBrowserWidget::rebuildContentsView()
     for (const auto& entry : entries) {
         const QString name = QString::fromStdString(entry.name);
         const AssetType type = static_cast<AssetType>(entry.type);
+        const QString customType = (!entry.isDirectory && m_mainWindow && m_mainWindow->PluginHost())
+            ? m_mainWindow->PluginHost()->CustomAssetDisplayName(QString::fromStdString(entry.relativePath))
+            : QString();
 
         if (!matchesFilter(type, entry.isDirectory)) {
             continue;
         }
 
         QStandardItem* item = new QStandardItem();
-        item->setText(QString("%1\n%2").arg(name, typeBadge(type, entry.isDirectory)));
-        item->setIcon(getAssetIcon(static_cast<int>(entry.type), entry.isDirectory));
+        item->setText(QString("%1\n%2").arg(name,
+            customType.isEmpty() ? typeBadge(type, entry.isDirectory)
+                                 : QStringLiteral("[%1]").arg(customType)));
+        QIcon icon = getAssetIcon(static_cast<int>(entry.type), entry.isDirectory);
+        if (!customType.isEmpty()) {
+            const QIcon pluginIcon = m_mainWindow->PluginHost()->CustomAssetIcon(
+                QString::fromStdString(entry.relativePath));
+            if (!pluginIcon.isNull()) icon = pluginIcon;
+        }
+        item->setIcon(icon);
         item->setData(QString::fromStdString(entry.relativePath), RelativePathRole);
         item->setData(static_cast<int>(entry.type), AssetTypeRole);
         item->setData(entry.isDirectory, IsDirectoryRole);
@@ -790,6 +802,11 @@ void AssetBrowserWidget::onContentsDoubleClicked(const QModelIndex& index)
         // Navigate into folder
         NavigateTo(relativePath);
     } else {
+        if (m_mainWindow && m_mainWindow->PluginHost() &&
+            m_mainWindow->PluginHost()->OpenCustomAsset(relativePath)) {
+            if (m_statusLabel) m_statusLabel->setText(tr("Opened plugin asset: %1").arg(relativePath));
+            return;
+        }
         if (assetType == AssetType::StaticMesh) {
             // Spawn mesh into the active scene
             std::cout << "[AssetBrowser] Spawning mesh: " << relativePath.toStdString() << "\n";
@@ -861,6 +878,24 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
         bool isDirectory = index.data(IsDirectoryRole).toBool();
         AssetType assetType = static_cast<AssetType>(index.data(AssetTypeRole).toInt());
 
+        if (relativePath.startsWith(QStringLiteral("plugin://"))) {
+            menu.addAction(isDirectory ? style()->standardIcon(QStyle::SP_DirOpenIcon)
+                                       : style()->standardIcon(QStyle::SP_DialogOpenButton),
+                           tr("Open"), [this, relativePath, isDirectory]() {
+                if (isDirectory) NavigateTo(relativePath);
+                else if (!m_mainWindow || !m_mainWindow->PluginHost() ||
+                         !m_mainWindow->PluginHost()->OpenCustomAsset(relativePath))
+                    emit assetOpenRequested(relativePath);
+            });
+            if (m_mainWindow && m_mainWindow->PluginHost())
+                m_mainWindow->PluginHost()->PopulateContextMenu("assetBrowser", menu, relativePath);
+            menu.addSeparator();
+            menu.addAction(tr("Copy Asset Path"), [this, relativePath]() { copyAssetPath(relativePath); });
+            menu.addAction(tr("Show in Explorer"), [this, relativePath]() { showInExplorer(relativePath); });
+            menu.exec(m_contentsView->viewport()->mapToGlobal(pos));
+            return;
+        }
+
         if (isDirectory) {
             menu.addAction(style()->standardIcon(QStyle::SP_DirOpenIcon), tr("Open"), [this, relativePath]() {
                 NavigateTo(relativePath);
@@ -870,7 +905,10 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
             menu.addSeparator();
         } else {
             menu.addAction(style()->standardIcon(QStyle::SP_DialogOpenButton), tr("Open"), [this, relativePath]() {
-                emit assetOpenRequested(relativePath);
+                if (!m_mainWindow || !m_mainWindow->PluginHost() ||
+                    !m_mainWindow->PluginHost()->OpenCustomAsset(relativePath)) {
+                    emit assetOpenRequested(relativePath);
+                }
             });
             if (assetType == AssetType::Prefab) {
                 menu.addAction(tr("Instantiate in Scene"), [this, relativePath]() {
@@ -990,6 +1028,9 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
             }
             menu.addSeparator();
         }
+        if (m_mainWindow && m_mainWindow->PluginHost()) {
+            m_mainWindow->PluginHost()->PopulateContextMenu("assetBrowser", menu, relativePath);
+        }
 
         menu.addAction(tr("Rename"), [this, relativePath, isDirectory]() {
             renameAsset(relativePath, isDirectory);
@@ -1066,6 +1107,14 @@ void AssetBrowserWidget::onFolderTreeContextMenu(const QPoint& pos)
         targetDir = index.data(RelativePathRole).toString();
     }
 
+    if (targetDir.startsWith(QStringLiteral("plugin://"))) {
+        menu.addAction(style()->standardIcon(QStyle::SP_DirOpenIcon), tr("Open"),
+                       [this, targetDir]() { NavigateTo(targetDir); });
+        menu.addAction(tr("Show in Explorer"), [this, targetDir]() { showInExplorer(targetDir); });
+        menu.exec(m_folderTree->viewport()->mapToGlobal(pos));
+        return;
+    }
+
     showCreateMenu(menu, targetDir);
 
     if (index.isValid() && !targetDir.isEmpty()) {
@@ -1121,6 +1170,13 @@ void AssetBrowserWidget::showCreateMenu(QMenu& menu, const QString& targetDirect
     menu.addAction(tr("Import Character…"), [this]() {
         importCharacter();
     });
+    if (m_mainWindow && m_mainWindow->PluginHost()) {
+        menu.addSeparator();
+        m_mainWindow->PluginHost()->PopulateAssetCreationMenu(menu, targetDirectory);
+        QMenu* importers = menu.addMenu(tr("Import with Plugin"));
+        m_mainWindow->PluginHost()->PopulateImporterMenu(*importers, targetDirectory);
+        if (importers->isEmpty()) delete importers;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

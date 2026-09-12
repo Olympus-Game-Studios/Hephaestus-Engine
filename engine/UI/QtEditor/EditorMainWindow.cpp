@@ -35,6 +35,8 @@
 #include "BuildSettingsDialog.h"
 #include "RuntimeUIOverlayWidget.h"
 #include "EditorNotificationService.h"
+#include "EditorPluginHost.h"
+#include "PluginManagerDialog.h"
 #include "../Shared/SettingsWindow.h"
 
 #include "../../Core/EditorContext.h"
@@ -66,6 +68,8 @@
 #include "../../Assets/AssetReferenceIndex.h"
 #include "../../Assets/CharacterRuntime.h"
 #include "../../Build/BuildService.h"
+#include "../../Plugins/PluginSystem.h"
+#include "AppConfig.h"
 
 #include <QClipboard>
 #include <QTextCursor>
@@ -471,6 +475,23 @@ EditorMainWindow::EditorMainWindow(QWidget* parent)
     setupStatusBar();
     applyUnifiedStyle();
 
+    m_pluginSystem = std::make_unique<Plugins::PluginSystem>();
+    m_pluginSystem->SetEngineVersion(HEPHAESTUS_VERSION_STRING);
+    m_pluginHost = std::make_unique<EditorPluginHost>(
+        this, m_pluginSystem.get(),
+        [this]() -> EditorContext* { return m_engine ? m_engine->GetEditorContext() : nullptr; },
+        m_projectContext.get(), [this]() {
+            rebuildSceneVisuals();
+            rebuildOutliner();
+            refreshDetailsPanel();
+            updateUndoRedoActions();
+        });
+    m_pluginSystem->SetContextFactory([this](const Plugins::PluginManifest& manifest) {
+        return m_pluginHost->CreateContext(manifest);
+    });
+    m_pluginSystem->Discover(QCoreApplication::applicationDirPath().toStdString(), {});
+    m_pluginSystem->LoadEnabled();
+
     m_notifications = new EditorNotificationService(this);
     m_notifications->SetStatusBar(statusBar());
     m_notifications->SetToastAnchor(this);
@@ -506,6 +527,9 @@ EditorMainWindow::~EditorMainWindow()
     }
     if (m_assetPipeline) {
         m_assetPipeline->Shutdown();
+    }
+    if (m_pluginSystem) {
+        m_pluginSystem->UnloadAll();
     }
 }
 
@@ -721,6 +745,9 @@ void EditorMainWindow::setupMenuBar()
     m_settingsAction = editMenu->addAction(tr("Settings"));
     m_settingsAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+,")));
     connect(m_settingsAction, &QAction::triggered, this, &EditorMainWindow::onOpenSettings);
+
+    QAction* pluginsAction = editMenu->addAction(tr("Plugins..."));
+    connect(pluginsAction, &QAction::triggered, this, &EditorMainWindow::onOpenPlugins);
 
     QMenu* sceneMenu = menuBar->addMenu(tr("&Scene"));
     QAction* hideSelectedAction = sceneMenu->addAction(tr("Hide Selected"));
@@ -3575,6 +3602,7 @@ void EditorMainWindow::onOutlinerContextMenu(const QPoint& pos)
         deleteAction->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
     }
 
+    if (m_pluginHost) m_pluginHost->PopulateContextMenu("sceneHierarchy", menu);
     menu.exec(m_outlinerTree->viewport()->mapToGlobal(pos));
 }
 
@@ -4440,6 +4468,7 @@ void EditorMainWindow::showViewportContextMenu(float x, float y)
         context->MarkDirty();
         rebuildOutliner();
     });
+    if (m_pluginHost) m_pluginHost->PopulateContextMenu("viewport", menu);
     menu.exec(QCursor::pos());
 }
 
@@ -4730,25 +4759,41 @@ void EditorMainWindow::onExit()
 
 bool EditorMainWindow::promptSaveDirtyScene()
 {
-    if (!m_engine) return true;
-    auto* ctx = m_engine->GetEditorContext();
-    if (!ctx || !ctx->IsDirty()) return true;
-
-    m_recoveryBusy = true;
-    auto result = QMessageBox::question(this, tr("Unsaved Changes"),
-        tr("The current scene has unsaved changes. Do you want to save before continuing?"),
-        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
-        QMessageBox::Save);
-    m_recoveryBusy = false;
-
-    if (result == QMessageBox::Save) {
-        onSaveLevel();
-        // If still dirty, save was cancelled or failed
-        return !ctx->IsDirty();
-    } else if (result == QMessageBox::Cancel) {
-        return false;
+    auto* ctx = m_engine ? m_engine->GetEditorContext() : nullptr;
+    if (ctx && ctx->IsDirty()) {
+        m_recoveryBusy = true;
+        auto result = QMessageBox::question(this, tr("Unsaved Changes"),
+            tr("The current scene has unsaved changes. Do you want to save before continuing?"),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+            QMessageBox::Save);
+        m_recoveryBusy = false;
+        if (result == QMessageBox::Save) {
+            onSaveLevel();
+            if (ctx->IsDirty()) return false;
+        } else if (result == QMessageBox::Cancel) {
+            return false;
+        }
     }
-    // Discard - continue without saving
+
+    auto& documents = EditorAssetServices::Instance().Documents();
+    for (const auto& document : documents.ListDirty()) {
+        if (document.kind != DocumentKind::Plugin) continue;
+        const auto result = QMessageBox::question(
+            this, tr("Unsaved Plugin Asset"),
+            tr("%1 has unsaved changes. Save it before continuing?")
+                .arg(QString::fromStdString(document.portablePath)),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+            QMessageBox::Save);
+        if (result == QMessageBox::Cancel) return false;
+        if (result == QMessageBox::Save) {
+            std::string error;
+            if (!documents.RequestSave(document.portablePath, &error)) {
+                QMessageBox::warning(this, tr("Save Plugin Asset"),
+                                     QString::fromStdString(error));
+                return false;
+            }
+        }
+    }
     return true;
 }
 
@@ -4856,6 +4901,11 @@ void EditorMainWindow::onCloseProject()
     m_projectSettingsManager.reset();
     EditorAssetServices::Instance().OnProjectClosed();
 
+    if (m_pluginSystem) {
+        m_pluginSystem->Discover(QCoreApplication::applicationDirPath().toStdString(), {});
+        m_pluginSystem->LoadEnabled();
+    }
+
     // Clear the scene
     if (m_engine) {
         if (auto* frameRenderer = m_engine->GetFrameRenderer()) {
@@ -4930,6 +4980,12 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
         QString::fromStdString(m_projectContext->GetProjectName())), 5000);
 
     EditorAssetServices::Instance().OnProjectOpened(m_projectContext->GetProjectRootDir());
+
+    if (m_pluginSystem) {
+        m_pluginSystem->Discover(QCoreApplication::applicationDirPath().toStdString(),
+                                 m_projectContext->GetProjectRootDir());
+        m_pluginSystem->LoadEnabled();
+    }
 
     updateWindowTitle();
     refreshAssetBrowser();
@@ -5587,6 +5643,13 @@ void EditorMainWindow::onOpenSettings()
     m_settingsWindow->show();
     m_settingsWindow->raise();
     m_settingsWindow->activateWindow();
+}
+
+void EditorMainWindow::onOpenPlugins()
+{
+    if (!m_pluginSystem) return;
+    PluginManagerDialog dialog(*m_pluginSystem, this);
+    dialog.exec();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

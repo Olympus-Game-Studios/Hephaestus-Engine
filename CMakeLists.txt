@@ -220,6 +220,14 @@ add_library(HephaestusInputCore STATIC
 )
 target_include_directories(HephaestusInputCore PUBLIC engine extern extern/glfw/include)
 
+# Stable, Qt-independent plugin discovery/lifecycle and mounted-content core.
+add_library(HephaestusPluginCore STATIC
+    engine/Assets/AssetMountRegistry.cpp
+    engine/Plugins/PluginManifest.cpp
+    engine/Plugins/PluginSystem.cpp
+)
+target_include_directories(HephaestusPluginCore PUBLIC engine extern)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared Engine Sources (used by both Editor and Game)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -467,7 +475,8 @@ add_executable(HephaestusEngine
 )
 
 if (WIN32)
-    set(APP_ICON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/editor/Icons/logo")
+    # Raster icon sizes currently live in logo/Old; the SVG masters remain one level up.
+    set(APP_ICON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/editor/Icons/logo/Old")
     set(APP_ICON_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_app_icon.ps1")
     set(APP_ICON_OUTPUT "${CMAKE_BINARY_DIR}/HephaestusEngine.ico")
 
@@ -511,7 +520,7 @@ elseif(APPLE)
 endif()
 
 target_include_directories(HephaestusEngine PRIVATE engine "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore HephaestusInputCore ufbx)
+target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore HephaestusInputCore HephaestusPluginCore ufbx)
 if(LUA_FOUND)
     if(TARGET Lua::Lua)
         target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt Lua::Lua)
@@ -578,6 +587,10 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/AssetDependencyDialog.h
             engine/UI/QtEditor/EditorAssetServices.cpp
             engine/UI/QtEditor/EditorAssetServices.h
+            engine/UI/QtEditor/EditorPluginHost.cpp
+            engine/UI/QtEditor/EditorPluginHost.h
+            engine/UI/QtEditor/PluginManagerDialog.cpp
+            engine/UI/QtEditor/PluginManagerDialog.h
             engine/UI/QtEditor/EditorAssetActions.cpp
             engine/UI/QtEditor/EditorAssetActions.h
             engine/UI/QtEditor/TextureViewerDialog.cpp
@@ -656,6 +669,30 @@ if(HEPHAESTUS_USE_QT)
             target_link_libraries(HephaestusEngine PRIVATE HephaestusToolsCommon)
         endif()
         target_compile_definitions(HephaestusEngine PRIVATE HEPHAESTUS_EDITOR_QT_UI=1)
+
+        add_library(HephaestusPrimitiveTools SHARED
+            Plugins/PrimitiveTools/Source/PrimitiveToolsPlugin.cpp
+        )
+        target_include_directories(HephaestusPrimitiveTools PRIVATE engine)
+        target_link_libraries(HephaestusPrimitiveTools PRIVATE Qt6::Widgets)
+        set_target_properties(HephaestusPrimitiveTools PROPERTIES
+            OUTPUT_NAME "HephaestusPrimitiveTools"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/PrimitiveTools/bin"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/PrimitiveTools/bin"
+        )
+        add_custom_command(TARGET HephaestusPrimitiveTools POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/PrimitiveTools/PrimitiveTools.hpplugin"
+                "$<TARGET_FILE_DIR:HephaestusPrimitiveTools>/../PrimitiveTools.hpplugin"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/PrimitiveTools/Content"
+                "$<TARGET_FILE_DIR:HephaestusPrimitiveTools>/../Content"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/PrimitiveTools/Resources"
+                "$<TARGET_FILE_DIR:HephaestusPrimitiveTools>/../Resources"
+            VERBATIM
+        )
+        add_dependencies(HephaestusEngine HephaestusPrimitiveTools)
 
         # Copy Qt DLLs to output directory (Windows)
         if(WIN32)
@@ -1608,6 +1645,11 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         NAME PackageLayout
         COMMAND PackageLayoutTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
+
+    add_executable(PluginSystemTests engine/Tests/PluginSystemTests.cpp)
+    target_link_libraries(PluginSystemTests PRIVATE HephaestusPluginCore)
+    target_include_directories(PluginSystemTests PRIVATE engine extern)
+    add_test(NAME PluginSystem COMMAND PluginSystemTests)
 endif()
 
 # Optional narrow Qt Test harness (off by default — requires Qt6 Test module)

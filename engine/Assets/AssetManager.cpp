@@ -4,6 +4,7 @@
  */
 
 #include "AssetManager.h"
+#include "AssetMountRegistry.h"
 #include <algorithm>
 #include <chrono>
 #include <functional>
@@ -56,7 +57,8 @@ std::string AssetManager::GetAssetRoot() const {
 
 bool AssetManager::HasValidAssetRoot() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return !m_assetRoot.empty() && std::filesystem::exists(m_assetRoot);
+    return (!m_assetRoot.empty() && std::filesystem::exists(m_assetRoot)) ||
+           !AssetMountRegistry::Instance().Mounts().empty();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,12 +94,13 @@ std::vector<DirectoryEntry> AssetManager::ListDirectory(const std::string& relat
     
     std::vector<DirectoryEntry> result;
     
-    if (m_assetRoot.empty() || !std::filesystem::exists(m_assetRoot)) {
+    const auto mounted = AssetMountRegistry::Instance().Resolve(relativePath);
+    if (!mounted && (m_assetRoot.empty() || !std::filesystem::exists(m_assetRoot))) {
         return result;
     }
     
-    std::filesystem::path targetPath = m_assetRoot;
-    if (!relativePath.empty()) {
+    std::filesystem::path targetPath = mounted ? *mounted : m_assetRoot;
+    if (!mounted && !relativePath.empty()) {
         targetPath = m_assetRoot / relativePath;
     }
     
@@ -135,6 +138,18 @@ std::vector<DirectoryEntry> AssetManager::ListDirectory(const std::string& relat
             files.push_back(std::move(dirEntry));
         }
     }
+
+    if (relativePath.empty()) {
+        for (const auto& mount : AssetMountRegistry::Instance().Mounts()) {
+            if (!mount.scheme.starts_with("plugin://")) continue;
+            DirectoryEntry plugin;
+            plugin.name = "Plugin - " + mount.scheme.substr(std::string("plugin://").size());
+            plugin.relativePath = mount.scheme;
+            plugin.type = AssetType::Folder;
+            plugin.isDirectory = true;
+            folders.push_back(std::move(plugin));
+        }
+    }
     
     // Sort folders and files alphabetically
     auto sortByName = [](const DirectoryEntry& a, const DirectoryEntry& b) {
@@ -161,11 +176,12 @@ std::optional<AssetInfo> AssetManager::GetAssetInfo(const std::string& relativeP
     }
     
     // Build info on-demand if not indexed
-    if (m_assetRoot.empty()) {
+    const auto mounted = AssetMountRegistry::Instance().Resolve(relativePath);
+    if (!mounted && m_assetRoot.empty()) {
         return std::nullopt;
     }
     
-    std::filesystem::path absPath = m_assetRoot / relativePath;
+    std::filesystem::path absPath = mounted ? *mounted : m_assetRoot / relativePath;
     if (!std::filesystem::exists(absPath)) {
         return std::nullopt;
     }
@@ -178,6 +194,12 @@ std::string AssetManager::GetParentPath(const std::string& relativePath) const {
         return "";
     }
     
+    if (relativePath.starts_with("plugin://")) {
+        const auto slash = relativePath.find('/', std::string("plugin://").size());
+        if (slash == std::string::npos) return "";
+        const auto last = relativePath.rfind('/');
+        return last == slash ? relativePath.substr(0, slash) : relativePath.substr(0, last);
+    }
     std::filesystem::path p(relativePath);
     if (p.has_parent_path()) {
         std::string parent = p.parent_path().string();
@@ -196,6 +218,9 @@ std::string AssetManager::GetParentPath(const std::string& relativePath) const {
 std::string AssetManager::ToAbsolutePath(const std::string& relativePath) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     
+    if (const auto mounted = AssetMountRegistry::Instance().Resolve(relativePath)) {
+        return mounted->string();
+    }
     if (m_assetRoot.empty()) {
         return "";
     }
@@ -210,6 +235,9 @@ std::string AssetManager::ToAbsolutePath(const std::string& relativePath) const 
 bool AssetManager::PathExists(const std::string& relativePath) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     
+    if (const auto mounted = AssetMountRegistry::Instance().Resolve(relativePath)) {
+        return std::filesystem::exists(*mounted);
+    }
     if (m_assetRoot.empty()) {
         return false;
     }
@@ -224,6 +252,9 @@ bool AssetManager::PathExists(const std::string& relativePath) const {
 bool AssetManager::IsDirectory(const std::string& relativePath) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     
+    if (const auto mounted = AssetMountRegistry::Instance().Resolve(relativePath)) {
+        return std::filesystem::is_directory(*mounted);
+    }
     if (m_assetRoot.empty()) {
         return false;
     }

@@ -23,7 +23,8 @@ enum class DocumentKind {
     Prefab,
     Material,
     HUI,
-    Character
+    Character,
+    Plugin
 };
 
 const char* ToString(DocumentKind kind);

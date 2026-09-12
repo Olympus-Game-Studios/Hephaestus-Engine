@@ -1,4 +1,5 @@
 #include "AssetPathPolicy.h"
+#include "AssetMountRegistry.h"
 
 #include <algorithm>
 #include <cctype>
@@ -77,7 +78,8 @@ bool AssetPathPolicy::IsPortableKey(const std::string& path) {
     if (path.empty()) {
         return false;
     }
-    if (path.rfind("builtin://", 0) == 0) {
+    if (path.rfind("builtin://", 0) == 0 || path.rfind("plugin://", 0) == 0 ||
+        path.rfind("/plugin/", 0) == 0) {
         return true;
     }
     const std::string normalized = NormalizeSeparators(path);
@@ -95,7 +97,8 @@ std::string AssetPathPolicy::ToPortableKey(const std::filesystem::path& projectR
     if (path.empty()) {
         return {};
     }
-    if (path.rfind("builtin://", 0) == 0) {
+    if (path.rfind("builtin://", 0) == 0 || path.rfind("plugin://", 0) == 0 ||
+        path.rfind("/plugin/", 0) == 0) {
         return path;
     }
 
@@ -145,6 +148,9 @@ std::filesystem::path AssetPathPolicy::ResolvePortableKey(const std::filesystem:
                                                          const std::string& key) {
     if (key.empty() || key.rfind("builtin://", 0) == 0) {
         return {};
+    }
+    if (const auto mounted = AssetMountRegistry::Instance().Resolve(key)) {
+        return *mounted;
     }
 
     std::filesystem::path p(key);

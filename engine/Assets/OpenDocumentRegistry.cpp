@@ -18,6 +18,8 @@ const char* ToString(DocumentKind kind) {
         return "HUI";
     case DocumentKind::Character:
         return "Character";
+    case DocumentKind::Plugin:
+        return "Plugin";
     }
     return "Unknown";
 }
