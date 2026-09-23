@@ -149,6 +149,28 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
+#### Platform profiles (CMake presets)
+
+The repository uses one source tree for all supported desktop platforms. Use the
+platform preset on that platform; no platform-specific branch is required:
+
+```bash
+cmake --preset macos-release    # macOS + Ninja
+cmake --build --preset macos-release
+cmake --preset linux-release    # Linux + Ninja
+cmake --build --preset linux-release
+```
+
+On Windows, use a Developer PowerShell for Visual Studio:
+
+```powershell
+cmake --preset windows-release
+cmake --build --preset windows-release
+```
+
+The presets expect the Vulkan SDK and Qt 6 to be installed on the selected
+platform. Pass `-DQt6_DIR=...` to CMake when Qt is not in its standard location.
+
 If you generate an Xcode project instead, use `cmake -S . -B build -G "Xcode"` and build with `cmake --build build --config Release` or open `build/HephaestusEngine.xcodeproj`.
 
 If you previously configured `build/`, rerun the single-line build command:
@@ -400,5 +422,4 @@ Contributions welcome! This is a learning project demonstrating modern engine ar
 - CMake: https://cmake.org/
 
 ---
-
 

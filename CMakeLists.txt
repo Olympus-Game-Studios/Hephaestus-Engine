@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
 project(HephaestusEngine LANGUAGES C CXX)
 
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Application Details  (single source of truth — edit these, not C++ files)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -663,6 +667,13 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/Shared/InputMapEditorWidget.cpp
             engine/UI/Shared/InputMapEditorWidget.h
         )
+
+        if(APPLE)
+            target_sources(HephaestusEngine PRIVATE
+                engine/UI/QtEditor/MacNativeSurface.h
+                engine/UI/QtEditor/MacNativeSurface.mm
+            )
+        endif()
 
         target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets)
         if(TARGET HephaestusToolsCommon)
@@ -1683,4 +1694,3 @@ foreach(HEPHAESTUS_TARGET IN LISTS HEPHAESTUS_DIRECTORY_TARGETS)
 endforeach()
 unset(HEPHAESTUS_DIRECTORY_TARGETS)
 unset(HEPHAESTUS_TARGET)
-

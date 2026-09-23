@@ -63,6 +63,10 @@
 #include <vulkan/vulkan_win32.h>
 #endif
 
+#ifdef __APPLE__
+#include <vulkan/vulkan_metal.h>
+#endif
+
 namespace Hephaestus {
 namespace QtEditor {
 
@@ -293,11 +297,13 @@ bool QtEditorEngine::createVulkanInstance()
     appInfo.engineVersion = VK_MAKE_VERSION(HEPHAESTUS_VERSION_MAJOR, HEPHAESTUS_VERSION_MINOR, HEPHAESTUS_VERSION_PATCH);
     appInfo.apiVersion = VK_API_VERSION_1_3;
 
-    // Extensions needed for Qt (Win32 surface)
+    // Extensions needed for the Qt native viewport.
     std::vector<const char*> extensions = {
         VK_KHR_SURFACE_EXTENSION_NAME,
 #ifdef _WIN32
         VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+#elif defined(__APPLE__)
+        VK_EXT_METAL_SURFACE_EXTENSION_NAME,
 #endif
     };
 

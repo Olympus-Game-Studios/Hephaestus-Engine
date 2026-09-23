@@ -14,6 +14,10 @@
 #include <vulkan/vulkan_win32.h>
 #endif
 
+#ifdef __APPLE__
+#include <vulkan/vulkan_metal.h>
+#endif
+
 void VulkanDevice::Init(GLFWwindow *window, VkInstance inInstance) {
   instance = inInstance;
 
@@ -98,6 +102,14 @@ bool VulkanDevice::AttachToSurface(const Hephaestus::NativeSurface& nativeSurfac
 #ifdef _WIN32
   if (!createWin32Surface(nativeSurface.windowHandle)) {
     std::cerr << "[VulkanDevice] Failed to create Win32 surface\n";
+    return false;
+  }
+#elif defined(__APPLE__)
+  VkMetalSurfaceCreateInfoEXT createInfo{};
+  createInfo.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
+  createInfo.pLayer = nativeSurface.windowHandle;
+  if (vkCreateMetalSurfaceEXT(instance, &createInfo, nullptr, &surface) != VK_SUCCESS) {
+    std::cerr << "[VulkanDevice] Failed to create Metal surface\n";
     return false;
   }
 #else

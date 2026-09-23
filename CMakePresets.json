@@ -1,0 +1,79 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "macos-release",
+      "displayName": "macOS Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/macos-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "HEPHAESTUS_BUILD_EDITOR": "ON",
+        "HEPHAESTUS_BUILD_GAME": "ON",
+        "HEPHAESTUS_USE_QT": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Windows x64 Release",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "HEPHAESTUS_BUILD_EDITOR": "ON",
+        "HEPHAESTUS_BUILD_GAME": "ON",
+        "HEPHAESTUS_USE_QT": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "HEPHAESTUS_BUILD_EDITOR": "ON",
+        "HEPHAESTUS_BUILD_GAME": "ON",
+        "HEPHAESTUS_USE_QT": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "macos-release",
+      "configurePreset": "macos-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "configuration": "Release"
+    }
+  ]
+}

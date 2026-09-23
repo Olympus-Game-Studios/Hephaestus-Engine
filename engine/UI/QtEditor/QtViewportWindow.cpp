@@ -7,6 +7,10 @@
 
 #include "QtViewportWindow.h"
 
+#ifdef __APPLE__
+#include "MacNativeSurface.h"
+#endif
+
 #include <QCursor>
 #include <QMouseEvent>
 #include <QKeyEvent>
@@ -56,8 +60,12 @@ NativeSurface QtViewportWindow::GetNativeSurface() const
     // On Windows, winId() returns the HWND
     surface.windowHandle = reinterpret_cast<void*>(const_cast<QtViewportWindow*>(this)->winId());
     surface.displayHandle = nullptr; // Not used on Windows
+#elif defined(__APPLE__)
+    // Vulkan's macOS surface is backed by a CAMetalLayer, not the NSView.
+    surface.windowHandle = GetMacMetalLayer(const_cast<QtViewportWindow*>(this));
+    surface.displayHandle = nullptr;
 #else
-    // TODO: Support other platforms
+    // Linux support is provided by the GLFW runtime path for now.
     surface.windowHandle = nullptr;
     surface.displayHandle = nullptr;
 #endif
