@@ -1275,6 +1275,15 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         COMMAND InputSystemTests
     )
 
+    add_executable(HttpTransportSmokeTests
+        engine/Tests/HttpTransportSmokeTests.cpp
+    )
+    target_include_directories(HttpTransportSmokeTests PRIVATE extern)
+    add_test(
+        NAME HttpTransportSmoke
+        COMMAND HttpTransportSmokeTests
+    )
+
     add_executable(LuaExposeScannerTests
         engine/Tests/LuaExposeScannerTests.cpp
         engine/Scripting/LuaExposeScanner.cpp
