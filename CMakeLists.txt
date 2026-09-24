@@ -157,6 +157,7 @@ option(HEPHAESTUS_GAME_SCRIPTING "Enable Lua scripting in game runtime" ON)
 option(HEPHAESTUS_USE_QT "Enable Qt-based editor UI" ON)
 option(HEPHAESTUS_USE_SHARED_ASSETS "Use shared runtime/editor/launcher asset folders" ON)
 option(HEPHAESTUS_MCP_LEGACY_COMPAT "Enable MCP 2025-11-25 compatibility" ON)
+option(HEPHAESTUS_RUNTIME_AUTOMATION "Compile MCP automation into the packaged game runtime" OFF)
 
 # Qt (Windows) - use C:\Qt as a hint for discovery
 set(HEPHAESTUS_QT_ROOT "C:/Qt" CACHE PATH "Root path to Qt installation")
@@ -232,6 +233,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/ComponentMetadata.cpp
     engine/Automation/EntityRef.cpp
     engine/Automation/PlayAutomation.cpp
+    engine/Automation/RuntimeAutomation.cpp
     engine/Automation/SceneAutomation.cpp
     engine/Automation/ToolRegistry.cpp
     engine/Automation/Mcp/McpHttpTypes.cpp
@@ -905,6 +907,17 @@ endif()
 target_compile_definitions(HephaestusGame PRIVATE
     HEPHAESTUS_GAME_RUNTIME=1
 )
+
+if(HEPHAESTUS_RUNTIME_AUTOMATION)
+    target_compile_definitions(HephaestusGame PRIVATE
+        HEPHAESTUS_RUNTIME_AUTOMATION=1
+        HEPHAESTUS_MCP_LEGACY_COMPAT=$<BOOL:${HEPHAESTUS_MCP_LEGACY_COMPAT}>
+    )
+    target_sources(HephaestusGame PRIVATE engine/Game/PackagedAutomation.cpp)
+    target_link_libraries(HephaestusGame PRIVATE HephaestusAutomationCore)
+else()
+    target_compile_definitions(HephaestusGame PRIVATE HEPHAESTUS_RUNTIME_AUTOMATION=0)
+endif()
 
 if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND)
     target_compile_definitions(HephaestusGame PRIVATE 

@@ -42,6 +42,10 @@
 #include "Core/RuntimeBootstrap.h"
 #include "../Input/InputSystem.h"
 
+#if HEPHAESTUS_RUNTIME_AUTOMATION
+#include "PackagedAutomation.h"
+#endif
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -143,6 +147,10 @@ struct GameConfig {
     std::string scenePath;
     std::string projectName;
     std::string inputProfile = "assets/input/Default.hpinput";
+#if HEPHAESTUS_RUNTIME_AUTOMATION
+    bool automationEnabled = false;
+    int automationPort = 0;
+#endif
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -435,6 +443,13 @@ static void LoadConfigFile(GameConfig& config) {
         } else if (key == "input_profile") {
             config.inputProfile = value;
         }
+#if HEPHAESTUS_RUNTIME_AUTOMATION
+        else if (key == "enabled" && value == "true" || key == "enabled" && value == "1") {
+            config.automationEnabled = true;
+        } else if (key == "port") {
+            config.automationPort = std::stoi(value);
+        }
+#endif
     }
 
     HP_LOG(Info, "Loaded configuration from game.ini");
@@ -1506,6 +1521,17 @@ int main(int argc, char* argv[]) {
     renderConfig.renderOutlines = false;
     renderConfig.renderGrid = false;
 
+#if HEPHAESTUS_RUNTIME_AUTOMATION
+    std::unique_ptr<Hephaestus::Runtime::PackagedAutomation> packagedAutomation;
+    if (g_Config.automationEnabled) {
+        packagedAutomation = std::make_unique<Hephaestus::Runtime::PackagedAutomation>(
+            scene, inputSystem, g_Config.projectName);
+        if (!packagedAutomation->Start(g_Config.automationPort)) {
+            HP_LOG(Warning, "Runtime automation was enabled but the MCP endpoint failed to start");
+        }
+    }
+#endif
+
     // ── Main Loop ─────────────────────────────────
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -1577,6 +1603,12 @@ int main(int argc, char* argv[]) {
         uiContext.SetDeltaTimeSeconds(deltaTime);
         uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
 
+#if HEPHAESTUS_RUNTIME_AUTOMATION
+        if (packagedAutomation) {
+            packagedAutomation->Tick();
+        }
+#endif
+
         const HUI::UIVec2 mousePos{static_cast<float>(cursorX), static_cast<float>(cursorY)};
         uiContext.QueueMouseMove(mousePos);
 
@@ -1629,6 +1661,12 @@ int main(int argc, char* argv[]) {
     // ── Cleanup ───────────────────────────────────
     HP_LOG(Info, "Shutting down...");
     
+#if HEPHAESTUS_RUNTIME_AUTOMATION
+    if (packagedAutomation) {
+        packagedAutomation->Stop();
+    }
+#endif
+
     vkDeviceWaitIdle(vkdev.device);
     g_GameCameraPtr = nullptr;
     frameRenderer.Shutdown();

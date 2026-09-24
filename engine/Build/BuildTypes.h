@@ -59,6 +59,7 @@ struct BuildRequest {
     bool reportUnusedAssets = false;
     bool incremental = true;
     bool clean = false;
+    bool enableRuntimeAutomation = false;
     std::filesystem::path applicationIcon;
     LogCallback onLog;
     ProgressCallback onProgress;

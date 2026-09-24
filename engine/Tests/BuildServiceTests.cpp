@@ -1,5 +1,6 @@
 #include "Build/BuildService.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -24,12 +25,15 @@ bool Check(bool condition, const char* message) {
 class CountingBuilder final : public RuntimeBuilder {
 public:
     bool build(const fs::path&, BuildConfiguration, const fs::path&,
-               const LogCallback&, const CancellationCallback&) override {
+               const LogCallback&, const CancellationCallback&,
+               bool enableRuntimeAutomation = false) override {
         ++calls;
+        lastAutomation = enableRuntimeAutomation;
         return false;
     }
 
     int calls = 0;
+    bool lastAutomation = false;
 };
 
 } // namespace
@@ -73,6 +77,20 @@ int main() {
     ok &= Check(result.success, "clean action succeeds without runtime discovery");
     ok &= Check(!fs::exists(root / "output" / "BuildServiceFixture"),
                 "clean action removes the previous successful package");
+
+    const int callsBeforeAutomation = builder->calls;
+    request.action = BuildAction::Package;
+    request.configuration = BuildConfiguration::Release;
+    request.enableRuntimeAutomation = true;
+    request.outputRoot = root / "release-automation";
+    result = service.execute(request);
+    const bool rejected = !result.success && std::any_of(
+        result.problems.begin(), result.problems.end(), [](const EditorProblem& problem) {
+            return problem.code == "BUILD_RUNTIME_AUTOMATION_NOT_ALLOWED";
+        });
+    ok &= Check(rejected, "Release packaging hard-rejects runtime automation");
+    ok &= Check(builder->calls == callsBeforeAutomation,
+                "rejected Release automation never invokes the runtime builder");
 
     fs::remove_all(root);
     if (ok) {

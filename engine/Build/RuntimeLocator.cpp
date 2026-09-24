@@ -99,7 +99,8 @@ std::filesystem::path RuntimeLocator::discoverEngineRoot(
 
 RuntimeLocationResult RuntimeLocator::locate(const std::filesystem::path& engineRoot,
                                              const std::filesystem::path& searchRoot,
-                                             BuildConfiguration configuration) const {
+                                             BuildConfiguration configuration,
+                                             bool enableRuntimeAutomation) const {
     RuntimeLocationResult result;
     const std::filesystem::path config(
         configuration == BuildConfiguration::Release ? "Release" : "Debug");
@@ -147,6 +148,14 @@ RuntimeLocationResult RuntimeLocator::locate(const std::filesystem::path& engine
                     {ProblemSeverity::Warning, "BUILD_RUNTIME_RELEASE_FALLBACK",
                      "Development runtime is unavailable; using the Release player",
                      root.generic_string()});
+                if (enableRuntimeAutomation) {
+                    result.problems.push_back(
+                        {ProblemSeverity::Error, "RUNTIME_AUTOMATION_UNAVAILABLE",
+                         "Runtime automation was requested but the Development runtime is "
+                         "unavailable and the Release player has automation compiled out",
+                         "Build the Development (Debug) HephaestusGame target with "
+                         "HEPHAESTUS_RUNTIME_AUTOMATION=ON, then package again."});
+                }
                 return result;
             }
         }
@@ -191,7 +200,8 @@ bool CMakeRuntimeBuilder::build(const std::filesystem::path& engineRoot,
                                 BuildConfiguration configuration,
                                 const std::filesystem::path& applicationIcon,
                                 const LogCallback& log,
-                                const CancellationCallback& cancelled) {
+                                const CancellationCallback& cancelled,
+                                bool enableRuntimeAutomation) {
     if (cancelled && cancelled()) {
         return false;
     }
@@ -222,7 +232,8 @@ bool CMakeRuntimeBuilder::build(const std::filesystem::path& engineRoot,
     const std::string configureCommand =
         "cmake -S \"" + engineRoot.string() + "\" -B \"" +
         buildDirectory.string() + "\" -DHEPHAESTUS_GAME_ICON=\"" +
-        applicationIcon.string() + "\"";
+        applicationIcon.string() + "\" -DHEPHAESTUS_RUNTIME_AUTOMATION=" +
+        (enableRuntimeAutomation ? "ON" : "OFF");
     if (log && !applicationIcon.empty()) {
         log("Configuring project-specific application icon");
     }

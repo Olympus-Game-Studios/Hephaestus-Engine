@@ -155,6 +155,8 @@ int main() {
                     ini.find("company =") == std::string::npos &&
                     ini.find("resizable=") == std::string::npos,
                     "game.ini contains only runtime-supported metadata");
+        ok &= Check(ini.find("[Automation]") == std::string::npos,
+                    "game.ini omits [Automation] when runtime automation is disabled");
     }
     ok &= Check(HasProblem(result.problems, "PACKAGE_PRODUCT_NAME_SANITIZED"),
                 "sanitized product names produce a warning");
@@ -179,6 +181,21 @@ int main() {
     ok &= Check(fs::exists(package / "preserve.marker"),
                 "cancelled staging preserves previous output");
     request.isCancelled = {};
+
+    request.enableRuntimeAutomation = true;
+    request.outputRoot = root / "automation-output";
+    auto automationResult = stager.stage(request, artifacts);
+    {
+        std::ifstream iniStream(root / "automation-output" / "Tiny_Game" / "game.ini");
+        const std::string ini((std::istreambuf_iterator<char>(iniStream)),
+                              std::istreambuf_iterator<char>());
+        ok &= Check(automationResult.success, "Development automation package succeeds");
+        ok &= Check(ini.find("[Automation]") != std::string::npos &&
+                    ini.find("enabled = true") != std::string::npos,
+                    "Development automation package writes the [Automation] section");
+    }
+    request.enableRuntimeAutomation = false;
+    request.outputRoot = outputRoot;
 
 #ifdef _WIN32
     HANDLE lockedExecutable = CreateFileW(

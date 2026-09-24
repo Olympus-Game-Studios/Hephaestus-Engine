@@ -28,13 +28,14 @@ std::string PlayStateName(PlayState state)
 }
 
 ToolDefinition Definition(std::string name, std::string description, Json schema,
-                          ToolHandler handler, PlayRequirement requirement)
+                          ToolHandler handler, PlayRequirement requirement,
+                          HostMask hostMask = HostMask::Editor)
 {
     ToolDefinition definition;
     definition.name = std::move(name);
     definition.description = std::move(description);
     definition.inputSchema = std::move(schema);
-    definition.hostMask = HostMask::Editor;
+    definition.hostMask = hostMask;
     definition.playRequirement = requirement;
     definition.mutatesProject = false;
     definition.handler = std::move(handler);
@@ -164,7 +165,7 @@ void RegisterPlayAutomation(AutomationService& service)
                 return Failure(ErrorCode::ToolUnavailable, std::move(error));
             }
             return ToolResult::Success({{"action", arguments["action"]}, {"value", value}});
-        }, PlayRequirement::PlayModeActive));
+        }, PlayRequirement::PlayModeActive, HostMask::Editor | HostMask::Runtime));
 
     registerTool(Definition(
         "input.set_axis",
@@ -186,7 +187,7 @@ void RegisterPlayAutomation(AutomationService& service)
                 return Failure(ErrorCode::ToolUnavailable, std::move(error));
             }
             return ToolResult::Success({{"axis", arguments["axis"]}, {"value", value}});
-        }, PlayRequirement::PlayModeActive));
+        }, PlayRequirement::PlayModeActive, HostMask::Editor | HostMask::Runtime));
 
     registerTool(Definition(
         "input.clear_overrides", "Clear all injected action and axis overrides.",
@@ -196,7 +197,7 @@ void RegisterPlayAutomation(AutomationService& service)
                 return Failure(ErrorCode::ToolUnavailable, std::move(error));
             }
             return ToolResult::Success({{"cleared", true}});
-        }, PlayRequirement::PlayModeActive));
+        }, PlayRequirement::PlayModeActive, HostMask::Editor | HostMask::Runtime));
 }
 
 } // namespace Hephaestus::Automation

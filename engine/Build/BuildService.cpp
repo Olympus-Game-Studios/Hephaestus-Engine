@@ -56,6 +56,14 @@ BuildResult BuildService::execute(const BuildRequest& originalRequest) const {
     if (request.productName.empty()) {
         request.productName = request.projectRoot.filename().string();
     }
+    if (request.enableRuntimeAutomation &&
+        request.configuration == BuildConfiguration::Release) {
+        result.problems.push_back({ProblemSeverity::Error, "BUILD_RUNTIME_AUTOMATION_NOT_ALLOWED",
+                                   "Runtime automation cannot be enabled in a Release package",
+                                   "Release builds have MCP automation compiled out at build time. "
+                                   "Use a Development package to enable runtime automation."});
+        return result;
+    }
     if (request.action == BuildAction::Clean) {
         progress(0.0F, "Cleaning package");
         PackageStager stager;
@@ -104,25 +112,29 @@ BuildResult BuildService::execute(const BuildRequest& originalRequest) const {
     progress(0.3F, "Locating runtime artifacts");
     RuntimeLocator locator;
     auto located = locator.locate(request.engineRoot, request.runtimeSearchRoot,
-                                  request.configuration);
+                                  request.configuration, request.enableRuntimeAutomation);
     const bool iconRequiresRebuild = !request.applicationIcon.empty();
-    if ((!located.success() || iconRequiresRebuild) && m_runtimeBuilder) {
+    const bool requiresRuntimeBuild = iconRequiresRebuild || request.enableRuntimeAutomation;
+    if ((!located.success() || requiresRuntimeBuild) && m_runtimeBuilder) {
         log(iconRequiresRebuild
                 ? "Application icon requested; rebuilding the game runtime"
-                : "Runtime artifacts are incomplete; attempting runtime build");
+                : (request.enableRuntimeAutomation
+                       ? "Runtime automation requested; rebuilding the game runtime"
+                       : "Runtime artifacts are incomplete; attempting runtime build"));
         const LogCallback builderLog = [&](const std::string& message) { log(message); };
         if (m_runtimeBuilder->build(request.engineRoot, request.configuration,
                                     request.applicationIcon,
-                                    builderLog, request.isCancelled)) {
+                                    builderLog, request.isCancelled,
+                                    request.enableRuntimeAutomation)) {
             located = locator.locate(request.engineRoot, request.runtimeSearchRoot,
-                                     request.configuration);
+                                     request.configuration, request.enableRuntimeAutomation);
         } else if (Cancelled(request)) {
             result.cancelled = true;
             return result;
         } else if (iconRequiresRebuild) {
             const CancellationCallback neverCancel = []() { return false; };
             m_runtimeBuilder->build(request.engineRoot, request.configuration, {},
-                                    log, neverCancel);
+                                    log, neverCancel, false);
             result.problems.push_back(
                 {ProblemSeverity::Error, "BUILD_ICON_REBUILD_FAILED",
                  "The application icon requires rebuilding HephaestusGame",
@@ -134,7 +146,7 @@ BuildResult BuildService::execute(const BuildRequest& originalRequest) const {
         if (iconRequiresRebuild && m_runtimeBuilder) {
             const CancellationCallback neverCancel = []() { return false; };
             m_runtimeBuilder->build(request.engineRoot, request.configuration, {},
-                                    log, neverCancel);
+                                    log, neverCancel, false);
         }
         result.problems.insert(result.problems.end(), located.problems.begin(),
                                located.problems.end());
@@ -160,10 +172,21 @@ BuildResult BuildService::execute(const BuildRequest& originalRequest) const {
         log("Restoring the shared game runtime after icon-specific packaging");
         const CancellationCallback neverCancel = []() { return false; };
         if (!m_runtimeBuilder->build(request.engineRoot, request.configuration, {},
-                                     log, neverCancel)) {
+                                     log, neverCancel, false)) {
             result.problems.push_back(
                 {ProblemSeverity::Warning, "BUILD_ICON_RUNTIME_RESTORE_FAILED",
                  "The package was created, but the shared runtime icon could not be restored",
+                 "Rebuild HephaestusGame before packaging a different project."});
+        }
+    }
+    if (request.enableRuntimeAutomation && m_runtimeBuilder) {
+        log("Restoring the shared game runtime after automation-specific packaging");
+        const CancellationCallback neverCancel = []() { return false; };
+        if (!m_runtimeBuilder->build(request.engineRoot, request.configuration, {},
+                                     log, neverCancel, false)) {
+            result.problems.push_back(
+                {ProblemSeverity::Warning, "BUILD_RUNTIME_AUTOMATION_RESTORE_FAILED",
+                 "The package was created, but the shared runtime could not be restored",
                  "Rebuild HephaestusGame before packaging a different project."});
         }
     }

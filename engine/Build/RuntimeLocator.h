@@ -30,7 +30,8 @@ class RuntimeLocator {
 public:
     RuntimeLocationResult locate(const std::filesystem::path& engineRoot,
                                  const std::filesystem::path& searchRoot,
-                                 BuildConfiguration configuration) const;
+                                 BuildConfiguration configuration,
+                                 bool enableRuntimeAutomation = false) const;
 
     static std::filesystem::path discoverEngineRoot(
         const std::filesystem::path& executableDirectory);
@@ -43,7 +44,8 @@ public:
                        BuildConfiguration configuration,
                        const std::filesystem::path& applicationIcon,
                        const LogCallback& log,
-                       const CancellationCallback& cancelled) = 0;
+                       const CancellationCallback& cancelled,
+                       bool enableRuntimeAutomation = false) = 0;
 };
 
 class CMakeRuntimeBuilder final : public RuntimeBuilder {
@@ -54,7 +56,8 @@ public:
                BuildConfiguration configuration,
                const std::filesystem::path& applicationIcon,
                const LogCallback& log,
-               const CancellationCallback& cancelled) override;
+               const CancellationCallback& cancelled,
+               bool enableRuntimeAutomation = false) override;
 
 private:
     std::filesystem::path m_buildDirectory;

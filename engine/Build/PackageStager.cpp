@@ -361,6 +361,10 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
         << "\nwindow_height = " << request.window.height << "\nfullscreen = "
         << (request.window.fullscreen ? "true" : "false") << "\nvsync = "
         << (request.window.vsync ? "true" : "false") << "\n";
+    if (request.enableRuntimeAutomation &&
+        request.configuration == BuildConfiguration::Development) {
+        ini << "\n[Automation]\nenabled = true\nport = 0\n";
+    }
     if (!WriteText(staging / "game.ini", ini.str(), result) ||
         !WriteText(staging / "README.txt",
                    request.productName + " " + request.version +
