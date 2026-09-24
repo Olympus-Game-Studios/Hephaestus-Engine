@@ -8,19 +8,109 @@
       "anchor": "Stretch"
     },
     "style": {
-      "backgroundColor": [0.0, 0.0, 0.0, 0.0]
+      "backgroundColor": [0.03, 0.04, 0.06, 0.92]
     },
     "children": [
       {
         "type": "Text",
-        "id": "status",
+        "id": "title",
         "properties": {
-          "text": "Stage 6 standalone portability",
-          "position": [24, 24]
+          "text": "Portability Test UI",
+          "position": [0, 0],
+          "size": [640, 56],
+          "textAlignment": "Center",
+          "anchor": "TopCenter"
         },
         "style": {
-          "fontSize": 22,
-          "textColor": [1.0, 1.0, 1.0, 1.0]
+          "fontSize": 28,
+          "fontBold": true,
+          "textColor": [0.9, 0.75, 0.3, 1.0]
+        }
+      },
+      {
+        "type": "Panel",
+        "id": "corner_indicator",
+        "properties": {
+          "size": [90, 30],
+          "anchor": "BottomRight"
+        },
+        "style": {
+          "backgroundColor": [0.2, 0.6, 0.9, 0.8]
+        }
+      },
+      {
+        "type": "Panel",
+        "id": "center_panel",
+        "properties": {
+          "size": [420, 220],
+          "anchor": "Center",
+          "padding": [24, 20, 24, 20]
+        },
+        "style": {
+          "backgroundColor": [0.12, 0.13, 0.17, 0.9],
+          "cornerRadius": 10,
+          "borderColor": [1, 1, 1, 0.15],
+          "borderWidth": 1
+        },
+        "children": [
+          {
+            "type": "Text",
+            "id": "status",
+            "properties": {
+              "text": "Stage 6 standalone portability",
+              "size": [372, 28],
+              "textAlignment": "Center"
+            },
+            "style": {
+              "fontSize": 20,
+              "textColor": [1.0, 1.0, 1.0, 1.0]
+            }
+          },
+          {
+            "type": "Button",
+            "id": "btn_click",
+            "properties": {
+              "text": "Click Me",
+              "position": [86, 76],
+              "size": [200, 48]
+            },
+            "normalStyle": {
+              "backgroundColor": [0.2, 0.55, 0.85, 1.0],
+              "cornerRadius": 8,
+              "textColor": [1, 1, 1, 1],
+              "fontSize": 18,
+              "fontBold": true
+            },
+            "hoveredStyle": {
+              "backgroundColor": [0.3, 0.65, 0.95, 1.0],
+              "cornerRadius": 8,
+              "borderColor": [1, 1, 1, 0.3],
+              "borderWidth": 2
+            }
+          },
+          {
+            "type": "Image",
+            "id": "image",
+            "properties": {
+              "position": [146, 140],
+              "size": [128, 48],
+              "imageId": "assets/textures/portability.ppm",
+              "imageScaleMode": "Fit"
+            }
+          }
+        ]
+      },
+      {
+        "type": "Panel",
+        "id": "semi_transparent",
+        "properties": {
+          "size": [260, 36],
+          "anchor": "BottomCenter",
+          "opacity": 0.4
+        },
+        "style": {
+          "backgroundColor": [0.5, 0.2, 0.7, 1.0],
+          "cornerRadius": 6
         }
       }
     ]

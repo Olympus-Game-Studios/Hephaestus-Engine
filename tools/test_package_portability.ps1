@@ -11,7 +11,10 @@ if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
     $BuildDirectory = Join-Path $repoRoot "build\$Configuration"
 }
 $buildTool = Join-Path $BuildDirectory "tools\HephaestusBuild.exe"
-$runtimeRoot = Split-Path -Parent (Split-Path -Parent $buildTool)
+# The runtime locator only probes roots derived from the engine SOURCE tree
+# (engineRoot/build/<config>). Passing build/<config> directly (as the older
+# harness did) leaves the locator with no candidate roots, so the source root
+# is required here. (Audit: TEST_AND_BUILD_REPORT.md / SYSTEM_AUDIT.md)
 $project = Join-Path $repoRoot "engine\Tests\Fixtures\PackagePortabilityProject"
 
 if (-not (Test-Path $buildTool -PathType Leaf)) {
@@ -32,7 +35,7 @@ try {
         --project $project `
         --config Release `
         --output $packageRoot `
-        --engine-root $runtimeRoot
+        --engine-root $repoRoot
     if ($LASTEXITCODE -ne 0) {
         throw "HephaestusBuild failed with exit code $LASTEXITCODE"
     }
@@ -48,6 +51,7 @@ try {
         "assets\textures\portability.ppm",
         "assets\prefabs\PortabilityLamp.hpprefab",
         "assets\ui\Portability.hui",
+        "assets\fonts\Roboto-Regular.ttf",
         "assets\audio\portability.wav",
         "scripts\portability.lua",
         "shaders",
@@ -94,6 +98,14 @@ try {
         "Scene loaded successfully",
         "STAGE6_LUA_AWAKE",
         "STAGE6_HUI_CONTROLLER_LOADED",
+        "STAGE6_HUI_LOADED",
+        "[HUI] Vulkan UI backend initialized",
+        "[HUI] UI pipeline created",
+        "[HUI] Font atlas created",
+        "STAGE6_HUI_DRAW_COMMANDS",
+        "STAGE6_HUI_WIDGET_BUTTON true",
+        "STAGE6_HUI_WIDGET_IMAGE true",
+        "STAGE6_HUI_WIDGET_TITLE true",
         "STAGE6_PORTABILITY_COMPLETE",
         "Shutting down..."
     )) {
