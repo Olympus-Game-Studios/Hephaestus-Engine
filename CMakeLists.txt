@@ -224,6 +224,20 @@ add_library(HephaestusInputCore STATIC
 )
 target_include_directories(HephaestusInputCore PUBLIC engine extern extern/glfw/include)
 
+# Transport-independent automation registry and main-thread dispatch core.
+add_library(HephaestusAutomationCore STATIC
+    engine/Automation/AutomationTypes.cpp
+    engine/Automation/AutomationService.cpp
+    engine/Automation/ComponentMetadata.cpp
+    engine/Automation/EntityRef.cpp
+    engine/Automation/ToolRegistry.cpp
+)
+target_include_directories(HephaestusAutomationCore PUBLIC
+    engine
+    extern
+    extern/entt/single_include
+)
+
 # Stable, Qt-independent plugin discovery/lifecycle and mounted-content core.
 add_library(HephaestusPluginCore STATIC
     engine/Assets/AssetMountRegistry.cpp
@@ -1292,6 +1306,16 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME HttpTransportSmoke
         COMMAND HttpTransportSmokeTests
+    )
+
+    add_executable(AutomationServiceTests
+        engine/Tests/AutomationServiceTests.cpp
+    )
+    target_link_libraries(AutomationServiceTests PRIVATE HephaestusAutomationCore)
+    target_include_directories(AutomationServiceTests PRIVATE engine extern)
+    add_test(
+        NAME AutomationService
+        COMMAND AutomationServiceTests
     )
 
     add_executable(LuaExposeScannerTests
