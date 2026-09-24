@@ -74,6 +74,62 @@ std::string ExtractProjectPathArg(int argc, char** argv)
     return {};
 }
 
+struct McpOptions
+{
+    bool enabled = false;
+    int port = 0;
+    std::string error;
+};
+
+McpOptions ParseMcpOptions(int argc, char** argv)
+{
+    McpOptions options;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--mcp") {
+            options.enabled = true;
+            continue;
+        }
+        static constexpr const char* kPortPrefix = "--mcp-port=";
+        if (arg.rfind(kPortPrefix, 0) == 0) {
+            options.enabled = true;
+            const std::string value = arg.substr(std::char_traits<char>::length(kPortPrefix));
+            try {
+                const long parsed = std::stol(value);
+                if (parsed < 0 || parsed > 65535) {
+                    options.error = "MCP port must be in the range 0..65535";
+                    return options;
+                }
+                options.port = static_cast<int>(parsed);
+            } catch (const std::exception&) {
+                options.error = "Invalid MCP port: " + value;
+                return options;
+            }
+            continue;
+        }
+        if (arg == "--mcp-port") {
+            options.enabled = true;
+            if (i + 1 >= argc) {
+                options.error = "Missing value for --mcp-port";
+                return options;
+            }
+            const std::string value = argv[++i];
+            try {
+                const long parsed = std::stol(value);
+                if (parsed < 0 || parsed > 65535) {
+                    options.error = "MCP port must be in the range 0..65535";
+                    return options;
+                }
+                options.port = static_cast<int>(parsed);
+            } catch (const std::exception&) {
+                options.error = "Invalid MCP port: " + value;
+                return options;
+            }
+        }
+    }
+    return options;
+}
+
 void HephaestusQtMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& message)
 {
     std::string line = message.toStdString();
@@ -166,6 +222,13 @@ int RunQtEditor(int argc, char** argv)
         Hephaestus::EngineLog::Info(std::string("Startup project: ") + startupProjectPath);
     }
 
+    const McpOptions mcp = ParseMcpOptions(argc, argv);
+    if (!mcp.error.empty()) {
+        std::cerr << "[QtEditor] Error: " << mcp.error << '\n';
+        std::cerr << "Usage: HephaestusEngine [--mcp [--mcp-port <port>]]\n";
+        return 2;
+    }
+
     try {
         // Qt 6 enables high-DPI scaling by default. Use PassThrough rounding so
         // fractional scale factors (e.g. 125%, 150%) are honoured precisely,
@@ -225,6 +288,13 @@ int RunQtEditor(int argc, char** argv)
         if (!startupProjectPath.empty()) {
             Hephaestus::EngineLog::Info(std::string("Opening project: ") + startupProjectPath);
             mainWindow.OpenProjectFromPath(QString::fromStdString(startupProjectPath));
+        }
+
+        if (mcp.enabled) {
+            Hephaestus::EngineLog::Info("Starting MCP automation endpoint");
+            if (!mainWindow.StartAutomation(mcp.port)) {
+                Hephaestus::EngineLog::Error("Failed to start MCP automation endpoint");
+            }
         }
 
         Hephaestus::EngineLog::Info("Entering Qt event loop");

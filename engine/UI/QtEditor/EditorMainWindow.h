@@ -67,6 +67,14 @@ class SettingsWindow;
 // Forward declare ProjectContext
 class ProjectContext;
 
+namespace Automation {
+class AutomationService;
+class AutomationBackend;
+namespace Mcp {
+class McpServer;
+}
+}
+
 namespace QtEditor {
 
 // Forward declarations
@@ -145,6 +153,11 @@ public:
     bool requestCloseOpenCharacter(const QString& absolutePath);
     EditorPluginHost* PluginHost() const { return m_pluginHost.get(); }
 
+    /// Start the localhost MCP automation endpoint on the given port (0 = ephemeral).
+    bool StartAutomation(int port);
+    /// Stop the automation service and HTTP endpoint before engine teardown.
+    void ShutdownAutomation();
+
 protected:
     void closeEvent(QCloseEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -153,6 +166,11 @@ protected:
 
 private:
      RuntimeUIOverlayWidget* m_runtimeUIOverlay = nullptr;
+
+    /// Editor-host adapter bridging the automation core to editor subsystems.
+    /// Nested so it can reach EditorMainWindow private members; implemented in the .cpp.
+    class EditorAutomationBackend;
+
     void setupMenuBar();
     void setupTopToolbar();
     void setupDockWidgets();
@@ -400,6 +418,12 @@ private:
     // Engine integration
     std::unique_ptr<QtEditorEngine> m_engine;
     
+    // Automation / MCP
+    std::unique_ptr<EditorAutomationBackend> m_automationBackend;
+    std::unique_ptr<Hephaestus::Automation::AutomationService> m_automationService;
+    std::unique_ptr<Hephaestus::Automation::Mcp::McpServer> m_mcpServer;
+    QTimer* m_automationTimer = nullptr;
+
     // Frame timing for status bar
     float m_lastDt = 0.0f;
     int m_frameCount = 0;

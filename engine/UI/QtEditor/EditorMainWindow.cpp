@@ -69,6 +69,10 @@
 #include "../../Assets/CharacterRuntime.h"
 #include "../../Build/BuildService.h"
 #include "../../Plugins/PluginSystem.h"
+#include "../../Automation/AutomationBackend.h"
+#include "../../Automation/AutomationService.h"
+#include "../../Automation/SceneAutomation.h"
+#include "../../Automation/Mcp/McpServer.h"
 #include "AppConfig.h"
 
 #include <QClipboard>
@@ -130,6 +134,8 @@
 #include <iterator>
 #include <filesystem>
 #include <string>
+#include <string_view>
+#include <atomic>
 #include <algorithm>
 #include <unordered_set>
 #include <vector>
@@ -533,6 +539,169 @@ EditorMainWindow::~EditorMainWindow()
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Automation / MCP host
+// ─────────────────────────────────────────────────────────────────────────────
+
+class EditorMainWindow::EditorAutomationBackend final : public Automation::AutomationBackend
+{
+public:
+    explicit EditorAutomationBackend(EditorMainWindow* owner) : m_owner(owner) {}
+
+    Automation::HostMask Host() const noexcept override { return Automation::HostMask::Editor; }
+
+    Automation::SceneAccess ActiveScene() noexcept override
+    {
+        Automation::SceneAccess access;
+        EditorContext* ctx = Context();
+        if (ctx) access.scene = ctx->GetActiveScene();
+        return access;
+    }
+
+    Hephaestus::PlayState GetPlayState() const noexcept override
+    {
+        return m_playState.load(std::memory_order_relaxed);
+    }
+
+    void UpdatePlayState(Hephaestus::PlayState state)
+    {
+        m_playState.store(state, std::memory_order_relaxed);
+    }
+
+    Automation::Json GetProjectInfo() const override
+    {
+        Automation::Json info = Automation::Json::object();
+        if (m_owner->m_projectContext && m_owner->m_projectContext->HasProject()) {
+            info["name"] = m_owner->m_projectContext->GetProjectName();
+            info["path"] = m_owner->m_projectContext->GetProjectFilePath();
+            info["rootDir"] = m_owner->m_projectContext->GetProjectRootDir();
+            info["assetRootDir"] = m_owner->m_projectContext->GetAssetRootDir();
+        }
+        return info;
+    }
+
+    std::string ActiveScenePath() const override
+    {
+        EditorContext* ctx = Context();
+        return ctx ? ctx->GetScenePath() : std::string{};
+    }
+
+    bool SaveActiveScene(std::string& outError) override
+    {
+        EditorContext* ctx = Context();
+        if (!ctx || !ctx->HasActiveScene()) {
+            outError = "No active scene";
+            return false;
+        }
+        if (ctx->GetScenePath().empty()) {
+            outError = "Scene has no path; save it in the editor first";
+            return false;
+        }
+        if (!ctx->SaveScene()) {
+            outError = "Failed to save scene";
+            return false;
+        }
+        return true;
+    }
+
+    bool PrepareEditorMutation(std::string_view label, std::string& outError) override
+    {
+        EditorContext* ctx = Context();
+        if (!ctx || !ctx->HasActiveScene()) {
+            outError = "No active scene";
+            return false;
+        }
+        EditorUndoManager::PushSnapshot(ctx, std::string(label));
+        return true;
+    }
+
+    void CompleteEditorMutation(bool structural) override
+    {
+        EditorContext* ctx = Context();
+        if (!ctx) return;
+        ctx->MarkDirty();
+        m_owner->rebuildSceneVisuals();
+        if (structural) {
+            m_owner->rebuildOutliner();
+        }
+        m_owner->refreshDetailsPanel();
+        m_owner->updateUndoRedoActions();
+    }
+
+    void AbortEditorMutation() override
+    {
+        EditorContext* ctx = Context();
+        if (!ctx) return;
+        std::string error;
+        if (EditorUndoManager::RestoreAndDiscardLastSnapshot(ctx, error)) {
+            m_owner->rebuildSceneVisuals();
+            m_owner->rebuildOutliner();
+            m_owner->refreshDetailsPanel();
+            m_owner->updateUndoRedoActions();
+        }
+    }
+
+private:
+    EditorContext* Context() const
+    {
+        if (!m_owner->m_engine) return nullptr;
+        return m_owner->m_engine->GetEditorContext();
+    }
+
+    EditorMainWindow* m_owner;
+    std::atomic<Hephaestus::PlayState> m_playState{Hephaestus::PlayState::Editor};
+};
+
+bool EditorMainWindow::StartAutomation(int port)
+{
+    if (m_automationService) return true;
+
+    m_automationBackend = std::make_unique<EditorAutomationBackend>(this);
+    m_automationService = std::make_unique<Automation::AutomationService>(*m_automationBackend);
+    Automation::RegisterSceneAutomation(*m_automationService);
+    m_mcpServer = std::make_unique<Automation::Mcp::McpServer>(*m_automationService);
+    if (!m_mcpServer->Start(port)) {
+        EngineLog::Error("MCP endpoint failed to start");
+        m_mcpServer.reset();
+        m_automationService.reset();
+        m_automationBackend.reset();
+        return false;
+    }
+
+    m_automationTimer = new QTimer(this);
+    m_automationTimer->setInterval(16);
+    connect(m_automationTimer, &QTimer::timeout, this, [this]() {
+        if (m_automationService && m_automationBackend) {
+            if (m_engine) {
+                m_automationBackend->UpdatePlayState(m_engine->GetPlayState());
+            }
+            m_automationService->Tick();
+        }
+    });
+    m_automationTimer->start();
+
+    const std::string endpoint = "http://127.0.0.1:" + std::to_string(m_mcpServer->Port()) + "/mcp";
+    EngineLog::Info("MCP automation endpoint listening on " + endpoint);
+    std::cout << "[MCP] " << endpoint << std::endl;
+    return true;
+}
+
+void EditorMainWindow::ShutdownAutomation()
+{
+    if (m_automationTimer) {
+        m_automationTimer->stop();
+    }
+    if (m_automationService) {
+        m_automationService->Shutdown();
+    }
+    if (m_mcpServer) {
+        m_mcpServer->Stop();
+    }
+    m_mcpServer.reset();
+    m_automationService.reset();
+    m_automationBackend.reset();
+}
+
 bool EditorMainWindow::StartEngine()
 {
     EngineLog::Info("EditorMainWindow::StartEngine");
@@ -605,6 +774,9 @@ void EditorMainWindow::closeEvent(QCloseEvent* event)
     if (m_characterEditorManager) {
         m_characterEditorManager->CloseAll();
     }
+
+    // Stop the automation endpoint before tearing down the engine.
+    ShutdownAutomation();
 
     // Stop and cleanup the engine before closing
     if (m_engine) {

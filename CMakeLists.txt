@@ -556,7 +556,7 @@ elseif(APPLE)
 endif()
 
 target_include_directories(HephaestusEngine PRIVATE engine "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore HephaestusInputCore HephaestusPluginCore ufbx)
+target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore HephaestusInputCore HephaestusPluginCore HephaestusAutomationCore ufbx)
 if(LUA_FOUND)
     if(TARGET Lua::Lua)
         target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt Lua::Lua)

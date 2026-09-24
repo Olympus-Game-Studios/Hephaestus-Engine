@@ -18,6 +18,8 @@ int main(int argc, char *argv[]) {
       std::cout << "Usage: HephaestusEngine [options]\n";
       std::cout << "Options:\n";
       std::cout << "  --help, -h             Show this help message\n";
+      std::cout << "  --mcp                  Enable the MCP automation endpoint (localhost only)\n";
+      std::cout << "  --mcp-port <port>      Port for the MCP endpoint (0 picks an ephemeral port)\n";
       Hephaestus::EngineLog::Shutdown();
       return 0;
     }
