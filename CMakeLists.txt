@@ -231,6 +231,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/AutomationService.cpp
     engine/Automation/ComponentMetadata.cpp
     engine/Automation/EntityRef.cpp
+    engine/Automation/SceneAutomation.cpp
     engine/Automation/ToolRegistry.cpp
     engine/Automation/Mcp/McpHttpTypes.cpp
     engine/Automation/Mcp/McpJsonRpc.cpp
@@ -1337,6 +1338,30 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME McpProtocol
         COMMAND McpProtocolTests
+    )
+
+    add_executable(AutomationSceneTests
+        engine/Tests/AutomationSceneTests.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_link_libraries(AutomationSceneTests PRIVATE HephaestusAutomationCore)
+    target_include_directories(AutomationSceneTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME AutomationScene
+        COMMAND AutomationSceneTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
     add_executable(LuaExposeScannerTests
