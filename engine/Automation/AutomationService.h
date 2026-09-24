@@ -57,6 +57,8 @@ public:
 
     [[nodiscard]] bool IsAcceptingCalls() const noexcept { return m_Accepting.load(); }
     [[nodiscard]] std::uint64_t FrameIndex() const noexcept { return m_FrameIndex; }
+    [[nodiscard]] HostMask CurrentHost() const noexcept { return m_Backend.Host(); }
+    [[nodiscard]] PlayState CurrentPlayState() const noexcept { return m_Backend.GetPlayState(); }
 
 private:
     struct PendingCall {

@@ -38,6 +38,7 @@ struct ToolDefinition {
     std::optional<Json> outputSchema;
     HostMask hostMask = HostMask::None;
     PlayRequirement playRequirement = PlayRequirement::Any;
+    std::vector<std::string> requiredClientCapabilities;
     bool mutatesProject = false;
     ToolHandler handler;
 };

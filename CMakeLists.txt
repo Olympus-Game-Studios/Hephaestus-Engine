@@ -156,6 +156,7 @@ option(HEPHAESTUS_BUILD_GAME "Build the standalone game runtime (HephaestusGame.
 option(HEPHAESTUS_GAME_SCRIPTING "Enable Lua scripting in game runtime" ON)
 option(HEPHAESTUS_USE_QT "Enable Qt-based editor UI" ON)
 option(HEPHAESTUS_USE_SHARED_ASSETS "Use shared runtime/editor/launcher asset folders" ON)
+option(HEPHAESTUS_MCP_LEGACY_COMPAT "Enable MCP 2025-11-25 compatibility" ON)
 
 # Qt (Windows) - use C:\Qt as a hint for discovery
 set(HEPHAESTUS_QT_ROOT "C:/Qt" CACHE PATH "Root path to Qt installation")
@@ -231,11 +232,21 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/ComponentMetadata.cpp
     engine/Automation/EntityRef.cpp
     engine/Automation/ToolRegistry.cpp
+    engine/Automation/Mcp/McpHttpTypes.cpp
+    engine/Automation/Mcp/McpJsonRpc.cpp
+    engine/Automation/Mcp/McpToolSchema.cpp
+    engine/Automation/Mcp/McpSession.cpp
+    engine/Automation/Mcp/McpLegacySession.cpp
+    engine/Automation/Mcp/McpHttpTransport.cpp
+    engine/Automation/Mcp/McpServer.cpp
 )
 target_include_directories(HephaestusAutomationCore PUBLIC
     engine
     extern
     extern/entt/single_include
+)
+target_compile_definitions(HephaestusAutomationCore PUBLIC
+    HEPHAESTUS_MCP_LEGACY_COMPAT=$<BOOL:${HEPHAESTUS_MCP_LEGACY_COMPAT}>
 )
 
 # Stable, Qt-independent plugin discovery/lifecycle and mounted-content core.
@@ -1316,6 +1327,16 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME AutomationService
         COMMAND AutomationServiceTests
+    )
+
+    add_executable(McpProtocolTests
+        engine/Tests/McpProtocolTests.cpp
+    )
+    target_link_libraries(McpProtocolTests PRIVATE HephaestusAutomationCore)
+    target_include_directories(McpProtocolTests PRIVATE engine extern)
+    add_test(
+        NAME McpProtocol
+        COMMAND McpProtocolTests
     )
 
     add_executable(LuaExposeScannerTests
