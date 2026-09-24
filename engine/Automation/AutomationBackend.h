@@ -36,6 +36,49 @@ public:
     }
     virtual void CompleteEditorMutation(bool) {}
     virtual void AbortEditorMutation() {}
+
+    // ── Play Mode control (editor host) ────────────────────────────────────
+
+    virtual bool StartPlayMode(std::string& outError)
+    {
+        outError = "Play Mode control is unavailable for this host";
+        return false;
+    }
+    virtual bool StopPlayMode(std::string& outError)
+    {
+        outError = "Play Mode control is unavailable for this host";
+        return false;
+    }
+    virtual bool TogglePause(std::string& outError)
+    {
+        outError = "Play Mode control is unavailable for this host";
+        return false;
+    }
+    virtual bool StepFrames(std::uint32_t count, float fixedDt, std::string& outError)
+    {
+        outError = "Deterministic frame stepping is unavailable for this host";
+        return false;
+    }
+
+    // ── Input injection (play mode) ────────────────────────────────────────
+
+    virtual bool SetActionOverride(std::string_view action, float value,
+                                   std::string& outError)
+    {
+        outError = "Input injection is unavailable for this host";
+        return false;
+    }
+    virtual bool SetAxisOverride(std::string_view axis, float value,
+                                 std::string& outError)
+    {
+        outError = "Input injection is unavailable for this host";
+        return false;
+    }
+    virtual bool ClearInputOverrides(std::string& outError)
+    {
+        outError = "Input injection is unavailable for this host";
+        return false;
+    }
 };
 
 } // namespace Hephaestus::Automation

@@ -3255,6 +3255,65 @@ Hephaestus::PlayState QtEditorEngine::GetPlayState() const
     return m_playModeManager.GetState();
 }
 
+void QtEditorEngine::runSimulationFrame(float dt)
+{
+    populateGameplayInput();
+    if (m_audioEngine && m_editorContext.HasActiveScene()) {
+        UpdateAudioSourcesForScene(*m_editorContext.GetActiveScene(), *m_audioEngine);
+    }
+    if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
+        try {
+            Scene* activeScene = m_editorContext.GetActiveScene();
+            m_joltPhysicsSystem->SetEnabled(true);
+            m_joltPhysicsSystem->Update(*activeScene, dt);
+        } catch (const std::exception& e) {
+            std::cerr << "[QtEditorEngine] Physics update error (step): " << e.what() << "\n";
+            m_physicsInitialized = false;
+        }
+    }
+    m_playModeManager.StepTick(dt);
+    syncViewportCursorCapture();
+
+    RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
+    if (runtimeUI && runtimeUI->system && runtimeUI->context && runtimeUI->renderer) {
+        runtimeUI->context->SetViewportSize({
+            static_cast<float>(m_swapchain->extent.width),
+            static_cast<float>(m_swapchain->extent.height)
+        });
+        runtimeUI->context->SetDeltaTimeSeconds(dt);
+        runtimeUI->system->Update(*runtimeUI->context);
+        runtimeUI->renderer->Reset();
+        runtimeUI->system->Render(*runtimeUI->renderer);
+    }
+}
+
+bool QtEditorEngine::StepFrames(std::uint32_t count, float fixedDt, std::string& outError)
+{
+    if (m_playModeManager.IsEditor()) {
+        outError = "Play Mode is not active";
+        return false;
+    }
+    if (m_stepping) {
+        outError = "A stepping sequence is already in progress";
+        return false;
+    }
+    if (fixedDt <= 0.0f) {
+        outError = "fixedDt must be positive";
+        return false;
+    }
+
+    m_stepping = true;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        runSimulationFrame(fixedDt);
+    }
+    m_stepping = false;
+
+    // Reset the frame timer so the next free-running tick applies a normal dt
+    // instead of a large delta accumulated across the stepped frames.
+    m_lastFrameTime = m_frameTimer.elapsed() / 1000.0f;
+    return true;
+}
+
 bool QtEditorEngine::IsPlaying() const
 {
     return !m_playModeManager.IsEditor();

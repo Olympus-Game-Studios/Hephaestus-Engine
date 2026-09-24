@@ -231,6 +231,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/AutomationService.cpp
     engine/Automation/ComponentMetadata.cpp
     engine/Automation/EntityRef.cpp
+    engine/Automation/PlayAutomation.cpp
     engine/Automation/SceneAutomation.cpp
     engine/Automation/ToolRegistry.cpp
     engine/Automation/Mcp/McpHttpTypes.cpp
@@ -1338,6 +1339,20 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME McpProtocol
         COMMAND McpProtocolTests
+    )
+
+    add_executable(AutomationPlayTests
+        engine/Tests/AutomationPlayTests.cpp
+    )
+    target_link_libraries(AutomationPlayTests PRIVATE HephaestusAutomationCore)
+    target_include_directories(AutomationPlayTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME AutomationPlay
+        COMMAND AutomationPlayTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
     add_executable(AutomationSceneTests

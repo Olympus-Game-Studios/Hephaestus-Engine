@@ -72,6 +72,7 @@
 #include "../../Automation/AutomationBackend.h"
 #include "../../Automation/AutomationService.h"
 #include "../../Automation/SceneAutomation.h"
+#include "../../Automation/PlayAutomation.h"
 #include "../../Automation/Mcp/McpServer.h"
 #include "AppConfig.h"
 
@@ -130,6 +131,7 @@
 #include <QUrl>
 #include <iostream>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <iterator>
 #include <filesystem>
@@ -641,6 +643,75 @@ public:
         }
     }
 
+    bool StartPlayMode(std::string& outError) override
+    {
+        if (!m_owner->m_engine) {
+            outError = "Engine is unavailable";
+            return false;
+        }
+        m_owner->m_engine->StartPlayMode();
+        return true;
+    }
+
+    bool StopPlayMode(std::string& outError) override
+    {
+        if (!m_owner->m_engine) {
+            outError = "Engine is unavailable";
+            return false;
+        }
+        m_owner->m_engine->StopPlayMode();
+        return true;
+    }
+
+    bool TogglePause(std::string& outError) override
+    {
+        if (!m_owner->m_engine) {
+            outError = "Engine is unavailable";
+            return false;
+        }
+        m_owner->m_engine->TogglePause();
+        return true;
+    }
+
+    bool StepFrames(std::uint32_t count, float fixedDt, std::string& outError) override
+    {
+        if (!m_owner->m_engine) {
+            outError = "Engine is unavailable";
+            return false;
+        }
+        return m_owner->m_engine->StepFrames(count, fixedDt, outError);
+    }
+
+    bool SetActionOverride(std::string_view action, float value, std::string& outError) override
+    {
+        if (!m_owner->m_engine) {
+            outError = "Engine is unavailable";
+            return false;
+        }
+        m_owner->m_engine->GetGameplayInput().SetActionOverride(std::string(action), value);
+        return true;
+    }
+
+    bool SetAxisOverride(std::string_view axis, float value, std::string& outError) override
+    {
+        if (!m_owner->m_engine) {
+            outError = "Engine is unavailable";
+            return false;
+        }
+        m_owner->m_engine->GetGameplayInput().SetAxisOverride(std::string(axis), value);
+        return true;
+    }
+
+    bool ClearInputOverrides(std::string& outError) override
+    {
+        if (!m_owner->m_engine) {
+            outError = "Engine is unavailable";
+            return false;
+        }
+        m_owner->m_engine->GetGameplayInput().ClearOverrides();
+        return true;
+    }
+
 private:
     EditorContext* Context() const
     {
@@ -659,6 +730,7 @@ bool EditorMainWindow::StartAutomation(int port)
     m_automationBackend = std::make_unique<EditorAutomationBackend>(this);
     m_automationService = std::make_unique<Automation::AutomationService>(*m_automationBackend);
     Automation::RegisterSceneAutomation(*m_automationService);
+    Automation::RegisterPlayAutomation(*m_automationService);
     m_mcpServer = std::make_unique<Automation::Mcp::McpServer>(*m_automationService);
     if (!m_mcpServer->Start(port)) {
         EngineLog::Error("MCP endpoint failed to start");

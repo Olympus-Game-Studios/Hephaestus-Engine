@@ -17,7 +17,9 @@
 #include <QObject>
 #include <QTimer>
 #include <QElapsedTimer>
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -249,6 +251,22 @@ public:
     Hephaestus::PlayModeManager* GetPlayModeManager() { return &m_playModeManager; }
 
     /**
+     * @brief Get the gameplay InputSystem for automation input injection.
+     */
+    Hephaestus::InputSystem& GetGameplayInput() { return m_gameplayInput; }
+
+    /**
+     * @brief Advance exactly @p count simulation frames with a fixed @p fixedDt.
+     *
+     * Valid only while Play Mode is active (Playing or Paused). Runs the full
+     * simulation body (input, physics, scripts, runtime UI) without rendering.
+     * From Paused the state machine remains Paused (classic single-step). The
+     * frame timer is reset afterward so the next free-running tick applies a
+     * normal delta time.
+     */
+    bool StepFrames(std::uint32_t count, float fixedDt, std::string& outError);
+
+    /**
      * @brief Upload a mesh to the GPU and add it to the mesh library.
      * @return Mesh handle, or InvalidMesh on failure.
      */
@@ -308,6 +326,7 @@ private:
     void populateGameplayInput();
     void loadProjectInputMap();
     void syncViewportCursorCapture();
+    void runSimulationFrame(float dt);
     void captureGizmoMultiDragWorldStarts(Scene* scene);
     void clearGizmoMultiDragWorldStarts();
     void selectEntitiesInViewportRect(float x0, float y0, float x1, float y1,
@@ -390,6 +409,7 @@ private:
     float m_lastFrameTime = 0.0f;
     bool m_renderInProgress = false;
     bool m_reportedFatalRenderError = false;
+    bool m_stepping = false;
 
     // Swapchain state
     bool m_swapchainNeedsRecreation = false;
