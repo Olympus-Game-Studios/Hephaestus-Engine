@@ -122,6 +122,19 @@ int main()
     auto saved = Call(service, "scene.save");
     ok &= Check(saved.Ok() && backend.saves == 1, "Scene save delegates to the host subsystem");
 
+    auto prefabInfo = Call(service, "prefab.get_info", {{"entity", secondRef}});
+    ok &= Check(prefabInfo.Ok() && prefabInfo.value["isPrefabNode"] == false &&
+                    prefabInfo.value["isPrefabInstance"] == false,
+                "prefab.get_info reports plain entities as non-prefab");
+    auto prefabRevert = Call(service, "prefab.revert", {{"entity", secondRef}});
+    ok &= Check(!prefabRevert.Ok() &&
+                    prefabRevert.error->code == Automation::ErrorCode::ToolUnavailable,
+                "prefab.revert rejects non-prefab entities");
+    auto prefabOverrides = Call(service, "prefab.list_overrides", {{"entity", secondRef}});
+    ok &= Check(!prefabOverrides.Ok() &&
+                    prefabOverrides.error->code == Automation::ErrorCode::ToolUnavailable,
+                "prefab.list_overrides rejects non-prefab entities");
+
     auto destroyed = Call(service, "entity.destroy", {{"entity", firstRef}});
     ok &= Check(destroyed.Ok(), "Entity destruction uses Scene");
     auto stale = Call(service, "entity.get", {{"entity", firstRef}});

@@ -481,6 +481,134 @@ void RegisterSceneAutomation(AutomationService& service)
             context.Backend().CompleteEditorMutation(false);
             return ToolResult::Success({{"updated", true}, {"type", type}});
         }, true));
+
+    const Json prefabEntitySchema = ObjectSchema(
+        {{"entity", {{"type", "string"}}},
+         {"component", {{"type", "string"}}},
+         {"property", {{"type", "string"}}}},
+        Json::array({"entity"}));
+
+    registerTool(Definition("prefab.get_info", "Report prefab-instance information for an entity.",
+        entityReferenceSchema, [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto resolved = Resolve(context, arguments, failure);
+            if (!resolved) return failure;
+            Entity entity(resolved->handle, resolved->scene);
+            Json info;
+            const auto* node = resolved->scene->GetRegistry().try_get<PrefabNodeComponent>(resolved->handle);
+            info["isPrefabNode"] = node != nullptr;
+            if (node) {
+                info["instanceId"] = node->instanceId;
+                info["nodeId"] = node->nodeId;
+                info["isRoot"] = node->isRoot;
+            }
+            const auto* instance = PrefabOverrideSystem::TryGetInstance(*resolved->scene, entity);
+            info["isPrefabInstance"] = instance != nullptr;
+            if (instance) {
+                info["prefabPath"] = instance->prefabPath;
+                info["instanceId"] = instance->instanceId;
+                info["missingPrefab"] = instance->missingPrefab;
+                if (instance->missingPrefab) info["missingReason"] = instance->missingReason;
+            }
+            return ToolResult::Success(std::move(info));
+        }));
+
+    registerTool(Definition("prefab.list_overrides", "List overrides on an entity's prefab instance.",
+        entityReferenceSchema, [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto resolved = Resolve(context, arguments, failure);
+            if (!resolved) return failure;
+            Entity entity(resolved->handle, resolved->scene);
+            const auto* instance = PrefabOverrideSystem::TryGetInstance(*resolved->scene, entity);
+            if (!instance) {
+                return Failure(ErrorCode::ToolUnavailable, "Entity is not a prefab instance");
+            }
+            Json overrides = Json::array();
+            for (const auto& ref : PrefabOverrideSystem::ListOverrides(*instance)) {
+                overrides.push_back({{"nodeId", ref.nodeId},
+                                     {"component", ref.component},
+                                     {"property", ref.property}});
+            }
+            return ToolResult::Success({{"overrides", std::move(overrides)}});
+        }));
+
+    registerTool(Definition("prefab.revert", "Revert prefab overrides on an entity.",
+        prefabEntitySchema, [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto resolved = Resolve(context, arguments, failure);
+            if (!resolved) return failure;
+            Entity entity(resolved->handle, resolved->scene);
+            if (!entity.HasComponent<PrefabNodeComponent>()) {
+                return Failure(ErrorCode::ToolUnavailable, "Entity is not a prefab node");
+            }
+            const std::string component = arguments.value("component", "");
+            const std::string property = arguments.value("property", "");
+            ToolResult mutationFailure;
+            if (!BeginMutation(context, "Revert Prefab Override", mutationFailure)) return mutationFailure;
+            bool reverted = false;
+            if (!property.empty()) {
+                reverted = PrefabOverrideSystem::RevertProperty(*resolved->scene, entity, component, property);
+            } else if (!component.empty()) {
+                reverted = PrefabOverrideSystem::RevertComponent(*resolved->scene, entity, component);
+            } else {
+                reverted = PrefabOverrideSystem::RevertNode(*resolved->scene, entity);
+            }
+            if (!reverted) {
+                context.Backend().AbortEditorMutation();
+                return Failure(ErrorCode::InternalError, "Prefab revert failed");
+            }
+            context.Backend().CompleteEditorMutation(true);
+            return ToolResult::Success({{"reverted", true}});
+        }, true));
+
+    registerTool(Definition("prefab.unpack", "Unpack a prefab instance into plain entities.",
+        entityReferenceSchema, [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto resolved = Resolve(context, arguments, failure);
+            if (!resolved) return failure;
+            Entity entity(resolved->handle, resolved->scene);
+            if (!entity.HasComponent<PrefabInstanceComponent>()) {
+                return Failure(ErrorCode::ToolUnavailable, "Entity is not a prefab instance root");
+            }
+            ToolResult mutationFailure;
+            if (!BeginMutation(context, "Unpack Prefab", mutationFailure)) return mutationFailure;
+            if (!PrefabOverrideSystem::UnpackInstance(*resolved->scene, entity)) {
+                context.Backend().AbortEditorMutation();
+                return Failure(ErrorCode::InternalError, "Prefab unpack failed");
+            }
+            context.Backend().CompleteEditorMutation(true);
+            return ToolResult::Success({{"unpacked", true}});
+        }, true));
+
+    registerTool(Definition("prefab.apply", "Apply overrides back to the source prefab asset.",
+        prefabEntitySchema, [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto resolved = Resolve(context, arguments, failure);
+            if (!resolved) return failure;
+            Entity entity(resolved->handle, resolved->scene);
+            if (!entity.HasComponent<PrefabNodeComponent>()) {
+                return Failure(ErrorCode::ToolUnavailable, "Entity is not a prefab node");
+            }
+            const std::string component = arguments.value("component", "");
+            const std::string property = arguments.value("property", "");
+            ToolResult mutationFailure;
+            if (!BeginMutation(context, "Apply To Prefab", mutationFailure)) return mutationFailure;
+            std::string error;
+            bool applied = false;
+            if (!property.empty()) {
+                applied = PrefabOverrideSystem::ApplyPropertyToPrefab(*resolved->scene, entity, component, property, error);
+            } else if (!component.empty()) {
+                applied = PrefabOverrideSystem::ApplyComponentToPrefab(*resolved->scene, entity, component, error);
+            } else {
+                applied = PrefabOverrideSystem::ApplyNodeToPrefab(*resolved->scene, entity, error);
+            }
+            if (!applied) {
+                context.Backend().AbortEditorMutation();
+                return Failure(ErrorCode::ToolUnavailable, std::move(error));
+            }
+            context.Backend().CompleteEditorMutation(true);
+            return ToolResult::Success({{"applied", true}});
+        }, true));
 }
 
 } // namespace Hephaestus::Automation
