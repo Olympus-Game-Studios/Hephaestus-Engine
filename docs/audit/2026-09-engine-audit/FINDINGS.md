@@ -3,6 +3,13 @@
 **Date:** 2026-09-24 · **Revision:** `26e3326` (main) · **Version stamp:** 2026.9.10
 **Method:** Read-only audit. Builds, tests, the editor, and a packaged game were run to verify claims. See the full per-topic documents in this directory (`SYSTEM_AUDIT.md`, `FEATURE_GAPS.md`, `TECHNICAL_DEBT.md`, `ROADMAP.md`, `TEST_AND_BUILD_REPORT.md`, `ENGINE_STATE.md`).
 
+> **Post-audit resolution (Stage 8A):** the **Runtime UI** gap below has been
+> **resolved** — `HephaestusGame` now renders HUI through a Vulkan overlay backend
+> (primitive geometry, text via an stb_truetype atlas, images, alpha, clipping,
+> anchors, resize), verified by the relocated packaged-game portability gate and
+> the headless `HUIRendererTests`. The historical finding is preserved below;
+> see `Documentation/Features/HEPHAESTUS_UI_RUNTIME_GUIDE.md` for the current state.
+
 ---
 
 ## 1. What Hephaestus Is Today

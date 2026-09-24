@@ -1,18 +1,18 @@
 # HephaestusUI Runtime UI Guide
 
-This document covers the first production-facing version of Hephaestus Engine's retained-mode runtime UI system.
+This document covers the production-facing version of Hephaestus Engine's retained-mode runtime UI system (HephaestusUI / HUI), including the packaged Vulkan renderer backend introduced in Stage 8A.
 
 Scope:
 - Runtime/game UI only (HUDs, menus, inventories, overlays)
 - Renderer-agnostic command generation
 - Engine-native input routing and widget tree management
 
-Out of scope for this version:
+Out of scope:
 - Qt editor UI replacement
 - HTML/CSS/WebView UI
 - Controller navigation graph
 - Timeline/animation system
-- JSON screen assets and visual authoring pipeline
+- Scroll lists / sliders / text inputs (separate milestones)
 
 ## 1. Design Goals
 
@@ -21,8 +21,10 @@ HephaestusUI is built as a retained-mode widget tree:
 - Layout is resolved each frame from parent to children
 - Widgets emit draw commands instead of issuing GPU calls directly
 - Input is hit-tested against current layout and dispatched as events
+- Rendering is backend-agnostic: the same `.hui`/Lua-authored screen renders through
+  the Qt editor overlay (Editor Play) and the Vulkan packaged-game backend
 
-Why retained mode here:
+Why retained mode:
 - Better fit for long-lived gameplay UI state
 - Easier Lua/runtime mutation (create/modify widgets over time)
 - Clear path to theme assets, serialization, and tooling
@@ -38,10 +40,11 @@ Core files:
 - `UIContext.h/.cpp`: Viewport and queued input events for a frame
 - `UIElement.h/.cpp`: Base widget node and tree behavior
 - `UILayout.h/.cpp`: Vertical/horizontal container layout helpers
-- `UIRenderer.h/.cpp`: Draw command buffer
+- `UIRenderer.h/.cpp`: Draw command buffer (renderer-independent)
 - `UIInputRouter.h/.cpp`: Hover/press/release/click dispatch
 - `UIStyle.h`: Primitive UI types and style struct
 - `UIFont.h/.cpp`: Font metadata registry scaffold
+- `HUIAsset.h/.cpp`: `.hui` JSON asset parsing, building, serialization
 
 Widgets:
 - `UICanvas`: Absolute layout root/container
@@ -51,6 +54,14 @@ Widgets:
 - `UIButton`: Stateful button with internal text child
 - `UIVerticalBox`: Vertical layout container
 - `UIHorizontalBox`: Horizontal layout container
+- `UIGridLayout`: Grid layout container
+
+Rendering backends (`engine/UI/HephaestusUI/Rendering/`):
+- `HUIRenderBackend.h`: Renderer-independent `IHUIRenderBackend` interface
+- `HUICommon.h`: Backend-agnostic vertex/batch geometry types (`UIVertex`, `UIBatch`)
+- `HUIGeometryBuilder.h/.cpp`: Converts the draw command list into batched quads (CPU)
+- `UIFontAtlas.h/.cpp`: CPU glyph rasterization (stb_truetype), atlas packing, text layout
+- `VulkanHUIRenderer.h/.cpp`: Vulkan backend used by packaged `HephaestusGame`
 
 ## 3. Object Model
 
@@ -63,12 +74,12 @@ Typical hierarchy:
 `UIElement` supports:
 - Parent pointer and owned children
 - Local position and size
-- Visibility and opacity
+- Visibility and opacity (inherited multiplicatively down the tree)
 - Padding and margin
-- Anchor metadata (`UIAnchor`) for future expansion
+- Anchor presets (`UIAnchorPreset`: TopLeft/TopCenter/TopRight/CenterLeft/Center/CenterRight/BottomLeft/BottomCenter/BottomRight/Stretch)
 - Z-order sorting for draw and hit test
-- Optional clipping
-- Optional style pointer
+- Optional clipping (pushed as clip rects)
+- Optional style pointer / owned style
 
 ### 3.2 Lifecycle
 
@@ -78,44 +89,39 @@ Per frame:
 3. Each active `UIScreen` routes queued input and updates layout
 4. `UIRenderer::Reset()`
 5. `UISystem::Render(renderer)`
-6. Renderer backend consumes `renderer.GetDrawCommands()`
+6. The active render backend consumes `renderer.GetDrawCommands()`
 
 ## 4. Layout Behavior
 
-### 4.1 Absolute (Canvas)
-
-`UICanvas` keeps child local position/size as-is (absolute placement).
-
-### 4.2 Vertical/Horizontal Containers
-
-`UIVerticalBox` and `UIHorizontalBox`:
-- Iterate visible children in insertion order
-- Apply spacing
-- Respect child margins
-- Auto-fill one axis when child size is `0` on that axis
-
-Notes:
-- This v1 is intentionally simple and deterministic
-- No flex grow/shrink or min/max constraints yet
+- Coordinates are **viewport pixels** with a **top-left origin, y growing downward**.
+- `UICanvas` keeps child local position/size as-is (absolute placement).
+- `UIVerticalBox` / `UIHorizontalBox`: iterate visible children, apply spacing and
+  margins, auto-fill one axis when child size is `0` on that axis.
+- `UIGridLayout`: fixed-column grid with per-cell alignment.
+- Anchors resolve child position against the parent's content rect; `Stretch` fills
+  the available space.
+- Layout is resolution-independent: screens relayout automatically when the
+  viewport size changes (window resize, fullscreen, different display resolution).
 
 ## 5. Draw Command Contract
 
 Widgets do not render directly. They emit commands into `UIRenderer`:
-- `UIDrawRectCommand`
-- `UIDrawImageCommand`
-- `UIDrawTextCommand`
-- `UIPushClipRectCommand`
-- `UIPopClipRectCommand`
+- `UIDrawRectCommand` (fill, border, corner radius, optional background image)
+- `UIDrawImageCommand` (image + tint + scale mode)
+- `UIDrawTextCommand` (text, font family/size/weight, alignment, wrap, shadow)
+- `UIPushClipRectCommand` / `UIPopClipRectCommand` (nested clipping)
 
-Backend responsibility:
-- Sort/submit according to command order and z
+The command stream is already in paint order (parent before children, siblings
+sorted by ascending z-order). Backend responsibility:
+- Convert commands into batched textured quads
 - Resolve `imageId` to textures
-- Resolve font family and glyphs
-- Apply clip stack semantics
+- Resolve font family and glyphs (atlas caching)
+- Apply clip stack semantics (scissor rectangles)
+- Blend correctly (premultiplied alpha)
 
 ## 6. Input Model
 
-`UIInputRouter` currently handles:
+`UIInputRouter` handles:
 - Mouse move
 - Mouse press
 - Mouse release
@@ -128,6 +134,9 @@ Backend responsibility:
 - `OnPressed`
 - `OnReleased`
 - `OnClicked`
+
+Hit-testing uses the same layout rects that the renderer draws, so a button
+visually and functionally occupies the same region.
 
 ## 7. Cursor Mode (Input Ownership)
 
@@ -156,9 +165,8 @@ local mode = UI.getCursorMode()   -- "ui" or "game"
 ### Host Integration
 
 When `CursorMode` changes the host (Qt editor or GLFW runtime) must react:
-
-- **Qt editor**: `populateGameplayInput()` honours the shared `InputSystem` cursor request. The editor camera controller is suppressed when the runtime UI is in `CursorMode::UI` to prevent fly-mode interference.
-- **GLFW runtime**: the Lua binding calls `glfwSetInputMode` directly. Script-driven camera controllers should check `UI.getCursorMode()` and skip mouse-look when in UI mode.
+- **Qt editor**: `populateGameplayInput()` honours the shared `InputSystem` cursor request. The editor camera controller is suppressed when the runtime UI is in `CursorMode::UI`.
+- **GLFW runtime / packaged game**: the Lua binding calls `glfwSetInputMode` directly. The packaged runtime routes mouse events to the UI at swapchain pixel coordinates (the same coordinate space the Vulkan backend renders into).
 
 Cursor mode resets to `Game` when play mode stops or `UISystem::ClearScreens()` is called.
 
@@ -168,87 +176,113 @@ Cursor mode resets to `Game` when play mode stops or `UISystem::ClearScreens()` 
 
 `UIStyle` fields:
 - `backgroundColor`
-- `borderColor`
-- `borderWidth`
-- `cornerRadius`
-- `textColor`
-- `padding`
+- `backgroundImageId`, `imageScaleMode`, `imageTint`
+- `borderColor`, `borderWidth`, `cornerRadius`
+- `textColor`, `fontFamily`, `fontSize`, `fontBold`, `fontItalic`, `textAlignment`
+- `textShadow`, `textShadowColor`, `textShadowOffset`
+- `padding`, `opacity`, `scale`
 
-Widgets may use local style or inherited/default behavior.
+### 8.2 Font Rendering
 
-### 8.2 UIFont
+Runtime text is rendered with a glyph atlas:
+- **Rasterizer:** `stb_truetype` (vendored at `extern/stb_truetype.h`)
+- **Atlas:** one RGBA8 atlas per (family, size, bold, italic) combination, packed
+  lazily as glyphs are requested (`UIFontAtlas`)
+- **Metrics:** advance, bearing, baseline, line height, basic kerning, UTF-8 decoding
+- **Font discovery:** bundled fonts in `assets/fonts/` (Roboto is shipped with the
+  engine), falling back to platform system font directories
+- Glyphs are cached; the atlas is only re-uploaded when new glyphs are rasterized
 
-`UIFont` and `UIFontRegistry` provide metadata storage:
-- Family name
-- Point size
-- Bold/italic flags
+## 9. Renderer Backends
 
-This is prepared for future FreeType integration.
+Both backends consume the exact same draw command list. Layout, input, and widget
+behaviour are identical; only the final presentation differs.
 
-## 9. C++ Usage Example
+### 9.1 Editor Play (Qt/QPainter)
 
-Simple runtime setup pattern:
+- `RuntimeUIOverlayWidget` paints the HUI command list over the viewport while
+  playing in the editor.
+- Fonts use Qt's `QFont`; images resolve through the editor asset manager.
+
+### 9.2 Packaged Game (Vulkan)
+
+- `VulkanHUIRenderer` renders HUI inside the shared swapchain render pass, after
+  the 3D scene, as an overlay.
+- One lightweight `hui.vert`/`hui.frag` pipeline with dynamic vertex/index buffers
+  per swapchain image.
+- **Batching:** consecutive quads sharing a texture and scissor are submitted with
+  one draw call.
+- **Alpha:** premultiplied alpha blending (correct text edges, PNG alpha, and
+  semi-transparent panels).
+- **Depth:** test and write disabled (UI is an overlay; ordering follows widget order).
+- **Clipping:** dynamic scissor rectangles support nested clip rects.
+- **Textures:** reuse the engine `VulkanTexture` path (PNG/JPG/HDR/PPM via stb_image).
+- **Resolution:** converts layout pixels to clip space centrally in the backend,
+  so screens work across 1280x720, 1920x1080, 2560x1440, and 3840x2160.
+
+### 9.3 Wiring in a packaged game
+
+`HephaestusGame` owns the Vulkan overlay through `EngineFrameRenderer`:
 
 ```cpp
-#include "../UI/HephaestusUI/UISystem.h"
-#include "../UI/HephaestusUI/UIContext.h"
-#include "../UI/HephaestusUI/UIRenderer.h"
-#include "../UI/HephaestusUI/UISimpleMenuExample.h"
-
-namespace HUI = Hephaestus::HephaestusUI;
-
-HUI::UISystem uiSystem;
-HUI::UIContext uiContext;
-HUI::UIRenderer uiRenderer;
-
-uiContext.SetViewportSize({1920.0f, 1080.0f});
-uiSystem.AddScreen(HUI::CreateSimpleMenuScreen());
-
-// Per frame:
-uiContext.QueueMouseMove(mousePos);
-uiSystem.Update(uiContext);
-
-uiRenderer.Reset();
-uiSystem.Render(uiRenderer);
-
-const auto& commands = uiRenderer.GetDrawCommands();
-// Feed commands into render backend.
+// per frame, after uiSystem.Render(uiRenderer):
+frameRenderer.SubmitHUICommands(uiRenderer.GetDrawCommands());
+frameRenderer.RenderFrame(&scene, camera, config, deltaTime);
 ```
+
+The frame renderer prepares the overlay geometry, records it into the swapchain
+pass after the scene, and recreates the UI pipeline/frame buffers on swapchain
+resize. `EngineFrameRenderer::SetProjectRoot(...)` also seeds the UI font/image
+search paths.
 
 ## 10. Lua Bridge Summary
 
-HephaestusUI is exposed to Lua through the global `UI` table in `LuaScriptEngine`.
+HephaestusUI is exposed to Lua through the global `UI` table in `LuaScriptEngine`,
+plus the managed `display.ui` / `destroy.ui` lifecycle API.
 
 Two levels are available:
 - Screen/system control (`createScreen`, visibility, active state, viewport)
 - Dynamic widget API (create panel/text/button/image/boxes and mutate properties)
+- Managed `.hui` loading with controller auto-load (`display.ui(path)`)
 
-Full Lua API reference is documented in:
+Full Lua API reference:
 - `Documentation/Scripting/LUA_UI_API_REFERENCE.md`
+- `Documentation/Scripting/LUA_DISPLAY_DESTROY_API.md`
 
 Script-only workflow (no engine source access):
 - `Documentation/Guides/NO_SOURCE_RUNTIME_UI_GUIDE.md`
 
-## 11. Current Limitations
+`.hui` asset format:
+- `Documentation/Features/HUI_FORMAT_REFERENCE.md`
 
-Known v1 constraints:
+## 11. Supported Image Formats
+
+Runtime UI images reuse the engine texture pipeline (stb_image):
+- PNG, JPG, BMP, TGA, PSD, GIF, HDR, PIC, PNM/PPM
+
+Scale modes (`UIImageScaleMode`): `Stretch`, `Fit`, `Fill`, `Center`.
+Tint and opacity are applied per image. Missing images render as a tinted solid
+placeholder and log the missing asset once (no crash).
+
+## 12. Current Limitations
+
+Known constraints:
 - No keyboard/controller focus navigation
 - No built-in animation/tweening
-- No serialized UI asset format (JSON/binary)
-- No data binding framework
-- No direct Lua button callback registration yet
+- No scroll lists / sliders / text-edit boxes / tooltips yet
+- Word-wrap is greedy (no hyphenation); kerning is basic
+- `UIStyle::scale` is parsed but not yet applied
+- Rounded corners use a fragment-shader SDF (uniform quad; no tessellation)
 
-## 12. Extension Plan
+## 13. Extension Plan
 
 Designed extension points:
 - Add focus manager for controller/keyboard navigation
 - Add animation subsystem over `UIElement` properties
-- Add theme/style asset loading
-- Add screen/widget serialization pipeline
-- Add Lua callback/event subscription API
-- Add editor-side visual UI authoring that exports runtime assets
+- Add scroll lists, sliders, and text input
+- Reuse the Vulkan HUI backend for Editor Play (Stage 8B) in place of the QPainter overlay
 
-## 13. Integration Checklist
+## 14. Integration Checklist
 
 When integrating into a runtime target:
 - Create `UISystem`, `UIContext`, `UIRenderer`
@@ -256,5 +290,5 @@ When integrating into a runtime target:
 - Queue mouse events into `UIContext`
 - Update `UISystem` before render
 - Reset and render `UIRenderer`
-- Consume draw command list in renderer backend
+- Submit the draw command list to the active backend
 - If Lua is enabled, call `LuaScriptEngine::SetUIBindings(...)`

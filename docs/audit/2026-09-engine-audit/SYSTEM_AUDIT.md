@@ -203,15 +203,17 @@ Every significant subsystem is classified below. Status scale: **Production Read
 | `.hui` asset format + parser/builder | Functional | `HUIAsset.cpp` |
 | Widgets (panel/text/button/image/canvas) + layouts (VBox/HBox/Grid) + anchors | Functional | `UI*.cpp` |
 | Editor Play rendering (QPainter overlay) | Functional | `RuntimeUIOverlayWidget.cpp` |
-| **Packaged game rendering** | **Missing** — `GameMain` collects draw commands and never consumes them; no Vulkan UI pass | `GameMain.cpp:1609-1611` |
-| Text rendering | Partial — QPainter fonts in editor; `UIFont` is a descriptor only, no atlas | `UIFont.h` |
-| Image rendering | Stub — placeholder colored rect; no texture binding | `RuntimeUIOverlayWidget.cpp:208-216` |
+| **Packaged game rendering** | **RESOLVED (Stage 8A)** — Vulkan overlay backend (`VulkanHUIRenderer`) records the HUI pass after the 3D scene; `GameMain` submits commands via `EngineFrameRenderer::SubmitHUICommands`; verified by the relocated packaged-game portability gate and headless `HUIRendererTests` | `engine/UI/HephaestusUI/Rendering/` |
+| Text rendering | Functional (packaged) — stb_truetype glyph atlas (`UIFontAtlas`), caching, metrics, kerning, wrapping, shadows | `engine/UI/HephaestusUI/Rendering/UIFontAtlas.cpp` |
+| Image rendering | Functional (packaged) — reuses `VulkanTexture` (PNG/JPG/HDR/PPM), scale modes, tint, missing-asset placeholder | `VulkanHUIRenderer.cpp` |
 | Lists / scroll / sliders / text input / tooltips | **Missing** | — |
 | Focus manager / controller navigation | Partial — mouse-only router; scripts hand-roll key nav (see `mainMenu.lua`) | `UIInputRouter.cpp:10-63` |
 | Lua UI API (~75 functions) | Production Ready | `LuaScriptEngine.cpp:4680-4901` |
 | Visual editor | Functional | `HUIVisualEditorDialog.cpp` |
 
-**Conclusion:** menus/HUD/dialogue work in editor Play but **no shipped game can display any UI**. This is the highest-severity production gap.
+**Conclusion (historical):** menus/HUD/dialogue work in editor Play but **no shipped game can display any UI**. This was the highest-severity production gap.
+
+**Status update (Stage 8A):** the packaged runtime UI gap has been resolved. `HephaestusGame` renders HUI through the Vulkan backend (panels, buttons, text, images, alpha, clipping, anchors, resize). The editor Play QPainter overlay remains for authoring; both paths consume the same renderer-independent draw command list. See `Documentation/Features/HEPHAESTUS_UI_RUNTIME_GUIDE.md`.
 
 ---
 

@@ -71,10 +71,10 @@ The repository builds cleanly on Windows. No build failures were encountered. Lu
 | **Physics simulation** | None | — | **None** | Gravity, bodies, raycast, CharacterMotor, collisions, determinism, the documented Jolt crash |
 | **Editor Qt UI** | EditorQtSmoke (opt-in, trivial `QLineEdit` test) | N/A (OFF) | **None meaningful** | EditorMainWindow/viewport/inspector |
 | **Audio** | None | — | **None** | — |
-| **Runtime UI rendering** | None (UI sources linked into CharacterLua only) | — | **None** | Draw-command, hit-test, layout |
-| **Packaged game end-to-end** | `tools/test_package_portability.ps1` (standalone) | Works when invoked correctly* | Good script | Not wired into CTest/CI; currently broken as-written (`--engine-root` = `build/Release`) |
+| **Runtime UI rendering** | `HUIRendererTests` (new) | Pass | **Good — headless** (draw-command generation, layout/anchors, hit-test, visibility, ordering, geometry conversion, font atlas) | Vulkan device/swapchain path (opt-in only) |
+| **Packaged game end-to-end** | `tools/test_package_portability.ps1` (standalone) | Pass (fixed) | Good script | Not wired into CTest/CI |
 
-\* The portability script's `--engine-root` is computed as `build/Release` (no `CMakeLists.txt`), so `RuntimeLocator` finds nothing and the script throws. Passing the source root works (verified manually — package built, relocated, ran, exit 0).
+\* Historical note: the portability script's `--engine-root` was computed as `build/Release` (no `CMakeLists.txt`), so `RuntimeLocator` found nothing and the script threw. Passing the source root works. This harness bug was fixed in Stage 8A (the script now passes the source root) and the gate — including the new HUI verification markers — runs green.
 
 ### Test categories
 
@@ -87,7 +87,7 @@ The repository builds cleanly on Windows. No build failures were encountered. Lu
 
 ### Important systems with no meaningful automated coverage
 
-Rendering/GPU, physics simulation, editor Qt UI, audio, and runtime UI rendering. The portability end-to-end gate exists but is unwired and currently red. **There is no CI** (no `.github/workflows/`); ROADMAP's "nightly smoke test in CI" claim is unmet.
+Rendering/GPU, physics simulation, editor Qt UI, and audio. The portability end-to-end gate is standalone (unwired into CTest/CI) but runs green in Stage 8A, including the HUI verification markers. **There is no CI** (no `.github/workflows/`); ROADMAP's "nightly smoke test in CI" claim is unmet.
 
 ---
 
