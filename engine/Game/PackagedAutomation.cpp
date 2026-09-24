@@ -4,6 +4,7 @@
 
 #include "../Automation/AutomationBackend.h"
 #include "../Automation/AutomationService.h"
+#include "../Automation/LogAutomation.h"
 #include "../Automation/Mcp/McpServer.h"
 #include "../Automation/PlayAutomation.h"
 #include "../Automation/RuntimeAutomation.h"
@@ -66,6 +67,7 @@ bool PackagedAutomation::Start(int port)
     m_service = std::make_unique<Automation::AutomationService>(*m_backend);
     Automation::RegisterPlayAutomation(*m_service);
     Automation::RegisterRuntimeAutomation(*m_service);
+    Automation::RegisterLogAutomation(*m_service);
     m_server = std::make_unique<Automation::Mcp::McpServer>(*m_service);
     if (!m_server->Start(port)) {
         m_server.reset();

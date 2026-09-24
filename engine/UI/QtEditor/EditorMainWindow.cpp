@@ -73,6 +73,7 @@
 #include "../../Automation/AutomationService.h"
 #include "../../Automation/SceneAutomation.h"
 #include "../../Automation/PlayAutomation.h"
+#include "../../Automation/LogAutomation.h"
 #include "../../Automation/Mcp/McpServer.h"
 #include "AppConfig.h"
 
@@ -731,6 +732,7 @@ bool EditorMainWindow::StartAutomation(int port)
     m_automationService = std::make_unique<Automation::AutomationService>(*m_automationBackend);
     Automation::RegisterSceneAutomation(*m_automationService);
     Automation::RegisterPlayAutomation(*m_automationService);
+    Automation::RegisterLogAutomation(*m_automationService);
     m_mcpServer = std::make_unique<Automation::Mcp::McpServer>(*m_automationService);
     if (!m_mcpServer->Start(port)) {
         EngineLog::Error("MCP endpoint failed to start");

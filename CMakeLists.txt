@@ -232,6 +232,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/AutomationService.cpp
     engine/Automation/ComponentMetadata.cpp
     engine/Automation/EntityRef.cpp
+    engine/Automation/LogAutomation.cpp
     engine/Automation/PlayAutomation.cpp
     engine/Automation/RuntimeAutomation.cpp
     engine/Automation/SceneAutomation.cpp
@@ -1366,6 +1367,22 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME AutomationPlay
         COMMAND AutomationPlayTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(AutomationLogTests
+        engine/Tests/AutomationLogTests.cpp
+        engine/Core/EngineLog.cpp
+    )
+    target_link_libraries(AutomationLogTests PRIVATE HephaestusAutomationCore)
+    target_include_directories(AutomationLogTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+        "${CMAKE_BINARY_DIR}/generated"
+    )
+    add_test(
+        NAME AutomationLog
+        COMMAND AutomationLogTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
     add_executable(AutomationSceneTests
