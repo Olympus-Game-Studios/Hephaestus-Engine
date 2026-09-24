@@ -1,0 +1,64 @@
+#include "Input/InputSystem.h"
+
+#include <cmath>
+#include <iostream>
+#include <string>
+
+namespace {
+
+bool Check(bool condition, const std::string& message)
+{
+    if (!condition) {
+        std::cerr << "[FAIL] " << message << '\n';
+    }
+    return condition;
+}
+
+bool Near(float left, float right)
+{
+    return std::abs(left - right) <= 0.001f;
+}
+
+} // namespace
+
+int main()
+{
+    bool ok = true;
+    Hephaestus::InputSystem input;
+
+    input.BeginFrame();
+    input.SetActionOverride("Jump", 1.0f);
+    ok &= Check(input.IsActionDown("Jump"), "Action override drives down state");
+    ok &= Check(input.IsActionPressed("Jump"), "Override applied after BeginFrame has a rising edge");
+
+    input.BeginFrame();
+    ok &= Check(input.IsActionDown("Jump"), "Action override persists across frames");
+    ok &= Check(!input.IsActionPressed("Jump"), "Persistent override does not repeat pressed edge");
+
+    input.ClearActionOverrides();
+    ok &= Check(input.IsActionReleased("Jump"), "Clearing override emits release in the current frame");
+
+    input.SetAxisOverride("MoveForward", 0.75f);
+    ok &= Check(Near(input.GetAxis("MoveForward"), 0.75f), "Axis override replaces mapped input");
+    input.SetAxisOverride("MoveForward", 2.0f);
+    ok &= Check(Near(input.GetAxis("MoveForward"), 1.0f), "Axis override is normalized");
+    input.ClearAxisOverrides();
+    ok &= Check(Near(input.GetAxis("MoveForward"), 0.0f), "Axis override clears");
+
+    input.SetActionOverride("MissingAction", 1.0f);
+    input.SetAxisOverride("MissingAxis", 1.0f);
+    ok &= Check(!input.IsActionDown("MissingAction"), "Unknown actions cannot be injected");
+    ok &= Check(Near(input.GetAxis("MissingAxis"), 0.0f), "Unknown axes cannot be injected");
+
+    input.SetActionOverride("Jump", 1.0f);
+    input.SetAxisOverride("MoveForward", -1.0f);
+    input.Reset();
+    ok &= Check(!input.IsActionDown("Jump"), "Reset clears action overrides");
+    ok &= Check(Near(input.GetAxis("MoveForward"), 0.0f), "Reset clears axis overrides");
+
+    if (ok) {
+        std::cout << "InputOverrideTests passed\n";
+        return 0;
+    }
+    return 1;
+}

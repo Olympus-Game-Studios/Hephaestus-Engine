@@ -367,6 +367,10 @@ bool TestHuiAssetCompatibility(const std::string& repoRoot) {
         auto start = result.widgetMap.find("btn_start");
         if (!Check(title != result.widgetMap.end(), "widget map contains title")) local = false;
         if (!Check(start != result.widgetMap.end(), "widget map contains btn_start")) local = false;
+        if (title != result.widgetMap.end() &&
+            !Check(title->second->GetId() == "title", "title id persists on live element")) local = false;
+        if (start != result.widgetMap.end() &&
+            !Check(start->second->GetId() == "btn_start", "button id persists on live element")) local = false;
 
         HUI::UIRenderer renderer;
         result.screen->Draw(renderer);

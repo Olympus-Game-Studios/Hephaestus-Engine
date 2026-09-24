@@ -1275,6 +1275,16 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         COMMAND InputSystemTests
     )
 
+    add_executable(InputOverrideTests
+        engine/Tests/InputOverrideTests.cpp
+    )
+    target_link_libraries(InputOverrideTests PRIVATE HephaestusInputCore)
+    target_include_directories(InputOverrideTests PRIVATE engine extern)
+    add_test(
+        NAME InputOverride
+        COMMAND InputOverrideTests
+    )
+
     add_executable(HttpTransportSmokeTests
         engine/Tests/HttpTransportSmokeTests.cpp
     )

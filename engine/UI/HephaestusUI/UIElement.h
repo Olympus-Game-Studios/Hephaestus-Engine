@@ -3,6 +3,8 @@
 #include "UIStyle.h"
 
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace Hephaestus::HephaestusUI {
@@ -21,6 +23,7 @@ public:
     bool RemoveChild(UIElement* child);
 
     void SetPosition(const UIVec2& position) { m_Position = position; }
+    void SetId(std::string id) { m_Id = std::move(id); }
     void SetSize(const UIVec2& size) { m_Size = size; }
     void SetMinSize(const UIVec2& minSize) { m_MinSize = minSize; }
     void SetMaxSize(const UIVec2& maxSize) { m_MaxSize = maxSize; }
@@ -40,6 +43,7 @@ public:
     void ClearOwnedStyle() { m_UseOwnedStyle = false; }
 
     [[nodiscard]] const UIVec2& GetPosition() const { return m_Position; }
+    [[nodiscard]] const std::string& GetId() const { return m_Id; }
     [[nodiscard]] const UIVec2& GetSize() const { return m_Size; }
     [[nodiscard]] const UIVec2& GetMinSize() const { return m_MinSize; }
     [[nodiscard]] const UIVec2& GetMaxSize() const { return m_MaxSize; }
@@ -89,6 +93,7 @@ private:
 
     UIElement* m_Parent = nullptr;
     std::vector<std::unique_ptr<UIElement>> m_Children;
+    std::string m_Id;
 
     UIVec2 m_Position = {0.0f, 0.0f};
     UIVec2 m_Size = {0.0f, 0.0f};

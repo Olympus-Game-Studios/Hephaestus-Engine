@@ -119,6 +119,9 @@ public:
     /// @param dt delta time in seconds.
     void Tick(float dt);
 
+    /// Run one script/animation frame while Playing or Paused without changing state.
+    bool StepTick(float dt);
+
     // ── Camera authority ─────────────────────────────────────────────────────
 
     CameraMode GetCameraMode() const { return m_cameraMode; }
@@ -159,6 +162,7 @@ public:
 
 private:
     void Log(const std::string& msg);
+    void TickActiveState(float dt);
 
     // State
     PlayState  m_state = PlayState::Editor;

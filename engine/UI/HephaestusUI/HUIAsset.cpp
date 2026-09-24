@@ -703,6 +703,7 @@ std::unique_ptr<UIElement> HUIBuilder::buildWidget(const HUIWidgetNode& node,
 
     if (!element) return nullptr;
 
+    element->SetId(node.id);
     applyCommonProperties(element.get(), node);
 
     if (!node.id.empty()) {

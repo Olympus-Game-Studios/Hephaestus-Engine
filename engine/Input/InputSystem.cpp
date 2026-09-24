@@ -33,6 +33,7 @@ InputSystem::InputSystem()
 void InputSystem::BeginFrame()
 {
     m_Previous = m_Current;
+    m_PreviousActionOverrides = m_ActionOverrides;
     m_Current.mouseDeltaX = 0.0;
     m_Current.mouseDeltaY = 0.0;
     m_Current.scrollDeltaX = 0.0;
@@ -43,6 +44,9 @@ void InputSystem::Reset()
 {
     m_Current = {};
     m_Previous = {};
+    m_ActionOverrides.clear();
+    m_PreviousActionOverrides.clear();
+    m_AxisOverrides.clear();
     m_CursorModeRequest = 0;
 }
 
@@ -106,6 +110,34 @@ void InputSystem::SetGamepadAxisState(int axis, float value)
     }
 }
 
+void InputSystem::SetActionOverride(const std::string& name, float value)
+{
+    if (!HasAction(name)) return;
+    m_ActionOverrides[name] = std::clamp(value, 0.0f, 1.0f);
+}
+
+void InputSystem::SetAxisOverride(const std::string& name, float value)
+{
+    if (!HasAxis(name)) return;
+    m_AxisOverrides[name] = std::clamp(value, -1.0f, 1.0f);
+}
+
+void InputSystem::ClearActionOverrides()
+{
+    m_ActionOverrides.clear();
+}
+
+void InputSystem::ClearAxisOverrides()
+{
+    m_AxisOverrides.clear();
+}
+
+void InputSystem::ClearOverrides()
+{
+    ClearActionOverrides();
+    ClearAxisOverrides();
+}
+
 bool InputSystem::IsKeyDown(int key) const
 {
     return InRange(m_Current.keys, key) && m_Current.keys[static_cast<std::size_t>(key)];
@@ -127,6 +159,10 @@ bool InputSystem::IsGamepadConnected() const { return m_Current.gamepadConnected
 
 bool InputSystem::IsActionDown(const std::string& name) const
 {
+    if (const auto overrideIt = m_ActionOverrides.find(name);
+        overrideIt != m_ActionOverrides.end()) {
+        return overrideIt->second >= 0.5f;
+    }
     const auto it = m_ActionLookup.find(name);
     return it != m_ActionLookup.end() && EvaluateAction(m_Map.actions[it->second], m_Current);
 }
@@ -136,7 +172,15 @@ bool InputSystem::IsActionPressed(const std::string& name) const
     const auto it = m_ActionLookup.find(name);
     if (it == m_ActionLookup.end()) return false;
     const auto& action = m_Map.actions[it->second];
-    return EvaluateAction(action, m_Current) && !EvaluateAction(action, m_Previous);
+    const auto currentOverride = m_ActionOverrides.find(name);
+    const auto previousOverride = m_PreviousActionOverrides.find(name);
+    const bool current = currentOverride != m_ActionOverrides.end()
+        ? currentOverride->second >= 0.5f
+        : EvaluateAction(action, m_Current);
+    const bool previous = previousOverride != m_PreviousActionOverrides.end()
+        ? previousOverride->second >= 0.5f
+        : EvaluateAction(action, m_Previous);
+    return current && !previous;
 }
 
 bool InputSystem::IsActionReleased(const std::string& name) const
@@ -144,11 +188,23 @@ bool InputSystem::IsActionReleased(const std::string& name) const
     const auto it = m_ActionLookup.find(name);
     if (it == m_ActionLookup.end()) return false;
     const auto& action = m_Map.actions[it->second];
-    return !EvaluateAction(action, m_Current) && EvaluateAction(action, m_Previous);
+    const auto currentOverride = m_ActionOverrides.find(name);
+    const auto previousOverride = m_PreviousActionOverrides.find(name);
+    const bool current = currentOverride != m_ActionOverrides.end()
+        ? currentOverride->second >= 0.5f
+        : EvaluateAction(action, m_Current);
+    const bool previous = previousOverride != m_PreviousActionOverrides.end()
+        ? previousOverride->second >= 0.5f
+        : EvaluateAction(action, m_Previous);
+    return !current && previous;
 }
 
 float InputSystem::GetAxis(const std::string& name) const
 {
+    if (const auto overrideIt = m_AxisOverrides.find(name);
+        overrideIt != m_AxisOverrides.end()) {
+        return overrideIt->second;
+    }
     const auto it = m_AxisLookup.find(name);
     return it == m_AxisLookup.end() ? 0.0f : EvaluateAxis(m_Map.axes[it->second], m_Current);
 }

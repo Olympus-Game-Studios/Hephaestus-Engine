@@ -209,11 +209,24 @@ void PlayModeManager::RequestStop() {
 }
 
 void PlayModeManager::Tick(float dt) {
-    m_deltaTime = dt;
-
     if (m_state != PlayState::Playing) {
         return;  // nothing to tick in editor or paused
     }
+
+    TickActiveState(dt);
+}
+
+bool PlayModeManager::StepTick(float dt) {
+    if (m_state == PlayState::Editor) {
+        return false;
+    }
+
+    TickActiveState(dt);
+    return true;
+}
+
+void PlayModeManager::TickActiveState(float dt) {
+    m_deltaTime = dt;
 
     m_timeSincePlay += dt;
 

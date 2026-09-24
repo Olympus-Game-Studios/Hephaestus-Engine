@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <deque>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -23,6 +24,7 @@
 #include <streambuf>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
@@ -170,6 +172,11 @@ std::ofstream g_File;
 std::filesystem::path g_LogPath;
 std::mutex g_Mutex;
 std::string g_ApplicationName = "Hephaestus";
+constexpr std::size_t kLogEntryCapacity = 2048;
+std::deque<EngineLogEntry> g_LogEntries;
+std::unordered_map<EngineLog::SubscriptionId, EngineLog::SubscriptionCallback> g_LogSubscribers;
+std::uint64_t g_NextLogCursor = 1;
+EngineLog::SubscriptionId g_NextSubscriptionId = 1;
 
 std::streambuf* g_OldCout = nullptr;
 std::streambuf* g_OldCerr = nullptr;
@@ -198,6 +205,34 @@ void WriteToOriginalConsole(const std::string& line)
     buf->sputn(line.data(), static_cast<std::streamsize>(line.size()));
     buf->sputc('\n');
     buf->pubsync();
+}
+
+EngineLogEntry RecordEntryLocked(EngineLogLevel level, std::string_view message,
+                                 std::string_view category, std::string timestamp)
+{
+    EngineLogEntry entry;
+    entry.cursor = g_NextLogCursor++;
+    entry.timestamp = std::move(timestamp);
+    entry.level = level;
+    entry.category.assign(category);
+    entry.message.assign(message);
+    g_LogEntries.push_back(entry);
+    while (g_LogEntries.size() > kLogEntryCapacity) {
+        g_LogEntries.pop_front();
+    }
+    return entry;
+}
+
+void NotifySubscribers(const EngineLogEntry& entry,
+                       const std::vector<EngineLog::SubscriptionCallback>& callbacks)
+{
+    for (const auto& callback : callbacks) {
+        try {
+            callback(entry);
+        } catch (...) {
+            // Logging must remain safe when an observer fails.
+        }
+    }
 }
 
 #ifdef _WIN32
@@ -339,11 +374,13 @@ void EngineLog::Shutdown()
 
 bool EngineLog::IsInitialized()
 {
+    std::lock_guard<std::mutex> lock(g_Mutex);
     return g_Initialized;
 }
 
 std::string EngineLog::LogFilePath()
 {
+    std::lock_guard<std::mutex> lock(g_Mutex);
     return PathToUtf8(g_LogPath);
 }
 
@@ -359,14 +396,28 @@ void EngineLog::AppendRaw(const char* data, std::size_t size)
     g_File.flush();
 }
 
-void EngineLog::Write(EngineLogLevel level, std::string_view message)
+void EngineLog::Write(EngineLogLevel level, std::string_view message,
+                      std::string_view category)
 {
+    const std::string timestamp = Timestamp();
     std::ostringstream oss;
-    oss << "[" << Timestamp() << "] [" << LevelToString(level) << "] " << message;
+    oss << "[" << timestamp << "] [" << LevelToString(level) << "] ";
+    if (!category.empty()) {
+        oss << "[" << category << "] ";
+    }
+    oss << message;
     const std::string line = oss.str();
+    EngineLogEntry entry;
+    std::vector<SubscriptionCallback> callbacks;
 
     {
         std::lock_guard<std::mutex> lock(g_Mutex);
+        entry = RecordEntryLocked(level, message, category, timestamp);
+        callbacks.reserve(g_LogSubscribers.size());
+        for (const auto& [id, callback] : g_LogSubscribers) {
+            (void)id;
+            callbacks.push_back(callback);
+        }
         if (g_File.is_open()) {
             g_File << line << std::endl;
             g_File.flush();
@@ -374,6 +425,54 @@ void EngineLog::Write(EngineLogLevel level, std::string_view message)
     }
 
     WriteToOriginalConsole(line);
+    NotifySubscribers(entry, callbacks);
+}
+
+void EngineLog::RecordOnly(EngineLogLevel level, std::string_view message,
+                           std::string_view category)
+{
+    EngineLogEntry entry;
+    std::vector<SubscriptionCallback> callbacks;
+    {
+        std::lock_guard<std::mutex> lock(g_Mutex);
+        entry = RecordEntryLocked(level, message, category, Timestamp());
+        callbacks.reserve(g_LogSubscribers.size());
+        for (const auto& [id, callback] : g_LogSubscribers) {
+            (void)id;
+            callbacks.push_back(callback);
+        }
+    }
+    NotifySubscribers(entry, callbacks);
+}
+
+EngineLogSnapshot EngineLog::Snapshot(std::uint64_t afterCursor, std::size_t limit)
+{
+    std::lock_guard<std::mutex> lock(g_Mutex);
+    EngineLogSnapshot snapshot;
+    snapshot.nextCursor = g_NextLogCursor - 1;
+    if (limit == 0) return snapshot;
+    snapshot.entries.reserve(std::min(limit, g_LogEntries.size()));
+    for (const auto& entry : g_LogEntries) {
+        if (entry.cursor <= afterCursor) continue;
+        snapshot.entries.push_back(entry);
+        if (snapshot.entries.size() == limit) break;
+    }
+    return snapshot;
+}
+
+EngineLog::SubscriptionId EngineLog::Subscribe(SubscriptionCallback callback)
+{
+    if (!callback) return 0;
+    std::lock_guard<std::mutex> lock(g_Mutex);
+    const SubscriptionId id = g_NextSubscriptionId++;
+    g_LogSubscribers.emplace(id, std::move(callback));
+    return id;
+}
+
+void EngineLog::Unsubscribe(SubscriptionId id)
+{
+    std::lock_guard<std::mutex> lock(g_Mutex);
+    g_LogSubscribers.erase(id);
 }
 
 void EngineLog::Debug(std::string_view message) { Write(EngineLogLevel::Debug, message); }

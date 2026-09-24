@@ -31,6 +31,12 @@ public:
     void SetGamepadButtonState(int button, bool down);
     void SetGamepadAxisState(int axis, float value);
 
+    void SetActionOverride(const std::string& name, float value);
+    void SetAxisOverride(const std::string& name, float value);
+    void ClearActionOverrides();
+    void ClearAxisOverrides();
+    void ClearOverrides();
+
     bool IsKeyDown(int key) const;
     bool IsMouseButtonDown(int button) const;
     double GetMouseX() const;
@@ -82,6 +88,9 @@ private:
     DeviceState m_Previous;
     std::unordered_map<std::string, std::size_t> m_ActionLookup;
     std::unordered_map<std::string, std::size_t> m_AxisLookup;
+    std::unordered_map<std::string, float> m_ActionOverrides;
+    std::unordered_map<std::string, float> m_PreviousActionOverrides;
+    std::unordered_map<std::string, float> m_AxisOverrides;
     int m_CursorModeRequest = 0;
 };
 
