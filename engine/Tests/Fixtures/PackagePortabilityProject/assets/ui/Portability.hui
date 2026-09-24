@@ -94,7 +94,7 @@
             "properties": {
               "position": [146, 140],
               "size": [128, 48],
-              "imageId": "assets/textures/portability.ppm",
+              "imageId": "assets/textures/portability.png",
               "imageScaleMode": "Fit"
             }
           }
