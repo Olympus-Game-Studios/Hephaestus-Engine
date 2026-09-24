@@ -33,12 +33,17 @@
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
 #include "../Core/EditorDebugDraw.h"
+#include "../UI/HephaestusUI/UIRenderer.h"
 
 // Forward declarations
 class VulkanDevice;
 class VulkanSwapchain;
 class VulkanPipeline;
 class Scene;
+
+namespace Hephaestus::HephaestusUI {
+class VulkanHUIRenderer;
+} // namespace Hephaestus::HephaestusUI
 
 namespace Hephaestus {
 
@@ -190,10 +195,22 @@ public:
     const FrameStats& GetLastFrameStats() const { return m_lastFrameStats; }
 
     /**
-     * @brief Set the project root directory for resolving relative asset paths (HDRI, etc.).
+     * @brief Set the project root directory for resolving relative asset paths (HDRI, fonts, UI images).
      */
-    void SetProjectRoot(const std::string& root) { m_projectRoot = root; }
+    void SetProjectRoot(const std::string& root);
     const std::string& GetProjectRoot() const { return m_projectRoot; }
+
+    // --- Runtime HUI Overlay ---
+
+    /**
+     * @brief Provide the current HUI draw commands to render as an overlay.
+     * The vector must stay alive until RenderFrame() (which consumes it)
+     * returns. Pass an empty list or skip calling to draw no overlay.
+     */
+    void SubmitHUICommands(const std::vector<Hephaestus::HephaestusUI::UIDrawCommand>& commands);
+
+    /** @brief True when the Vulkan HUI overlay backend was initialized. */
+    bool HasHUIOverlay() const;
 
     // --- Mesh Library Management ---
 
@@ -367,6 +384,8 @@ private:
                         const FrameRenderConfig& config);
     void recordGrid(VkCommandBuffer cmd, uint32_t imageIndex, const FrameRenderConfig& config);
     void recordDebugOverlay(VkCommandBuffer cmd, uint32_t imageIndex, const FrameRenderConfig& config);
+    void recordHUIOverlay(VkCommandBuffer cmd, uint32_t imageIndex);
+    bool createUIResources();
     bool createGridResources();
     bool createDebugOverlayResources();
     bool createOutlineResources();
@@ -402,6 +421,11 @@ private:
     // External resources (not owned)
     VulkanDevice* m_device = nullptr;
     VulkanSwapchain* m_swapchain = nullptr;
+
+    // Runtime HUI overlay (Vulkan backend for the packaged game UI)
+    std::unique_ptr<Hephaestus::HephaestusUI::VulkanHUIRenderer> m_uiOverlay;
+    const std::vector<Hephaestus::HephaestusUI::UIDrawCommand>* m_uiCommands = nullptr;
+    bool m_uiCommandsSubmitted = false;
 
     // Owned resources
     std::unique_ptr<VulkanPipeline> m_pipeline;

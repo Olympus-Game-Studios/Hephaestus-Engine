@@ -680,6 +680,7 @@ int main(int argc, char* argv[]) {
         Bootstrap::Shutdown();
         return -1;
     }
+    HP_LOG(Info, "Swapchain extent: " + std::to_string(swap.extent.width) + "x" + std::to_string(swap.extent.height));
     
     Bootstrap::EndStage(InitStage::Renderer, true);
 
@@ -1609,6 +1610,10 @@ int main(int argc, char* argv[]) {
         uiSystem.Update(uiContext);
         uiRenderer.Reset();
         uiSystem.Render(uiRenderer);
+
+        // Submit the renderer-independent HUI command list to the Vulkan overlay
+        // backend; the frame renderer consumes it during RenderFrame().
+        frameRenderer.SubmitHUICommands(uiRenderer.GetDrawCommands());
 
         if (!frameRenderer.RenderFrame(&scene, gameCamera.ToRenderCamera(), renderConfig, deltaTime)) {
             if (frameRenderer.HasDeviceLost()) {

@@ -309,6 +309,9 @@ target_include_directories(HephaestusPluginCore PUBLIC engine extern)
     engine/UI/HephaestusUI/UIText.cpp
     engine/UI/HephaestusUI/UITheme.cpp
     engine/UI/HephaestusUI/UIVerticalBox.cpp
+    engine/UI/HephaestusUI/Rendering/HUIGeometryBuilder.cpp
+    engine/UI/HephaestusUI/Rendering/UIFontAtlas.cpp
+    engine/UI/HephaestusUI/Rendering/VulkanHUIRenderer.cpp
 )
 
 # Editor-only sources
@@ -466,6 +469,9 @@ add_executable(HephaestusEngine
     engine/UI/HephaestusUI/UIText.cpp
     engine/UI/HephaestusUI/UITheme.cpp
     engine/UI/HephaestusUI/UIVerticalBox.cpp
+    engine/UI/HephaestusUI/Rendering/HUIGeometryBuilder.cpp
+    engine/UI/HephaestusUI/Rendering/UIFontAtlas.cpp
+    engine/UI/HephaestusUI/Rendering/VulkanHUIRenderer.cpp
     engine/UI/EditorDocument.cpp
     engine/UI/CharacterDocument.cpp
     engine/UI/InspectorSelectionModel.cpp
@@ -971,6 +977,8 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadowmap_skinned.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/hui.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/hui.frag
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)
@@ -1661,6 +1669,37 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     target_link_libraries(PluginSystemTests PRIVATE HephaestusPluginCore)
     target_include_directories(PluginSystemTests PRIVATE engine extern)
     add_test(NAME PluginSystem COMMAND PluginSystemTests)
+
+    add_executable(HUIRendererTests
+        engine/Tests/HUIRendererTests.cpp
+        engine/Scene/Json.cpp
+        engine/UI/HephaestusUI/HUIAsset.cpp
+        engine/UI/HephaestusUI/UIButton.cpp
+        engine/UI/HephaestusUI/UICanvas.cpp
+        engine/UI/HephaestusUI/UIContext.cpp
+        engine/UI/HephaestusUI/UIElement.cpp
+        engine/UI/HephaestusUI/UIFont.cpp
+        engine/UI/HephaestusUI/UIGridLayout.cpp
+        engine/UI/HephaestusUI/UIHorizontalBox.cpp
+        engine/UI/HephaestusUI/UIImage.cpp
+        engine/UI/HephaestusUI/UIInputRouter.cpp
+        engine/UI/HephaestusUI/UILayout.cpp
+        engine/UI/HephaestusUI/UIPanel.cpp
+        engine/UI/HephaestusUI/UIRenderer.cpp
+        engine/UI/HephaestusUI/UIScreen.cpp
+        engine/UI/HephaestusUI/UISimpleMenuExample.cpp
+        engine/UI/HephaestusUI/UISystem.cpp
+        engine/UI/HephaestusUI/UIText.cpp
+        engine/UI/HephaestusUI/UITheme.cpp
+        engine/UI/HephaestusUI/UIVerticalBox.cpp
+        engine/UI/HephaestusUI/Rendering/HUIGeometryBuilder.cpp
+        engine/UI/HephaestusUI/Rendering/UIFontAtlas.cpp
+    )
+    target_include_directories(HUIRendererTests PRIVATE engine extern)
+    add_test(
+        NAME HUIRendererWorkflow
+        COMMAND HUIRendererTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
 endif()
 
 # Optional narrow Qt Test harness (off by default — requires Qt6 Test module)

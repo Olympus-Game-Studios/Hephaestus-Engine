@@ -11,6 +11,7 @@
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Components.h"
+#include "../UI/HephaestusUI/Rendering/VulkanHUIRenderer.h"
 
 #include <nlohmann/json.hpp>
 
@@ -394,6 +395,12 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
     if (!createSkyboxResources()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create skybox resources (skybox will be disabled)\n";
     }
+
+    // Create the runtime HUI overlay backend (used by packaged games; dormant
+    // in the editor where Qt paints the HUI overlay).
+    if (!createUIResources()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create HUI overlay resources (runtime UI will be disabled)\n";
+    }
     
     m_initialized = true;
     std::cout << "[EngineFrameRenderer] Initialized successfully\n";
@@ -407,6 +414,57 @@ void EngineFrameRenderer::OnResize(uint32_t width, uint32_t height)
     m_swapchainDirty = true;
     m_pendingWidth = width;
     m_pendingHeight = height;
+}
+
+void EngineFrameRenderer::SetProjectRoot(const std::string& root)
+{
+    m_projectRoot = root;
+    if (m_uiOverlay) {
+        m_uiOverlay->SetProjectRoot(root);
+    }
+}
+
+void EngineFrameRenderer::SubmitHUICommands(
+    const std::vector<Hephaestus::HephaestusUI::UIDrawCommand>& commands)
+{
+    if (!m_uiOverlay) {
+        return;
+    }
+    m_uiCommands = &commands;
+    m_uiCommandsSubmitted = true;
+    m_uiOverlay->SetViewportSize({static_cast<float>(m_swapchain->extent.width),
+                                  static_cast<float>(m_swapchain->extent.height)});
+    m_uiOverlay->SetDrawCommands(commands);
+}
+
+bool EngineFrameRenderer::HasHUIOverlay() const
+{
+    return m_uiOverlay != nullptr;
+}
+
+bool EngineFrameRenderer::createUIResources()
+{
+    if (!m_device || !m_swapchain) {
+        return false;
+    }
+    m_uiOverlay = std::make_unique<Hephaestus::HephaestusUI::VulkanHUIRenderer>();
+    const bool ok = m_uiOverlay->Init(m_device, m_swapchain->renderPass, m_swapchain->format,
+                                      m_swapchain->extent,
+                                      static_cast<uint32_t>(m_swapchain->images.size()));
+    if (!ok) {
+        m_uiOverlay.reset();
+        return false;
+    }
+    m_uiOverlay->SetProjectRoot(m_projectRoot);
+    return true;
+}
+
+void EngineFrameRenderer::recordHUIOverlay(VkCommandBuffer cmd, uint32_t imageIndex)
+{
+    if (!m_uiOverlay || !m_uiCommandsSubmitted) {
+        return;
+    }
+    m_uiOverlay->RecordDraw(cmd, imageIndex);
 }
 
 bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera, 
@@ -490,6 +548,14 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         }
 #endif
 
+        // Recreate the runtime HUI overlay for the new swapchain (the old
+        // pipeline/vertex buffers were destroyed in cleanupSwapchainResources).
+        if (m_uiOverlay) {
+            m_uiOverlay->OnSwapchainRecreated(m_swapchain->renderPass, m_swapchain->format,
+                                              m_swapchain->extent,
+                                              static_cast<uint32_t>(m_swapchain->images.size()));
+        }
+
         m_currentFrame = 0;
         m_swapchainDirty = false;
     }
@@ -546,7 +612,13 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (scene) {
         updateLightingUBO(imageIndex, scene, camera);
     }
-    
+
+    // Prepare the runtime HUI overlay geometry/uploads (queue work is allowed
+    // here; the command buffer has not been recorded yet).
+    if (m_uiOverlay && m_uiCommandsSubmitted) {
+        m_uiOverlay->PrepareFrame();
+    }
+
     // Record command buffer
     VkCommandBuffer cmd = m_commandBuffers[imageIndex];
     vkResetCommandBuffer(cmd, 0);
@@ -602,15 +674,22 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         recordShadowPass(cmd, scene, camera, config);
     }
     
-    // Record main render pass
+// Record main render pass
     recordMainPass(cmd, imageIndex, scene, config);
-    
+
     VkResult endResult = vkEndCommandBuffer(cmd);
     if (endResult != VK_SUCCESS) {
         std::cerr << "[EngineFrameRenderer] Failed to end command buffer (VkResult: " << endResult << ")\n";
         return false;
     }
-    
+
+    // Drop the HUI command reference now that the frame has consumed it.
+    if (m_uiOverlay) {
+        m_uiOverlay->ClearDrawCommands();
+    }
+    m_uiCommands = nullptr;
+    m_uiCommandsSubmitted = false;
+
     // Submit
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submitInfo{};
@@ -3609,6 +3688,10 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     }
 #endif
 
+    // Runtime HUI overlay (drawn after the 3D scene and editor overlays, so the
+    // UI appears on top; depth test/write are disabled by the UI pipeline).
+    recordHUIOverlay(cmd, imageIndex);
+
     vkCmdEndRenderPass(cmd);
 }
 
@@ -3931,6 +4014,12 @@ void EngineFrameRenderer::cleanupSwapchainResources()
     m_debugOverlay.vertexCapacity = 0;
 #endif
 
+    // Destroy swapchain-dependent HUI overlay resources (pipeline + per-image
+    // buffers); textures and font atlases survive.
+    if (m_uiOverlay) {
+        m_uiOverlay->OnSwapchainDestroyed();
+    }
+
     if (m_descriptorPool != VK_NULL_HANDLE) {
         vkDestroyDescriptorPool(m_device->device, m_descriptorPool, nullptr);
         m_descriptorPool = VK_NULL_HANDLE;
@@ -4094,6 +4183,14 @@ void EngineFrameRenderer::destroyAllResources()
     
     // Cleanup skybox
     m_skybox.Cleanup(m_device->allocator, m_device->device);
+
+    // Shutdown the runtime HUI overlay backend
+    if (m_uiOverlay) {
+        m_uiOverlay->Shutdown();
+        m_uiOverlay.reset();
+    }
+    m_uiCommands = nullptr;
+    m_uiCommandsSubmitted = false;
     
     // Cleanup outline renderer
     cleanupOutlineResources();
