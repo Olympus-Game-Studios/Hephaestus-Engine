@@ -234,6 +234,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/AutomationService.cpp
     engine/Automation/ComponentMetadata.cpp
     engine/Automation/EntityRef.cpp
+    engine/Automation/AssetAutomation.cpp
     engine/Automation/LogAutomation.cpp
     engine/Automation/PlayAutomation.cpp
     engine/Automation/RuntimeAutomation.cpp
@@ -465,6 +466,7 @@ add_executable(HephaestusEngine
     engine/Assets/AssetOperationService.cpp
     engine/Assets/DerivedDataCache.cpp
     engine/Assets/EditorAssetPipeline.cpp
+    engine/Assets/EditorAssetImportService.cpp
     engine/Assets/FileWatcher.cpp
     engine/Assets/RecoveryStore.cpp
     engine/Assets/EditorViewState.cpp
@@ -1442,6 +1444,36 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME AutomationScene
         COMMAND AutomationSceneTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(AutomationAssetTests
+        engine/Tests/AutomationAssetTests.cpp
+        engine/Assets/AssetManager.cpp
+        engine/Assets/AssetDatabase.cpp
+        engine/Assets/AssetImporters.cpp
+        engine/Assets/AssetOperationService.cpp
+        engine/Assets/AssetReferenceIndex.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Assets/CharacterAsset.cpp
+        engine/Assets/OpenDocumentRegistry.cpp
+        engine/Assets/EditorAssetPipeline.cpp
+        engine/Assets/EditorAssetImportService.cpp
+        engine/Assets/ReimportManager.cpp
+        engine/Assets/DerivedDataCache.cpp
+        engine/Assets/FileWatcher.cpp
+        engine/Assets/ModelImporter.cpp
+    )
+    target_link_libraries(AutomationAssetTests PRIVATE HephaestusAutomationCore Vulkan::Vulkan)
+    target_include_directories(AutomationAssetTests PRIVATE
+        engine
+        extern
+        extern/VMA
+        extern/entt/single_include
+    )
+    hephaestus_target_ufbx(AutomationAssetTests STATIC)
+    add_test(
+        NAME AutomationAsset
+        COMMAND AutomationAssetTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
     add_executable(LuaExposeScannerTests

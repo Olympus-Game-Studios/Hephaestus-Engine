@@ -1,12 +1,20 @@
 #pragma once
 
+#include "AssetImportService.h"
 #include "AutomationTypes.h"
 #include "Core/PlayModeManager.h"
 
 #include <string>
 #include <string_view>
 
+class AssetDatabase;
 class Scene;
+
+namespace Hephaestus {
+class AssetManager;
+class AssetOperationService;
+class AssetReferenceIndex;
+}
 
 namespace Hephaestus::Automation {
 
@@ -77,6 +85,34 @@ public:
     virtual bool ClearInputOverrides(std::string& outError)
     {
         outError = "Input injection is unavailable for this host";
+        return false;
+    }
+
+    // ── Content-authoring services (editor host) ──────────────────────────
+    //
+    // Narrow accessors around existing engine/editor content subsystems. They
+    // default to nullptr so runtime hosts and test backends compile unchanged;
+    // content-authoring tools that require a missing service return a
+    // structured ToolUnavailable error rather than duplicating the subsystem.
+
+    virtual Hephaestus::AssetManager* Assets() noexcept { return nullptr; }
+    virtual Hephaestus::AssetReferenceIndex* AssetReferences() noexcept { return nullptr; }
+    virtual Hephaestus::AssetOperationService* AssetOperations() noexcept { return nullptr; }
+    virtual IAssetImportService* AssetImport() noexcept { return nullptr; }
+    virtual AssetDatabase* ImportDatabase() noexcept { return nullptr; }
+
+    /** Refresh editor views after an asset file operation. */
+    virtual void NotifyAssetChanged() {}
+
+    /**
+     * @brief Ask the host script runtime to force-reload scripts.
+     *
+     * Returns false (with a message) when the host has no live script runtime,
+     * for example while the editor is not in Play Mode.
+     */
+    virtual bool RequestScriptReload(std::string& outError)
+    {
+        outError = "Script reload is unavailable for this host";
         return false;
     }
 };

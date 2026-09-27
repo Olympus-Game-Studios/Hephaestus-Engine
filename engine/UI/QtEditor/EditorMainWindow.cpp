@@ -71,9 +71,11 @@
 #include "../../Plugins/PluginSystem.h"
 #include "../../Automation/AutomationBackend.h"
 #include "../../Automation/AutomationService.h"
+#include "../../Automation/AssetAutomation.h"
 #include "../../Automation/SceneAutomation.h"
 #include "../../Automation/PlayAutomation.h"
 #include "../../Automation/LogAutomation.h"
+#include "../../Assets/EditorAssetImportService.h"
 #include "AppConfig.h"
 
 #include <QClipboard>
@@ -745,6 +747,47 @@ public:
         return true;
     }
 
+    // ── Content-authoring services ─────────────────────────────────────────
+
+    Hephaestus::AssetManager* Assets() noexcept override
+    {
+        return &Hephaestus::AssetManager::GetInstance();
+    }
+
+    Hephaestus::AssetReferenceIndex* AssetReferences() noexcept override
+    {
+        return &EditorAssetServices::Instance().ReferenceIndex();
+    }
+
+    Hephaestus::AssetOperationService* AssetOperations() noexcept override
+    {
+        return &EditorAssetServices::Instance().Operations();
+    }
+
+    Automation::IAssetImportService* AssetImport() noexcept override
+    {
+        EditorAssetPipeline* pipeline = m_owner->GetAssetPipeline();
+        if (!pipeline || !pipeline->IsInitialized()) {
+            return nullptr;
+        }
+        if (!m_assetImport) {
+            m_assetImport = std::make_unique<EditorAssetImportService>(*pipeline);
+        }
+        return m_assetImport.get();
+    }
+
+    AssetDatabase* ImportDatabase() noexcept override
+    {
+        EditorAssetPipeline* pipeline = m_owner->GetAssetPipeline();
+        return (pipeline && pipeline->IsInitialized()) ? &pipeline->GetDatabase() : nullptr;
+    }
+
+    void NotifyAssetChanged() override
+    {
+        m_owner->refreshAssetBrowser();
+        m_owner->rebuildSceneVisuals();
+    }
+
 private:
     EditorContext* Context() const
     {
@@ -754,6 +797,7 @@ private:
 
     EditorMainWindow* m_owner;
     std::atomic<Hephaestus::PlayState> m_playState{Hephaestus::PlayState::Editor};
+    std::unique_ptr<EditorAssetImportService> m_assetImport;
 };
 
 void EditorMainWindow::SetupAutomation()
@@ -765,6 +809,7 @@ void EditorMainWindow::SetupAutomation()
     Automation::RegisterSceneAutomation(*m_automationService);
     Automation::RegisterPlayAutomation(*m_automationService);
     Automation::RegisterLogAutomation(*m_automationService);
+    Automation::RegisterAssetAutomation(*m_automationService);
     m_firstPartyContext = std::make_unique<FirstPartyContext>(this);
 
     m_automationTimer = new QTimer(this);
