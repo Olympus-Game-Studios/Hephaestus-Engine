@@ -1,4 +1,4 @@
-#include "Automation/Mcp/McpServer.h"
+#include "HephaestusMCP/Core/McpServer.h"
 
 #include <httplib/httplib.h>
 

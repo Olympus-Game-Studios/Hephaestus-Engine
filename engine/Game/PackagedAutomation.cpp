@@ -5,7 +5,7 @@
 #include "../Automation/AutomationBackend.h"
 #include "../Automation/AutomationService.h"
 #include "../Automation/LogAutomation.h"
-#include "../Automation/Mcp/McpServer.h"
+#include "HephaestusMCP/Core/McpServer.h"
 #include "../Automation/PlayAutomation.h"
 #include "../Automation/RuntimeAutomation.h"
 #include "../Input/InputSystem.h"

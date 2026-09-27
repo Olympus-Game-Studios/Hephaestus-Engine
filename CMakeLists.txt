@@ -227,6 +227,8 @@ add_library(HephaestusInputCore STATIC
 target_include_directories(HephaestusInputCore PUBLIC engine extern extern/glfw/include)
 
 # Transport-independent automation registry and main-thread dispatch core.
+# This library is intentionally free of any MCP/HTTP protocol implementation;
+# semantic automation tools live here and are consumed by hosts and plugins.
 add_library(HephaestusAutomationCore STATIC
     engine/Automation/AutomationTypes.cpp
     engine/Automation/AutomationService.cpp
@@ -237,20 +239,32 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/RuntimeAutomation.cpp
     engine/Automation/SceneAutomation.cpp
     engine/Automation/ToolRegistry.cpp
-    engine/Automation/Mcp/McpHttpTypes.cpp
-    engine/Automation/Mcp/McpJsonRpc.cpp
-    engine/Automation/Mcp/McpToolSchema.cpp
-    engine/Automation/Mcp/McpSession.cpp
-    engine/Automation/Mcp/McpLegacySession.cpp
-    engine/Automation/Mcp/McpHttpTransport.cpp
-    engine/Automation/Mcp/McpServer.cpp
 )
 target_include_directories(HephaestusAutomationCore PUBLIC
     engine
     extern
     extern/entt/single_include
 )
-target_compile_definitions(HephaestusAutomationCore PUBLIC
+
+# MCP protocol and HTTP transport implementation. Qt-free and usable by both
+# the editor plugin and the packaged Development runtime. Depends only on the
+# semantic automation core.
+add_library(HephaestusMcpCore STATIC
+    Plugins/HephaestusMCP/Core/McpHttpTypes.cpp
+    Plugins/HephaestusMCP/Core/McpJsonRpc.cpp
+    Plugins/HephaestusMCP/Core/McpToolSchema.cpp
+    Plugins/HephaestusMCP/Core/McpSession.cpp
+    Plugins/HephaestusMCP/Core/McpLegacySession.cpp
+    Plugins/HephaestusMCP/Core/McpHttpTransport.cpp
+    Plugins/HephaestusMCP/Core/McpServer.cpp
+)
+target_link_libraries(HephaestusMcpCore PUBLIC HephaestusAutomationCore)
+target_include_directories(HephaestusMcpCore PUBLIC
+    engine
+    extern
+    Plugins
+)
+target_compile_definitions(HephaestusMcpCore PUBLIC
     HEPHAESTUS_MCP_LEGACY_COMPAT=$<BOOL:${HEPHAESTUS_MCP_LEGACY_COMPAT}>
 )
 
@@ -560,7 +574,7 @@ elseif(APPLE)
 endif()
 
 target_include_directories(HephaestusEngine PRIVATE engine "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore HephaestusInputCore HephaestusPluginCore HephaestusAutomationCore ufbx)
+target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore HephaestusInputCore HephaestusPluginCore HephaestusAutomationCore HephaestusMcpCore ufbx)
 if(LUA_FOUND)
     if(TARGET Lua::Lua)
         target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt Lua::Lua)
@@ -915,7 +929,7 @@ if(HEPHAESTUS_RUNTIME_AUTOMATION)
         HEPHAESTUS_MCP_LEGACY_COMPAT=$<BOOL:${HEPHAESTUS_MCP_LEGACY_COMPAT}>
     )
     target_sources(HephaestusGame PRIVATE engine/Game/PackagedAutomation.cpp)
-    target_link_libraries(HephaestusGame PRIVATE HephaestusAutomationCore)
+    target_link_libraries(HephaestusGame PRIVATE HephaestusMcpCore)
 else()
     target_compile_definitions(HephaestusGame PRIVATE HEPHAESTUS_RUNTIME_AUTOMATION=0)
 endif()
@@ -1329,6 +1343,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_executable(HttpTransportSmokeTests
         engine/Tests/HttpTransportSmokeTests.cpp
     )
+    target_link_libraries(HttpTransportSmokeTests PRIVATE HephaestusMcpCore)
     target_include_directories(HttpTransportSmokeTests PRIVATE extern)
     add_test(
         NAME HttpTransportSmoke
@@ -1348,7 +1363,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_executable(McpProtocolTests
         engine/Tests/McpProtocolTests.cpp
     )
-    target_link_libraries(McpProtocolTests PRIVATE HephaestusAutomationCore)
+    target_link_libraries(McpProtocolTests PRIVATE HephaestusMcpCore)
     target_include_directories(McpProtocolTests PRIVATE engine extern)
     add_test(
         NAME McpProtocol

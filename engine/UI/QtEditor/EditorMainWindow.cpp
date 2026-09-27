@@ -74,7 +74,7 @@
 #include "../../Automation/SceneAutomation.h"
 #include "../../Automation/PlayAutomation.h"
 #include "../../Automation/LogAutomation.h"
-#include "../../Automation/Mcp/McpServer.h"
+#include "HephaestusMCP/Core/McpServer.h"
 #include "AppConfig.h"
 
 #include <QClipboard>
