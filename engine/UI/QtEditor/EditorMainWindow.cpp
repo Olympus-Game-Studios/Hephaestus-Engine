@@ -72,6 +72,7 @@
 #include "../../Automation/AutomationBackend.h"
 #include "../../Automation/AutomationService.h"
 #include "../../Automation/AssetAutomation.h"
+#include "../../Automation/CharacterAutomation.h"
 #include "../../Automation/MaterialAutomation.h"
 #include "../../Automation/SceneAutomation.h"
 #include "../../Automation/PlayAutomation.h"
@@ -812,6 +813,7 @@ void EditorMainWindow::SetupAutomation()
     Automation::RegisterLogAutomation(*m_automationService);
     Automation::RegisterAssetAutomation(*m_automationService);
     Automation::RegisterMaterialAutomation(*m_automationService);
+    Automation::RegisterCharacterAutomation(*m_automationService);
     m_firstPartyContext = std::make_unique<FirstPartyContext>(this);
 
     m_automationTimer = new QTimer(this);

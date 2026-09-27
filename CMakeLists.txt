@@ -235,6 +235,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/ComponentMetadata.cpp
     engine/Automation/EntityRef.cpp
     engine/Automation/AssetAutomation.cpp
+    engine/Automation/CharacterAutomation.cpp
     engine/Automation/LogAutomation.cpp
     engine/Automation/MaterialAutomation.cpp
     engine/Automation/PlayAutomation.cpp
@@ -1503,6 +1504,39 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME AutomationMaterial
         COMMAND AutomationMaterialTests
+    )
+
+    add_executable(AutomationCharacterTests
+        engine/Tests/AutomationCharacterTests.cpp
+        engine/Assets/CharacterAsset.cpp
+        engine/Assets/CharacterRuntime.cpp
+        engine/Assets/CharacterImport.cpp
+        engine/Assets/SkeletalModelImporter.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Assets/AssetManager.cpp
+        engine/Animation/Skeleton.cpp
+        engine/Animation/AnimationClip.cpp
+        engine/Animation/CharacterPlayback.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_link_libraries(AutomationCharacterTests PRIVATE HephaestusAutomationCore)
+    target_include_directories(AutomationCharacterTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    hephaestus_target_ufbx(AutomationCharacterTests SKELETAL)
+    add_test(
+        NAME AutomationCharacter
+        COMMAND AutomationCharacterTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
     add_executable(LuaExposeScannerTests
