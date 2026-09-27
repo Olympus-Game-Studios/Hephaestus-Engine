@@ -236,6 +236,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/EntityRef.cpp
     engine/Automation/AssetAutomation.cpp
     engine/Automation/LogAutomation.cpp
+    engine/Automation/MaterialAutomation.cpp
     engine/Automation/PlayAutomation.cpp
     engine/Automation/RuntimeAutomation.cpp
     engine/Automation/SceneAutomation.cpp
@@ -1474,6 +1475,34 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME AutomationAsset
         COMMAND AutomationAssetTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(AutomationMaterialTests
+        engine/Tests/AutomationMaterialTests.cpp
+        engine/UI/MaterialEditor/MaterialGraph.cpp
+        engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
+        engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
+        engine/Assets/AssetManager.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_link_libraries(AutomationMaterialTests PRIVATE HephaestusAutomationCore)
+    target_include_directories(AutomationMaterialTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME AutomationMaterial
+        COMMAND AutomationMaterialTests
     )
 
     add_executable(LuaExposeScannerTests
