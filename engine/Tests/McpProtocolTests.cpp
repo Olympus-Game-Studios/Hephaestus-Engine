@@ -292,8 +292,14 @@ bool TestHttpTransport(Mcp::McpServer& server)
 
     auto get = client.Get("/mcp");
     ok &= Check(get && get->status == 405, "GET /mcp returns 405");
+    const int boundPort = server.Port();
     server.Stop();
     ok &= Check(!server.IsRunning(), "HTTP server shuts down cleanly");
+    ok &= Check(server.Start(boundPort), "HTTP server restarts on the released port");
+    ok &= Check(server.IsRunning() && server.Port() == boundPort,
+                "Restart reports the same bound port");
+    server.Stop();
+    ok &= Check(!server.IsRunning(), "Restarted HTTP server stops cleanly");
     return ok;
 }
 

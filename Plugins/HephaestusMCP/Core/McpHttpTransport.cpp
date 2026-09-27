@@ -54,7 +54,9 @@ void ApplyResponse(const HttpResponse& source, httplib::Response& destination)
 
 class McpHttpTransport::Impl {
 public:
-    httplib::Server server;
+    // Recreated on every Start so a stopped transport can be restarted with a
+    // clean routing table and listening socket.
+    std::unique_ptr<httplib::Server> server;
     std::thread thread;
     std::atomic<bool> running{false};
     int port = 0;
@@ -66,9 +68,11 @@ McpHttpTransport::~McpHttpTransport() { Stop(); }
 bool McpHttpTransport::Start(int port, Handler handler)
 {
     if (m_Impl->running.load() || !handler || port < 0 || port > 65535) return false;
-    m_Impl->server.set_payload_max_length(4 * 1024 * 1024);
-    m_Impl->server.set_pre_routing_handler([](const httplib::Request& request,
-                                               httplib::Response& response) {
+    m_Impl->server = std::make_unique<httplib::Server>();
+    httplib::Server& server = *m_Impl->server;
+    server.set_payload_max_length(4 * 1024 * 1024);
+    server.set_pre_routing_handler([](const httplib::Request& request,
+                                      httplib::Response& response) {
         if (IsAllowedOrigin(request)) return httplib::Server::HandlerResponse::Unhandled;
         response.status = httplib::StatusCode::Forbidden_403;
         return httplib::Server::HandlerResponse::Handled;
@@ -76,17 +80,20 @@ bool McpHttpTransport::Start(int port, Handler handler)
     auto route = [handler](const httplib::Request& request, httplib::Response& response) {
         ApplyResponse(handler(ConvertRequest(request)), response);
     };
-    m_Impl->server.Post("/mcp", route);
-    m_Impl->server.Get("/mcp", route);
-    m_Impl->server.Delete("/mcp", route);
+    server.Post("/mcp", route);
+    server.Get("/mcp", route);
+    server.Delete("/mcp", route);
 
     m_Impl->port = port == 0
-        ? m_Impl->server.bind_to_any_port("127.0.0.1")
-        : (m_Impl->server.bind_to_port("127.0.0.1", port) ? port : -1);
-    if (m_Impl->port <= 0) return false;
+        ? server.bind_to_any_port("127.0.0.1")
+        : (server.bind_to_port("127.0.0.1", port) ? port : -1);
+    if (m_Impl->port <= 0) {
+        m_Impl->server.reset();
+        return false;
+    }
     m_Impl->running.store(true);
     m_Impl->thread = std::thread([impl = m_Impl.get()]() {
-        impl->server.listen_after_bind();
+        impl->server->listen_after_bind();
         impl->running.store(false);
     });
     return true;
@@ -95,7 +102,16 @@ bool McpHttpTransport::Start(int port, Handler handler)
 void McpHttpTransport::Stop()
 {
     if (!m_Impl) return;
-    m_Impl->server.stop();
+    if (m_Impl->server) {
+        // cpp-httplib's stop() is a no-op unless the accept loop has marked
+        // itself running. Wait (bounded by our own running flag, which the
+        // listener clears when it returns) so a stop issued immediately after
+        // start cannot be lost and deadlock the join.
+        while (m_Impl->running.load() && !m_Impl->server->is_running()) {
+            std::this_thread::yield();
+        }
+        m_Impl->server->stop();
+    }
     if (m_Impl->thread.joinable()) m_Impl->thread.join();
     m_Impl->running.store(false);
     m_Impl->port = 0;
