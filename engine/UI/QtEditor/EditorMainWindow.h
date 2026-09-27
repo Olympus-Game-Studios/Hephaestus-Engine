@@ -420,7 +420,7 @@ private:
     // Engine integration
     std::unique_ptr<QtEditorEngine> m_engine;
     
-    // Automation / MCP
+    // Automation (engine-owned; MCP is an optional consumer)
     std::unique_ptr<EditorAutomationBackend> m_automationBackend;
     std::unique_ptr<Hephaestus::Automation::AutomationService> m_automationService;
     std::unique_ptr<FirstPartyContext> m_firstPartyContext;
