@@ -3255,6 +3255,17 @@ Hephaestus::PlayState QtEditorEngine::GetPlayState() const
     return m_playModeManager.GetState();
 }
 
+bool QtEditorEngine::ReloadScripts(std::string& outError)
+{
+    if (!m_luaScriptEngine) {
+        outError = "No Lua script runtime is active";
+        return false;
+    }
+    m_luaScriptEngine->RequestReloadAll();
+    outError.clear();
+    return true;
+}
+
 void QtEditorEngine::runSimulationFrame(float dt)
 {
     populateGameplayInput();

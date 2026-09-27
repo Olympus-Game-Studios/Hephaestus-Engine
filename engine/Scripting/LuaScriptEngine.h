@@ -154,6 +154,15 @@ public:
     void Update(Scene& scene, float deltaTime);
 
     /**
+     * Force every live script instance to reload on the next Update().
+     *
+     * This reuses the existing mtime/embedded-source reload path rather than
+     * building a parallel loader. Used by the editor automation host to
+     * implement a semantic script reload request.
+     */
+    void RequestReloadAll();
+
+    /**
      * Late update active Lua scripts (onLateUpdate)
      */
     void LateUpdate(Scene& scene, float deltaTime);
@@ -251,6 +260,7 @@ private:
         std::filesystem::path resolvedPath;
         std::filesystem::file_time_type lastWriteTime{};
         size_t embeddedSourceHash = 0;
+        bool forceReload = false;
         int environmentRef = -1;
         int onAwakeRef = -1;
         int onEnableRef = -1;

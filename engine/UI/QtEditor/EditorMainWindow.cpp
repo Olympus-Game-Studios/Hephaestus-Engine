@@ -77,6 +77,7 @@
 #include "../../Automation/SceneAutomation.h"
 #include "../../Automation/PlayAutomation.h"
 #include "../../Automation/LogAutomation.h"
+#include "../../Automation/ScriptAutomation.h"
 #include "../../Assets/EditorAssetImportService.h"
 #include "AppConfig.h"
 
@@ -790,6 +791,15 @@ public:
         m_owner->rebuildSceneVisuals();
     }
 
+    bool RequestScriptReload(std::string& outError) override
+    {
+        if (!m_owner->m_engine) {
+            outError = "Engine is unavailable";
+            return false;
+        }
+        return m_owner->m_engine->ReloadScripts(outError);
+    }
+
 private:
     EditorContext* Context() const
     {
@@ -814,6 +824,7 @@ void EditorMainWindow::SetupAutomation()
     Automation::RegisterAssetAutomation(*m_automationService);
     Automation::RegisterMaterialAutomation(*m_automationService);
     Automation::RegisterCharacterAutomation(*m_automationService);
+    Automation::RegisterScriptAutomation(*m_automationService);
     m_firstPartyContext = std::make_unique<FirstPartyContext>(this);
 
     m_automationTimer = new QTimer(this);

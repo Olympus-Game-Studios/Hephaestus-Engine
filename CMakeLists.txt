@@ -241,6 +241,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/PlayAutomation.cpp
     engine/Automation/RuntimeAutomation.cpp
     engine/Automation/SceneAutomation.cpp
+    engine/Automation/ScriptAutomation.cpp
     engine/Automation/ToolRegistry.cpp
 )
 target_include_directories(HephaestusAutomationCore PUBLIC
@@ -1537,6 +1538,33 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME AutomationCharacter
         COMMAND AutomationCharacterTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(AutomationScriptTests
+        engine/Tests/AutomationScriptTests.cpp
+        engine/Scripting/LuaExposeScanner.cpp
+        engine/Scripting/LuaScriptVariableReconciler.cpp
+        engine/Assets/AssetManager.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_link_libraries(AutomationScriptTests PRIVATE HephaestusAutomationCore)
+    target_include_directories(AutomationScriptTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME AutomationScript
+        COMMAND AutomationScriptTests
     )
 
     add_executable(LuaExposeScannerTests

@@ -1387,6 +1387,13 @@ void LuaScriptEngine::AddSearchPath(const std::filesystem::path& path) {
     }
 }
 
+void LuaScriptEngine::RequestReloadAll() {
+    for (auto& [key, instance] : m_ScriptInstances) {
+        (void)key;
+        instance.forceReload = true;
+    }
+}
+
 LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene,
                                                                  entt::entity entityHandle,
                                                                  LuaScriptComponent& component,
@@ -1427,7 +1434,7 @@ LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene,
     }
 
     if (hasEmbeddedSource) {
-        bool needsReload = !instance.valid || sourceChanged;
+        bool needsReload = !instance.valid || sourceChanged || instance.forceReload;
         if (needsReload) {
             Entity entity(entityHandle, &scene);
             if (instance.valid) {
@@ -1445,6 +1452,7 @@ LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene,
 
             instance.embeddedSourceHash = sourceHash;
             instance.errorLogged = false;
+            instance.forceReload = false;
         }
         return &instance;
     }
@@ -1462,7 +1470,8 @@ LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene,
         return nullptr;
     }
 
-    bool needsReload = !instance.valid || (instance.valid && timestamp != instance.lastWriteTime);
+    bool needsReload = !instance.valid || instance.forceReload ||
+        (instance.valid && timestamp != instance.lastWriteTime);
 
     if (needsReload) {
         Entity entity(entityHandle, &scene);
@@ -1489,6 +1498,7 @@ LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene,
 
         instance.errorLogged = false;
         instance.lastWriteTime = timestamp;
+        instance.forceReload = false;
     }
 
     return &instance;

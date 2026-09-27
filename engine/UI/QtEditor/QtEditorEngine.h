@@ -267,6 +267,15 @@ public:
     bool StepFrames(std::uint32_t count, float fixedDt, std::string& outError);
 
     /**
+     * @brief Force the live Lua runtime to reload all scripts.
+     *
+     * Returns false (with a message) when no script runtime exists yet, for
+     * example before Play Mode has ever been started. Reuses LuaScriptEngine's
+     * existing mtime reload path.
+     */
+    bool ReloadScripts(std::string& outError);
+
+    /**
      * @brief Upload a mesh to the GPU and add it to the mesh library.
      * @return Mesh handle, or InvalidMesh on failure.
      */
