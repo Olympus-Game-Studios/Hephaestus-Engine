@@ -74,7 +74,6 @@
 #include "../../Automation/SceneAutomation.h"
 #include "../../Automation/PlayAutomation.h"
 #include "../../Automation/LogAutomation.h"
-#include "HephaestusMCP/Core/McpServer.h"
 #include "AppConfig.h"
 
 #include <QClipboard>
@@ -455,9 +454,35 @@ static QIcon makeSnapGlyphIcon(const QSize& size, const QColor& color)
     return QIcon(pix);
 }
 
-EditorMainWindow::EditorMainWindow(QWidget* parent)
+class EditorMainWindow::FirstPartyContext final : public Plugins::IFirstPartyPluginContext
+{
+public:
+    explicit FirstPartyContext(EditorMainWindow* owner) : m_owner(owner) {}
+
+    std::uint32_t GetFirstPartyApiVersion() const override
+    {
+        return Plugins::HP_FIRST_PARTY_API_VERSION;
+    }
+
+    Plugins::IAutomationService* GetAutomationService() override
+    {
+        return m_owner->m_automationService.get();
+    }
+
+    const Plugins::FirstPartyStartupOptions& GetStartupOptions() const override
+    {
+        return m_owner->m_startupOptions;
+    }
+
+private:
+    EditorMainWindow* m_owner;
+};
+
+EditorMainWindow::EditorMainWindow(QWidget* parent,
+                                   Hephaestus::Plugins::FirstPartyStartupOptions startupOptions)
     : QMainWindow(parent)
     , m_projectContext(std::make_unique<ProjectContext>())
+    , m_startupOptions(std::move(startupOptions))
 {
     EngineLog::Info("EditorMainWindow: constructing UI");
 
@@ -484,6 +509,10 @@ EditorMainWindow::EditorMainWindow(QWidget* parent)
     setupStatusBar();
     applyUnifiedStyle();
 
+    // Automation must exist before plugins load. MCP is an optional consumer of
+    // the Automation API, never an engine dependency.
+    SetupAutomation();
+
     m_pluginSystem = std::make_unique<Plugins::PluginSystem>();
     m_pluginSystem->SetEngineVersion(HEPHAESTUS_VERSION_STRING);
     m_pluginHost = std::make_unique<EditorPluginHost>(
@@ -497,6 +526,9 @@ EditorMainWindow::EditorMainWindow(QWidget* parent)
         });
     m_pluginSystem->SetContextFactory([this](const Plugins::PluginManifest& manifest) {
         return m_pluginHost->CreateContext(manifest);
+    });
+    m_pluginSystem->SetFirstPartyContextFactory([this]() -> Plugins::IFirstPartyPluginContext* {
+        return m_firstPartyContext.get();
     });
     m_pluginSystem->Discover(QCoreApplication::applicationDirPath().toStdString(), {});
     m_pluginSystem->LoadEnabled();
@@ -543,7 +575,7 @@ EditorMainWindow::~EditorMainWindow()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Automation / MCP host
+// Automation host
 // ─────────────────────────────────────────────────────────────────────────────
 
 class EditorMainWindow::EditorAutomationBackend final : public Automation::AutomationBackend
@@ -724,23 +756,16 @@ private:
     std::atomic<Hephaestus::PlayState> m_playState{Hephaestus::PlayState::Editor};
 };
 
-bool EditorMainWindow::StartAutomation(int port)
+void EditorMainWindow::SetupAutomation()
 {
-    if (m_automationService) return true;
+    if (m_automationService) return;
 
     m_automationBackend = std::make_unique<EditorAutomationBackend>(this);
     m_automationService = std::make_unique<Automation::AutomationService>(*m_automationBackend);
     Automation::RegisterSceneAutomation(*m_automationService);
     Automation::RegisterPlayAutomation(*m_automationService);
     Automation::RegisterLogAutomation(*m_automationService);
-    m_mcpServer = std::make_unique<Automation::Mcp::McpServer>(*m_automationService);
-    if (!m_mcpServer->Start(port)) {
-        EngineLog::Error("MCP endpoint failed to start");
-        m_mcpServer.reset();
-        m_automationService.reset();
-        m_automationBackend.reset();
-        return false;
-    }
+    m_firstPartyContext = std::make_unique<FirstPartyContext>(this);
 
     m_automationTimer = new QTimer(this);
     m_automationTimer->setInterval(16);
@@ -754,10 +779,7 @@ bool EditorMainWindow::StartAutomation(int port)
     });
     m_automationTimer->start();
 
-    const std::string endpoint = "http://127.0.0.1:" + std::to_string(m_mcpServer->Port()) + "/mcp";
-    EngineLog::Info("MCP automation endpoint listening on " + endpoint);
-    std::cout << "[MCP] " << endpoint << std::endl;
-    return true;
+    EngineLog::Info("Editor automation service ready (independent of MCP)");
 }
 
 void EditorMainWindow::ShutdownAutomation()
@@ -768,12 +790,6 @@ void EditorMainWindow::ShutdownAutomation()
     if (m_automationService) {
         m_automationService->Shutdown();
     }
-    if (m_mcpServer) {
-        m_mcpServer->Stop();
-    }
-    m_mcpServer.reset();
-    m_automationService.reset();
-    m_automationBackend.reset();
 }
 
 bool EditorMainWindow::StartEngine()

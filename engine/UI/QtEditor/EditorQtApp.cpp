@@ -77,6 +77,7 @@ std::string ExtractProjectPathArg(int argc, char** argv)
 struct McpOptions
 {
     bool enabled = false;
+    bool portSpecified = false;
     int port = 0;
     std::string error;
 };
@@ -93,6 +94,7 @@ McpOptions ParseMcpOptions(int argc, char** argv)
         static constexpr const char* kPortPrefix = "--mcp-port=";
         if (arg.rfind(kPortPrefix, 0) == 0) {
             options.enabled = true;
+            options.portSpecified = true;
             const std::string value = arg.substr(std::char_traits<char>::length(kPortPrefix));
             try {
                 const long parsed = std::stol(value);
@@ -109,6 +111,7 @@ McpOptions ParseMcpOptions(int argc, char** argv)
         }
         if (arg == "--mcp-port") {
             options.enabled = true;
+            options.portSpecified = true;
             if (i + 1 >= argc) {
                 options.error = "Missing value for --mcp-port";
                 return options;
@@ -265,7 +268,11 @@ int RunQtEditor(int argc, char** argv)
         QApplication::setOrganizationDomain(Hephaestus::Tools::VersionInfo::Domain());
 
         Hephaestus::EngineLog::Info("Constructing EditorMainWindow (UI only, no Vulkan yet)");
-        Hephaestus::QtEditor::EditorMainWindow mainWindow;
+        Hephaestus::Plugins::FirstPartyStartupOptions startupOptions;
+        startupOptions.automationRequested = mcp.enabled;
+        startupOptions.automationPortSpecified = mcp.portSpecified;
+        startupOptions.automationPort = mcp.port;
+        Hephaestus::QtEditor::EditorMainWindow mainWindow(nullptr, startupOptions);
         Hephaestus::EngineLog::Info("EditorMainWindow constructed, calling show()");
 
         mainWindow.show();
@@ -288,13 +295,6 @@ int RunQtEditor(int argc, char** argv)
         if (!startupProjectPath.empty()) {
             Hephaestus::EngineLog::Info(std::string("Opening project: ") + startupProjectPath);
             mainWindow.OpenProjectFromPath(QString::fromStdString(startupProjectPath));
-        }
-
-        if (mcp.enabled) {
-            Hephaestus::EngineLog::Info("Starting MCP automation endpoint");
-            if (!mainWindow.StartAutomation(mcp.port)) {
-                Hephaestus::EngineLog::Error("Failed to start MCP automation endpoint");
-            }
         }
 
         Hephaestus::EngineLog::Info("Entering Qt event loop");

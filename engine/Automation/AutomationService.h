@@ -3,6 +3,7 @@
 #include "AutomationBackend.h"
 #include "EntityRef.h"
 #include "ToolRegistry.h"
+#include "PluginAPI/PluginFirstParty.h"
 
 #include <atomic>
 #include <cstddef>
@@ -39,10 +40,10 @@ struct PostedCall {
     std::future<ToolResult> result;
 };
 
-class AutomationService {
+class AutomationService : public Plugins::IAutomationService {
 public:
     explicit AutomationService(AutomationBackend& backend);
-    ~AutomationService();
+    ~AutomationService() override;
 
     AutomationService(const AutomationService&) = delete;
     AutomationService& operator=(const AutomationService&) = delete;
@@ -50,6 +51,12 @@ public:
     ToolRegistry& Registry() noexcept { return m_Registry; }
     const ToolRegistry& Registry() const noexcept { return m_Registry; }
     EntityRefTable& Entities() noexcept { return m_Entities; }
+
+    // ── Plugins::IAutomationService ────────────────────────────────────────
+    [[nodiscard]] const ToolRegistry& GetRegistry() const override { return m_Registry; }
+    [[nodiscard]] HostMask GetHost() const override { return m_Backend.Host(); }
+    [[nodiscard]] PlayState GetPlayState() const override { return m_Backend.GetPlayState(); }
+    Plugins::ToolFuture PostCall(ToolCall call) override;
 
     PostedCall Post(ToolCall call);
     std::size_t Tick();

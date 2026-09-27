@@ -13,7 +13,7 @@ bool HasModernMetadata(const ParsedMessage& message)
 
 } // namespace
 
-McpServer::McpServer(AutomationService& service, SessionConfig config)
+McpServer::McpServer(Plugins::IAutomationService& service, SessionConfig config)
     : m_Modern(service, std::move(config))
 #if HEPHAESTUS_MCP_LEGACY_COMPAT
     , m_Legacy(m_Modern)

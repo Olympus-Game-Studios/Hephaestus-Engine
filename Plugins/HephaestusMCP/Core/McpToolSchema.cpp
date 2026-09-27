@@ -60,11 +60,11 @@ bool WalkProperties(const Json& schema, std::vector<std::string>& path,
 
 } // namespace
 
-Json BuildToolList(const AutomationService& service)
+Json BuildToolList(const Plugins::IAutomationService& service)
 {
     Json tools = Json::array();
-    for (const ToolDefinition* definition : service.Registry().Available(
-             service.CurrentHost(), service.CurrentPlayState())) {
+    for (const ToolDefinition* definition : service.GetRegistry().Available(
+             service.GetHost(), service.GetPlayState())) {
         Json tool = {{"name", definition->name},
                      {"description", definition->description},
                      {"inputSchema", definition->inputSchema}};

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Automation/AutomationService.h"
+#include "PluginAPI/PluginFirstParty.h"
 
 #include <string>
 #include <vector>
@@ -13,7 +13,7 @@ struct HeaderParameter {
     std::string type;
 };
 
-Json BuildToolList(const AutomationService& service);
+Json BuildToolList(const Plugins::IAutomationService& service);
 bool CollectHeaderParameters(const Json& schema, std::vector<HeaderParameter>& out,
                              std::string& outError);
 

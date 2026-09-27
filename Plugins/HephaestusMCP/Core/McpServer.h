@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PluginAPI/PluginFirstParty.h"
 #include "McpHttpTransport.h"
 #include "McpLegacySession.h"
 
@@ -7,7 +8,7 @@ namespace Hephaestus::Automation::Mcp {
 
 class McpServer {
 public:
-    McpServer(AutomationService& service, SessionConfig config = {});
+    McpServer(Plugins::IAutomationService& service, SessionConfig config = {});
     ~McpServer();
 
     bool Start(int port = 0);

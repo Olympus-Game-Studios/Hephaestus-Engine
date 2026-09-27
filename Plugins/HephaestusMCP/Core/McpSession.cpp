@@ -106,17 +106,17 @@ std::string PrimitiveString(const Json& value, std::string_view type)
     return {};
 }
 
-bool IsToolAvailable(const AutomationService& service, const ToolDefinition* definition)
+bool IsToolAvailable(const Plugins::IAutomationService& service, const ToolDefinition* definition)
 {
     if (!definition) return false;
-    const auto available = service.Registry().Available(service.CurrentHost(),
-                                                        service.CurrentPlayState());
+    const auto available = service.GetRegistry().Available(service.GetHost(),
+                                                           service.GetPlayState());
     return std::find(available.begin(), available.end(), definition) != available.end();
 }
 
 } // namespace
 
-McpSession::McpSession(AutomationService& service, SessionConfig config)
+McpSession::McpSession(Plugins::IAutomationService& service, SessionConfig config)
     : m_Service(service), m_Config(std::move(config))
 {
 }
@@ -281,7 +281,7 @@ Json McpSession::ExecuteToolCall(const Json& id, const Json& params, bool modern
         return MakeError(id, InvalidParams, "tools/call requires params.name");
     }
     const std::string name = params["name"].get<std::string>();
-    const ToolDefinition* definition = m_Service.Registry().Find(name);
+    const ToolDefinition* definition = m_Service.GetRegistry().Find(name);
     if (!IsToolAvailable(m_Service, definition)) {
         outHttpStatus = 400;
         return MakeError(id, InvalidParams, "Unknown tool: " + name);
@@ -292,15 +292,15 @@ Json McpSession::ExecuteToolCall(const Json& id, const Json& params, bool modern
         return MakeError(id, InvalidParams, "tools/call arguments must be an object");
     }
 
-    PostedCall posted = m_Service.Post({name, std::move(arguments)});
-    if (posted.result.wait_for(m_Config.requestTimeout) != std::future_status::ready) {
+    Plugins::ToolFuture posted = m_Service.PostCall({name, std::move(arguments)});
+    if (posted.wait_for(m_Config.requestTimeout) != std::future_status::ready) {
         Json result = {{"content", Json::array({{{"type", "text"},
                                                   {"text", "Automation request timed out"}}})},
                        {"isError", true}};
         if (modern) result = DecorateResult(std::move(result));
         return MakeResult(id, std::move(result));
     }
-    ToolResult toolResult = posted.result.get();
+    ToolResult toolResult = posted.get();
     Json structured;
     std::string text;
     bool isError = !toolResult.Ok();
@@ -368,7 +368,7 @@ HttpResponse McpSession::HandlePost(const HttpRequest& request)
     }
     if (message.method == "tools/call") {
         const std::string name = message.params.value("name", "");
-        const ToolDefinition* definition = m_Service.Registry().Find(name);
+        const ToolDefinition* definition = m_Service.GetRegistry().Find(name);
         if (!IsToolAvailable(m_Service, definition)) {
             return JsonError(message.id, InvalidParams, "Unknown tool: " + name, 400);
         }

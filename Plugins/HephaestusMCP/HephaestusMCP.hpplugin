@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "apiVersion": 1,
+  "id": "com.hephaestus.mcp",
+  "name": "Hephaestus MCP",
+  "description": "Exposes Hephaestus automation tools over the Model Context Protocol (localhost only).",
+  "author": "Hephaestus Engine",
+  "pluginVersion": "1.0.0",
+  "engineVersion": ">=2026.9.0",
+  "type": "editor",
+  "entry": "bin/HephaestusMCP.dll"
+}

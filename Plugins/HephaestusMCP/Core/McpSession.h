@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Automation/AutomationService.h"
+#include "PluginAPI/PluginFirstParty.h"
 #include "McpHttpTypes.h"
 #include "McpJsonRpc.h"
 
@@ -23,7 +23,7 @@ public:
     static constexpr std::string_view ProtocolVersion = "2026-07-28";
     static constexpr std::string_view LegacyProtocolVersion = "2025-11-25";
 
-    McpSession(AutomationService& service, SessionConfig config = {});
+    McpSession(Plugins::IAutomationService& service, SessionConfig config = {});
 
     HttpResponse HandlePost(const HttpRequest& request);
     Json BuildToolsListResult(bool modern) const;
@@ -43,7 +43,7 @@ private:
                                const ToolDefinition& definition, HttpResponse& outError) const;
     Json DecorateResult(Json result) const;
 
-    AutomationService& m_Service;
+    Plugins::IAutomationService& m_Service;
     SessionConfig m_Config;
 };
 

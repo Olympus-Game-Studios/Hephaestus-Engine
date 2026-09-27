@@ -31,6 +31,9 @@ PluginSystem::PluginSystem() = default;
 PluginSystem::~PluginSystem() { UnloadAll(); }
 void PluginSystem::SetEngineVersion(std::string version) { engineVersion_ = std::move(version); }
 void PluginSystem::SetContextFactory(ContextFactory factory) { contextFactory_ = std::move(factory); }
+void PluginSystem::SetFirstPartyContextFactory(FirstPartyContextFactory factory) {
+    firstPartyFactory_ = std::move(factory);
+}
 
 void PluginSystem::DiscoverRoot(const std::filesystem::path& root, PluginLocation location) {
     std::error_code ec;
@@ -167,8 +170,19 @@ void PluginSystem::LoadEnabled() {
             candidate->destroy = exports->destroy;
             candidate->context = contextFactory_(record.manifest);
             candidate->instance = exports->create();
-            if (!candidate->context || !candidate->instance ||
-                !candidate->instance->OnLoad(*candidate->context))
+            if (!candidate->context || !candidate->instance)
+                throw std::runtime_error("plugin instance could not be created");
+            if (firstPartyFactory_) {
+#ifdef _WIN32
+                auto setContext = reinterpret_cast<SetFirstPartyContextFn>(
+                    GetProcAddress(candidate->module, HP_FIRST_PARTY_SET_CONTEXT_EXPORT));
+#else
+                auto setContext = reinterpret_cast<SetFirstPartyContextFn>(
+                    dlsym(candidate->module, HP_FIRST_PARTY_SET_CONTEXT_EXPORT));
+#endif
+                if (setContext) setContext(candidate->instance, firstPartyFactory_());
+            }
+            if (!candidate->instance->OnLoad(*candidate->context))
                 throw std::runtime_error("plugin OnLoad failed");
             record.status = PluginStatus::Loaded;
             loaded_.push_back(std::move(candidate));

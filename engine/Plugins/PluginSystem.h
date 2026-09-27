@@ -2,6 +2,7 @@
 
 #include "PluginManifest.h"
 #include "../PluginAPI/PluginAPI.h"
+#include "../PluginAPI/PluginFirstParty.h"
 
 #include <filesystem>
 #include <functional>
@@ -29,6 +30,12 @@ public:
     using ContextFactory = std::function<std::unique_ptr<IPluginContext>(
         const PluginManifest& manifest)>;
 
+    /// Optional provider for the internal first-party context. When set, the
+    /// host probes each plugin module for the HP_SetFirstPartyContext export
+    /// and hands it the context before OnLoad. Third-party plugins that do not
+    /// export it never receive first-party capabilities.
+    using FirstPartyContextFactory = std::function<IFirstPartyPluginContext*()>;
+
     PluginSystem();
     ~PluginSystem();
     PluginSystem(const PluginSystem&) = delete;
@@ -36,6 +43,7 @@ public:
 
     void SetEngineVersion(std::string version);
     void SetContextFactory(ContextFactory factory);
+    void SetFirstPartyContextFactory(FirstPartyContextFactory factory);
     void Discover(const std::filesystem::path& engineRoot,
                   const std::filesystem::path& projectRoot);
     void LoadEnabled();
@@ -55,6 +63,7 @@ private:
     std::string engineVersion_ = "0.0.0";
     std::filesystem::path projectRoot_;
     ContextFactory contextFactory_;
+    FirstPartyContextFactory firstPartyFactory_;
     std::vector<PluginRecord> records_;
     std::vector<std::unique_ptr<LoadedPlugin>> loaded_;
 };

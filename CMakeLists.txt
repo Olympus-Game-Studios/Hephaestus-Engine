@@ -574,7 +574,7 @@ elseif(APPLE)
 endif()
 
 target_include_directories(HephaestusEngine PRIVATE engine "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore HephaestusInputCore HephaestusPluginCore HephaestusAutomationCore HephaestusMcpCore ufbx)
+target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore HephaestusInputCore HephaestusPluginCore HephaestusAutomationCore ufbx)
 if(LUA_FOUND)
     if(TARGET Lua::Lua)
         target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt Lua::Lua)
@@ -754,6 +754,26 @@ if(HEPHAESTUS_USE_QT)
             VERBATIM
         )
         add_dependencies(HephaestusEngine HephaestusPrimitiveTools)
+
+        # Official MCP editor plugin. A first-party consumer of the Automation
+        # API: it links the Qt-free McpCore and never the engine's internals.
+        add_library(HephaestusMCP SHARED
+            Plugins/HephaestusMCP/Source/HephaestusMcpPlugin.cpp
+        )
+        target_include_directories(HephaestusMCP PRIVATE engine)
+        target_link_libraries(HephaestusMCP PRIVATE HephaestusMcpCore Qt6::Widgets)
+        set_target_properties(HephaestusMCP PROPERTIES
+            OUTPUT_NAME "HephaestusMCP"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/HephaestusMCP/bin"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/HephaestusMCP/bin"
+        )
+        add_custom_command(TARGET HephaestusMCP POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/HephaestusMCP/HephaestusMCP.hpplugin"
+                "$<TARGET_FILE_DIR:HephaestusMCP>/../HephaestusMCP.hpplugin"
+            VERBATIM
+        )
+        add_dependencies(HephaestusEngine HephaestusMCP)
 
         # Copy Qt DLLs to output directory (Windows)
         if(WIN32)

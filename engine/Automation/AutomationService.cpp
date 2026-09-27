@@ -46,6 +46,12 @@ AutomationService::~AutomationService()
     Shutdown();
 }
 
+Plugins::ToolFuture AutomationService::PostCall(ToolCall call)
+{
+    PostedCall posted = Post(std::move(call));
+    return std::move(posted.result);
+}
+
 PostedCall AutomationService::Post(ToolCall call)
 {
     PendingCall pending;

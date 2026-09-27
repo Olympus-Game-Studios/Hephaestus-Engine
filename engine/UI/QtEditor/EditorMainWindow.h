@@ -35,6 +35,7 @@
 #include <QThread>
 #include <QTimer>
 #include "BuildSettingsDialog.h"
+#include "../../PluginAPI/PluginFirstParty.h"
 #include <memory>
 #include <atomic>
 #include <filesystem>
@@ -70,9 +71,6 @@ class ProjectContext;
 namespace Automation {
 class AutomationService;
 class AutomationBackend;
-namespace Mcp {
-class McpServer;
-}
 }
 
 namespace QtEditor {
@@ -132,7 +130,9 @@ class EditorMainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    explicit EditorMainWindow(QWidget* parent = nullptr);
+    explicit EditorMainWindow(
+        QWidget* parent = nullptr,
+        Hephaestus::Plugins::FirstPartyStartupOptions startupOptions = {});
     ~EditorMainWindow() override;
     void OpenProjectFromPath(const QString& filepath);
 
@@ -153,9 +153,7 @@ public:
     bool requestCloseOpenCharacter(const QString& absolutePath);
     EditorPluginHost* PluginHost() const { return m_pluginHost.get(); }
 
-    /// Start the localhost MCP automation endpoint on the given port (0 = ephemeral).
-    bool StartAutomation(int port);
-    /// Stop the automation service and HTTP endpoint before engine teardown.
+    /// Stop the automation service tick pump and drain work before engine teardown.
     void ShutdownAutomation();
 
 protected:
@@ -170,7 +168,11 @@ private:
     /// Editor-host adapter bridging the automation core to editor subsystems.
     /// Nested so it can reach EditorMainWindow private members; implemented in the .cpp.
     class EditorAutomationBackend;
+    /// Internal first-party context handed to first-party plugins (e.g. MCP).
+    class FirstPartyContext;
 
+    /// Create the engine-owned automation backend/service and main-thread pump.
+    void SetupAutomation();
     void setupMenuBar();
     void setupTopToolbar();
     void setupDockWidgets();
@@ -421,7 +423,8 @@ private:
     // Automation / MCP
     std::unique_ptr<EditorAutomationBackend> m_automationBackend;
     std::unique_ptr<Hephaestus::Automation::AutomationService> m_automationService;
-    std::unique_ptr<Hephaestus::Automation::Mcp::McpServer> m_mcpServer;
+    std::unique_ptr<FirstPartyContext> m_firstPartyContext;
+    Hephaestus::Plugins::FirstPartyStartupOptions m_startupOptions;
     QTimer* m_automationTimer = nullptr;
 
     // Frame timing for status bar
