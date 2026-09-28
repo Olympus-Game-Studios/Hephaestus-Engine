@@ -409,11 +409,113 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
 
 void EngineFrameRenderer::OnResize(uint32_t width, uint32_t height)
 {
+    finishCapture();
+    if (m_capture.requested || m_capture.submitted || !m_capture.pixels.empty()) {
+        m_capture.requested = false;
+        m_capture.pixels.clear();
+        m_capture.error = "ViewportUnavailable: viewport resized during capture";
+    }
     if (width == 0 || height == 0) return;
     
     m_swapchainDirty = true;
     m_pendingWidth = width;
     m_pendingHeight = height;
+}
+
+bool EngineFrameRenderer::RequestFrameCapture(std::string& outError)
+{
+    if (!m_initialized || !m_device || !m_swapchain || m_swapchainDirty ||
+        !m_swapchain->swapchain || !m_swapchain->extent.width || !m_swapchain->extent.height) {
+        outError = "ViewportUnavailable: no usable swapchain";
+        return false;
+    }
+    if (!m_renderedFrameCount) { outError = "NoRenderedFrame"; return false; }
+    if (!m_swapchain->supportsCapture) {
+        outError = "ViewportUnavailable: surface does not support swapchain transfer-source capture";
+        return false;
+    }
+    if (m_swapchain->format != VK_FORMAT_B8G8R8A8_SRGB &&
+        m_swapchain->format != VK_FORMAT_B8G8R8A8_UNORM &&
+        m_swapchain->format != VK_FORMAT_R8G8B8A8_SRGB &&
+        m_swapchain->format != VK_FORMAT_R8G8B8A8_UNORM) {
+        outError = "ViewportUnavailable: swapchain color format is not 8-bit RGBA";
+        return false;
+    }
+    if (m_capture.requested || m_capture.submitted || !m_capture.pixels.empty()) {
+        outError = "CaptureInProgress";
+        return false;
+    }
+    CancelFrameCapture();
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(m_swapchain->extent.width) *
+                               m_swapchain->extent.height * 4;
+    VkBufferCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    info.size = bytes;
+    info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VmaAllocationCreateInfo alloc{};
+    alloc.usage = VMA_MEMORY_USAGE_GPU_TO_CPU;
+    if (vmaCreateBuffer(m_device->allocator, &info, &alloc, &m_capture.buffer,
+                        &m_capture.allocation, nullptr) != VK_SUCCESS) {
+        outError = "Failed to allocate framebuffer readback buffer";
+        return false;
+    }
+    m_capture.width = m_swapchain->extent.width;
+    m_capture.height = m_swapchain->extent.height;
+    m_capture.requested = true;
+    m_capture.error.clear();
+    return true;
+}
+
+void EngineFrameRenderer::finishCapture()
+{
+    if (!m_capture.submitted || !m_device ||
+        vkGetFenceStatus(m_device->device, m_capture.fence) != VK_SUCCESS) return;
+    if (m_capture.cancelled) {
+        m_capture.submitted = false;
+        CancelFrameCapture();
+        return;
+    }
+    const size_t bytes = static_cast<size_t>(m_capture.width) * m_capture.height * 4;
+    void* mapped = nullptr;
+    if (vmaMapMemory(m_device->allocator, m_capture.allocation, &mapped) == VK_SUCCESS) {
+        vmaInvalidateAllocation(m_device->allocator, m_capture.allocation, 0, VK_WHOLE_SIZE);
+        const auto* source = static_cast<const uint8_t*>(mapped);
+        m_capture.pixels.assign(source, source + bytes);
+        vmaUnmapMemory(m_device->allocator, m_capture.allocation);
+        if (m_swapchain->format == VK_FORMAT_B8G8R8A8_SRGB ||
+            m_swapchain->format == VK_FORMAT_B8G8R8A8_UNORM) {
+            for (size_t i = 0; i < bytes; i += 4) std::swap(m_capture.pixels[i], m_capture.pixels[i+2]);
+        }
+    } else m_capture.error = "Failed to map completed framebuffer copy";
+    m_capture.submitted = false;
+    m_capture.fence = VK_NULL_HANDLE;
+}
+
+bool EngineFrameRenderer::PollFrameCapture(FrameCapture& out, std::string& outError)
+{
+    finishCapture();
+    if (!m_capture.error.empty()) {
+        outError = m_capture.error;
+        CancelFrameCapture();
+        return true;
+    }
+    if (m_capture.pixels.empty()) return false;
+    out.width = m_capture.width;
+    out.height = m_capture.height;
+    out.frame = m_capture.frame;
+    out.rgba = std::move(m_capture.pixels);
+    CancelFrameCapture();
+    return true;
+}
+
+void EngineFrameRenderer::CancelFrameCapture()
+{
+    // A submitted copy must outlive its GPU fence; defer cancellation until completion.
+    if (m_capture.submitted) { m_capture.cancelled = true; return; }
+    if (m_capture.buffer && m_device) {
+        vmaDestroyBuffer(m_device->allocator, m_capture.buffer, m_capture.allocation);
+    }
+    m_capture = {};
 }
 
 void EngineFrameRenderer::SetProjectRoot(const std::string& root)
@@ -478,6 +580,12 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     // Handle pending resize
     if (m_swapchainDirty) {
         vkDeviceWaitIdle(m_device->device);
+        finishCapture();
+        if (m_capture.requested || !m_capture.pixels.empty()) {
+            m_capture.requested = false;
+            m_capture.pixels.clear();
+            m_capture.error = "ViewportUnavailable: swapchain was recreated before capture";
+        }
 
         const size_t previousImageCount = m_commandBuffers.size();
         const bool recreateSkyboxDescriptors =
@@ -562,6 +670,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     
     // Wait for previous frame
     vkWaitForFences(m_device->device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+    finishCapture(); // Before a completed frame's fence can be reset for reuse.
     
     // Deferred readback fallback: if the immediate readback below didn't run
     // (e.g. submit failed), drain any pending pick on the next frame where the
@@ -677,6 +786,33 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
 // Record main render pass
     recordMainPass(cmd, imageIndex, scene, config);
 
+    if (m_capture.requested) {
+        VkImageMemoryBarrier before{};
+        before.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        before.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        before.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        before.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        before.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        before.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        before.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        before.image = m_swapchain->images[imageIndex];
+        before.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &before);
+        VkBufferImageCopy region{};
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent = {m_capture.width, m_capture.height, 1};
+        vkCmdCopyImageToBuffer(cmd, before.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               m_capture.buffer, 1, &region);
+        VkImageMemoryBarrier after = before;
+        after.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        after.dstAccessMask = 0;
+        after.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        after.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &after);
+    }
+
     VkResult endResult = vkEndCommandBuffer(cmd);
     if (endResult != VK_SUCCESS) {
         std::cerr << "[EngineFrameRenderer] Failed to end command buffer (VkResult: " << endResult << ")\n";
@@ -704,12 +840,24 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     
     VkResult submitResult = vkQueueSubmit(m_device->graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
     if (submitResult != VK_SUCCESS) {
+        if (m_capture.requested) {
+            m_capture.requested = false;
+            m_capture.error = "Framebuffer copy submission failed";
+        }
         if (submitResult == VK_ERROR_DEVICE_LOST) {
             m_deviceLost = true;
             std::cerr << "[EngineFrameRenderer] vkQueueSubmit reported VK_ERROR_DEVICE_LOST\n";
         }
         std::cerr << "[EngineFrameRenderer] Failed to submit draw command buffer (VkResult: " << submitResult << ")\n";
         return false;
+    }
+    if (m_capture.requested) {
+        m_capture.requested = false;
+        m_capture.submitted = true;
+        m_capture.fence = m_inFlightFences[m_currentFrame];
+        m_capture.frame = ++m_renderedFrameCount;
+    } else {
+        ++m_renderedFrameCount;
     }
     
     // Present
@@ -752,6 +900,9 @@ void EngineFrameRenderer::Shutdown()
     if (m_device && m_device->device) {
         vkDeviceWaitIdle(m_device->device);
     }
+    finishCapture();
+    m_capture.submitted = false;
+    CancelFrameCapture();
     
     destroyAllResources();
     m_initialized = false;

@@ -294,6 +294,17 @@ public:
      */
     bool IsPickingAvailable() const { return m_idPicker.initialized; }
 
+    // One-shot readback of the completed editor frame, after 3D/editor/HUI drawing.
+    // Request on the render thread; PollFrameCapture never waits for the GPU.
+    struct FrameCapture {
+        uint32_t width = 0, height = 0;
+        uint64_t frame = 0;
+        std::vector<uint8_t> rgba;
+    };
+    bool RequestFrameCapture(std::string& outError);
+    bool PollFrameCapture(FrameCapture& out, std::string& outError);
+    void CancelFrameCapture();
+
 #ifndef HEPHAESTUS_GAME_RUNTIME
     // --- Transform Gizmo (Editor only) ---
 
@@ -433,6 +444,18 @@ private:
     // Frame timing
     static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
     uint32_t m_currentFrame = 0;
+    uint64_t m_renderedFrameCount = 0;
+    struct CaptureReadback {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        uint32_t width = 0, height = 0;
+        uint64_t frame = 0;
+        VkFence fence = VK_NULL_HANDLE;
+        bool requested = false, submitted = false, cancelled = false;
+        std::vector<uint8_t> pixels;
+        std::string error;
+    } m_capture;
+    void finishCapture();
 
     // Synchronization
     std::vector<VkSemaphore> m_imageAvailableSemaphores;

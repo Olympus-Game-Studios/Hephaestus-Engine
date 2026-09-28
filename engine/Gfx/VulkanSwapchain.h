@@ -11,6 +11,7 @@ struct VulkanSwapchain {
     VkSurfaceKHR surface{};
     VkExtent2D extent{};
     VkFormat format{};
+    bool supportsCapture = false; // Surface permits TRANSFER_SRC on presentable images.
     VkSwapchainKHR swapchain{};
     std::vector<VkImage> images;
     std::vector<VkImageView> imageViews;

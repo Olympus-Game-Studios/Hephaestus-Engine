@@ -150,7 +150,9 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
     swapInfo.imageColorSpace = formats[0].colorSpace;
     swapInfo.imageExtent = extent;
     swapInfo.imageArrayLayers = 1;
-    swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    supportsCapture = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+    swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                          (supportsCapture ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
     swapInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapInfo.preTransform = caps.currentTransform;
     VkCompositeAlphaFlagBitsKHR compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
