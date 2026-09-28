@@ -234,6 +234,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/AutomationService.cpp
     engine/Automation/ComponentMetadata.cpp
     engine/Automation/EntityRef.cpp
+    engine/Automation/EditorAutomation.cpp
     engine/Automation/AssetAutomation.cpp
     engine/Automation/CharacterAutomation.cpp
     engine/Automation/LogAutomation.cpp
@@ -243,6 +244,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/SceneAutomation.cpp
     engine/Automation/ScriptAutomation.cpp
     engine/Automation/ToolRegistry.cpp
+    engine/Automation/ViewportAutomation.cpp
 )
 target_include_directories(HephaestusAutomationCore PUBLIC
     engine
@@ -1427,6 +1429,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(AutomationSceneTests
         engine/Tests/AutomationSceneTests.cpp
+        engine/Core/EditorContext.cpp
         engine/Scene/Json.cpp
         engine/Scene/Entity.cpp
         engine/Scene/Scene.cpp
@@ -1448,6 +1451,22 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         NAME AutomationScene
         COMMAND AutomationSceneTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
+    add_executable(AutomationEditorViewportTests
+        engine/Tests/AutomationEditorViewportTests.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_link_libraries(AutomationEditorViewportTests PRIVATE HephaestusAutomationCore)
+    target_include_directories(AutomationEditorViewportTests PRIVATE engine extern extern/entt/single_include)
+    add_test(NAME AutomationEditorViewport COMMAND AutomationEditorViewportTests)
 
     add_executable(AutomationAssetTests
         engine/Tests/AutomationAssetTests.cpp

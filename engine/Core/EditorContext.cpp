@@ -284,9 +284,8 @@ std::vector<entt::entity> EditorContext::GetSelectedEntities() const
 
 void EditorContext::ClearSelection()
 {
-    if (m_selectedEntity == entt::null) {
-        return; // Already clear
-    }
+    if (m_selectedEntity == entt::null &&
+        (!m_activeScene || m_activeScene->GetSelectedEntities().empty())) return;
     
     m_selectedEntity = entt::null;
     

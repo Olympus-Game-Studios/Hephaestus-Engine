@@ -1,9 +1,13 @@
 #include "Automation/AutomationService.h"
 #include "Automation/SceneAutomation.h"
+#include "Automation/ScenePathPolicy.h"
+#include "Core/EditorContext.h"
 #include "Scene/Scene.h"
+#include "Scene/SceneSerializer.h"
 
 #include <cmath>
 #include <iostream>
+#include <filesystem>
 #include <string>
 
 namespace Automation = Hephaestus::Automation;
@@ -24,12 +28,16 @@ public:
     int structural = 0;
     int aborted = 0;
     int saves = 0;
+    std::string savedAs;
+    std::string newSceneName;
+    std::string openedScene;
+    Hephaestus::PlayState state = Hephaestus::PlayState::Editor;
 
     Automation::HostMask Host() const noexcept override { return Automation::HostMask::Editor; }
     Automation::SceneAccess ActiveScene() noexcept override { return {&scene}; }
     Hephaestus::PlayState GetPlayState() const noexcept override
     {
-        return Hephaestus::PlayState::Editor;
+        return state;
     }
     Automation::Json GetProjectInfo() const override
     {
@@ -39,6 +47,29 @@ public:
     bool SaveActiveScene(std::string&) override
     {
         ++saves;
+        return true;
+    }
+    bool SaveActiveSceneAs(std::string_view path, std::string& outPath, std::string& error) override
+    {
+        std::filesystem::path absolute;
+        if (!Automation::ResolveProjectScenePath(std::filesystem::temp_directory_path(),
+                                                 path, absolute, error)) return false;
+        savedAs = absolute.lexically_relative(std::filesystem::temp_directory_path()).generic_string();
+        outPath = savedAs;
+        return true;
+    }
+    bool NewScene(std::string_view name, std::string&) override
+    {
+        newSceneName = name;
+        return true;
+    }
+    bool OpenScene(std::string_view path, std::string& outPath, std::string& error) override
+    {
+        std::filesystem::path resolved;
+        if (!Automation::ResolveProjectScenePath(std::filesystem::temp_directory_path(),
+                                                 path, resolved, error)) return false;
+        openedScene = resolved.generic_string();
+        outPath = std::string(path);
         return true;
     }
     bool PrepareEditorMutation(std::string_view, std::string&) override
@@ -121,6 +152,47 @@ int main()
 
     auto saved = Call(service, "scene.save");
     ok &= Check(saved.Ok() && backend.saves == 1, "Scene save delegates to the host subsystem");
+    auto saveAs = Call(service, "scene.save_as", {{"path", "Scenes/Automation.hpscene"}});
+    ok &= Check(saveAs.Ok() && backend.savedAs == "Scenes/Automation.hpscene",
+                "Save-as delegates the path and persistence to the editor backend");
+    ok &= Check(!Call(service, "scene.save_as", {{"path", "../escape.hpscene"}}).Ok(),
+                "Unsafe scene destinations are rejected by the host");
+    backend.state = Hephaestus::PlayState::Playing;
+    auto playSave = Call(service, "scene.save_as", {{"path", "Scenes/Play.hpscene"}});
+    ok &= Check(!playSave.Ok() && playSave.error->code == Automation::ErrorCode::PlayModeActive,
+                "Play Mode cannot persist transient scene state");
+    backend.state = Hephaestus::PlayState::Editor;
+
+    {
+        namespace fs = std::filesystem;
+        fs::path output, root = fs::temp_directory_path() / "hephaestus-scene-automation-test";
+        std::string error;
+        fs::create_directories(root);
+        ok &= Check(Automation::ResolveProjectScenePath(root, "Scenes/NewScene", output, error) &&
+                    output.extension() == ".hpscene", "Project scene path and extension");
+        Hephaestus::EditorContext editor;
+        editor.NewScene();
+        editor.GetActiveScene()->CreateEntity("Persisted");
+        editor.MarkDirty();
+        ok &= Check(editor.GetScenePath().empty() && !editor.SaveScene(), "Unsaved scene needs save-as");
+        fs::create_directories(output.parent_path());
+        ok &= Check(editor.SaveSceneAs(output.string()) && fs::exists(output) &&
+                    editor.GetScenePath() == output.string() && !editor.IsDirty(),
+                    "Normal editor serializer persists scene and updates path/dirty state");
+        editor.MarkDirty();
+        ok &= Check(editor.SaveScene() && !editor.IsDirty(), "Subsequent normal save works");
+        Scene loaded;
+        ok &= Check(SceneSerializer::Deserialize(loaded, output, error) &&
+                    loaded.GetName() == "New Scene", "Serialized scene is loadable");
+        editor.NewScene("Another Scene");
+        ok &= Check(editor.GetScenePath().empty() && editor.LoadScene(output.string()) &&
+                    editor.GetActiveScene()->GetName() == "New Scene" && !editor.IsDirty(),
+                    "Normal editor open replaces the unsaved scene through the deserializer");
+        ok &= Check(!Automation::ResolveProjectScenePath(root, "../escape", output, error) &&
+                    !Automation::ResolveProjectScenePath(root, (root.parent_path() / "escape").string(), output, error),
+                    "Traversal and absolute destinations rejected");
+        fs::remove_all(root);
+    }
 
     auto prefabInfo = Call(service, "prefab.get_info", {{"entity", secondRef}});
     ok &= Check(prefabInfo.Ok() && prefabInfo.value["isPrefabNode"] == false &&
@@ -142,6 +214,13 @@ int main()
                 "Destroyed entity references expire");
     auto survivor = Call(service, "entity.get", {{"entity", secondRef}});
     ok &= Check(survivor.Ok(), "Unrelated entity reference remains valid");
+    auto opened = Call(service, "scene.open", {{"path", "Scenes/Automation.hpscene"}});
+    ok &= Check(opened.Ok() && !backend.openedScene.empty(), "Scene open delegates to the editor backend");
+    ok &= Check(!Call(service, "scene.open", {{"path", "../escape.hpscene"}}).Ok(),
+                "Scene open rejects project escape");
+    auto fresh = Call(service, "scene.new", {{"name", "New Automation Scene"}});
+    ok &= Check(fresh.Ok() && backend.newSceneName == "New Automation Scene",
+                "Scene new delegates to the editor backend");
 
     ok &= Check(backend.prepared == backend.completed,
                 "Every successful mutation completes the host mutation hook");

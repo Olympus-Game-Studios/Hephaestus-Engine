@@ -182,6 +182,32 @@ void RegisterSceneAutomation(AutomationService& service)
                                         {"path", context.Backend().ActiveScenePath()}});
         }));
 
+    registerTool(Definition("scene.new", "Create a new unsaved scene (refuses to discard dirty work).",
+        ObjectSchema({{"name", {{"type", "string"}}}}),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            if (arguments.contains("name") && !arguments["name"].is_string())
+                return Failure(ErrorCode::InvalidArguments, "Scene name must be a string");
+            const std::string name = arguments.value("name", "New Scene");
+            if (name.empty()) return Failure(ErrorCode::InvalidArguments, "Scene name cannot be empty");
+            std::string error;
+            if (!context.Backend().NewScene(name, error)) return Failure(ErrorCode::ToolUnavailable, std::move(error));
+            context.Entities().ObserveActiveScene(context.Backend().ActiveScene().scene);
+            return ToolResult::Success({{"name", name}, {"path", ""}});
+        }, false, PlayRequirement::EditorOnly));
+
+    registerTool(Definition("scene.open", "Open a project-relative scene (refuses to discard dirty work).",
+        ObjectSchema({{"path", {{"type", "string"}}}}, Json::array({"path"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            if (!arguments.contains("path") || !arguments["path"].is_string() ||
+                arguments["path"].get<std::string>().empty())
+                return Failure(ErrorCode::InvalidArguments, "A project-relative scene path is required");
+            std::string path, error;
+            if (!context.Backend().OpenScene(arguments["path"].get<std::string>(), path, error))
+                return Failure(ErrorCode::ToolUnavailable, std::move(error));
+            context.Entities().ObserveActiveScene(context.Backend().ActiveScene().scene);
+            return ToolResult::Success({{"path", path}, {"opened", true}});
+        }, false, PlayRequirement::EditorOnly));
+
     registerTool(Definition("scene.list_entities", "List entities from the active live scene.",
         ObjectSchema(), [](ToolContext& context, const Json&) -> ToolOutcome {
             Scene* scene = RequireScene(context);
@@ -209,6 +235,21 @@ void RegisterSceneAutomation(AutomationService& service)
             }
             return ToolResult::Success({{"saved", true},
                                         {"path", context.Backend().ActiveScenePath()}});
+        }, false, PlayRequirement::EditorOnly));
+
+    registerTool(Definition("scene.save_as", "Persist the active scene to a project-relative scene path.",
+        ObjectSchema({{"path", {{"type", "string"}}}}, Json::array({"path"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            if (!RequireScene(context)) return Failure(ErrorCode::NoActiveScene, "No active scene");
+            if (!arguments.contains("path") || !arguments["path"].is_string() ||
+                arguments["path"].get<std::string>().empty()) {
+                return Failure(ErrorCode::InvalidArguments, "A project-relative scene path is required");
+            }
+            std::string path, error;
+            if (!context.Backend().SaveActiveSceneAs(arguments["path"].get<std::string>(), path, error)) {
+                return Failure(ErrorCode::InvalidArguments, std::move(error));
+            }
+            return ToolResult::Success({{"saved", true}, {"path", path}});
         }, false, PlayRequirement::EditorOnly));
 
     registerTool(Definition("entity.create", "Create an entity in the active live scene.",

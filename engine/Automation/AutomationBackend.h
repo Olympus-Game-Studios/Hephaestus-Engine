@@ -6,6 +6,8 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
+#include <entt/entt.hpp>
 
 class AssetDatabase;
 class Scene;
@@ -37,6 +39,53 @@ public:
         outError = "Saving is unavailable for this host";
         return false;
     }
+    virtual bool SaveActiveSceneAs(std::string_view, std::string& outPath, std::string& outError)
+    {
+        outError = "Saving as a new scene is unavailable for this host";
+        return false;
+    }
+    virtual bool NewScene(std::string_view, std::string& outError)
+    {
+        outError = "Creating a scene is unavailable for this host";
+        return false;
+    }
+    virtual bool OpenScene(std::string_view, std::string& outPath, std::string& outError)
+    {
+        outError = "Opening a scene is unavailable for this host";
+        return false;
+    }
+    [[nodiscard]] virtual Json GetEditorState() const { return Json::object(); }
+    [[nodiscard]] virtual std::vector<entt::entity> GetSelection() const { return {}; }
+    virtual bool SetSelection(const std::vector<entt::entity>&, std::string& outError)
+    {
+        outError = "Selection is unavailable for this host";
+        return false;
+    }
+    [[nodiscard]] virtual Json GetViewportState() const { return {{"available", false}}; }
+    [[nodiscard]] virtual Json GetViewportCamera() const { return Json::object(); }
+    virtual bool SetViewportCamera(const Json&, std::string& outError)
+    {
+        outError = "Viewport camera is unavailable";
+        return false;
+    }
+    virtual bool FocusEntities(const std::vector<entt::entity>&, std::string& outError)
+    {
+        outError = "Viewport framing is unavailable";
+        return false;
+    }
+    struct ViewportPixels {
+        std::uint32_t width = 0, height = 0;
+        std::uint64_t frame = 0;
+        std::vector<std::uint8_t> rgba;
+    };
+    virtual bool RequestViewportCapture(std::string& outError)
+    {
+        outError = "Viewport capture is unavailable";
+        return false;
+    }
+    // True means finished (either pixels or error); false means still pending.
+    virtual bool PollViewportCapture(ViewportPixels&, std::string&) { return false; }
+    virtual void CancelViewportCapture() {}
     virtual bool PrepareEditorMutation(std::string_view, std::string& outError)
     {
         outError = "Editor mutation is unavailable for this host";

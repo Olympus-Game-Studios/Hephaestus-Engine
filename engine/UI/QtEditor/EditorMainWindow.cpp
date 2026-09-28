@@ -60,6 +60,8 @@
 #include "../../Scene/Scene.h"
 #include "../../Scene/Components.h"
 #include "../../Scene/Entity.h"
+#include "../../Scene/SceneAuthoring.h"
+#include "../../Gfx/VulkanSwapchain.h"
 #include "../../Scripting/ScriptComponent.h"
 #include "../../Scripting/LuaScriptComponent.h"
 #include "../../UI/InspectorSelectionModel.h"
@@ -71,10 +73,13 @@
 #include "../../Plugins/PluginSystem.h"
 #include "../../Automation/AutomationBackend.h"
 #include "../../Automation/AutomationService.h"
+#include "../../Automation/EditorAutomation.h"
+#include "../../Automation/ViewportAutomation.h"
 #include "../../Automation/AssetAutomation.h"
 #include "../../Automation/CharacterAutomation.h"
 #include "../../Automation/MaterialAutomation.h"
 #include "../../Automation/SceneAutomation.h"
+#include "../../Automation/ScenePathPolicy.h"
 #include "../../Automation/PlayAutomation.h"
 #include "../../Automation/LogAutomation.h"
 #include "../../Automation/ScriptAutomation.h"
@@ -623,7 +628,13 @@ public:
     std::string ActiveScenePath() const override
     {
         EditorContext* ctx = Context();
-        return ctx ? ctx->GetScenePath() : std::string{};
+        if (!ctx || ctx->GetScenePath().empty()) return {};
+        const std::filesystem::path path(ctx->GetScenePath());
+        if (m_owner->m_projectContext && m_owner->m_projectContext->HasProject()) {
+            const auto relative = path.lexically_relative(m_owner->m_projectContext->GetProjectRootDir());
+            if (!relative.empty() && *relative.begin() != "..") return relative.generic_string();
+        }
+        return path.generic_string();
     }
 
     bool SaveActiveScene(std::string& outError) override
@@ -634,7 +645,7 @@ public:
             return false;
         }
         if (ctx->GetScenePath().empty()) {
-            outError = "Scene has no path; save it in the editor first";
+            outError = "Scene has no path; call scene.save_as first";
             return false;
         }
         if (!ctx->SaveScene()) {
@@ -642,6 +653,198 @@ public:
             return false;
         }
         return true;
+    }
+
+    bool SaveActiveSceneAs(std::string_view destination, std::string& outPath,
+                           std::string& outError) override
+    {
+        EditorContext* ctx = Context();
+        if (!ctx || !ctx->HasActiveScene() || !m_owner->m_projectContext ||
+            !m_owner->m_projectContext->HasProject()) {
+            outError = "An active project and scene are required";
+            return false;
+        }
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path root = fs::weakly_canonical(m_owner->m_projectContext->GetProjectRootDir(), ec);
+        if (ec) { outError = "Cannot resolve project root"; return false; }
+        fs::path absolute;
+        if (!Automation::ResolveProjectScenePath(root, destination, absolute, outError)) return false;
+        fs::create_directories(absolute.parent_path(), ec);
+        if (ec) { outError = "Cannot create scene directory: " + ec.message(); return false; }
+        if (!ctx->SaveSceneAs(absolute.string())) {
+            outError = "Scene serializer failed to save the scene";
+            return false;
+        }
+        outPath = absolute.lexically_relative(root).generic_string();
+        return true;
+    }
+
+    bool NewScene(std::string_view name, std::string& outError) override
+    {
+        EditorContext* ctx = Context();
+        if (!ctx || !m_owner->m_projectContext || !m_owner->m_projectContext->HasProject()) {
+            outError = "An active project is required";
+            return false;
+        }
+        if (ctx->IsDirty()) { outError = "Save or discard the dirty scene before creating another"; return false; }
+        ctx->NewScene(std::string(name));
+        return true;
+    }
+
+    bool OpenScene(std::string_view destination, std::string& outPath,
+                   std::string& outError) override
+    {
+        EditorContext* ctx = Context();
+        if (!ctx || !m_owner->m_projectContext || !m_owner->m_projectContext->HasProject()) {
+            outError = "An active project is required";
+            return false;
+        }
+        if (ctx->IsDirty()) { outError = "Save or discard the dirty scene before opening another"; return false; }
+        namespace fs = std::filesystem;
+        const fs::path root = m_owner->m_projectContext->GetProjectRootDir();
+        fs::path absolute;
+        if (!Automation::ResolveProjectScenePath(root, destination, absolute, outError)) return false;
+        if (!fs::is_regular_file(absolute)) { outError = "Scene file does not exist"; return false; }
+        if (!ctx->LoadScene(absolute.string())) { outError = "Scene deserializer could not open the scene"; return false; }
+        m_owner->m_engine->RebuildSceneMeshes();
+        outPath = ActiveScenePath();
+        return true;
+    }
+
+    Automation::Json GetEditorState() const override
+    {
+        EditorContext* ctx = Context();
+        const bool loaded = m_owner->m_projectContext && m_owner->m_projectContext->HasProject();
+        const auto state = GetPlayState();
+        return {{"projectLoaded", loaded},
+                {"scene", {{"path", ActiveScenePath()},
+                           {"dirty", ctx && ctx->IsDirty()},
+                           {"name", ctx && ctx->GetActiveScene() ? ctx->GetActiveScene()->GetName() : ""}}},
+                {"playState", state == Hephaestus::PlayState::Editor ? "Editor" :
+                              state == Hephaestus::PlayState::Paused ? "Paused" : "Playing"},
+                {"viewportAvailable", m_owner->m_engine && m_owner->m_engine->IsReadyToRender() &&
+                                      m_owner->m_viewportWindow && m_owner->m_viewportWindow->IsReadyForRendering()}};
+    }
+
+    std::vector<entt::entity> GetSelection() const override
+    {
+        EditorContext* ctx = Context();
+        return ctx ? ctx->GetSelectedEntities() : std::vector<entt::entity>{};
+    }
+
+    bool SetSelection(const std::vector<entt::entity>& handles, std::string& outError) override
+    {
+        EditorContext* ctx = Context();
+        if (!ctx || !ctx->GetActiveScene()) { outError = "No active scene"; return false; }
+        if (handles.empty()) ctx->ClearSelection();
+        else ctx->SelectEntities(handles, handles.back());
+        m_owner->restoreOutlinerTreeSelection();
+        m_owner->refreshDetailsPanel();
+        return true;
+    }
+
+    Automation::Json GetViewportState() const override
+    {
+        auto* renderer = m_owner->m_engine ? m_owner->m_engine->GetFrameRenderer() : nullptr;
+        auto* swapchain = renderer ? renderer->GetSwapchain() : nullptr;
+        const bool available = m_owner->m_engine && m_owner->m_engine->IsReadyToRender() &&
+            m_owner->m_viewportWindow && m_owner->m_viewportWindow->IsReadyForRendering() &&
+            swapchain && swapchain->extent.width && swapchain->extent.height;
+        return {{"available", available}, {"width", available ? swapchain->extent.width : 0u},
+                {"height", available ? swapchain->extent.height : 0u}};
+    }
+
+    Automation::Json GetViewportCamera() const override
+    {
+        auto* cam = m_owner->m_engine ? m_owner->m_engine->GetCameraController() : nullptr;
+        if (!cam) return Automation::Json::object();
+        return {{"position", Automation::Json::array({cam->positionX, cam->positionY, cam->positionZ})},
+                {"yawDeg", cam->yawDeg}, {"pitchDeg", cam->pitchDeg}, {"fovDeg", cam->fovDeg},
+                {"nearPlane", cam->nearPlane}, {"farPlane", cam->farPlane},
+                {"projection", cam->orthographic ? "orthographic" : "perspective"}};
+    }
+
+    bool SetViewportCamera(const Automation::Json& values, std::string& outError) override
+    {
+        auto* cam = m_owner->m_engine ? m_owner->m_engine->GetCameraController() : nullptr;
+        if (!cam) { outError = "Viewport camera is unavailable"; return false; }
+        if (values.contains("position")) {
+            cam->positionX = values["position"][0].get<float>();
+            cam->positionY = values["position"][1].get<float>();
+            cam->positionZ = values["position"][2].get<float>();
+        }
+        if (values.contains("yawDeg")) cam->yawDeg = values["yawDeg"].get<float>();
+        if (values.contains("pitchDeg")) cam->pitchDeg = values["pitchDeg"].get<float>();
+        if (values.contains("fovDeg")) cam->fovDeg = values["fovDeg"].get<float>();
+        m_owner->m_viewportWindow->requestUpdate();
+        return true;
+    }
+
+    bool FocusEntities(const std::vector<entt::entity>& handles, std::string& outError) override
+    {
+        EditorContext* ctx = Context();
+        auto* cam = m_owner->m_engine ? m_owner->m_engine->GetCameraController() : nullptr;
+        Scene* scene = ctx ? ctx->GetActiveScene() : nullptr;
+        if (!scene || !cam || handles.empty()) { outError = "No entities to frame"; return false; }
+        AABB combined{};
+        bool found = false;
+        for (entt::entity handle : handles) {
+            if (!scene->GetRegistry().valid(handle)) continue;
+            auto* transform = scene->GetRegistry().try_get<TransformComponent>(handle);
+            if (!transform) continue;
+            const auto* mesh = scene->GetRegistry().try_get<MeshRendererComponent>(handle);
+            const Mat4 world = scene->GetWorldTransform(Entity(handle, scene));
+            AABB bounds = mesh ? SceneAuthoring::TransformBounds(mesh->localBounds, world)
+                               : AABB{Vec3(world.m[12], world.m[13], world.m[14]),
+                                      Vec3(world.m[12], world.m[13], world.m[14])};
+            if (!found) { combined = bounds; found = true; }
+            else {
+                combined.min.x = std::min(combined.min.x, bounds.min.x);
+                combined.min.y = std::min(combined.min.y, bounds.min.y);
+                combined.min.z = std::min(combined.min.z, bounds.min.z);
+                combined.max.x = std::max(combined.max.x, bounds.max.x);
+                combined.max.y = std::max(combined.max.y, bounds.max.y);
+                combined.max.z = std::max(combined.max.z, bounds.max.z);
+            }
+        }
+        if (!found) { outError = "Selected entities have no world transforms"; return false; }
+        const Vec3 center = combined.Center();
+        const float dx = combined.max.x - combined.min.x, dy = combined.max.y - combined.min.y,
+                    dz = combined.max.z - combined.min.z;
+        cam->FocusOnPoint(center.x, center.y, center.z,
+                          std::max(0.5f, std::sqrt(dx*dx + dy*dy + dz*dz) * 0.5f));
+        m_owner->m_viewportWindow->requestUpdate();
+        return true;
+    }
+
+    bool RequestViewportCapture(std::string& outError) override
+    {
+        if (!GetViewportState().value("available", false) || !m_owner->m_engine ||
+            !m_owner->m_engine->GetFrameRenderer()) {
+            outError = "ViewportUnavailable";
+            return false;
+        }
+        return m_owner->m_engine->GetFrameRenderer()->RequestFrameCapture(outError);
+    }
+
+    bool PollViewportCapture(ViewportPixels& pixels, std::string& outError) override
+    {
+        auto* renderer = m_owner->m_engine ? m_owner->m_engine->GetFrameRenderer() : nullptr;
+        if (!renderer) { outError = "ViewportUnavailable"; return true; }
+        EngineFrameRenderer::FrameCapture frame;
+        if (!renderer->PollFrameCapture(frame, outError)) return false;
+        pixels.width = frame.width;
+        pixels.height = frame.height;
+        pixels.frame = frame.frame;
+        pixels.rgba = std::move(frame.rgba);
+        return true;
+    }
+
+    void CancelViewportCapture() override
+    {
+        if (m_owner->m_engine && m_owner->m_engine->GetFrameRenderer())
+            m_owner->m_engine->GetFrameRenderer()->CancelFrameCapture();
     }
 
     bool PrepareEditorMutation(std::string_view label, std::string& outError) override
@@ -819,6 +1022,8 @@ void EditorMainWindow::SetupAutomation()
     m_automationBackend = std::make_unique<EditorAutomationBackend>(this);
     m_automationService = std::make_unique<Automation::AutomationService>(*m_automationBackend);
     Automation::RegisterSceneAutomation(*m_automationService);
+    Automation::RegisterEditorAutomation(*m_automationService);
+    Automation::RegisterViewportAutomation(*m_automationService);
     Automation::RegisterPlayAutomation(*m_automationService);
     Automation::RegisterLogAutomation(*m_automationService);
     Automation::RegisterAssetAutomation(*m_automationService);
