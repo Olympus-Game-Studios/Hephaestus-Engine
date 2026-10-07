@@ -8,8 +8,12 @@
 #include "HephaestusMCP/Core/McpServer.h"
 #include "../Automation/PlayAutomation.h"
 #include "../Automation/RuntimeAutomation.h"
+#include "../Automation/RuntimeUIHostAdapter.h"
+#include "../Automation/UIAutomation.h"
 #include "../Input/InputSystem.h"
 #include "../Scene/Scene.h"
+#include "../UI/HephaestusUI/UIContext.h"
+#include "../UI/HephaestusUI/UISystem.h"
 
 #include <iostream>
 #include <string>
@@ -19,8 +23,10 @@ namespace Hephaestus::Runtime {
 
 class PackagedAutomation::RuntimeBackend final : public Automation::AutomationBackend {
 public:
-    RuntimeBackend(Scene& scene, InputSystem& input, std::string projectName)
-        : m_scene(scene), m_input(input), m_projectName(std::move(projectName)) {}
+    RuntimeBackend(Scene& scene, InputSystem& input, HephaestusUI::UISystem& ui,
+                   HephaestusUI::UIContext& uiContext, std::string projectName)
+        : m_scene(scene), m_input(input), m_ui(ui), m_uiContext(uiContext),
+          m_projectName(std::move(projectName)) {}
 
     Automation::HostMask Host() const noexcept override { return Automation::HostMask::Runtime; }
     Automation::SceneAccess ActiveScene() noexcept override { return {&m_scene}; }
@@ -50,14 +56,49 @@ public:
         return true;
     }
 
+    bool CopyRuntimeUI(std::vector<Automation::AutomationBackend::UIScreenNode>& out,
+                       std::string& outError) override
+    {
+        return Automation::CopyRuntimeUIFrom(m_ui, m_uiContext, out, outError);
+    }
+    bool ResolveRuntimeUI(const Automation::AutomationBackend::UISelector& selector,
+                          Automation::AutomationBackend::UINode& out, std::string& outError) override
+    {
+        return Automation::ResolveRuntimeUIFrom(m_ui, m_uiContext, selector, out, outError);
+    }
+    bool QueueRuntimeUIClick(const Automation::AutomationBackend::UISelector& selector,
+                             Automation::AutomationBackend::UIBounds& outBounds, float& outX, float& outY,
+                             std::uint64_t& outSerial, std::uint64_t& outClickToken,
+                             std::string& outId, std::string& outScreen, std::string& outError) override
+    {
+        if (!Automation::QueueRuntimeUIClickFrom(m_ui, m_uiContext, selector, outBounds, outX, outY,
+                                                 outClickToken, outId, outScreen, outError)) {
+            return false;
+        }
+        outSerial = m_uiSerial;
+        return true;
+    }
+    void CancelRuntimeUIClick(std::uint64_t token) override
+    {
+        m_uiContext.CancelTaggedMouseEvents(token);
+    }
+    std::uint64_t RuntimeUIUpdateSerial() const override { return m_uiSerial; }
+
+    void NoteUIUpdated() { ++m_uiSerial; }
+
 private:
     Scene& m_scene;
     InputSystem& m_input;
+    HephaestusUI::UISystem& m_ui;
+    HephaestusUI::UIContext& m_uiContext;
     std::string m_projectName;
+    std::uint64_t m_uiSerial = 0;
 };
 
-PackagedAutomation::PackagedAutomation(Scene& scene, InputSystem& input, std::string projectName)
-    : m_backend(std::make_unique<RuntimeBackend>(scene, input, std::move(projectName))) {}
+PackagedAutomation::PackagedAutomation(Scene& scene, InputSystem& input,
+                                       HephaestusUI::UISystem& ui, HephaestusUI::UIContext& uiContext,
+                                       std::string projectName)
+    : m_backend(std::make_unique<RuntimeBackend>(scene, input, ui, uiContext, std::move(projectName))) {}
 
 PackagedAutomation::~PackagedAutomation() { Stop(); }
 
@@ -68,6 +109,7 @@ bool PackagedAutomation::Start(int port)
     Automation::RegisterPlayAutomation(*m_service);
     Automation::RegisterRuntimeAutomation(*m_service);
     Automation::RegisterLogAutomation(*m_service);
+    Automation::RegisterUIAutomation(*m_service);
     m_server = std::make_unique<Automation::Mcp::McpServer>(*m_service);
     if (!m_server->Start(port)) {
         m_server.reset();
@@ -81,6 +123,11 @@ bool PackagedAutomation::Start(int port)
 void PackagedAutomation::Tick()
 {
     if (m_service) m_service->Tick();
+}
+
+void PackagedAutomation::NoteUIUpdated()
+{
+    if (m_backend) m_backend->NoteUIUpdated();
 }
 
 void PackagedAutomation::Stop()

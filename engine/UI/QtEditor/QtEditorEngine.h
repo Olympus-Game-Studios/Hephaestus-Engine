@@ -37,6 +37,7 @@
 #include "../../Core/EditorContext.h"
 #include "../../Core/EditorCameraController.h"
 #include "../../Scene/SceneAuthoring.h"
+#include "../../Automation/AutomationBackend.h"
 #include "../../Core/PlayModeManager.h"
 #include "../../Input/InputSystem.h"
 
@@ -275,6 +276,18 @@ public:
      */
     bool ReloadScripts(std::string& outError);
 
+    bool CopyRuntimeUI(std::vector<Hephaestus::Automation::AutomationBackend::UIScreenNode>& out,
+                       std::string& outError);
+    bool ResolveRuntimeUI(const Hephaestus::Automation::AutomationBackend::UISelector& selector,
+                          Hephaestus::Automation::AutomationBackend::UINode& out, std::string& outError);
+    bool QueueRuntimeUIClick(const Hephaestus::Automation::AutomationBackend::UISelector& selector,
+                             Hephaestus::Automation::AutomationBackend::UIBounds& outBounds,
+                             float& outX, float& outY, std::uint64_t& outSerial,
+                             std::uint64_t& outClickToken, std::string& outId, std::string& outScreen,
+                             std::string& outError);
+    void CancelRuntimeUIClick(std::uint64_t token);
+    [[nodiscard]] std::uint64_t RuntimeUIUpdateSerial() const { return m_runtimeUIUpdateSerial; }
+
     /**
      * @brief Upload a mesh to the GPU and add it to the mesh library.
      * @return Mesh handle, or InvalidMesh on failure.
@@ -405,6 +418,7 @@ private:
     std::unique_ptr<Physics::JoltPhysicsEngine> m_joltPhysicsEngine;
     std::unique_ptr<Physics::JoltPhysicsSystem> m_joltPhysicsSystem;
     bool m_physicsInitialized = false;
+    std::uint64_t m_runtimeUIUpdateSerial = 0;
     GLFWwindow* m_glfwWindow = nullptr;   // borrowed from main if GLFW path exists
     bool m_editorGizmoVisibleBeforePlay = true;
 

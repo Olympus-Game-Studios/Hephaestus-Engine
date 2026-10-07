@@ -19,6 +19,10 @@ class Scene;
 
 namespace Hephaestus {
 class InputSystem;
+namespace HephaestusUI {
+class UIContext;
+class UISystem;
+}
 }
 
 namespace Hephaestus::Automation {
@@ -32,7 +36,9 @@ namespace Hephaestus::Runtime {
 
 class PackagedAutomation {
 public:
-    PackagedAutomation(Scene& scene, InputSystem& input, std::string projectName);
+    PackagedAutomation(Scene& scene, InputSystem& input,
+                       HephaestusUI::UISystem& ui, HephaestusUI::UIContext& uiContext,
+                       std::string projectName);
     ~PackagedAutomation();
 
     PackagedAutomation(const PackagedAutomation&) = delete;
@@ -40,6 +46,7 @@ public:
 
     bool Start(int port);
     void Tick();
+    void NoteUIUpdated();
     void Stop();
 
     [[nodiscard]] bool IsRunning() const noexcept;

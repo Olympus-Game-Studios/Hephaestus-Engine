@@ -226,13 +226,15 @@ public:
      */
     virtual bool QueueRuntimeUIClick(const UISelector&, UIBounds& outBounds, float& outX, float& outY,
                                     std::uint64_t& outSerial, std::uint64_t& outClickToken,
-                                    std::string& outError)
+                                    std::string& outId, std::string& outScreen, std::string& outError)
     {
         outBounds = {};
         outX = 0.0f;
         outY = 0.0f;
         outSerial = 0;
         outClickToken = 0;
+        outId.clear();
+        outScreen.clear();
         outError = "unavailable";
         return false;
     }

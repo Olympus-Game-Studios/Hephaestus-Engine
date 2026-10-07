@@ -10,6 +10,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "QtEditorEngine.h"
+#include "../../Automation/RuntimeUIHostAdapter.h"
 #include "AppConfig.h"
 #include "EditorUndoCommand.h"
 #include "../../Audio/AudioEngine.h"
@@ -1865,6 +1866,7 @@ void QtEditorEngine::onTick()
         });
         runtimeUI->context->SetDeltaTimeSeconds(dt);
         runtimeUI->system->Update(*runtimeUI->context);
+        ++m_runtimeUIUpdateSerial;
         runtimeUI->renderer->Reset();
         runtimeUI->system->Render(*runtimeUI->renderer);
     } else if (runtimeUI && runtimeUI->renderer) {
@@ -3293,6 +3295,7 @@ void QtEditorEngine::runSimulationFrame(float dt)
         });
         runtimeUI->context->SetDeltaTimeSeconds(dt);
         runtimeUI->system->Update(*runtimeUI->context);
+        ++m_runtimeUIUpdateSerial;
         runtimeUI->renderer->Reset();
         runtimeUI->system->Render(*runtimeUI->renderer);
     }
@@ -3386,6 +3389,65 @@ bool QtEditorEngine::IsRuntimeUICursorMode() const
     RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
     return runtimeUI && runtimeUI->system &&
            runtimeUI->system->GetCursorMode() == Hephaestus::HephaestusUI::CursorMode::UI;
+}
+
+namespace {
+RuntimeUIState* LiveRuntimeUI(QtEditorEngine* engine)
+{
+    RuntimeUIState* runtimeUI = FindRuntimeUIState(engine);
+    if (!runtimeUI || !runtimeUI->system || !runtimeUI->context) return nullptr;
+    return runtimeUI;
+}
+}
+
+bool QtEditorEngine::CopyRuntimeUI(std::vector<Hephaestus::Automation::AutomationBackend::UIScreenNode>& out,
+                                   std::string& outError)
+{
+    RuntimeUIState* runtimeUI = LiveRuntimeUI(this);
+    if (!runtimeUI) {
+        outError = "unavailable";
+        return false;
+    }
+    return Hephaestus::Automation::CopyRuntimeUIFrom(*runtimeUI->system, *runtimeUI->context, out, outError);
+}
+
+bool QtEditorEngine::ResolveRuntimeUI(const Hephaestus::Automation::AutomationBackend::UISelector& selector,
+                                      Hephaestus::Automation::AutomationBackend::UINode& out,
+                                      std::string& outError)
+{
+    RuntimeUIState* runtimeUI = LiveRuntimeUI(this);
+    if (!runtimeUI) {
+        outError = "unavailable";
+        return false;
+    }
+    return Hephaestus::Automation::ResolveRuntimeUIFrom(*runtimeUI->system, *runtimeUI->context, selector, out, outError);
+}
+
+bool QtEditorEngine::QueueRuntimeUIClick(const Hephaestus::Automation::AutomationBackend::UISelector& selector,
+                                         Hephaestus::Automation::AutomationBackend::UIBounds& outBounds,
+                                         float& outX, float& outY, std::uint64_t& outSerial,
+                                         std::uint64_t& outClickToken, std::string& outId, std::string& outScreen,
+                                         std::string& outError)
+{
+    RuntimeUIState* runtimeUI = LiveRuntimeUI(this);
+    if (!runtimeUI) {
+        outError = "unavailable";
+        return false;
+    }
+    if (!Hephaestus::Automation::QueueRuntimeUIClickFrom(*runtimeUI->system, *runtimeUI->context, selector,
+                                                         outBounds, outX, outY, outClickToken, outId, outScreen,
+                                                         outError)) {
+        return false;
+    }
+    outSerial = m_runtimeUIUpdateSerial;
+    return true;
+}
+
+void QtEditorEngine::CancelRuntimeUIClick(std::uint64_t token)
+{
+    RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
+    if (!runtimeUI || !runtimeUI->context) return;
+    runtimeUI->context->CancelTaggedMouseEvents(token);
 }
 
 } // namespace QtEditor

@@ -244,6 +244,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/SceneAutomation.cpp
     engine/Automation/ScriptAutomation.cpp
     engine/Automation/ToolRegistry.cpp
+    engine/Automation/UIAutomation.cpp
     engine/Automation/ViewportAutomation.cpp
 )
 target_include_directories(HephaestusAutomationCore PUBLIC
@@ -344,6 +345,7 @@ target_include_directories(HephaestusPluginCore PUBLIC engine extern)
     engine/UI/HephaestusUI/UIButton.cpp
     engine/UI/HephaestusUI/UICanvas.cpp
     engine/UI/HephaestusUI/UIContext.cpp
+    engine/UI/HephaestusUI/RuntimeUIInspection.cpp
     engine/UI/HephaestusUI/UIElement.cpp
     engine/UI/HephaestusUI/UIFont.cpp
     engine/UI/HephaestusUI/UIGridLayout.cpp
@@ -505,6 +507,7 @@ add_executable(HephaestusEngine
     engine/UI/HephaestusUI/UIButton.cpp
     engine/UI/HephaestusUI/UICanvas.cpp
     engine/UI/HephaestusUI/UIContext.cpp
+    engine/UI/HephaestusUI/RuntimeUIInspection.cpp
     engine/UI/HephaestusUI/UIElement.cpp
     engine/UI/HephaestusUI/UIFont.cpp
     engine/UI/HephaestusUI/UIGridLayout.cpp
@@ -1467,6 +1470,31 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     target_link_libraries(AutomationEditorViewportTests PRIVATE HephaestusAutomationCore)
     target_include_directories(AutomationEditorViewportTests PRIVATE engine extern extern/entt/single_include)
     add_test(NAME AutomationEditorViewport COMMAND AutomationEditorViewportTests)
+
+    add_executable(AutomationUITests
+        engine/Tests/AutomationUITests.cpp
+        engine/UI/HephaestusUI/RuntimeUIInspection.cpp
+        engine/UI/HephaestusUI/UIButton.cpp
+        engine/UI/HephaestusUI/UICanvas.cpp
+        engine/UI/HephaestusUI/UIContext.cpp
+        engine/UI/HephaestusUI/UIElement.cpp
+        engine/UI/HephaestusUI/UIFont.cpp
+        engine/UI/HephaestusUI/UIGridLayout.cpp
+        engine/UI/HephaestusUI/UIHorizontalBox.cpp
+        engine/UI/HephaestusUI/UIImage.cpp
+        engine/UI/HephaestusUI/UIInputRouter.cpp
+        engine/UI/HephaestusUI/UILayout.cpp
+        engine/UI/HephaestusUI/UIPanel.cpp
+        engine/UI/HephaestusUI/UIRenderer.cpp
+        engine/UI/HephaestusUI/UIScreen.cpp
+        engine/UI/HephaestusUI/UISystem.cpp
+        engine/UI/HephaestusUI/UIText.cpp
+        engine/UI/HephaestusUI/UITheme.cpp
+        engine/UI/HephaestusUI/UIVerticalBox.cpp
+    )
+    target_link_libraries(AutomationUITests PRIVATE HephaestusAutomationCore)
+    target_include_directories(AutomationUITests PRIVATE engine extern extern/entt/single_include)
+    add_test(NAME AutomationUI COMMAND AutomationUITests)
 
     add_executable(AutomationAssetTests
         engine/Tests/AutomationAssetTests.cpp

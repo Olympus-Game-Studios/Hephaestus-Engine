@@ -83,6 +83,7 @@
 #include "../../Automation/PlayAutomation.h"
 #include "../../Automation/LogAutomation.h"
 #include "../../Automation/ScriptAutomation.h"
+#include "../../Automation/UIAutomation.h"
 #include "../../Assets/EditorAssetImportService.h"
 #include "AppConfig.h"
 
@@ -1003,6 +1004,36 @@ public:
         return m_owner->m_engine->ReloadScripts(outError);
     }
 
+    bool CopyRuntimeUI(std::vector<Automation::AutomationBackend::UIScreenNode>& out,
+                       std::string& outError) override
+    {
+        if (!m_owner->m_engine) { outError = "unavailable"; return false; }
+        return m_owner->m_engine->CopyRuntimeUI(out, outError);
+    }
+    bool ResolveRuntimeUI(const Automation::AutomationBackend::UISelector& selector,
+                          Automation::AutomationBackend::UINode& out, std::string& outError) override
+    {
+        if (!m_owner->m_engine) { outError = "unavailable"; return false; }
+        return m_owner->m_engine->ResolveRuntimeUI(selector, out, outError);
+    }
+    bool QueueRuntimeUIClick(const Automation::AutomationBackend::UISelector& selector,
+                             Automation::AutomationBackend::UIBounds& outBounds, float& outX, float& outY,
+                             std::uint64_t& outSerial, std::uint64_t& outClickToken,
+                             std::string& outId, std::string& outScreen, std::string& outError) override
+    {
+        if (!m_owner->m_engine) { outError = "unavailable"; return false; }
+        return m_owner->m_engine->QueueRuntimeUIClick(selector, outBounds, outX, outY, outSerial,
+                                                      outClickToken, outId, outScreen, outError);
+    }
+    void CancelRuntimeUIClick(std::uint64_t token) override
+    {
+        if (m_owner->m_engine) m_owner->m_engine->CancelRuntimeUIClick(token);
+    }
+    std::uint64_t RuntimeUIUpdateSerial() const override
+    {
+        return m_owner->m_engine ? m_owner->m_engine->RuntimeUIUpdateSerial() : 0;
+    }
+
 private:
     EditorContext* Context() const
     {
@@ -1030,6 +1061,7 @@ void EditorMainWindow::SetupAutomation()
     Automation::RegisterMaterialAutomation(*m_automationService);
     Automation::RegisterCharacterAutomation(*m_automationService);
     Automation::RegisterScriptAutomation(*m_automationService);
+    Automation::RegisterUIAutomation(*m_automationService);
     m_firstPartyContext = std::make_unique<FirstPartyContext>(this);
 
     m_automationTimer = new QTimer(this);
