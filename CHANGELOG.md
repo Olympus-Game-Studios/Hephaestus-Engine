@@ -118,6 +118,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - 2026-08-31: Include Jolt `BodyFilter.h` in `JoltPhysicsSystem.cpp` for `IgnoreSingleBodyFilter` used by centralized raycasts.
 - 2026-08-28: Prefab instance transforms and component edits in the Scene Editor are recorded as overrides (or as instance `rootTransform` for the root) so they survive save/reload and Refresh.
 
+### Internal
+
+- 2026-10-07: AutomationBackend gains Qt-free runtime UI and physics observation virtuals. UI clicks carry a token so a timeout can drop only those synthetic events. Physics snapshots are defined as fully-read bodies only.
+
 ## [2026.8.27]
 
 ### Added

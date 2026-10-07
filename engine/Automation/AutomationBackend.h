@@ -4,6 +4,7 @@
 #include "AutomationTypes.h"
 #include "Core/PlayModeManager.h"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -162,6 +163,155 @@ public:
     virtual bool RequestScriptReload(std::string& outError)
     {
         outError = "Script reload is unavailable for this host";
+        return false;
+    }
+
+    // ── Runtime UI observation (play / packaged runtime) ──────────────────
+    //
+    // Hosts fill these from the live UISystem. Automation code does not see
+    // UISystem. outError uses a stable reason token: unavailable, not_found,
+    // ambiguous, not_hittable, no_bounds.
+
+    struct UIBounds {
+        float x = 0.0f;
+        float y = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+    };
+
+    struct UINode {
+        std::string id;
+        std::string type;
+        std::string text;
+        std::string screen;
+        bool visible = false;
+        bool enabled = false;
+        bool interactable = false;
+        UIBounds bounds;
+        std::vector<UINode> children;
+    };
+
+    struct UIScreenNode {
+        std::string name;
+        bool active = false;
+        bool visible = false;
+        std::vector<UINode> children;
+    };
+
+    struct UISelector {
+        std::string id;
+        std::string type;
+        std::string text;
+        std::string screen;
+    };
+
+    virtual bool CopyRuntimeUI(std::vector<UIScreenNode>& out, std::string& outError)
+    {
+        out.clear();
+        outError = "unavailable";
+        return false;
+    }
+
+    virtual bool ResolveRuntimeUI(const UISelector&, UINode& out, std::string& outError)
+    {
+        out = {};
+        outError = "unavailable";
+        return false;
+    }
+
+    /**
+     * Queue one synthetic press+release into the live UIContext.
+     * outClickToken identifies only those events so a timeout can drop them
+     * without touching player input (tag 0).
+     */
+    virtual bool QueueRuntimeUIClick(const UISelector&, UIBounds& outBounds, float& outX, float& outY,
+                                    std::uint64_t& outSerial, std::uint64_t& outClickToken,
+                                    std::string& outError)
+    {
+        outBounds = {};
+        outX = 0.0f;
+        outY = 0.0f;
+        outSerial = 0;
+        outClickToken = 0;
+        outError = "unavailable";
+        return false;
+    }
+
+    /** Drop queued synthetic events for this click token. Token 0 is a no-op. */
+    virtual void CancelRuntimeUIClick(std::uint64_t) {}
+
+    [[nodiscard]] virtual std::uint64_t RuntimeUIUpdateSerial() const { return 0; }
+
+    // ── Runtime physics observation (read-only) ────────────────────────────
+    //
+    // Snapshots are published only after every field was read from a live body.
+    // Hosts skip unreadable bodies in lists and return "no_body" or "unreadable"
+    // from the single-body queries. They do not fill defaults for a failed read.
+
+    struct PhysicsVec3 {
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+    };
+
+    struct PhysicsQuat {
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+        float w = 1.0f;
+    };
+
+    struct PhysicsBodySnapshot {
+        entt::entity entity = entt::null;
+        bool entityValid = false;
+        std::string motionType;
+        bool active = false;
+        bool sleeping = false;
+        bool sensor = false;
+        PhysicsVec3 position;
+        PhysicsQuat rotation;
+        PhysicsVec3 linearVelocity;
+        PhysicsVec3 angularVelocity;
+        std::uint32_t debugBodyIndex = 0;
+    };
+
+    struct PhysicsRaycastResult {
+        bool hit = false;
+        entt::entity entity = entt::null;
+        bool entityValid = false;
+        PhysicsVec3 point;
+        PhysicsVec3 normal;
+        float distance = 0.0f;
+    };
+
+    virtual bool PhysicsRaycast(const PhysicsVec3&, const PhysicsVec3&, float, entt::entity,
+                                PhysicsRaycastResult& out, std::string& outError)
+    {
+        out = {};
+        outError = "unavailable";
+        return false;
+    }
+
+    virtual bool ListPhysicsBodies(std::vector<PhysicsBodySnapshot>& out, std::string& outError)
+    {
+        out.clear();
+        outError = "unavailable";
+        return false;
+    }
+
+    virtual bool GetPhysicsBody(entt::entity, PhysicsBodySnapshot& out, std::string& outError)
+    {
+        out = {};
+        outError = "unavailable";
+        return false;
+    }
+
+    virtual bool GetCharacterState(entt::entity, PhysicsBodySnapshot& pose, bool& grounded,
+                                   std::string& outError)
+    {
+        pose = {};
+        grounded = false;
+        outError = "unavailable";
         return false;
     }
 };
