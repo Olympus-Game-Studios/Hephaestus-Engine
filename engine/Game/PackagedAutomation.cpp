@@ -12,6 +12,8 @@
 #include "../Automation/RuntimeAutomation.h"
 #include "../Automation/RuntimeUIHostAdapter.h"
 #include "../Automation/UIAutomation.h"
+#include "../Automation/ViewportAutomation.h"
+#include "../Gfx/EngineFrameRenderer.h"
 #include "../Physics/JoltPhysicsEngine.h"
 #include "../Physics/JoltPhysicsSystem.h"
 #include "../Input/InputSystem.h"
@@ -30,9 +32,11 @@ class PackagedAutomation::RuntimeBackend final : public Automation::AutomationBa
 public:
     RuntimeBackend(Scene& scene, InputSystem& input, HephaestusUI::UISystem& ui,
                    HephaestusUI::UIContext& uiContext, Physics::JoltPhysicsEngine& physicsEngine,
-                   Physics::JoltPhysicsSystem& physics, std::string projectName)
+                   Physics::JoltPhysicsSystem& physics, Hephaestus::EngineFrameRenderer& frameRenderer,
+                   std::string rootDir, std::string projectName)
         : m_scene(scene), m_input(input), m_ui(ui), m_uiContext(uiContext),
-          m_physicsEngine(physicsEngine), m_physics(physics), m_projectName(std::move(projectName)) {}
+          m_physicsEngine(physicsEngine), m_physics(physics), m_frameRenderer(frameRenderer),
+          m_rootDir(std::move(rootDir)), m_projectName(std::move(projectName)) {}
 
     Automation::HostMask Host() const noexcept override { return Automation::HostMask::Runtime; }
     Automation::SceneAccess ActiveScene() noexcept override { return {&m_scene}; }
@@ -43,7 +47,7 @@ public:
 
     Automation::Json GetProjectInfo() const override
     {
-        return {{"name", m_projectName}, {"host", "runtime"}};
+        return {{"name", m_projectName}, {"host", "runtime"}, {"rootDir", m_rootDir}};
     }
 
     bool SetActionOverride(std::string_view action, float value, std::string&) override
@@ -115,6 +119,22 @@ public:
                                                  grounded, outError);
     }
 
+    bool RequestViewportCapture(std::string& outError) override
+    {
+        return m_frameRenderer.RequestFrameCapture(outError);
+    }
+    bool PollViewportCapture(Automation::AutomationBackend::ViewportPixels& pixels, std::string& outError) override
+    {
+        Hephaestus::EngineFrameRenderer::FrameCapture frame;
+        if (!m_frameRenderer.PollFrameCapture(frame, outError)) return false;
+        pixels.width = frame.width;
+        pixels.height = frame.height;
+        pixels.frame = frame.frame;
+        pixels.rgba = std::move(frame.rgba);
+        return true;
+    }
+    void CancelViewportCapture() override { m_frameRenderer.CancelFrameCapture(); }
+
     void NoteUIUpdated() { ++m_uiSerial; }
 
 private:
@@ -124,6 +144,8 @@ private:
     HephaestusUI::UIContext& m_uiContext;
     Physics::JoltPhysicsEngine& m_physicsEngine;
     Physics::JoltPhysicsSystem& m_physics;
+    Hephaestus::EngineFrameRenderer& m_frameRenderer;
+    std::string m_rootDir;
     std::string m_projectName;
     std::uint64_t m_uiSerial = 0;
 };
@@ -131,9 +153,11 @@ private:
 PackagedAutomation::PackagedAutomation(Scene& scene, InputSystem& input,
                                        HephaestusUI::UISystem& ui, HephaestusUI::UIContext& uiContext,
                                        Physics::JoltPhysicsEngine& physicsEngine,
-                                       Physics::JoltPhysicsSystem& physics, std::string projectName)
+                                       Physics::JoltPhysicsSystem& physics,
+                                       Hephaestus::EngineFrameRenderer& frameRenderer, std::string rootDir,
+                                       std::string projectName)
     : m_backend(std::make_unique<RuntimeBackend>(scene, input, ui, uiContext, physicsEngine, physics,
-                                                 std::move(projectName))) {}
+                                                 frameRenderer, std::move(rootDir), std::move(projectName))) {}
 
 PackagedAutomation::~PackagedAutomation() { Stop(); }
 
@@ -146,6 +170,7 @@ bool PackagedAutomation::Start(int port)
     Automation::RegisterLogAutomation(*m_service);
     Automation::RegisterUIAutomation(*m_service);
     Automation::RegisterPhysicsAutomation(*m_service);
+    Automation::RegisterRuntimeCapture(*m_service);
     m_server = std::make_unique<Automation::Mcp::McpServer>(*m_service);
     if (!m_server->Start(port)) {
         m_server.reset();

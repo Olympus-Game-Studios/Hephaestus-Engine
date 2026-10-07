@@ -23,6 +23,10 @@ class JoltPhysicsSystem;
 }
 
 namespace Hephaestus {
+class EngineFrameRenderer;
+}
+
+namespace Hephaestus {
 class InputSystem;
 namespace HephaestusUI {
 class UIContext;
@@ -44,6 +48,7 @@ public:
     PackagedAutomation(Scene& scene, InputSystem& input,
                        HephaestusUI::UISystem& ui, HephaestusUI::UIContext& uiContext,
                        Physics::JoltPhysicsEngine& physicsEngine, Physics::JoltPhysicsSystem& physics,
+                       Hephaestus::EngineFrameRenderer& frameRenderer, std::string rootDir,
                        std::string projectName);
     ~PackagedAutomation();
 

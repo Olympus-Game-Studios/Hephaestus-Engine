@@ -1524,8 +1524,10 @@ int main(int argc, char* argv[]) {
 #if HEPHAESTUS_RUNTIME_AUTOMATION
     std::unique_ptr<Hephaestus::Runtime::PackagedAutomation> packagedAutomation;
     if (g_Config.automationEnabled) {
+        const fs::path captureRoot = !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot;
         packagedAutomation = std::make_unique<Hephaestus::Runtime::PackagedAutomation>(
-            scene, inputSystem, uiSystem, uiContext, joltPhysicsEngine, physicsSystem, g_Config.projectName);
+            scene, inputSystem, uiSystem, uiContext, joltPhysicsEngine, physicsSystem, frameRenderer,
+            captureRoot.generic_string(), g_Config.projectName);
         if (!packagedAutomation->Start(g_Config.automationPort)) {
             HP_LOG(Warning, "Runtime automation was enabled but the MCP endpoint failed to start");
         }

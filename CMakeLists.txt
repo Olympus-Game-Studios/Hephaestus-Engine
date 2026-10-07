@@ -1527,6 +1527,17 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     )
     add_test(NAME AutomationPhysics COMMAND AutomationPhysicsTests)
 
+    add_executable(AutomationRuntimeCaptureTests
+        engine/Tests/AutomationRuntimeCaptureTests.cpp
+    )
+    target_link_libraries(AutomationRuntimeCaptureTests PRIVATE HephaestusAutomationCore)
+    target_include_directories(AutomationRuntimeCaptureTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(NAME AutomationRuntimeCapture COMMAND AutomationRuntimeCaptureTests)
+
     add_executable(AutomationAssetTests
         engine/Tests/AutomationAssetTests.cpp
         engine/Assets/AssetManager.cpp

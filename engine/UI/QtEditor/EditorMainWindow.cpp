@@ -1091,6 +1091,7 @@ void EditorMainWindow::SetupAutomation()
     Automation::RegisterScriptAutomation(*m_automationService);
     Automation::RegisterUIAutomation(*m_automationService);
     Automation::RegisterPhysicsAutomation(*m_automationService);
+    Automation::RegisterRuntimeCapture(*m_automationService);
     m_firstPartyContext = std::make_unique<FirstPartyContext>(this);
 
     m_automationTimer = new QTimer(this);

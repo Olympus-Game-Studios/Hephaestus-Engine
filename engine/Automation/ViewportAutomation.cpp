@@ -31,6 +31,8 @@ bool Available(ToolContext& context) { return context.Backend().GetViewportState
 ToolResult Unavailable() { return ToolResult::Failure(ErrorCode::ToolUnavailable, "ViewportUnavailable: viewport is not ready"); }
 class CaptureOperation final : public DeferredOperation {
 public:
+    explicit CaptureOperation(std::string prefix) : m_Prefix(std::move(prefix)) {}
+
     std::optional<ToolResult> Poll(ToolContext& ctx) override
     {
         if (firstFrame == 0) firstFrame = ctx.FrameIndex();
@@ -53,7 +55,7 @@ public:
         namespace fs = std::filesystem;
         const fs::path root = fs::u8path(project["rootDir"].get<std::string>());
         const fs::path relative = fs::path(".hephaestus") / "automation" / "captures" /
-            ("viewport-" + std::to_string(pixels.frame) + "-" + std::to_string(ctx.FrameIndex()) + ".png");
+            (m_Prefix + "-" + std::to_string(pixels.frame) + "-" + std::to_string(ctx.FrameIndex()) + ".png");
         std::error_code ec;
         fs::create_directories(root / relative.parent_path(), ec);
         if (ec) return ToolResult::Failure(ErrorCode::ToolUnavailable, "Cannot create capture directory: " + ec.message());
@@ -67,6 +69,7 @@ public:
                                     {"frame", pixels.frame}});
     }
 private:
+    std::string m_Prefix;
     std::uint64_t firstFrame = 0;
 };
 }
@@ -135,7 +138,28 @@ void RegisterViewportAutomation(AutomationService& service)
         std::string error;
         if (!ctx.Backend().RequestViewportCapture(error))
             return ToolResult::Failure(ErrorCode::ToolUnavailable, std::move(error));
-        return std::make_unique<CaptureOperation>();
+        return std::make_unique<CaptureOperation>("viewport");
     });
+}
+
+void RegisterRuntimeCapture(AutomationService& service)
+{
+    const Json empty = {{"type", "object"}, {"properties", Json::object()}, {"additionalProperties", false}};
+    ToolDefinition tool;
+    tool.name = "runtime.capture";
+    tool.description = "Capture the current rendered frame as a PNG during Play Mode or in the packaged runtime.";
+    tool.inputSchema = empty;
+    tool.hostMask = HostMask::Editor | HostMask::Runtime;
+    tool.playRequirement = PlayRequirement::PlayModeActive;
+    tool.mutatesProject = false;
+    tool.handler = [](ToolContext& context, const Json&) -> ToolOutcome {
+        std::string error;
+        if (!context.Backend().RequestViewportCapture(error)) {
+            return ToolResult::Failure(ErrorCode::ToolUnavailable, std::move(error));
+        }
+        return std::make_unique<CaptureOperation>("runtime");
+    };
+    std::string error;
+    if (!service.Registry().Register(std::move(tool), error)) throw std::runtime_error(error);
 }
 } // namespace Hephaestus::Automation
