@@ -6,10 +6,14 @@
 #include "../Automation/AutomationService.h"
 #include "../Automation/LogAutomation.h"
 #include "HephaestusMCP/Core/McpServer.h"
+#include "../Automation/PhysicsAutomation.h"
+#include "../Automation/PhysicsHostAdapter.h"
 #include "../Automation/PlayAutomation.h"
 #include "../Automation/RuntimeAutomation.h"
 #include "../Automation/RuntimeUIHostAdapter.h"
 #include "../Automation/UIAutomation.h"
+#include "../Physics/JoltPhysicsEngine.h"
+#include "../Physics/JoltPhysicsSystem.h"
 #include "../Input/InputSystem.h"
 #include "../Scene/Scene.h"
 #include "../UI/HephaestusUI/UIContext.h"
@@ -18,15 +22,17 @@
 #include <iostream>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace Hephaestus::Runtime {
 
 class PackagedAutomation::RuntimeBackend final : public Automation::AutomationBackend {
 public:
     RuntimeBackend(Scene& scene, InputSystem& input, HephaestusUI::UISystem& ui,
-                   HephaestusUI::UIContext& uiContext, std::string projectName)
+                   HephaestusUI::UIContext& uiContext, Physics::JoltPhysicsEngine& physicsEngine,
+                   Physics::JoltPhysicsSystem& physics, std::string projectName)
         : m_scene(scene), m_input(input), m_ui(ui), m_uiContext(uiContext),
-          m_projectName(std::move(projectName)) {}
+          m_physicsEngine(physicsEngine), m_physics(physics), m_projectName(std::move(projectName)) {}
 
     Automation::HostMask Host() const noexcept override { return Automation::HostMask::Runtime; }
     Automation::SceneAccess ActiveScene() noexcept override { return {&m_scene}; }
@@ -84,6 +90,31 @@ public:
     }
     std::uint64_t RuntimeUIUpdateSerial() const override { return m_uiSerial; }
 
+    bool PhysicsRaycast(const Automation::AutomationBackend::PhysicsVec3& origin,
+                        const Automation::AutomationBackend::PhysicsVec3& direction, float maxDistance,
+                        entt::entity ignore, Automation::AutomationBackend::PhysicsRaycastResult& out,
+                        std::string& outError) override
+    {
+        return Automation::CastPhysicsRay(true, &m_physicsEngine, &m_physics, &m_scene, origin, direction,
+                                           maxDistance, ignore, out, outError);
+    }
+    bool ListPhysicsBodies(std::vector<Automation::AutomationBackend::PhysicsBodySnapshot>& out,
+                           std::string& outError) override
+    {
+        return Automation::ListPhysicsSnapshots(true, &m_physicsEngine, &m_physics, &m_scene, out, outError);
+    }
+    bool GetPhysicsBody(entt::entity entity, Automation::AutomationBackend::PhysicsBodySnapshot& out,
+                        std::string& outError) override
+    {
+        return Automation::ReadPhysicsSnapshot(true, &m_physicsEngine, &m_physics, &m_scene, entity, out, outError);
+    }
+    bool GetCharacterState(entt::entity entity, Automation::AutomationBackend::PhysicsBodySnapshot& pose,
+                           bool& grounded, std::string& outError) override
+    {
+        return Automation::ReadCharacterSnapshot(true, &m_physicsEngine, &m_physics, &m_scene, entity, pose,
+                                                 grounded, outError);
+    }
+
     void NoteUIUpdated() { ++m_uiSerial; }
 
 private:
@@ -91,14 +122,18 @@ private:
     InputSystem& m_input;
     HephaestusUI::UISystem& m_ui;
     HephaestusUI::UIContext& m_uiContext;
+    Physics::JoltPhysicsEngine& m_physicsEngine;
+    Physics::JoltPhysicsSystem& m_physics;
     std::string m_projectName;
     std::uint64_t m_uiSerial = 0;
 };
 
 PackagedAutomation::PackagedAutomation(Scene& scene, InputSystem& input,
                                        HephaestusUI::UISystem& ui, HephaestusUI::UIContext& uiContext,
-                                       std::string projectName)
-    : m_backend(std::make_unique<RuntimeBackend>(scene, input, ui, uiContext, std::move(projectName))) {}
+                                       Physics::JoltPhysicsEngine& physicsEngine,
+                                       Physics::JoltPhysicsSystem& physics, std::string projectName)
+    : m_backend(std::make_unique<RuntimeBackend>(scene, input, ui, uiContext, physicsEngine, physics,
+                                                 std::move(projectName))) {}
 
 PackagedAutomation::~PackagedAutomation() { Stop(); }
 
@@ -110,6 +145,7 @@ bool PackagedAutomation::Start(int port)
     Automation::RegisterRuntimeAutomation(*m_service);
     Automation::RegisterLogAutomation(*m_service);
     Automation::RegisterUIAutomation(*m_service);
+    Automation::RegisterPhysicsAutomation(*m_service);
     m_server = std::make_unique<Automation::Mcp::McpServer>(*m_service);
     if (!m_server->Start(port)) {
         m_server.reset();

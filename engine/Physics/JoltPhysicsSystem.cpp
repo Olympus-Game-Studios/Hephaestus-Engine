@@ -756,6 +756,75 @@ bool JoltPhysicsSystem::Raycast(entt::entity ignoreEntity, const Vec3& origin, c
     return true;
 }
 
+Physics::BodyObservationStatus JoltPhysicsSystem::ObserveBody(entt::entity entity, BodyObservation& out) const
+{
+    const auto it = m_EntityToBodyMap.find(entity);
+    if (it == m_EntityToBodyMap.end() || it->second.IsInvalid()) {
+        return BodyObservationStatus::Missing;
+    }
+
+    const JPH::BodyID bodyId = it->second;
+    JPH::PhysicsSystem* physicsSystem = m_PhysicsEngine.GetPhysicsSystem();
+    if (!physicsSystem || !physicsSystem->GetBodyInterface().IsAdded(bodyId)) {
+        return BodyObservationStatus::Unreadable;
+    }
+
+    JPH::BodyLockRead lock(physicsSystem->GetBodyLockInterface(), bodyId);
+    if (!lock.Succeeded()) {
+        return BodyObservationStatus::Unreadable;
+    }
+
+    const JPH::Body& body = lock.GetBody();
+    const char* motionType = nullptr;
+    switch (body.GetMotionType()) {
+        case JPH::EMotionType::Static: motionType = "static"; break;
+        case JPH::EMotionType::Kinematic: motionType = "kinematic"; break;
+        case JPH::EMotionType::Dynamic: motionType = "dynamic"; break;
+        default: break;
+    }
+    if (!motionType) {
+        return BodyObservationStatus::Unreadable;
+    }
+
+    const bool active = body.IsActive();
+    const bool dynamic = body.GetMotionType() == JPH::EMotionType::Dynamic;
+    const JPH::RVec3 position = body.GetPosition();
+    const JPH::Quat rotation = body.GetRotation();
+    const JPH::Vec3 linear = body.GetLinearVelocity();
+    const JPH::Vec3 angular = body.GetAngularVelocity();
+
+    BodyObservation snapshot;
+    snapshot.entity = entity;
+    snapshot.motionType = motionType;
+    snapshot.active = active;
+    snapshot.sleeping = dynamic && !active;
+    snapshot.sensor = body.IsSensor();
+    snapshot.position = Vec3(static_cast<float>(position.GetX()),
+                              static_cast<float>(position.GetY()),
+                              static_cast<float>(position.GetZ()));
+    snapshot.rotationX = rotation.GetX();
+    snapshot.rotationY = rotation.GetY();
+    snapshot.rotationZ = rotation.GetZ();
+    snapshot.rotationW = rotation.GetW();
+    snapshot.linearVelocity = Vec3(linear.GetX(), linear.GetY(), linear.GetZ());
+    snapshot.angularVelocity = Vec3(angular.GetX(), angular.GetY(), angular.GetZ());
+    snapshot.debugBodyIndex = bodyId.GetIndex();
+    out = std::move(snapshot);
+    return BodyObservationStatus::Ready;
+}
+
+void JoltPhysicsSystem::ObserveBodies(std::vector<BodyObservation>& out) const
+{
+    out.clear();
+    out.reserve(m_EntityToBodyMap.size());
+    for (const auto& entry : m_EntityToBodyMap) {
+        BodyObservation body;
+        if (ObserveBody(entry.first, body) == BodyObservationStatus::Ready) {
+            out.push_back(std::move(body));
+        }
+    }
+}
+
 void JoltPhysicsSystem::ClearAllBodies() {
     // Destroy all bodies in the physics engine
     std::vector<JPH::BodyID> bodiesToDestroy;

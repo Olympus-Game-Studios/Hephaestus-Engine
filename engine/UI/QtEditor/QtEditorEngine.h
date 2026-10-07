@@ -288,6 +288,20 @@ public:
     void CancelRuntimeUIClick(std::uint64_t token);
     [[nodiscard]] std::uint64_t RuntimeUIUpdateSerial() const { return m_runtimeUIUpdateSerial; }
 
+    bool PhysicsRaycast(const Hephaestus::Automation::AutomationBackend::PhysicsVec3& origin,
+                        const Hephaestus::Automation::AutomationBackend::PhysicsVec3& direction,
+                        float maxDistance, entt::entity ignore,
+                        Hephaestus::Automation::AutomationBackend::PhysicsRaycastResult& out,
+                        std::string& outError);
+    bool ListPhysicsBodies(std::vector<Hephaestus::Automation::AutomationBackend::PhysicsBodySnapshot>& out,
+                           std::string& outError);
+    bool GetPhysicsBody(entt::entity entity,
+                        Hephaestus::Automation::AutomationBackend::PhysicsBodySnapshot& out,
+                        std::string& outError);
+    bool GetCharacterState(entt::entity entity,
+                           Hephaestus::Automation::AutomationBackend::PhysicsBodySnapshot& pose,
+                           bool& grounded, std::string& outError);
+
     /**
      * @brief Upload a mesh to the GPU and add it to the mesh library.
      * @return Mesh handle, or InvalidMesh on failure.

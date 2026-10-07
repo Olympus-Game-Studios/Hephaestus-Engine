@@ -245,6 +245,7 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/ScriptAutomation.cpp
     engine/Automation/ToolRegistry.cpp
     engine/Automation/UIAutomation.cpp
+    engine/Automation/PhysicsAutomation.cpp
     engine/Automation/ViewportAutomation.cpp
 )
 target_include_directories(HephaestusAutomationCore PUBLIC
@@ -1495,6 +1496,36 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     target_link_libraries(AutomationUITests PRIVATE HephaestusAutomationCore)
     target_include_directories(AutomationUITests PRIVATE engine extern extern/entt/single_include)
     add_test(NAME AutomationUI COMMAND AutomationUITests)
+
+    add_executable(AutomationPhysicsTests
+        engine/Tests/AutomationPhysicsTests.cpp
+        engine/Physics/JoltPhysicsEngine.cpp
+        engine/Physics/JoltPhysicsSystem.cpp
+        engine/Physics/CharacterMotor.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Assets/ModelImporter.cpp
+        engine/Assets/FbxDocument.cpp
+        engine/Assets/FbxStaticImporter.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_link_libraries(AutomationPhysicsTests PRIVATE HephaestusAutomationCore Jolt ufbx Vulkan::Vulkan)
+    target_include_directories(AutomationPhysicsTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+        extern/JoltPhysics
+        extern/JoltPhysics/Build
+        extern/VMA
+    )
+    add_test(NAME AutomationPhysics COMMAND AutomationPhysicsTests)
 
     add_executable(AutomationAssetTests
         engine/Tests/AutomationAssetTests.cpp

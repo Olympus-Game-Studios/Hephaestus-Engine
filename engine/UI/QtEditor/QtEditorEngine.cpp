@@ -10,6 +10,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "QtEditorEngine.h"
+#include "../../Automation/PhysicsHostAdapter.h"
 #include "../../Automation/RuntimeUIHostAdapter.h"
 #include "AppConfig.h"
 #include "EditorUndoCommand.h"
@@ -3448,6 +3449,43 @@ void QtEditorEngine::CancelRuntimeUIClick(std::uint64_t token)
     RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
     if (!runtimeUI || !runtimeUI->context) return;
     runtimeUI->context->CancelTaggedMouseEvents(token);
+}
+
+bool QtEditorEngine::PhysicsRaycast(const Hephaestus::Automation::AutomationBackend::PhysicsVec3& origin,
+                                    const Hephaestus::Automation::AutomationBackend::PhysicsVec3& direction,
+                                    float maxDistance, entt::entity ignore,
+                                    Hephaestus::Automation::AutomationBackend::PhysicsRaycastResult& out,
+                                    std::string& outError)
+{
+    return Hephaestus::Automation::CastPhysicsRay(
+        m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
+        m_editorContext.GetActiveScene(), origin, direction, maxDistance, ignore, out, outError);
+}
+
+bool QtEditorEngine::ListPhysicsBodies(
+    std::vector<Hephaestus::Automation::AutomationBackend::PhysicsBodySnapshot>& out, std::string& outError)
+{
+    return Hephaestus::Automation::ListPhysicsSnapshots(
+        m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
+        m_editorContext.GetActiveScene(), out, outError);
+}
+
+bool QtEditorEngine::GetPhysicsBody(entt::entity entity,
+                                    Hephaestus::Automation::AutomationBackend::PhysicsBodySnapshot& out,
+                                    std::string& outError)
+{
+    return Hephaestus::Automation::ReadPhysicsSnapshot(
+        m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
+        m_editorContext.GetActiveScene(), entity, out, outError);
+}
+
+bool QtEditorEngine::GetCharacterState(entt::entity entity,
+                                       Hephaestus::Automation::AutomationBackend::PhysicsBodySnapshot& pose,
+                                       bool& grounded, std::string& outError)
+{
+    return Hephaestus::Automation::ReadCharacterSnapshot(
+        m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
+        m_editorContext.GetActiveScene(), entity, pose, grounded, outError);
 }
 
 } // namespace QtEditor

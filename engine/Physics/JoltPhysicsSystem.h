@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <unordered_map>
+#include <vector>
 #include <filesystem>
 #include <Jolt/Jolt.h>
 
@@ -17,6 +20,31 @@ struct RaycastHit {
     Vec3 point{0.0f, 0.0f, 0.0f};
     Vec3 normal{0.0f, 1.0f, 0.0f};
     entt::entity entity = entt::null;
+};
+
+// A snapshot is published only after the body is added and every field below
+// was read under a successful lock. Callers must not treat a failed read as
+// a default transform, velocity, or sensor flag.
+enum class BodyObservationStatus {
+    Ready,
+    Missing,
+    Unreadable,
+};
+
+struct BodyObservation {
+    entt::entity entity = entt::null;
+    std::string motionType;
+    bool active = false;
+    bool sleeping = false;
+    bool sensor = false;
+    Vec3 position;
+    float rotationX = 0.0f;
+    float rotationY = 0.0f;
+    float rotationZ = 0.0f;
+    float rotationW = 0.0f;
+    Vec3 linearVelocity;
+    Vec3 angularVelocity;
+    std::uint32_t debugBodyIndex = 0;
 };
 
 /**
@@ -54,6 +82,9 @@ public:
     // World raycast; optionally ignores a single entity's body. Fills outHit.
     bool Raycast(entt::entity ignoreEntity, const Vec3& origin, const Vec3& direction,
                  float maxDistance, RaycastHit& outHit) const;
+
+    BodyObservationStatus ObserveBody(entt::entity entity, BodyObservation& out) const;
+    void ObserveBodies(std::vector<BodyObservation>& out) const;
 
     // Enable/disable the system
     void SetEnabled(bool enabled) { m_Enabled = enabled; }

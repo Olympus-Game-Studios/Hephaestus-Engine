@@ -83,6 +83,7 @@
 #include "../../Automation/PlayAutomation.h"
 #include "../../Automation/LogAutomation.h"
 #include "../../Automation/ScriptAutomation.h"
+#include "../../Automation/PhysicsAutomation.h"
 #include "../../Automation/UIAutomation.h"
 #include "../../Assets/EditorAssetImportService.h"
 #include "AppConfig.h"
@@ -1034,6 +1035,33 @@ public:
         return m_owner->m_engine ? m_owner->m_engine->RuntimeUIUpdateSerial() : 0;
     }
 
+    bool PhysicsRaycast(const Automation::AutomationBackend::PhysicsVec3& origin,
+                        const Automation::AutomationBackend::PhysicsVec3& direction, float maxDistance,
+                        entt::entity ignore, Automation::AutomationBackend::PhysicsRaycastResult& out,
+                        std::string& outError) override
+    {
+        if (!m_owner->m_engine) { outError = "unavailable"; return false; }
+        return m_owner->m_engine->PhysicsRaycast(origin, direction, maxDistance, ignore, out, outError);
+    }
+    bool ListPhysicsBodies(std::vector<Automation::AutomationBackend::PhysicsBodySnapshot>& out,
+                           std::string& outError) override
+    {
+        if (!m_owner->m_engine) { outError = "unavailable"; return false; }
+        return m_owner->m_engine->ListPhysicsBodies(out, outError);
+    }
+    bool GetPhysicsBody(entt::entity entity, Automation::AutomationBackend::PhysicsBodySnapshot& out,
+                        std::string& outError) override
+    {
+        if (!m_owner->m_engine) { outError = "unavailable"; return false; }
+        return m_owner->m_engine->GetPhysicsBody(entity, out, outError);
+    }
+    bool GetCharacterState(entt::entity entity, Automation::AutomationBackend::PhysicsBodySnapshot& pose,
+                           bool& grounded, std::string& outError) override
+    {
+        if (!m_owner->m_engine) { outError = "unavailable"; return false; }
+        return m_owner->m_engine->GetCharacterState(entity, pose, grounded, outError);
+    }
+
 private:
     EditorContext* Context() const
     {
@@ -1062,6 +1090,7 @@ void EditorMainWindow::SetupAutomation()
     Automation::RegisterCharacterAutomation(*m_automationService);
     Automation::RegisterScriptAutomation(*m_automationService);
     Automation::RegisterUIAutomation(*m_automationService);
+    Automation::RegisterPhysicsAutomation(*m_automationService);
     m_firstPartyContext = std::make_unique<FirstPartyContext>(this);
 
     m_automationTimer = new QTimer(this);
