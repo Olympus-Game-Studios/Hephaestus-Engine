@@ -85,6 +85,8 @@
 #include "../../Automation/ScriptAutomation.h"
 #include "../../Automation/PhysicsAutomation.h"
 #include "../../Automation/UIAutomation.h"
+#include "../../Automation/BuildAutomation.h"
+#include "../../Automation/TestAutomation.h"
 #include "../../Assets/EditorAssetImportService.h"
 #include "AppConfig.h"
 
@@ -147,6 +149,8 @@
 #include <fstream>
 #include <iterator>
 #include <filesystem>
+#include <mutex>
+#include <thread>
 #include <string>
 #include <string_view>
 #include <atomic>
@@ -594,6 +598,15 @@ class EditorMainWindow::EditorAutomationBackend final : public Automation::Autom
 {
 public:
     explicit EditorAutomationBackend(EditorMainWindow* owner) : m_owner(owner) {}
+
+    ~EditorAutomationBackend() override
+    {
+        if (m_testProcess && m_testProcess->state() != QProcess::NotRunning) {
+            m_testProcess->kill();
+            m_testProcess->waitForFinished(3000);
+        }
+        if (m_buildThread.joinable()) m_buildThread.join();
+    }
 
     Automation::HostMask Host() const noexcept override { return Automation::HostMask::Editor; }
 
@@ -1062,7 +1075,198 @@ public:
         return m_owner->m_engine->GetCharacterState(entity, pose, grounded, outError);
     }
 
+    bool StartBuild(const Automation::AutomationBackend::BuildRequestSpec& request,
+                    std::string& outError) override
+    {
+        if (m_owner->m_buildThread && m_owner->m_buildThread->isRunning()) {
+            outError = "busy";
+            return false;
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_buildMutex);
+            if (m_buildStatus.state == "running") {
+                outError = "busy";
+                return false;
+            }
+        }
+        if (m_buildThread.joinable()) m_buildThread.join();
+        if (!m_owner->m_projectContext || !m_owner->m_projectContext->HasProject()) {
+            outError = "no_project";
+            return false;
+        }
+        EditorContext* ctx = Context();
+        if ((request.action == "validate" || request.action == "package") && ctx && ctx->IsDirty()) {
+            outError = "dirty";
+            return false;
+        }
+
+        Build::BuildRequest build;
+        build.projectRoot = std::filesystem::path(m_owner->m_projectContext->GetProjectRootDir());
+        build.productName = m_owner->m_projectContext->GetProjectName();
+        if (build.productName.empty()) build.productName = build.projectRoot.filename().string();
+        const std::filesystem::path executableDirectory(
+            QCoreApplication::applicationDirPath().toStdWString());
+        build.runtimeSearchRoot = executableDirectory;
+        build.engineRoot = Build::RuntimeLocator::discoverEngineRoot(executableDirectory);
+        if (request.outputRoot.empty()) {
+            build.outputRoot = build.projectRoot / "Builds";
+        } else {
+            const std::filesystem::path output(request.outputRoot);
+            build.outputRoot = output.is_absolute() ? output : build.projectRoot / output;
+        }
+        build.startupScene = request.startupScene;
+        build.configuration = request.configuration == "Release"
+                                  ? Build::BuildConfiguration::Release
+                                  : Build::BuildConfiguration::Development;
+        build.action = request.action == "clean" ? Build::BuildAction::Clean
+                       : request.action == "validate" ? Build::BuildAction::Validate
+                                                      : Build::BuildAction::Package;
+        build.enableRuntimeAutomation = request.enableRuntimeAutomation;
+        build.validateFirst = true;
+        build.engineVersion = Tools::VersionInfo::EngineVersion().toStdString();
+
+        {
+            std::lock_guard<std::mutex> lock(m_buildMutex);
+            m_buildStatus = {};
+            m_buildStatus.state = "running";
+            m_buildStatus.action = request.action;
+            m_buildStatus.configuration = request.configuration;
+            m_buildStatus.outputPath = build.outputRoot.generic_string();
+        }
+
+        m_buildThread = std::thread([this, build]() {
+            Automation::AutomationBackend::BuildStatus finished;
+            finished.action = build.action == Build::BuildAction::Clean ? "clean"
+                              : build.action == Build::BuildAction::Validate ? "validate"
+                                                                             : "package";
+            finished.configuration = build.configuration == Build::BuildConfiguration::Release
+                                         ? "Release" : "Development";
+            try {
+                const Build::BuildResult result = Build::BuildService().execute(build);
+                finished.outputPath = result.outputPath.generic_string();
+                finished.executablePath = result.executablePath.generic_string();
+                finished.packageBytes = static_cast<std::uint64_t>(result.packageBytes);
+                finished.state = result.cancelled ? "cancelled" : result.success ? "succeeded" : "failed";
+                const std::size_t logBegin = result.logSummary.size() > 40
+                                                 ? result.logSummary.size() - 40 : 0;
+                finished.logSummary.assign(result.logSummary.begin() + static_cast<std::ptrdiff_t>(logBegin),
+                                           result.logSummary.end());
+                for (const Build::EditorProblem& problem : result.problems) {
+                    const char* severity = "info";
+                    if (problem.severity == Build::ProblemSeverity::Error) severity = "error";
+                    else if (problem.severity == Build::ProblemSeverity::Warning) severity = "warning";
+                    finished.problems.push_back(
+                        {severity, problem.code, problem.message, problem.detail, problem.assetPath});
+                }
+            } catch (const std::exception& exception) {
+                finished.state = "failed";
+                finished.problems.push_back(
+                    {"error", "BUILD_EXCEPTION", exception.what(), "", ""});
+            } catch (...) {
+                finished.state = "failed";
+                finished.problems.push_back(
+                    {"error", "BUILD_EXCEPTION", "Build failed", "", ""});
+            }
+            std::lock_guard<std::mutex> lock(m_buildMutex);
+            m_buildStatus = std::move(finished);
+        });
+        return true;
+    }
+
+    Automation::AutomationBackend::BuildStatus GetBuildStatus() override
+    {
+        std::lock_guard<std::mutex> lock(m_buildMutex);
+        return m_buildStatus;
+    }
+
+    bool ListTests(const std::string& configuration, std::vector<std::string>& out,
+                   std::string& outError) override
+    {
+        out.clear();
+        QProcess process;
+        process.start("ctest", {"-N", "-C", QString::fromStdString(configuration),
+                                "--test-dir", BuildDirectory()});
+        if (!process.waitForStarted(5000) || !process.waitForFinished(20000) ||
+            process.exitCode() != 0) {
+            outError = "unavailable";
+            return false;
+        }
+        const QString text = QString::fromUtf8(process.readAllStandardOutput());
+        for (const QString& line : text.split('\n')) {
+            const int marker = line.indexOf("Test #");
+            if (marker < 0) continue;
+            const int colon = line.indexOf(':', marker);
+            if (colon < 0) continue;
+            const QString name = line.mid(colon + 1).trimmed();
+            if (!name.isEmpty()) out.push_back(name.toStdString());
+        }
+        return true;
+    }
+
+    bool StartTest(const std::string& name, const std::string& configuration,
+                   std::string& outError) override
+    {
+        if (m_testProcess && m_testProcess->state() != QProcess::NotRunning) {
+            outError = "busy";
+            return false;
+        }
+        std::vector<std::string> names;
+        if (!ListTests(configuration, names, outError)) return false;
+        bool found = false;
+        for (const std::string& candidate : names) {
+            if (candidate == name) found = true;
+        }
+        if (!found) {
+            outError = "not_found";
+            return false;
+        }
+        m_testOutput.clear();
+        m_testStatus = {};
+        m_testStatus.state = "running";
+        m_testStatus.name = name;
+        m_testStatus.configuration = configuration;
+        m_testProcess = std::make_unique<QProcess>();
+        m_testProcess->setProcessChannelMode(QProcess::MergedChannels);
+        m_testProcess->start("ctest", {"--test-dir", BuildDirectory(), "-C",
+                                       QString::fromStdString(configuration), "-R",
+                                       QString::fromStdString("^" + name + "$"),
+                                       "--output-on-failure"});
+        if (!m_testProcess->waitForStarted(5000)) {
+            m_testStatus.state = "failed";
+            m_testStatus.output = "ctest failed to start";
+            outError = "unavailable";
+            return false;
+        }
+        return true;
+    }
+
+    Automation::AutomationBackend::TestRunStatus GetTestStatus() override
+    {
+        if (m_testProcess) {
+            m_testOutput += QString::fromUtf8(m_testProcess->readAll()).toStdString();
+            if (m_testOutput.size() > 8000) {
+                m_testOutput.erase(0, m_testOutput.size() - 8000);
+            }
+            m_testStatus.output = m_testOutput;
+            if (m_testProcess->state() == QProcess::NotRunning && m_testStatus.state == "running") {
+                m_testStatus.exitCode = m_testProcess->exitCode();
+                m_testStatus.state = m_testStatus.exitCode == 0 ? "passed" : "failed";
+            }
+        }
+        return m_testStatus;
+    }
+
 private:
+    QString BuildDirectory() const
+    {
+        const QString executable = QCoreApplication::applicationDirPath();
+        const QString parent = QDir(executable).absoluteFilePath("..");
+        if (QFileInfo::exists(QDir(parent).filePath("CTestTestfile.cmake"))) {
+            return QDir(parent).absolutePath();
+        }
+        return executable;
+    }
+
     EditorContext* Context() const
     {
         if (!m_owner->m_engine) return nullptr;
@@ -1072,6 +1276,12 @@ private:
     EditorMainWindow* m_owner;
     std::atomic<Hephaestus::PlayState> m_playState{Hephaestus::PlayState::Editor};
     std::unique_ptr<EditorAssetImportService> m_assetImport;
+    std::mutex m_buildMutex;
+    Automation::AutomationBackend::BuildStatus m_buildStatus;
+    std::thread m_buildThread;
+    std::unique_ptr<QProcess> m_testProcess;
+    Automation::AutomationBackend::TestRunStatus m_testStatus;
+    std::string m_testOutput;
 };
 
 void EditorMainWindow::SetupAutomation()
@@ -1092,6 +1302,8 @@ void EditorMainWindow::SetupAutomation()
     Automation::RegisterUIAutomation(*m_automationService);
     Automation::RegisterPhysicsAutomation(*m_automationService);
     Automation::RegisterRuntimeCapture(*m_automationService);
+    Automation::RegisterBuildAutomation(*m_automationService);
+    Automation::RegisterTestAutomation(*m_automationService);
     m_firstPartyContext = std::make_unique<FirstPartyContext>(this);
 
     m_automationTimer = new QTimer(this);

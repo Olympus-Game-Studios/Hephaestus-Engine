@@ -27,6 +27,7 @@
 #include "../Assets/CharacterRuntime.h"
 #include "../Animation/CharacterPlayback.h"
 #include "../Scene/CharacterComponent.h"
+#include "../Core/EngineLog.h"
 #include "../Core/Math.h"
 #include "../Input/InputSystem.h"
 #include <iostream>
@@ -975,6 +976,7 @@ void LuaScriptEngine::RegisterUtilityBindings() {
 #if LUA_AVAILABLE
     lua_register(m_State, "engine_log", [](lua_State* L) -> int {
         const char* msg = luaL_checkstring(L, 1);
+        Hephaestus::EngineLog::RecordOnly(Hephaestus::EngineLogLevel::Info, msg, "Lua");
         std::cout << "[Lua] " << msg << std::endl;
         return 0;
     });

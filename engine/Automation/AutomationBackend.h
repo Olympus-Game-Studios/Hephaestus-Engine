@@ -316,6 +316,67 @@ public:
         outError = "unavailable";
         return false;
     }
+
+    // ── Editor build and CTest (editor host) ──────────────────────────────
+    //
+    // Automation code does not link the build system or spawn processes.
+    // The editor host runs BuildService and ctest. outError tokens:
+    // unavailable, no_project, dirty, busy, not_found.
+
+    struct BuildProblem {
+        std::string severity;
+        std::string code;
+        std::string message;
+        std::string detail;
+        std::string assetPath;
+    };
+
+    struct BuildRequestSpec {
+        std::string action;
+        std::string configuration;
+        std::string startupScene;
+        std::string outputRoot;
+        bool enableRuntimeAutomation = false;
+    };
+
+    struct BuildStatus {
+        std::string state = "idle";
+        std::string action;
+        std::string configuration;
+        std::string outputPath;
+        std::string executablePath;
+        std::uint64_t packageBytes = 0;
+        std::vector<BuildProblem> problems;
+        std::vector<std::string> logSummary;
+    };
+
+    struct TestRunStatus {
+        std::string state = "idle";
+        std::string name;
+        std::string configuration;
+        int exitCode = 0;
+        std::string output;
+    };
+
+    virtual bool StartBuild(const BuildRequestSpec&, std::string& outError)
+    {
+        outError = "unavailable";
+        return false;
+    }
+    virtual BuildStatus GetBuildStatus() { return {}; }
+
+    virtual bool ListTests(const std::string&, std::vector<std::string>& out, std::string& outError)
+    {
+        out.clear();
+        outError = "unavailable";
+        return false;
+    }
+    virtual bool StartTest(const std::string&, const std::string&, std::string& outError)
+    {
+        outError = "unavailable";
+        return false;
+    }
+    virtual TestRunStatus GetTestStatus() { return {}; }
 };
 
 } // namespace Hephaestus::Automation

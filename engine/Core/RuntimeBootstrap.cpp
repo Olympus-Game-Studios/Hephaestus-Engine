@@ -6,6 +6,7 @@
  */
 
 #include "RuntimeBootstrap.h"
+#include "EngineLog.h"
 
 #include <chrono>
 #include <ctime>
@@ -450,6 +451,17 @@ bool Bootstrap::InstallCrashHandler() {
 #endif
 }
 
+Hephaestus::EngineLogLevel ToEngineLogLevel(LogLevel level) {
+    switch (level) {
+    case LogLevel::Debug: return Hephaestus::EngineLogLevel::Debug;
+    case LogLevel::Warning: return Hephaestus::EngineLogLevel::Warning;
+    case LogLevel::Error: return Hephaestus::EngineLogLevel::Error;
+    case LogLevel::Fatal: return Hephaestus::EngineLogLevel::Fatal;
+    case LogLevel::Info: return Hephaestus::EngineLogLevel::Info;
+    }
+    return Hephaestus::EngineLogLevel::Info;
+}
+
 void Bootstrap::Log(LogLevel level, const std::string& message) {
     std::string timestamp = GetTimestamp();
     std::string levelStr = LevelToString(level);
@@ -457,6 +469,8 @@ void Bootstrap::Log(LogLevel level, const std::string& message) {
     std::ostringstream oss;
     oss << "[" << timestamp << "] [" << levelStr << "] " << message;
     std::string formatted = oss.str();
+
+    Hephaestus::EngineLog::RecordOnly(ToEngineLogLevel(level), message, "Runtime");
     
     // Console output
     std::ostream& out = (level >= LogLevel::Error) ? std::cerr : std::cout;

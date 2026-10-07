@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-07: Editor automation adds `build.validate`, `build.package`, `build.clean`, and `build.get_status`, which drive the in-process build service. Release packages still reject runtime automation. `test.list`, `test.run`, and `test.get_status` run one named CTest from the engine build tree. These tools are editor-only.
 - 2026-10-07: `runtime.capture` writes a PNG from the existing framebuffer readback during editor Play Mode and in the Development packaged runtime. It shares the viewport capture slot and uses the `runtime-` filename prefix. Editor images do not include the Qt HUI overlay; packaged images include HUI when it was submitted to the swapchain.
 - 2026-10-07: Runtime physics automation adds `physics.raycast`, `physics.list_bodies`, `physics.get_body`, and `physics.get_character_state`. Snapshots include only bodies that were locked and read; missing bodies are skipped or returned as `no_body`, and bodies that cannot be queried return `unreadable`. Queries are read-only and available in editor Play Mode and the Development packaged runtime.
 - 2026-10-07: Runtime UI automation adds `ui.get_tree`, `ui.find`, `ui.get`, and `ui.click`. Clicks queue press/release into `UIContext` and are dispatched by `UIInputRouter` on the next `UISystem::Update`. A timed-out click cancels only its tagged events and leaves player input queued. Available in editor Play Mode and the Development packaged runtime.
@@ -82,6 +83,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-10-07: `engine_log` and packaged runtime `HP_LOG` lines are recorded in the EngineLog ring, so `log.get_entries` can read them in editor Play Mode and the Development runtime. A limited page now continues from the last returned cursor instead of skipping the rest of the ring.
 - 2026-09-04: MeshCollider CPU resolution applies its push to the Jolt body origin instead of writing center-of-mass through `SetPosition`, so offset character capsules no longer hop into the air and fall every tick. Transform is re-synced after the correction. FloorStub in Boomer-Shooter now uses a static complex MeshCollider so Jolt owns a mesh matching the visual cube.
 - 2026-09-04: Enemy capsule uses cylinder height 1.0 + radius 0.4 (total 1.8m, offset 0.9) so the collider matches a standing YBot instead of a 2.6m Player-style capsule. Character draw lift now uses the current pose's lowest bone, not only bind-pose mesh bounds.
 - 2026-09-04: Character capsules with `freezeRotation` keep pitch/roll locked but allow yaw so `Physics.setRotation` can face a target. `Physics.setRotation` also writes the entity Transform the same frame. Character meshes whose bounds sit below the origin (Mixamo hip pivot) are lifted onto the entity origin at draw time, and character colliders use the authored capsule offset instead of mesh-bounds centering.

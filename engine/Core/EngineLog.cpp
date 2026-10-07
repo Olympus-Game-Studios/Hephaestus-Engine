@@ -457,6 +457,10 @@ EngineLogSnapshot EngineLog::Snapshot(std::uint64_t afterCursor, std::size_t lim
         snapshot.entries.push_back(entry);
         if (snapshot.entries.size() == limit) break;
     }
+    // Page from the last returned cursor so a limit does not skip the rest of the ring.
+    if (!snapshot.entries.empty()) {
+        snapshot.nextCursor = snapshot.entries.back().cursor;
+    }
     return snapshot;
 }
 

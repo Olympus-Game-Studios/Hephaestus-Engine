@@ -247,6 +247,8 @@ add_library(HephaestusAutomationCore STATIC
     engine/Automation/UIAutomation.cpp
     engine/Automation/PhysicsAutomation.cpp
     engine/Automation/ViewportAutomation.cpp
+    engine/Automation/BuildAutomation.cpp
+    engine/Automation/TestAutomation.cpp
 )
 target_include_directories(HephaestusAutomationCore PUBLIC
     engine
@@ -1418,6 +1420,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_executable(AutomationLogTests
         engine/Tests/AutomationLogTests.cpp
         engine/Core/EngineLog.cpp
+        engine/Core/RuntimeBootstrap.cpp
     )
     target_link_libraries(AutomationLogTests PRIVATE HephaestusAutomationCore)
     target_include_directories(AutomationLogTests PRIVATE
@@ -1429,6 +1432,20 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME AutomationLog
         COMMAND AutomationLogTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(AutomationBuildTests
+        engine/Tests/AutomationBuildTests.cpp
+    )
+    target_link_libraries(AutomationBuildTests PRIVATE HephaestusAutomationCore)
+    target_include_directories(AutomationBuildTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME AutomationBuild
+        COMMAND AutomationBuildTests
     )
 
     add_executable(AutomationSceneTests
