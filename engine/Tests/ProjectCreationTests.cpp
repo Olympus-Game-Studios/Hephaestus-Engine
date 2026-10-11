@@ -71,6 +71,8 @@ bool TestCreateBlankProjectLayout()
                   "assets/scenes/default.hpscene");
     pass &= Check(FileExists(project, QStringLiteral("assets/input/Default.hpinput")),
                   "assets/input/Default.hpinput");
+    pass &= Check(FileExists(project, QStringLiteral(".hephaestus/physics_layers.json")),
+                  ".hephaestus/physics_layers.json");
     pass &= Check(result.defaultSceneRelativePath == QStringLiteral("assets/scenes/default.hpscene"),
                   "defaultSceneRelativePath");
 

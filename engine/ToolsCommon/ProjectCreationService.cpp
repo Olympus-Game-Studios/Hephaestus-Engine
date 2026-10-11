@@ -5,6 +5,7 @@
 #include "ProjectSettingsManager.h"
 #include "VersionInfo.h"
 #include "../Input/InputMap.h"
+#include "../Physics/PhysicsLayerConfig.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -104,6 +105,13 @@ bool ProjectCreationService::CreateBlankProject(const QString& parentDir,
     }
 
     QDir().mkpath(projectDir.filePath(QStringLiteral(".hephaestus")));
+    {
+        QFile layerFile(projectDir.filePath(QStringLiteral(".hephaestus/physics_layers.json")));
+        if (layerFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            layerFile.write(Physics::kPhysicsLayerSeedJson);
+            layerFile.close();
+        }
+    }
     QDir().mkpath(projectDir.filePath(QStringLiteral("assets/scenes")));
     QDir().mkpath(projectDir.filePath(QStringLiteral("assets/textures")));
     QDir().mkpath(projectDir.filePath(QStringLiteral("assets/scripts")));

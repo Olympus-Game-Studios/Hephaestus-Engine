@@ -61,6 +61,7 @@
 
 // Physics
 #include "../Physics/JoltPhysicsEngine.h"
+#include "../Physics/PhysicsLayerConfig.h"
 #include "../Physics/JoltPhysicsSystem.h"
 #include "../Physics/CharacterMotor.h"
 #include <Jolt/Physics/Collision/CastResult.h>
@@ -766,6 +767,13 @@ int main(int argc, char* argv[]) {
     
     Physics::JoltPhysicsEngine joltPhysicsEngine;
     joltPhysicsEngine.Initialize();
+    {
+        Physics::PhysicsLayerConfig layerConfig;
+        const fs::path layerRoot = !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot;
+        Physics::PhysicsLayerConfig::LoadFromFile(
+            Physics::PhysicsLayerConfig::ProjectFile(layerRoot), layerConfig);
+        joltPhysicsEngine.BeginPlayWorld(layerConfig);
+    }
     
     Physics::JoltPhysicsSystem physicsSystem(joltPhysicsEngine);
     physicsSystem.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);

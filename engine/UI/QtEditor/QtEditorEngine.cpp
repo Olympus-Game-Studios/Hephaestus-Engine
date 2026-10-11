@@ -31,6 +31,7 @@
 #include "../../Assets/CharacterRuntime.h"
 #include "../../Core/ProjectContext.h"
 #include "../../Physics/JoltPhysicsEngine.h"
+#include "../../Physics/PhysicsLayerConfig.h"
 #include "../../Physics/JoltPhysicsSystem.h"
 #include "../../Physics/CharacterMotor.h"
 #include "../../Scripting/LuaScriptEngine.h"
@@ -2902,10 +2903,21 @@ void QtEditorEngine::StartPlayMode()
         }
     }
 
-    if (m_physicsInitialized && m_joltPhysicsSystem) {
-        m_joltPhysicsSystem->SetProjectRoot(projectRootPath);
-        m_joltPhysicsSystem->ClearAllBodies();
-        m_joltPhysicsSystem->SetEnabled(true);
+    if (m_physicsInitialized && m_joltPhysicsEngine) {
+        Physics::PhysicsLayerConfig layerConfig;
+        const Physics::PhysicsLayerLoadResult loaded = Physics::PhysicsLayerConfig::LoadFromFile(
+            Physics::PhysicsLayerConfig::ProjectFile(projectRootPath), layerConfig);
+        if (!loaded.error.empty()) {
+            std::cerr << "[QtEditorEngine] " << loaded.error << "\n";
+        }
+        if (m_joltPhysicsSystem && m_joltPhysicsEngine->GetPhysicsSystem()) {
+            m_joltPhysicsSystem->ClearAllBodies();
+        }
+        m_joltPhysicsEngine->BeginPlayWorld(layerConfig);
+        if (m_joltPhysicsSystem) {
+            m_joltPhysicsSystem->SetProjectRoot(projectRootPath);
+            m_joltPhysicsSystem->SetEnabled(true);
+        }
     }
 
     if (!m_audioEngine) {
@@ -3189,9 +3201,14 @@ void QtEditorEngine::StopPlayMode()
         return;  // nothing to stop
     }
 
-    if (m_joltPhysicsSystem) {
+    if (m_joltPhysicsSystem && m_joltPhysicsEngine && m_joltPhysicsEngine->GetPhysicsSystem()) {
         m_joltPhysicsSystem->ClearAllBodies();
+    }
+    if (m_joltPhysicsSystem) {
         m_joltPhysicsSystem->SetEnabled(false);
+    }
+    if (m_joltPhysicsEngine) {
+        m_joltPhysicsEngine->EndPlayWorld();
     }
 
     m_playModeManager.StopPlayMode();

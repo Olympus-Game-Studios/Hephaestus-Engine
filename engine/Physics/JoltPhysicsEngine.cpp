@@ -11,6 +11,9 @@
 #include <Jolt/Core/Memory.h>
 #include <Jolt/Core/IssueReporting.h>
 #include <Jolt/Physics/EPhysicsUpdateError.h>
+#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
+#include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
+#include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
 #include <Jolt/RegisterTypes.h>
 #include <Jolt/Core/Factory.h>
 
@@ -184,51 +187,7 @@ void JoltPhysicsEngine::Initialize() {
         std::cout << "Temp allocator created (" << (kTempAllocatorBytes / (1024 * 1024))
                   << " MB fixed block, malloc fallback)\n";
 
-        // Create the physics system with default layer setup
-        // For now, we'll create a simple physics world without complex layer filtering
-        std::cout << "Creating physics system...\n";
-        m_PhysicsSystem = std::make_unique<JPH::PhysicsSystem>();
-        
-        // Initialize with default broad phase layers
-        // This uses a simple pass-through implementation
-        class SimpleBroadPhaseLayer : public JPH::BroadPhaseLayerInterface {
-        public:
-            virtual JPH::uint GetNumBroadPhaseLayers() const override { return 1; }
-            virtual JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override { return JPH::BroadPhaseLayer(0); }
-#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
-            virtual const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override { return "DefaultLayer"; }
-#endif
-        };
-        
-        class SimpleObjectVsBroadPhaseFilter : public JPH::ObjectVsBroadPhaseLayerFilter {
-        public:
-            virtual bool ShouldCollide(JPH::ObjectLayer layer1, JPH::BroadPhaseLayer layer2) const override { return true; }
-        };
-        
-        class SimpleObjectLayerFilter : public JPH::ObjectLayerPairFilter {
-        public:
-            virtual bool ShouldCollide(JPH::ObjectLayer layer1, JPH::ObjectLayer layer2) const override { return true; }
-        };
-        
-        static SimpleBroadPhaseLayer broadPhaseLayer;
-        static SimpleObjectVsBroadPhaseFilter objVsBroadPhaseFilter;
-        static SimpleObjectLayerFilter objectLayerFilter;
-        
-        std::cout << "Initializing physics system with " << MAX_BODIES << " max bodies\n";
-        m_PhysicsSystem->Init(
-            MAX_BODIES,
-            NUM_BODY_MUTEXES,
-            MAX_BODY_PAIRS,
-            MAX_CONTACT_CONSTRAINTS,
-            broadPhaseLayer,
-            objVsBroadPhaseFilter,
-            objectLayerFilter
-        );
-        std::cout << "Physics system initialized\n";
-
-        // Set default gravity
-        SetGravity(Vec3(0.0f, -9.81f, 0.0f));
-
+        BeginPlayWorld(PhysicsLayerConfig::Compatibility());
         std::cout << "Jolt Physics Engine initialized successfully\n";
     } catch (const std::exception& e) {
         std::cerr << "Exception during physics initialization: " << e.what() << "\n";
@@ -240,7 +199,7 @@ void JoltPhysicsEngine::Initialize() {
 }
 
 void JoltPhysicsEngine::Shutdown() {
-    m_PhysicsSystem.reset();
+    EndPlayWorld();
     m_JobSystem.reset();
     m_TempAllocator.reset();
 
@@ -295,6 +254,91 @@ std::unique_ptr<JPH::TempAllocator> JoltPhysicsEngine::ExchangeTempAllocatorForT
 {
     m_TempAllocator.swap(replacement);
     return replacement;
+}
+
+void JoltPhysicsEngine::BuildFilterTables(const PhysicsLayerConfig& config)
+{
+    constexpr JPH::uint kObjectLayers = static_cast<JPH::uint>(kMaxGameplayLayers) * 2;
+    constexpr JPH::uint kBroadPhaseLayers = 2;
+    m_BroadPhase = std::make_unique<JPH::BroadPhaseLayerInterfaceTable>(kObjectLayers, kBroadPhaseLayers);
+    m_ObjectPairFilter = std::make_unique<JPH::ObjectLayerPairFilterTable>(kObjectLayers);
+#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
+    m_BroadPhase->SetBroadPhaseLayerName(JPH::BroadPhaseLayer(0), "NonMoving");
+    m_BroadPhase->SetBroadPhaseLayerName(JPH::BroadPhaseLayer(1), "Moving");
+#endif
+    for (JPH::uint gameplay = 0; gameplay < kMaxGameplayLayers; ++gameplay) {
+        m_BroadPhase->MapObjectToBroadPhaseLayer(static_cast<JPH::ObjectLayer>(gameplay * 2), JPH::BroadPhaseLayer(0));
+        m_BroadPhase->MapObjectToBroadPhaseLayer(static_cast<JPH::ObjectLayer>(gameplay * 2 + 1), JPH::BroadPhaseLayer(1));
+    }
+    for (JPH::uint first = 0; first < kObjectLayers; ++first) {
+        for (JPH::uint second = 0; second <= first; ++second) {
+            const auto gameplayA = static_cast<std::uint16_t>(first / 2);
+            const auto gameplayB = static_cast<std::uint16_t>(second / 2);
+            const bool staticA = (first % 2) == 0;
+            const bool staticB = (second % 2) == 0;
+            if (staticA && staticB) {
+                continue;
+            }
+            if (!config.HasLayer(gameplayA) || !config.HasLayer(gameplayB)) {
+                continue;
+            }
+            if (!config.Collides(gameplayA, gameplayB)) {
+                continue;
+            }
+            m_ObjectPairFilter->EnableCollision(static_cast<JPH::ObjectLayer>(first),
+                                                static_cast<JPH::ObjectLayer>(second));
+        }
+    }
+    m_ObjectVsBroadPhase = std::make_unique<JPH::ObjectVsBroadPhaseLayerFilterTable>(
+        *m_BroadPhase, kBroadPhaseLayers, *m_ObjectPairFilter, kObjectLayers);
+}
+
+void JoltPhysicsEngine::EndPlayWorld()
+{
+    m_PhysicsSystem.reset();
+    m_ObjectVsBroadPhase.reset();
+    m_ObjectPairFilter.reset();
+    m_BroadPhase.reset();
+}
+
+void JoltPhysicsEngine::BeginPlayWorld(const PhysicsLayerConfig& config)
+{
+    EndPlayWorld();
+    m_LayerConfig = config;
+    if (!m_HoldsGlobalJolt) {
+        AcquireJoltRuntime();
+        m_HoldsGlobalJolt = true;
+    }
+    BuildFilterTables(m_LayerConfig);
+    std::cout << "Creating physics system...\n";
+    m_PhysicsSystem = std::make_unique<JPH::PhysicsSystem>();
+    std::cout << "Initializing physics system with " << MAX_BODIES << " max bodies\n";
+    m_PhysicsSystem->Init(
+        MAX_BODIES,
+        NUM_BODY_MUTEXES,
+        MAX_BODY_PAIRS,
+        MAX_CONTACT_CONSTRAINTS,
+        *m_BroadPhase,
+        *m_ObjectVsBroadPhase,
+        *m_ObjectPairFilter);
+    SetGravity(Vec3(0.0f, -9.81f, 0.0f));
+    std::cout << "Physics system initialized\n";
+}
+
+JPH::ObjectLayer JoltPhysicsEngine::ObjectLayerFor(std::uint16_t gameplayLayer, bool isStatic) const
+{
+    const std::uint16_t resolved = m_LayerConfig.Resolve(gameplayLayer);
+    return static_cast<JPH::ObjectLayer>(static_cast<unsigned>(resolved) * 2u + (isStatic ? 0u : 1u));
+}
+
+bool JoltPhysicsEngine::EncodedLayersShouldCollide(std::uint16_t gameplayA, bool staticA,
+                                                   std::uint16_t gameplayB, bool staticB) const
+{
+    if (!m_ObjectPairFilter) {
+        return false;
+    }
+    return m_ObjectPairFilter->ShouldCollide(ObjectLayerFor(gameplayA, staticA),
+                                             ObjectLayerFor(gameplayB, staticB));
 }
 
 void JoltPhysicsEngine::SetGravity(const Vec3& gravity) {

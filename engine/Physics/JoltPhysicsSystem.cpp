@@ -583,7 +583,7 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
         JPH::RVec3(transform.position.x, transform.position.y, transform.position.z),
         EulerXYZToQuat(transform.rotation),
         treatAsStatic ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic,
-        0  // Object layer
+        m_PhysicsEngine.ObjectLayerFor(0, treatAsStatic)
     );
 
     bodySettings.mIsSensor = treatAsSensor;
@@ -982,7 +982,7 @@ void JoltPhysicsSystem::UpdateEntityBodies(Scene& scene) {
                 JPH::RVec3(transform.position.x, transform.position.y, transform.position.z),
                 EulerXYZToQuat(transform.rotation),
                 JPH::EMotionType::Static,
-                0  // Object layer
+                m_PhysicsEngine.ObjectLayerFor(0, true)
             );
             bodySettings.mIsSensor = collider.isTrigger;
 

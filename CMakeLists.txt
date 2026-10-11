@@ -327,6 +327,7 @@ target_include_directories(HephaestusPluginCore PUBLIC engine extern)
     engine/Gfx/VulkanTexture.cpp
     engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
+    engine/Physics/PhysicsLayerConfig.cpp
     engine/Physics/JoltPhysicsEngine.cpp
     engine/Physics/JoltPhysicsSystem.cpp
     engine/Physics/CharacterMotor.cpp
@@ -489,6 +490,7 @@ add_executable(HephaestusEngine
     engine/Gfx/VulkanLightGizmo.cpp
     engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
+    engine/Physics/PhysicsLayerConfig.cpp
     engine/Physics/JoltPhysicsEngine.cpp
     engine/Physics/JoltPhysicsSystem.cpp
     engine/Physics/CharacterMotor.cpp
@@ -1517,7 +1519,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_executable(AutomationPhysicsTests
         engine/Tests/AutomationPhysicsTests.cpp
         engine/Core/EngineLog.cpp
-        engine/Physics/JoltPhysicsEngine.cpp
+        engine/Physics/PhysicsLayerConfig.cpp
+    engine/Physics/JoltPhysicsEngine.cpp
         engine/Physics/JoltPhysicsSystem.cpp
         engine/Physics/CharacterMotor.cpp
         engine/Scene/Json.cpp
@@ -1549,7 +1552,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_executable(PhysicsSettlingReproTests
         engine/Tests/PhysicsSettlingReproTests.cpp
         engine/Core/EngineLog.cpp
-        engine/Physics/JoltPhysicsEngine.cpp
+        engine/Physics/PhysicsLayerConfig.cpp
+    engine/Physics/JoltPhysicsEngine.cpp
         engine/Physics/JoltPhysicsSystem.cpp
         engine/Physics/CharacterMotor.cpp
         engine/Scene/Json.cpp
@@ -1578,6 +1582,34 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     )
     add_test(NAME PhysicsSettlingRepro COMMAND PhysicsSettlingReproTests)
     set_tests_properties(PhysicsSettlingRepro PROPERTIES TIMEOUT 1800)
+
+    add_executable(PhysicsFoundationTests
+        engine/Tests/PhysicsFoundationTests.cpp
+        engine/Physics/PhysicsLayerConfig.cpp
+        engine/Scene/Json.cpp
+        engine/Core/EngineLog.cpp
+    )
+    target_include_directories(PhysicsFoundationTests PRIVATE
+        engine
+        "${CMAKE_BINARY_DIR}/generated"
+    )
+    add_test(NAME PhysicsFoundation COMMAND PhysicsFoundationTests)
+
+    add_executable(JoltPhysicsIntegrationTests
+        engine/Tests/JoltPhysicsIntegrationTests.cpp
+        engine/Physics/PhysicsLayerConfig.cpp
+        engine/Physics/JoltPhysicsEngine.cpp
+        engine/Scene/Json.cpp
+        engine/Core/EngineLog.cpp
+    )
+    target_link_libraries(JoltPhysicsIntegrationTests PRIVATE Jolt)
+    target_include_directories(JoltPhysicsIntegrationTests PRIVATE
+        engine
+        extern/JoltPhysics
+        extern/JoltPhysics/Build
+        "${CMAKE_BINARY_DIR}/generated"
+    )
+    add_test(NAME JoltPhysicsIntegration COMMAND JoltPhysicsIntegrationTests)
 
     add_executable(AutomationRuntimeCaptureTests
         engine/Tests/AutomationRuntimeCaptureTests.cpp

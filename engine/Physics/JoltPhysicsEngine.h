@@ -12,7 +12,17 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
 
+#include <cstdint>
+#include <memory>
+
 #include "../Core/Math.h"
+#include "PhysicsLayerConfig.h"
+
+namespace JPH {
+class BroadPhaseLayerInterfaceTable;
+class ObjectLayerPairFilterTable;
+class ObjectVsBroadPhaseLayerFilterTable;
+}
 
 namespace Physics {
 
@@ -63,18 +73,28 @@ public:
     static constexpr size_t kTempAllocatorBytes = 18ull * 1024ull * 1024ull;
     std::unique_ptr<JPH::TempAllocator> ExchangeTempAllocatorForTest(std::unique_ptr<JPH::TempAllocator> replacement);
 
+    // Per-play physics world. Global Jolt types stay registered across End/Begin.
+    void BeginPlayWorld(const PhysicsLayerConfig& config);
+    void EndPlayWorld();
+    const PhysicsLayerConfig& ActiveLayerConfig() const { return m_LayerConfig; }
+    JPH::ObjectLayer ObjectLayerFor(std::uint16_t gameplayLayer, bool isStatic) const;
+    bool EncodedLayersShouldCollide(std::uint16_t gameplayA, bool staticA,
+                                    std::uint16_t gameplayB, bool staticB) const;
+
 private:
     // Allocators
     std::unique_ptr<JPH::JobSystemThreadPool> m_JobSystem;
     std::unique_ptr<JPH::TempAllocator> m_TempAllocator;
+    std::unique_ptr<JPH::BroadPhaseLayerInterfaceTable> m_BroadPhase;
+    std::unique_ptr<JPH::ObjectLayerPairFilterTable> m_ObjectPairFilter;
+    std::unique_ptr<JPH::ObjectVsBroadPhaseLayerFilterTable> m_ObjectVsBroadPhase;
 
     // Physics system
     std::unique_ptr<JPH::PhysicsSystem> m_PhysicsSystem;
+    PhysicsLayerConfig m_LayerConfig = PhysicsLayerConfig::Compatibility();
     bool m_HoldsGlobalJolt = false;
 
-    // Layer configuration
-    void InitializeLayers();
-    void InitializeCollisionFilters();
+    void BuildFilterTables(const PhysicsLayerConfig& config);
 };
 
 } // namespace Physics

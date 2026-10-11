@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-11: Physics layers load from `.hephaestus/physics_layers.json`. A missing file stays collide-all on Default. New projects receive the four-layer seed. Play start rebuilds the Jolt `PhysicsSystem` and filter tables from that file; stopping Play destroys the world and leaves the process-wide Jolt factory registered.
 - 2026-10-11: Stage 9A settling repro (`PhysicsSettlingRepro`) on the pre-fix 1 GiB `TempAllocatorImpl`. Historic 8-box stack survived 20 init/300-step/shutdown cycles; peak `GetUsage` was 9028112 bytes. Heavier 64-box scene (plus gravity-free movers and overlapping sensors) survived 300 steps; peak `GetUsage` was 9039344 bytes. The Jolt 4.1.0-rc1 settling crash was not reproduced on Jolt 5.4.1. No stepping, filter, or allocator-size change.
 - 2026-10-07: Editor automation adds `build.validate`, `build.package`, `build.clean`, and `build.get_status`, which drive the in-process build service. Release packages still reject runtime automation. `test.list`, `test.run`, and `test.get_status` run one named CTest from the engine build tree. These tools are editor-only.
 - 2026-10-07: `runtime.capture` writes a PNG from the existing framebuffer readback during editor Play Mode and in the Development packaged runtime. It shares the viewport capture slot and uses the `runtime-` filename prefix. Editor images do not include the Qt HUI overlay; packaged images include HUI when it was submitted to the swapchain.
