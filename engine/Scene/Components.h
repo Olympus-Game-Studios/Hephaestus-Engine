@@ -302,6 +302,12 @@ struct PhysicsShapeComponent {
  * Rigid body component - defines physics properties for dynamic/static bodies
  * Must be paired with a TransformComponent for position/rotation
  */
+enum class RigidBodyMotion : std::uint8_t {
+    Dynamic,
+    Static,
+    Kinematic
+};
+
 struct RigidBodyComponent {
     // Physics properties
     float mass = 1.0f;                    // Body mass (kg), 0 = static
@@ -309,6 +315,7 @@ struct RigidBodyComponent {
     bool isTrigger = false;               // If true, body acts as sensor (no physics)
     bool useGravity = true;               // Apply gravity to this body
     bool freezeRotation = false;          // Lock rotation
+    RigidBodyMotion motion = RigidBodyMotion::Dynamic;
     
     // Linear motion
     Vec3 linearVelocity;
@@ -342,10 +349,11 @@ struct RigidBodyComponent {
     {
     }
     
-    bool IsDynamic() const { return !isStatic && !isTrigger && mass > 0.0f; }
+    bool IsDynamic() const { return motion != RigidBodyMotion::Kinematic && !isStatic && !isTrigger && mass > 0.0f; }
     bool IsStatic() const { return isStatic || mass <= 0.0f; }
+    bool IsKinematic() const { return motion == RigidBodyMotion::Kinematic && !IsStatic(); }
     bool IsSensor() const { return isTrigger; }
-    bool UsesGravity() const { return useGravity && !IsStatic(); }
+    bool UsesGravity() const { return useGravity && !IsStatic() && !IsKinematic(); }
     bool HasValidBody() const { return joltBodyId != InvalidBody; }
     void InvalidateBodyHandle() { joltBodyId = InvalidBody; }
 
@@ -371,6 +379,7 @@ struct RigidBodyComponent {
         body.isStatic = false;
         body.useGravity = false;
         body.freezeRotation = true;
+        body.motion = RigidBodyMotion::Kinematic;
         return body;
     }
 };

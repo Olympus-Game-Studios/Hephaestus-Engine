@@ -283,6 +283,15 @@ void JoltPhysicsSystem::ClearAccumulator() {
     m_StalledStepCount = 0;
 }
 
+struct KinematicSlice {
+    JPH::BodyID bodyId;
+    bool move = false;
+    JPH::RVec3 startPos = JPH::RVec3::sZero();
+    JPH::Quat startRot = JPH::Quat::sIdentity();
+    JPH::RVec3 endPos = JPH::RVec3::sZero();
+    JPH::Quat endRot = JPH::Quat::sIdentity();
+};
+
 void JoltPhysicsSystem::Update(Scene& scene, float deltaTime) {
     if (!m_Enabled) {
         return;
@@ -295,8 +304,19 @@ void JoltPhysicsSystem::Update(Scene& scene, float deltaTime) {
         ++m_StalledStepCount;
     }
 
-    auto stepBodies = [this, &scene]() {
+    auto stepBodies = [this, &scene](const std::vector<KinematicSlice>* kinematicSlices, int stepIndex, int substepCount) {
         PrepareSceneBodies(scene);
+        if (kinematicSlices && substepCount > 0) {
+            const float alpha = static_cast<float>(stepIndex) / static_cast<float>(substepCount);
+            JPH::BodyInterface& bodyInterface = m_PhysicsEngine.GetBodyInterface();
+            for (const KinematicSlice& slice : *kinematicSlices) {
+                if (!slice.move || !bodyInterface.IsAdded(slice.bodyId)) {
+                    continue;
+                }
+                const JPH::RVec3 position = slice.startPos + (slice.endPos - slice.startPos) * alpha;
+                bodyInterface.MoveKinematic(slice.bodyId, position, slice.startRot.SLERP(slice.endRot, alpha), kPhysicsFixedDt);
+            }
+        }
         if (m_EntityToBodyMap.empty()) {
             return;
         }
@@ -317,8 +337,43 @@ void JoltPhysicsSystem::Update(Scene& scene, float deltaTime) {
         return;
     }
 
-    for (int step = 0; step < budget.substepCount; ++step) {
-        stepBodies();
+    std::vector<KinematicSlice> kinematicSlices;
+    {
+        JPH::BodyInterface& bodyInterface = m_PhysicsEngine.GetBodyInterface();
+        auto view = scene.GetEntitiesWith<TransformComponent, RigidBodyComponent>();
+        for (auto handle : view) {
+            entt::entity entity = handle;
+            auto& rigidBody = scene.GetRegistry().get<RigidBodyComponent>(entity);
+            if (!rigidBody.IsKinematic()) {
+                continue;
+            }
+            auto found = m_EntityToBodyMap.find(entity);
+            if (found == m_EntityToBodyMap.end() || !bodyInterface.IsAdded(found->second)) {
+                continue;
+            }
+            WorldPose endPose;
+            if (!DecomposeEntityPose(scene, entity, endPose)) {
+                continue;
+            }
+            KinematicSlice slice;
+            slice.bodyId = found->second;
+            slice.startPos = bodyInterface.GetPosition(slice.bodyId);
+            slice.startRot = bodyInterface.GetRotation(slice.bodyId);
+            slice.endPos = JPH::RVec3(endPose.position.x, endPose.position.y, endPose.position.z);
+            slice.endRot = JPH::Quat(endPose.rotation.x, endPose.rotation.y, endPose.rotation.z, endPose.rotation.w);
+            const double dx = slice.endPos.GetX() - slice.startPos.GetX();
+            const double dy = slice.endPos.GetY() - slice.startPos.GetY();
+            const double dz = slice.endPos.GetZ() - slice.startPos.GetZ();
+            const float distanceSq = static_cast<float>(dx * dx + dy * dy + dz * dz);
+            const float rotationDot = std::abs(slice.startRot.Dot(slice.endRot));
+            slice.move = distanceSq > kPoseChangeEpsilon * kPoseChangeEpsilon
+                || rotationDot < 1.0f - kPoseChangeEpsilon;
+            kinematicSlices.push_back(slice);
+        }
+    }
+
+    for (int step = 1; step <= budget.substepCount; ++step) {
+        stepBodies(&kinematicSlices, step, budget.substepCount);
     }
 }
 
@@ -426,6 +481,7 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
 
     rigidBody.isStatic = rigidBody.isStatic || isStatic || rigidBody.mass <= 0.0f;
     const bool treatAsStatic = rigidBody.IsStatic();
+    const bool treatAsKinematic = rigidBody.IsKinematic();
     const bool treatAsSensor = rigidBody.IsSensor() || isSensor;
 
     JPH::RefConst<JPH::Shape> shape;
@@ -654,7 +710,8 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
         shape,
         JPH::RVec3(transform.position.x, transform.position.y, transform.position.z),
         EulerXYZToQuat(transform.rotation),
-        treatAsStatic ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic,
+        treatAsStatic ? JPH::EMotionType::Static
+            : (treatAsKinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic),
         m_PhysicsEngine.ObjectLayerFor(rigidBody.layer, treatAsStatic)
     );
 
@@ -673,9 +730,9 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
     bodySettings.mFriction = rigidBody.friction;
     bodySettings.mLinearDamping = rigidBody.linearDamping;
     bodySettings.mAngularDamping = rigidBody.angularDamping;
-    bodySettings.mGravityFactor = rigidBody.UsesGravity() ? 1.0f : 0.0f;
+    bodySettings.mGravityFactor = treatAsKinematic || !rigidBody.UsesGravity() ? 0.0f : 1.0f;
     
-    if (!treatAsStatic) {
+    if (!treatAsStatic && !treatAsKinematic) {
         // Dynamic gameplay bodies can cross thin geometry between discrete
         // steps during frame spikes. Linear casting keeps their swept shape
         // in the collision query and prevents intermittent floor tunneling.
@@ -701,6 +758,11 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
             }
         }
         bodySettings.mMassPropertiesOverride = massProps;
+    } else if (treatAsKinematic && rigidBody.freezeRotation) {
+        bodySettings.mAllowedDOFs =
+            JPH::EAllowedDOFs::TranslationX |
+            JPH::EAllowedDOFs::TranslationY |
+            JPH::EAllowedDOFs::TranslationZ;
     }
 
     JPH::BodyInterface& bodyInterface = m_PhysicsEngine.GetBodyInterface();
@@ -759,7 +821,8 @@ entt::entity JoltPhysicsSystem::GetEntityForBody(JPH::BodyID bodyId) const {
 }
 
 bool JoltPhysicsSystem::Raycast(entt::entity ignoreEntity, const Vec3& origin, const Vec3& direction,
-                                float maxDistance, RaycastHit& outHit, const std::uint16_t* gameplayLayer) const {
+                                float maxDistance, RaycastHit& outHit, const std::uint16_t* gameplayLayer,
+                                bool ignoreSensors) const {
     outHit = RaycastHit{};
 
     JPH::PhysicsSystem* physicsSystem = m_PhysicsEngine.GetPhysicsSystem();
@@ -795,8 +858,30 @@ bool JoltPhysicsSystem::Raycast(entt::entity ignoreEntity, const Vec3& origin, c
         ignoreBody = GetBodyID(ignoreEntity);
     }
 
+    class IgnoreSensorsFilter final : public JPH::BodyFilter {
+    public:
+        explicit IgnoreSensorsFilter(JPH::BodyID ignore) : m_Ignore(ignore) {}
+        bool ShouldCollide(const JPH::BodyID& inBodyID) const override { return inBodyID != m_Ignore; }
+        bool ShouldCollideLocked(const JPH::Body& inBody) const override {
+            return inBody.GetID() != m_Ignore && !inBody.IsSensor();
+        }
+    private:
+        JPH::BodyID m_Ignore;
+    };
+
     bool hit = false;
-    if (gameplayLayer) {
+    if (ignoreSensors) {
+        IgnoreSensorsFilter filter(ignoreBody);
+        if (gameplayLayer) {
+            const JPH::ObjectLayer queryLayer = m_PhysicsEngine.ObjectLayerFor(*gameplayLayer, false);
+            hit = query.CastRay(ray, rayCastResult,
+                                physicsSystem->GetDefaultBroadPhaseLayerFilter(queryLayer),
+                                physicsSystem->GetDefaultLayerFilter(queryLayer),
+                                filter);
+        } else {
+            hit = query.CastRay(ray, rayCastResult, {}, {}, filter);
+        }
+    } else if (gameplayLayer) {
         const JPH::ObjectLayer queryLayer = m_PhysicsEngine.ObjectLayerFor(*gameplayLayer, false);
         const JPH::DefaultBroadPhaseLayerFilter broadFilter = physicsSystem->GetDefaultBroadPhaseLayerFilter(queryLayer);
         const JPH::DefaultObjectLayerFilter objectFilter = physicsSystem->GetDefaultLayerFilter(queryLayer);

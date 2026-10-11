@@ -326,7 +326,8 @@ int main()
           "Zero direction fails the query");
     check(physics.Raycast(floorId, Vec3(2.0f, 2.0f, 0.0f), Vec3(0.0f, -1.0f, 0.0f), 10.0f, cast) && !cast.hit,
           "Ignoring the floor reports a miss");
-    check(Physics::CharacterMotor::IsGrounded(engine, physics, dynamicId), "Dynamic body probe is grounded on the floor");
+    check(!Physics::CharacterMotor::IsGrounded(engine, physics, dynamicId),
+          "Dynamic body probe ignores a sensor floor");
 
     class JoltBackend final : public A::AutomationBackend {
     public:
@@ -374,7 +375,7 @@ int main()
     const auto liveBody = joltCall("physics.get_body", {{"entity", liveDynamic}});
     const auto liveState = joltCall("physics.get_character_state", {{"entity", liveDynamic}});
     check(liveBody.Ok() && liveBody.value["motionType"] == "dynamic" && liveBody.value["sensor"] == false &&
-              liveState.Ok() && liveState.value["grounded"] == true &&
+              liveState.Ok() && liveState.value["grounded"] == false &&
               Near(liveState.value["linearVelocity"][2].get<float>(), dynamicSnapshot.linearVelocity.z),
           "Tool body and character state match the read snapshot");
     const auto liveHit = joltCall("physics.raycast",

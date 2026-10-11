@@ -1,4 +1,5 @@
 #include "Core/EngineLog.h"
+#include "Physics/CharacterMotor.h"
 #include "Physics/JoltPhysicsEngine.h"
 #include "Physics/JoltPhysicsSystem.h"
 #include "Physics/PhysicsLayerConfig.h"
@@ -12,6 +13,7 @@
 #include <cmath>
 #include <iostream>
 #include <string>
+#include <tuple>
 #include <utility>
 
 namespace {
@@ -277,6 +279,96 @@ int main()
                 }
             }
             pass &= Check(logged, "non-uniform ancestor scale logs a physics error");
+        }
+        world.Shutdown();
+    }
+
+    auto runKinematic = [](bool singleWideFrame) {
+        Physics::JoltPhysicsEngine world;
+        world.Initialize();
+        world.BeginPlayWorld(Physics::PhysicsLayerConfig::Compatibility());
+        float endX = 0.0f;
+        float endSpeed = 0.0f;
+        float midX = 0.0f;
+        std::string motion;
+        {
+            Scene scene("Kinematic");
+            Physics::JoltPhysicsSystem system(world);
+            Entity platform = scene.CreateEntity("Platform");
+            auto& body = platform.AddComponent<RigidBodyComponent>();
+            body = RigidBodyComponent::CreateKinematic();
+            platform.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(1.0f, 0.25f, 1.0f)));
+            system.PrepareSceneBodies(scene);
+            const entt::entity id = static_cast<entt::entity>(platform);
+            if (singleWideFrame) {
+                platform.GetComponent<TransformComponent>().position.x = 1.0f;
+                system.Update(scene, Physics::kPhysicsFixedDt * 2.0f);
+            } else {
+                platform.GetComponent<TransformComponent>().position.x = 0.5f;
+                system.Update(scene, Physics::kPhysicsFixedDt);
+                Physics::BodyObservation mid{};
+                system.ObserveBody(id, mid);
+                midX = mid.position.x;
+                platform.GetComponent<TransformComponent>().position.x = 1.0f;
+                system.Update(scene, Physics::kPhysicsFixedDt);
+            }
+            Physics::BodyObservation observation{};
+            system.ObserveBody(id, observation);
+            endX = observation.position.x;
+            endSpeed = observation.linearVelocity.x;
+            motion = observation.motionType;
+        }
+        world.Shutdown();
+        return std::tuple<float, float, float, std::string>(endX, endSpeed, midX, motion);
+    };
+    const auto wide = runKinematic(true);
+    const auto stepped = runKinematic(false);
+    pass &= Check(std::get<3>(wide) == "kinematic" && std::abs(std::get<0>(wide) - 1.0f) < 1.0e-3f,
+                  "one 1/30 frame moves a kinematic body to the authored end");
+    pass &= Check(std::abs(std::get<1>(wide) - 30.0f) < 1.0f,
+                  "a 1 m move over two substeps has about 30 m/s, not 60");
+    pass &= Check(std::abs(std::get<2>(stepped) - 0.5f) < 1.0e-3f && std::abs(std::get<0>(stepped) - 1.0f) < 1.0e-3f,
+                  "two 1/60 frames reach the same kinematic positions");
+    pass &= Check(std::abs(std::get<1>(stepped) - 30.0f) < 1.0f,
+                  "each 1/60 kinematic slice is about 30 m/s");
+
+    {
+        Physics::JoltPhysicsEngine world;
+        world.Initialize();
+        world.BeginPlayWorld(Physics::PhysicsLayerConfig::Compatibility());
+        {
+            Scene scene("GroundSensor");
+            Physics::JoltPhysicsSystem system(world);
+            Entity character = scene.CreateEntity("Character");
+            character.GetComponent<TransformComponent>().position = Vec3(0.0f, 1.0f, 0.0f);
+            auto& characterBody = character.AddComponent<RigidBodyComponent>();
+            characterBody.mass = 1.0f;
+            characterBody.useGravity = false;
+            character.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.4f, 0.4f, 0.4f)));
+            Entity sensor = scene.CreateEntity("Sensor");
+            sensor.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 0.0f);
+            auto& sensorBody = sensor.AddComponent<RigidBodyComponent>();
+            sensorBody.isStatic = true;
+            sensorBody.isTrigger = true;
+            sensorBody.mass = 0.0f;
+            sensorBody.useGravity = false;
+            sensor.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(2.0f, 0.5f, 2.0f)));
+            system.PrepareSceneBodies(scene);
+            const bool sensorGround = Physics::CharacterMotor::IsGrounded(
+                world, system, static_cast<entt::entity>(character), 2.0f);
+            pass &= Check(!sensorGround, "character grounding ignores a sensor");
+
+            Entity floor = scene.CreateEntity("Floor");
+            floor.GetComponent<TransformComponent>().position = Vec3(0.0f, -1.0f, 0.0f);
+            auto& floorBody = floor.AddComponent<RigidBodyComponent>();
+            floorBody.isStatic = true;
+            floorBody.mass = 0.0f;
+            floorBody.useGravity = false;
+            floor.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(2.0f, 0.5f, 2.0f)));
+            system.PrepareSceneBodies(scene);
+            const bool solidGround = Physics::CharacterMotor::IsGrounded(
+                world, system, static_cast<entt::entity>(character), 3.0f);
+            pass &= Check(solidGround, "character grounding still hits a solid floor below a sensor");
         }
         world.Shutdown();
     }

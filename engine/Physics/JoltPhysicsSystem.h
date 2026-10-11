@@ -91,7 +91,8 @@ public:
 
     // World raycast; optionally ignores a single entity's body. Fills outHit.
     bool Raycast(entt::entity ignoreEntity, const Vec3& origin, const Vec3& direction,
-                 float maxDistance, RaycastHit& outHit, const std::uint16_t* gameplayLayer = nullptr) const;
+                 float maxDistance, RaycastHit& outHit, const std::uint16_t* gameplayLayer = nullptr,
+                 bool ignoreSensors = false) const;
 
     BodyObservationStatus ObserveBody(entt::entity entity, BodyObservation& out) const;
     void ObserveBodies(std::vector<BodyObservation>& out) const;

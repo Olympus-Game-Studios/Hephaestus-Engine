@@ -22,7 +22,7 @@ bool CharacterMotor::IsGrounded(JoltPhysicsEngine& physicsEngine, JoltPhysicsSys
     Vec3 direction(0.0f, -1.0f, 0.0f);
 
     RaycastHit hit{};
-    if (!physicsSystem.Raycast(entity, origin, direction, probeDistance + startOffset, hit)) {
+    if (!physicsSystem.Raycast(entity, origin, direction, probeDistance + startOffset, hit, nullptr, true)) {
         return false;
     }
     return hit.hit && hit.normal.y > 0.35f;
