@@ -9,7 +9,7 @@ endif()
 # Application Details  (single source of truth — edit these, not C++ files)
 # ─────────────────────────────────────────────────────────────────────────────
 set(HEPHAESTUS_VERSION_MAJOR 2026)
-set(HEPHAESTUS_VERSION_MINOR 9)
+set(HEPHAESTUS_VERSION_MINOR 11)
 set(HEPHAESTUS_VERSION_PATCH 10)
 set(HEPHAESTUS_VERSION "${HEPHAESTUS_VERSION_MAJOR}.${HEPHAESTUS_VERSION_MINOR}.${HEPHAESTUS_VERSION_PATCH}")
 
@@ -1543,6 +1543,37 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         extern/VMA
     )
     add_test(NAME AutomationPhysics COMMAND AutomationPhysicsTests)
+
+    add_executable(PhysicsSettlingReproTests
+        engine/Tests/PhysicsSettlingReproTests.cpp
+        engine/Physics/JoltPhysicsEngine.cpp
+        engine/Physics/JoltPhysicsSystem.cpp
+        engine/Physics/CharacterMotor.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Assets/ModelImporter.cpp
+        engine/Assets/FbxDocument.cpp
+        engine/Assets/FbxStaticImporter.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_link_libraries(PhysicsSettlingReproTests PRIVATE Jolt ufbx Vulkan::Vulkan)
+    target_include_directories(PhysicsSettlingReproTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+        extern/JoltPhysics
+        extern/JoltPhysics/Build
+        extern/VMA
+    )
+    add_test(NAME PhysicsSettlingRepro COMMAND PhysicsSettlingReproTests)
+    set_tests_properties(PhysicsSettlingRepro PROPERTIES TIMEOUT 1800)
 
     add_executable(AutomationRuntimeCaptureTests
         engine/Tests/AutomationRuntimeCaptureTests.cpp

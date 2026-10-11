@@ -95,9 +95,8 @@ void JoltPhysicsEngine::Initialize() {
 
         // Persistent temporary allocator used during simulation steps
         // Increased to 1024 MB (1 GB) to handle island building during settling phase
-        constexpr size_t TEMP_ALLOCATOR_SIZE = 1024 * 1024 * 1024;
-        m_TempAllocator = std::make_unique<JPH::TempAllocatorImpl>(TEMP_ALLOCATOR_SIZE);
-        std::cout << "Temp allocator created (" << (TEMP_ALLOCATOR_SIZE / (1024 * 1024)) << " MB)\n";
+        m_TempAllocator = std::make_unique<JPH::TempAllocatorImpl>(kStockTempAllocatorBytes);
+        std::cout << "Temp allocator created (" << (kStockTempAllocatorBytes / (1024 * 1024)) << " MB)\n";
 
         // Create the physics system with default layer setup
         // For now, we'll create a simple physics world without complex layer filtering
@@ -194,8 +193,7 @@ void JoltPhysicsEngine::Update(float deltaTime) {
         JPH::TempAllocator* tempAllocator = m_TempAllocator.get();
         if (!tempAllocator) {
             // Fallback for safety if initialization was skipped
-            constexpr size_t TEMP_ALLOCATOR_SIZE = 1024 * 1024 * 1024;
-            m_TempAllocator = std::make_unique<JPH::TempAllocatorImpl>(TEMP_ALLOCATOR_SIZE);
+            m_TempAllocator = std::make_unique<JPH::TempAllocatorImpl>(kStockTempAllocatorBytes);
             tempAllocator = m_TempAllocator.get();
         }
 
@@ -214,6 +212,13 @@ void JoltPhysicsEngine::Update(float deltaTime) {
     } catch (...) {
         std::cerr << "Unknown exception during physics update (likely Jolt crash)\n";
     }
+}
+
+std::unique_ptr<JPH::TempAllocator> JoltPhysicsEngine::ExchangeTempAllocatorForTest(
+    std::unique_ptr<JPH::TempAllocator> replacement)
+{
+    m_TempAllocator.swap(replacement);
+    return replacement;
 }
 
 void JoltPhysicsEngine::SetGravity(const Vec3& gravity) {

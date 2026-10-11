@@ -55,10 +55,15 @@ public:
     JPH::TempAllocator* GetTempAllocator() { return m_TempAllocator.get(); }
     JPH::JobSystem* GetJobSystem() { return m_JobSystem.get(); }
 
+    // Stock simulation temp block installed by Initialize. The settling repro
+    // swaps in a same-sized recorder; production never calls this.
+    static constexpr size_t kStockTempAllocatorBytes = 1024ull * 1024ull * 1024ull;
+    std::unique_ptr<JPH::TempAllocator> ExchangeTempAllocatorForTest(std::unique_ptr<JPH::TempAllocator> replacement);
+
 private:
     // Allocators
     std::unique_ptr<JPH::JobSystemThreadPool> m_JobSystem;
-    std::unique_ptr<JPH::TempAllocatorImpl> m_TempAllocator;
+    std::unique_ptr<JPH::TempAllocator> m_TempAllocator;
 
     // Physics system
     std::unique_ptr<JPH::PhysicsSystem> m_PhysicsSystem;
