@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-11: Project Settings → Physics edits `.hephaestus/physics_layers.json` through `PhysicsLayerConfig`: named layers, stable ids, tombstones, and a symmetric collision matrix. The Rigid Body inspector selects a layer by name. Matrix edits apply on the next Play.
 - 2026-10-11: Stopping Play writes one Physics info line with the live body count, the last frame's substep count, the stalled-step count, and the last frame's contact count.
 - 2026-10-11: Cylinder physics shapes build a Jolt cylinder. Scene and prefab rigid bodies store `motion` and `layer`. Old files that only have `isStatic` still load. Packages copy `.hephaestus/physics_layers.json` and leave the rest of that folder behind.
 - 2026-10-11: Lua scripts receive `onTriggerEnter`, `onTriggerStay`, `onTriggerExit`, `onCollisionEnter`, `onCollisionStay`, and `onCollisionExit` after each fixed physics step. The other entity is nil when it was destroyed. Exit callbacks do not receive a contact.
@@ -69,6 +70,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-10-11: `RigidBodyComponent::SetMotion` keeps `isStatic` equal to `motion == Static` for inspector edits, presets, factories, prefab apply, and scene duplication. Saves write `isStatic` from `motion`. `ProjectCreationLayout` prepends the engine Qt runtime to `PATH` so an incompatible `Qt6Core.dll` earlier on `PATH` is not loaded.
 - 2026-10-11: Body lookup uses the full Jolt body id. Static triggers are created as kinematic sensors so a sleeping static body does not end the overlap. Kinematic bodies do not collide with static bodies.
 - 2026-10-11: Kinematic rigid bodies use Jolt kinematic motion and `MoveKinematic` sliced across the frame's fixed substeps. `CreateKinematic` selects that motion. Character grounding rejects sensor hits; other raycasts still hit them.
 - 2026-09-04: Boomer-Shooter Enemy prefab uses `Enemy1.hpcharacter` (Idle/Walk controller) instead of a cube mesh; `Enemy.lua` still owns chase/damage while locomotion clips play from `Enemy1Character.lua`.
@@ -134,6 +136,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Internal
 
+- 2026-10-11: Stage 9A closeout verified named collision-layer authoring, the motion/isStatic invariant, old scene and prefab loads, the full Release CTest suite, editor Play sessions, and Development and Release packages.
 - 2026-10-07: AutomationBackend gains Qt-free runtime UI and physics observation virtuals. UI clicks carry a token so a timeout can drop only those synthetic events. Physics snapshots are defined as fully-read bodies only.
 
 ## [2026.8.27]

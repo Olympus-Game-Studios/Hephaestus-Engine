@@ -211,6 +211,16 @@ local spawns = Scene.findAllWithPrefix("EnemySpawn")
 Scene.destroy(enemy)
 
 local hit = Physics.raycast(ox, oy, oz, dx, dy, dz, 80)
+-- Physics.raycast(..., maxDistance, "Character") filters by the project matrix
+
+function onTriggerEnter(other, contact) end   -- contact is nil without a valid manifold
+function onTriggerStay(other, contact) end
+function onTriggerExit(other) end              -- no contact
+function onCollisionEnter(other, contact) end  -- contact may be nil
+function onCollisionStay(other, contact) end
+function onCollisionExit(other) end            -- no contact
+-- contact = { point, normal, relativeVelocity, penetration }
+-- normal separates this body from other; point is the manifold midpoint
 if hit and hit.entity then
   hit.entity:Call("onDamage", 25)
 end

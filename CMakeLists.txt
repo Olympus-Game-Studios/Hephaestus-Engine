@@ -2179,6 +2179,15 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
             NAME ProjectCreationLayout
             COMMAND ProjectCreationTests
         )
+        if(TARGET Qt6::Core)
+            set(_heph_project_creation_path "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+            if(TARGET HephaestusEngine)
+                string(APPEND _heph_project_creation_path
+                    ";PATH=path_list_prepend:$<TARGET_FILE_DIR:HephaestusEngine>")
+            endif()
+            set_tests_properties(ProjectCreationLayout PROPERTIES
+                ENVIRONMENT_MODIFICATION "${_heph_project_creation_path}")
+        endif()
     endif()
 
     add_executable(EditorLogicSmokeTests

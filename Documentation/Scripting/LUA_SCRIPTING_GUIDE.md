@@ -121,14 +121,27 @@ end
 function onAnimationFinished(clipId)
 end
 
--- Physics collisions (when implemented)
-function onTriggerEnter(other)
+-- Trigger overlaps. The other entity is the payload. Exit never receives a contact.
+-- Enter and stay receive a contact only when a valid manifold exists; otherwise contact is nil.
+function onTriggerEnter(other, contact)
 end
 
-function onTriggerStay(other)
+function onTriggerStay(other, contact)
 end
 
 function onTriggerExit(other)
+end
+
+-- Solid contacts. contact is nil when the event is real but Jolt did not produce
+-- a point with non-negative penetration (including speculative contacts).
+-- onCollisionExit never receives contact data.
+function onCollisionEnter(other, contact)
+end
+
+function onCollisionStay(other, contact)
+end
+
+function onCollisionExit(other)
 end
 ```
 
@@ -411,14 +424,44 @@ Also available:
 
 ### Physics
 
+Play steps physics at a fixed `1/60` second after `onUpdate`, with at most four substeps. There is no `FixedUpdate` and no render interpolation. Callbacks below run on the main thread after the fixed step that produced them.
+
 ```lua
 -- Hitscan (ignores the calling entity's body when possible)
 local hit = Physics.raycast(ox, oy, oz, dx, dy, dz, maxDistance)
+-- Optional layer name filters the cast with the project collision matrix:
+-- Physics.raycast(ox, oy, oz, dx, dy, dz, maxDistance, "Character")
 if hit then
   -- hit.point, hit.normal, hit.distance, hit.entity (userdata or nil)
   if hit.entity then
     hit.entity:Call("onDamage", 25)
   end
+end
+
+function onCollisionEnter(other, contact)
+  if contact then
+    -- contact.point {x,y,z} is the midpoint of the two shape points
+    -- contact.normal {x,y,z} points so this body separates from other
+    -- contact.relativeVelocity {x,y,z} is other velocity minus this body
+    -- contact.penetration is meters; negative values are not delivered
+  end
+end
+
+function onCollisionStay(other, contact)
+end
+
+function onCollisionExit(other)
+  -- no contact argument
+end
+
+function onTriggerEnter(other, contact)
+  -- other is the overlapping entity. contact may be nil.
+end
+
+function onTriggerStay(other, contact)
+end
+
+function onTriggerExit(other)
 end
 
 -- Basic FPS capsule motor (current script entity must have a rigid body)
@@ -429,11 +472,15 @@ Physics.move(wishX, wishZ, 6.0) -- world XZ wish; preserves Y (gravity/jump)
 Physics.setRotation(0, yawRadians, 0)
 ```
 
+`onCollisionEnter` and `onCollisionStay` omit `contact` when the pair exists but there is no valid contact payload (no manifold point, or penetration is negative / speculative). Do not invent a contact in that case. `onCollisionExit` never receives contact data. A solid pair can emit `onCollisionExit` when one body sleeps, so `onCollisionStay` is not a ground signal. `Physics.isGrounded` ignores sensors.
+
+Trigger callbacks identify the other entity. Enter and stay also receive `contact` when the same valid-contact rule passes, and otherwise pass nil. `onTriggerExit` never receives a contact. An authored static trigger is simulated as a kinematic sensor. With the current Jolt flags, a trigger does not detect a static non-sensor. Trigger versus trigger reports when the collision matrix allows that pair.
+
 Available helpers:
 
 - `Physics.isAvailable()` / `Physics.hasBody()`
 - `Physics.getLinearVelocity()` / `Physics.setLinearVelocity(x,y,z)` / `Physics.setAngularVelocity(...)` / `Physics.setRotation(rx,ry,rz)` (radians)
-- `Physics.raycast(ox,oy,oz,dx,dy,dz,maxDistance)` → hit table or `nil`
+- `Physics.raycast(ox,oy,oz,dx,dy,dz,maxDistance[, layerName])` → hit table or `nil`
 - `Physics.isGrounded()` / `Physics.move(wishX, wishZ, speed)` / `Physics.jump(impulse)`
 
 ## Performance Considerations
