@@ -46,13 +46,20 @@ inline bool CastPhysicsRay(bool initialized, Physics::JoltPhysicsEngine* engine,
                            const AutomationBackend::PhysicsVec3& origin,
                            const AutomationBackend::PhysicsVec3& direction, float maxDistance,
                            entt::entity ignore, AutomationBackend::PhysicsRaycastResult& out,
-                           std::string& outError)
+                           std::string& outError, const std::string* layerName = nullptr)
 {
     if (!PhysicsWorldReady(initialized, engine, system, outError)) return false;
 
+    const std::uint16_t* layer = nullptr;
+    std::uint16_t resolved = 0;
+    if (layerName && !layerName->empty()) {
+        if (!engine->TryResolveLayerToken(*layerName, resolved, outError)) return false;
+        layer = &resolved;
+    }
+
     Physics::RaycastHit hit;
     if (!system->Raycast(ignore, Vec3(origin.x, origin.y, origin.z),
-                         Vec3(direction.x, direction.y, direction.z), maxDistance, hit)) {
+                         Vec3(direction.x, direction.y, direction.z), maxDistance, hit, layer)) {
         outError = "unavailable";
         return false;
     }

@@ -287,8 +287,10 @@ public:
     };
 
     virtual bool PhysicsRaycast(const PhysicsVec3&, const PhysicsVec3&, float, entt::entity,
-                                PhysicsRaycastResult& out, std::string& outError)
+                                PhysicsRaycastResult& out, std::string& outError,
+                                const std::string* layerName = nullptr)
     {
+        (void)layerName;
         out = {};
         outError = "unavailable";
         return false;

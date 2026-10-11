@@ -73,6 +73,8 @@ public:
     static constexpr size_t kTempAllocatorBytes = 18ull * 1024ull * 1024ull;
     std::unique_ptr<JPH::TempAllocator> ExchangeTempAllocatorForTest(std::unique_ptr<JPH::TempAllocator> replacement);
 
+    bool TryResolveLayerToken(const std::string& token, std::uint16_t& outId, std::string& outError) const;
+
     // Per-play physics world. Global Jolt types stay registered across End/Begin.
     void BeginPlayWorld(const PhysicsLayerConfig& config);
     void EndPlayWorld();

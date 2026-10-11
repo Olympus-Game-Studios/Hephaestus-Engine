@@ -292,7 +292,7 @@ public:
                         const Hephaestus::Automation::AutomationBackend::PhysicsVec3& direction,
                         float maxDistance, entt::entity ignore,
                         Hephaestus::Automation::AutomationBackend::PhysicsRaycastResult& out,
-                        std::string& outError);
+                        std::string& outError, const std::string* layerName = nullptr);
     bool ListPhysicsBodies(std::vector<Hephaestus::Automation::AutomationBackend::PhysicsBodySnapshot>& out,
                            std::string& outError);
     bool GetPhysicsBody(entt::entity entity,

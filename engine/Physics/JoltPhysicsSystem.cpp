@@ -583,7 +583,7 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
         JPH::RVec3(transform.position.x, transform.position.y, transform.position.z),
         EulerXYZToQuat(transform.rotation),
         treatAsStatic ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic,
-        m_PhysicsEngine.ObjectLayerFor(0, treatAsStatic)
+        m_PhysicsEngine.ObjectLayerFor(rigidBody.layer, treatAsStatic)
     );
 
     bodySettings.mIsSensor = treatAsSensor;
@@ -685,7 +685,7 @@ entt::entity JoltPhysicsSystem::GetEntityForBody(JPH::BodyID bodyId) const {
 }
 
 bool JoltPhysicsSystem::Raycast(entt::entity ignoreEntity, const Vec3& origin, const Vec3& direction,
-                                float maxDistance, RaycastHit& outHit) const {
+                                float maxDistance, RaycastHit& outHit, const std::uint16_t* gameplayLayer) const {
     outHit = RaycastHit{};
 
     JPH::PhysicsSystem* physicsSystem = m_PhysicsEngine.GetPhysicsSystem();
@@ -722,7 +722,17 @@ bool JoltPhysicsSystem::Raycast(entt::entity ignoreEntity, const Vec3& origin, c
     }
 
     bool hit = false;
-    if (!ignoreBody.IsInvalid()) {
+    if (gameplayLayer) {
+        const JPH::ObjectLayer queryLayer = m_PhysicsEngine.ObjectLayerFor(*gameplayLayer, false);
+        const JPH::DefaultBroadPhaseLayerFilter broadFilter = physicsSystem->GetDefaultBroadPhaseLayerFilter(queryLayer);
+        const JPH::DefaultObjectLayerFilter objectFilter = physicsSystem->GetDefaultLayerFilter(queryLayer);
+        if (!ignoreBody.IsInvalid()) {
+            JPH::IgnoreSingleBodyFilter filter(ignoreBody);
+            hit = query.CastRay(ray, rayCastResult, broadFilter, objectFilter, filter);
+        } else {
+            hit = query.CastRay(ray, rayCastResult, broadFilter, objectFilter);
+        }
+    } else if (!ignoreBody.IsInvalid()) {
         JPH::IgnoreSingleBodyFilter filter(ignoreBody);
         hit = query.CastRay(ray, rayCastResult, {}, {}, filter);
     } else {
@@ -977,12 +987,15 @@ void JoltPhysicsSystem::UpdateEntityBodies(Scene& scene) {
                 continue;
             }
 
+            const std::uint16_t meshLayer = m_PhysicsEngine.ActiveLayerConfig().HasLayer(kLayerWorld)
+                ? kLayerWorld
+                : kLayerDefault;
             JPH::BodyCreationSettings bodySettings(
                 shape,
                 JPH::RVec3(transform.position.x, transform.position.y, transform.position.z),
                 EulerXYZToQuat(transform.rotation),
                 JPH::EMotionType::Static,
-                m_PhysicsEngine.ObjectLayerFor(0, true)
+                m_PhysicsEngine.ObjectLayerFor(meshLayer, true)
             );
             bodySettings.mIsSensor = collider.isTrigger;
 

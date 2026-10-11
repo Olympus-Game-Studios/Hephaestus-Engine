@@ -149,7 +149,8 @@ void RegisterPhysicsAutomation(AutomationService& service)
         {"properties", {{"origin", vec3},
                         {"direction", vec3},
                         {"maxDistance", {{"type", "number"}}},
-                        {"ignore", {{"type", "string"}}}}},
+                        {"ignore", {{"type", "string"}}},
+                        {"layer", {{"type", "string"}}}}},
         {"required", Json::array({"origin", "direction", "maxDistance"})},
         {"additionalProperties", false}};
     const Json entitySchema = {
@@ -201,8 +202,18 @@ void RegisterPhysicsAutomation(AutomationService& service)
                 ignore = resolved.handle;
             }
 
+            const std::string* layerName = nullptr;
+            std::string layerStorage;
+            if (arguments.contains("layer")) {
+                if (!arguments["layer"].is_string() || arguments["layer"].get<std::string>().empty()) {
+                    return ToolResult::Failure(ErrorCode::InvalidArguments, "layer must be a physics layer name");
+                }
+                layerStorage = arguments["layer"].get<std::string>();
+                layerName = &layerStorage;
+            }
+
             PhysicsRaycastResult hit;
-            if (!context.Backend().PhysicsRaycast(origin, direction, maxDistance, ignore, hit, error)) {
+            if (!context.Backend().PhysicsRaycast(origin, direction, maxDistance, ignore, hit, error, layerName)) {
                 return PhysicsFailure(error);
             }
             if (!hit.hit) return ToolResult::Success({{"hit", false}});

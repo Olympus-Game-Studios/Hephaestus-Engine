@@ -97,10 +97,10 @@ public:
     bool PhysicsRaycast(const Automation::AutomationBackend::PhysicsVec3& origin,
                         const Automation::AutomationBackend::PhysicsVec3& direction, float maxDistance,
                         entt::entity ignore, Automation::AutomationBackend::PhysicsRaycastResult& out,
-                        std::string& outError) override
+                        std::string& outError, const std::string* layerName = nullptr) override
     {
         return Automation::CastPhysicsRay(true, &m_physicsEngine, &m_physics, &m_scene, origin, direction,
-                                           maxDistance, ignore, out, outError);
+                                           maxDistance, ignore, out, outError, layerName);
     }
     bool ListPhysicsBodies(std::vector<Automation::AutomationBackend::PhysicsBodySnapshot>& out,
                            std::string& outError) override

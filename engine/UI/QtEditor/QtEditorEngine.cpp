@@ -3111,14 +3111,23 @@ void QtEditorEngine::StartPlayMode()
     };
 
     physicsBinding.raycast = [this](uint32_t entityId, const Vec3& origin, const Vec3& direction,
-                                    float maxDistance, PhysicsRaycastHit& outHit) -> bool {
-        if (!m_physicsInitialized || !m_joltPhysicsSystem) {
+                                    float maxDistance, PhysicsRaycastHit& outHit, const char* layerName,
+                                    std::string& outError) -> bool {
+        if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine) {
             return false;
+        }
+        const std::uint16_t* layer = nullptr;
+        std::uint16_t resolved = 0;
+        if (layerName && layerName[0] != '\0') {
+            if (!m_joltPhysicsEngine->TryResolveLayerToken(layerName, resolved, outError)) {
+                return false;
+            }
+            layer = &resolved;
         }
 
         Physics::RaycastHit hit{};
         const bool ok = m_joltPhysicsSystem->Raycast(
-            static_cast<entt::entity>(entityId), origin, direction, maxDistance, hit);
+            static_cast<entt::entity>(entityId), origin, direction, maxDistance, hit, layer);
         if (!ok) {
             return false;
         }
@@ -3472,11 +3481,11 @@ bool QtEditorEngine::PhysicsRaycast(const Hephaestus::Automation::AutomationBack
                                     const Hephaestus::Automation::AutomationBackend::PhysicsVec3& direction,
                                     float maxDistance, entt::entity ignore,
                                     Hephaestus::Automation::AutomationBackend::PhysicsRaycastResult& out,
-                                    std::string& outError)
+                                    std::string& outError, const std::string* layerName)
 {
     return Hephaestus::Automation::CastPhysicsRay(
         m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
-        m_editorContext.GetActiveScene(), origin, direction, maxDistance, ignore, out, outError);
+        m_editorContext.GetActiveScene(), origin, direction, maxDistance, ignore, out, outError, layerName);
 }
 
 bool QtEditorEngine::ListPhysicsBodies(

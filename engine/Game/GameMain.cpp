@@ -894,12 +894,20 @@ int main(int argc, char* argv[]) {
         return true;
     };
 
-    physicsBinding.raycast = [&physicsSystem](
+    physicsBinding.raycast = [&physicsSystem, &joltPhysicsEngine](
                                 uint32_t entityId, const Vec3& origin, const Vec3& direction, float maxDistance,
-                                PhysicsRaycastHit& outHit) -> bool {
+                                PhysicsRaycastHit& outHit, const char* layerName, std::string& outError) -> bool {
+        const std::uint16_t* layer = nullptr;
+        std::uint16_t resolved = 0;
+        if (layerName && layerName[0] != '\0') {
+            if (!joltPhysicsEngine.TryResolveLayerToken(layerName, resolved, outError)) {
+                return false;
+            }
+            layer = &resolved;
+        }
         Physics::RaycastHit hit{};
         const bool ok = physicsSystem.Raycast(
-            static_cast<entt::entity>(entityId), origin, direction, maxDistance, hit);
+            static_cast<entt::entity>(entityId), origin, direction, maxDistance, hit, layer);
         if (!ok) {
             return false;
         }

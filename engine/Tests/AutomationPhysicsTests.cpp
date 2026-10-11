@@ -60,7 +60,7 @@ public:
 
     bool PhysicsRaycast(const A::AutomationBackend::PhysicsVec3&, const A::AutomationBackend::PhysicsVec3&,
                         float, entt::entity ignore, A::AutomationBackend::PhysicsRaycastResult& out,
-                        std::string& outError) override
+                        std::string& outError, const std::string* = nullptr) override
     {
         ++rayCalls;
         lastIgnore = ignore;
@@ -340,9 +340,10 @@ int main()
         Hephaestus::PlayState GetPlayState() const noexcept override { return Hephaestus::PlayState::Playing; }
         bool PhysicsRaycast(const A::AutomationBackend::PhysicsVec3& origin,
                             const A::AutomationBackend::PhysicsVec3& direction, float maxDistance, entt::entity ignore,
-                            A::AutomationBackend::PhysicsRaycastResult& out, std::string& outError) override
+                            A::AutomationBackend::PhysicsRaycastResult& out, std::string& outError,
+                            const std::string* layerName = nullptr) override
         {
-            return A::CastPhysicsRay(true, &engine, &physics, &world, origin, direction, maxDistance, ignore, out, outError);
+            return A::CastPhysicsRay(true, &engine, &physics, &world, origin, direction, maxDistance, ignore, out, outError, layerName);
         }
         bool ListPhysicsBodies(std::vector<A::AutomationBackend::PhysicsBodySnapshot>& out, std::string& outError) override
         {

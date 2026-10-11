@@ -1247,15 +1247,25 @@ int LuaScriptEngine::Lua_Physics_raycast(lua_State* L) {
     float dy = static_cast<float>(luaL_checknumber(L, 5));
     float dz = static_cast<float>(luaL_checknumber(L, 6));
     float maxDistance = static_cast<float>(luaL_checknumber(L, 7));
+    const char* layerName = nullptr;
+    if (lua_gettop(L) >= 8 && !lua_isnoneornil(L, 8)) {
+        layerName = luaL_checkstring(L, 8);
+    }
 
     PhysicsRaycastHit hit{};
+    std::string error;
     bool ok = engine->m_PhysicsBinding.raycast(
         engine->m_CurrentEntityId,
         Vec3(ox, oy, oz),
         Vec3(dx, dy, dz),
         maxDistance,
-        hit
+        hit,
+        layerName,
+        error
     );
+    if (!error.empty()) {
+        return luaL_error(L, "%s", error.c_str());
+    }
 
     if (!ok || !hit.hit) {
         lua_pushnil(L);

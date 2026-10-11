@@ -1599,14 +1599,31 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         engine/Tests/JoltPhysicsIntegrationTests.cpp
         engine/Physics/PhysicsLayerConfig.cpp
         engine/Physics/JoltPhysicsEngine.cpp
+        engine/Physics/JoltPhysicsSystem.cpp
+        engine/Physics/CharacterMotor.cpp
         engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Assets/ModelImporter.cpp
+        engine/Assets/FbxDocument.cpp
+        engine/Assets/FbxStaticImporter.cpp
+        engine/Scripting/ScriptBase.cpp
         engine/Core/EngineLog.cpp
     )
-    target_link_libraries(JoltPhysicsIntegrationTests PRIVATE Jolt)
+    target_link_libraries(JoltPhysicsIntegrationTests PRIVATE Jolt ufbx Vulkan::Vulkan)
     target_include_directories(JoltPhysicsIntegrationTests PRIVATE
         engine
+        extern
+        extern/entt/single_include
         extern/JoltPhysics
         extern/JoltPhysics/Build
+        extern/VMA
         "${CMAKE_BINARY_DIR}/generated"
     )
     add_test(NAME JoltPhysicsIntegration COMMAND JoltPhysicsIntegrationTests)

@@ -1,7 +1,10 @@
 #include "JoltPhysicsEngine.h"
 #include "../Core/EngineLog.h"
 
+#include <cctype>
+#include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <iostream>
 #include <cstdarg>
 #include <cstdio>
@@ -254,6 +257,25 @@ std::unique_ptr<JPH::TempAllocator> JoltPhysicsEngine::ExchangeTempAllocatorForT
 {
     m_TempAllocator.swap(replacement);
     return replacement;
+}
+
+bool JoltPhysicsEngine::TryResolveLayerToken(const std::string& token, std::uint16_t& outId, std::string& outError) const
+{
+    const std::uint16_t byName = m_LayerConfig.FindIdByName(token);
+    if (byName != kInvalidLayer) {
+        outId = byName;
+        return true;
+    }
+    if (!token.empty() && std::all_of(token.begin(), token.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
+        const int value = std::atoi(token.c_str());
+        if (value >= 0 && value < static_cast<int>(kMaxGameplayLayers) &&
+            m_LayerConfig.HasLayer(static_cast<std::uint16_t>(value))) {
+            outId = static_cast<std::uint16_t>(value);
+            return true;
+        }
+    }
+    outError = "unknown physics layer '" + token + "'";
+    return false;
 }
 
 void JoltPhysicsEngine::BuildFilterTables(const PhysicsLayerConfig& config)

@@ -320,6 +320,9 @@ struct RigidBodyComponent {
     Vec3 angularAcceleration;
     float angularDamping = 0.05f;         // Angular velocity damping
     
+    // Collision layer. 0 is Default. Ids are stable; names are display-only.
+    std::uint16_t layer = 0;
+
     // Material properties
     float friction = 0.3f;                // Friction coefficient
     float restitution = 0.0f;             // Bounciness/elasticity
