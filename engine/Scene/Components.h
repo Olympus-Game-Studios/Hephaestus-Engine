@@ -354,6 +354,34 @@ struct RigidBodyComponent {
     bool IsKinematic() const { return motion == RigidBodyMotion::Kinematic && !IsStatic(); }
     bool IsSensor() const { return isTrigger; }
     bool UsesGravity() const { return useGravity && !IsStatic() && !IsKinematic(); }
+
+    // JSON may still say isStatic. An explicit motion string wins; otherwise
+    // isStatic or a non-positive mass selects static. isStatic is then rewritten
+    // so older readers stay consistent with the motion enum.
+    void ApplyAuthoredMotion(bool motionExplicit) {
+        if (!motionExplicit) {
+            motion = (isStatic || mass <= 0.0f) ? RigidBodyMotion::Static : RigidBodyMotion::Dynamic;
+        }
+        if (motion == RigidBodyMotion::Kinematic) {
+            isStatic = false;
+            useGravity = false;
+            if (mass <= 0.0f) {
+                mass = 1.0f;
+            }
+            return;
+        }
+        if (motion == RigidBodyMotion::Static || mass <= 0.0f) {
+            motion = RigidBodyMotion::Static;
+            isStatic = true;
+            mass = 0.0f;
+            useGravity = false;
+            return;
+        }
+        isStatic = false;
+        if (mass <= 0.0f && !isTrigger) {
+            mass = 1.0f;
+        }
+    }
     bool HasValidBody() const { return joltBodyId != InvalidBody; }
     void InvalidateBodyHandle() { joltBodyId = InvalidBody; }
 

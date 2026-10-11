@@ -788,8 +788,18 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             std::ostringstream oss;
             oss.imbue(std::locale::classic());
             oss << "        \"RigidBody\": {\n";
+            RigidBodyMotion savedMotion = rigidBody->motion;
+            if (savedMotion != RigidBodyMotion::Kinematic && (rigidBody->isStatic || rigidBody->mass <= 0.0f)) {
+                savedMotion = RigidBodyMotion::Static;
+            } else if (savedMotion != RigidBodyMotion::Kinematic) {
+                savedMotion = RigidBodyMotion::Dynamic;
+            }
+            const char* motionName = savedMotion == RigidBodyMotion::Static ? "static"
+                : (savedMotion == RigidBodyMotion::Kinematic ? "kinematic" : "dynamic");
             oss << "          \"mass\": " << FormatFloat(rigidBody->mass) << ",\n";
-            oss << "          \"isStatic\": " << (rigidBody->isStatic ? "true" : "false") << ",\n";
+            oss << "          \"motion\": \"" << motionName << "\",\n";
+            oss << "          \"layer\": " << rigidBody->layer << ",\n";
+            oss << "          \"isStatic\": " << (savedMotion == RigidBodyMotion::Static ? "true" : "false") << ",\n";
             oss << "          \"isTrigger\": " << (rigidBody->isTrigger ? "true" : "false") << ",\n";
             oss << "          \"useGravity\": " << (rigidBody->useGravity ? "true" : "false") << ",\n";
             oss << "          \"freezeRotation\": " << (rigidBody->freezeRotation ? "true" : "false") << ",\n";
@@ -1311,6 +1321,27 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             if (const JsonValue* staticValue = rigidBodyObj->Find("isStatic")) {
                 rigidBody.isStatic = ParseBoolLike(*staticValue, rigidBody.isStatic);
             }
+            bool motionExplicit = false;
+            if (const JsonValue* motionValue = rigidBodyObj->Find("motion")) {
+                if (motionValue->IsString()) {
+                    const std::string& motionName = motionValue->AsString();
+                    if (motionName == "static") {
+                        rigidBody.motion = RigidBodyMotion::Static;
+                        motionExplicit = true;
+                    } else if (motionName == "kinematic") {
+                        rigidBody.motion = RigidBodyMotion::Kinematic;
+                        motionExplicit = true;
+                    } else if (motionName == "dynamic") {
+                        rigidBody.motion = RigidBodyMotion::Dynamic;
+                        motionExplicit = true;
+                    }
+                }
+            }
+            if (const JsonValue* layerValue = rigidBodyObj->Find("layer")) {
+                if (layerValue->IsNumber()) {
+                    rigidBody.layer = static_cast<std::uint16_t>(std::max(0.0, layerValue->AsNumber()));
+                }
+            }
             if (const JsonValue* triggerValue = rigidBodyObj->Find("isTrigger")) {
                 rigidBody.isTrigger = ParseBoolLike(*triggerValue, rigidBody.isTrigger);
             }
@@ -1350,12 +1381,7 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                 ParseVec3(*angularVelValue, rigidBody.angularVelocity);
             }
 
-            if (rigidBody.isStatic) {
-                rigidBody.mass = 0.0f;
-                rigidBody.useGravity = false;
-            } else if (rigidBody.mass <= 0.0f && !rigidBody.isTrigger) {
-                rigidBody.mass = 1.0f;
-            }
+            rigidBody.ApplyAuthoredMotion(motionExplicit);
 
             rigidBody.InvalidateBodyHandle();
         }
@@ -2288,8 +2314,18 @@ std::string SceneSerializer::SerializeToString() const
             std::ostringstream oss;
             oss.imbue(std::locale::classic());
             oss << "        \"RigidBody\": {\n";
+            RigidBodyMotion savedMotion = rigidBody->motion;
+            if (savedMotion != RigidBodyMotion::Kinematic && (rigidBody->isStatic || rigidBody->mass <= 0.0f)) {
+                savedMotion = RigidBodyMotion::Static;
+            } else if (savedMotion != RigidBodyMotion::Kinematic) {
+                savedMotion = RigidBodyMotion::Dynamic;
+            }
+            const char* motionName = savedMotion == RigidBodyMotion::Static ? "static"
+                : (savedMotion == RigidBodyMotion::Kinematic ? "kinematic" : "dynamic");
             oss << "          \"mass\": " << FormatFloat(rigidBody->mass) << ",\n";
-            oss << "          \"isStatic\": " << (rigidBody->isStatic ? "true" : "false") << ",\n";
+            oss << "          \"motion\": \"" << motionName << "\",\n";
+            oss << "          \"layer\": " << rigidBody->layer << ",\n";
+            oss << "          \"isStatic\": " << (savedMotion == RigidBodyMotion::Static ? "true" : "false") << ",\n";
             oss << "          \"isTrigger\": " << (rigidBody->isTrigger ? "true" : "false") << ",\n";
             oss << "          \"useGravity\": " << (rigidBody->useGravity ? "true" : "false") << ",\n";
             oss << "          \"freezeRotation\": " << (rigidBody->freezeRotation ? "true" : "false") << ",\n";

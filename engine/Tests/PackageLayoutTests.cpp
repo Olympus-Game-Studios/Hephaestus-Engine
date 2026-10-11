@@ -72,6 +72,7 @@ int main() {
     Write(project / ".engine" / "meshes" / "project.mesh", "mesh");
     Write(project / ".engine" / "hdris" / "project.hdr", "project hdri");
     Write(project / ".hephaestus" / "private.json", "must not ship");
+    Write(project / ".hephaestus" / "physics_layers.json", "{\"version\":1}");
     Write(engine / ".engine" / "meshes" / "builtin.mesh", "mesh");
     Write(engine / ".engine" / "hdris" / "builtin.hdr", "builtin hdri");
     Write(engine / "LICENSE", "Engine license");
@@ -130,7 +131,10 @@ int main() {
                 "project HDRIs are packaged");
     ok &= Check(fs::exists(package / ".engine" / "hdris" / "builtin.hdr"),
                 "builtin HDRIs are packaged");
-    ok &= Check(!fs::exists(package / ".hephaestus"), ".hephaestus is excluded");
+    ok &= Check(fs::exists(package / ".hephaestus" / "physics_layers.json"),
+                "physics_layers.json is packaged");
+    ok &= Check(!fs::exists(package / ".hephaestus" / "private.json"),
+                "other .hephaestus editor state is excluded");
     ok &= Check(fs::exists(package / "build_manifest.json"), "JSON manifest exists");
     ok &= Check(fs::exists(package / "export_manifest.txt"), "export manifest exists");
     ok &= Check(fs::exists(package / "ThirdPartyNotices.txt"), "license notices exist");

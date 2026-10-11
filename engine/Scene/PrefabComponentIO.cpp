@@ -200,8 +200,18 @@ void ApplyPhysicsShape(PhysicsShapeComponent& shape, const JsonValue& data) {
 
 void CaptureRigidBody(const RigidBodyComponent& body, JsonValue& data) {
     data = MakeObject();
+    RigidBodyMotion savedMotion = body.motion;
+    if (savedMotion != RigidBodyMotion::Kinematic && (body.isStatic || body.mass <= 0.0f)) {
+        savedMotion = RigidBodyMotion::Static;
+    } else if (savedMotion != RigidBodyMotion::Kinematic) {
+        savedMotion = RigidBodyMotion::Dynamic;
+    }
+    const char* motionName = savedMotion == RigidBodyMotion::Static ? "static"
+        : (savedMotion == RigidBodyMotion::Kinematic ? "kinematic" : "dynamic");
     data.objectValue["mass"] = MakeNumber(body.mass);
-    data.objectValue["isStatic"] = MakeBool(body.isStatic);
+    data.objectValue["motion"] = MakeString(motionName);
+    data.objectValue["layer"] = MakeNumber(body.layer);
+    data.objectValue["isStatic"] = MakeBool(savedMotion == RigidBodyMotion::Static);
     data.objectValue["isTrigger"] = MakeBool(body.isTrigger);
     data.objectValue["useGravity"] = MakeBool(body.useGravity);
     data.objectValue["freezeRotation"] = MakeBool(body.freezeRotation);
@@ -225,6 +235,27 @@ void ApplyRigidBody(RigidBodyComponent& body, const JsonValue& data) {
     }
     if (const JsonValue* staticValue = data.Find("isStatic")) {
         body.isStatic = ParseBoolLike(*staticValue, body.isStatic);
+    }
+    bool motionExplicit = false;
+    if (const JsonValue* motionValue = data.Find("motion")) {
+        if (motionValue->IsString()) {
+            const std::string& motionName = motionValue->AsString();
+            if (motionName == "static") {
+                body.motion = RigidBodyMotion::Static;
+                motionExplicit = true;
+            } else if (motionName == "kinematic") {
+                body.motion = RigidBodyMotion::Kinematic;
+                motionExplicit = true;
+            } else if (motionName == "dynamic") {
+                body.motion = RigidBodyMotion::Dynamic;
+                motionExplicit = true;
+            }
+        }
+    }
+    if (const JsonValue* layerValue = data.Find("layer")) {
+        if (layerValue->IsNumber()) {
+            body.layer = static_cast<std::uint16_t>(std::max(0.0, layerValue->AsNumber()));
+        }
     }
     if (const JsonValue* triggerValue = data.Find("isTrigger")) {
         body.isTrigger = ParseBoolLike(*triggerValue, body.isTrigger);
@@ -264,6 +295,7 @@ void ApplyRigidBody(RigidBodyComponent& body, const JsonValue& data) {
     if (const JsonValue* debugValue = data.Find("debugDraw")) {
         body.debugDraw = ParseBoolLike(*debugValue, body.debugDraw);
     }
+    body.ApplyAuthoredMotion(motionExplicit);
 }
 
 void CaptureMaterial(const MaterialComponent& material, JsonValue& data) {

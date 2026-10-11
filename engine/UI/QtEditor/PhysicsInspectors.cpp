@@ -87,11 +87,19 @@ void RigidBodyInspector::buildUI()
     auto* form = new QFormLayout();
     form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
+    m_motionCombo = new QComboBox();
+    m_motionCombo->addItem(tr("Dynamic"), static_cast<int>(RigidBodyMotion::Dynamic));
+    m_motionCombo->addItem(tr("Static"), static_cast<int>(RigidBodyMotion::Static));
+    m_motionCombo->addItem(tr("Kinematic"), static_cast<int>(RigidBodyMotion::Kinematic));
+    m_layerSpin = new QSpinBox();
+    m_layerSpin->setRange(0, 15);
     m_staticCheck    = new QCheckBox(tr("Static Body"));
     m_triggerCheck   = new QCheckBox(tr("Trigger Volume"));
     m_gravityCheck   = new QCheckBox(tr("Use Gravity"));
     m_freezeRotCheck = new QCheckBox(tr("Freeze Rotation"));
 
+    form->addRow(tr("Motion:"), m_motionCombo);
+    form->addRow(tr("Layer:"), m_layerSpin);
     form->addRow(QString(), m_staticCheck);
     form->addRow(QString(), m_triggerCheck);
     form->addRow(QString(), m_gravityCheck);
@@ -139,6 +147,14 @@ void RigidBodyInspector::connectSignals()
 {
     auto onChange = [this]() { applyToComponent(); };
 
+    connect(m_motionCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+        applyToComponent();
+        EndEdit();
+    });
+    connect(m_layerSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) {
+        applyToComponent();
+        EndEdit();
+    });
     connect(m_staticCheck,    &QCheckBox::toggled, this, [this](bool) {
         updateDynamicFieldsVisibility();
         applyToComponent();
@@ -205,10 +221,20 @@ void RigidBodyInspector::Refresh()
 {
     EndEdit();
     MixedBool isStatic, isTrigger, useGravity, freezeRot, debugDraw;
+    MixedScalar layer;
+    int motionIndex = -1;
+    bool motionMixed = false;
     MixedScalar mass, linDamp, angDamp, friction, restitution;
     MixedScalar linX, linY, linZ, angX, angY, angZ;
     VisitTargets<RigidBodyComponent>([&](const RigidBodyComponent& rb, entt::entity) {
         AccumulateBool(isStatic, rb.isStatic);
+        AccumulateScalar(layer, static_cast<float>(rb.layer));
+        const int index = static_cast<int>(rb.motion);
+        if (motionIndex < 0) {
+            motionIndex = index;
+        } else if (motionIndex != index) {
+            motionMixed = true;
+        }
         AccumulateBool(isTrigger, rb.isTrigger);
         AccumulateBool(useGravity, rb.useGravity);
         AccumulateBool(freezeRot, rb.freezeRotation);
@@ -229,6 +255,15 @@ void RigidBodyInspector::Refresh()
 
     m_updating = true;
     blockAllSignals(true);
+    if (!motionMixed && motionIndex >= 0) {
+        const int comboIndex = m_motionCombo->findData(motionIndex);
+        if (comboIndex >= 0) {
+            m_motionCombo->setCurrentIndex(comboIndex);
+        }
+    }
+    if (layer.present && !layer.mixed) {
+        m_layerSpin->setValue(static_cast<int>(layer.value));
+    }
     SetCheckFromMixed(m_staticCheck, isStatic);
     SetCheckFromMixed(m_triggerCheck, isTrigger);
     SetCheckFromMixed(m_gravityCheck, useGravity);
@@ -262,6 +297,23 @@ void RigidBodyInspector::applyToComponent()
             rb.*field = value;
         });
     };
+    int motionValue = 0;
+    if (TryReadCombo(m_motionCombo, motionValue)) {
+        ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
+            rb.motion = static_cast<RigidBodyMotion>(motionValue);
+            rb.isStatic = rb.motion == RigidBodyMotion::Static;
+            if (rb.motion == RigidBodyMotion::Kinematic) {
+                rb.useGravity = false;
+                rb.isStatic = false;
+            }
+        });
+    }
+    if (m_layerSpin->isEnabled()) {
+        const auto layerValue = static_cast<std::uint16_t>(m_layerSpin->value());
+        ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
+            rb.layer = layerValue;
+        });
+    }
     writeBool(m_staticCheck, &RigidBodyComponent::isStatic);
     writeBool(m_triggerCheck, &RigidBodyComponent::isTrigger);
     writeBool(m_gravityCheck, &RigidBodyComponent::useGravity);
@@ -311,12 +363,14 @@ void RigidBodyInspector::applyPreset(bool isPlayer)
     EditorUndoManager::PushSnapshot(m_ctx, isPlayer ? "Preset: Player" : "Preset: Ground");
     ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
         if (isPlayer) {
+            rb.motion = RigidBodyMotion::Dynamic;
             rb.isStatic = false; rb.isTrigger = false;
             rb.useGravity = true; rb.freezeRotation = true;
             rb.mass = 80.0f;
             rb.linearDamping = 0.1f; rb.angularDamping = 0.5f;
             rb.friction = 0.6f; rb.restitution = 0.0f;
         } else {
+            rb.motion = RigidBodyMotion::Static;
             rb.isStatic = true; rb.isTrigger = false;
             rb.useGravity = false; rb.freezeRotation = false;
             rb.mass = 0.0f;
@@ -336,6 +390,8 @@ void RigidBodyInspector::updateDynamicFieldsVisibility()
 
 void RigidBodyInspector::blockAllSignals(bool block)
 {
+    m_motionCombo->blockSignals(block);
+    m_layerSpin->blockSignals(block);
     m_staticCheck->blockSignals(block);
     m_triggerCheck->blockSignals(block);
     m_gravityCheck->blockSignals(block);
@@ -505,6 +561,7 @@ void PhysicsShapeInspector::buildUI()
     m_shapeCombo->addItem(tr("Box"),     static_cast<int>(PhysicsShapeType::Box));
     m_shapeCombo->addItem(tr("Sphere"),  static_cast<int>(PhysicsShapeType::Sphere));
     m_shapeCombo->addItem(tr("Capsule"), static_cast<int>(PhysicsShapeType::Capsule));
+    m_shapeCombo->addItem(tr("Cylinder"), static_cast<int>(PhysicsShapeType::Cylinder));
     form->addRow(tr("Shape:"), m_shapeCombo);
 
     // Box extents
@@ -646,8 +703,9 @@ void PhysicsShapeInspector::applyToComponent()
     writeExtent(m_extY, 1);
     writeExtent(m_extZ, 2);
     double radius = 0.0, height = 0.0;
-    const bool editingCapsule =
-        m_shapeCombo->currentData().toInt() == static_cast<int>(PhysicsShapeType::Capsule);
+    const int shapeType = m_shapeCombo->currentData().toInt();
+    const bool editingCapsule = shapeType == static_cast<int>(PhysicsShapeType::Capsule)
+        || shapeType == static_cast<int>(PhysicsShapeType::Cylinder);
     QDoubleSpinBox* radiusEditor = editingCapsule ? m_capRadiusSpin : m_radiusSpin;
     if (TryReadSpin(radiusEditor, radius)) {
         ForEachTarget<PhysicsShapeComponent>([&](PhysicsShapeComponent& ps, entt::entity) {
@@ -676,7 +734,7 @@ void PhysicsShapeInspector::updateShapeFieldsVisibility()
     auto t = static_cast<PhysicsShapeType>(m_shapeCombo->currentData().toInt());
     m_boxGroup->setVisible(t == PhysicsShapeType::Box);
     m_sphereGroup->setVisible(t == PhysicsShapeType::Sphere);
-    m_capsuleGroup->setVisible(t == PhysicsShapeType::Capsule);
+    m_capsuleGroup->setVisible(t == PhysicsShapeType::Capsule || t == PhysicsShapeType::Cylinder);
 }
 
 void PhysicsShapeInspector::autoFitToMeshBounds(PhysicsShapeType newType)
@@ -715,6 +773,7 @@ void PhysicsShapeInspector::autoFitToMeshBounds(PhysicsShapeType newType)
             m_radiusSpin->setValue(static_cast<double>(std::max(maxHalf, 0.001f)));
             break;
         }
+        case PhysicsShapeType::Cylinder:
         case PhysicsShapeType::Capsule: {
             // Capsule along Y axis.  Jolt total height = 2 * halfHeight + 2 * radius.
             // radius = max(halfX, halfZ), height (cylinder part) = max(2*(halfY - radius), 0.01)

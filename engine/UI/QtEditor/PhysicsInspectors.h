@@ -20,6 +20,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QPushButton>
@@ -55,6 +56,8 @@ private:
     // Widgets
     QPushButton*    m_presetPlayerBtn  = nullptr;
     QPushButton*    m_presetGroundBtn  = nullptr;
+    QComboBox*      m_motionCombo      = nullptr;
+    QSpinBox*       m_layerSpin        = nullptr;
     QCheckBox*      m_staticCheck      = nullptr;
     QCheckBox*      m_triggerCheck     = nullptr;
     QCheckBox*      m_gravityCheck     = nullptr;

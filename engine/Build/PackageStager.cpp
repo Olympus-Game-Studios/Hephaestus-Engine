@@ -347,6 +347,17 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
                 "Could not copy runtime prerequisite", copyError);
         return fail();
     }
+    const auto layerSource = request.projectRoot / ".hephaestus" / "physics_layers.json";
+    if (std::filesystem::exists(layerSource)) {
+        std::filesystem::create_directories(staging / ".hephaestus", ec);
+        if (!CopyOne(layerSource, staging / ".hephaestus" / "physics_layers.json",
+                     output / ".hephaestus" / "physics_layers.json",
+                     request.incremental && !request.clean, copyError)) {
+            Problem(result, ProblemSeverity::Error, "PACKAGE_LAYER_COPY_FAILED",
+                    "Could not copy physics_layers.json", copyError);
+            return fail();
+        }
+    }
     const std::string startup = request.startupScene;
     if (request.onProgress) {
         request.onProgress(0.0F, "Writing configuration");

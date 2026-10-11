@@ -13,6 +13,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
@@ -856,6 +857,18 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
                     return applyOffset(result.Get());
                 }
                 std::cerr << "Failed to create capsule collision shape: " << result.GetError().c_str() << "\n";
+                break;
+            }
+            case PhysicsShapeType::Cylinder: {
+                float radiusAxis = std::max(absScale.x, absScale.z);
+                float radius = std::max(shapeComp.radius * radiusAxis, 0.001f);
+                float halfHeight = std::max(shapeComp.height * 0.5f * absScale.y, 0.001f);
+                JPH::CylinderShapeSettings settings(halfHeight, radius);
+                auto result = settings.Create();
+                if (!result.HasError()) {
+                    return applyOffset(result.Get());
+                }
+                std::cerr << "Failed to create cylinder collision shape: " << result.GetError().c_str() << "\n";
                 break;
             }
             case PhysicsShapeType::Mesh:
