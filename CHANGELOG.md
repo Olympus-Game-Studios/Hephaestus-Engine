@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-11: Stopping Play writes one Physics info line with the live body count, the last frame's substep count, the stalled-step count, and the last frame's contact count.
 - 2026-10-11: Cylinder physics shapes build a Jolt cylinder. Scene and prefab rigid bodies store `motion` and `layer`. Old files that only have `isStatic` still load. Packages copy `.hephaestus/physics_layers.json` and leave the rest of that folder behind.
 - 2026-10-11: Lua scripts receive `onTriggerEnter`, `onTriggerStay`, `onTriggerExit`, `onCollisionEnter`, `onCollisionStay`, and `onCollisionExit` after each fixed physics step. The other entity is nil when it was destroyed. Exit callbacks do not receive a contact.
 - 2026-10-11: Physics contact listener records manifolds during the fixed step and collapses them on the main thread into enter, stay, and exit events. A test sink receives them.

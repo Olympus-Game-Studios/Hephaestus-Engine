@@ -74,6 +74,8 @@ public:
     void ClearAccumulator();
     int LastSubstepCount() const { return m_LastSubstepCount; }
     int StalledStepCount() const { return m_StalledStepCount; }
+    int BodyCount() const { return static_cast<int>(m_EntityToBodyMap.size()); }
+    int FrameContactCount() const { return static_cast<int>(m_FrameContactEvents.size()); }
     float Accumulator() const { return m_Accumulator; }
 
     // Create a physics body for an entity

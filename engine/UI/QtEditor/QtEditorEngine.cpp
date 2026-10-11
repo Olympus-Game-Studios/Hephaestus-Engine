@@ -3228,6 +3228,13 @@ void QtEditorEngine::StopPlayMode()
     }
 
     if (m_joltPhysicsSystem && m_joltPhysicsEngine && m_joltPhysicsEngine->GetPhysicsSystem()) {
+        Hephaestus::EngineLog::Write(
+            Hephaestus::EngineLogLevel::Info,
+            "Physics play stopped: bodies=" + std::to_string(m_joltPhysicsSystem->BodyCount())
+                + " lastSubsteps=" + std::to_string(m_joltPhysicsSystem->LastSubstepCount())
+                + " stalledSteps=" + std::to_string(m_joltPhysicsSystem->StalledStepCount())
+                + " lastFrameContacts=" + std::to_string(m_joltPhysicsSystem->FrameContactCount()),
+            "Physics");
         m_joltPhysicsSystem->ClearAllBodies();
     }
     if (m_joltPhysicsSystem) {
