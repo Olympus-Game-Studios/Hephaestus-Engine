@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-11: Physics contact listener records manifolds during the fixed step and collapses them on the main thread into enter, stay, and exit events. A test sink receives them.
 - 2026-10-11: Rigid bodies store a collision layer id. Body creation encodes static versus moving broadphase layers, mesh colliders without a rigid body use World when that layer exists, and `Physics.raycast` / `physics.raycast` take an optional layer name.
 - 2026-10-11: Physics layers load from `.hephaestus/physics_layers.json`. A missing file stays collide-all on Default. New projects receive the four-layer seed. Play start rebuilds the Jolt `PhysicsSystem` and filter tables from that file; stopping Play destroys the world and leaves the process-wide Jolt factory registered.
 - 2026-10-11: Stage 9A settling repro (`PhysicsSettlingRepro`) on the pre-fix 1 GiB `TempAllocatorImpl`. Historic 8-box stack survived 20 init/300-step/shutdown cycles; peak `GetUsage` was 9028112 bytes. Heavier 64-box scene (plus gravity-free movers and overlapping sensors) survived 300 steps; peak `GetUsage` was 9039344 bytes. The Jolt 4.1.0-rc1 settling crash was not reproduced on Jolt 5.4.1. No stepping, filter, or allocator-size change.
@@ -65,6 +66,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-10-11: Body lookup uses the full Jolt body id. Static triggers are created as kinematic sensors so a sleeping static body does not end the overlap. Kinematic bodies do not collide with static bodies.
 - 2026-10-11: Kinematic rigid bodies use Jolt kinematic motion and `MoveKinematic` sliced across the frame's fixed substeps. `CreateKinematic` selects that motion. Character grounding rejects sensor hits; other raycasts still hit them.
 - 2026-09-04: Boomer-Shooter Enemy prefab uses `Enemy1.hpcharacter` (Idle/Walk controller) instead of a cube mesh; `Enemy.lua` still owns chase/damage while locomotion clips play from `Enemy1Character.lua`.
 - 2026-09-04: Character Editor moves clips and folders out of the left Character tree into an Animations dock tabbed with Inspector, with Import Animation and Create Folder on that tab.

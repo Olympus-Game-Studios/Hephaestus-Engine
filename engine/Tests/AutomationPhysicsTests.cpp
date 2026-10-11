@@ -292,7 +292,7 @@ int main()
     bool liveActive = false;
     check(LiveRead(engine, physics, floorId, livePosition, liveRotation, liveLinear, liveSensor, liveActive),
           "Floor can be locked for comparison");
-    check(floorSnapshot.motionType == "static" && floorSnapshot.sleeping == false && floorSnapshot.sensor == liveSensor &&
+    check(floorSnapshot.motionType == "kinematic" && floorSnapshot.sleeping == false && floorSnapshot.sensor == liveSensor &&
               liveSensor && floorSnapshot.active == liveActive &&
               floorSnapshot.debugBodyIndex == physics.GetBodyID(floorId).GetIndex() &&
               Near(floorSnapshot.position.y, static_cast<float>(livePosition.GetY())) &&

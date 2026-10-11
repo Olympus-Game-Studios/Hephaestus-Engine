@@ -9,12 +9,14 @@
 #include "Scene/Scene.h"
 
 #include <Jolt/Core/Factory.h>
+#include <Jolt/Physics/Body/BodyInterface.h>
 
 #include <cmath>
 #include <iostream>
 #include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -369,6 +371,167 @@ int main()
             const bool solidGround = Physics::CharacterMotor::IsGrounded(
                 world, system, static_cast<entt::entity>(character), 3.0f);
             pass &= Check(solidGround, "character grounding still hits a solid floor below a sensor");
+        }
+        world.Shutdown();
+    }
+
+    {
+        Physics::JoltPhysicsEngine world;
+        world.Initialize();
+        world.BeginPlayWorld(Physics::PhysicsLayerConfig::Seed());
+        {
+            Scene scene("Contacts");
+            Physics::JoltPhysicsSystem system(world);
+            std::vector<Physics::PhysicsContactEvent> events;
+            system.SetContactEventSink([&](const Physics::PhysicsContactEvent& event) { events.push_back(event); });
+            auto countKind = [&](Physics::PhysicsEventKind kind) {
+                int count = 0;
+                for (const Physics::PhysicsContactEvent& event : events) {
+                    if (event.kind == kind) {
+                        ++count;
+                    }
+                }
+                return count;
+            };
+
+            Entity trigger = scene.CreateEntity("Trigger");
+            trigger.GetComponent<TransformComponent>().position = Vec3(0.0f, 1.0f, 0.0f);
+            auto& triggerBody = trigger.AddComponent<RigidBodyComponent>();
+            triggerBody.isStatic = true;
+            triggerBody.isTrigger = true;
+            triggerBody.mass = 0.0f;
+            triggerBody.useGravity = false;
+            trigger.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+
+            Entity dynamic = scene.CreateEntity("Dynamic");
+            dynamic.GetComponent<TransformComponent>().position = Vec3(0.0f, 1.0f, 0.0f);
+            auto& dynamicBody = dynamic.AddComponent<RigidBodyComponent>();
+            dynamicBody.isStatic = false;
+            dynamicBody.mass = 1.0f;
+            dynamicBody.useGravity = false;
+            dynamic.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+
+            system.PrepareSceneBodies(scene);
+            Physics::BodyObservation triggerObservation;
+            pass &= Check(system.ObserveBody(static_cast<entt::entity>(trigger), triggerObservation)
+                              == Physics::BodyObservationStatus::Ready
+                          && triggerObservation.motionType == "kinematic" && triggerObservation.active,
+                          "a static trigger is an active kinematic sensor");
+            const JPH::BodyID firstDynamicId = system.GetBodyID(static_cast<entt::entity>(dynamic));
+
+            events.clear();
+            system.Update(scene, Physics::kPhysicsFixedDt);
+            pass &= Check(countKind(Physics::PhysicsEventKind::TriggerEnter) >= 1,
+                          "an overlapping dynamic body emits TriggerEnter");
+            events.clear();
+            system.Update(scene, Physics::kPhysicsFixedDt);
+            pass &= Check(countKind(Physics::PhysicsEventKind::TriggerStay) >= 1
+                          && countKind(Physics::PhysicsEventKind::TriggerEnter) == 0,
+                          "the next fixed step emits TriggerStay");
+
+            world.GetBodyInterface().SetPosition(system.GetBodyID(static_cast<entt::entity>(dynamic)),
+                                                 JPH::RVec3(8.0, 1.0, 0.0), JPH::EActivation::Activate);
+            events.clear();
+            system.Update(scene, Physics::kPhysicsFixedDt);
+            pass &= Check(countKind(Physics::PhysicsEventKind::TriggerExit) >= 1,
+                          "separating the dynamic body emits TriggerExit");
+
+            world.GetBodyInterface().SetPosition(system.GetBodyID(static_cast<entt::entity>(dynamic)),
+                                                 JPH::RVec3(0.0, 1.0, 0.0), JPH::EActivation::Activate);
+            events.clear();
+            system.Update(scene, Physics::kPhysicsFixedDt);
+            pass &= Check(countKind(Physics::PhysicsEventKind::TriggerEnter) >= 1, "re-entry emits TriggerEnter");
+            events.clear();
+            scene.DestroyEntity(trigger);
+            system.Update(scene, Physics::kPhysicsFixedDt);
+            bool destroyedExit = false;
+            for (const Physics::PhysicsContactEvent& event : events) {
+                if (event.kind == Physics::PhysicsEventKind::TriggerExit && !event.otherAlive
+                    && event.receiver == static_cast<std::uint32_t>(static_cast<entt::entity>(dynamic))) {
+                    destroyedExit = true;
+                }
+            }
+            pass &= Check(destroyedExit, "destroying the trigger exits the live body with no other entity");
+
+            Entity staticBox = scene.CreateEntity("StaticBox");
+            staticBox.GetComponent<TransformComponent>().position = Vec3(20.0f, 1.0f, 0.0f);
+            auto& staticBody = staticBox.AddComponent<RigidBodyComponent>();
+            staticBody.isStatic = true;
+            staticBody.mass = 0.0f;
+            staticBody.useGravity = false;
+            staticBox.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            Entity kinematic = scene.CreateEntity("Kinematic");
+            kinematic.GetComponent<TransformComponent>().position = Vec3(20.0f, 1.0f, 0.0f);
+            kinematic.AddComponent<RigidBodyComponent>(RigidBodyComponent::CreateKinematic());
+            kinematic.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            events.clear();
+            system.Update(scene, Physics::kPhysicsFixedDt);
+            pass &= Check(countKind(Physics::PhysicsEventKind::CollisionEnter) == 0
+                          && countKind(Physics::PhysicsEventKind::TriggerEnter) == 0,
+                          "kinematic versus static stays silent while kinematic-versus-static collision is off");
+
+            Entity triggerA = scene.CreateEntity("TriggerA");
+            triggerA.GetComponent<TransformComponent>().position = Vec3(30.0f, 1.0f, 0.0f);
+            auto& triggerABody = triggerA.AddComponent<RigidBodyComponent>();
+            triggerABody.isStatic = true;
+            triggerABody.isTrigger = true;
+            triggerABody.mass = 0.0f;
+            triggerABody.useGravity = false;
+            triggerABody.layer = Physics::kLayerTrigger;
+            triggerA.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            Entity triggerB = scene.CreateEntity("TriggerB");
+            triggerB.GetComponent<TransformComponent>().position = Vec3(30.0f, 1.0f, 0.0f);
+            auto& triggerBBody = triggerB.AddComponent<RigidBodyComponent>();
+            triggerBBody.isStatic = true;
+            triggerBBody.isTrigger = true;
+            triggerBBody.mass = 0.0f;
+            triggerBBody.useGravity = false;
+            triggerBBody.layer = Physics::kLayerTrigger;
+            triggerB.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            events.clear();
+            system.Update(scene, Physics::kPhysicsFixedDt);
+            pass &= Check(events.empty(), "trigger versus trigger stays silent when the matrix bit is off");
+
+            Entity floor = scene.CreateEntity("SolidFloor");
+            floor.GetComponent<TransformComponent>().position = Vec3(40.0f, 1.0f, 0.0f);
+            auto& floorBody = floor.AddComponent<RigidBodyComponent>();
+            floorBody.isStatic = true;
+            floorBody.mass = 0.0f;
+            floorBody.useGravity = false;
+            floor.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            Entity solid = scene.CreateEntity("SolidDynamic");
+            solid.GetComponent<TransformComponent>().position = Vec3(40.0f, 1.0f, 0.0f);
+            auto& solidBody = solid.AddComponent<RigidBodyComponent>();
+            solidBody.isStatic = false;
+            solidBody.mass = 1.0f;
+            solidBody.useGravity = false;
+            solid.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            events.clear();
+            system.Update(scene, Physics::kPhysicsFixedDt);
+            pass &= Check(countKind(Physics::PhysicsEventKind::CollisionEnter) >= 1,
+                          "an overlapping solid pair emits CollisionEnter");
+            world.GetBodyInterface().DeactivateBody(system.GetBodyID(static_cast<entt::entity>(solid)));
+            events.clear();
+            system.Update(scene, Physics::kPhysicsFixedDt);
+            pass &= Check(countKind(Physics::PhysicsEventKind::CollisionExit) >= 1,
+                          "sleeping a solid body emits CollisionExit");
+
+            scene.DestroyEntity(dynamic);
+            system.PrepareSceneBodies(scene);
+            pass &= Check(system.GetEntityForBody(firstDynamicId) == entt::null,
+                          "a destroyed body id no longer resolves");
+            Entity replacement = scene.CreateEntity("Replacement");
+            replacement.GetComponent<TransformComponent>().position = Vec3(50.0f, 1.0f, 0.0f);
+            auto& replacementBody = replacement.AddComponent<RigidBodyComponent>();
+            replacementBody.isStatic = true;
+            replacementBody.mass = 0.0f;
+            replacementBody.useGravity = false;
+            replacement.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            system.PrepareSceneBodies(scene);
+            pass &= Check(system.GetEntityForBody(firstDynamicId) == entt::null
+                          && system.GetEntityForBody(system.GetBodyID(static_cast<entt::entity>(replacement)))
+                              == static_cast<entt::entity>(replacement),
+                          "a recycled body index still rejects the old sequence");
         }
         world.Shutdown();
     }

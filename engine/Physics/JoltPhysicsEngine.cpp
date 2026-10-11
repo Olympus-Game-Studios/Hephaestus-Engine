@@ -312,6 +312,9 @@ void JoltPhysicsEngine::BuildFilterTables(const PhysicsLayerConfig& config)
 
 void JoltPhysicsEngine::EndPlayWorld()
 {
+    if (m_PhysicsSystem) {
+        m_PhysicsSystem->SetContactListener(nullptr);
+    }
     m_PhysicsSystem.reset();
     m_ObjectVsBroadPhase.reset();
     m_ObjectPairFilter.reset();

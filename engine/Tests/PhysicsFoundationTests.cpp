@@ -1,4 +1,5 @@
 #include "Core/EngineLog.h"
+#include "Physics/PhysicsContactEvents.h"
 #include "Physics/PhysicsLayerConfig.h"
 #include "Physics/PhysicsStepClock.h"
 #include "Physics/PhysicsWorldPose.h"
@@ -182,6 +183,86 @@ bool TestWorldPose()
     return pass;
 }
 
+bool TestContactCollapse()
+{
+    bool pass = true;
+    std::unordered_map<std::uint64_t, Physics::PhysicsOverlapState> overlap;
+    std::vector<Physics::PhysicsContactEvent> events;
+    Physics::PhysicsContactRecord added;
+    added.kind = Physics::PhysicsContactKind::Added;
+    added.body1 = 1;
+    added.body2 = 2;
+    added.entity1 = 10;
+    added.entity2 = 20;
+    added.hasPoint = true;
+    added.normalY = 1.0f;
+    added.point2Y = 1.0f;
+    added.penetration = 0.25f;
+    added.vel1X = 1.0f;
+    Physics::CollapseContactRecords({added}, overlap, events);
+    pass &= Check(events.size() == 2 && overlap.size() == 1, "a new solid pair emits one enter for each body");
+    const auto body1 = events[0].receiver == 10 ? events[0] : events[1];
+    const auto body2 = events[0].receiver == 20 ? events[0] : events[1];
+    pass &= Check(body1.kind == Physics::PhysicsEventKind::CollisionEnter
+                      && body2.kind == Physics::PhysicsEventKind::CollisionEnter,
+                  "solid contacts are collision events");
+    pass &= Check(body1.normalY < 0.0f && body2.normalY > 0.0f, "body 1 receives the negated Jolt normal");
+    pass &= Check(body1.relativeVelocityX < 0.0f && body2.relativeVelocityX > 0.0f,
+                  "relative velocity is the other body minus the receiver");
+    pass &= Check(body1.pointY > 0.4f && body1.pointY < 0.6f && body1.hasContact,
+                  "the contact point is the midpoint of the deepest pair");
+
+    Physics::PhysicsContactRecord again = added;
+    Physics::CollapseContactRecords({again}, overlap, events);
+    pass &= Check(events.empty(), "a second add for a pair that is already open is ignored");
+
+    Physics::PhysicsContactRecord persisted = added;
+    persisted.kind = Physics::PhysicsContactKind::Persisted;
+    Physics::CollapseContactRecords({persisted}, overlap, events);
+    pass &= Check(events.size() == 2 && events[0].kind == Physics::PhysicsEventKind::CollisionStay,
+                  "a persisted solid pair emits stay");
+
+    Physics::PhysicsContactRecord speculative = added;
+    speculative.body1 = 3;
+    speculative.body2 = 4;
+    speculative.entity1 = 30;
+    speculative.entity2 = 40;
+    speculative.penetration = -0.1f;
+    Physics::CollapseContactRecords({speculative}, overlap, events);
+    pass &= Check(events.size() == 2 && !events[0].hasContact && !events[1].hasContact,
+                  "a negative penetration still enters and carries no contact");
+
+    Physics::PhysicsContactRecord removed;
+    removed.kind = Physics::PhysicsContactKind::Removed;
+    removed.body1 = 1;
+    removed.body2 = 2;
+    removed.entity1 = 10;
+    removed.entity2 = 20;
+    removed.lastContact = false;
+    Physics::CollapseContactRecords({removed}, overlap, events);
+    pass &= Check(events.empty() && overlap.count(Physics::PhysicsPairKey(1, 2)) == 1,
+                  "a removed subshape does not exit while the bodies are still in contact");
+    removed.lastContact = true;
+    removed.entity2Live = false;
+    Physics::CollapseContactRecords({removed}, overlap, events);
+    pass &= Check(events.size() == 1 && events[0].receiver == 10
+                      && events[0].kind == Physics::PhysicsEventKind::CollisionExit
+                      && !events[0].hasContact && !events[0].otherAlive,
+                  "the last removal exits the live receiver without a contact");
+
+    overlap.clear();
+    Physics::PhysicsContactRecord sensor = added;
+    sensor.sensor = true;
+    sensor.body1 = 7;
+    sensor.body2 = 8;
+    sensor.entity1 = 70;
+    sensor.entity2 = 80;
+    Physics::CollapseContactRecords({sensor}, overlap, events);
+    pass &= Check(events.size() == 2 && events[0].kind == Physics::PhysicsEventKind::TriggerEnter,
+                  "a sensor pair emits trigger events to both bodies");
+    return pass;
+}
+
 } // namespace
 
 int main()
@@ -192,6 +273,7 @@ int main()
     pass &= TestLayerIdentity();
     pass &= TestAccumulator();
     pass &= TestWorldPose();
+    pass &= TestContactCollapse();
     if (!pass) {
         std::cerr << "[FAIL] PhysicsFoundationTests\n";
         return 1;

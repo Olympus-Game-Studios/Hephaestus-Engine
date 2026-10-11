@@ -16,14 +16,18 @@
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Math/Float3.h>
 
 #include "../Assets/MeshAsset.h"
 #include "../Assets/ModelImporter.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <filesystem>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -249,12 +253,125 @@ JPH::RefConst<JPH::Shape> BuildMeshShapeFromMeshData(const MeshData& meshData, c
 
 namespace Physics {
 
+namespace {
+
+std::uint32_t BodyKey(JPH::BodyID bodyId)
+{
+    return bodyId.GetIndexAndSequenceNumber();
+}
+
+std::uint32_t EntityKey(entt::entity entity)
+{
+    return static_cast<std::uint32_t>(entity);
+}
+
+} // namespace
+
+struct PhysicsContactListener : public JPH::ContactListener {
+    JPH::PhysicsSystem* system = nullptr;
+    std::mutex mutex;
+    std::array<PhysicsContactRecord, kPhysicsContactBufferCapacity> records{};
+    int count = 0;
+    bool overflow = false;
+
+    void Clear()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        count = 0;
+        overflow = false;
+    }
+
+    void Push(const PhysicsContactRecord& record)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (count >= kPhysicsContactBufferCapacity) {
+            overflow = true;
+            return;
+        }
+        records[static_cast<std::size_t>(count++)] = record;
+    }
+
+    void AppendManifold(PhysicsContactKind kind, const JPH::Body& body1, const JPH::Body& body2,
+                        const JPH::ContactManifold& manifold)
+    {
+        PhysicsContactRecord record;
+        record.kind = kind;
+        record.body1 = BodyKey(body1.GetID());
+        record.body2 = BodyKey(body2.GetID());
+        record.entity1 = static_cast<std::uint32_t>(body1.GetUserData());
+        record.entity2 = static_cast<std::uint32_t>(body2.GetUserData());
+        record.sensor = body1.IsSensor() || body2.IsSensor();
+        record.normalX = manifold.mWorldSpaceNormal.GetX();
+        record.normalY = manifold.mWorldSpaceNormal.GetY();
+        record.normalZ = manifold.mWorldSpaceNormal.GetZ();
+        record.penetration = manifold.mPenetrationDepth;
+        const JPH::uint pointCount = manifold.mRelativeContactPointsOn1.size();
+        if (pointCount > 0) {
+            JPH::uint deepest = 0;
+            float deepestSeparation = -1.0e30f;
+            for (JPH::uint index = 0; index < pointCount; ++index) {
+                const JPH::Vec3 delta = manifold.mRelativeContactPointsOn2[index]
+                    - manifold.mRelativeContactPointsOn1[index];
+                const float separation = delta.Dot(manifold.mWorldSpaceNormal);
+                if (separation > deepestSeparation) {
+                    deepestSeparation = separation;
+                    deepest = index;
+                }
+            }
+            const JPH::RVec3 point1 = manifold.GetWorldSpaceContactPointOn1(deepest);
+            const JPH::RVec3 point2 = manifold.GetWorldSpaceContactPointOn2(deepest);
+            const JPH::Vec3 velocity1 = body1.GetPointVelocity(point1);
+            const JPH::Vec3 velocity2 = body2.GetPointVelocity(point2);
+            record.hasPoint = true;
+            record.point1X = static_cast<float>(point1.GetX());
+            record.point1Y = static_cast<float>(point1.GetY());
+            record.point1Z = static_cast<float>(point1.GetZ());
+            record.point2X = static_cast<float>(point2.GetX());
+            record.point2Y = static_cast<float>(point2.GetY());
+            record.point2Z = static_cast<float>(point2.GetZ());
+            record.vel1X = velocity1.GetX();
+            record.vel1Y = velocity1.GetY();
+            record.vel1Z = velocity1.GetZ();
+            record.vel2X = velocity2.GetX();
+            record.vel2Y = velocity2.GetY();
+            record.vel2Z = velocity2.GetZ();
+        }
+        Push(record);
+    }
+
+    void OnContactAdded(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold,
+                        JPH::ContactSettings&) override
+    {
+        AppendManifold(PhysicsContactKind::Added, body1, body2, manifold);
+    }
+
+    void OnContactPersisted(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold,
+                            JPH::ContactSettings&) override
+    {
+        AppendManifold(PhysicsContactKind::Persisted, body1, body2, manifold);
+    }
+
+    void OnContactRemoved(const JPH::SubShapeIDPair& pair) override
+    {
+        PhysicsContactRecord record;
+        record.kind = PhysicsContactKind::Removed;
+        record.body1 = BodyKey(pair.GetBody1ID());
+        record.body2 = BodyKey(pair.GetBody2ID());
+        record.entity1 = kNullPhysicsEntity;
+        record.entity2 = kNullPhysicsEntity;
+        record.lastContact = system != nullptr
+            && !system->WereBodiesInContact(pair.GetBody1ID(), pair.GetBody2ID());
+        Push(record);
+    }
+};
+
 JoltPhysicsSystem::JoltPhysicsSystem(JoltPhysicsEngine& physicsEngine)
     : m_PhysicsEngine(physicsEngine)
 {
 }
 
 JoltPhysicsSystem::~JoltPhysicsSystem() {
+    DetachContactListener();
     // Clean up all bodies
     std::vector<JPH::BodyID> bodies;
     bodies.reserve(m_EntityToBodyMap.size());
@@ -268,6 +385,102 @@ JoltPhysicsSystem::~JoltPhysicsSystem() {
     m_BodyToEntityMap.clear();
     m_BodyPoseBinding.clear();
     m_PoseRejectionLogged.clear();
+    ClearContactState();
+}
+
+void JoltPhysicsSystem::SetContactEventSink(std::function<void(const PhysicsContactEvent&)> sink)
+{
+    m_ContactSink = std::move(sink);
+}
+
+void JoltPhysicsSystem::EnsureContactListener()
+{
+    if (!m_ContactListener) {
+        m_ContactListener = std::make_unique<PhysicsContactListener>();
+    }
+    JPH::PhysicsSystem* system = m_PhysicsEngine.GetPhysicsSystem();
+    if (!system) {
+        return;
+    }
+    m_ContactListener->system = system;
+    if (system->GetContactListener() != m_ContactListener.get()) {
+        system->SetContactListener(m_ContactListener.get());
+    }
+}
+
+void JoltPhysicsSystem::DetachContactListener()
+{
+    JPH::PhysicsSystem* system = m_PhysicsEngine.GetPhysicsSystem();
+    if (system && m_ContactListener && system->GetContactListener() == m_ContactListener.get()) {
+        system->SetContactListener(nullptr);
+    }
+}
+
+void JoltPhysicsSystem::ClearContactState()
+{
+    m_ContactOverlaps.clear();
+    m_RetiredBodies.clear();
+    if (m_ContactListener) {
+        m_ContactListener->Clear();
+    }
+}
+
+void JoltPhysicsSystem::DispatchContactEvents()
+{
+    if (!m_ContactListener) {
+        return;
+    }
+    std::vector<PhysicsContactRecord> batch;
+    bool overflow = false;
+    {
+        std::lock_guard<std::mutex> lock(m_ContactListener->mutex);
+        batch.assign(m_ContactListener->records.begin(),
+                     m_ContactListener->records.begin() + m_ContactListener->count);
+        m_ContactListener->count = 0;
+        overflow = m_ContactListener->overflow;
+        m_ContactListener->overflow = false;
+    }
+    if (overflow) {
+        Hephaestus::EngineLog::Write(
+            Hephaestus::EngineLogLevel::Warning,
+            "Physics contact buffer overflow; some contacts were dropped",
+            "Physics");
+    }
+
+    auto resolve = [this](std::uint32_t body, std::uint32_t& entity, bool& live) {
+        auto liveIt = m_BodyToEntityMap.find(body);
+        if (liveIt != m_BodyToEntityMap.end()) {
+            entity = EntityKey(liveIt->second);
+            live = true;
+            return;
+        }
+        auto retired = m_RetiredBodies.find(body);
+        if (retired != m_RetiredBodies.end()) {
+            entity = EntityKey(retired->second);
+            live = false;
+            return;
+        }
+        entity = kNullPhysicsEntity;
+        live = false;
+    };
+
+    for (PhysicsContactRecord& record : batch) {
+        if (record.kind != PhysicsContactKind::Removed) {
+            continue;
+        }
+        resolve(record.body1, record.entity1, record.entity1Live);
+        resolve(record.body2, record.entity2, record.entity2Live);
+    }
+
+    std::vector<PhysicsContactEvent> events;
+    CollapseContactRecords(batch, m_ContactOverlaps, events);
+    m_RetiredBodies.clear();
+    if (!m_ContactSink) {
+        return;
+    }
+    for (const PhysicsContactEvent& event : events) {
+        m_ContactSink(event);
+    }
 }
 
 void JoltPhysicsSystem::PrepareSceneBodies(Scene& scene) {
@@ -321,6 +534,7 @@ void JoltPhysicsSystem::Update(Scene& scene, float deltaTime) {
             return;
         }
         m_PhysicsEngine.Update(kPhysicsFixedDt);
+        DispatchContactEvents();
         auto view = scene.GetEntitiesWith<TransformComponent, RigidBodyComponent>();
         for (auto handle : view) {
             entt::entity entity = handle;
@@ -336,6 +550,8 @@ void JoltPhysicsSystem::Update(Scene& scene, float deltaTime) {
         PrepareSceneBodies(scene);
         return;
     }
+
+    EnsureContactListener();
 
     std::vector<KinematicSlice> kinematicSlices;
     {
@@ -706,16 +922,19 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
         shape = result.Get();
     }
 
+    const bool runtimeKinematic = treatAsKinematic || (treatAsStatic && treatAsSensor);
+    const bool runtimeStatic = treatAsStatic && !runtimeKinematic;
     JPH::BodyCreationSettings bodySettings(
         shape,
         JPH::RVec3(transform.position.x, transform.position.y, transform.position.z),
         EulerXYZToQuat(transform.rotation),
-        treatAsStatic ? JPH::EMotionType::Static
-            : (treatAsKinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic),
-        m_PhysicsEngine.ObjectLayerFor(rigidBody.layer, treatAsStatic)
+        runtimeStatic ? JPH::EMotionType::Static
+            : (runtimeKinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic),
+        m_PhysicsEngine.ObjectLayerFor(rigidBody.layer, runtimeStatic)
     );
 
     bodySettings.mIsSensor = treatAsSensor;
+    bodySettings.mCollideKinematicVsNonDynamic = false;
     bodySettings.mLinearVelocity = JPH::Vec3(
         rigidBody.linearVelocity.x, 
         rigidBody.linearVelocity.y, 
@@ -730,9 +949,9 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
     bodySettings.mFriction = rigidBody.friction;
     bodySettings.mLinearDamping = rigidBody.linearDamping;
     bodySettings.mAngularDamping = rigidBody.angularDamping;
-    bodySettings.mGravityFactor = treatAsKinematic || !rigidBody.UsesGravity() ? 0.0f : 1.0f;
+    bodySettings.mGravityFactor = runtimeKinematic || !rigidBody.UsesGravity() ? 0.0f : 1.0f;
     
-    if (!treatAsStatic && !treatAsKinematic) {
+    if (!runtimeStatic && !runtimeKinematic) {
         // Dynamic gameplay bodies can cross thin geometry between discrete
         // steps during frame spikes. Linear casting keeps their swept shape
         // in the collision query and prevents intermittent floor tunneling.
@@ -758,7 +977,7 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
             }
         }
         bodySettings.mMassPropertiesOverride = massProps;
-    } else if (treatAsKinematic && rigidBody.freezeRotation) {
+    } else if (runtimeKinematic && rigidBody.freezeRotation) {
         bodySettings.mAllowedDOFs =
             JPH::EAllowedDOFs::TranslationX |
             JPH::EAllowedDOFs::TranslationY |
@@ -774,11 +993,12 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
     }
 
     JPH::BodyID bodyId = pBody->GetID();
-    bodyInterface.AddBody(bodyId, treatAsStatic ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
+    pBody->SetUserData(static_cast<JPH::uint64>(EntityKey(entity)));
+    bodyInterface.AddBody(bodyId, runtimeStatic ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
 
     // Map entity to body
     m_EntityToBodyMap[entity] = bodyId;
-    m_BodyToEntityMap[bodyId.GetIndex()] = entity;
+    m_BodyToEntityMap[BodyKey(bodyId)] = entity;
     m_BodyPoseBinding[entity] = BodyPoseBinding{worldPose.shapeScale, authoredTransform.parent};
 
     rigidBody.joltBodyId = bodyId.GetIndexAndSequenceNumber();
@@ -793,8 +1013,9 @@ void JoltPhysicsSystem::DestroyRigidBody(JPH::BodyID bodyId) {
         return;
     }
 
-    auto it = m_BodyToEntityMap.find(bodyId.GetIndex());
+    auto it = m_BodyToEntityMap.find(BodyKey(bodyId));
     if (it != m_BodyToEntityMap.end()) {
+        m_RetiredBodies[BodyKey(bodyId)] = it->second;
         m_BodyPoseBinding.erase(it->second);
         m_EntityToBodyMap.erase(it->second);
         m_BodyToEntityMap.erase(it);
@@ -816,7 +1037,7 @@ entt::entity JoltPhysicsSystem::GetEntityForBody(JPH::BodyID bodyId) const {
     if (bodyId.IsInvalid()) {
         return entt::null;
     }
-    auto it = m_BodyToEntityMap.find(bodyId.GetIndex());
+    auto it = m_BodyToEntityMap.find(BodyKey(bodyId));
     return it != m_BodyToEntityMap.end() ? it->second : entt::null;
 }
 
@@ -1011,6 +1232,7 @@ void JoltPhysicsSystem::ClearAllBodies() {
     m_BodyToEntityMap.clear();
     m_BodyPoseBinding.clear();
     m_PoseRejectionLogged.clear();
+    ClearContactState();
 }
 
 void JoltPhysicsSystem::SyncTransformToPhysics(Scene& scene, entt::entity entity, JPH::BodyID bodyId, bool activateBody) {
@@ -1239,14 +1461,17 @@ void JoltPhysicsSystem::UpdateEntityBodies(Scene& scene) {
             const std::uint16_t meshLayer = m_PhysicsEngine.ActiveLayerConfig().HasLayer(kLayerWorld)
                 ? kLayerWorld
                 : kLayerDefault;
+            const bool meshSensor = collider.isTrigger;
             JPH::BodyCreationSettings bodySettings(
                 shape,
                 JPH::RVec3(worldPose.position.x, worldPose.position.y, worldPose.position.z),
                 JPH::Quat(worldPose.rotation.x, worldPose.rotation.y, worldPose.rotation.z, worldPose.rotation.w),
-                JPH::EMotionType::Static,
-                m_PhysicsEngine.ObjectLayerFor(meshLayer, true)
+                meshSensor ? JPH::EMotionType::Kinematic : JPH::EMotionType::Static,
+                m_PhysicsEngine.ObjectLayerFor(meshLayer, !meshSensor)
             );
-            bodySettings.mIsSensor = collider.isTrigger;
+            bodySettings.mIsSensor = meshSensor;
+            bodySettings.mGravityFactor = 0.0f;
+            bodySettings.mCollideKinematicVsNonDynamic = false;
 
             JPH::BodyInterface& bodyInterface = m_PhysicsEngine.GetBodyInterface();
             JPH::Body* pBody = bodyInterface.CreateBody(bodySettings);
@@ -1256,10 +1481,11 @@ void JoltPhysicsSystem::UpdateEntityBodies(Scene& scene) {
             }
 
             JPH::BodyID bodyId = pBody->GetID();
-            bodyInterface.AddBody(bodyId, JPH::EActivation::DontActivate);
+            pBody->SetUserData(static_cast<JPH::uint64>(EntityKey(entity)));
+            bodyInterface.AddBody(bodyId, meshSensor ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
 
             m_EntityToBodyMap[entity] = bodyId;
-            m_BodyToEntityMap[bodyId.GetIndex()] = entity;
+            m_BodyToEntityMap[BodyKey(bodyId)] = entity;
             m_BodyPoseBinding[entity] = BodyPoseBinding{worldPose.shapeScale, sceneEntity.GetComponent<TransformComponent>().parent};
         } else {
             JPH::BodyInterface& bodyInterface = m_PhysicsEngine.GetBodyInterface();

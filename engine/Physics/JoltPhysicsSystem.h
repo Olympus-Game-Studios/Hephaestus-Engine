@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -10,11 +11,14 @@
 #include <Jolt/Jolt.h>
 
 #include "JoltPhysicsEngine.h"
+#include "PhysicsContactEvents.h"
 #include "PhysicsWorldPose.h"
 #include "../Scene/Scene.h"
 #include "../Core/Math.h"
 
 namespace Physics {
+
+struct PhysicsContactListener;
 
 struct RaycastHit {
     bool hit = false;
@@ -108,6 +112,8 @@ public:
     // Clear all physics bodies (used when exiting play mode)
     void ClearAllBodies();
 
+    void SetContactEventSink(std::function<void(const PhysicsContactEvent&)> sink);
+
 private:
     JoltPhysicsEngine& m_PhysicsEngine;
     std::unordered_map<entt::entity, JPH::BodyID> m_EntityToBodyMap;
@@ -140,6 +146,15 @@ private:
 
     std::unordered_map<entt::entity, BodyPoseBinding> m_BodyPoseBinding;
     std::unordered_set<entt::entity> m_PoseRejectionLogged;
+    std::unordered_map<std::uint64_t, PhysicsOverlapState> m_ContactOverlaps;
+    std::unordered_map<std::uint32_t, entt::entity> m_RetiredBodies;
+    std::function<void(const PhysicsContactEvent&)> m_ContactSink;
+    std::unique_ptr<PhysicsContactListener> m_ContactListener;
+
+    void EnsureContactListener();
+    void DetachContactListener();
+    void DispatchContactEvents();
+    void ClearContactState();
 };
 
 } // namespace Physics
