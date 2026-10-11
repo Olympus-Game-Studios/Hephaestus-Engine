@@ -420,6 +420,7 @@ void JoltPhysicsSystem::ClearContactState()
 {
     m_ContactOverlaps.clear();
     m_RetiredBodies.clear();
+    m_FrameContactEvents.clear();
     if (m_ContactListener) {
         m_ContactListener->Clear();
     }
@@ -475,6 +476,7 @@ void JoltPhysicsSystem::DispatchContactEvents()
     std::vector<PhysicsContactEvent> events;
     CollapseContactRecords(batch, m_ContactOverlaps, events);
     m_RetiredBodies.clear();
+    m_FrameContactEvents.insert(m_FrameContactEvents.end(), events.begin(), events.end());
     if (!m_ContactSink) {
         return;
     }
@@ -506,6 +508,7 @@ struct KinematicSlice {
 };
 
 void JoltPhysicsSystem::Update(Scene& scene, float deltaTime) {
+    m_FrameContactEvents.clear();
     if (!m_Enabled) {
         return;
     }

@@ -15,6 +15,7 @@
 
 #include "../Core/Math.h"
 #include "../Core/PropertyValue.h"
+#include "../Physics/PhysicsContactEvents.h"
 
 #if LUA_AVAILABLE
     #include <lua.hpp>
@@ -173,6 +174,12 @@ public:
     void DispatchAnimationFinished(Scene& scene);
 
     /**
+     * Dispatch onTrigger* and onCollision* after the fixed physics step.
+     * Exit events pass no contact. A destroyed other entity is nil.
+     */
+    void DispatchContactEvents(Scene& scene, const std::vector<Physics::PhysicsContactEvent>& events);
+
+    /**
      * Notify engine that play mode just started
      */
     void OnSimulationStarted();
@@ -269,6 +276,12 @@ private:
         int onDisableRef = -1;
         int onDestroyRef = -1;
         int onAnimationFinishedRef = -1;
+        int onTriggerEnterRef = -1;
+        int onTriggerStayRef = -1;
+        int onTriggerExitRef = -1;
+        int onCollisionEnterRef = -1;
+        int onCollisionStayRef = -1;
+        int onCollisionExitRef = -1;
         bool awakeCalled = false;
         bool valid = false;
         bool errorLogged = false;

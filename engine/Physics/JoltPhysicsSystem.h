@@ -113,6 +113,7 @@ public:
     void ClearAllBodies();
 
     void SetContactEventSink(std::function<void(const PhysicsContactEvent&)> sink);
+    const std::vector<PhysicsContactEvent>& FrameContactEvents() const { return m_FrameContactEvents; }
 
 private:
     JoltPhysicsEngine& m_PhysicsEngine;
@@ -149,6 +150,7 @@ private:
     std::unordered_map<std::uint64_t, PhysicsOverlapState> m_ContactOverlaps;
     std::unordered_map<std::uint32_t, entt::entity> m_RetiredBodies;
     std::function<void(const PhysicsContactEvent&)> m_ContactSink;
+    std::vector<PhysicsContactEvent> m_FrameContactEvents;
     std::unique_ptr<PhysicsContactListener> m_ContactListener;
 
     void EnsureContactListener();

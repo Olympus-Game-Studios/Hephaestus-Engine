@@ -1849,6 +1849,86 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
                     "$<TARGET_FILE_DIR:CharacterLuaTests>/${LUA_DLL_NAME}"
             )
         endif()
+
+        add_executable(PhysicsLuaTests
+            engine/Tests/PhysicsLuaTests.cpp
+            engine/Core/EngineLog.cpp
+            engine/Scripting/LuaScriptEngine.cpp
+            engine/Scripting/LuaExposeScanner.cpp
+            engine/Scripting/LuaScriptVariableReconciler.cpp
+            engine/Scripting/ScriptBase.cpp
+            engine/Audio/AudioEngine.cpp
+            engine/Assets/CharacterAsset.cpp
+            engine/Assets/CharacterRuntime.cpp
+            engine/Assets/SkeletalModelImporter.cpp
+            engine/Assets/AssetPathPolicy.cpp
+            engine/Assets/ModelImporter.cpp
+            engine/Assets/FbxDocument.cpp
+            engine/Assets/FbxStaticImporter.cpp
+            engine/Animation/Skeleton.cpp
+            engine/Animation/AnimationClip.cpp
+            engine/Animation/CharacterPlayback.cpp
+            engine/Scene/Json.cpp
+            engine/Scene/Entity.cpp
+            engine/Scene/Scene.cpp
+            engine/Scene/PrefabSerializer.cpp
+            engine/Scene/PrefabInstantiator.cpp
+            engine/Scene/PrefabComponentIO.cpp
+            engine/Scene/PrefabOverrideSystem.cpp
+            engine/Scene/SceneSerializer.cpp
+            engine/Physics/PhysicsLayerConfig.cpp
+            engine/Physics/JoltPhysicsEngine.cpp
+            engine/Physics/JoltPhysicsSystem.cpp
+            engine/Physics/CharacterMotor.cpp
+            engine/UI/HephaestusUI/HUIAsset.cpp
+            engine/UI/HephaestusUI/UIButton.cpp
+            engine/UI/HephaestusUI/UICanvas.cpp
+            engine/UI/HephaestusUI/UIContext.cpp
+            engine/UI/HephaestusUI/UIElement.cpp
+            engine/UI/HephaestusUI/UIFont.cpp
+            engine/UI/HephaestusUI/UIGridLayout.cpp
+            engine/UI/HephaestusUI/UIHorizontalBox.cpp
+            engine/UI/HephaestusUI/UIImage.cpp
+            engine/UI/HephaestusUI/UIInputRouter.cpp
+            engine/UI/HephaestusUI/UILayout.cpp
+            engine/UI/HephaestusUI/UIPanel.cpp
+            engine/UI/HephaestusUI/UIRenderer.cpp
+            engine/UI/HephaestusUI/UIScreen.cpp
+            engine/UI/HephaestusUI/UISimpleMenuExample.cpp
+            engine/UI/HephaestusUI/UISystem.cpp
+            engine/UI/HephaestusUI/UIText.cpp
+            engine/UI/HephaestusUI/UITheme.cpp
+            engine/UI/HephaestusUI/UIVerticalBox.cpp
+        )
+        target_include_directories(PhysicsLuaTests PRIVATE
+            engine
+            extern
+            extern/entt/single_include
+            extern/JoltPhysics
+            extern/JoltPhysics/Build
+            extern/VMA
+            "${CMAKE_BINARY_DIR}/generated"
+            ${LUA_INCLUDE_DIR}
+        )
+        target_compile_definitions(PhysicsLuaTests PRIVATE LUA_AVAILABLE=1)
+        if(TARGET Lua::Lua)
+            target_link_libraries(PhysicsLuaTests PRIVATE Lua::Lua glfw HephaestusInputCore Jolt Vulkan::Vulkan)
+        else()
+            target_link_libraries(PhysicsLuaTests PRIVATE ${LUA_LIBRARIES} glfw HephaestusInputCore Jolt Vulkan::Vulkan)
+        endif()
+        hephaestus_target_ufbx(PhysicsLuaTests SKELETAL)
+        if(WIN32)
+            target_link_libraries(PhysicsLuaTests PRIVATE winmm)
+        endif()
+        add_test(NAME PhysicsLua COMMAND PhysicsLuaTests)
+        if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
+            get_filename_component(PHYSICS_LUA_DLL_NAME "${LUA_DLL_PATH}" NAME)
+            add_custom_command(TARGET PhysicsLuaTests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${LUA_DLL_PATH}"
+                    "$<TARGET_FILE_DIR:PhysicsLuaTests>/${PHYSICS_LUA_DLL_NAME}"
+            )
+        endif()
     endif()
 
     add_executable(AssetReferenceIndexTests

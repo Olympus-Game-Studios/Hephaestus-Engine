@@ -1654,6 +1654,9 @@ int main(int argc, char* argv[]) {
 
         // Fixed-step physics after scripts so onUpdate can write this frame's motion.
         physicsSystem.Update(scene, deltaTime);
+#if HEPHAESTUS_GAME_SCRIPTING
+        luaEngine.DispatchContactEvents(scene, physicsSystem.FrameContactEvents());
+#endif
 
         Hephaestus::CharacterAnimationSystem::Tick(scene, deltaTime);
 #if HEPHAESTUS_GAME_SCRIPTING

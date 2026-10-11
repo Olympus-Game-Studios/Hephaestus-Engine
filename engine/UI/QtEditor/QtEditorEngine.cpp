@@ -1856,6 +1856,9 @@ void QtEditorEngine::onTick()
                 Scene* activeScene = m_editorContext.GetActiveScene();
                 m_joltPhysicsSystem->SetEnabled(true);
                 m_joltPhysicsSystem->Update(*activeScene, dt);
+                if (m_luaScriptEngine) {
+                    m_luaScriptEngine->DispatchContactEvents(*activeScene, m_joltPhysicsSystem->FrameContactEvents());
+                }
             } catch (const std::exception& e) {
                 std::cerr << "[QtEditorEngine] Physics update error: " << e.what() << "\n";
                 m_physicsInitialized = false;
@@ -3336,6 +3339,9 @@ void QtEditorEngine::runSimulationFrame(float dt)
             Scene* activeScene = m_editorContext.GetActiveScene();
             m_joltPhysicsSystem->SetEnabled(true);
             m_joltPhysicsSystem->Update(*activeScene, dt);
+            if (m_luaScriptEngine) {
+                m_luaScriptEngine->DispatchContactEvents(*activeScene, m_joltPhysicsSystem->FrameContactEvents());
+            }
         } catch (const std::exception& e) {
             std::cerr << "[QtEditorEngine] Physics update error (step): " << e.what() << "\n";
             m_physicsInitialized = false;

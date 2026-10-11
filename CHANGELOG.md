@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-11: Lua scripts receive `onTriggerEnter`, `onTriggerStay`, `onTriggerExit`, `onCollisionEnter`, `onCollisionStay`, and `onCollisionExit` after each fixed physics step. The other entity is nil when it was destroyed. Exit callbacks do not receive a contact.
 - 2026-10-11: Physics contact listener records manifolds during the fixed step and collapses them on the main thread into enter, stay, and exit events. A test sink receives them.
 - 2026-10-11: Rigid bodies store a collision layer id. Body creation encodes static versus moving broadphase layers, mesh colliders without a rigid body use World when that layer exists, and `Physics.raycast` / `physics.raycast` take an optional layer name.
 - 2026-10-11: Physics layers load from `.hephaestus/physics_layers.json`. A missing file stays collide-all on Default. New projects receive the four-layer seed. Play start rebuilds the Jolt `PhysicsSystem` and filter tables from that file; stopping Play destroys the world and leaves the process-wide Jolt factory registered.

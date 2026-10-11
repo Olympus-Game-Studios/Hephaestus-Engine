@@ -648,6 +648,109 @@ void LuaScriptEngine::DispatchAnimationFinished(Scene& scene) {
 #endif
 }
 
+void LuaScriptEngine::DispatchContactEvents(Scene& scene, const std::vector<Physics::PhysicsContactEvent>& events) {
+#if LUA_AVAILABLE
+    if (!m_State || events.empty()) {
+        return;
+    }
+    m_Scene = &scene;
+    for (const Physics::PhysicsContactEvent& event : events) {
+        if (event.receiver == Physics::kNullPhysicsEntity) {
+            continue;
+        }
+        int ScriptInstance::* refMember = nullptr;
+        const char* callbackName = nullptr;
+        switch (event.kind) {
+            case Physics::PhysicsEventKind::TriggerEnter:
+                refMember = &ScriptInstance::onTriggerEnterRef;
+                callbackName = "onTriggerEnter";
+                break;
+            case Physics::PhysicsEventKind::TriggerStay:
+                refMember = &ScriptInstance::onTriggerStayRef;
+                callbackName = "onTriggerStay";
+                break;
+            case Physics::PhysicsEventKind::TriggerExit:
+                refMember = &ScriptInstance::onTriggerExitRef;
+                callbackName = "onTriggerExit";
+                break;
+            case Physics::PhysicsEventKind::CollisionEnter:
+                refMember = &ScriptInstance::onCollisionEnterRef;
+                callbackName = "onCollisionEnter";
+                break;
+            case Physics::PhysicsEventKind::CollisionStay:
+                refMember = &ScriptInstance::onCollisionStayRef;
+                callbackName = "onCollisionStay";
+                break;
+            case Physics::PhysicsEventKind::CollisionExit:
+                refMember = &ScriptInstance::onCollisionExitRef;
+                callbackName = "onCollisionExit";
+                break;
+        }
+        if (!refMember || !callbackName) {
+            continue;
+        }
+        const LuaScriptSlot slots[] = {LuaScriptSlot::CharacterController, LuaScriptSlot::Gameplay};
+        for (LuaScriptSlot slot : slots) {
+            ScriptInstance* instance = FindInstance(event.receiver, slot);
+            if (!instance || !instance->valid) {
+                continue;
+            }
+            const int functionRef = instance->*refMember;
+            if (functionRef == kInvalidRef) {
+                continue;
+            }
+            lua_rawgeti(m_State, LUA_REGISTRYINDEX, functionRef);
+            if (!lua_isfunction(m_State, -1)) {
+                lua_pop(m_State, 1);
+                continue;
+            }
+            const uint32_t previousEntity = m_CurrentEntityId;
+            const float previousDelta = m_CurrentDeltaTime;
+            m_CurrentEntityId = event.receiver;
+            SetupThisForEntity(event.receiver);
+            if (event.otherAlive) {
+                PushEntityUserdata(m_State, event.other);
+            } else {
+                lua_pushnil(m_State);
+            }
+            int argumentCount = 1;
+            if (event.hasContact) {
+                auto pushVec = [this](float x, float y, float z) {
+                    lua_createtable(m_State, 0, 3);
+                    lua_pushnumber(m_State, x);
+                    lua_setfield(m_State, -2, "x");
+                    lua_pushnumber(m_State, y);
+                    lua_setfield(m_State, -2, "y");
+                    lua_pushnumber(m_State, z);
+                    lua_setfield(m_State, -2, "z");
+                };
+                lua_createtable(m_State, 0, 4);
+                pushVec(event.pointX, event.pointY, event.pointZ);
+                lua_setfield(m_State, -2, "point");
+                pushVec(event.normalX, event.normalY, event.normalZ);
+                lua_setfield(m_State, -2, "normal");
+                pushVec(event.relativeVelocityX, event.relativeVelocityY, event.relativeVelocityZ);
+                lua_setfield(m_State, -2, "relativeVelocity");
+                lua_pushnumber(m_State, event.penetration);
+                lua_setfield(m_State, -2, "penetration");
+                argumentCount = 2;
+            }
+            if (lua_pcall(m_State, argumentCount, 0, 0) != LUA_OK) {
+                LogLuaError(callbackName);
+            }
+            m_CurrentEntityId = previousEntity;
+            m_CurrentDeltaTime = previousDelta;
+            if (previousEntity != kInvalidEntityId) {
+                SetupThisForEntity(previousEntity);
+            }
+        }
+    }
+#else
+    (void)scene;
+    (void)events;
+#endif
+}
+
 void LuaScriptEngine::OnSimulationStarted() {
 #if LUA_AVAILABLE
     for (auto& [_, instance] : m_ScriptInstances) {
@@ -1573,6 +1676,12 @@ void LuaScriptEngine::ReleaseInstanceResources(ScriptInstance& instance) {
     unref(instance.onDisableRef);
     unref(instance.onDestroyRef);
     unref(instance.onAnimationFinishedRef);
+    unref(instance.onTriggerEnterRef);
+    unref(instance.onTriggerStayRef);
+    unref(instance.onTriggerExitRef);
+    unref(instance.onCollisionEnterRef);
+    unref(instance.onCollisionStayRef);
+    unref(instance.onCollisionExitRef);
     unref(instance.environmentRef);
 
     instance.valid = false;
@@ -1662,6 +1771,12 @@ bool LuaScriptEngine::LoadScriptForInstance(ScriptInstance& instance, const LuaS
     instance.onDisableRef = FetchFunctionRef(instance.environmentRef, "onDisable");
     instance.onDestroyRef = FetchFunctionRef(instance.environmentRef, destroyName);
     instance.onAnimationFinishedRef = FetchFunctionRef(instance.environmentRef, "onAnimationFinished");
+    instance.onTriggerEnterRef = FetchFunctionRef(instance.environmentRef, "onTriggerEnter");
+    instance.onTriggerStayRef = FetchFunctionRef(instance.environmentRef, "onTriggerStay");
+    instance.onTriggerExitRef = FetchFunctionRef(instance.environmentRef, "onTriggerExit");
+    instance.onCollisionEnterRef = FetchFunctionRef(instance.environmentRef, "onCollisionEnter");
+    instance.onCollisionStayRef = FetchFunctionRef(instance.environmentRef, "onCollisionStay");
+    instance.onCollisionExitRef = FetchFunctionRef(instance.environmentRef, "onCollisionExit");
 
     instance.valid = instance.environmentRef != kInvalidRef;
     instance.awakeCalled = false;
