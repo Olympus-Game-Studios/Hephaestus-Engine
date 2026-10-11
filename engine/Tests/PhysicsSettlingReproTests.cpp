@@ -14,6 +14,7 @@
 //   Commit 2 fixed block = max(9039344 * 2, one page), rounded up to 1 MiB
 //             = 18874368 bytes (18 MiB). The 8-box peak is not the sizing input.
 
+#include "Core/EngineLog.h"
 #include "Physics/JoltPhysicsEngine.h"
 #include "Physics/JoltPhysicsSystem.h"
 #include "Scene/Components.h"
@@ -296,6 +297,14 @@ int main()
     }
     if (!historicSurvived || !heavierSurvived) {
         ok = false;
+    }
+
+    const Hephaestus::EngineLogSnapshot log = Hephaestus::EngineLog::Snapshot();
+    for (const Hephaestus::EngineLogEntry& entry : log.entries) {
+        if (entry.category == "Physics" && entry.message.find("malloc fallback") != std::string::npos) {
+            std::cerr << "[FAIL] temp allocator used the malloc fallback: " << entry.message << "\n";
+            ok = false;
+        }
     }
 
     if (ok) {

@@ -55,9 +55,12 @@ public:
     JPH::TempAllocator* GetTempAllocator() { return m_TempAllocator.get(); }
     JPH::JobSystem* GetJobSystem() { return m_JobSystem.get(); }
 
-    // Stock simulation temp block installed by Initialize. The settling repro
-    // swaps in a same-sized recorder; production never calls this.
+    // Historical 1 GiB block measured by PhysicsSettlingRepro before the
+    // fallback allocator. The repro swaps this size in only while Initialize
+    // still installs a raw TempAllocatorImpl.
     static constexpr size_t kStockTempAllocatorBytes = 1024ull * 1024ull * 1024ull;
+    // 18 MiB: twice the heavier-scene peak (9039344 bytes), rounded up to 1 MiB.
+    static constexpr size_t kTempAllocatorBytes = 18ull * 1024ull * 1024ull;
     std::unique_ptr<JPH::TempAllocator> ExchangeTempAllocatorForTest(std::unique_ptr<JPH::TempAllocator> replacement);
 
 private:
@@ -67,6 +70,7 @@ private:
 
     // Physics system
     std::unique_ptr<JPH::PhysicsSystem> m_PhysicsSystem;
+    bool m_HoldsGlobalJolt = false;
 
     // Layer configuration
     void InitializeLayers();

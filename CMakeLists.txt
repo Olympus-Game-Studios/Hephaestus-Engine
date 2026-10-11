@@ -1516,6 +1516,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(AutomationPhysicsTests
         engine/Tests/AutomationPhysicsTests.cpp
+        engine/Core/EngineLog.cpp
         engine/Physics/JoltPhysicsEngine.cpp
         engine/Physics/JoltPhysicsSystem.cpp
         engine/Physics/CharacterMotor.cpp
@@ -1541,11 +1542,13 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         extern/JoltPhysics
         extern/JoltPhysics/Build
         extern/VMA
+        "${CMAKE_BINARY_DIR}/generated"
     )
     add_test(NAME AutomationPhysics COMMAND AutomationPhysicsTests)
 
     add_executable(PhysicsSettlingReproTests
         engine/Tests/PhysicsSettlingReproTests.cpp
+        engine/Core/EngineLog.cpp
         engine/Physics/JoltPhysicsEngine.cpp
         engine/Physics/JoltPhysicsSystem.cpp
         engine/Physics/CharacterMotor.cpp
@@ -1571,6 +1574,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         extern/JoltPhysics
         extern/JoltPhysics/Build
         extern/VMA
+        "${CMAKE_BINARY_DIR}/generated"
     )
     add_test(NAME PhysicsSettlingRepro COMMAND PhysicsSettlingReproTests)
     set_tests_properties(PhysicsSettlingRepro PROPERTIES TIMEOUT 1800)

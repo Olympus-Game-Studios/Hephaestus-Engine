@@ -63,6 +63,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-10-11: Physics temp allocation is an 18 MiB fixed block with malloc fallback (twice the recorded heavier-scene peak of 9039344 bytes, rounded up). The first fallback logs one `Physics` warning. Jolt's process-wide factory is reference-counted and released on the last engine shutdown. `PhysicsSystem::Update` errors are logged by flag name. The historic settling crash was not reproduced on Jolt 5.4.1, and the stale 4.1.0-rc1 comment is removed.
 - 2026-09-04: Boomer-Shooter Enemy prefab uses `Enemy1.hpcharacter` (Idle/Walk controller) instead of a cube mesh; `Enemy.lua` still owns chase/damage while locomotion clips play from `Enemy1Character.lua`.
 - 2026-09-04: Character Editor moves clips and folders out of the left Character tree into an Animations dock tabbed with Inspector, with Import Animation and Create Folder on that tab.
 - 2026-09-02: `HephaestusGame` now hosts the authoritative `EngineFrameRenderer` for scene rendering, materials, lighting, cascaded shadows, HDRI, synchronization, and presentation while preserving GLFW runtime lifecycle and packaged asset resolution.
