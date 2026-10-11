@@ -65,7 +65,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- 2026-10-11: Physics steps at a fixed 1/60 s, at most four substeps per frame, and discards leftover time after that cap. Play runs onUpdate before the physics step. `PrepareSceneBodies` creates existing bodies before the first onUpdate and does not advance the simulation. A frame shorter than 1/60 still refreshes bodies. The 33 ms clamp inside `JoltPhysicsEngine::Update` is removed.
+- 2026-10-11: Physics bodies use the entity world pose. Static bodies follow the hierarchy, dynamic bodies keep the simulated world pose when a parent moves, and a non-uniform ancestor scale skips the body. Mesh-collider triangles use the world matrix.
 - 2026-09-04: Boomer-Shooter Enemy prefab uses `Enemy1.hpcharacter` (Idle/Walk controller) instead of a cube mesh; `Enemy.lua` still owns chase/damage while locomotion clips play from `Enemy1Character.lua`.
 - 2026-09-04: Character Editor moves clips and folders out of the left Character tree into an Animations dock tabbed with Inspector, with Import Animation and Create Folder on that tab.
 - 2026-09-02: `HephaestusGame` now hosts the authoritative `EngineFrameRenderer` for scene rendering, materials, lighting, cascaded shadows, HDRI, synchronization, and presentation while preserving GLFW runtime lifecycle and packaged asset resolution.

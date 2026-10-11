@@ -1,5 +1,6 @@
 #include "JoltPhysicsSystem.h"
 #include "PhysicsStepClock.h"
+#include "../Core/EngineLog.h"
 #include "../Scene/Components.h"
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
@@ -265,6 +266,8 @@ JoltPhysicsSystem::~JoltPhysicsSystem() {
     }
     m_EntityToBodyMap.clear();
     m_BodyToEntityMap.clear();
+    m_BodyPoseBinding.clear();
+    m_PoseRejectionLogged.clear();
 }
 
 void JoltPhysicsSystem::PrepareSceneBodies(Scene& scene) {
@@ -362,6 +365,39 @@ const MeshData* GetMeshDataForPath(const std::string& meshAssetPath, const std::
 
 } // namespace
 
+bool JoltPhysicsSystem::DecomposeEntityPose(Scene& scene, entt::entity entity, WorldPose& out) const
+{
+    std::vector<RigidTransformSample> chain;
+    entt::entity cursor = entity;
+    int guard = 0;
+    entt::registry& registry = scene.GetRegistry();
+    while (cursor != entt::null && guard++ < 64) {
+        if (!registry.valid(cursor) || !registry.all_of<TransformComponent>(cursor)) {
+            return false;
+        }
+        const TransformComponent& transform = registry.get<TransformComponent>(cursor);
+        chain.push_back(RigidTransformSample{transform.position, transform.rotation, transform.scale});
+        cursor = transform.parent;
+    }
+    if (cursor != entt::null) {
+        return false;
+    }
+    std::reverse(chain.begin(), chain.end());
+    return TryComposeWorldPose(chain.data(), chain.size(), out);
+}
+
+void JoltPhysicsSystem::LogRejectedPose(entt::entity entity)
+{
+    if (!m_PoseRejectionLogged.insert(entity).second) {
+        return;
+    }
+    Hephaestus::EngineLog::Write(
+        Hephaestus::EngineLogLevel::Error,
+        "Physics body skipped for entity " + std::to_string(static_cast<std::uint32_t>(entity))
+            + ": a parent has non-uniform scale",
+        "Physics");
+}
+
 JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
     Scene& scene,
     entt::entity entity,
@@ -374,9 +410,19 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
         return JPH::BodyID();
     }
 
-    auto& transform = sceneEntity.GetComponent<TransformComponent>();
+    auto& authoredTransform = sceneEntity.GetComponent<TransformComponent>();
     auto& rigidBody = sceneEntity.GetComponent<RigidBodyComponent>();
     rigidBody.InvalidateBodyHandle();
+
+    WorldPose worldPose;
+    if (!DecomposeEntityPose(scene, entity, worldPose)) {
+        LogRejectedPose(entity);
+        return JPH::BodyID();
+    }
+    TransformComponent transform = authoredTransform;
+    transform.position = worldPose.position;
+    transform.rotation = worldPose.rotationEuler;
+    transform.scale = worldPose.shapeScale;
 
     rigidBody.isStatic = rigidBody.isStatic || isStatic || rigidBody.mass <= 0.0f;
     const bool treatAsStatic = rigidBody.IsStatic();
@@ -671,6 +717,7 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
     // Map entity to body
     m_EntityToBodyMap[entity] = bodyId;
     m_BodyToEntityMap[bodyId.GetIndex()] = entity;
+    m_BodyPoseBinding[entity] = BodyPoseBinding{worldPose.shapeScale, authoredTransform.parent};
 
     rigidBody.joltBodyId = bodyId.GetIndexAndSequenceNumber();
 
@@ -686,6 +733,7 @@ void JoltPhysicsSystem::DestroyRigidBody(JPH::BodyID bodyId) {
 
     auto it = m_BodyToEntityMap.find(bodyId.GetIndex());
     if (it != m_BodyToEntityMap.end()) {
+        m_BodyPoseBinding.erase(it->second);
         m_EntityToBodyMap.erase(it->second);
         m_BodyToEntityMap.erase(it);
     }
@@ -876,6 +924,8 @@ void JoltPhysicsSystem::ClearAllBodies() {
     // Ensure maps are cleared
     m_EntityToBodyMap.clear();
     m_BodyToEntityMap.clear();
+    m_BodyPoseBinding.clear();
+    m_PoseRejectionLogged.clear();
 }
 
 void JoltPhysicsSystem::SyncTransformToPhysics(Scene& scene, entt::entity entity, JPH::BodyID bodyId, bool activateBody) {
@@ -885,7 +935,6 @@ void JoltPhysicsSystem::SyncTransformToPhysics(Scene& scene, entt::entity entity
         return;
     }
 
-    auto& transform = sceneEntity.GetComponent<TransformComponent>();
     auto& rigidBody = sceneEntity.GetComponent<RigidBodyComponent>();
     JPH::BodyInterface& bodyInterface = m_PhysicsEngine.GetBodyInterface();
 
@@ -893,8 +942,25 @@ void JoltPhysicsSystem::SyncTransformToPhysics(Scene& scene, entt::entity entity
         return;
     }
 
-    JPH::RVec3 position(transform.position.x, transform.position.y, transform.position.z);
-    JPH::Quat rotation = EulerXYZToQuat(transform.rotation);
+    WorldPose worldPose;
+    if (!DecomposeEntityPose(scene, entity, worldPose)) {
+        return;
+    }
+
+    JPH::RVec3 position(worldPose.position.x, worldPose.position.y, worldPose.position.z);
+    JPH::Quat rotation(worldPose.rotation.x, worldPose.rotation.y, worldPose.rotation.z, worldPose.rotation.w);
+    if (!activateBody) {
+        const JPH::RVec3 current = bodyInterface.GetPosition(bodyId);
+        const JPH::Quat currentRotation = bodyInterface.GetRotation(bodyId);
+        const float dx = static_cast<float>(current.GetX()) - worldPose.position.x;
+        const float dy = static_cast<float>(current.GetY()) - worldPose.position.y;
+        const float dz = static_cast<float>(current.GetZ()) - worldPose.position.z;
+        const float positionDelta = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const float rotationDot = std::abs(currentRotation.Dot(rotation));
+        if (positionDelta <= kPoseChangeEpsilon && rotationDot >= 1.0f - kPoseChangeEpsilon) {
+            return;
+        }
+    }
     bodyInterface.SetPositionAndRotation(
         bodyId,
         position,
@@ -927,6 +993,10 @@ void JoltPhysicsSystem::SyncTransformFromPhysics(Scene& scene, entt::entity enti
     auto& rigidBody = sceneEntity.GetComponent<RigidBodyComponent>();
     auto& bodyInterface = m_PhysicsEngine.GetBodyInterface();
 
+    if (!rigidBody.IsDynamic()) {
+        return;
+    }
+
     // Skip if body ID is invalid
     if (bodyId.IsInvalid()) {
         return;
@@ -941,12 +1011,30 @@ void JoltPhysicsSystem::SyncTransformFromPhysics(Scene& scene, entt::entity enti
     // so that offset collision shapes (RotatedTranslatedShape) don't cause
     // the entity transform to drift from its expected location.
     JPH::RVec3 joltPos = bodyInterface.GetPosition(bodyId);
-    transform.position.x = static_cast<float>(joltPos.GetX());
-    transform.position.y = static_cast<float>(joltPos.GetY());
-    transform.position.z = static_cast<float>(joltPos.GetZ());
-
     JPH::Quat joltRot = bodyInterface.GetRotation(bodyId);
-    transform.rotation = QuatToEulerXYZ(joltRot);
+    const Vec3 worldPosition(static_cast<float>(joltPos.GetX()),
+                             static_cast<float>(joltPos.GetY()),
+                             static_cast<float>(joltPos.GetZ()));
+    const PoseQuat worldRotation{joltRot.GetX(), joltRot.GetY(), joltRot.GetZ(), joltRot.GetW()};
+
+    if (transform.parent != entt::null) {
+        WorldPose parentPose;
+        if (!DecomposeEntityPose(scene, transform.parent, parentPose)) {
+            return;
+        }
+        WorldPose selfPose;
+        if (!DecomposeEntityPose(scene, entity, selfPose)) {
+            return;
+        }
+        const Vec3 localPosition = WorldPointToLocal(
+            parentPose.position, parentPose.rotation, selfPose.ancestorScale, worldPosition);
+        const PoseQuat localRotation = WorldRotationToLocal(parentPose.rotation, worldRotation);
+        transform.position = localPosition;
+        transform.rotation = PoseQuatToEulerXYZ(localRotation);
+    } else {
+        transform.position = worldPosition;
+        transform.rotation = PoseQuatToEulerXYZ(worldRotation);
+    }
 
     JPH::Vec3 linVel = bodyInterface.GetLinearVelocity(bodyId);
     rigidBody.linearVelocity.x = linVel.GetX();
@@ -976,9 +1064,43 @@ void JoltPhysicsSystem::UpdateEntityBodies(Scene& scene) {
                 SyncTransformToPhysics(scene, entity, bodyId, true);
             }
         } else {
-            if (rigidBody.IsStatic() || rigidBody.IsSensor()) {
+            WorldPose worldPose;
+            if (!DecomposeEntityPose(scene, entity, worldPose)) {
+                LogRejectedPose(entity);
+                DestroyRigidBody(it->second);
+                continue;
+            }
+            auto bindingIt = m_BodyPoseBinding.find(entity);
+            const bool scaleChanged = bindingIt == m_BodyPoseBinding.end()
+                || !PoseNearlyEqual(bindingIt->second.shapeScale, worldPose.shapeScale, kUniformScaleEpsilon);
+            if (scaleChanged) {
+                Hephaestus::EngineLog::Write(
+                    Hephaestus::EngineLogLevel::Info,
+                    "Physics body recreated because its shape scale changed",
+                    "Physics");
+                DestroyRigidBody(it->second);
+                JPH::BodyID bodyId = CreateRigidBody(scene, entity, rigidBody.IsStatic(), rigidBody.IsSensor());
+                if (!bodyId.IsInvalid()) {
+                    rigidBody.joltBodyId = bodyId.GetIndexAndSequenceNumber();
+                    SyncTransformToPhysics(scene, entity, bodyId, true);
+                }
+                continue;
+            }
+            auto& transform = sceneEntity.GetComponent<TransformComponent>();
+            if (rigidBody.IsDynamic() && bindingIt->second.parent != transform.parent) {
+                JPH::BodyInterface& bodyInterface = m_PhysicsEngine.GetBodyInterface();
+                if (bodyInterface.IsAdded(it->second)) {
+                    bodyInterface.SetPositionAndRotation(
+                        it->second,
+                        JPH::RVec3(worldPose.position.x, worldPose.position.y, worldPose.position.z),
+                        JPH::Quat(worldPose.rotation.x, worldPose.rotation.y, worldPose.rotation.z, worldPose.rotation.w),
+                        JPH::EActivation::Activate);
+                }
+            } else if (rigidBody.IsStatic() || rigidBody.IsSensor()) {
                 SyncTransformToPhysics(scene, entity, it->second, false);
             }
+            bindingIt->second.parent = transform.parent;
+            bindingIt->second.shapeScale = worldPose.shapeScale;
         }
     }
 
@@ -998,17 +1120,33 @@ void JoltPhysicsSystem::UpdateEntityBodies(Scene& scene) {
             continue;
         }
 
-        auto& transform = sceneEntity.GetComponent<TransformComponent>();
-        auto& renderer = sceneEntity.GetComponent<MeshRendererComponent>();
+        WorldPose worldPose;
+        if (!DecomposeEntityPose(scene, entity, worldPose)) {
+            LogRejectedPose(entity);
+            auto rejected = m_EntityToBodyMap.find(entity);
+            if (rejected != m_EntityToBodyMap.end()) {
+                DestroyRigidBody(rejected->second);
+            }
+            continue;
+        }
 
+        auto& renderer = sceneEntity.GetComponent<MeshRendererComponent>();
         auto it = m_EntityToBodyMap.find(entity);
+        const auto binding = m_BodyPoseBinding.find(entity);
+        const bool scaleChanged = it != m_EntityToBodyMap.end()
+            && (binding == m_BodyPoseBinding.end()
+                || !PoseNearlyEqual(binding->second.shapeScale, worldPose.shapeScale, kUniformScaleEpsilon));
+        if (scaleChanged) {
+            DestroyRigidBody(it->second);
+            it = m_EntityToBodyMap.end();
+        }
         if (it == m_EntityToBodyMap.end()) {
             const MeshData* meshData = GetMeshDataForPath(renderer.meshAssetPath, m_ProjectRoot);
             if (!meshData) {
                 continue;
             }
 
-            JPH::RefConst<JPH::Shape> shape = BuildMeshShapeFromMeshData(*meshData, transform.scale);
+            JPH::RefConst<JPH::Shape> shape = BuildMeshShapeFromMeshData(*meshData, worldPose.shapeScale);
             if (!shape) {
                 continue;
             }
@@ -1018,8 +1156,8 @@ void JoltPhysicsSystem::UpdateEntityBodies(Scene& scene) {
                 : kLayerDefault;
             JPH::BodyCreationSettings bodySettings(
                 shape,
-                JPH::RVec3(transform.position.x, transform.position.y, transform.position.z),
-                EulerXYZToQuat(transform.rotation),
+                JPH::RVec3(worldPose.position.x, worldPose.position.y, worldPose.position.z),
+                JPH::Quat(worldPose.rotation.x, worldPose.rotation.y, worldPose.rotation.z, worldPose.rotation.w),
                 JPH::EMotionType::Static,
                 m_PhysicsEngine.ObjectLayerFor(meshLayer, true)
             );
@@ -1037,16 +1175,22 @@ void JoltPhysicsSystem::UpdateEntityBodies(Scene& scene) {
 
             m_EntityToBodyMap[entity] = bodyId;
             m_BodyToEntityMap[bodyId.GetIndex()] = entity;
+            m_BodyPoseBinding[entity] = BodyPoseBinding{worldPose.shapeScale, sceneEntity.GetComponent<TransformComponent>().parent};
         } else {
-            // Keep static body in sync if transforms change
             JPH::BodyInterface& bodyInterface = m_PhysicsEngine.GetBodyInterface();
             if (bodyInterface.IsAdded(it->second)) {
-                bodyInterface.SetPositionAndRotation(
-                    it->second,
-                    JPH::RVec3(transform.position.x, transform.position.y, transform.position.z),
-                    EulerXYZToQuat(transform.rotation),
-                    JPH::EActivation::DontActivate
-                );
+                const JPH::RVec3 current = bodyInterface.GetPosition(it->second);
+                const float dx = static_cast<float>(current.GetX()) - worldPose.position.x;
+                const float dy = static_cast<float>(current.GetY()) - worldPose.position.y;
+                const float dz = static_cast<float>(current.GetZ()) - worldPose.position.z;
+                if (dx * dx + dy * dy + dz * dz > kPoseChangeEpsilon * kPoseChangeEpsilon) {
+                    bodyInterface.SetPositionAndRotation(
+                        it->second,
+                        JPH::RVec3(worldPose.position.x, worldPose.position.y, worldPose.position.z),
+                        JPH::Quat(worldPose.rotation.x, worldPose.rotation.y, worldPose.rotation.z, worldPose.rotation.w),
+                        JPH::EActivation::DontActivate
+                    );
+                }
             }
         }
     }
@@ -1204,25 +1348,21 @@ void JoltPhysicsSystem::IntegrateMeshColliders(Scene& scene) {
             continue;
         }
 
-        auto& meshColliderTransform = meshColliderEntity.GetComponent<TransformComponent>();
         if (!meshColliderEntity.HasComponent<MeshRendererComponent>()) {
             continue;
         }
 
+        WorldPose meshPose;
+        if (!DecomposeEntityPose(scene, meshColliderHandle, meshPose)) {
+            LogRejectedPose(meshColliderHandle);
+            continue;
+        }
+        const Mat4 meshWorldMat = scene.GetWorldTransform(meshColliderEntity);
         const auto& renderer = meshColliderEntity.GetComponent<MeshRendererComponent>();
-        
         const MeshData* meshData = GetMeshDataForPath(renderer.meshAssetPath, m_ProjectRoot);
         if (!meshData || meshData->vertices.empty() || meshData->indices.size() < 3) {
             continue;
         }
-
-        // Build world-space transformation matrix
-        Mat4 scaleMat = Mat4::Scale(meshColliderTransform.scale);
-        Mat4 rotX = Mat4::RotationX(meshColliderTransform.rotation.x);
-        Mat4 rotY = Mat4::RotationY(meshColliderTransform.rotation.y);
-        Mat4 rotZ = Mat4::RotationZ(meshColliderTransform.rotation.z);
-        Mat4 rotMat = Mat4::Multiply(Mat4::Multiply(rotX, rotY), rotZ);
-        Mat4 meshWorldMat = Mat4::Multiply(Mat4::Multiply(Mat4::Translation(meshColliderTransform.position), rotMat), scaleMat);
 
         // Build world-space triangles with normals and bounds
         std::vector<WorldTriangle> worldTriangles;

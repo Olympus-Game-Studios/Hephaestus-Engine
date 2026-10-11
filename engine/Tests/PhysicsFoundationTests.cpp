@@ -1,6 +1,7 @@
 #include "Core/EngineLog.h"
 #include "Physics/PhysicsLayerConfig.h"
 #include "Physics/PhysicsStepClock.h"
+#include "Physics/PhysicsWorldPose.h"
 
 #include <filesystem>
 #include <fstream>
@@ -136,6 +137,51 @@ bool TestAccumulator()
     return pass;
 }
 
+bool TestWorldPose()
+{
+    bool pass = true;
+    Physics::RigidTransformSample root;
+    root.position = Vec3(0.0f, 5.0f, 0.0f);
+    Physics::RigidTransformSample child;
+    child.position = Vec3(0.0f, 1.0f, 0.0f);
+    const Physics::RigidTransformSample translated[] = {root, child};
+    Physics::WorldPose pose;
+    pass &= Check(Physics::TryComposeWorldPose(translated, 2, pose), "parent translation decomposes");
+    pass &= Check(Near(pose.position.y, 6.0f) && Near(pose.position.x, 0.0f),
+                  "parent translation plus local offset is the world position");
+
+    root.scale = Vec3(2.0f, 2.0f, 2.0f);
+    child.scale = Vec3(0.5f, 0.5f, 0.5f);
+    const Physics::RigidTransformSample scaled[] = {root, child};
+    pass &= Check(Physics::TryComposeWorldPose(scaled, 2, pose), "uniform parent scale decomposes");
+    pass &= Check(Near(pose.shapeScale.x, 1.0f) && Near(pose.shapeScale.y, 1.0f) && Near(pose.shapeScale.z, 1.0f),
+                  "uniform parent scale multiplies shape scale");
+    pass &= Check(Near(pose.position.y, 7.0f), "uniform parent scale multiplies the child offset");
+
+    child.scale = Vec3(-2.0f, 1.0f, 0.5f);
+    root.scale = Vec3(1.0f, 1.0f, 1.0f);
+    const Physics::RigidTransformSample negative[] = {root, child};
+    pass &= Check(Physics::TryComposeWorldPose(negative, 2, pose), "negative local scale decomposes");
+    pass &= Check(Near(pose.shapeScale.x, 2.0f) && Near(pose.shapeScale.y, 1.0f) && Near(pose.shapeScale.z, 0.5f),
+                  "shape scale uses the absolute local scale");
+
+    root.scale = Vec3(2.0f, 1.0f, 2.0f);
+    const Physics::RigidTransformSample sheared[] = {root, child};
+    pass &= Check(!Physics::TryComposeWorldPose(sheared, 2, pose), "non-uniform ancestor scale fails");
+
+    root.scale = Vec3(1.0f, 1.0f, 1.0f);
+    root.rotation = Vec3(0.0f, 1.5707963f, 0.0f);
+    child.position = Vec3(1.0f, 0.0f, 0.0f);
+    child.scale = Vec3(1.0f, 1.0f, 1.0f);
+    const Physics::RigidTransformSample rotated[] = {root, child};
+    pass &= Check(Physics::TryComposeWorldPose(rotated, 2, pose), "rotated parent decomposes");
+    const Vec3 recovered = Physics::WorldPointToLocal(root.position, Physics::PoseQuatFromEulerXYZ(root.rotation),
+                                                      Vec3(1.0f, 1.0f, 1.0f), pose.position);
+    pass &= Check(Near(recovered.x, 1.0f) && Near(recovered.y, 0.0f) && Near(recovered.z, 0.0f),
+                  "dynamic write-back recovers local position from the body world position");
+    return pass;
+}
+
 } // namespace
 
 int main()
@@ -145,6 +191,7 @@ int main()
     pass &= TestMatrixRoundTrip();
     pass &= TestLayerIdentity();
     pass &= TestAccumulator();
+    pass &= TestWorldPose();
     if (!pass) {
         std::cerr << "[FAIL] PhysicsFoundationTests\n";
         return 1;

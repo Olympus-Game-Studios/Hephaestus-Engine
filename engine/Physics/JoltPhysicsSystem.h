@@ -4,11 +4,13 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <filesystem>
 #include <Jolt/Jolt.h>
 
 #include "JoltPhysicsEngine.h"
+#include "PhysicsWorldPose.h"
 #include "../Scene/Scene.h"
 #include "../Core/Math.h"
 
@@ -124,9 +126,19 @@ private:
     // Update entity bodies in the scene
     void UpdateEntityBodies(Scene& scene);
     void RemoveStaleBodies(Scene& scene);
+    bool DecomposeEntityPose(Scene& scene, entt::entity entity, WorldPose& out) const;
+    void LogRejectedPose(entt::entity entity);
 
     // Integrate mesh colliders with dynamic bodies
     void IntegrateMeshColliders(Scene& scene);
+
+    struct BodyPoseBinding {
+        Vec3 shapeScale{1.0f, 1.0f, 1.0f};
+        entt::entity parent = entt::null;
+    };
+
+    std::unordered_map<entt::entity, BodyPoseBinding> m_BodyPoseBinding;
+    std::unordered_set<entt::entity> m_PoseRejectionLogged;
 };
 
 } // namespace Physics

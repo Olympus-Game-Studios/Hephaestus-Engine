@@ -1,3 +1,4 @@
+#include "Core/EngineLog.h"
 #include "Physics/JoltPhysicsEngine.h"
 #include "Physics/JoltPhysicsSystem.h"
 #include "Physics/PhysicsLayerConfig.h"
@@ -8,6 +9,7 @@
 
 #include <Jolt/Core/Factory.h>
 
+#include <cmath>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -189,6 +191,92 @@ int main()
             pass &= Check(system.LastSubstepCount() == 4 && system.StalledStepCount() == 1 &&
                               system.Accumulator() == 0.0f,
                           "a 100ms frame takes four steps and discards the remainder");
+        }
+        world.Shutdown();
+    }
+
+    {
+        Physics::JoltPhysicsEngine world;
+        world.Initialize();
+        world.BeginPlayWorld(Physics::PhysicsLayerConfig::Compatibility());
+        {
+            Scene scene("Hierarchy");
+            Physics::JoltPhysicsSystem system(world);
+            Entity parent = scene.CreateEntity("Parent");
+            parent.GetComponent<TransformComponent>().position = Vec3(0.0f, 5.0f, 0.0f);
+            Entity staticChild = scene.CreateEntity("StaticChild");
+            staticChild.GetComponent<TransformComponent>().position = Vec3(0.0f, 1.0f, 0.0f);
+            auto& staticBody = staticChild.AddComponent<RigidBodyComponent>();
+            staticBody.isStatic = true;
+            staticBody.mass = 0.0f;
+            staticBody.useGravity = false;
+            staticChild.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            scene.SetParent(staticChild, parent, false);
+
+            Entity dynamicChild = scene.CreateEntity("DynamicChild");
+            dynamicChild.GetComponent<TransformComponent>().position = Vec3(0.0f, 3.0f, 0.0f);
+            auto& dynamicBody = dynamicChild.AddComponent<RigidBodyComponent>();
+            dynamicBody.mass = 1.0f;
+            dynamicBody.useGravity = false;
+            dynamicChild.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            scene.SetParent(dynamicChild, parent, false);
+
+            system.PrepareSceneBodies(scene);
+            Physics::BodyObservation staticObservation{};
+            const bool staticReady = system.ObserveBody(static_cast<entt::entity>(staticChild), staticObservation)
+                == Physics::BodyObservationStatus::Ready;
+            pass &= Check(staticReady && staticObservation.position.y > 5.9f && staticObservation.position.y < 6.1f,
+                          "static child body uses the parented world position");
+
+            parent.GetComponent<TransformComponent>().position = Vec3(0.0f, 8.0f, 0.0f);
+            system.ClearAccumulator();
+            system.Update(scene, Physics::kPhysicsFixedDt);
+            const bool staticMoved = system.ObserveBody(static_cast<entt::entity>(staticChild), staticObservation)
+                == Physics::BodyObservationStatus::Ready;
+            pass &= Check(staticMoved && staticObservation.position.y > 8.9f && staticObservation.position.y < 9.1f,
+                          "static child follows a moved parent");
+            pass &= Check(staticChild.GetComponent<TransformComponent>().position.y > 0.9f
+                              && staticChild.GetComponent<TransformComponent>().position.y < 1.1f,
+                          "static child local position stays authored");
+
+            Physics::BodyObservation dynamicObservation{};
+            const bool dynamicReady = system.ObserveBody(static_cast<entt::entity>(dynamicChild), dynamicObservation)
+                == Physics::BodyObservationStatus::Ready;
+            pass &= Check(dynamicReady && dynamicObservation.position.x > -0.1f && dynamicObservation.position.x < 0.1f,
+                          "dynamic child is not dragged when the parent moves");
+            const Mat4 dynamicWorld = scene.GetWorldTransform(dynamicChild);
+            pass &= Check(std::abs(dynamicWorld.m[12] - dynamicObservation.position.x) < 0.05f
+                              && std::abs(dynamicWorld.m[13] - dynamicObservation.position.y) < 0.05f,
+                          "dynamic child world transform matches the simulated body");
+
+            Entity movedParent = scene.CreateEntity("MovedParent");
+            movedParent.GetComponent<TransformComponent>().position = Vec3(10.0f, 0.0f, 0.0f);
+            scene.SetParent(dynamicChild, movedParent, false);
+            system.ClearAccumulator();
+            system.Update(scene, Physics::kPhysicsFixedDt);
+            const bool reparented = system.ObserveBody(static_cast<entt::entity>(dynamicChild), dynamicObservation)
+                == Physics::BodyObservationStatus::Ready;
+            pass &= Check(reparented && dynamicObservation.position.x > 9.5f && dynamicObservation.position.x < 10.5f,
+                          "reparenting a dynamic body teleports it to the new world pose");
+
+            Entity sheared = scene.CreateEntity("Sheared");
+            sheared.GetComponent<TransformComponent>().scale = Vec3(2.0f, 1.0f, 2.0f);
+            Entity rejected = scene.CreateEntity("Rejected");
+            auto& rejectedBody = rejected.AddComponent<RigidBodyComponent>();
+            rejectedBody.mass = 1.0f;
+            rejected.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            scene.SetParent(rejected, sheared, false);
+            const auto logBefore = Hephaestus::EngineLog::Snapshot().nextCursor;
+            system.PrepareSceneBodies(scene);
+            pass &= Check(system.GetBodyID(static_cast<entt::entity>(rejected)).IsInvalid(),
+                          "non-uniform ancestor scale does not create a body");
+            bool logged = false;
+            for (const auto& entry : Hephaestus::EngineLog::Snapshot(logBefore).entries) {
+                if (entry.category == "Physics" && entry.message.find("non-uniform") != std::string::npos) {
+                    logged = true;
+                }
+            }
+            pass &= Check(logged, "non-uniform ancestor scale logs a physics error");
         }
         world.Shutdown();
     }
