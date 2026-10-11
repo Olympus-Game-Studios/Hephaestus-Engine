@@ -20,6 +20,7 @@ class QWidget;
 namespace Hephaestus::UI {
 
 class InputMapEditorWidget;
+class PhysicsLayerEditorWidget;
 
 class SettingsWindow : public QDialog {
     Q_OBJECT
@@ -102,7 +103,10 @@ private:
     TabUi m_engineTab;
     TabUi m_projectTab;
     InputMapEditorWidget* m_inputMapEditor = nullptr;
+    PhysicsLayerEditorWidget* m_physicsLayerEditor = nullptr;
     QLineEdit* m_inputProfileEdit = nullptr;
+
+    void AttachPhysicsLayerPage();
 };
 
 } // namespace Hephaestus::UI

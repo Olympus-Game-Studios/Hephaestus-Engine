@@ -731,6 +731,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/Shared/SettingsWindow.h
             engine/UI/Shared/InputMapEditorWidget.cpp
             engine/UI/Shared/InputMapEditorWidget.h
+            engine/UI/Shared/PhysicsLayerEditorWidget.cpp
+            engine/UI/Shared/PhysicsLayerEditorWidget.h
         )
 
         if(APPLE)
@@ -860,6 +862,11 @@ add_executable(HephaestusLauncher
     engine/UI/Shared/SettingsWindow.cpp
     engine/UI/Shared/InputMapEditorWidget.h
     engine/UI/Shared/InputMapEditorWidget.cpp
+    engine/UI/Shared/PhysicsLayerEditorWidget.h
+    engine/UI/Shared/PhysicsLayerEditorWidget.cpp
+    engine/Physics/PhysicsLayerConfig.cpp
+    engine/Scene/Json.cpp
+    engine/Core/EngineLog.cpp
 )
 
 if(NOT HEPHAESTUS_USE_SHARED_ASSETS)

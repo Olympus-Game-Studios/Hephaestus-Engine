@@ -355,6 +355,36 @@ struct RigidBodyComponent {
     bool IsSensor() const { return isTrigger; }
     bool UsesGravity() const { return useGravity && !IsStatic() && !IsKinematic(); }
 
+    // isStatic is a compatibility mirror of motion. After this returns,
+    // isStatic == (motion == Static).
+    void SyncStaticMirror() {
+        isStatic = motion == RigidBodyMotion::Static;
+    }
+
+    // Inspector, presets, and factories write motion here so the mirror cannot drift.
+    void SetMotion(RigidBodyMotion next) {
+        motion = next;
+        if (motion == RigidBodyMotion::Kinematic) {
+            isStatic = false;
+            useGravity = false;
+            if (mass <= 0.0f) {
+                mass = 1.0f;
+            }
+            return;
+        }
+        if (motion == RigidBodyMotion::Static) {
+            isStatic = true;
+            mass = 0.0f;
+            useGravity = false;
+            return;
+        }
+        motion = RigidBodyMotion::Dynamic;
+        isStatic = false;
+        if (mass <= 0.0f && !isTrigger) {
+            mass = 1.0f;
+        }
+    }
+
     // JSON may still say isStatic. An explicit motion string wins; otherwise
     // isStatic or a non-positive mass selects static. isStatic is then rewritten
     // so older readers stay consistent with the motion enum.
@@ -382,32 +412,36 @@ struct RigidBodyComponent {
             mass = 1.0f;
         }
     }
+    const char* MotionTypeName() const {
+        switch (motion) {
+        case RigidBodyMotion::Static: return "static";
+        case RigidBodyMotion::Kinematic: return "kinematic";
+        default: return "dynamic";
+        }
+    }
+
     bool HasValidBody() const { return joltBodyId != InvalidBody; }
     void InvalidateBodyHandle() { joltBodyId = InvalidBody; }
 
     static RigidBodyComponent CreateDynamic(float mass = 1.0f, float friction = 0.3f) {
         RigidBodyComponent body;
-        body.mass = mass;
-        body.isStatic = false;
+        body.mass = mass > 0.0f ? mass : 1.0f;
         body.friction = friction;
+        body.SetMotion(RigidBodyMotion::Dynamic);
         return body;
     }
     
     static RigidBodyComponent CreateStatic() {
         RigidBodyComponent body;
-        body.mass = 0.0f;
-        body.isStatic = true;
-        body.useGravity = false;
+        body.SetMotion(RigidBodyMotion::Static);
         return body;
     }
     
     static RigidBodyComponent CreateKinematic(float mass = 1.0f) {
         RigidBodyComponent body;
-        body.mass = mass;
-        body.isStatic = false;
-        body.useGravity = false;
+        body.mass = mass > 0.0f ? mass : 1.0f;
         body.freezeRotation = true;
-        body.motion = RigidBodyMotion::Kinematic;
+        body.SetMotion(RigidBodyMotion::Kinematic);
         return body;
     }
 };

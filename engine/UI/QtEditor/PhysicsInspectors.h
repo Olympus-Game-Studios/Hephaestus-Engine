@@ -57,8 +57,8 @@ private:
     QPushButton*    m_presetPlayerBtn  = nullptr;
     QPushButton*    m_presetGroundBtn  = nullptr;
     QComboBox*      m_motionCombo      = nullptr;
-    QSpinBox*       m_layerSpin        = nullptr;
-    QCheckBox*      m_staticCheck      = nullptr;
+    QComboBox*      m_layerCombo       = nullptr;
+    QLabel*         m_layerWarning     = nullptr;
     QCheckBox*      m_triggerCheck     = nullptr;
     QCheckBox*      m_gravityCheck     = nullptr;
     QCheckBox*      m_freezeRotCheck   = nullptr;

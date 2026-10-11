@@ -87,7 +87,7 @@ bool BuildLampHierarchy(Scene& scene, Entity& outRoot, Entity& outShade) {
     shape.extents = Vec3(0.4f, 0.2f, 0.4f);
     auto& body = outShade.AddComponent<RigidBodyComponent>();
     body.mass = 2.5f;
-    body.isStatic = false;
+    body.SetMotion(RigidBodyMotion::Dynamic);
     auto& lua = outShade.AddComponent<LuaScriptComponent>();
     lua.scriptPath = "assets/scripts/Lamp.lua";
     lua.variables["glow"] = PropertyValue(1.0);
@@ -730,6 +730,219 @@ bool TestHierarchySceneComponentTypes(const fs::path&) {
     return ok;
 }
 
+bool MotionSynced(const RigidBodyComponent& body) {
+    return body.isStatic == (body.motion == RigidBodyMotion::Static);
+}
+
+bool TestRigidBodyMotionInvariant(const fs::path& outDir) {
+    bool ok = true;
+    {
+        const RigidBodyComponent built;
+        ok &= Check(built.motion == RigidBodyMotion::Dynamic && MotionSynced(built), "construction is dynamic and synced");
+        ok &= Check(MotionSynced(RigidBodyComponent::CreateStatic())
+                        && RigidBodyComponent::CreateStatic().motion == RigidBodyMotion::Static
+                        && RigidBodyComponent::CreateStatic().isStatic,
+                    "CreateStatic is static");
+        const RigidBodyComponent dynamic = RigidBodyComponent::CreateDynamic(4.0f);
+        ok &= Check(dynamic.motion == RigidBodyMotion::Dynamic && !dynamic.isStatic && MotionSynced(dynamic),
+                    "CreateDynamic is dynamic");
+        const RigidBodyComponent kinematic = RigidBodyComponent::CreateKinematic();
+        ok &= Check(kinematic.motion == RigidBodyMotion::Kinematic && !kinematic.isStatic && MotionSynced(kinematic),
+                    "CreateKinematic is kinematic");
+        RigidBodyComponent edited;
+        edited.SetMotion(RigidBodyMotion::Static);
+        ok &= Check(edited.motion == RigidBodyMotion::Static && edited.isStatic, "inspector SetMotion static");
+        edited.SetMotion(RigidBodyMotion::Kinematic);
+        ok &= Check(edited.motion == RigidBodyMotion::Kinematic && !edited.isStatic, "inspector SetMotion kinematic");
+        edited.SetMotion(RigidBodyMotion::Dynamic);
+        ok &= Check(edited.motion == RigidBodyMotion::Dynamic && !edited.isStatic, "inspector SetMotion dynamic");
+    }
+
+    auto applyBody = [](Entity entity, const std::string& json) {
+        JsonValue data;
+        std::string error;
+        if (!JsonParser(json).Parse(data, error) || !data.IsObject()) {
+            return false;
+        }
+        return PrefabComponentIO::ApplyComponentJson(entity, "RigidBody", data, true);
+    };
+
+    Scene authored("Authored");
+    Entity componentSet = authored.CreateEntity("ComponentSet");
+    ok &= Check(applyBody(componentSet, R"({"isStatic":true,"mass":2,"useGravity":true,"isTrigger":false})"),
+                "component.set legacy static payload");
+    if (componentSet.HasComponent<RigidBodyComponent>()) {
+        const auto& body = componentSet.GetComponent<RigidBodyComponent>();
+        ok &= Check(body.motion == RigidBodyMotion::Static && body.isStatic && body.layer == 0 && MotionSynced(body),
+                    "legacy isStatic true becomes Static on layer 0");
+    }
+    ok &= Check(applyBody(componentSet, R"({"isStatic":false,"mass":3,"useGravity":true,"isTrigger":false})"),
+                "component.set legacy dynamic payload");
+    if (componentSet.HasComponent<RigidBodyComponent>()) {
+        const auto& body = componentSet.GetComponent<RigidBodyComponent>();
+        ok &= Check(body.motion == RigidBodyMotion::Dynamic && !body.isStatic && MotionSynced(body),
+                    "legacy isStatic false becomes Dynamic");
+    }
+    ok &= Check(applyBody(componentSet, R"({"motion":"kinematic","isStatic":true,"mass":1,"isTrigger":false})"),
+                "component.set contradictory motion");
+    if (componentSet.HasComponent<RigidBodyComponent>()) {
+        const auto& body = componentSet.GetComponent<RigidBodyComponent>();
+        ok &= Check(body.motion == RigidBodyMotion::Kinematic && !body.isStatic && MotionSynced(body),
+                    "explicit motion wins over isStatic");
+        PrefabComponentEntry captured;
+        ok &= Check(PrefabComponentIO::CaptureComponent(componentSet, "RigidBody", captured), "capture kinematic body");
+        const JsonValue* savedStatic = captured.data.Find("isStatic");
+        const JsonValue* savedMotion = captured.data.Find("motion");
+        ok &= Check(savedStatic && savedStatic->IsBool() && !savedStatic->boolValue
+                        && savedMotion && savedMotion->IsString() && savedMotion->AsString() == "kinematic",
+                    "capture writes a matching isStatic mirror");
+    }
+
+    const fs::path scenePath = outDir / "OldRigidBody.hpscene";
+    {
+        std::ofstream sceneFile(scenePath);
+        sceneFile << R"({
+  "name": "OldRigidBodies",
+  "entities": [
+    {
+      "id": 1,
+      "name": "OldStatic",
+      "components": {
+        "RigidBody": { "isStatic": true, "mass": 5, "useGravity": true, "isTrigger": false }
+      }
+    },
+    {
+      "id": 2,
+      "name": "OldDynamic",
+      "components": {
+        "RigidBody": { "isStatic": false, "mass": 2, "useGravity": true, "isTrigger": false }
+      }
+    }
+  ]
+})";
+    }
+    Scene loaded("OldScene");
+    std::string error;
+    ok &= Check(SceneSerializer::Deserialize(loaded, scenePath, error), "old scene loads through SceneSerializer: " + error);
+    Entity oldStatic = FindByTag(loaded, "OldStatic");
+    Entity oldDynamic = FindByTag(loaded, "OldDynamic");
+    ok &= Check(static_cast<bool>(oldStatic) && static_cast<bool>(oldDynamic), "old scene entities exist");
+    if (oldStatic && oldDynamic) {
+        const auto& staticBody = oldStatic.GetComponent<RigidBodyComponent>();
+        const auto& dynamicBody = oldDynamic.GetComponent<RigidBodyComponent>();
+        ok &= Check(staticBody.motion == RigidBodyMotion::Static && staticBody.isStatic && staticBody.layer == 0
+                        && MotionSynced(staticBody),
+                    "old static scene body is Static on layer 0");
+        ok &= Check(dynamicBody.motion == RigidBodyMotion::Dynamic && !dynamicBody.isStatic && dynamicBody.layer == 0
+                        && MotionSynced(dynamicBody),
+                    "old dynamic scene body is Dynamic on layer 0");
+        const fs::path savedPath = outDir / "OldRigidBodySaved.hpscene";
+        ok &= Check(SceneSerializer(loaded).Serialize(savedPath, error), "resave old scene: " + error);
+        std::ifstream saved(savedPath);
+        const std::string savedText((std::istreambuf_iterator<char>(saved)), std::istreambuf_iterator<char>());
+        ok &= Check(savedText.find("\"motion\": \"static\"") != std::string::npos
+                        && savedText.find("\"motion\": \"dynamic\"") != std::string::npos,
+                    "resave writes motion");
+        Scene roundTrip("RoundTrip");
+        ok &= Check(SceneSerializer::Deserialize(roundTrip, savedPath, error), "saved scene reloads");
+        Entity roundStatic = FindByTag(roundTrip, "OldStatic");
+        ok &= Check(static_cast<bool>(roundStatic) && MotionSynced(roundStatic.GetComponent<RigidBodyComponent>())
+                        && roundStatic.GetComponent<RigidBodyComponent>().motion == RigidBodyMotion::Static,
+                    "scene round-trip stays synced");
+        auto copies = loaded.DuplicateEntities({static_cast<entt::entity>(oldStatic)}, false);
+        ok &= Check(!copies.empty() && copies[0].HasComponent<RigidBodyComponent>()
+                        && copies[0].GetComponent<RigidBodyComponent>().motion == RigidBodyMotion::Static
+                        && MotionSynced(copies[0].GetComponent<RigidBodyComponent>()),
+                    "scene duplicate keeps motion and isStatic together");
+    }
+
+    const fs::path staticPrefab = outDir / "OldStatic.hpprefab";
+    const fs::path dynamicPrefab = outDir / "OldDynamic.hpprefab";
+    {
+        std::ofstream file(staticPrefab);
+        file << R"({
+  "schema": "HephaestusPrefab",
+  "assetVersion": 1,
+  "guid": "old-static-body",
+  "name": "OldStaticPrefab",
+  "rootNodeId": "root",
+  "nodes": [{
+    "id": "root",
+    "name": "OldStaticPrefab",
+    "parentId": null,
+    "transform": { "position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+    "components": [{
+      "type": "RigidBody",
+      "enabled": true,
+      "data": { "mass": 0, "isStatic": true, "useGravity": false, "isTrigger": false }
+    }],
+    "exposed": []
+  }]
+})";
+    }
+    {
+        std::ofstream file(dynamicPrefab);
+        file << R"({
+  "schema": "HephaestusPrefab",
+  "assetVersion": 1,
+  "guid": "old-dynamic-body",
+  "name": "OldDynamicPrefab",
+  "rootNodeId": "root",
+  "nodes": [{
+    "id": "root",
+    "name": "OldDynamicPrefab",
+    "parentId": null,
+    "transform": { "position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+    "components": [{
+      "type": "RigidBody",
+      "enabled": true,
+      "data": { "mass": 2, "isStatic": false, "useGravity": true, "isTrigger": false }
+    }],
+    "exposed": []
+  }]
+})";
+    }
+
+    PrefabAsset staticAsset;
+    PrefabAsset dynamicAsset;
+    ok &= Check(PrefabSerializer::Deserialize(staticAsset, staticPrefab, error), "load old static prefab: " + error);
+    ok &= Check(PrefabSerializer::Deserialize(dynamicAsset, dynamicPrefab, error), "load old dynamic prefab: " + error);
+    Scene prefabs("Prefabs");
+    Entity staticInstance = InstantiateAt(prefabs, staticAsset, staticPrefab.generic_string(), Vec3(0, 0, 0));
+    Entity dynamicInstance = InstantiateAt(prefabs, dynamicAsset, dynamicPrefab.generic_string(), Vec3(2, 0, 0));
+    ok &= Check(static_cast<bool>(staticInstance) && static_cast<bool>(dynamicInstance), "instantiate old prefabs");
+    if (staticInstance && dynamicInstance) {
+        const auto& staticBody = staticInstance.GetComponent<RigidBodyComponent>();
+        ok &= Check(staticBody.motion == RigidBodyMotion::Static && staticBody.isStatic && staticBody.layer == 0
+                        && MotionSynced(staticBody),
+                    "old prefab isStatic override loads as Static layer 0");
+        dynamicInstance.GetComponent<RigidBodyComponent>().SetMotion(RigidBodyMotion::Static);
+        PrefabOverrideSystem::SyncEntityOverrides(prefabs, dynamicInstance);
+        const auto& instance = dynamicInstance.GetComponent<PrefabInstanceComponent>();
+        const std::string nodeId = dynamicInstance.GetComponent<PrefabNodeComponent>().nodeId;
+        ok &= Check(PrefabOverrideSystem::IsPropertyOverridden(instance, nodeId, "RigidBody", "motion")
+                        || PrefabOverrideSystem::IsPropertyOverridden(instance, nodeId, "RigidBody", "isStatic"),
+                    "prefab instance records the rigid-body override");
+        const fs::path prefabScene = outDir / "OldPrefabInstance.hpscene";
+        ok &= Check(SceneSerializer(prefabs).Serialize(prefabScene, error), "save prefab instance scene: " + error);
+        Scene reloaded("ReloadedPrefabs");
+        ok &= Check(SceneSerializer::Deserialize(reloaded, prefabScene, error), "reload prefab instance scene: " + error);
+        Entity reloadedDynamic = FindByTag(reloaded, "OldDynamicPrefab");
+        ok &= Check(static_cast<bool>(reloadedDynamic)
+                        && reloadedDynamic.GetComponent<RigidBodyComponent>().motion == RigidBodyMotion::Static
+                        && reloadedDynamic.GetComponent<RigidBodyComponent>().isStatic
+                        && MotionSynced(reloadedDynamic.GetComponent<RigidBodyComponent>()),
+                    "prefab instance override survives reload in sync");
+        ok &= Check(applyBody(reloadedDynamic, R"({"motion":"kinematic","isStatic":true,"mass":1})"),
+                    "apply contradictory motion on a prefab instance");
+        ok &= Check(reloadedDynamic.GetComponent<RigidBodyComponent>().motion == RigidBodyMotion::Kinematic
+                        && !reloadedDynamic.GetComponent<RigidBodyComponent>().isStatic
+                        && MotionSynced(reloadedDynamic.GetComponent<RigidBodyComponent>()),
+                    "prefab apply keeps motion authoritative");
+    }
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -764,6 +977,7 @@ int main(int argc, char** argv) {
     run("LegacyBlueprint", TestLegacyBlueprint, repoRoot);
     run("InstantiatePoseAndVars", TestInstantiatePoseAndVars, outDir);
     run("HierarchySceneComponentTypes", TestHierarchySceneComponentTypes, outDir);
+    run("RigidBodyMotionInvariant", TestRigidBodyMotionInvariant, outDir);
 
     if (failed > 0) {
         std::cerr << failed << " prefab test(s) failed\n";

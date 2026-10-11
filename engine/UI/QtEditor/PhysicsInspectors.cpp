@@ -9,11 +9,16 @@
 #include "EditorUndoCommand.h"
 #include "PropertyEditors.h"
 
+#include "../../Assets/AssetManager.h"
 #include "../../Core/EditorContext.h"
+#include "../../Physics/PhysicsLayerConfig.h"
 #include "../../Scene/Scene.h"
 #include "../../Scene/Components.h"
 
+#include <QSignalBlocker>
 #include <QStyle>
+
+#include <filesystem>
 #include <iostream>
 
 namespace Hephaestus {
@@ -91,16 +96,18 @@ void RigidBodyInspector::buildUI()
     m_motionCombo->addItem(tr("Dynamic"), static_cast<int>(RigidBodyMotion::Dynamic));
     m_motionCombo->addItem(tr("Static"), static_cast<int>(RigidBodyMotion::Static));
     m_motionCombo->addItem(tr("Kinematic"), static_cast<int>(RigidBodyMotion::Kinematic));
-    m_layerSpin = new QSpinBox();
-    m_layerSpin->setRange(0, 15);
-    m_staticCheck    = new QCheckBox(tr("Static Body"));
+    m_layerCombo = new QComboBox();
+    m_layerWarning = new QLabel();
+    m_layerWarning->setWordWrap(true);
+    m_layerWarning->setStyleSheet("color: #b8860b;");
+    m_layerWarning->setVisible(false);
     m_triggerCheck   = new QCheckBox(tr("Trigger Volume"));
     m_gravityCheck   = new QCheckBox(tr("Use Gravity"));
     m_freezeRotCheck = new QCheckBox(tr("Freeze Rotation"));
 
     form->addRow(tr("Motion:"), m_motionCombo);
-    form->addRow(tr("Layer:"), m_layerSpin);
-    form->addRow(QString(), m_staticCheck);
+    form->addRow(tr("Layer:"), m_layerCombo);
+    form->addRow(QString(), m_layerWarning);
     form->addRow(QString(), m_triggerCheck);
     form->addRow(QString(), m_gravityCheck);
     form->addRow(QString(), m_freezeRotCheck);
@@ -148,15 +155,11 @@ void RigidBodyInspector::connectSignals()
     auto onChange = [this]() { applyToComponent(); };
 
     connect(m_motionCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
-        applyToComponent();
-        EndEdit();
-    });
-    connect(m_layerSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) {
-        applyToComponent();
-        EndEdit();
-    });
-    connect(m_staticCheck,    &QCheckBox::toggled, this, [this](bool) {
         updateDynamicFieldsVisibility();
+        applyToComponent();
+        EndEdit();
+    });
+    connect(m_layerCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
         applyToComponent();
         EndEdit();
     });
@@ -217,17 +220,32 @@ void RigidBodyInspector::connectSignals()
     });
 }
 
+namespace {
+
+Physics::PhysicsLayerConfig LoadProjectLayers()
+{
+    const std::string root = AssetManager::GetInstance().GetProjectRoot();
+    Physics::PhysicsLayerConfig config;
+    if (root.empty()) {
+        return Physics::PhysicsLayerConfig::Compatibility();
+    }
+    Physics::PhysicsLayerConfig::LoadFromFile(
+        Physics::PhysicsLayerConfig::ProjectFile(std::filesystem::path(root)), config);
+    return config;
+}
+
+} // namespace
+
 void RigidBodyInspector::Refresh()
 {
     EndEdit();
-    MixedBool isStatic, isTrigger, useGravity, freezeRot, debugDraw;
+    MixedBool isTrigger, useGravity, freezeRot, debugDraw;
     MixedScalar layer;
     int motionIndex = -1;
     bool motionMixed = false;
     MixedScalar mass, linDamp, angDamp, friction, restitution;
     MixedScalar linX, linY, linZ, angX, angY, angZ;
     VisitTargets<RigidBodyComponent>([&](const RigidBodyComponent& rb, entt::entity) {
-        AccumulateBool(isStatic, rb.isStatic);
         AccumulateScalar(layer, static_cast<float>(rb.layer));
         const int index = static_cast<int>(rb.motion);
         if (motionIndex < 0) {
@@ -261,10 +279,35 @@ void RigidBodyInspector::Refresh()
             m_motionCombo->setCurrentIndex(comboIndex);
         }
     }
-    if (layer.present && !layer.mixed) {
-        m_layerSpin->setValue(static_cast<int>(layer.value));
+    const Physics::PhysicsLayerConfig layers = LoadProjectLayers();
+    {
+        const QSignalBlocker blocker(m_layerCombo);
+        m_layerCombo->clear();
+        for (const Physics::PhysicsLayerDesc& desc : layers.Layers()) {
+            m_layerCombo->addItem(QString::fromStdString(desc.name), static_cast<int>(desc.id));
+        }
+        if (m_layerCombo->count() == 0) {
+            m_layerCombo->addItem(tr("Default"), 0);
+        }
     }
-    SetCheckFromMixed(m_staticCheck, isStatic);
+    m_layerWarning->setVisible(false);
+    m_layerWarning->clear();
+    if (layer.present && !layer.mixed) {
+        const auto layerId = static_cast<std::uint16_t>(layer.value);
+        if (!layers.HasLayer(layerId) || layers.IsTombstoned(layerId)) {
+            const QString label = layers.IsTombstoned(layerId)
+                ? tr("Deleted layer %1").arg(layerId)
+                : tr("Unknown layer %1").arg(layerId);
+            m_layerCombo->addItem(label, static_cast<int>(layerId));
+            m_layerWarning->setText(layers.IsTombstoned(layerId)
+                ? tr("This layer was deleted. Play resolves it to Default until another layer is chosen.")
+                : tr("This layer is not in the project file. Play resolves it to Default until another layer is chosen."));
+            m_layerWarning->setVisible(true);
+        }
+        SetComboFromMixed(m_layerCombo, false, static_cast<int>(layerId));
+    } else if (layer.mixed) {
+        SetComboFromMixed(m_layerCombo, true, 0);
+    }
     SetCheckFromMixed(m_triggerCheck, isTrigger);
     SetCheckFromMixed(m_gravityCheck, useGravity);
     SetCheckFromMixed(m_freezeRotCheck, freezeRot);
@@ -297,24 +340,12 @@ void RigidBodyInspector::applyToComponent()
             rb.*field = value;
         });
     };
-    int motionValue = 0;
-    if (TryReadCombo(m_motionCombo, motionValue)) {
+    int layerValue = 0;
+    if (TryReadCombo(m_layerCombo, layerValue) && layerValue >= 0) {
         ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
-            rb.motion = static_cast<RigidBodyMotion>(motionValue);
-            rb.isStatic = rb.motion == RigidBodyMotion::Static;
-            if (rb.motion == RigidBodyMotion::Kinematic) {
-                rb.useGravity = false;
-                rb.isStatic = false;
-            }
+            rb.layer = static_cast<std::uint16_t>(layerValue);
         });
     }
-    if (m_layerSpin->isEnabled()) {
-        const auto layerValue = static_cast<std::uint16_t>(m_layerSpin->value());
-        ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
-            rb.layer = layerValue;
-        });
-    }
-    writeBool(m_staticCheck, &RigidBodyComponent::isStatic);
     writeBool(m_triggerCheck, &RigidBodyComponent::isTrigger);
     writeBool(m_gravityCheck, &RigidBodyComponent::useGravity);
     writeBool(m_freezeRotCheck, &RigidBodyComponent::freezeRotation);
@@ -347,14 +378,12 @@ void RigidBodyInspector::applyToComponent()
     writeAxis(m_angVelY, &RigidBodyComponent::angularVelocity, 1);
     writeAxis(m_angVelZ, &RigidBodyComponent::angularVelocity, 2);
 
-    ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
-        if (rb.isStatic || rb.isTrigger) {
-            rb.mass = 0.0f;
-            rb.useGravity = false;
-        } else if (rb.mass <= 0.0f) {
-            rb.mass = 1.0f;
-        }
-    });
+    int motionValue = 0;
+    if (TryReadCombo(m_motionCombo, motionValue)) {
+        ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
+            rb.SetMotion(static_cast<RigidBodyMotion>(motionValue));
+        });
+    }
 }
 
 void RigidBodyInspector::applyPreset(bool isPlayer)
@@ -363,17 +392,17 @@ void RigidBodyInspector::applyPreset(bool isPlayer)
     EditorUndoManager::PushSnapshot(m_ctx, isPlayer ? "Preset: Player" : "Preset: Ground");
     ForEachTarget<RigidBodyComponent>([&](RigidBodyComponent& rb, entt::entity) {
         if (isPlayer) {
-            rb.motion = RigidBodyMotion::Dynamic;
-            rb.isStatic = false; rb.isTrigger = false;
-            rb.useGravity = true; rb.freezeRotation = true;
+            rb.isTrigger = false;
+            rb.freezeRotation = true;
             rb.mass = 80.0f;
+            rb.SetMotion(RigidBodyMotion::Dynamic);
+            rb.useGravity = true;
             rb.linearDamping = 0.1f; rb.angularDamping = 0.5f;
             rb.friction = 0.6f; rb.restitution = 0.0f;
         } else {
-            rb.motion = RigidBodyMotion::Static;
-            rb.isStatic = true; rb.isTrigger = false;
-            rb.useGravity = false; rb.freezeRotation = false;
-            rb.mass = 0.0f;
+            rb.isTrigger = false;
+            rb.freezeRotation = false;
+            rb.SetMotion(RigidBodyMotion::Static);
             rb.linearDamping = 0.0f; rb.angularDamping = 0.0f;
             rb.friction = 0.5f; rb.restitution = 0.0f;
         }
@@ -383,16 +412,22 @@ void RigidBodyInspector::applyPreset(bool isPlayer)
 
 void RigidBodyInspector::updateDynamicFieldsVisibility()
 {
-    bool isDynamic = !m_staticCheck->isChecked() && !m_triggerCheck->isChecked();
+    const bool isDynamic = m_motionCombo->currentData().toInt() == static_cast<int>(RigidBodyMotion::Dynamic);
+    const bool kinematic = m_motionCombo->currentData().toInt() == static_cast<int>(RigidBodyMotion::Kinematic);
     m_massRow->setVisible(isDynamic);
     m_gravityCheck->setVisible(isDynamic);
+    if (m_linVelX && m_linVelX->parentWidget()) {
+        m_linVelX->parentWidget()->setVisible(!kinematic);
+    }
+    if (m_angVelX && m_angVelX->parentWidget()) {
+        m_angVelX->parentWidget()->setVisible(!kinematic);
+    }
 }
 
 void RigidBodyInspector::blockAllSignals(bool block)
 {
     m_motionCombo->blockSignals(block);
-    m_layerSpin->blockSignals(block);
-    m_staticCheck->blockSignals(block);
+    m_layerCombo->blockSignals(block);
     m_triggerCheck->blockSignals(block);
     m_gravityCheck->blockSignals(block);
     m_freezeRotCheck->blockSignals(block);

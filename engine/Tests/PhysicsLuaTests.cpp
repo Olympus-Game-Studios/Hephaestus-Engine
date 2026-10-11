@@ -44,9 +44,13 @@ Entity AddBox(Scene& scene, const char* name, Vec3 position, bool isStatic, bool
     Entity entity = scene.CreateEntity(name);
     entity.GetComponent<TransformComponent>().position = position;
     auto& body = entity.AddComponent<RigidBodyComponent>();
-    body.isStatic = isStatic;
     body.isTrigger = sensor;
-    body.mass = isStatic ? 0.0f : 1.0f;
+    if (isStatic) {
+        body.SetMotion(RigidBodyMotion::Static);
+    } else {
+        body.mass = 1.0f;
+        body.SetMotion(RigidBodyMotion::Dynamic);
+    }
     body.useGravity = false;
     entity.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
     return entity;

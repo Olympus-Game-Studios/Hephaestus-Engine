@@ -30,10 +30,14 @@ Entity AddBox(Scene& scene, const char* name, Vec3 position, Vec3 extents, bool 
     entity.GetComponent<TransformComponent>().position = position;
     entity.GetComponent<TransformComponent>().rotation = Vec3(0.0f, 0.4f, 0.0f);
     auto& body = entity.AddComponent<RigidBodyComponent>();
-    body.isStatic = isStatic;
     body.isTrigger = sensor;
+    if (isStatic) {
+        body.SetMotion(RigidBodyMotion::Static);
+    } else {
+        body.mass = 1.0f;
+        body.SetMotion(RigidBodyMotion::Dynamic);
+    }
     body.useGravity = false;
-    body.mass = isStatic ? 0.0f : 1.0f;
     body.linearVelocity = Vec3(0.25f, 0.0f, -0.5f);
     entity.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(extents));
     return entity;

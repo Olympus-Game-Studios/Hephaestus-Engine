@@ -788,18 +788,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             std::ostringstream oss;
             oss.imbue(std::locale::classic());
             oss << "        \"RigidBody\": {\n";
-            RigidBodyMotion savedMotion = rigidBody->motion;
-            if (savedMotion != RigidBodyMotion::Kinematic && (rigidBody->isStatic || rigidBody->mass <= 0.0f)) {
-                savedMotion = RigidBodyMotion::Static;
-            } else if (savedMotion != RigidBodyMotion::Kinematic) {
-                savedMotion = RigidBodyMotion::Dynamic;
-            }
-            const char* motionName = savedMotion == RigidBodyMotion::Static ? "static"
-                : (savedMotion == RigidBodyMotion::Kinematic ? "kinematic" : "dynamic");
             oss << "          \"mass\": " << FormatFloat(rigidBody->mass) << ",\n";
-            oss << "          \"motion\": \"" << motionName << "\",\n";
+            oss << "          \"motion\": \"" << rigidBody->MotionTypeName() << "\",\n";
             oss << "          \"layer\": " << rigidBody->layer << ",\n";
-            oss << "          \"isStatic\": " << (savedMotion == RigidBodyMotion::Static ? "true" : "false") << ",\n";
+            oss << "          \"isStatic\": " << (rigidBody->motion == RigidBodyMotion::Static ? "true" : "false") << ",\n";
             oss << "          \"isTrigger\": " << (rigidBody->isTrigger ? "true" : "false") << ",\n";
             oss << "          \"useGravity\": " << (rigidBody->useGravity ? "true" : "false") << ",\n";
             oss << "          \"freezeRotation\": " << (rigidBody->freezeRotation ? "true" : "false") << ",\n";
@@ -2314,18 +2306,10 @@ std::string SceneSerializer::SerializeToString() const
             std::ostringstream oss;
             oss.imbue(std::locale::classic());
             oss << "        \"RigidBody\": {\n";
-            RigidBodyMotion savedMotion = rigidBody->motion;
-            if (savedMotion != RigidBodyMotion::Kinematic && (rigidBody->isStatic || rigidBody->mass <= 0.0f)) {
-                savedMotion = RigidBodyMotion::Static;
-            } else if (savedMotion != RigidBodyMotion::Kinematic) {
-                savedMotion = RigidBodyMotion::Dynamic;
-            }
-            const char* motionName = savedMotion == RigidBodyMotion::Static ? "static"
-                : (savedMotion == RigidBodyMotion::Kinematic ? "kinematic" : "dynamic");
             oss << "          \"mass\": " << FormatFloat(rigidBody->mass) << ",\n";
-            oss << "          \"motion\": \"" << motionName << "\",\n";
+            oss << "          \"motion\": \"" << rigidBody->MotionTypeName() << "\",\n";
             oss << "          \"layer\": " << rigidBody->layer << ",\n";
-            oss << "          \"isStatic\": " << (savedMotion == RigidBodyMotion::Static ? "true" : "false") << ",\n";
+            oss << "          \"isStatic\": " << (rigidBody->motion == RigidBodyMotion::Static ? "true" : "false") << ",\n";
             oss << "          \"isTrigger\": " << (rigidBody->isTrigger ? "true" : "false") << ",\n";
             oss << "          \"useGravity\": " << (rigidBody->useGravity ? "true" : "false") << ",\n";
             oss << "          \"freezeRotation\": " << (rigidBody->freezeRotation ? "true" : "false") << ",\n";

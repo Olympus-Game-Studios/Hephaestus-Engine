@@ -82,7 +82,7 @@ SceneBodies AddStack(Scene& scene, int count, const Vec3& origin, float jitterSc
             origin.z + 0.012f * static_cast<float>(i));
         auto& body = box.AddComponent<RigidBodyComponent>();
         body.mass = 1.0f;
-        body.isStatic = false;
+        body.SetMotion(RigidBodyMotion::Dynamic);
         body.useGravity = true;
         box.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
         if (created.sample == entt::null) {
@@ -97,9 +97,7 @@ void AddFloor(Scene& scene)
     Entity floor = scene.CreateEntity("Floor");
     floor.GetComponent<TransformComponent>().position = Vec3(0.0f, -0.5f, 0.0f);
     auto& body = floor.AddComponent<RigidBodyComponent>();
-    body.isStatic = true;
-    body.mass = 0.0f;
-    body.useGravity = false;
+    body.SetMotion(RigidBodyMotion::Static);
     floor.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(30.0f, 0.5f, 30.0f)));
 }
 
@@ -128,7 +126,7 @@ SceneBodies BuildHeavierScene(Scene& scene)
             static_cast<float>(mover) * 3.0f - 4.5f, 1.5f, 6.0f);
         auto& body = entity.AddComponent<RigidBodyComponent>();
         body.mass = 1.0f;
-        body.isStatic = false;
+        body.SetMotion(RigidBodyMotion::Dynamic);
         body.useGravity = false;
         body.linearVelocity = Vec3(0.6f, 0.0f, 0.0f);
         entity.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.4f, 0.4f, 0.4f)));
@@ -141,8 +139,8 @@ SceneBodies BuildHeavierScene(Scene& scene)
             0.04f * static_cast<float>(sensor), 1.0f, 0.04f * static_cast<float>(sensor));
         auto& body = entity.AddComponent<RigidBodyComponent>();
         body.mass = 1.0f;
-        body.isStatic = false;
         body.isTrigger = true;
+        body.SetMotion(RigidBodyMotion::Dynamic);
         body.useGravity = false;
         entity.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.75f, 0.75f, 0.75f)));
     }

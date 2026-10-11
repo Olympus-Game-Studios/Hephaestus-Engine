@@ -75,7 +75,7 @@ int main()
             Entity floor = scene.CreateEntity("Floor");
             floor.GetComponent<TransformComponent>().position = Vec3(0.0f, -0.5f, 0.0f);
             auto& floorBody = floor.AddComponent<RigidBodyComponent>();
-            floorBody.isStatic = true;
+            floorBody.SetMotion(RigidBodyMotion::Static);
             floorBody.mass = 0.0f;
             floorBody.useGravity = false;
             floorBody.layer = Physics::kLayerWorld;
@@ -118,14 +118,14 @@ int main()
             Entity worldBox = scene.CreateEntity("WorldBox");
             worldBox.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 2.0f);
             auto& worldBody = worldBox.AddComponent<RigidBodyComponent>();
-            worldBody.isStatic = true;
+            worldBody.SetMotion(RigidBodyMotion::Static);
             worldBody.useGravity = false;
             worldBody.layer = Physics::kLayerWorld;
             worldBox.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(1.0f, 1.0f, 1.0f)));
             Entity defaultBox = scene.CreateEntity("DefaultBox");
             defaultBox.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 6.0f);
             auto& defaultBody = defaultBox.AddComponent<RigidBodyComponent>();
-            defaultBody.isStatic = true;
+            defaultBody.SetMotion(RigidBodyMotion::Static);
             defaultBody.useGravity = false;
             defaultBody.layer = Physics::kLayerDefault;
             defaultBox.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(1.0f, 1.0f, 1.0f)));
@@ -211,7 +211,7 @@ int main()
             Entity staticChild = scene.CreateEntity("StaticChild");
             staticChild.GetComponent<TransformComponent>().position = Vec3(0.0f, 1.0f, 0.0f);
             auto& staticBody = staticChild.AddComponent<RigidBodyComponent>();
-            staticBody.isStatic = true;
+            staticBody.SetMotion(RigidBodyMotion::Static);
             staticBody.mass = 0.0f;
             staticBody.useGravity = false;
             staticChild.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
@@ -350,7 +350,7 @@ int main()
             Entity sensor = scene.CreateEntity("Sensor");
             sensor.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 0.0f);
             auto& sensorBody = sensor.AddComponent<RigidBodyComponent>();
-            sensorBody.isStatic = true;
+            sensorBody.SetMotion(RigidBodyMotion::Static);
             sensorBody.isTrigger = true;
             sensorBody.mass = 0.0f;
             sensorBody.useGravity = false;
@@ -363,7 +363,7 @@ int main()
             Entity floor = scene.CreateEntity("Floor");
             floor.GetComponent<TransformComponent>().position = Vec3(0.0f, -1.0f, 0.0f);
             auto& floorBody = floor.AddComponent<RigidBodyComponent>();
-            floorBody.isStatic = true;
+            floorBody.SetMotion(RigidBodyMotion::Static);
             floorBody.mass = 0.0f;
             floorBody.useGravity = false;
             floor.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(2.0f, 0.5f, 2.0f)));
@@ -397,7 +397,7 @@ int main()
             Entity trigger = scene.CreateEntity("Trigger");
             trigger.GetComponent<TransformComponent>().position = Vec3(0.0f, 1.0f, 0.0f);
             auto& triggerBody = trigger.AddComponent<RigidBodyComponent>();
-            triggerBody.isStatic = true;
+            triggerBody.SetMotion(RigidBodyMotion::Static);
             triggerBody.isTrigger = true;
             triggerBody.mass = 0.0f;
             triggerBody.useGravity = false;
@@ -406,7 +406,7 @@ int main()
             Entity dynamic = scene.CreateEntity("Dynamic");
             dynamic.GetComponent<TransformComponent>().position = Vec3(0.0f, 1.0f, 0.0f);
             auto& dynamicBody = dynamic.AddComponent<RigidBodyComponent>();
-            dynamicBody.isStatic = false;
+            dynamicBody.SetMotion(RigidBodyMotion::Dynamic);
             dynamicBody.mass = 1.0f;
             dynamicBody.useGravity = false;
             dynamic.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
@@ -456,7 +456,7 @@ int main()
             Entity staticBox = scene.CreateEntity("StaticBox");
             staticBox.GetComponent<TransformComponent>().position = Vec3(20.0f, 1.0f, 0.0f);
             auto& staticBody = staticBox.AddComponent<RigidBodyComponent>();
-            staticBody.isStatic = true;
+            staticBody.SetMotion(RigidBodyMotion::Static);
             staticBody.mass = 0.0f;
             staticBody.useGravity = false;
             staticBox.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
@@ -473,7 +473,7 @@ int main()
             Entity triggerA = scene.CreateEntity("TriggerA");
             triggerA.GetComponent<TransformComponent>().position = Vec3(30.0f, 1.0f, 0.0f);
             auto& triggerABody = triggerA.AddComponent<RigidBodyComponent>();
-            triggerABody.isStatic = true;
+            triggerABody.SetMotion(RigidBodyMotion::Static);
             triggerABody.isTrigger = true;
             triggerABody.mass = 0.0f;
             triggerABody.useGravity = false;
@@ -482,7 +482,7 @@ int main()
             Entity triggerB = scene.CreateEntity("TriggerB");
             triggerB.GetComponent<TransformComponent>().position = Vec3(30.0f, 1.0f, 0.0f);
             auto& triggerBBody = triggerB.AddComponent<RigidBodyComponent>();
-            triggerBBody.isStatic = true;
+            triggerBBody.SetMotion(RigidBodyMotion::Static);
             triggerBBody.isTrigger = true;
             triggerBBody.mass = 0.0f;
             triggerBBody.useGravity = false;
@@ -495,14 +495,14 @@ int main()
             Entity floor = scene.CreateEntity("SolidFloor");
             floor.GetComponent<TransformComponent>().position = Vec3(40.0f, 1.0f, 0.0f);
             auto& floorBody = floor.AddComponent<RigidBodyComponent>();
-            floorBody.isStatic = true;
+            floorBody.SetMotion(RigidBodyMotion::Static);
             floorBody.mass = 0.0f;
             floorBody.useGravity = false;
             floor.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
             Entity solid = scene.CreateEntity("SolidDynamic");
             solid.GetComponent<TransformComponent>().position = Vec3(40.0f, 1.0f, 0.0f);
             auto& solidBody = solid.AddComponent<RigidBodyComponent>();
-            solidBody.isStatic = false;
+            solidBody.SetMotion(RigidBodyMotion::Dynamic);
             solidBody.mass = 1.0f;
             solidBody.useGravity = false;
             solid.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
@@ -523,7 +523,7 @@ int main()
             Entity replacement = scene.CreateEntity("Replacement");
             replacement.GetComponent<TransformComponent>().position = Vec3(50.0f, 1.0f, 0.0f);
             auto& replacementBody = replacement.AddComponent<RigidBodyComponent>();
-            replacementBody.isStatic = true;
+            replacementBody.SetMotion(RigidBodyMotion::Static);
             replacementBody.mass = 0.0f;
             replacementBody.useGravity = false;
             replacement.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));

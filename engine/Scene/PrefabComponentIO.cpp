@@ -200,18 +200,10 @@ void ApplyPhysicsShape(PhysicsShapeComponent& shape, const JsonValue& data) {
 
 void CaptureRigidBody(const RigidBodyComponent& body, JsonValue& data) {
     data = MakeObject();
-    RigidBodyMotion savedMotion = body.motion;
-    if (savedMotion != RigidBodyMotion::Kinematic && (body.isStatic || body.mass <= 0.0f)) {
-        savedMotion = RigidBodyMotion::Static;
-    } else if (savedMotion != RigidBodyMotion::Kinematic) {
-        savedMotion = RigidBodyMotion::Dynamic;
-    }
-    const char* motionName = savedMotion == RigidBodyMotion::Static ? "static"
-        : (savedMotion == RigidBodyMotion::Kinematic ? "kinematic" : "dynamic");
     data.objectValue["mass"] = MakeNumber(body.mass);
-    data.objectValue["motion"] = MakeString(motionName);
+    data.objectValue["motion"] = MakeString(body.MotionTypeName());
     data.objectValue["layer"] = MakeNumber(body.layer);
-    data.objectValue["isStatic"] = MakeBool(savedMotion == RigidBodyMotion::Static);
+    data.objectValue["isStatic"] = MakeBool(body.motion == RigidBodyMotion::Static);
     data.objectValue["isTrigger"] = MakeBool(body.isTrigger);
     data.objectValue["useGravity"] = MakeBool(body.useGravity);
     data.objectValue["freezeRotation"] = MakeBool(body.freezeRotation);

@@ -1,5 +1,6 @@
 #include "SettingsWindow.h"
 #include "InputMapEditorWidget.h"
+#include "PhysicsLayerEditorWidget.h"
 
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -158,6 +159,7 @@ void SettingsWindow::RebuildTabs()
 {
     m_tabs->clear();
     m_inputMapEditor = nullptr;
+    m_physicsLayerEditor = nullptr;
     m_inputProfileEdit = nullptr;
     m_engineTab = TabUi();
     m_projectTab = TabUi();
@@ -179,6 +181,7 @@ void SettingsWindow::RebuildTabs()
                  QStringLiteral("Project Settings"),
                  m_projectManager->Definitions(),
                  m_projectPending);
+        AttachPhysicsLayerPage();
     }
 
     int targetIndex = 0;
@@ -293,6 +296,7 @@ void SettingsWindow::BuildTab(TabUi& tab,
         if (categoryPage) {
             tab.categoryPages->setCurrentWidget(categoryPage);
         }
+        tab.resetCategoryButton->setEnabled(categoryId != QStringLiteral("physics.layers"));
     });
 
     connect(tab.search, &QLineEdit::textChanged, this, [this, &tab](const QString& text) {
@@ -672,6 +676,15 @@ void SettingsWindow::ApplySearchFilter(TabUi& tab, const QString& searchText)
         }
     }
 
+    if (QListWidgetItem* physics = tab.categoryItems.value(QStringLiteral("physics.layers"))) {
+        const bool visible = needle.isEmpty()
+            || QStringLiteral("physics layers collision matrix").contains(needle, Qt::CaseInsensitive);
+        physics->setHidden(!visible);
+        if (visible && !firstVisible) {
+            firstVisible = physics;
+        }
+    }
+
     QListWidgetItem* current = tab.categories->currentItem();
     if (!current || current->isHidden()) {
         if (firstVisible) {
@@ -701,6 +714,9 @@ void SettingsWindow::UpdateDirtyState()
             }
         }
         if (m_inputMapEditor && m_inputMapEditor->IsDirty()) {
+            m_projectDirty = true;
+        }
+        if (m_physicsLayerEditor && m_physicsLayerEditor->IsDirty()) {
             m_projectDirty = true;
         }
     }
@@ -764,6 +780,15 @@ bool SettingsWindow::ApplyChanges()
                 return false;
             }
         }
+        if (m_physicsLayerEditor && m_physicsLayerEditor->IsDirty()) {
+            QString error;
+            if (!m_physicsLayerEditor->Save(&error)) {
+                QMessageBox::critical(
+                    this, QStringLiteral("Save Failed"),
+                    error.isEmpty() ? QStringLiteral("Failed to save physics layers.") : error);
+                return false;
+            }
+        }
         m_projectManager->SetValues(m_projectPending);
         if (!m_projectManager->Save()) {
             QMessageBox::critical(this,
@@ -796,6 +821,27 @@ QHash<QString, QVariant> SettingsWindow::CurrentValuesForTab(const QString& tabK
         return m_projectManager->Values();
     }
     return m_engineManager.Values();
+}
+
+void SettingsWindow::AttachPhysicsLayerPage()
+{
+    auto* item = new QListWidgetItem(QStringLiteral("Physics"), m_projectTab.categories);
+    item->setData(Qt::UserRole, QStringLiteral("physics.layers"));
+    m_projectTab.categoryItems.insert(QStringLiteral("physics.layers"), item);
+
+    auto* page = new QWidget(m_projectTab.categoryPages);
+    auto* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(4, 4, 4, 4);
+    m_physicsLayerEditor = new PhysicsLayerEditorWidget(page);
+    layout->addWidget(m_physicsLayerEditor);
+    QString error;
+    if (!m_physicsLayerEditor->Load(std::filesystem::path(m_projectRoot.toStdWString()), &error)) {
+        QMessageBox::warning(this, QStringLiteral("Physics Layers"),
+                             error.isEmpty() ? QStringLiteral("Could not load physics layers.") : error);
+    }
+    m_physicsLayerEditor->SetChangedCallback([this]() { UpdateDirtyState(); });
+    m_projectTab.categoryPages->addWidget(page);
+    m_projectTab.categoryPagesById.insert(QStringLiteral("physics.layers"), page);
 }
 
 void SettingsWindow::SaveWindowState() const

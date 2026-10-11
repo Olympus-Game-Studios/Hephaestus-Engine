@@ -519,6 +519,7 @@ Entity Scene::PasteClipboard()
     if (data.rigidBody) {
         RigidBodyComponent rb = *data.rigidBody;
         rb.InvalidateBodyHandle();
+        rb.SyncStaticMirror();
         e.AddComponent<RigidBodyComponent>(rb);
     }
 

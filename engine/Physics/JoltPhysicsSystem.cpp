@@ -699,8 +699,7 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
     transform.rotation = worldPose.rotationEuler;
     transform.scale = worldPose.shapeScale;
 
-    rigidBody.isStatic = rigidBody.isStatic || isStatic || rigidBody.mass <= 0.0f;
-    const bool treatAsStatic = rigidBody.IsStatic();
+    const bool treatAsStatic = rigidBody.IsStatic() || isStatic;
     const bool treatAsKinematic = rigidBody.IsKinematic();
     const bool treatAsSensor = rigidBody.IsSensor() || isSensor;
 
