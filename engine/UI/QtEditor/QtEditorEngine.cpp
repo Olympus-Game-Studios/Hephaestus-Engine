@@ -1842,6 +1842,19 @@ void QtEditorEngine::onTick()
             try {
                 Scene* activeScene = m_editorContext.GetActiveScene();
                 m_joltPhysicsSystem->SetEnabled(true);
+                m_joltPhysicsSystem->PrepareSceneBodies(*activeScene);
+            } catch (const std::exception& e) {
+                std::cerr << "[QtEditorEngine] Physics prepare error: " << e.what() << "\n";
+                m_physicsInitialized = false;
+            }
+        }
+
+        m_playModeManager.BeginScriptFrame(dt);
+
+        if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
+            try {
+                Scene* activeScene = m_editorContext.GetActiveScene();
+                m_joltPhysicsSystem->SetEnabled(true);
                 m_joltPhysicsSystem->Update(*activeScene, dt);
             } catch (const std::exception& e) {
                 std::cerr << "[QtEditorEngine] Physics update error: " << e.what() << "\n";
@@ -1849,7 +1862,7 @@ void QtEditorEngine::onTick()
             }
         }
 
-        m_playModeManager.Tick(dt);
+        m_playModeManager.FinishScriptFrame(dt);
         syncViewportCursorCapture();
 
         if (m_playModeManager.IsStopRequested()) {
@@ -2917,6 +2930,7 @@ void QtEditorEngine::StartPlayMode()
         if (m_joltPhysicsSystem) {
             m_joltPhysicsSystem->SetProjectRoot(projectRootPath);
             m_joltPhysicsSystem->SetEnabled(true);
+            m_joltPhysicsSystem->ClearAccumulator();
         }
     }
 
@@ -3214,6 +3228,7 @@ void QtEditorEngine::StopPlayMode()
         m_joltPhysicsSystem->ClearAllBodies();
     }
     if (m_joltPhysicsSystem) {
+        m_joltPhysicsSystem->ClearAccumulator();
         m_joltPhysicsSystem->SetEnabled(false);
     }
     if (m_joltPhysicsEngine) {
@@ -3275,7 +3290,11 @@ void QtEditorEngine::StopPlayMode()
 
 void QtEditorEngine::TogglePause()
 {
+    const bool wasPaused = m_playModeManager.IsPaused();
     m_playModeManager.TogglePause();
+    if (m_joltPhysicsSystem && (wasPaused || m_playModeManager.IsPaused())) {
+        m_joltPhysicsSystem->ClearAccumulator();
+    }
     emit playStateChanged(m_playModeManager.IsPlaying(), m_playModeManager.IsPaused());
 }
 
@@ -3305,13 +3324,24 @@ void QtEditorEngine::runSimulationFrame(float dt)
         try {
             Scene* activeScene = m_editorContext.GetActiveScene();
             m_joltPhysicsSystem->SetEnabled(true);
+            m_joltPhysicsSystem->PrepareSceneBodies(*activeScene);
+        } catch (const std::exception& e) {
+            std::cerr << "[QtEditorEngine] Physics prepare error (step): " << e.what() << "\n";
+            m_physicsInitialized = false;
+        }
+    }
+    m_playModeManager.BeginScriptFrame(dt);
+    if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
+        try {
+            Scene* activeScene = m_editorContext.GetActiveScene();
+            m_joltPhysicsSystem->SetEnabled(true);
             m_joltPhysicsSystem->Update(*activeScene, dt);
         } catch (const std::exception& e) {
             std::cerr << "[QtEditorEngine] Physics update error (step): " << e.what() << "\n";
             m_physicsInitialized = false;
         }
     }
-    m_playModeManager.StepTick(dt);
+    m_playModeManager.FinishScriptFrame(dt);
     syncViewportCursorCapture();
 
     RuntimeUIState* runtimeUI = FindRuntimeUIState(this);

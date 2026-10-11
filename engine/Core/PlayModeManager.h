@@ -115,11 +115,17 @@ public:
 
     // ── Per-frame update  (call from your tick / game loop) ──────────────────
 
-    /// Must be called once per frame.
+    /// Must be called once per frame while Playing.
     /// @param dt delta time in seconds.
     void Tick(float dt);
 
-    /// Run one script/animation frame while Playing or Paused without changing state.
+    /// Gameplay onUpdate. The host steps physics after this and before FinishScriptFrame.
+    void BeginScriptFrame(float dt);
+
+    /// Animation, animation-finished callbacks, and onLateUpdate.
+    void FinishScriptFrame(float dt);
+
+    /// Run one script frame while Playing or Paused, with no physics step between.
     bool StepTick(float dt);
 
     // ── Camera authority ─────────────────────────────────────────────────────
@@ -162,7 +168,6 @@ public:
 
 private:
     void Log(const std::string& msg);
-    void TickActiveState(float dt);
 
     // State
     PlayState  m_state = PlayState::Editor;

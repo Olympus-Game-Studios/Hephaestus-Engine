@@ -1,4 +1,5 @@
 #include "JoltPhysicsSystem.h"
+#include "PhysicsStepClock.h"
 #include "../Scene/Components.h"
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
@@ -266,31 +267,56 @@ JoltPhysicsSystem::~JoltPhysicsSystem() {
     m_BodyToEntityMap.clear();
 }
 
+void JoltPhysicsSystem::PrepareSceneBodies(Scene& scene) {
+    if (!m_Enabled || !m_PhysicsEngine.GetPhysicsSystem()) {
+        return;
+    }
+    UpdateEntityBodies(scene);
+}
+
+void JoltPhysicsSystem::ClearAccumulator() {
+    m_Accumulator = 0.0f;
+    m_LastSubstepCount = 0;
+    m_StalledStepCount = 0;
+}
+
 void JoltPhysicsSystem::Update(Scene& scene, float deltaTime) {
     if (!m_Enabled) {
         return;
     }
 
-    UpdateEntityBodies(scene);
+    const PhysicsStepBudget budget = AdvancePhysicsAccumulator(m_Accumulator, deltaTime);
+    m_Accumulator = budget.accumulator;
+    m_LastSubstepCount = budget.substepCount;
+    if (budget.stalled) {
+        ++m_StalledStepCount;
+    }
 
-    if (m_EntityToBodyMap.empty()) {
+    auto stepBodies = [this, &scene]() {
+        PrepareSceneBodies(scene);
+        if (m_EntityToBodyMap.empty()) {
+            return;
+        }
+        m_PhysicsEngine.Update(kPhysicsFixedDt);
+        auto view = scene.GetEntitiesWith<TransformComponent, RigidBodyComponent>();
+        for (auto handle : view) {
+            entt::entity entity = handle;
+            auto it = m_EntityToBodyMap.find(entity);
+            if (it != m_EntityToBodyMap.end()) {
+                SyncTransformFromPhysics(scene, entity, it->second);
+            }
+        }
+        IntegrateMeshColliders(scene);
+    };
+
+    if (budget.substepCount <= 0) {
+        PrepareSceneBodies(scene);
         return;
     }
 
-    // Step the physics world and then push results back into components
-    m_PhysicsEngine.Update(deltaTime);
-
-    auto view = scene.GetEntitiesWith<TransformComponent, RigidBodyComponent>();
-    for (auto handle : view) {
-        entt::entity entity = handle;
-        auto it = m_EntityToBodyMap.find(entity);
-        if (it != m_EntityToBodyMap.end()) {
-            SyncTransformFromPhysics(scene, entity, it->second);
-        }
+    for (int step = 0; step < budget.substepCount; ++step) {
+        stepBodies();
     }
-
-    // Integrate mesh colliders: push dynamic Jolt bodies out of mesh collider geometry
-    IntegrateMeshColliders(scene);
 }
 
 namespace {

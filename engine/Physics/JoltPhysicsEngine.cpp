@@ -219,17 +219,12 @@ void JoltPhysicsEngine::Update(float deltaTime) {
         return;
     }
 
-    try {
-        // Clamp delta time to prevent instability
-        const float maxDeltaTime = 0.033f; // ~30 FPS minimum
-        float clampedDeltaTime = std::min(deltaTime, maxDeltaTime);
-
-        // Ensure positive time delta
-        if (clampedDeltaTime <= 0.0f) {
+        try {
+        if (deltaTime <= 0.0f) {
             return;
         }
 
-        // Step the physics simulation with our temp allocator
+        // The host accumulator is the only clamp. This steps the supplied dt once.
         int collisionSteps = 1;
         JPH::TempAllocator* tempAllocator = m_TempAllocator.get();
         if (!tempAllocator) {
@@ -239,7 +234,7 @@ void JoltPhysicsEngine::Update(float deltaTime) {
         }
 
         const JPH::EPhysicsUpdateError error = m_PhysicsSystem->Update(
-            clampedDeltaTime,
+            deltaTime,
             collisionSteps,
             tempAllocator,
             m_JobSystem.get()

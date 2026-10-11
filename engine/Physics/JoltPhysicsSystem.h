@@ -59,8 +59,16 @@ public:
     explicit JoltPhysicsSystem(JoltPhysicsEngine& physicsEngine);
     ~JoltPhysicsSystem();
 
-    // Update physics simulation for the scene
+    // Creates and removes bodies without stepping the simulation.
+    void PrepareSceneBodies(Scene& scene);
+
+    // Fixed-step update. frameDt is accumulated; each substep is 1/60 s.
     void Update(Scene& scene, float deltaTime);
+
+    void ClearAccumulator();
+    int LastSubstepCount() const { return m_LastSubstepCount; }
+    int StalledStepCount() const { return m_StalledStepCount; }
+    float Accumulator() const { return m_Accumulator; }
 
     // Create a physics body for an entity
     JPH::BodyID CreateRigidBody(
@@ -103,6 +111,9 @@ private:
     std::unordered_map<uint32_t, entt::entity> m_BodyToEntityMap;
     std::filesystem::path m_ProjectRoot;
     bool m_Enabled = true;
+    float m_Accumulator = 0.0f;
+    int m_LastSubstepCount = 0;
+    int m_StalledStepCount = 0;
 
     // Sync transform from component to physics body
     void SyncTransformToPhysics(Scene& scene, entt::entity entity, JPH::BodyID bodyId, bool activateBody);

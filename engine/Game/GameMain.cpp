@@ -1641,16 +1641,20 @@ int main(int argc, char* argv[]) {
             uiMousePressed[static_cast<size_t>(i)] = pressed;
         }
 
-        // Update physics
-        physicsSystem.Update(scene, deltaTime);
-
         // Update declarative ECS audio sources.
         UpdateAudioSources(scene, audioEngine);
+
+        // Bodies for entities already in the scene exist before onUpdate.
+        physicsSystem.PrepareSceneBodies(scene);
 
         // Update scripts
 #if HEPHAESTUS_GAME_SCRIPTING
         luaEngine.Update(scene, deltaTime);
 #endif
+
+        // Fixed-step physics after scripts so onUpdate can write this frame's motion.
+        physicsSystem.Update(scene, deltaTime);
+
         Hephaestus::CharacterAnimationSystem::Tick(scene, deltaTime);
 #if HEPHAESTUS_GAME_SCRIPTING
         luaEngine.DispatchAnimationFinished(scene);

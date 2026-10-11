@@ -1,5 +1,6 @@
 #include "Core/EngineLog.h"
 #include "Physics/PhysicsLayerConfig.h"
+#include "Physics/PhysicsStepClock.h"
 
 #include <filesystem>
 #include <fstream>
@@ -93,6 +94,48 @@ bool TestLayerIdentity()
     return pass;
 }
 
+bool Near(float value, float expected)
+{
+    const float delta = value - expected;
+    return delta < 1.0e-4f && delta > -1.0e-4f;
+}
+
+bool TestAccumulator()
+{
+    bool pass = true;
+    const auto one = Physics::AdvancePhysicsAccumulator(0.0f, Physics::kPhysicsFixedDt);
+    pass &= Check(one.substepCount == 1 && !one.stalled && Near(one.accumulator, 0.0f),
+                  "dt 1/60 takes one step");
+
+    const auto two = Physics::AdvancePhysicsAccumulator(0.0f, Physics::kPhysicsFixedDt * 2.0f);
+    pass &= Check(two.substepCount == 2 && !two.stalled && Near(two.accumulator, 0.0f),
+                  "dt 1/30 takes two steps");
+
+    const auto exactCap = Physics::AdvancePhysicsAccumulator(0.0f, Physics::kPhysicsFixedDt * 4.0f);
+    pass &= Check(exactCap.substepCount == 4 && !exactCap.stalled && Near(exactCap.accumulator, 0.0f),
+                  "exactly four steps does not stall");
+
+    const auto hitch = Physics::AdvancePhysicsAccumulator(0.0f, 0.1f);
+    pass &= Check(hitch.substepCount == 4 && hitch.stalled && hitch.accumulator == 0.0f,
+                  "dt 0.1 takes four steps and stalls");
+
+    auto carry = Physics::AdvancePhysicsAccumulator(0.0f, 0.01f);
+    pass &= Check(carry.substepCount == 0 && carry.accumulator > 0.009f && carry.accumulator < 0.011f,
+                  "leftover under a step carries");
+    carry = Physics::AdvancePhysicsAccumulator(carry.accumulator, 0.01f);
+    pass &= Check(carry.substepCount == 1 && carry.accumulator > 0.0f && carry.accumulator < Physics::kPhysicsFixedDt,
+                  "carried leftover completes on the next frame");
+
+    const auto cleared = Physics::AdvancePhysicsAccumulator(0.0f, 0.0f);
+    pass &= Check(cleared.substepCount == 0 && Near(cleared.accumulator, 0.0f) && !cleared.stalled,
+                  "a cleared accumulator stays idle");
+
+    const auto ignored = Physics::AdvancePhysicsAccumulator(0.01f, -1.0f);
+    pass &= Check(ignored.substepCount == 0 && Near(ignored.accumulator, 0.01f),
+                  "a negative frame dt does not rewind the accumulator");
+    return pass;
+}
+
 } // namespace
 
 int main()
@@ -101,6 +144,7 @@ int main()
     pass &= TestCompatibilityAndSeed();
     pass &= TestMatrixRoundTrip();
     pass &= TestLayerIdentity();
+    pass &= TestAccumulator();
     if (!pass) {
         std::cerr << "[FAIL] PhysicsFoundationTests\n";
         return 1;

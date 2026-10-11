@@ -1,6 +1,7 @@
 #include "Physics/JoltPhysicsEngine.h"
 #include "Physics/JoltPhysicsSystem.h"
 #include "Physics/PhysicsLayerConfig.h"
+#include "Physics/PhysicsStepClock.h"
 #include "Scene/Components.h"
 #include "Scene/Entity.h"
 #include "Scene/Scene.h"
@@ -135,6 +136,59 @@ int main()
                 entt::null, Vec3(0.0f, 0.0f, -1.0f), Vec3(0.0f, 0.0f, 1.0f), 20.0f, hit, &defaultLayer);
             pass &= Check(filtered && hit.hit && hit.entity == static_cast<entt::entity>(defaultBox),
                           "Default-layer ray skips the World box when that pair is off");
+        }
+        world.Shutdown();
+    }
+
+    {
+        Physics::JoltPhysicsEngine world;
+        world.Initialize();
+        world.BeginPlayWorld(Physics::PhysicsLayerConfig::Compatibility());
+        {
+            Scene scene("FirstOnUpdate");
+            Physics::JoltPhysicsSystem system(world);
+            Entity box = scene.CreateEntity("Existing");
+            box.GetComponent<TransformComponent>().position = Vec3(0.0f, 3.0f, 0.0f);
+            auto& body = box.AddComponent<RigidBodyComponent>();
+            body.mass = 1.0f;
+            box.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            const entt::entity boxId = static_cast<entt::entity>(box);
+
+            system.PrepareSceneBodies(scene);
+            Physics::BodyObservation before{};
+            const bool ready = system.ObserveBody(boxId, before) == Physics::BodyObservationStatus::Ready;
+            pass &= Check(ready && !system.GetBodyID(boxId).IsInvalid(),
+                          "existing dynamic body is usable during the first onUpdate");
+
+            system.Update(scene, 0.001f);
+            Physics::BodyObservation held{};
+            const bool still = system.ObserveBody(boxId, held) == Physics::BodyObservationStatus::Ready;
+            pass &= Check(system.LastSubstepCount() == 0 && still && held.position.y > 2.99f && held.position.y < 3.01f,
+                          "accumulator below fixedDt creates no substep and does not move the body");
+
+            Entity spawned = scene.CreateEntity("Spawned");
+            spawned.GetComponent<TransformComponent>().position = Vec3(2.0f, 3.0f, 0.0f);
+            auto& spawnedBody = spawned.AddComponent<RigidBodyComponent>();
+            spawnedBody.mass = 1.0f;
+            spawned.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            const entt::entity spawnedId = static_cast<entt::entity>(spawned);
+            system.ClearAccumulator();
+            system.Update(scene, 0.001f);
+            pass &= Check(system.LastSubstepCount() == 0 && !system.GetBodyID(spawnedId).IsInvalid(),
+                          "a body spawned by onUpdate exists after a zero-substep structural pass");
+
+            system.ClearAccumulator();
+            system.Update(scene, Physics::kPhysicsFixedDt);
+            Physics::BodyObservation stepped{};
+            const bool steppedReady = system.ObserveBody(boxId, stepped) == Physics::BodyObservationStatus::Ready;
+            pass &= Check(system.LastSubstepCount() == 1 && steppedReady && stepped.position.y < before.position.y,
+                          "one fixed step moves the dynamic body");
+
+            system.ClearAccumulator();
+            system.Update(scene, 0.1f);
+            pass &= Check(system.LastSubstepCount() == 4 && system.StalledStepCount() == 1 &&
+                              system.Accumulator() == 0.0f,
+                          "a 100ms frame takes four steps and discards the remainder");
         }
         world.Shutdown();
     }

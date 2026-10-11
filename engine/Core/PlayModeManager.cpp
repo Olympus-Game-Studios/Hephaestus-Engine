@@ -213,7 +213,8 @@ void PlayModeManager::Tick(float dt) {
         return;  // nothing to tick in editor or paused
     }
 
-    TickActiveState(dt);
+    BeginScriptFrame(dt);
+    FinishScriptFrame(dt);
 }
 
 bool PlayModeManager::StepTick(float dt) {
@@ -221,31 +222,41 @@ bool PlayModeManager::StepTick(float dt) {
         return false;
     }
 
-    TickActiveState(dt);
+    BeginScriptFrame(dt);
+    FinishScriptFrame(dt);
     return true;
 }
 
-void PlayModeManager::TickActiveState(float dt) {
-    m_deltaTime = dt;
-
-    m_timeSincePlay += dt;
-
-    // ── Update C++ scripts ─────────────────────────────────────────────────
-    if (m_cppEngine) {
-        m_cppEngine->UpdateScripts(dt);
-        m_cppEngine->LateUpdateScripts(dt);
+void PlayModeManager::BeginScriptFrame(float dt) {
+    if (m_state == PlayState::Editor) {
+        return;
     }
 
-    // ── Update Lua scripts ─────────────────────────────────────────────────
+    m_deltaTime = dt;
+    m_timeSincePlay += dt;
+
+    if (m_cppEngine) {
+        m_cppEngine->UpdateScripts(dt);
+    }
     if (m_luaEngine && m_scene) {
         m_luaEngine->Update(*m_scene, dt);
     }
+}
+
+void PlayModeManager::FinishScriptFrame(float dt) {
+    if (m_state == PlayState::Editor) {
+        return;
+    }
+
     if (m_scene) {
         CharacterAnimationSystem::Tick(*m_scene, dt);
     }
     if (m_luaEngine && m_scene) {
         m_luaEngine->DispatchAnimationFinished(*m_scene);
         m_luaEngine->LateUpdate(*m_scene, dt);
+    }
+    if (m_cppEngine) {
+        m_cppEngine->LateUpdateScripts(dt);
     }
 }
 
