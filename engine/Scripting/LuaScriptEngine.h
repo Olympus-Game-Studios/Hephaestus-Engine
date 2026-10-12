@@ -90,6 +90,19 @@ struct LuaScriptInstanceKeyHash {
     }
 };
 
+struct CharacterBinding {
+    std::function<bool(uint32_t entityId, float worldX, float worldZ)> move;
+    std::function<bool(uint32_t entityId)> jump;
+    std::function<bool(uint32_t entityId, bool crouched)> setCrouched;
+    std::function<bool(uint32_t entityId)> isGrounded;
+    std::function<bool(uint32_t entityId, Vec3& out)> getVelocity;
+    std::function<bool(uint32_t entityId, Vec3& out)> getGroundNormal;
+    std::function<bool(uint32_t entityId, Vec3& out)> getGroundVelocity;
+    std::function<bool(uint32_t entityId, std::string& outState)> getGroundState;
+    std::function<bool(uint32_t entityId, float x, float y, float z)> teleport;
+    std::function<bool(uint32_t entityId, float radians)> setFacingYaw;
+};
+
 struct PhysicsBinding {
     std::function<bool(uint32_t entityId)> hasBody;
     std::function<bool(uint32_t entityId, Vec3& outVelocity)> getLinearVelocity;
@@ -223,6 +236,7 @@ public:
      * Provide physics callbacks (Jolt) for Lua bindings
      */
     void SetPhysicsBinding(PhysicsBinding binding);
+    void SetCharacterBinding(CharacterBinding binding);
 
     /// Provide the shared input system populated by the current host.
     void SetInputSystem(Hephaestus::InputSystem* inputSystem);
@@ -251,6 +265,7 @@ private:
     Hephaestus::EngineFrameRenderer* m_FrameRenderer = nullptr;
     CameraBinding m_CameraBinding{};
     PhysicsBinding m_PhysicsBinding{};
+    CharacterBinding m_CharacterBinding{};
     Hephaestus::InputSystem* m_InputSystem = nullptr;
     std::unordered_set<std::string> m_MissingInputNames;
     QuitRequestCallback m_QuitRequestCallback;
@@ -355,6 +370,7 @@ private:
      * Register physics bindings
      */
     void RegisterPhysicsBindings();
+    void RegisterCharacterBindings();
 
     /**
      * Register audio bindings
@@ -453,6 +469,16 @@ private:
     static int Lua_Physics_isGrounded(lua_State* L);
     static int Lua_Physics_move(lua_State* L);
     static int Lua_Physics_jump(lua_State* L);
+    static int Lua_Character_move(lua_State* L);
+    static int Lua_Character_jump(lua_State* L);
+    static int Lua_Character_setCrouched(lua_State* L);
+    static int Lua_Character_isGrounded(lua_State* L);
+    static int Lua_Character_getVelocity(lua_State* L);
+    static int Lua_Character_getGroundNormal(lua_State* L);
+    static int Lua_Character_getGroundVelocity(lua_State* L);
+    static int Lua_Character_getGroundState(lua_State* L);
+    static int Lua_Character_teleport(lua_State* L);
+    static int Lua_Character_setFacingYaw(lua_State* L);
 
     static int Lua_Audio_isAvailable(lua_State* L);
     static int Lua_Audio_play(lua_State* L);

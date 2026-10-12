@@ -464,11 +464,18 @@ end
 function onTriggerExit(other)
 end
 
--- Basic FPS capsule motor (current script entity must have a rigid body)
-if Physics.isGrounded() then
-  Physics.jump(5.5)
+-- CharacterControllerComponent locomotion. Wish is world-space and horizontal.
+-- Jump is latched for the next fixed step and is legal only on OnGround.
+-- Coyote time and jump buffering are not part of this controller.
+Character.move(wishX, wishZ)
+if Character.isGrounded() then
+  Character.jump()
 end
-Physics.move(wishX, wishZ, 6.0) -- world XZ wish; preserves Y (gravity/jump)
+
+-- Physics.move / jump / isGrounded route to that controller when it is live.
+-- On a rigid body with no character controller they keep the legacy motor.
+-- Physics.jump(speed) uses that speed for the next jump request only.
+Physics.move(wishX, wishZ, 6.0)
 Physics.setRotation(0, yawRadians, 0)
 ```
 
@@ -481,7 +488,10 @@ Available helpers:
 - `Physics.isAvailable()` / `Physics.hasBody()`
 - `Physics.getLinearVelocity()` / `Physics.setLinearVelocity(x,y,z)` / `Physics.setAngularVelocity(...)` / `Physics.setRotation(rx,ry,rz)` (radians)
 - `Physics.raycast(ox,oy,oz,dx,dy,dz,maxDistance[, layerName])` → hit table or `nil`
-- `Physics.isGrounded()` / `Physics.move(wishX, wishZ, speed)` / `Physics.jump(impulse)`
+- `Character.move(x, z)` / `Character.move(x, y, z)` / `Character.jump()` / `Character.setCrouched(bool)` / `Character.isGrounded()`
+- `Character.getVelocity()` / `Character.getGroundNormal()` / `Character.getGroundVelocity()` / `Character.getGroundState()`
+- `Character.teleport(x, y, z)` / `Character.setFacingYaw(radians)`
+- `Physics.isGrounded()` / `Physics.move(wishX, wishZ, speed)` / `Physics.jump(speed)` — controller when one is live, otherwise the legacy rigid-body motor. A jump speed does not carry into a later jump.
 
 ## Performance Considerations
 

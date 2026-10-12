@@ -859,6 +859,10 @@ void LuaScriptEngine::SetPhysicsBinding(PhysicsBinding binding) {
     m_PhysicsBinding = std::move(binding);
 }
 
+void LuaScriptEngine::SetCharacterBinding(CharacterBinding binding) {
+    m_CharacterBinding = std::move(binding);
+}
+
 void LuaScriptEngine::SetInputSystem(Hephaestus::InputSystem* inputSystem) {
     m_InputSystem = inputSystem;
     m_MissingInputNames.clear();
@@ -977,6 +981,7 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterApplicationBindings();
     RegisterCameraBindings();
     RegisterPhysicsBindings();
+    RegisterCharacterBindings();
     RegisterAudioBindings();
     RegisterUIBindings();
     RegisterDisplayDestroyBindings();
@@ -1197,6 +1202,33 @@ void LuaScriptEngine::RegisterPhysicsBindings() {
     lua_setfield(m_State, -2, "jump");
 
     lua_setglobal(m_State, "Physics");
+#endif
+}
+
+void LuaScriptEngine::RegisterCharacterBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Character_move);
+    lua_setfield(m_State, -2, "move");
+    lua_pushcfunction(m_State, Lua_Character_jump);
+    lua_setfield(m_State, -2, "jump");
+    lua_pushcfunction(m_State, Lua_Character_setCrouched);
+    lua_setfield(m_State, -2, "setCrouched");
+    lua_pushcfunction(m_State, Lua_Character_isGrounded);
+    lua_setfield(m_State, -2, "isGrounded");
+    lua_pushcfunction(m_State, Lua_Character_getVelocity);
+    lua_setfield(m_State, -2, "getVelocity");
+    lua_pushcfunction(m_State, Lua_Character_getGroundNormal);
+    lua_setfield(m_State, -2, "getGroundNormal");
+    lua_pushcfunction(m_State, Lua_Character_getGroundVelocity);
+    lua_setfield(m_State, -2, "getGroundVelocity");
+    lua_pushcfunction(m_State, Lua_Character_getGroundState);
+    lua_setfield(m_State, -2, "getGroundState");
+    lua_pushcfunction(m_State, Lua_Character_teleport);
+    lua_setfield(m_State, -2, "teleport");
+    lua_pushcfunction(m_State, Lua_Character_setFacingYaw);
+    lua_setfield(m_State, -2, "setFacingYaw");
+    lua_setglobal(m_State, "Character");
 #endif
 }
 
@@ -1440,6 +1472,192 @@ int LuaScriptEngine::Lua_Physics_move(lua_State* L) {
     float wishZ = static_cast<float>(luaL_checknumber(L, 2));
     float speed = static_cast<float>(luaL_checknumber(L, 3));
     lua_pushboolean(L, engine->m_PhysicsBinding.move(engine->m_CurrentEntityId, wishX, wishZ, speed));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+namespace {
+
+void PushVec3(lua_State* L, const Vec3& value)
+{
+    lua_newtable(L);
+    lua_pushnumber(L, value.x);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, value.y);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, value.z);
+    lua_setfield(L, -2, "z");
+}
+
+} // namespace
+
+int LuaScriptEngine::Lua_Character_move(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.move) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const int argc = lua_gettop(L);
+    const float x = static_cast<float>(luaL_checknumber(L, 1));
+    float z = 0.0f;
+    if (argc >= 3) {
+        z = static_cast<float>(luaL_checknumber(L, 3));
+    } else {
+        z = static_cast<float>(luaL_checknumber(L, 2));
+    }
+    lua_pushboolean(L, engine->m_CharacterBinding.move(engine->m_CurrentEntityId, x, z));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_jump(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.jump) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_pushboolean(L, engine->m_CharacterBinding.jump(engine->m_CurrentEntityId));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_setCrouched(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.setCrouched) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const bool crouched = lua_toboolean(L, 1) != 0;
+    lua_pushboolean(L, engine->m_CharacterBinding.setCrouched(engine->m_CurrentEntityId, crouched));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_isGrounded(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.isGrounded) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_pushboolean(L, engine->m_CharacterBinding.isGrounded(engine->m_CurrentEntityId));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_getVelocity(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Vec3 velocity;
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.getVelocity
+        || !engine->m_CharacterBinding.getVelocity(engine->m_CurrentEntityId, velocity)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    PushVec3(L, velocity);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_getGroundNormal(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Vec3 normal;
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.getGroundNormal
+        || !engine->m_CharacterBinding.getGroundNormal(engine->m_CurrentEntityId, normal)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    PushVec3(L, normal);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_getGroundVelocity(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Vec3 velocity;
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.getGroundVelocity
+        || !engine->m_CharacterBinding.getGroundVelocity(engine->m_CurrentEntityId, velocity)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    PushVec3(L, velocity);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_getGroundState(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    std::string state;
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.getGroundState
+        || !engine->m_CharacterBinding.getGroundState(engine->m_CurrentEntityId, state)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, state.c_str());
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_teleport(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.teleport) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const float x = static_cast<float>(luaL_checknumber(L, 1));
+    const float y = static_cast<float>(luaL_checknumber(L, 2));
+    const float z = static_cast<float>(luaL_checknumber(L, 3));
+    lua_pushboolean(L, engine->m_CharacterBinding.teleport(engine->m_CurrentEntityId, x, y, z));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_setFacingYaw(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.setFacingYaw) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const float yaw = static_cast<float>(luaL_checknumber(L, 1));
+    lua_pushboolean(L, engine->m_CharacterBinding.setFacingYaw(engine->m_CurrentEntityId, yaw));
     return 1;
 #else
     (void)L;

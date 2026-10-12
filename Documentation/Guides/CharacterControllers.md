@@ -2,7 +2,11 @@
 
 Runtime Lua that drives `.hpcharacter` playback. This is not an animation graph, blend space, IK, retargeting, or Character Editor sandbox.
 
-Gameplay AI stays on `LuaScriptComponent`. The controller stays on `CharacterComponent` (`runController`, `controllerScriptPath`, `controllerVariables`). One Lua VM, two script slots on the same entity.
+The `CharacterComponent` slot named CharacterController is the animation script. It is not the physics controller. Locomotion is `CharacterControllerComponent` (`Character.move`, `Character.jump`, and the rest of the `Character` table). A mesh can have both. A capsule with only `CharacterControllerComponent` can move.
+
+Coyote time and jump buffering are not part of General Character Controller 1.0. `Character.jump()` and `Physics.jump` are accepted only while the controller's ground state is `OnGround`, so a later FPS plugin cannot implement true post-ledge coyote time with that call alone. A future generic jump-policy or launch API may allow it. This milestone does not add that API.
+
+Gameplay AI stays on `LuaScriptComponent`. The animation script stays on `CharacterComponent` (`runController`, `controllerScriptPath`, `controllerVariables`). One Lua VM, two script slots on the same entity.
 
 ## Slots
 

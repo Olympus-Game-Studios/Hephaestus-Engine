@@ -6,8 +6,9 @@
 namespace Physics {
 
 /**
- * Thin FPS capsule helper on top of an existing rigid body.
- * Not CharacterVirtual — wish-dir XZ move, gravity from Jolt, short ground probe.
+ * Legacy rigid-body helper. Not the supported character controller.
+ * New locomotion uses CharacterControllerComponent and JPH::CharacterVirtual.
+ * This path remains for a dynamic body with no character controller.
  */
 class CharacterMotor {
 public:
