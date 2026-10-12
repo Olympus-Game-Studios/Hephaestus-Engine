@@ -23,6 +23,10 @@
 // Forward declarations
 class Scene;
 
+namespace Physics {
+class CharacterControllerSystem;
+}
+
 namespace Hephaestus {
 
 /**
@@ -270,6 +274,11 @@ public:
     void SetEditorStateIds(std::unordered_set<uint32_t> hidden,
                            std::unordered_set<uint32_t> locked);
 
+    void SetCharacterControllers(Physics::CharacterControllerSystem* controllers) {
+        m_characterControllers = controllers;
+    }
+    Physics::CharacterControllerSystem* CharacterControllers() const { return m_characterControllers; }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Callbacks (for UI updates)
     // ─────────────────────────────────────────────────────────────────────────
@@ -305,6 +314,7 @@ private:
     std::unordered_set<uint32_t> m_editorHidden;
     std::unordered_set<uint32_t> m_editorLocked;
     std::unordered_set<uint32_t> m_isolated;
+    Physics::CharacterControllerSystem* m_characterControllers = nullptr;
 
     // Callbacks
     SceneChangedCallback m_onSceneChanged;
