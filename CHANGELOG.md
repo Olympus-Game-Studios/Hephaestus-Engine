@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-12: General Character Controller 1.0 adds `CharacterControllerComponent` and `CharacterControllerSystem` on `JPH::CharacterVirtual` with an inner kinematic proxy. Root entities get fixed-step acceleration, jump, slopes, stairs, stick-to-floor, moving platforms, crouch clearance, ceiling collision, dynamic pushes, layer filters, trigger contacts, and character-versus-character blocking. Lua `Character.*` is the locomotion API. `Physics.move`, `Physics.jump`, and `Physics.isGrounded` use it when a controller is live and otherwise keep the legacy rigid-body motor. `Physics.jump(speed)` applies that speed only to the next jump request. `physics.get_character_state` reports controller state without a rigid body and keeps the previous keys for a rigid body. Coyote time and jump buffering are not included.
 - 2026-10-11: Project Settings → Physics edits `.hephaestus/physics_layers.json` through `PhysicsLayerConfig`: named layers, stable ids, tombstones, and a symmetric collision matrix. The Rigid Body inspector selects a layer by name. Matrix edits apply on the next Play.
 - 2026-10-11: Stopping Play writes one Physics info line with the live body count, the last frame's substep count, the stalled-step count, and the last frame's contact count.
 - 2026-10-11: Cylinder physics shapes build a Jolt cylinder. Scene and prefab rigid bodies store `motion` and `layer`. Old files that only have `isStatic` still load. Packages copy `.hephaestus/physics_layers.json` and leave the rest of that folder behind.
@@ -136,6 +137,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Internal
 
+- 2026-10-12: `CharacterLuaTests` links `EngineLog` and includes the generated `AppConfig` header so the existing `engine_log` binding resolves when that target is built.
 - 2026-10-11: Stage 9A closeout verified named collision-layer authoring, the motion/isStatic invariant, old scene and prefab loads, the full Release CTest suite, editor Play sessions, and Development and Release packages.
 - 2026-10-07: AutomationBackend gains Qt-free runtime UI and physics observation virtuals. UI clicks carry a token so a timeout can drop only those synthetic events. Physics snapshots are defined as fully-read bodies only.
 
