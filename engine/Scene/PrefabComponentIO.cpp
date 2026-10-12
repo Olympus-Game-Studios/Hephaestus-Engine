@@ -679,6 +679,65 @@ void ApplyScriptComponent(ScriptComponent& script, const JsonValue& data) {
     }
 }
 
+void CaptureCharacterController(const CharacterControllerComponent& component, JsonValue& data) {
+    data = MakeObject();
+    data.objectValue["enabled"] = MakeBool(component.enabled);
+    data.objectValue["height"] = MakeNumber(component.height);
+    data.objectValue["radius"] = MakeNumber(component.radius);
+    data.objectValue["crouchedHeight"] = MakeNumber(component.crouchedHeight);
+    data.objectValue["maxSlopeAngleDegrees"] = MakeNumber(component.maxSlopeAngleDegrees);
+    data.objectValue["stepHeight"] = MakeNumber(component.stepHeight);
+    data.objectValue["groundSnapDistance"] = MakeNumber(component.groundSnapDistance);
+    data.objectValue["walkSpeed"] = MakeNumber(component.walkSpeed);
+    data.objectValue["acceleration"] = MakeNumber(component.acceleration);
+    data.objectValue["deceleration"] = MakeNumber(component.deceleration);
+    data.objectValue["airAcceleration"] = MakeNumber(component.airAcceleration);
+    data.objectValue["airControl"] = MakeNumber(component.airControl);
+    data.objectValue["jumpSpeed"] = MakeNumber(component.jumpSpeed);
+    data.objectValue["gravityScale"] = MakeNumber(component.gravityScale);
+    data.objectValue["maxFallSpeed"] = MakeNumber(component.maxFallSpeed);
+    data.objectValue["collisionLayer"] = MakeNumber(component.collisionLayer);
+    data.objectValue["mass"] = MakeNumber(component.mass);
+    data.objectValue["pushStrength"] = MakeNumber(component.pushStrength);
+}
+
+void ApplyCharacterController(CharacterControllerComponent& component, const JsonValue& data) {
+    if (!data.IsObject()) {
+        return;
+    }
+    auto readFloat = [&](const char* key, float& out) {
+        if (const JsonValue* value = data.Find(key)) {
+            if (value->IsNumber()) {
+                out = static_cast<float>(value->AsNumber());
+            }
+        }
+    };
+    if (const JsonValue* enabled = data.Find("enabled")) {
+        component.enabled = ParseBoolLike(*enabled, component.enabled);
+    }
+    readFloat("height", component.height);
+    readFloat("radius", component.radius);
+    readFloat("crouchedHeight", component.crouchedHeight);
+    readFloat("maxSlopeAngleDegrees", component.maxSlopeAngleDegrees);
+    readFloat("stepHeight", component.stepHeight);
+    readFloat("groundSnapDistance", component.groundSnapDistance);
+    readFloat("walkSpeed", component.walkSpeed);
+    readFloat("acceleration", component.acceleration);
+    readFloat("deceleration", component.deceleration);
+    readFloat("airAcceleration", component.airAcceleration);
+    readFloat("airControl", component.airControl);
+    readFloat("jumpSpeed", component.jumpSpeed);
+    readFloat("gravityScale", component.gravityScale);
+    readFloat("maxFallSpeed", component.maxFallSpeed);
+    readFloat("mass", component.mass);
+    readFloat("pushStrength", component.pushStrength);
+    if (const JsonValue* layer = data.Find("collisionLayer")) {
+        if (layer->IsNumber()) {
+            component.collisionLayer = static_cast<std::uint16_t>(std::max(0.0, layer->AsNumber()));
+        }
+    }
+}
+
 void CaptureCharacter(const CharacterComponent& character, JsonValue& data) {
     data = MakeObject();
     if (!character.characterPath.empty()) {
@@ -1101,6 +1160,12 @@ bool CaptureComponent(Entity entity, const std::string& type, PrefabComponentEnt
         CaptureCharacter(entity.GetComponent<CharacterComponent>(), out.data);
         return true;
     }
+    if (type == "CharacterController" && entity.HasComponent<CharacterControllerComponent>()) {
+        const auto& controller = entity.GetComponent<CharacterControllerComponent>();
+        out.enabled = controller.enabled;
+        CaptureCharacterController(controller, out.data);
+        return true;
+    }
     return false;
 }
 
@@ -1233,6 +1298,20 @@ bool ApplyComponentJson(Entity entity, const std::string& type, const JsonValue&
         ApplyCharacter(character, data);
         return true;
     }
+    if (type == "CharacterController") {
+        auto& controller = entity.HasComponent<CharacterControllerComponent>()
+            ? entity.GetComponent<CharacterControllerComponent>()
+            : entity.AddComponent<CharacterControllerComponent>();
+        ApplyCharacterController(controller, data);
+        if (data.IsObject()) {
+            if (const JsonValue* enabledField = data.Find("enabled")) {
+                controller.enabled = ParseBoolLike(*enabledField, enabled);
+            }
+        } else {
+            controller.enabled = enabled;
+        }
+        return true;
+    }
     return false;
 }
 
@@ -1255,6 +1334,7 @@ bool HasComponent(Entity entity, const std::string& type) {
     if (type == "ScriptComponent") return entity.HasComponent<ScriptComponent>();
     if (type == "AudioSource") return entity.HasComponent<AudioSourceComponent>();
     if (type == "Character") return entity.HasComponent<CharacterComponent>();
+    if (type == "CharacterController") return entity.HasComponent<CharacterControllerComponent>();
     return false;
 }
 
@@ -1284,6 +1364,7 @@ bool RemoveComponent(Entity entity, const std::string& type) {
     else if (type == "ScriptComponent") entity.RemoveComponent<ScriptComponent>();
     else if (type == "AudioSource") entity.RemoveComponent<AudioSourceComponent>();
     else if (type == "Character") entity.RemoveComponent<CharacterComponent>();
+    else if (type == "CharacterController") entity.RemoveComponent<CharacterControllerComponent>();
     else return false;
     return true;
 }
@@ -1291,7 +1372,8 @@ bool RemoveComponent(Entity entity, const std::string& type) {
 const std::vector<std::string>& SupportedTypes() {
     static const std::vector<std::string> kTypes = {
         "MeshRenderer", "MeshCollider", "PhysicsShape", "RigidBody",
-        "Material", "Light", "Camera", "LuaScript", "ScriptComponent", "AudioSource", "Character"
+        "Material", "Light", "Camera", "LuaScript", "ScriptComponent", "AudioSource", "Character",
+        "CharacterController"
     };
     return kTypes;
 }

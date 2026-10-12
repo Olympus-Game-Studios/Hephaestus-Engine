@@ -163,6 +163,73 @@ PropertyValue ParsePropertyValue(const JsonValue& value);
 static bool ParseBoolLike(const JsonValue& value, bool fallback);
 static std::string NormalizeAssetPathForSave(const std::string& rawPath);
 
+std::string WriteCharacterControllerJson(const CharacterControllerComponent& component)
+{
+    std::ostringstream oss;
+    oss.imbue(std::locale::classic());
+    oss << "        \"CharacterController\": {\n";
+    oss << "          \"enabled\": " << (component.enabled ? "true" : "false") << ",\n";
+    oss << "          \"height\": " << FormatFloat(component.height) << ",\n";
+    oss << "          \"radius\": " << FormatFloat(component.radius) << ",\n";
+    oss << "          \"crouchedHeight\": " << FormatFloat(component.crouchedHeight) << ",\n";
+    oss << "          \"maxSlopeAngleDegrees\": " << FormatFloat(component.maxSlopeAngleDegrees) << ",\n";
+    oss << "          \"stepHeight\": " << FormatFloat(component.stepHeight) << ",\n";
+    oss << "          \"groundSnapDistance\": " << FormatFloat(component.groundSnapDistance) << ",\n";
+    oss << "          \"walkSpeed\": " << FormatFloat(component.walkSpeed) << ",\n";
+    oss << "          \"acceleration\": " << FormatFloat(component.acceleration) << ",\n";
+    oss << "          \"deceleration\": " << FormatFloat(component.deceleration) << ",\n";
+    oss << "          \"airAcceleration\": " << FormatFloat(component.airAcceleration) << ",\n";
+    oss << "          \"airControl\": " << FormatFloat(component.airControl) << ",\n";
+    oss << "          \"jumpSpeed\": " << FormatFloat(component.jumpSpeed) << ",\n";
+    oss << "          \"gravityScale\": " << FormatFloat(component.gravityScale) << ",\n";
+    oss << "          \"maxFallSpeed\": " << FormatFloat(component.maxFallSpeed) << ",\n";
+    oss << "          \"collisionLayer\": " << component.collisionLayer << ",\n";
+    oss << "          \"mass\": " << FormatFloat(component.mass) << ",\n";
+    oss << "          \"pushStrength\": " << FormatFloat(component.pushStrength) << "\n";
+    oss << "        }";
+    return oss.str();
+}
+
+bool ApplyCharacterControllerJson(CharacterControllerComponent& component, const JsonValue& data, std::string& outError)
+{
+    if (!data.IsObject()) {
+        outError = "CharacterController component is not an object.";
+        return false;
+    }
+    auto readFloat = [&](const char* key, float& out) {
+        if (const JsonValue* value = data.Find(key)) {
+            if (value->IsNumber()) {
+                out = static_cast<float>(value->AsNumber());
+            }
+        }
+    };
+    if (const JsonValue* enabled = data.Find("enabled")) {
+        component.enabled = ParseBoolLike(*enabled, component.enabled);
+    }
+    readFloat("height", component.height);
+    readFloat("radius", component.radius);
+    readFloat("crouchedHeight", component.crouchedHeight);
+    readFloat("maxSlopeAngleDegrees", component.maxSlopeAngleDegrees);
+    readFloat("stepHeight", component.stepHeight);
+    readFloat("groundSnapDistance", component.groundSnapDistance);
+    readFloat("walkSpeed", component.walkSpeed);
+    readFloat("acceleration", component.acceleration);
+    readFloat("deceleration", component.deceleration);
+    readFloat("airAcceleration", component.airAcceleration);
+    readFloat("airControl", component.airControl);
+    readFloat("jumpSpeed", component.jumpSpeed);
+    readFloat("gravityScale", component.gravityScale);
+    readFloat("maxFallSpeed", component.maxFallSpeed);
+    readFloat("mass", component.mass);
+    readFloat("pushStrength", component.pushStrength);
+    if (const JsonValue* layer = data.Find("collisionLayer")) {
+        if (layer->IsNumber()) {
+            component.collisionLayer = static_cast<std::uint16_t>(std::max(0.0, layer->AsNumber()));
+        }
+    }
+    return true;
+}
+
 std::string WriteCharacterComponentJson(const CharacterComponent& character)
 {
     std::ostringstream oss;
@@ -686,6 +753,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
         const AudioSourceComponent* audio = registry.try_get<AudioSourceComponent>(handle);
         const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
+        const CharacterControllerComponent* characterController = registry.try_get<CharacterControllerComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
         const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
@@ -939,6 +1007,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
 
         if (character) {
             componentBlocks.push_back(WriteCharacterComponentJson(*character));
+        }
+
+        if (characterController) {
+            componentBlocks.push_back(WriteCharacterControllerJson(*characterController));
         }
 
         if (selection) {
@@ -1752,6 +1824,15 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
         }
 
+        if (const JsonValue* controllerObj = components->Find("CharacterController")) {
+            auto& controller = entity.HasComponent<CharacterControllerComponent>()
+                ? entity.GetComponent<CharacterControllerComponent>()
+                : entity.AddComponent<CharacterControllerComponent>();
+            if (!ApplyCharacterControllerJson(controller, *controllerObj, outError)) {
+                return false;
+            }
+        }
+
         if (const JsonValue* selectionObj = components->Find("Selection")) {
             if (!selectionObj->IsObject()) {
                 outError = "Selection component is not an object.";
@@ -2204,6 +2285,7 @@ std::string SceneSerializer::SerializeToString() const
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
         const AudioSourceComponent* audio = registry.try_get<AudioSourceComponent>(handle);
         const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
+        const CharacterControllerComponent* characterController = registry.try_get<CharacterControllerComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
         const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
@@ -2441,6 +2523,10 @@ std::string SceneSerializer::SerializeToString() const
 
         if (character) {
             componentBlocks.push_back(WriteCharacterComponentJson(*character));
+        }
+
+        if (characterController) {
+            componentBlocks.push_back(WriteCharacterControllerJson(*characterController));
         }
 
         if (selection) {
