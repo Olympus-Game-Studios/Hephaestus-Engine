@@ -54,6 +54,7 @@ struct GLFWwindow;
 namespace Physics {
 class JoltPhysicsEngine;
 class JoltPhysicsSystem;
+class CharacterControllerSystem;
 }
 
 namespace Hephaestus {
@@ -431,6 +432,7 @@ private:
     std::unique_ptr<ScriptEngine>    m_cppScriptEngine;
     std::unique_ptr<Physics::JoltPhysicsEngine> m_joltPhysicsEngine;
     std::unique_ptr<Physics::JoltPhysicsSystem> m_joltPhysicsSystem;
+    std::unique_ptr<Physics::CharacterControllerSystem> m_characterControllers;
     bool m_physicsInitialized = false;
     std::uint64_t m_runtimeUIUpdateSerial = 0;
     GLFWwindow* m_glfwWindow = nullptr;   // borrowed from main if GLFW path exists

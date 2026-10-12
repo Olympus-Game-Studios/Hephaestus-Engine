@@ -43,6 +43,7 @@ ComponentMetadataRegistry::ComponentMetadataRegistry()
     m_Descriptors.push_back(Component("AudioSource", "Audio Source", "Audio"));
     m_Descriptors.push_back(Component("Camera", "Camera", "Rendering"));
     m_Descriptors.push_back(Component("Character", "Character", "Animation"));
+    m_Descriptors.push_back(Component("CharacterController", "Character Controller", "Physics"));
     m_Descriptors.push_back(Component("Light", "Light", "Rendering"));
     m_Descriptors.push_back(Component("LuaScript", "Lua Script", "Scripting"));
     m_Descriptors.push_back(Component("Material", "Material", "Rendering"));

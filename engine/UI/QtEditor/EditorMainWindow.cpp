@@ -28,6 +28,7 @@
 #include "CameraInspector.h"
 #include "AudioSourceInspector.h"
 #include "CharacterInspector.h"
+#include "CharacterControllerInspector.h"
 #include "AddComponentPopup.h"
 #include "PropertyEditors.h"
 #include "AssetReferenceEditor.h"
@@ -7104,6 +7105,14 @@ void EditorMainWindow::registerComponentInspectors()
         },
         [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
             return new CharacterInspector(ctx, e, parent);
+        });
+
+    reg.Register("CharacterController", 16,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<CharacterControllerComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new CharacterControllerInspector(ctx, e, parent);
         });
 
     // ── MeshCollider (order 20) ─────────────────────────────────────────

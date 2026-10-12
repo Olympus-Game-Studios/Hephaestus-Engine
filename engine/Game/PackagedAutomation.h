@@ -20,6 +20,7 @@ class Scene;
 namespace Physics {
 class JoltPhysicsEngine;
 class JoltPhysicsSystem;
+class CharacterControllerSystem;
 }
 
 namespace Hephaestus {
@@ -48,6 +49,7 @@ public:
     PackagedAutomation(Scene& scene, InputSystem& input,
                        HephaestusUI::UISystem& ui, HephaestusUI::UIContext& uiContext,
                        Physics::JoltPhysicsEngine& physicsEngine, Physics::JoltPhysicsSystem& physics,
+                       Physics::CharacterControllerSystem& characterControllers,
                        Hephaestus::EngineFrameRenderer& frameRenderer, std::string rootDir,
                        std::string projectName);
     ~PackagedAutomation();

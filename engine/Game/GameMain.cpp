@@ -64,6 +64,7 @@
 #include "../Physics/PhysicsLayerConfig.h"
 #include "../Physics/JoltPhysicsSystem.h"
 #include "../Physics/CharacterMotor.h"
+#include "../Physics/CharacterControllerSystem.h"
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
@@ -776,6 +777,8 @@ int main(int argc, char* argv[]) {
     }
     
     Physics::JoltPhysicsSystem physicsSystem(joltPhysicsEngine);
+    Physics::CharacterControllerSystem characterControllers(joltPhysicsEngine, physicsSystem);
+    physicsSystem.SetCharacterController(&characterControllers);
     physicsSystem.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
     
     Bootstrap::EndStage(InitStage::Physics, true);
@@ -922,22 +925,94 @@ int main(int argc, char* argv[]) {
         return true;
     };
 
-    physicsBinding.isGrounded = [&joltPhysicsEngine, &physicsSystem](uint32_t entityId) -> bool {
-        return Physics::CharacterMotor::IsGrounded(
-            joltPhysicsEngine, physicsSystem, static_cast<entt::entity>(entityId));
+    physicsBinding.isGrounded = [&joltPhysicsEngine, &physicsSystem, &characterControllers](uint32_t entityId) -> bool {
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        Physics::CharacterControllerState state;
+        if (characterControllers.GetState(entity, state)) {
+            return state.grounded;
+        }
+        return Physics::CharacterMotor::IsGrounded(joltPhysicsEngine, physicsSystem, entity);
     };
 
-    physicsBinding.move = [&joltPhysicsEngine, &physicsSystem](uint32_t entityId, float wishX, float wishZ, float speed) -> bool {
-        return Physics::CharacterMotor::Move(
-            joltPhysicsEngine, physicsSystem, static_cast<entt::entity>(entityId), wishX, wishZ, speed);
+    physicsBinding.move = [&joltPhysicsEngine, &physicsSystem, &characterControllers](uint32_t entityId, float wishX, float wishZ, float speed) -> bool {
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (characterControllers.HasRuntime(entity)) {
+            return characterControllers.SetLegacyMove(entity, wishX, wishZ, speed);
+        }
+        return Physics::CharacterMotor::Move(joltPhysicsEngine, physicsSystem, entity, wishX, wishZ, speed);
     };
 
-    physicsBinding.jump = [&joltPhysicsEngine, &physicsSystem](uint32_t entityId, float impulse) -> bool {
-        return Physics::CharacterMotor::Jump(
-            joltPhysicsEngine, physicsSystem, static_cast<entt::entity>(entityId), impulse);
+    physicsBinding.jump = [&joltPhysicsEngine, &physicsSystem, &characterControllers](uint32_t entityId, float impulse) -> bool {
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (characterControllers.HasRuntime(entity)) {
+            characterControllers.JumpWithSpeed(entity, impulse);
+            return true;
+        }
+        return Physics::CharacterMotor::Jump(joltPhysicsEngine, physicsSystem, entity, impulse);
     };
 
     luaEngine.SetPhysicsBinding(std::move(physicsBinding));
+
+    CharacterBinding characterBinding;
+    characterBinding.move = [&characterControllers](uint32_t entityId, float worldX, float worldZ) {
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (!characterControllers.HasRuntime(entity)) return false;
+        characterControllers.SetMoveInput(entity, worldX, worldZ);
+        return true;
+    };
+    characterBinding.jump = [&characterControllers](uint32_t entityId) {
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (!characterControllers.HasRuntime(entity)) return false;
+        characterControllers.Jump(entity);
+        return true;
+    };
+    characterBinding.setCrouched = [&characterControllers](uint32_t entityId, bool crouched) {
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (!characterControllers.HasRuntime(entity)) return false;
+        characterControllers.SetCrouched(entity, crouched);
+        return true;
+    };
+    characterBinding.isGrounded = [&characterControllers](uint32_t entityId) {
+        Physics::CharacterControllerState state;
+        return characterControllers.GetState(static_cast<entt::entity>(entityId), state) && state.grounded;
+    };
+    characterBinding.getVelocity = [&characterControllers](uint32_t entityId, Vec3& out) {
+        Physics::CharacterControllerState state;
+        if (!characterControllers.GetState(static_cast<entt::entity>(entityId), state)) return false;
+        out = state.velocity;
+        return true;
+    };
+    characterBinding.getGroundNormal = [&characterControllers](uint32_t entityId, Vec3& out) {
+        Physics::CharacterControllerState state;
+        if (!characterControllers.GetState(static_cast<entt::entity>(entityId), state)) return false;
+        out = state.groundNormal;
+        return true;
+    };
+    characterBinding.getGroundVelocity = [&characterControllers](uint32_t entityId, Vec3& out) {
+        Physics::CharacterControllerState state;
+        if (!characterControllers.GetState(static_cast<entt::entity>(entityId), state)) return false;
+        out = state.groundVelocity;
+        return true;
+    };
+    characterBinding.getGroundState = [&characterControllers](uint32_t entityId, std::string& out) {
+        Physics::CharacterControllerState state;
+        if (!characterControllers.GetState(static_cast<entt::entity>(entityId), state)) return false;
+        out = Physics::CharacterGroundStateName(state.groundState);
+        return true;
+    };
+    characterBinding.teleport = [&characterControllers](uint32_t entityId, float x, float y, float z) {
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (!characterControllers.HasRuntime(entity)) return false;
+        characterControllers.Teleport(entity, Vec3(x, y, z));
+        return true;
+    };
+    characterBinding.setFacingYaw = [&characterControllers](uint32_t entityId, float radians) {
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (!characterControllers.HasRuntime(entity)) return false;
+        characterControllers.SetFacingYaw(entity, radians);
+        return true;
+    };
+    luaEngine.SetCharacterBinding(std::move(characterBinding));
     
     Bootstrap::EndStage(InitStage::Scripting, true);
 #endif
@@ -1542,8 +1617,8 @@ int main(int argc, char* argv[]) {
     if (g_Config.automationEnabled) {
         const fs::path captureRoot = !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot;
         packagedAutomation = std::make_unique<Hephaestus::Runtime::PackagedAutomation>(
-            scene, inputSystem, uiSystem, uiContext, joltPhysicsEngine, physicsSystem, frameRenderer,
-            captureRoot.generic_string(), g_Config.projectName);
+            scene, inputSystem, uiSystem, uiContext, joltPhysicsEngine, physicsSystem, characterControllers,
+            frameRenderer, captureRoot.generic_string(), g_Config.projectName);
         if (!packagedAutomation->Start(g_Config.automationPort)) {
             HP_LOG(Warning, "Runtime automation was enabled but the MCP endpoint failed to start");
         }

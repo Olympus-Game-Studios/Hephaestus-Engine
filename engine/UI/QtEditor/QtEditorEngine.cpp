@@ -34,6 +34,7 @@
 #include "../../Physics/PhysicsLayerConfig.h"
 #include "../../Physics/JoltPhysicsSystem.h"
 #include "../../Physics/CharacterMotor.h"
+#include "../../Physics/CharacterControllerSystem.h"
 #include "../../Scripting/LuaScriptEngine.h"
 #include "../../Scripting/ScriptEngine.h"
 #include "../../Scripting/LuaScriptComponent.h"
@@ -2911,6 +2912,10 @@ void QtEditorEngine::StartPlayMode()
         try {
             m_joltPhysicsEngine->Initialize();
             m_joltPhysicsSystem = std::make_unique<Physics::JoltPhysicsSystem>(*m_joltPhysicsEngine);
+            m_characterControllers = std::make_unique<Physics::CharacterControllerSystem>(
+                *m_joltPhysicsEngine, *m_joltPhysicsSystem);
+            m_joltPhysicsSystem->SetCharacterController(m_characterControllers.get());
+            m_editorContext.SetCharacterControllers(m_characterControllers.get());
             m_physicsInitialized = true;
             std::cout << "[QtEditorEngine] Physics engine initialized\n";
         } catch (const std::exception& e) {
@@ -3163,28 +3168,107 @@ void QtEditorEngine::StartPlayMode()
         if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine) {
             return false;
         }
-        return Physics::CharacterMotor::IsGrounded(
-            *m_joltPhysicsEngine, *m_joltPhysicsSystem, static_cast<entt::entity>(entityId));
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        Physics::CharacterControllerState state;
+        if (m_characterControllers && m_characterControllers->GetState(entity, state)) {
+            return state.grounded;
+        }
+        return Physics::CharacterMotor::IsGrounded(*m_joltPhysicsEngine, *m_joltPhysicsSystem, entity);
     };
 
     physicsBinding.move = [this](uint32_t entityId, float wishX, float wishZ, float speed) -> bool {
         if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine) {
             return false;
         }
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (m_characterControllers && m_characterControllers->HasRuntime(entity)) {
+            return m_characterControllers->SetLegacyMove(entity, wishX, wishZ, speed);
+        }
         return Physics::CharacterMotor::Move(
-            *m_joltPhysicsEngine, *m_joltPhysicsSystem, static_cast<entt::entity>(entityId),
-            wishX, wishZ, speed);
+            *m_joltPhysicsEngine, *m_joltPhysicsSystem, entity, wishX, wishZ, speed);
     };
 
     physicsBinding.jump = [this](uint32_t entityId, float impulse) -> bool {
         if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine) {
             return false;
         }
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (m_characterControllers && m_characterControllers->HasRuntime(entity)) {
+            m_characterControllers->JumpWithSpeed(entity, impulse);
+            return true;
+        }
         return Physics::CharacterMotor::Jump(
-            *m_joltPhysicsEngine, *m_joltPhysicsSystem, static_cast<entt::entity>(entityId), impulse);
+            *m_joltPhysicsEngine, *m_joltPhysicsSystem, entity, impulse);
     };
 
     m_luaScriptEngine->SetPhysicsBinding(std::move(physicsBinding));
+
+    CharacterBinding characterBinding;
+    characterBinding.move = [this](uint32_t entityId, float worldX, float worldZ) {
+        if (!m_characterControllers) return false;
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (!m_characterControllers->HasRuntime(entity)) return false;
+        m_characterControllers->SetMoveInput(entity, worldX, worldZ);
+        return true;
+    };
+    characterBinding.jump = [this](uint32_t entityId) {
+        if (!m_characterControllers) return false;
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (!m_characterControllers->HasRuntime(entity)) return false;
+        m_characterControllers->Jump(entity);
+        return true;
+    };
+    characterBinding.setCrouched = [this](uint32_t entityId, bool crouched) {
+        if (!m_characterControllers) return false;
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (!m_characterControllers->HasRuntime(entity)) return false;
+        m_characterControllers->SetCrouched(entity, crouched);
+        return true;
+    };
+    characterBinding.isGrounded = [this](uint32_t entityId) {
+        Physics::CharacterControllerState state;
+        return m_characterControllers && m_characterControllers->GetState(static_cast<entt::entity>(entityId), state)
+            && state.grounded;
+    };
+    characterBinding.getVelocity = [this](uint32_t entityId, Vec3& out) {
+        Physics::CharacterControllerState state;
+        if (!m_characterControllers || !m_characterControllers->GetState(static_cast<entt::entity>(entityId), state)) return false;
+        out = state.velocity;
+        return true;
+    };
+    characterBinding.getGroundNormal = [this](uint32_t entityId, Vec3& out) {
+        Physics::CharacterControllerState state;
+        if (!m_characterControllers || !m_characterControllers->GetState(static_cast<entt::entity>(entityId), state)) return false;
+        out = state.groundNormal;
+        return true;
+    };
+    characterBinding.getGroundVelocity = [this](uint32_t entityId, Vec3& out) {
+        Physics::CharacterControllerState state;
+        if (!m_characterControllers || !m_characterControllers->GetState(static_cast<entt::entity>(entityId), state)) return false;
+        out = state.groundVelocity;
+        return true;
+    };
+    characterBinding.getGroundState = [this](uint32_t entityId, std::string& out) {
+        Physics::CharacterControllerState state;
+        if (!m_characterControllers || !m_characterControllers->GetState(static_cast<entt::entity>(entityId), state)) return false;
+        out = Physics::CharacterGroundStateName(state.groundState);
+        return true;
+    };
+    characterBinding.teleport = [this](uint32_t entityId, float x, float y, float z) {
+        if (!m_characterControllers) return false;
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (!m_characterControllers->HasRuntime(entity)) return false;
+        m_characterControllers->Teleport(entity, Vec3(x, y, z));
+        return true;
+    };
+    characterBinding.setFacingYaw = [this](uint32_t entityId, float radians) {
+        if (!m_characterControllers) return false;
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (!m_characterControllers->HasRuntime(entity)) return false;
+        m_characterControllers->SetFacingYaw(entity, radians);
+        return true;
+    };
+    m_luaScriptEngine->SetCharacterBinding(std::move(characterBinding));
 
     // ── Initialize C++ script engine ───────────────────────────────────────
     if (!m_cppScriptEngine) {
@@ -3554,7 +3638,8 @@ bool QtEditorEngine::GetCharacterState(entt::entity entity,
 {
     return Hephaestus::Automation::ReadCharacterSnapshot(
         m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
-        m_editorContext.GetActiveScene(), entity, pose, grounded, outError);
+        m_editorContext.GetActiveScene(), entity, pose, grounded, outError,
+        m_characterControllers.get());
 }
 
 } // namespace QtEditor

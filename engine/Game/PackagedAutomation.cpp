@@ -14,6 +14,7 @@
 #include "../Automation/UIAutomation.h"
 #include "../Automation/ViewportAutomation.h"
 #include "../Gfx/EngineFrameRenderer.h"
+#include "../Physics/CharacterControllerSystem.h"
 #include "../Physics/JoltPhysicsEngine.h"
 #include "../Physics/JoltPhysicsSystem.h"
 #include "../Input/InputSystem.h"
@@ -32,11 +33,11 @@ class PackagedAutomation::RuntimeBackend final : public Automation::AutomationBa
 public:
     RuntimeBackend(Scene& scene, InputSystem& input, HephaestusUI::UISystem& ui,
                    HephaestusUI::UIContext& uiContext, Physics::JoltPhysicsEngine& physicsEngine,
-                   Physics::JoltPhysicsSystem& physics, Hephaestus::EngineFrameRenderer& frameRenderer,
-                   std::string rootDir, std::string projectName)
+                   Physics::JoltPhysicsSystem& physics, Physics::CharacterControllerSystem& characterControllers,
+                   Hephaestus::EngineFrameRenderer& frameRenderer, std::string rootDir, std::string projectName)
         : m_scene(scene), m_input(input), m_ui(ui), m_uiContext(uiContext),
-          m_physicsEngine(physicsEngine), m_physics(physics), m_frameRenderer(frameRenderer),
-          m_rootDir(std::move(rootDir)), m_projectName(std::move(projectName)) {}
+          m_physicsEngine(physicsEngine), m_physics(physics), m_characterControllers(characterControllers),
+          m_frameRenderer(frameRenderer), m_rootDir(std::move(rootDir)), m_projectName(std::move(projectName)) {}
 
     Automation::HostMask Host() const noexcept override { return Automation::HostMask::Runtime; }
     Automation::SceneAccess ActiveScene() noexcept override { return {&m_scene}; }
@@ -116,7 +117,7 @@ public:
                            bool& grounded, std::string& outError) override
     {
         return Automation::ReadCharacterSnapshot(true, &m_physicsEngine, &m_physics, &m_scene, entity, pose,
-                                                 grounded, outError);
+                                                 grounded, outError, &m_characterControllers);
     }
 
     bool RequestViewportCapture(std::string& outError) override
@@ -144,6 +145,7 @@ private:
     HephaestusUI::UIContext& m_uiContext;
     Physics::JoltPhysicsEngine& m_physicsEngine;
     Physics::JoltPhysicsSystem& m_physics;
+    Physics::CharacterControllerSystem& m_characterControllers;
     Hephaestus::EngineFrameRenderer& m_frameRenderer;
     std::string m_rootDir;
     std::string m_projectName;
@@ -154,10 +156,12 @@ PackagedAutomation::PackagedAutomation(Scene& scene, InputSystem& input,
                                        HephaestusUI::UISystem& ui, HephaestusUI::UIContext& uiContext,
                                        Physics::JoltPhysicsEngine& physicsEngine,
                                        Physics::JoltPhysicsSystem& physics,
+                                       Physics::CharacterControllerSystem& characterControllers,
                                        Hephaestus::EngineFrameRenderer& frameRenderer, std::string rootDir,
                                        std::string projectName)
     : m_backend(std::make_unique<RuntimeBackend>(scene, input, ui, uiContext, physicsEngine, physics,
-                                                 frameRenderer, std::move(rootDir), std::move(projectName))) {}
+                                                 characterControllers, frameRenderer, std::move(rootDir),
+                                                 std::move(projectName))) {}
 
 PackagedAutomation::~PackagedAutomation() { Stop(); }
 

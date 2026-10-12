@@ -87,6 +87,7 @@ const std::vector<InspectorComponentDesc>& InspectorAddableComponents()
         { "MeshCollider", "Mesh Collider", "Physics", false },
         { "AudioSource", "Audio Source", "Audio", false },
         { "Character", "Character", "Animation", false },
+        { "CharacterController", "Character Controller", "Physics", false },
         { "LuaScript", "Lua Script", "Scripting", false },
         { "ScriptComponent", "Script Component", "Scripting", false },
     };
@@ -151,6 +152,9 @@ bool InspectorEntityHasComponent(const entt::registry& reg, entt::entity entity,
     if (type == "Character") {
         return reg.all_of<CharacterComponent>(entity);
     }
+    if (type == "CharacterController") {
+        return reg.all_of<CharacterControllerComponent>(entity);
+    }
     if (type == "Environment") {
         return reg.all_of<EnvironmentComponent>(entity);
     }
@@ -167,7 +171,8 @@ std::vector<std::string> InspectorComponentsOn(const entt::registry& reg, entt::
 {
     static const char* kInspectable[] = {
         "MeshRenderer", "MeshCollider", "PhysicsShape", "RigidBody",
-        "Light", "Camera", "LuaScript", "ScriptComponent", "AudioSource", "Character", "Environment"
+        "Light", "Camera", "LuaScript", "ScriptComponent", "AudioSource", "Character",
+        "CharacterController", "Environment"
     };
     std::vector<std::string> out;
     for (const char* type : kInspectable) {
