@@ -1,4 +1,5 @@
 #include "JoltPhysicsSystem.h"
+#include "CharacterControllerSystem.h"
 #include "PhysicsStepClock.h"
 #include "../Core/EngineLog.h"
 #include "../Scene/Components.h"
@@ -270,6 +271,8 @@ std::uint32_t EntityKey(entt::entity entity)
 
 struct PhysicsContactListener : public JPH::ContactListener {
     JPH::PhysicsSystem* system = nullptr;
+    const std::unordered_set<std::uint32_t>* characterProxies = nullptr;
+    bool neutralizeProxyDynamic = false;
     std::mutex mutex;
     std::array<PhysicsContactRecord, kPhysicsContactBufferCapacity> records{};
     int count = 0;
@@ -340,15 +343,40 @@ struct PhysicsContactListener : public JPH::ContactListener {
         Push(record);
     }
 
-    void OnContactAdded(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold,
-                        JPH::ContactSettings&) override
+    void NeutralizeProxyDynamic(const JPH::Body& body1, const JPH::Body& body2, JPH::ContactSettings& settings) const
     {
+        if (!neutralizeProxyDynamic || !characterProxies || body1.IsSensor() || body2.IsSensor()) {
+            return;
+        }
+        const bool proxy1 = characterProxies->contains(BodyKey(body1.GetID()));
+        const bool proxy2 = characterProxies->contains(BodyKey(body2.GetID()));
+        if (proxy1 == proxy2) {
+            return;
+        }
+        const JPH::Body& other = proxy1 ? body2 : body1;
+        if (!other.IsDynamic()) {
+            return;
+        }
+        if (proxy1) {
+            settings.mInvMassScale2 = 0.0f;
+            settings.mInvInertiaScale2 = 0.0f;
+        } else {
+            settings.mInvMassScale1 = 0.0f;
+            settings.mInvInertiaScale1 = 0.0f;
+        }
+    }
+
+    void OnContactAdded(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold,
+                        JPH::ContactSettings& settings) override
+    {
+        NeutralizeProxyDynamic(body1, body2, settings);
         AppendManifold(PhysicsContactKind::Added, body1, body2, manifold);
     }
 
     void OnContactPersisted(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold,
-                            JPH::ContactSettings&) override
+                            JPH::ContactSettings& settings) override
     {
+        NeutralizeProxyDynamic(body1, body2, settings);
         AppendManifold(PhysicsContactKind::Persisted, body1, body2, manifold);
     }
 
@@ -371,7 +399,49 @@ JoltPhysicsSystem::JoltPhysicsSystem(JoltPhysicsEngine& physicsEngine)
 {
 }
 
+void JoltPhysicsSystem::SetCharacterController(CharacterControllerSystem* controller)
+{
+    m_CharacterController = controller;
+}
+
+void JoltPhysicsSystem::SetNeutralizeProxyDynamicResponse(bool neutralize)
+{
+    m_NeutralizeProxyDynamicResponse = neutralize;
+    if (m_ContactListener) {
+        m_ContactListener->neutralizeProxyDynamic = neutralize;
+    }
+}
+
+void JoltPhysicsSystem::RegisterCharacterProxy(entt::entity entity, JPH::BodyID bodyId)
+{
+    if (bodyId.IsInvalid()) {
+        return;
+    }
+    const std::uint32_t key = BodyKey(bodyId);
+    m_CharacterProxies.insert(key);
+    m_BodyToEntityMap[key] = entity;
+}
+
+void JoltPhysicsSystem::UnregisterCharacterProxy(JPH::BodyID bodyId)
+{
+    if (bodyId.IsInvalid()) {
+        return;
+    }
+    const std::uint32_t key = BodyKey(bodyId);
+    m_CharacterProxies.erase(key);
+    auto found = m_BodyToEntityMap.find(key);
+    if (found != m_BodyToEntityMap.end()) {
+        m_BodyToEntityMap.erase(found);
+    }
+}
+
+bool JoltPhysicsSystem::IsCharacterProxy(JPH::BodyID bodyId) const
+{
+    return !bodyId.IsInvalid() && m_CharacterProxies.contains(BodyKey(bodyId));
+}
+
 JoltPhysicsSystem::~JoltPhysicsSystem() {
+    m_CharacterController = nullptr;
     DetachContactListener();
     // Clean up all bodies
     std::vector<JPH::BodyID> bodies;
@@ -404,6 +474,8 @@ void JoltPhysicsSystem::EnsureContactListener()
         return;
     }
     m_ContactListener->system = system;
+    m_ContactListener->characterProxies = &m_CharacterProxies;
+    m_ContactListener->neutralizeProxyDynamic = m_NeutralizeProxyDynamicResponse;
     if (system->GetContactListener() != m_ContactListener.get()) {
         system->SetContactListener(m_ContactListener.get());
     }
@@ -490,6 +562,9 @@ void JoltPhysicsSystem::PrepareSceneBodies(Scene& scene) {
     if (!m_Enabled || !m_PhysicsEngine.GetPhysicsSystem()) {
         return;
     }
+    if (m_CharacterController) {
+        m_CharacterController->SyncLifecycle(scene);
+    }
     UpdateEntityBodies(scene);
 }
 
@@ -534,7 +609,10 @@ void JoltPhysicsSystem::Update(Scene& scene, float deltaTime) {
                 bodyInterface.MoveKinematic(slice.bodyId, position, slice.startRot.SLERP(slice.endRot, alpha), kPhysicsFixedDt);
             }
         }
-        if (m_EntityToBodyMap.empty()) {
+        if (m_CharacterController) {
+            m_CharacterController->FixedStep(scene, kPhysicsFixedDt);
+        }
+        if (m_EntityToBodyMap.empty() && !(m_CharacterController && m_CharacterController->ActiveCount() > 0)) {
             return;
         }
         m_PhysicsEngine.Update(kPhysicsFixedDt);
@@ -1092,6 +1170,12 @@ bool JoltPhysicsSystem::Raycast(entt::entity ignoreEntity, const Vec3& origin, c
     JPH::BodyID ignoreBody;
     if (ignoreEntity != entt::null) {
         ignoreBody = GetBodyID(ignoreEntity);
+        if (ignoreBody.IsInvalid() && m_CharacterController) {
+            const std::uint32_t proxyKey = m_CharacterController->ProxyBodyKey(ignoreEntity);
+            if (proxyKey != 0xFFFFFFFFu) {
+                ignoreBody = JPH::BodyID(proxyKey);
+            }
+        }
     }
 
     class IgnoreSensorsFilter final : public JPH::BodyFilter {
@@ -1231,6 +1315,11 @@ void JoltPhysicsSystem::ObserveBodies(std::vector<BodyObservation>& out) const
 }
 
 void JoltPhysicsSystem::ClearAllBodies() {
+    if (m_CharacterController) {
+        m_CharacterController->Clear();
+    }
+    m_CharacterProxies.clear();
+
     // Destroy all bodies in the physics engine
     std::vector<JPH::BodyID> bodiesToDestroy;
     
@@ -1377,6 +1466,21 @@ void JoltPhysicsSystem::UpdateEntityBodies(Scene& scene) {
         entt::entity entity = handle;
         Entity sceneEntity(entity, &scene);
         auto& rigidBody = sceneEntity.GetComponent<RigidBodyComponent>();
+
+        if (sceneEntity.HasComponent<CharacterControllerComponent>()) {
+            auto existing = m_EntityToBodyMap.find(entity);
+            if (existing != m_EntityToBodyMap.end()) {
+                if (m_ControllerBodySkipLogged.insert(entity).second) {
+                    Hephaestus::EngineLog::Write(
+                        Hephaestus::EngineLogLevel::Warning,
+                        "Rigid body skipped because a character controller is present",
+                        "Character");
+                }
+                DestroyRigidBody(existing->second);
+            }
+            rigidBody.InvalidateBodyHandle();
+            continue;
+        }
 
         auto it = m_EntityToBodyMap.find(entity);
         if (it == m_EntityToBodyMap.end()) {

@@ -60,10 +60,24 @@ struct BodyObservation {
  * Updates and synchronizes physics bodies with entity transforms and components.
  * Handles creation, destruction, and synchronization of physics bodies.
  */
+class CharacterControllerSystem;
+
 class JoltPhysicsSystem {
 public:
     explicit JoltPhysicsSystem(JoltPhysicsEngine& physicsEngine);
     ~JoltPhysicsSystem();
+
+    // Non-owning. The controller updates inside each fixed substep and owns its proxies.
+    void SetCharacterController(CharacterControllerSystem* controller);
+    CharacterControllerSystem* GetCharacterController() const { return m_CharacterController; }
+    void RegisterCharacterProxy(entt::entity entity, JPH::BodyID bodyId);
+    void UnregisterCharacterProxy(JPH::BodyID bodyId);
+    bool IsCharacterProxy(JPH::BodyID bodyId) const;
+
+    // When true, a character proxy contact does not let the solver push a dynamic body.
+    // CharacterVirtual::HandleContact remains the push. Sensors are unchanged.
+    void SetNeutralizeProxyDynamicResponse(bool neutralize);
+    bool NeutralizeProxyDynamicResponse() const { return m_NeutralizeProxyDynamicResponse; }
 
     // Creates and removes bodies without stepping the simulation.
     void PrepareSceneBodies(Scene& scene);
@@ -154,6 +168,10 @@ private:
     std::function<void(const PhysicsContactEvent&)> m_ContactSink;
     std::vector<PhysicsContactEvent> m_FrameContactEvents;
     std::unique_ptr<PhysicsContactListener> m_ContactListener;
+    CharacterControllerSystem* m_CharacterController = nullptr;
+    std::unordered_set<std::uint32_t> m_CharacterProxies;
+    std::unordered_set<entt::entity> m_ControllerBodySkipLogged;
+    bool m_NeutralizeProxyDynamicResponse = false;
 
     void EnsureContactListener();
     void DetachContactListener();

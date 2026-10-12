@@ -331,6 +331,8 @@ target_include_directories(HephaestusPluginCore PUBLIC engine extern)
     engine/Physics/JoltPhysicsEngine.cpp
     engine/Physics/JoltPhysicsSystem.cpp
     engine/Physics/CharacterMotor.cpp
+    engine/Physics/CharacterControllerMath.cpp
+    engine/Physics/CharacterControllerSystem.cpp
     engine/Scene/Scene.cpp
     engine/Scene/SceneAuthoring.cpp
     engine/Scene/Entity.cpp
@@ -494,6 +496,8 @@ add_executable(HephaestusEngine
     engine/Physics/JoltPhysicsEngine.cpp
     engine/Physics/JoltPhysicsSystem.cpp
     engine/Physics/CharacterMotor.cpp
+    engine/Physics/CharacterControllerMath.cpp
+    engine/Physics/CharacterControllerSystem.cpp
     engine/Scene/Scene.cpp
     engine/Scene/SceneAuthoring.cpp
     engine/Scene/Entity.cpp
@@ -695,6 +699,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/LuaScriptInspector.h
             engine/UI/QtEditor/CharacterInspector.cpp
             engine/UI/QtEditor/CharacterInspector.h
+            engine/UI/QtEditor/CharacterControllerInspector.cpp
+            engine/UI/QtEditor/CharacterControllerInspector.h
             engine/UI/QtEditor/CharacterImportDialog.cpp
             engine/UI/QtEditor/CharacterImportDialog.h
             engine/UI/QtEditor/PhysicsInspectors.cpp
@@ -1530,6 +1536,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     engine/Physics/JoltPhysicsEngine.cpp
         engine/Physics/JoltPhysicsSystem.cpp
         engine/Physics/CharacterMotor.cpp
+    engine/Physics/CharacterControllerMath.cpp
+    engine/Physics/CharacterControllerSystem.cpp
         engine/Scene/Json.cpp
         engine/Scene/Entity.cpp
         engine/Scene/Scene.cpp
@@ -1563,6 +1571,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     engine/Physics/JoltPhysicsEngine.cpp
         engine/Physics/JoltPhysicsSystem.cpp
         engine/Physics/CharacterMotor.cpp
+    engine/Physics/CharacterControllerMath.cpp
+    engine/Physics/CharacterControllerSystem.cpp
         engine/Scene/Json.cpp
         engine/Scene/Entity.cpp
         engine/Scene/Scene.cpp
@@ -1608,6 +1618,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         engine/Physics/JoltPhysicsEngine.cpp
         engine/Physics/JoltPhysicsSystem.cpp
         engine/Physics/CharacterMotor.cpp
+    engine/Physics/CharacterControllerMath.cpp
+    engine/Physics/CharacterControllerSystem.cpp
         engine/Scene/Json.cpp
         engine/Scene/Entity.cpp
         engine/Scene/Scene.cpp
@@ -1634,6 +1646,64 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         "${CMAKE_BINARY_DIR}/generated"
     )
     add_test(NAME JoltPhysicsIntegration COMMAND JoltPhysicsIntegrationTests)
+
+    add_executable(CharacterControllerMathTests
+        engine/Tests/CharacterControllerMathTests.cpp
+        engine/Physics/CharacterControllerMath.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Scripting/ScriptBase.cpp
+        engine/Core/EngineLog.cpp
+    )
+    target_include_directories(CharacterControllerMathTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+        "${CMAKE_BINARY_DIR}/generated"
+    )
+    add_test(NAME CharacterControllerMath COMMAND CharacterControllerMathTests)
+
+    add_executable(CharacterControllerJoltTests
+        engine/Tests/CharacterControllerJoltTests.cpp
+        engine/Physics/PhysicsLayerConfig.cpp
+        engine/Physics/JoltPhysicsEngine.cpp
+        engine/Physics/JoltPhysicsSystem.cpp
+        engine/Physics/CharacterMotor.cpp
+        engine/Physics/CharacterControllerMath.cpp
+        engine/Physics/CharacterControllerSystem.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Assets/ModelImporter.cpp
+        engine/Assets/FbxDocument.cpp
+        engine/Assets/FbxStaticImporter.cpp
+        engine/Scripting/ScriptBase.cpp
+        engine/Core/EngineLog.cpp
+    )
+    target_link_libraries(CharacterControllerJoltTests PRIVATE Jolt ufbx Vulkan::Vulkan)
+    target_include_directories(CharacterControllerJoltTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+        extern/JoltPhysics
+        extern/JoltPhysics/Build
+        extern/VMA
+        "${CMAKE_BINARY_DIR}/generated"
+    )
+    add_test(NAME CharacterControllerJolt COMMAND CharacterControllerJoltTests)
 
     add_executable(AutomationRuntimeCaptureTests
         engine/Tests/AutomationRuntimeCaptureTests.cpp
@@ -1788,6 +1858,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     if(LUA_FOUND)
         add_executable(CharacterLuaTests
             engine/Tests/CharacterLuaTests.cpp
+            engine/Core/EngineLog.cpp
             engine/Scripting/LuaScriptEngine.cpp
             engine/Scripting/LuaExposeScanner.cpp
             engine/Scripting/LuaScriptVariableReconciler.cpp
@@ -1832,6 +1903,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
             engine
             extern
             extern/entt/single_include
+            "${CMAKE_BINARY_DIR}/generated"
             ${LUA_INCLUDE_DIR}
         )
         target_compile_definitions(CharacterLuaTests PRIVATE LUA_AVAILABLE=1)
@@ -1887,6 +1959,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
             engine/Physics/JoltPhysicsEngine.cpp
             engine/Physics/JoltPhysicsSystem.cpp
             engine/Physics/CharacterMotor.cpp
+    engine/Physics/CharacterControllerMath.cpp
+    engine/Physics/CharacterControllerSystem.cpp
             engine/UI/HephaestusUI/HUIAsset.cpp
             engine/UI/HephaestusUI/UIButton.cpp
             engine/UI/HephaestusUI/UICanvas.cpp
