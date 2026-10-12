@@ -1,6 +1,7 @@
 #include "Automation/AutomationService.h"
 #include "Automation/PhysicsAutomation.h"
 #include "Automation/PhysicsHostAdapter.h"
+#include "Physics/CharacterControllerSystem.h"
 #include "Physics/CharacterMotor.h"
 #include "Physics/JoltPhysicsEngine.h"
 #include "Physics/JoltPhysicsSystem.h"
@@ -380,6 +381,7 @@ int main()
     const auto liveState = joltCall("physics.get_character_state", {{"entity", liveDynamic}});
     check(liveBody.Ok() && liveBody.value["motionType"] == "dynamic" && liveBody.value["sensor"] == false &&
               liveState.Ok() && liveState.value["grounded"] == false &&
+              !liveState.value.contains("groundState") &&
               Near(liveState.value["linearVelocity"][2].get<float>(), dynamicSnapshot.linearVelocity.z),
           "Tool body and character state match the read snapshot");
     const auto liveHit = joltCall("physics.raycast",
@@ -409,6 +411,55 @@ int main()
     check(!A::ReadCharacterSnapshot(true, &engine, &physics, &world, dynamicId, discarded, unusedGrounded, staleError) &&
               staleError == "no_body" && unusedGrounded == true,
           "Character state does not clear grounded when the body is already gone");
+
+    {
+        Physics::JoltPhysicsEngine controllerEngine;
+        controllerEngine.Initialize();
+        controllerEngine.BeginPlayWorld(Physics::PhysicsLayerConfig::Seed());
+        Scene controllerWorld("ControllerState");
+        Physics::JoltPhysicsSystem controllerPhysics(controllerEngine);
+        Physics::CharacterControllerSystem controllerCharacters(controllerEngine, controllerPhysics);
+        controllerPhysics.SetCharacterController(&controllerCharacters);
+        Entity floor = AddBox(controllerWorld, "Floor", Vec3(0.0f, -0.5f, 0.0f), Vec3(4.0f, 0.5f, 4.0f), true, false);
+        (void)floor;
+        Entity walker = controllerWorld.CreateEntity("Walker");
+        walker.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.05f, 0.0f);
+        walker.AddComponent<CharacterControllerComponent>();
+        const entt::entity walkerId = static_cast<entt::entity>(walker);
+        for (int frame = 0; frame < 40; ++frame) {
+            controllerPhysics.Update(controllerWorld, 1.0f / 60.0f);
+        }
+        class ControllerBackend final : public A::AutomationBackend {
+        public:
+            Scene& world;
+            Physics::JoltPhysicsEngine& engine;
+            Physics::JoltPhysicsSystem& physics;
+            Physics::CharacterControllerSystem& controllers;
+            ControllerBackend(Scene& world, Physics::JoltPhysicsEngine& engine, Physics::JoltPhysicsSystem& physics,
+                              Physics::CharacterControllerSystem& controllers)
+                : world(world), engine(engine), physics(physics), controllers(controllers) {}
+            A::HostMask Host() const noexcept override { return A::HostMask::Editor; }
+            A::SceneAccess ActiveScene() noexcept override { return {&world}; }
+            Hephaestus::PlayState GetPlayState() const noexcept override { return Hephaestus::PlayState::Playing; }
+            bool GetCharacterState(entt::entity entity, A::AutomationBackend::PhysicsBodySnapshot& pose, bool& outGrounded,
+                                   std::string& outError) override
+            {
+                return A::ReadCharacterSnapshot(true, &engine, &physics, &world, entity, pose, outGrounded, outError,
+                                                &controllers);
+            }
+        } backend(controllerWorld, controllerEngine, controllerPhysics, controllerCharacters);
+        A::AutomationService service(backend);
+        A::RegisterPhysicsAutomation(service);
+        service.Tick();
+        const std::string walkerRef = service.Entities().Bind(controllerWorld, walkerId).value;
+        auto future = service.Post({"physics.get_character_state", {{"entity", walkerRef}}});
+        service.Tick();
+        const auto result = future.result.get();
+        check(result.Ok() && result.value["groundState"] == "OnGround" && result.value.contains("crouched") &&
+                  result.value.contains("standBlocked") && result.value.contains("onSteepSlope") &&
+                  !result.value["supportingEntity"].is_null(),
+              "Controller character state reports ground, crouch, and support fields");
+    }
 
     if (!ok) return 1;
     std::cout << "AutomationPhysicsTests passed\n";

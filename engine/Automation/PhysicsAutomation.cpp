@@ -267,7 +267,7 @@ void RegisterPhysicsAutomation(AutomationService& service)
         });
 
     Add(service, "physics.get_character_state",
-        "Read position, linear velocity, and the current ground probe for an entity that has a rigid body.",
+        "Read position, linear velocity, and grounding for a character controller or a rigid body.",
         entitySchema,
         [](ToolContext& context, const Json& arguments) -> ToolOutcome {
             ToolResult failure;
@@ -282,6 +282,24 @@ void RegisterPhysicsAutomation(AutomationService& service)
             Json value = {{"position", Vec3Json(pose.position)},
                           {"linearVelocity", Vec3Json(pose.linearVelocity)},
                           {"grounded", grounded}};
+            if (pose.hasCharacterController) {
+                value["groundState"] = pose.groundState;
+                value["groundNormal"] = Vec3Json(pose.groundNormal);
+                value["groundVelocity"] = Vec3Json(pose.groundVelocity);
+                value["planarSpeed"] = pose.planarSpeed;
+                value["verticalSpeed"] = pose.verticalSpeed;
+                value["crouched"] = pose.crouched;
+                value["standBlocked"] = pose.standBlocked;
+                value["onSteepSlope"] = pose.onSteepSlope;
+                if (!pose.supportingEntityValid || pose.supportingEntity == entt::null) {
+                    value["supportingEntity"] = nullptr;
+                } else {
+                    Scene* supportScene = context.Backend().ActiveScene().scene;
+                    if (!supportScene) return ToolResult::Failure(ErrorCode::NoActiveScene, "No active scene");
+                    const EntityRef support = context.Entities().Bind(*supportScene, pose.supportingEntity);
+                    value["supportingEntity"] = support ? Json(support.value) : Json(nullptr);
+                }
+            }
             if (pose.entity == entt::null || !pose.entityValid) {
                 value["entity"] = nullptr;
             } else {

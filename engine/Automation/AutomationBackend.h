@@ -275,6 +275,17 @@ public:
         PhysicsVec3 linearVelocity;
         PhysicsVec3 angularVelocity;
         std::uint32_t debugBodyIndex = 0;
+        bool hasCharacterController = false;
+        std::string groundState;
+        PhysicsVec3 groundNormal{0.0f, 1.0f, 0.0f};
+        PhysicsVec3 groundVelocity{};
+        entt::entity supportingEntity = entt::null;
+        bool supportingEntityValid = false;
+        float planarSpeed = 0.0f;
+        float verticalSpeed = 0.0f;
+        bool crouched = false;
+        bool standBlocked = false;
+        bool onSteepSlope = false;
     };
 
     struct PhysicsRaycastResult {

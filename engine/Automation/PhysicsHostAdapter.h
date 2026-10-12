@@ -4,6 +4,7 @@
 // HephaestusAutomationCore does not include this header.
 
 #include "AutomationBackend.h"
+#include "../Physics/CharacterControllerSystem.h"
 #include "../Physics/CharacterMotor.h"
 #include "../Physics/JoltPhysicsEngine.h"
 #include "../Physics/JoltPhysicsSystem.h"
@@ -119,8 +120,32 @@ inline bool ReadPhysicsSnapshot(bool initialized, Physics::JoltPhysicsEngine* en
 inline bool ReadCharacterSnapshot(bool initialized, Physics::JoltPhysicsEngine* engine,
                                   Physics::JoltPhysicsSystem* system, Scene* scene, entt::entity entity,
                                   AutomationBackend::PhysicsBodySnapshot& pose, bool& grounded,
-                                  std::string& outError)
+                                  std::string& outError,
+                                  Physics::CharacterControllerSystem* controllers = nullptr)
 {
+    Physics::CharacterControllerState state;
+    if (controllers && controllers->GetState(entity, state)) {
+        pose = {};
+        pose.entity = entity;
+        pose.entityValid = entity != entt::null && scene && scene->GetRegistry().valid(entity);
+        pose.position = {state.position.x, state.position.y, state.position.z};
+        pose.linearVelocity = {state.velocity.x, state.velocity.y, state.velocity.z};
+        pose.hasCharacterController = true;
+        pose.groundState = Physics::CharacterGroundStateName(state.groundState);
+        pose.groundNormal = {state.groundNormal.x, state.groundNormal.y, state.groundNormal.z};
+        pose.groundVelocity = {state.groundVelocity.x, state.groundVelocity.y, state.groundVelocity.z};
+        pose.supportingEntity = state.supportingEntity;
+        pose.supportingEntityValid = state.supportingEntity != entt::null && scene
+            && scene->GetRegistry().valid(state.supportingEntity);
+        pose.planarSpeed = state.planarSpeed;
+        pose.verticalSpeed = state.verticalSpeed;
+        pose.crouched = state.crouched;
+        pose.standBlocked = state.standBlocked;
+        pose.onSteepSlope = state.onSteepSlope;
+        grounded = state.grounded;
+        outError.clear();
+        return true;
+    }
     if (!ReadPhysicsSnapshot(initialized, engine, system, scene, entity, pose, outError)) return false;
     grounded = Physics::CharacterMotor::IsGrounded(*engine, *system, entity);
     return true;
