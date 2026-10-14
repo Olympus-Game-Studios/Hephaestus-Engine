@@ -24,6 +24,8 @@
 #include "../Scene/PrefabInstantiator.h"
 #include "../Scene/PrefabOverrideSystem.h"
 #include "../Scene/PrefabComponentIO.h"
+#include "../Assets/AssetMountRegistry.h"
+#include "../Assets/AssetPathPolicy.h"
 #include "../Assets/CharacterRuntime.h"
 #include "../Animation/CharacterPlayback.h"
 #include "../Scene/CharacterComponent.h"
@@ -248,6 +250,7 @@ void LuaScriptEngine::Initialize(Scene* scene, GLFWwindow* window) {
 
     luaL_openlibs(m_State);
     RegisterBindings();
+    RebuildSearchPaths();
     std::cout << "[Lua] Scripting engine initialized" << std::endl;
 #else
     (void)scene;
@@ -1789,6 +1792,11 @@ void LuaScriptEngine::RebuildSearchPaths() {
         add(m_ProjectRoot / "assets" / "scripts");
         add(m_ProjectRoot / "scripts");
     }
+    for (const auto& mount : Hephaestus::AssetMountRegistry::Instance().Mounts()) {
+        if (mount.scheme.rfind("plugin://", 0) == 0) {
+            add(mount.root / "Scripts");
+        }
+    }
 
     const std::filesystem::path current = std::filesystem::current_path();
     add(current);
@@ -1802,6 +1810,36 @@ void LuaScriptEngine::RebuildSearchPaths() {
     if (!std::filesystem::exists(current / "game.ini")) {
         add(current / "engine" / "Game" / "scripts");
     }
+
+#if LUA_AVAILABLE
+    if (m_State) {
+        auto luaPattern = [](const std::filesystem::path& dir) {
+            return (dir / "?.lua").generic_string() + ";" +
+                   (dir / "?" / "init.lua").generic_string() + ";";
+        };
+        std::string prefix;
+        if (!m_ProjectRoot.empty()) {
+            prefix += luaPattern(m_ProjectRoot / "assets" / "scripts");
+        }
+        for (const auto& mount : Hephaestus::AssetMountRegistry::Instance().Mounts()) {
+            if (mount.scheme.rfind("plugin://", 0) == 0) {
+                prefix += luaPattern(mount.root / "Scripts");
+            }
+        }
+        if (!prefix.empty()) {
+            lua_getglobal(m_State, "package");
+            if (lua_istable(m_State, -1)) {
+                lua_getfield(m_State, -1, "path");
+                const char* currentPath = lua_tostring(m_State, -1);
+                const std::string combined = prefix + (currentPath ? currentPath : "");
+                lua_pop(m_State, 1);
+                lua_pushstring(m_State, combined.c_str());
+                lua_setfield(m_State, -2, "path");
+            }
+            lua_pop(m_State, 1);
+        }
+    }
+#endif
 }
 
 void LuaScriptEngine::AddSearchPath(const std::filesystem::path& path) {
@@ -2342,6 +2380,19 @@ bool LuaScriptEngine::CallInstanceFunctionByName(ScriptInstance& instance, const
 std::filesystem::path LuaScriptEngine::ResolveScriptPath(const std::string& scriptPath) const {
     if (scriptPath.empty()) {
         return {};
+    }
+
+    if (Hephaestus::AssetPathPolicy::IsPluginContentKey(scriptPath)) {
+        const std::filesystem::path mounted =
+            Hephaestus::AssetPathPolicy::ResolvePortableKey(m_ProjectRoot, scriptPath);
+        if (mounted.empty()) {
+            Hephaestus::EngineLog::Write(
+                Hephaestus::EngineLogLevel::Error,
+                Hephaestus::AssetPathPolicy::UnresolvedPluginContentMessage(scriptPath) +
+                    " (" + scriptPath + ")",
+                "Script");
+        }
+        return mounted;
     }
 
     std::filesystem::path candidate(scriptPath);
@@ -3249,6 +3300,19 @@ std::filesystem::path LuaScriptEngine::ResolvePrefabPath(const std::string& pref
     namespace fs = std::filesystem;
     if (prefabPath.empty()) {
         return {};
+    }
+
+    if (Hephaestus::AssetPathPolicy::IsPluginContentKey(prefabPath)) {
+        const fs::path mounted =
+            Hephaestus::AssetPathPolicy::ResolvePortableKey(m_ProjectRoot, prefabPath);
+        if (mounted.empty()) {
+            Hephaestus::EngineLog::Write(
+                Hephaestus::EngineLogLevel::Error,
+                Hephaestus::AssetPathPolicy::UnresolvedPluginContentMessage(prefabPath) +
+                    " (" + prefabPath + ")",
+                "Prefab");
+        }
+        return mounted;
     }
 
     fs::path path(prefabPath);
@@ -7090,7 +7154,14 @@ int LuaScriptEngine::Lua_UI_loadHUI(lua_State* L) {
 
     // Resolve path relative to project root / search paths
     std::filesystem::path resolved(filePath);
-    if (!resolved.is_absolute()) {
+    if (Hephaestus::AssetPathPolicy::IsPluginContentKey(filePath)) {
+        resolved = Hephaestus::AssetPathPolicy::ResolvePortableKey(engine->m_ProjectRoot, filePath);
+        if (resolved.empty()) {
+            lua_pushnil(L);
+            lua_pushstring(L, Hephaestus::AssetPathPolicy::UnresolvedPluginContentMessage(filePath).c_str());
+            return 2;
+        }
+    } else if (!resolved.is_absolute()) {
         for (const auto& searchPath : engine->m_SearchPaths) {
             auto candidate = searchPath / filePath;
             if (std::filesystem::exists(candidate)) {
@@ -7256,7 +7327,13 @@ uint32_t LuaScriptEngine::displayHUI(const std::string& filePath, std::string& o
 
     // Resolve to an absolute path
     std::filesystem::path resolved(filePath);
-    if (!resolved.is_absolute()) {
+    if (Hephaestus::AssetPathPolicy::IsPluginContentKey(filePath)) {
+        resolved = Hephaestus::AssetPathPolicy::ResolvePortableKey(m_ProjectRoot, filePath);
+        if (resolved.empty()) {
+            outError = Hephaestus::AssetPathPolicy::UnresolvedPluginContentMessage(filePath);
+            return 0;
+        }
+    } else if (!resolved.is_absolute()) {
         bool found = false;
         for (const auto& searchPath : m_SearchPaths) {
             auto candidate = searchPath / filePath;

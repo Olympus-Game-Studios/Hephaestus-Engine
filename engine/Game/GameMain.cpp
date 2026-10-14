@@ -98,7 +98,9 @@
 #include "../UI/HephaestusUI/UISystem.h"
 
 // Assets
+#include "../Assets/AssetPathPolicy.h"
 #include "../Assets/MeshAsset.h"
+#include "../Plugins/PluginContent.h"
 #include "../Assets/ModelImporter.h"
 #include "../Assets/SkeletalModelImporter.h"
 #include "../Assets/CharacterRuntime.h"
@@ -745,6 +747,7 @@ int main(int argc, char* argv[]) {
     // Resolve portable prefab paths (assets/prefabs/...) against the project root
     // before scene deserialize, otherwise instances become Missing Prefab stubs.
     SetProjectRootFromScene(scenePath);
+    Hephaestus::Plugins::MountStagedPluginContent(g_RuntimeRoot);
     PrefabOverrideSystem::SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
     frameRenderer.SetProjectRoot((!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot).string());
 
@@ -1366,6 +1369,17 @@ int main(int argc, char* argv[]) {
                 // so that scenes created on another device still work.
                 fs::path meshPath;
                 fs::path assetP(renderer.meshAssetPath);
+                if (Hephaestus::AssetPathPolicy::IsPluginContentKey(renderer.meshAssetPath)) {
+                    meshPath = Hephaestus::AssetPathPolicy::ResolvePortableKey(
+                        !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot,
+                        renderer.meshAssetPath);
+                    if (meshPath.empty()) {
+                        HP_LOG(Error, Hephaestus::AssetPathPolicy::UnresolvedPluginContentMessage(
+                                          renderer.meshAssetPath) +
+                                          " (" + renderer.meshAssetPath + ")");
+                        continue;
+                    }
+                }
 
                 // 1. runtimeRoot / key  (standard relative path)
                 if (assetP.is_relative() && !g_RuntimeRoot.empty()) {

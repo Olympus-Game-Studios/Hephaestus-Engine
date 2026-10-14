@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "../Assets/AssetPathPolicy.h"
 
 #include <algorithm>
 #include <cctype>
@@ -80,7 +81,13 @@ AudioEngine::SoundHandle AudioEngine::Play(const std::string& path, bool loop, f
 
     std::filesystem::path resolved = ResolveAudioPath(path);
     if (resolved.empty() || !std::filesystem::exists(resolved) || !IsSupportedAudioExtension(resolved)) {
-        std::cerr << "[Audio] Cannot play sound. Invalid or unsupported path: " << path << std::endl;
+        if (Hephaestus::AssetPathPolicy::IsPluginContentKey(path) &&
+            Hephaestus::AssetPathPolicy::ResolvePortableKey(m_ProjectRoot, path).empty()) {
+            std::cerr << "[Audio] " << Hephaestus::AssetPathPolicy::UnresolvedPluginContentMessage(path)
+                      << " (" << path << ")" << std::endl;
+        } else {
+            std::cerr << "[Audio] Cannot play sound. Invalid or unsupported path: " << path << std::endl;
+        }
         return InvalidHandle;
     }
 
@@ -228,6 +235,10 @@ bool AudioEngine::IsBackendAvailable() const {
 std::filesystem::path AudioEngine::ResolveAudioPath(const std::string& inputPath) const {
     if (inputPath.empty()) {
         return {};
+    }
+
+    if (Hephaestus::AssetPathPolicy::IsPluginContentKey(inputPath)) {
+        return Hephaestus::AssetPathPolicy::ResolvePortableKey(m_ProjectRoot, inputPath);
     }
 
     std::filesystem::path candidate(inputPath);

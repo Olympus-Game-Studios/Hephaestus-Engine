@@ -152,6 +152,9 @@ std::filesystem::path AssetPathPolicy::ResolvePortableKey(const std::filesystem:
     if (const auto mounted = AssetMountRegistry::Instance().Resolve(key)) {
         return *mounted;
     }
+    if (IsPluginContentKey(key)) {
+        return {};
+    }
 
     std::filesystem::path p(key);
     if (p.is_absolute()) {
@@ -229,6 +232,39 @@ AssetPathClassification AssetPathPolicy::Classify(const std::filesystem::path& p
     result.portableKey = portable;
     result.isPortable = false;
     return result;
+}
+
+bool AssetPathPolicy::IsPluginContentKey(const std::string& key)
+{
+    return key.rfind("plugin://", 0) == 0 || key.rfind("/plugin/", 0) == 0;
+}
+
+std::string AssetPathPolicy::PluginIdFromContentKey(const std::string& key)
+{
+    std::string value = key;
+    std::replace(value.begin(), value.end(), '\\', '/');
+    std::size_t start = 0;
+    if (value.rfind("plugin://", 0) == 0) {
+        start = 9;
+    } else if (value.rfind("/plugin/", 0) == 0) {
+        start = 8;
+    } else {
+        return {};
+    }
+    const std::size_t slash = value.find('/', start);
+    if (slash == std::string::npos) {
+        return value.substr(start);
+    }
+    return value.substr(start, slash - start);
+}
+
+std::string AssetPathPolicy::UnresolvedPluginContentMessage(const std::string& key)
+{
+    const std::string id = PluginIdFromContentKey(key);
+    if (id.empty()) {
+        return "plugin is not enabled or not installed";
+    }
+    return "plugin '" + id + "' is not enabled or not installed";
 }
 
 } // namespace Hephaestus

@@ -282,6 +282,7 @@ target_compile_definitions(HephaestusMcpCore PUBLIC
 add_library(HephaestusPluginCore STATIC
     engine/Assets/AssetMountRegistry.cpp
     engine/Plugins/PluginManifest.cpp
+    engine/Plugins/PluginContent.cpp
     engine/Plugins/PluginSystem.cpp
 )
 target_include_directories(HephaestusPluginCore PUBLIC engine extern)
@@ -406,6 +407,7 @@ add_library(HephaestusBuildCore STATIC
     engine/Assets/AssetReferenceIndex.cpp
 )
 target_include_directories(HephaestusBuildCore PUBLIC engine extern)
+target_link_libraries(HephaestusBuildCore PUBLIC HephaestusPluginCore)
 
 add_executable(HephaestusBuildCli engine/BuildCli.cpp)
 target_link_libraries(HephaestusBuildCli PRIVATE HephaestusBuildCore)
@@ -1018,7 +1020,7 @@ if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND)
     endif()
 endif()
 
-target_link_libraries(HephaestusGame PRIVATE ${GAME_LINK_LIBS} HephaestusInputCore ufbx)
+target_link_libraries(HephaestusGame PRIVATE ${GAME_LINK_LIBS} HephaestusInputCore HephaestusPluginCore ufbx)
 
 # Windows: link dbghelp for crash handler
 if(WIN32)

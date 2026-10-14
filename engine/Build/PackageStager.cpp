@@ -1,4 +1,5 @@
 #include "Build/PackageStager.h"
+#include "../Plugins/PluginContent.h"
 
 #include <algorithm>
 #include <cctype>
@@ -358,6 +359,27 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
             return fail();
         }
     }
+
+    std::vector<Hephaestus::Plugins::StagedPluginMount> stagedMounts;
+    const auto pluginContent = Hephaestus::Plugins::CollectEnabledPluginContent(
+        request.engineRoot, request.projectRoot);
+    for (const auto& plugin : pluginContent) {
+        const auto relative = std::filesystem::path("Plugins") / plugin.id / "Content";
+        if (!CopyTree(plugin.sourceRoot, staging / relative, output / relative,
+                      "Copying plugin content " + plugin.id, request, result)) {
+            return fail();
+        }
+        stagedMounts.push_back({plugin.id, relative});
+    }
+    {
+        std::string mountsError;
+        if (!Hephaestus::Plugins::WriteStagedPluginMounts(staging, stagedMounts, mountsError)) {
+            Problem(result, ProblemSeverity::Error, "PACKAGE_PLUGIN_MOUNTS_FAILED",
+                    "Could not write staged plugin content mounts", mountsError);
+            return fail();
+        }
+    }
+
     const std::string startup = request.startupScene;
     if (request.onProgress) {
         request.onProgress(0.0F, "Writing configuration");

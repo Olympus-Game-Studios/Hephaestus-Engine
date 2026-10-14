@@ -79,6 +79,30 @@ int main() {
     Write(runtime / "HephaestusGame.exe", "fake executable");
     Write(runtime / "lua.dll", "fake lua");
     Write(runtime / "shaders" / "basic.vert.spv", "fake shader");
+    const std::string pluginManifest =
+        R"({"version":1,"apiVersion":1,"id":"ID","name":"Test","author":"Tests",)"
+        R"("pluginVersion":"1.0.0","engineVersion":">=2026.9.0","type":"editor",)"
+        R"("entry":"bin/HephaestusFPS.dll","content":"Content"})";
+    auto writePlugin = [&](const fs::path& root, const std::string& id, bool enabledDefault,
+                           bool withDll) {
+        std::string text = pluginManifest;
+        const auto pos = text.find("\"id\":\"ID\"");
+        text.replace(pos, 9, "\"id\":\"" + id + "\"");
+        if (!enabledDefault) {
+            const auto typePos = text.find("\"type\":\"editor\"");
+            text.insert(typePos, "\"defaultEnabled\":false,");
+        }
+        Write(root / "Plugins" / id / (id + ".hpplugin"), text);
+        Write(root / "Plugins" / id / "Content" / "Scripts" / "Boot.lua", "return true");
+        Write(root / "Plugins" / id / "Content" / "UI" / "Hud.hui", "{}");
+        if (withDll) {
+            Write(root / "Plugins" / id / "bin" / "HephaestusFPS.dll", "dll");
+            Write(root / "Plugins" / id / "bin" / "Qt6Core.dll", "qt");
+        }
+    };
+    writePlugin(engine, "com.engine.content", true, true);
+    writePlugin(project, "com.project.content", true, true);
+    writePlugin(engine, "com.disabled.content", false, true);
 
     BuildRequest request;
     request.projectRoot = project;
@@ -123,6 +147,42 @@ int main() {
     ok &= Check(fs::exists(package / "assets" / "input" / "Default.hpinput"),
                 "input map is packaged");
     ok &= Check(fs::exists(package / "scripts" / "boot.lua"), "scripts are packaged");
+    ok &= Check(fs::exists(package / "Plugins" / "com.engine.content" / "Content" / "Scripts" /
+                           "Boot.lua"),
+                "enabled engine plugin content is staged");
+    ok &= Check(fs::exists(package / "Plugins" / "com.project.content" / "Content" / "UI" / "Hud.hui"),
+                "enabled project plugin content is staged");
+    ok &= Check(!fs::exists(package / "Plugins" / "com.disabled.content"),
+                "disabled plugin content is omitted");
+    ok &= Check(!fs::exists(package / "Plugins" / "com.engine.content" / "bin" / "HephaestusFPS.dll") &&
+                    !fs::exists(package / "Plugins" / "com.engine.content" / "Content" / "bin"),
+                "plugin entry DLLs are omitted");
+    ok &= Check(!fs::exists(package / "Plugins" / "com.engine.content" / "bin" / "Qt6Core.dll") &&
+                    !fs::exists(package / "Qt6Core.dll"),
+                "Qt is not packaged from plugin content");
+    {
+        std::ifstream mountsStream(package / "Plugins" / "content-mounts.json");
+        nlohmann::json mounts;
+        mountsStream >> mounts;
+        bool engineMount = false;
+        bool projectMount = false;
+        bool disabledMount = false;
+        for (const auto& plugin : mounts.value("plugins", nlohmann::json::array())) {
+            const std::string id = plugin.value("id", "");
+            const std::string rootPath = plugin.value("root", "");
+            if (id == "com.engine.content") {
+                engineMount = rootPath == "Plugins/com.engine.content/Content";
+            }
+            if (id == "com.project.content") {
+                projectMount = rootPath == "Plugins/com.project.content/Content";
+            }
+            if (id == "com.disabled.content") {
+                disabledMount = true;
+            }
+        }
+        ok &= Check(engineMount && projectMount && !disabledMount,
+                    "each enabled plugin id mounts its own content root");
+    }
     ok &= Check(fs::exists(package / ".engine" / "meshes" / "builtin.mesh"),
                 "engine meshes are packaged");
     ok &= Check(fs::exists(package / ".engine" / "meshes" / "project.mesh"),

@@ -51,6 +51,8 @@ void PluginSystem::DiscoverRoot(const std::filesystem::path& root, PluginLocatio
         if (!parsed.success) {
             record.status = PluginStatus::Invalid;
             record.error = parsed.error;
+        } else {
+            record.enabled = parsed.manifest.defaultEnabled;
         }
         records_.push_back(std::move(record));
     }

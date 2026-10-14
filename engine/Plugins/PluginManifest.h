@@ -18,6 +18,7 @@ struct PluginManifest {
     std::string pluginVersion;
     std::string engineVersion;
     PluginType type = PluginType::Editor;
+    bool defaultEnabled = true;
     std::filesystem::path entry;
     std::filesystem::path content;
     std::filesystem::path icon;

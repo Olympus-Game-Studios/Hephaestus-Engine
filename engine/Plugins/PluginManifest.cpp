@@ -45,6 +45,7 @@ ManifestParseResult ParsePluginManifest(const std::filesystem::path& path) {
         m.entry = json.value("entry", "");
         m.content = json.value("content", "");
         m.icon = json.value("icon", "");
+        m.defaultEnabled = json.value("defaultEnabled", true);
         const std::string type = json.value("type", "editor");
         if (type == "editor") m.type = PluginType::Editor;
         else if (type == "runtime") m.type = PluginType::Runtime;

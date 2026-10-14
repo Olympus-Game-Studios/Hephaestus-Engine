@@ -4,6 +4,7 @@
 #include "PrefabInstantiator.h"
 #include "PrefabSerializer.h"
 #include "../Scripting/LuaScriptComponent.h"
+#include "../Assets/AssetPathPolicy.h"
 
 #include <algorithm>
 #include <cmath>
@@ -239,6 +240,10 @@ std::filesystem::path PrefabOverrideSystem::ResolveAssetFilePath(const std::stri
     fs::path input(path);
     std::error_code ec;
 
+    if (Hephaestus::AssetPathPolicy::IsPluginContentKey(path)) {
+        return Hephaestus::AssetPathPolicy::ResolvePortableKey(ProjectRootStorage(), path);
+    }
+
     if (input.is_absolute()) {
         return input.lexically_normal();
     }
@@ -351,6 +356,10 @@ bool PrefabOverrideSystem::LoadAsset(const std::string& path, PrefabAsset& out, 
     }
 
     const fs::path resolved = ResolveAssetFilePath(path, false);
+    if (Hephaestus::AssetPathPolicy::IsPluginContentKey(path) && resolved.empty()) {
+        error = Hephaestus::AssetPathPolicy::UnresolvedPluginContentMessage(path);
+        return false;
+    }
     const std::string resolvedKey = NormalizePathKey(resolved.generic_string());
     if (!resolvedKey.empty() && resolvedKey != key) {
         auto resolvedIt = cache.find(resolvedKey);

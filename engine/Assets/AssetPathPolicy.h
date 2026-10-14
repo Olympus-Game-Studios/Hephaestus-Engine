@@ -69,6 +69,10 @@ public:
 
     /** Collect known project markers used when remapping absolute paths. */
     static const std::vector<std::string>& ProjectMarkers();
+
+    static bool IsPluginContentKey(const std::string& key);
+    static std::string PluginIdFromContentKey(const std::string& key);
+    static std::string UnresolvedPluginContentMessage(const std::string& key);
 };
 
 } // namespace Hephaestus

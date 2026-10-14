@@ -166,6 +166,20 @@ int main(int argc, char** argv) {
     ok &= TestExternalAbsolute(scratch);
     ok &= TestLegacyFilename();
     ok &= TestRelocationRoundTrip(scratch);
+    {
+        ok &= Check(AssetPathPolicy::IsPluginContentKey("plugin://com.example.mod/UI/Hud.hui"),
+                    "plugin key detected");
+        ok &= Check(AssetPathPolicy::PluginIdFromContentKey(
+                       "plugin://com.hephaestus.fps/Scripts/FPS/Player.lua") == "com.hephaestus.fps",
+                    "plugin id extracted");
+        const std::string missing = AssetPathPolicy::UnresolvedPluginContentMessage(
+            "plugin://com.hephaestus.fps/UI/FPSHud.hui");
+        ok &= Check(missing.find("com.hephaestus.fps") != std::string::npos &&
+                        missing.find("not enabled or not installed") != std::string::npos,
+                    "missing plugin diagnostic contains id");
+        ok &= Check(AssetPathPolicy::ResolvePortableKey({}, "plugin://com.missing/file.lua").empty(),
+                    "unmounted plugin key does not become a project-relative path");
+    }
 
     if (!ok) {
         return 1;

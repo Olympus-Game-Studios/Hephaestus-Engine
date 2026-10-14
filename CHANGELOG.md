@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-14: Plugin manifests accept optional `defaultEnabled` (default true). Packaged games stage enabled plugin `Content/` from engine and project `Plugins/` directories, write `Plugins/content-mounts.json`, and `GameMain` mounts those roots before scene/script/HUI/mesh/audio/prefab resolution. `package.path` searches project `assets/scripts` then enabled plugin `Scripts`. Unresolved `plugin://` keys name the plugin id and say it is not enabled or not installed. Editor plugin DLLs and Qt are not staged with that content.
 - 2026-10-14: Lua `Mesh.setVisible` / `Mesh.isVisible`. `Physics.raycast` keeps origin, direction, distance, and optional layer, then adds `ignoreSensors` (argument 9, default false) and an optional entity userdata (argument 10) that replaces the calling-entity ignore, including the character inner proxy.
 - 2026-10-14: `Character.setSpeedMultiplier`, `Character.getSpeedMultiplier`, `Character.isCrouched`, and `Character.isStandBlocked`. The runtime speed multiplier defaults to 1, scales fixed-step target speed as `walkSpeed * multiplier`, and is not stored on `CharacterControllerComponent`.
 - 2026-10-14: `ActiveCameraSyncTests` locks active-camera world tracking for a root camera, a parented camera, parent yaw plus child pitch, parent movement, and component FOV / near / far.
