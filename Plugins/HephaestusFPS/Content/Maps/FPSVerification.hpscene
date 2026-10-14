@@ -7,7 +7,8 @@
       "id": 1, "name": "DirectionalLight", "parent": null,
       "components": {
         "Transform": { "position": [4.0, 10.0, 2.0], "rotation": [-0.8, 0.4, 0.0], "scale": [1, 1, 1] },
-        "Light": { "type": "Directional", "color": [1.0, 0.98, 0.9], "intensity": 1.2, "castsShadow": true }
+        "Light": { "type": "Directional", "color": [1.0, 0.98, 0.9], "intensity": 1.2, "castsShadow": true },
+        "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/VerificationOtherHud.lua", "enabled": true, "variables": {} }
       }
     },
     {
@@ -15,26 +16,27 @@
       "components": {
         "Transform": { "position": [0.0, -0.5, 0.0], "rotation": [0, 0, 0], "scale": [24.0, 1.0, 24.0] },
         "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
-        "PhysicsShape": { "type": "Box", "extents": [12.0, 0.5, 12.0], "offset": [0, 0, 0] },
+         "PhysicsShape": { "type": "Box", "extents": [0.5, 0.5, 0.5], "offset": [0, 0, 0] },
         "RigidBody": { "mass": 0, "motion": "static", "layer": 1, "isStatic": true, "isTrigger": false, "useGravity": false }
       }
     },
     {
-      "id": 3, "name": "Stair", "parent": null,
+       "id": 3, "name": "Stair1", "parent": null,
       "components": {
-        "Transform": { "position": [-4.0, 0.15, 2.0], "rotation": [0, 0, 0], "scale": [1.2, 0.3, 0.8] },
+         "Transform": { "position": [2.5, 0.1, 4.0], "rotation": [0, 0, 0], "scale": [0.6, 0.2, 2.0] },
         "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
-        "PhysicsShape": { "type": "Box", "extents": [0.6, 0.15, 0.4], "offset": [0, 0, 0] },
+         "PhysicsShape": { "type": "Box", "extents": [0.5, 0.5, 0.5], "offset": [0, 0, 0] },
         "RigidBody": { "mass": 0, "motion": "static", "layer": 1, "isStatic": true, "isTrigger": false, "useGravity": false }
       }
     },
     {
       "id": 4, "name": "MovingPlatform", "parent": null,
       "components": {
-        "Transform": { "position": [2.0, 0.1, 4.0], "rotation": [0, 0, 0], "scale": [2.0, 0.2, 2.0] },
+         "Transform": { "position": [7.15, 1.35, 4.0], "rotation": [0, 0, 0], "scale": [2.5, 0.3, 2.5] },
         "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
-        "PhysicsShape": { "type": "Box", "extents": [1.0, 0.1, 1.0], "offset": [0, 0, 0] },
-        "RigidBody": { "mass": 0, "motion": "kinematic", "layer": 1, "isStatic": false, "isTrigger": false, "useGravity": false, "linearVelocity": [0.4, 0.0, 0.0] }
+         "PhysicsShape": { "type": "Box", "extents": [0.5, 0.5, 0.5], "offset": [0, 0, 0] },
+         "RigidBody": { "mass": 0, "motion": "kinematic", "layer": 1, "isStatic": false, "isTrigger": false, "useGravity": false },
+         "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/VerificationMovingPlatform.lua", "enabled": true, "variables": {} }
       }
     },
     {
@@ -61,8 +63,7 @@
     {
       "id": 8, "name": "FPSHitscan", "parent": 7,
       "components": {
-        "Transform": { "position": [0.15, -0.12, -0.35], "rotation": [0, 0, 0], "scale": [0.05, 0.05, 0.4] },
-        "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+         "Transform": { "position": [0.75, -0.10, 0.24], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
         "LuaScript": {
           "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Weapon.lua",
           "enabled": true,
@@ -73,8 +74,7 @@
     {
       "id": 9, "name": "FPSHitscanAuto", "parent": 7,
       "components": {
-        "Transform": { "position": [0.18, -0.14, -0.38], "rotation": [0, 0, 0], "scale": [0.06, 0.06, 0.5] },
-        "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+         "Transform": { "position": [0.8, -0.10, 0.28], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
         "LuaScript": {
           "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Weapon.lua",
           "enabled": true,
@@ -85,9 +85,9 @@
     {
       "id": 10, "name": "FPSButton", "parent": null,
       "components": {
-        "Transform": { "position": [3.0, 1.0, 1.5], "rotation": [0, 0, 0], "scale": [0.4, 0.4, 0.1] },
+         "Transform": { "position": [2.4, 1.2, -2.5], "rotation": [0, 0, 0], "scale": [0.3, 0.5, 0.5] },
         "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
-        "PhysicsShape": { "type": "Box", "extents": [0.2, 0.2, 0.05], "offset": [0, 0, 0] },
+         "PhysicsShape": { "type": "Box", "extents": [0.5, 0.5, 0.5], "offset": [0, 0, 0] },
         "RigidBody": { "mass": 0, "motion": "static", "layer": 1, "isStatic": true, "isTrigger": false, "useGravity": false },
         "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Button.lua", "enabled": true, "variables": {} }
       }
@@ -95,7 +95,7 @@
     {
       "id": 11, "name": "FPSDoor", "parent": null,
       "components": {
-        "Transform": { "position": [5.0, 1.0, -1.5], "rotation": [0, 0, 0], "scale": [1.2, 2.0, 0.12] },
+         "Transform": { "position": [3.6, 1.2, -2.5], "rotation": [0, 0, 0], "scale": [0.2, 2.4, 1.4] },
         "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
         "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Door.lua", "enabled": true, "variables": {} }
       }
@@ -103,30 +103,118 @@
     {
       "id": 12, "name": "FPSTarget", "parent": null,
       "components": {
-        "Transform": { "position": [8.0, 0.8, 0.0], "rotation": [0, 0, 0], "scale": [0.6, 1.6, 0.4] },
+         "Transform": { "position": [8.0, 1.2, 0.0], "rotation": [0, 0, 0], "scale": [0.5, 2.4, 1.0] },
         "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
-        "PhysicsShape": { "type": "Box", "extents": [0.3, 0.8, 0.2], "offset": [0, 0, 0] },
+         "PhysicsShape": { "type": "Box", "extents": [0.5, 0.5, 0.5], "offset": [0, 0, 0] },
         "RigidBody": { "mass": 0, "motion": "static", "layer": 1, "isStatic": true, "isTrigger": false, "useGravity": false },
-        "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Target.lua", "enabled": true, "variables": { "maxHealth": 60 } }
+         "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Target.lua", "enabled": true, "variables": { "maxHealth": 100 } }
       }
     },
     {
       "id": 13, "name": "FPSPickup", "parent": null,
       "components": {
-        "Transform": { "position": [2.0, 0.4, 1.0], "rotation": [0, 0, 0], "scale": [0.3, 0.3, 0.3] },
-        "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+         "Transform": { "position": [1.5, 1.2, 2.5], "rotation": [0, 0.785398, 0], "scale": [0.4, 0.4, 0.4] },
+         "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+         "PhysicsShape": { "type": "Box", "extents": [0.5, 0.5, 0.5] },
+         "RigidBody": { "mass": 0, "motion": "static", "layer": 1, "isStatic": true, "useGravity": false },
         "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Pickup.lua", "enabled": true, "variables": {} }
       }
     },
     {
       "id": 14, "name": "TriggerVolume", "parent": null,
       "components": {
-        "Transform": { "position": [4.0, 1.0, 0.0], "rotation": [0, 0, 0], "scale": [0.6, 1.6, 0.6] },
+         "Transform": { "position": [4.0, 1.2, 0.0], "rotation": [0, 0, 0], "scale": [1.6, 2.4, 2.0] },
         "MeshRenderer": { "visible": true, "hideInGame": true, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
-        "PhysicsShape": { "type": "Box", "extents": [0.3, 0.8, 0.3], "offset": [0, 0, 0] },
+         "PhysicsShape": { "type": "Box", "extents": [0.5, 0.5, 0.5], "offset": [0, 0, 0] },
         "RigidBody": { "mass": 0, "motion": "static", "layer": 3, "isStatic": true, "isTrigger": true, "useGravity": false },
         "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/TriggerDummy.lua", "enabled": true, "variables": { "maxHealth": 1 } }
       }
-    }
+    },
+    { "id": 15, "name": "Stair2", "components": {
+      "Transform": { "position": [3.1,0.2,4], "scale": [0.6,0.4,2] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": true },
+      "PhysicsShape": { "type": "Box", "extents": [0.5,0.5,0.5] },
+      "RigidBody": { "motion": "static", "isStatic": true, "layer": 1, "useGravity": false }
+    }},
+    { "id": 16, "name": "Stair3", "components": {
+      "Transform": { "position": [3.7,0.3,4], "scale": [0.6,0.6,2] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": true },
+      "PhysicsShape": { "type": "Box", "extents": [0.5,0.5,0.5] },
+      "RigidBody": { "motion": "static", "isStatic": true, "layer": 1, "useGravity": false }
+    }},
+    { "id": 17, "name": "Stair4", "components": {
+      "Transform": { "position": [4.3,0.4,4], "scale": [0.6,0.8,2] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": true },
+      "PhysicsShape": { "type": "Box", "extents": [0.5,0.5,0.5] },
+      "RigidBody": { "motion": "static", "isStatic": true, "layer": 1, "useGravity": false }
+    }},
+    { "id": 18, "name": "Stair5", "components": {
+      "Transform": { "position": [4.9,0.5,4], "scale": [0.6,1,2] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": true },
+      "PhysicsShape": { "type": "Box", "extents": [0.5,0.5,0.5] },
+      "RigidBody": { "motion": "static", "isStatic": true, "layer": 1, "useGravity": false }
+    }},
+    { "id": 19, "name": "Stair6", "components": {
+      "Transform": { "position": [5.5,0.6,4], "scale": [0.6,1.2,2] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": true },
+      "PhysicsShape": { "type": "Box", "extents": [0.5,0.5,0.5] },
+      "RigidBody": { "motion": "static", "isStatic": true, "layer": 1, "useGravity": false }
+    }},
+    { "id": 20, "name": "ButtonPedestal", "components": {
+       "Transform": { "position": [2.4,0.4,-2.5], "scale": [0.7,0.8,0.7] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": true }
+    }},
+    { "id": 21, "name": "PickupPedestal", "components": {
+       "Transform": { "position": [1.5,0.4,2.5], "scale": [0.8,0.8,0.8] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": true }
+    }},
+    { "id": 22, "name": "CrouchCeiling", "components": {
+      "Transform": { "position": [-2,1.4,3], "scale": [2,0.3,2] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": true },
+      "PhysicsShape": { "type": "Box", "extents": [0.5,0.5,0.5] },
+      "RigidBody": { "motion": "static", "isStatic": true, "layer": 1, "useGravity": false }
+    }},
+    { "id": 23, "name": "TriggerVisualPost1", "components": { "Transform": { "position": [3.2,1.2,-1], "scale": [0.06,2.4,0.06] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
+    { "id": 24, "name": "TriggerVisualPost2", "components": { "Transform": { "position": [4.8,1.2,-1], "scale": [0.06,2.4,0.06] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
+    { "id": 25, "name": "TriggerVisualPost3", "components": { "Transform": { "position": [3.2,1.2,1], "scale": [0.06,2.4,0.06] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
+    { "id": 26, "name": "TriggerVisualPost4", "components": { "Transform": { "position": [4.8,1.2,1], "scale": [0.06,2.4,0.06] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
+    { "id": 27, "name": "TriggerVisualTop1", "components": { "Transform": { "position": [4,2.4,-1], "scale": [1.6,0.06,0.06] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
+    { "id": 28, "name": "TriggerVisualTop2", "components": { "Transform": { "position": [4,2.4,1], "scale": [1.6,0.06,0.06] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
+    { "id": 29, "name": "TriggerVisualTop3", "components": { "Transform": { "position": [3.2,2.4,0], "scale": [0.06,0.06,2] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
+    { "id": 30, "name": "TriggerVisualTop4", "components": { "Transform": { "position": [4.8,2.4,0], "scale": [0.06,0.06,2] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
+    { "id": 31, "name": "TriggerVisualBottom1", "components": { "Transform": { "position": [4,0.03,-1], "scale": [1.6,0.06,0.06] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
+    { "id": 32, "name": "TriggerVisualBottom2", "components": { "Transform": { "position": [4,0.03,1], "scale": [1.6,0.06,0.06] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
+    { "id": 33, "name": "TriggerVisualBottom3", "components": { "Transform": { "position": [3.2,0.03,0], "scale": [0.06,0.06,2] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
+    { "id": 34, "name": "TriggerVisualBottom4", "components": { "Transform": { "position": [4.8,0.03,0], "scale": [0.06,0.06,2] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
+    { "id": 36, "name": "FPSHitscan_Part_Body", "parent": 8, "components": {
+      "Transform": { "position": [0,0,0], "scale": [0.16,0.08,0.20] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false },
+      "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {} }
+    }},
+    { "id": 37, "name": "FPSHitscan_Part_Barrel", "parent": 8, "components": {
+      "Transform": { "position": [0.18,0.015,0], "scale": [0.28,0.045,0.055] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false },
+      "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {} }
+    }},
+    { "id": 38, "name": "FPSHitscan_Part_Grip", "parent": 8, "components": {
+      "Transform": { "position": [-0.04,-0.115,0.04], "scale": [0.07,0.16,0.08] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false },
+      "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {} }
+    }},
+    { "id": 39, "name": "FPSHitscanAuto_Part_Body", "parent": 9, "components": {
+      "Transform": { "position": [0,0,0], "scale": [0.2,0.1,0.24] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false },
+      "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {} }
+    }},
+    { "id": 40, "name": "FPSHitscanAuto_Part_Barrel", "parent": 9, "components": {
+      "Transform": { "position": [0.25,0,0], "scale": [0.35,0.05,0.05] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false },
+      "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {} }
+    }},
+    { "id": 41, "name": "FPSHitscanAuto_Part_Grip", "parent": 9, "components": {
+      "Transform": { "position": [0,-0.13,0.05], "scale": [0.08,0.18,0.08] },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false },
+      "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {} }
+    }}
   ]
 }

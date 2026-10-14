@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "controller": "",
+  "root": {
+    "type": "Panel",
+    "id": "VerificationOtherHud",
+    "properties": { "anchor": "Stretch" },
+    "style": { "backgroundColor": [0.0, 0.0, 0.0, 0.0] },
+    "children": [
+      {
+        "type": "Text",
+        "id": "PreservedScreenLabel",
+        "properties": { "text": "OTHER HUD PRESERVED", "anchor": "TopLeft", "size": [300, 32] },
+        "style": { "fontSize": 16, "fontBold": true, "textColor": [0.3, 1.0, 0.5, 1.0] }
+      }
+    ]
+  }
+}
