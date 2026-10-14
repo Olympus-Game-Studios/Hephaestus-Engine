@@ -1723,7 +1723,7 @@ int main(int argc, char* argv[]) {
         double cursorY = 0.0;
         glfwGetCursorPos(window, &cursorX, &cursorY);
         inputSystem.SetMousePosition(cursorX, cursorY);
-        inputSystem.SetMouseDelta(
+        inputSystem.AddMouseDelta(
             hasLastCursorPosition ? cursorX - lastCursorX : 0.0,
             hasLastCursorPosition ? cursorY - lastCursorY : 0.0);
         lastCursorX = cursorX;

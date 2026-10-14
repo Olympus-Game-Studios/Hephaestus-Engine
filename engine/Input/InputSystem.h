@@ -33,6 +33,8 @@ public:
     void SetGamepadAxisState(int axis, float value);
 
     void SetActionOverride(const std::string& name, float value);
+    // Automation arrives between frames; apply after the previous-state snapshot.
+    void QueueActionOverride(const std::string& name, float value);
     void SetAxisOverride(const std::string& name, float value);
     void ClearActionOverrides();
     void ClearAxisOverrides();
@@ -91,6 +93,7 @@ private:
     std::unordered_map<std::string, std::size_t> m_AxisLookup;
     std::unordered_map<std::string, float> m_ActionOverrides;
     std::unordered_map<std::string, float> m_PreviousActionOverrides;
+    std::unordered_map<std::string, float> m_QueuedActionOverrides;
     std::unordered_map<std::string, float> m_AxisOverrides;
     double m_QueuedMouseDeltaX = 0.0;
     double m_QueuedMouseDeltaY = 0.0;

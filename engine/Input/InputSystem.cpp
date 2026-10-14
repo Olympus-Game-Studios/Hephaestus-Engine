@@ -34,6 +34,10 @@ void InputSystem::BeginFrame()
 {
     m_Previous = m_Current;
     m_PreviousActionOverrides = m_ActionOverrides;
+    for (const auto& [name, value] : m_QueuedActionOverrides) {
+        SetActionOverride(name, value);
+    }
+    m_QueuedActionOverrides.clear();
     m_Current.mouseDeltaX = m_QueuedMouseDeltaX;
     m_Current.mouseDeltaY = m_QueuedMouseDeltaY;
     m_QueuedMouseDeltaX = 0.0;
@@ -48,6 +52,7 @@ void InputSystem::Reset()
     m_Previous = {};
     m_ActionOverrides.clear();
     m_PreviousActionOverrides.clear();
+    m_QueuedActionOverrides.clear();
     m_AxisOverrides.clear();
     m_QueuedMouseDeltaX = 0.0;
     m_QueuedMouseDeltaY = 0.0;
@@ -88,6 +93,11 @@ void InputSystem::QueueMouseDelta(double x, double y)
 {
     m_QueuedMouseDeltaX += x;
     m_QueuedMouseDeltaY += y;
+}
+
+void InputSystem::QueueActionOverride(const std::string& name, float value)
+{
+    if (HasAction(name)) m_QueuedActionOverrides[name] = value;
 }
 
 void InputSystem::AddScrollDelta(double x, double y)
@@ -144,6 +154,9 @@ void InputSystem::ClearAxisOverrides()
 
 void InputSystem::ClearOverrides()
 {
+    m_QueuedActionOverrides.clear();
+    m_QueuedMouseDeltaX = 0.0;
+    m_QueuedMouseDeltaY = 0.0;
     ClearActionOverrides();
     ClearAxisOverrides();
 }

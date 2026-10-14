@@ -1558,7 +1558,7 @@ void QtEditorEngine::populateGameplayInput()
         }
     }
     m_gameplayInput.SetMousePosition(m_runtimeMouseX, m_runtimeMouseY);
-    m_gameplayInput.SetMouseDelta(m_runtimeMouseDeltaX, m_runtimeMouseDeltaY);
+    m_gameplayInput.AddMouseDelta(m_runtimeMouseDeltaX, m_runtimeMouseDeltaY);
     m_gameplayInput.AddScrollDelta(0.0, m_runtimeScrollDeltaY);
     // GLFW joystick polling is intentionally confined to the GLFW runtime.
     // Qt Play still receives the same keyboard/mouse action map.

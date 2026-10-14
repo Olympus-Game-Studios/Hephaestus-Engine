@@ -62,9 +62,26 @@ int main()
     input.BeginFrame();
     ok &= Check(input.GetMouseDeltaX() == 40.0 && input.GetMouseDeltaY() == -80.0,
                 "queued mouse delta applies unclamped on the next BeginFrame");
+    input.AddMouseDelta(3.0, 4.0);
+    ok &= Check(input.GetMouseDeltaX() == 43.0 && input.GetMouseDeltaY() == -76.0,
+                "host device collection preserves injected mouse delta");
     input.BeginFrame();
     ok &= Check(input.GetMouseDeltaX() == 0.0 && input.GetMouseDeltaY() == 0.0,
                 "queued mouse delta is consumed after one frame");
+
+    input.QueueActionOverride("Jump", 1.0f);
+    input.BeginFrame();
+    ok &= Check(input.IsActionPressed("Jump"), "between-frame injection retains rising edge");
+    input.BeginFrame();
+    ok &= Check(input.IsActionDown("Jump") && !input.IsActionPressed("Jump"),
+                "queued action remains held without repeating its edge");
+    input.QueueActionOverride("Jump", 0.0f);
+    input.BeginFrame();
+    ok &= Check(input.IsActionReleased("Jump"), "queued release retains falling edge");
+    input.QueueActionOverride("Jump", 1.0f);
+    input.ClearOverrides();
+    input.BeginFrame();
+    ok &= Check(!input.IsActionDown("Jump"), "clear cancels pending injection");
 
     if (ok) {
         std::cout << "InputOverrideTests passed\n";

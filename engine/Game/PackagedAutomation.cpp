@@ -53,7 +53,7 @@ public:
 
     bool SetActionOverride(std::string_view action, float value, std::string&) override
     {
-        m_input.SetActionOverride(std::string(action), value);
+        m_input.QueueActionOverride(std::string(action), value);
         return true;
     }
     bool SetAxisOverride(std::string_view axis, float value, std::string&) override

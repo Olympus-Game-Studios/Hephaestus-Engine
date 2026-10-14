@@ -945,7 +945,7 @@ public:
             outError = "Engine is unavailable";
             return false;
         }
-        m_owner->m_engine->GetGameplayInput().SetActionOverride(std::string(action), value);
+        m_owner->m_engine->GetGameplayInput().QueueActionOverride(std::string(action), value);
         return true;
     }
 
