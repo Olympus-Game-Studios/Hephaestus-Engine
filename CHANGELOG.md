@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-14: First-party FPS plugin `com.hephaestus.fps` (`Plugins/HephaestusFPS`): editor commands, additive input installer, Lua FPS modules, player/weapon/interact/health/HUD content, and `FPSVerification.hpscene`. `defaultEnabled` is false. Packaged games stage plugin Content only.
+- 2026-10-14: Automation `input.add_mouse_delta` queues unclamped pixel delta on the gameplay `InputSystem` for the next `BeginFrame` in editor Play and the Development packaged runtime.
 - 2026-10-14: Plugin manifests accept optional `defaultEnabled` (default true). Packaged games stage enabled plugin `Content/` from engine and project `Plugins/` directories, write `Plugins/content-mounts.json`, and `GameMain` mounts those roots before scene/script/HUI/mesh/audio/prefab resolution. `package.path` searches project `assets/scripts` then enabled plugin `Scripts`. Unresolved `plugin://` keys name the plugin id and say it is not enabled or not installed. Editor plugin DLLs and Qt are not staged with that content.
 - 2026-10-14: Lua `Mesh.setVisible` / `Mesh.isVisible`. `Physics.raycast` keeps origin, direction, distance, and optional layer, then adds `ignoreSensors` (argument 9, default false) and an optional entity userdata (argument 10) that replaces the calling-entity ignore, including the character inner proxy.
 - 2026-10-14: `Character.setSpeedMultiplier`, `Character.getSpeedMultiplier`, `Character.isCrouched`, and `Character.isStandBlocked`. The runtime speed multiplier defaults to 1, scales fixed-step target speed as `walkSpeed * multiplier`, and is not stored on `CharacterControllerComponent`.
