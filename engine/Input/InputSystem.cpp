@@ -34,8 +34,10 @@ void InputSystem::BeginFrame()
 {
     m_Previous = m_Current;
     m_PreviousActionOverrides = m_ActionOverrides;
-    m_Current.mouseDeltaX = 0.0;
-    m_Current.mouseDeltaY = 0.0;
+    m_Current.mouseDeltaX = m_QueuedMouseDeltaX;
+    m_Current.mouseDeltaY = m_QueuedMouseDeltaY;
+    m_QueuedMouseDeltaX = 0.0;
+    m_QueuedMouseDeltaY = 0.0;
     m_Current.scrollDeltaX = 0.0;
     m_Current.scrollDeltaY = 0.0;
 }
@@ -47,6 +49,8 @@ void InputSystem::Reset()
     m_ActionOverrides.clear();
     m_PreviousActionOverrides.clear();
     m_AxisOverrides.clear();
+    m_QueuedMouseDeltaX = 0.0;
+    m_QueuedMouseDeltaY = 0.0;
     m_CursorModeRequest = 0;
 }
 
@@ -78,6 +82,12 @@ void InputSystem::AddMouseDelta(double x, double y)
 {
     m_Current.mouseDeltaX += x;
     m_Current.mouseDeltaY += y;
+}
+
+void InputSystem::QueueMouseDelta(double x, double y)
+{
+    m_QueuedMouseDeltaX += x;
+    m_QueuedMouseDeltaY += y;
 }
 
 void InputSystem::AddScrollDelta(double x, double y)

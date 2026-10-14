@@ -61,6 +61,11 @@ public:
         m_input.SetAxisOverride(std::string(axis), value);
         return true;
     }
+    bool AddMouseDelta(double x, double y, std::string&) override
+    {
+        m_input.QueueMouseDelta(x, y);
+        return true;
+    }
     bool ClearInputOverrides(std::string&) override
     {
         m_input.ClearOverrides();

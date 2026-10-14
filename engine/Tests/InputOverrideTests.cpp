@@ -56,6 +56,16 @@ int main()
     ok &= Check(!input.IsActionDown("Jump"), "Reset clears action overrides");
     ok &= Check(Near(input.GetAxis("MoveForward"), 0.0f), "Reset clears axis overrides");
 
+    input.QueueMouseDelta(40.0, -80.0);
+    ok &= Check(input.GetMouseDeltaX() == 0.0 && input.GetMouseDeltaY() == 0.0,
+                "queued mouse delta is not visible until BeginFrame");
+    input.BeginFrame();
+    ok &= Check(input.GetMouseDeltaX() == 40.0 && input.GetMouseDeltaY() == -80.0,
+                "queued mouse delta applies unclamped on the next BeginFrame");
+    input.BeginFrame();
+    ok &= Check(input.GetMouseDeltaX() == 0.0 && input.GetMouseDeltaY() == 0.0,
+                "queued mouse delta is consumed after one frame");
+
     if (ok) {
         std::cout << "InputOverrideTests passed\n";
         return 0;

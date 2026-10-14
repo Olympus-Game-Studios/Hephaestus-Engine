@@ -26,6 +26,7 @@ public:
     void SetMousePosition(double x, double y);
     void SetMouseDelta(double x, double y);
     void AddMouseDelta(double x, double y);
+    void QueueMouseDelta(double x, double y);
     void AddScrollDelta(double x, double y);
     void SetGamepadConnected(bool connected);
     void SetGamepadButtonState(int button, bool down);
@@ -91,6 +92,8 @@ private:
     std::unordered_map<std::string, float> m_ActionOverrides;
     std::unordered_map<std::string, float> m_PreviousActionOverrides;
     std::unordered_map<std::string, float> m_AxisOverrides;
+    double m_QueuedMouseDeltaX = 0.0;
+    double m_QueuedMouseDeltaY = 0.0;
     int m_CursorModeRequest = 0;
 };
 

@@ -190,6 +190,24 @@ void RegisterPlayAutomation(AutomationService& service)
         }, PlayRequirement::PlayModeActive, HostMask::Editor | HostMask::Runtime));
 
     registerTool(Definition(
+        "input.add_mouse_delta",
+        "Add unclamped mouse pixel delta for the next gameplay frame while Play Mode is active.",
+        ObjectSchema({{"x", {{"type", "number"}}}, {"y", {{"type", "number"}}}},
+                     Json::array({"x", "y"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            float x = 0.0f;
+            float y = 0.0f;
+            if (!RequireFloat(arguments, "x", x) || !RequireFloat(arguments, "y", y)) {
+                return Failure(ErrorCode::InvalidArguments, "Numeric x and y mouse delta values are required");
+            }
+            std::string error;
+            if (!context.Backend().AddMouseDelta(static_cast<double>(x), static_cast<double>(y), error)) {
+                return Failure(ErrorCode::ToolUnavailable, std::move(error));
+            }
+            return ToolResult::Success({{"x", x}, {"y", y}});
+        }, PlayRequirement::PlayModeActive, HostMask::Editor | HostMask::Runtime));
+
+    registerTool(Definition(
         "input.clear_overrides", "Clear all injected action and axis overrides.",
         ObjectSchema(), [](ToolContext& context, const Json&) -> ToolOutcome {
             std::string error;

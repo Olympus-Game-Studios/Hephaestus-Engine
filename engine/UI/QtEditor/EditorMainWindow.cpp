@@ -959,6 +959,16 @@ public:
         return true;
     }
 
+    bool AddMouseDelta(double x, double y, std::string& outError) override
+    {
+        if (!m_owner->m_engine) {
+            outError = "Engine is unavailable";
+            return false;
+        }
+        m_owner->m_engine->GetGameplayInput().QueueMouseDelta(x, y);
+        return true;
+    }
+
     bool ClearInputOverrides(std::string& outError) override
     {
         if (!m_owner->m_engine) {

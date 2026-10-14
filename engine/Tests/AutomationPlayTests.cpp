@@ -29,6 +29,8 @@ public:
     float lastStepDt = 0.0f;
     std::unordered_map<std::string, float> actions;
     std::unordered_map<std::string, float> axes;
+    double mouseDeltaX = 0.0;
+    double mouseDeltaY = 0.0;
 
     Automation::HostMask Host() const noexcept override { return Automation::HostMask::Editor; }
     Automation::SceneAccess ActiveScene() noexcept override { return {}; }
@@ -72,6 +74,12 @@ public:
     bool SetAxisOverride(std::string_view axis, float value, std::string& outError) override
     {
         axes[std::string(axis)] = value;
+        return true;
+    }
+    bool AddMouseDelta(double x, double y, std::string& outError) override
+    {
+        mouseDeltaX += x;
+        mouseDeltaY += y;
         return true;
     }
     bool ClearInputOverrides(std::string& outError) override
@@ -150,6 +158,10 @@ int main()
     auto axis = Call(service, "input.set_axis", {{"axis", "MoveX"}, {"value", -0.5}});
     ok &= Check(axis.Ok() && backend.axes["MoveX"] == -0.5f,
                 "input.set_axis injects an axis override");
+
+    auto mouse = Call(service, "input.add_mouse_delta", {{"x", 40.0}, {"y", -80.0}});
+    ok &= Check(mouse.Ok() && backend.mouseDeltaX == 40.0 && backend.mouseDeltaY == -80.0,
+                "input.add_mouse_delta injects unclamped pixel delta");
 
     auto clear = Call(service, "input.clear_overrides");
     ok &= Check(clear.Ok() && backend.actions.empty() && backend.axes.empty(),

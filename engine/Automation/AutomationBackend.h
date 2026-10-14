@@ -132,6 +132,11 @@ public:
         outError = "Input injection is unavailable for this host";
         return false;
     }
+    virtual bool AddMouseDelta(double x, double y, std::string& outError)
+    {
+        outError = "Input injection is unavailable for this host";
+        return false;
+    }
     virtual bool ClearInputOverrides(std::string& outError)
     {
         outError = "Input injection is unavailable for this host";
