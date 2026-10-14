@@ -927,7 +927,8 @@ int main(int argc, char* argv[]) {
 
     physicsBinding.raycast = [&physicsSystem, &joltPhysicsEngine](
                                 uint32_t entityId, const Vec3& origin, const Vec3& direction, float maxDistance,
-                                PhysicsRaycastHit& outHit, const char* layerName, std::string& outError) -> bool {
+                                PhysicsRaycastHit& outHit, const char* layerName, std::string& outError,
+                                bool ignoreSensors) -> bool {
         const std::uint16_t* layer = nullptr;
         std::uint16_t resolved = 0;
         if (layerName && layerName[0] != '\0') {
@@ -938,7 +939,7 @@ int main(int argc, char* argv[]) {
         }
         Physics::RaycastHit hit{};
         const bool ok = physicsSystem.Raycast(
-            static_cast<entt::entity>(entityId), origin, direction, maxDistance, hit, layer);
+            static_cast<entt::entity>(entityId), origin, direction, maxDistance, hit, layer, ignoreSensors);
         if (!ok) {
             return false;
         }

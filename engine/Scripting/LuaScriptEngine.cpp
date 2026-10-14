@@ -975,6 +975,7 @@ void LuaScriptEngine::RegisterBindings() {
 #if LUA_AVAILABLE
     RegisterEntityBindings();
     RegisterTransformBindings();
+    RegisterMeshBindings();
     RegisterInputBindings();
     RegisterUtilityBindings();
     RegisterExposeBindings();
@@ -1036,6 +1037,17 @@ void LuaScriptEngine::RegisterTransformBindings() {
     lua_setfield(m_State, -2, "setScale");
 
     lua_setglobal(m_State, "Transform");
+#endif
+}
+
+void LuaScriptEngine::RegisterMeshBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Mesh_setVisible);
+    lua_setfield(m_State, -2, "setVisible");
+    lua_pushcfunction(m_State, Lua_Mesh_isVisible);
+    lua_setfield(m_State, -2, "isVisible");
+    lua_setglobal(m_State, "Mesh");
 #endif
 }
 
@@ -1394,17 +1406,30 @@ int LuaScriptEngine::Lua_Physics_raycast(lua_State* L) {
     if (lua_gettop(L) >= 8 && !lua_isnoneornil(L, 8)) {
         layerName = luaL_checkstring(L, 8);
     }
+    bool ignoreSensors = false;
+    if (lua_gettop(L) >= 9 && !lua_isnoneornil(L, 9)) {
+        ignoreSensors = lua_toboolean(L, 9) != 0;
+    }
+    uint32_t ignoreEntityId = engine->m_CurrentEntityId;
+    if (lua_gettop(L) >= 10 && !lua_isnoneornil(L, 10)) {
+        uint32_t* explicitId = static_cast<uint32_t*>(luaL_testudata(L, 10, "HephaestusEntity"));
+        if (!explicitId) {
+            return luaL_error(L, "Physics.raycast expected an entity userdata as argument 10");
+        }
+        ignoreEntityId = *explicitId;
+    }
 
     PhysicsRaycastHit hit{};
     std::string error;
     bool ok = engine->m_PhysicsBinding.raycast(
-        engine->m_CurrentEntityId,
+        ignoreEntityId,
         Vec3(ox, oy, oz),
         Vec3(dx, dy, dz),
         maxDistance,
         hit,
         layerName,
-        error
+        error,
+        ignoreSensors
     );
     if (!error.empty()) {
         return luaL_error(L, "%s", error.c_str());
@@ -2586,6 +2611,49 @@ int LuaScriptEngine::Lua_Transform_setScale(lua_State* L) {
     float sz = static_cast<float>(luaL_checknumber(L, 3));
     transform->scale = Vec3(sx, sy, sz);
     return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Mesh_setVisible(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (!registry.all_of<MeshRendererComponent>(handle)) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    registry.get<MeshRendererComponent>(handle).visible = lua_toboolean(L, 1) != 0;
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Mesh_isVisible(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (!registry.all_of<MeshRendererComponent>(handle)) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_pushboolean(L, registry.get<MeshRendererComponent>(handle).visible);
+    return 1;
 #else
     (void)L;
     return 0;

@@ -3152,7 +3152,7 @@ void QtEditorEngine::StartPlayMode()
 
     physicsBinding.raycast = [this](uint32_t entityId, const Vec3& origin, const Vec3& direction,
                                     float maxDistance, PhysicsRaycastHit& outHit, const char* layerName,
-                                    std::string& outError) -> bool {
+                                    std::string& outError, bool ignoreSensors) -> bool {
         if (!m_physicsInitialized || !m_joltPhysicsSystem || !m_joltPhysicsEngine) {
             return false;
         }
@@ -3167,7 +3167,7 @@ void QtEditorEngine::StartPlayMode()
 
         Physics::RaycastHit hit{};
         const bool ok = m_joltPhysicsSystem->Raycast(
-            static_cast<entt::entity>(entityId), origin, direction, maxDistance, hit, layer);
+            static_cast<entt::entity>(entityId), origin, direction, maxDistance, hit, layer, ignoreSensors);
         if (!ok) {
             return false;
         }

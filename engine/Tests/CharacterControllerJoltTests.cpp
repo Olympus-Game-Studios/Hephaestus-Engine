@@ -744,6 +744,49 @@ int main()
               "Recreating the runtime resets the speed multiplier to 1");
     }
 
+    {
+        Session session("IgnoreProxyRay");
+        AddFloor(session);
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, 0.0f));
+        Entity target = AddStatic(session, "Target", Vec3(4.0f, 1.0f, 0.0f), Vec3(0.5f, 1.0f, 0.5f));
+        const entt::entity characterId = static_cast<entt::entity>(character);
+        const entt::entity targetId = static_cast<entt::entity>(target);
+        session.Step(20);
+        const Vec3 origin(0.0f, 0.9f, 0.0f);
+        const Vec3 direction(1.0f, 0.0f, 0.0f);
+        const std::uint16_t characterLayer = Physics::kLayerCharacter;
+        Physics::RaycastHit selfHit;
+        Check(session.system.Raycast(entt::null, origin, direction, 20.0f, selfHit, &characterLayer)
+                  && selfHit.hit && selfHit.entity == characterId,
+              "A ray that starts inside the player proxy hits the proxy first");
+        Physics::RaycastHit ignored;
+        Check(session.system.Raycast(characterId, origin, direction, 20.0f, ignored, &characterLayer)
+                  && ignored.hit && ignored.entity == targetId,
+              "Ignoring the player hits the target instead of the proxy");
+        Check(ignored.entity != characterId, "The ignored player proxy is not the hit");
+    }
+
+    {
+        Session session("IgnoreSensorsRay");
+        AddFloor(session);
+        Entity trigger = AddStatic(session, "Trigger", Vec3(2.0f, 1.0f, 0.0f), Vec3(0.4f, 1.0f, 0.4f),
+                                   Physics::kLayerTrigger);
+        trigger.GetComponent<RigidBodyComponent>().isTrigger = true;
+        Entity target = AddStatic(session, "Target", Vec3(4.0f, 1.0f, 0.0f), Vec3(0.5f, 1.0f, 0.5f));
+        session.Step(2);
+        const Vec3 origin(0.0f, 1.0f, 0.0f);
+        const Vec3 direction(1.0f, 0.0f, 0.0f);
+        const std::uint16_t characterLayer = Physics::kLayerCharacter;
+        Physics::RaycastHit sensorHit;
+        Check(session.system.Raycast(entt::null, origin, direction, 20.0f, sensorHit, &characterLayer, false)
+                  && sensorHit.hit && sensorHit.entity == static_cast<entt::entity>(trigger),
+              "ignoreSensors false lets a trigger be hit");
+        Physics::RaycastHit skipped;
+        Check(session.system.Raycast(entt::null, origin, direction, 20.0f, skipped, &characterLayer, true)
+                  && skipped.hit && skipped.entity == static_cast<entt::entity>(target),
+              "ignoreSensors true skips the trigger");
+    }
+
     if (!g_Pass) {
         return 1;
     }

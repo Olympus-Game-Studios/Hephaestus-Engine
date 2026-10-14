@@ -113,7 +113,7 @@ struct PhysicsBinding {
     std::function<bool(uint32_t entityId, const Vec3& velocity, bool activate)> setLinearVelocity;
     std::function<bool(uint32_t entityId, const Vec3& velocity, bool activate)> setAngularVelocity;
     std::function<bool(uint32_t entityId, const Vec3& rotationEuler, bool activate)> setRotation;
-    std::function<bool(uint32_t entityId, const Vec3& origin, const Vec3& direction, float maxDistance, PhysicsRaycastHit& outHit, const char* layerName, std::string& outError)> raycast;
+    std::function<bool(uint32_t entityId, const Vec3& origin, const Vec3& direction, float maxDistance, PhysicsRaycastHit& outHit, const char* layerName, std::string& outError, bool ignoreSensors)> raycast;
     std::function<bool(uint32_t entityId)> isGrounded;
     std::function<bool(uint32_t entityId, float wishX, float wishZ, float speed)> move;
     std::function<bool(uint32_t entityId, float impulse)> jump;
@@ -349,6 +349,7 @@ private:
      * Register Transform bindings
      */
     void RegisterTransformBindings();
+    void RegisterMeshBindings();
 
     /**
      * Register Input bindings
@@ -434,6 +435,8 @@ private:
     static int Lua_Transform_rotate(lua_State* L);
     static int Lua_Transform_getScale(lua_State* L);
     static int Lua_Transform_setScale(lua_State* L);
+    static int Lua_Mesh_setVisible(lua_State* L);
+    static int Lua_Mesh_isVisible(lua_State* L);
 
     static int Lua_Entity_isValid(lua_State* L);
     static int Lua_Entity_getName(lua_State* L);
