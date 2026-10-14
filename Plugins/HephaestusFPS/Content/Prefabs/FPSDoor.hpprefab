@@ -1,0 +1,28 @@
+{
+  "schema": "HephaestusPrefab",
+  "assetVersion": 1,
+  "guid": "e5c9f012-33bb-4d21-fps-door-01",
+  "name": "FPSDoor",
+  "rootNodeId": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "FPSDoor",
+      "parentId": null,
+      "transform": { "position": [0, 1, 0], "rotation": [0, 0, 0], "scale": [1.2, 2.0, 0.12] },
+      "components": [
+        {
+          "type": "MeshRenderer",
+          "enabled": true,
+          "data": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false, "appliedMaterialPaths": [] }
+        },
+        {
+          "type": "LuaScript",
+          "enabled": true,
+          "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/Door.lua", "enabled": true, "variables": {}, "authoredVariables": [] }
+        }
+      ],
+      "exposed": []
+    }
+  ]
+}

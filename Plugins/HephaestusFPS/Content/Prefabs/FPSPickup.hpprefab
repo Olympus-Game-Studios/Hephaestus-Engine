@@ -1,0 +1,28 @@
+{
+  "schema": "HephaestusPrefab",
+  "assetVersion": 1,
+  "guid": "07eb0234-55dd-4f43-fps-pickup-01",
+  "name": "FPSPickup",
+  "rootNodeId": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "FPSPickup",
+      "parentId": null,
+      "transform": { "position": [0, 0.4, 0], "rotation": [0, 0, 0], "scale": [0.3, 0.3, 0.3] },
+      "components": [
+        {
+          "type": "MeshRenderer",
+          "enabled": true,
+          "data": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false, "appliedMaterialPaths": [] }
+        },
+        {
+          "type": "LuaScript",
+          "enabled": true,
+          "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/Pickup.lua", "enabled": true, "variables": {}, "authoredVariables": [] }
+        }
+      ],
+      "exposed": []
+    }
+  ]
+}

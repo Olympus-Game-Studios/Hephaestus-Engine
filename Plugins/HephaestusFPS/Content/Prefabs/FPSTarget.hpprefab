@@ -1,0 +1,38 @@
+{
+  "schema": "HephaestusPrefab",
+  "assetVersion": 1,
+  "guid": "f6daf123-44cc-4e32-fps-target-01",
+  "name": "FPSTarget",
+  "rootNodeId": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "FPSTarget",
+      "parentId": null,
+      "transform": { "position": [0, 1, 0], "rotation": [0, 0, 0], "scale": [0.6, 1.6, 0.4] },
+      "components": [
+        {
+          "type": "MeshRenderer",
+          "enabled": true,
+          "data": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false, "appliedMaterialPaths": [] }
+        },
+        {
+          "type": "PhysicsShape",
+          "enabled": true,
+          "data": { "type": "Box", "extents": [0.5, 0.5, 0.5], "offset": [0, 0, 0] }
+        },
+        {
+          "type": "RigidBody",
+          "enabled": true,
+          "data": { "mass": 0, "motion": "static", "layer": 1, "isStatic": true, "isTrigger": false, "useGravity": false }
+        },
+        {
+          "type": "LuaScript",
+          "enabled": true,
+          "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/Target.lua", "enabled": true, "variables": { "maxHealth": 60 }, "authoredVariables": ["maxHealth"] }
+        }
+      ],
+      "exposed": []
+    }
+  ]
+}
