@@ -1,0 +1,129 @@
+{
+  "schema": "HephaestusPrefab",
+  "assetVersion": 1,
+  "guid": "b7e2c104-9a55-4d8f-b013-fps-player-01",
+  "name": "FPSPlayer",
+  "rootNodeId": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "FPSPlayer",
+      "parentId": null,
+      "transform": {
+        "position": [0.0, 0.0, 0.0],
+        "rotation": [0.0, 0.0, 0.0],
+        "scale": [1.0, 1.0, 1.0]
+      },
+      "components": [
+        {
+          "type": "CharacterController",
+          "enabled": true,
+          "data": {
+            "enabled": true,
+            "height": 1.8,
+            "radius": 0.3,
+            "crouchedHeight": 1.1,
+            "walkSpeed": 5.0
+          }
+        },
+        {
+          "type": "LuaScript",
+          "enabled": true,
+          "data": {
+            "path": "plugin://com.hephaestus.fps/Scripts/FPS/Player.lua",
+            "enabled": true,
+            "variables": {},
+            "authoredVariables": []
+          }
+        }
+      ],
+      "exposed": []
+    },
+    {
+      "id": "camera",
+      "name": "Camera",
+      "parentId": "root",
+      "transform": {
+        "position": [0.0, 1.62, 0.0],
+        "rotation": [0.0, 0.0, 0.0],
+        "scale": [1.0, 1.0, 1.0]
+      },
+      "components": [
+        {
+          "type": "Camera",
+          "enabled": true,
+          "data": {
+            "fov": 90.0,
+            "nearPlane": 0.05,
+            "farPlane": 1000.0,
+            "projection": "Perspective",
+            "isActive": true,
+            "isPrimary": true,
+            "showEditorMesh": false
+          }
+        }
+      ],
+      "exposed": []
+    },
+    {
+      "id": "viewmodel",
+      "name": "ViewmodelRoot",
+      "parentId": "camera",
+      "transform": {
+        "position": [0.0, 0.0, 0.0],
+        "rotation": [0.0, 0.0, 0.0],
+        "scale": [1.0, 1.0, 1.0]
+      },
+      "components": [],
+      "exposed": []
+    },
+    {
+      "id": "weapon",
+      "name": "FPSHitscan",
+      "parentId": "viewmodel",
+      "transform": {
+        "position": [0.15, -0.12, -0.35],
+        "rotation": [0.0, 0.0, 0.0],
+        "scale": [0.05, 0.05, 0.4]
+      },
+      "components": [
+        {
+          "type": "MeshRenderer",
+          "enabled": true,
+          "data": {
+            "visible": true,
+            "hideInGame": false,
+            "meshSource": "builtin://cube",
+            "meshImported": false,
+            "backfaceCulling": false,
+            "appliedMaterialPaths": []
+          }
+        },
+        {
+          "type": "LuaScript",
+          "enabled": true,
+          "data": {
+            "path": "plugin://com.hephaestus.fps/Scripts/FPS/Weapon.lua",
+            "enabled": true,
+            "variables": {
+              "displayName": "Pistol",
+              "fireMode": "semi",
+              "roundsPerSecond": 5,
+              "damage": 20,
+              "range": 100,
+              "magazineSize": 12,
+              "reserveAmmo": 48,
+              "reloadSeconds": 1.4,
+              "hitscan": true
+            },
+            "authoredVariables": [
+              "displayName", "fireMode", "roundsPerSecond", "damage", "range",
+              "magazineSize", "reserveAmmo", "reloadSeconds", "hitscan"
+            ]
+          }
+        }
+      ],
+      "exposed": []
+    }
+  ]
+}
