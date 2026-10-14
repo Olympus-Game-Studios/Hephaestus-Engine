@@ -782,6 +782,33 @@ if(HEPHAESTUS_USE_QT)
         )
         add_dependencies(HephaestusEngine HephaestusPrimitiveTools)
 
+        add_library(HephaestusFPS SHARED
+            Plugins/HephaestusFPS/Source/HephaestusFPSEditor.cpp
+        )
+        target_include_directories(HephaestusFPS PRIVATE engine extern)
+        target_link_libraries(HephaestusFPS PRIVATE Qt6::Widgets)
+        set_target_properties(HephaestusFPS PROPERTIES
+            OUTPUT_NAME "HephaestusFPS"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/HephaestusFPS/bin"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/Plugins/HephaestusFPS/bin"
+        )
+        add_custom_command(TARGET HephaestusFPS POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/HephaestusFPS/HephaestusFPS.hpplugin"
+                "$<TARGET_FILE_DIR:HephaestusFPS>/../HephaestusFPS.hpplugin"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/HephaestusFPS/Content"
+                "$<TARGET_FILE_DIR:HephaestusFPS>/../Content"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/HephaestusFPS/Resources"
+                "$<TARGET_FILE_DIR:HephaestusFPS>/../Resources"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/HephaestusFPS/Documentation"
+                "$<TARGET_FILE_DIR:HephaestusFPS>/../Documentation"
+            VERBATIM
+        )
+        add_dependencies(HephaestusEngine HephaestusFPS)
+
         # Official MCP editor plugin. A first-party consumer of the Automation
         # API: it links the Qt-free McpCore and never the engine's internals.
         add_library(HephaestusMCP SHARED
@@ -2349,6 +2376,45 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     target_link_libraries(PluginSystemTests PRIVATE HephaestusPluginCore)
     target_include_directories(PluginSystemTests PRIVATE engine extern)
     add_test(NAME PluginSystem COMMAND PluginSystemTests)
+
+    add_executable(FPSInputMergeTests engine/Tests/FPSInputMergeTests.cpp)
+    target_include_directories(FPSInputMergeTests PRIVATE
+        engine
+        extern
+        Plugins/HephaestusFPS/Source
+    )
+    add_test(NAME FPSInputMerge COMMAND FPSInputMergeTests)
+
+    add_executable(FPSPluginLayoutTests engine/Tests/FPSPluginLayoutTests.cpp)
+    target_link_libraries(FPSPluginLayoutTests PRIVATE HephaestusPluginCore)
+    target_include_directories(FPSPluginLayoutTests PRIVATE engine extern)
+    add_test(
+        NAME FPSPluginLayout
+        COMMAND FPSPluginLayoutTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    if(LUA_FOUND)
+        add_executable(FPSLogicTests engine/Tests/FPSLogicTests.cpp)
+        target_include_directories(FPSLogicTests PRIVATE ${LUA_INCLUDE_DIR})
+        target_compile_definitions(FPSLogicTests PRIVATE LUA_AVAILABLE=1)
+        if(TARGET Lua::Lua)
+            target_link_libraries(FPSLogicTests PRIVATE Lua::Lua)
+        else()
+            target_link_libraries(FPSLogicTests PRIVATE ${LUA_LIBRARIES})
+        endif()
+        add_test(
+            NAME FPSLogic
+            COMMAND FPSLogicTests ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+        if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
+            get_filename_component(FPS_LOGIC_LUA_DLL_NAME "${LUA_DLL_PATH}" NAME)
+            add_custom_command(TARGET FPSLogicTests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${LUA_DLL_PATH}"
+                    "$<TARGET_FILE_DIR:FPSLogicTests>/${FPS_LOGIC_LUA_DLL_NAME}"
+            )
+        endif()
+    endif()
 
     add_executable(HUIRendererTests
         engine/Tests/HUIRendererTests.cpp
