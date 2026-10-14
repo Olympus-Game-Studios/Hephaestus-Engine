@@ -29,7 +29,7 @@ layout(push_constant) uniform PushConstants {
 void main() {
     vec2 ndc = vec2(
         aPos.x / pc.viewportSize.x * 2.0 - 1.0,
-        1.0 - aPos.y / pc.viewportSize.y * 2.0
+        aPos.y / pc.viewportSize.y * 2.0 - 1.0
     );
     gl_Position = vec4(ndc, 0.0, 1.0);
     vUV = aUV;
