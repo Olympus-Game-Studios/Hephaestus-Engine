@@ -1,0 +1,64 @@
+{
+  "schema": "HephaestusPrefab",
+  "assetVersion": 1,
+  "guid": "a91c2e44-7b18-4d03-9c55-fps-hitscan-auto",
+  "name": "FPSHitscanAuto",
+  "rootNodeId": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "FPSHitscanAuto",
+      "parentId": null,
+      "transform": {
+        "position": [0.18, -0.14, -0.38],
+        "rotation": [0.0, 0.0, 0.0],
+        "scale": [0.06, 0.06, 0.5]
+      },
+      "components": [
+        {
+          "type": "MeshRenderer",
+          "enabled": true,
+          "data": {
+            "visible": true,
+            "hideInGame": false,
+            "meshSource": "builtin://cube",
+            "meshImported": false,
+            "backfaceCulling": false,
+            "appliedMaterialPaths": []
+          }
+        },
+        {
+          "type": "LuaScript",
+          "enabled": true,
+          "data": {
+            "path": "plugin://com.hephaestus.fps/Scripts/FPS/Weapon.lua",
+            "enabled": true,
+            "variables": {
+              "displayName": "SMG",
+              "fireMode": "auto",
+              "roundsPerSecond": 10,
+              "damage": 12,
+              "range": 80,
+              "magazineSize": 24,
+              "reserveAmmo": 72,
+              "reloadSeconds": 1.8,
+              "hitscan": true
+            },
+            "authoredVariables": [
+              "displayName",
+              "fireMode",
+              "roundsPerSecond",
+              "damage",
+              "range",
+              "magazineSize",
+              "reserveAmmo",
+              "reloadSeconds",
+              "hitscan"
+            ]
+          }
+        }
+      ],
+      "exposed": []
+    }
+  ]
+}
