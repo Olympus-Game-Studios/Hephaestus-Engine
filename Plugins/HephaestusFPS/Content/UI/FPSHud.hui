@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "controller": "",
+  "root": {
+    "type": "Panel",
+    "id": "root",
+    "properties": {
+      "anchor": "Stretch"
+    },
+    "style": {
+      "backgroundColor": [0.0, 0.0, 0.0, 0.0]
+    },
+    "children": [
+      {
+        "type": "Text",
+        "id": "Crosshair",
+        "properties": {
+          "text": "+",
+          "textAlignment": "Center",
+          "anchor": "Center",
+          "size": [32, 32]
+        },
+        "style": {
+          "fontSize": 28,
+          "fontBold": true,
+          "textColor": [1.0, 1.0, 1.0, 0.9]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "HealthText",
+        "properties": {
+          "text": "100 / 100",
+          "anchor": "BottomLeft",
+          "size": [220, 32]
+        },
+        "style": {
+          "fontSize": 18,
+          "textColor": [0.85, 0.2, 0.2, 1.0]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "AmmoText",
+        "properties": {
+          "text": "12 / 48",
+          "anchor": "BottomRight",
+          "size": [160, 32],
+          "textAlignment": "Right"
+        },
+        "style": {
+          "fontSize": 18,
+          "textColor": [1.0, 1.0, 1.0, 1.0]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "WeaponName",
+        "properties": {
+          "text": "Pistol",
+          "anchor": "BottomRight",
+          "size": [160, 24],
+          "textAlignment": "Right"
+        },
+        "style": {
+          "fontSize": 14,
+          "textColor": [0.8, 0.8, 0.8, 1.0]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "Prompt",
+        "properties": {
+          "text": "",
+          "anchor": "BottomCenter",
+          "size": [320, 28],
+          "textAlignment": "Center"
+        },
+        "style": {
+          "fontSize": 16,
+          "textColor": [1.0, 0.92, 0.4, 1.0]
+        }
+      }
+    ]
+  }
+}
