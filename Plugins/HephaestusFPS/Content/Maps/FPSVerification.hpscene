@@ -1,0 +1,132 @@
+{
+  "scene": { "name": "FPSVerification", "version": "1.0" },
+  "environment": { "skybox": "", "ambientColor": [0.12, 0.12, 0.16], "ambientIntensity": 0.4 },
+  "blueprintInstances": [],
+  "entities": [
+    {
+      "id": 1, "name": "DirectionalLight", "parent": null,
+      "components": {
+        "Transform": { "position": [4.0, 10.0, 2.0], "rotation": [-0.8, 0.4, 0.0], "scale": [1, 1, 1] },
+        "Light": { "type": "Directional", "color": [1.0, 0.98, 0.9], "intensity": 1.2, "castsShadow": true }
+      }
+    },
+    {
+      "id": 2, "name": "Floor", "parent": null,
+      "components": {
+        "Transform": { "position": [0.0, -0.5, 0.0], "rotation": [0, 0, 0], "scale": [24.0, 1.0, 24.0] },
+        "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+        "PhysicsShape": { "type": "Box", "extents": [12.0, 0.5, 12.0], "offset": [0, 0, 0] },
+        "RigidBody": { "mass": 0, "motion": "static", "layer": 1, "isStatic": true, "isTrigger": false, "useGravity": false }
+      }
+    },
+    {
+      "id": 3, "name": "Stair", "parent": null,
+      "components": {
+        "Transform": { "position": [-4.0, 0.15, 2.0], "rotation": [0, 0, 0], "scale": [1.2, 0.3, 0.8] },
+        "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+        "PhysicsShape": { "type": "Box", "extents": [0.6, 0.15, 0.4], "offset": [0, 0, 0] },
+        "RigidBody": { "mass": 0, "motion": "static", "layer": 1, "isStatic": true, "isTrigger": false, "useGravity": false }
+      }
+    },
+    {
+      "id": 4, "name": "MovingPlatform", "parent": null,
+      "components": {
+        "Transform": { "position": [2.0, 0.1, 4.0], "rotation": [0, 0, 0], "scale": [2.0, 0.2, 2.0] },
+        "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+        "PhysicsShape": { "type": "Box", "extents": [1.0, 0.1, 1.0], "offset": [0, 0, 0] },
+        "RigidBody": { "mass": 0, "motion": "kinematic", "layer": 1, "isStatic": false, "isTrigger": false, "useGravity": false, "linearVelocity": [0.4, 0.0, 0.0] }
+      }
+    },
+    {
+      "id": 5, "name": "FPSPlayer", "parent": null,
+      "components": {
+        "Transform": { "position": [0.0, 0.0, 0.0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+        "CharacterController": { "enabled": true, "height": 1.8, "radius": 0.3, "crouchedHeight": 1.1, "walkSpeed": 5.0, "collisionLayer": 2 },
+        "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Player.lua", "enabled": true, "variables": {} }
+      }
+    },
+    {
+      "id": 6, "name": "Camera", "parent": 5,
+      "components": {
+        "Transform": { "position": [0.0, 1.62, 0.0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+        "Camera": { "fov": 90.0, "nearPlane": 0.05, "farPlane": 1000.0, "projection": "Perspective", "isActive": true }
+      }
+    },
+    {
+      "id": 7, "name": "ViewmodelRoot", "parent": 6,
+      "components": {
+        "Transform": { "position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1] }
+      }
+    },
+    {
+      "id": 8, "name": "FPSHitscan", "parent": 7,
+      "components": {
+        "Transform": { "position": [0.15, -0.12, -0.35], "rotation": [0, 0, 0], "scale": [0.05, 0.05, 0.4] },
+        "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+        "LuaScript": {
+          "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Weapon.lua",
+          "enabled": true,
+          "variables": { "displayName": "Pistol", "fireMode": "semi", "roundsPerSecond": 5, "damage": 20, "range": 100, "magazineSize": 12, "reserveAmmo": 48, "reloadSeconds": 1.4, "hitscan": true }
+        }
+      }
+    },
+    {
+      "id": 9, "name": "FPSHitscanAuto", "parent": 7,
+      "components": {
+        "Transform": { "position": [0.18, -0.14, -0.38], "rotation": [0, 0, 0], "scale": [0.06, 0.06, 0.5] },
+        "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+        "LuaScript": {
+          "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Weapon.lua",
+          "enabled": true,
+          "variables": { "displayName": "SMG", "fireMode": "auto", "roundsPerSecond": 10, "damage": 12, "range": 80, "magazineSize": 24, "reserveAmmo": 72, "reloadSeconds": 1.8, "hitscan": true }
+        }
+      }
+    },
+    {
+      "id": 10, "name": "FPSButton", "parent": null,
+      "components": {
+        "Transform": { "position": [3.0, 1.0, 1.5], "rotation": [0, 0, 0], "scale": [0.4, 0.4, 0.1] },
+        "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+        "PhysicsShape": { "type": "Box", "extents": [0.2, 0.2, 0.05], "offset": [0, 0, 0] },
+        "RigidBody": { "mass": 0, "motion": "static", "layer": 1, "isStatic": true, "isTrigger": false, "useGravity": false },
+        "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Button.lua", "enabled": true, "variables": {} }
+      }
+    },
+    {
+      "id": 11, "name": "FPSDoor", "parent": null,
+      "components": {
+        "Transform": { "position": [5.0, 1.0, -1.5], "rotation": [0, 0, 0], "scale": [1.2, 2.0, 0.12] },
+        "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+        "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Door.lua", "enabled": true, "variables": {} }
+      }
+    },
+    {
+      "id": 12, "name": "FPSTarget", "parent": null,
+      "components": {
+        "Transform": { "position": [8.0, 0.8, 0.0], "rotation": [0, 0, 0], "scale": [0.6, 1.6, 0.4] },
+        "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+        "PhysicsShape": { "type": "Box", "extents": [0.3, 0.8, 0.2], "offset": [0, 0, 0] },
+        "RigidBody": { "mass": 0, "motion": "static", "layer": 1, "isStatic": true, "isTrigger": false, "useGravity": false },
+        "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Target.lua", "enabled": true, "variables": { "maxHealth": 60 } }
+      }
+    },
+    {
+      "id": 13, "name": "FPSPickup", "parent": null,
+      "components": {
+        "Transform": { "position": [2.0, 0.4, 1.0], "rotation": [0, 0, 0], "scale": [0.3, 0.3, 0.3] },
+        "MeshRenderer": { "visible": true, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+        "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/Pickup.lua", "enabled": true, "variables": {} }
+      }
+    },
+    {
+      "id": 14, "name": "TriggerVolume", "parent": null,
+      "components": {
+        "Transform": { "position": [4.0, 1.0, 0.0], "rotation": [0, 0, 0], "scale": [0.6, 1.6, 0.6] },
+        "MeshRenderer": { "visible": true, "hideInGame": true, "meshSource": "builtin://cube", "meshImported": false, "backfaceCulling": false },
+        "PhysicsShape": { "type": "Box", "extents": [0.3, 0.8, 0.3], "offset": [0, 0, 0] },
+        "RigidBody": { "mass": 0, "motion": "static", "layer": 3, "isStatic": true, "isTrigger": true, "useGravity": false },
+        "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/TriggerDummy.lua", "enabled": true, "variables": { "maxHealth": 1 } }
+      }
+    }
+  ]
+}
