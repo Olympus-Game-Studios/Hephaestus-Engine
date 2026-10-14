@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "actions": [
+    {
+      "name": "Jump",
+      "bindings": [
+        { "type": "keyboard", "control": "SPACE" },
+        { "type": "gamepad_button", "control": "SOUTH" }
+      ]
+    },
+    {
+      "name": "Interact",
+      "bindings": [
+        { "type": "keyboard", "control": "E" },
+        { "type": "gamepad_button", "control": "WEST" }
+      ]
+    },
+    {
+      "name": "Sprint",
+      "bindings": [
+        { "type": "keyboard", "control": "LEFT_SHIFT" },
+        { "type": "gamepad_button", "control": "LEFT_STICK" }
+      ]
+    },
+    {
+      "name": "Crouch",
+      "bindings": [
+        { "type": "keyboard", "control": "LEFT_CTRL" },
+        { "type": "gamepad_button", "control": "EAST" }
+      ]
+    },
+    {
+      "name": "Fire",
+      "bindings": [
+        { "type": "mouse_button", "control": "LEFT" },
+        { "type": "gamepad_button", "control": "RIGHT_BUMPER" }
+      ]
+    },
+    {
+      "name": "Aim",
+      "bindings": [
+        { "type": "mouse_button", "control": "RIGHT" },
+        { "type": "gamepad_button", "control": "LEFT_BUMPER" }
+      ]
+    },
+    {
+      "name": "Reload",
+      "bindings": [
+        { "type": "keyboard", "control": "R" },
+        { "type": "gamepad_button", "control": "NORTH" }
+      ]
+    },
+    {
+      "name": "NextWeapon",
+      "bindings": [
+        { "type": "keyboard", "control": "Q" },
+        { "type": "gamepad_button", "control": "DPAD_RIGHT" }
+      ]
+    },
+    {
+      "name": "PreviousWeapon",
+      "bindings": [
+        { "type": "keyboard", "control": "Z" },
+        { "type": "gamepad_button", "control": "DPAD_LEFT" }
+      ]
+    },
+    { "name": "Weapon1", "bindings": [ { "type": "keyboard", "control": "1" } ] },
+    { "name": "Weapon2", "bindings": [ { "type": "keyboard", "control": "2" } ] },
+    { "name": "Weapon3", "bindings": [ { "type": "keyboard", "control": "3" } ] },
+    { "name": "Weapon4", "bindings": [ { "type": "keyboard", "control": "4" } ] }
+  ],
+  "axes": [
+    {
+      "name": "MoveForward",
+      "clamp": true,
+      "bindings": [
+        { "type": "keyboard", "control": "W" },
+        { "type": "keyboard", "control": "S", "scale": -1.0 },
+        { "type": "gamepad_axis", "control": "LEFT_Y", "scale": -1.0 }
+      ]
+    },
+    {
+      "name": "MoveRight",
+      "clamp": true,
+      "bindings": [
+        { "type": "keyboard", "control": "D" },
+        { "type": "keyboard", "control": "A", "scale": -1.0 },
+        { "type": "gamepad_axis", "control": "LEFT_X" }
+      ]
+    },
+    {
+      "name": "LookX",
+      "clamp": false,
+      "bindings": [
+        { "type": "mouse_delta", "control": "X" },
+        { "type": "gamepad_axis", "control": "RIGHT_X" }
+      ]
+    },
+    {
+      "name": "LookY",
+      "clamp": false,
+      "bindings": [
+        { "type": "mouse_delta", "control": "Y" },
+        { "type": "gamepad_axis", "control": "RIGHT_Y" }
+      ]
+    },
+    {
+      "name": "LookStickX",
+      "clamp": true,
+      "bindings": [ { "type": "gamepad_axis", "control": "RIGHT_X" } ]
+    },
+    {
+      "name": "LookStickY",
+      "clamp": true,
+      "bindings": [ { "type": "gamepad_axis", "control": "RIGHT_Y" } ]
+    }
+  ]
+}
