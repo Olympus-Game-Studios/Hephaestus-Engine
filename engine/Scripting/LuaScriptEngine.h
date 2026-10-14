@@ -95,6 +95,10 @@ struct CharacterBinding {
     std::function<bool(uint32_t entityId)> jump;
     std::function<bool(uint32_t entityId, bool crouched)> setCrouched;
     std::function<bool(uint32_t entityId)> isGrounded;
+    std::function<bool(uint32_t entityId, float multiplier)> setSpeedMultiplier;
+    std::function<bool(uint32_t entityId, float& outMultiplier)> getSpeedMultiplier;
+    std::function<bool(uint32_t entityId)> isCrouched;
+    std::function<bool(uint32_t entityId)> isStandBlocked;
     std::function<bool(uint32_t entityId, Vec3& out)> getVelocity;
     std::function<bool(uint32_t entityId, Vec3& out)> getGroundNormal;
     std::function<bool(uint32_t entityId, Vec3& out)> getGroundVelocity;
@@ -473,6 +477,10 @@ private:
     static int Lua_Character_jump(lua_State* L);
     static int Lua_Character_setCrouched(lua_State* L);
     static int Lua_Character_isGrounded(lua_State* L);
+    static int Lua_Character_setSpeedMultiplier(lua_State* L);
+    static int Lua_Character_getSpeedMultiplier(lua_State* L);
+    static int Lua_Character_isCrouched(lua_State* L);
+    static int Lua_Character_isStandBlocked(lua_State* L);
     static int Lua_Character_getVelocity(lua_State* L);
     static int Lua_Character_getGroundNormal(lua_State* L);
     static int Lua_Character_getGroundVelocity(lua_State* L);

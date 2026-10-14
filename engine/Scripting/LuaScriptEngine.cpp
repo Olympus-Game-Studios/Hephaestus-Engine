@@ -1216,6 +1216,14 @@ void LuaScriptEngine::RegisterCharacterBindings() {
     lua_setfield(m_State, -2, "setCrouched");
     lua_pushcfunction(m_State, Lua_Character_isGrounded);
     lua_setfield(m_State, -2, "isGrounded");
+    lua_pushcfunction(m_State, Lua_Character_setSpeedMultiplier);
+    lua_setfield(m_State, -2, "setSpeedMultiplier");
+    lua_pushcfunction(m_State, Lua_Character_getSpeedMultiplier);
+    lua_setfield(m_State, -2, "getSpeedMultiplier");
+    lua_pushcfunction(m_State, Lua_Character_isCrouched);
+    lua_setfield(m_State, -2, "isCrouched");
+    lua_pushcfunction(m_State, Lua_Character_isStandBlocked);
+    lua_setfield(m_State, -2, "isStandBlocked");
     lua_pushcfunction(m_State, Lua_Character_getVelocity);
     lua_setfield(m_State, -2, "getVelocity");
     lua_pushcfunction(m_State, Lua_Character_getGroundNormal);
@@ -1556,6 +1564,67 @@ int LuaScriptEngine::Lua_Character_isGrounded(lua_State* L) {
         return 1;
     }
     lua_pushboolean(L, engine->m_CharacterBinding.isGrounded(engine->m_CurrentEntityId));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_setSpeedMultiplier(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.setSpeedMultiplier) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const float multiplier = static_cast<float>(luaL_checknumber(L, 1));
+    lua_pushboolean(L, engine->m_CharacterBinding.setSpeedMultiplier(engine->m_CurrentEntityId, multiplier));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_getSpeedMultiplier(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    float multiplier = 1.0f;
+    if (engine && engine->CurrentEntityValid() && engine->m_CharacterBinding.getSpeedMultiplier) {
+        engine->m_CharacterBinding.getSpeedMultiplier(engine->m_CurrentEntityId, multiplier);
+    }
+    lua_pushnumber(L, multiplier);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_isCrouched(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.isCrouched) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_pushboolean(L, engine->m_CharacterBinding.isCrouched(engine->m_CurrentEntityId));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_isStandBlocked(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.isStandBlocked) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_pushboolean(L, engine->m_CharacterBinding.isStandBlocked(engine->m_CurrentEntityId));
     return 1;
 #else
     (void)L;

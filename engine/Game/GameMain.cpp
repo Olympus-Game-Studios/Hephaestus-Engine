@@ -1000,6 +1000,24 @@ int main(int argc, char* argv[]) {
         characterControllers.SetCrouched(entity, crouched);
         return true;
     };
+    characterBinding.setSpeedMultiplier = [&characterControllers](uint32_t entityId, float multiplier) {
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (!characterControllers.HasRuntime(entity)) return false;
+        characterControllers.SetSpeedMultiplier(entity, multiplier);
+        return true;
+    };
+    characterBinding.getSpeedMultiplier = [&characterControllers](uint32_t entityId, float& outMultiplier) {
+        outMultiplier = characterControllers.GetSpeedMultiplier(static_cast<entt::entity>(entityId));
+        return true;
+    };
+    characterBinding.isCrouched = [&characterControllers](uint32_t entityId) {
+        Physics::CharacterControllerState state;
+        return characterControllers.GetState(static_cast<entt::entity>(entityId), state) && state.crouched;
+    };
+    characterBinding.isStandBlocked = [&characterControllers](uint32_t entityId) {
+        Physics::CharacterControllerState state;
+        return characterControllers.GetState(static_cast<entt::entity>(entityId), state) && state.standBlocked;
+    };
     characterBinding.isGrounded = [&characterControllers](uint32_t entityId) {
         Physics::CharacterControllerState state;
         return characterControllers.GetState(static_cast<entt::entity>(entityId), state) && state.grounded;

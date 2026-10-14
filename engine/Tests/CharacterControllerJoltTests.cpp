@@ -708,6 +708,42 @@ int main()
               "A later Character.jump uses the component speed (vy=" + std::to_string(normal) + ")");
     }
 
+    {
+        Session session("SpeedMultiplier");
+        AddFloor(session);
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, 0.0f));
+        CharacterControllerComponent& component = character.GetComponent<CharacterControllerComponent>();
+        const float authoredSpeed = component.walkSpeed;
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(30);
+        Check(std::fabs(session.controllers.GetSpeedMultiplier(id) - 1.0f) < 1.0e-4f,
+              "A new runtime speed multiplier is 1");
+        session.controllers.SetSpeedMultiplier(id, 1.6f);
+        session.controllers.SetMoveInput(id, 1.0f, 0.0f);
+        Check(std::fabs(session.controllers.GetSpeedMultiplier(id) - 1.6f) < 1.0e-4f,
+              "SetMoveInput does not clear the speed multiplier");
+        Check(std::fabs(component.walkSpeed - authoredSpeed) < 1.0e-4f,
+              "The speed multiplier does not change authored walkSpeed");
+        session.Step(45);
+        const auto moving = StateOf(session, id);
+        Check(moving.planarSpeed > authoredSpeed * 1.45f && moving.planarSpeed < authoredSpeed * 1.75f,
+              "A 1.6 multiplier raises target speed (speed=" + std::to_string(moving.planarSpeed) + ")");
+        Check(std::fabs(component.walkSpeed - authoredSpeed) < 1.0e-4f,
+              "Stepping leaves authored walkSpeed unchanged");
+        const auto crouched = StateOf(session, id);
+        Check(!crouched.crouched && !crouched.standBlocked, "Standing controller reports neither crouch flag");
+        component.enabled = false;
+        session.Step(1);
+        Check(!session.controllers.HasRuntime(id), "Disabling the controller destroys the runtime");
+        Check(std::fabs(session.controllers.GetSpeedMultiplier(id) - 1.0f) < 1.0e-4f,
+              "A destroyed runtime reports multiplier 1");
+        component.enabled = true;
+        session.Step(1);
+        Check(session.controllers.HasRuntime(id)
+                  && std::fabs(session.controllers.GetSpeedMultiplier(id) - 1.0f) < 1.0e-4f,
+              "Recreating the runtime resets the speed multiplier to 1");
+    }
+
     if (!g_Pass) {
         return 1;
     }

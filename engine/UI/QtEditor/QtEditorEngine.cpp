@@ -3243,6 +3243,30 @@ void QtEditorEngine::StartPlayMode()
         m_characterControllers->SetCrouched(entity, crouched);
         return true;
     };
+    characterBinding.setSpeedMultiplier = [this](uint32_t entityId, float multiplier) {
+        if (!m_characterControllers) return false;
+        const entt::entity entity = static_cast<entt::entity>(entityId);
+        if (!m_characterControllers->HasRuntime(entity)) return false;
+        m_characterControllers->SetSpeedMultiplier(entity, multiplier);
+        return true;
+    };
+    characterBinding.getSpeedMultiplier = [this](uint32_t entityId, float& outMultiplier) {
+        if (!m_characterControllers) return false;
+        outMultiplier = m_characterControllers->GetSpeedMultiplier(static_cast<entt::entity>(entityId));
+        return true;
+    };
+    characterBinding.isCrouched = [this](uint32_t entityId) {
+        Physics::CharacterControllerState state;
+        return m_characterControllers
+            && m_characterControllers->GetState(static_cast<entt::entity>(entityId), state)
+            && state.crouched;
+    };
+    characterBinding.isStandBlocked = [this](uint32_t entityId) {
+        Physics::CharacterControllerState state;
+        return m_characterControllers
+            && m_characterControllers->GetState(static_cast<entt::entity>(entityId), state)
+            && state.standBlocked;
+    };
     characterBinding.isGrounded = [this](uint32_t entityId) {
         Physics::CharacterControllerState state;
         return m_characterControllers && m_characterControllers->GetState(static_cast<entt::entity>(entityId), state)

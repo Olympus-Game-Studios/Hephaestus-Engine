@@ -130,6 +130,7 @@ struct CharacterControllerSystem::Runtime {
     bool jumpRequested = false;
     std::optional<float> jumpSpeedOverride;
     std::optional<float> legacySpeed;
+    float speedMultiplier = 1.0f;
     bool crouchRequested = false;
     bool crouched = false;
     bool standBlocked = false;
@@ -227,6 +228,21 @@ void CharacterControllerSystem::SetMoveInput(entt::entity entity, float worldX, 
     }
     runtime->wish = NormalizePlanarWish(worldX, worldZ);
     runtime->legacySpeed.reset();
+}
+
+void CharacterControllerSystem::SetSpeedMultiplier(entt::entity entity, float multiplier)
+{
+    Runtime* runtime = Find(entity);
+    if (!runtime || !std::isfinite(multiplier)) {
+        return;
+    }
+    runtime->speedMultiplier = std::max(0.0f, multiplier);
+}
+
+float CharacterControllerSystem::GetSpeedMultiplier(entt::entity entity) const
+{
+    const Runtime* runtime = Find(entity);
+    return runtime ? runtime->speedMultiplier : 1.0f;
 }
 
 void CharacterControllerSystem::ClearMoveInput(entt::entity entity)
@@ -561,7 +577,8 @@ void CharacterControllerSystem::FixedStep(Scene& scene, float fixedDt)
         step.velocity = velocity;
         step.groundVelocity = groundVelocity;
         step.wish = runtime->wish;
-        step.targetSpeed = runtime->legacySpeed.value_or(runtime->applied.walkSpeed);
+        const float scaledWalkSpeed = runtime->applied.walkSpeed * std::max(0.0f, runtime->speedMultiplier);
+        step.targetSpeed = runtime->legacySpeed.value_or(scaledWalkSpeed);
         step.acceleration = runtime->applied.acceleration;
         step.deceleration = runtime->applied.deceleration;
         step.airAcceleration = runtime->applied.airAcceleration;

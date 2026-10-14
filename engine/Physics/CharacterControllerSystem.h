@@ -54,6 +54,8 @@ public:
 
     void SetMoveInput(entt::entity entity, float worldX, float worldZ);
     void ClearMoveInput(entt::entity entity);
+    void SetSpeedMultiplier(entt::entity entity, float multiplier);
+    float GetSpeedMultiplier(entt::entity entity) const;
     void Jump(entt::entity entity);
     void JumpWithSpeed(entt::entity entity, float speed);
     bool SetLegacyMove(entt::entity entity, float worldX, float worldZ, float speed);
