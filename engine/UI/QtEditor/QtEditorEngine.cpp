@@ -21,6 +21,7 @@
 #include "../../Gfx/VulkanPipeline.h"
 #include "../../Gfx/EngineFrameRenderer.h"
 #include "../../Gfx/Vertex.h"
+#include "../../Scene/ActiveCameraSync.h"
 #include "../../Scene/Scene.h"
 #include "../../Scene/Components.h"
 #include "../../Scene/Entity.h"
@@ -1899,8 +1900,10 @@ void QtEditorEngine::onTick()
         m_cameraController.BuildRenderCamera(m_camera);
     }
 
-    // If a script is driving the camera, apply its state to the render camera
+    // If a script is driving the camera, follow the active CameraComponent after LateUpdate.
+    // Editor fly control stays in place until Camera.setActive(true).
     if (isPlayOrPause && m_playModeManager.GetCameraMode() == Hephaestus::CameraMode::RuntimeScript) {
+        m_playModeManager.SyncRuntimeCameraFromActiveComponent();
         m_playModeManager.ApplyRuntimeCameraToRender(m_camera);
     }
 
@@ -3003,6 +3006,11 @@ void QtEditorEngine::StartPlayMode()
         return m_playModeManager.IsScriptCameraActive();
     };
     camBinding.setPosition = [this](const Vec3& pos) {
+        Scene* scene = m_editorContext.HasActiveScene() ? m_editorContext.GetActiveScene() : nullptr;
+        if (scene && Hephaestus::WriteActiveCameraLocalPosition(*scene, pos) &&
+            m_playModeManager.SyncRuntimeCameraFromActiveComponent()) {
+            return;
+        }
         auto& cam = m_playModeManager.GetRuntimeCamera();
         cam.posX = pos.x;
         cam.posY = pos.y;
@@ -3013,6 +3021,11 @@ void QtEditorEngine::StartPlayMode()
         return Vec3(cam.posX, cam.posY, cam.posZ);
     };
     camBinding.setRotation = [this](const Vec3& rot) {
+        Scene* scene = m_editorContext.HasActiveScene() ? m_editorContext.GetActiveScene() : nullptr;
+        if (scene && Hephaestus::WriteActiveCameraLocalRotation(*scene, rot) &&
+            m_playModeManager.SyncRuntimeCameraFromActiveComponent()) {
+            return;
+        }
         auto& cam = m_playModeManager.GetRuntimeCamera();
         cam.pitch = rot.x;
         cam.yaw = rot.y;
@@ -3023,6 +3036,11 @@ void QtEditorEngine::StartPlayMode()
         return Vec3(cam.pitch, cam.yaw, cam.roll);
     };
     camBinding.translate = [this](const Vec3& delta) {
+        Scene* scene = m_editorContext.HasActiveScene() ? m_editorContext.GetActiveScene() : nullptr;
+        if (scene && Hephaestus::TranslateActiveCameraLocal(*scene, delta) &&
+            m_playModeManager.SyncRuntimeCameraFromActiveComponent()) {
+            return;
+        }
         auto& cam = m_playModeManager.GetRuntimeCamera();
         cam.posX += delta.x;
         cam.posY += delta.y;

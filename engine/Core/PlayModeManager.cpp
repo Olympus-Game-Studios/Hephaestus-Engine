@@ -4,6 +4,7 @@
  */
 
 #include "PlayModeManager.h"
+#include "../Scene/ActiveCameraSync.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Components.h"
 #include "../Scene/Entity.h"
@@ -109,19 +110,17 @@ bool PlayModeManager::StartPlayMode() {
     }
 
     Entity runtimeCamera = activeCameraEntity ? activeCameraEntity : firstCameraEntity;
-    if (runtimeCamera) {
-        auto& camComp = runtimeCamera.GetComponent<CameraComponent>();
-        auto& camTransform = runtimeCamera.GetComponent<TransformComponent>();
-        m_runtimeCamera.posX = camTransform.position.x;
-        m_runtimeCamera.posY = camTransform.position.y;
-        m_runtimeCamera.posZ = camTransform.position.z;
-        // TransformComponent stores Euler rotation in radians; runtime camera also uses radians.
-        m_runtimeCamera.pitch = camTransform.rotation.x;
-        m_runtimeCamera.yaw   = camTransform.rotation.y;
-        m_runtimeCamera.roll  = camTransform.rotation.z;
-        m_runtimeCamera.nearPlane = camComp.nearPlane;
-        m_runtimeCamera.farPlane  = camComp.farPlane;
-        m_runtimeCamera.fov       = camComp.fov;
+    ActiveCameraView activeView;
+    if (runtimeCamera && TryMakeCameraView(*m_scene, runtimeCamera, activeView)) {
+        m_runtimeCamera.posX = activeView.position.x;
+        m_runtimeCamera.posY = activeView.position.y;
+        m_runtimeCamera.posZ = activeView.position.z;
+        m_runtimeCamera.pitch = activeView.pitchRadians;
+        m_runtimeCamera.yaw   = activeView.yawRadians;
+        m_runtimeCamera.roll  = activeView.rollRadians;
+        m_runtimeCamera.nearPlane = activeView.nearPlane;
+        m_runtimeCamera.farPlane  = activeView.farPlane;
+        m_runtimeCamera.fov       = activeView.fovDegrees;
     } else {
         // Fallback: copy editor camera position into runtime camera
         m_runtimeCamera.posX  = m_savedCamPosX;
@@ -277,6 +276,26 @@ void PlayModeManager::SetScriptCameraActive(bool active) {
         m_cameraMode = CameraMode::EditorFly;
         Log("Camera authority: reverted to default (script released camera)");
     }
+}
+
+bool PlayModeManager::SyncRuntimeCameraFromActiveComponent() {
+    if (!m_scene) {
+        return false;
+    }
+    const std::optional<ActiveCameraView> view = TryReadActiveCameraView(*m_scene);
+    if (!view) {
+        return false;
+    }
+    m_runtimeCamera.posX = view->position.x;
+    m_runtimeCamera.posY = view->position.y;
+    m_runtimeCamera.posZ = view->position.z;
+    m_runtimeCamera.pitch = view->pitchRadians;
+    m_runtimeCamera.yaw = view->yawRadians;
+    m_runtimeCamera.roll = view->rollRadians;
+    m_runtimeCamera.nearPlane = view->nearPlane;
+    m_runtimeCamera.farPlane = view->farPlane;
+    m_runtimeCamera.fov = view->fovDegrees;
+    return true;
 }
 
 void PlayModeManager::ApplyRuntimeCameraToRender(RenderCamera& out) const {

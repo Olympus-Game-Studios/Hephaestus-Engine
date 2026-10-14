@@ -333,6 +333,7 @@ target_include_directories(HephaestusPluginCore PUBLIC engine extern)
     engine/Physics/CharacterMotor.cpp
     engine/Physics/CharacterControllerMath.cpp
     engine/Physics/CharacterControllerSystem.cpp
+    engine/Scene/ActiveCameraSync.cpp
     engine/Scene/Scene.cpp
     engine/Scene/SceneAuthoring.cpp
     engine/Scene/Entity.cpp
@@ -498,6 +499,7 @@ add_executable(HephaestusEngine
     engine/Physics/CharacterMotor.cpp
     engine/Physics/CharacterControllerMath.cpp
     engine/Physics/CharacterControllerSystem.cpp
+    engine/Scene/ActiveCameraSync.cpp
     engine/Scene/Scene.cpp
     engine/Scene/SceneAuthoring.cpp
     engine/Scene/Entity.cpp
@@ -1310,6 +1312,30 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME SceneAuthoringWorkflow
         COMMAND SceneAuthoringTests ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(ActiveCameraSyncTests
+        engine/Tests/ActiveCameraSyncTests.cpp
+        engine/Scene/ActiveCameraSync.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_include_directories(ActiveCameraSyncTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME ActiveCameraSync
+        COMMAND ActiveCameraSyncTests
     )
 
     add_executable(InspectorEditTests

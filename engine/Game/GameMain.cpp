@@ -34,6 +34,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -78,6 +79,7 @@
 // Scene
 #include "../Scene/Components.h"
 #include "../Scene/Entity.h"
+#include "../Scene/ActiveCameraSync.h"
 #include "../Scene/Scene.h"
 #include "../Scene/SceneSerializer.h"
 #include "../Scene/PrefabOverrideSystem.h"
@@ -165,6 +167,32 @@ static fs::path g_ProjectRoot;   // Detected from scene file / .heproject
 static fs::path g_ProjectAssets; // g_ProjectRoot / "assets"
 static GameConfig g_Config;
 static GameCamera* g_GameCameraPtr = nullptr; // For Lua camera binding
+static Scene* g_GameScenePtr = nullptr;
+
+static void ApplyActiveCameraView(const Hephaestus::ActiveCameraView& view, GameCamera& camera)
+{
+    constexpr float kRadToDeg = 180.0f / 3.14159265f;
+    camera.position = view.position;
+    camera.yawDeg = view.yawRadians * kRadToDeg;
+    camera.pitchDeg = view.pitchRadians * kRadToDeg;
+    camera.fovDeg = view.fovDegrees;
+    camera.nearPlane = view.nearPlane;
+    camera.farPlane = view.farPlane;
+}
+
+static bool SyncGameCameraFromActiveComponent(GameCamera& camera)
+{
+    if (!g_GameScenePtr) {
+        return false;
+    }
+    const std::optional<Hephaestus::ActiveCameraView> view =
+        Hephaestus::TryReadActiveCameraView(*g_GameScenePtr);
+    if (!view) {
+        return false;
+    }
+    ApplyActiveCameraView(*view, camera);
+    return true;
+}
 static double g_ScrollDeltaX = 0.0;
 static double g_ScrollDeltaY = 0.0;
 
@@ -1021,6 +1049,7 @@ int main(int argc, char* argv[]) {
     // GameCamera will be set up later, but we need the pointer for binding
     GameCamera gameCamera;
     g_GameCameraPtr = &gameCamera;
+    g_GameScenePtr = &scene;
 
 #if HEPHAESTUS_GAME_SCRIPTING
     // Set up camera binding so Lua scripts can control the camera
@@ -1032,6 +1061,12 @@ int main(int argc, char* argv[]) {
         return true;
     };
     cameraBinding.setPosition = [](const Vec3& pos) {
+        if (g_GameScenePtr &&
+            Hephaestus::WriteActiveCameraLocalPosition(*g_GameScenePtr, pos) &&
+            g_GameCameraPtr &&
+            SyncGameCameraFromActiveComponent(*g_GameCameraPtr)) {
+            return;
+        }
         if (g_GameCameraPtr) {
             g_GameCameraPtr->position = pos;
         }
@@ -1043,6 +1078,12 @@ int main(int argc, char* argv[]) {
         return Vec3(0.0f, 0.0f, 0.0f);
     };
     cameraBinding.setRotation = [](const Vec3& rot) {
+        if (g_GameScenePtr &&
+            Hephaestus::WriteActiveCameraLocalRotation(*g_GameScenePtr, rot) &&
+            g_GameCameraPtr &&
+            SyncGameCameraFromActiveComponent(*g_GameCameraPtr)) {
+            return;
+        }
         if (g_GameCameraPtr) {
             // rot.x = pitch (radians), rot.y = yaw (radians)
             g_GameCameraPtr->pitchDeg = rot.x * 180.0f / 3.14159265f;
@@ -1060,6 +1101,12 @@ int main(int argc, char* argv[]) {
         return Vec3(0.0f, 0.0f, 0.0f);
     };
     cameraBinding.translate = [](const Vec3& delta) {
+        if (g_GameScenePtr &&
+            Hephaestus::TranslateActiveCameraLocal(*g_GameScenePtr, delta) &&
+            g_GameCameraPtr &&
+            SyncGameCameraFromActiveComponent(*g_GameCameraPtr)) {
+            return;
+        }
         if (g_GameCameraPtr) {
             g_GameCameraPtr->position = vadd(g_GameCameraPtr->position, delta);
         }
@@ -1492,36 +1539,16 @@ int main(int argc, char* argv[]) {
     HP_LOG(Info, "Finding active camera...");
     // gameCamera already declared earlier for Lua binding
     try {
-        auto cameraView = scene.GetEntitiesWith<CameraComponent, TransformComponent>();
-        bool foundCamera = false;
-        
-        for (auto entityHandle : cameraView) {
-            Entity entity(entityHandle, &scene);
-            auto& camComp = entity.GetComponent<CameraComponent>();
-            auto& transform = entity.GetComponent<TransformComponent>();
-            
-            if (camComp.isActive || camComp.isPrimary) {
-                gameCamera.position = transform.position;
-                
-                // Extract rotation from transform
-                Vec3 rot = transform.rotation;
-                gameCamera.pitchDeg = rot.x * 180.0f / 3.14159265f;
-                gameCamera.yawDeg = rot.y * 180.0f / 3.14159265f;
-                gameCamera.fovDeg = camComp.fov;
-                gameCamera.nearPlane = camComp.nearPlane;
-                gameCamera.farPlane = camComp.farPlane;
-                
-                std::string entityName = "Unknown";
-                if (entity.HasComponent<TagComponent>()) {
-                    entityName = entity.GetComponent<TagComponent>().tag;
-                }
-                HP_LOG(Info, "Using camera from entity: " + entityName);
-                foundCamera = true;
-                break;
+        if (const std::optional<Hephaestus::ActiveCameraView> view =
+                Hephaestus::TryReadActiveCameraView(scene)) {
+            ApplyActiveCameraView(*view, gameCamera);
+            std::string entityName = "Unknown";
+            Entity entity(view->entity, &scene);
+            if (entity && entity.HasComponent<TagComponent>()) {
+                entityName = entity.GetComponent<TagComponent>().tag;
             }
-        }
-        
-        if (!foundCamera) {
+            HP_LOG(Info, "Using camera from entity: " + entityName);
+        } else {
             HP_LOG(Warning, "No active camera found, using defaults");
         }
     } catch (const std::exception& e) {
@@ -1746,6 +1773,10 @@ int main(int argc, char* argv[]) {
         uiRenderer.Reset();
         uiSystem.Render(uiRenderer);
 
+        // Follow the active CameraComponent after LateUpdate and before render.
+        // Camera.setPosition / setRotation write that entity when one exists.
+        SyncGameCameraFromActiveComponent(gameCamera);
+
         // Submit the renderer-independent HUI command list to the Vulkan overlay
         // backend; the frame renderer consumes it during RenderFrame().
         frameRenderer.SubmitHUICommands(uiRenderer.GetDrawCommands());
@@ -1772,6 +1803,7 @@ int main(int argc, char* argv[]) {
 
     vkDeviceWaitIdle(vkdev.device);
     g_GameCameraPtr = nullptr;
+    g_GameScenePtr = nullptr;
     frameRenderer.Shutdown();
     swap.Cleanup();
     vkdev.Cleanup();

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-14: `ActiveCameraSyncTests` locks active-camera world tracking for a root camera, a parented camera, parent yaw plus child pitch, parent movement, and component FOV / near / far.
 - 2026-10-12: General Character Controller 1.0 adds `CharacterControllerComponent` and `CharacterControllerSystem` on `JPH::CharacterVirtual` with an inner kinematic proxy. Root entities get fixed-step acceleration, jump, slopes, stairs, stick-to-floor, moving platforms, crouch clearance, ceiling collision, dynamic pushes, layer filters, trigger contacts, and character-versus-character blocking. Lua `Character.*` is the locomotion API. `Physics.move`, `Physics.jump`, and `Physics.isGrounded` use it when a controller is live and otherwise keep the legacy rigid-body motor. `Physics.jump(speed)` applies that speed only to the next jump request. `physics.get_character_state` reports controller state without a rigid body and keeps the previous keys for a rigid body. Coyote time and jump buffering are not included.
 - 2026-10-11: Project Settings → Physics edits `.hephaestus/physics_layers.json` through `PhysicsLayerConfig`: named layers, stable ids, tombstones, and a symmetric collision matrix. The Rigid Body inspector selects a layer by name. Matrix edits apply on the next Play.
 - 2026-10-11: Stopping Play writes one Physics info line with the live body count, the last frame's substep count, the stalled-step count, and the last frame's contact count.
@@ -71,6 +72,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-10-14: Editor Play and `GameMain` follow the active `CameraComponent` world transform after LateUpdate and before render. FOV, near, and far come from the component. `Camera.setPosition`, `Camera.setRotation`, and `Camera.translate` write that entity's local transform when one exists, and still drive the detached runtime camera when it does not. Editor fly camera is unchanged until `Camera.setActive(true)`.
 - 2026-10-11: `RigidBodyComponent::SetMotion` keeps `isStatic` equal to `motion == Static` for inspector edits, presets, factories, prefab apply, and scene duplication. Saves write `isStatic` from `motion`. `ProjectCreationLayout` prepends the engine Qt runtime to `PATH` so an incompatible `Qt6Core.dll` earlier on `PATH` is not loaded.
 - 2026-10-11: Body lookup uses the full Jolt body id. Static triggers are created as kinematic sensors so a sleeping static body does not end the overlap. Kinematic bodies do not collide with static bodies.
 - 2026-10-11: Kinematic rigid bodies use Jolt kinematic motion and `MoveKinematic` sliced across the frame's fixed substeps. `CreateKinematic` selects that motion. Character grounding rejects sensor hits; other raycasts still hit them.

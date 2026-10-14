@@ -142,6 +142,10 @@ public:
     /// Write the runtime camera state into a RenderCamera (for the renderer).
     void ApplyRuntimeCameraToRender(RenderCamera& out) const;
 
+    /// After LateUpdate, copy the active CameraComponent world pose into the runtime camera.
+    /// Returns false when no active camera exists; the detached runtime pose is left unchanged.
+    bool SyncRuntimeCameraFromActiveComponent();
+
     /// Snapshot the current editor camera so we can restore it on stop.
     void SaveEditorCamera(const EditorCamera& cam);
 

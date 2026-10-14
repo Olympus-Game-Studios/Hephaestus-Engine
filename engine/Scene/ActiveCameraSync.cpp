@@ -1,0 +1,133 @@
+#include "ActiveCameraSync.h"
+
+#include "Components.h"
+#include "Entity.h"
+#include "Scene.h"
+
+#include <cmath>
+
+namespace Hephaestus {
+namespace {
+
+Vec3 RenderForward(float yawRadians, float pitchRadians)
+{
+    const float cosPitch = std::cos(pitchRadians);
+    return Vec3(
+        std::cos(yawRadians) * cosPitch,
+        std::sin(pitchRadians),
+        std::sin(yawRadians) * cosPitch);
+}
+
+Vec3 RotateDirection(const Mat4& world, const Vec3& direction)
+{
+    const Vec4 rotated = Mat4::TransformVec4(
+        world, Vec4(direction.x, direction.y, direction.z, 0.0f));
+    return vnorm(Vec3(rotated.x, rotated.y, rotated.z));
+}
+
+Entity FindActiveCameraEntity(Scene& scene)
+{
+    Entity active;
+    Entity primary;
+    auto cameraView = scene.GetEntitiesWith<CameraComponent, TransformComponent>();
+    for (auto entityHandle : cameraView) {
+        Entity entity(entityHandle, &scene);
+        const CameraComponent& camera = entity.GetComponent<CameraComponent>();
+        if (camera.isActive) {
+            active = entity;
+            break;
+        }
+        if (!primary && camera.isPrimary) {
+            primary = entity;
+        }
+    }
+    return active ? active : primary;
+}
+
+void AssignAnglesFromForward(const Vec3& forward, ActiveCameraView& out)
+{
+    const float clampedY = std::max(-1.0f, std::min(1.0f, forward.y));
+    out.pitchRadians = std::asin(clampedY);
+    out.yawRadians = std::atan2(forward.z, forward.x);
+}
+
+} // namespace
+
+bool TryMakeCameraView(Scene& scene, Entity camera, ActiveCameraView& out)
+{
+    if (!camera ||
+        !camera.HasComponent<CameraComponent>() ||
+        !camera.HasComponent<TransformComponent>()) {
+        return false;
+    }
+
+    const CameraComponent& cameraComponent = camera.GetComponent<CameraComponent>();
+    const TransformComponent& local = camera.GetComponent<TransformComponent>();
+    const Mat4 world = scene.GetWorldTransform(camera);
+
+    Vec3 forward = RenderForward(local.rotation.y, local.rotation.x);
+    if (local.parent != entt::null) {
+        Entity parent{local.parent, &scene};
+        if (parent && parent.HasComponent<TransformComponent>()) {
+            forward = RotateDirection(scene.GetWorldTransform(parent), forward);
+        }
+    }
+    if (vlen(forward) <= 1.0e-6f) {
+        forward = Vec3(1.0f, 0.0f, 0.0f);
+    }
+
+    out.entity = static_cast<entt::entity>(camera);
+    out.position = Vec3(world.m[12], world.m[13], world.m[14]);
+    AssignAnglesFromForward(forward, out);
+    out.rollRadians = local.rotation.z;
+    out.fovDegrees = cameraComponent.fov;
+    out.nearPlane = cameraComponent.nearPlane;
+    out.farPlane = cameraComponent.farPlane;
+    return true;
+}
+
+std::optional<ActiveCameraView> TryReadActiveCameraView(Scene& scene)
+{
+    Entity camera = FindActiveCameraEntity(scene);
+    if (!camera) {
+        return std::nullopt;
+    }
+    ActiveCameraView view;
+    if (!TryMakeCameraView(scene, camera, view)) {
+        return std::nullopt;
+    }
+    return view;
+}
+
+bool WriteActiveCameraLocalPosition(Scene& scene, const Vec3& localPosition)
+{
+    Entity camera = FindActiveCameraEntity(scene);
+    if (!camera || !camera.HasComponent<TransformComponent>()) {
+        return false;
+    }
+    camera.GetComponent<TransformComponent>().position = localPosition;
+    return true;
+}
+
+bool WriteActiveCameraLocalRotation(Scene& scene, const Vec3& eulerRadians)
+{
+    Entity camera = FindActiveCameraEntity(scene);
+    if (!camera || !camera.HasComponent<TransformComponent>()) {
+        return false;
+    }
+    camera.GetComponent<TransformComponent>().rotation = eulerRadians;
+    return true;
+}
+
+bool TranslateActiveCameraLocal(Scene& scene, const Vec3& localDelta)
+{
+    Entity camera = FindActiveCameraEntity(scene);
+    if (!camera || !camera.HasComponent<TransformComponent>()) {
+        return false;
+    }
+    TransformComponent& transform = camera.GetComponent<TransformComponent>();
+    transform.position = vadd(transform.position, localDelta);
+    return true;
+}
+
+} // namespace Hephaestus
