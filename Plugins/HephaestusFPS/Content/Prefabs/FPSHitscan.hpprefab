@@ -10,23 +10,11 @@
       "name": "FPSHitscan",
       "parentId": null,
       "transform": {
-        "position": [0.15, -0.12, -0.35],
+        "position": [0.75, -0.10, 0.24],
         "rotation": [0.0, 0.0, 0.0],
-        "scale": [0.05, 0.05, 0.4]
+        "scale": [1.0, 1.0, 1.0]
       },
       "components": [
-        {
-          "type": "MeshRenderer",
-          "enabled": true,
-          "data": {
-            "visible": true,
-            "hideInGame": false,
-            "meshSource": "builtin://cube",
-            "meshImported": false,
-            "backfaceCulling": false,
-            "appliedMaterialPaths": []
-          }
-        },
         {
           "type": "LuaScript",
           "enabled": true,
@@ -59,6 +47,18 @@
         }
       ],
       "exposed": []
-    }
+    },
+    { "id": "body", "name": "FPSHitscan_Part_Body", "parentId": "root", "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [0.16,0.08,0.20] }, "components": [
+      { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false } },
+      { "type": "LuaScript", "enabled": true, "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {}, "authoredVariables": [] } }
+    ], "exposed": [] },
+    { "id": "barrel", "name": "FPSHitscan_Part_Barrel", "parentId": "root", "transform": { "position": [0.18,0.015,0], "rotation": [0,0,0], "scale": [0.28,0.045,0.055] }, "components": [
+      { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false } },
+      { "type": "LuaScript", "enabled": true, "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {}, "authoredVariables": [] } }
+    ], "exposed": [] },
+    { "id": "grip", "name": "FPSHitscan_Part_Grip", "parentId": "root", "transform": { "position": [-0.04,-0.115,0.04], "rotation": [0,0,0], "scale": [0.07,0.16,0.08] }, "components": [
+      { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false } },
+      { "type": "LuaScript", "enabled": true, "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {}, "authoredVariables": [] } }
+    ], "exposed": [] }
   ]
 }

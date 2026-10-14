@@ -17,6 +17,7 @@ function onInteract(player)
             weapon.reserve = (weapon.reserve or 0) + ammoAmount
         end
     end
+    Interactable.unregister(this)
     Scene.destroy(this)
 end
 

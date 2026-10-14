@@ -87,6 +87,9 @@ function Weapon.register(entity, options)
     end
     if not exists then
         table.insert(Registry.weaponOrder, key)
+        -- Script awake order is not an authored slot order. Keep the default
+        -- weapon selection deterministic in editor and packaged runtime.
+        table.sort(Registry.weaponOrder)
     end
 end
 
@@ -144,6 +147,12 @@ local function playOptional(path)
     end
 end
 
+local function setPartsVisible(visible)
+    for _, part in ipairs(Scene.findAllWithPrefix(this:GetName() .. "_Part_")) do
+        part:Call("setWeaponPartVisible", visible)
+    end
+end
+
 function tick(dt, held, pressed, reload, ox, oy, oz, dx, dy, dz, owner)
     local row = Weapon.get(this)
     if not row or not row.equipped then
@@ -172,13 +181,15 @@ function tick(dt, held, pressed, reload, ox, oy, oz, dx, dy, dz, owner)
         row.kickPitch = row.kickPitch + degreesToRadians(row.recoilPitch)
         row.kickYaw = row.kickYaw + degreesToRadians(row.recoilYaw)
         if row.hitscan then
-            local hit = HitscanMod.trace(ox, oy, oz, dx, dy, dz, row.range, owner)
+            local hit = Hitscan.trace(ox, oy, oz, dx, dy, dz, row.range, owner)
             if hit and hit.entity then
                 row.lastHitKey = Registry.key(hit.entity)
                 if not Health.get(hit.entity) then
                     hit.entity:Call("onDamaged", row.damage)
                 else
                     Health.applyDamage(hit.entity, row.damage, owner)
+                    hit.entity:Call("onHealthChanged", Health.getHealth(hit.entity),
+                                    Health.getMaxHealth(hit.entity))
                 end
             end
         end
@@ -197,7 +208,28 @@ function tick(dt, held, pressed, reload, ox, oy, oz, dx, dy, dz, owner)
     else
         row.kickYaw = math.min(0, row.kickYaw + recover)
     end
-    Transform.setRotation(row.restPitch + row.kickPitch, row.restYaw + row.kickYaw, row.restRoll)
+    -- The render camera pitches around its view-local Z axis, while the camera
+    -- entity's scene transform pitches around X. Convert the authored camera-
+    -- space rest offset back through the scene hierarchy so the gun remains in
+    -- the lower-right of the rendered view instead of orbiting out of frame.
+    local player = Registry.player or {}
+    local yaw = player.yaw or 0
+    local pitch = player.pitch or 0
+    local depth = row.restX
+    local right = row.restZ
+    local down = -row.restY
+    local cy, sy = math.cos(yaw), math.sin(yaw)
+    local cp, sp = math.cos(pitch), math.sin(pitch)
+    local worldX = depth * cy * cp + right * sy + down * cy * sp
+    local worldY = depth * sp - down * cp
+    local worldZ = -depth * sy * cp + right * cy + down * sy * sp
+    local parentX = cy * worldX - sy * worldZ
+    local parentZ = sy * worldX + cy * worldZ
+    local localY = cp * worldY + sp * parentZ
+    local localZ = -sp * worldY + cp * parentZ
+    Transform.setPosition(parentX, localY, localZ)
+    Transform.setRotation(row.restPitch - pitch, row.restYaw + row.kickYaw,
+                          row.restRoll + pitch + row.kickPitch)
 end
 
 function equip()
@@ -206,7 +238,7 @@ function equip()
         row.equipped = true
         Registry.activeWeaponId = row.key
     end
-    Mesh.setVisible(true)
+    setPartsVisible(true)
 end
 
 function unequip()
@@ -217,11 +249,12 @@ function unequip()
             Registry.activeWeaponId = nil
         end
     end
-    Mesh.setVisible(false)
+    setPartsVisible(false)
 end
 
 function onAwake()
     Weapon.register(this, {})
+    setPartsVisible(false)
 end
 
 function onDestroy()

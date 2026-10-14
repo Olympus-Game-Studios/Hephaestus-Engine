@@ -9,7 +9,7 @@ Expose.number("mouseSensitivityY", 0.002)
 Expose.number("stickSensitivityX", 1.5)
 Expose.number("stickSensitivityY", 1.5)
 Expose.bool("invertX", false)
-Expose.bool("invertY", true)
+Expose.bool("invertY", false)
 Expose.number("pitchMinDegrees", -89)
 Expose.number("pitchMaxDegrees", 89)
 Expose.number("standEyeHeight", 1.62)
@@ -79,12 +79,12 @@ local function applyLook(dt)
     end
     local invertXScale = invertX and -1 or 1
     local invertYScale = invertY and -1 or 1
-    yaw = yaw + mx * mouseSensitivityX * invertXScale
-    pitch = pitch + my * mouseSensitivityY * invertYScale
+    yaw = yaw - mx * mouseSensitivityX * invertXScale
+    pitch = pitch - my * mouseSensitivityY * invertYScale
     local stickX = Input.getAxis("LookStickX") or 0
     local stickY = Input.getAxis("LookStickY") or 0
-    yaw = yaw + stickX * stickSensitivityX * invertXScale * dt
-    pitch = pitch + stickY * stickSensitivityY * invertYScale * dt
+    yaw = yaw - stickX * stickSensitivityX * invertXScale * dt
+    pitch = pitch - stickY * stickSensitivityY * invertYScale * dt
     pitch = Logic.clampPitch(pitch, degToRad(pitchMinDegrees), degToRad(pitchMaxDegrees))
 end
 
@@ -120,6 +120,12 @@ end
 
 function onAwake()
     Registry.ensureSession()
+    local rotation = Transform.getRotation()
+    yaw = rotation.y
+    pitch = 0
+    inputEnabled = true
+    discoverTries = 0
+    commands = { fireHeld = false, firePressed = false, reload = false, interact = false }
     Health.attach(this, { maxHealth = maxHealth })
     Registry.setPlayer(this, {
         yaw = 0,
@@ -138,6 +144,8 @@ function onUpdate(dt)
     applyLook(dt)
     Character.setFacingYaw(yaw)
     Camera.setRotation(pitch, 0, 0)
+    Registry.player.yaw = yaw
+    Registry.player.pitch = pitch
     local wishX, wishZ = 0, 0
     if lookEnabled and inputEnabled then
         local basis = Logic.yawBasis(yaw)
@@ -145,12 +153,13 @@ function onUpdate(dt)
         local right = Input.getAxis("MoveRight") or 0
         wishX = basis.forward.x * forward + basis.right.x * right
         wishZ = basis.forward.z * forward + basis.right.z * right
+        Character.move(wishX, wishZ)
         if Input.isActionPressed("Jump") then
             Character.jump()
         end
         local crouchHeld = Input.isActionDown("Crouch")
         Character.setCrouched(crouchHeld)
-        local crouched = Character.isCrouched() or Character.isStandBlocked()
+        local crouched = crouchHeld or Character.isCrouched() or Character.isStandBlocked()
         if Logic.sprintAllowed(forward, crouched) and Input.isActionDown("Sprint") then
             Character.setSpeedMultiplier(sprintMultiplier)
         else
@@ -172,13 +181,13 @@ function onUpdate(dt)
             end
         end
     else
+        Character.move(0, 0)
         Character.setSpeedMultiplier(1)
         commands.fireHeld = false
         commands.firePressed = false
         commands.reload = false
         commands.interact = false
     end
-    Character.move(wishX, wishZ)
 end
 
 function onLateUpdate(dt)

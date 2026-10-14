@@ -6,9 +6,9 @@ The plugin is off by default (`defaultEnabled` is false). Packaged games stage p
 
 ## Look invert
 
-`invertY` defaults to true. `Input.getMouseDelta().y` is positive when the mouse moves down. With invert on, moving the mouse up looks up.
+`invertX` and `invertY` default to false. In this renderer's yaw convention positive mouse X decreases controller yaw and turns the rendered view right; negative mouse Y increases camera pitch and looks up. Positive right-stick X turns right and positive right-stick Y looks down. Set the corresponding `invert*` option to true for inverted controls.
 
-Facing yaw is `Character.setFacingYaw`. Camera pitch is the active camera entity's local X. Aim and movement use `FPS.Logic.yawBasis` / `aimRay`, which match `ActiveCameraSync` (parent yaw θ → render yaw −θ).
+Facing yaw is `Character.setFacingYaw`. Camera pitch is the active camera entity's local X. Aim and movement use `FPS.Logic.yawBasis` / `aimRay`, which match `ActiveCameraSync` (parent yaw θ → render yaw −θ). Movement and look are applied in the same `onUpdate` before physics.
 
 ## Input
 

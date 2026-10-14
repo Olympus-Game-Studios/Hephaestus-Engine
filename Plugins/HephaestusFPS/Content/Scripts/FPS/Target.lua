@@ -10,7 +10,12 @@ end
 
 function onDeath(instigator)
     dead = true
+    Mesh.setVisible(false)
     engine_log("[FPS.Target] died")
+end
+
+function onHealthChanged(current, maximum)
+    engine_log(string.format("[FPS.Target] health=%s/%s", tostring(current), tostring(maximum)))
 end
 
 function onDestroy()
