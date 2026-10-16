@@ -28,6 +28,9 @@ function Hud.mount(path, enabled)
 end
 
 function Hud.unmount()
+    if Hud.handle and destroy and destroy.ui then
+        destroy.ui(Hud.handle)
+    end
     Hud.handle = nil
     Hud.widgets = {}
 end

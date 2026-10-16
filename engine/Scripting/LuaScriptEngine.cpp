@@ -4896,6 +4896,9 @@ void LuaScriptEngine::RegisterSceneBindings() {
 
     lua_pushcfunction(m_State, Lua_Scene_FindAllWithPrefix);
     lua_setfield(m_State, -2, "findAllWithPrefix");
+
+    lua_pushcfunction(m_State, Lua_Scene_Reload);
+    lua_setfield(m_State, -2, "reload");
     
     lua_setglobal(m_State, "Scene");
     
@@ -7536,7 +7539,9 @@ int LuaScriptEngine::Lua_Destroy_ui(lua_State* L) {
     }
 
     // Accept either an integer handle or the string "current"
-    if (lua_isstring(L, 1)) {
+    // lua_isstring is true for numbers too (Lua will convert them to strings).
+    // Managed display handles are numeric, so only branch on actual strings here.
+    if (lua_type(L, 1) == LUA_TSTRING) {
         const char* target = lua_tostring(L, 1);
         if (std::string(target) == "current") {
             if (engine->m_HUIStack.empty()) {
@@ -7578,6 +7583,30 @@ int LuaScriptEngine::Lua_Destroy_ui(lua_State* L) {
 
     luaL_error(L, "destroy.ui expects a handle (number), \"current\", or \"all\"");
     return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Scene_Reload(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_SceneReloadCallback) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+
+    bool requested = false;
+    try {
+        requested = engine->m_SceneReloadCallback();
+    } catch (const std::exception& exception) {
+        engine->LogBindingError(nullptr, std::string("Scene.reload failed: ") + exception.what());
+    } catch (...) {
+        engine->LogBindingError(nullptr, "Scene.reload failed");
+    }
+    lua_pushboolean(L, requested);
+    return 1;
 #else
     (void)L;
     return 0;

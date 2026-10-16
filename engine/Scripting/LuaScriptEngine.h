@@ -249,6 +249,9 @@ public:
     using QuitRequestCallback = std::function<void()>;
     void SetQuitRequestCallback(QuitRequestCallback cb) { m_QuitRequestCallback = std::move(cb); }
 
+    using SceneReloadCallback = std::function<bool()>;
+    void SetSceneReloadCallback(SceneReloadCallback cb) { m_SceneReloadCallback = std::move(cb); }
+
     /**
      * Provide audio backend for Lua Audio.* bindings.
      */
@@ -273,6 +276,7 @@ private:
     Hephaestus::InputSystem* m_InputSystem = nullptr;
     std::unordered_set<std::string> m_MissingInputNames;
     QuitRequestCallback m_QuitRequestCallback;
+    SceneReloadCallback m_SceneReloadCallback;
     AudioEngine* m_AudioEngine = nullptr;
     Hephaestus::HephaestusUI::UISystem* m_UISystem = nullptr;
     Hephaestus::HephaestusUI::UIContext* m_UIContext = nullptr;
@@ -637,6 +641,7 @@ private:
     static int Lua_Scene_Instantiate(lua_State* L);
     static int Lua_Scene_Destroy(lua_State* L);
     static int Lua_Scene_FindAllWithPrefix(lua_State* L);
+    static int Lua_Scene_Reload(lua_State* L);
 
     static int Lua_This_Call(lua_State* L);
     static int Lua_This_CallController(lua_State* L);

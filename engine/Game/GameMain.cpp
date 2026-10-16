@@ -829,6 +829,7 @@ int main(int argc, char* argv[]) {
     Bootstrap::BeginStage(InitStage::Scripting);
     
     LuaScriptEngine luaEngine;
+    bool sceneReloadRequested = false;
     try {
         luaEngine.Initialize(&scene, window);
         // Set project root so script search paths resolve correctly on any device
@@ -837,6 +838,10 @@ int main(int argc, char* argv[]) {
         luaEngine.SetInputSystem(&inputSystem);
         luaEngine.SetAudioEngine(&audioEngine);
         luaEngine.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);
+        luaEngine.SetSceneReloadCallback([&sceneReloadRequested]() {
+            sceneReloadRequested = true;
+            return true;
+        });
         HP_LOG(Info, "Lua scripting engine initialized");
     } catch (const std::exception& e) {
         HP_LOG(Error, std::string("Failed to initialize Lua: ") + e.what());
@@ -1785,6 +1790,26 @@ int main(int argc, char* argv[]) {
         // Update scripts
 #if HEPHAESTUS_GAME_SCRIPTING
         luaEngine.Update(scene, deltaTime);
+        if (sceneReloadRequested) {
+            sceneReloadRequested = false;
+            luaEngine.OnSimulationStopped();
+            characterControllers.Clear();
+            physicsSystem.ClearAllBodies();
+            physicsSystem.ClearAccumulator();
+
+            std::string reloadError;
+            if (!SceneSerializer::Deserialize(scene, scenePath.string(), reloadError)) {
+                HP_LOG(Error, "Failed to restart scene: " + reloadError);
+                Bootstrap::ShowFatalError("Scene Restart Error",
+                    "Failed to restart the current scene:\n" + reloadError);
+                break;
+            }
+
+            luaEngine.OnSimulationStarted();
+            physicsSystem.PrepareSceneBodies(scene);
+            HP_LOG(Info, "Gameplay scene restarted: " + scenePath.string());
+            continue;
+        }
 #endif
 
         // Fixed-step physics after scripts so onUpdate can write this frame's motion.
