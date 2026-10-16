@@ -1,6 +1,7 @@
 #include "Automation/AutomationService.h"
 #include "Automation/SceneAutomation.h"
 #include "Automation/ScenePathPolicy.h"
+#include "Automation/EntityRef.h"
 #include "Core/EditorContext.h"
 #include "Scene/Scene.h"
 #include "Scene/SceneSerializer.h"
@@ -98,6 +99,27 @@ Automation::ToolResult Call(Automation::AutomationService& service, std::string 
 int main()
 {
     bool ok = true;
+
+    Scene lifecycleScene("Lifecycle identity test");
+    lifecycleScene.SetSourceAssetPath("plugin://sample/Content/Maps/Reload.hpscene");
+    Entity authored = lifecycleScene.CreateEntity("Authored");
+    authored.GetComponent<TransformComponent>().position.x = 3.0f;
+    Automation::EntityRefTable entityRefs;
+    const Automation::EntityRef staleRef = entityRefs.Bind(
+        lifecycleScene, static_cast<entt::entity>(authored));
+    const std::uint64_t sourceGeneration = lifecycleScene.GetRuntimeGeneration();
+    const std::string authoredSnapshot = SceneSerializer(lifecycleScene).SerializeToString();
+    ok &= Check(lifecycleScene.IsReloadable() &&
+                    lifecycleScene.GetSourceAssetPath() == "plugin://sample/Content/Maps/Reload.hpscene",
+                "scene ownership preserves virtual authored source URIs without filesystem normalization");
+    ok &= Check(SceneSerializer::DeserializeFromString(lifecycleScene, authoredSnapshot) &&
+                    lifecycleScene.GetSourceAssetPath() == "plugin://sample/Content/Maps/Reload.hpscene" &&
+                    lifecycleScene.GetRuntimeGeneration() > sourceGeneration,
+                "snapshot reconstruction advances scene generation without replacing source identity");
+    ok &= Check(entityRefs.Resolve(staleRef, &lifecycleScene).status ==
+                    Automation::EntityResolutionStatus::Destroyed,
+                "entity references from an earlier scene generation remain stale after handle reuse");
+
     SceneBackend backend;
     Automation::AutomationService service(backend);
     Automation::RegisterSceneAutomation(service);

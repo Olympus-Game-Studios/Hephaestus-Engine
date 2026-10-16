@@ -191,6 +191,9 @@ public:
      * @brief Clear the current selection.
      */
     void ClearSelection();
+    /// Resynchronize the editor's cached selection from the current scene after
+    /// a scene reconstruction has remapped live entity handles.
+    void SyncSelectionFromScene();
 
     /**
      * @brief Get the currently selected entity.

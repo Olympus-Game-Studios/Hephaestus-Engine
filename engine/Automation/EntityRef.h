@@ -49,9 +49,12 @@ private:
     struct Entry {
         Scene* scene = nullptr;
         entt::entity handle = entt::null;
+        std::uint64_t sceneIdentity = 0;
+        std::uint64_t generation = 0;
     };
 
     Scene* m_ObservedScene = nullptr;
+    std::uint64_t m_ObservedSceneIdentity = 0;
     std::uint64_t m_NextId = 1;
     std::unordered_map<std::string, Entry> m_Entries;
 };

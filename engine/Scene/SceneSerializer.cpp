@@ -1196,7 +1196,10 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
 
         const JsonValue* nameField = entityValue.Find("name");
         std::string entityName = nameField && nameField->IsString() ? nameField->AsString() : std::string("Entity");
-        Entity entity = scene.CreateEntityWithID(static_cast<entt::entity>(entityId), entityName);
+        // Serialized ids are only scene-local keys for parent/component links.
+        // Reusing them as live EnTT handles would make stale Lua userdata from
+        // a prior reconstruction valid again when an authored id is repeated.
+        Entity entity = scene.CreateEntity(entityName);
         idToEntity[entityId] = static_cast<entt::entity>(entity);
 
         const JsonValue* parentValue = entityValue.Find("parent");
@@ -2205,6 +2208,8 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
         scene.ClearSelection();
     }
 
+    scene.SetSourceAssetPath(filepath.string());
+    scene.MarkReconstructedFromSource();
     return true;
 }
 
@@ -2594,6 +2599,7 @@ bool SceneSerializer::DeserializeFromString(Scene& scene, const std::string& dat
     // Unique temp path avoids races when multiple deserializations run concurrently.
     // (Shared fixed name previously clobbered peer callers.)
     namespace fs = std::filesystem;
+    const std::string sourceAssetPath = scene.GetSourceAssetPath();
     const auto stamp = std::chrono::high_resolution_clock::now().time_since_epoch().count();
     const auto unique = std::to_string(stamp) + "_" +
                         std::to_string(reinterpret_cast<std::uintptr_t>(&data));
@@ -2614,6 +2620,7 @@ bool SceneSerializer::DeserializeFromString(Scene& scene, const std::string& dat
     }
 
     const bool result = Deserialize(scene, tempPath);
+    scene.SetSourceAssetPath(sourceAssetPath);
     std::error_code ec;
     fs::remove(tempPath, ec);
     return result;

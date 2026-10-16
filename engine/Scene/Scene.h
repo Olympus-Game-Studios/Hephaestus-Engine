@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <cstdint>
 #include "Entity.h"
 #include "Components.h"
 
@@ -42,6 +43,16 @@ public:
     const std::string& GetName() const { return m_Name; }
     void SetName(const std::string& name) { m_Name = name; }
 
+    // Authored source identity is retained independently of the display name.
+    // Virtual URIs (for example plugin://) are kept verbatim; filesystem paths
+    // are stored as normalized absolute paths.
+    void SetSourceAssetPath(const std::string& path);
+    const std::string& GetSourceAssetPath() const { return m_SourceAssetPath; }
+    bool IsReloadable() const { return !m_SourceAssetPath.empty(); }
+    std::uint64_t GetIdentity() const { return m_SceneIdentity; }
+    std::uint64_t GetRuntimeGeneration() const { return m_RuntimeGeneration; }
+    void MarkReconstructedFromSource() { ++m_RuntimeGeneration; }
+
     // Selection management
     Entity GetSelectedEntity();
     std::vector<Entity> GetSelectedEntities();
@@ -71,6 +82,9 @@ public:
 
 private:
     std::string m_Name;
+    std::string m_SourceAssetPath;
+    std::uint64_t m_SceneIdentity = 0;
+    std::uint64_t m_RuntimeGeneration = 1;
     entt::registry m_Registry;
     entt::entity m_PrimarySelected{ entt::null };
 

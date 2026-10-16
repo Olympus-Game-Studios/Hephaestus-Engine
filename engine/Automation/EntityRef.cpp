@@ -2,6 +2,8 @@
 
 #include "Scene/Scene.h"
 
+#include <cstdint>
+
 namespace Hephaestus::Automation {
 
 EntityRef EntityRefTable::Bind(Scene& scene, entt::entity handle)
@@ -9,13 +11,16 @@ EntityRef EntityRefTable::Bind(Scene& scene, entt::entity handle)
     if (!scene.GetRegistry().valid(handle)) return {};
 
     for (const auto& [token, entry] : m_Entries) {
-        if (entry.scene == &scene && entry.handle == handle) {
+        if (entry.scene == &scene && entry.sceneIdentity == scene.GetIdentity() &&
+            entry.handle == handle &&
+            entry.generation == scene.GetRuntimeGeneration()) {
             return EntityRef{token};
         }
     }
 
     EntityRef ref{"entity-" + std::to_string(m_NextId++)};
-    m_Entries.emplace(ref.value, Entry{&scene, handle});
+    m_Entries.emplace(ref.value, Entry{
+        &scene, handle, scene.GetIdentity(), scene.GetRuntimeGeneration()});
     return ref;
 }
 
@@ -28,7 +33,13 @@ ResolvedEntity EntityRefTable::Resolve(const EntityRef& ref, Scene* activeScene)
     if (it->second.scene != activeScene) {
         return {EntityResolutionStatus::SceneChanged, nullptr, entt::null};
     }
-    if (!activeScene || !activeScene->GetRegistry().valid(it->second.handle)) {
+    if (!activeScene || it->second.sceneIdentity != activeScene->GetIdentity()) {
+        return {EntityResolutionStatus::SceneChanged, nullptr, entt::null};
+    }
+    if (it->second.generation != activeScene->GetRuntimeGeneration()) {
+        return {EntityResolutionStatus::Destroyed, activeScene, entt::null};
+    }
+    if (!activeScene->GetRegistry().valid(it->second.handle)) {
         return {EntityResolutionStatus::Destroyed, activeScene, entt::null};
     }
     return {EntityResolutionStatus::Resolved, activeScene, it->second.handle};
@@ -46,8 +57,10 @@ void EntityRefTable::Reset()
 
 void EntityRefTable::ObserveActiveScene(Scene* activeScene)
 {
-    if (m_ObservedScene == activeScene) return;
+    const std::uint64_t identity = activeScene ? activeScene->GetIdentity() : 0;
+    if (m_ObservedScene == activeScene && m_ObservedSceneIdentity == identity) return;
     m_ObservedScene = activeScene;
+    m_ObservedSceneIdentity = identity;
     Reset();
 }
 

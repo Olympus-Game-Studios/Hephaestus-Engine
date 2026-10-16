@@ -132,6 +132,7 @@ bool EditorContext::SaveSceneAs(const std::string& filepath)
     
     // Update path and clear dirty
     m_scenePath = filepath;
+    scene->SetSourceAssetPath(filepath);
     m_isDirty = false;
     
     std::cout << "[EditorContext] Scene saved: " << filepath << "\n";
@@ -295,6 +296,22 @@ void EditorContext::ClearSelection()
     
     if (m_onSelectionChanged) {
         m_onSelectionChanged(entt::null);
+    }
+}
+
+void EditorContext::SyncSelectionFromScene()
+{
+    Scene* scene = GetActiveScene();
+    if (!scene) {
+        ClearSelection();
+        return;
+    }
+
+    const Entity selected = scene->GetSelectedEntity();
+    if (selected) {
+        SelectEntity(static_cast<entt::entity>(selected));
+    } else {
+        ClearSelection();
     }
 }
 

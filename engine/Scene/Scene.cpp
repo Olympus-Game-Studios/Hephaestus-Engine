@@ -3,8 +3,10 @@
 #include "PrefabInstantiator.h"
 #include "PrefabOverrideSystem.h"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <functional>
+#include <filesystem>
 #include <unordered_set>
 #include <vector>
 
@@ -19,8 +21,13 @@ static void onLightComponentAdded(entt::registry& reg, entt::entity ent)
 }
 #endif
 
+namespace {
+std::atomic<std::uint64_t> s_NextSceneIdentity{1};
+}
+
 Scene::Scene(const std::string& name)
     : m_Name(name)
+    , m_SceneIdentity(s_NextSceneIdentity.fetch_add(1, std::memory_order_relaxed))
 {
 #ifndef HEPHAESTUS_GAME_RUNTIME
     m_Registry.on_construct<LightComponent>().connect<&onLightComponentAdded>();
@@ -30,6 +37,31 @@ Scene::Scene(const std::string& name)
 Scene::~Scene()
 {
     Clear();
+}
+
+void Scene::SetSourceAssetPath(const std::string& path)
+{
+    if (path.empty()) {
+        m_SourceAssetPath.clear();
+        return;
+    }
+
+    // URI paths must be tested before filesystem normalization. On Windows,
+    // std::filesystem treats the colon in plugin:// as a path/root delimiter.
+    if (path.find("://") != std::string::npos) {
+        m_SourceAssetPath = path;
+        return;
+    }
+
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path absolute = fs::absolute(fs::u8path(path), ec);
+    if (ec) {
+        m_SourceAssetPath = fs::u8path(path).lexically_normal().generic_string();
+        return;
+    }
+    fs::path canonical = fs::weakly_canonical(absolute, ec);
+    m_SourceAssetPath = (ec ? absolute.lexically_normal() : canonical).generic_string();
 }
 
 Entity Scene::CreateEntity(const std::string& name)
@@ -363,6 +395,7 @@ void Scene::ClearSelection()
 void Scene::Clear()
 {
     m_Registry.clear();
+    m_PrimarySelected = entt::null;
 }
 
 // ---------------- Clipboard (single-entity copy/paste with component preservation) ----------------
