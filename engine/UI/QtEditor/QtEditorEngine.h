@@ -220,6 +220,8 @@ public:
     Hephaestus::PlayState GetPlayState() const;
     bool IsPlaying() const;
     bool IsPaused() const;
+    bool IsRealtime() const;
+    void SetRealtime(bool realtime);
 
     /**
      * @brief Forward a key event to the Lua runtime input state.

@@ -624,6 +624,11 @@ public:
         return m_playState.load(std::memory_order_relaxed);
     }
 
+    bool IsRealtime() const noexcept override
+    {
+        return !m_owner->m_engine || m_owner->m_engine->IsRealtime();
+    }
+
     void UpdatePlayState(Hephaestus::PlayState state)
     {
         m_playState.store(state, std::memory_order_relaxed);
@@ -937,6 +942,16 @@ public:
             return false;
         }
         return m_owner->m_engine->StepFrames(count, fixedDt, outError);
+    }
+
+    bool SetRealtime(bool realtime, std::string& outError) override
+    {
+        if (!m_owner->m_engine) {
+            outError = "Engine is unavailable";
+            return false;
+        }
+        m_owner->m_engine->SetRealtime(realtime);
+        return true;
     }
 
     bool SetActionOverride(std::string_view action, float value, std::string& outError) override

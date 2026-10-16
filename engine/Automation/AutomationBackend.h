@@ -32,6 +32,7 @@ public:
     [[nodiscard]] virtual HostMask Host() const noexcept = 0;
     [[nodiscard]] virtual SceneAccess ActiveScene() noexcept = 0;
     [[nodiscard]] virtual PlayState GetPlayState() const noexcept = 0;
+    [[nodiscard]] virtual bool IsRealtime() const noexcept { return true; }
 
     [[nodiscard]] virtual Json GetProjectInfo() const { return Json::object(); }
     [[nodiscard]] virtual std::string ActiveScenePath() const { return {}; }
@@ -115,6 +116,11 @@ public:
     virtual bool StepFrames(std::uint32_t count, float fixedDt, std::string& outError)
     {
         outError = "Deterministic frame stepping is unavailable for this host";
+        return false;
+    }
+    virtual bool SetRealtime(bool, std::string& outError)
+    {
+        outError = "Realtime control is unavailable for this host";
         return false;
     }
 

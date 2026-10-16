@@ -13,6 +13,7 @@
 #include "../Automation/RuntimeUIHostAdapter.h"
 #include "../Automation/UIAutomation.h"
 #include "../Automation/ViewportAutomation.h"
+#include "../Core/SimulationExecutionMode.h"
 #include "../Gfx/EngineFrameRenderer.h"
 #include "../Physics/CharacterControllerSystem.h"
 #include "../Physics/JoltPhysicsEngine.h"
@@ -23,6 +24,7 @@
 #include "../UI/HephaestusUI/UISystem.h"
 
 #include <iostream>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -34,16 +36,37 @@ public:
     RuntimeBackend(Scene& scene, InputSystem& input, HephaestusUI::UISystem& ui,
                    HephaestusUI::UIContext& uiContext, Physics::JoltPhysicsEngine& physicsEngine,
                    Physics::JoltPhysicsSystem& physics, Physics::CharacterControllerSystem& characterControllers,
-                   Hephaestus::EngineFrameRenderer& frameRenderer, std::string rootDir, std::string projectName)
+                   Hephaestus::EngineFrameRenderer& frameRenderer, std::string rootDir, std::string projectName,
+                   std::function<void(float)> stepFrame)
         : m_scene(scene), m_input(input), m_ui(ui), m_uiContext(uiContext),
           m_physicsEngine(physicsEngine), m_physics(physics), m_characterControllers(characterControllers),
-          m_frameRenderer(frameRenderer), m_rootDir(std::move(rootDir)), m_projectName(std::move(projectName)) {}
+          m_frameRenderer(frameRenderer), m_rootDir(std::move(rootDir)), m_projectName(std::move(projectName)),
+          m_stepFrame(std::move(stepFrame)) {}
 
     Automation::HostMask Host() const noexcept override { return Automation::HostMask::Runtime; }
     Automation::SceneAccess ActiveScene() noexcept override { return {&m_scene}; }
     Hephaestus::PlayState GetPlayState() const noexcept override
     {
         return Hephaestus::PlayState::Playing;
+    }
+    bool IsRealtime() const noexcept override { return m_executionMode.IsRealtime(); }
+    bool SetRealtime(bool realtime, std::string&) override
+    {
+        m_executionMode.SetRealtime(realtime);
+        return true;
+    }
+    bool StepFrames(std::uint32_t count, float fixedDt, std::string& outError) override
+    {
+        if (fixedDt <= 0.0f) {
+            outError = "fixedDt must be positive";
+            return false;
+        }
+        if (!m_stepFrame) {
+            outError = "Deterministic frame stepping is unavailable for this runtime";
+            return false;
+        }
+        for (std::uint32_t i = 0; i < count; ++i) m_stepFrame(fixedDt);
+        return true;
     }
 
     Automation::Json GetProjectInfo() const override
@@ -154,6 +177,8 @@ private:
     Hephaestus::EngineFrameRenderer& m_frameRenderer;
     std::string m_rootDir;
     std::string m_projectName;
+    std::function<void(float)> m_stepFrame;
+    Hephaestus::SimulationExecutionMode m_executionMode;
     std::uint64_t m_uiSerial = 0;
 };
 
@@ -163,10 +188,10 @@ PackagedAutomation::PackagedAutomation(Scene& scene, InputSystem& input,
                                        Physics::JoltPhysicsSystem& physics,
                                        Physics::CharacterControllerSystem& characterControllers,
                                        Hephaestus::EngineFrameRenderer& frameRenderer, std::string rootDir,
-                                       std::string projectName)
+                                       std::string projectName, std::function<void(float)> stepFrame)
     : m_backend(std::make_unique<RuntimeBackend>(scene, input, ui, uiContext, physicsEngine, physics,
                                                  characterControllers, frameRenderer, std::move(rootDir),
-                                                 std::move(projectName))) {}
+                                                 std::move(projectName), std::move(stepFrame))) {}
 
 PackagedAutomation::~PackagedAutomation() { Stop(); }
 
@@ -198,6 +223,11 @@ void PackagedAutomation::Tick()
 void PackagedAutomation::NoteUIUpdated()
 {
     if (m_backend) m_backend->NoteUIUpdated();
+}
+
+bool PackagedAutomation::IsRealtime() const noexcept
+{
+    return !m_backend || m_backend->IsRealtime();
 }
 
 void PackagedAutomation::Stop()

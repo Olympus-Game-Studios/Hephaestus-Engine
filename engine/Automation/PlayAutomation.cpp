@@ -71,8 +71,11 @@ void RegisterPlayAutomation(AutomationService& service)
     registerTool(Definition(
         "play.get_state", "Report the current Play Mode state.",
         ObjectSchema(), [](ToolContext& context, const Json&) -> ToolOutcome {
-            return ToolResult::Success({{"state", PlayStateName(context.Backend().GetPlayState())}});
-        }, PlayRequirement::Any));
+            const bool realtime = context.Backend().IsRealtime();
+            return ToolResult::Success({{"state", PlayStateName(context.Backend().GetPlayState())},
+                                        {"realtime", realtime},
+                                        {"executionMode", realtime ? "realtime" : "manual"}});
+        }, PlayRequirement::Any, HostMask::Editor | HostMask::Runtime));
 
     registerTool(Definition(
         "play.start", "Start Play Mode (snapshots the scene and runs scripts).",
@@ -143,7 +146,24 @@ void RegisterPlayAutomation(AutomationService& service)
                 return Failure(ErrorCode::ToolUnavailable, std::move(error));
             }
             return ToolResult::Success({{"advanced", count}, {"fixedDt", fixedDt}});
-        }, PlayRequirement::PlayModeActive));
+        }, PlayRequirement::PlayModeActive, HostMask::Editor | HostMask::Runtime));
+
+    registerTool(Definition(
+        "play.set_realtime",
+        "Enable or disable wall-clock-driven gameplay simulation while Play Mode is active.",
+        ObjectSchema({{"enabled", {{"type", "boolean"}}}}, Json::array({"enabled"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            if (!arguments.contains("enabled") || !arguments["enabled"].is_boolean()) {
+                return Failure(ErrorCode::InvalidArguments, "enabled must be a boolean");
+            }
+            const bool enabled = arguments["enabled"].get<bool>();
+            std::string error;
+            if (!context.Backend().SetRealtime(enabled, error)) {
+                return Failure(ErrorCode::ToolUnavailable, std::move(error));
+            }
+            return ToolResult::Success({{"realtime", enabled},
+                                        {"executionMode", enabled ? "realtime" : "manual"}});
+        }, PlayRequirement::PlayModeActive, HostMask::Editor | HostMask::Runtime));
 
     registerTool(Definition(
         "input.set_action",

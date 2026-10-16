@@ -12,6 +12,7 @@
 #if HEPHAESTUS_RUNTIME_AUTOMATION
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -51,7 +52,7 @@ public:
                        Physics::JoltPhysicsEngine& physicsEngine, Physics::JoltPhysicsSystem& physics,
                        Physics::CharacterControllerSystem& characterControllers,
                        Hephaestus::EngineFrameRenderer& frameRenderer, std::string rootDir,
-                       std::string projectName);
+                       std::string projectName, std::function<void(float)> stepFrame);
     ~PackagedAutomation();
 
     PackagedAutomation(const PackagedAutomation&) = delete;
@@ -60,6 +61,7 @@ public:
     bool Start(int port);
     void Tick();
     void NoteUIUpdated();
+    [[nodiscard]] bool IsRealtime() const noexcept;
     void Stop();
 
     [[nodiscard]] bool IsRunning() const noexcept;

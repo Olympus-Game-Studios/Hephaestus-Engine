@@ -1834,7 +1834,7 @@ void QtEditorEngine::onTick()
     const bool isPaused  = m_playModeManager.IsPaused();
     const bool isPlayOrPause = !m_playModeManager.IsEditor();
 
-    if (isPlaying) {
+    if (isPlaying && m_playModeManager.ShouldAdvanceRealtime()) {
         populateGameplayInput();
         if (m_audioEngine && m_editorContext.HasActiveScene()) {
             Scene* activeScene = m_editorContext.GetActiveScene();
@@ -1874,12 +1874,13 @@ void QtEditorEngine::onTick()
             m_playModeManager.ClearStopRequest();
             StopPlayMode();
         }
-    } else if (m_joltPhysicsSystem) {
+    } else if (!isPlayOrPause && m_joltPhysicsSystem) {
         m_joltPhysicsSystem->SetEnabled(false);
     }
 
     RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
-    if (isPlayOrPause && runtimeUI && runtimeUI->system && runtimeUI->context && runtimeUI->renderer) {
+    if (isPlayOrPause && (!isPlaying || m_playModeManager.ShouldAdvanceRealtime()) &&
+        runtimeUI && runtimeUI->system && runtimeUI->context && runtimeUI->renderer) {
         runtimeUI->context->SetViewportSize({
             static_cast<float>(m_swapchain->extent.width),
             static_cast<float>(m_swapchain->extent.height)
@@ -1889,7 +1890,7 @@ void QtEditorEngine::onTick()
         ++m_runtimeUIUpdateSerial;
         runtimeUI->renderer->Reset();
         runtimeUI->system->Render(*runtimeUI->renderer);
-    } else if (runtimeUI && runtimeUI->renderer) {
+    } else if (!isPlayOrPause && runtimeUI && runtimeUI->renderer) {
         runtimeUI->renderer->Reset();
     }
 
@@ -3437,6 +3438,17 @@ void QtEditorEngine::TogglePause()
 Hephaestus::PlayState QtEditorEngine::GetPlayState() const
 {
     return m_playModeManager.GetState();
+}
+
+bool QtEditorEngine::IsRealtime() const
+{
+    return m_playModeManager.IsRealtime();
+}
+
+void QtEditorEngine::SetRealtime(bool realtime)
+{
+    m_playModeManager.SetRealtime(realtime);
+    m_lastFrameTime = m_frameTimer.elapsed() / 1000.0f;
 }
 
 bool QtEditorEngine::ReloadScripts(std::string& outError)

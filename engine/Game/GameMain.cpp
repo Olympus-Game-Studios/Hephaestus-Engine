@@ -1679,41 +1679,9 @@ int main(int argc, char* argv[]) {
 
 #if HEPHAESTUS_RUNTIME_AUTOMATION
     std::unique_ptr<Hephaestus::Runtime::PackagedAutomation> packagedAutomation;
-    if (g_Config.automationEnabled) {
-        const fs::path captureRoot = !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot;
-        packagedAutomation = std::make_unique<Hephaestus::Runtime::PackagedAutomation>(
-            scene, inputSystem, uiSystem, uiContext, joltPhysicsEngine, physicsSystem, characterControllers,
-            frameRenderer, captureRoot.generic_string(), g_Config.projectName);
-        if (!packagedAutomation->Start(g_Config.automationPort)) {
-            HP_LOG(Warning, "Runtime automation was enabled but the MCP endpoint failed to start");
-        }
-    }
 #endif
 
-    // ── Main Loop ─────────────────────────────────
-    while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
-
-        if (g_FramebufferResized || recreateSwapchain) {
-            g_FramebufferResized = false;
-            recreateSwapchain = false;
-            try {
-                vkDeviceWaitIdle(vkdev.device);
-                swap.Recreate(window);
-                frameRenderer.OnResize(swap.extent.width, swap.extent.height);
-            } catch (const std::exception& e) {
-                HP_LOG(Error, std::string("Failed to recreate swapchain: ") + e.what());
-                Bootstrap::ShowFatalError("Renderer Error",
-                    std::string("Failed to recreate the swapchain:\n") + e.what());
-                break;
-            }
-        }
-
-        // Calculate delta time
-        auto currentTime = std::chrono::high_resolution_clock::now();
-        float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
-        lastTime = currentTime;
-
+    auto simulateGameplayFrame = [&](float simulationDeltaTime) {
         inputSystem.BeginFrame();
         for (int key = GLFW_KEY_SPACE; key <= GLFW_KEY_LAST; ++key) {
             const int state = glfwGetKey(window, key);
@@ -1758,7 +1726,92 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        uiContext.SetDeltaTimeSeconds(deltaTime);
+        uiContext.SetDeltaTimeSeconds(simulationDeltaTime);
+
+        // Update declarative ECS audio sources and physics scene state only
+        // on a realtime or explicitly stepped gameplay frame.
+        UpdateAudioSources(scene, audioEngine);
+        physicsSystem.PrepareSceneBodies(scene);
+
+        // Scripts
+#if HEPHAESTUS_GAME_SCRIPTING
+        luaEngine.Update(scene, simulationDeltaTime);
+        if (sceneReloadRequested) {
+            sceneReloadRequested = false;
+            luaEngine.OnSimulationStopped();
+            characterControllers.Clear();
+            physicsSystem.ClearAllBodies();
+            physicsSystem.ClearAccumulator();
+
+            std::string reloadError;
+            if (!SceneSerializer::Deserialize(scene, scenePath.string(), reloadError)) {
+                HP_LOG(Error, "Failed to restart scene: " + reloadError);
+                Bootstrap::ShowFatalError("Scene Restart Error",
+                    "Failed to restart the current scene:\n" + reloadError);
+                return;
+            }
+
+            luaEngine.OnSimulationStarted();
+            physicsSystem.PrepareSceneBodies(scene);
+            HP_LOG(Info, "Gameplay scene restarted: " + scenePath.string());
+            return;
+        }
+#endif
+
+        // Fixed-step physics follows scripts so onUpdate can write this frame's motion.
+        physicsSystem.Update(scene, simulationDeltaTime);
+#if HEPHAESTUS_GAME_SCRIPTING
+        luaEngine.DispatchContactEvents(scene, physicsSystem.FrameContactEvents());
+#endif
+
+        Hephaestus::CharacterAnimationSystem::Tick(scene, simulationDeltaTime);
+#if HEPHAESTUS_GAME_SCRIPTING
+        luaEngine.DispatchAnimationFinished(scene);
+        luaEngine.LateUpdate(scene, simulationDeltaTime);
+#endif
+
+        uiSystem.Update(uiContext);
+#if HEPHAESTUS_RUNTIME_AUTOMATION
+        if (packagedAutomation) packagedAutomation->NoteUIUpdated();
+#endif
+    };
+
+#if HEPHAESTUS_RUNTIME_AUTOMATION
+    if (g_Config.automationEnabled) {
+        const fs::path captureRoot = !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot;
+        packagedAutomation = std::make_unique<Hephaestus::Runtime::PackagedAutomation>(
+            scene, inputSystem, uiSystem, uiContext, joltPhysicsEngine, physicsSystem, characterControllers,
+            frameRenderer, captureRoot.generic_string(), g_Config.projectName,
+            [&simulateGameplayFrame](float fixedDt) { simulateGameplayFrame(fixedDt); });
+        if (!packagedAutomation->Start(g_Config.automationPort)) {
+            HP_LOG(Warning, "Runtime automation was enabled but the MCP endpoint failed to start");
+        }
+    }
+#endif
+
+    // ── Main Loop ─────────────────────────────────
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+
+        if (g_FramebufferResized || recreateSwapchain) {
+            g_FramebufferResized = false;
+            recreateSwapchain = false;
+            try {
+                vkDeviceWaitIdle(vkdev.device);
+                swap.Recreate(window);
+                frameRenderer.OnResize(swap.extent.width, swap.extent.height);
+            } catch (const std::exception& e) {
+                HP_LOG(Error, std::string("Failed to recreate swapchain: ") + e.what());
+                Bootstrap::ShowFatalError("Renderer Error",
+                    std::string("Failed to recreate the swapchain:\n") + e.what());
+                break;
+            }
+        }
+
+        // Calculate wall-clock delta for realtime gameplay and host rendering.
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
+        lastTime = currentTime;
         uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
 
 #if HEPHAESTUS_RUNTIME_AUTOMATION
@@ -1767,6 +1820,9 @@ int main(int argc, char* argv[]) {
         }
 #endif
 
+        double cursorX = 0.0;
+        double cursorY = 0.0;
+        glfwGetCursorPos(window, &cursorX, &cursorY);
         const HUI::UIVec2 mousePos{static_cast<float>(cursorX), static_cast<float>(cursorY)};
         uiContext.QueueMouseMove(mousePos);
 
@@ -1781,53 +1837,18 @@ int main(int argc, char* argv[]) {
             uiMousePressed[static_cast<size_t>(i)] = pressed;
         }
 
-        // Update declarative ECS audio sources.
-        UpdateAudioSources(scene, audioEngine);
-
-        // Bodies for entities already in the scene exist before onUpdate.
-        physicsSystem.PrepareSceneBodies(scene);
-
-        // Update scripts
-#if HEPHAESTUS_GAME_SCRIPTING
-        luaEngine.Update(scene, deltaTime);
-        if (sceneReloadRequested) {
-            sceneReloadRequested = false;
-            luaEngine.OnSimulationStopped();
-            characterControllers.Clear();
-            physicsSystem.ClearAllBodies();
-            physicsSystem.ClearAccumulator();
-
-            std::string reloadError;
-            if (!SceneSerializer::Deserialize(scene, scenePath.string(), reloadError)) {
-                HP_LOG(Error, "Failed to restart scene: " + reloadError);
-                Bootstrap::ShowFatalError("Scene Restart Error",
-                    "Failed to restart the current scene:\n" + reloadError);
-                break;
-            }
-
-            luaEngine.OnSimulationStarted();
-            physicsSystem.PrepareSceneBodies(scene);
-            HP_LOG(Info, "Gameplay scene restarted: " + scenePath.string());
-            continue;
-        }
-#endif
-
-        // Fixed-step physics after scripts so onUpdate can write this frame's motion.
-        physicsSystem.Update(scene, deltaTime);
-#if HEPHAESTUS_GAME_SCRIPTING
-        luaEngine.DispatchContactEvents(scene, physicsSystem.FrameContactEvents());
-#endif
-
-        Hephaestus::CharacterAnimationSystem::Tick(scene, deltaTime);
-#if HEPHAESTUS_GAME_SCRIPTING
-        luaEngine.DispatchAnimationFinished(scene);
-        luaEngine.LateUpdate(scene, deltaTime);
-#endif
-
-        uiSystem.Update(uiContext);
+        bool realtimeSimulation = true;
 #if HEPHAESTUS_RUNTIME_AUTOMATION
-        if (packagedAutomation) packagedAutomation->NoteUIUpdated();
+        realtimeSimulation = !packagedAutomation || packagedAutomation->IsRealtime();
 #endif
+        if (realtimeSimulation) {
+            simulateGameplayFrame(deltaTime);
+        } else {
+            // Keep host-side UI clock frozen too; gameplay/HUI updates are
+            // delivered by explicit step_frames calls while in manual mode.
+            uiContext.SetDeltaTimeSeconds(0.0f);
+        }
+
         uiRenderer.Reset();
         uiSystem.Render(uiRenderer);
 

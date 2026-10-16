@@ -92,6 +92,7 @@ bool PlayModeManager::StartPlayMode() {
 
     // ── 2. Transition state ────────────────────────────────────────────────
     m_state = PlayState::Playing;
+    m_executionMode.Reset();
     m_timeSincePlay = 0.0f;
     m_deltaTime = 0.0f;
 
@@ -197,6 +198,7 @@ void PlayModeManager::StopPlayMode() {
 
     // ── 5. Transition state ────────────────────────────────────────────────
     m_state = PlayState::Editor;
+    m_executionMode.Reset();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,7 +210,7 @@ void PlayModeManager::RequestStop() {
 }
 
 void PlayModeManager::Tick(float dt) {
-    if (m_state != PlayState::Playing) {
+    if (m_state != PlayState::Playing || !m_executionMode.ShouldAdvanceRealtime()) {
         return;  // nothing to tick in editor or paused
     }
 

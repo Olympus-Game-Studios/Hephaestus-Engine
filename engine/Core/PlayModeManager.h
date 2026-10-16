@@ -17,6 +17,7 @@
 #include <string>
 #include <functional>
 #include <memory>
+#include "SimulationExecutionMode.h"
 
 // Forward declarations
 class Scene;
@@ -102,6 +103,9 @@ public:
     bool IsPlaying() const { return m_state == PlayState::Playing; }
     bool IsPaused()  const { return m_state == PlayState::Paused; }
     bool IsEditor()  const { return m_state == PlayState::Editor; }
+    bool IsRealtime() const { return m_executionMode.IsRealtime(); }
+    bool ShouldAdvanceRealtime() const { return m_executionMode.ShouldAdvanceRealtime(); }
+    void SetRealtime(bool realtime) { m_executionMode.SetRealtime(realtime); }
 
     /// Enter play mode.  Snapshots the scene, initialises scripts, transitions camera.
     /// @return true on success; false if already playing or scene is null.
@@ -176,6 +180,7 @@ private:
     // State
     PlayState  m_state = PlayState::Editor;
     CameraMode m_cameraMode = CameraMode::EditorFly;
+    SimulationExecutionMode m_executionMode;
 
     // Scene
     Scene* m_scene = nullptr;
