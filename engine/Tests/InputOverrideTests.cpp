@@ -70,8 +70,18 @@ int main()
                 "queued mouse delta is consumed after one frame");
 
     input.QueueActionOverride("Jump", 1.0f);
+    // Simulate arbitrary host/render callbacks while the realtime gate is
+    // closed: they must not call BeginFrame and consume injected input.
+    for (int hostFrame = 0; hostFrame < 5; ++hostFrame) {
+        input.QueueMouseDelta(2.0, -3.0);
+    }
+    ok &= Check(!input.IsActionDown("Jump") && input.GetMouseDeltaX() == 0.0 &&
+                    input.GetMouseDeltaY() == 0.0,
+                "queued automation input remains unconsumed while no simulation frame runs");
     input.BeginFrame();
-    ok &= Check(input.IsActionPressed("Jump"), "between-frame injection retains rising edge");
+    ok &= Check(input.IsActionPressed("Jump") && input.GetMouseDeltaX() == 10.0 &&
+                    input.GetMouseDeltaY() == -15.0,
+                "the first deliberate frame consumes held action edge and accumulated mouse delta");
     input.BeginFrame();
     ok &= Check(input.IsActionDown("Jump") && !input.IsActionPressed("Jump"),
                 "queued action remains held without repeating its edge");

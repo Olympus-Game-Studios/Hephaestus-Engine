@@ -1,5 +1,6 @@
 #include "Automation/AutomationService.h"
 #include "Automation/PlayAutomation.h"
+#include "Core/SimulationExecutionMode.h"
 
 #include <cmath>
 #include <cstdint>
@@ -21,6 +22,8 @@ bool Check(bool condition, const std::string& message)
 class PlayBackend final : public Automation::AutomationBackend {
 public:
     Hephaestus::PlayState state = Hephaestus::PlayState::Editor;
+    Automation::HostMask host = Automation::HostMask::Editor;
+    Hephaestus::SimulationExecutionMode executionMode;
     int startCalls = 0;
     int stopCalls = 0;
     int toggleCalls = 0;
@@ -32,20 +35,23 @@ public:
     double mouseDeltaX = 0.0;
     double mouseDeltaY = 0.0;
 
-    Automation::HostMask Host() const noexcept override { return Automation::HostMask::Editor; }
+    Automation::HostMask Host() const noexcept override { return host; }
     Automation::SceneAccess ActiveScene() noexcept override { return {}; }
     Hephaestus::PlayState GetPlayState() const noexcept override { return state; }
+    bool IsRealtime() const noexcept override { return executionMode.IsRealtime(); }
 
     bool StartPlayMode(std::string& outError) override
     {
         ++startCalls;
         state = Hephaestus::PlayState::Playing;
+        executionMode.Reset();
         return true;
     }
     bool StopPlayMode(std::string& outError) override
     {
         ++stopCalls;
         state = Hephaestus::PlayState::Editor;
+        executionMode.Reset();
         return true;
     }
     bool TogglePause(std::string& outError) override
@@ -64,6 +70,11 @@ public:
         ++stepCalls;
         lastStepCount = count;
         lastStepDt = fixedDt;
+        return true;
+    }
+    bool SetRealtime(bool enabled, std::string&) override
+    {
+        executionMode.SetRealtime(enabled);
         return true;
     }
     bool SetActionOverride(std::string_view action, float value, std::string& outError) override
@@ -103,6 +114,30 @@ Automation::ToolResult Call(Automation::AutomationService& service, std::string 
 int main()
 {
     bool ok = true;
+    Hephaestus::SimulationExecutionMode executionMode;
+    ok &= Check(executionMode.IsRealtime() && executionMode.ShouldAdvanceRealtime(),
+                "Simulation execution mode defaults to realtime host advancement");
+    int simulatedHostFrames = 0;
+    const auto hostUpdate = [&]() {
+        if (executionMode.ShouldAdvanceRealtime()) ++simulatedHostFrames;
+    };
+    hostUpdate();
+    executionMode.SetRealtime(false);
+    ok &= Check(!executionMode.IsRealtime() && !executionMode.ShouldAdvanceRealtime(),
+                "Manual execution mode closes the normal host-update gate");
+    for (int hostFrame = 0; hostFrame < 20; ++hostFrame) hostUpdate();
+    ok &= Check(simulatedHostFrames == 1,
+                "normal host updates do not tick simulation while manual mode is active");
+    for (int stepFrame = 0; stepFrame < 3; ++stepFrame) ++simulatedHostFrames;
+    ok &= Check(simulatedHostFrames == 4,
+                "explicit stepped frames advance simulation while the host update gate is closed");
+    executionMode.SetRealtime(true);
+    hostUpdate();
+    ok &= Check(executionMode.ShouldAdvanceRealtime() && simulatedHostFrames == 5,
+                "restoring realtime resumes ordinary host-driven simulation");
+    executionMode.Reset();
+    ok &= Check(executionMode.IsRealtime(), "Reset restores realtime host advancement");
+
     PlayBackend backend;
     Automation::AutomationService service(backend);
     Automation::RegisterPlayAutomation(service);
@@ -110,6 +145,8 @@ int main()
     auto initial = Call(service, "play.get_state");
     ok &= Check(initial.Ok() && initial.value["state"] == "editor",
                 "Initial play state is editor");
+    ok &= Check(initial.value["realtime"] == true && initial.value["executionMode"] == "realtime",
+                "Initial execution mode is realtime");
 
     auto stepWhileEditor = Call(service, "play.step_frames", {{"count", 3}});
     ok &= Check(!stepWhileEditor.Ok() &&
@@ -125,6 +162,18 @@ int main()
     ok &= Check(start.Ok() && backend.startCalls == 1 && backend.state == Hephaestus::PlayState::Playing,
                 "play.start enters Play Mode");
 
+    auto manual = Call(service, "play.set_realtime", {{"enabled", false}});
+    ok &= Check(manual.Ok() && manual.value["realtime"] == false && !backend.IsRealtime(),
+                "play.set_realtime(false) enables manual simulation mode");
+    auto manualState = Call(service, "play.get_state");
+    ok &= Check(manualState.Ok() && manualState.value["executionMode"] == "manual" &&
+                    manualState.value["realtime"] == false,
+                "play.get_state reports manual simulation mode");
+    auto invalidRealtime = Call(service, "play.set_realtime", {{"enabled", "false"}});
+    ok &= Check(!invalidRealtime.Ok() &&
+                    invalidRealtime.error->code == Automation::ErrorCode::InvalidArguments,
+                "play.set_realtime rejects non-boolean values");
+
     auto startAgain = Call(service, "play.start");
     ok &= Check(!startAgain.Ok() && startAgain.error->code == Automation::ErrorCode::PlayModeActive,
                 "play.start is unavailable while already playing");
@@ -138,6 +187,30 @@ int main()
                     backend.lastStepCount == 4 &&
                     std::abs(backend.lastStepDt - 1.0 / 30.0) < 1e-6,
                 "play.step_frames advances the requested frame count with fixed dt");
+
+    auto restoreRealtime = Call(service, "play.set_realtime", {{"enabled", true}});
+    ok &= Check(restoreRealtime.Ok() && backend.IsRealtime(),
+                "play.set_realtime(true) restores wall-clock-driven simulation");
+    auto manualAgain = Call(service, "play.set_realtime", {{"enabled", false}});
+    ok &= Check(manualAgain.Ok() && !backend.IsRealtime(),
+                "manual execution mode may be enabled again before Stop");
+
+    backend.host = Automation::HostMask::Runtime;
+    const auto runtimeTools = service.Registry().Available(Automation::HostMask::Runtime,
+                                                            Hephaestus::PlayState::Playing);
+    bool runtimeHasManualControl = false;
+    bool runtimeHasState = false;
+    bool runtimeHasStepping = false;
+    for (const auto* definition : runtimeTools) {
+        if (definition->name == "play.set_realtime") runtimeHasManualControl = true;
+        if (definition->name == "play.get_state") runtimeHasState = true;
+        if (definition->name == "play.step_frames") runtimeHasStepping = true;
+    }
+    ok &= Check(runtimeHasManualControl,
+                "play.set_realtime is registered for the packaged runtime host");
+    ok &= Check(runtimeHasState && runtimeHasStepping,
+                "play.get_state and play.step_frames are registered for the packaged runtime host");
+    backend.host = Automation::HostMask::Editor;
 
     auto pause = Call(service, "play.pause");
     ok &= Check(pause.Ok() && backend.toggleCalls == 1 && backend.state == Hephaestus::PlayState::Paused,
@@ -170,6 +243,7 @@ int main()
     auto stop = Call(service, "play.stop");
     ok &= Check(stop.Ok() && backend.stopCalls == 1 && backend.state == Hephaestus::PlayState::Editor,
                 "play.stop exits Play Mode");
+    ok &= Check(backend.IsRealtime(), "play.stop restores realtime mode for the next Play session");
 
     service.Shutdown();
     if (ok) {
