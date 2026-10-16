@@ -1343,6 +1343,33 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         COMMAND SceneAuthoringTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
+    add_executable(RuntimeSceneLifecycleTests
+        engine/Tests/RuntimeSceneLifecycleTests.cpp
+        engine/Core/PlayModeManager.cpp
+        engine/Scene/ActiveCameraSync.cpp
+        engine/Scene/Json.cpp
+        engine/Scene/Entity.cpp
+        engine/Scene/Scene.cpp
+        engine/Scene/PrefabSerializer.cpp
+        engine/Scene/PrefabInstantiator.cpp
+        engine/Scene/PrefabComponentIO.cpp
+        engine/Scene/PrefabOverrideSystem.cpp
+        engine/Scene/SceneSerializer.cpp
+        engine/Assets/AssetPathPolicy.cpp
+        engine/Scripting/ScriptBase.cpp
+    )
+    target_include_directories(RuntimeSceneLifecycleTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+        extern/VMA
+    )
+    target_link_libraries(RuntimeSceneLifecycleTests PRIVATE HephaestusAutomationCore Vulkan::Vulkan)
+    add_test(
+        NAME RuntimeSceneLifecycle
+        COMMAND RuntimeSceneLifecycleTests
+    )
+
     add_executable(ActiveCameraSyncTests
         engine/Tests/ActiveCameraSyncTests.cpp
         engine/Scene/ActiveCameraSync.cpp

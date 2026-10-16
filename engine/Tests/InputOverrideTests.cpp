@@ -82,6 +82,12 @@ int main()
     ok &= Check(input.IsActionPressed("Jump") && input.GetMouseDeltaX() == 10.0 &&
                     input.GetMouseDeltaY() == -15.0,
                 "the first deliberate frame consumes held action edge and accumulated mouse delta");
+    input.QueueMouseDelta(17.0, 9.0);
+    input.ResetTransientState();
+    ok &= Check(input.IsActionDown("Jump") && !input.IsActionPressed("Jump") &&
+                    !input.IsActionReleased("Jump") && input.GetMouseDeltaX() == 0.0 &&
+                    input.GetMouseDeltaY() == 0.0,
+                "scene reload clears one-shot edges and queued deltas while preserving held overrides");
     input.BeginFrame();
     ok &= Check(input.IsActionDown("Jump") && !input.IsActionPressed("Jump"),
                 "queued action remains held without repeating its edge");

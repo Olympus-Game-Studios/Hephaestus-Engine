@@ -14,6 +14,9 @@
 #include "Scene/Scene.h"
 #include "Scripting/LuaScriptComponent.h"
 #include "Scripting/LuaScriptEngine.h"
+#include "UI/HephaestusUI/UIContext.h"
+#include "UI/HephaestusUI/UISystem.h"
+#include "UI/HephaestusUI/UIRenderer.h"
 
 #include <cmath>
 #include <filesystem>
@@ -278,6 +281,95 @@ bool TestBrokenControllerIsolation(const fs::path& root) {
     return ok;
 }
 
+bool TestSceneReloadRequestLifecycle() {
+    bool ok = true;
+    Scene scene("ReloadRequest");
+    Entity entity = scene.CreateEntity("ReloadScript");
+    entity.AddComponent<LuaScriptComponent>().scriptSource = R"(
+local reloadProbeState = package.loaded.__runtimeSceneReload or {}
+package.loaded.__runtimeSceneReload = reloadProbeState
+function onAwake()
+    _G.reloadAwakeCount = (_G.reloadAwakeCount or 0) + 1
+    if _G.reloadAwakeCount == 1 then
+        _G.oldReloadScreen = UI.createScreen("ReloadProbeHUD")
+        reloadProbeState.oldEntity = this
+    else
+        _G.newReloadScreen = UI.createScreen("ReloadProbeHUD")
+        reloadProbeState.newEntity = this
+    end
+end
+function onDestroy()
+    _G.reloadDestroyCount = (_G.reloadDestroyCount or 0) + 1
+end
+function onUpdate(dt)
+    if _G.requestSceneReload then
+        _G.reloadAccepted = Scene.reload()
+        _G.requestSceneReload = false
+    end
+end
+)";
+
+    LuaScriptEngine engine;
+    engine.Initialize(&scene, nullptr);
+    Hephaestus::HephaestusUI::UISystem uiSystem;
+    Hephaestus::HephaestusUI::UIContext uiContext;
+    Hephaestus::HephaestusUI::UIRenderer uiRenderer;
+    engine.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);
+    int acceptedRequests = 0;
+    engine.SetSceneReloadCallback([&acceptedRequests]() {
+        ++acceptedRequests;
+        return true;
+    });
+    engine.OnSimulationStarted();
+    engine.Update(scene, 1.0f / 60.0f);
+    ok &= Check(engine.ExecuteString("assert(_G.reloadAwakeCount == 1)"),
+                "authored entity script receives its first onAwake");
+
+    engine.ExecuteString("_G.requestSceneReload = true");
+    engine.Update(scene, 1.0f / 60.0f);
+    ok &= Check(acceptedRequests == 1 && engine.ExecuteString("assert(_G.reloadAccepted == true)"),
+                "Scene.reload accepts a gameplay-originated deferred request");
+
+    engine.OnSimulationStopped();
+    ok &= Check(engine.ExecuteString("assert(_G.reloadDestroyCount == 1)"),
+                "old entity script onDestroy runs before scene teardown");
+    uiSystem.ClearScreens();
+    ok &= Check(engine.ExecuteString("assert(UI.setScreenVisible(_G.oldReloadScreen, false) == false)"),
+                "old scene screen handles are invalidated at teardown");
+    scene.Clear();
+    scene.MarkReconstructedFromSource();
+    Entity reloaded = scene.CreateEntity("ReloadScript");
+    reloaded.AddComponent<LuaScriptComponent>().scriptSource = R"(
+local reloadProbeState = package.loaded.__runtimeSceneReload or {}
+package.loaded.__runtimeSceneReload = reloadProbeState
+function onAwake()
+    _G.reloadAwakeCount = (_G.reloadAwakeCount or 0) + 1
+    if _G.reloadAwakeCount == 1 then
+        _G.oldReloadScreen = UI.createScreen("ReloadProbeHUD")
+        reloadProbeState.oldEntity = this
+    else
+        _G.newReloadScreen = UI.createScreen("ReloadProbeHUD")
+        reloadProbeState.newEntity = this
+    end
+end
+function onDestroy()
+    _G.reloadDestroyCount = (_G.reloadDestroyCount or 0) + 1
+end
+)";
+    engine.OnSimulationStarted();
+    engine.Update(scene, 1.0f / 60.0f);
+    ok &= Check(engine.ExecuteString("assert(_G.reloadAwakeCount == 2)"),
+                "reconstructed entity gets a fresh script instance and onAwake");
+    ok &= Check(uiSystem.GetScreens().size() == 1 && engine.ExecuteString(
+                    "assert(_G.newReloadScreen ~= _G.oldReloadScreen)"),
+                "reloaded scene mounts one new screen with a non-recycled handle");
+    ok &= Check(engine.ExecuteString("assert(package.loaded.__runtimeSceneReload.oldEntity:IsValid() == false and package.loaded.__runtimeSceneReload.newEntity:IsValid() == true)"),
+                "Lua entity userdata from the prior scene generation expires");
+    engine.OnSimulationStopped();
+    engine.Shutdown();
+    return ok;
+}
+
 } // namespace
 
 int main() {
@@ -292,6 +384,7 @@ int main() {
     ok &= TestSlotsAndAnimator(root);
     ok &= TestControllerDisabled(root);
     ok &= TestBrokenControllerIsolation(root);
+    ok &= TestSceneReloadRequestLifecycle();
     if (ok) {
         std::cout << "CharacterLuaTests passed\n";
         return 0;
