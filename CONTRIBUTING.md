@@ -13,13 +13,14 @@ Thanks for your interest in improving the project! This guide explains how to se
 
 ## Getting Started
 1. Fork the repository and clone your fork locally.
-2. Install the required tooling (Visual Studio 2019/2022 with C++, CMake ≥ 3.16, Vulkan SDK, Git). Optional: Python for helper scripts. See `README.md` for up-to-date links.
+2. Install the required tooling (Visual Studio 2022 with C++, CMake ≥ 3.24, Vulkan SDK, Git). Optional: Python for helper scripts. See `README.md` for setup details.
 3. Pull dependencies:
 	- Run `./setup_entt.ps1` once to download EnTT into `extern/entt/`.
 	- Check that the `extern/` directory contains the rest of the vendor libraries after cloning (GLFW, ImGui, ImGuizmo, etc.).
-4. Generate a build directory and configure CMake:
-	- `cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release`
-	- You can re-use the same `build/` folder for Debug by setting `-DCMAKE_BUILD_TYPE=Debug` or using Visual Studio configuration dropdowns.
+4. Configure and build with the CMake preset for your host (`windows-release`, `macos-release`, or `linux-release`):
+	- `cmake --preset windows-release`
+	- `cmake --build --preset windows-release`
+	- On Windows, run these from a Visual Studio Developer PowerShell. Substitute the matching preset on macOS or Linux.
 
 ## Development Workflow
 - Work from feature branches created off `main`. Use a descriptive branch name, such as `feature/ecs-undo-stack` or `fix/crash-on-exit`.
@@ -29,13 +30,13 @@ Thanks for your interest in improving the project! This guide explains how to se
 
 ## Coding Guidelines
 - Follow the existing code style in surrounding files. Match brace placement, naming conventions, and include order.
-- Use modern C++17 STL facilities and RAII. Avoid raw `new`/`delete` in new code unless ownership semantics require it.
+- Use modern C++20 standard-library facilities and RAII. Avoid raw `new`/`delete` in new code unless ownership semantics require it.
 - Keep headers lean: avoid unnecessary includes and prefer forward declarations where practical.
 - Document non-obvious logic with concise comments. Focus comments on intent rather than line-by-line narration.
 - For shaders and scripts, mirror the formatting used in the corresponding directory.
 
 ## Testing & Validation
-- **C++ builds**: Run `cmake --build build --config Release` (or `Debug`) before submitting.
+- **C++ builds and tests**: Build the affected target/configuration and run the relevant CTest tests when available. For the full preset workflow, see `CMakePresets.json` and `AGENTS.md`.
 - **Runtime smoke test**: Launch `build/Release/HephaestusEngine.exe` (or Debug) and confirm the affected features behave as expected.
 - **Shaders**: If you change GLSL files, recompile SPIR-V with `glslangValidator` and include updated `.spv` outputs.
 - **Documentation/examples**: Update or add markdown snippets to reflect behaviour changes; run spell checks where possible.
