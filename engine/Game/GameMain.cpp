@@ -823,6 +823,8 @@ int main(int argc, char* argv[]) {
     HUI::UIContext uiContext;
     HUI::UIRenderer uiRenderer;
     uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
+    bool sceneReloadFailed = false;
+    bool sceneReloadProcessing = false;
 
     // ── Scripting ─────────────────────────────────
 #if HEPHAESTUS_GAME_SCRIPTING
@@ -838,7 +840,10 @@ int main(int argc, char* argv[]) {
         luaEngine.SetInputSystem(&inputSystem);
         luaEngine.SetAudioEngine(&audioEngine);
         luaEngine.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);
-        luaEngine.SetSceneReloadCallback([&sceneReloadRequested]() {
+        luaEngine.SetSceneReloadCallback([&scene, &sceneReloadRequested, &sceneReloadProcessing]() {
+            if (!scene.IsReloadable() || sceneReloadRequested || sceneReloadProcessing) {
+                return false;
+            }
             sceneReloadRequested = true;
             return true;
         });
@@ -1681,7 +1686,57 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<Hephaestus::Runtime::PackagedAutomation> packagedAutomation;
 #endif
 
+#if HEPHAESTUS_GAME_SCRIPTING
+    auto reloadSceneAtSafePoint = [&]() {
+        if (!sceneReloadRequested) return false;
+        sceneReloadRequested = false;
+        sceneReloadProcessing = true;
+        const fs::path sourcePath = fs::u8path(scene.GetSourceAssetPath());
+        Scene staged;
+        std::string reloadError;
+        if (!scene.IsReloadable() || !SceneSerializer::Deserialize(staged, sourcePath, reloadError)) {
+            if (reloadError.empty()) reloadError = "current scene has no authored source asset";
+            sceneReloadFailed = true;
+            HP_LOG(Error, "Cannot reload scene from '" + scene.GetSourceAssetPath() + "': " + reloadError);
+            Bootstrap::ShowFatalError("Scene Restart Error",
+                "Cannot reload the current authored scene:\n" + reloadError);
+            sceneReloadProcessing = false;
+            return true;
+        }
+
+        luaEngine.OnSimulationStopped();
+        characterControllers.Clear();
+        physicsSystem.ClearAllBodies();
+        physicsSystem.ClearAccumulator();
+        audioEngine.StopAll();
+        uiSystem.ClearScreens();
+        uiSystem.SetCursorMode(HUI::CursorMode::Game);
+        uiContext.ClearQueuedMouseEvents();
+        uiRenderer.Reset();
+        inputSystem.ResetTransientState();
+
+        if (!SceneSerializer::Deserialize(scene, sourcePath, reloadError)) {
+            sceneReloadFailed = true;
+            HP_LOG(Error, "Failed to reconstruct scene: " + reloadError);
+            scene.Clear();
+            Bootstrap::ShowFatalError("Scene Restart Error",
+                "Failed to reconstruct the current authored scene:\n" + reloadError);
+            sceneReloadProcessing = false;
+            return true;
+        }
+
+        const fs::path characterRoot = !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot;
+        Hephaestus::CharacterRuntime::BindScene(scene, characterRoot, &frameRenderer);
+        luaEngine.OnSimulationStarted();
+        physicsSystem.PrepareSceneBodies(scene);
+        HP_LOG(Info, "Gameplay scene restarted: " + scene.GetSourceAssetPath());
+        sceneReloadProcessing = false;
+        return true;
+    };
+#endif
+
     auto simulateGameplayFrame = [&](float simulationDeltaTime) {
+        if (sceneReloadFailed) return;
         inputSystem.BeginFrame();
         for (int key = GLFW_KEY_SPACE; key <= GLFW_KEY_LAST; ++key) {
             const int state = glfwGetKey(window, key);
@@ -1736,38 +1791,21 @@ int main(int argc, char* argv[]) {
         // Scripts
 #if HEPHAESTUS_GAME_SCRIPTING
         luaEngine.Update(scene, simulationDeltaTime);
-        if (sceneReloadRequested) {
-            sceneReloadRequested = false;
-            luaEngine.OnSimulationStopped();
-            characterControllers.Clear();
-            physicsSystem.ClearAllBodies();
-            physicsSystem.ClearAccumulator();
-
-            std::string reloadError;
-            if (!SceneSerializer::Deserialize(scene, scenePath.string(), reloadError)) {
-                HP_LOG(Error, "Failed to restart scene: " + reloadError);
-                Bootstrap::ShowFatalError("Scene Restart Error",
-                    "Failed to restart the current scene:\n" + reloadError);
-                return;
-            }
-
-            luaEngine.OnSimulationStarted();
-            physicsSystem.PrepareSceneBodies(scene);
-            HP_LOG(Info, "Gameplay scene restarted: " + scenePath.string());
-            return;
-        }
+        if (reloadSceneAtSafePoint()) return;
 #endif
 
         // Fixed-step physics follows scripts so onUpdate can write this frame's motion.
         physicsSystem.Update(scene, simulationDeltaTime);
 #if HEPHAESTUS_GAME_SCRIPTING
         luaEngine.DispatchContactEvents(scene, physicsSystem.FrameContactEvents());
+        if (reloadSceneAtSafePoint()) return;
 #endif
 
         Hephaestus::CharacterAnimationSystem::Tick(scene, simulationDeltaTime);
 #if HEPHAESTUS_GAME_SCRIPTING
         luaEngine.DispatchAnimationFinished(scene);
         luaEngine.LateUpdate(scene, simulationDeltaTime);
+        if (reloadSceneAtSafePoint()) return;
 #endif
 
         uiSystem.Update(uiContext);

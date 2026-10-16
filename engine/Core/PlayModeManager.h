@@ -17,6 +17,7 @@
 #include <string>
 #include <functional>
 #include <memory>
+#include <utility>
 #include "SimulationExecutionMode.h"
 
 // Forward declarations
@@ -132,6 +133,18 @@ public:
     /// Run one script frame while Playing or Paused, with no physics step between.
     bool StepTick(float dt);
 
+    /// Gameplay-facing request; accepted requests are processed by the host at
+    /// the boundary after script callbacks return and before physics advances.
+    bool RequestSceneReload();
+    bool HasPendingSceneReload() const { return m_sceneReloadRequested; }
+    using SceneReloadCallback = std::function<bool(std::string& outError)>;
+    void SetSceneReloadCallback(SceneReloadCallback callback) {
+        m_sceneReloadCallback = std::move(callback);
+    }
+    /// Consume the request and invoke the host-owned teardown/load sequence.
+    /// Returns true when a request was consumed, including controlled failure.
+    bool ProcessSceneReload();
+
     // ── Camera authority ─────────────────────────────────────────────────────
 
     CameraMode GetCameraMode() const { return m_cameraMode; }
@@ -176,6 +189,7 @@ public:
 
 private:
     void Log(const std::string& msg);
+    void InitializeRuntimeCameraFromScene();
 
     // State
     PlayState  m_state = PlayState::Editor;
@@ -206,6 +220,9 @@ private:
 
     // Stop request (set by scripts via Application.quit())
     bool m_stopRequested = false;
+    bool m_sceneReloadRequested = false;
+    bool m_processingSceneReload = false;
+    SceneReloadCallback m_sceneReloadCallback;
 
     // Logging
     PlayModeLogCallback m_logCb;

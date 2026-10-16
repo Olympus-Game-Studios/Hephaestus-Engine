@@ -45,12 +45,54 @@
 #include <functional>
 #include <cmath>
 #include <exception>
+#include <new>
 
 #include <GLFW/glfw3.h>
 
 #ifndef LUA_AVAILABLE
     #define LUA_AVAILABLE 0
 #endif
+
+struct LuaEntityReference {
+    std::uint32_t entityId = static_cast<std::uint32_t>(entt::null);
+    std::uint64_t sceneIdentity = 0;
+    std::uint64_t sceneGeneration = 0;
+    LuaScriptEngine* owner = nullptr;
+
+    operator std::uint32_t() const noexcept
+    {
+        if (!owner || !owner->m_Scene ||
+            owner->m_Scene->GetIdentity() != sceneIdentity ||
+            owner->m_Scene->GetRuntimeGeneration() != sceneGeneration) {
+            return static_cast<std::uint32_t>(entt::null);
+        }
+        return entityId;
+    }
+
+    LuaEntityReference& operator=(std::uint32_t value) noexcept
+    {
+        entityId = value;
+        return *this;
+    }
+
+#if LUA_AVAILABLE
+    static LuaEntityReference* Create(lua_State* state,
+                                      LuaScriptEngine* engine,
+                                      std::uint32_t entity)
+    {
+        auto* reference = new (lua_newuserdata(state, sizeof(LuaEntityReference))) LuaEntityReference{};
+        reference->entityId = entity;
+        reference->owner = engine;
+        reference->sceneIdentity = engine && engine->m_Scene
+            ? engine->m_Scene->GetIdentity()
+            : 0;
+        reference->sceneGeneration = engine && engine->m_Scene
+            ? engine->m_Scene->GetRuntimeGeneration()
+            : 0;
+        return reference;
+    }
+#endif
+};
 
 namespace {
     constexpr int kInvalidRef = -1;
@@ -416,6 +458,7 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
     }
 
     m_Scene = &scene;
+    m_SceneReloadRequested = false;
     m_ActiveUpdateOrder.clear();
     m_UpdatingScripts = true;
 
@@ -490,6 +533,7 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
     }
 
     for (auto entityHandle : gameplayReady) {
+        if (m_SceneReloadRequested) break;
         if (!registry.valid(entityHandle)) {
             continue;
         }
@@ -499,6 +543,7 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
         }
     }
     for (auto entityHandle : controllerReady) {
+        if (m_SceneReloadRequested) break;
         if (!registry.valid(entityHandle)) {
             continue;
         }
@@ -508,6 +553,7 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
         }
     }
     for (auto entityHandle : gameplayReady) {
+        if (m_SceneReloadRequested) break;
         if (!registry.valid(entityHandle)) {
             continue;
         }
@@ -517,6 +563,7 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
         }
     }
     for (auto entityHandle : controllerReady) {
+        if (m_SceneReloadRequested) break;
         if (!registry.valid(entityHandle)) {
             continue;
         }
@@ -555,7 +602,11 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
     }
 
     m_UpdatingScripts = false;
-    FlushDeferredSceneOps();
+    if (m_SceneReloadRequested) {
+        ClearDeferredSceneOps();
+    } else {
+        FlushDeferredSceneOps();
+    }
 
     // Bind characters spawned this tick after Lua returns. Doing FBX load / GPU
     // upload inside Scene.instantiate (Director onUpdate) can abort the spawn.
@@ -576,12 +627,13 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
 
 void LuaScriptEngine::LateUpdate(Scene& scene, float deltaTime) {
 #if LUA_AVAILABLE
-    if (!m_State) {
+    if (!m_State || m_SceneReloadRequested) {
         return;
     }
 
     m_Scene = &scene;
     for (const LuaScriptInstanceKey& key : m_ActiveUpdateOrder) {
+        if (m_SceneReloadRequested) break;
         auto it = m_ScriptInstances.find(key);
         if (it == m_ScriptInstances.end()) {
             continue;
@@ -602,13 +654,14 @@ void LuaScriptEngine::LateUpdate(Scene& scene, float deltaTime) {
 
 void LuaScriptEngine::DispatchAnimationFinished(Scene& scene) {
 #if LUA_AVAILABLE
-    if (!m_State) {
+    if (!m_State || m_SceneReloadRequested) {
         return;
     }
     m_Scene = &scene;
     auto& registry = scene.GetRegistry();
     auto view = registry.view<CharacterComponent>();
     for (auto entityHandle : view) {
+        if (m_SceneReloadRequested) break;
         CharacterComponent& character = view.get<CharacterComponent>(entityHandle);
         if (!character.player.finishedThisFrame || character.player.finishedClip.empty()) {
             continue;
@@ -653,11 +706,12 @@ void LuaScriptEngine::DispatchAnimationFinished(Scene& scene) {
 
 void LuaScriptEngine::DispatchContactEvents(Scene& scene, const std::vector<Physics::PhysicsContactEvent>& events) {
 #if LUA_AVAILABLE
-    if (!m_State || events.empty()) {
+    if (!m_State || m_SceneReloadRequested || events.empty()) {
         return;
     }
     m_Scene = &scene;
     for (const Physics::PhysicsContactEvent& event : events) {
+        if (m_SceneReloadRequested) break;
         if (event.receiver == Physics::kNullPhysicsEntity) {
             continue;
         }
@@ -756,6 +810,7 @@ void LuaScriptEngine::DispatchContactEvents(Scene& scene, const std::vector<Phys
 
 void LuaScriptEngine::OnSimulationStarted() {
 #if LUA_AVAILABLE
+    m_SceneReloadRequested = false;
     for (auto& [_, instance] : m_ScriptInstances) {
         instance.awakeCalled = false;
     }
@@ -767,6 +822,7 @@ void LuaScriptEngine::OnSimulationStarted() {
 
 void LuaScriptEngine::OnSimulationStopped() {
 #if LUA_AVAILABLE
+    m_SceneReloadRequested = false;
     if (!m_State) {
         return;
     }
@@ -814,6 +870,7 @@ void LuaScriptEngine::OnSimulationStopped() {
 
     // Destroy all managed HUI instances so nothing leaks between sessions
     destroyAllHUIInstances();
+    ResetUIHandleMaps();
 #endif
 }
 
@@ -970,8 +1027,6 @@ void LuaScriptEngine::ResetUIHandleMaps() {
     m_ActiveHUIInstances.clear();
     m_HUIPathToHandle.clear();
     m_HUIStack.clear();
-    m_NextUIScreenHandle = 1;
-    m_NextUIElementHandle = 1;
 }
 
 void LuaScriptEngine::RegisterBindings() {
@@ -1415,7 +1470,7 @@ int LuaScriptEngine::Lua_Physics_raycast(lua_State* L) {
     }
     uint32_t ignoreEntityId = engine->m_CurrentEntityId;
     if (lua_gettop(L) >= 10 && !lua_isnoneornil(L, 10)) {
-        uint32_t* explicitId = static_cast<uint32_t*>(luaL_testudata(L, 10, "HephaestusEntity"));
+        LuaEntityReference* explicitId = static_cast<LuaEntityReference*>(luaL_testudata(L, 10, "HephaestusEntity"));
         if (!explicitId) {
             return luaL_error(L, "Physics.raycast expected an entity userdata as argument 10");
         }
@@ -3267,8 +3322,7 @@ void LuaScriptEngine::SetupThisForEntity(uint32_t entityId) {
     }
     
     // Create a userdata to hold the entity ID
-    uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(m_State, sizeof(uint32_t)));
-    *pEntityId = entityId;
+    LuaEntityReference::Create(m_State, this, entityId);
     
     // Set its metatable to "HephaestusEntity"
     luaL_getmetatable(m_State, "HephaestusEntity");
@@ -3286,8 +3340,7 @@ void LuaScriptEngine::PushEntityUserdata(lua_State* L, uint32_t entityId) {
     if (!L) {
         return;
     }
-    uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
-    *pEntityId = entityId;
+    LuaEntityReference::Create(L, this, entityId);
     luaL_getmetatable(L, "HephaestusEntity");
     lua_setmetatable(L, -2);
 #else
@@ -3573,12 +3626,24 @@ void LuaScriptEngine::FlushDeferredSceneOps() {
     std::vector<PendingDestroy> destroys = std::move(m_PendingDestroys);
     m_PendingDestroys.clear();
     for (const PendingDestroy& pending : destroys) {
+        if (m_SceneReloadRequested) {
+            ClearDeferredSceneOps();
+            return;
+        }
         ExecuteDestroy(pending.entityId);
+        if (m_SceneReloadRequested) {
+            ClearDeferredSceneOps();
+            return;
+        }
     }
 
     std::vector<PendingSpawn> spawns = std::move(m_PendingSpawns);
     m_PendingSpawns.clear();
     for (const PendingSpawn& pending : spawns) {
+        if (m_SceneReloadRequested) {
+            ClearDeferredSceneOps();
+            return;
+        }
         ExecuteSpawn(pending);
     }
 }
@@ -3596,7 +3661,7 @@ int LuaScriptEngine::Lua_This_GetTransform(lua_State* L) {
         return 1;
     }
 
-    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
     if (!selfId) {
         lua_pushnil(L);
         return 1;
@@ -3607,8 +3672,7 @@ int LuaScriptEngine::Lua_This_GetTransform(lua_State* L) {
         return 1;
     }
 
-    uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
-    *pEntityId = *selfId;
+    LuaEntityReference::Create(L, engine, static_cast<std::uint32_t>(*selfId));
     luaL_getmetatable(L, "HephaestusTransform");
     lua_setmetatable(L, -2);
     return 1;
@@ -3625,7 +3689,7 @@ int LuaScriptEngine::Lua_This_GetName(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
     if (!selfId) {
         lua_pushnil(L);
         return 1;
@@ -3649,7 +3713,7 @@ int LuaScriptEngine::Lua_This_SetName(lua_State* L) {
     if (!engine) {
         return 0;
     }
-    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
     if (!selfId) {
         return 0;
     }
@@ -3676,7 +3740,7 @@ int LuaScriptEngine::Lua_This_SetName(lua_State* L) {
 int LuaScriptEngine::Lua_This_IsValid(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
     bool valid = engine && selfId && static_cast<bool>(engine->MakeEntity(*selfId));
     lua_pushboolean(L, valid);
     return 1;
@@ -3694,7 +3758,7 @@ int LuaScriptEngine::CallNamedOnSlot(lua_State* L, LuaScriptSlot slot) {
         return 1;
     }
 
-    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
     if (!selfId) {
         lua_pushboolean(L, false);
         return 1;
@@ -3780,7 +3844,7 @@ int LuaScriptEngine::Lua_This_CallController(lua_State* L) {
 
 CharacterComponent* LuaScriptEngine::CharacterFromLuaSelf(lua_State* L, const char* meta) {
 #if LUA_AVAILABLE
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_testudata(L, 1, meta));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, meta));
     if (!pEntityId) {
         return nullptr;
     }
@@ -3840,7 +3904,7 @@ int LuaScriptEngine::Lua_This_GetAnimator(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
     if (!selfId) {
         lua_pushnil(L);
         return 1;
@@ -3850,8 +3914,7 @@ int LuaScriptEngine::Lua_This_GetAnimator(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
-    *pEntityId = *selfId;
+    LuaEntityReference::Create(L, engine, static_cast<std::uint32_t>(*selfId));
     luaL_getmetatable(L, "HephaestusAnimator");
     lua_setmetatable(L, -2);
     return 1;
@@ -3868,7 +3931,7 @@ int LuaScriptEngine::Lua_This_GetCharacter(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
     if (!selfId) {
         lua_pushnil(L);
         return 1;
@@ -3878,8 +3941,7 @@ int LuaScriptEngine::Lua_This_GetCharacter(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
-    *pEntityId = *selfId;
+    LuaEntityReference::Create(L, engine, static_cast<std::uint32_t>(*selfId));
     luaL_getmetatable(L, "HephaestusCharacter");
     lua_setmetatable(L, -2);
     return 1;
@@ -3901,7 +3963,7 @@ int LuaScriptEngine::Lua_Animator_Play(lua_State* L) {
     std::string error;
     const bool ok = Hephaestus::CharacterAnimationSystem::Play(*character, clipId, error);
     if (!ok) {
-        uint32_t* id = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusAnimator"));
+        LuaEntityReference* id = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusAnimator"));
         engine->LogBindingErrorForEntity(id ? *id : 0, error);
     }
     lua_pushboolean(L, ok);
@@ -3925,7 +3987,7 @@ int LuaScriptEngine::Lua_Animator_CrossFade(lua_State* L) {
     std::string error;
     const bool ok = Hephaestus::CharacterAnimationSystem::CrossFade(*character, clipId, duration, error);
     if (!ok) {
-        uint32_t* id = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusAnimator"));
+        LuaEntityReference* id = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusAnimator"));
         engine->LogBindingErrorForEntity(id ? *id : 0, error);
     }
     lua_pushboolean(L, ok);
@@ -3989,7 +4051,7 @@ int LuaScriptEngine::Lua_Animator_SetSpeed(lua_State* L) {
     }
     const bool ok = Hephaestus::CharacterAnimationSystem::SetSpeed(*character, speed);
     if (!ok) {
-        uint32_t* id = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusAnimator"));
+        LuaEntityReference* id = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusAnimator"));
         engine->LogBindingErrorForEntity(id ? *id : 0,
                                 "Animator:SetSpeed requires a speed greater than 0. Use Pause() to freeze.");
     }
@@ -4133,7 +4195,7 @@ bool LuaScriptEngine::PushSocketTable(lua_State* L, uint32_t entityId, const cha
 int LuaScriptEngine::Lua_Character_GetSocket(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusCharacter"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusCharacter"));
     const char* name = luaL_checkstring(L, 2);
     if (!engine || !pEntityId || !name) {
         lua_pushnil(L);
@@ -4150,7 +4212,7 @@ int LuaScriptEngine::Lua_Character_GetSocket(lua_State* L) {
 int LuaScriptEngine::Lua_Character_GetSocketLocal(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusCharacter"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusCharacter"));
     const char* name = luaL_checkstring(L, 2);
     if (!engine || !pEntityId || !name) {
         lua_pushnil(L);
@@ -4173,7 +4235,7 @@ int LuaScriptEngine::Lua_TransformObj_GetPosition(lua_State* L) {
     }
     
     // Get entity ID from userdata (self at index 1)
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusTransform"));
     if (!pEntityId) {
         lua_pushnil(L);
         return 1;
@@ -4207,7 +4269,7 @@ int LuaScriptEngine::Lua_TransformObj_SetPosition(lua_State* L) {
     }
     
     // Get entity ID from userdata (self at index 1)
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusTransform"));
     if (!pEntityId) {
         return 0;
     }
@@ -4254,7 +4316,7 @@ int LuaScriptEngine::Lua_TransformObj_GetRotation(lua_State* L) {
         return 1;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusTransform"));
     if (!pEntityId) {
         lua_pushnil(L);
         return 1;
@@ -4287,7 +4349,7 @@ int LuaScriptEngine::Lua_TransformObj_SetRotation(lua_State* L) {
         return 0;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusTransform"));
     if (!pEntityId) {
         return 0;
     }
@@ -4333,7 +4395,7 @@ int LuaScriptEngine::Lua_TransformObj_GetScale(lua_State* L) {
         return 1;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusTransform"));
     if (!pEntityId) {
         lua_pushnil(L);
         return 1;
@@ -4366,7 +4428,7 @@ int LuaScriptEngine::Lua_TransformObj_SetScale(lua_State* L) {
         return 0;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusTransform"));
     if (!pEntityId) {
         return 0;
     }
@@ -4411,7 +4473,7 @@ int LuaScriptEngine::Lua_TransformObj_Translate(lua_State* L) {
         return 0;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusTransform"));
     if (!pEntityId) {
         return 0;
     }
@@ -4441,7 +4503,7 @@ int LuaScriptEngine::Lua_TransformObj_Rotate(lua_State* L) {
         return 0;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusTransform"));
     if (!pEntityId) {
         return 0;
     }
@@ -4475,7 +4537,7 @@ int LuaScriptEngine::Lua_This_GetCamera(lua_State* L) {
         return 1;
     }
 
-    uint32_t* selfId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
     if (!selfId) {
         lua_pushnil(L);
         return 1;
@@ -4487,8 +4549,7 @@ int LuaScriptEngine::Lua_This_GetCamera(lua_State* L) {
         return 1;
     }
 
-    uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
-    *pEntityId = *selfId;
+    LuaEntityReference::Create(L, engine, static_cast<std::uint32_t>(*selfId));
     luaL_getmetatable(L, "HephaestusCamera");
     lua_setmetatable(L, -2);
     return 1;
@@ -4506,7 +4567,7 @@ int LuaScriptEngine::Lua_CameraObj_GetFov(lua_State* L) {
         return 1;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusCamera"));
     if (!pEntityId) {
         lua_pushnil(L);
         return 1;
@@ -4534,7 +4595,7 @@ int LuaScriptEngine::Lua_CameraObj_SetFov(lua_State* L) {
         return 0;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusCamera"));
     if (!pEntityId) {
         return 0;
     }
@@ -4562,7 +4623,7 @@ int LuaScriptEngine::Lua_CameraObj_GetNear(lua_State* L) {
         return 1;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusCamera"));
     if (!pEntityId) {
         lua_pushnil(L);
         return 1;
@@ -4590,7 +4651,7 @@ int LuaScriptEngine::Lua_CameraObj_SetNear(lua_State* L) {
         return 0;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusCamera"));
     if (!pEntityId) {
         return 0;
     }
@@ -4618,7 +4679,7 @@ int LuaScriptEngine::Lua_CameraObj_GetFar(lua_State* L) {
         return 1;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusCamera"));
     if (!pEntityId) {
         lua_pushnil(L);
         return 1;
@@ -4646,7 +4707,7 @@ int LuaScriptEngine::Lua_CameraObj_SetFar(lua_State* L) {
         return 0;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusCamera"));
     if (!pEntityId) {
         return 0;
     }
@@ -4674,7 +4735,7 @@ int LuaScriptEngine::Lua_CameraObj_IsActive(lua_State* L) {
         return 1;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusCamera"));
     if (!pEntityId) {
         lua_pushboolean(L, false);
         return 1;
@@ -4702,7 +4763,7 @@ int LuaScriptEngine::Lua_CameraObj_SetActive(lua_State* L) {
         return 0;
     }
     
-    uint32_t* pEntityId = static_cast<uint32_t*>(luaL_checkudata(L, 1, "HephaestusCamera"));
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusCamera"));
     if (!pEntityId) {
         return 0;
     }
@@ -4749,8 +4810,7 @@ int LuaScriptEngine::Lua_Scene_FindFirstCamera(lua_State* L) {
     auto cameraView = engine->m_Scene->GetEntitiesWith<CameraComponent>();
     for (auto entityHandle : cameraView) {
         // Return first camera found
-        uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
-        *pEntityId = static_cast<uint32_t>(entityHandle);
+        LuaEntityReference::Create(L, engine, static_cast<std::uint32_t>(entityHandle));
         luaL_getmetatable(L, "HephaestusEntity");
         lua_setmetatable(L, -2);
         return 1;
@@ -4777,8 +4837,7 @@ int LuaScriptEngine::Lua_Scene_FindCameras(lua_State* L) {
     
     auto cameraView = engine->m_Scene->GetEntitiesWith<CameraComponent>();
     for (auto entityHandle : cameraView) {
-        uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
-        *pEntityId = static_cast<uint32_t>(entityHandle);
+        LuaEntityReference::Create(L, engine, static_cast<std::uint32_t>(entityHandle));
         luaL_getmetatable(L, "HephaestusEntity");
         lua_setmetatable(L, -2);
         lua_rawseti(L, -2, index++);
@@ -4806,8 +4865,7 @@ int LuaScriptEngine::Lua_Scene_GetActiveCamera(lua_State* L) {
         Entity entity(entityHandle, engine->m_Scene);
         auto& camera = entity.GetComponent<CameraComponent>();
         if (camera.isActive) {
-            uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
-            *pEntityId = static_cast<uint32_t>(entityHandle);
+            LuaEntityReference::Create(L, engine, static_cast<std::uint32_t>(entityHandle));
             luaL_getmetatable(L, "HephaestusEntity");
             lua_setmetatable(L, -2);
             return 1;
@@ -4816,8 +4874,7 @@ int LuaScriptEngine::Lua_Scene_GetActiveCamera(lua_State* L) {
     
     // Second pass: return first camera if none active
     for (auto entityHandle : cameraView) {
-        uint32_t* pEntityId = static_cast<uint32_t*>(lua_newuserdata(L, sizeof(uint32_t)));
-        *pEntityId = static_cast<uint32_t>(entityHandle);
+        LuaEntityReference::Create(L, engine, static_cast<std::uint32_t>(entityHandle));
         luaL_getmetatable(L, "HephaestusEntity");
         lua_setmetatable(L, -2);
         return 1;
@@ -4843,7 +4900,7 @@ int LuaScriptEngine::Lua_Scene_SetActiveCamera(lua_State* L) {
     if (lua_isnumber(L, 1)) {
         targetEntityId = static_cast<uint32_t>(lua_tonumber(L, 1));
     } else if (lua_isuserdata(L, 1)) {
-        uint32_t* pEntityId = static_cast<uint32_t*>(lua_touserdata(L, 1));
+        LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(lua_touserdata(L, 1));
         if (pEntityId) {
             targetEntityId = *pEntityId;
         }
@@ -5012,7 +5069,7 @@ int LuaScriptEngine::Lua_Scene_Destroy(lua_State* L) {
 
     uint32_t entityId = 0;
     if (lua_isuserdata(L, 1)) {
-        uint32_t* pEntityId = static_cast<uint32_t*>(luaL_testudata(L, 1, "HephaestusEntity"));
+        LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
         if (pEntityId) {
             entityId = *pEntityId;
         }
@@ -7600,6 +7657,12 @@ int LuaScriptEngine::Lua_Scene_Reload(lua_State* L) {
     bool requested = false;
     try {
         requested = engine->m_SceneReloadCallback();
+        if (requested) {
+            engine->m_SceneReloadRequested = true;
+        } else {
+            engine->LogBindingError(nullptr,
+                "Scene.reload rejected: current runtime scene is not reloadable or a reload is already pending");
+        }
     } catch (const std::exception& exception) {
         engine->LogBindingError(nullptr, std::string("Scene.reload failed: ") + exception.what());
     } catch (...) {

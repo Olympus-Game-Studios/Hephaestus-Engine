@@ -23,6 +23,7 @@
 #include "../../Gfx/Vertex.h"
 #include "../../Scene/ActiveCameraSync.h"
 #include "../../Scene/Scene.h"
+#include "../../Scene/SceneSerializer.h"
 #include "../../Scene/Components.h"
 #include "../../Scene/Entity.h"
 #include "../../Scene/PrefabOverrideSystem.h"
@@ -1852,8 +1853,11 @@ void QtEditorEngine::onTick()
         }
 
         m_playModeManager.BeginScriptFrame(dt);
-
-        if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
+        bool reloadHandled = false;
+        if (m_playModeManager.HasPendingSceneReload()) {
+            m_playModeManager.ProcessSceneReload();
+            reloadHandled = true;
+        } else if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
             try {
                 Scene* activeScene = m_editorContext.GetActiveScene();
                 m_joltPhysicsSystem->SetEnabled(true);
@@ -1867,7 +1871,17 @@ void QtEditorEngine::onTick()
             }
         }
 
-        m_playModeManager.FinishScriptFrame(dt);
+        if (!reloadHandled && m_playModeManager.HasPendingSceneReload()) {
+            m_playModeManager.ProcessSceneReload();
+            reloadHandled = true;
+        }
+        if (!reloadHandled) {
+            m_playModeManager.FinishScriptFrame(dt);
+            if (m_playModeManager.HasPendingSceneReload()) {
+                m_playModeManager.ProcessSceneReload();
+                reloadHandled = true;
+            }
+        }
         syncViewportCursorCapture();
 
         if (m_playModeManager.IsStopRequested()) {
@@ -3322,10 +3336,16 @@ void QtEditorEngine::StartPlayMode()
     // Wire up engines to the play mode manager
     m_playModeManager.SetScene(scene);
     m_playModeManager.SetLuaScriptEngine(m_luaScriptEngine.get());
+    m_luaScriptEngine->SetSceneReloadCallback([this]() {
+        return m_playModeManager.RequestSceneReload();
+    });
     m_luaScriptEngine->SetQuitRequestCallback([this]() {
         m_playModeManager.RequestStop();
     });
     m_playModeManager.SetCppScriptEngine(m_cppScriptEngine.get());
+    m_playModeManager.SetSceneReloadCallback([this](std::string& error) {
+        return reloadRuntimeScene(error);
+    });
     m_playModeManager.SetLogCallback([](const std::string& msg) {
         std::cout << msg << std::endl;
     });
@@ -3373,6 +3393,7 @@ void QtEditorEngine::StopPlayMode()
     }
 
     m_playModeManager.StopPlayMode();
+    m_editorContext.SyncSelectionFromScene();
 
     if (m_luaScriptEngine) {
         m_luaScriptEngine->SetUIBindings(nullptr, nullptr, nullptr);
@@ -3451,6 +3472,86 @@ void QtEditorEngine::SetRealtime(bool realtime)
     m_lastFrameTime = m_frameTimer.elapsed() / 1000.0f;
 }
 
+bool QtEditorEngine::reloadRuntimeScene(std::string& outError)
+{
+    Scene* scene = m_editorContext.GetActiveScene();
+    if (!scene || !scene->IsReloadable()) {
+        outError = "current scene has no authored source asset";
+        return false;
+    }
+
+    const std::string sourcePath = scene->GetSourceAssetPath();
+
+    // Validate into a temporary scene before teardown. A missing or malformed
+    // source therefore leaves the active play scene intact.
+    Scene staged;
+    if (!SceneSerializer::Deserialize(staged, std::filesystem::u8path(sourcePath), outError)) {
+        outError = "cannot reload '" + sourcePath + "': " + outError;
+        return false;
+    }
+
+    if (m_luaScriptEngine) {
+        m_luaScriptEngine->OnSimulationStopped();
+    }
+    if (m_cppScriptEngine) {
+        m_cppScriptEngine->DestroyScripts();
+    }
+
+    m_editorContext.ClearSelection();
+    if (m_audioEngine) {
+        m_audioEngine->StopAll();
+    }
+    if (m_joltPhysicsSystem) {
+        m_joltPhysicsSystem->ClearAllBodies();
+        m_joltPhysicsSystem->ClearAccumulator();
+        m_joltPhysicsSystem->SetEnabled(true);
+    } else if (m_characterControllers) {
+        m_characterControllers->Clear();
+    }
+
+    RuntimeUIState* runtimeUI = FindRuntimeUIState(this);
+    if (runtimeUI) {
+        if (runtimeUI->system) {
+            runtimeUI->system->ClearScreens();
+            runtimeUI->system->SetCursorMode(Hephaestus::HephaestusUI::CursorMode::Game);
+        }
+        if (runtimeUI->context) {
+            runtimeUI->context->ClearQueuedMouseEvents();
+        }
+        if (runtimeUI->renderer) {
+            runtimeUI->renderer->Reset();
+        }
+    }
+    m_gameplayInput.ResetTransientState();
+
+    if (!SceneSerializer::Deserialize(*scene, std::filesystem::u8path(sourcePath), outError)) {
+        scene->Clear();
+        outError = "source passed validation but failed during reconstruction: " + outError;
+        return false;
+    }
+    m_editorContext.ClearSelection();
+
+    if (m_luaScriptEngine) {
+        m_luaScriptEngine->OnSimulationStarted();
+    }
+    if (m_cppScriptEngine) {
+        m_cppScriptEngine->AwakeScripts();
+    }
+
+    namespace fs = std::filesystem;
+    fs::path projectRoot = m_projectRoot.empty() ? fs::path{} : fs::path(m_projectRoot);
+    if (projectRoot.empty()) {
+        projectRoot = fs::path(sourcePath).parent_path();
+    }
+    Hephaestus::CharacterRuntime::BindScene(*scene, projectRoot, m_frameRenderer.get());
+    m_editorContext.RequestRebuildSceneVisuals();
+    if (m_joltPhysicsSystem) {
+        m_joltPhysicsSystem->PrepareSceneBodies(*scene);
+    }
+    outError.clear();
+    return true;
+}
+
 bool QtEditorEngine::ReloadScripts(std::string& outError)
 {
     if (!m_luaScriptEngine) {
@@ -3479,7 +3580,11 @@ void QtEditorEngine::runSimulationFrame(float dt)
         }
     }
     m_playModeManager.BeginScriptFrame(dt);
-    if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
+    bool reloadHandled = false;
+    if (m_playModeManager.HasPendingSceneReload()) {
+        m_playModeManager.ProcessSceneReload();
+        reloadHandled = true;
+    } else if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
         try {
             Scene* activeScene = m_editorContext.GetActiveScene();
             m_joltPhysicsSystem->SetEnabled(true);
@@ -3492,7 +3597,17 @@ void QtEditorEngine::runSimulationFrame(float dt)
             m_physicsInitialized = false;
         }
     }
-    m_playModeManager.FinishScriptFrame(dt);
+    if (!reloadHandled && m_playModeManager.HasPendingSceneReload()) {
+        m_playModeManager.ProcessSceneReload();
+        reloadHandled = true;
+    }
+    if (!reloadHandled) {
+        m_playModeManager.FinishScriptFrame(dt);
+        if (m_playModeManager.HasPendingSceneReload()) {
+            m_playModeManager.ProcessSceneReload();
+            reloadHandled = true;
+        }
+    }
     syncViewportCursorCapture();
 
     RuntimeUIState* runtimeUI = FindRuntimeUIState(this);

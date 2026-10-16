@@ -95,6 +95,19 @@ void InputSystem::QueueMouseDelta(double x, double y)
     m_QueuedMouseDeltaY += y;
 }
 
+void InputSystem::ResetTransientState()
+{
+    m_Current.mouseDeltaX = 0.0;
+    m_Current.mouseDeltaY = 0.0;
+    m_Current.scrollDeltaX = 0.0;
+    m_Current.scrollDeltaY = 0.0;
+    m_QueuedMouseDeltaX = 0.0;
+    m_QueuedMouseDeltaY = 0.0;
+    m_QueuedActionOverrides.clear();
+    m_Previous = m_Current;
+    m_PreviousActionOverrides = m_ActionOverrides;
+}
+
 void InputSystem::QueueActionOverride(const std::string& name, float value)
 {
     if (HasAction(name)) m_QueuedActionOverrides[name] = value;

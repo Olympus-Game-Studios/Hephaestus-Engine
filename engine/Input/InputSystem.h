@@ -20,6 +20,9 @@ public:
 
     void BeginFrame();
     void Reset();
+    // Drop one-shot deltas and pressed/released edges while preserving held
+    // physical state and explicit automation override levels.
+    void ResetTransientState();
 
     void SetKeyState(int key, bool down);
     void SetMouseButtonState(int button, bool down);

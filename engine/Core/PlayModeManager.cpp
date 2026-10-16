@@ -80,6 +80,8 @@ bool PlayModeManager::StartPlayMode() {
     }
 
     Log("Play Mode started");
+    m_sceneReloadRequested = false;
+    m_processingSceneReload = false;
 
     // ── 1. Snapshot scene ──────────────────────────────────────────────────
     {
@@ -97,43 +99,8 @@ bool PlayModeManager::StartPlayMode() {
     m_deltaTime = 0.0f;
 
     // ── 3. Camera: find scene camera entity or keep editor camera ──────────
-    m_cameraMode = CameraMode::EditorFly;   // default until script takes over
-
-    // Look for a CameraComponent entity to use as runtime starting camera
-    Entity activeCameraEntity;
-    Entity firstCameraEntity;
-    auto cameraView = m_scene->GetEntitiesWith<CameraComponent, TransformComponent>();
-    for (auto entityHandle : cameraView) {
-        Entity entity(entityHandle, m_scene);
-        auto& cam = entity.GetComponent<CameraComponent>();
-        if (!firstCameraEntity) firstCameraEntity = entity;
-        if (cam.isActive) { activeCameraEntity = entity; break; }
-    }
-
-    Entity runtimeCamera = activeCameraEntity ? activeCameraEntity : firstCameraEntity;
-    ActiveCameraView activeView;
-    if (runtimeCamera && TryMakeCameraView(*m_scene, runtimeCamera, activeView)) {
-        m_runtimeCamera.posX = activeView.position.x;
-        m_runtimeCamera.posY = activeView.position.y;
-        m_runtimeCamera.posZ = activeView.position.z;
-        m_runtimeCamera.pitch = activeView.pitchRadians;
-        m_runtimeCamera.yaw   = activeView.yawRadians;
-        m_runtimeCamera.roll  = activeView.rollRadians;
-        m_runtimeCamera.nearPlane = activeView.nearPlane;
-        m_runtimeCamera.farPlane  = activeView.farPlane;
-        m_runtimeCamera.fov       = activeView.fovDegrees;
-    } else {
-        // Fallback: copy editor camera position into runtime camera
-        m_runtimeCamera.posX  = m_savedCamPosX;
-        m_runtimeCamera.posY  = m_savedCamPosY;
-        m_runtimeCamera.posZ  = m_savedCamPosZ;
-        m_runtimeCamera.pitch = RuntimeCameraState::DegToRad(m_savedCamPitch);
-        m_runtimeCamera.yaw   = RuntimeCameraState::DegToRad(m_savedCamYaw);
-        m_runtimeCamera.roll  = 0.0f;
-        m_runtimeCamera.nearPlane = m_savedCamNear;
-        m_runtimeCamera.farPlane  = m_savedCamFar;
-        m_runtimeCamera.fov       = m_savedCamFov;
-    }
+    m_cameraMode = CameraMode::EditorFly;
+    InitializeRuntimeCameraFromScene();
 
     // ── 4. Notify script engines ───────────────────────────────────────────
     if (m_luaEngine) {
@@ -170,6 +137,8 @@ void PlayModeManager::StopPlayMode() {
     }
 
     Log("Play Mode stopped");
+    m_sceneReloadRequested = false;
+    m_processingSceneReload = false;
 
     // ── 1. Tear down scripts ───────────────────────────────────────────────
     if (m_luaEngine) {
@@ -209,13 +178,120 @@ void PlayModeManager::RequestStop() {
     m_stopRequested = true;
 }
 
+bool PlayModeManager::RequestSceneReload()
+{
+    if (m_processingSceneReload) {
+        return false;
+    }
+    if (m_state == PlayState::Editor) {
+        Log("Scene.reload rejected: Play Mode is not active");
+        return false;
+    }
+    if (!m_scene || !m_scene->IsReloadable()) {
+        Log("Scene.reload rejected: current scene has no authored source asset");
+        return false;
+    }
+    if (!m_sceneReloadCallback) {
+        Log("Scene.reload rejected: runtime scene reload is unavailable on this host");
+        return false;
+    }
+    if (m_sceneReloadRequested) {
+        return false;
+    }
+    m_sceneReloadRequested = true;
+    Log("Scene.reload requested");
+    return true;
+}
+
+bool PlayModeManager::ProcessSceneReload()
+{
+    if (!m_sceneReloadRequested) {
+        return false;
+    }
+    m_sceneReloadRequested = false;
+    m_processingSceneReload = true;
+
+    std::string error;
+    bool success = false;
+    try {
+        success = m_sceneReloadCallback && m_sceneReloadCallback(error);
+    } catch (const std::exception& exception) {
+        error = exception.what();
+    } catch (...) {
+        error = "unknown scene reload failure";
+    }
+    m_processingSceneReload = false;
+
+    if (!success) {
+        if (error.empty()) error = "host failed to reconstruct the authored scene";
+        Log("Scene.reload failed: " + error);
+        // The host may already have torn down the old scene. Freeze gameplay
+        // rather than advancing a partial/empty world after a failed reload.
+        m_state = PlayState::Paused;
+        return true;
+    }
+
+    m_timeSincePlay = 0.0f;
+    m_deltaTime = 0.0f;
+    m_cameraMode = CameraMode::EditorFly;
+    InitializeRuntimeCameraFromScene();
+    Log("Scene.reload completed: " + m_scene->GetSourceAssetPath());
+    return true;
+}
+
+void PlayModeManager::InitializeRuntimeCameraFromScene()
+{
+    Entity activeCameraEntity;
+    Entity firstCameraEntity;
+    if (m_scene) {
+        auto cameraView = m_scene->GetEntitiesWith<CameraComponent, TransformComponent>();
+        for (auto entityHandle : cameraView) {
+            Entity entity(entityHandle, m_scene);
+            auto& camera = entity.GetComponent<CameraComponent>();
+            if (!firstCameraEntity) firstCameraEntity = entity;
+            if (camera.isActive) { activeCameraEntity = entity; break; }
+        }
+    }
+
+    Entity runtimeCamera = activeCameraEntity ? activeCameraEntity : firstCameraEntity;
+    ActiveCameraView activeView;
+    if (m_scene && runtimeCamera && TryMakeCameraView(*m_scene, runtimeCamera, activeView)) {
+        m_runtimeCamera.posX = activeView.position.x;
+        m_runtimeCamera.posY = activeView.position.y;
+        m_runtimeCamera.posZ = activeView.position.z;
+        m_runtimeCamera.pitch = activeView.pitchRadians;
+        m_runtimeCamera.yaw = activeView.yawRadians;
+        m_runtimeCamera.roll = activeView.rollRadians;
+        m_runtimeCamera.nearPlane = activeView.nearPlane;
+        m_runtimeCamera.farPlane = activeView.farPlane;
+        m_runtimeCamera.fov = activeView.fovDegrees;
+    } else {
+        m_runtimeCamera.posX = m_savedCamPosX;
+        m_runtimeCamera.posY = m_savedCamPosY;
+        m_runtimeCamera.posZ = m_savedCamPosZ;
+        m_runtimeCamera.pitch = RuntimeCameraState::DegToRad(m_savedCamPitch);
+        m_runtimeCamera.yaw = RuntimeCameraState::DegToRad(m_savedCamYaw);
+        m_runtimeCamera.roll = 0.0f;
+        m_runtimeCamera.nearPlane = m_savedCamNear;
+        m_runtimeCamera.farPlane = m_savedCamFar;
+        m_runtimeCamera.fov = m_savedCamFov;
+    }
+}
+
 void PlayModeManager::Tick(float dt) {
     if (m_state != PlayState::Playing || !m_executionMode.ShouldAdvanceRealtime()) {
         return;  // nothing to tick in editor or paused
     }
 
     BeginScriptFrame(dt);
+    if (m_sceneReloadRequested) {
+        ProcessSceneReload();
+        return;
+    }
     FinishScriptFrame(dt);
+    if (m_sceneReloadRequested) {
+        ProcessSceneReload();
+    }
 }
 
 bool PlayModeManager::StepTick(float dt) {
@@ -224,7 +300,14 @@ bool PlayModeManager::StepTick(float dt) {
     }
 
     BeginScriptFrame(dt);
+    if (m_sceneReloadRequested) {
+        ProcessSceneReload();
+        return true;
+    }
     FinishScriptFrame(dt);
+    if (m_sceneReloadRequested) {
+        ProcessSceneReload();
+    }
     return true;
 }
 
@@ -256,7 +339,7 @@ void PlayModeManager::FinishScriptFrame(float dt) {
         m_luaEngine->DispatchAnimationFinished(*m_scene);
         m_luaEngine->LateUpdate(*m_scene, dt);
     }
-    if (m_cppEngine) {
+    if (m_cppEngine && !m_sceneReloadRequested) {
         m_cppEngine->LateUpdateScripts(dt);
     }
 }

@@ -40,6 +40,7 @@ public:
 
     /// Remove queued events with this tag. Tag 0 is ignored so player input stays.
     void CancelTaggedMouseEvents(std::uint64_t tag);
+    void ClearQueuedMouseEvents() { m_MouseEvents.clear(); }
 
     [[nodiscard]] std::vector<UIMouseEvent> ConsumeMouseEvents();
 

@@ -265,6 +265,8 @@ public:
                        Hephaestus::HephaestusUI::UIRenderer* uiRenderer);
 
 private:
+    friend struct LuaEntityReference;
+
     lua_State* m_State = nullptr;
     Scene* m_Scene = nullptr;
     GLFWwindow* m_Window = nullptr;
@@ -332,6 +334,7 @@ private:
     std::vector<PendingSpawn> m_PendingSpawns;
     std::vector<PendingDestroy> m_PendingDestroys;
     bool m_UpdatingScripts = false;
+    bool m_SceneReloadRequested = false;
 
     uint32_t m_CurrentEntityId = std::numeric_limits<uint32_t>::max();
     float m_CurrentDeltaTime = 0.0f;

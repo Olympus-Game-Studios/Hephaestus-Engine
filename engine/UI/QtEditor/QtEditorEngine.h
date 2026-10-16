@@ -366,6 +366,7 @@ private:
     void loadProjectInputMap();
     void syncViewportCursorCapture();
     void runSimulationFrame(float dt);
+    bool reloadRuntimeScene(std::string& outError);
     void captureGizmoMultiDragWorldStarts(Scene* scene);
     void clearGizmoMultiDragWorldStarts();
     void selectEntitiesInViewportRect(float x0, float y0, float x1, float y1,
