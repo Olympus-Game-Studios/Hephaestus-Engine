@@ -421,6 +421,7 @@ local enemies = Scene.findAllWithPrefix("Enemy")
 Also available:
 
 - `Scene.FindFirstCamera()` / `Scene.FindCameras()` / `Scene.GetActiveCamera()` / `Scene.SetActiveCamera(entity)`
+- `Scene.reload()` requests a fresh reconstruction of the current authored scene. See [Runtime Scene Lifecycle](../Guides/RuntimeSceneLifecycle.md).
 
 ### Physics
 
