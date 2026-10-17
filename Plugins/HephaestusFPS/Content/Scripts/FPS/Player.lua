@@ -37,6 +37,7 @@ local commands = { fireHeld = false, firePressed = false, reload = false, intera
 local discoverTries = 0
 local lastLookX = 0
 local lastLookY = 0
+local lastKnownHealth = 0
 
 local function degToRad(value)
     return value * math.pi / 180
@@ -134,6 +135,7 @@ function onAwake()
         inputEnabled = true,
     })
     eyeHeight = standEyeHeight
+    lastKnownHealth = Health.getHealth(this)
     Camera.setActive(true)
     Player.setLookEnabled(true)
     Hud.mount(hudDocument, hudEnabled)
@@ -286,11 +288,24 @@ function onLateUpdate(dt)
         maxHealth = Health.getMaxHealth(this),
         weapon = Registry.weaponSnapshot(weaponEntity),
         prompt = Interactable.prompt(),
+        dt = lastDt,
     })
+end
+
+function onHealthChanged(current, maximum)
+    if current < lastKnownHealth then
+        Hud.flashDamage()
+    end
+    lastKnownHealth = current
+end
+
+function setHudSuppressed(suppressed)
+    Hud.setSuppressed(suppressed)
 end
 
 function onDeath()
     Player.setInputEnabled(false)
+    Hud.setSuppressed(true)
 end
 
 function onDestroy()
