@@ -39,6 +39,7 @@
 #include "../../Physics/CharacterControllerSystem.h"
 #include "../../Scripting/LuaScriptEngine.h"
 #include "../../Scripting/ScriptPhysicsBindings.h"
+#include "../../Core/SimulationStep.h"
 #include "../../Scripting/ScriptEngine.h"
 #include "../../Scripting/LuaScriptComponent.h"
 #include "../HephaestusUI/UISystem.h"
@@ -151,38 +152,6 @@ static int QtMouseButtonToGLFW(int qtButton) {
     if (qtButton == 2)  return GLFW_MOUSE_BUTTON_RIGHT;   // Qt::RightButton
     if (qtButton == 4)  return GLFW_MOUSE_BUTTON_MIDDLE;  // Qt::MiddleButton
     return -1;
-}
-
-static void UpdateAudioSourcesForScene(Scene& scene, AudioEngine& audioEngine) {
-    auto audioView = scene.GetEntitiesWith<AudioSourceComponent>();
-    for (auto entityHandle : audioView) {
-        auto& audio = audioView.get<AudioSourceComponent>(entityHandle);
-
-        if (!audio.enabled || audio.clipPath.empty()) {
-            if (audio.runtimeHandle != 0) {
-                audioEngine.Stop(audio.runtimeHandle);
-                audio.runtimeHandle = 0;
-            }
-            audio.runtimeStarted = false;
-            audio.runtimeLastClip.clear();
-            continue;
-        }
-
-        if (audio.runtimeHandle != 0) {
-            if (audio.runtimeLastClip != audio.clipPath || !audioEngine.IsPlaying(audio.runtimeHandle)) {
-                audioEngine.Stop(audio.runtimeHandle);
-                audio.runtimeHandle = 0;
-            } else {
-                audioEngine.SetVolume(audio.runtimeHandle, audio.volume);
-            }
-        }
-
-        if (audio.runtimeHandle == 0 && audio.playOnStart && !audio.runtimeStarted) {
-            audio.runtimeHandle = audioEngine.Play(audio.clipPath, audio.loop, audio.volume);
-            audio.runtimeStarted = audio.runtimeHandle != 0;
-            audio.runtimeLastClip = audio.clipPath;
-        }
-    }
 }
 
 struct RuntimeUIState {
@@ -1838,51 +1807,7 @@ void QtEditorEngine::onTick()
 
     if (isPlaying && m_playModeManager.ShouldAdvanceRealtime()) {
         populateGameplayInput();
-        if (m_audioEngine && m_editorContext.HasActiveScene()) {
-            Scene* activeScene = m_editorContext.GetActiveScene();
-            UpdateAudioSourcesForScene(*activeScene, *m_audioEngine);
-        }
-        if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
-            try {
-                Scene* activeScene = m_editorContext.GetActiveScene();
-                m_joltPhysicsSystem->SetEnabled(true);
-                m_joltPhysicsSystem->PrepareSceneBodies(*activeScene);
-            } catch (const std::exception& e) {
-                std::cerr << "[QtEditorEngine] Physics prepare error: " << e.what() << "\n";
-                m_physicsInitialized = false;
-            }
-        }
-
-        m_playModeManager.BeginScriptFrame(dt);
-        bool reloadHandled = false;
-        if (m_playModeManager.HasPendingSceneReload()) {
-            m_playModeManager.ProcessSceneReload();
-            reloadHandled = true;
-        } else if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
-            try {
-                Scene* activeScene = m_editorContext.GetActiveScene();
-                m_joltPhysicsSystem->SetEnabled(true);
-                m_joltPhysicsSystem->Update(*activeScene, dt);
-                if (m_luaScriptEngine) {
-                    m_luaScriptEngine->DispatchContactEvents(*activeScene, m_joltPhysicsSystem->FrameContactEvents());
-                }
-            } catch (const std::exception& e) {
-                std::cerr << "[QtEditorEngine] Physics update error: " << e.what() << "\n";
-                m_physicsInitialized = false;
-            }
-        }
-
-        if (!reloadHandled && m_playModeManager.HasPendingSceneReload()) {
-            m_playModeManager.ProcessSceneReload();
-            reloadHandled = true;
-        }
-        if (!reloadHandled) {
-            m_playModeManager.FinishScriptFrame(dt);
-            if (m_playModeManager.HasPendingSceneReload()) {
-                m_playModeManager.ProcessSceneReload();
-                reloadHandled = true;
-            }
-        }
+        simulateGameplayFrame(dt);
         syncViewportCursorCapture();
 
         if (m_playModeManager.IsStopRequested()) {
@@ -3279,51 +3204,41 @@ bool QtEditorEngine::ReloadScripts(std::string& outError)
     return true;
 }
 
+void QtEditorEngine::simulateGameplayFrame(float dt)
+{
+    Scene* scene = m_editorContext.HasActiveScene() ? m_editorContext.GetActiveScene() : nullptr;
+    if (!scene) {
+        return;
+    }
+    m_playModeManager.AdvanceFrameTime(dt);
+    if (m_physicsInitialized && m_joltPhysicsSystem) {
+        m_joltPhysicsSystem->SetEnabled(true);
+    }
+
+    Hephaestus::SimulationStepContext step;
+    step.scene = scene;
+    step.audio = m_audioEngine.get();
+    step.physics = m_physicsInitialized ? m_joltPhysicsSystem.get() : nullptr;
+    step.lua = m_luaScriptEngine.get();
+    step.cppScripts = m_cppScriptEngine.get();
+    step.reloadAtSafePoint = [this]() {
+        if (!m_playModeManager.HasPendingSceneReload()) {
+            return false;
+        }
+        m_playModeManager.ProcessSceneReload();
+        return true;
+    };
+    step.onPhysicsError = [this](const std::exception& e) {
+        std::cerr << "[QtEditorEngine] Physics error: " << e.what() << "\n";
+        m_physicsInitialized = false;
+    };
+    Hephaestus::RunSimulationStep(step, dt);
+}
+
 void QtEditorEngine::runSimulationFrame(float dt)
 {
     populateGameplayInput();
-    if (m_audioEngine && m_editorContext.HasActiveScene()) {
-        UpdateAudioSourcesForScene(*m_editorContext.GetActiveScene(), *m_audioEngine);
-    }
-    if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
-        try {
-            Scene* activeScene = m_editorContext.GetActiveScene();
-            m_joltPhysicsSystem->SetEnabled(true);
-            m_joltPhysicsSystem->PrepareSceneBodies(*activeScene);
-        } catch (const std::exception& e) {
-            std::cerr << "[QtEditorEngine] Physics prepare error (step): " << e.what() << "\n";
-            m_physicsInitialized = false;
-        }
-    }
-    m_playModeManager.BeginScriptFrame(dt);
-    bool reloadHandled = false;
-    if (m_playModeManager.HasPendingSceneReload()) {
-        m_playModeManager.ProcessSceneReload();
-        reloadHandled = true;
-    } else if (m_physicsInitialized && m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
-        try {
-            Scene* activeScene = m_editorContext.GetActiveScene();
-            m_joltPhysicsSystem->SetEnabled(true);
-            m_joltPhysicsSystem->Update(*activeScene, dt);
-            if (m_luaScriptEngine) {
-                m_luaScriptEngine->DispatchContactEvents(*activeScene, m_joltPhysicsSystem->FrameContactEvents());
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "[QtEditorEngine] Physics update error (step): " << e.what() << "\n";
-            m_physicsInitialized = false;
-        }
-    }
-    if (!reloadHandled && m_playModeManager.HasPendingSceneReload()) {
-        m_playModeManager.ProcessSceneReload();
-        reloadHandled = true;
-    }
-    if (!reloadHandled) {
-        m_playModeManager.FinishScriptFrame(dt);
-        if (m_playModeManager.HasPendingSceneReload()) {
-            m_playModeManager.ProcessSceneReload();
-            reloadHandled = true;
-        }
-    }
+    simulateGameplayFrame(dt);
     syncViewportCursorCapture();
 
     RuntimeUIState* runtimeUI = FindRuntimeUIState(this);

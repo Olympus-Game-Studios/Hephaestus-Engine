@@ -101,7 +101,7 @@ int main()
                 "reload request is accepted and remains pending until the host boundary");
     ok &= Check(scene.FindEntityByName("Player").GetComponent<TransformComponent>().position.x == 99.0f,
                 "requesting reload does not destroy entities inside the caller stack");
-    play.BeginScriptFrame(1.0f / 60.0f);
+    play.AdvanceFrameTime(1.0f / 60.0f);
     ok &= Check(play.ProcessSceneReload(), "process reload at the host boundary");
     ok &= Check(!nestedReloadAccepted && !play.HasPendingSceneReload(),
                 "teardown cannot queue a nested scene reload");

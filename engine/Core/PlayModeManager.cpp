@@ -13,7 +13,6 @@
 #include "../Scripting/ScriptEngine.h"
 #include "../Scripting/LuaScriptComponent.h"
 #include "../Gfx/EngineFrameRenderer.h"
-#include "../Animation/CharacterPlayback.h"
 #include "EditorContext.h"
 
 #include <iostream>
@@ -278,70 +277,12 @@ void PlayModeManager::InitializeRuntimeCameraFromScene()
     }
 }
 
-void PlayModeManager::Tick(float dt) {
-    if (m_state != PlayState::Playing || !m_executionMode.ShouldAdvanceRealtime()) {
-        return;  // nothing to tick in editor or paused
-    }
-
-    BeginScriptFrame(dt);
-    if (m_sceneReloadRequested) {
-        ProcessSceneReload();
-        return;
-    }
-    FinishScriptFrame(dt);
-    if (m_sceneReloadRequested) {
-        ProcessSceneReload();
-    }
-}
-
-bool PlayModeManager::StepTick(float dt) {
-    if (m_state == PlayState::Editor) {
-        return false;
-    }
-
-    BeginScriptFrame(dt);
-    if (m_sceneReloadRequested) {
-        ProcessSceneReload();
-        return true;
-    }
-    FinishScriptFrame(dt);
-    if (m_sceneReloadRequested) {
-        ProcessSceneReload();
-    }
-    return true;
-}
-
-void PlayModeManager::BeginScriptFrame(float dt) {
+void PlayModeManager::AdvanceFrameTime(float dt) {
     if (m_state == PlayState::Editor) {
         return;
     }
-
     m_deltaTime = dt;
     m_timeSincePlay += dt;
-
-    if (m_cppEngine) {
-        m_cppEngine->UpdateScripts(dt);
-    }
-    if (m_luaEngine && m_scene) {
-        m_luaEngine->Update(*m_scene, dt);
-    }
-}
-
-void PlayModeManager::FinishScriptFrame(float dt) {
-    if (m_state == PlayState::Editor) {
-        return;
-    }
-
-    if (m_scene) {
-        CharacterAnimationSystem::Tick(*m_scene, dt);
-    }
-    if (m_luaEngine && m_scene) {
-        m_luaEngine->DispatchAnimationFinished(*m_scene);
-        m_luaEngine->LateUpdate(*m_scene, dt);
-    }
-    if (m_cppEngine && !m_sceneReloadRequested) {
-        m_cppEngine->LateUpdateScripts(dt);
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

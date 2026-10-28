@@ -87,6 +87,7 @@
 
 // Scripting
 #include "../Audio/AudioEngine.h"
+#include "../Core/SimulationStep.h"
 #if HEPHAESTUS_GAME_SCRIPTING
 #include "../Scripting/LuaScriptEngine.h"
 #include "../Scripting/ScriptPhysicsBindings.h"
@@ -403,38 +404,6 @@ static void LoadConfigFile(GameConfig& config) {
     }
 
     HP_LOG(Info, "Loaded configuration from game.ini");
-}
-
-static void UpdateAudioSources(Scene& scene, AudioEngine& audioEngine) {
-    auto audioView = scene.GetEntitiesWith<AudioSourceComponent>();
-    for (auto entityHandle : audioView) {
-        auto& audio = audioView.get<AudioSourceComponent>(entityHandle);
-
-        if (!audio.enabled || audio.clipPath.empty()) {
-            if (audio.runtimeHandle != 0) {
-                audioEngine.Stop(audio.runtimeHandle);
-                audio.runtimeHandle = 0;
-            }
-            audio.runtimeStarted = false;
-            audio.runtimeLastClip.clear();
-            continue;
-        }
-
-        if (audio.runtimeHandle != 0) {
-            if (audio.runtimeLastClip != audio.clipPath || !audioEngine.IsPlaying(audio.runtimeHandle)) {
-                audioEngine.Stop(audio.runtimeHandle);
-                audio.runtimeHandle = 0;
-            } else {
-                audioEngine.SetVolume(audio.runtimeHandle, audio.volume);
-            }
-        }
-
-        if (audio.runtimeHandle == 0 && audio.playOnStart && !audio.runtimeStarted) {
-            audio.runtimeHandle = audioEngine.Play(audio.clipPath, audio.loop, audio.volume);
-            audio.runtimeStarted = audio.runtimeHandle != 0;
-            audio.runtimeLastClip = audio.clipPath;
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1484,30 +1453,15 @@ int main(int argc, char* argv[]) {
 
         uiContext.SetDeltaTimeSeconds(simulationDeltaTime);
 
-        // Update declarative ECS audio sources and physics scene state only
-        // on a realtime or explicitly stepped gameplay frame.
-        UpdateAudioSources(scene, audioEngine);
-        physicsSystem.PrepareSceneBodies(scene);
-
-        // Scripts
+        Hephaestus::SimulationStepContext step;
+        step.scene = &scene;
+        step.audio = &audioEngine;
+        step.physics = &physicsSystem;
 #if HEPHAESTUS_GAME_SCRIPTING
-        luaEngine.Update(scene, simulationDeltaTime);
-        if (reloadSceneAtSafePoint()) return;
+        step.lua = &luaEngine;
+        step.reloadAtSafePoint = reloadSceneAtSafePoint;
 #endif
-
-        // Fixed-step physics follows scripts so onUpdate can write this frame's motion.
-        physicsSystem.Update(scene, simulationDeltaTime);
-#if HEPHAESTUS_GAME_SCRIPTING
-        luaEngine.DispatchContactEvents(scene, physicsSystem.FrameContactEvents());
-        if (reloadSceneAtSafePoint()) return;
-#endif
-
-        Hephaestus::CharacterAnimationSystem::Tick(scene, simulationDeltaTime);
-#if HEPHAESTUS_GAME_SCRIPTING
-        luaEngine.DispatchAnimationFinished(scene);
-        luaEngine.LateUpdate(scene, simulationDeltaTime);
-        if (reloadSceneAtSafePoint()) return;
-#endif
+        if (!Hephaestus::RunSimulationStep(step, simulationDeltaTime)) return;
 
         uiSystem.Update(uiContext);
 #if HEPHAESTUS_RUNTIME_AUTOMATION

@@ -120,18 +120,8 @@ public:
 
     // ── Per-frame update  (call from your tick / game loop) ──────────────────
 
-    /// Must be called once per frame while Playing.
-    /// @param dt delta time in seconds.
-    void Tick(float dt);
-
-    /// Gameplay onUpdate. The host steps physics after this and before FinishScriptFrame.
-    void BeginScriptFrame(float dt);
-
-    /// Animation, animation-finished callbacks, and onLateUpdate.
-    void FinishScriptFrame(float dt);
-
-    /// Run one script frame while Playing or Paused, with no physics step between.
-    bool StepTick(float dt);
+    /// Record one simulated frame; the host runs it with Hephaestus::RunSimulationStep.
+    void AdvanceFrameTime(float dt);
 
     /// Gameplay-facing request; accepted requests are processed by the host at
     /// the boundary after script callbacks return and before physics advances.

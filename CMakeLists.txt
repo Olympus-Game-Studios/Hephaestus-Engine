@@ -312,6 +312,7 @@ add_library(HephaestusRuntime STATIC
     engine/Animation/CharacterPlayback.cpp
     engine/Core/ProjectContext.cpp
     engine/Core/EngineLog.cpp
+    engine/Core/SimulationStep.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
     engine/Gfx/VulkanPipeline.cpp
@@ -1655,6 +1656,17 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${LUA_DLL_PATH}"
                     "$<TARGET_FILE_DIR:PhysicsLuaTests>/${PHYSICS_LUA_DLL_NAME}"
+            )
+        endif()
+
+        add_executable(SimulationStepTests engine/Tests/SimulationStepTests.cpp)
+        target_link_libraries(SimulationStepTests PRIVATE HephaestusRuntime)
+        add_test(NAME SimulationStep COMMAND SimulationStepTests)
+        if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
+            add_custom_command(TARGET SimulationStepTests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${LUA_DLL_PATH}"
+                    "$<TARGET_FILE_DIR:SimulationStepTests>/${PHYSICS_LUA_DLL_NAME}"
             )
         endif()
     endif()
