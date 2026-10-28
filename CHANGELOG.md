@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-28: Sun shadows are now soft in proportion to distance: contact shadows stay sharp where objects meet the ground and get softer the further they fall from the object casting them. Directional lights have a new "Sun Size" setting (degrees, default 1) in the Light inspector's Shadows group; a larger sun gives softer shadows. Scenes and prefabs save it, and older scenes load with the default.
 - 2026-10-28: Point and spot lights with "Cast Shadows" on now cast shadows, in the editor and packaged games, with soft 3x3-filtered edges and the light's "Strength" setting. Up to 4 point lights and 8 spot lights per frame are shadowed; further lights stay unshadowed. Cast Shadows is on by default, so existing point and spot lights start casting shadows.
 - 2026-10-28: Probe volumes have a "Hardware ray tracing" toggle. On GPUs with Vulkan ray queries, the volume traces its probes every frame instead of using a bake, so moving objects also block, bounce and shadow light, and no bake is needed. GPUs without support fall back to the bake.
 - 2026-10-28: Surfaces inside a baked probe volume now take their indirect (bounce) light from the probes, blending into the sky or flat ambient at the volume edge, in the editor and packaged games. Animated characters receive it too. This completes real-time diffuse global illumination for static scenes.
