@@ -153,7 +153,7 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 option(HEPHAESTUS_BUILD_EDITOR "Build the editor (HephaestusEngine.exe)" ON)
 option(HEPHAESTUS_BUILD_GAME "Build the standalone game runtime (HephaestusGame.exe)" ON)
-option(HEPHAESTUS_GAME_SCRIPTING "Enable Lua scripting in game runtime" ON)
+option(HEPHAESTUS_GAME_SCRIPTING "Start Lua scripting in the game runtime (Lua support itself follows LUA_FOUND)" ON)
 option(HEPHAESTUS_USE_QT "Enable Qt-based editor UI" ON)
 option(HEPHAESTUS_USE_SHARED_ASSETS "Use shared runtime/editor/launcher asset folders" ON)
 option(HEPHAESTUS_MCP_LEGACY_COMPAT "Enable MCP 2025-11-25 compatibility" ON)
@@ -1014,15 +1014,14 @@ else()
 endif()
 
 if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND)
-    target_compile_definitions(HephaestusGame PRIVATE 
-        HEPHAESTUS_GAME_SCRIPTING=1
-        LUA_AVAILABLE=1
-    )
+    target_compile_definitions(HephaestusGame PRIVATE HEPHAESTUS_GAME_SCRIPTING=1)
 else()
-    target_compile_definitions(HephaestusGame PRIVATE 
-        HEPHAESTUS_GAME_SCRIPTING=0
-        LUA_AVAILABLE=0
-    )
+    target_compile_definitions(HephaestusGame PRIVATE HEPHAESTUS_GAME_SCRIPTING=0)
+endif()
+if(LUA_FOUND)
+    target_compile_definitions(HephaestusGame PRIVATE LUA_AVAILABLE=1)
+else()
+    target_compile_definitions(HephaestusGame PRIVATE LUA_AVAILABLE=0)
 endif()
 
 target_include_directories(HephaestusGame PRIVATE
@@ -1038,7 +1037,7 @@ target_include_directories(HephaestusGame PRIVATE
 # Link libraries for game runtime
 set(GAME_LINK_LIBS Vulkan::Vulkan glfw Jolt)
 
-if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND)
+if(LUA_FOUND)
     if(TARGET Lua::Lua)
         list(APPEND GAME_LINK_LIBS Lua::Lua)
     else()
@@ -1062,8 +1061,8 @@ set_target_properties(HephaestusGame PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug"
 )
 
-# Copy Lua DLL to game output directory if using scripting
-if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND AND WIN32)
+# Copy Lua DLL to game output directory
+if(LUA_FOUND AND WIN32)
     if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
         get_filename_component(LUA_DLL_NAME "${LUA_DLL_PATH}" NAME)
         add_custom_command(TARGET HephaestusGame POST_BUILD
