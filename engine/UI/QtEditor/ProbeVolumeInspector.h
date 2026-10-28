@@ -24,6 +24,7 @@ public:
     void Refresh() override;
     // Supplies the current static-geometry signature (0 = unknown) so the status can flag a stale bake.
     void SetGeometrySignatureProvider(std::function<uint64_t()> provider);
+    void SetHardwareRayTracingAvailable(bool available);
 
 signals:
     void bakeRequested();
@@ -39,6 +40,9 @@ private:
     QDoubleSpinBox* m_intensity = nullptr;
     QLabel* m_total = nullptr;
     QLabel* m_bakeStatus = nullptr;
+    QCheckBox* m_hardware = nullptr;
+    QLabel* m_hardwareNote = nullptr;
+    bool m_hardwareAvailable = false;
     QPushButton* m_bake = nullptr;
     QPushButton* m_remove = nullptr;
     std::function<uint64_t()> m_geometrySignature;

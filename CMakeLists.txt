@@ -323,6 +323,7 @@ add_library(HephaestusRuntime STATIC
     engine/Gfx/SkyIrradiance.cpp
     engine/Gfx/ProbeBake.cpp
     engine/Gfx/ProbeGI.cpp
+    engine/Gfx/ProbeRayTracer.cpp
     engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/PhysicsLayerConfig.cpp
@@ -995,6 +996,7 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tonemap.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tonemap.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_update.comp
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_trace.comp
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_debug.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_debug.frag
     )
@@ -1012,10 +1014,14 @@ if (GLSLC_EXECUTABLE)
     foreach(SRC ${SHADER_SOURCES})
         get_filename_component(FN ${SRC} NAME)
         set(OUT ${SHADER_OUTPUT_DIR}/${FN}.spv)
+        set(GLSLC_EXTRA_FLAGS)
+        if(FN STREQUAL "probe_trace.comp")
+            set(GLSLC_EXTRA_FLAGS --target-env=vulkan1.2)  # ray queries need SPIR-V 1.4+
+        endif()
         add_custom_command(
             OUTPUT ${OUT}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUTPUT_DIR}
-            COMMAND ${GLSLC_EXECUTABLE} ${SRC} -o ${OUT}
+            COMMAND ${GLSLC_EXECUTABLE} ${GLSLC_EXTRA_FLAGS} ${SRC} -o ${OUT}
             DEPENDS ${SRC} ${SHADER_INCLUDES}
             COMMENT "Compiling ${FN} -> ${OUT}"
             VERBATIM

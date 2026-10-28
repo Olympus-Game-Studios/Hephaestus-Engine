@@ -753,6 +753,7 @@ struct ProbeVolumeComponent {
     int probeCountZ = 8;
     float intensity = 1.0f;
     std::string bakePath;  // project-relative .hpprobes written by "Bake Probes"
+    bool hardwareRayTracing = false;  // trace probe rays every frame when the GPU supports it, else use the bake
 
     // Offset of probe (ix, iy, iz) from the volume centre; a single probe on an axis sits at the centre.
     Vec3 ProbeOffset(int ix, int iy, int iz) const {

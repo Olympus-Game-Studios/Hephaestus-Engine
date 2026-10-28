@@ -661,6 +661,7 @@ static std::string WriteProbeVolumeJson(const ProbeVolumeComponent& volume)
     oss << "          \"probeCounts\": [" << volume.probeCountX << ", " << volume.probeCountY << ", "
         << volume.probeCountZ << "],\n";
     oss << "          \"intensity\": " << FormatFloat(volume.intensity) << ",\n";
+    oss << "          \"hardwareRayTracing\": " << (volume.hardwareRayTracing ? "true" : "false") << ",\n";
     oss << "          \"bakePath\": \"" << EscapeString(NormalizeAssetPathForSave(volume.bakePath)) << "\"\n";
     oss << "        }";
     return oss.str();
@@ -692,6 +693,9 @@ static bool ApplyProbeVolumeJson(ProbeVolumeComponent& volume, const JsonValue& 
         if (intensity->IsNumber()) {
             volume.intensity = static_cast<float>(intensity->AsNumber());
         }
+    }
+    if (const JsonValue* hardware = data.Find("hardwareRayTracing")) {
+        volume.hardwareRayTracing = ParseBoolLike(*hardware, volume.hardwareRayTracing);
     }
     if (const JsonValue* bakePath = data.Find("bakePath")) {
         if (bakePath->IsString()) {

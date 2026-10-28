@@ -260,6 +260,7 @@ public:
 
     // Static, visible mesh triangles in world space for probe baking. Editor only: packaged games keep no CPU copy.
     ProbeBakeGeometry CollectProbeBakeGeometry(Scene& scene);
+    bool ProbeHardwareRayTracingAvailable() const { return m_probeGI.HardwareRayTracingAvailable(); }
 
     /**
      * @brief Register an additional lookup key (alias) for an existing mesh.

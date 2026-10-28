@@ -764,8 +764,35 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     {
         Vec3 sunDirection;
         const bool hasSun = scene && FindShadowCastingSun(scene, sunDirection);
+        // Hardware tracing sees every visible, non-skinned mesh, so moving objects block and bounce light too.
+        auto collectInstances = [&]() {
+            std::vector<ProbeTraceInstance> instances;
+            auto view = scene->GetRegistry().view<MeshRendererComponent>();
+            for (entt::entity handle : view) {
+                auto& renderer = view.get<MeshRendererComponent>(handle);
+                if (!renderer.visible || renderer.hideInGame || !renderer.HasValidMesh() ||
+                    scene->GetRegistry().all_of<CharacterComponent>(handle)) {
+                    continue;
+                }
+                Entity entity(handle, scene);
+                const Mat4 world = scene->GetWorldTransform(entity);
+                const MaterialComponent* material = resolveMaterialForSlot(entity, renderer, 0);
+                for (size_t meshHandle : MeshHandlesForDraw(renderer)) {
+                    if (meshHandle >= m_meshLibrary.size() || m_meshLibrary[meshHandle].skinned) continue;
+                    ProbeTraceInstance instance;
+                    instance.mesh = &m_meshLibrary[meshHandle];
+                    instance.world = world;
+                    if (material) {
+                        instance.albedo = material->albedo;
+                        instance.emissive = vscale(material->emissive, material->emissiveStrength);
+                    }
+                    instances.push_back(instance);
+                }
+            }
+            return instances;
+        };
         m_probeGI.Prepare(scene, m_projectRoot, imageIndex, m_lightingBuffers[imageIndex].buffer,
-                          hasSun ? &sunDirection : nullptr);
+                          hasSun ? &sunDirection : nullptr, collectInstances);
     }
 
     // Prepare the runtime HUI overlay geometry/uploads (queue work is allowed
@@ -1011,13 +1038,18 @@ size_t EngineFrameRenderer::AddStaticMesh(const std::string& name, const MeshDat
         mesh.cpuIndices = data.indices;
     }
 
+    // Ray-traced probes build acceleration structures from these buffers and read triangles by address.
+    const VkBufferUsageFlags rayTracingUsage = m_device->SupportsRayQuery()
+        ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+              VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+        : 0;
     const VkDeviceSize vbSize = data.vertices.size() * sizeof(Vertex);
     mesh.vertexBuffer.Create(allocator, vbSize,
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rayTracingUsage,
         VMA_MEMORY_USAGE_GPU_ONLY);
     const VkDeviceSize ibSize = data.indices.size() * sizeof(uint32_t);
     mesh.indexBuffer.Create(allocator, ibSize,
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rayTracingUsage,
         VMA_MEMORY_USAGE_GPU_ONLY);
 
     VulkanBuffer stagingVB;

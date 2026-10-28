@@ -51,6 +51,7 @@ int main() {
         volume.probeCountZ = 9;
         volume.intensity = 1.75f;
         volume.bakePath = "assets/scenes/RoundTrip.GI.hpprobes";
+        volume.hardwareRayTracing = true;
         scene.CreateEntity("Plain");
 
         const std::string saved = SceneSerializer(scene).SerializeToString();
@@ -64,7 +65,7 @@ int main() {
             pass &= Check(!copy.enabled && Near(copy.size.x, 24.0f) && Near(copy.size.y, 6.5f) &&
                               Near(copy.size.z, 12.0f) && copy.probeCountX == 16 && copy.probeCountY == 5 &&
                               copy.probeCountZ == 9 && Near(copy.intensity, 1.75f) &&
-                              copy.bakePath == "assets/scenes/RoundTrip.GI.hpprobes",
+                              copy.bakePath == "assets/scenes/RoundTrip.GI.hpprobes" && copy.hardwareRayTracing,
                           "round trip keeps every probe volume field");
         }
         pass &= Check(count == 1, "only the authored entity gets a probe volume");
@@ -81,7 +82,8 @@ int main() {
             const auto& copy = loaded.GetRegistry().get<ProbeVolumeComponent>(handle);
             pass &= Check(copy.probeCountX == 1 && copy.probeCountY == 1 && copy.probeCountZ == 4,
                           "probe counts below one load as one");
-            pass &= Check(copy.enabled && Near(copy.size.x, 10.0f) && Near(copy.intensity, 1.0f),
+            pass &= Check(copy.enabled && Near(copy.size.x, 10.0f) && Near(copy.intensity, 1.0f) &&
+                              !copy.hardwareRayTracing,
                           "missing fields keep their defaults");
         }
     }

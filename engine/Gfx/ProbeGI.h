@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ProbeBake.h"
+#include "ProbeRayTracer.h"
 #include "VulkanBuffer.h"
 
 #include <vulkan/vulkan.h>
@@ -9,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -17,7 +19,8 @@ class VulkanDevice;
 
 namespace Hephaestus {
 
-// Only the first enabled, baked ProbeVolumeComponent in a scene is lit.
+// Only the first enabled ProbeVolumeComponent that is baked, or that asks for hardware ray tracing on a GPU
+// that supports it, is lit.
 class ProbeGI {
 public:
     static constexpr uint32_t kSunMapResolution = 2048;
@@ -38,11 +41,14 @@ public:
     void DestroySwapchainResources();
 
     // Before command recording for imageIndex: (re)loads the bake, fills the parameters and descriptor sets.
+    // collectInstances is called only when the volume traces with hardware ray tracing.
     void Prepare(Scene* scene, const std::string& projectRoot, uint32_t imageIndex, VkBuffer lightingBuffer,
-                 const Vec3* sunDirection);
+                 const Vec3* sunDirection, const std::function<std::vector<ProbeTraceInstance>()>& collectInstances);
     bool Active() const { return m_active; }
+    bool HardwareRayTracingAvailable() const { return m_tracerReady; }
+    bool UsingHardwareRayTracing() const { return m_active && m_hardware; }
 
-    bool HasSunMap() const { return m_active && m_sunValid; }
+    bool HasSunMap() const { return m_active && m_sunValid && !m_hardware; }
     VkFramebuffer SunFramebuffer() const { return m_sunFramebuffer; }
     const Mat4& SunViewProj() const { return m_sunViewProj; }
 
@@ -59,6 +65,8 @@ private:
     bool createComputePipeline();
     bool createPlaceholders();
     bool loadBake(const std::filesystem::path& file, std::string& outError);
+    bool createHardwareVolume(const int counts[3], std::string& outError);
+    bool createAtlases(const int counts[3]);
     void destroyBake();
     void writeDescriptorSets(uint32_t imageIndex, VkBuffer lightingBuffer);
 
@@ -91,7 +99,7 @@ private:
     // Loaded bake.
     std::string m_bakeKey;
     ProbeBake m_bakeGrid;  // header fields only
-    VulkanBuffer m_rays;
+    VulkanBuffer m_rays;  // baked hits, or the per-frame traced hits in hardware mode
     VulkanBuffer m_offsets;
     struct Atlas {
         VkImage image = VK_NULL_HANDLE;
@@ -107,6 +115,9 @@ private:
     uint32_t m_resetFrames = 0;
     float m_intensity = 1.0f;
     bool m_active = false;
+    bool m_hardware = false;
+    ProbeRayTracer m_tracer;
+    bool m_tracerReady = false;
 };
 
 } // namespace Hephaestus

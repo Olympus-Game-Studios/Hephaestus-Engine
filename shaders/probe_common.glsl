@@ -6,7 +6,8 @@ layout(std140, set = GI_SET, binding = 0) uniform ProbeGIParams {
     vec4 probeSpacing;  // xyz = grid step (0 on single-probe axes), w = hysteresis
     ivec4 probeCounts;  // xyz = probes per axis, w = 1 when the volume is active
     mat4 sunViewProj;
-    vec4 giParams;      // x = max ray distance, y = 1 when the sun map is valid, z = 1 to discard history
+    vec4 giParams;      // x = max ray distance, y = 1 when the sun map is valid, z = 1 to discard history,
+                        // w = 1 when ray hits carry their own sun visibility (hardware ray tracing)
 } gi;
 
 layout(std430, set = GI_SET, binding = 3) readonly buffer ProbeOffsets { vec4 probeOffsets[]; };
@@ -33,6 +34,15 @@ vec3 octDecode(vec2 e) {
         n.xz = (1.0 - abs(n.zx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.z >= 0.0 ? 1.0 : -1.0);
     }
     return normalize(n);
+}
+
+// Must match engine/Gfx/ProbeBake.cpp:ProbeRayDirection.
+vec3 probeRayDirection(uint i, uint count) {
+    float golden = 3.14159265359 * (3.0 - sqrt(5.0));
+    float y = 1.0 - (float(i) + 0.5) * 2.0 / float(count);
+    float r = sqrt(max(0.0, 1.0 - y * y));
+    float phi = golden * float(i);
+    return vec3(r * cos(phi), y, r * sin(phi));
 }
 
 ivec3 probeCoord(int p) {

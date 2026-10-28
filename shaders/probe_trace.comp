@@ -1,0 +1,92 @@
+#version 460
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+#extension GL_GOOGLE_include_directive : require
+
+// Hardware ray tracing variant of the bake: fills the same ray hits engine/Gfx/ProbeBake.cpp writes, every frame.
+layout(local_size_x = 128) in;
+
+#define GI_SET 0
+#include "probe_common.glsl"
+#define LIGHTING_SET 0
+#define LIGHTING_BINDING 1
+#include "lighting_common.glsl"
+
+layout(set = 0, binding = 11) uniform accelerationStructureEXT sceneTlas;
+
+struct TraceInstance {
+    vec4 albedo;
+    vec4 emissive;
+    uvec2 vertices;  // address of Vertex[] (engine/Gfx/Vertex.h, 11 floats each)
+    uvec2 indices;   // address of uint[]
+};
+layout(std430, set = 0, binding = 12) readonly buffer Instances { TraceInstance instances[]; };
+
+struct RayHit {
+    vec4 normalDistance;
+    vec4 albedo;  // w = sun visibility at the hit
+    vec4 emissive;
+};
+layout(std430, set = 0, binding = 13) writeonly buffer Hits { RayHit hits[]; };
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Floats { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Indices { uint i[]; };
+
+const uint RAYS = 128u;
+const uint VERTEX_FLOATS = 11u;
+const float MAX_TRACE = 10000.0;
+
+vec3 vertexPosition(Floats vertices, uint index) {
+    uint base = index * VERTEX_FLOATS;
+    return vec3(vertices.v[base], vertices.v[base + 1u], vertices.v[base + 2u]);
+}
+
+bool occluded(vec3 origin, vec3 dir) {
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, sceneTlas, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0xFF,
+                          origin, 0.001, dir, MAX_TRACE);
+    while (rayQueryProceedEXT(q)) {}
+    return rayQueryGetIntersectionTypeEXT(q, true) != gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+void main() {
+    int probe = int(gl_WorkGroupID.x);
+    uint ray = gl_LocalInvocationID.x;
+    vec3 origin = probePosition(probe);
+    vec3 dir = probeRayDirection(ray, RAYS);
+
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, sceneTlas, gl_RayFlagsOpaqueEXT, 0xFF, origin, 0.0, dir, MAX_TRACE);
+    while (rayQueryProceedEXT(q)) {}
+
+    RayHit hit;
+    hit.normalDistance = vec4(0.0, 0.0, 0.0, -1.0);
+    hit.albedo = vec4(0.0);
+    hit.emissive = vec4(0.0);
+    if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionTriangleEXT) {
+        TraceInstance inst = instances[rayQueryGetIntersectionInstanceCustomIndexEXT(q, true)];
+        uint primitive = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, true));
+        Indices indices = Indices(inst.indices);
+        Floats vertices = Floats(inst.vertices);
+        vec3 a = vertexPosition(vertices, indices.i[primitive * 3u]);
+        vec3 b = vertexPosition(vertices, indices.i[primitive * 3u + 1u]);
+        vec3 c = vertexPosition(vertices, indices.i[primitive * 3u + 2u]);
+        mat3 objectToWorld = mat3(rayQueryGetIntersectionObjectToWorldEXT(q, true));
+        vec3 n = normalize(transpose(inverse(objectToWorld)) * cross(b - a, c - a));
+        if (dot(n, dir) > 0.0) {
+            n = -n;
+        }
+        float t = rayQueryGetIntersectionTEXT(q, true);
+        vec3 hitPos = origin + dir * t;
+        float sunVisibility = 1.0;
+        if (lighting.dirLightDirIntensity.w > 0.0) {
+            vec3 toSun = normalize(-lighting.dirLightDirIntensity.xyz);
+            sunVisibility = dot(n, toSun) > 0.0 && !occluded(hitPos + n * 0.01, toSun) ? 1.0 : 0.0;
+        }
+        hit.normalDistance = vec4(n, t);
+        hit.albedo = vec4(inst.albedo.rgb, sunVisibility);
+        hit.emissive = inst.emissive;
+    }
+    hits[uint(probe) * RAYS + ray] = hit;
+}

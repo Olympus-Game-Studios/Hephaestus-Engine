@@ -23,6 +23,18 @@ public:
     /** True when the logical device enabled fillModeNonSolid (wireframe rasterization). */
     bool SupportsFillModeNonSolid() const { return m_fillModeNonSolid; }
 
+    // Extension entry points, loaded only when SupportsRayQuery().
+    struct RayTracingFunctions {
+        PFN_vkCreateAccelerationStructureKHR createAccelerationStructure = nullptr;
+        PFN_vkDestroyAccelerationStructureKHR destroyAccelerationStructure = nullptr;
+        PFN_vkGetAccelerationStructureBuildSizesKHR getBuildSizes = nullptr;
+        PFN_vkCmdBuildAccelerationStructuresKHR cmdBuildAccelerationStructures = nullptr;
+        PFN_vkGetAccelerationStructureDeviceAddressKHR getAccelerationStructureAddress = nullptr;
+    };
+    /** True when VK_KHR_ray_query, acceleration structures and buffer device addresses are enabled. */
+    bool SupportsRayQuery() const { return m_rayQuery; }
+    const RayTracingFunctions& RayTracing() const { return m_rayTracing; }
+
     // Legacy GLFW-based initialization (runtime/legacy editor path)
     void Init(GLFWwindow* window, VkInstance instance);
     
@@ -47,6 +59,9 @@ private:
     void findQueueFamilies(VkPhysicalDevice pd);
     void createLogicalDevice();
     void createCommandPool();
+    void createAllocator();
 
     bool m_fillModeNonSolid = false;
+    bool m_rayQuery = false;
+    RayTracingFunctions m_rayTracing;
 };

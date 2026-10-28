@@ -12,7 +12,7 @@ layout(local_size_x = 128) in;
 
 struct RayHit {
     vec4 normalDistance;  // xyz = normal, w = distance (< 0 = sky)
-    vec4 albedo;
+    vec4 albedo;          // w = sun visibility when giParams.w = 1
     vec4 emissive;
 };
 layout(std430, set = 0, binding = 2) readonly buffer Rays { RayHit rays[]; };
@@ -26,14 +26,6 @@ const uint RAYS = 128u;
 shared vec3 sRadiance[RAYS];
 shared vec3 sDirection[RAYS];
 shared float sDistance[RAYS];
-
-vec3 rayDirection(uint i) {
-    float golden = PI * (3.0 - sqrt(5.0));
-    float y = 1.0 - (float(i) + 0.5) * 2.0 / float(RAYS);
-    float r = sqrt(max(0.0, 1.0 - y * y));
-    float phi = golden * float(i);
-    return vec3(r * cos(phi), y, r * sin(phi));
-}
 
 float sunVisibility(vec3 pos) {
     if (gi.giParams.y < 0.5) {
@@ -55,12 +47,12 @@ vec3 skyRadiance(vec3 dir) {
     return lighting.ambientColorIntensity.rgb * lighting.ambientColorIntensity.w;
 }
 
-vec3 directIrradiance(vec3 pos, vec3 n) {
+vec3 directIrradiance(vec3 pos, vec3 n, float tracedSunVisibility) {
     vec3 e = vec3(0.0);
     if (lighting.dirLightDirIntensity.w > 0.0) {
         vec3 l = normalize(-lighting.dirLightDirIntensity.xyz);
-        e += lighting.dirLightColor.rgb * lighting.dirLightDirIntensity.w * max(dot(n, l), 0.0) *
-             sunVisibility(pos + n * 0.05);
+        float visibility = gi.giParams.w > 0.5 ? tracedSunVisibility : sunVisibility(pos + n * 0.05);
+        e += lighting.dirLightColor.rgb * lighting.dirLightDirIntensity.w * max(dot(n, l), 0.0) * visibility;
     }
     for (int i = 0; i < lighting.pointLightCount && i < 16; ++i) {
         vec3 toLight = lighting.pointLightPositions[i].xyz - pos;
@@ -106,7 +98,7 @@ void main() {
     float maxDistance = gi.giParams.x;
 
     RayHit hit = rays[uint(probe) * RAYS + ray];
-    vec3 dir = rayDirection(ray);
+    vec3 dir = probeRayDirection(ray, RAYS);
     vec3 radiance;
     float distance;
     if (hit.normalDistance.w < 0.0) {
@@ -117,7 +109,7 @@ void main() {
         vec3 n = hit.normalDistance.xyz;
         vec3 hitPos = probePos + dir * distance;
         vec3 bounce = gi.giParams.z > 0.5 ? vec3(0.0) : sampleProbeIrradiance(hitPos, n) * PI;
-        radiance = hit.albedo.rgb / PI * (directIrradiance(hitPos, n) + bounce) + hit.emissive.rgb;
+        radiance = hit.albedo.rgb / PI * (directIrradiance(hitPos, n, hit.albedo.w) + bounce) + hit.emissive.rgb;
     }
     sRadiance[ray] = radiance;
     sDirection[ray] = dir;

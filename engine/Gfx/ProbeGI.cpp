@@ -125,6 +125,10 @@ bool ProbeGI::Init(VulkanDevice* device) {
     if (!createComputePipeline()) {
         std::cerr << "[ProbeGI] Probe update pipeline unavailable; probe volumes will not be lit\n";
     }
+    m_tracerReady = m_tracer.Init(device);
+    if (device->SupportsRayQuery() && !m_tracerReady) {
+        std::cerr << "[ProbeGI] Hardware ray tracing unavailable; probe volumes use their bakes\n";
+    }
     return true;
 }
 
@@ -308,6 +312,11 @@ bool ProbeGI::CreateSwapchainResources(VkRenderPass sceneRenderPass, uint32_t sc
     query.queryCount = 2 * imageCount;
     if (vkCreateQueryPool(device, &query, nullptr, &m_queryPool) != VK_SUCCESS) return false;
     m_queryWritten.assign(imageCount, false);
+    if (m_tracerReady && !m_tracer.CreateSwapchainResources(imageCount)) {
+        std::cerr << "[ProbeGI] Hardware ray tracing resources failed; probe volumes use their bakes\n";
+        m_tracer.DestroySwapchainResources();
+        m_tracerReady = false;
+    }
 
     const VkDescriptorSetLayout setLayouts[] = {cameraSetLayout, m_setLayout};
     VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float)};
@@ -377,6 +386,7 @@ bool ProbeGI::CreateSwapchainResources(VkRenderPass sceneRenderPass, uint32_t sc
 void ProbeGI::DestroySwapchainResources() {
     if (!m_device) return;
     VkDevice device = m_device->device;
+    m_tracer.DestroySwapchainResources();
     if (m_debugPipeline) vkDestroyPipeline(device, m_debugPipeline, nullptr);
     if (m_debugLayout) vkDestroyPipelineLayout(device, m_debugLayout, nullptr);
     if (m_queryPool) vkDestroyQueryPool(device, m_queryPool, nullptr);
@@ -396,6 +406,7 @@ void ProbeGI::Shutdown() {
     VkDevice device = m_device->device;
     DestroySwapchainResources();
     destroyBake();
+    m_tracer.Shutdown();
     if (m_sunFramebuffer) vkDestroyFramebuffer(device, m_sunFramebuffer, nullptr);
     if (m_sunView) vkDestroyImageView(device, m_sunView, nullptr);
     if (m_sunImage) vmaDestroyImage(m_device->allocator, m_sunImage, m_sunAllocation);
@@ -433,6 +444,7 @@ void ProbeGI::destroyBake() {
     m_bakeKey.clear();
     m_probeCount = 0;
     m_active = false;
+    m_hardware = false;
 }
 
 bool ProbeGI::loadBake(const std::filesystem::path& file, std::string& outError) {
@@ -464,8 +476,49 @@ bool ProbeGI::loadBake(const std::filesystem::path& file, std::string& outError)
         return false;
     }
 
-    const uint32_t tilesX = static_cast<uint32_t>(bake.probeCounts[0] * bake.probeCounts[1]);
-    const uint32_t tilesY = static_cast<uint32_t>(bake.probeCounts[2]);
+    if (!createAtlases(bake.probeCounts)) {
+        outError = "Could not create probe atlases";
+        return false;
+    }
+
+    bake.hits.clear();
+    bake.probeOffsets.clear();
+    m_bakeGrid = std::move(bake);
+    m_probeCount = static_cast<size_t>(m_bakeGrid.probeCounts[0]) * m_bakeGrid.probeCounts[1] * m_bakeGrid.probeCounts[2];
+    m_parity = 0;
+    m_resetFrames = 1;
+    return true;
+}
+
+bool ProbeGI::createHardwareVolume(const int counts[3], std::string& outError) {
+    const size_t probes = static_cast<size_t>(counts[0]) * counts[1] * counts[2];
+    std::vector<Vec4> offsets(probes, Vec4(0.0f, 0.0f, 0.0f, 0.0f));
+    try {
+        m_rays.Create(m_device->allocator, probes * kProbeBakeRaysPerProbe * sizeof(GpuRayHit),
+                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+        m_offsets.Create(m_device->allocator, offsets.size() * sizeof(Vec4), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                         VMA_MEMORY_USAGE_CPU_TO_GPU, offsets.data());
+    } catch (const std::exception& e) {
+        outError = e.what();
+        return false;
+    }
+    if (!createAtlases(counts)) {
+        outError = "Could not create probe atlases";
+        return false;
+    }
+    m_bakeGrid = ProbeBake{};
+    for (int a = 0; a < 3; ++a) m_bakeGrid.probeCounts[a] = counts[a];
+    m_bakeGrid.raysPerProbe = kProbeBakeRaysPerProbe;
+    m_probeCount = probes;
+    m_parity = 0;
+    m_resetFrames = 1;
+    m_hardware = true;
+    return true;
+}
+
+bool ProbeGI::createAtlases(const int counts[3]) {
+    const uint32_t tilesX = static_cast<uint32_t>(counts[0] * counts[1]);
+    const uint32_t tilesY = static_cast<uint32_t>(counts[2]);
     auto createAtlas = [&](Atlas& atlas, VkFormat format, uint32_t tile) {
         VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         image.imageType = VK_IMAGE_TYPE_2D;
@@ -491,7 +544,6 @@ bool ProbeGI::loadBake(const std::filesystem::path& file, std::string& outError)
     for (int i = 0; i < 2; ++i) {
         if (!createAtlas(m_irradiance[i], VK_FORMAT_R16G16B16A16_SFLOAT, kIrradianceTile) ||
             !createAtlas(m_visibility[i], VK_FORMAT_R16G16_SFLOAT, kVisibilityTile)) {
-            outError = "Could not create probe atlases";
             return false;
         }
     }
@@ -518,18 +570,12 @@ bool ProbeGI::loadBake(const std::filesystem::path& file, std::string& outError)
                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
                              &cleared, 0, nullptr, 0, nullptr);
     });
-
-    bake.hits.clear();
-    bake.probeOffsets.clear();
-    m_bakeGrid = std::move(bake);
-    m_probeCount = static_cast<size_t>(m_bakeGrid.probeCounts[0]) * m_bakeGrid.probeCounts[1] * m_bakeGrid.probeCounts[2];
-    m_parity = 0;
-    m_resetFrames = 1;
     return true;
 }
 
 void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t imageIndex, VkBuffer lightingBuffer,
-                      const Vec3* sunDirection) {
+                      const Vec3* sunDirection,
+                      const std::function<std::vector<ProbeTraceInstance>()>& collectInstances) {
     m_active = false;
     if (!m_device || imageIndex >= m_sets.size()) return;
     auto writeInactive = [&]() {
@@ -558,7 +604,7 @@ void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t ima
     entt::entity volumeEntity = entt::null;
     for (entt::entity handle : scene->GetRegistry().view<ProbeVolumeComponent>()) {
         const auto& candidate = scene->GetRegistry().get<ProbeVolumeComponent>(handle);
-        if (candidate.enabled && !candidate.bakePath.empty()) {
+        if (candidate.enabled && ((candidate.hardwareRayTracing && m_tracerReady) || !candidate.bakePath.empty())) {
             volume = &candidate;
             volumeEntity = handle;
             break;
@@ -573,14 +619,31 @@ void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t ima
         return;
     }
 
+    const bool hardware = volume->hardwareRayTracing && m_tracerReady;
+    const int counts[3] = {std::max(1, volume->probeCountX), std::max(1, volume->probeCountY),
+                           std::max(1, volume->probeCountZ)};
     std::filesystem::path file = std::filesystem::path(projectRoot) / volume->bakePath;
     if (projectRoot.empty() || !std::filesystem::exists(file)) {
         file = volume->bakePath;
     }
-    const std::string key = file.generic_string() + "|" +
-                            std::to_string(WriteTime(file).time_since_epoch().count()) + "|" +
-                            std::to_string(static_cast<uint32_t>(volumeEntity));
-    if (key != m_bakeKey) {
+    const std::string key = hardware
+        ? "rt|" + std::to_string(counts[0]) + "x" + std::to_string(counts[1]) + "x" + std::to_string(counts[2]) + "|" +
+              std::to_string(static_cast<uint32_t>(volumeEntity))
+        : file.generic_string() + "|" + std::to_string(WriteTime(file).time_since_epoch().count()) + "|" +
+              std::to_string(static_cast<uint32_t>(volumeEntity));
+    if (hardware && key != m_bakeKey) {
+        vkDeviceWaitIdle(m_device->device);
+        destroyBake();
+        std::string error;
+        if (!createHardwareVolume(counts, error)) {
+            std::cerr << "[ProbeGI] " << error << "\n";
+            destroyBake();
+        }
+        m_bakeKey = key;
+        if (m_probeCount > 0) {
+            std::cout << "[ProbeGI] Tracing " << m_probeCount << " probes with hardware ray tracing\n";
+        }
+    } else if (!hardware && key != m_bakeKey) {
         vkDeviceWaitIdle(m_device->device);
         destroyBake();
         std::string error;
@@ -596,6 +659,12 @@ void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t ima
     if (m_probeCount == 0) {
         writeInactive();
         return;
+    }
+    if (m_hardware) {
+        // Traced volumes follow the component live; only a probe-count change rebuilds them.
+        const Mat4 world = scene->GetWorldTransform(Entity(volumeEntity, scene));
+        m_bakeGrid.center = Vec3(world.m[12], world.m[13], world.m[14]);
+        m_bakeGrid.size = volume->size;
     }
 
     ProbeVolumeComponent grid;
@@ -632,13 +701,18 @@ void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t ima
     params.probeCounts[2] = m_bakeGrid.probeCounts[2];
     params.probeCounts[3] = 1;
     params.sunViewProj = m_sunViewProj;
-    params.giParams = Vec4(maxDistance, m_sunValid ? 1.0f : 0.0f, m_resetFrames > 0 ? 1.0f : 0.0f, 0.0f);
+    params.giParams = Vec4(maxDistance, m_sunValid && !m_hardware ? 1.0f : 0.0f, m_resetFrames > 0 ? 1.0f : 0.0f,
+                           m_hardware ? 1.0f : 0.0f);
     void* mapped = nullptr;
     vmaMapMemory(m_device->allocator, m_paramBuffers[imageIndex].allocation, &mapped);
     std::memcpy(mapped, &params, sizeof(params));
     vmaUnmapMemory(m_device->allocator, m_paramBuffers[imageIndex].allocation);
 
     writeDescriptorSets(imageIndex, lightingBuffer);
+    if (m_hardware && !m_tracer.Prepare(imageIndex, collectInstances(), m_paramBuffers[imageIndex].buffer,
+                                        lightingBuffer, m_offsets.buffer, m_rays.buffer)) {
+        return;
+    }
     m_intensity = volume->intensity;
     m_active = true;
 }
@@ -707,6 +781,9 @@ void ProbeGI::RecordUpdate(VkCommandBuffer cmd, uint32_t imageIndex) {
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
 
+    if (m_hardware) {
+        m_tracer.Record(cmd, imageIndex, static_cast<uint32_t>(m_probeCount));
+    }
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computeLayout, 0, 1, &m_sets[imageIndex][0], 0,
                             nullptr);

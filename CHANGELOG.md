@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-28: Probe volumes have a "Hardware ray tracing" toggle. On GPUs with Vulkan ray queries, the volume traces its probes every frame instead of using a bake, so moving objects also block, bounce and shadow light, and no bake is needed. GPUs without support fall back to the bake.
 - 2026-10-28: Surfaces inside a baked probe volume now take their indirect (bounce) light from the probes, blending into the sky or flat ambient at the volume edge, in the editor and packaged games. Animated characters receive it too. This completes real-time diffuse global illumination for static scenes.
 - 2026-10-28: Baked probe volumes are relit on the GPU every frame from the current sun, point and spot lights, sky and emissive surfaces, including light bouncing between surfaces over several frames. In the editor each probe is drawn as a sphere showing the light it receives. Surfaces use the probes from the following entry on.
 - 2026-10-28: "Bake Probes" on the Probe Volume inspector traces what every probe sees in the scene's static meshes (distance, surface normal, material colour and emission per ray), moves probes that start inside walls, and saves a `.hpprobes` file next to the scene that packaged builds include. The inspector shows when the bake is missing or out of date: after the volume moves or changes, or after static meshes or their materials change. Probes do not light the scene until the next step.

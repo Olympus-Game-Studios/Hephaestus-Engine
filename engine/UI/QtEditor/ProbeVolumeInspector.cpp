@@ -45,6 +45,12 @@ void ProbeVolumeInspector::SetGeometrySignatureProvider(std::function<uint64_t()
     Refresh();
 }
 
+void ProbeVolumeInspector::SetHardwareRayTracingAvailable(bool available)
+{
+    m_hardwareAvailable = available;
+    Refresh();
+}
+
 void ProbeVolumeInspector::buildUI()
 {
     auto* layout = new QVBoxLayout(this);
@@ -67,6 +73,17 @@ void ProbeVolumeInspector::buildUI()
     form->addRow(tr("Intensity"), m_intensity);
     m_total = new QLabel();
     form->addRow(tr("Total Probes"), m_total);
+
+    auto* tracingBox = new QGroupBox(tr("Ray Tracing"), this);
+    auto* tracingForm = new QFormLayout(tracingBox);
+    layout->addWidget(tracingBox);
+    m_hardware = new QCheckBox(tr("Hardware ray tracing"));
+    m_hardware->setToolTip(tr("Trace probe rays on the GPU every frame, so moving objects block and bounce light. "
+                              "GPUs without ray tracing use the bake instead."));
+    tracingForm->addRow(QString(), m_hardware);
+    m_hardwareNote = new QLabel();
+    m_hardwareNote->setWordWrap(true);
+    tracingForm->addRow(QString(), m_hardwareNote);
 
     auto* bakeBox = new QGroupBox(tr("Bake"), this);
     auto* bakeForm = new QFormLayout(bakeBox);
@@ -92,6 +109,7 @@ void ProbeVolumeInspector::connectSignals()
         Refresh();
     };
     connect(m_enabled, &QCheckBox::toggled, this, edited);
+    connect(m_hardware, &QCheckBox::toggled, this, edited);
     for (int i = 0; i < 3; ++i) {
         connect(m_size[i], qOverload<double>(&QDoubleSpinBox::valueChanged), this, edited);
         connect(m_counts[i], qOverload<double>(&QDoubleSpinBox::valueChanged), this, edited);
@@ -114,6 +132,7 @@ void ProbeVolumeInspector::applyToComponent()
     if (m_updating) return;
     ForEachTarget<ProbeVolumeComponent>([&](ProbeVolumeComponent& component, entt::entity) {
         if (m_enabled->checkState() != Qt::PartiallyChecked) component.enabled = m_enabled->isChecked();
+        if (m_hardware->checkState() != Qt::PartiallyChecked) component.hardwareRayTracing = m_hardware->isChecked();
         double value = 0.0;
         float* sizes[3] = {&component.size.x, &component.size.y, &component.size.z};
         int* counts[3] = {&component.probeCountX, &component.probeCountY, &component.probeCountZ};
@@ -129,10 +148,11 @@ void ProbeVolumeInspector::applyToComponent()
 void ProbeVolumeInspector::Refresh()
 {
     EndEdit();
-    MixedBool enabled;
+    MixedBool enabled, hardware;
     MixedScalar size[3], counts[3], intensity, total;
     VisitTargets<ProbeVolumeComponent>([&](const ProbeVolumeComponent& component, entt::entity) {
         AccumulateBool(enabled, component.enabled);
+        AccumulateBool(hardware, component.hardwareRayTracing);
         AccumulateScalar(size[0], component.size.x);
         AccumulateScalar(size[1], component.size.y);
         AccumulateScalar(size[2], component.size.z);
@@ -146,6 +166,13 @@ void ProbeVolumeInspector::Refresh()
 
     m_updating = true;
     SetCheckFromMixed(m_enabled, enabled);
+    SetCheckFromMixed(m_hardware, hardware);
+    const bool wantsHardware = hardware.present && (hardware.mixed || hardware.value);
+    m_hardwareNote->setText(!wantsHardware ? QString()
+                            : m_hardwareAvailable
+                                ? tr("Tracing every frame on this GPU; the bake is not used.")
+                                : tr("This GPU has no ray tracing support, so the bake is used instead."));
+    m_hardwareNote->setVisible(wantsHardware);
     for (int i = 0; i < 3; ++i) {
         SetSpinFromMixed(m_size[i], size[i]);
         SetSpinFromMixed(m_counts[i], counts[i]);
