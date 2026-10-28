@@ -59,7 +59,7 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     // - binding 3: Combined image sampler array for material textures
     // - binding 4: Directional shadow map sampler
     // - binding 5: Environment reflection texture
-    VkDescriptorSetLayoutBinding bindings[6] = {};
+    VkDescriptorSetLayoutBinding bindings[7] = {};
     
     // Binding 0: Camera/View UBO
     bindings[0].binding = 0;
@@ -97,8 +97,14 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     bindings[5].descriptorCount = 1;
     bindings[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // Binding 6: Point/spot light shadow atlas
+    bindings[6].binding = 6;
+    bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[6].descriptorCount = 1;
+    bindings[6].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    setInfo.bindingCount = 6;
+    setInfo.bindingCount = 7;
     setInfo.pBindings = bindings;
     if (vkCreateDescriptorSetLayout(device, &setInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create descriptor set layout");

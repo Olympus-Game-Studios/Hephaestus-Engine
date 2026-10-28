@@ -172,6 +172,9 @@ struct LightingUBO {
     Vec4 cascadeTexelWorld;  // world-space size of one shadow texel per cascade
     Vec4 cascadeDepthRange;  // light-space depth range per cascade, to turn world biases into depth
     Vec4 shadowBiasWorld;    // x = extra depth bias, y = extra normal offset (metres)
+    Mat4 localShadowViewProj[32];  // atlas tiles, see EngineFrameRenderer::kLocalShadowTile
+    Vec4 pointShadowParams[16];    // x = first of six tiles (+X,-X,+Y,-Y,+Z,-Z) or -1, y = shadow strength, z = far, w = tan(half fov)
+    Vec4 spotShadowParams[16];     // x = tile or -1, y = shadow strength, z = far, w = tan(half fov)
 };
 
 static bool MeshAllowsHiddenEditorOutline(const MeshRendererComponent& renderer,
@@ -359,6 +362,9 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
     }
     if (m_directionalShadow.IsValid() && !createSkinnedShadowPipeline()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create skinned shadow pipeline\n";
+    }
+    if (m_directionalShadow.IsValid() && !createLocalShadowResources()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create point/spot shadow atlas (those lights will be unshadowed)\n";
     }
     
     if (!createDescriptorSets()) {
@@ -857,6 +863,9 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     // Record shadow pass (before main pass)
     if (config.renderShadows && m_directionalShadow.IsValid()) {
         recordShadowPass(cmd, scene, camera, config);
+    }
+    if (config.renderShadows && m_localShadow.IsValid() && !m_localShadowJobs.empty()) {
+        recordLocalShadowPass(cmd, scene, config);
     }
     if (m_probeGI.Active()) {
         m_probeGI.BeginTiming(cmd, imageIndex);
@@ -2070,7 +2079,7 @@ bool EngineFrameRenderer::createDescriptorSets()
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount) },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, static_cast<uint32_t>(imageCount) },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount) },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount) * (kTextureArraySize + 2) }
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount) * (kTextureArraySize + 3) }
     };
     
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -2143,7 +2152,12 @@ bool EngineFrameRenderer::createDescriptorSets()
         environmentMapInfo.imageView = m_dummyTexture.imageView;
         environmentMapInfo.sampler = m_dummyTexture.sampler;
 
-        VkWriteDescriptorSet descriptorWrites[6] = {};
+        VkDescriptorImageInfo localShadowInfo{};
+        localShadowInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        localShadowInfo.imageView = m_localShadow.IsValid() ? m_localShadow.imageView : m_dummyTexture.imageView;
+        localShadowInfo.sampler = m_localShadow.IsValid() ? m_directionalShadow.sampler : m_dummyTexture.sampler;
+
+        VkWriteDescriptorSet descriptorWrites[7] = {};
         
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = m_descriptorSets[i];
@@ -2196,7 +2210,14 @@ bool EngineFrameRenderer::createDescriptorSets()
         descriptorWrites[5].descriptorCount = 1;
         descriptorWrites[5].pImageInfo = &environmentMapInfo;
         
-        vkUpdateDescriptorSets(m_device->device, 6, descriptorWrites, 0, nullptr);
+        descriptorWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[6].dstSet = m_descriptorSets[i];
+        descriptorWrites[6].dstBinding = 6;
+        descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[6].descriptorCount = 1;
+        descriptorWrites[6].pImageInfo = &localShadowInfo;
+
+        vkUpdateDescriptorSets(m_device->device, 7, descriptorWrites, 0, nullptr);
     }
     
     return true;
@@ -2864,7 +2885,23 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
     
     lightUBO.pointLightCount = 0;
     lightUBO.spotLightCount = 0;
-    
+    for (int i = 0; i < 16; ++i) {
+        lightUBO.pointShadowParams[i] = Vec4(-1.0f, 0.0f, 0.0f, 0.0f);
+        lightUBO.spotShadowParams[i] = Vec4(-1.0f, 0.0f, 0.0f, 0.0f);
+    }
+    m_localShadowJobs.clear();
+    uint32_t nextShadowTile = 0;
+    int shadowedPoints = 0;
+    int shadowedSpots = 0;
+    constexpr float kLocalShadowNear = 0.05f;
+    auto addShadowTile = [&](const Vec3& pos, const Vec3& forward, const Vec3& up, float fovY, float range) {
+        const Mat4 view = Mat4::LookAt(pos, vadd(pos, forward), up);
+        const Mat4 proj = Mat4::Perspective(fovY, 1.0f, kLocalShadowNear, std::max(range, kLocalShadowNear * 2.0f));
+        const uint32_t tile = nextShadowTile++;
+        lightUBO.localShadowViewProj[tile] = Mat4::Multiply(proj, view);
+        m_localShadowJobs.push_back({lightUBO.localShadowViewProj[tile], pos, range, tile});
+    };
+
     // If scene is provided, gather lights from it
     if (scene) {
         auto envView = scene->GetEntitiesWith<EnvironmentComponent>();
@@ -2978,6 +3015,17 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 lightUBO.pointLightColors[pointLightIndex] = {light.color.x, light.color.y, light.color.z, light.intensity};
                 lightUBO.pointLightAttenuation[pointLightIndex] = {
                     light.constant, light.linear, light.quadratic, 0.0f};
+                if (light.castShadows && m_localShadow.IsValid() && shadowedPoints < kMaxShadowedPointLights) {
+                    const float base = static_cast<float>(nextShadowTile);
+                    const Vec3 faces[6] = {Vec3(1, 0, 0), Vec3(-1, 0, 0), Vec3(0, 1, 0),
+                                           Vec3(0, -1, 0), Vec3(0, 0, 1), Vec3(0, 0, -1)};
+                    for (int f = 0; f < 6; ++f) {
+                        const Vec3 up = (f == 2 || f == 3) ? Vec3(0, 0, 1) : Vec3(0, 1, 0);
+                        addShadowTile(lightPos, faces[f], up, 1.5707963f, light.range);
+                    }
+                    lightUBO.pointShadowParams[pointLightIndex] = Vec4(base, light.shadowStrength, light.range, 1.0f);
+                    ++shadowedPoints;
+                }
                 ++pointLightIndex;
             } else if (light.type == LightType::Spot && spotLightIndex < 16) {
                 lightUBO.spotLightPositions[spotLightIndex] = {lightPos.x, lightPos.y, lightPos.z, light.range};
@@ -2986,6 +3034,16 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 lightUBO.spotLightColors[spotLightIndex] = {light.color.x, light.color.y, light.color.z, light.intensity};
                 lightUBO.spotLightAttenuation[spotLightIndex] = {
                     light.constant, light.linear, light.quadratic, light.outerConeAngle};
+                if (light.castShadows && m_localShadow.IsValid() && shadowedSpots < kMaxShadowedSpotLights) {
+                    // outerConeAngle is the full aperture; pad it so filtering at the cone edge stays in the tile.
+                    const float fovY = std::min(light.outerConeAngle + 0.1f, 2.8f);
+                    const Vec3 up = std::fabs(lightDir.y) > 0.99f ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
+                    const float tile = static_cast<float>(nextShadowTile);
+                    addShadowTile(lightPos, lightDir, up, fovY, light.range);
+                    lightUBO.spotShadowParams[spotLightIndex] =
+                        Vec4(tile, light.shadowStrength, light.range, std::tan(fovY * 0.5f));
+                    ++shadowedSpots;
+                }
                 ++spotLightIndex;
             }
         }
@@ -3076,14 +3134,6 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
     vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_directionalShadow.pipeline);
     
-    auto meshView = registry.view<TransformComponent, MeshRendererComponent>();
-    int shadowMeshCount = 0;
-    
-    struct ShadowPushConstants {
-        Mat4 lightViewProj;
-        Mat4 model;
-    };
-    
     // 2x2 atlas offsets for 4 cascades
     uint32_t halfRes = m_directionalShadow.resolution / 2;
     int atlasOffsetX[4] = { 0, 1, 0, 1 };
@@ -3107,12 +3157,33 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
         sc.extent = { halfRes, halfRes };
         vkCmdSetScissor(cmd, 0, 1, &sc);
         
-        // Render all meshes with this cascade's VP matrix
+        drawShadowCasters(cmd, scene, config, cascadeVPs[cascade], nullptr, 0.0f);
+    }
+
+    static bool shadowPassDebugPrinted = false;
+    if (!shadowPassDebugPrinted) {
+        std::cout << "[ShadowPass] CSM: Rendered " << CSM_CASCADE_COUNT << " cascades\n";
+        shadowPassDebugPrinted = true;
+    }
+
+    vkCmdEndRenderPass(cmd);
+}
+
+void EngineFrameRenderer::drawShadowCasters(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config,
+                                            const Mat4& viewProj, const Vec3* cullCenter, float cullRadius)
+{
+    auto& registry = scene->GetRegistry();
+    auto meshView = registry.view<TransformComponent, MeshRendererComponent>();
+    struct ShadowPushConstants {
+        Mat4 lightViewProj;
+        Mat4 model;
+    };
+    {
         VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
         VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
         bool usingSkinnedShadow = false;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_directionalShadow.pipeline);
-        
+
         for (auto entity : meshView) {
             auto& meshComp = meshView.get<MeshRendererComponent>(entity);
             if (!IsEditorEntityVisible(static_cast<uint32_t>(entity), config)) continue;
@@ -3150,25 +3221,120 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
                 }
 
                 ShadowPushConstants pc;
-                pc.lightViewProj = cascadeVPs[cascade];
+                pc.lightViewProj = viewProj;
                 pc.model = CharacterAwareModelMatrix(scene, Entity(entity, scene), meshComp);
+                if (cullCenter) {
+                    // Bounding sphere of the mesh AABB against the light's range.
+                    const Vec3 lo = mesh.bounds.min, hi = mesh.bounds.max;
+                    const Vec3 local((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f);
+                    const float* m = pc.model.m;
+                    const Vec3 center(m[0] * local.x + m[4] * local.y + m[8] * local.z + m[12],
+                                      m[1] * local.x + m[5] * local.y + m[9] * local.z + m[13],
+                                      m[2] * local.x + m[6] * local.y + m[10] * local.z + m[14]);
+                    const float scale = std::max({vlen(Vec3(m[0], m[1], m[2])), vlen(Vec3(m[4], m[5], m[6])),
+                                                  vlen(Vec3(m[8], m[9], m[10]))});
+                    const float radius = 0.5f * vlen(vsub(hi, lo)) * scale;
+                    if (vlen(vsub(center, *cullCenter)) > cullRadius + radius) continue;
+                }
                 const VkPipelineLayout shadowLayout =
                     skinned ? m_skinned.shadowLayout : m_directionalShadow.pipelineLayout;
                 vkCmdPushConstants(cmd, shadowLayout, VK_SHADER_STAGE_VERTEX_BIT,
                                   0, sizeof(pc), &pc);
 
                 vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
-                shadowMeshCount++;
             }
         }
     }
-    
-    static bool shadowPassDebugPrinted = false;
-    if (!shadowPassDebugPrinted && shadowMeshCount > 0) {
-        std::cout << "[ShadowPass] CSM: Rendered " << shadowMeshCount << " draw calls across " << CSM_CASCADE_COUNT << " cascades\n";
-        shadowPassDebugPrinted = true;
+}
+
+bool EngineFrameRenderer::createLocalShadowResources()
+{
+    VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image.imageType = VK_IMAGE_TYPE_2D;
+    image.format = VK_FORMAT_D32_SFLOAT;
+    image.extent = {kLocalShadowTile * kLocalShadowColumns, kLocalShadowTile * kLocalShadowRows, 1};
+    image.mipLevels = 1;
+    image.arrayLayers = 1;
+    image.samples = VK_SAMPLE_COUNT_1_BIT;
+    image.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    VmaAllocationCreateInfo alloc{};
+    alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    if (vmaCreateImage(m_device->allocator, &image, &alloc, &m_localShadow.image, &m_localShadow.allocation,
+                       nullptr) != VK_SUCCESS) {
+        m_localShadow = ShadowMap{};
+        return false;
     }
-    
+    VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view.image = m_localShadow.image;
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.format = VK_FORMAT_D32_SFLOAT;
+    view.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    VkFramebufferCreateInfo fb{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    fb.renderPass = m_directionalShadow.renderPass;
+    fb.attachmentCount = 1;
+    fb.width = image.extent.width;
+    fb.height = image.extent.height;
+    fb.layers = 1;
+    if (vkCreateImageView(m_device->device, &view, nullptr, &m_localShadow.imageView) != VK_SUCCESS ||
+        (fb.pAttachments = &m_localShadow.imageView,
+         vkCreateFramebuffer(m_device->device, &fb, nullptr, &m_localShadow.framebuffer) != VK_SUCCESS)) {
+        if (m_localShadow.imageView) vkDestroyImageView(m_device->device, m_localShadow.imageView, nullptr);
+        vmaDestroyImage(m_device->allocator, m_localShadow.image, m_localShadow.allocation);
+        m_localShadow = ShadowMap{};
+        return false;
+    }
+    // Frames without shadowed point/spot lights never render the atlas but still bind it.
+    VkCommandBufferAllocateInfo cmdAlloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    cmdAlloc.commandPool = m_device->commandPool;
+    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAlloc.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(m_device->device, &cmdAlloc, &cmd);
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &begin);
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = m_localShadow.image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
+                         0, nullptr, 1, &barrier);
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &cmd;
+    vkQueueSubmit(m_device->graphicsQueue, 1, &submit, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_device->graphicsQueue);
+    vkFreeCommandBuffers(m_device->device, m_device->commandPool, 1, &cmd);
+    return true;
+}
+
+void EngineFrameRenderer::recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config)
+{
+    if (!scene) return;
+    VkClearValue clear{};
+    clear.depthStencil = {1.0f, 0};
+    VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    begin.renderPass = m_directionalShadow.renderPass;
+    begin.framebuffer = m_localShadow.framebuffer;
+    begin.renderArea.extent = {kLocalShadowTile * kLocalShadowColumns, kLocalShadowTile * kLocalShadowRows};
+    begin.clearValueCount = 1;
+    begin.pClearValues = &clear;
+    vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    for (const LocalShadowJob& job : m_localShadowJobs) {
+        const uint32_t x = (job.tile % kLocalShadowColumns) * kLocalShadowTile;
+        const uint32_t y = (job.tile / kLocalShadowColumns) * kLocalShadowTile;
+        const VkViewport viewport{static_cast<float>(x), static_cast<float>(y), static_cast<float>(kLocalShadowTile),
+                                  static_cast<float>(kLocalShadowTile), 0.0f, 1.0f};
+        const VkRect2D scissor{{static_cast<int32_t>(x), static_cast<int32_t>(y)}, {kLocalShadowTile, kLocalShadowTile}};
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+        drawShadowCasters(cmd, scene, config, job.viewProj, &job.lightPos, job.range);
+    }
     vkCmdEndRenderPass(cmd);
 }
 
@@ -4707,6 +4873,11 @@ void EngineFrameRenderer::destroyAllResources()
     cleanupLightGizmoResources();
 
     cleanupToneMapResources();
+
+    if (m_localShadow.framebuffer) vkDestroyFramebuffer(m_device->device, m_localShadow.framebuffer, nullptr);
+    if (m_localShadow.imageView) vkDestroyImageView(m_device->device, m_localShadow.imageView, nullptr);
+    if (m_localShadow.image) vmaDestroyImage(m_device->allocator, m_localShadow.image, m_localShadow.allocation);
+    m_localShadow = ShadowMap{};
 
     // Cleanup shadow map resources
     if (m_directionalShadow.pipeline != VK_NULL_HANDLE) {

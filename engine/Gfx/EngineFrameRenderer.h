@@ -575,6 +575,25 @@ private:
     };
     ShadowMap m_directionalShadow;
 
+    // Point and spot light shadows share one depth atlas of 512x512 tiles (shaders/triangle.frag:localShadow).
+    static constexpr uint32_t kLocalShadowTile = 512;
+    static constexpr uint32_t kLocalShadowColumns = 8;
+    static constexpr uint32_t kLocalShadowRows = 4;
+    static constexpr int kMaxShadowedPointLights = 4;  // six tiles each
+    static constexpr int kMaxShadowedSpotLights = 8;
+    ShadowMap m_localShadow;  // shares m_directionalShadow's render pass, pipelines and sampler
+    struct LocalShadowJob {
+        Mat4 viewProj;
+        Vec3 lightPos;
+        float range = 0.0f;
+        uint32_t tile = 0;
+    };
+    std::vector<LocalShadowJob> m_localShadowJobs;  // filled by updateLightingUBO, drawn by recordLocalShadowPass
+    bool createLocalShadowResources();
+    void recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config);
+    void drawShadowCasters(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config, const Mat4& viewProj,
+                           const Vec3* cullCenter, float cullRadius);
+
     ProbeGI m_probeGI;  // set 2 of the main and skinned surface pipelines
     void recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene);
 

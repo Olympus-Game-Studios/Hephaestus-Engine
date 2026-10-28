@@ -62,6 +62,7 @@ layout(set = 0, binding = 5) uniform sampler2D environmentMap;
 #include "probe_common.glsl"
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
+layout(set = 0, binding = 6) uniform sampler2D localShadowAtlas;  // 8 x 4 tiles of 512 (EngineFrameRenderer::kLocalShadowTile)
 
 const float PI = 3.14159265359;
 
@@ -115,6 +116,52 @@ vec3 sampleEnvironmentReflection(vec3 direction) {
     uv.x = atan(dir.z, dir.x) / (2.0 * PI) + 0.5;
     uv.y = asin(clamp(dir.y, -1.0, 1.0)) / PI + 0.5;
     return texture(environmentMap, uv).rgb;
+}
+
+// Point/spot shadow from one perspective tile, compared in linear depth so the bias is in metres.
+float localShadow(int tile, vec3 lightPos, vec4 params) {
+    const float TILE = 512.0;
+    const float nearPlane = 0.05;  // kLocalShadowNear in engine/Gfx/EngineFrameRenderer.cpp
+    float farPlane = params.z;
+    vec3 geometricNormal = normalize(fragNormal);
+    vec3 toLight = lightPos - fragWorldPos;
+    float dist = length(toLight);
+    float NdotL = clamp(dot(geometricNormal, toLight / max(dist, 1e-4)), 0.0, 1.0);
+    float texelWorld = 2.0 * dist * params.w / TILE;
+    vec3 shadowPos = fragWorldPos + geometricNormal * texelWorld * (0.5 + 1.5 * (1.0 - NdotL));
+    vec4 clip = lighting.localShadowViewProj[tile] * vec4(shadowPos, 1.0);
+    if (clip.w <= nearPlane) {
+        return 1.0;
+    }
+    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+        return 1.0;
+    }
+    vec2 tileOrigin = vec2(float(tile % 8), float(tile / 8));
+    float receiver = clip.w - texelWorld * 1.5;
+    float lit = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            vec2 local = clamp(uv + vec2(x, y) / TILE, vec2(0.5 / TILE), vec2(1.0 - 0.5 / TILE));
+            float depth = texture(localShadowAtlas, (tileOrigin + local) / vec2(8.0, 4.0)).r;
+            float blocker = nearPlane * farPlane / (farPlane - depth * (farPlane - nearPlane));
+            lit += receiver > blocker ? 0.0 : 1.0;
+        }
+    }
+    return mix(1.0, lit / 9.0, params.y);
+}
+
+float pointShadow(int light, vec3 lightPos) {
+    vec4 params = lighting.pointShadowParams[light];
+    if (params.x < 0.0) {
+        return 1.0;
+    }
+    vec3 d = fragWorldPos - lightPos;
+    vec3 a = abs(d);
+    int face = a.x >= a.y && a.x >= a.z ? (d.x >= 0.0 ? 0 : 1)
+             : a.y >= a.z ? (d.y >= 0.0 ? 2 : 3)
+             : (d.z >= 0.0 ? 4 : 5);
+    return localShadow(int(params.x) + face, lightPos, params);
 }
 
 float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
@@ -357,7 +404,7 @@ void main() {
         vec3 H = normalize(V + L);
         
         float atten = calculateAttenuation(distance, attenuation);
-        vec3 radiance = lightColor * intensity * atten;
+        vec3 radiance = lightColor * intensity * atten * pointShadow(i, lightPos);
         
         // Cook-Torrance BRDF
         float NDF = DistributionGGX(N, H, roughness);
@@ -403,7 +450,9 @@ void main() {
         vec3 H = normalize(V + L);
         
         float atten = calculateAttenuation(distance, attenuation);
-        vec3 radiance = lightColor * intensity * atten * spotFalloff;
+        float spotShadow = lighting.spotShadowParams[i].x < 0.0
+            ? 1.0 : localShadow(int(lighting.spotShadowParams[i].x), lightPos, lighting.spotShadowParams[i]);
+        vec3 radiance = lightColor * intensity * atten * spotFalloff * spotShadow;
         
         // Cook-Torrance BRDF
         float NDF = DistributionGGX(N, H, roughness);

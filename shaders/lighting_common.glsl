@@ -25,6 +25,9 @@ layout(std140, set = LIGHTING_SET, binding = LIGHTING_BINDING) uniform LightingU
     vec4 cascadeTexelWorld;  // world size of one shadow texel per cascade
     vec4 cascadeDepthRange;  // light-space depth range per cascade
     vec4 shadowBiasWorld;    // x = extra depth bias, y = extra normal offset (metres)
+    mat4 localShadowViewProj[32];  // point/spot shadow atlas tiles
+    vec4 pointShadowParams[16];    // x = first of six tiles (+X,-X,+Y,-Y,+Z,-Z) or -1, y = shadow strength, z = far, w = tan(half fov)
+    vec4 spotShadowParams[16];     // x = tile or -1, y = shadow strength, z = far, w = tan(half fov)
 } lighting;
 
 // Calculate light attenuation for point lights
