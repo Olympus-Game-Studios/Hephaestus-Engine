@@ -360,6 +360,18 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
         }
     }
 
+    const auto missingPlugins = Hephaestus::Plugins::FindMissingEnabledPlugins(
+        request.engineRoot, request.projectRoot);
+    for (const auto& id : missingPlugins) {
+        Problem(result, ProblemSeverity::Error, "PACKAGE_PLUGIN_NOT_FOUND",
+                "Enabled plugin " + id + " was not found, so its content cannot be packaged",
+                "Searched " + (request.engineRoot / "Plugins").generic_string() + " and " +
+                    (request.projectRoot / "Plugins").generic_string());
+    }
+    if (!missingPlugins.empty()) {
+        return fail();
+    }
+
     std::vector<Hephaestus::Plugins::StagedPluginMount> stagedMounts;
     const auto pluginContent = Hephaestus::Plugins::CollectEnabledPluginContent(
         request.engineRoot, request.projectRoot);

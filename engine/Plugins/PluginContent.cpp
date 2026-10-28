@@ -109,6 +109,27 @@ std::vector<EnabledPluginContent> CollectEnabledPluginContent(
     return result;
 }
 
+std::vector<std::string> FindMissingEnabledPlugins(
+    const std::filesystem::path& engineRoot,
+    const std::filesystem::path& projectRoot)
+{
+    std::vector<PluginManifest> manifests;
+    DiscoverManifests(engineRoot / "Plugins", manifests);
+    if (!projectRoot.empty()) {
+        DiscoverManifests(projectRoot / "Plugins", manifests);
+    }
+    std::vector<std::string> missing;
+    for (const auto& [id, enabled] : LoadEnabledOverrides(projectRoot)) {
+        const bool found = std::any_of(manifests.begin(), manifests.end(),
+            [&](const PluginManifest& manifest) { return manifest.id == id; });
+        if (enabled && !found) {
+            missing.push_back(id);
+        }
+    }
+    std::sort(missing.begin(), missing.end());
+    return missing;
+}
+
 bool WriteStagedPluginMounts(const std::filesystem::path& packageRoot,
                              const std::vector<StagedPluginMount>& mounts,
                              std::string& error)

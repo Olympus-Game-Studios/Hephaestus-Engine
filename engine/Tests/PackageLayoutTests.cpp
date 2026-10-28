@@ -261,6 +261,15 @@ int main() {
     request.enableRuntimeAutomation = false;
     request.outputRoot = outputRoot;
 
+    Write(project / ".hephaestus" / "plugins.json",
+          R"({"version":1,"enabled":{"com.project.content":true,"com.missing.content":true}})");
+    result = stager.stage(request, artifacts);
+    ok &= Check(!result.success && HasProblem(result.problems, "PACKAGE_PLUGIN_NOT_FOUND"),
+                "an enabled plugin that is not installed fails the package");
+    ok &= Check(fs::exists(package / "preserve.marker"),
+                "a missing enabled plugin preserves previous output");
+    fs::remove(project / ".hephaestus" / "plugins.json");
+
 #ifdef _WIN32
     HANDLE lockedExecutable = CreateFileW(
         (package / "Tiny_Game.exe").c_str(), GENERIC_READ, FILE_SHARE_READ,

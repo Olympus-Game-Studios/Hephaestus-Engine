@@ -20,6 +20,10 @@ std::vector<EnabledPluginContent> CollectEnabledPluginContent(
     const std::filesystem::path& engineRoot,
     const std::filesystem::path& projectRoot);
 
+std::vector<std::string> FindMissingEnabledPlugins(
+    const std::filesystem::path& engineRoot,
+    const std::filesystem::path& projectRoot);
+
 bool WriteStagedPluginMounts(const std::filesystem::path& packageRoot,
                              const std::vector<StagedPluginMount>& mounts,
                              std::string& error);
