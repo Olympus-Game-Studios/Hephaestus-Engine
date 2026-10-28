@@ -741,6 +741,27 @@ struct EnvironmentComponent {
     {}
 };
 
+/**
+ * Probe volume - an axis-aligned grid of global illumination probes centred on
+ * the entity's world position. Rotation and scale of the entity are ignored.
+ */
+struct ProbeVolumeComponent {
+    bool enabled = true;
+    Vec3 size{10.0f, 5.0f, 10.0f};
+    int probeCountX = 8;
+    int probeCountY = 4;
+    int probeCountZ = 8;
+    float intensity = 1.0f;
+
+    // Offset of probe (ix, iy, iz) from the volume centre; a single probe on an axis sits at the centre.
+    Vec3 ProbeOffset(int ix, int iy, int iz) const {
+        auto axis = [](int i, int count, float extent) {
+            return count > 1 ? extent * (static_cast<float>(i) / static_cast<float>(count - 1) - 0.5f) : 0.0f;
+        };
+        return Vec3(axis(ix, probeCountX, size.x), axis(iy, probeCountY, size.y), axis(iz, probeCountZ, size.z));
+    }
+};
+
 // ═══════════════════════════════════════════════════════════════
 // PREFAB INSTANCING
 // ═══════════════════════════════════════════════════════════════

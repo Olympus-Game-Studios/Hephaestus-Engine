@@ -651,6 +651,50 @@ SceneSerializer::SceneSerializer(const Scene& scene)
 {
 }
 
+static std::string WriteProbeVolumeJson(const ProbeVolumeComponent& volume)
+{
+    std::ostringstream oss;
+    oss.imbue(std::locale::classic());
+    oss << "        \"ProbeVolume\": {\n";
+    oss << "          \"enabled\": " << (volume.enabled ? "true" : "false") << ",\n";
+    oss << "          \"size\": " << FormatVec3(volume.size) << ",\n";
+    oss << "          \"probeCounts\": [" << volume.probeCountX << ", " << volume.probeCountY << ", "
+        << volume.probeCountZ << "],\n";
+    oss << "          \"intensity\": " << FormatFloat(volume.intensity) << "\n";
+    oss << "        }";
+    return oss.str();
+}
+
+static bool ApplyProbeVolumeJson(ProbeVolumeComponent& volume, const JsonValue& data, std::string& outError)
+{
+    if (!data.IsObject()) {
+        outError = "ProbeVolume component is not an object.";
+        return false;
+    }
+    if (const JsonValue* enabled = data.Find("enabled")) {
+        volume.enabled = ParseBoolLike(*enabled, volume.enabled);
+    }
+    if (const JsonValue* size = data.Find("size")) {
+        ParseVec3(*size, volume.size);
+    }
+    if (const JsonValue* counts = data.Find("probeCounts")) {
+        int* targets[] = {&volume.probeCountX, &volume.probeCountY, &volume.probeCountZ};
+        if (counts->IsArray() && counts->AsArray().size() == 3) {
+            for (size_t i = 0; i < 3; ++i) {
+                if (counts->AsArray()[i].IsNumber()) {
+                    *targets[i] = std::max(1, static_cast<int>(counts->AsArray()[i].AsNumber()));
+                }
+            }
+        }
+    }
+    if (const JsonValue* intensity = data.Find("intensity")) {
+        if (intensity->IsNumber()) {
+            volume.intensity = static_cast<float>(intensity->AsNumber());
+        }
+    }
+    return true;
+}
+
 bool SceneSerializer::Serialize(const std::filesystem::path& filepath) const
 {
     std::string ignoredError;
@@ -754,6 +798,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         const AudioSourceComponent* audio = registry.try_get<AudioSourceComponent>(handle);
         const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
         const CharacterControllerComponent* characterController = registry.try_get<CharacterControllerComponent>(handle);
+        const ProbeVolumeComponent* probeVolume = registry.try_get<ProbeVolumeComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
         const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
@@ -1011,6 +1056,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
 
         if (characterController) {
             componentBlocks.push_back(WriteCharacterControllerJson(*characterController));
+        }
+
+        if (probeVolume) {
+            componentBlocks.push_back(WriteProbeVolumeJson(*probeVolume));
         }
 
         if (selection) {
@@ -1836,6 +1885,15 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
         }
 
+        if (const JsonValue* probeVolumeObj = components->Find("ProbeVolume")) {
+            auto& volume = entity.HasComponent<ProbeVolumeComponent>()
+                ? entity.GetComponent<ProbeVolumeComponent>()
+                : entity.AddComponent<ProbeVolumeComponent>();
+            if (!ApplyProbeVolumeJson(volume, *probeVolumeObj, outError)) {
+                return false;
+            }
+        }
+
         if (const JsonValue* selectionObj = components->Find("Selection")) {
             if (!selectionObj->IsObject()) {
                 outError = "Selection component is not an object.";
@@ -2291,6 +2349,7 @@ std::string SceneSerializer::SerializeToString() const
         const AudioSourceComponent* audio = registry.try_get<AudioSourceComponent>(handle);
         const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
         const CharacterControllerComponent* characterController = registry.try_get<CharacterControllerComponent>(handle);
+        const ProbeVolumeComponent* probeVolume = registry.try_get<ProbeVolumeComponent>(handle);
         const SelectionComponent* selection = registry.try_get<SelectionComponent>(handle);
         const FolderComponent* folder = registry.try_get<FolderComponent>(handle);
         const EnvironmentComponent* environment = registry.try_get<EnvironmentComponent>(handle);
@@ -2532,6 +2591,10 @@ std::string SceneSerializer::SerializeToString() const
 
         if (characterController) {
             componentBlocks.push_back(WriteCharacterControllerJson(*characterController));
+        }
+
+        if (probeVolume) {
+            componentBlocks.push_back(WriteProbeVolumeJson(*probeVolume));
         }
 
         if (selection) {

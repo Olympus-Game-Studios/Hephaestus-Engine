@@ -614,6 +614,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/CharacterInspector.h
             engine/UI/QtEditor/CharacterControllerInspector.cpp
             engine/UI/QtEditor/CharacterControllerInspector.h
+            engine/UI/QtEditor/ProbeVolumeInspector.cpp
+            engine/UI/QtEditor/ProbeVolumeInspector.h
             engine/UI/QtEditor/CharacterImportDialog.cpp
             engine/UI/QtEditor/CharacterImportDialog.h
             engine/UI/QtEditor/PhysicsInspectors.cpp
@@ -1497,6 +1499,13 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         "${CMAKE_BINARY_DIR}/generated"
     )
     add_test(NAME CharacterControllerMath COMMAND CharacterControllerMathTests)
+
+    add_executable(ProbeVolumeTests
+        engine/Tests/ProbeVolumeTests.cpp
+    )
+    target_link_libraries(ProbeVolumeTests PRIVATE HephaestusRuntime)
+    target_include_directories(ProbeVolumeTests PRIVATE engine extern extern/entt/single_include)
+    add_test(NAME ProbeVolume COMMAND ProbeVolumeTests)
 
     add_executable(CharacterControllerJoltTests
         engine/Tests/CharacterControllerJoltTests.cpp

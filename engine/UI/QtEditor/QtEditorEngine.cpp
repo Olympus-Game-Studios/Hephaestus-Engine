@@ -1883,6 +1883,38 @@ void QtEditorEngine::onTick()
     m_renderInProgress = false;
 }
 
+static void AppendProbeVolumeDebugDraw(Scene& scene, std::vector<EditorDebugLine>& lines,
+                                       std::vector<EditorDebugPoint>& points)
+{
+    for (entt::entity handle : scene.GetRegistry().view<ProbeVolumeComponent>()) {
+        const auto& volume = scene.GetRegistry().get<ProbeVolumeComponent>(handle);
+        const Mat4 world = scene.GetWorldTransform(Entity(handle, &scene));
+        const Vec3 center(world.m[12], world.m[13], world.m[14]);
+        const Vec3 color = volume.enabled ? Vec3(0.3f, 0.8f, 1.0f) : Vec3(0.5f, 0.5f, 0.5f);
+        const Vec3 h(volume.size.x * 0.5f, volume.size.y * 0.5f, volume.size.z * 0.5f);
+        auto corner = [&](int i) {
+            return Vec3(center.x + ((i & 1) ? h.x : -h.x), center.y + ((i & 2) ? h.y : -h.y),
+                        center.z + ((i & 4) ? h.z : -h.z));
+        };
+        for (int i = 0; i < 8; ++i) {
+            for (int bit = 1; bit < 8; bit <<= 1) {
+                if (!(i & bit)) {
+                    lines.push_back({corner(i), corner(i | bit), color});
+                }
+            }
+        }
+        for (int z = 0; z < volume.probeCountZ; ++z) {
+            for (int y = 0; y < volume.probeCountY; ++y) {
+                for (int x = 0; x < volume.probeCountX; ++x) {
+                    const Vec3 offset = volume.ProbeOffset(x, y, z);
+                    points.push_back({Vec3(center.x + offset.x, center.y + offset.y, center.z + offset.z),
+                                      color, 0.08f});
+                }
+            }
+        }
+    }
+}
+
 void QtEditorEngine::renderFrame()
 {
     static std::string lastSceneName;
@@ -1960,6 +1992,7 @@ void QtEditorEngine::renderFrame()
     m_renderConfig.enableSnap = snapSettings.enableSnap;
     m_renderConfig.debugLines = m_debugLines;
     m_renderConfig.debugPoints = m_debugPoints;
+    AppendProbeVolumeDebugDraw(*scene, m_renderConfig.debugLines, m_renderConfig.debugPoints);
     // Set snap value based on current gizmo mode
     switch (m_editorContext.GetGizmoMode()) {
         case Hephaestus::GizmoMode::Translate:

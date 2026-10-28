@@ -20,6 +20,7 @@
 #include "PrefabInstanceBar.h"
 #include "LightInspector.h"
 #include "EnvironmentInspector.h"
+#include "ProbeVolumeInspector.h"
 #include "ComponentInspector.h"
 #include "MeshRendererInspector.h"
 #include "ScriptInspector.h"
@@ -7203,6 +7204,14 @@ void EditorMainWindow::registerComponentInspectors()
             return new EnvironmentInspector(ctx, e, parent);
         });
 
+    reg.Register("ProbeVolume", 11,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<ProbeVolumeComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new ProbeVolumeInspector(ctx, e, parent);
+        });
+
     // ── AudioSource (order 42) ──────────────────────────────────────────
     reg.Register("AudioSource", 42,
         [](const entt::registry& r, entt::entity e) {
@@ -7478,6 +7487,9 @@ void EditorMainWindow::resetInspectorComponent(const std::string& type)
         }
         if (type == "Environment" && entity.HasComponent<EnvironmentComponent>()) {
             entity.RemoveComponent<EnvironmentComponent>();
+        }
+        if (type == "ProbeVolume" && entity.HasComponent<ProbeVolumeComponent>()) {
+            entity.RemoveComponent<ProbeVolumeComponent>();
         }
         BatchAddComponent(*ctx->GetActiveScene(), { handle }, type);
     }

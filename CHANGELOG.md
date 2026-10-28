@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-10-28: New Probe Volume component (Add Component → Lighting) places a box-shaped grid of global illumination probes, with size, probes per axis and intensity. Scenes save and load it, and the editor viewport shows the box and every probe position. It does not light the scene yet; baking and probe lighting follow in later steps.
 - 2026-10-28: Scenes with an HDRI environment (with "Use as IBL" on) now take their ambient light from the sky: the HDRI is projected to spherical harmonics when it loads and lights surfaces by their facing. The HDRI's sun is left out because the scene's directional light supplies it. Scenes without an HDRI keep the flat ambient.
 - 2026-10-28: The frame renderer now draws the scene into a linear HDR target and tone-maps it in one pass, with editor overlays and runtime HUI drawn after tone mapping. Lighting looks the same as before. This is the first step toward probe-based global illumination. The swapchain format is now chosen explicitly (UNORM preferred), which fixes doubled gamma on drivers that list an sRGB surface format first.
 - 2026-10-16: Consolidated Hephaestus engineering standards into `.agents/*.md` with root `AGENTS.md` as the shared entry point. Cursor/OpenCode skill adapters route to the shared rules, GitHub Copilot uses native AGENTS.md discovery, and `CLAUDE.md` imports the shared entry point for compatibility. Retired duplicated legacy instruction files.
