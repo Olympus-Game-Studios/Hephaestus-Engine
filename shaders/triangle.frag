@@ -133,8 +133,16 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
     else if (viewDepth < lighting.cascadeSplits.z) cascade = 2;
     else                                           cascade = 3;
     
-    // Transform world position by this cascade's VP matrix
-    vec4 cascadeLightSpace = lighting.cascadeViewProj[cascade] * vec4(fragWorldPos, 1.0);
+    // Biases are sized from this cascade's texel footprint, so they stay a few centimetres near the camera
+    // instead of a fixed fraction of the cascade's whole depth range (which leaked light at contact points).
+    vec3 geometricNormal = normalize(fragNormal);
+    float NdotL = clamp(dot(geometricNormal, lightDir), 0.0, 1.0);
+    float texelWorld = lighting.cascadeTexelWorld[cascade];
+    float normalOffset = texelWorld * (0.5 + 1.5 * (1.0 - NdotL)) + lighting.shadowBiasWorld.y;
+    vec3 shadowPos = fragWorldPos + geometricNormal * normalOffset;
+    float bias = (texelWorld + lighting.shadowBiasWorld.x) / lighting.cascadeDepthRange[cascade];
+
+    vec4 cascadeLightSpace = lighting.cascadeViewProj[cascade] * vec4(shadowPos, 1.0);
     vec3 projCoords = cascadeLightSpace.xyz / cascadeLightSpace.w;
     
     // Transform from NDC [-1,1] to texture coordinates [0,1]
@@ -159,14 +167,6 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
     
     vec2 atlasUV = projCoords.xy * 0.5 + atlasOffset;
 
-    // Calculate slope-scaled bias — scale with cascade index for stability
-    float baseBias = lighting.dirShadowParams.x;
-    float NdotL = max(dot(normal, lightDir), 0.0);
-    float slopeBias = baseBias * tan(acos(clamp(NdotL, 0.001, 1.0)));
-    slopeBias = clamp(slopeBias, 0.0, baseBias * 5.0);
-    float cascadeBiasScale = 1.0 + float(cascade) * 0.75;
-    float bias = (baseBias + slopeBias) * cascadeBiasScale;
-    
     // Texel size in full-atlas UV space (1 / full resolution)
     float texelSize = lighting.dirShadowParams.z;
 

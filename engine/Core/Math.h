@@ -423,7 +423,8 @@ inline Mat4 ComputeCascadeShadowVP(
     float camYawDeg, float camPitchDeg,
     float sliceNear, float sliceFar,
     float fovRadians, float aspect,
-    Vec3 lightDir)
+    Vec3 lightDir,
+    float* outRadius = nullptr, float* outDepthRange = nullptr)
 {
     constexpr float D2R = 3.1415926535f / 180.0f;
 
@@ -494,6 +495,8 @@ inline Mat4 ComputeCascadeShadowVP(
     float nearZ = 0.1f;
     float farZ = extraTowardLight + radius * 2.0f + 1.0f;
     Mat4 lp = Mat4::OrthographicShadow(-radius, radius, -radius, radius, nearZ, farZ);
+    if (outRadius) *outRadius = radius;
+    if (outDepthRange) *outDepthRange = farZ - nearZ;
 
     return Mat4::Multiply(lp, lv);
 }

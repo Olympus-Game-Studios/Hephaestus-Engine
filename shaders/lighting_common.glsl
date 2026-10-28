@@ -22,6 +22,9 @@ layout(std140, set = LIGHTING_SET, binding = LIGHTING_BINDING) uniform LightingU
     mat4 cascadeViewProj[4];
     vec4 cascadeSplits;
     vec4 skyIrradianceSH[9]; // see engine/Gfx/SkyIrradiance.cpp
+    vec4 cascadeTexelWorld;  // world size of one shadow texel per cascade
+    vec4 cascadeDepthRange;  // light-space depth range per cascade
+    vec4 shadowBiasWorld;    // x = extra depth bias, y = extra normal offset (metres)
 } lighting;
 
 // Calculate light attenuation for point lights

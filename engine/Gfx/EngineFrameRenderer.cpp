@@ -169,6 +169,9 @@ struct LightingUBO {
     Mat4 cascadeViewProj[4];
     Vec4 cascadeSplits;  // view-space far plane for each cascade
     Vec4 skyIrradianceSH[9];
+    Vec4 cascadeTexelWorld;  // world-space size of one shadow texel per cascade
+    Vec4 cascadeDepthRange;  // light-space depth range per cascade, to turn world biases into depth
+    Vec4 shadowBiasWorld;    // x = extra depth bias, y = extra normal offset (metres)
 };
 
 static bool MeshAllowsHiddenEditorOutline(const MeshRendererComponent& renderer,
@@ -2944,13 +2947,21 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                     ComputeCascadeSplits(camera.nearPlane, maxRange, splits);
                     
                     // Compute VP matrix for each cascade
+                    float radii[CSM_CASCADE_COUNT] = {};
+                    float depthRanges[CSM_CASCADE_COUNT] = {};
                     for (int c = 0; c < CSM_CASCADE_COUNT; c++) {
                         lightUBO.cascadeViewProj[c] = ComputeCascadeShadowVP(
                             camera.positionX, camera.positionY, camera.positionZ,
                             camera.yawDeg, camera.pitchDeg,
                             splits[c], splits[c + 1],
-                            fovY, aspect, lightDir);
+                            fovY, aspect, lightDir, &radii[c], &depthRanges[c]);
                     }
+                    const float tileResolution = static_cast<float>(m_directionalShadow.resolution / 2);
+                    lightUBO.cascadeTexelWorld = Vec4(2.0f * radii[0] / tileResolution, 2.0f * radii[1] / tileResolution,
+                                                      2.0f * radii[2] / tileResolution, 2.0f * radii[3] / tileResolution);
+                    lightUBO.cascadeDepthRange = Vec4(depthRanges[0], depthRanges[1], depthRanges[2], depthRanges[3]);
+                    lightUBO.shadowBiasWorld = Vec4(std::max(0.0f, light.shadowBias),
+                                                    std::max(0.0f, light.shadowNormalBias), 0.0f, 0.0f);
                     lightUBO.cascadeSplits = Vec4(splits[1], splits[2], splits[3], splits[4]);
                     lightUBO.cascadeCount = CSM_CASCADE_COUNT;
                     
