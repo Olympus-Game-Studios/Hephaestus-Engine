@@ -281,6 +281,8 @@ target_compile_definitions(HephaestusMcpCore PUBLIC
 # Stable, Qt-independent plugin discovery/lifecycle and mounted-content core.
 add_library(HephaestusPluginCore STATIC
     engine/Assets/AssetMountRegistry.cpp
+    engine/Assets/AssetPathPolicy.cpp
+    engine/Assets/AssetReferenceIndex.cpp
     engine/Plugins/PluginManifest.cpp
     engine/Plugins/PluginContent.cpp
     engine/Plugins/PluginSystem.cpp
@@ -288,9 +290,10 @@ add_library(HephaestusPluginCore STATIC
 target_include_directories(HephaestusPluginCore PUBLIC engine extern)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Shared Engine Sources (used by both Editor and Game)
+# HephaestusRuntime: the Qt-free engine shared by the editor, the packaged game
+# and the tests. Never link Qt here.
 # ─────────────────────────────────────────────────────────────────────────────
-    set(ENGINE_CORE_SOURCES
+add_library(HephaestusRuntime STATIC
     engine/Audio/AudioEngine.cpp
     engine/Assets/ModelImporter.cpp
     engine/Assets/FbxDocument.cpp
@@ -299,8 +302,6 @@ target_include_directories(HephaestusPluginCore PUBLIC engine extern)
     engine/Assets/AssetDatabase.cpp
     engine/Assets/AssetImporters.cpp
     engine/Assets/AssetManager.cpp
-    engine/Assets/AssetPathPolicy.cpp
-    engine/Assets/AssetReferenceIndex.cpp
     engine/Assets/CharacterAsset.cpp
     engine/Assets/CharacterRuntime.cpp
     engine/Assets/CharacterRuntimeGpu.cpp
@@ -309,18 +310,7 @@ target_include_directories(HephaestusPluginCore PUBLIC engine extern)
     engine/Animation/Skeleton.cpp
     engine/Animation/AnimationClip.cpp
     engine/Animation/CharacterPlayback.cpp
-    engine/Assets/OpenDocumentRegistry.cpp
-    engine/Assets/AssetOperationService.cpp
-    engine/Assets/DerivedDataCache.cpp
-    engine/Assets/EditorAssetPipeline.cpp
-    engine/Assets/EditorViewState.cpp
-    engine/Assets/FileWatcher.cpp
-    engine/Assets/RecoveryStore.cpp
-    engine/Assets/ReimportManager.cpp
-    engine/Core/EditorContext.cpp
-    engine/Core/EditorCameraController.cpp
     engine/Core/ProjectContext.cpp
-    engine/Core/PlayModeManager.cpp
     engine/Core/EngineLog.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
@@ -375,6 +365,32 @@ target_include_directories(HephaestusPluginCore PUBLIC engine extern)
     engine/UI/HephaestusUI/Rendering/UIFontAtlas.cpp
     engine/UI/HephaestusUI/Rendering/VulkanHUIRenderer.cpp
 )
+target_include_directories(HephaestusRuntime PUBLIC
+    engine
+    extern
+    extern/VMA
+    extern/entt/single_include
+    extern/JoltPhysics
+    extern/JoltPhysics/Build
+    "${CMAKE_BINARY_DIR}/generated"
+)
+target_link_libraries(HephaestusRuntime PUBLIC
+    HephaestusInputCore HephaestusPluginCore Vulkan::Vulkan glfw Jolt ufbx
+)
+if(LUA_FOUND)
+    if(TARGET Lua::Lua)
+        target_link_libraries(HephaestusRuntime PUBLIC Lua::Lua)
+    else()
+        target_link_libraries(HephaestusRuntime PUBLIC ${LUA_LIBRARIES})
+    endif()
+    target_include_directories(HephaestusRuntime PUBLIC ${LUA_INCLUDE_DIR})
+    target_compile_definitions(HephaestusRuntime PUBLIC LUA_AVAILABLE=1)
+else()
+    target_compile_definitions(HephaestusRuntime PUBLIC LUA_AVAILABLE=0)
+endif()
+if(WIN32)
+    target_link_libraries(HephaestusRuntime PUBLIC winmm)
+endif()
 
 # Editor-only sources
 set(EDITOR_ONLY_SOURCES
@@ -391,12 +407,6 @@ set(EDITOR_ONLY_SOURCES
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
 
-# Game runtime-only sources
-set(GAME_RUNTIME_SOURCES
-    engine/Game/GameMain.cpp
-    engine/Core/RuntimeBootstrap.cpp
-)
-
 # Shared non-Qt project validation and packaging pipeline used by the editor
 # and headless CLI. Keep compiler/process orchestration out of Qt UI code.
 add_library(HephaestusBuildCore STATIC
@@ -405,8 +415,6 @@ add_library(HephaestusBuildCore STATIC
     engine/Build/PackageStager.cpp
     engine/Build/ProjectValidator.cpp
     engine/Build/RuntimeLocator.cpp
-    engine/Assets/AssetPathPolicy.cpp
-    engine/Assets/AssetReferenceIndex.cpp
 )
 target_include_directories(HephaestusBuildCore PUBLIC engine extern)
 target_link_libraries(HephaestusBuildCore PUBLIC HephaestusPluginCore)
@@ -985,8 +993,8 @@ endif()
 if(HEPHAESTUS_BUILD_GAME)
 
 add_executable(HephaestusGame
-    ${ENGINE_CORE_SOURCES}
-    ${GAME_RUNTIME_SOURCES}
+    engine/Game/GameMain.cpp
+    engine/Core/RuntimeBootstrap.cpp
 )
 
 set(HEPHAESTUS_GAME_ICON "" CACHE FILEPATH
@@ -1015,40 +1023,12 @@ if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND)
 else()
     target_compile_definitions(HephaestusGame PRIVATE HEPHAESTUS_GAME_SCRIPTING=0)
 endif()
-if(LUA_FOUND)
-    target_compile_definitions(HephaestusGame PRIVATE LUA_AVAILABLE=1)
-else()
-    target_compile_definitions(HephaestusGame PRIVATE LUA_AVAILABLE=0)
-endif()
 
-target_include_directories(HephaestusGame PRIVATE
-    engine
-    extern
-    extern/VMA
-    extern/entt/single_include
-    extern/JoltPhysics
-    extern/JoltPhysics/Build
-    "${CMAKE_BINARY_DIR}/generated"
-)
-
-# Link libraries for game runtime
-set(GAME_LINK_LIBS Vulkan::Vulkan glfw Jolt)
-
-if(LUA_FOUND)
-    if(TARGET Lua::Lua)
-        list(APPEND GAME_LINK_LIBS Lua::Lua)
-    else()
-        list(APPEND GAME_LINK_LIBS ${LUA_LIBRARIES})
-        target_include_directories(HephaestusGame PRIVATE ${LUA_INCLUDE_DIR})
-    endif()
-endif()
-
-target_link_libraries(HephaestusGame PRIVATE ${GAME_LINK_LIBS} HephaestusInputCore HephaestusPluginCore ufbx)
+target_link_libraries(HephaestusGame PRIVATE HephaestusRuntime)
 
 # Windows: link dbghelp for crash handler
 if(WIN32)
     target_link_libraries(HephaestusGame PRIVATE dbghelp)
-    target_link_libraries(HephaestusGame PRIVATE winmm)
 endif()
 
 # Set output directory for game executable
