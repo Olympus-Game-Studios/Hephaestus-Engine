@@ -447,7 +447,7 @@ bool QtEditorEngine::createSwapchain()
         
         // Initialize the frame renderer
         m_frameRenderer = std::make_unique<Hephaestus::EngineFrameRenderer>();
-        if (!m_frameRenderer->Init(m_device.get(), m_swapchain.get())) {
+        if (!m_frameRenderer->Init(m_device.get(), m_swapchain.get(), true)) {
             throw std::runtime_error("Failed to initialize frame renderer");
         }
         

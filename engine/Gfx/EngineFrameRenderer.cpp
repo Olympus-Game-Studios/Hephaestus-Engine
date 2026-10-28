@@ -243,12 +243,13 @@ EngineFrameRenderer::~EngineFrameRenderer()
     Shutdown();
 }
 
-bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
+bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain, bool editorOverlays)
 {
     if (m_initialized) {
         std::cerr << "[EngineFrameRenderer] Already initialized\n";
         return false;
     }
+    m_editorOverlays = editorOverlays;
     
     if (!device || !swapchain) {
         std::cerr << "[EngineFrameRenderer] Invalid device or swapchain\n";
@@ -351,46 +352,44 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain)
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create skinned mesh pipelines\n";
     }
     
-    // Editor viewport grid (optional; omitted in standalone game runtime)
-#ifndef HEPHAESTUS_GAME_RUNTIME
-    // Editor-only resources are compiled out of the packaged runtime. Per-frame
-    // visibility remains controlled by FrameRenderConfig for editor and play modes.
-    if (!createGridResources()) {
-        std::cerr << "[EngineFrameRenderer] Warning: Failed to create grid resources (grid will be disabled)\n";
-    }
-    if (!createDebugOverlayResources()) {
-        std::cerr << "[EngineFrameRenderer] Warning: Failed to create debug overlay resources\n";
-    }
+    // Editor overlay resources are created only for hosts that request them at Init.
+    if (m_editorOverlays) {
+        if (!createGridResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to create grid resources (grid will be disabled)\n";
+        }
+        if (!createDebugOverlayResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to create debug overlay resources\n";
+        }
 
-    // Create outline resources (optional, failure doesn't prevent init)
-    if (!createOutlineResources()) {
-        std::cerr << "[EngineFrameRenderer] Warning: Failed to create outline resources (outlines will be disabled)\n";
-    } else if (!createSkinnedOutlinePipelines()) {
-        std::cerr << "[EngineFrameRenderer] Warning: Failed to create skinned outline pipelines\n";
-    }
+        // Create outline resources (optional, failure doesn't prevent init)
+        if (!createOutlineResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to create outline resources (outlines will be disabled)\n";
+        } else if (!createSkinnedOutlinePipelines()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to create skinned outline pipelines\n";
+        }
     
-    // Create ID picker resources (optional, failure doesn't prevent init)
-    if (!createIdPickerResources()) {
-        std::cerr << "[EngineFrameRenderer] Warning: Failed to create ID picker resources (picking will be disabled)\n";
-    } else if (!createSkinnedIdPipelines()) {
-        std::cerr << "[EngineFrameRenderer] Warning: Failed to create skinned ID pipelines\n";
-    }
+        // Create ID picker resources (optional, failure doesn't prevent init)
+        if (!createIdPickerResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to create ID picker resources (picking will be disabled)\n";
+        } else if (!createSkinnedIdPipelines()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to create skinned ID pipelines\n";
+        }
 
-    // Create gizmo resources (optional, failure doesn't prevent init)
-    if (!createGizmoResources()) {
-        std::cerr << "[EngineFrameRenderer] Warning: Failed to create gizmo resources (gizmo will be disabled)\n";
-    }
+        // Create gizmo resources (optional, failure doesn't prevent init)
+        if (!createGizmoResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to create gizmo resources (gizmo will be disabled)\n";
+        }
 
-    // Create directional light gizmo resources (optional)
-    if (!createLightGizmoResources()) {
-        std::cerr << "[EngineFrameRenderer] Warning: Failed to create light gizmo resources (light gizmos will be disabled)\n";
-    }
+        // Create directional light gizmo resources (optional)
+        if (!createLightGizmoResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to create light gizmo resources (light gizmos will be disabled)\n";
+        }
 
-    // Create billboard resources (optional, failure doesn't prevent init)
-    if (!createBillboardResources()) {
-        std::cerr << "[EngineFrameRenderer] Warning: Failed to create billboard resources (light icons will be disabled)\n";
+        // Create billboard resources (optional, failure doesn't prevent init)
+        if (!createBillboardResources()) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to create billboard resources (light icons will be disabled)\n";
+        }
     }
-#endif
 
     // Create skybox resources (optional, failure doesn't prevent init)
     if (!createSkyboxResources()) {
@@ -629,33 +628,33 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             }
         }
 
-#ifndef HEPHAESTUS_GAME_RUNTIME
-        if (!createGridResources()) {
-            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate grid resources\n";
+        if (m_editorOverlays) {
+            if (!createGridResources()) {
+                std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate grid resources\n";
+            }
+            if (!createDebugOverlayResources()) {
+                std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate debug overlay resources\n";
+            }
+            if (!createOutlineResources()) {
+                std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate outline resources\n";
+            } else if (!createSkinnedOutlinePipelines()) {
+                std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate skinned outline pipelines\n";
+            }
+            if (!createIdPickerResources()) {
+                std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate ID picker resources\n";
+            } else if (!createSkinnedIdPipelines()) {
+                std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate skinned ID pipelines\n";
+            }
+            if (!createGizmoResources()) {
+                std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate gizmo resources\n";
+            }
+            if (!createLightGizmoResources()) {
+                std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate light gizmo resources\n";
+            }
+            if (!createBillboardResources()) {
+                std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate billboard resources\n";
+            }
         }
-        if (!createDebugOverlayResources()) {
-            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate debug overlay resources\n";
-        }
-        if (!createOutlineResources()) {
-            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate outline resources\n";
-        } else if (!createSkinnedOutlinePipelines()) {
-            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate skinned outline pipelines\n";
-        }
-        if (!createIdPickerResources()) {
-            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate ID picker resources\n";
-        } else if (!createSkinnedIdPipelines()) {
-            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate skinned ID pipelines\n";
-        }
-        if (!createGizmoResources()) {
-            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate gizmo resources\n";
-        }
-        if (!createLightGizmoResources()) {
-            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate light gizmo resources\n";
-        }
-        if (!createBillboardResources()) {
-            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate billboard resources\n";
-        }
-#endif
 
         // Recreate the runtime HUI overlay for the new swapchain (the old
         // pipeline/vertex buffers were destroyed in cleanupSwapchainResources).
@@ -3809,14 +3808,11 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     if (config.isEditorMode && config.renderGrid && !config.isPlaying) {
         recordGrid(cmd, imageIndex, config);
     }
-#ifndef HEPHAESTUS_GAME_RUNTIME
     if (config.isEditorMode && !config.isPlaying) {
         recordDebugOverlay(cmd, imageIndex, config);
     }
-#endif
     
     // Render billboard icons for lights and other editor icons (before outlines/gizmo)  
-#ifndef HEPHAESTUS_GAME_RUNTIME
     if (config.isEditorMode && config.renderBillboards && !config.isPlaying) {
         recordBillboards(cmd, imageIndex, scene);
     }
@@ -3825,20 +3821,17 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     if (config.isEditorMode && !config.isPlaying) {
         recordLightGizmos(cmd, imageIndex, scene, config);
     }
-#endif
 
     // Render selection outlines and hidden-object outlines (editor mode)
     if (config.isEditorMode && config.renderOutlines) {
         recordOutlines(cmd, imageIndex, scene, config);
     }
     
-#ifndef HEPHAESTUS_GAME_RUNTIME
     // Render gizmo on selected entity
     if (config.isEditorMode && config.renderGizmo && m_gizmoInitialized && 
         m_gizmoTargetEntity != UINT32_MAX) {
         m_gizmo.Render(cmd, m_descriptorSets[imageIndex]);
     }
-#endif
 
     // Runtime HUI overlay (drawn after the 3D scene and editor overlays, so the
     // UI appears on top; depth test/write are disabled by the UI pipeline).
@@ -3991,7 +3984,6 @@ void EngineFrameRenderer::recordOutlines(VkCommandBuffer cmd, uint32_t imageInde
 // Gizmo Integration (Editor-only)
 // ============================================================================
 
-#ifndef HEPHAESTUS_GAME_RUNTIME
 
 bool EngineFrameRenderer::createGizmoResources()
 {
@@ -4126,7 +4118,6 @@ bool EngineFrameRenderer::CheckGizmoHover(float screenX, float screenY, const Ma
     return outAxis >= 0;
 }
 
-#endif // HEPHAESTUS_GAME_RUNTIME
 
 // ============================================================================
 // Private: Cleanup
@@ -4138,7 +4129,6 @@ void EngineFrameRenderer::cleanupSwapchainResources()
 
     cleanupSkinnedGraphicsPipelines();
 
-#ifndef HEPHAESTUS_GAME_RUNTIME
     cleanupBillboardResources();
     cleanupGizmoResources();
     cleanupLightGizmoResources();
@@ -4157,7 +4147,6 @@ void EngineFrameRenderer::cleanupSwapchainResources()
     m_debugOverlay.initialized = false;
     m_debugOverlay.vertexCount = 0;
     m_debugOverlay.vertexCapacity = 0;
-#endif
 
     // Destroy swapchain-dependent HUI overlay resources (pipeline + per-image
     // buffers); textures and font atlases survive.
@@ -4343,12 +4332,10 @@ void EngineFrameRenderer::destroyAllResources()
     // Cleanup ID picker
     cleanupIdPickerResources();
     
-#ifndef HEPHAESTUS_GAME_RUNTIME
     // Cleanup gizmo
     cleanupGizmoResources();
     // Cleanup light direction gizmo
     cleanupLightGizmoResources();
-#endif
 
     // Cleanup shadow map resources
     if (m_directionalShadow.pipeline != VK_NULL_HANDLE) {
@@ -5088,7 +5075,7 @@ void EngineFrameRenderer::EditorGrid::Cleanup(VkDevice device)
 void EngineFrameRenderer::recordGrid(VkCommandBuffer cmd, uint32_t imageIndex, 
                                       const FrameRenderConfig& config)
 {
-    if (!config.renderGrid || !config.isEditorMode || config.isPlaying) return;
+    if (!m_editorGrid.initialized || !config.renderGrid || !config.isEditorMode || config.isPlaying) return;
     
     EditorGrid::GridPushConstants pc;
     pc.gridSize = 10.0f;     // Major grid lines every 10 units
@@ -5117,7 +5104,6 @@ bool EngineFrameRenderer::createGridResources()
     return m_editorGrid.initialized;
 }
 
-#ifndef HEPHAESTUS_GAME_RUNTIME
 bool EngineFrameRenderer::createDebugOverlayResources()
 {
     if (m_debugOverlay.initialized) {
@@ -5333,14 +5319,6 @@ void EngineFrameRenderer::recordDebugOverlay(VkCommandBuffer cmd, uint32_t image
     vkCmdBindVertexBuffers(cmd, 0, 1, &m_debugOverlay.vertexBuffer.buffer, &offset);
     vkCmdDraw(cmd, m_debugOverlay.vertexCount, 1, 0, 0);
 }
-#else
-bool EngineFrameRenderer::createDebugOverlayResources() {
-    return true;
-}
-
-void EngineFrameRenderer::recordDebugOverlay(VkCommandBuffer /*cmd*/, uint32_t /*imageIndex*/,
-                                             const FrameRenderConfig& /*config*/) {}
-#endif
 
 // ============================================================================
 // Selection Outline Renderer Implementation

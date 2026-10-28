@@ -716,7 +716,7 @@ int main(int argc, char* argv[]) {
     }
 
     Hephaestus::EngineFrameRenderer frameRenderer;
-    if (!frameRenderer.Init(&vkdev, &swap)) {
+    if (!frameRenderer.Init(&vkdev, &swap, false)) {
         Bootstrap::ShowFatalError("Renderer Error", "Failed to initialize the frame renderer.");
         frameRenderer.Shutdown();
         swap.Cleanup();

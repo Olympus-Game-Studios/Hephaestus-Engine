@@ -326,6 +326,8 @@ target_include_directories(HephaestusPluginCore PUBLIC engine extern)
     engine/Gfx/VulkanSwapchain.cpp
     engine/Gfx/VulkanPipeline.cpp
     engine/Gfx/VulkanTexture.cpp
+    engine/Gfx/VulkanGizmo.cpp
+    engine/Gfx/VulkanLightGizmo.cpp
     engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/PhysicsLayerConfig.cpp
@@ -996,11 +998,6 @@ if(WIN32 AND HEPHAESTUS_GAME_ICON AND EXISTS "${HEPHAESTUS_GAME_ICON}")
     target_sources(HephaestusGame PRIVATE "${GAME_ICON_RC}")
     set_source_files_properties("${GAME_ICON_RC}" PROPERTIES GENERATED TRUE)
 endif()
-
-# Game runtime compile definitions
-target_compile_definitions(HephaestusGame PRIVATE
-    HEPHAESTUS_GAME_RUNTIME=1
-)
 
 if(HEPHAESTUS_RUNTIME_AUTOMATION)
     target_compile_definitions(HephaestusGame PRIVATE

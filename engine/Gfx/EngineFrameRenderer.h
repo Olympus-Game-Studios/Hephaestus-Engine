@@ -26,10 +26,8 @@
 
 #include "VulkanBuffer.h"
 #include "VulkanTexture.h"
-#ifndef HEPHAESTUS_GAME_RUNTIME
 #include "VulkanGizmo.h"
 #include "VulkanLightGizmo.h"
-#endif
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
 #include "../Core/EditorDebugDraw.h"
@@ -159,9 +157,10 @@ public:
      * @brief Initialize the renderer with Vulkan resources.
      * @param device Initialized VulkanDevice (must outlive renderer)
      * @param swapchain Initialized VulkanSwapchain (must outlive renderer)
+     * @param editorOverlays Create grid, gizmo, billboard, outline, ID-picker and debug-overlay resources
      * @return true if initialization succeeded
      */
-    bool Init(VulkanDevice* device, VulkanSwapchain* swapchain);
+    bool Init(VulkanDevice* device, VulkanSwapchain* swapchain, bool editorOverlays);
 
     /**
      * @brief Handle viewport resize.
@@ -305,7 +304,6 @@ public:
     bool PollFrameCapture(FrameCapture& out, std::string& outError);
     void CancelFrameCapture();
 
-#ifndef HEPHAESTUS_GAME_RUNTIME
     // --- Transform Gizmo (Editor only) ---
 
     /**
@@ -341,12 +339,6 @@ public:
      */
     bool CheckGizmoHover(float screenX, float screenY, const Mat4& viewMatrix, 
                          const Mat4& projMatrix, int& outAxis);
-#else
-    // Stubs for game runtime
-    bool IsGizmoAvailable() const { return false; }
-    void UpdateGizmoState(uint32_t, const Mat4&, const Mat4&, const Mat4&, const Vec3&, int, int) {}
-    bool CheckGizmoHover(float, float, const Mat4&, const Mat4&, int& outAxis) { outAxis = -1; return false; }
-#endif
 
     // --- Accessors ---
 
@@ -409,13 +401,11 @@ private:
     void cleanupIdPickerResources();
     uint32_t resolvePickRegion() const;
     
-#ifndef HEPHAESTUS_GAME_RUNTIME
     // Gizmo helpers (Editor only)
     bool createGizmoResources();
     void cleanupGizmoResources();
     bool createLightGizmoResources();
     void cleanupLightGizmoResources();
-#endif
 
     // Cleanup helpers
     void cleanupSwapchainResources();
@@ -674,7 +664,6 @@ private:
     };
     EditorGrid m_editorGrid;
 
-#ifndef HEPHAESTUS_GAME_RUNTIME
     struct DebugOverlay {
         bool initialized = false;
         VkPipeline pipeline = VK_NULL_HANDLE;
@@ -684,7 +673,6 @@ private:
         uint32_t vertexCount = 0;
     };
     DebugOverlay m_debugOverlay;
-#endif
 
     // Entity ID picker for viewport selection
     struct IdPicker {
@@ -767,7 +755,6 @@ private:
     };
     OutlineRenderer m_outlineRenderer;
 
-#ifndef HEPHAESTUS_GAME_RUNTIME
     // Transform gizmo (editor-only)
     VulkanGizmo m_gizmo;
     bool m_gizmoInitialized = false;
@@ -780,7 +767,8 @@ private:
     // Directional light gizmo (editor-only)
     VulkanLightGizmo m_lightGizmo;
     bool m_lightGizmoInitialized = false;
-#endif
+
+    bool m_editorOverlays = false;
 };
 
 } // namespace Hephaestus
