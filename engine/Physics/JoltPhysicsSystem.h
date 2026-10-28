@@ -85,6 +85,10 @@ public:
     // Fixed-step update. frameDt is accumulated; each substep is 1/60 s.
     void Update(Scene& scene, float deltaTime);
 
+    // Call RestoreSimulationPoses after rendering and before anything else reads or writes transforms.
+    void ApplyRenderInterpolation(Scene& scene);
+    void RestoreSimulationPoses(Scene& scene);
+
     void ClearAccumulator();
     int LastSubstepCount() const { return m_LastSubstepCount; }
     int StalledStepCount() const { return m_StalledStepCount; }
@@ -160,6 +164,19 @@ private:
         Vec3 shapeScale{1.0f, 1.0f, 1.0f};
         entt::entity parent = entt::null;
     };
+
+    struct InterpolatedPose {
+        Vec3 previousPosition;
+        Vec3 currentPosition;
+        Vec3 previousRotation;
+        Vec3 currentRotation;
+        bool rotates = false;
+        bool applied = false;
+    };
+
+    std::unordered_map<entt::entity, InterpolatedPose> m_InterpolatedPoses;
+    void CaptureInterpolationStart(Scene& scene);
+    void CaptureInterpolationEnd(Scene& scene);
 
     std::unordered_map<entt::entity, BodyPoseBinding> m_BodyPoseBinding;
     std::unordered_set<entt::entity> m_PoseRejectionLogged;

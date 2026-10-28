@@ -569,6 +569,7 @@ void JoltPhysicsSystem::PrepareSceneBodies(Scene& scene) {
 }
 
 void JoltPhysicsSystem::ClearAccumulator() {
+    m_InterpolatedPoses.clear();
     m_Accumulator = 0.0f;
     m_LastSubstepCount = 0;
     m_StalledStepCount = 0;
@@ -671,7 +672,108 @@ void JoltPhysicsSystem::Update(Scene& scene, float deltaTime) {
     }
 
     for (int step = 1; step <= budget.substepCount; ++step) {
+        if (step == budget.substepCount) {
+            CaptureInterpolationStart(scene);
+        }
         stepBodies(&kinematicSlices, step, budget.substepCount);
+    }
+    CaptureInterpolationEnd(scene);
+}
+
+void JoltPhysicsSystem::CaptureInterpolationStart(Scene& scene)
+{
+    m_InterpolatedPoses.clear();
+    entt::registry& registry = scene.GetRegistry();
+    if (m_CharacterController) {
+        auto characters = scene.GetEntitiesWith<TransformComponent, CharacterControllerComponent>();
+        for (auto handle : characters) {
+            entt::entity entity = handle;
+            if (m_CharacterController->HasRuntime(entity)) {
+                InterpolatedPose& pose = m_InterpolatedPoses[entity];
+                pose.previousPosition = registry.get<TransformComponent>(entity).position;
+            }
+        }
+    }
+    for (const auto& [entity, bodyId] : m_EntityToBodyMap) {
+        if (!registry.valid(entity) || !registry.all_of<TransformComponent, RigidBodyComponent>(entity)
+            || !registry.get<RigidBodyComponent>(entity).IsDynamic()) {
+            continue;
+        }
+        const auto& transform = registry.get<TransformComponent>(entity);
+        auto [it, inserted] = m_InterpolatedPoses.try_emplace(entity);
+        if (inserted) {
+            it->second.previousPosition = transform.position;
+            it->second.previousRotation = transform.rotation;
+            it->second.rotates = true;
+        }
+    }
+}
+
+void JoltPhysicsSystem::CaptureInterpolationEnd(Scene& scene)
+{
+    entt::registry& registry = scene.GetRegistry();
+    for (auto it = m_InterpolatedPoses.begin(); it != m_InterpolatedPoses.end();) {
+        if (!registry.valid(it->first) || !registry.all_of<TransformComponent>(it->first)) {
+            it = m_InterpolatedPoses.erase(it);
+            continue;
+        }
+        const auto& transform = registry.get<TransformComponent>(it->first);
+        it->second.currentPosition = transform.position;
+        it->second.currentRotation = transform.rotation;
+        it->second.applied = false;
+        ++it;
+    }
+}
+
+void JoltPhysicsSystem::ApplyRenderInterpolation(Scene& scene)
+{
+    const float alpha = std::clamp(m_Accumulator / kPhysicsFixedDt, 0.0f, 1.0f);
+    entt::registry& registry = scene.GetRegistry();
+    for (auto& [entity, pose] : m_InterpolatedPoses) {
+        if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) {
+            continue;
+        }
+        auto& transform = registry.get<TransformComponent>(entity);
+        if (!PoseNearlyEqual(transform.position, pose.currentPosition)
+            || (pose.rotates && !PoseNearlyEqual(transform.rotation, pose.currentRotation))) {
+            continue;
+        }
+        const Vec3& from = pose.previousPosition;
+        const Vec3& to = pose.currentPosition;
+        transform.position = Vec3(from.x + (to.x - from.x) * alpha,
+                                  from.y + (to.y - from.y) * alpha,
+                                  from.z + (to.z - from.z) * alpha);
+        if (pose.rotates) {
+            const float dx = std::remainder(pose.currentRotation.x - pose.previousRotation.x, 2.0f * JPH::JPH_PI);
+            const float dy = std::remainder(pose.currentRotation.y - pose.previousRotation.y, 2.0f * JPH::JPH_PI);
+            const float dz = std::remainder(pose.currentRotation.z - pose.previousRotation.z, 2.0f * JPH::JPH_PI);
+            constexpr float kMaxEulerStep = 0.5f * JPH::JPH_PI;
+            if (std::abs(dx) < kMaxEulerStep && std::abs(dy) < kMaxEulerStep && std::abs(dz) < kMaxEulerStep) {
+                transform.rotation = Vec3(pose.previousRotation.x + dx * alpha,
+                                          pose.previousRotation.y + dy * alpha,
+                                          pose.previousRotation.z + dz * alpha);
+            }
+        }
+        pose.applied = true;
+    }
+}
+
+void JoltPhysicsSystem::RestoreSimulationPoses(Scene& scene)
+{
+    entt::registry& registry = scene.GetRegistry();
+    for (auto& [entity, pose] : m_InterpolatedPoses) {
+        if (!pose.applied) {
+            continue;
+        }
+        pose.applied = false;
+        if (!registry.valid(entity) || !registry.all_of<TransformComponent>(entity)) {
+            continue;
+        }
+        auto& transform = registry.get<TransformComponent>(entity);
+        transform.position = pose.currentPosition;
+        if (pose.rotates) {
+            transform.rotation = pose.currentRotation;
+        }
     }
 }
 
@@ -1336,6 +1438,7 @@ void JoltPhysicsSystem::ClearAllBodies() {
     m_BodyToEntityMap.clear();
     m_BodyPoseBinding.clear();
     m_PoseRejectionLogged.clear();
+    m_InterpolatedPoses.clear();
     ClearContactState();
 }
 

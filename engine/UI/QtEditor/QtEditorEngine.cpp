@@ -1835,6 +1835,13 @@ void QtEditorEngine::onTick()
         runtimeUI->renderer->Reset();
     }
 
+    Scene* interpolatedScene = nullptr;
+    if (isPlaying && m_playModeManager.ShouldAdvanceRealtime() && m_physicsInitialized &&
+        m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
+        interpolatedScene = m_editorContext.GetActiveScene();
+        m_joltPhysicsSystem->ApplyRenderInterpolation(*interpolatedScene);
+    }
+
     // ── Camera update ──────────────────────────────────────────────────────
     // Only update editor camera when NOT in RuntimeScript mode
     if (!isPlayOrPause || m_playModeManager.GetCameraMode() == Hephaestus::CameraMode::EditorFly) {
@@ -1868,7 +1875,10 @@ void QtEditorEngine::onTick()
     }
     
     renderFrame();
-    
+    if (interpolatedScene) {
+        m_joltPhysicsSystem->RestoreSimulationPoses(*interpolatedScene);
+    }
+
     emit frameRendered(dt);
     m_renderInProgress = false;
 }

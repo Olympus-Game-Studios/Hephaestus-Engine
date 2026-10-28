@@ -177,6 +177,29 @@ int main()
     }
 
     {
+        Session session("RenderInterpolation");
+        AddFloor(session);
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, 0.0f));
+        const entt::entity id = static_cast<entt::entity>(character);
+        auto& transform = character.GetComponent<TransformComponent>();
+        session.Step(30);
+        session.controllers.SetMoveInput(id, 1.0f, 0.0f);
+        session.Step(30);
+        transform.rotation.y = 1.0f;
+        const float previousX = transform.position.x;
+        session.system.Update(session.scene, 0.5f / 60.0f);
+        session.system.Update(session.scene, 1.0f / 60.0f);
+        const float currentX = transform.position.x;
+        session.system.ApplyRenderInterpolation(session.scene);
+        const float renderedX = transform.position.x;
+        Check(std::abs(renderedX - (previousX + (currentX - previousX) * 0.5f)) < 1.0e-4f,
+              "A moving character renders halfway through its last fixed step");
+        Check(transform.rotation.y == 1.0f, "Character facing is not interpolated");
+        session.system.RestoreSimulationPoses(session.scene);
+        Check(transform.position.x == currentX, "Restoring puts back the character's stepped position");
+    }
+
+    {
         Session session("Fall");
         AddFloor(session);
         Entity character = AddCharacter(session, Vec3(0.0f, 3.0f, 0.0f));

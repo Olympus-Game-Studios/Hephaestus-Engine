@@ -1413,6 +1413,10 @@ int main(int argc, char* argv[]) {
         uiRenderer.Reset();
         uiSystem.Render(uiRenderer);
 
+        if (realtimeSimulation) {
+            physicsSystem.ApplyRenderInterpolation(scene);
+        }
+
         // Follow the active CameraComponent after LateUpdate and before render.
         // Camera.setPosition / setRotation write that entity when one exists.
         SyncGameCameraFromActiveComponent(gameCamera);
@@ -1421,7 +1425,9 @@ int main(int argc, char* argv[]) {
         // backend; the frame renderer consumes it during RenderFrame().
         frameRenderer.SubmitHUICommands(uiRenderer.GetDrawCommands());
 
-        if (!frameRenderer.RenderFrame(&scene, gameCamera.ToRenderCamera(), renderConfig, deltaTime)) {
+        const bool rendered = frameRenderer.RenderFrame(&scene, gameCamera.ToRenderCamera(), renderConfig, deltaTime);
+        physicsSystem.RestoreSimulationPoses(scene);
+        if (!rendered) {
             if (frameRenderer.HasDeviceLost()) {
                 HP_LOG(Error, "Vulkan device lost; stopping the game loop");
                 Bootstrap::ShowFatalError("Renderer Error",

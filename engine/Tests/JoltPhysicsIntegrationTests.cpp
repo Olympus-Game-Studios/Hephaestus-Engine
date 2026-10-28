@@ -536,6 +536,49 @@ int main()
         world.Shutdown();
     }
 
+    {
+        Physics::JoltPhysicsEngine world;
+        world.Initialize();
+        world.BeginPlayWorld(Physics::PhysicsLayerConfig::Seed());
+        {
+            Scene scene("RenderInterpolation");
+            Physics::JoltPhysicsSystem system(world);
+            Entity box = scene.CreateEntity("FallingBox");
+            box.GetComponent<TransformComponent>().position = Vec3(0.0f, 10.0f, 0.0f);
+            auto& body = box.AddComponent<RigidBodyComponent>();
+            body.mass = 1.0f;
+            box.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.5f, 0.5f, 0.5f)));
+            auto& transform = box.GetComponent<TransformComponent>();
+
+            for (int frame = 0; frame < 10; ++frame) {
+                system.Update(scene, Physics::kPhysicsFixedDt);
+            }
+            const float previousY = transform.position.y;
+            system.Update(scene, Physics::kPhysicsFixedDt * 1.25f);
+            const float currentY = transform.position.y;
+            pass &= Check(system.LastSubstepCount() == 1 && currentY < previousY,
+                          "the box falls one fixed step and keeps a quarter step in the accumulator");
+
+            system.ApplyRenderInterpolation(scene);
+            const float renderedY = transform.position.y;
+            const float expectedY = previousY + (currentY - previousY) * 0.25f;
+            pass &= Check(std::abs(renderedY - expectedY) < 1.0e-4f,
+                          "render interpolation places the box a quarter of the way through the last step");
+            system.RestoreSimulationPoses(scene);
+            pass &= Check(transform.position.y == currentY,
+                          "restoring puts back the stepped simulation pose");
+
+            transform.position = Vec3(5.0f, 20.0f, 0.0f);
+            system.ApplyRenderInterpolation(scene);
+            pass &= Check(transform.position.x == 5.0f && transform.position.y == 20.0f,
+                          "a pose moved after the step is rendered where it was moved, not interpolated");
+            system.RestoreSimulationPoses(scene);
+            pass &= Check(transform.position.x == 5.0f && transform.position.y == 20.0f,
+                          "restoring leaves a pose that was not interpolated alone");
+        }
+        world.Shutdown();
+    }
+
     if (!pass) {
         std::cerr << "[FAIL] JoltPhysicsIntegrationTests\n";
         return 1;
