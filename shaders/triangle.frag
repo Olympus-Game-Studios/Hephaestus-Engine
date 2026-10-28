@@ -60,7 +60,7 @@ layout(std140, set = 0, binding = 2) uniform LightingUBO {
     vec4 dirLightDirIntensity;      // xyz = direction, w = intensity
     vec4 dirLightColor;             // rgb = color, w = unused
     vec4 ambientColorIntensity;     // rgb = ambient color, w = ambient intensity
-    vec4 environmentReflectionParams; // x = intensity, y = enabled, zw = unused
+    vec4 environmentReflectionParams; // x = intensity, y = enabled, z = sky irradiance enabled, w = sky intensity
     vec4 pointLightPositions[16];
     vec4 pointLightColors[16];
     vec4 pointLightAttenuation[16];
@@ -74,6 +74,7 @@ layout(std140, set = 0, binding = 2) uniform LightingUBO {
     float csmPadding1;
     mat4 cascadeViewProj[4];
     vec4 cascadeSplits;
+    vec4 skyIrradianceSH[9]; // see engine/Gfx/SkyIrradiance.cpp
 } lighting;
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
@@ -157,6 +158,19 @@ float calculateSpotlightFalloff(vec3 lightDir, vec3 lightToFrag, float innerAngl
     // Map from [cosOuter, cosInner] to [0, 1]
     float falloff = (cosTheta - cosOuter) / (cosInner - cosOuter);
     return smoothstep(0.0, 1.0, falloff);
+}
+
+vec3 evaluateSkyIrradiance(vec3 n) {
+    vec3 e = lighting.skyIrradianceSH[0].rgb * 0.282095;
+    e += lighting.skyIrradianceSH[1].rgb * (0.488603 * n.y);
+    e += lighting.skyIrradianceSH[2].rgb * (0.488603 * n.z);
+    e += lighting.skyIrradianceSH[3].rgb * (0.488603 * n.x);
+    e += lighting.skyIrradianceSH[4].rgb * (1.092548 * n.x * n.y);
+    e += lighting.skyIrradianceSH[5].rgb * (1.092548 * n.y * n.z);
+    e += lighting.skyIrradianceSH[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0));
+    e += lighting.skyIrradianceSH[7].rgb * (1.092548 * n.x * n.z);
+    e += lighting.skyIrradianceSH[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+    return max(e, vec3(0.0));
 }
 
 vec3 sampleEnvironmentReflection(vec3 direction) {
@@ -474,6 +488,10 @@ void main() {
     
     // ── Ambient Lighting ─────────────────────────────────────
     vec3 ambient = lighting.ambientColorIntensity.rgb * lighting.ambientColorIntensity.w * albedo * ao;
+    if (lighting.environmentReflectionParams.z > 0.5) {
+        vec3 irradiance = evaluateSkyIrradiance(N) * lighting.environmentReflectionParams.w;
+        ambient = irradiance / PI * albedo * (1.0 - metallic) * ao;
+    }
     vec3 color = ambient + Lo;
 
     // ── Environment Reflections ──────────────────────────────

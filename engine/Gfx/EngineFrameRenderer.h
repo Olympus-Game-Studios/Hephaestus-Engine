@@ -28,6 +28,7 @@
 #include "VulkanTexture.h"
 #include "VulkanGizmo.h"
 #include "VulkanLightGizmo.h"
+#include "SkyIrradiance.h"
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
 #include "../Core/EditorDebugDraw.h"
@@ -609,6 +610,7 @@ private:
 
         // Environment texture (loaded HDRI or fallback)
         VulkanTexture environmentTexture;
+        IrradianceSH irradianceSH{};
 
         // Cube vertex buffer for skybox
         VkBuffer vertexBuffer = VK_NULL_HANDLE;

@@ -150,7 +150,8 @@ bool VulkanTexture::LoadHDRFromFile(
     VkPhysicalDevice physicalDevice,
     VkCommandPool commandPool,
     VkQueue graphicsQueue,
-    const std::string& filepath)
+    const std::string& filepath,
+    std::vector<float>* outPixels)
 {
     // Load HDR image using stbi_loadf (returns float data)
     int texWidth, texHeight, texChannels;
@@ -183,6 +184,9 @@ bool VulkanTexture::LoadHDRFromFile(
     memcpy(data, pixels, static_cast<size_t>(imageSize));
     vmaUnmapMemory(allocator, stagingBuffer.allocation);
 
+    if (outPixels) {
+        outPixels->assign(pixels, pixels + static_cast<size_t>(width) * height * 4);
+    }
     stbi_image_free(pixels);
     stbi_set_flip_vertically_on_load(false);
 

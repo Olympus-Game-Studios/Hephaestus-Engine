@@ -320,6 +320,7 @@ add_library(HephaestusRuntime STATIC
     engine/Gfx/VulkanGizmo.cpp
     engine/Gfx/VulkanLightGizmo.cpp
     engine/Gfx/BuiltinMeshes.cpp
+    engine/Gfx/SkyIrradiance.cpp
     engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/PhysicsLayerConfig.cpp
@@ -1212,6 +1213,16 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME RuntimeSceneLifecycle
         COMMAND RuntimeSceneLifecycleTests
+    )
+
+    add_executable(SkyIrradianceTests
+        engine/Tests/SkyIrradianceTests.cpp
+    )
+    target_link_libraries(SkyIrradianceTests PRIVATE HephaestusRuntime)
+    target_include_directories(SkyIrradianceTests PRIVATE engine extern)
+    add_test(
+        NAME SkyIrradiance
+        COMMAND SkyIrradianceTests
     )
 
     add_executable(SwapchainFormatTests

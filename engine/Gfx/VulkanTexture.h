@@ -2,6 +2,7 @@
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <string>
+#include <vector>
 
 /**
  * VulkanTexture - Manages a Vulkan texture (image + view + sampler)
@@ -35,7 +36,8 @@ public:
         VkPhysicalDevice physicalDevice,
         VkCommandPool commandPool,
         VkQueue graphicsQueue,
-        const std::string& filepath);
+        const std::string& filepath,
+        std::vector<float>* outPixels = nullptr);
 
     // Create 1x1 solid color texture
     bool CreateSolidColor(

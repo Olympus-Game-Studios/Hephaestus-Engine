@@ -168,6 +168,7 @@ struct LightingUBO {
     // CSM cascade data (appended to preserve existing layout offsets)
     Mat4 cascadeViewProj[4];
     Vec4 cascadeSplits;  // view-space far plane for each cascade
+    Vec4 skyIrradianceSH[9];
 };
 
 static bool MeshAllowsHiddenEditorOutline(const MeshRendererComponent& renderer,
@@ -2792,7 +2793,12 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 !env.hdriPath.empty() &&
                 m_skybox.hasHDRI;
             if (enableReflections) {
-                lightUBO.environmentReflectionParams = Vec4(std::max(0.0f, env.reflectionIntensity), 1.0f, 0.0f, 0.0f);
+                lightUBO.environmentReflectionParams = Vec4(std::max(0.0f, env.reflectionIntensity), 1.0f,
+                                                            1.0f, std::max(0.0f, env.hdriIntensity));
+                for (int i = 0; i < 9; ++i) {
+                    const auto& c = m_skybox.irradianceSH[i];
+                    lightUBO.skyIrradianceSH[i] = Vec4(c[0], c[1], c[2], 0.0f);
+                }
             }
             break;
         }
@@ -4518,15 +4524,19 @@ bool EngineFrameRenderer::Skybox::LoadHDRI(const std::string& path, VmaAllocator
     environmentTexture.Destroy(allocator, device);
 
     // Load new HDRI
-    if (!environmentTexture.LoadHDRFromFile(allocator, device, physDevice, cmdPool, queue, path)) {
+    std::vector<float> pixels;
+    if (!environmentTexture.LoadHDRFromFile(allocator, device, physDevice, cmdPool, queue, path, &pixels)) {
         // Fallback to 1x1 white
         environmentTexture.CreateSolidColor(allocator, device, physDevice, cmdPool, queue, 0xFFFFFFFF);
+        irradianceSH = {};
         hasHDRI = false;
         loadedHDRIPath.clear();
         std::cerr << "[Skybox] Failed to load HDRI: " << path << " — falling back to solid color\n";
         return false;
     }
 
+    irradianceSH = ProjectEquirectIrradianceSH(pixels.data(), environmentTexture.width,
+                                               environmentTexture.height);
     hasHDRI = true;
     loadedHDRIPath = path;
     std::cout << "[Skybox] Loaded HDRI: " << path << " (" << environmentTexture.width << "x" << environmentTexture.height << ")\n";
