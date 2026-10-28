@@ -79,6 +79,9 @@ int main() {
         pass &= Check(distances, "every ray hits the closed room at the analytic distance");
         pass &= Check(normals, "hit normals face back toward the probe");
         pass &= Check(materials, "hits carry the wall material");
+        bool frontFaces = true;
+        for (const auto& hit : bake.hits) frontFaces &= !hit.backface;
+        pass &= Check(frontFaces, "rays inside a room hit the walls' front faces");
         pass &= Check(vlen(bake.probeOffsets[0]) == 0.0f, "a probe in open space is not moved");
 
         const auto path = std::filesystem::temp_directory_path() / "hephaestus_probe_bake_test.hpprobes";
@@ -115,6 +118,26 @@ int main() {
         bool allSky = sky.ProbeCount() == 8 * 4 * 8;
         for (const auto& hit : sky.hits) allSky &= hit.distance < 0.0f;
         pass &= Check(allSky, "with no geometry every ray escapes to the sky");
+    }
+
+    {
+        // A single probe cannot move, so inside a solid block every ray is a backface hit.
+        ProbeBakeGeometry block;
+        block.materials.push_back({});
+        AddBox(block, v3(0, 0, 0), 0.5f, false, 0);
+        ProbeVolumeComponent volume;
+        volume.probeCountX = volume.probeCountY = volume.probeCountZ = 1;
+        const ProbeBake bake = BakeProbeVolume(block, v3(0, 0, 0), volume);
+        bool allBackface = true;
+        for (const auto& hit : bake.hits) allBackface &= hit.backface && hit.distance > 0.0f;
+        pass &= Check(allBackface, "rays from inside a solid block are flagged as backface hits");
+        const auto path = std::filesystem::temp_directory_path() / "hephaestus_probe_bake_backface.hpprobes";
+        std::string error;
+        ProbeBake loaded;
+        bool kept = WriteProbeBake(path, bake, error) && ReadProbeBake(path, loaded, error);
+        for (const auto& hit : loaded.hits) kept &= hit.backface;
+        pass &= Check(kept, "the backface flag survives the bake file round trip");
+        std::filesystem::remove(path);
     }
 
     {

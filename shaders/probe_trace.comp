@@ -25,8 +25,8 @@ layout(std430, set = 0, binding = 12) readonly buffer Instances { TraceInstance 
 
 struct RayHit {
     vec4 normalDistance;
-    vec4 albedo;  // w = sun visibility at the hit
-    vec4 emissive;
+    vec4 albedo;    // w = sun visibility at the hit
+    vec4 emissive;  // w = 1 when the ray hit a backface
 };
 layout(std430, set = 0, binding = 13) writeonly buffer Hits { RayHit hits[]; };
 
@@ -54,7 +54,7 @@ void main() {
     int probe = int(gl_WorkGroupID.x);
     uint ray = gl_LocalInvocationID.x;
     vec3 origin = probePosition(probe);
-    vec3 dir = probeRayDirection(ray, RAYS);
+    vec3 dir = mat3(gi.rayRotation) * probeRayDirection(ray, RAYS);
 
     rayQueryEXT q;
     rayQueryInitializeEXT(q, sceneTlas, gl_RayFlagsOpaqueEXT, 0xFF, origin, 0.0, dir, MAX_TRACE);
@@ -74,7 +74,8 @@ void main() {
         vec3 c = vertexPosition(vertices, indices.i[primitive * 3u + 2u]);
         mat3 objectToWorld = mat3(rayQueryGetIntersectionObjectToWorldEXT(q, true));
         vec3 n = normalize(transpose(inverse(objectToWorld)) * cross(b - a, c - a));
-        if (dot(n, dir) > 0.0) {
+        bool backface = dot(n, dir) > 0.0;
+        if (backface) {
             n = -n;
         }
         float t = rayQueryGetIntersectionTEXT(q, true);
@@ -86,7 +87,7 @@ void main() {
         }
         hit.normalDistance = vec4(n, t);
         hit.albedo = vec4(inst.albedo.rgb, sunVisibility);
-        hit.emissive = inst.emissive;
+        hit.emissive = vec4(inst.emissive.rgb, backface ? 1.0 : 0.0);
     }
     hits[uint(probe) * RAYS + ray] = hit;
 }

@@ -8,6 +8,7 @@ layout(std140, set = GI_SET, binding = 0) uniform ProbeGIParams {
     mat4 sunViewProj;
     vec4 giParams;      // x = max ray distance, y = 1 when the sun map is valid, z = 1 to discard history,
                         // w = 1 when ray hits carry their own sun visibility (hardware ray tracing)
+    mat4 rayRotation;   // applied to probeRayDirection; changes every frame when tracing, identity for bakes
 } gi;
 
 layout(std430, set = GI_SET, binding = 3) readonly buffer ProbeOffsets { vec4 probeOffsets[]; };
@@ -70,7 +71,8 @@ vec2 probeAtlasUV(int p, vec3 dir, int tile, int inner, vec2 atlasSize) {
 }
 
 // Cosine-weighted mean radiance around n at pos (irradiance / pi), DDGI-style weights.
-vec3 sampleProbeIrradiance(vec3 pos, vec3 n) {
+// viewDir points from the surface toward the viewer (or the tracing probe).
+vec3 sampleProbeIrradiance(vec3 pos, vec3 n, vec3 viewDir) {
     ivec3 counts = gi.probeCounts.xyz;
     vec3 spacing = gi.probeSpacing.xyz;
     vec3 safeSpacing = max(spacing, vec3(1e-4));
@@ -81,8 +83,11 @@ vec3 sampleProbeIrradiance(vec3 pos, vec3 n) {
 
     vec2 irrSize = vec2(textureSize(irradianceAtlas, 0));
     vec2 visSize = vec2(textureSize(visibilityAtlas, 0));
-    float bias = 0.05 * max(max(spacing.x, spacing.y), max(spacing.z, 0.5));
-    vec3 biasedPos = pos + n * bias;
+    vec3 usedSpacing = mix(vec3(1e6), spacing, greaterThan(spacing, vec3(0.0)));
+    float minSpacing = min(min(usedSpacing.x, usedSpacing.y), usedSpacing.z);
+    minSpacing = minSpacing >= 1e6 ? 1.0 : minSpacing;
+    // DDGI surface bias (Majercik et al. 2019): mostly toward the viewer, a little along the normal.
+    vec3 biasedPos = pos + (n * 0.2 + viewDir * 0.8) * (0.75 * minSpacing) * 0.3;
 
     vec3 sum = vec3(0.0);
     float weightSum = 0.0;

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -116,6 +117,7 @@ private:
     float m_intensity = 1.0f;
     bool m_active = false;
     bool m_hardware = false;
+    std::mt19937 m_rng{0x5eed};
     ProbeRayTracer m_tracer;
     bool m_tracerReady = false;
 };

@@ -180,6 +180,7 @@ TraceResult Trace(const Bvh& bvh, const ProbeBakeGeometry& geometry, const Vec3&
     const ProbeBakeTriangle& triangle = geometry.triangles[tri];
     Vec3 n = vnorm(vcross(vsub(triangle.b, triangle.a), vsub(triangle.c, triangle.a)));
     r.backface = vdot(n, dir) > 0.0f;
+    r.hit.backface = r.backface;
     if (r.backface) {
         n = vscale(n, -1.0f);
     }
@@ -384,7 +385,8 @@ bool WriteProbeBake(const std::filesystem::path& path, const ProbeBake& bake, st
         const auto oct = OctEncode(hit.distance >= 0.0f ? hit.normal : Vec3(0.0f, 1.0f, 0.0f));
         Put(out, PackSnorm(oct[0]));
         Put(out, PackSnorm(oct[1]));
-        const uint8_t albedo[4] = {PackUnorm(hit.albedo.x), PackUnorm(hit.albedo.y), PackUnorm(hit.albedo.z), 0};
+        const uint8_t albedo[4] = {PackUnorm(hit.albedo.x), PackUnorm(hit.albedo.y), PackUnorm(hit.albedo.z),
+                                   static_cast<uint8_t>(hit.backface ? 255 : 0)};
         out.write(reinterpret_cast<const char*>(albedo), 4);
         Put(out, hit.emissive);
     }
@@ -467,6 +469,7 @@ bool ReadProbeBake(const std::filesystem::path& path, ProbeBake& bake, std::stri
         }
         hit.normal = OctDecode(ox / 32767.0f, oy / 32767.0f);
         hit.albedo = Vec3(albedo[0] / 255.0f, albedo[1] / 255.0f, albedo[2] / 255.0f);
+        hit.backface = albedo[3] > 127;
     }
     bake = std::move(result);
     return true;

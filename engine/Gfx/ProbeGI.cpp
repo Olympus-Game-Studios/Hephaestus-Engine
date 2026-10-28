@@ -11,6 +11,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <random>
 
 namespace Hephaestus {
 
@@ -27,6 +28,7 @@ struct ProbeGIParams {
     int32_t probeCounts[4];
     Mat4 sunViewProj;
     Vec4 giParams;
+    Mat4 rayRotation;
 };
 
 struct GpuRayHit {
@@ -88,6 +90,26 @@ void SubmitOnce(VulkanDevice* device, const std::function<void(VkCommandBuffer)>
     vkQueueSubmit(device->graphicsQueue, 1, &submit, VK_NULL_HANDLE);
     vkQueueWaitIdle(device->graphicsQueue);
     vkFreeCommandBuffers(device->device, device->commandPool, 1, &cmd);
+}
+
+// Uniform random rotation (Shoemake): traced probes see new directions every frame, and hysteresis
+// averages them, which removes the blotches a fixed set of 128 directions leaves.
+Mat4 RandomRotation(std::mt19937& rng) {
+    std::uniform_real_distribution<float> u(0.0f, 1.0f);
+    const float u1 = u(rng), u2 = u(rng) * 6.28318531f, u3 = u(rng) * 6.28318531f;
+    const float a = std::sqrt(1.0f - u1), b = std::sqrt(u1);
+    const float x = a * std::sin(u2), y = a * std::cos(u2), z = b * std::sin(u3), w = b * std::cos(u3);
+    Mat4 m = Mat4::Identity();
+    m.m[0] = 1 - 2 * (y * y + z * z);
+    m.m[1] = 2 * (x * y + z * w);
+    m.m[2] = 2 * (x * z - y * w);
+    m.m[4] = 2 * (x * y - z * w);
+    m.m[5] = 1 - 2 * (x * x + z * z);
+    m.m[6] = 2 * (y * z + x * w);
+    m.m[8] = 2 * (x * z + y * w);
+    m.m[9] = 2 * (y * z - x * w);
+    m.m[10] = 1 - 2 * (x * x + y * y);
+    return m;
 }
 
 std::filesystem::file_time_type WriteTime(const std::filesystem::path& file) {
@@ -460,7 +482,7 @@ bool ProbeGI::loadBake(const std::filesystem::path& file, std::string& outError)
         const ProbeRayHit& h = bake.hits[i];
         hits[i].normalDistance = Vec4(h.normal.x, h.normal.y, h.normal.z, h.distance);
         hits[i].albedo = Vec4(h.albedo.x, h.albedo.y, h.albedo.z, 1.0f);
-        hits[i].emissive = Vec4(h.emissive.x, h.emissive.y, h.emissive.z, 0.0f);
+        hits[i].emissive = Vec4(h.emissive.x, h.emissive.y, h.emissive.z, h.backface ? 1.0f : 0.0f);
     }
     std::vector<Vec4> offsets(bake.probeOffsets.size());
     for (size_t i = 0; i < offsets.size(); ++i) {
@@ -701,6 +723,7 @@ void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t ima
     params.probeCounts[2] = m_bakeGrid.probeCounts[2];
     params.probeCounts[3] = 1;
     params.sunViewProj = m_sunViewProj;
+    params.rayRotation = m_hardware ? RandomRotation(m_rng) : Mat4::Identity();
     params.giParams = Vec4(maxDistance, m_sunValid && !m_hardware ? 1.0f : 0.0f, m_resetFrames > 0 ? 1.0f : 0.0f,
                            m_hardware ? 1.0f : 0.0f);
     void* mapped = nullptr;

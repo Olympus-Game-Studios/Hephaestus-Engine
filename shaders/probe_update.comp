@@ -13,7 +13,7 @@ layout(local_size_x = 128) in;
 struct RayHit {
     vec4 normalDistance;  // xyz = normal, w = distance (< 0 = sky)
     vec4 albedo;          // w = sun visibility when giParams.w = 1
-    vec4 emissive;
+    vec4 emissive;        // w = 1 when the ray hit a backface
 };
 layout(std430, set = 0, binding = 2) readonly buffer Rays { RayHit rays[]; };
 layout(set = 0, binding = 4) uniform sampler2D sunDepth;
@@ -98,17 +98,22 @@ void main() {
     float maxDistance = gi.giParams.x;
 
     RayHit hit = rays[uint(probe) * RAYS + ray];
-    vec3 dir = probeRayDirection(ray, RAYS);
+    vec3 dir = mat3(gi.rayRotation) * probeRayDirection(ray, RAYS);
     vec3 radiance;
     float distance;
     if (hit.normalDistance.w < 0.0) {
         radiance = skyRadiance(dir);
         distance = maxDistance;
+    } else if (hit.emissive.w > 0.5) {
+        // Inside geometry: no light, and a short distance so the visibility test stops this probe
+        // from lighting surfaces on the far side of the wall (DDGI, Majercik et al. 2019).
+        radiance = vec3(0.0);
+        distance = hit.normalDistance.w * 0.2;
     } else {
         distance = hit.normalDistance.w;
         vec3 n = hit.normalDistance.xyz;
         vec3 hitPos = probePos + dir * distance;
-        vec3 bounce = gi.giParams.z > 0.5 ? vec3(0.0) : sampleProbeIrradiance(hitPos, n) * PI;
+        vec3 bounce = gi.giParams.z > 0.5 ? vec3(0.0) : sampleProbeIrradiance(hitPos, n, -dir) * PI;
         radiance = hit.albedo.rgb / PI * (directIrradiance(hitPos, n, hit.albedo.w) + bounce) + hit.emissive.rgb;
     }
     sRadiance[ray] = radiance;

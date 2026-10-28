@@ -436,7 +436,7 @@ void main() {
         vec3 outside = max(abs(fragWorldPos - center) - halfExtent, vec3(0.0));
         float weight = clamp(1.0 - length(outside) / spacing, 0.0, 1.0);
         if (weight > 0.0) {
-            vec3 probeLight = sampleProbeIrradiance(fragWorldPos, N) * gi.firstProbe.w;
+            vec3 probeLight = sampleProbeIrradiance(fragWorldPos, N, V) * gi.firstProbe.w;
             ambient = mix(ambient, probeLight * albedo * (1.0 - metallic) * ao, weight);
         }
     }

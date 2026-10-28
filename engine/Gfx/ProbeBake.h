@@ -33,6 +33,7 @@ struct ProbeRayHit {
     Vec3 normal{0.0f, 0.0f, 0.0f};
     Vec3 albedo{0.0f, 0.0f, 0.0f};
     Vec3 emissive{0.0f, 0.0f, 0.0f};
+    bool backface = false;  // hit the inside of a surface: the probe sees no light along this ray
 };
 
 struct ProbeBake {
