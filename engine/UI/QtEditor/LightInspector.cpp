@@ -67,6 +67,9 @@ void LightInspector::buildUI()
     auto* shadowLayout = new QVBoxLayout(m_shadowGroup);
     m_castShadows = new BoolPropertyEditor(tr("Cast Shadows"), m_shadowGroup);
     m_shadowAutoFit = new BoolPropertyEditor(tr("Auto-Fit"), m_shadowGroup);
+    m_rayTracedShadows = new BoolPropertyEditor(tr("Ray-Traced Shadows"), m_shadowGroup);
+    m_rayTracedShadows->setToolTip(tr("Trace this light's shadow on GPUs with hardware ray tracing. Other GPUs use "
+                                      "shadow maps. Animated characters do not cast ray-traced shadows."));
     m_shadowBias = new NumericPropertyEditor(tr("Bias"), m_shadowGroup);
     m_shadowBias->setRange(0.0, 0.1);
     m_shadowBias->setDecimals(4);
@@ -99,6 +102,7 @@ void LightInspector::buildUI()
     m_shadowExtent->setDecimals(0);
     m_shadowExtent->setSingleStep(50.0);
     shadowLayout->addWidget(m_castShadows);
+    shadowLayout->addWidget(m_rayTracedShadows);
     shadowLayout->addWidget(m_shadowAutoFit);
     shadowLayout->addWidget(m_shadowBias);
     shadowLayout->addWidget(m_shadowNormalBias);
@@ -164,6 +168,11 @@ void LightInspector::connectSignals()
         EndEdit();
         m_shadowBias->setEnabled(v);
     });
+    connect(m_rayTracedShadows, &BoolPropertyEditor::valueEdited, this, [this](bool v) {
+        BeginEdit("Edit light");
+        ForEachTarget<LightComponent>([&](LightComponent& lc, entt::entity) { lc.rayTracedShadows = v; });
+        EndEdit();
+    });
     connect(m_shadowAutoFit, &BoolPropertyEditor::valueEdited, this, [this](bool v) {
         BeginEdit("Edit light");
         ForEachTarget<LightComponent>([&](LightComponent& lc, entt::entity) { lc.shadowAutoFit = v; });
@@ -200,7 +209,7 @@ void LightInspector::connectSignals()
 void LightInspector::Refresh()
 {
     EndEdit();
-    MixedBool enabled, shadows, autoFit;
+    MixedBool enabled, shadows, autoFit, rayTraced;
     MixedScalar intensity, range, inner, outer, bias, nBias, strength, sunSize, dist, extent, maxDist;
     MixedScalar typeMix;
     MixedVec3Axes colorMix;
@@ -208,6 +217,7 @@ void LightInspector::Refresh()
         AccumulateBool(enabled, lc.enabled);
         AccumulateBool(shadows, lc.castShadows);
         AccumulateBool(autoFit, lc.shadowAutoFit);
+        AccumulateBool(rayTraced, lc.rayTracedShadows);
         AccumulateScalar(intensity, lc.intensity);
         AccumulateScalar(range, lc.range);
         AccumulateScalar(inner, lc.innerConeAngle * 57.2957795);
@@ -237,6 +247,7 @@ void LightInspector::Refresh()
     m_outerCone->setFromMixed(outer);
     m_castShadows->setFromMixed(shadows);
     m_shadowAutoFit->setFromMixed(autoFit);
+    m_rayTracedShadows->setFromMixed(rayTraced);
     m_shadowBias->setFromMixed(bias);
     m_shadowNormalBias->setFromMixed(nBias);
     m_shadowStrength->setFromMixed(strength);

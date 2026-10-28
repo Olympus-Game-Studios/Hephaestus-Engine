@@ -42,11 +42,17 @@ public:
     void DestroySwapchainResources();
 
     // Before command recording for imageIndex: (re)loads the bake, fills the parameters and descriptor sets.
-    // collectInstances is called only when the volume traces with hardware ray tracing.
+    // collectInstances is called only when the volume traces with hardware ray tracing or traceShadows is set.
     void Prepare(Scene* scene, const std::string& projectRoot, uint32_t imageIndex, VkBuffer lightingBuffer,
-                 const Vec3* sunDirection, const std::function<std::vector<ProbeTraceInstance>()>& collectInstances);
+                 const Vec3* sunDirection, bool traceShadows,
+                 const std::function<std::vector<ProbeTraceInstance>()>& collectInstances);
     bool Active() const { return m_active; }
+    // When true, DrawSet binds the scene acceleration structure at binding 11 and surfaces use triangle_rt.frag.
     bool HardwareRayTracingAvailable() const { return m_tracerReady; }
+    // Whether this frame's scene acceleration structure holds the scene (Prepare collected instances).
+    bool SceneTraced() const { return m_sceneTraced; }
+    // Builds the scene acceleration structure Prepare filled; before RecordUpdate and the scene pass.
+    void RecordScene(VkCommandBuffer cmd, uint32_t imageIndex);
     bool UsingHardwareRayTracing() const { return m_active && m_hardware; }
 
     bool HasSunMap() const { return m_active && m_sunValid && !m_hardware; }
@@ -67,6 +73,8 @@ private:
     bool createPlaceholders();
     bool loadBake(const std::filesystem::path& file, std::string& outError);
     bool createHardwareVolume(const int counts[3], std::string& outError);
+    void prepareVolume(Scene* scene, const std::string& projectRoot, uint32_t imageIndex, VkBuffer lightingBuffer,
+                       const Vec3* sunDirection);
     bool createAtlases(const int counts[3]);
     void destroyBake();
     void writeDescriptorSets(uint32_t imageIndex, VkBuffer lightingBuffer);
@@ -120,6 +128,7 @@ private:
     std::mt19937 m_rng{0x5eed};
     ProbeRayTracer m_tracer;
     bool m_tracerReady = false;
+    bool m_sceneTraced = false;
 };
 
 } // namespace Hephaestus

@@ -589,8 +589,14 @@ private:
         uint32_t tile = 0;
     };
     std::vector<LocalShadowJob> m_localShadowJobs;  // filled by updateLightingUBO, drawn by recordLocalShadowPass
+    bool m_traceShadows = false;    // some light asked for ray-traced shadows this frame (set by updateLightingUBO)
+    bool m_sunRayTraced = false;    // the sun's shadow is ray traced, so the cascade pass is skipped
     bool createLocalShadowResources();
     void recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config);
+    // The ray-query build of triangle.frag reads the scene acceleration structure in ProbeGI's set.
+    const char* surfaceFragmentShader() const {
+        return m_probeGI.HardwareRayTracingAvailable() ? "triangle_rt.frag.spv" : "triangle.frag.spv";
+    }
     void drawShadowCasters(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config, const Mat4& viewProj,
                            const Vec3* cullCenter, float cullRadius);
 

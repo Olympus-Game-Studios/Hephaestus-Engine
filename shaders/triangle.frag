@@ -1,5 +1,8 @@
-#version 450
+#version 460
 #extension GL_GOOGLE_include_directive : require
+#ifdef RAY_TRACED_SHADOWS
+#extension GL_EXT_ray_query : require
+#endif
 
 #define MAX_TEXTURE_SLOTS 128
 layout(location = 0) in vec3 fragWorldPos;
@@ -63,6 +66,9 @@ layout(set = 0, binding = 5) uniform sampler2D environmentMap;
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
 layout(set = 0, binding = 6) uniform sampler2D localShadowAtlas;  // 8 x 4 tiles of 512 (EngineFrameRenderer::kLocalShadowTile)
+#ifdef RAY_TRACED_SHADOWS
+layout(set = GI_SET, binding = 11) uniform accelerationStructureEXT sceneStructure;  // engine/Gfx/ProbeGI.cpp kScene
+#endif
 
 const float PI = 3.14159265359;
 
@@ -151,8 +157,56 @@ float localShadow(int tile, vec3 lightPos, vec4 params) {
     return mix(1.0, lit / 9.0, params.y);
 }
 
+#ifdef RAY_TRACED_SHADOWS
+bool rayOccluded(vec3 origin, vec3 dir, float maxDistance) {
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, sceneStructure, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0xFF,
+                          origin, 0.0, dir, maxDistance);
+    while (rayQueryProceedEXT(query)) {}
+    return rayQueryGetIntersectionTypeEXT(query, true) != gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+vec3 rayOrigin() {
+    return fragWorldPos + normalize(fragNormal) * 0.01;
+}
+
+// Fraction of the sun's disc hidden from this fragment, from 8 rays spread over its angular size.
+float tracedSunOcclusion(vec3 toSun) {
+    float tanHalfSun = lighting.shadowBiasWorld.z;
+    vec3 origin = rayOrigin();
+    if (tanHalfSun <= 0.0) {
+        return rayOccluded(origin, toSun, 10000.0) ? 1.0 : 0.0;
+    }
+    const int RAYS = 8;
+    vec3 tangent = normalize(cross(abs(toSun.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), toSun));
+    vec3 bitangent = cross(toSun, tangent);
+    float rotation = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+    float hidden = 0.0;
+    for (int i = 0; i < RAYS; ++i) {
+        float radius = sqrt((float(i) + 0.5) / float(RAYS)) * tanHalfSun;
+        float angle = rotation + float(i) * 2.39996323;  // golden angle spiral over the disc
+        vec3 dir = normalize(toSun + (tangent * cos(angle) + bitangent * sin(angle)) * radius);
+        hidden += rayOccluded(origin, dir, 10000.0) ? 1.0 : 0.0;
+    }
+    return hidden / float(RAYS);
+}
+
+float tracedLocalShadow(vec3 lightPos, float strength) {
+    vec3 origin = rayOrigin();
+    vec3 toLight = lightPos - origin;
+    float dist = length(toLight);
+    bool hidden = dist > 0.02 && rayOccluded(origin, toLight / dist, dist - 0.01);
+    return hidden ? 1.0 - strength : 1.0;
+}
+#endif
+
 float pointShadow(int light, vec3 lightPos) {
     vec4 params = lighting.pointShadowParams[light];
+#ifdef RAY_TRACED_SHADOWS
+    if (params.x < -1.5) {
+        return tracedLocalShadow(lightPos, params.y);
+    }
+#endif
     if (params.x < 0.0) {
         return 1.0;
     }
@@ -162,6 +216,16 @@ float pointShadow(int light, vec3 lightPos) {
              : a.y >= a.z ? (d.y >= 0.0 ? 2 : 3)
              : (d.z >= 0.0 ? 4 : 5);
     return localShadow(int(params.x) + face, lightPos, params);
+}
+
+float spotShadow(int light, vec3 lightPos) {
+    vec4 params = lighting.spotShadowParams[light];
+#ifdef RAY_TRACED_SHADOWS
+    if (params.x < -1.5) {
+        return tracedLocalShadow(lightPos, params.y);
+    }
+#endif
+    return params.x < 0.0 ? 1.0 : localShadow(int(params.x), lightPos, params);
 }
 
 // Fraction of the 16 Poisson taps in shadow for one cascade.
@@ -243,6 +307,11 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
     if (lighting.dirShadowParams.w < 0.5) {
         return 1.0;
     }
+#ifdef RAY_TRACED_SHADOWS
+    if (lighting.shadowBiasWorld.w > 0.5) {
+        return 1.0 - tracedSunOcclusion(lightDir) * lighting.dirShadowParams.y;
+    }
+#endif
 
     // Engine LookAt maps forward to +Z, so view-space Z is positive for objects in front
     float viewDepth = (ubo.view * vec4(fragWorldPos, 1.0)).z;
@@ -462,9 +531,7 @@ void main() {
         vec3 H = normalize(V + L);
         
         float atten = calculateAttenuation(distance, attenuation);
-        float spotShadow = lighting.spotShadowParams[i].x < 0.0
-            ? 1.0 : localShadow(int(lighting.spotShadowParams[i].x), lightPos, lighting.spotShadowParams[i]);
-        vec3 radiance = lightColor * intensity * atten * spotFalloff * spotShadow;
+        vec3 radiance = lightColor * intensity * atten * spotFalloff * spotShadow(i, lightPos);
         
         // Cook-Torrance BRDF
         float NDF = DistributionGGX(N, H, roughness);

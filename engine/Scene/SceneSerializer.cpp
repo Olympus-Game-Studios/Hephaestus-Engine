@@ -984,7 +984,8 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "            \"distance\": " << FormatFloat(light->shadowDistance) << ",\n";
             oss << "            \"extent\": " << FormatFloat(light->shadowExtent) << ",\n";
             oss << "            \"maxDistance\": " << FormatFloat(light->shadowMaxDistance) << ",\n";
-            oss << "            \"sunSize\": " << FormatFloat(light->sunAngularDiameter) << "\n";
+            oss << "            \"sunSize\": " << FormatFloat(light->sunAngularDiameter) << ",\n";
+            oss << "            \"rayTraced\": " << (light->rayTracedShadows ? "true" : "false") << "\n";
             oss << "          }\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
@@ -1715,6 +1716,11 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     if (const JsonValue* sunSizeValue = shadowObj->Find("sunSize")) {
                         if (sunSizeValue->IsNumber()) {
                             light.sunAngularDiameter = static_cast<float>(sunSizeValue->AsNumber());
+                        }
+                    }
+                    if (const JsonValue* rayTracedValue = shadowObj->Find("rayTraced")) {
+                        if (rayTracedValue->IsBool()) {
+                            light.rayTracedShadows = rayTracedValue->AsBool();
                         }
                     }
                 }
@@ -2541,7 +2547,8 @@ std::string SceneSerializer::SerializeToString() const
             oss << "            \"distance\": " << FormatFloat(light->shadowDistance) << ",\n";
             oss << "            \"extent\": " << FormatFloat(light->shadowExtent) << ",\n";
             oss << "            \"maxDistance\": " << FormatFloat(light->shadowMaxDistance) << ",\n";
-            oss << "            \"sunSize\": " << FormatFloat(light->sunAngularDiameter) << "\n";
+            oss << "            \"sunSize\": " << FormatFloat(light->sunAngularDiameter) << ",\n";
+            oss << "            \"rayTraced\": " << (light->rayTracedShadows ? "true" : "false") << "\n";
             oss << "          }\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());

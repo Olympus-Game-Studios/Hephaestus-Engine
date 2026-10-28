@@ -1029,6 +1029,19 @@ if (GLSLC_EXECUTABLE)
         list(APPEND SHADER_OUTPUTS ${OUT})
     endforeach()
 
+    # Surface shader with ray-traced shadows, used on GPUs with VK_KHR_ray_query (EngineFrameRenderer::surfaceFragmentShader).
+    set(RT_FRAG_OUT ${SHADER_OUTPUT_DIR}/triangle_rt.frag.spv)
+    add_custom_command(
+        OUTPUT ${RT_FRAG_OUT}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUTPUT_DIR}
+        COMMAND ${GLSLC_EXECUTABLE} --target-env=vulkan1.2 -DRAY_TRACED_SHADOWS
+                ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag -o ${RT_FRAG_OUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag ${SHADER_INCLUDES}
+        COMMENT "Compiling triangle.frag (ray-traced shadows) -> ${RT_FRAG_OUT}"
+        VERBATIM
+    )
+    list(APPEND SHADER_OUTPUTS ${RT_FRAG_OUT})
+
     add_custom_target(Shaders ALL DEPENDS ${SHADER_OUTPUTS})
     
     # Add shader dependency to both targets

@@ -126,7 +126,10 @@ bool ProbeRayTracer::CreateSwapchainResources(uint32_t imageCount) {
     alloc.descriptorSetCount = imageCount;
     alloc.pSetLayouts = layouts.data();
     if (vkAllocateDescriptorSets(m_device->device, &alloc, sets.data()) != VK_SUCCESS) return false;
-    for (uint32_t i = 0; i < imageCount; ++i) m_frames[i].set = sets[i];
+    for (uint32_t i = 0; i < imageCount; ++i) {
+        m_frames[i].set = sets[i];
+        if (!ensureCapacity(m_frames[i], 1)) return false;
+    }
     return true;
 }
 
@@ -295,8 +298,7 @@ bool ProbeRayTracer::ensureCapacity(FrameResources& frame, uint32_t instanceCoun
     return true;
 }
 
-bool ProbeRayTracer::Prepare(uint32_t imageIndex, const std::vector<ProbeTraceInstance>& instances, VkBuffer params,
-                             VkBuffer lighting, VkBuffer offsets, VkBuffer hits) {
+bool ProbeRayTracer::PrepareScene(uint32_t imageIndex, const std::vector<ProbeTraceInstance>& instances) {
     if (!Ready() || imageIndex >= m_frames.size()) return false;
     std::vector<VkAccelerationStructureInstanceKHR> asInstances;
     std::vector<GpuTraceInstance> data;
@@ -340,7 +342,12 @@ bool ProbeRayTracer::Prepare(uint32_t imageIndex, const std::vector<ProbeTraceIn
         std::memcpy(mapped, data.data(), data.size() * sizeof(data[0]));
         vmaUnmapMemory(m_device->allocator, frame.instanceData.allocation);
     }
+    return true;
+}
 
+void ProbeRayTracer::WriteTraceSet(uint32_t imageIndex, VkBuffer params, VkBuffer lighting, VkBuffer offsets,
+                                   VkBuffer hits) {
+    FrameResources& frame = m_frames[imageIndex];
     VkWriteDescriptorSetAccelerationStructureKHR asWrite{
         VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
     asWrite.accelerationStructureCount = 1;
@@ -370,10 +377,9 @@ bool ProbeRayTracer::Prepare(uint32_t imageIndex, const std::vector<ProbeTraceIn
         write(kHits, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &hitsInfo),
     };
     vkUpdateDescriptorSets(m_device->device, static_cast<uint32_t>(std::size(writes)), writes, 0, nullptr);
-    return true;
 }
 
-void ProbeRayTracer::Record(VkCommandBuffer cmd, uint32_t imageIndex, uint32_t probeCount) {
+void ProbeRayTracer::RecordScene(VkCommandBuffer cmd, uint32_t imageIndex) {
     FrameResources& frame = m_frames[imageIndex];
     VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
     geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
@@ -395,8 +401,12 @@ void ProbeRayTracer::Record(VkCommandBuffer cmd, uint32_t imageIndex, uint32_t p
     built.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
     built.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &built, 0, nullptr, 0, nullptr);
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &built, 0,
+                         nullptr, 0, nullptr);
+}
 
+void ProbeRayTracer::Record(VkCommandBuffer cmd, uint32_t imageIndex, uint32_t probeCount) {
+    FrameResources& frame = m_frames[imageIndex];
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &frame.set, 0, nullptr);
     vkCmdDispatch(cmd, probeCount, 1, 1);

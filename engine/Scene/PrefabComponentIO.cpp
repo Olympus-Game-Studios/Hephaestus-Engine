@@ -429,6 +429,7 @@ void CaptureLight(const LightComponent& light, JsonValue& data) {
     data.objectValue["shadowExtent"] = MakeNumber(light.shadowExtent);
     data.objectValue["shadowMaxDistance"] = MakeNumber(light.shadowMaxDistance);
     data.objectValue["sunAngularDiameter"] = MakeNumber(light.sunAngularDiameter);
+    data.objectValue["rayTracedShadows"] = MakeBool(light.rayTracedShadows);
 }
 
 void ApplyLight(LightComponent& light, const JsonValue& data) {
@@ -509,6 +510,9 @@ void ApplyLight(LightComponent& light, const JsonValue& data) {
         if (sunSizeValue->IsNumber()) {
             light.sunAngularDiameter = static_cast<float>(sunSizeValue->AsNumber());
         }
+    }
+    if (const JsonValue* rayTracedValue = data.Find("rayTracedShadows")) {
+        light.rayTracedShadows = ParseBoolLike(*rayTracedValue, light.rayTracedShadows);
     }
 }
 

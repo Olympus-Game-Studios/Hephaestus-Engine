@@ -27,6 +27,7 @@ int main() {
     bool pass = true;
 
     pass &= Check(Near(LightComponent().sunAngularDiameter, 1.0f), "a new light has a 1 degree sun");
+    pass &= Check(!LightComponent().rayTracedShadows, "a new light uses shadow maps");
 
     {
         Scene scene("RoundTrip");
@@ -34,6 +35,7 @@ int main() {
         auto& light = sun.AddComponent<LightComponent>(LightComponent::CreateDirectional(Vec3(0, -1, 0)));
         light.sunAngularDiameter = 3.5f;
         light.castShadows = false;
+        light.rayTracedShadows = true;
 
         const std::string saved = SceneSerializer(scene).SerializeToString();
         Scene loaded("Loaded");
@@ -42,8 +44,8 @@ int main() {
         for (auto handle : loaded.GetRegistry().view<LightComponent>()) {
             const auto& copy = loaded.GetRegistry().get<LightComponent>(handle);
             ++count;
-            pass &= Check(Near(copy.sunAngularDiameter, 3.5f) && !copy.castShadows,
-                          "scene round trip keeps the sun size and cast shadows flag");
+            pass &= Check(Near(copy.sunAngularDiameter, 3.5f) && !copy.castShadows && copy.rayTracedShadows,
+                          "scene round trip keeps the sun size, cast shadows and ray-traced flags");
         }
         pass &= Check(count == 1, "one light after the round trip");
 
@@ -52,8 +54,9 @@ int main() {
         Entity target = loaded.CreateEntity("Target");
         target.AddComponent<LightComponent>();
         pass &= Check(PrefabComponentIO::ApplyEntry(target, entry) &&
-                          Near(target.GetComponent<LightComponent>().sunAngularDiameter, 3.5f),
-                      "prefab data keeps the sun size");
+                          Near(target.GetComponent<LightComponent>().sunAngularDiameter, 3.5f) &&
+                          target.GetComponent<LightComponent>().rayTracedShadows,
+                      "prefab data keeps the sun size and ray-traced flag");
     }
 
     {
@@ -69,8 +72,9 @@ int main() {
         pass &= Check(SceneSerializer::DeserializeFromString(loaded, legacy), "legacy scene loads");
         for (auto handle : loaded.GetRegistry().view<LightComponent>()) {
             const auto& light = loaded.GetRegistry().get<LightComponent>(handle);
-            pass &= Check(Near(light.sunAngularDiameter, 1.0f) && Near(light.shadowMaxDistance, 200.0f),
-                          "a scene without a sun size keeps the default");
+            pass &= Check(Near(light.sunAngularDiameter, 1.0f) && Near(light.shadowMaxDistance, 200.0f) &&
+                              !light.rayTracedShadows,
+                          "a scene without a sun size or ray-traced flag keeps the defaults");
         }
     }
 

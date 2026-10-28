@@ -171,10 +171,10 @@ struct LightingUBO {
     Vec4 skyIrradianceSH[9];
     Vec4 cascadeTexelWorld;  // world-space size of one shadow texel per cascade
     Vec4 cascadeDepthRange;  // light-space depth range per cascade, to turn world biases into depth
-    Vec4 shadowBiasWorld;    // x = extra depth bias, y = extra normal offset (metres), z = tan(sun half angle)
+    Vec4 shadowBiasWorld;    // x = extra depth bias, y = extra normal offset (metres), z = tan(sun half angle), w = 1 when ray traced
     Mat4 localShadowViewProj[32];  // atlas tiles, see EngineFrameRenderer::kLocalShadowTile
-    Vec4 pointShadowParams[16];    // x = first of six tiles (+X,-X,+Y,-Y,+Z,-Z) or -1, y = shadow strength, z = far, w = tan(half fov)
-    Vec4 spotShadowParams[16];     // x = tile or -1, y = shadow strength, z = far, w = tan(half fov)
+    Vec4 pointShadowParams[16];    // x = first of six tiles (+X,-X,+Y,-Y,+Z,-Z), -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
+    Vec4 spotShadowParams[16];     // x = tile, -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
 };
 
 static bool MeshAllowsHiddenEditorOutline(const MeshRendererComponent& renderer,
@@ -801,7 +801,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             return instances;
         };
         m_probeGI.Prepare(scene, m_projectRoot, imageIndex, m_lightingBuffers[imageIndex].buffer,
-                          hasSun ? &sunDirection : nullptr, collectInstances);
+                          hasSun ? &sunDirection : nullptr, scene && m_traceShadows, collectInstances);
     }
 
     // Prepare the runtime HUI overlay geometry/uploads (queue work is allowed
@@ -861,9 +861,10 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     }
     
     // Record shadow pass (before main pass)
-    if (config.renderShadows && m_directionalShadow.IsValid()) {
+    if (config.renderShadows && m_directionalShadow.IsValid() && !(scene && m_sunRayTraced)) {
         recordShadowPass(cmd, scene, camera, config);
     }
+    m_probeGI.RecordScene(cmd, imageIndex);
     if (config.renderShadows && m_localShadow.IsValid() && !m_localShadowJobs.empty()) {
         recordLocalShadowPass(cmd, scene, config);
     }
@@ -1234,7 +1235,7 @@ bool EngineFrameRenderer::createPipeline()
         m_pipeline = std::make_unique<VulkanPipeline>();
         const bool enableWireframe = m_device && m_device->SupportsFillModeNonSolid();
         m_pipeline->Init(m_device->device, m_swapchain->renderPass, m_swapchain->extent, enableWireframe,
-                         {m_probeGI.EmptySetLayout(), m_probeGI.SetLayout()});
+                         {m_probeGI.EmptySetLayout(), m_probeGI.SetLayout()}, surfaceFragmentShader());
         return true;
     } catch (const std::exception& e) {
         std::cerr << "[EngineFrameRenderer] Pipeline creation failed: " << e.what() << "\n";
@@ -1416,7 +1417,7 @@ bool EngineFrameRenderer::createSkinnedMainPipelines()
     }
 
     VkShaderModule vert = LoadSpvModule(m_device->device, "triangle_skinned.vert.spv");
-    VkShaderModule frag = LoadSpvModule(m_device->device, "triangle.frag.spv");
+    VkShaderModule frag = LoadSpvModule(m_device->device, surfaceFragmentShader());
     if (!vert || !frag) {
         std::cerr << "[EngineFrameRenderer] Failed to load skinned triangle shaders\n";
         if (vert) vkDestroyShaderModule(m_device->device, vert, nullptr);
@@ -2890,6 +2891,9 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
         lightUBO.spotShadowParams[i] = Vec4(-1.0f, 0.0f, 0.0f, 0.0f);
     }
     m_localShadowJobs.clear();
+    m_traceShadows = false;
+    m_sunRayTraced = false;
+    const bool canTrace = m_probeGI.HardwareRayTracingAvailable();
     uint32_t nextShadowTile = 0;
     int shadowedPoints = 0;
     int shadowedSpots = 0;
@@ -2998,8 +3002,11 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                                                       2.0f * radii[2] / tileResolution, 2.0f * radii[3] / tileResolution);
                     lightUBO.cascadeDepthRange = Vec4(depthRanges[0], depthRanges[1], depthRanges[2], depthRanges[3]);
                     const float sunHalfAngle = std::clamp(light.sunAngularDiameter, 0.0f, 10.0f) * 0.5f * 0.01745329252f;
+                    m_sunRayTraced = canTrace && light.rayTracedShadows;
+                    m_traceShadows |= m_sunRayTraced;
                     lightUBO.shadowBiasWorld = Vec4(std::max(0.0f, light.shadowBias),
-                                                    std::max(0.0f, light.shadowNormalBias), std::tan(sunHalfAngle), 0.0f);
+                                                    std::max(0.0f, light.shadowNormalBias), std::tan(sunHalfAngle),
+                                                    m_sunRayTraced ? 1.0f : 0.0f);
                     lightUBO.cascadeSplits = Vec4(splits[1], splits[2], splits[3], splits[4]);
                     lightUBO.cascadeCount = CSM_CASCADE_COUNT;
                     
@@ -3016,7 +3023,10 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 lightUBO.pointLightColors[pointLightIndex] = {light.color.x, light.color.y, light.color.z, light.intensity};
                 lightUBO.pointLightAttenuation[pointLightIndex] = {
                     light.constant, light.linear, light.quadratic, 0.0f};
-                if (light.castShadows && m_localShadow.IsValid() && shadowedPoints < kMaxShadowedPointLights) {
+                if (light.castShadows && canTrace && light.rayTracedShadows) {
+                    lightUBO.pointShadowParams[pointLightIndex] = Vec4(-2.0f, light.shadowStrength, light.range, 0.0f);
+                    m_traceShadows = true;
+                } else if (light.castShadows && m_localShadow.IsValid() && shadowedPoints < kMaxShadowedPointLights) {
                     const float base = static_cast<float>(nextShadowTile);
                     const Vec3 faces[6] = {Vec3(1, 0, 0), Vec3(-1, 0, 0), Vec3(0, 1, 0),
                                            Vec3(0, -1, 0), Vec3(0, 0, 1), Vec3(0, 0, -1)};
@@ -3035,7 +3045,10 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 lightUBO.spotLightColors[spotLightIndex] = {light.color.x, light.color.y, light.color.z, light.intensity};
                 lightUBO.spotLightAttenuation[spotLightIndex] = {
                     light.constant, light.linear, light.quadratic, light.outerConeAngle};
-                if (light.castShadows && m_localShadow.IsValid() && shadowedSpots < kMaxShadowedSpotLights) {
+                if (light.castShadows && canTrace && light.rayTracedShadows) {
+                    lightUBO.spotShadowParams[spotLightIndex] = Vec4(-2.0f, light.shadowStrength, light.range, 0.0f);
+                    m_traceShadows = true;
+                } else if (light.castShadows && m_localShadow.IsValid() && shadowedSpots < kMaxShadowedSpotLights) {
                     // outerConeAngle is the full aperture; pad it so filtering at the cone edge stays in the tile.
                     const float fovY = std::min(light.outerConeAngle + 0.1f, 2.8f);
                     const Vec3 up = std::fabs(lightDir.y) > 0.99f ? Vec3(1, 0, 0) : Vec3(0, 1, 0);

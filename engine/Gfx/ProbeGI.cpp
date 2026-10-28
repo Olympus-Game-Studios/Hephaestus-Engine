@@ -47,6 +47,7 @@ enum Binding : uint32_t {
     kVisibilityOut = 8,
     kIrradianceRead = 9,
     kVisibilityRead = 10,
+    kScene = 11,  // scene acceleration structure, only with hardware ray tracing
 };
 
 VkShaderModule LoadShader(VkDevice device, const std::string& name) {
@@ -143,13 +144,13 @@ bool ProbeGI::Init(VulkanDevice* device) {
     sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
     if (vkCreateSampler(device->device, &sampler, nullptr, &m_depthSampler) != VK_SUCCESS) return false;
 
-    if (!createLayouts() || !createPlaceholders()) return false;
-    if (!createComputePipeline()) {
-        std::cerr << "[ProbeGI] Probe update pipeline unavailable; probe volumes will not be lit\n";
-    }
     m_tracerReady = m_tracer.Init(device);
     if (device->SupportsRayQuery() && !m_tracerReady) {
         std::cerr << "[ProbeGI] Hardware ray tracing unavailable; probe volumes use their bakes\n";
+    }
+    if (!createLayouts() || !createPlaceholders()) return false;
+    if (!createComputePipeline()) {
+        std::cerr << "[ProbeGI] Probe update pipeline unavailable; probe volumes will not be lit\n";
     }
     return true;
 }
@@ -167,9 +168,10 @@ bool ProbeGI::createLayouts() {
         {kVisibilityOut, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute, nullptr},
         {kIrradianceRead, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, all, nullptr},
         {kVisibilityRead, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, all, nullptr},
+        {kScene, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
     };
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layoutInfo.bindingCount = static_cast<uint32_t>(std::size(bindings));
+    layoutInfo.bindingCount = static_cast<uint32_t>(std::size(bindings)) - (m_tracerReady ? 0 : 1);
     layoutInfo.pBindings = bindings;
     if (vkCreateDescriptorSetLayout(m_device->device, &layoutInfo, nullptr, &m_setLayout) != VK_SUCCESS) return false;
     VkDescriptorSetLayoutCreateInfo emptyInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -301,10 +303,11 @@ bool ProbeGI::CreateSwapchainResources(VkRenderPass sceneRenderPass, uint32_t sc
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 * imageCount},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 * imageCount},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 * imageCount},
+        {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 2 * imageCount},
     };
     VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pool.maxSets = 2 * imageCount;
-    pool.poolSizeCount = static_cast<uint32_t>(std::size(sizes));
+    pool.poolSizeCount = static_cast<uint32_t>(std::size(sizes)) - (m_tracerReady ? 0 : 1);
     pool.pPoolSizes = sizes;
     if (vkCreateDescriptorPool(device, &pool, nullptr, &m_descriptorPool) != VK_SUCCESS) return false;
     m_sets.assign(imageCount, {});
@@ -334,10 +337,10 @@ bool ProbeGI::CreateSwapchainResources(VkRenderPass sceneRenderPass, uint32_t sc
     query.queryCount = 2 * imageCount;
     if (vkCreateQueryPool(device, &query, nullptr, &m_queryPool) != VK_SUCCESS) return false;
     m_queryWritten.assign(imageCount, false);
+    // The surface pipelines were built to read the scene structure, so it must exist from here on.
     if (m_tracerReady && !m_tracer.CreateSwapchainResources(imageCount)) {
-        std::cerr << "[ProbeGI] Hardware ray tracing resources failed; probe volumes use their bakes\n";
-        m_tracer.DestroySwapchainResources();
-        m_tracerReady = false;
+        std::cerr << "[ProbeGI] Hardware ray tracing resources failed\n";
+        return false;
     }
 
     const VkDescriptorSetLayout setLayouts[] = {cameraSetLayout, m_setLayout};
@@ -596,8 +599,44 @@ bool ProbeGI::createAtlases(const int counts[3]) {
 }
 
 void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t imageIndex, VkBuffer lightingBuffer,
-                      const Vec3* sunDirection,
+                      const Vec3* sunDirection, bool traceShadows,
                       const std::function<std::vector<ProbeTraceInstance>()>& collectInstances) {
+    prepareVolume(scene, projectRoot, imageIndex, lightingBuffer, sunDirection);
+    m_sceneTraced = false;
+    if (!m_tracerReady || imageIndex >= m_sets.size()) return;
+    if (scene && (traceShadows || (m_active && m_hardware))) {
+        m_sceneTraced = m_tracer.PrepareScene(imageIndex, collectInstances());
+    }
+    if (m_active && m_hardware) {
+        if (m_sceneTraced) {
+            m_tracer.WriteTraceSet(imageIndex, m_paramBuffers[imageIndex].buffer, lightingBuffer, m_offsets.buffer,
+                                   m_rays.buffer);
+        } else {
+            m_active = false;
+        }
+    }
+    VkWriteDescriptorSetAccelerationStructureKHR asWrite{
+        VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
+    const VkAccelerationStructureKHR structure = m_tracer.SceneStructure(imageIndex);
+    asWrite.accelerationStructureCount = 1;
+    asWrite.pAccelerationStructures = &structure;
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.pNext = &asWrite;
+    write.dstSet = m_sets[imageIndex][1];
+    write.dstBinding = kScene;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    vkUpdateDescriptorSets(m_device->device, 1, &write, 0, nullptr);
+}
+
+void ProbeGI::RecordScene(VkCommandBuffer cmd, uint32_t imageIndex) {
+    if (m_sceneTraced) {
+        m_tracer.RecordScene(cmd, imageIndex);
+    }
+}
+
+void ProbeGI::prepareVolume(Scene* scene, const std::string& projectRoot, uint32_t imageIndex,
+                            VkBuffer lightingBuffer, const Vec3* sunDirection) {
     m_active = false;
     if (!m_device || imageIndex >= m_sets.size()) return;
     auto writeInactive = [&]() {
@@ -732,10 +771,6 @@ void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t ima
     vmaUnmapMemory(m_device->allocator, m_paramBuffers[imageIndex].allocation);
 
     writeDescriptorSets(imageIndex, lightingBuffer);
-    if (m_hardware && !m_tracer.Prepare(imageIndex, collectInstances(), m_paramBuffers[imageIndex].buffer,
-                                        lightingBuffer, m_offsets.buffer, m_rays.buffer)) {
-        return;
-    }
     m_intensity = volume->intensity;
     m_active = true;
 }

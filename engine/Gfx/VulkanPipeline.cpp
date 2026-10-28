@@ -43,7 +43,7 @@ VkShaderModule VulkanPipeline::createShaderModule(const std::vector<char>& code)
 }
 
 void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool enableWireframe,
-                          const std::vector<VkDescriptorSetLayout>& extraSetLayouts)
+                          const std::vector<VkDescriptorSetLayout>& extraSetLayouts, const std::string& fragmentShader)
 {
     device = dev;
     renderPass = rp;
@@ -117,10 +117,10 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
         "../build/Release/shaders/triangle.vert.spv"
     };
     std::vector<std::string> candidatesFrag = {
-        "shaders/triangle.frag.spv",
-        "../shaders/triangle.frag.spv",
-        "build/Release/shaders/triangle.frag.spv",
-        "../build/Release/shaders/triangle.frag.spv"
+        "shaders/" + fragmentShader,
+        "../shaders/" + fragmentShader,
+        "build/Release/shaders/" + fragmentShader,
+        "../build/Release/shaders/" + fragmentShader
     };
     std::vector<char> vertCode;
     std::vector<char> fragCode;
@@ -138,7 +138,7 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     if (!loaded) {
         // Final attempt, throw a more descriptive error
         vertCode = readFile("shaders/triangle.vert.spv");
-        fragCode = readFile("shaders/triangle.frag.spv");
+        fragCode = readFile("shaders/" + fragmentShader);
     }
 
     VkShaderModule vertShader = createShaderModule(vertCode);

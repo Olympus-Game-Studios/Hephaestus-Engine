@@ -20,7 +20,8 @@ struct VulkanPipeline {
 
     // extraSetLayouts follow the pipeline's own set 0 layout.
     void Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool enableWireframe = false,
-              const std::vector<VkDescriptorSetLayout>& extraSetLayouts = {});
+              const std::vector<VkDescriptorSetLayout>& extraSetLayouts = {},
+              const std::string& fragmentShader = "triangle.frag.spv");
     void CreateBillboardPipeline(VkDevice dev, VkRenderPass rp, VkExtent2D ext, VkDescriptorSetLayout descLayout);
     void CreateOutlinePipeline();
     void Cleanup();
