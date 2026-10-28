@@ -28,3 +28,13 @@ This repository is a C++20 game engine with a Qt-based editor (`HephaestusEngine
 ## Rule precedence
 
 Follow higher-priority system/developer requirements and explicit user requirements first, then correctness and safety, then verified source/build constraints, then the applicable `.agents/` rules, and finally nearby local conventions. Rules refine one another; if applicable project guidance genuinely conflicts, do not silently discard correctness or user intent—resolve the conflict or explain the ambiguity.
+
+## Rules
+
+1. Commit & contribution authorship
+
+    Always contribute as the user, never as an AI. No Co-Authored-By: <AI> trailer, no "Generated with …" footer, no AI author/--author override, no noreply@anthropic.com / noreply@openai.com. Commits use the user's own git identity.
+
+2. Never commit secrets or build artifacts
+
+    Do not stage/commit credentials (API keys, tokens, private keys). Use env vars / a secret store. Do not commit .pdb (or other large build artifacts) — add them to .gitignore.
