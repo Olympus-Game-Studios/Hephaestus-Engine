@@ -70,6 +70,7 @@ struct alignas(16) MaterialUBO {
 };
 
 constexpr VkDeviceSize kBoneUboSize = 128 * sizeof(Mat4);
+constexpr float kLightIconHalfExtent = 0.5f;
 
 // Mixamo-style characters often have the pivot at the hips. Lift the mesh so
 // feet sit on the entity origin without moving the physics capsule. Use the
@@ -3858,24 +3859,17 @@ void EngineFrameRenderer::recordBillboards(VkCommandBuffer cmd, uint32_t imageIn
 
     auto& registry = scene->GetRegistry();
 
-    // Gather entities that have both a TransformComponent and an EditorIconComponent
-    auto iconView = registry.view<TransformComponent, EditorIconComponent>();
+    auto iconView = registry.view<TransformComponent, LightComponent>();
     bool anyDrawn = false;
 
     for (auto entityHandle : iconView) {
-        auto& icon = registry.get<EditorIconComponent>(entityHandle);
-        if (!icon.visible) continue;
+        const auto& light = registry.get<LightComponent>(entityHandle);
 
-        auto& transform = registry.get<TransformComponent>(entityHandle);
-
-        // Select descriptor set based on icon type
         VkDescriptorSet* dsPtr = nullptr;
-        switch (icon.iconType) {
-            case EditorIconType::PointLight:
-                dsPtr = &m_billboardDescriptorSets_Point[imageIndex]; break;
-            case EditorIconType::DirectionalLight:
+        switch (light.type) {
+            case LightType::Directional:
                 dsPtr = &m_billboardDescriptorSets_Directional[imageIndex]; break;
-            case EditorIconType::SpotLight:
+            case LightType::Spot:
                 dsPtr = &m_billboardDescriptorSets_Spot[imageIndex]; break;
             default:
                 dsPtr = &m_billboardDescriptorSets_Point[imageIndex]; break;
@@ -3909,7 +3903,7 @@ void EngineFrameRenderer::recordBillboards(VkCommandBuffer cmd, uint32_t imageIn
         pc.x    = worldMat.m[12];
         pc.y    = worldMat.m[13];
         pc.z    = worldMat.m[14];
-        pc.size = icon.size;
+        pc.size = kLightIconHalfExtent;
 
         vkCmdPushConstants(cmd, m_billboardPipeline.layout,
                            VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
@@ -6173,13 +6167,11 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
                                 &m_descriptorSets[imageIndex], 1, &dynOff);
 
         auto& reg = scene->GetRegistry();
-        auto iconView = reg.view<TransformComponent, EditorIconComponent>();
+        auto iconView = reg.view<TransformComponent, LightComponent>();
         for (auto ent : iconView) {
             const uint32_t entityId = static_cast<uint32_t>(ent);
             if (!IsEditorEntityVisible(entityId, config) ||
                 ContainsEntityId(config.editorLockedEntities, entityId)) continue;
-            auto& icon = reg.get<EditorIconComponent>(ent);
-            if (!icon.visible) continue;
 
             Mat4 worldMat = scene->GetWorldTransform(Entity(ent, scene));
 
@@ -6187,7 +6179,7 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
             bpc.posX     = worldMat.m[12];
             bpc.posY     = worldMat.m[13];
             bpc.posZ     = worldMat.m[14];
-            bpc.size     = icon.size;
+            bpc.size     = kLightIconHalfExtent;
             bpc.entityId = static_cast<uint32_t>(ent);
 
             vkCmdPushConstants(cmd, m_billboardIdPipeline.layout,

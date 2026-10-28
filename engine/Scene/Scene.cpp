@@ -10,17 +10,6 @@
 #include <unordered_set>
 #include <vector>
 
-// ── Editor-only: auto-attach billboard icon when a LightComponent is created ──
-#ifndef HEPHAESTUS_GAME_RUNTIME
-static void onLightComponentAdded(entt::registry& reg, entt::entity ent)
-{
-    if (!reg.all_of<EditorIconComponent>(ent)) {
-        auto& light = reg.get<LightComponent>(ent);
-        reg.emplace<EditorIconComponent>(ent, EditorIconComponent::ForLight(light.type));
-    }
-}
-#endif
-
 namespace {
 std::atomic<std::uint64_t> s_NextSceneIdentity{1};
 }
@@ -29,9 +18,6 @@ Scene::Scene(const std::string& name)
     : m_Name(name)
     , m_SceneIdentity(s_NextSceneIdentity.fetch_add(1, std::memory_order_relaxed))
 {
-#ifndef HEPHAESTUS_GAME_RUNTIME
-    m_Registry.on_construct<LightComponent>().connect<&onLightComponentAdded>();
-#endif
 }
 
 Scene::~Scene()

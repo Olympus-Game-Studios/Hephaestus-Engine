@@ -7953,7 +7953,6 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
             light = LightComponent::CreatePoint();
         }
         created.AddComponent<LightComponent>(light);
-        created.AddComponent<EditorIconComponent>(EditorIconComponent::ForLight(light.type));
 
         auto& tc = created.GetComponent<TransformComponent>();
         tc.position = spawnPos;

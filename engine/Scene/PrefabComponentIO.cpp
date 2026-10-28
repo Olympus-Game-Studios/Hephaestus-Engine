@@ -1251,13 +1251,6 @@ bool ApplyComponentJson(Entity entity, const std::string& type, const JsonValue&
             ? entity.GetComponent<LightComponent>()
             : entity.AddComponent<LightComponent>();
         ApplyLight(light, data);
-#ifndef HEPHAESTUS_GAME_RUNTIME
-        if (entity.HasComponent<EditorIconComponent>()) {
-            entity.GetComponent<EditorIconComponent>() = EditorIconComponent::ForLight(light.type);
-        } else {
-            entity.AddComponent<EditorIconComponent>(EditorIconComponent::ForLight(light.type));
-        }
-#endif
         return true;
     }
     if (type == "Camera") {

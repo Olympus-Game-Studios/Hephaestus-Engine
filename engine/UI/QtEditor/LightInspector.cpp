@@ -114,15 +114,7 @@ void LightInspector::connectSignals()
     connect(m_type, &EnumPropertyEditor::valueEdited, this, [this](int data) {
         BeginEdit("Edit light");
         const auto type = static_cast<LightType>(data);
-        ForEachTarget<LightComponent>([&](LightComponent& lc, entt::entity entity) {
-            lc.type = type;
-            if (m_ctx && m_ctx->HasActiveScene()) {
-                auto& reg = m_ctx->GetActiveScene()->GetRegistry();
-                if (reg.all_of<EditorIconComponent>(entity)) {
-                    reg.get<EditorIconComponent>(entity) = EditorIconComponent::ForLight(type);
-                }
-            }
-        });
+        ForEachTarget<LightComponent>([&](LightComponent& lc, entt::entity) { lc.type = type; });
         EndEdit();
         updateTypeVisibility();
     });
