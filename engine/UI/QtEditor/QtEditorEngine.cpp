@@ -40,6 +40,7 @@
 #include "../../Scripting/LuaScriptEngine.h"
 #include "../../Scripting/ScriptPhysicsBindings.h"
 #include "../../Core/SimulationStep.h"
+#include "../../Gfx/BuiltinMeshes.h"
 #include "../../Scripting/ScriptEngine.h"
 #include "../../Scripting/LuaScriptComponent.h"
 #include "../HephaestusUI/UISystem.h"
@@ -2119,143 +2120,7 @@ void QtEditorEngine::createBuiltinMeshes()
         return;
     }
 
-    std::cout << "[QtEditorEngine] Creating builtin meshes...\n";
-
-    // Create a simple cube mesh
-    MeshData cubeMesh;
-    
-    // Cube vertices (24 vertices for proper normals)
-    // Vertex format: {pos[3], normal[3], color[3], texCoord[2]}
-    float s = 0.5f;
-    // Front face
-    cubeMesh.vertices.push_back({{-s, -s,  s}, { 0,  0,  1}, {1, 1, 1}, {0, 0}});
-    cubeMesh.vertices.push_back({{ s, -s,  s}, { 0,  0,  1}, {1, 1, 1}, {1, 0}});
-    cubeMesh.vertices.push_back({{ s,  s,  s}, { 0,  0,  1}, {1, 1, 1}, {1, 1}});
-    cubeMesh.vertices.push_back({{-s,  s,  s}, { 0,  0,  1}, {1, 1, 1}, {0, 1}});
-    // Back face
-    cubeMesh.vertices.push_back({{ s, -s, -s}, { 0,  0, -1}, {1, 1, 1}, {0, 0}});
-    cubeMesh.vertices.push_back({{-s, -s, -s}, { 0,  0, -1}, {1, 1, 1}, {1, 0}});
-    cubeMesh.vertices.push_back({{-s,  s, -s}, { 0,  0, -1}, {1, 1, 1}, {1, 1}});
-    cubeMesh.vertices.push_back({{ s,  s, -s}, { 0,  0, -1}, {1, 1, 1}, {0, 1}});
-    // Top face
-    cubeMesh.vertices.push_back({{-s,  s,  s}, { 0,  1,  0}, {1, 1, 1}, {0, 0}});
-    cubeMesh.vertices.push_back({{ s,  s,  s}, { 0,  1,  0}, {1, 1, 1}, {1, 0}});
-    cubeMesh.vertices.push_back({{ s,  s, -s}, { 0,  1,  0}, {1, 1, 1}, {1, 1}});
-    cubeMesh.vertices.push_back({{-s,  s, -s}, { 0,  1,  0}, {1, 1, 1}, {0, 1}});
-    // Bottom face
-    cubeMesh.vertices.push_back({{-s, -s, -s}, { 0, -1,  0}, {1, 1, 1}, {0, 0}});
-    cubeMesh.vertices.push_back({{ s, -s, -s}, { 0, -1,  0}, {1, 1, 1}, {1, 0}});
-    cubeMesh.vertices.push_back({{ s, -s,  s}, { 0, -1,  0}, {1, 1, 1}, {1, 1}});
-    cubeMesh.vertices.push_back({{-s, -s,  s}, { 0, -1,  0}, {1, 1, 1}, {0, 1}});
-    // Right face
-    cubeMesh.vertices.push_back({{ s, -s,  s}, { 1,  0,  0}, {1, 1, 1}, {0, 0}});
-    cubeMesh.vertices.push_back({{ s, -s, -s}, { 1,  0,  0}, {1, 1, 1}, {1, 0}});
-    cubeMesh.vertices.push_back({{ s,  s, -s}, { 1,  0,  0}, {1, 1, 1}, {1, 1}});
-    cubeMesh.vertices.push_back({{ s,  s,  s}, { 1,  0,  0}, {1, 1, 1}, {0, 1}});
-    // Left face
-    cubeMesh.vertices.push_back({{-s, -s, -s}, {-1,  0,  0}, {1, 1, 1}, {0, 0}});
-    cubeMesh.vertices.push_back({{-s, -s,  s}, {-1,  0,  0}, {1, 1, 1}, {1, 0}});
-    cubeMesh.vertices.push_back({{-s,  s,  s}, {-1,  0,  0}, {1, 1, 1}, {1, 1}});
-    cubeMesh.vertices.push_back({{-s,  s, -s}, {-1,  0,  0}, {1, 1, 1}, {0, 1}});
-
-    // Cube indices
-    for (int face = 0; face < 6; ++face) {
-        uint32_t base = face * 4;
-        cubeMesh.indices.push_back(base + 0);
-        cubeMesh.indices.push_back(base + 1);
-        cubeMesh.indices.push_back(base + 2);
-        cubeMesh.indices.push_back(base + 0);
-        cubeMesh.indices.push_back(base + 2);
-        cubeMesh.indices.push_back(base + 3);
-    }
-    cubeMesh.bounds = AABB(Vec3(-s, -s, -s), Vec3(s, s, s));
-
-    uploadMeshToGPU("Default Cube", cubeMesh, std::filesystem::path("builtin://cube"), false);
-
-    // Create a simple preview plane
-    MeshData planeMesh;
-    const float p = 0.75f;
-    planeMesh.vertices.push_back({{-p, 0.0f, -p}, {0, 1, 0}, {1, 1, 1}, {0, 0}});
-    planeMesh.vertices.push_back({{ p, 0.0f, -p}, {0, 1, 0}, {1, 1, 1}, {1, 0}});
-    planeMesh.vertices.push_back({{ p, 0.0f,  p}, {0, 1, 0}, {1, 1, 1}, {1, 1}});
-    planeMesh.vertices.push_back({{-p, 0.0f,  p}, {0, 1, 0}, {1, 1, 1}, {0, 1}});
-    planeMesh.indices = {0, 1, 2, 0, 2, 3};
-    planeMesh.bounds = AABB(Vec3(-p, 0.0f, -p), Vec3(p, 0.0f, p));
-    uploadMeshToGPU("Default Plane", planeMesh, std::filesystem::path("builtin://plane"), false);
-
-    // Create a simple sphere mesh
-    MeshData sphereMesh;
-    const int stacks = 16;
-    const int slices = 32;
-    const float radius = 0.5f;
-
-    // Generate vertices
-    for (int i = 0; i <= stacks; ++i) {
-        float phi = static_cast<float>(i) / stacks * 3.14159265f;
-        for (int j = 0; j <= slices; ++j) {
-            float theta = static_cast<float>(j) / slices * 2.0f * 3.14159265f;
-            float x = radius * sinf(phi) * cosf(theta);
-            float y = radius * cosf(phi);
-            float z = radius * sinf(phi) * sinf(theta);
-            Vec3 normal = vnorm(Vec3(x, y, z));
-            float u = static_cast<float>(j) / slices;
-            float v = static_cast<float>(i) / stacks;
-            sphereMesh.vertices.push_back({{x, y, z}, {normal.x, normal.y, normal.z}, {1, 1, 1}, {u, v}});
-        }
-    }
-
-    // Generate indices
-    for (int i = 0; i < stacks; ++i) {
-        for (int j = 0; j < slices; ++j) {
-            uint32_t first = i * (slices + 1) + j;
-            uint32_t second = first + slices + 1;
-            sphereMesh.indices.push_back(first);
-            sphereMesh.indices.push_back(second);
-            sphereMesh.indices.push_back(first + 1);
-            sphereMesh.indices.push_back(second);
-            sphereMesh.indices.push_back(second + 1);
-            sphereMesh.indices.push_back(first + 1);
-        }
-    }
-    sphereMesh.bounds = AABB(Vec3(-radius, -radius, -radius), Vec3(radius, radius, radius));
-
-    uploadMeshToGPU("Default Sphere", sphereMesh, std::filesystem::path("builtin://sphere"), false);
-
-    {
-        Hephaestus::SkeletalImportResult fixture;
-        std::vector<Mat4> palette;
-        Hephaestus::SkeletalModelImporter::BuildRestPoseFixture(fixture, palette);
-        if (fixture.meshes.empty()) {
-            return;
-        }
-        const Hephaestus::SkinnedMeshPart& part = fixture.meshes.front();
-        std::vector<SkinnedVertex> verts(part.vertices.size());
-        for (size_t i = 0; i < part.vertices.size(); ++i) {
-            const auto& src = part.vertices[i];
-            std::memcpy(verts[i].pos, src.pos, sizeof(src.pos));
-            std::memcpy(verts[i].normal, src.normal, sizeof(src.normal));
-            std::memcpy(verts[i].color, src.color, sizeof(src.color));
-            std::memcpy(verts[i].texCoord, src.texCoord, sizeof(src.texCoord));
-            std::memcpy(verts[i].joints, src.joints, sizeof(src.joints));
-            std::memcpy(verts[i].weights, src.weights, sizeof(src.weights));
-        }
-        std::vector<MeshData::Submesh> submeshes;
-        for (const auto& sub : part.submeshes) {
-            MeshData::Submesh gpuSub{};
-            gpuSub.indexOffset = sub.indexOffset;
-            gpuSub.indexCount = sub.indexCount;
-            gpuSub.materialSlot = sub.materialSlot;
-            gpuSub.name = sub.name;
-            submeshes.push_back(std::move(gpuSub));
-        }
-        const size_t handle = m_frameRenderer->AddSkinnedMesh(
-            "Skinned Rest Fixture", verts, part.indices, submeshes, fixture.bounds, palette,
-            std::filesystem::path("builtin://skinned_rest_fixture"), false);
-        if (handle != SIZE_MAX) {
-            std::cout << "[QtEditorEngine] Builtin skinned rest fixture handle " << handle << "\n";
-        }
-    }
-
+    Hephaestus::AddBuiltinMeshes(*m_frameRenderer);
     m_builtinMeshesCreated = true;
     std::cout << "[QtEditorEngine] Builtin meshes created\n";
 }

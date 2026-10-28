@@ -105,6 +105,7 @@
 #include "../Plugins/PluginContent.h"
 #include "../Assets/ModelImporter.h"
 #include "../Assets/SkeletalModelImporter.h"
+#include "../Gfx/BuiltinMeshes.h"
 #include "../Assets/CharacterRuntime.h"
 #include "../Animation/CharacterPlayback.h"
 #include "../Gfx/Vertex.h"
@@ -825,148 +826,9 @@ int main(int argc, char* argv[]) {
     cppScripts.AwakeScripts();
 
     // ── Generate Builtin Primitive Meshes ─────────────────────────
-    HP_LOG(Info, "Generating builtin primitive meshes...");
-    
-    // Cube mesh data (24 vertices with proper normals per face)
-    // Uses extent [-1, +1] (2x2x2) to match Blender default Cube.glb
-    const float c = 1.0f;
-    const std::vector<Vertex> cubeVertices = {
-        // Front face (Z+)
-        {{-c, -c, c}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-        {{c, -c, c}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
-        {{c, c, c}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-        {{-c, c, c}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-        // Back face (Z-)
-        {{c, -c, -c}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-        {{-c, -c, -c}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
-        {{-c, c, -c}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-        {{c, c, -c}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-        // Right face (X+)
-        {{c, -c, c}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-        {{c, -c, -c}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
-        {{c, c, -c}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-        {{c, c, c}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-        // Left face (X-)
-        {{-c, -c, -c}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-        {{-c, -c, c}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
-        {{-c, c, c}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-        {{-c, c, -c}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-        // Top face (Y+)
-        {{-c, c, c}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-        {{c, c, c}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
-        {{c, c, -c}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-        {{-c, c, -c}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-        // Bottom face (Y-)
-        {{-c, -c, -c}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-        {{c, -c, -c}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f}},
-        {{c, -c, c}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-        {{-c, -c, c}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-    };
-    const std::vector<uint32_t> cubeIndices = {
-        0, 1, 2, 2, 3, 0,       // Front
-        4, 5, 6, 6, 7, 4,       // Back
-        8, 9, 10, 10, 11, 8,    // Right
-        12, 13, 14, 14, 15, 12, // Left
-        16, 17, 18, 18, 19, 16, // Top
-        20, 21, 22, 22, 23, 20  // Bottom
-    };
-    
-    MeshData cubeMeshData;
-    cubeMeshData.vertices = cubeVertices;
-    cubeMeshData.indices = cubeIndices;
-    cubeMeshData.bounds = AABB(Vec3(-1.0f, -1.0f, -1.0f), Vec3(1.0f, 1.0f, 1.0f));
-    
-    size_t builtinCubeHandle = frameRenderer.AddStaticMesh("builtin://cube", cubeMeshData, "builtin://cube", false);
-    if (builtinCubeHandle != SIZE_MAX) {
-        HP_LOG(Info, "  Loaded builtin cube mesh at handle " + std::to_string(builtinCubeHandle));
-    }
-    
-    // Sphere mesh generation
-    auto generateSphereMesh = [](float radius, uint32_t rings, uint32_t segments) {
-        MeshData data;
-        const float pi = 3.14159265359f;
-        
-        for (uint32_t ring = 0; ring <= rings; ++ring) {
-            float phi = pi * float(ring) / float(rings);
-            float y = radius * std::cos(phi);
-            float ringRadius = radius * std::sin(phi);
-            
-            for (uint32_t seg = 0; seg <= segments; ++seg) {
-                float theta = 2.0f * pi * float(seg) / float(segments);
-                float x = ringRadius * std::cos(theta);
-                float z = ringRadius * std::sin(theta);
-                
-                Vertex v{};
-                v.pos[0] = x; v.pos[1] = y; v.pos[2] = z;
-                float len = std::sqrt(x*x + y*y + z*z);
-                v.normal[0] = x/len; v.normal[1] = y/len; v.normal[2] = z/len;
-                v.color[0] = 1.0f; v.color[1] = 1.0f; v.color[2] = 1.0f;
-                v.texCoord[0] = float(seg) / float(segments);
-                v.texCoord[1] = float(ring) / float(rings);
-                data.vertices.push_back(v);
-            }
-        }
-        
-        uint32_t stride = segments + 1;
-        for (uint32_t ring = 0; ring < rings; ++ring) {
-            for (uint32_t seg = 0; seg < segments; ++seg) {
-                uint32_t i0 = ring * stride + seg;
-                uint32_t i1 = i0 + 1;
-                uint32_t i2 = i0 + stride;
-                uint32_t i3 = i2 + 1;
-                data.indices.push_back(i0);
-                data.indices.push_back(i2);
-                data.indices.push_back(i1);
-                data.indices.push_back(i1);
-                data.indices.push_back(i2);
-                data.indices.push_back(i3);
-            }
-        }
-        data.bounds = AABB(Vec3(-radius, -radius, -radius), Vec3(radius, radius, radius));
-        return data;
-    };
-    
-    MeshData sphereMeshData = generateSphereMesh(1.0f, 24, 16);
-    size_t builtinSphereHandle = frameRenderer.AddStaticMesh("builtin://sphere", sphereMeshData, "builtin://sphere", false);
-    if (builtinSphereHandle != SIZE_MAX) {
-        HP_LOG(Info, "  Loaded builtin sphere mesh at handle " + std::to_string(builtinSphereHandle));
-    }
+    Hephaestus::AddBuiltinMeshes(frameRenderer);
+    HP_LOG(Info, "Generated builtin primitive meshes");
 
-    {
-        Hephaestus::SkeletalImportResult fixture;
-        std::vector<Mat4> palette;
-        Hephaestus::SkeletalModelImporter::BuildRestPoseFixture(fixture, palette);
-        if (!fixture.meshes.empty()) {
-            const Hephaestus::SkinnedMeshPart& part = fixture.meshes.front();
-            std::vector<SkinnedVertex> verts(part.vertices.size());
-            for (size_t i = 0; i < part.vertices.size(); ++i) {
-                const auto& src = part.vertices[i];
-                std::memcpy(verts[i].pos, src.pos, sizeof(src.pos));
-                std::memcpy(verts[i].normal, src.normal, sizeof(src.normal));
-                std::memcpy(verts[i].color, src.color, sizeof(src.color));
-                std::memcpy(verts[i].texCoord, src.texCoord, sizeof(src.texCoord));
-                std::memcpy(verts[i].joints, src.joints, sizeof(src.joints));
-                std::memcpy(verts[i].weights, src.weights, sizeof(src.weights));
-            }
-            std::vector<MeshData::Submesh> submeshes;
-            for (const auto& sub : part.submeshes) {
-                MeshData::Submesh gpuSub{};
-                gpuSub.indexOffset = sub.indexOffset;
-                gpuSub.indexCount = sub.indexCount;
-                gpuSub.materialSlot = sub.materialSlot;
-                gpuSub.name = sub.name;
-                submeshes.push_back(std::move(gpuSub));
-            }
-            const size_t handle = frameRenderer.AddSkinnedMesh(
-                "Skinned Rest Fixture", verts, part.indices, submeshes, fixture.bounds, palette,
-                fs::path("builtin://skinned_rest_fixture"), false);
-            if (handle != SIZE_MAX) {
-                HP_LOG(Info, "  Loaded builtin skinned rest fixture at handle " +
-                                 std::to_string(handle));
-            }
-        }
-    }
-    
     // ── Load Scene Meshes ─────────────────────────
     HP_LOG(Info, "Loading scene meshes...");
     {
@@ -1183,7 +1045,7 @@ int main(int argc, char* argv[]) {
                         size_t builtinHandle = frameRenderer.GetMeshHandle(builtinKey);
                         if (builtinHandle != SIZE_MAX) {
                             renderer.meshHandle = builtinHandle;
-                            HP_LOG(Info, "  " + entityName + " mapped " + renderer.meshAssetPath + " -> " + builtinKey + " (handle " + std::to_string(renderer.meshHandle) + ")");
+                            HP_LOG(Warning, "  " + entityName + ": mesh file " + renderer.meshAssetPath + " is missing; using " + builtinKey + " instead, which may differ in size");
                             loadedCount++;
                             continue;
                         }

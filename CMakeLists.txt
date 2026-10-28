@@ -319,6 +319,7 @@ add_library(HephaestusRuntime STATIC
     engine/Gfx/VulkanTexture.cpp
     engine/Gfx/VulkanGizmo.cpp
     engine/Gfx/VulkanLightGizmo.cpp
+    engine/Gfx/BuiltinMeshes.cpp
     engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/PhysicsLayerConfig.cpp
