@@ -752,6 +752,7 @@ struct ProbeVolumeComponent {
     int probeCountY = 4;
     int probeCountZ = 8;
     float intensity = 1.0f;
+    std::string bakePath;  // project-relative .hpprobes written by "Bake Probes"
 
     // Offset of probe (ix, iy, iz) from the volume centre; a single probe on an axis sits at the centre.
     Vec3 ProbeOffset(int ix, int iy, int iz) const {

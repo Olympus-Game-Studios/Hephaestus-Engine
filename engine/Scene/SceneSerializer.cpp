@@ -660,7 +660,8 @@ static std::string WriteProbeVolumeJson(const ProbeVolumeComponent& volume)
     oss << "          \"size\": " << FormatVec3(volume.size) << ",\n";
     oss << "          \"probeCounts\": [" << volume.probeCountX << ", " << volume.probeCountY << ", "
         << volume.probeCountZ << "],\n";
-    oss << "          \"intensity\": " << FormatFloat(volume.intensity) << "\n";
+    oss << "          \"intensity\": " << FormatFloat(volume.intensity) << ",\n";
+    oss << "          \"bakePath\": \"" << EscapeString(NormalizeAssetPathForSave(volume.bakePath)) << "\"\n";
     oss << "        }";
     return oss.str();
 }
@@ -690,6 +691,11 @@ static bool ApplyProbeVolumeJson(ProbeVolumeComponent& volume, const JsonValue& 
     if (const JsonValue* intensity = data.Find("intensity")) {
         if (intensity->IsNumber()) {
             volume.intensity = static_cast<float>(intensity->AsNumber());
+        }
+    }
+    if (const JsonValue* bakePath = data.Find("bakePath")) {
+        if (bakePath->IsString()) {
+            volume.bakePath = bakePath->AsString();
         }
     }
     return true;

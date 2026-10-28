@@ -3,7 +3,11 @@
 #include "ProbeVolumeInspector.h"
 #include "PropertyEditors.h"
 
+#include "../../Assets/AssetManager.h"
+#include "../../Gfx/ProbeBake.h"
 #include "../../Scene/Components.h"
+#include "../../Scene/Entity.h"
+#include "../../Scene/Scene.h"
 
 #include <QFormLayout>
 #include <QGroupBox>
@@ -58,6 +62,16 @@ void ProbeVolumeInspector::buildUI()
     m_total = new QLabel();
     form->addRow(tr("Total Probes"), m_total);
 
+    auto* bakeBox = new QGroupBox(tr("Bake"), this);
+    auto* bakeForm = new QFormLayout(bakeBox);
+    layout->addWidget(bakeBox);
+    m_bakeStatus = new QLabel();
+    m_bakeStatus->setWordWrap(true);
+    bakeForm->addRow(tr("Status"), m_bakeStatus);
+    m_bake = new QPushButton(tr("Bake Probes"));
+    m_bake->setToolTip(tr("Trace what each probe sees in the static meshes and save it next to the scene."));
+    bakeForm->addRow(QString(), m_bake);
+
     m_remove = new QPushButton(tr("Remove Component"));
     layout->addWidget(m_remove);
 }
@@ -77,6 +91,7 @@ void ProbeVolumeInspector::connectSignals()
         connect(m_counts[i], qOverload<double>(&QDoubleSpinBox::valueChanged), this, edited);
     }
     connect(m_intensity, qOverload<double>(&QDoubleSpinBox::valueChanged), this, edited);
+    connect(m_bake, &QPushButton::clicked, this, &ProbeVolumeInspector::bakeRequested);
     connect(m_remove, &QPushButton::clicked, this, [this]() {
         ForEachTarget<ProbeVolumeComponent>([&](ProbeVolumeComponent&, entt::entity entity) {
             if (m_ctx && m_ctx->HasActiveScene()) {
@@ -131,6 +146,34 @@ void ProbeVolumeInspector::Refresh()
     }
     SetSpinFromMixed(m_intensity, intensity);
     m_total->setText(total.mixed ? tr("—") : QString::number(static_cast<int>(total.value)));
+
+    QString status;
+    if (Targets().size() > 1) {
+        status = tr("Select one volume to see its bake status.");
+    } else if (m_ctx && m_ctx->HasActiveScene()) {
+        Scene* scene = m_ctx->GetActiveScene();
+        const auto* volumePtr = scene->GetRegistry().try_get<ProbeVolumeComponent>(GetEntity());
+        if (!volumePtr) {
+            status.clear();
+        } else if (volumePtr->bakePath.empty()) {
+            status = tr("Not baked.");
+        } else {
+            const ProbeVolumeComponent& volume = *volumePtr;
+            const std::filesystem::path file =
+                std::filesystem::path(AssetManager::GetInstance().GetProjectRoot()) / volume.bakePath;
+            const Mat4 world = scene->GetWorldTransform(Entity(GetEntity(), scene));
+            ProbeBake header;
+            std::string error;
+            if (!ReadProbeBakeHeader(file, header, error)) {
+                status = tr("Bake file unreadable: %1").arg(QString::fromStdString(error));
+            } else if (!ProbeBakeMatchesVolume(header, Vec3(world.m[12], world.m[13], world.m[14]), volume)) {
+                status = tr("Out of date: the volume moved or changed since the last bake.");
+            } else {
+                status = tr("Baked: %1").arg(QString::fromStdString(volume.bakePath));
+            }
+        }
+    }
+    m_bakeStatus->setText(status);
     m_updating = false;
 }
 

@@ -29,6 +29,7 @@
 #include "VulkanGizmo.h"
 #include "VulkanLightGizmo.h"
 #include "SkyIrradiance.h"
+#include "ProbeBake.h"
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
 #include "../Core/EditorDebugDraw.h"
@@ -38,6 +39,7 @@
 class VulkanDevice;
 class VulkanSwapchain;
 class VulkanPipeline;
+class Entity;
 class Scene;
 
 namespace Hephaestus::HephaestusUI {
@@ -253,6 +255,9 @@ public:
      * @return Handle or SIZE_MAX if not found
      */
     size_t GetMeshHandle(const std::string& sourceKey) const;
+
+    // Static, visible mesh triangles in world space for probe baking. Editor only: packaged games keep no CPU copy.
+    ProbeBakeGeometry CollectProbeBakeGeometry(Scene& scene);
 
     /**
      * @brief Register an additional lookup key (alias) for an existing mesh.
@@ -539,6 +544,7 @@ private:
     uint32_t ensureMaterialTextureSlot(const std::string& rawPath);
     void updateEnvironmentReflectionDescriptor(uint32_t imageIndex);
     EnvironmentComponent* findEnvironment(Scene* scene);
+    const MaterialComponent* resolveMaterialForSlot(Entity& entity, const MeshRendererComponent& renderer, int slot);
     void prepareEnvironment(Scene* scene, const FrameRenderConfig& config, uint32_t imageIndex);
     void updateTextureSlotInDescriptors(uint32_t slotIndex, uint32_t imageIndex);
     void flushPendingTextureDescriptorUpdates(uint32_t imageIndex);

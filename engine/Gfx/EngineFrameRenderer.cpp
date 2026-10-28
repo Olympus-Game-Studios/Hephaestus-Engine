@@ -963,6 +963,13 @@ size_t EngineFrameRenderer::AddStaticMesh(const std::string& name, const MeshDat
     mesh.submeshes = data.submeshes;
     mesh.bounds = data.bounds;
     mesh.imported = imported;
+    if (m_editorOverlays) {
+        mesh.cpuPositions.reserve(data.vertices.size());
+        for (const Vertex& v : data.vertices) {
+            mesh.cpuPositions.emplace_back(v.pos[0], v.pos[1], v.pos[2]);
+        }
+        mesh.cpuIndices = data.indices;
+    }
 
     const VkDeviceSize vbSize = data.vertices.size() * sizeof(Vertex);
     mesh.vertexBuffer.Create(allocator, vbSize,
@@ -3463,6 +3470,96 @@ void EngineFrameRenderer::prepareEnvironment(Scene* scene, const FrameRenderConf
     updateEnvironmentReflectionDescriptor(imageIndex);
 }
 
+const MaterialComponent* EngineFrameRenderer::resolveMaterialForSlot(Entity& entity,
+                                                                    const MeshRendererComponent& renderer,
+                                                                    int slot)
+{
+    if (slot < 0) slot = 0;
+    // 1) Check per-slot material path assignment (from ImGUI editor)
+    if (static_cast<size_t>(slot) < renderer.appliedMaterialPaths.size()) {
+        const std::string& slotPath = renderer.appliedMaterialPaths[slot];
+        if (!slotPath.empty()) {
+            if (const MaterialComponent* mat = resolveMaterialFromPath(slotPath)) {
+                return mat;
+            }
+        }
+    }
+    // 2) Fallback: entity's own MaterialComponent (single material for all submeshes)
+    if (entity.HasComponent<MaterialComponent>()) {
+        return &entity.GetComponent<MaterialComponent>();
+    }
+    // 3) No material assigned
+    return nullptr;
+}
+
+ProbeBakeGeometry EngineFrameRenderer::CollectProbeBakeGeometry(Scene& scene)
+{
+    ProbeBakeGeometry geometry;
+    std::unordered_map<const MaterialComponent*, uint32_t> materialIndex;
+    auto addMaterial = [&](const MaterialComponent* material) {
+        const auto found = materialIndex.find(material);
+        if (found != materialIndex.end()) {
+            return found->second;
+        }
+        ProbeBakeMaterial baked;
+        if (material) {
+            baked.albedo = material->albedo;
+            baked.emissive = vscale(material->emissive, material->emissiveStrength);
+        }
+        const uint32_t index = static_cast<uint32_t>(geometry.materials.size());
+        geometry.materials.push_back(baked);
+        materialIndex.emplace(material, index);
+        return index;
+    };
+
+    auto view = scene.GetRegistry().view<MeshRendererComponent>();
+    for (entt::entity handle : view) {
+        Entity entity(handle, &scene);
+        const MeshRendererComponent& renderer = view.get<MeshRendererComponent>(handle);
+        if (!renderer.visible || renderer.hideInGame || !renderer.HasValidMesh() ||
+            entity.HasComponent<CharacterComponent>() || entity.HasComponent<CharacterControllerComponent>()) {
+            continue;
+        }
+        if (const auto* body = scene.GetRegistry().try_get<RigidBodyComponent>(handle); body && !body->IsStatic()) {
+            continue;
+        }
+        const Mat4 world = scene.GetWorldTransform(entity);
+        auto toWorld = [&](const Vec3& p) {
+            const float* m = world.m;
+            return Vec3(m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12],
+                        m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13],
+                        m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14]);
+        };
+        for (size_t meshHandle : MeshHandlesForDraw(renderer)) {
+            if (meshHandle >= m_meshLibrary.size()) {
+                continue;
+            }
+            const MeshGPU& mesh = m_meshLibrary[meshHandle];
+            if (mesh.skinned || mesh.cpuIndices.empty()) {
+                continue;
+            }
+            auto addRange = [&](uint32_t first, uint32_t count, uint32_t material) {
+                for (uint32_t i = first; i + 2 < first + count && i + 2 < mesh.cpuIndices.size(); i += 3) {
+                    geometry.triangles.push_back({toWorld(mesh.cpuPositions[mesh.cpuIndices[i]]),
+                                                  toWorld(mesh.cpuPositions[mesh.cpuIndices[i + 1]]),
+                                                  toWorld(mesh.cpuPositions[mesh.cpuIndices[i + 2]]),
+                                                  material});
+                }
+            };
+            if (mesh.submeshes.empty()) {
+                addRange(0, static_cast<uint32_t>(mesh.cpuIndices.size()),
+                         addMaterial(resolveMaterialForSlot(entity, renderer, 0)));
+            } else {
+                for (const auto& submesh : mesh.submeshes) {
+                    addRange(submesh.indexOffset, submesh.indexCount,
+                             addMaterial(resolveMaterialForSlot(entity, renderer, submesh.materialSlot)));
+                }
+            }
+        }
+    }
+    return geometry;
+}
+
 void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageIndex, 
                                           Scene* scene, const FrameRenderConfig& config)
 {
@@ -3707,26 +3804,6 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         VkPipelineLayout currentDrawLayout = m_pipeline->layout;
         VkDescriptorSet currentBoneSet = VK_NULL_HANDLE;
         
-        // Lambda: resolve material for a given submesh slot on an entity
-        auto resolveMaterialForSlot = [&](Entity& entity, MeshRendererComponent& renderer, int slot) -> const MaterialComponent* {
-            if (slot < 0) slot = 0;
-            // 1) Check per-slot material path assignment (from ImGUI editor)
-            if (static_cast<size_t>(slot) < renderer.appliedMaterialPaths.size()) {
-                const std::string& slotPath = renderer.appliedMaterialPaths[slot];
-                if (!slotPath.empty()) {
-                    if (const MaterialComponent* mat = resolveMaterialFromPath(slotPath)) {
-                        return mat;
-                    }
-                }
-            }
-            // 2) Fallback: entity's own MaterialComponent (single material for all submeshes)
-            if (entity.HasComponent<MaterialComponent>()) {
-                return &entity.GetComponent<MaterialComponent>();
-            }
-            // 3) No material assigned
-            return nullptr;
-        };
-
         // Lambda: upload material to dynamic UBO and issue draw call
         auto drawWithMaterial = [&](const MaterialComponent* material,
                                     uint32_t indexOffset, uint32_t indexCount,

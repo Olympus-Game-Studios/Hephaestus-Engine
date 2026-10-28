@@ -20,6 +20,9 @@ public:
     explicit ProbeVolumeInspector(EditorContext* ctx, entt::entity entity, QWidget* parent = nullptr);
     void Refresh() override;
 
+signals:
+    void bakeRequested();
+
 private:
     void buildUI();
     void connectSignals();
@@ -30,6 +33,8 @@ private:
     QDoubleSpinBox* m_counts[3] = {};
     QDoubleSpinBox* m_intensity = nullptr;
     QLabel* m_total = nullptr;
+    QLabel* m_bakeStatus = nullptr;
+    QPushButton* m_bake = nullptr;
     QPushButton* m_remove = nullptr;
     bool m_updating = false;
 };

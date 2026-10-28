@@ -321,6 +321,7 @@ add_library(HephaestusRuntime STATIC
     engine/Gfx/VulkanLightGizmo.cpp
     engine/Gfx/BuiltinMeshes.cpp
     engine/Gfx/SkyIrradiance.cpp
+    engine/Gfx/ProbeBake.cpp
     engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/PhysicsLayerConfig.cpp
@@ -1506,6 +1507,13 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     target_link_libraries(ProbeVolumeTests PRIVATE HephaestusRuntime)
     target_include_directories(ProbeVolumeTests PRIVATE engine extern extern/entt/single_include)
     add_test(NAME ProbeVolume COMMAND ProbeVolumeTests)
+
+    add_executable(ProbeBakeTests
+        engine/Tests/ProbeBakeTests.cpp
+    )
+    target_link_libraries(ProbeBakeTests PRIVATE HephaestusRuntime)
+    target_include_directories(ProbeBakeTests PRIVATE engine extern extern/entt/single_include)
+    add_test(NAME ProbeBake COMMAND ProbeBakeTests)
 
     add_executable(CharacterControllerJoltTests
         engine/Tests/CharacterControllerJoltTests.cpp

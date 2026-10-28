@@ -44,6 +44,9 @@ struct MeshGPU {
     uint32_t boneCount = 0;
     VulkanBuffer boneBuffer;
     VkDescriptorSet boneDescriptorSet = VK_NULL_HANDLE;
+    // Editor only: object-space triangles for probe baking.
+    std::vector<Vec3> cpuPositions;
+    std::vector<uint32_t> cpuIndices;
 
     void Destroy(VmaAllocator allocator) {
         vertexBuffer.Destroy(allocator);
@@ -55,6 +58,8 @@ struct MeshGPU {
         skinned = false;
         boneDescriptorSet = VK_NULL_HANDLE;
         submeshes.clear();
+        cpuPositions.clear();
+        cpuIndices.clear();
         imported = false;
         sourceKey.clear();
         sourcePath.clear();
