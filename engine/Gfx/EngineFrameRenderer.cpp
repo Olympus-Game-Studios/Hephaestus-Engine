@@ -737,6 +737,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (scene) {
         updateLightingUBO(imageIndex, scene, camera);
     }
+    prepareEnvironment(scene, config, imageIndex);
 
     // Prepare the runtime HUI overlay geometry/uploads (queue work is allowed
     // here; the command buffer has not been recorded yet).
@@ -3347,6 +3348,115 @@ void EngineFrameRenderer::flushPendingTextureDescriptorUpdates(uint32_t imageInd
     pending.clear();
 }
 
+EnvironmentComponent* EngineFrameRenderer::findEnvironment(Scene* scene)
+{
+    EnvironmentComponent* envComp = nullptr;
+    
+    // Prefer entity named "Environment"
+    auto envView = scene->GetEntitiesWith<EnvironmentComponent>();
+    for (auto ent : envView) {
+        auto* tagComp = scene->GetRegistry().try_get<TagComponent>(ent);
+        if (tagComp && tagComp->tag == "Environment") {
+            envComp = &scene->GetRegistry().get<EnvironmentComponent>(ent);
+            break;
+        }
+    }
+    // Fallback: first entity with EnvironmentComponent
+    if (!envComp) {
+        for (auto ent : envView) {
+            envComp = &scene->GetRegistry().get<EnvironmentComponent>(ent);
+            break;
+        }
+    }
+    return envComp;
+}
+
+void EngineFrameRenderer::prepareEnvironment(Scene* scene, const FrameRenderConfig& config,
+                                             uint32_t imageIndex)
+{
+    EnvironmentComponent* envComp =
+        (config.renderSkybox && m_skybox.initialized && scene) ? findEnvironment(scene) : nullptr;
+    if (envComp && envComp->type == EnvironmentComponent::BackgroundType::HDRI &&
+        !envComp->hdriPath.empty()) {
+        if (envComp->hdriPath != m_lastSkyboxPath) {
+            // Resolve the HDRI path
+            namespace fs = std::filesystem;
+            std::string resolvedPath;
+            
+            // Try multiple resolve strategies
+            auto tryResolve = [](const std::string& candidate) -> bool {
+                return std::filesystem::exists(candidate);
+            };
+            
+            std::vector<std::string> candidates;
+            
+            // If path is already absolute
+            if (fs::path(envComp->hdriPath).is_absolute()) {
+                candidates.push_back(envComp->hdriPath);
+            }
+            
+            // Strategy 1: relative to known project root (set by editor)
+            if (!m_projectRoot.empty()) {
+                fs::path pr(m_projectRoot);
+                candidates.push_back((pr / envComp->hdriPath).string());
+                candidates.push_back((pr / "assets" / envComp->hdriPath).string());
+            }
+            
+            // Strategy 2: relative to working directory
+            candidates.push_back(envComp->hdriPath);
+            candidates.push_back("assets/" + envComp->hdriPath);
+            candidates.push_back("../assets/" + envComp->hdriPath);
+            
+            // Strategy 3: walk up from CWD looking for .heproject (fallback)
+            {
+                fs::path cwd = fs::current_path();
+                fs::path search = cwd;
+                for (int i = 0; i < 10 && !search.empty(); ++i) {
+                    std::error_code ec;
+                    for (const auto& entry : fs::directory_iterator(search, fs::directory_options::skip_permission_denied, ec)) {
+                        if (entry.path().extension() == ".heproject") {
+                            candidates.push_back((search / envComp->hdriPath).string());
+                            candidates.push_back((search / "assets" / envComp->hdriPath).string());
+                            break;
+                        }
+                    }
+                    auto parent = search.parent_path();
+                    if (parent == search) break;
+                    search = parent;
+                }
+            }
+            
+            for (const auto& candidate : candidates) {
+                if (tryResolve(candidate)) {
+                    resolvedPath = candidate;
+                    break;
+                }
+            }
+            
+            if (!resolvedPath.empty()) {
+                static bool pathLogPrinted = false;
+                if (!pathLogPrinted) {
+                    std::cout << "[Skybox] Resolved HDRI path: " << resolvedPath << "\n";
+                    pathLogPrinted = true;
+                }
+                vkDeviceWaitIdle(m_device->device);
+                if (m_skybox.LoadHDRI(resolvedPath, m_device->allocator,
+                                      m_device->physicalDevice, m_device->commandPool,
+                                      m_device->graphicsQueue, m_device->device)) {
+                    m_lastSkyboxPath = envComp->hdriPath;
+                }
+            } else {
+                static bool failLogPrinted = false;
+                if (!failLogPrinted) {
+                    std::cerr << "[Skybox] Could not resolve HDRI path: " << envComp->hdriPath << "\n";
+                    failLogPrinted = true;
+                }
+            }
+        }
+    }
+    updateEnvironmentReflectionDescriptor(imageIndex);
+}
+
 void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageIndex, 
                                           Scene* scene, const FrameRenderConfig& config)
 {
@@ -3382,25 +3492,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     
     // ── Skybox / Environment background ──────────────────────────────
     if (config.renderSkybox && m_skybox.initialized && scene) {
-        // Find the EnvironmentComponent in the scene
-        EnvironmentComponent* envComp = nullptr;
-        
-        // Prefer entity named "Environment"
-        auto envView = scene->GetEntitiesWith<EnvironmentComponent>();
-        for (auto ent : envView) {
-            auto* tagComp = scene->GetRegistry().try_get<TagComponent>(ent);
-            if (tagComp && tagComp->tag == "Environment") {
-                envComp = &scene->GetRegistry().get<EnvironmentComponent>(ent);
-                break;
-            }
-        }
-        // Fallback: first entity with EnvironmentComponent
-        if (!envComp) {
-            for (auto ent : envView) {
-                envComp = &scene->GetRegistry().get<EnvironmentComponent>(ent);
-                break;
-            }
-        }
+        EnvironmentComponent* envComp = findEnvironment(scene);
         
         if (envComp) {
             Skybox::SkyboxPushConstants pc;
@@ -3408,82 +3500,6 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             if (envComp->type == EnvironmentComponent::BackgroundType::HDRI &&
                 !envComp->hdriPath.empty()) {
                 
-                // Live editing: reload HDRI if path changed
-                if (envComp->hdriPath != m_lastSkyboxPath) {
-                    // Resolve the HDRI path
-                    namespace fs = std::filesystem;
-                    std::string resolvedPath;
-                    
-                    // Try multiple resolve strategies
-                    auto tryResolve = [](const std::string& candidate) -> bool {
-                        return std::filesystem::exists(candidate);
-                    };
-                    
-                    std::vector<std::string> candidates;
-                    
-                    // If path is already absolute
-                    if (fs::path(envComp->hdriPath).is_absolute()) {
-                        candidates.push_back(envComp->hdriPath);
-                    }
-                    
-                    // Strategy 1: relative to known project root (set by editor)
-                    if (!m_projectRoot.empty()) {
-                        fs::path pr(m_projectRoot);
-                        candidates.push_back((pr / envComp->hdriPath).string());
-                        candidates.push_back((pr / "assets" / envComp->hdriPath).string());
-                    }
-                    
-                    // Strategy 2: relative to working directory
-                    candidates.push_back(envComp->hdriPath);
-                    candidates.push_back("assets/" + envComp->hdriPath);
-                    candidates.push_back("../assets/" + envComp->hdriPath);
-                    
-                    // Strategy 3: walk up from CWD looking for .heproject (fallback)
-                    {
-                        fs::path cwd = fs::current_path();
-                        fs::path search = cwd;
-                        for (int i = 0; i < 10 && !search.empty(); ++i) {
-                            std::error_code ec;
-                            for (const auto& entry : fs::directory_iterator(search, fs::directory_options::skip_permission_denied, ec)) {
-                                if (entry.path().extension() == ".heproject") {
-                                    candidates.push_back((search / envComp->hdriPath).string());
-                                    candidates.push_back((search / "assets" / envComp->hdriPath).string());
-                                    break;
-                                }
-                            }
-                            auto parent = search.parent_path();
-                            if (parent == search) break;
-                            search = parent;
-                        }
-                    }
-                    
-                    for (const auto& candidate : candidates) {
-                        if (tryResolve(candidate)) {
-                            resolvedPath = candidate;
-                            break;
-                        }
-                    }
-                    
-                    if (!resolvedPath.empty()) {
-                        static bool pathLogPrinted = false;
-                        if (!pathLogPrinted) {
-                            std::cout << "[Skybox] Resolved HDRI path: " << resolvedPath << "\n";
-                            pathLogPrinted = true;
-                        }
-                        vkDeviceWaitIdle(m_device->device);
-                        if (m_skybox.LoadHDRI(resolvedPath, m_device->allocator,
-                                              m_device->physicalDevice, m_device->commandPool,
-                                              m_device->graphicsQueue, m_device->device)) {
-                            m_lastSkyboxPath = envComp->hdriPath;
-                        }
-                    } else {
-                        static bool failLogPrinted = false;
-                        if (!failLogPrinted) {
-                            std::cerr << "[Skybox] Could not resolve HDRI path: " << envComp->hdriPath << "\n";
-                            failLogPrinted = true;
-                        }
-                    }
-                }
                 
                 if (m_skybox.hasHDRI) {
                     pc.intensity = envComp->hdriIntensity;
@@ -3510,8 +3526,6 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         }
     }
     // ── End Skybox ───────────────────────────────────────────────────
-
-    updateEnvironmentReflectionDescriptor(imageIndex);
     
     // Bind pipeline dynamically per-object (backface culling toggle)
     VkPipeline currentPipeline = VK_NULL_HANDLE;

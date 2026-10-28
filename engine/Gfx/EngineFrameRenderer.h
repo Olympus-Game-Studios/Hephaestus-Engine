@@ -537,6 +537,8 @@ private:
     const MaterialComponent* resolveMaterialFromPath(const std::string& materialPath);
     uint32_t ensureMaterialTextureSlot(const std::string& rawPath);
     void updateEnvironmentReflectionDescriptor(uint32_t imageIndex);
+    EnvironmentComponent* findEnvironment(Scene* scene);
+    void prepareEnvironment(Scene* scene, const FrameRenderConfig& config, uint32_t imageIndex);
     void updateTextureSlotInDescriptors(uint32_t slotIndex, uint32_t imageIndex);
     void flushPendingTextureDescriptorUpdates(uint32_t imageIndex);
 
