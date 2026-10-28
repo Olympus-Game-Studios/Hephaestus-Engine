@@ -116,6 +116,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-10-28: Inspector checkboxes that start unchecked (Probe Volume "Enabled" and "Hardware ray tracing", Mesh Renderer, Camera, Lua Script and others) now turn back on with one click. Before, the click went to a half-checked state that was ignored.
 - 2026-10-28: Dynamic rigid bodies rotated about more than one axis now show the rotation physics actually has. The quaternion-to-Euler conversion used when copying body poses back to transforms assumed the wrong axis order.
 - 2026-10-28: FPS plugin automatic weapons no longer fire up to four shots in one frame when the trigger is pulled again after a pause or after reloading with the trigger held.
 - 2026-10-28: Packaging fails with `PACKAGE_PLUGIN_NOT_FOUND` when `.hephaestus/plugins.json` enables a plugin that is not installed under the engine or project `Plugins` folder, instead of producing a package without that plugin's content.

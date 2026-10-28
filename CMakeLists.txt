@@ -2025,8 +2025,12 @@ if(HEPHAESTUS_BUILD_QT_TESTS AND HEPHAESTUS_USE_QT AND Qt6_FOUND)
     if(Qt6Test_FOUND)
         add_executable(EditorQtSmokeTests
             engine/Tests/EditorQtSmokeTests.cpp
+            engine/UI/QtEditor/PropertyEditors.cpp
+            engine/UI/QtEditor/PropertyEditors.h
         )
-        target_link_libraries(EditorQtSmokeTests PRIVATE Qt6::Test Qt6::Widgets)
+        set_target_properties(EditorQtSmokeTests PROPERTIES AUTOMOC ON)
+        target_compile_definitions(EditorQtSmokeTests PRIVATE HEPHAESTUS_EDITOR_QT_UI=1)
+        target_link_libraries(EditorQtSmokeTests PRIVATE Qt6::Test Qt6::Widgets HephaestusEditorCore)
         target_include_directories(EditorQtSmokeTests PRIVATE engine)
         add_test(NAME EditorQtSmoke COMMAND EditorQtSmokeTests)
     else()

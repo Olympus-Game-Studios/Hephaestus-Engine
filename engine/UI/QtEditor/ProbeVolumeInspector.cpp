@@ -108,8 +108,9 @@ void ProbeVolumeInspector::connectSignals()
         EndEdit();
         Refresh();
     };
-    connect(m_enabled, &QCheckBox::toggled, this, edited);
-    connect(m_hardware, &QCheckBox::toggled, this, edited);
+    // stateChanged also reports PartiallyChecked -> Checked, which toggled() does not for a mixed selection.
+    connect(m_enabled, &QCheckBox::stateChanged, this, edited);
+    connect(m_hardware, &QCheckBox::stateChanged, this, edited);
     for (int i = 0; i < 3; ++i) {
         connect(m_size[i], qOverload<double>(&QDoubleSpinBox::valueChanged), this, edited);
         connect(m_counts[i], qOverload<double>(&QDoubleSpinBox::valueChanged), this, edited);
