@@ -392,13 +392,25 @@ if(WIN32)
     target_link_libraries(HephaestusRuntime PUBLIC winmm)
 endif()
 
-# Editor-only sources
-set(EDITOR_ONLY_SOURCES
-    engine/Core/main.cpp
-    engine/Gfx/VulkanGizmo.cpp
-    engine/Gfx/VulkanLightGizmo.cpp
+# Qt-free editor services and documents. Editor-only, but never Qt: Qt code
+# lives in engine/UI/QtEditor and is compiled into HephaestusEngine.
+add_library(HephaestusEditorCore STATIC
+    engine/Core/EditorContext.cpp
+    engine/Core/EditorCameraController.cpp
+    engine/Core/PlayModeManager.cpp
+    engine/Assets/OpenDocumentRegistry.cpp
+    engine/Assets/AssetOperationService.cpp
+    engine/Assets/DerivedDataCache.cpp
+    engine/Assets/EditorAssetPipeline.cpp
+    engine/Assets/EditorAssetImportService.cpp
+    engine/Assets/EditorViewState.cpp
+    engine/Assets/FileWatcher.cpp
+    engine/Assets/RecoveryStore.cpp
+    engine/Assets/ReimportManager.cpp
     engine/UI/EditorDocument.cpp
     engine/UI/CharacterDocument.cpp
+    engine/UI/InspectorSelectionModel.cpp
+    engine/UI/ComponentClipboard.cpp
     engine/UI/MaterialEditor/MaterialGraph.cpp
     engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
     engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
@@ -406,6 +418,7 @@ set(EDITOR_ONLY_SOURCES
     engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
     engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
+target_link_libraries(HephaestusEditorCore PUBLIC HephaestusRuntime)
 
 # Shared non-Qt project validation and packaging pipeline used by the editor
 # and headless CLI. Keep compiler/process orchestration out of Qt UI code.
@@ -466,99 +479,7 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 if(HEPHAESTUS_BUILD_EDITOR)
 add_executable(HephaestusEngine
-    engine/Audio/AudioEngine.cpp
     engine/Core/main.cpp
-    engine/Core/EngineLog.cpp
-    engine/Core/EditorContext.cpp
-    engine/Core/EditorCameraController.cpp
-    engine/Core/ProjectContext.cpp
-    engine/Core/PlayModeManager.cpp
-    engine/Assets/ModelImporter.cpp
-    engine/Assets/FbxDocument.cpp
-    engine/Assets/FbxStaticImporter.cpp
-    engine/Assets/FbxSkeletalImporter.cpp
-    engine/Assets/AssetDatabase.cpp
-    engine/Assets/AssetImporters.cpp
-    engine/Assets/AssetManager.cpp
-    engine/Assets/OpenDocumentRegistry.cpp
-    engine/Assets/CharacterAsset.cpp
-    engine/Assets/CharacterRuntime.cpp
-    engine/Assets/CharacterRuntimeGpu.cpp
-    engine/Assets/CharacterImport.cpp
-    engine/Assets/SkeletalModelImporter.cpp
-    engine/Animation/Skeleton.cpp
-    engine/Animation/AnimationClip.cpp
-    engine/Animation/CharacterPlayback.cpp
-    engine/Assets/AssetOperationService.cpp
-    engine/Assets/DerivedDataCache.cpp
-    engine/Assets/EditorAssetPipeline.cpp
-    engine/Assets/EditorAssetImportService.cpp
-    engine/Assets/FileWatcher.cpp
-    engine/Assets/RecoveryStore.cpp
-    engine/Assets/EditorViewState.cpp
-    engine/Assets/ReimportManager.cpp
-    engine/Gfx/VulkanDevice.cpp
-    engine/Gfx/VulkanSwapchain.cpp
-    engine/Gfx/VulkanPipeline.cpp
-    engine/Gfx/VulkanTexture.cpp
-    engine/Gfx/VulkanGizmo.cpp
-    engine/Gfx/VulkanLightGizmo.cpp
-    engine/Gfx/EngineFrameRenderer.cpp
-    engine/Physics/MeshCollisionSystem.cpp
-    engine/Physics/PhysicsLayerConfig.cpp
-    engine/Physics/JoltPhysicsEngine.cpp
-    engine/Physics/JoltPhysicsSystem.cpp
-    engine/Physics/CharacterMotor.cpp
-    engine/Physics/CharacterControllerMath.cpp
-    engine/Physics/CharacterControllerSystem.cpp
-    engine/Scene/ActiveCameraSync.cpp
-    engine/Scene/Scene.cpp
-    engine/Scene/SceneAuthoring.cpp
-    engine/Scene/Entity.cpp
-    engine/Scene/Json.cpp
-    engine/Scene/PrefabSerializer.cpp
-    engine/Scene/PrefabInstantiator.cpp
-    engine/Scene/PrefabComponentIO.cpp
-    engine/Scene/PrefabOverrideSystem.cpp
-    engine/Scene/SceneSerializer.cpp
-    engine/Scripting/ScriptBase.cpp
-    engine/Scripting/ScriptEngine.cpp
-    engine/Scripting/LuaScriptEngine.cpp
-    engine/Scripting/LuaExposeScanner.cpp
-    engine/Scripting/LuaScriptVariableReconciler.cpp
-    engine/UI/HephaestusUI/HUIAsset.cpp
-    engine/UI/HephaestusUI/UIButton.cpp
-    engine/UI/HephaestusUI/UICanvas.cpp
-    engine/UI/HephaestusUI/UIContext.cpp
-    engine/UI/HephaestusUI/RuntimeUIInspection.cpp
-    engine/UI/HephaestusUI/UIElement.cpp
-    engine/UI/HephaestusUI/UIFont.cpp
-    engine/UI/HephaestusUI/UIGridLayout.cpp
-    engine/UI/HephaestusUI/UIHorizontalBox.cpp
-    engine/UI/HephaestusUI/UIImage.cpp
-    engine/UI/HephaestusUI/UIInputRouter.cpp
-    engine/UI/HephaestusUI/UILayout.cpp
-    engine/UI/HephaestusUI/UIPanel.cpp
-    engine/UI/HephaestusUI/UIRenderer.cpp
-    engine/UI/HephaestusUI/UIScreen.cpp
-    engine/UI/HephaestusUI/UISimpleMenuExample.cpp
-    engine/UI/HephaestusUI/UISystem.cpp
-    engine/UI/HephaestusUI/UIText.cpp
-    engine/UI/HephaestusUI/UITheme.cpp
-    engine/UI/HephaestusUI/UIVerticalBox.cpp
-    engine/UI/HephaestusUI/Rendering/HUIGeometryBuilder.cpp
-    engine/UI/HephaestusUI/Rendering/UIFontAtlas.cpp
-    engine/UI/HephaestusUI/Rendering/VulkanHUIRenderer.cpp
-    engine/UI/EditorDocument.cpp
-    engine/UI/CharacterDocument.cpp
-    engine/UI/InspectorSelectionModel.cpp
-    engine/UI/ComponentClipboard.cpp
-    engine/UI/MaterialEditor/MaterialGraph.cpp
-    engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
-    engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
-    engine/UI/MaterialEditor/MaterialShaderGenerator.cpp
-    engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
-    engine/UI/MaterialEditor/TextureDiscovery.cpp
 )
 
 if (WIN32)
@@ -606,44 +527,18 @@ elseif(APPLE)
     )
 endif()
 
-target_include_directories(HephaestusEngine PRIVATE engine "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(HephaestusEngine PRIVATE HephaestusBuildCore HephaestusInputCore HephaestusPluginCore HephaestusAutomationCore ufbx)
-if(LUA_FOUND)
-    if(TARGET Lua::Lua)
-        target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt Lua::Lua)
-    else()
-        # Manual vcpkg Lua
-        target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt ${LUA_LIBRARIES})
-    endif()
-    target_include_directories(HephaestusEngine PRIVATE ${LUA_INCLUDE_DIR})
-    target_compile_definitions(HephaestusEngine PRIVATE LUA_AVAILABLE=1)
-    
-    # Copy Lua DLL to output directory
-    if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
-        get_filename_component(LUA_DLL_NAME "${LUA_DLL_PATH}" NAME)
-        add_custom_command(TARGET HephaestusEngine POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${LUA_DLL_PATH}"
-                "$<TARGET_FILE_DIR:HephaestusEngine>/${LUA_DLL_NAME}"
-            COMMENT "Copying ${LUA_DLL_NAME} to output directory"
-        )
-    endif()
-else()
-    target_link_libraries(HephaestusEngine PRIVATE Vulkan::Vulkan glfw Jolt)
-    # Lua disabled - LuaScriptEngine will be a stub
-    target_compile_definitions(HephaestusEngine PRIVATE LUA_AVAILABLE=0)
+target_link_libraries(HephaestusEngine PRIVATE HephaestusEditorCore HephaestusBuildCore HephaestusAutomationCore)
+
+# Copy Lua DLL to output directory
+if(LUA_FOUND AND DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
+    get_filename_component(LUA_DLL_NAME "${LUA_DLL_PATH}" NAME)
+    add_custom_command(TARGET HephaestusEngine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${LUA_DLL_PATH}"
+            "$<TARGET_FILE_DIR:HephaestusEngine>/${LUA_DLL_NAME}"
+        COMMENT "Copying ${LUA_DLL_NAME} to output directory"
+    )
 endif()
-if(WIN32)
-    target_link_libraries(HephaestusEngine PRIVATE winmm)
-endif()
-target_include_directories(HephaestusEngine PRIVATE
-    engine
-    extern
-    extern/VMA
-    extern/entt/single_include
-    extern/JoltPhysics
-    extern/JoltPhysics/Build
-)
 
 
 # Qt editor UI (optional)
