@@ -9,6 +9,9 @@
 #include <QLabel>
 #include <QPushButton>
 
+#include <cstdint>
+#include <functional>
+
 namespace Hephaestus {
 namespace QtEditor {
 
@@ -19,6 +22,8 @@ class ProbeVolumeInspector : public ComponentInspector
 public:
     explicit ProbeVolumeInspector(EditorContext* ctx, entt::entity entity, QWidget* parent = nullptr);
     void Refresh() override;
+    // Supplies the current static-geometry signature (0 = unknown) so the status can flag a stale bake.
+    void SetGeometrySignatureProvider(std::function<uint64_t()> provider);
 
 signals:
     void bakeRequested();
@@ -36,6 +41,7 @@ private:
     QLabel* m_bakeStatus = nullptr;
     QPushButton* m_bake = nullptr;
     QPushButton* m_remove = nullptr;
+    std::function<uint64_t()> m_geometrySignature;
     bool m_updating = false;
 };
 

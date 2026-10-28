@@ -40,6 +40,7 @@ struct ProbeBake {
     Vec3 size{0.0f, 0.0f, 0.0f};
     int probeCounts[3] = {0, 0, 0};
     uint32_t raysPerProbe = 0;
+    uint64_t geometrySignature = 0;   // 0 for version 1 files, which predate it
     std::vector<Vec3> probeOffsets;   // relocation from the grid position, per probe
     std::vector<ProbeRayHit> hits;    // raysPerProbe entries per probe, probes in x-fastest order
 
@@ -48,13 +49,16 @@ struct ProbeBake {
 
 constexpr uint32_t kProbeBakeRaysPerProbe = 128;
 
+// Hash of the triangles and their materials; it changes whenever the baked geometry would.
+uint64_t ProbeBakeGeometrySignature(const ProbeBakeGeometry& geometry);
+
 // Fixed spherical Fibonacci direction i of n; the bake and the GPU relight must agree on it.
 Vec3 ProbeRayDirection(uint32_t i, uint32_t n);
 
 ProbeBake BakeProbeVolume(const ProbeBakeGeometry& geometry, const Vec3& center,
                           const ProbeVolumeComponent& volume, uint32_t raysPerProbe = kProbeBakeRaysPerProbe);
 
-// True when the bake was made for this volume at this centre (geometry changes are not detected).
+// True when the bake was made for this volume at this centre; compare geometrySignature for geometry changes.
 bool ProbeBakeMatchesVolume(const ProbeBake& bake, const Vec3& center, const ProbeVolumeComponent& volume);
 
 bool WriteProbeBake(const std::filesystem::path& path, const ProbeBake& bake, std::string& outError);

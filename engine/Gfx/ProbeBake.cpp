@@ -16,7 +16,7 @@ namespace {
 
 constexpr float kPi = 3.14159265358979f;
 constexpr char kMagic[4] = {'H', 'P', 'P', 'B'};
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
 // DDGI (Majercik et al. 2019): a probe that sees backfaces on over 25% of its rays is inside geometry.
 constexpr float kBackfaceInsideFraction = 0.25f;
 
@@ -273,6 +273,7 @@ ProbeBake BakeProbeVolume(const ProbeBakeGeometry& geometry, const Vec3& center,
     bake.probeCounts[1] = std::max(1, volume.probeCountY);
     bake.probeCounts[2] = std::max(1, volume.probeCountZ);
     bake.raysPerProbe = raysPerProbe;
+    bake.geometrySignature = ProbeBakeGeometrySignature(geometry);
     const size_t probes = static_cast<size_t>(bake.probeCounts[0]) * bake.probeCounts[1] * bake.probeCounts[2];
     bake.probeOffsets.assign(probes, Vec3());
     bake.hits.assign(probes * raysPerProbe, ProbeRayHit{});
@@ -335,6 +336,25 @@ ProbeBake BakeProbeVolume(const ProbeBakeGeometry& geometry, const Vec3& center,
     return bake;
 }
 
+uint64_t ProbeBakeGeometrySignature(const ProbeBakeGeometry& geometry) {
+    // Per-triangle FNV-1a summed, so the order entities are visited in does not matter.
+    uint64_t sum = 0;
+    for (const ProbeBakeTriangle& t : geometry.triangles) {
+        const ProbeBakeMaterial material =
+            t.material < geometry.materials.size() ? geometry.materials[t.material] : ProbeBakeMaterial{};
+        const float values[15] = {t.a.x, t.a.y, t.a.z, t.b.x, t.b.y, t.b.z, t.c.x, t.c.y, t.c.z,
+                                  material.albedo.x, material.albedo.y, material.albedo.z,
+                                  material.emissive.x, material.emissive.y, material.emissive.z};
+        uint64_t hash = 14695981039346656037ull;
+        const auto* bytes = reinterpret_cast<const unsigned char*>(values);
+        for (size_t i = 0; i < sizeof(values); ++i) {
+            hash = (hash ^ bytes[i]) * 1099511628211ull;
+        }
+        sum += hash;
+    }
+    return sum == 0 ? 1 : sum;
+}
+
 bool ProbeBakeMatchesVolume(const ProbeBake& bake, const Vec3& center, const ProbeVolumeComponent& volume) {
     constexpr float kTolerance = 1.0e-4f;
     return bake.probeCounts[0] == std::max(1, volume.probeCountX) &&
@@ -357,6 +377,7 @@ bool WriteProbeBake(const std::filesystem::path& path, const ProbeBake& bake, st
     Put(out, bake.size);
     for (int c : bake.probeCounts) Put(out, static_cast<int32_t>(c));
     Put(out, bake.raysPerProbe);
+    Put(out, bake.geometrySignature);
     for (const Vec3& offset : bake.probeOffsets) Put(out, offset);
     for (const ProbeRayHit& hit : bake.hits) {
         Put(out, hit.distance);
@@ -383,13 +404,15 @@ bool ReadHeader(std::ifstream& in, const std::filesystem::path& path, ProbeBake&
     }
     char magic[4];
     uint32_t version = 0;
-    if (!in.read(magic, 4) || std::memcmp(magic, kMagic, 4) != 0 || !Get(in, version) || version != kVersion) {
-        outError = path.generic_string() + " is not a version " + std::to_string(kVersion) + " probe bake";
+    if (!in.read(magic, 4) || std::memcmp(magic, kMagic, 4) != 0 || !Get(in, version) || version < 1 ||
+        version > kVersion) {
+        outError = path.generic_string() + " is not a version 1-" + std::to_string(kVersion) + " probe bake";
         return false;
     }
     int32_t counts[3];
     if (!Get(in, result.center) || !Get(in, result.size) || !Get(in, counts[0]) || !Get(in, counts[1]) ||
-        !Get(in, counts[2]) || !Get(in, result.raysPerProbe)) {
+        !Get(in, counts[2]) || !Get(in, result.raysPerProbe) ||
+        (version >= 2 && !Get(in, result.geometrySignature))) {
         outError = path.generic_string() + " has a truncated header";
         return false;
     }

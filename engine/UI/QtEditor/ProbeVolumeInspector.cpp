@@ -39,6 +39,12 @@ ProbeVolumeInspector::ProbeVolumeInspector(EditorContext* ctx, entt::entity enti
     Refresh();
 }
 
+void ProbeVolumeInspector::SetGeometrySignatureProvider(std::function<uint64_t()> provider)
+{
+    m_geometrySignature = std::move(provider);
+    Refresh();
+}
+
 void ProbeVolumeInspector::buildUI()
 {
     auto* layout = new QVBoxLayout(this);
@@ -168,6 +174,11 @@ void ProbeVolumeInspector::Refresh()
                 status = tr("Bake file unreadable: %1").arg(QString::fromStdString(error));
             } else if (!ProbeBakeMatchesVolume(header, Vec3(world.m[12], world.m[13], world.m[14]), volume)) {
                 status = tr("Out of date: the volume moved or changed since the last bake.");
+            } else if (header.geometrySignature == 0) {
+                status = tr("Baked before geometry tracking. Bake again to be warned when static meshes change.");
+            } else if (const uint64_t current = m_geometrySignature ? m_geometrySignature() : 0;
+                       current != 0 && current != header.geometrySignature) {
+                status = tr("Out of date: static meshes or their materials changed since the last bake.");
             } else {
                 status = tr("Baked: %1").arg(QString::fromStdString(volume.bakePath));
             }

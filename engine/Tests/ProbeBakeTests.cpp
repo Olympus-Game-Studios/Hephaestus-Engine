@@ -1,8 +1,10 @@
 #include "Gfx/ProbeBake.h"
 #include "Scene/Components.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 
 using namespace Hephaestus;
@@ -130,6 +132,62 @@ int main() {
         pass &= Check(outside > 0.5f && vlen(moved) <= 0.45f * 5.0f, "the buried probe moves out of the block");
         pass &= Check(vlen(bake.probeOffsets[0]) == 0.0f && vlen(bake.probeOffsets[2]) == 0.0f,
                       "probes outside the block stay put");
+    }
+
+    {
+        ProbeBakeGeometry a;
+        a.materials.push_back({v3(0.5f, 0.5f, 0.5f), v3(0, 0, 0)});
+        AddBox(a, v3(0, 0, 0), 1.0f, false, 0);
+        AddBox(a, v3(4, 0, 0), 1.0f, false, 0);
+        ProbeBakeGeometry reordered = a;
+        std::reverse(reordered.triangles.begin(), reordered.triangles.end());
+        ProbeBakeGeometry moved = a;
+        moved.triangles[0].a.y += 0.01f;
+        ProbeBakeGeometry recoloured = a;
+        recoloured.materials[0].albedo.x = 0.6f;
+        const uint64_t base = ProbeBakeGeometrySignature(a);
+        pass &= Check(base != 0 && base == ProbeBakeGeometrySignature(reordered),
+                      "the geometry signature ignores the order meshes are visited in");
+        pass &= Check(base != ProbeBakeGeometrySignature(moved), "moving a vertex changes the signature");
+        pass &= Check(base != ProbeBakeGeometrySignature(recoloured), "changing a material changes the signature");
+
+        ProbeVolumeComponent volume;
+        volume.probeCountX = volume.probeCountY = volume.probeCountZ = 1;
+        const ProbeBake bake = BakeProbeVolume(a, v3(0, 3, 0), volume);
+        pass &= Check(bake.geometrySignature == base, "a bake records the signature of its geometry");
+        const auto path = std::filesystem::temp_directory_path() / "hephaestus_probe_bake_signature.hpprobes";
+        std::string error;
+        ProbeBake header;
+        pass &= Check(WriteProbeBake(path, bake, error) && ReadProbeBakeHeader(path, header, error) &&
+                          header.geometrySignature == base,
+                      "the signature survives the bake file round trip");
+
+        // A version 1 file (written before the signature existed) still loads, with signature 0.
+        {
+            std::ofstream v1(path, std::ios::binary | std::ios::trunc);
+            const uint32_t version = 1, rays = 1;
+            const int32_t counts[3] = {1, 1, 1};
+            const Vec3 zero;
+            const float distance = 2.0f;
+            const int16_t oct[2] = {0, 0};
+            const uint8_t albedo[4] = {255, 0, 0, 0};
+            v1.write("HPPB", 4);
+            v1.write(reinterpret_cast<const char*>(&version), 4);
+            v1.write(reinterpret_cast<const char*>(&zero), sizeof(Vec3));
+            v1.write(reinterpret_cast<const char*>(&zero), sizeof(Vec3));
+            v1.write(reinterpret_cast<const char*>(counts), sizeof(counts));
+            v1.write(reinterpret_cast<const char*>(&rays), 4);
+            v1.write(reinterpret_cast<const char*>(&zero), sizeof(Vec3));
+            v1.write(reinterpret_cast<const char*>(&distance), 4);
+            v1.write(reinterpret_cast<const char*>(oct), sizeof(oct));
+            v1.write(reinterpret_cast<const char*>(albedo), 4);
+            v1.write(reinterpret_cast<const char*>(&zero), sizeof(Vec3));
+        }
+        ProbeBake legacy;
+        pass &= Check(ReadProbeBake(path, legacy, error) && legacy.geometrySignature == 0 &&
+                          legacy.hits.size() == 1 && legacy.hits[0].distance == 2.0f,
+                      "version 1 bake files still load");
+        std::filesystem::remove(path);
     }
 
     if (pass) {

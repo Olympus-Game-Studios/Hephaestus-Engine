@@ -7299,6 +7299,12 @@ void EditorMainWindow::rebuildComponentInspectors()
                 [this](const QString& typeName) { resetInspectorComponent(typeName.toStdString()); });
         if (auto* probeVolume = qobject_cast<ProbeVolumeInspector*>(insp)) {
             connect(probeVolume, &ProbeVolumeInspector::bakeRequested, this, &EditorMainWindow::bakeProbeVolumes);
+            probeVolume->SetGeometrySignatureProvider([this]() -> uint64_t {
+                auto* ctx = m_engine ? m_engine->GetEditorContext() : nullptr;
+                if (!ctx || !ctx->HasActiveScene() || !m_engine->GetFrameRenderer()) return 0;
+                return ProbeBakeGeometrySignature(
+                    m_engine->GetFrameRenderer()->CollectProbeBakeGeometry(*ctx->GetActiveScene()));
+            });
         }
 
         m_detailsLayout->insertWidget(stretchIndex, insp);
