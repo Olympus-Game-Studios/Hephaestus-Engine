@@ -98,7 +98,7 @@ std::filesystem::file_time_type WriteTime(const std::filesystem::path& file) {
 
 } // namespace
 
-bool ProbeGI::Init(VulkanDevice* device, VkRenderPass depthOnlyRenderPass) {
+bool ProbeGI::Init(VulkanDevice* device) {
     m_device = device;
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(device->physicalDevice, &props);
@@ -121,10 +121,14 @@ bool ProbeGI::Init(VulkanDevice* device, VkRenderPass depthOnlyRenderPass) {
     sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
     if (vkCreateSampler(device->device, &sampler, nullptr, &m_depthSampler) != VK_SUCCESS) return false;
 
-    return createLayoutAndPipeline() && createSunMap(depthOnlyRenderPass);
+    if (!createLayouts() || !createPlaceholders()) return false;
+    if (!createComputePipeline()) {
+        std::cerr << "[ProbeGI] Probe update pipeline unavailable; probe volumes will not be lit\n";
+    }
+    return true;
 }
 
-bool ProbeGI::createLayoutAndPipeline() {
+bool ProbeGI::createLayouts() {
     const VkShaderStageFlags compute = VK_SHADER_STAGE_COMPUTE_BIT;
     const VkShaderStageFlags all = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     const VkDescriptorSetLayoutBinding bindings[] = {
@@ -142,12 +146,68 @@ bool ProbeGI::createLayoutAndPipeline() {
     layoutInfo.bindingCount = static_cast<uint32_t>(std::size(bindings));
     layoutInfo.pBindings = bindings;
     if (vkCreateDescriptorSetLayout(m_device->device, &layoutInfo, nullptr, &m_setLayout) != VK_SUCCESS) return false;
+    VkDescriptorSetLayoutCreateInfo emptyInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    if (vkCreateDescriptorSetLayout(m_device->device, &emptyInfo, nullptr, &m_emptySetLayout) != VK_SUCCESS) return false;
 
     VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pl.setLayoutCount = 1;
     pl.pSetLayouts = &m_setLayout;
-    if (vkCreatePipelineLayout(m_device->device, &pl, nullptr, &m_computeLayout) != VK_SUCCESS) return false;
+    return vkCreatePipelineLayout(m_device->device, &pl, nullptr, &m_computeLayout) == VK_SUCCESS;
+}
 
+bool ProbeGI::createPlaceholders() {
+    try {
+        const float zeros[4] = {};
+        m_placeholderBuffer.Create(m_device->allocator, sizeof(zeros), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                   VMA_MEMORY_USAGE_CPU_TO_GPU, const_cast<float*>(zeros));
+    } catch (const std::exception&) {
+        return false;
+    }
+    VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image.imageType = VK_IMAGE_TYPE_2D;
+    image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    image.extent = {1, 1, 1};
+    image.mipLevels = 1;
+    image.arrayLayers = 1;
+    image.samples = VK_SAMPLE_COUNT_1_BIT;
+    image.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    VmaAllocationCreateInfo alloc{};
+    alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    if (vmaCreateImage(m_device->allocator, &image, &alloc, &m_placeholderAtlas.image, &m_placeholderAtlas.allocation,
+                       nullptr) != VK_SUCCESS) {
+        return false;
+    }
+    VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view.image = m_placeholderAtlas.image;
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (vkCreateImageView(m_device->device, &view, nullptr, &m_placeholderAtlas.view) != VK_SUCCESS) return false;
+    SubmitOnce(m_device, [&](VkCommandBuffer cmd) {
+        VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        toGeneral.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        toGeneral.srcQueueFamilyIndex = toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGeneral.image = m_placeholderAtlas.image;
+        toGeneral.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                             nullptr, 1, &toGeneral);
+        const VkClearColorValue zero{};
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdClearColorImage(cmd, m_placeholderAtlas.image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+        VkMemoryBarrier cleared{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        cleared.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        cleared.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
+                             &cleared, 0, nullptr, 0, nullptr);
+    });
+    return true;
+}
+
+bool ProbeGI::createComputePipeline() {
     VkShaderModule module = LoadShader(m_device->device, "probe_update.comp.spv");
     if (!module) return false;
     VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
@@ -160,7 +220,7 @@ bool ProbeGI::createLayoutAndPipeline() {
     return result == VK_SUCCESS;
 }
 
-bool ProbeGI::createSunMap(VkRenderPass depthOnlyRenderPass) {
+bool ProbeGI::InitSunMap(VkRenderPass depthOnlyRenderPass) {
     if (depthOnlyRenderPass == VK_NULL_HANDLE) {
         return true;  // no shadow pass: probes treat the sun as unoccluded
     }
@@ -342,6 +402,12 @@ void ProbeGI::Shutdown() {
     if (m_computePipeline) vkDestroyPipeline(device, m_computePipeline, nullptr);
     if (m_computeLayout) vkDestroyPipelineLayout(device, m_computeLayout, nullptr);
     if (m_setLayout) vkDestroyDescriptorSetLayout(device, m_setLayout, nullptr);
+    if (m_emptySetLayout) vkDestroyDescriptorSetLayout(device, m_emptySetLayout, nullptr);
+    m_placeholderBuffer.Destroy(m_device->allocator);
+    if (m_placeholderAtlas.view) vkDestroyImageView(device, m_placeholderAtlas.view, nullptr);
+    if (m_placeholderAtlas.image) vmaDestroyImage(m_device->allocator, m_placeholderAtlas.image, m_placeholderAtlas.allocation);
+    m_placeholderAtlas = Atlas{};
+    m_emptySetLayout = VK_NULL_HANDLE;
     if (m_atlasSampler) vkDestroySampler(device, m_atlasSampler, nullptr);
     if (m_depthSampler) vkDestroySampler(device, m_depthSampler, nullptr);
     m_sunFramebuffer = VK_NULL_HANDLE;
@@ -465,7 +531,19 @@ bool ProbeGI::loadBake(const std::filesystem::path& file, std::string& outError)
 void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t imageIndex, VkBuffer lightingBuffer,
                       const Vec3* sunDirection) {
     m_active = false;
-    if (!m_device || !m_computePipeline || imageIndex >= m_sets.size() || !scene) return;
+    if (!m_device || imageIndex >= m_sets.size()) return;
+    auto writeInactive = [&]() {
+        const ProbeGIParams params{};
+        void* mapped = nullptr;
+        vmaMapMemory(m_device->allocator, m_paramBuffers[imageIndex].allocation, &mapped);
+        std::memcpy(mapped, &params, sizeof(params));
+        vmaUnmapMemory(m_device->allocator, m_paramBuffers[imageIndex].allocation);
+        writeDescriptorSets(imageIndex, lightingBuffer);
+    };
+    if (!m_computePipeline || !scene) {
+        writeInactive();
+        return;
+    }
 
     if (m_queryWritten[imageIndex] && m_timestampPeriodNs > 0.0f) {
         uint64_t stamps[2] = {};
@@ -491,6 +569,7 @@ void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t ima
             vkDeviceWaitIdle(m_device->device);
             destroyBake();
         }
+        writeInactive();
         return;
     }
 
@@ -514,7 +593,10 @@ void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t ima
             std::cout << "[ProbeGI] Loaded " << m_probeCount << " probes from " << file.generic_string() << "\n";
         }
     }
-    if (m_probeCount == 0) return;
+    if (m_probeCount == 0) {
+        writeInactive();
+        return;
+    }
 
     ProbeVolumeComponent grid;
     grid.size = m_bakeGrid.size;
@@ -564,19 +646,26 @@ void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t ima
 void ProbeGI::writeDescriptorSets(uint32_t imageIndex, VkBuffer lightingBuffer) {
     const uint32_t read = m_parity;
     const uint32_t written = 1 - m_parity;
+    const bool loaded = m_probeCount > 0;
+    // Placeholders are only read by draws; no dispatch runs while the volume is not loaded.
+    const VkImageView placeholder = m_placeholderAtlas.view;
     for (int which = 0; which < 2; ++which) {
         const uint32_t sampled = which == 0 ? read : written;  // compute reads history, drawing reads the result
         VkDescriptorSet set = m_sets[imageIndex][which];
         const VkDescriptorBufferInfo params{m_paramBuffers[imageIndex].buffer, 0, sizeof(ProbeGIParams)};
         const VkDescriptorBufferInfo lighting{lightingBuffer, 0, VK_WHOLE_SIZE};
-        const VkDescriptorBufferInfo rays{m_rays.buffer, 0, VK_WHOLE_SIZE};
-        const VkDescriptorBufferInfo offsets{m_offsets.buffer, 0, VK_WHOLE_SIZE};
-        const VkDescriptorImageInfo sun{m_depthSampler, m_sunView ? m_sunView : m_irradiance[read].view,
+        const VkDescriptorBufferInfo rays{loaded ? m_rays.buffer : m_placeholderBuffer.buffer, 0, VK_WHOLE_SIZE};
+        const VkDescriptorBufferInfo offsets{loaded ? m_offsets.buffer : m_placeholderBuffer.buffer, 0, VK_WHOLE_SIZE};
+        const VkDescriptorImageInfo sun{m_depthSampler, m_sunView ? m_sunView : placeholder,
                                         m_sunView ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo irrOut{VK_NULL_HANDLE, m_irradiance[written].view, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo visOut{VK_NULL_HANDLE, m_visibility[written].view, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo irrRead{m_atlasSampler, m_irradiance[sampled].view, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo visRead{m_atlasSampler, m_visibility[sampled].view, VK_IMAGE_LAYOUT_GENERAL};
+        const VkDescriptorImageInfo irrOut{VK_NULL_HANDLE, loaded ? m_irradiance[written].view : placeholder,
+                                           VK_IMAGE_LAYOUT_GENERAL};
+        const VkDescriptorImageInfo visOut{VK_NULL_HANDLE, loaded ? m_visibility[written].view : placeholder,
+                                           VK_IMAGE_LAYOUT_GENERAL};
+        const VkDescriptorImageInfo irrRead{m_atlasSampler, loaded ? m_irradiance[sampled].view : placeholder,
+                                            VK_IMAGE_LAYOUT_GENERAL};
+        const VkDescriptorImageInfo visRead{m_atlasSampler, loaded ? m_visibility[sampled].view : placeholder,
+                                            VK_IMAGE_LAYOUT_GENERAL};
         auto write = [&](uint32_t binding, VkDescriptorType type, const VkDescriptorBufferInfo* buffer,
                          const VkDescriptorImageInfo* image) {
             VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};

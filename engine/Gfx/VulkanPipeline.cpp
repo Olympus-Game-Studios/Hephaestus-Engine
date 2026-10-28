@@ -42,7 +42,8 @@ VkShaderModule VulkanPipeline::createShaderModule(const std::vector<char>& code)
     return module;
 }
 
-void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool enableWireframe)
+void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool enableWireframe,
+                          const std::vector<VkDescriptorSetLayout>& extraSetLayouts)
 {
     device = dev;
     renderPass = rp;
@@ -211,10 +212,12 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     pushConstantRange.offset = 0;
     pushConstantRange.size = 64; // sizeof(Mat4) = 16 floats * 4 bytes
 
+    std::vector<VkDescriptorSetLayout> setLayouts = {descriptorSetLayout};
+    setLayouts.insert(setLayouts.end(), extraSetLayouts.begin(), extraSetLayouts.end());
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &descriptorSetLayout;
+    layoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+    layoutInfo.pSetLayouts = setLayouts.data();
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &pushConstantRange;
     if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &layout) != VK_SUCCESS)

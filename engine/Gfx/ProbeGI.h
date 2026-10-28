@@ -22,8 +22,16 @@ class ProbeGI {
 public:
     static constexpr uint32_t kSunMapResolution = 2048;
 
-    bool Init(VulkanDevice* device, VkRenderPass depthOnlyRenderPass);
+    // Layouts and placeholder data every lit draw binds; must succeed before the surface pipelines are built.
+    bool Init(VulkanDevice* device);
+    // Optional: without it the probes see the sun unoccluded.
+    bool InitSunMap(VkRenderPass depthOnlyRenderPass);
     void Shutdown();
+
+    VkDescriptorSetLayout SetLayout() const { return m_setLayout; }
+    VkDescriptorSetLayout EmptySetLayout() const { return m_emptySetLayout; }
+    // Set 2 of the surface pipelines: the probe result, or placeholders with probeCounts.w = 0.
+    VkDescriptorSet DrawSet(uint32_t imageIndex) const { return m_sets[imageIndex][1]; }
 
     bool CreateSwapchainResources(VkRenderPass sceneRenderPass, uint32_t sceneSubpass,
                                   VkDescriptorSetLayout cameraSetLayout, uint32_t imageCount);
@@ -47,8 +55,9 @@ public:
     size_t ProbeCount() const { return m_probeCount; }
 
 private:
-    bool createLayoutAndPipeline();
-    bool createSunMap(VkRenderPass depthOnlyRenderPass);
+    bool createLayouts();
+    bool createComputePipeline();
+    bool createPlaceholders();
     bool loadBake(const std::filesystem::path& file, std::string& outError);
     void destroyBake();
     void writeDescriptorSets(uint32_t imageIndex, VkBuffer lightingBuffer);
@@ -57,6 +66,7 @@ private:
     VkSampler m_atlasSampler = VK_NULL_HANDLE;
     VkSampler m_depthSampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_emptySetLayout = VK_NULL_HANDLE;
     VkPipelineLayout m_computeLayout = VK_NULL_HANDLE;
     VkPipeline m_computePipeline = VK_NULL_HANDLE;
 
@@ -90,6 +100,8 @@ private:
     };
     Atlas m_irradiance[2];
     Atlas m_visibility[2];
+    Atlas m_placeholderAtlas;  // 1x1 RGBA16F, GENERAL
+    VulkanBuffer m_placeholderBuffer;
     size_t m_probeCount = 0;
     uint32_t m_parity = 0;
     uint32_t m_resetFrames = 0;

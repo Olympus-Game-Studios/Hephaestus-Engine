@@ -574,8 +574,7 @@ private:
     };
     ShadowMap m_directionalShadow;
 
-    ProbeGI m_probeGI;
-    bool m_probeGIReady = false;
+    ProbeGI m_probeGI;  // set 2 of the main and skinned surface pipelines
     void recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene);
 
     // Billboard resources for light icons

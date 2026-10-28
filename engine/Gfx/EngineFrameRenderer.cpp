@@ -268,6 +268,11 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
     m_device = device;
     m_swapchain = swapchain;
     m_deviceLost = false;
+
+    if (!m_probeGI.Init(m_device)) {
+        std::cerr << "[EngineFrameRenderer] Failed to create probe GI layouts\n";
+        return false;
+    }
     
     // Create render resources
     if (!createPipeline()) {
@@ -364,13 +369,14 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
         std::cerr << "[EngineFrameRenderer] Failed to create tone map resources\n";
         return false;
     }
-    m_probeGIReady =
-        m_probeGI.Init(m_device, m_directionalShadow.IsValid() ? m_directionalShadow.renderPass : VK_NULL_HANDLE) &&
-        m_probeGI.CreateSwapchainResources(m_swapchain->renderPass, VulkanSwapchain::kSceneSubpass,
-                                           m_pipeline->descriptorSetLayout,
-                                           static_cast<uint32_t>(m_swapchain->images.size()));
-    if (!m_probeGIReady) {
-        std::cerr << "[EngineFrameRenderer] Warning: Failed to create probe GI resources (probe lighting disabled)\n";
+    if (m_directionalShadow.IsValid() && !m_probeGI.InitSunMap(m_directionalShadow.renderPass)) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create the probe sun map (probes see the sun unoccluded)\n";
+    }
+    if (!m_probeGI.CreateSwapchainResources(m_swapchain->renderPass, VulkanSwapchain::kSceneSubpass,
+                                            m_pipeline->descriptorSetLayout,
+                                            static_cast<uint32_t>(m_swapchain->images.size()))) {
+        std::cerr << "[EngineFrameRenderer] Failed to create probe GI resources\n";
+        return false;
     }
 
     // Editor overlay resources are created only for hosts that request them at Init.
@@ -641,12 +647,11 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             std::cerr << "[EngineFrameRenderer] Failed to recreate tone map resources\n";
             return false;
         }
-        if (m_probeGIReady &&
-            !m_probeGI.CreateSwapchainResources(m_swapchain->renderPass, VulkanSwapchain::kSceneSubpass,
+        if (!m_probeGI.CreateSwapchainResources(m_swapchain->renderPass, VulkanSwapchain::kSceneSubpass,
                                                 m_pipeline->descriptorSetLayout,
                                                 static_cast<uint32_t>(m_swapchain->images.size()))) {
-            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate probe GI resources (probe lighting disabled)\n";
-            m_probeGIReady = false;
+            std::cerr << "[EngineFrameRenderer] Failed to recreate probe GI resources\n";
+            return false;
         }
         if (!createSkinnedMainPipelines()) {
             std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate skinned mesh pipelines\n";
@@ -756,7 +761,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         updateLightingUBO(imageIndex, scene, camera);
     }
     prepareEnvironment(scene, config, imageIndex);
-    if (m_probeGIReady) {
+    {
         Vec3 sunDirection;
         const bool hasSun = scene && FindShadowCastingSun(scene, sunDirection);
         m_probeGI.Prepare(scene, m_projectRoot, imageIndex, m_lightingBuffers[imageIndex].buffer,
@@ -823,7 +828,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (config.renderShadows && m_directionalShadow.IsValid()) {
         recordShadowPass(cmd, scene, camera, config);
     }
-    if (m_probeGIReady && m_probeGI.Active()) {
+    if (m_probeGI.Active()) {
         m_probeGI.BeginTiming(cmd, imageIndex);
         if (m_probeGI.HasSunMap()) {
             recordProbeGISunPass(cmd, scene);
@@ -833,7 +838,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     
 // Record main render pass
     recordMainPass(cmd, imageIndex, scene, config);
-    m_lastFrameStats.probeGIGpuMs = m_probeGIReady && m_probeGI.Active() ? m_probeGI.LastGpuMilliseconds() : -1.0f;
+    m_lastFrameStats.probeGIGpuMs = m_probeGI.Active() ? m_probeGI.LastGpuMilliseconds() : -1.0f;
     if (m_lastFrameStats.probeGIGpuMs >= 0.0f && m_renderedFrameCount % 600 == 0) {
         std::cout << "[ProbeGI] " << m_probeGI.ProbeCount() << " probes updated in "
                   << m_lastFrameStats.probeGIGpuMs << " ms GPU\n";
@@ -1184,7 +1189,8 @@ bool EngineFrameRenderer::createPipeline()
     try {
         m_pipeline = std::make_unique<VulkanPipeline>();
         const bool enableWireframe = m_device && m_device->SupportsFillModeNonSolid();
-        m_pipeline->Init(m_device->device, m_swapchain->renderPass, m_swapchain->extent, enableWireframe);
+        m_pipeline->Init(m_device->device, m_swapchain->renderPass, m_swapchain->extent, enableWireframe,
+                         {m_probeGI.EmptySetLayout(), m_probeGI.SetLayout()});
         return true;
     } catch (const std::exception& e) {
         std::cerr << "[EngineFrameRenderer] Pipeline creation failed: " << e.what() << "\n";
@@ -1349,13 +1355,14 @@ bool EngineFrameRenderer::createSkinnedMainPipelines()
     DestroyPipeline(m_device->device, m_skinned.pipelineWireframeBackface);
     DestroyPipelineLayout(m_device->device, m_skinned.pipelineLayout);
 
-    VkDescriptorSetLayout setLayouts[] = {m_pipeline->descriptorSetLayout, m_skinned.boneSetLayout};
+    VkDescriptorSetLayout setLayouts[] = {m_pipeline->descriptorSetLayout, m_skinned.boneSetLayout,
+                                          m_probeGI.SetLayout()};
     VkPushConstantRange push{};
     push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     push.size = 64;
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 2;
+    layoutInfo.setLayoutCount = 3;
     layoutInfo.pSetLayouts = setLayouts;
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &push;
@@ -3917,6 +3924,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
         bool materialOverflowLogged = false;
         VkPipelineLayout currentDrawLayout = m_pipeline->layout;
+        VkPipelineLayout probeSetLayout = VK_NULL_HANDLE;  // layout the probe set was last bound with
         VkDescriptorSet currentBoneSet = VK_NULL_HANDLE;
         
         // Lambda: upload material to dynamic UBO and issue draw call
@@ -4033,6 +4041,13 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 }
                 currentDrawLayout = skinned ? m_skinned.pipelineLayout : m_pipeline->layout;
                 currentBoneSet = skinned ? boneSet : VK_NULL_HANDLE;
+                if (currentDrawLayout != probeSetLayout) {
+                    // Set 2 layouts differ in set 1 between the two pipelines, so switching disturbs it.
+                    const VkDescriptorSet probeSet = m_probeGI.DrawSet(imageIndex);
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, currentDrawLayout, 2, 1, &probeSet,
+                                            0, nullptr);
+                    probeSetLayout = currentDrawLayout;
+                }
 
                 if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
                     VkBuffer vb = mesh.vertexBuffer.buffer;
@@ -4108,7 +4123,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         }
     }
     
-    if (config.isEditorMode && !config.isPlaying && m_probeGIReady && m_probeGI.Active()) {
+    if (config.isEditorMode && !config.isPlaying && m_probeGI.Active()) {
         m_probeGI.RecordDebug(cmd, imageIndex, m_descriptorSets[imageIndex]);
     }
     recordToneMap(cmd);
@@ -4649,7 +4664,6 @@ void EngineFrameRenderer::destroyAllResources()
     cleanupLightGizmoResources();
 
     cleanupToneMapResources();
-    m_probeGI.Shutdown();
 
     // Cleanup shadow map resources
     if (m_directionalShadow.pipeline != VK_NULL_HANDLE) {
@@ -4687,6 +4701,7 @@ void EngineFrameRenderer::destroyAllResources()
         m_pipeline->Cleanup();
         m_pipeline.reset();
     }
+    m_probeGI.Shutdown();  // after every pipeline layout that uses its set layouts
     
     m_device = nullptr;
     m_swapchain = nullptr;

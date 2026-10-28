@@ -58,6 +58,8 @@ layout(set = 0, binding = 5) uniform sampler2D environmentMap;
 #define LIGHTING_SET 0
 #define LIGHTING_BINDING 2
 #include "lighting_common.glsl"
+#define GI_SET 2
+#include "probe_common.glsl"
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
 
@@ -425,6 +427,18 @@ void main() {
     if (lighting.environmentReflectionParams.z > 0.5) {
         vec3 irradiance = evaluateSkyIrradiance(N) * lighting.environmentReflectionParams.w;
         ambient = irradiance / PI * albedo * (1.0 - metallic) * ao;
+    }
+    if (gi.probeCounts.w == 1) {
+        // Fade from the probes to the sky/flat ambient over one probe spacing outside the volume.
+        vec3 halfExtent = 0.5 * gi.probeSpacing.xyz * vec3(gi.probeCounts.xyz - 1);
+        vec3 center = gi.firstProbe.xyz + halfExtent;
+        float spacing = max(max(gi.probeSpacing.x, gi.probeSpacing.y), max(gi.probeSpacing.z, 0.5));
+        vec3 outside = max(abs(fragWorldPos - center) - halfExtent, vec3(0.0));
+        float weight = clamp(1.0 - length(outside) / spacing, 0.0, 1.0);
+        if (weight > 0.0) {
+            vec3 probeLight = sampleProbeIrradiance(fragWorldPos, N) * gi.firstProbe.w;
+            ambient = mix(ambient, probeLight * albedo * (1.0 - metallic) * ao, weight);
+        }
     }
     vec3 color = ambient + Lo;
 
