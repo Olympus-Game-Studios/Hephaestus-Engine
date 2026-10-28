@@ -199,89 +199,6 @@ static double g_ScrollDeltaX = 0.0;
 static double g_ScrollDeltaY = 0.0;
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Mesh Library for Runtime
-// ──────────────────────────────────────────────────────────────────────────────
-
-static size_t LoadMeshToGPU(const MeshData& meshData, const std::string& name, 
-                            VmaAllocator allocator, VkDevice device,
-                            VkCommandPool cmdPool, VkQueue queue,
-                            Hephaestus::EngineFrameRenderer& frameRenderer) {
-    if (meshData.vertices.empty() || meshData.indices.empty()) {
-        return SIZE_MAX;
-    }
-    
-    MeshGPU mesh;
-    mesh.name = name;
-    mesh.sourceKey = name;
-    mesh.vertexCount = static_cast<uint32_t>(meshData.vertices.size());
-    mesh.indexCount = static_cast<uint32_t>(meshData.indices.size());
-    mesh.bounds = meshData.bounds;
-    mesh.submeshes = meshData.submeshes;
-    
-    // Create vertex buffer
-    VkDeviceSize vbSize = meshData.vertices.size() * sizeof(Vertex);
-    mesh.vertexBuffer.Create(allocator, vbSize, 
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VMA_MEMORY_USAGE_GPU_ONLY);
-    
-    // Create index buffer
-    VkDeviceSize ibSize = meshData.indices.size() * sizeof(uint32_t);
-    mesh.indexBuffer.Create(allocator, ibSize,
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VMA_MEMORY_USAGE_GPU_ONLY);
-    
-    // Stage and copy vertex data
-    VulkanBuffer stagingVB;
-    stagingVB.Create(allocator, vbSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
-    void* vbData;
-    vmaMapMemory(allocator, stagingVB.allocation, &vbData);
-    memcpy(vbData, meshData.vertices.data(), vbSize);
-    vmaUnmapMemory(allocator, stagingVB.allocation);
-    
-    // Stage and copy index data
-    VulkanBuffer stagingIB;
-    stagingIB.Create(allocator, ibSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
-    void* ibData;
-    vmaMapMemory(allocator, stagingIB.allocation, &ibData);
-    memcpy(ibData, meshData.indices.data(), ibSize);
-    vmaUnmapMemory(allocator, stagingIB.allocation);
-    
-    // Copy buffers
-    VkCommandBufferAllocateInfo cmdAlloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    cmdAlloc.commandPool = cmdPool;
-    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmdAlloc.commandBufferCount = 1;
-    
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(device, &cmdAlloc, &cmd);
-    
-    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
-    
-    VkBufferCopy copyRegion{};
-    copyRegion.size = vbSize;
-    vkCmdCopyBuffer(cmd, stagingVB.buffer, mesh.vertexBuffer.buffer, 1, &copyRegion);
-    
-    copyRegion.size = ibSize;
-    vkCmdCopyBuffer(cmd, stagingIB.buffer, mesh.indexBuffer.buffer, 1, &copyRegion);
-    
-    vkEndCommandBuffer(cmd);
-    
-    VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmd;
-    vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(queue);
-    
-    vkFreeCommandBuffers(device, cmdPool, 1, &cmd);
-    stagingVB.Destroy(allocator);
-    stagingIB.Destroy(allocator);
-    
-    return frameRenderer.AddMesh(std::move(mesh));
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
 // Callbacks
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -1201,8 +1118,7 @@ int main(int argc, char* argv[]) {
     cubeMeshData.indices = cubeIndices;
     cubeMeshData.bounds = AABB(Vec3(-1.0f, -1.0f, -1.0f), Vec3(1.0f, 1.0f, 1.0f));
     
-    size_t builtinCubeHandle = LoadMeshToGPU(cubeMeshData, "builtin://cube", vkdev.allocator,
-        vkdev.device, vkdev.commandPool, vkdev.graphicsQueue, frameRenderer);
+    size_t builtinCubeHandle = frameRenderer.AddStaticMesh("builtin://cube", cubeMeshData, "builtin://cube", false);
     if (builtinCubeHandle != SIZE_MAX) {
         HP_LOG(Info, "  Loaded builtin cube mesh at handle " + std::to_string(builtinCubeHandle));
     }
@@ -1253,8 +1169,7 @@ int main(int argc, char* argv[]) {
     };
     
     MeshData sphereMeshData = generateSphereMesh(1.0f, 24, 16);
-    size_t builtinSphereHandle = LoadMeshToGPU(sphereMeshData, "builtin://sphere", vkdev.allocator,
-        vkdev.device, vkdev.commandPool, vkdev.graphicsQueue, frameRenderer);
+    size_t builtinSphereHandle = frameRenderer.AddStaticMesh("builtin://sphere", sphereMeshData, "builtin://sphere", false);
     if (builtinSphereHandle != SIZE_MAX) {
         HP_LOG(Info, "  Loaded builtin sphere mesh at handle " + std::to_string(builtinSphereHandle));
     }
@@ -1529,10 +1444,10 @@ int main(int argc, char* argv[]) {
                 
                 if (ModelImporter::LoadModel(meshPath, meshData, importError)) {
                     HP_LOG(Info, "    Model imported, uploading to GPU...");
-                    size_t idx = LoadMeshToGPU(meshData, meshKey, vkdev.allocator, 
-                        vkdev.device, vkdev.commandPool, vkdev.graphicsQueue, frameRenderer);
-                    if (idx != SIZE_MAX) {
+                    size_t idx = frameRenderer.AddStaticMesh(meshKey, meshData, meshKey, false);
+                    if (idx != MeshRendererComponent::InvalidMesh) {
                         renderer.meshHandle = idx;
+                        frameRenderer.AddMeshAlias(meshKey, idx);
                         frameRenderer.AddMeshAlias(meshPath.lexically_normal().generic_string(), idx);
                         
                         // Update submesh count from the loaded mesh data

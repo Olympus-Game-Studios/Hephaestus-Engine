@@ -221,6 +221,13 @@ public:
     size_t AddMesh(MeshGPU mesh);
 
     /**
+     * @brief Upload static mesh data to device-local buffers and add it to the library.
+     * @return Mesh handle, or MeshRendererComponent::InvalidMesh when there is no geometry
+     */
+    size_t AddStaticMesh(const std::string& name, const MeshData& data,
+                         const std::filesystem::path& sourcePath, bool imported);
+
+    /**
      * @brief Upload a skinned mesh (rest-pose bone UBO, eval/palette joint indices).
      */
     size_t AddSkinnedMesh(const std::string& name,

@@ -2347,42 +2347,7 @@ size_t QtEditorEngine::uploadMeshToGPU(const std::string& name, const MeshData& 
         return MeshRendererComponent::InvalidMesh;
     }
 
-    MeshGPU mesh{};
-    mesh.name = name;
-    mesh.sourcePath = sourcePath;
-    mesh.sourceKey = sourcePath.generic_string();
-    mesh.vertexCount = static_cast<uint32_t>(data.vertices.size());
-    mesh.indexCount = static_cast<uint32_t>(data.indices.size());
-    mesh.submeshes = data.submeshes;
-    mesh.bounds = data.bounds;
-    mesh.imported = imported;
-
-    // Create vertex buffer
-    VkDeviceSize vertexBufferSize = sizeof(Vertex) * data.vertices.size();
-    mesh.vertexBuffer.Create(m_device->allocator, vertexBufferSize,
-                             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                             VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-    void* mapped = nullptr;
-    if (vmaMapMemory(m_device->allocator, mesh.vertexBuffer.allocation, &mapped) == VK_SUCCESS) {
-        std::memcpy(mapped, data.vertices.data(), static_cast<size_t>(vertexBufferSize));
-        vmaFlushAllocation(m_device->allocator, mesh.vertexBuffer.allocation, 0, VK_WHOLE_SIZE);
-        vmaUnmapMemory(m_device->allocator, mesh.vertexBuffer.allocation);
-    }
-
-    // Create index buffer
-    VkDeviceSize indexBufferSize = sizeof(uint32_t) * data.indices.size();
-    mesh.indexBuffer.Create(m_device->allocator, indexBufferSize,
-                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                            VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-    if (vmaMapMemory(m_device->allocator, mesh.indexBuffer.allocation, &mapped) == VK_SUCCESS) {
-        std::memcpy(mapped, data.indices.data(), static_cast<size_t>(indexBufferSize));
-        vmaFlushAllocation(m_device->allocator, mesh.indexBuffer.allocation, 0, VK_WHOLE_SIZE);
-        vmaUnmapMemory(m_device->allocator, mesh.indexBuffer.allocation);
-    }
-
-    size_t handle = m_frameRenderer->AddMesh(std::move(mesh));
+    size_t handle = m_frameRenderer->AddStaticMesh(name, data, sourcePath, imported);
     std::cout << "[QtEditorEngine] Uploaded mesh '" << name << "' as handle " << handle << "\n";
     return handle;
 }

@@ -926,6 +926,78 @@ size_t EngineFrameRenderer::AddMesh(MeshGPU mesh)
     return handle;
 }
 
+size_t EngineFrameRenderer::AddStaticMesh(const std::string& name, const MeshData& data,
+                                          const std::filesystem::path& sourcePath, bool imported)
+{
+    if (!m_device || data.vertices.empty() || data.indices.empty()) {
+        return MeshRendererComponent::InvalidMesh;
+    }
+
+    VmaAllocator allocator = m_device->allocator;
+    VkDevice device = m_device->device;
+
+    MeshGPU mesh{};
+    mesh.name = name;
+    mesh.sourcePath = sourcePath;
+    mesh.sourceKey = sourcePath.generic_string();
+    mesh.vertexCount = static_cast<uint32_t>(data.vertices.size());
+    mesh.indexCount = static_cast<uint32_t>(data.indices.size());
+    mesh.submeshes = data.submeshes;
+    mesh.bounds = data.bounds;
+    mesh.imported = imported;
+
+    const VkDeviceSize vbSize = data.vertices.size() * sizeof(Vertex);
+    mesh.vertexBuffer.Create(allocator, vbSize,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VMA_MEMORY_USAGE_GPU_ONLY);
+    const VkDeviceSize ibSize = data.indices.size() * sizeof(uint32_t);
+    mesh.indexBuffer.Create(allocator, ibSize,
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VMA_MEMORY_USAGE_GPU_ONLY);
+
+    VulkanBuffer stagingVB;
+    stagingVB.Create(allocator, vbSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+    void* mapped = nullptr;
+    vmaMapMemory(allocator, stagingVB.allocation, &mapped);
+    std::memcpy(mapped, data.vertices.data(), static_cast<size_t>(vbSize));
+    vmaUnmapMemory(allocator, stagingVB.allocation);
+
+    VulkanBuffer stagingIB;
+    stagingIB.Create(allocator, ibSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+    vmaMapMemory(allocator, stagingIB.allocation, &mapped);
+    std::memcpy(mapped, data.indices.data(), static_cast<size_t>(ibSize));
+    vmaUnmapMemory(allocator, stagingIB.allocation);
+
+    VkCommandBufferAllocateInfo cmdAlloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    cmdAlloc.commandPool = m_device->commandPool;
+    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAlloc.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(device, &cmdAlloc, &cmd);
+
+    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+    VkBufferCopy copyRegion{};
+    copyRegion.size = vbSize;
+    vkCmdCopyBuffer(cmd, stagingVB.buffer, mesh.vertexBuffer.buffer, 1, &copyRegion);
+    copyRegion.size = ibSize;
+    vkCmdCopyBuffer(cmd, stagingIB.buffer, mesh.indexBuffer.buffer, 1, &copyRegion);
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(m_device->graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_device->graphicsQueue);
+
+    vkFreeCommandBuffers(device, m_device->commandPool, 1, &cmd);
+    stagingVB.Destroy(allocator);
+    stagingIB.Destroy(allocator);
+
+    return AddMesh(std::move(mesh));
+}
+
 size_t EngineFrameRenderer::AddSkinnedMesh(const std::string& name,
                                            const std::vector<SkinnedVertex>& vertices,
                                            const std::vector<uint32_t>& indices,
