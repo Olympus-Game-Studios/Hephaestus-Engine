@@ -108,6 +108,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-10-28: Packaged games drew `builtin://cube` and `builtin://sphere` at twice their editor size (half-extent 1.0 instead of 0.5), so builtin boxes looked larger than their colliders. Both hosts now use one builtin mesh set at the editor's size, packaged games gain `builtin://plane`, and falling back from a missing `.engine/meshes` file to a builtin mesh logs a warning.
 - 2026-10-16: `destroy.ui` accepts numeric managed screen handles again. The binding distinguishes a real Lua string from a number (`lua_isstring` is true for numbers), so `destroy.ui(handle)` no longer matches the `"current"` branch; the FPS `Hud.lua` destroys its HUD on unmount.
 - 2026-10-14: Runtime HUI overlay vertical orientation. `hui.vert` maps the top-left, y-down viewport coordinates directly to NDC (`aPos.y / viewportSize.y * 2 - 1`), so HUI text and panels render upright instead of vertically mirrored.
 - 2026-10-14: Automation input survives host frames. `InputSystem` applies queued action overrides on the next `BeginFrame` after the previous-state snapshot (via `QueueActionOverride`) and accumulates queued mouse deltas, so `input.set_action` edges and `input.add_mouse_delta` are not consumed by intermediate host/render callbacks; `ClearOverrides` also clears queued deltas.
