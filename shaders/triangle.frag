@@ -306,11 +306,9 @@ void main() {
         discard;
     }
 
-    // Unlit viewport mode: albedo (+ emissive), skip lighting / tonemap path mirrors lit gamma
+    // Unlit viewport mode: albedo (+ emissive), skip lighting
     if (ubo.shadingMode > 0.5) {
         vec3 unlit = albedo + material.emissive * material.emissiveStrength;
-        unlit = unlit / (unlit + vec3(1.0));
-        unlit = pow(unlit, vec3(1.0 / 2.2));
         outColor = vec4(unlit, opacity);
         return;
     }
@@ -494,12 +492,6 @@ void main() {
     
     // Add emissive
     color += material.emissive * material.emissiveStrength;
-    
-    // HDR tonemapping (Reinhard)
-    color = color / (color + vec3(1.0));
-    
-    // Gamma correction
-    color = pow(color, vec3(1.0 / 2.2));
-    
+
     outColor = vec4(color, opacity);
 }

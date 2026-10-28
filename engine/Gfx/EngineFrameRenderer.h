@@ -398,6 +398,9 @@ private:
     bool createUIResources();
     bool createGridResources();
     bool createDebugOverlayResources();
+    bool createToneMapResources();
+    void cleanupToneMapResources();
+    void recordToneMap(VkCommandBuffer cmd);
     bool createOutlineResources();
     void cleanupOutlineResources();
     
@@ -680,6 +683,15 @@ private:
         uint32_t vertexCount = 0;
     };
     DebugOverlay m_debugOverlay;
+
+    struct ToneMap {
+        VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
+        VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+    };
+    ToneMap m_toneMap;
 
     // Entity ID picker for viewport selection
     struct IdPicker {

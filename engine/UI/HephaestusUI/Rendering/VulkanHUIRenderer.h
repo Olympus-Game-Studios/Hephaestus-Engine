@@ -47,11 +47,11 @@ public:
     VulkanHUIRenderer& operator=(const VulkanHUIRenderer&) = delete;
 
     /** Create Vulkan resources. The device must outlive this renderer. */
-    bool Init(VulkanDevice* device, VkRenderPass renderPass, VkFormat swapchainFormat,
+    bool Init(VulkanDevice* device, VkRenderPass renderPass, uint32_t subpass, VkFormat swapchainFormat,
               const VkExtent2D& extent, uint32_t swapchainImageCount);
 
     /** Recreate swapchain-dependent resources (pipeline + per-image buffers). */
-    void OnSwapchainRecreated(VkRenderPass renderPass, VkFormat swapchainFormat,
+    void OnSwapchainRecreated(VkRenderPass renderPass, uint32_t subpass, VkFormat swapchainFormat,
                               const VkExtent2D& extent, uint32_t swapchainImageCount);
 
     /** Destroy swapchain-dependent resources (kept alive: textures/atlases). */
@@ -164,6 +164,7 @@ private:
     VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_Pipeline = VK_NULL_HANDLE;
     VkRenderPass m_RenderPass = VK_NULL_HANDLE;
+    uint32_t m_Subpass = 0;
     bool m_SrgbOutput = false;
 
     // Per-image vertex/index buffers

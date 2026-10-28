@@ -987,6 +987,8 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/hui.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/hui.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tonemap.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tonemap.frag
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)
@@ -1210,6 +1212,16 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME RuntimeSceneLifecycle
         COMMAND RuntimeSceneLifecycleTests
+    )
+
+    add_executable(SwapchainFormatTests
+        engine/Tests/SwapchainFormatTests.cpp
+    )
+    target_link_libraries(SwapchainFormatTests PRIVATE HephaestusRuntime)
+    target_include_directories(SwapchainFormatTests PRIVATE engine extern)
+    add_test(
+        NAME SwapchainFormat
+        COMMAND SwapchainFormatTests
     )
 
     add_executable(ActiveCameraSyncTests

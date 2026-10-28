@@ -3,6 +3,38 @@
 #include <iostream>
 #include <algorithm>
 
+VkSurfaceFormatKHR ChooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& available)
+{
+    if (available.empty()) {
+        throw std::runtime_error("Surface reports no formats");
+    }
+    if (available.size() == 1 && available[0].format == VK_FORMAT_UNDEFINED) {
+        return { VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
+    }
+    const VkFormat preferred[] = { VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM,
+                                   VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_R8G8B8A8_SRGB };
+    for (VkFormat want : preferred) {
+        for (const auto& f : available) {
+            if (f.format == want && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                return f;
+            }
+        }
+    }
+    return available[0];
+}
+
+bool IsSrgbFormat(VkFormat format)
+{
+    switch (format) {
+    case VK_FORMAT_R8G8B8A8_SRGB:
+    case VK_FORMAT_B8G8R8A8_SRGB:
+    case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static VkFormat findSupportedFormat(VkPhysicalDevice phys,
                                     const std::vector<VkFormat>& candidates,
                                     VkImageTiling tiling,
@@ -122,7 +154,8 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
     vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(formatCount);
     vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, formats.data());
-    format = formats[0].format;
+    const VkSurfaceFormatKHR surfaceFormat = ChooseSurfaceFormat(formats);
+    format = surfaceFormat.format;
 
     uint32_t presentModeCount;
     vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, nullptr);
@@ -147,7 +180,7 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
     swapInfo.surface = surface;
     swapInfo.minImageCount = imageCount;
     swapInfo.imageFormat = format;
-    swapInfo.imageColorSpace = formats[0].colorSpace;
+    swapInfo.imageColorSpace = surfaceFormat.colorSpace;
     swapInfo.imageExtent = extent;
     swapInfo.imageArrayLayers = 1;
     supportsCapture = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
@@ -202,11 +235,16 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
                   depthImage, depthAllocation);
     depthImageView = createImageView(device, depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
 
-    // ── Create render pass (color + depth) ────────────────────────────
+    createImage2D(device, allocator, extent.width, extent.height, kHdrFormat,
+                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
+                  hdrImage, hdrAllocation);
+    hdrImageView = createImageView(device, hdrImage, kHdrFormat, VK_IMAGE_ASPECT_COLOR_BIT);
+
+    // ── Create render pass: scene → HDR, then tone map + overlays → swapchain ──
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = format;
     colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -223,6 +261,16 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
     depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
+    VkAttachmentDescription hdrAttachment{};
+    hdrAttachment.format = kHdrFormat;
+    hdrAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    hdrAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    hdrAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    hdrAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    hdrAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    hdrAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    hdrAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
     VkAttachmentReference colorRef{};
     colorRef.attachment = 0;
     colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -231,41 +279,88 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
     depthRef.attachment = 1;
     depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorRef;
-    subpass.pDepthStencilAttachment = &depthRef;
+    VkAttachmentReference hdrWriteRef{};
+    hdrWriteRef.attachment = 2;
+    hdrWriteRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-    VkSubpassDependency dep{};
-    dep.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dep.dstSubpass = 0;
-    dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dep.srcAccessMask = 0;
-    dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    VkAttachmentReference hdrReadRef{};
+    hdrReadRef.attachment = 2;
+    hdrReadRef.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-    VkAttachmentDescription attachments[2] = { colorAttachment, depthAttachment };
+    VkSubpassDescription subpasses[2]{};
+    subpasses[kSceneSubpass].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpasses[kSceneSubpass].colorAttachmentCount = 1;
+    subpasses[kSceneSubpass].pColorAttachments = &hdrWriteRef;
+    subpasses[kSceneSubpass].pDepthStencilAttachment = &depthRef;
+
+    subpasses[kOverlaySubpass].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpasses[kOverlaySubpass].inputAttachmentCount = 1;
+    subpasses[kOverlaySubpass].pInputAttachments = &hdrReadRef;
+    subpasses[kOverlaySubpass].colorAttachmentCount = 1;
+    subpasses[kOverlaySubpass].pColorAttachments = &colorRef;
+    subpasses[kOverlaySubpass].pDepthStencilAttachment = &depthRef;
+
+    // HDR and depth images are shared by all frames in flight: the previous frame must finish with them first.
+    VkSubpassDependency deps[3]{};
+    deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    deps[0].dstSubpass = kSceneSubpass;
+    deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    deps[1].srcSubpass = kSceneSubpass;
+    deps[1].dstSubpass = kOverlaySubpass;
+    deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    deps[1].dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    deps[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+    deps[2].srcSubpass = VK_SUBPASS_EXTERNAL;
+    deps[2].dstSubpass = kOverlaySubpass;
+    deps[2].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[2].srcAccessMask = 0;
+    deps[2].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[2].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    VkAttachmentDescription attachments[3] = { colorAttachment, depthAttachment, hdrAttachment };
     VkRenderPassCreateInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 2;
+    renderPassInfo.attachmentCount = 3;
     renderPassInfo.pAttachments = attachments;
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-    renderPassInfo.dependencyCount = 1;
-    renderPassInfo.pDependencies = &dep;
+    renderPassInfo.subpassCount = 2;
+    renderPassInfo.pSubpasses = subpasses;
+    renderPassInfo.dependencyCount = 3;
+    renderPassInfo.pDependencies = deps;
 
     if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS)
         throw std::runtime_error("Failed to create render pass");
 
-    // ── Create framebuffers (color + depth) ───────────────────────────
+    // ── Create framebuffers (color + depth + HDR) ─────────────────────
     framebuffers.resize(imageViews.size());
     for (size_t i = 0; i < imageViews.size(); ++i) {
-        VkImageView attachments[] = { imageViews[i], depthImageView };
+        VkImageView attachments[] = { imageViews[i], depthImageView, hdrImageView };
         VkFramebufferCreateInfo fbInfo{};
         fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         fbInfo.renderPass = renderPass;
-        fbInfo.attachmentCount = 2;
+        fbInfo.attachmentCount = 3;
         fbInfo.pAttachments = attachments;
         fbInfo.width = extent.width;
         fbInfo.height = extent.height;
@@ -291,6 +386,12 @@ void VulkanSwapchain::Cleanup()
         vmaDestroyImage(allocator, depthImage, depthAllocation);
         depthImage = VK_NULL_HANDLE;
         depthAllocation = nullptr;
+    }
+    if (hdrImageView) { vkDestroyImageView(device, hdrImageView, nullptr); hdrImageView = VK_NULL_HANDLE; }
+    if (hdrImage) {
+        vmaDestroyImage(allocator, hdrImage, hdrAllocation);
+        hdrImage = VK_NULL_HANDLE;
+        hdrAllocation = nullptr;
     }
 }
 

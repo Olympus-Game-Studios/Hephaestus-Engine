@@ -1,4 +1,5 @@
 ﻿#include "VulkanPipeline.h"
+#include "VulkanSwapchain.h"
 #include <fstream>
 #include <stdexcept>
 #include <iostream>
@@ -373,7 +374,7 @@ void VulkanPipeline::CreateOutlinePipeline()
     pipelineCI.pDynamicState = &dyn;
     pipelineCI.layout = layout; // Use the same layout as the main pipeline
     pipelineCI.renderPass = renderPass;
-    pipelineCI.subpass = 0;
+    pipelineCI.subpass = VulkanSwapchain::kOverlaySubpass;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &outlinePipeline) != VK_SUCCESS) {
         throw std::runtime_error("Failed to create outline graphics pipeline");
@@ -580,7 +581,7 @@ void VulkanPipeline::CreateBillboardPipeline(VkDevice dev, VkRenderPass rp, VkEx
     pci.pDynamicState = &dynamicState;
     pci.layout = layout;
     pci.renderPass = renderPass;
-    pci.subpass = 0;
+    pci.subpass = VulkanSwapchain::kOverlaySubpass;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &pipeline) != VK_SUCCESS)
         throw std::runtime_error("Failed to create billboard graphics pipeline");

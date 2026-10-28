@@ -124,6 +124,12 @@ static VkShaderModule LoadSpvModule(VkDevice device, const std::string& name) {
     return VK_NULL_HANDLE;
 }
 
+// Inverse of tonemap.frag, so the display-referred clear color shows unchanged after tone mapping.
+static float DisplayToSceneLinear(float display) {
+    const float toned = std::min(std::pow(std::clamp(display, 0.0f, 1.0f), 2.2f), 0.999f);
+    return toned / (1.0f - toned);
+}
+
 static void DestroyPipeline(VkDevice device, VkPipeline& pipeline) {
     if (pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, pipeline, nullptr);
@@ -351,7 +357,11 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
     if (!createSkinnedMainPipelines()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create skinned mesh pipelines\n";
     }
-    
+    if (!createToneMapResources()) {
+        std::cerr << "[EngineFrameRenderer] Failed to create tone map resources\n";
+        return false;
+    }
+
     // Editor overlay resources are created only for hosts that request them at Init.
     if (m_editorOverlays) {
         if (!createGridResources()) {
@@ -550,7 +560,8 @@ bool EngineFrameRenderer::createUIResources()
         return false;
     }
     m_uiOverlay = std::make_unique<Hephaestus::HephaestusUI::VulkanHUIRenderer>();
-    const bool ok = m_uiOverlay->Init(m_device, m_swapchain->renderPass, m_swapchain->format,
+    const bool ok = m_uiOverlay->Init(m_device, m_swapchain->renderPass,
+                                      VulkanSwapchain::kOverlaySubpass, m_swapchain->format,
                                       m_swapchain->extent,
                                       static_cast<uint32_t>(m_swapchain->images.size()));
     if (!ok) {
@@ -615,6 +626,10 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             std::cerr << "[EngineFrameRenderer] Failed to recreate descriptor sets\n";
             return false;
         }
+        if (!createToneMapResources()) {
+            std::cerr << "[EngineFrameRenderer] Failed to recreate tone map resources\n";
+            return false;
+        }
         if (!createSkinnedMainPipelines()) {
             std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate skinned mesh pipelines\n";
         }
@@ -659,7 +674,8 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         // Recreate the runtime HUI overlay for the new swapchain (the old
         // pipeline/vertex buffers were destroyed in cleanupSwapchainResources).
         if (m_uiOverlay) {
-            m_uiOverlay->OnSwapchainRecreated(m_swapchain->renderPass, m_swapchain->format,
+            m_uiOverlay->OnSwapchainRecreated(m_swapchain->renderPass,
+                                              VulkanSwapchain::kOverlaySubpass, m_swapchain->format,
                                               m_swapchain->extent,
                                               static_cast<uint32_t>(m_swapchain->images.size()));
         }
@@ -1644,6 +1660,7 @@ bool EngineFrameRenderer::createSkinnedOutlinePipelines()
     pci.pDynamicState = &dyn;
     pci.layout = m_skinned.outlineLayout;
     pci.renderPass = m_swapchain->renderPass;
+    pci.subpass = VulkanSwapchain::kOverlaySubpass;
 
     if (vkCreateGraphicsPipelines(m_device->device, VK_NULL_HANDLE, 1, &pci, nullptr,
                                   &m_skinned.outlinePipeline) != VK_SUCCESS) {
@@ -3333,9 +3350,12 @@ void EngineFrameRenderer::flushPendingTextureDescriptorUpdates(uint32_t imageInd
 void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageIndex, 
                                           Scene* scene, const FrameRenderConfig& config)
 {
-    VkClearValue clearValues[2];
-    clearValues[0].color = {{config.clearColorR, config.clearColorG, config.clearColorB, 1.0f}};
+    VkClearValue clearValues[3];
+    clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
     clearValues[1].depthStencil = {1.0f, 0};
+    clearValues[2].color = {{DisplayToSceneLinear(config.clearColorR),
+                             DisplayToSceneLinear(config.clearColorG),
+                             DisplayToSceneLinear(config.clearColorB), 1.0f}};
     
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -3343,7 +3363,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     renderPassInfo.framebuffer = m_swapchain->framebuffers[imageIndex];
     renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = m_swapchain->extent;
-    renderPassInfo.clearValueCount = 2;
+    renderPassInfo.clearValueCount = 3;
     renderPassInfo.pClearValues = clearValues;
     
     vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
@@ -3876,6 +3896,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         }
     }
     
+    recordToneMap(cmd);
+
     // Render editor grid (after opaque meshes, before transparent) — not in play/pause or shipped game
     if (config.isEditorMode && config.renderGrid && !config.isPlaying) {
         recordGrid(cmd, imageIndex, config);
@@ -4200,6 +4222,7 @@ void EngineFrameRenderer::cleanupSwapchainResources()
     if (!m_device || !m_device->device) return;
 
     cleanupSkinnedGraphicsPipelines();
+    cleanupToneMapResources();
 
     cleanupBillboardResources();
     cleanupGizmoResources();
@@ -4408,6 +4431,8 @@ void EngineFrameRenderer::destroyAllResources()
     cleanupGizmoResources();
     // Cleanup light direction gizmo
     cleanupLightGizmoResources();
+
+    cleanupToneMapResources();
 
     // Cleanup shadow map resources
     if (m_directionalShadow.pipeline != VK_NULL_HANDLE) {
@@ -5078,7 +5103,7 @@ void EngineFrameRenderer::EditorGrid::Init(VkDevice device, VkRenderPass renderP
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout;
     pipelineInfo.renderPass = renderPass;
-    pipelineInfo.subpass = 0;
+    pipelineInfo.subpass = VulkanSwapchain::kOverlaySubpass;
     
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS) {
         std::cerr << "[EditorGrid] Failed to create graphics pipeline\n";
@@ -5174,6 +5199,166 @@ bool EngineFrameRenderer::createGridResources()
                       cameraDescLayout, m_device->allocator);
     
     return m_editorGrid.initialized;
+}
+
+bool EngineFrameRenderer::createToneMapResources()
+{
+    VkDevice device = m_device->device;
+
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo layoutCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    layoutCI.bindingCount = 1;
+    layoutCI.pBindings = &binding;
+    if (vkCreateDescriptorSetLayout(device, &layoutCI, nullptr, &m_toneMap.setLayout) != VK_SUCCESS) {
+        return false;
+    }
+
+    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1};
+    VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    poolCI.maxSets = 1;
+    poolCI.poolSizeCount = 1;
+    poolCI.pPoolSizes = &poolSize;
+    if (vkCreateDescriptorPool(device, &poolCI, nullptr, &m_toneMap.descriptorPool) != VK_SUCCESS) {
+        cleanupToneMapResources();
+        return false;
+    }
+
+    VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    allocInfo.descriptorPool = m_toneMap.descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &m_toneMap.setLayout;
+    if (vkAllocateDescriptorSets(device, &allocInfo, &m_toneMap.descriptorSet) != VK_SUCCESS) {
+        cleanupToneMapResources();
+        return false;
+    }
+
+    VkDescriptorImageInfo hdrInfo{};
+    hdrInfo.imageView = m_swapchain->hdrImageView;
+    hdrInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = m_toneMap.descriptorSet;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+    write.pImageInfo = &hdrInfo;
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+
+    VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(uint32_t)};
+    VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &m_toneMap.setLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &pcr;
+    if (vkCreatePipelineLayout(device, &plci, nullptr, &m_toneMap.pipelineLayout) != VK_SUCCESS) {
+        cleanupToneMapResources();
+        return false;
+    }
+
+    VkShaderModule vert = LoadSpvModule(device, "tonemap.vert.spv");
+    VkShaderModule frag = LoadSpvModule(device, "tonemap.frag.spv");
+    if (!vert || !frag) {
+        std::cerr << "[EngineFrameRenderer] Missing tonemap.vert.spv or tonemap.frag.spv\n";
+        if (vert) vkDestroyShaderModule(device, vert, nullptr);
+        if (frag) vkDestroyShaderModule(device, frag, nullptr);
+        cleanupToneMapResources();
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vert;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = frag;
+    stages[1].pName = "main";
+
+    VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo vpState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    vpState.viewportCount = 1;
+    vpState.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.cullMode = VK_CULL_MODE_NONE;
+    raster.lineWidth = 1.0f;
+    VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    ds.depthTestEnable = VK_FALSE;
+    ds.depthWriteEnable = VK_FALSE;
+    VkPipelineColorBlendAttachmentState cba{};
+    cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    blend.attachmentCount = 1;
+    blend.pAttachments = &cba;
+    VkDynamicState dynStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynState{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynState.dynamicStateCount = 2;
+    dynState.pDynamicStates = dynStates;
+
+    VkGraphicsPipelineCreateInfo pci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    pci.stageCount = 2;
+    pci.pStages = stages;
+    pci.pVertexInputState = &vi;
+    pci.pInputAssemblyState = &ia;
+    pci.pViewportState = &vpState;
+    pci.pRasterizationState = &raster;
+    pci.pMultisampleState = &ms;
+    pci.pDepthStencilState = &ds;
+    pci.pColorBlendState = &blend;
+    pci.pDynamicState = &dynState;
+    pci.layout = m_toneMap.pipelineLayout;
+    pci.renderPass = m_swapchain->renderPass;
+    pci.subpass = VulkanSwapchain::kOverlaySubpass;
+
+    const VkResult result =
+        vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &m_toneMap.pipeline);
+    vkDestroyShaderModule(device, vert, nullptr);
+    vkDestroyShaderModule(device, frag, nullptr);
+    if (result != VK_SUCCESS) {
+        cleanupToneMapResources();
+        return false;
+    }
+    return true;
+}
+
+void EngineFrameRenderer::cleanupToneMapResources()
+{
+    VkDevice device = m_device->device;
+    DestroyPipeline(device, m_toneMap.pipeline);
+    if (m_toneMap.pipelineLayout) {
+        vkDestroyPipelineLayout(device, m_toneMap.pipelineLayout, nullptr);
+        m_toneMap.pipelineLayout = VK_NULL_HANDLE;
+    }
+    if (m_toneMap.descriptorPool) {
+        vkDestroyDescriptorPool(device, m_toneMap.descriptorPool, nullptr);
+        m_toneMap.descriptorPool = VK_NULL_HANDLE;
+    }
+    m_toneMap.descriptorSet = VK_NULL_HANDLE;
+    if (m_toneMap.setLayout) {
+        vkDestroyDescriptorSetLayout(device, m_toneMap.setLayout, nullptr);
+        m_toneMap.setLayout = VK_NULL_HANDLE;
+    }
+}
+
+void EngineFrameRenderer::recordToneMap(VkCommandBuffer cmd)
+{
+    vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_toneMap.pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_toneMap.pipelineLayout,
+                            0, 1, &m_toneMap.descriptorSet, 0, nullptr);
+    const uint32_t outputIsSrgb = IsSrgbFormat(m_swapchain->format) ? 1u : 0u;
+    vkCmdPushConstants(cmd, m_toneMap.pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(outputIsSrgb), &outputIsSrgb);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 
 bool EngineFrameRenderer::createDebugOverlayResources()
@@ -5304,6 +5489,7 @@ bool EngineFrameRenderer::createDebugOverlayResources()
     pci.pDynamicState = &dynState;
     pci.layout = m_debugOverlay.pipelineLayout;
     pci.renderPass = m_swapchain->renderPass;
+    pci.subpass = VulkanSwapchain::kOverlaySubpass;
 
     const VkResult pipeResult =
         vkCreateGraphicsPipelines(m_device->device, VK_NULL_HANDLE, 1, &pci, nullptr,
@@ -5586,7 +5772,7 @@ void EngineFrameRenderer::OutlineRenderer::Init(VkDevice device, VkRenderPass re
     pipelineInfo.pDynamicState = &dynamicStateInfo;
     pipelineInfo.layout = pipelineLayout;
     pipelineInfo.renderPass = renderPass;
-    pipelineInfo.subpass = 0;
+    pipelineInfo.subpass = VulkanSwapchain::kOverlaySubpass;
     
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS) {
         std::cerr << "[OutlineRenderer] Failed to create graphics pipeline\n";
