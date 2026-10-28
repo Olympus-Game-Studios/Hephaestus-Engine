@@ -1523,6 +1523,13 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     target_include_directories(ProbeVolumeTests PRIVATE engine extern extern/entt/single_include)
     add_test(NAME ProbeVolume COMMAND ProbeVolumeTests)
 
+    add_executable(LightShadowSettingsTests
+        engine/Tests/LightShadowSettingsTests.cpp
+    )
+    target_link_libraries(LightShadowSettingsTests PRIVATE HephaestusRuntime)
+    target_include_directories(LightShadowSettingsTests PRIVATE engine extern extern/entt/single_include)
+    add_test(NAME LightShadowSettings COMMAND LightShadowSettingsTests)
+
     add_executable(ProbeBakeTests
         engine/Tests/ProbeBakeTests.cpp
     )

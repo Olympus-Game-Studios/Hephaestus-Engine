@@ -649,6 +649,7 @@ struct LightComponent {
     float shadowDistance;  // How far shadows extend from camera (used when shadowAutoFit=false)
     float shadowExtent;    // Size of orthographic shadow frustum (used when shadowAutoFit=false)
     float shadowMaxDistance; // Max shadow range when auto-fit is on (caps camera farPlane)
+    float sunAngularDiameter; // Directional only: apparent sun size in degrees; sets how fast shadows soften with distance
 
     LightComponent()
         : type(LightType::Point)
@@ -670,6 +671,7 @@ struct LightComponent {
         , shadowDistance(500.0f)
         , shadowExtent(500.0f)
         , shadowMaxDistance(500.0f)
+        , sunAngularDiameter(1.0f)
     {}
 
     // Factory methods for common light types

@@ -204,21 +204,37 @@ float cascadeOcclusion(int cascade, vec3 lightDir) {
 
     // Per-fragment rotation angle from world position to break up banding
     float rotAngle = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
-    float cosA = cos(rotAngle);
-    float sinA = sin(rotAngle);
+    mat2 rotation = mat2(cos(rotAngle), sin(rotAngle), -sin(rotAngle), cos(rotAngle));
 
-    // Spread radius in atlas texels — wider for far cascades
-    float spreadTexels = 2.5 + float(cascade) * 1.0;
+    // Soft shadows (PCSS): the penumbra grows with the distance from the blocker to the receiver
+    // times the sun's angular size, so contact shadows stay sharp and long shadows soften.
+    const float MAX_TEXELS = 24.0;
+    const float BLOCKER_SEARCH_METRES = 4.0;  // occluders further than this from the receiver soften no more
+    float depthRange = lighting.cascadeDepthRange[cascade];
+    float tanHalfSun = lighting.shadowBiasWorld.z;
+    float receiver = projCoords.z - bias;
+    float searchTexels = clamp(tanHalfSun * BLOCKER_SEARCH_METRES / texelWorld, 1.5, MAX_TEXELS);
+    float blockerSum = 0.0;
+    float blockers = 0.0;
+    for (int i = 0; i < 16; i++) {
+        vec2 sampleCoord = clamp(atlasUV + rotation * poissonDisk[i] * searchTexels * texelSize, quadrantMin, quadrantMax);
+        float depth = texture(shadowMap, sampleCoord).r;
+        if (depth < receiver) {
+            blockerSum += depth;
+            blockers += 1.0;
+        }
+    }
+    if (blockers == 0.0) {
+        return 0.0;
+    }
+    float blockerDistance = (receiver - blockerSum / blockers) * depthRange;
+    float filterTexels = clamp(blockerDistance * tanHalfSun / texelWorld, 1.5, MAX_TEXELS);
 
     float shadow = 0.0;
     for (int i = 0; i < 16; i++) {
-        vec2 offset = vec2(
-            poissonDisk[i].x * cosA - poissonDisk[i].y * sinA,
-            poissonDisk[i].x * sinA + poissonDisk[i].y * cosA
-        );
-        vec2 sampleCoord = clamp(atlasUV + offset * spreadTexels * texelSize, quadrantMin, quadrantMax);
+        vec2 sampleCoord = clamp(atlasUV + rotation * poissonDisk[i] * filterTexels * texelSize, quadrantMin, quadrantMax);
         float closestDepth = texture(shadowMap, sampleCoord).r;
-        shadow += (projCoords.z - bias > closestDepth) ? 1.0 : 0.0;
+        shadow += receiver > closestDepth ? 1.0 : 0.0;
     }
     return shadow / 16.0;
 }

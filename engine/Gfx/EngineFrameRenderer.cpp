@@ -171,7 +171,7 @@ struct LightingUBO {
     Vec4 skyIrradianceSH[9];
     Vec4 cascadeTexelWorld;  // world-space size of one shadow texel per cascade
     Vec4 cascadeDepthRange;  // light-space depth range per cascade, to turn world biases into depth
-    Vec4 shadowBiasWorld;    // x = extra depth bias, y = extra normal offset (metres)
+    Vec4 shadowBiasWorld;    // x = extra depth bias, y = extra normal offset (metres), z = tan(sun half angle)
     Mat4 localShadowViewProj[32];  // atlas tiles, see EngineFrameRenderer::kLocalShadowTile
     Vec4 pointShadowParams[16];    // x = first of six tiles (+X,-X,+Y,-Y,+Z,-Z) or -1, y = shadow strength, z = far, w = tan(half fov)
     Vec4 spotShadowParams[16];     // x = tile or -1, y = shadow strength, z = far, w = tan(half fov)
@@ -2997,8 +2997,9 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                     lightUBO.cascadeTexelWorld = Vec4(2.0f * radii[0] / tileResolution, 2.0f * radii[1] / tileResolution,
                                                       2.0f * radii[2] / tileResolution, 2.0f * radii[3] / tileResolution);
                     lightUBO.cascadeDepthRange = Vec4(depthRanges[0], depthRanges[1], depthRanges[2], depthRanges[3]);
+                    const float sunHalfAngle = std::clamp(light.sunAngularDiameter, 0.0f, 10.0f) * 0.5f * 0.01745329252f;
                     lightUBO.shadowBiasWorld = Vec4(std::max(0.0f, light.shadowBias),
-                                                    std::max(0.0f, light.shadowNormalBias), 0.0f, 0.0f);
+                                                    std::max(0.0f, light.shadowNormalBias), std::tan(sunHalfAngle), 0.0f);
                     lightUBO.cascadeSplits = Vec4(splits[1], splits[2], splits[3], splits[4]);
                     lightUBO.cascadeCount = CSM_CASCADE_COUNT;
                     

@@ -983,7 +983,8 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "            \"strength\": " << FormatFloat(light->shadowStrength) << ",\n";
             oss << "            \"distance\": " << FormatFloat(light->shadowDistance) << ",\n";
             oss << "            \"extent\": " << FormatFloat(light->shadowExtent) << ",\n";
-            oss << "            \"maxDistance\": " << FormatFloat(light->shadowMaxDistance) << "\n";
+            oss << "            \"maxDistance\": " << FormatFloat(light->shadowMaxDistance) << ",\n";
+            oss << "            \"sunSize\": " << FormatFloat(light->sunAngularDiameter) << "\n";
             oss << "          }\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
@@ -1709,6 +1710,11 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     if (const JsonValue* maxDistValue = shadowObj->Find("maxDistance")) {
                         if (maxDistValue->IsNumber()) {
                             light.shadowMaxDistance = static_cast<float>(maxDistValue->AsNumber());
+                        }
+                    }
+                    if (const JsonValue* sunSizeValue = shadowObj->Find("sunSize")) {
+                        if (sunSizeValue->IsNumber()) {
+                            light.sunAngularDiameter = static_cast<float>(sunSizeValue->AsNumber());
                         }
                     }
                 }
@@ -2534,7 +2540,8 @@ std::string SceneSerializer::SerializeToString() const
             oss << "            \"strength\": " << FormatFloat(light->shadowStrength) << ",\n";
             oss << "            \"distance\": " << FormatFloat(light->shadowDistance) << ",\n";
             oss << "            \"extent\": " << FormatFloat(light->shadowExtent) << ",\n";
-            oss << "            \"maxDistance\": " << FormatFloat(light->shadowMaxDistance) << "\n";
+            oss << "            \"maxDistance\": " << FormatFloat(light->shadowMaxDistance) << ",\n";
+            oss << "            \"sunSize\": " << FormatFloat(light->sunAngularDiameter) << "\n";
             oss << "          }\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
