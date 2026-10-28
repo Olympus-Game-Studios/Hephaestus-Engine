@@ -3,6 +3,7 @@
 #include "Physics/PhysicsLayerConfig.h"
 #include "Physics/PhysicsStepClock.h"
 #include "Physics/PhysicsWorldPose.h"
+#include "Scene/Components.h"
 
 #include <filesystem>
 #include <fstream>
@@ -180,6 +181,18 @@ bool TestWorldPose()
                                                       Vec3(1.0f, 1.0f, 1.0f), pose.position);
     pass &= Check(Near(recovered.x, 1.0f) && Near(recovered.y, 0.0f) && Near(recovered.z, 0.0f),
                   "dynamic write-back recovers local position from the body world position");
+
+    const Vec3 tilted(0.3f, 0.4f, 0.5f);
+    const Vec3 roundTrip = Physics::PoseQuatToEulerXYZ(Physics::PoseQuatFromEulerXYZ(tilted));
+    pass &= Check(Near(roundTrip.x, tilted.x) && Near(roundTrip.y, tilted.y) && Near(roundTrip.z, tilted.z),
+                  "Euler XYZ survives a quaternion round trip about all three axes");
+    TransformComponent fromMatrix;
+    TransformComponent source;
+    source.rotation = tilted;
+    fromMatrix.SetFromMatrix(source.GetLocalMatrix());
+    pass &= Check(Near(fromMatrix.rotation.x, roundTrip.x) && Near(fromMatrix.rotation.y, roundTrip.y)
+                      && Near(fromMatrix.rotation.z, roundTrip.z),
+                  "quaternion Euler extraction matches the transform matrix convention");
     return pass;
 }
 

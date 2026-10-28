@@ -66,15 +66,15 @@ inline PoseQuat PoseQuatFromEulerXYZ(const Vec3& euler)
 inline Vec3 PoseQuatToEulerXYZ(const PoseQuat& quat)
 {
     Vec3 euler{};
-    const float sinr = 2.0f * (quat.w * quat.x + quat.y * quat.z);
+    const float sinr = 2.0f * (quat.w * quat.x - quat.y * quat.z);
     const float cosr = 1.0f - 2.0f * (quat.x * quat.x + quat.y * quat.y);
     euler.x = std::atan2(sinr, cosr);
 
-    float sinp = 2.0f * (quat.w * quat.y - quat.z * quat.x);
+    float sinp = 2.0f * (quat.x * quat.z + quat.y * quat.w);
     sinp = std::clamp(sinp, -1.0f, 1.0f);
     euler.y = std::asin(sinp);
 
-    const float siny = 2.0f * (quat.w * quat.z + quat.x * quat.y);
+    const float siny = 2.0f * (quat.w * quat.z - quat.x * quat.y);
     const float cosy = 1.0f - 2.0f * (quat.y * quat.y + quat.z * quat.z);
     euler.z = std::atan2(siny, cosy);
     return euler;

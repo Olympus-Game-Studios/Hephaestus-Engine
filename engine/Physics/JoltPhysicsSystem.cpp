@@ -189,30 +189,6 @@ JPH::Quat EulerXYZToQuat(const Vec3& euler)
     return qx * qy * qz;
 }
 
-Vec3 QuatToEulerXYZ(const JPH::Quat& quat)
-{
-    Vec3 euler{};
-
-    const float qw = quat.GetW();
-    const float qx = quat.GetX();
-    const float qy = quat.GetY();
-    const float qz = quat.GetZ();
-
-    const float sinr_cosp = 2.0f * (qw * qx + qy * qz);
-    const float cosr_cosp = 1.0f - 2.0f * (qx * qx + qy * qy);
-    euler.x = std::atan2(sinr_cosp, cosr_cosp);
-
-    float sinp = 2.0f * (qw * qy - qz * qx);
-    sinp = std::clamp(sinp, -1.0f, 1.0f);
-    euler.y = std::asin(sinp);
-
-    const float siny_cosp = 2.0f * (qw * qz + qx * qy);
-    const float cosy_cosp = 1.0f - 2.0f * (qy * qy + qz * qz);
-    euler.z = std::atan2(siny_cosp, cosy_cosp);
-
-    return euler;
-}
-
 JPH::RefConst<JPH::Shape> BuildMeshShapeFromMeshData(const MeshData& meshData, const Vec3& scale)
 {
     if (meshData.vertices.empty() || meshData.indices.size() < 3) {
