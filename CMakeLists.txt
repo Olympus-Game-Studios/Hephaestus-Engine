@@ -1145,13 +1145,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(MaterialCompatibilityTests
         engine/Tests/MaterialCompatibilityTests.cpp
-        engine/UI/MaterialEditor/MaterialGraph.cpp
-        engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
-        engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp
-        engine/UI/MaterialEditor/MaterialShaderGenerator.cpp
-        engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
         engine/Assets/AssetPathPolicy.cpp
     )
+    target_link_libraries(MaterialCompatibilityTests PRIVATE HephaestusEditorCore)
 
     target_include_directories(MaterialCompatibilityTests PRIVATE
         engine
@@ -1166,17 +1162,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(PrefabSystemTests
         engine/Tests/PrefabSystemTests.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(PrefabSystemTests PRIVATE HephaestusRuntime)
 
     target_include_directories(PrefabSystemTests PRIVATE
         engine
@@ -1191,19 +1179,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(SceneAuthoringTests
         engine/Tests/SceneAuthoringTests.cpp
-        engine/Assets/EditorViewState.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/SceneAuthoring.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(SceneAuthoringTests PRIVATE HephaestusEditorCore)
     target_include_directories(SceneAuthoringTests PRIVATE
         engine
         extern
@@ -1216,19 +1194,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(RuntimeSceneLifecycleTests
         engine/Tests/RuntimeSceneLifecycleTests.cpp
-        engine/Core/PlayModeManager.cpp
-        engine/Scene/ActiveCameraSync.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(RuntimeSceneLifecycleTests PRIVATE HephaestusEditorCore)
     target_include_directories(RuntimeSceneLifecycleTests PRIVATE
         engine
         extern
@@ -1243,18 +1211,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(ActiveCameraSyncTests
         engine/Tests/ActiveCameraSyncTests.cpp
-        engine/Scene/ActiveCameraSync.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(ActiveCameraSyncTests PRIVATE HephaestusRuntime)
     target_include_directories(ActiveCameraSyncTests PRIVATE
         engine
         extern
@@ -1267,19 +1226,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(InspectorEditTests
         engine/Tests/InspectorEditTests.cpp
-        engine/UI/InspectorSelectionModel.cpp
-        engine/UI/ComponentClipboard.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(InspectorEditTests PRIVATE HephaestusEditorCore)
     target_include_directories(InspectorEditTests PRIVATE
         engine
         extern
@@ -1307,8 +1256,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(ModelImporterTests
         engine/Tests/ModelImporterTests.cpp
-        engine/Assets/ModelImporter.cpp
     )
+    target_link_libraries(ModelImporterTests PRIVATE HephaestusRuntime)
     target_include_directories(ModelImporterTests PRIVATE
         engine
         extern
@@ -1387,9 +1336,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(AutomationLogTests
         engine/Tests/AutomationLogTests.cpp
-        engine/Core/EngineLog.cpp
         engine/Core/RuntimeBootstrap.cpp
     )
+    target_link_libraries(AutomationLogTests PRIVATE HephaestusRuntime)
     target_link_libraries(AutomationLogTests PRIVATE HephaestusAutomationCore)
     target_include_directories(AutomationLogTests PRIVATE
         engine
@@ -1418,18 +1367,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(AutomationSceneTests
         engine/Tests/AutomationSceneTests.cpp
-        engine/Core/EditorContext.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(AutomationSceneTests PRIVATE HephaestusEditorCore)
     target_link_libraries(AutomationSceneTests PRIVATE HephaestusAutomationCore)
     target_include_directories(AutomationSceneTests PRIVATE
         engine
@@ -1442,69 +1382,26 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     )
     add_executable(AutomationEditorViewportTests
         engine/Tests/AutomationEditorViewportTests.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(AutomationEditorViewportTests PRIVATE HephaestusRuntime)
     target_link_libraries(AutomationEditorViewportTests PRIVATE HephaestusAutomationCore)
     target_include_directories(AutomationEditorViewportTests PRIVATE engine extern extern/entt/single_include)
     add_test(NAME AutomationEditorViewport COMMAND AutomationEditorViewportTests)
 
     add_executable(AutomationUITests
         engine/Tests/AutomationUITests.cpp
-        engine/UI/HephaestusUI/RuntimeUIInspection.cpp
-        engine/UI/HephaestusUI/UIButton.cpp
-        engine/UI/HephaestusUI/UICanvas.cpp
-        engine/UI/HephaestusUI/UIContext.cpp
-        engine/UI/HephaestusUI/UIElement.cpp
-        engine/UI/HephaestusUI/UIFont.cpp
-        engine/UI/HephaestusUI/UIGridLayout.cpp
-        engine/UI/HephaestusUI/UIHorizontalBox.cpp
-        engine/UI/HephaestusUI/UIImage.cpp
-        engine/UI/HephaestusUI/UIInputRouter.cpp
-        engine/UI/HephaestusUI/UILayout.cpp
-        engine/UI/HephaestusUI/UIPanel.cpp
-        engine/UI/HephaestusUI/UIRenderer.cpp
-        engine/UI/HephaestusUI/UIScreen.cpp
-        engine/UI/HephaestusUI/UISystem.cpp
-        engine/UI/HephaestusUI/UIText.cpp
-        engine/UI/HephaestusUI/UITheme.cpp
-        engine/UI/HephaestusUI/UIVerticalBox.cpp
     )
+    target_link_libraries(AutomationUITests PRIVATE HephaestusRuntime)
     target_link_libraries(AutomationUITests PRIVATE HephaestusAutomationCore)
     target_include_directories(AutomationUITests PRIVATE engine extern extern/entt/single_include)
     add_test(NAME AutomationUI COMMAND AutomationUITests)
 
     add_executable(AutomationPhysicsTests
         engine/Tests/AutomationPhysicsTests.cpp
-        engine/Core/EngineLog.cpp
-        engine/Physics/PhysicsLayerConfig.cpp
-    engine/Physics/JoltPhysicsEngine.cpp
-        engine/Physics/JoltPhysicsSystem.cpp
-        engine/Physics/CharacterMotor.cpp
-    engine/Physics/CharacterControllerMath.cpp
-    engine/Physics/CharacterControllerSystem.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Assets/ModelImporter.cpp
-        engine/Assets/FbxDocument.cpp
-        engine/Assets/FbxStaticImporter.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(AutomationPhysicsTests PRIVATE HephaestusRuntime)
     target_link_libraries(AutomationPhysicsTests PRIVATE HephaestusAutomationCore Jolt ufbx Vulkan::Vulkan)
     target_include_directories(AutomationPhysicsTests PRIVATE
         engine
@@ -1519,27 +1416,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(PhysicsSettlingReproTests
         engine/Tests/PhysicsSettlingReproTests.cpp
-        engine/Core/EngineLog.cpp
-        engine/Physics/PhysicsLayerConfig.cpp
-    engine/Physics/JoltPhysicsEngine.cpp
-        engine/Physics/JoltPhysicsSystem.cpp
-        engine/Physics/CharacterMotor.cpp
-    engine/Physics/CharacterControllerMath.cpp
-    engine/Physics/CharacterControllerSystem.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Assets/ModelImporter.cpp
-        engine/Assets/FbxDocument.cpp
-        engine/Assets/FbxStaticImporter.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(PhysicsSettlingReproTests PRIVATE HephaestusRuntime)
     target_link_libraries(PhysicsSettlingReproTests PRIVATE Jolt ufbx Vulkan::Vulkan)
     target_include_directories(PhysicsSettlingReproTests PRIVATE
         engine
@@ -1555,10 +1434,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(PhysicsFoundationTests
         engine/Tests/PhysicsFoundationTests.cpp
-        engine/Physics/PhysicsLayerConfig.cpp
-        engine/Scene/Json.cpp
-        engine/Core/EngineLog.cpp
     )
+    target_link_libraries(PhysicsFoundationTests PRIVATE HephaestusRuntime)
     target_include_directories(PhysicsFoundationTests PRIVATE
         engine
         "${CMAKE_BINARY_DIR}/generated"
@@ -1567,27 +1444,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(JoltPhysicsIntegrationTests
         engine/Tests/JoltPhysicsIntegrationTests.cpp
-        engine/Physics/PhysicsLayerConfig.cpp
-        engine/Physics/JoltPhysicsEngine.cpp
-        engine/Physics/JoltPhysicsSystem.cpp
-        engine/Physics/CharacterMotor.cpp
-    engine/Physics/CharacterControllerMath.cpp
-    engine/Physics/CharacterControllerSystem.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Assets/ModelImporter.cpp
-        engine/Assets/FbxDocument.cpp
-        engine/Assets/FbxStaticImporter.cpp
-        engine/Scripting/ScriptBase.cpp
-        engine/Core/EngineLog.cpp
     )
+    target_link_libraries(JoltPhysicsIntegrationTests PRIVATE HephaestusRuntime)
     target_link_libraries(JoltPhysicsIntegrationTests PRIVATE Jolt ufbx Vulkan::Vulkan)
     target_include_directories(JoltPhysicsIntegrationTests PRIVATE
         engine
@@ -1602,19 +1461,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(CharacterControllerMathTests
         engine/Tests/CharacterControllerMathTests.cpp
-        engine/Physics/CharacterControllerMath.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Scripting/ScriptBase.cpp
-        engine/Core/EngineLog.cpp
     )
+    target_link_libraries(CharacterControllerMathTests PRIVATE HephaestusRuntime)
     target_include_directories(CharacterControllerMathTests PRIVATE
         engine
         extern
@@ -1625,27 +1474,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(CharacterControllerJoltTests
         engine/Tests/CharacterControllerJoltTests.cpp
-        engine/Physics/PhysicsLayerConfig.cpp
-        engine/Physics/JoltPhysicsEngine.cpp
-        engine/Physics/JoltPhysicsSystem.cpp
-        engine/Physics/CharacterMotor.cpp
-        engine/Physics/CharacterControllerMath.cpp
-        engine/Physics/CharacterControllerSystem.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Assets/ModelImporter.cpp
-        engine/Assets/FbxDocument.cpp
-        engine/Assets/FbxStaticImporter.cpp
-        engine/Scripting/ScriptBase.cpp
-        engine/Core/EngineLog.cpp
     )
+    target_link_libraries(CharacterControllerJoltTests PRIVATE HephaestusRuntime)
     target_link_libraries(CharacterControllerJoltTests PRIVATE Jolt ufbx Vulkan::Vulkan)
     target_include_directories(CharacterControllerJoltTests PRIVATE
         engine
@@ -1671,21 +1502,10 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(AutomationAssetTests
         engine/Tests/AutomationAssetTests.cpp
-        engine/Assets/AssetManager.cpp
-        engine/Assets/AssetDatabase.cpp
-        engine/Assets/AssetImporters.cpp
-        engine/Assets/AssetOperationService.cpp
         engine/Assets/AssetReferenceIndex.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Assets/CharacterAsset.cpp
-        engine/Assets/OpenDocumentRegistry.cpp
-        engine/Assets/EditorAssetPipeline.cpp
-        engine/Assets/EditorAssetImportService.cpp
-        engine/Assets/ReimportManager.cpp
-        engine/Assets/DerivedDataCache.cpp
-        engine/Assets/FileWatcher.cpp
-        engine/Assets/ModelImporter.cpp
     )
+    target_link_libraries(AutomationAssetTests PRIVATE HephaestusEditorCore)
     target_link_libraries(AutomationAssetTests PRIVATE HephaestusAutomationCore Vulkan::Vulkan)
     target_include_directories(AutomationAssetTests PRIVATE
         engine
@@ -1701,21 +1521,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(AutomationMaterialTests
         engine/Tests/AutomationMaterialTests.cpp
-        engine/UI/MaterialEditor/MaterialGraph.cpp
-        engine/UI/MaterialEditor/MaterialNodeDefinitions.cpp
-        engine/UI/MaterialEditor/MaterialAssetSerializer.cpp
-        engine/Assets/AssetManager.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(AutomationMaterialTests PRIVATE HephaestusEditorCore)
     target_link_libraries(AutomationMaterialTests PRIVATE HephaestusAutomationCore)
     target_include_directories(AutomationMaterialTests PRIVATE
         engine
@@ -1729,25 +1537,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(AutomationCharacterTests
         engine/Tests/AutomationCharacterTests.cpp
-        engine/Assets/CharacterAsset.cpp
-        engine/Assets/CharacterRuntime.cpp
-        engine/Assets/CharacterImport.cpp
-        engine/Assets/SkeletalModelImporter.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Assets/AssetManager.cpp
-        engine/Animation/Skeleton.cpp
-        engine/Animation/AnimationClip.cpp
-        engine/Animation/CharacterPlayback.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(AutomationCharacterTests PRIVATE HephaestusRuntime)
     target_link_libraries(AutomationCharacterTests PRIVATE HephaestusAutomationCore)
     target_include_directories(AutomationCharacterTests PRIVATE
         engine
@@ -1762,20 +1554,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(AutomationScriptTests
         engine/Tests/AutomationScriptTests.cpp
-        engine/Scripting/LuaExposeScanner.cpp
-        engine/Scripting/LuaScriptVariableReconciler.cpp
-        engine/Assets/AssetManager.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(AutomationScriptTests PRIVATE HephaestusRuntime)
     target_link_libraries(AutomationScriptTests PRIVATE HephaestusAutomationCore)
     target_include_directories(AutomationScriptTests PRIVATE
         engine
@@ -1789,8 +1570,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(LuaExposeScannerTests
         engine/Tests/LuaExposeScannerTests.cpp
-        engine/Scripting/LuaExposeScanner.cpp
     )
+    target_link_libraries(LuaExposeScannerTests PRIVATE HephaestusRuntime)
     target_include_directories(LuaExposeScannerTests PRIVATE engine extern)
     add_test(
         NAME LuaExposeScanner
@@ -1799,9 +1580,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(LuaScriptVariableTests
         engine/Tests/LuaScriptVariableTests.cpp
-        engine/Scripting/LuaExposeScanner.cpp
-        engine/Scripting/LuaScriptVariableReconciler.cpp
     )
+    target_link_libraries(LuaScriptVariableTests PRIVATE HephaestusRuntime)
     target_include_directories(LuaScriptVariableTests PRIVATE engine extern)
     add_test(
         NAME LuaScriptVariables
@@ -1811,47 +1591,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     if(LUA_FOUND)
         add_executable(CharacterLuaTests
             engine/Tests/CharacterLuaTests.cpp
-            engine/Core/EngineLog.cpp
-            engine/Scripting/LuaScriptEngine.cpp
-            engine/Scripting/LuaExposeScanner.cpp
-            engine/Scripting/LuaScriptVariableReconciler.cpp
-            engine/Scripting/ScriptBase.cpp
-            engine/Audio/AudioEngine.cpp
-            engine/Assets/CharacterAsset.cpp
-            engine/Assets/CharacterRuntime.cpp
-            engine/Assets/SkeletalModelImporter.cpp
             engine/Assets/AssetPathPolicy.cpp
-            engine/Animation/Skeleton.cpp
-            engine/Animation/AnimationClip.cpp
-            engine/Animation/CharacterPlayback.cpp
-            engine/Scene/Json.cpp
-            engine/Scene/Entity.cpp
-            engine/Scene/Scene.cpp
-            engine/Scene/PrefabSerializer.cpp
-            engine/Scene/PrefabInstantiator.cpp
-            engine/Scene/PrefabComponentIO.cpp
-            engine/Scene/PrefabOverrideSystem.cpp
-            engine/Scene/SceneSerializer.cpp
-            engine/UI/HephaestusUI/HUIAsset.cpp
-            engine/UI/HephaestusUI/UIButton.cpp
-            engine/UI/HephaestusUI/UICanvas.cpp
-            engine/UI/HephaestusUI/UIContext.cpp
-            engine/UI/HephaestusUI/UIElement.cpp
-            engine/UI/HephaestusUI/UIFont.cpp
-            engine/UI/HephaestusUI/UIGridLayout.cpp
-            engine/UI/HephaestusUI/UIHorizontalBox.cpp
-            engine/UI/HephaestusUI/UIImage.cpp
-            engine/UI/HephaestusUI/UIInputRouter.cpp
-            engine/UI/HephaestusUI/UILayout.cpp
-            engine/UI/HephaestusUI/UIPanel.cpp
-            engine/UI/HephaestusUI/UIRenderer.cpp
-            engine/UI/HephaestusUI/UIScreen.cpp
-            engine/UI/HephaestusUI/UISimpleMenuExample.cpp
-            engine/UI/HephaestusUI/UISystem.cpp
-            engine/UI/HephaestusUI/UIText.cpp
-            engine/UI/HephaestusUI/UITheme.cpp
-            engine/UI/HephaestusUI/UIVerticalBox.cpp
         )
+        target_link_libraries(CharacterLuaTests PRIVATE HephaestusRuntime)
         target_include_directories(CharacterLuaTests PRIVATE
             engine
             extern
@@ -1859,7 +1601,6 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
             "${CMAKE_BINARY_DIR}/generated"
             ${LUA_INCLUDE_DIR}
         )
-        target_compile_definitions(CharacterLuaTests PRIVATE LUA_AVAILABLE=1)
         if(TARGET Lua::Lua)
             target_link_libraries(CharacterLuaTests PRIVATE Lua::Lua glfw HephaestusInputCore)
         else()
@@ -1884,56 +1625,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
         add_executable(PhysicsLuaTests
             engine/Tests/PhysicsLuaTests.cpp
-            engine/Core/EngineLog.cpp
-            engine/Scripting/LuaScriptEngine.cpp
-            engine/Scripting/LuaExposeScanner.cpp
-            engine/Scripting/LuaScriptVariableReconciler.cpp
-            engine/Scripting/ScriptBase.cpp
-            engine/Audio/AudioEngine.cpp
-            engine/Assets/CharacterAsset.cpp
-            engine/Assets/CharacterRuntime.cpp
-            engine/Assets/SkeletalModelImporter.cpp
             engine/Assets/AssetPathPolicy.cpp
-            engine/Assets/ModelImporter.cpp
-            engine/Assets/FbxDocument.cpp
-            engine/Assets/FbxStaticImporter.cpp
-            engine/Animation/Skeleton.cpp
-            engine/Animation/AnimationClip.cpp
-            engine/Animation/CharacterPlayback.cpp
-            engine/Scene/Json.cpp
-            engine/Scene/Entity.cpp
-            engine/Scene/Scene.cpp
-            engine/Scene/PrefabSerializer.cpp
-            engine/Scene/PrefabInstantiator.cpp
-            engine/Scene/PrefabComponentIO.cpp
-            engine/Scene/PrefabOverrideSystem.cpp
-            engine/Scene/SceneSerializer.cpp
-            engine/Physics/PhysicsLayerConfig.cpp
-            engine/Physics/JoltPhysicsEngine.cpp
-            engine/Physics/JoltPhysicsSystem.cpp
-            engine/Physics/CharacterMotor.cpp
-    engine/Physics/CharacterControllerMath.cpp
-    engine/Physics/CharacterControllerSystem.cpp
-            engine/UI/HephaestusUI/HUIAsset.cpp
-            engine/UI/HephaestusUI/UIButton.cpp
-            engine/UI/HephaestusUI/UICanvas.cpp
-            engine/UI/HephaestusUI/UIContext.cpp
-            engine/UI/HephaestusUI/UIElement.cpp
-            engine/UI/HephaestusUI/UIFont.cpp
-            engine/UI/HephaestusUI/UIGridLayout.cpp
-            engine/UI/HephaestusUI/UIHorizontalBox.cpp
-            engine/UI/HephaestusUI/UIImage.cpp
-            engine/UI/HephaestusUI/UIInputRouter.cpp
-            engine/UI/HephaestusUI/UILayout.cpp
-            engine/UI/HephaestusUI/UIPanel.cpp
-            engine/UI/HephaestusUI/UIRenderer.cpp
-            engine/UI/HephaestusUI/UIScreen.cpp
-            engine/UI/HephaestusUI/UISimpleMenuExample.cpp
-            engine/UI/HephaestusUI/UISystem.cpp
-            engine/UI/HephaestusUI/UIText.cpp
-            engine/UI/HephaestusUI/UITheme.cpp
-            engine/UI/HephaestusUI/UIVerticalBox.cpp
         )
+        target_link_libraries(PhysicsLuaTests PRIVATE HephaestusRuntime)
         target_include_directories(PhysicsLuaTests PRIVATE
             engine
             extern
@@ -1944,7 +1638,6 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
             "${CMAKE_BINARY_DIR}/generated"
             ${LUA_INCLUDE_DIR}
         )
-        target_compile_definitions(PhysicsLuaTests PRIVATE LUA_AVAILABLE=1)
         if(TARGET Lua::Lua)
             target_link_libraries(PhysicsLuaTests PRIVATE Lua::Lua glfw HephaestusInputCore Jolt Vulkan::Vulkan)
         else()
@@ -1983,10 +1676,10 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(CharacterAssetTests
         engine/Tests/CharacterAssetTests.cpp
-        engine/Assets/CharacterAsset.cpp
         engine/Assets/AssetReferenceIndex.cpp
         engine/Assets/AssetPathPolicy.cpp
     )
+    target_link_libraries(CharacterAssetTests PRIVATE HephaestusRuntime)
     target_include_directories(CharacterAssetTests PRIVATE
         engine
         extern
@@ -1998,10 +1691,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(SkeletalImportTests
         engine/Tests/SkeletalImportTests.cpp
-        engine/Animation/Skeleton.cpp
-        engine/Animation/AnimationClip.cpp
-        engine/Assets/SkeletalModelImporter.cpp
     )
+    target_link_libraries(SkeletalImportTests PRIVATE HephaestusRuntime)
     target_include_directories(SkeletalImportTests PRIVATE
         engine
         extern
@@ -2014,10 +1705,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(SkinnedMeshTests
         engine/Tests/SkinnedMeshTests.cpp
-        engine/Animation/Skeleton.cpp
-        engine/Animation/AnimationClip.cpp
-        engine/Assets/SkeletalModelImporter.cpp
     )
+    target_link_libraries(SkinnedMeshTests PRIVATE HephaestusRuntime)
     target_include_directories(SkinnedMeshTests PRIVATE
         engine
         extern
@@ -2032,21 +1721,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(CharacterPlaybackTests
         engine/Tests/CharacterPlaybackTests.cpp
-        engine/Animation/Skeleton.cpp
-        engine/Animation/AnimationClip.cpp
-        engine/Animation/CharacterPlayback.cpp
-        engine/Assets/SkeletalModelImporter.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(CharacterPlaybackTests PRIVATE HephaestusRuntime)
     target_include_directories(CharacterPlaybackTests PRIVATE
         engine
         extern
@@ -2060,25 +1737,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(CharacterWorkflowTests
         engine/Tests/CharacterWorkflowTests.cpp
-        engine/Assets/CharacterAsset.cpp
-        engine/Assets/CharacterRuntime.cpp
-        engine/Assets/CharacterImport.cpp
-        engine/Assets/SkeletalModelImporter.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Assets/AssetManager.cpp
-        engine/Animation/Skeleton.cpp
-        engine/Animation/AnimationClip.cpp
-        engine/Animation/CharacterPlayback.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(CharacterWorkflowTests PRIVATE HephaestusRuntime)
     target_include_directories(CharacterWorkflowTests PRIVATE
         engine
         extern
@@ -2092,26 +1753,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(CharacterEditorTests
         engine/Tests/CharacterEditorTests.cpp
-        engine/Assets/CharacterAsset.cpp
-        engine/Assets/CharacterRuntime.cpp
-        engine/Assets/CharacterImport.cpp
-        engine/Assets/SkeletalModelImporter.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Animation/Skeleton.cpp
-        engine/Animation/AnimationClip.cpp
-        engine/Animation/CharacterPlayback.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
-        engine/Scripting/ScriptBase.cpp
-        engine/UI/EditorDocument.cpp
-        engine/UI/CharacterDocument.cpp
     )
+    target_link_libraries(CharacterEditorTests PRIVATE HephaestusEditorCore)
     target_include_directories(CharacterEditorTests PRIVATE
         engine
         extern
@@ -2125,26 +1769,9 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(FbxImportTests
         engine/Tests/FbxImportTests.cpp
-        engine/Assets/ModelImporter.cpp
-        engine/Assets/CharacterAsset.cpp
-        engine/Assets/CharacterImport.cpp
-        engine/Assets/CharacterRuntime.cpp
-        engine/Assets/SkeletalModelImporter.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Assets/AssetManager.cpp
-        engine/Animation/Skeleton.cpp
-        engine/Animation/AnimationClip.cpp
-        engine/Animation/CharacterPlayback.cpp
-        engine/Scene/Json.cpp
-        engine/Scene/Entity.cpp
-        engine/Scene/Scene.cpp
-        engine/Scene/PrefabSerializer.cpp
-        engine/Scene/PrefabInstantiator.cpp
-        engine/Scene/PrefabComponentIO.cpp
-        engine/Scene/PrefabOverrideSystem.cpp
-        engine/Scene/SceneSerializer.cpp
-        engine/Scripting/ScriptBase.cpp
     )
+    target_link_libraries(FbxImportTests PRIVATE HephaestusRuntime)
     target_include_directories(FbxImportTests PRIVATE
         engine
         extern
@@ -2160,13 +1787,10 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(AssetOperationTransactionTests
         engine/Tests/AssetOperationTransactionTests.cpp
-        engine/Assets/AssetOperationService.cpp
-        engine/Assets/OpenDocumentRegistry.cpp
         engine/Assets/AssetReferenceIndex.cpp
         engine/Assets/AssetPathPolicy.cpp
-        engine/Assets/AssetManager.cpp
-        engine/Assets/CharacterAsset.cpp
     )
+    target_link_libraries(AssetOperationTransactionTests PRIVATE HephaestusEditorCore)
 
     target_include_directories(AssetOperationTransactionTests PRIVATE
         engine
@@ -2180,8 +1804,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(RecoveryStoreTests
         engine/Tests/RecoveryStoreTests.cpp
-        engine/Assets/RecoveryStore.cpp
     )
+    target_link_libraries(RecoveryStoreTests PRIVATE HephaestusEditorCore)
 
     target_include_directories(RecoveryStoreTests PRIVATE
         engine
@@ -2316,29 +1940,8 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
 
     add_executable(HUIRendererTests
         engine/Tests/HUIRendererTests.cpp
-        engine/Scene/Json.cpp
-        engine/UI/HephaestusUI/HUIAsset.cpp
-        engine/UI/HephaestusUI/UIButton.cpp
-        engine/UI/HephaestusUI/UICanvas.cpp
-        engine/UI/HephaestusUI/UIContext.cpp
-        engine/UI/HephaestusUI/UIElement.cpp
-        engine/UI/HephaestusUI/UIFont.cpp
-        engine/UI/HephaestusUI/UIGridLayout.cpp
-        engine/UI/HephaestusUI/UIHorizontalBox.cpp
-        engine/UI/HephaestusUI/UIImage.cpp
-        engine/UI/HephaestusUI/UIInputRouter.cpp
-        engine/UI/HephaestusUI/UILayout.cpp
-        engine/UI/HephaestusUI/UIPanel.cpp
-        engine/UI/HephaestusUI/UIRenderer.cpp
-        engine/UI/HephaestusUI/UIScreen.cpp
-        engine/UI/HephaestusUI/UISimpleMenuExample.cpp
-        engine/UI/HephaestusUI/UISystem.cpp
-        engine/UI/HephaestusUI/UIText.cpp
-        engine/UI/HephaestusUI/UITheme.cpp
-        engine/UI/HephaestusUI/UIVerticalBox.cpp
-        engine/UI/HephaestusUI/Rendering/HUIGeometryBuilder.cpp
-        engine/UI/HephaestusUI/Rendering/UIFontAtlas.cpp
     )
+    target_link_libraries(HUIRendererTests PRIVATE HephaestusRuntime)
     target_include_directories(HUIRendererTests PRIVATE engine extern)
     add_test(
         NAME HUIRendererWorkflow
