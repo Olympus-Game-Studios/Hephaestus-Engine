@@ -240,6 +240,26 @@ int main(int argc, char** argv)
     }
 
     lua_settop(L, 0);
+    if (luaL_dostring(L, R"(
+        local s = { fireMode = "auto", roundsPerSecond = 10, magazine = 999 }
+        Logic.tickFire(s, 1 / 60, true, true)
+        for _ = 1, 60 do Logic.tickFire(s, 1 / 60, false, false) end
+        local repress = Logic.tickFire(s, 1 / 60, true, true)
+        s.reloadRemaining = 1
+        for _ = 1, 60 do Logic.tickFire(s, 1 / 60, true, false) end
+        s.reloadRemaining = 0
+        local afterReload = Logic.tickFire(s, 1 / 60, true, false)
+        return repress, afterReload
+    )") != LUA_OK) {
+        std::cerr << "[idle] " << lua_tostring(L, -1) << '\n';
+        ok = false;
+    } else {
+        ok &= Check(lua_tointeger(L, -2) == 1, "automatic re-press after idle fires one shot");
+        ok &= Check(lua_tointeger(L, -1) == 1, "automatic fire after a held reload fires one shot");
+    }
+    lua_settop(L, 0);
+
+    lua_settop(L, 0);
     lua_newtable(L);
     lua_pushnumber(L, 0);
     lua_setfield(L, -2, "magazine");

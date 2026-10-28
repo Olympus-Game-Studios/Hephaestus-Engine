@@ -41,10 +41,12 @@ end
 
 function Logic.tickFire(state, dt, held, pressed)
     state.now = (state.now or 0) + dt
-    if (state.reloadRemaining or 0) > 0 then
-        return 0
-    end
-    if (state.magazine or 0) <= 0 then
+    state.nextFire = state.nextFire or 0
+    local isHeld = held == true or held == 1
+    local isPressed = pressed == true or pressed == 1
+    if (state.reloadRemaining or 0) > 0 or (state.magazine or 0) <= 0
+        or (state.fireMode == "auto" and not isHeld) then
+        state.nextFire = math.max(state.nextFire, state.now)
         return 0
     end
     local rps = state.roundsPerSecond or 1
@@ -52,10 +54,7 @@ function Logic.tickFire(state, dt, held, pressed)
         rps = 1
     end
     local interval = 1 / rps
-    state.nextFire = state.nextFire or 0
     local shots = 0
-    local isHeld = held == true or held == 1
-    local isPressed = pressed == true or pressed == 1
     if state.fireMode == "auto" then
         while isHeld and state.now >= state.nextFire and shots < 4 do
             shots = shots + 1
