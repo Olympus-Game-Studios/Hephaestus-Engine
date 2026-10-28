@@ -341,6 +341,7 @@ add_library(HephaestusRuntime STATIC
     engine/Scripting/LuaScriptEngine.cpp
     engine/Scripting/LuaExposeScanner.cpp
     engine/Scripting/LuaScriptVariableReconciler.cpp
+    engine/Scripting/ScriptPhysicsBindings.cpp
     engine/UI/HephaestusUI/HUIAsset.cpp
     engine/UI/HephaestusUI/UIButton.cpp
     engine/UI/HephaestusUI/UICanvas.cpp

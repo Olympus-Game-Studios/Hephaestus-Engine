@@ -8,6 +8,7 @@
 #include "Scene/Scene.h"
 #include "Scripting/LuaScriptComponent.h"
 #include "Scripting/LuaScriptEngine.h"
+#include "Scripting/ScriptPhysicsBindings.h"
 
 #include <filesystem>
 #include <iostream>
@@ -123,6 +124,42 @@ end
         pass &= Check(lua.ExecuteString("assert(_G.collision == true)"),
                       "onCollisionEnter receives a contact");
         (void)floor;
+
+        bool physicsAvailable = true;
+        const ScriptPhysicsAccessor access = [&]() {
+            return physicsAvailable ? ScriptPhysicsAccess{&scene, &world, &physics, nullptr} : ScriptPhysicsAccess{};
+        };
+        lua.SetPhysicsBinding(MakeScriptPhysicsBinding(access));
+        lua.SetCharacterBinding(MakeScriptCharacterBinding(access));
+        Entity probe = AddBox(scene, "Probe", Vec3(30.0f, 1.0f, 0.0f), false, false);
+        AddBox(scene, "ProbeFloor", Vec3(30.0f, -3.0f, 0.0f), true, false);
+        auto& probeScript = probe.AddComponent<LuaScriptComponent>();
+        probeScript.scriptSource = R"lua(
+function onUpdate(dt)
+    _G.probeHasBody = Physics.hasBody()
+    _G.probeSet = Physics.setLinearVelocity(0, 2, 0, true)
+    local v = Physics.getLinearVelocity()
+    _G.probeVy = v and v.y or nil
+    local hit = Physics.raycast(30, 0.4, 0, 0, -1, 0, 10)
+    _G.probeRayDistance = hit and hit.hit and hit.distance or nil
+    _G.probeCharacterMove = Character.move(1, 0)
+end
+)lua";
+        physics.Update(scene, Physics::kPhysicsFixedDt);
+        lua.Update(scene, Physics::kPhysicsFixedDt);
+        pass &= Check(lua.ExecuteString("assert(_G.probeHasBody == true and _G.probeSet == true)"),
+                      "shared physics binding finds and drives the script's body");
+        pass &= Check(lua.ExecuteString("assert(math.abs(_G.probeVy - 2) < 1e-4)"),
+                      "shared physics binding reads back the velocity it set");
+        pass &= Check(lua.ExecuteString("assert(_G.probeRayDistance ~= nil and math.abs(_G.probeRayDistance - 2.9) < 0.05)"),
+                      "shared physics binding raycasts against the scene");
+        pass &= Check(lua.ExecuteString("assert(_G.probeCharacterMove == false)"),
+                      "shared character binding reports no controller system");
+
+        physicsAvailable = false;
+        lua.Update(scene, Physics::kPhysicsFixedDt);
+        pass &= Check(lua.ExecuteString("assert(_G.probeHasBody == false and _G.probeSet == false and _G.probeRayDistance == nil)"),
+                      "shared physics binding reports unavailable physics without touching it");
 
         lua.OnSimulationStopped();
         lua.Shutdown();
