@@ -30,6 +30,7 @@
 #include "VulkanLightGizmo.h"
 #include "SkyIrradiance.h"
 #include "ProbeBake.h"
+#include "ProbeGI.h"
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
 #include "../Core/EditorDebugDraw.h"
@@ -135,6 +136,7 @@ struct FrameStats {
     int drawCalls   = 0;
     int meshesDrawn = 0;
     int entitiesSkipped = 0;
+    float probeGIGpuMs = -1.0f;  // last measured probe GI update, negative when unknown or inactive
 };
 
 /**
@@ -571,6 +573,10 @@ private:
         void Destroy();
     };
     ShadowMap m_directionalShadow;
+
+    ProbeGI m_probeGI;
+    bool m_probeGIReady = false;
+    void recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene);
 
     // Billboard resources for light icons
     struct BillboardPipeline {

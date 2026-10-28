@@ -250,6 +250,8 @@ EngineFrameRenderer::~EngineFrameRenderer()
     Shutdown();
 }
 
+static bool FindShadowCastingSun(Scene* scene, Vec3& outDirection);
+
 bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain, bool editorOverlays)
 {
     if (m_initialized) {
@@ -361,6 +363,14 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
     if (!createToneMapResources()) {
         std::cerr << "[EngineFrameRenderer] Failed to create tone map resources\n";
         return false;
+    }
+    m_probeGIReady =
+        m_probeGI.Init(m_device, m_directionalShadow.IsValid() ? m_directionalShadow.renderPass : VK_NULL_HANDLE) &&
+        m_probeGI.CreateSwapchainResources(m_swapchain->renderPass, VulkanSwapchain::kSceneSubpass,
+                                           m_pipeline->descriptorSetLayout,
+                                           static_cast<uint32_t>(m_swapchain->images.size()));
+    if (!m_probeGIReady) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create probe GI resources (probe lighting disabled)\n";
     }
 
     // Editor overlay resources are created only for hosts that request them at Init.
@@ -631,6 +641,13 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             std::cerr << "[EngineFrameRenderer] Failed to recreate tone map resources\n";
             return false;
         }
+        if (m_probeGIReady &&
+            !m_probeGI.CreateSwapchainResources(m_swapchain->renderPass, VulkanSwapchain::kSceneSubpass,
+                                                m_pipeline->descriptorSetLayout,
+                                                static_cast<uint32_t>(m_swapchain->images.size()))) {
+            std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate probe GI resources (probe lighting disabled)\n";
+            m_probeGIReady = false;
+        }
         if (!createSkinnedMainPipelines()) {
             std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate skinned mesh pipelines\n";
         }
@@ -739,6 +756,12 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         updateLightingUBO(imageIndex, scene, camera);
     }
     prepareEnvironment(scene, config, imageIndex);
+    if (m_probeGIReady) {
+        Vec3 sunDirection;
+        const bool hasSun = scene && FindShadowCastingSun(scene, sunDirection);
+        m_probeGI.Prepare(scene, m_projectRoot, imageIndex, m_lightingBuffers[imageIndex].buffer,
+                          hasSun ? &sunDirection : nullptr);
+    }
 
     // Prepare the runtime HUI overlay geometry/uploads (queue work is allowed
     // here; the command buffer has not been recorded yet).
@@ -800,9 +823,21 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (config.renderShadows && m_directionalShadow.IsValid()) {
         recordShadowPass(cmd, scene, camera, config);
     }
+    if (m_probeGIReady && m_probeGI.Active()) {
+        m_probeGI.BeginTiming(cmd, imageIndex);
+        if (m_probeGI.HasSunMap()) {
+            recordProbeGISunPass(cmd, scene);
+        }
+        m_probeGI.RecordUpdate(cmd, imageIndex);
+    }
     
 // Record main render pass
     recordMainPass(cmd, imageIndex, scene, config);
+    m_lastFrameStats.probeGIGpuMs = m_probeGIReady && m_probeGI.Active() ? m_probeGI.LastGpuMilliseconds() : -1.0f;
+    if (m_lastFrameStats.probeGIGpuMs >= 0.0f && m_renderedFrameCount % 600 == 0) {
+        std::cout << "[ProbeGI] " << m_probeGI.ProbeCount() << " probes updated in "
+                  << m_lastFrameStats.probeGIGpuMs << " ms GPU\n";
+    }
 
     if (m_capture.requested) {
         VkImageMemoryBarrier before{};
@@ -3492,6 +3527,90 @@ const MaterialComponent* EngineFrameRenderer::resolveMaterialForSlot(Entity& ent
     return nullptr;
 }
 
+// Static geometry the probes bake against and the probe sun map draws.
+static bool IsProbeStaticMesh(Scene& scene, entt::entity handle, const MeshRendererComponent& renderer)
+{
+    if (!renderer.visible || renderer.hideInGame || !renderer.HasValidMesh()) {
+        return false;
+    }
+    const auto& registry = scene.GetRegistry();
+    if (registry.all_of<CharacterComponent>(handle) || registry.all_of<CharacterControllerComponent>(handle)) {
+        return false;
+    }
+    const auto* body = registry.try_get<RigidBodyComponent>(handle);
+    return !body || body->IsStatic();
+}
+
+static bool FindShadowCastingSun(Scene* scene, Vec3& outDirection)
+{
+    auto view = scene->GetRegistry().view<TransformComponent, LightComponent>();
+    for (auto entity : view) {
+        const auto& light = view.get<LightComponent>(entity);
+        if (light.type != LightType::Directional || !light.castShadows || !light.enabled) continue;
+        const auto& transform = view.get<TransformComponent>(entity);
+        Mat4 rotation = Mat4::RotationZ(transform.rotation.z);
+        rotation = Mat4::Multiply(Mat4::RotationY(transform.rotation.y), rotation);
+        rotation = Mat4::Multiply(Mat4::RotationX(transform.rotation.x), rotation);
+        outDirection = vnorm(Mat4::TransformDirection(rotation, Vec3(0, 0, -1)));
+        return true;
+    }
+    return false;
+}
+
+void EngineFrameRenderer::recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene)
+{
+    // The previous frame's probe update sampled this map.
+    VkMemoryBarrier reads{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    reads.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0,
+                         1, &reads, 0, nullptr, 0, nullptr);
+
+    VkClearValue clear{};
+    clear.depthStencil = {1.0f, 0};
+    VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    begin.renderPass = m_directionalShadow.renderPass;
+    begin.framebuffer = m_probeGI.SunFramebuffer();
+    begin.renderArea.extent = {ProbeGI::kSunMapResolution, ProbeGI::kSunMapResolution};
+    begin.clearValueCount = 1;
+    begin.pClearValues = &clear;
+    vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    VkViewport viewport{0.0f, 0.0f, static_cast<float>(ProbeGI::kSunMapResolution),
+                        static_cast<float>(ProbeGI::kSunMapResolution), 0.0f, 1.0f};
+    VkRect2D scissor{{0, 0}, {ProbeGI::kSunMapResolution, ProbeGI::kSunMapResolution}};
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_directionalShadow.pipeline);
+
+    struct ShadowPushConstants {
+        Mat4 lightViewProj;
+        Mat4 model;
+    } pc;
+    pc.lightViewProj = m_probeGI.SunViewProj();
+    auto view = scene->GetRegistry().view<MeshRendererComponent>();
+    for (entt::entity handle : view) {
+        const auto& renderer = view.get<MeshRendererComponent>(handle);
+        if (!IsProbeStaticMesh(*scene, handle, renderer)) continue;
+        pc.model = scene->GetWorldTransform(Entity(handle, scene));
+        for (size_t meshHandle : MeshHandlesForDraw(renderer)) {
+            if (meshHandle >= m_meshLibrary.size()) continue;
+            const MeshGPU& mesh = m_meshLibrary[meshHandle];
+            if (mesh.skinned || mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE) continue;
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, &offset);
+            vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdPushConstants(cmd, m_directionalShadow.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+            vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+        }
+    }
+    vkCmdEndRenderPass(cmd);
+
+    VkMemoryBarrier written{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    written.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    written.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                         &written, 0, nullptr, 0, nullptr);
+}
+
 ProbeBakeGeometry EngineFrameRenderer::CollectProbeBakeGeometry(Scene& scene)
 {
     ProbeBakeGeometry geometry;
@@ -3516,11 +3635,7 @@ ProbeBakeGeometry EngineFrameRenderer::CollectProbeBakeGeometry(Scene& scene)
     for (entt::entity handle : view) {
         Entity entity(handle, &scene);
         const MeshRendererComponent& renderer = view.get<MeshRendererComponent>(handle);
-        if (!renderer.visible || renderer.hideInGame || !renderer.HasValidMesh() ||
-            entity.HasComponent<CharacterComponent>() || entity.HasComponent<CharacterControllerComponent>()) {
-            continue;
-        }
-        if (const auto* body = scene.GetRegistry().try_get<RigidBodyComponent>(handle); body && !body->IsStatic()) {
+        if (!IsProbeStaticMesh(scene, handle, renderer)) {
             continue;
         }
         const Mat4 world = scene.GetWorldTransform(entity);
@@ -3993,6 +4108,9 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         }
     }
     
+    if (config.isEditorMode && !config.isPlaying && m_probeGIReady && m_probeGI.Active()) {
+        m_probeGI.RecordDebug(cmd, imageIndex, m_descriptorSets[imageIndex]);
+    }
     recordToneMap(cmd);
 
     // Render editor grid (after opaque meshes, before transparent) — not in play/pause or shipped game
@@ -4320,6 +4438,7 @@ void EngineFrameRenderer::cleanupSwapchainResources()
 
     cleanupSkinnedGraphicsPipelines();
     cleanupToneMapResources();
+    m_probeGI.DestroySwapchainResources();
 
     cleanupBillboardResources();
     cleanupGizmoResources();
@@ -4530,6 +4649,7 @@ void EngineFrameRenderer::destroyAllResources()
     cleanupLightGizmoResources();
 
     cleanupToneMapResources();
+    m_probeGI.Shutdown();
 
     // Cleanup shadow map resources
     if (m_directionalShadow.pipeline != VK_NULL_HANDLE) {

@@ -322,6 +322,7 @@ add_library(HephaestusRuntime STATIC
     engine/Gfx/BuiltinMeshes.cpp
     engine/Gfx/SkyIrradiance.cpp
     engine/Gfx/ProbeBake.cpp
+    engine/Gfx/ProbeGI.cpp
     engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/PhysicsLayerConfig.cpp
@@ -993,6 +994,14 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/hui.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tonemap.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tonemap.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_update.comp
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_debug.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_debug.frag
+    )
+
+    set(SHADER_INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/lighting_common.glsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_common.glsl
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)
@@ -1007,7 +1016,7 @@ if (GLSLC_EXECUTABLE)
             OUTPUT ${OUT}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUTPUT_DIR}
             COMMAND ${GLSLC_EXECUTABLE} ${SRC} -o ${OUT}
-            DEPENDS ${SRC}
+            DEPENDS ${SRC} ${SHADER_INCLUDES}
             COMMENT "Compiling ${FN} -> ${OUT}"
             VERBATIM
         )
