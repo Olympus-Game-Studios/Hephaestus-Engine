@@ -91,8 +91,8 @@
 #if HEPHAESTUS_GAME_SCRIPTING
 #include "../Scripting/LuaScriptEngine.h"
 #include "../Scripting/ScriptPhysicsBindings.h"
-#include "../Scripting/ScriptEngine.h"
 #endif
+#include "../Scripting/ScriptEngine.h"
 
 // Runtime UI
 #include "../UI/HephaestusUI/UIContext.h"
@@ -820,6 +820,9 @@ int main(int argc, char* argv[]) {
     // Hydrate script components
     luaEngine.OnSimulationStarted();
 #endif
+    ScriptEngine cppScripts;
+    cppScripts.Initialize(&scene);
+    cppScripts.AwakeScripts();
 
     // ── Generate Builtin Primitive Meshes ─────────────────────────
     HP_LOG(Info, "Generating builtin primitive meshes...");
@@ -1375,6 +1378,7 @@ int main(int argc, char* argv[]) {
         }
 
         luaEngine.OnSimulationStopped();
+        cppScripts.DestroyScripts();
         characterControllers.Clear();
         physicsSystem.ClearAllBodies();
         physicsSystem.ClearAccumulator();
@@ -1398,6 +1402,7 @@ int main(int argc, char* argv[]) {
         const fs::path characterRoot = !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot;
         Hephaestus::CharacterRuntime::BindScene(scene, characterRoot, &frameRenderer);
         luaEngine.OnSimulationStarted();
+        cppScripts.AwakeScripts();
         physicsSystem.PrepareSceneBodies(scene);
         HP_LOG(Info, "Gameplay scene restarted: " + scene.GetSourceAssetPath());
         sceneReloadProcessing = false;
@@ -1457,6 +1462,7 @@ int main(int argc, char* argv[]) {
         step.scene = &scene;
         step.audio = &audioEngine;
         step.physics = &physicsSystem;
+        step.cppScripts = &cppScripts;
 #if HEPHAESTUS_GAME_SCRIPTING
         step.lua = &luaEngine;
         step.reloadAtSafePoint = reloadSceneAtSafePoint;
@@ -1574,6 +1580,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     vkDeviceWaitIdle(vkdev.device);
+    cppScripts.Shutdown();
     g_GameCameraPtr = nullptr;
     g_GameScenePtr = nullptr;
     frameRenderer.Shutdown();
