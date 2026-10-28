@@ -164,22 +164,8 @@ float pointShadow(int light, vec3 lightPos) {
     return localShadow(int(params.x) + face, lightPos, params);
 }
 
-float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
-    if (lighting.dirShadowParams.w < 0.5) {
-        return 1.0;
-    }
-
-    // Compute view-space depth of this fragment for cascade selection
-    // Engine LookAt maps forward to +Z, so view-space Z is positive for objects in front
-    float viewDepth = (ubo.view * vec4(fragWorldPos, 1.0)).z;
-    
-    // Select cascade based on view depth vs split distances
-    int cascade = 0;
-    if      (viewDepth < lighting.cascadeSplits.x) cascade = 0;
-    else if (viewDepth < lighting.cascadeSplits.y) cascade = 1;
-    else if (viewDepth < lighting.cascadeSplits.z) cascade = 2;
-    else                                           cascade = 3;
-    
+// Fraction of the 16 Poisson taps in shadow for one cascade.
+float cascadeOcclusion(int cascade, vec3 lightDir) {
     // Biases are sized from this cascade's texel footprint, so they stay a few centimetres near the camera
     // instead of a fixed fraction of the cascade's whole depth range (which leaked light at contact points).
     vec3 geometricNormal = normalize(fragNormal);
@@ -191,33 +177,20 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
 
     vec4 cascadeLightSpace = lighting.cascadeViewProj[cascade] * vec4(shadowPos, 1.0);
     vec3 projCoords = cascadeLightSpace.xyz / cascadeLightSpace.w;
-    
-    // Transform from NDC [-1,1] to texture coordinates [0,1]
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
-    
-    // Fragment is outside the shadow map frustum - no shadow
-    if (projCoords.z > 1.0 || projCoords.z < 0.0) {
-        return 1.0;
+    if (projCoords.z > 1.0 || projCoords.z < 0.0 ||
+        any(lessThan(projCoords.xy, vec2(0.0))) || any(greaterThan(projCoords.xy, vec2(1.0)))) {
+        return 0.0;
     }
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 || 
-        projCoords.y < 0.0 || projCoords.y > 1.0) {
-        return 1.0;
-    }
-    
-    // Map UV to the correct 2x2 atlas quadrant
-    // Cascade 0: top-left, 1: top-right, 2: bottom-left, 3: bottom-right
-    vec2 atlasOffset;
-    if      (cascade == 0) atlasOffset = vec2(0.0, 0.0);
-    else if (cascade == 1) atlasOffset = vec2(0.5, 0.0);
-    else if (cascade == 2) atlasOffset = vec2(0.0, 0.5);
-    else                   atlasOffset = vec2(0.5, 0.5);
-    
+
+    // Cascade 0: top-left, 1: top-right, 2: bottom-left, 3: bottom-right of the 2x2 atlas
+    vec2 atlasOffset = vec2(float(cascade % 2), float(cascade / 2)) * 0.5;
     vec2 atlasUV = projCoords.xy * 0.5 + atlasOffset;
-
-    // Texel size in full-atlas UV space (1 / full resolution)
     float texelSize = lighting.dirShadowParams.z;
+    // Keep filter taps inside this cascade's quadrant so they never read a neighbouring cascade.
+    vec2 quadrantMin = atlasOffset + vec2(0.5 * texelSize);
+    vec2 quadrantMax = atlasOffset + vec2(0.5 - 0.5 * texelSize);
 
-    // 16-sample Poisson disk for smooth soft shadows
     const vec2 poissonDisk[16] = vec2[](
         vec2(-0.9420, -0.3990), vec2( 0.9456, -0.7689),
         vec2(-0.0942, -0.9293), vec2( 0.3448,  0.2930),
@@ -239,19 +212,42 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
 
     float shadow = 0.0;
     for (int i = 0; i < 16; i++) {
-        // Rotate sample around origin
         vec2 offset = vec2(
             poissonDisk[i].x * cosA - poissonDisk[i].y * sinA,
             poissonDisk[i].x * sinA + poissonDisk[i].y * cosA
         );
-        vec2 sampleCoord = atlasUV + offset * spreadTexels * texelSize;
+        vec2 sampleCoord = clamp(atlasUV + offset * spreadTexels * texelSize, quadrantMin, quadrantMax);
         float closestDepth = texture(shadowMap, sampleCoord).r;
         shadow += (projCoords.z - bias > closestDepth) ? 1.0 : 0.0;
     }
-    shadow /= 16.0;
+    return shadow / 16.0;
+}
 
-    float strength = lighting.dirShadowParams.y;
-    return 1.0 - shadow * strength;
+float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
+    if (lighting.dirShadowParams.w < 0.5) {
+        return 1.0;
+    }
+
+    // Engine LookAt maps forward to +Z, so view-space Z is positive for objects in front
+    float viewDepth = (ubo.view * vec4(fragWorldPos, 1.0)).z;
+    vec4 splits = lighting.cascadeSplits;
+    if (viewDepth >= splits.w) {
+        return 1.0;
+    }
+    int cascade = viewDepth < splits.x ? 0 : viewDepth < splits.y ? 1 : viewDepth < splits.z ? 2 : 3;
+
+    // The last 10% of each cascade cross-fades into the next one, and the last 10% of the final
+    // cascade fades the shadow out, so neither the cascade seams nor the shadow distance show as a line.
+    float cascadeStart = cascade == 0 ? 0.0 : splits[cascade - 1];
+    float band = 0.1 * (splits[cascade] - cascadeStart);
+    float t = clamp((viewDepth - (splits[cascade] - band)) / max(band, 1e-4), 0.0, 1.0);
+    float occlusion = cascadeOcclusion(cascade, lightDir);
+    if (t > 0.0) {
+        occlusion = cascade < 3 ? mix(occlusion, cascadeOcclusion(cascade + 1, lightDir), t)
+                                : occlusion * (1.0 - t);
+    }
+
+    return 1.0 - occlusion * lighting.dirShadowParams.y;
 }
 
 // ═══════════════════════════════════════════════════════════════
