@@ -1,6 +1,8 @@
 ﻿#define VMA_IMPLEMENTATION
 #include "VulkanDevice.h"
 #include "vk_mem_alloc.h"
+#include <algorithm>
+#include <cstring>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -31,15 +33,7 @@ void VulkanDevice::Init(GLFWwindow *window, VkInstance inInstance) {
   findQueueFamilies(physicalDevice);
   createLogicalDevice();
   createCommandPool();
-
-  // ---- Create VMA allocator ----
-  VmaAllocatorCreateInfo allocatorInfo{};
-  allocatorInfo.physicalDevice = physicalDevice;
-  allocatorInfo.device = device;
-  allocatorInfo.instance = instance;
-
-  if (vmaCreateAllocator(&allocatorInfo, &allocator) != VK_SUCCESS)
-    throw std::runtime_error("Failed to create VMA allocator");
+  createAllocator();
 
   std::cout << "Vulkan device initialized.\n";
 }
@@ -77,15 +71,7 @@ void VulkanDevice::InitWithoutSurface(VkInstance inInstance) {
   
   createLogicalDevice();
   createCommandPool();
-
-  // ---- Create VMA allocator ----
-  VmaAllocatorCreateInfo allocatorInfo{};
-  allocatorInfo.physicalDevice = physicalDevice;
-  allocatorInfo.device = device;
-  allocatorInfo.instance = instance;
-
-  if (vmaCreateAllocator(&allocatorInfo, &allocator) != VK_SUCCESS)
-    throw std::runtime_error("Failed to create VMA allocator");
+  createAllocator();
 
   std::cout << "Vulkan device initialized (without surface).\n";
 }
@@ -281,22 +267,101 @@ void VulkanDevice::createLogicalDevice() {
   features.samplerAnisotropy = VK_TRUE;
   features.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
   m_fillModeNonSolid = supportedFeatures.fillModeNonSolid == VK_TRUE;
+  // Probe GI stores to rg16f images, which SPIR-V treats as an extended storage format.
+  m_storageImageExtendedFormats = supportedFeatures.shaderStorageImageExtendedFormats == VK_TRUE;
+  features.shaderStorageImageExtendedFormats = supportedFeatures.shaderStorageImageExtendedFormats;
   if (m_fillModeNonSolid) {
     features.fillModeNonSolid = VK_TRUE;
   }
+  // Optional hardware ray queries for probe GI: needs Vulkan 1.2 buffer device addresses plus the KHR extensions.
+  VkPhysicalDeviceProperties deviceProps{};
+  vkGetPhysicalDeviceProperties(physicalDevice, &deviceProps);
+  uint32_t extensionCount = 0;
+  vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, nullptr);
+  std::vector<VkExtensionProperties> available(extensionCount);
+  vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, available.data());
+  auto hasExtension = [&](const char* name) {
+    return std::any_of(available.begin(), available.end(),
+                       [&](const VkExtensionProperties& e) { return std::strcmp(e.extensionName, name) == 0; });
+  };
+  VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeatures{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+  VkPhysicalDeviceVulkan12Features vulkan12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+  accelFeatures.pNext = &rayQueryFeatures;
+  vulkan12.pNext = &accelFeatures;
+  VkPhysicalDeviceFeatures2 features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+  features2.pNext = &vulkan12;
+  m_rayQuery = false;
+  if (deviceProps.apiVersion >= VK_API_VERSION_1_2 &&
+      hasExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
+      hasExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
+      hasExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)) {
+    vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
+    m_rayQuery = vulkan12.bufferDeviceAddress && accelFeatures.accelerationStructure && rayQueryFeatures.rayQuery;
+  }
+
+  VkPhysicalDeviceRayQueryFeaturesKHR enableRayQuery{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+  enableRayQuery.rayQuery = VK_TRUE;
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR enableAccel{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+  enableAccel.accelerationStructure = VK_TRUE;
+  enableAccel.pNext = &enableRayQuery;
+  VkPhysicalDeviceVulkan12Features enable12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+  enable12.bufferDeviceAddress = VK_TRUE;
+  enable12.pNext = &enableAccel;
+  VkPhysicalDeviceFeatures2 enable{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+  enable.features = features;
+  enable.pNext = &enable12;
+
   VkDeviceCreateInfo ci{};
   ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
   ci.queueCreateInfoCount = static_cast<uint32_t>(qInfos.size());
   ci.pQueueCreateInfos = qInfos.data();
-  ci.pEnabledFeatures = &features;
+  if (m_rayQuery) {
+    deviceExtensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+    deviceExtensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+    deviceExtensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+    ci.pNext = &enable;
+  } else {
+    ci.pEnabledFeatures = &features;
+  }
   ci.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
   ci.ppEnabledExtensionNames = deviceExtensions.data();
 
   if (vkCreateDevice(physicalDevice, &ci, nullptr, &device) != VK_SUCCESS)
     throw std::runtime_error("Failed to create logical device");
 
+  if (m_rayQuery) {
+    m_rayTracing.createAccelerationStructure = reinterpret_cast<PFN_vkCreateAccelerationStructureKHR>(
+        vkGetDeviceProcAddr(device, "vkCreateAccelerationStructureKHR"));
+    m_rayTracing.destroyAccelerationStructure = reinterpret_cast<PFN_vkDestroyAccelerationStructureKHR>(
+        vkGetDeviceProcAddr(device, "vkDestroyAccelerationStructureKHR"));
+    m_rayTracing.getBuildSizes = reinterpret_cast<PFN_vkGetAccelerationStructureBuildSizesKHR>(
+        vkGetDeviceProcAddr(device, "vkGetAccelerationStructureBuildSizesKHR"));
+    m_rayTracing.cmdBuildAccelerationStructures = reinterpret_cast<PFN_vkCmdBuildAccelerationStructuresKHR>(
+        vkGetDeviceProcAddr(device, "vkCmdBuildAccelerationStructuresKHR"));
+    m_rayTracing.getAccelerationStructureAddress = reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(
+        vkGetDeviceProcAddr(device, "vkGetAccelerationStructureDeviceAddressKHR"));
+    std::cout << "[VulkanDevice] Hardware ray queries enabled\n";
+  }
+
   vkGetDeviceQueue(device, graphicsFamily, 0, &graphicsQueue);
   vkGetDeviceQueue(device, presentFamily, 0, &presentQueue);
+}
+
+void VulkanDevice::createAllocator() {
+  VmaAllocatorCreateInfo allocatorInfo{};
+  allocatorInfo.physicalDevice = physicalDevice;
+  allocatorInfo.device = device;
+  allocatorInfo.instance = instance;
+  if (m_rayQuery) {
+    allocatorInfo.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+    allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_2;
+  }
+
+  if (vmaCreateAllocator(&allocatorInfo, &allocator) != VK_SUCCESS)
+    throw std::runtime_error("Failed to create VMA allocator");
 }
 
 void VulkanDevice::createCommandPool() {

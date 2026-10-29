@@ -5,7 +5,14 @@
 #include "vk_mem_alloc.h"
 #include "NativeSurface.h"
 
+VkSurfaceFormatKHR ChooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& available);
+bool IsSrgbFormat(VkFormat format);
+
 struct VulkanSwapchain {
+    static constexpr uint32_t kSceneSubpass = 0;
+    static constexpr uint32_t kOverlaySubpass = 1;
+    static constexpr VkFormat kHdrFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+
     VkDevice device{};
     VkPhysicalDevice physicalDevice{};
     VkSurfaceKHR surface{};
@@ -24,6 +31,10 @@ struct VulkanSwapchain {
     VkImage depthImage{};
     VmaAllocation depthAllocation{};
     VkImageView depthImageView{};
+
+    VkImage hdrImage{};
+    VmaAllocation hdrAllocation{};
+    VkImageView hdrImageView{};
 
     // Legacy GLFW-based initialization (runtime/legacy editor path)
     void Init(VkPhysicalDevice phys, VkDevice dev, VkSurfaceKHR surf, GLFWwindow* window,

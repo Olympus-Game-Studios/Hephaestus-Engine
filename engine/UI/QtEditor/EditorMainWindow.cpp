@@ -20,6 +20,8 @@
 #include "PrefabInstanceBar.h"
 #include "LightInspector.h"
 #include "EnvironmentInspector.h"
+#include "ProbeVolumeInspector.h"
+#include "../../Gfx/ProbeBake.h"
 #include "ComponentInspector.h"
 #include "MeshRendererInspector.h"
 #include "ScriptInspector.h"
@@ -145,6 +147,8 @@
 #include <QSignalBlocker>
 #include <QUrl>
 #include <iostream>
+#include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -7203,6 +7207,14 @@ void EditorMainWindow::registerComponentInspectors()
             return new EnvironmentInspector(ctx, e, parent);
         });
 
+    reg.Register("ProbeVolume", 11,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<ProbeVolumeComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new ProbeVolumeInspector(ctx, e, parent);
+        });
+
     // ── AudioSource (order 42) ──────────────────────────────────────────
     reg.Register("AudioSource", 42,
         [](const entt::registry& r, entt::entity e) {
@@ -7285,6 +7297,19 @@ void EditorMainWindow::rebuildComponentInspectors()
                 [this](const QString& typeName) { pasteInspectorComponentValues(typeName.toStdString()); });
         connect(insp, &ComponentInspector::resetComponentRequested, this,
                 [this](const QString& typeName) { resetInspectorComponent(typeName.toStdString()); });
+        if (auto* probeVolume = qobject_cast<ProbeVolumeInspector*>(insp)) {
+            connect(probeVolume, &ProbeVolumeInspector::bakeRequested, this, &EditorMainWindow::bakeProbeVolumes);
+            if (m_engine && m_engine->GetFrameRenderer()) {
+                probeVolume->SetHardwareRayTracingAvailable(
+                    m_engine->GetFrameRenderer()->ProbeHardwareRayTracingAvailable());
+            }
+            probeVolume->SetGeometrySignatureProvider([this]() -> uint64_t {
+                auto* ctx = m_engine ? m_engine->GetEditorContext() : nullptr;
+                if (!ctx || !ctx->HasActiveScene() || !m_engine->GetFrameRenderer()) return 0;
+                return ProbeBakeGeometrySignature(
+                    m_engine->GetFrameRenderer()->CollectProbeBakeGeometry(*ctx->GetActiveScene()));
+            });
+        }
 
         m_detailsLayout->insertWidget(stretchIndex, insp);
         decoratePrefabComponentInspector(insp, insp->TypeName());
@@ -7479,11 +7504,79 @@ void EditorMainWindow::resetInspectorComponent(const std::string& type)
         if (type == "Environment" && entity.HasComponent<EnvironmentComponent>()) {
             entity.RemoveComponent<EnvironmentComponent>();
         }
+        if (type == "ProbeVolume" && entity.HasComponent<ProbeVolumeComponent>()) {
+            entity.RemoveComponent<ProbeVolumeComponent>();
+        }
         BatchAddComponent(*ctx->GetActiveScene(), { handle }, type);
     }
     ctx->MarkDirty();
     refreshDetailsPanel();
     statusBar()->showMessage(tr("Reset %1 to defaults").arg(QString::fromStdString(InspectorDisplayName(type))), 2500);
+}
+
+void EditorMainWindow::bakeProbeVolumes()
+{
+    if (!m_engine || !m_engine->GetFrameRenderer()) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    if (ctx->GetScenePath().empty() || !m_projectContext || !m_projectContext->HasProject()) {
+        QMessageBox::information(this, tr("Bake Probes"),
+                                 tr("Save the scene in a project first. The bake is stored next to the scene file."));
+        return;
+    }
+    Scene* scene = ctx->GetActiveScene();
+    auto& reg = scene->GetRegistry();
+    std::vector<entt::entity> volumes;
+    for (entt::entity handle : resolveInspectorSelection().entities) {
+        if (reg.valid(handle) && reg.all_of<ProbeVolumeComponent>(handle)) {
+            volumes.push_back(handle);
+        }
+    }
+    if (volumes.empty()) return;
+
+    namespace fs = std::filesystem;
+    const fs::path projectRoot(m_projectContext->GetProjectRootDir());
+    const fs::path scenePath(ctx->GetScenePath());
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const auto started = std::chrono::steady_clock::now();
+    const ProbeBakeGeometry geometry = m_engine->GetFrameRenderer()->CollectProbeBakeGeometry(*scene);
+    EditorUndoManager::PushSnapshot(ctx, "Bake Probes");
+    size_t probes = 0, moved = 0;
+    QString failure;
+    for (entt::entity handle : volumes) {
+        Entity entity(handle, scene);
+        auto& volume = reg.get<ProbeVolumeComponent>(handle);
+        const Mat4 world = scene->GetWorldTransform(entity);
+        const ProbeBake bake = BakeProbeVolume(geometry, Vec3(world.m[12], world.m[13], world.m[14]), volume);
+
+        std::string name = entity.HasComponent<TagComponent>() ? entity.GetComponent<TagComponent>().tag : "";
+        for (char& c : name) {
+            if (!std::isalnum(static_cast<unsigned char>(c))) c = '_';
+        }
+        name += "_" + std::to_string(static_cast<uint32_t>(handle));
+        const fs::path file = scenePath.parent_path() / (scenePath.stem().string() + "." + name + ".hpprobes");
+        std::string error;
+        if (!WriteProbeBake(file, bake, error)) {
+            failure = QString::fromStdString(error);
+            break;
+        }
+        volume.bakePath = file.lexically_relative(projectRoot).generic_string();
+        probes += bake.ProbeCount();
+        for (const Vec3& offset : bake.probeOffsets) {
+            if (vlen(offset) > 0.0f) ++moved;
+        }
+    }
+    QApplication::restoreOverrideCursor();
+    ctx->MarkDirty();
+    refreshDetailsPanel();
+    if (!failure.isEmpty()) {
+        QMessageBox::warning(this, tr("Bake Probes"), failure);
+        return;
+    }
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started).count();
+    statusBar()->showMessage(tr("Baked %1 probes against %2 triangles in %3 ms (%4 moved out of geometry)")
+                                 .arg(probes).arg(geometry.triangles.size()).arg(ms).arg(moved), 6000);
 }
 
 void EditorMainWindow::removeInspectorComponent(const std::string& type)

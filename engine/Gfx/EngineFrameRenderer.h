@@ -28,6 +28,9 @@
 #include "VulkanTexture.h"
 #include "VulkanGizmo.h"
 #include "VulkanLightGizmo.h"
+#include "SkyIrradiance.h"
+#include "ProbeBake.h"
+#include "ProbeGI.h"
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
 #include "../Core/EditorDebugDraw.h"
@@ -37,6 +40,7 @@
 class VulkanDevice;
 class VulkanSwapchain;
 class VulkanPipeline;
+class Entity;
 class Scene;
 
 namespace Hephaestus::HephaestusUI {
@@ -132,6 +136,7 @@ struct FrameStats {
     int drawCalls   = 0;
     int meshesDrawn = 0;
     int entitiesSkipped = 0;
+    float probeGIGpuMs = -1.0f;  // last measured probe GI update, negative when unknown or inactive
 };
 
 /**
@@ -252,6 +257,10 @@ public:
      * @return Handle or SIZE_MAX if not found
      */
     size_t GetMeshHandle(const std::string& sourceKey) const;
+
+    // Static, visible mesh triangles in world space for probe baking. Editor only: packaged games keep no CPU copy.
+    ProbeBakeGeometry CollectProbeBakeGeometry(Scene& scene);
+    bool ProbeHardwareRayTracingAvailable() const { return m_probeGI.HardwareRayTracingAvailable(); }
 
     /**
      * @brief Register an additional lookup key (alias) for an existing mesh.
@@ -398,6 +407,9 @@ private:
     bool createUIResources();
     bool createGridResources();
     bool createDebugOverlayResources();
+    bool createToneMapResources();
+    void cleanupToneMapResources();
+    void recordToneMap(VkCommandBuffer cmd);
     bool createOutlineResources();
     void cleanupOutlineResources();
     
@@ -534,6 +546,9 @@ private:
     const MaterialComponent* resolveMaterialFromPath(const std::string& materialPath);
     uint32_t ensureMaterialTextureSlot(const std::string& rawPath);
     void updateEnvironmentReflectionDescriptor(uint32_t imageIndex);
+    EnvironmentComponent* findEnvironment(Scene* scene);
+    const MaterialComponent* resolveMaterialForSlot(Entity& entity, const MeshRendererComponent& renderer, int slot);
+    void prepareEnvironment(Scene* scene, const FrameRenderConfig& config, uint32_t imageIndex);
     void updateTextureSlotInDescriptors(uint32_t slotIndex, uint32_t imageIndex);
     void flushPendingTextureDescriptorUpdates(uint32_t imageIndex);
 
@@ -559,6 +574,34 @@ private:
         void Destroy();
     };
     ShadowMap m_directionalShadow;
+
+    // Point and spot light shadows share one depth atlas of 512x512 tiles (shaders/triangle.frag:localShadow).
+    static constexpr uint32_t kLocalShadowTile = 512;
+    static constexpr uint32_t kLocalShadowColumns = 8;
+    static constexpr uint32_t kLocalShadowRows = 4;
+    static constexpr int kMaxShadowedPointLights = 4;  // six tiles each
+    static constexpr int kMaxShadowedSpotLights = 8;
+    ShadowMap m_localShadow;  // shares m_directionalShadow's render pass, pipelines and sampler
+    struct LocalShadowJob {
+        Mat4 viewProj;
+        Vec3 lightPos;
+        float range = 0.0f;
+        uint32_t tile = 0;
+    };
+    std::vector<LocalShadowJob> m_localShadowJobs;  // filled by updateLightingUBO, drawn by recordLocalShadowPass
+    bool m_traceShadows = false;    // some light asked for ray-traced shadows this frame (set by updateLightingUBO)
+    bool m_sunRayTraced = false;    // the sun's shadow is ray traced, so the cascade pass is skipped
+    bool createLocalShadowResources();
+    void recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config);
+    // The ray-query build of triangle.frag reads the scene acceleration structure in ProbeGI's set.
+    const char* surfaceFragmentShader() const {
+        return m_probeGI.HardwareRayTracingAvailable() ? "triangle_rt.frag.spv" : "triangle.frag.spv";
+    }
+    void drawShadowCasters(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config, const Mat4& viewProj,
+                           const Vec3* cullCenter, float cullRadius);
+
+    ProbeGI m_probeGI;  // set 2 of the main and skinned surface pipelines
+    void recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene);
 
     // Billboard resources for light icons
     struct BillboardPipeline {
@@ -604,6 +647,7 @@ private:
 
         // Environment texture (loaded HDRI or fallback)
         VulkanTexture environmentTexture;
+        IrradianceSH irradianceSH{};
 
         // Cube vertex buffer for skybox
         VkBuffer vertexBuffer = VK_NULL_HANDLE;
@@ -680,6 +724,15 @@ private:
         uint32_t vertexCount = 0;
     };
     DebugOverlay m_debugOverlay;
+
+    struct ToneMap {
+        VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
+        VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+    };
+    ToneMap m_toneMap;
 
     // Entity ID picker for viewport selection
     struct IdPicker {

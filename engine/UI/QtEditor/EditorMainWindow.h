@@ -209,6 +209,7 @@ private:
     void pasteInspectorComponentValues(const std::string& type);
     void resetInspectorComponent(const std::string& type);
     void removeInspectorComponent(const std::string& type);
+    void bakeProbeVolumes();
     ComponentInspector* focusedComponentInspector() const;
     void handleDragDrop(const QString& assetPath, const QString& targetField);
     void handleViewportSpawnDrop(const QByteArray& spawnPayload, const QPoint& dropPos);

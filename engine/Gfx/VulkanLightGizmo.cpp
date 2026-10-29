@@ -1,6 +1,7 @@
 #include "VulkanLightGizmo.h"
 #include "VulkanGizmo.h"   // for GizmoVertex
 #include "VulkanBuffer.h"
+#include "VulkanSwapchain.h"
 #include <iostream>
 #include <cmath>
 #include <fstream>
@@ -171,7 +172,7 @@ void VulkanLightGizmo::CreatePipeline(VkDevice device, VkRenderPass renderPass,
     pci.pDynamicState       = &dynState;
     pci.layout              = m_pipelineLayout;
     pci.renderPass          = renderPass;
-    pci.subpass             = 0;
+    pci.subpass             = VulkanSwapchain::kOverlaySubpass;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &m_pipeline) != VK_SUCCESS)
         throw std::runtime_error("VulkanLightGizmo: failed to create pipeline");

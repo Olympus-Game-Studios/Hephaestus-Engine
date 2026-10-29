@@ -82,6 +82,7 @@ const std::vector<InspectorComponentDesc>& InspectorAddableComponents()
         { "Light", "Light", "Lighting", false },
         { "Camera", "Camera", "Camera", false },
         { "Environment", "Environment", "Lighting", true },
+        { "ProbeVolume", "Probe Volume", "Lighting", false },
         { "RigidBody", "Rigid Body", "Physics", false },
         { "PhysicsShape", "Physics Shape", "Physics", false },
         { "MeshCollider", "Mesh Collider", "Physics", false },
@@ -158,6 +159,9 @@ bool InspectorEntityHasComponent(const entt::registry& reg, entt::entity entity,
     if (type == "Environment") {
         return reg.all_of<EnvironmentComponent>(entity);
     }
+    if (type == "ProbeVolume") {
+        return reg.all_of<ProbeVolumeComponent>(entity);
+    }
     if (type == "Material") {
         return reg.all_of<MaterialComponent>(entity);
     }
@@ -172,7 +176,7 @@ std::vector<std::string> InspectorComponentsOn(const entt::registry& reg, entt::
     static const char* kInspectable[] = {
         "MeshRenderer", "MeshCollider", "PhysicsShape", "RigidBody",
         "Light", "Camera", "LuaScript", "ScriptComponent", "AudioSource", "Character",
-        "CharacterController", "Environment"
+        "CharacterController", "Environment", "ProbeVolume"
     };
     std::vector<std::string> out;
     for (const char* type : kInspectable) {
@@ -339,6 +343,8 @@ BatchComponentResult BatchAddComponent(Scene& scene, const std::vector<entt::ent
                 entity.AddComponent<AudioSourceComponent>();
             } else if (type == "Environment") {
                 entity.AddComponent<EnvironmentComponent>();
+            } else if (type == "ProbeVolume") {
+                entity.AddComponent<ProbeVolumeComponent>();
             } else {
                 ++result.failed;
                 continue;
@@ -385,6 +391,11 @@ BatchComponentResult BatchRemoveComponent(Scene& scene, const std::vector<entt::
         }
         if (type == "Environment" && entity.HasComponent<EnvironmentComponent>()) {
             entity.RemoveComponent<EnvironmentComponent>();
+            ++result.added;
+            continue;
+        }
+        if (type == "ProbeVolume" && entity.HasComponent<ProbeVolumeComponent>()) {
+            entity.RemoveComponent<ProbeVolumeComponent>();
             ++result.added;
             continue;
         }

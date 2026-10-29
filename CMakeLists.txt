@@ -320,6 +320,10 @@ add_library(HephaestusRuntime STATIC
     engine/Gfx/VulkanGizmo.cpp
     engine/Gfx/VulkanLightGizmo.cpp
     engine/Gfx/BuiltinMeshes.cpp
+    engine/Gfx/SkyIrradiance.cpp
+    engine/Gfx/ProbeBake.cpp
+    engine/Gfx/ProbeGI.cpp
+    engine/Gfx/ProbeRayTracer.cpp
     engine/Gfx/EngineFrameRenderer.cpp
     engine/Physics/MeshCollisionSystem.cpp
     engine/Physics/PhysicsLayerConfig.cpp
@@ -613,6 +617,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/CharacterInspector.h
             engine/UI/QtEditor/CharacterControllerInspector.cpp
             engine/UI/QtEditor/CharacterControllerInspector.h
+            engine/UI/QtEditor/ProbeVolumeInspector.cpp
+            engine/UI/QtEditor/ProbeVolumeInspector.h
             engine/UI/QtEditor/CharacterImportDialog.cpp
             engine/UI/QtEditor/CharacterImportDialog.h
             engine/UI/QtEditor/PhysicsInspectors.cpp
@@ -987,6 +993,17 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/grid.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/hui.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/hui.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tonemap.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tonemap.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_update.comp
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_trace.comp
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_debug.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_debug.frag
+    )
+
+    set(SHADER_INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/lighting_common.glsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_common.glsl
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)
@@ -997,16 +1014,33 @@ if (GLSLC_EXECUTABLE)
     foreach(SRC ${SHADER_SOURCES})
         get_filename_component(FN ${SRC} NAME)
         set(OUT ${SHADER_OUTPUT_DIR}/${FN}.spv)
+        set(GLSLC_EXTRA_FLAGS)
+        if(FN STREQUAL "probe_trace.comp")
+            set(GLSLC_EXTRA_FLAGS --target-env=vulkan1.2)  # ray queries need SPIR-V 1.4+
+        endif()
         add_custom_command(
             OUTPUT ${OUT}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUTPUT_DIR}
-            COMMAND ${GLSLC_EXECUTABLE} ${SRC} -o ${OUT}
-            DEPENDS ${SRC}
+            COMMAND ${GLSLC_EXECUTABLE} ${GLSLC_EXTRA_FLAGS} ${SRC} -o ${OUT}
+            DEPENDS ${SRC} ${SHADER_INCLUDES}
             COMMENT "Compiling ${FN} -> ${OUT}"
             VERBATIM
         )
         list(APPEND SHADER_OUTPUTS ${OUT})
     endforeach()
+
+    # Surface shader with ray-traced shadows, used on GPUs with VK_KHR_ray_query (EngineFrameRenderer::surfaceFragmentShader).
+    set(RT_FRAG_OUT ${SHADER_OUTPUT_DIR}/triangle_rt.frag.spv)
+    add_custom_command(
+        OUTPUT ${RT_FRAG_OUT}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUTPUT_DIR}
+        COMMAND ${GLSLC_EXECUTABLE} --target-env=vulkan1.2 -DRAY_TRACED_SHADOWS
+                ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag -o ${RT_FRAG_OUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag ${SHADER_INCLUDES}
+        COMMENT "Compiling triangle.frag (ray-traced shadows) -> ${RT_FRAG_OUT}"
+        VERBATIM
+    )
+    list(APPEND SHADER_OUTPUTS ${RT_FRAG_OUT})
 
     add_custom_target(Shaders ALL DEPENDS ${SHADER_OUTPUTS})
     
@@ -1210,6 +1244,26 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME RuntimeSceneLifecycle
         COMMAND RuntimeSceneLifecycleTests
+    )
+
+    add_executable(SkyIrradianceTests
+        engine/Tests/SkyIrradianceTests.cpp
+    )
+    target_link_libraries(SkyIrradianceTests PRIVATE HephaestusRuntime)
+    target_include_directories(SkyIrradianceTests PRIVATE engine extern)
+    add_test(
+        NAME SkyIrradiance
+        COMMAND SkyIrradianceTests
+    )
+
+    add_executable(SwapchainFormatTests
+        engine/Tests/SwapchainFormatTests.cpp
+    )
+    target_link_libraries(SwapchainFormatTests PRIVATE HephaestusRuntime)
+    target_include_directories(SwapchainFormatTests PRIVATE engine extern)
+    add_test(
+        NAME SwapchainFormat
+        COMMAND SwapchainFormatTests
     )
 
     add_executable(ActiveCameraSyncTests
@@ -1474,6 +1528,27 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         "${CMAKE_BINARY_DIR}/generated"
     )
     add_test(NAME CharacterControllerMath COMMAND CharacterControllerMathTests)
+
+    add_executable(ProbeVolumeTests
+        engine/Tests/ProbeVolumeTests.cpp
+    )
+    target_link_libraries(ProbeVolumeTests PRIVATE HephaestusRuntime)
+    target_include_directories(ProbeVolumeTests PRIVATE engine extern extern/entt/single_include)
+    add_test(NAME ProbeVolume COMMAND ProbeVolumeTests)
+
+    add_executable(LightShadowSettingsTests
+        engine/Tests/LightShadowSettingsTests.cpp
+    )
+    target_link_libraries(LightShadowSettingsTests PRIVATE HephaestusRuntime)
+    target_include_directories(LightShadowSettingsTests PRIVATE engine extern extern/entt/single_include)
+    add_test(NAME LightShadowSettings COMMAND LightShadowSettingsTests)
+
+    add_executable(ProbeBakeTests
+        engine/Tests/ProbeBakeTests.cpp
+    )
+    target_link_libraries(ProbeBakeTests PRIVATE HephaestusRuntime)
+    target_include_directories(ProbeBakeTests PRIVATE engine extern extern/entt/single_include)
+    add_test(NAME ProbeBake COMMAND ProbeBakeTests)
 
     add_executable(CharacterControllerJoltTests
         engine/Tests/CharacterControllerJoltTests.cpp
@@ -1970,8 +2045,12 @@ if(HEPHAESTUS_BUILD_QT_TESTS AND HEPHAESTUS_USE_QT AND Qt6_FOUND)
     if(Qt6Test_FOUND)
         add_executable(EditorQtSmokeTests
             engine/Tests/EditorQtSmokeTests.cpp
+            engine/UI/QtEditor/PropertyEditors.cpp
+            engine/UI/QtEditor/PropertyEditors.h
         )
-        target_link_libraries(EditorQtSmokeTests PRIVATE Qt6::Test Qt6::Widgets)
+        set_target_properties(EditorQtSmokeTests PROPERTIES AUTOMOC ON)
+        target_compile_definitions(EditorQtSmokeTests PRIVATE HEPHAESTUS_EDITOR_QT_UI=1)
+        target_link_libraries(EditorQtSmokeTests PRIVATE Qt6::Test Qt6::Widgets HephaestusEditorCore)
         target_include_directories(EditorQtSmokeTests PRIVATE engine)
         add_test(NAME EditorQtSmoke COMMAND EditorQtSmokeTests)
     else()

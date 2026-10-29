@@ -131,7 +131,7 @@ VulkanHUIRenderer::~VulkanHUIRenderer() {
 }
 
 bool VulkanHUIRenderer::Init(VulkanDevice* device, VkRenderPass renderPass,
-                             VkFormat swapchainFormat,
+                             uint32_t subpass, VkFormat swapchainFormat,
                              const VkExtent2D& extent, uint32_t swapchainImageCount) {
     if (!device) {
         return false;
@@ -139,6 +139,7 @@ bool VulkanHUIRenderer::Init(VulkanDevice* device, VkRenderPass renderPass,
     m_Device = device;
     m_Allocator = device->allocator;
     m_RenderPass = renderPass;
+    m_Subpass = subpass;
     m_SwapchainImageCount = swapchainImageCount;
     m_SrgbOutput = swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB ||
                    swapchainFormat == VK_FORMAT_R8G8B8A8_SRGB ||
@@ -182,6 +183,7 @@ bool VulkanHUIRenderer::Init(VulkanDevice* device, VkRenderPass renderPass,
 }
 
 void VulkanHUIRenderer::OnSwapchainRecreated(VkRenderPass renderPass,
+                                             uint32_t subpass,
                                              VkFormat swapchainFormat,
                                              const VkExtent2D& extent,
                                              uint32_t swapchainImageCount) {
@@ -191,6 +193,7 @@ void VulkanHUIRenderer::OnSwapchainRecreated(VkRenderPass renderPass,
     destroyFrameBuffers();
 
     m_RenderPass = renderPass;
+    m_Subpass = subpass;
     m_SwapchainImageCount = swapchainImageCount;
     m_SrgbOutput = swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB ||
                    swapchainFormat == VK_FORMAT_R8G8B8A8_SRGB ||
@@ -789,7 +792,7 @@ bool VulkanHUIRenderer::createPipeline(VkRenderPass renderPass) {
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = m_PipelineLayout;
     pipelineInfo.renderPass = renderPass;
-    pipelineInfo.subpass = 0;
+    pipelineInfo.subpass = m_Subpass;
 
     const VkResult result = vkCreateGraphicsPipelines(m_Device->device, VK_NULL_HANDLE, 1,
                                                       &pipelineInfo, nullptr, &m_Pipeline);

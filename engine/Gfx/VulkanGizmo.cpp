@@ -1,5 +1,6 @@
 #include "VulkanGizmo.h"
 #include "VulkanBuffer.h"
+#include "VulkanSwapchain.h"
 #include <iostream>
 #include <cmath>
 #include <fstream>
@@ -546,7 +547,7 @@ void VulkanGizmo::CreatePipeline(VkDevice device, VkRenderPass renderPass,
     pci.pColorBlendState = &blend;
     pci.layout = m_PipelineLayout;
     pci.renderPass = renderPass;
-    pci.subpass = 0;
+    pci.subpass = VulkanSwapchain::kOverlaySubpass;
 
     VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
     VkPipelineDynamicStateCreateInfo dynamicStateInfo{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};

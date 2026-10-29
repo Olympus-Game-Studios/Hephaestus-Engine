@@ -1,4 +1,5 @@
 ﻿#include "VulkanPipeline.h"
+#include "VulkanSwapchain.h"
 #include <fstream>
 #include <stdexcept>
 #include <iostream>
@@ -41,7 +42,8 @@ VkShaderModule VulkanPipeline::createShaderModule(const std::vector<char>& code)
     return module;
 }
 
-void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool enableWireframe)
+void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool enableWireframe,
+                          const std::vector<VkDescriptorSetLayout>& extraSetLayouts, const std::string& fragmentShader)
 {
     device = dev;
     renderPass = rp;
@@ -57,7 +59,7 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     // - binding 3: Combined image sampler array for material textures
     // - binding 4: Directional shadow map sampler
     // - binding 5: Environment reflection texture
-    VkDescriptorSetLayoutBinding bindings[6] = {};
+    VkDescriptorSetLayoutBinding bindings[7] = {};
     
     // Binding 0: Camera/View UBO
     bindings[0].binding = 0;
@@ -95,8 +97,14 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     bindings[5].descriptorCount = 1;
     bindings[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // Binding 6: Point/spot light shadow atlas
+    bindings[6].binding = 6;
+    bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[6].descriptorCount = 1;
+    bindings[6].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    setInfo.bindingCount = 6;
+    setInfo.bindingCount = 7;
     setInfo.pBindings = bindings;
     if (vkCreateDescriptorSetLayout(device, &setInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create descriptor set layout");
@@ -109,10 +117,10 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
         "../build/Release/shaders/triangle.vert.spv"
     };
     std::vector<std::string> candidatesFrag = {
-        "shaders/triangle.frag.spv",
-        "../shaders/triangle.frag.spv",
-        "build/Release/shaders/triangle.frag.spv",
-        "../build/Release/shaders/triangle.frag.spv"
+        "shaders/" + fragmentShader,
+        "../shaders/" + fragmentShader,
+        "build/Release/shaders/" + fragmentShader,
+        "../build/Release/shaders/" + fragmentShader
     };
     std::vector<char> vertCode;
     std::vector<char> fragCode;
@@ -130,7 +138,7 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     if (!loaded) {
         // Final attempt, throw a more descriptive error
         vertCode = readFile("shaders/triangle.vert.spv");
-        fragCode = readFile("shaders/triangle.frag.spv");
+        fragCode = readFile("shaders/" + fragmentShader);
     }
 
     VkShaderModule vertShader = createShaderModule(vertCode);
@@ -210,10 +218,12 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
     pushConstantRange.offset = 0;
     pushConstantRange.size = 64; // sizeof(Mat4) = 16 floats * 4 bytes
 
+    std::vector<VkDescriptorSetLayout> setLayouts = {descriptorSetLayout};
+    setLayouts.insert(setLayouts.end(), extraSetLayouts.begin(), extraSetLayouts.end());
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &descriptorSetLayout;
+    layoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+    layoutInfo.pSetLayouts = setLayouts.data();
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &pushConstantRange;
     if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &layout) != VK_SUCCESS)
@@ -373,7 +383,7 @@ void VulkanPipeline::CreateOutlinePipeline()
     pipelineCI.pDynamicState = &dyn;
     pipelineCI.layout = layout; // Use the same layout as the main pipeline
     pipelineCI.renderPass = renderPass;
-    pipelineCI.subpass = 0;
+    pipelineCI.subpass = VulkanSwapchain::kOverlaySubpass;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &outlinePipeline) != VK_SUCCESS) {
         throw std::runtime_error("Failed to create outline graphics pipeline");
@@ -580,7 +590,7 @@ void VulkanPipeline::CreateBillboardPipeline(VkDevice dev, VkRenderPass rp, VkEx
     pci.pDynamicState = &dynamicState;
     pci.layout = layout;
     pci.renderPass = renderPass;
-    pci.subpass = 0;
+    pci.subpass = VulkanSwapchain::kOverlaySubpass;
 
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &pipeline) != VK_SUCCESS)
         throw std::runtime_error("Failed to create billboard graphics pipeline");

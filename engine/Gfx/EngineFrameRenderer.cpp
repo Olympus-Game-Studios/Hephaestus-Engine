@@ -124,6 +124,12 @@ static VkShaderModule LoadSpvModule(VkDevice device, const std::string& name) {
     return VK_NULL_HANDLE;
 }
 
+// Inverse of tonemap.frag, so the display-referred clear color shows unchanged after tone mapping.
+static float DisplayToSceneLinear(float display) {
+    const float toned = std::min(std::pow(std::clamp(display, 0.0f, 1.0f), 2.2f), 0.999f);
+    return toned / (1.0f - toned);
+}
+
 static void DestroyPipeline(VkDevice device, VkPipeline& pipeline) {
     if (pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, pipeline, nullptr);
@@ -162,6 +168,13 @@ struct LightingUBO {
     // CSM cascade data (appended to preserve existing layout offsets)
     Mat4 cascadeViewProj[4];
     Vec4 cascadeSplits;  // view-space far plane for each cascade
+    Vec4 skyIrradianceSH[9];
+    Vec4 cascadeTexelWorld;  // world-space size of one shadow texel per cascade
+    Vec4 cascadeDepthRange;  // light-space depth range per cascade, to turn world biases into depth
+    Vec4 shadowBiasWorld;    // x = extra depth bias, y = extra normal offset (metres), z = tan(sun half angle), w = 1 when ray traced
+    Mat4 localShadowViewProj[32];  // atlas tiles, see EngineFrameRenderer::kLocalShadowTile
+    Vec4 pointShadowParams[16];    // x = first of six tiles (+X,-X,+Y,-Y,+Z,-Z), -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
+    Vec4 spotShadowParams[16];     // x = tile, -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
 };
 
 static bool MeshAllowsHiddenEditorOutline(const MeshRendererComponent& renderer,
@@ -243,6 +256,8 @@ EngineFrameRenderer::~EngineFrameRenderer()
     Shutdown();
 }
 
+static bool FindShadowCastingSun(Scene* scene, Vec3& outDirection);
+
 bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain, bool editorOverlays)
 {
     if (m_initialized) {
@@ -259,6 +274,11 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
     m_device = device;
     m_swapchain = swapchain;
     m_deviceLost = false;
+
+    if (!m_probeGI.Init(m_device)) {
+        std::cerr << "[EngineFrameRenderer] Failed to create probe GI layouts\n";
+        return false;
+    }
     
     // Create render resources
     if (!createPipeline()) {
@@ -343,6 +363,9 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
     if (m_directionalShadow.IsValid() && !createSkinnedShadowPipeline()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create skinned shadow pipeline\n";
     }
+    if (m_directionalShadow.IsValid() && !createLocalShadowResources()) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create point/spot shadow atlas (those lights will be unshadowed)\n";
+    }
     
     if (!createDescriptorSets()) {
         std::cerr << "[EngineFrameRenderer] Failed to create descriptor sets\n";
@@ -351,7 +374,20 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
     if (!createSkinnedMainPipelines()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create skinned mesh pipelines\n";
     }
-    
+    if (!createToneMapResources()) {
+        std::cerr << "[EngineFrameRenderer] Failed to create tone map resources\n";
+        return false;
+    }
+    if (m_directionalShadow.IsValid() && !m_probeGI.InitSunMap(m_directionalShadow.renderPass)) {
+        std::cerr << "[EngineFrameRenderer] Warning: Failed to create the probe sun map (probes see the sun unoccluded)\n";
+    }
+    if (!m_probeGI.CreateSwapchainResources(m_swapchain->renderPass, VulkanSwapchain::kSceneSubpass,
+                                            m_pipeline->descriptorSetLayout,
+                                            static_cast<uint32_t>(m_swapchain->images.size()))) {
+        std::cerr << "[EngineFrameRenderer] Failed to create probe GI resources\n";
+        return false;
+    }
+
     // Editor overlay resources are created only for hosts that request them at Init.
     if (m_editorOverlays) {
         if (!createGridResources()) {
@@ -550,7 +586,8 @@ bool EngineFrameRenderer::createUIResources()
         return false;
     }
     m_uiOverlay = std::make_unique<Hephaestus::HephaestusUI::VulkanHUIRenderer>();
-    const bool ok = m_uiOverlay->Init(m_device, m_swapchain->renderPass, m_swapchain->format,
+    const bool ok = m_uiOverlay->Init(m_device, m_swapchain->renderPass,
+                                      VulkanSwapchain::kOverlaySubpass, m_swapchain->format,
                                       m_swapchain->extent,
                                       static_cast<uint32_t>(m_swapchain->images.size()));
     if (!ok) {
@@ -615,6 +652,16 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             std::cerr << "[EngineFrameRenderer] Failed to recreate descriptor sets\n";
             return false;
         }
+        if (!createToneMapResources()) {
+            std::cerr << "[EngineFrameRenderer] Failed to recreate tone map resources\n";
+            return false;
+        }
+        if (!m_probeGI.CreateSwapchainResources(m_swapchain->renderPass, VulkanSwapchain::kSceneSubpass,
+                                                m_pipeline->descriptorSetLayout,
+                                                static_cast<uint32_t>(m_swapchain->images.size()))) {
+            std::cerr << "[EngineFrameRenderer] Failed to recreate probe GI resources\n";
+            return false;
+        }
         if (!createSkinnedMainPipelines()) {
             std::cerr << "[EngineFrameRenderer] Warning: Failed to recreate skinned mesh pipelines\n";
         }
@@ -659,7 +706,8 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         // Recreate the runtime HUI overlay for the new swapchain (the old
         // pipeline/vertex buffers were destroyed in cleanupSwapchainResources).
         if (m_uiOverlay) {
-            m_uiOverlay->OnSwapchainRecreated(m_swapchain->renderPass, m_swapchain->format,
+            m_uiOverlay->OnSwapchainRecreated(m_swapchain->renderPass,
+                                              VulkanSwapchain::kOverlaySubpass, m_swapchain->format,
                                               m_swapchain->extent,
                                               static_cast<uint32_t>(m_swapchain->images.size()));
         }
@@ -721,6 +769,40 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (scene) {
         updateLightingUBO(imageIndex, scene, camera);
     }
+    prepareEnvironment(scene, config, imageIndex);
+    {
+        Vec3 sunDirection;
+        const bool hasSun = scene && FindShadowCastingSun(scene, sunDirection);
+        // Hardware tracing sees every visible, non-skinned mesh, so moving objects block and bounce light too.
+        auto collectInstances = [&]() {
+            std::vector<ProbeTraceInstance> instances;
+            auto view = scene->GetRegistry().view<MeshRendererComponent>();
+            for (entt::entity handle : view) {
+                auto& renderer = view.get<MeshRendererComponent>(handle);
+                if (!renderer.visible || renderer.hideInGame || !renderer.HasValidMesh() ||
+                    scene->GetRegistry().all_of<CharacterComponent>(handle)) {
+                    continue;
+                }
+                Entity entity(handle, scene);
+                const Mat4 world = scene->GetWorldTransform(entity);
+                const MaterialComponent* material = resolveMaterialForSlot(entity, renderer, 0);
+                for (size_t meshHandle : MeshHandlesForDraw(renderer)) {
+                    if (meshHandle >= m_meshLibrary.size() || m_meshLibrary[meshHandle].skinned) continue;
+                    ProbeTraceInstance instance;
+                    instance.mesh = &m_meshLibrary[meshHandle];
+                    instance.world = world;
+                    if (material) {
+                        instance.albedo = material->albedo;
+                        instance.emissive = vscale(material->emissive, material->emissiveStrength);
+                    }
+                    instances.push_back(instance);
+                }
+            }
+            return instances;
+        };
+        m_probeGI.Prepare(scene, m_projectRoot, imageIndex, m_lightingBuffers[imageIndex].buffer,
+                          hasSun ? &sunDirection : nullptr, scene && m_traceShadows, collectInstances);
+    }
 
     // Prepare the runtime HUI overlay geometry/uploads (queue work is allowed
     // here; the command buffer has not been recorded yet).
@@ -779,12 +861,28 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     }
     
     // Record shadow pass (before main pass)
-    if (config.renderShadows && m_directionalShadow.IsValid()) {
+    if (config.renderShadows && m_directionalShadow.IsValid() && !(scene && m_sunRayTraced)) {
         recordShadowPass(cmd, scene, camera, config);
+    }
+    m_probeGI.RecordScene(cmd, imageIndex);
+    if (config.renderShadows && m_localShadow.IsValid() && !m_localShadowJobs.empty()) {
+        recordLocalShadowPass(cmd, scene, config);
+    }
+    if (m_probeGI.Active()) {
+        m_probeGI.BeginTiming(cmd, imageIndex);
+        if (m_probeGI.HasSunMap()) {
+            recordProbeGISunPass(cmd, scene);
+        }
+        m_probeGI.RecordUpdate(cmd, imageIndex);
     }
     
 // Record main render pass
     recordMainPass(cmd, imageIndex, scene, config);
+    m_lastFrameStats.probeGIGpuMs = m_probeGI.Active() ? m_probeGI.LastGpuMilliseconds() : -1.0f;
+    if (m_lastFrameStats.probeGIGpuMs >= 0.0f && m_renderedFrameCount % 600 == 0) {
+        std::cout << "[ProbeGI] " << m_probeGI.ProbeCount() << " probes updated in "
+                  << m_lastFrameStats.probeGIGpuMs << " ms GPU\n";
+    }
 
     if (m_capture.requested) {
         VkImageMemoryBarrier before{};
@@ -945,14 +1043,26 @@ size_t EngineFrameRenderer::AddStaticMesh(const std::string& name, const MeshDat
     mesh.submeshes = data.submeshes;
     mesh.bounds = data.bounds;
     mesh.imported = imported;
+    if (m_editorOverlays) {
+        mesh.cpuPositions.reserve(data.vertices.size());
+        for (const Vertex& v : data.vertices) {
+            mesh.cpuPositions.emplace_back(v.pos[0], v.pos[1], v.pos[2]);
+        }
+        mesh.cpuIndices = data.indices;
+    }
 
+    // Ray-traced probes build acceleration structures from these buffers and read triangles by address.
+    const VkBufferUsageFlags rayTracingUsage = m_device->SupportsRayQuery()
+        ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+              VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+        : 0;
     const VkDeviceSize vbSize = data.vertices.size() * sizeof(Vertex);
     mesh.vertexBuffer.Create(allocator, vbSize,
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rayTracingUsage,
         VMA_MEMORY_USAGE_GPU_ONLY);
     const VkDeviceSize ibSize = data.indices.size() * sizeof(uint32_t);
     mesh.indexBuffer.Create(allocator, ibSize,
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rayTracingUsage,
         VMA_MEMORY_USAGE_GPU_ONLY);
 
     VulkanBuffer stagingVB;
@@ -1124,7 +1234,8 @@ bool EngineFrameRenderer::createPipeline()
     try {
         m_pipeline = std::make_unique<VulkanPipeline>();
         const bool enableWireframe = m_device && m_device->SupportsFillModeNonSolid();
-        m_pipeline->Init(m_device->device, m_swapchain->renderPass, m_swapchain->extent, enableWireframe);
+        m_pipeline->Init(m_device->device, m_swapchain->renderPass, m_swapchain->extent, enableWireframe,
+                         {m_probeGI.EmptySetLayout(), m_probeGI.SetLayout()}, surfaceFragmentShader());
         return true;
     } catch (const std::exception& e) {
         std::cerr << "[EngineFrameRenderer] Pipeline creation failed: " << e.what() << "\n";
@@ -1289,13 +1400,14 @@ bool EngineFrameRenderer::createSkinnedMainPipelines()
     DestroyPipeline(m_device->device, m_skinned.pipelineWireframeBackface);
     DestroyPipelineLayout(m_device->device, m_skinned.pipelineLayout);
 
-    VkDescriptorSetLayout setLayouts[] = {m_pipeline->descriptorSetLayout, m_skinned.boneSetLayout};
+    VkDescriptorSetLayout setLayouts[] = {m_pipeline->descriptorSetLayout, m_skinned.boneSetLayout,
+                                          m_probeGI.SetLayout()};
     VkPushConstantRange push{};
     push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     push.size = 64;
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 2;
+    layoutInfo.setLayoutCount = 3;
     layoutInfo.pSetLayouts = setLayouts;
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &push;
@@ -1305,7 +1417,7 @@ bool EngineFrameRenderer::createSkinnedMainPipelines()
     }
 
     VkShaderModule vert = LoadSpvModule(m_device->device, "triangle_skinned.vert.spv");
-    VkShaderModule frag = LoadSpvModule(m_device->device, "triangle.frag.spv");
+    VkShaderModule frag = LoadSpvModule(m_device->device, surfaceFragmentShader());
     if (!vert || !frag) {
         std::cerr << "[EngineFrameRenderer] Failed to load skinned triangle shaders\n";
         if (vert) vkDestroyShaderModule(m_device->device, vert, nullptr);
@@ -1644,6 +1756,7 @@ bool EngineFrameRenderer::createSkinnedOutlinePipelines()
     pci.pDynamicState = &dyn;
     pci.layout = m_skinned.outlineLayout;
     pci.renderPass = m_swapchain->renderPass;
+    pci.subpass = VulkanSwapchain::kOverlaySubpass;
 
     if (vkCreateGraphicsPipelines(m_device->device, VK_NULL_HANDLE, 1, &pci, nullptr,
                                   &m_skinned.outlinePipeline) != VK_SUCCESS) {
@@ -1967,7 +2080,7 @@ bool EngineFrameRenderer::createDescriptorSets()
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount) },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, static_cast<uint32_t>(imageCount) },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount) },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount) * (kTextureArraySize + 2) }
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount) * (kTextureArraySize + 3) }
     };
     
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -2040,7 +2153,12 @@ bool EngineFrameRenderer::createDescriptorSets()
         environmentMapInfo.imageView = m_dummyTexture.imageView;
         environmentMapInfo.sampler = m_dummyTexture.sampler;
 
-        VkWriteDescriptorSet descriptorWrites[6] = {};
+        VkDescriptorImageInfo localShadowInfo{};
+        localShadowInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        localShadowInfo.imageView = m_localShadow.IsValid() ? m_localShadow.imageView : m_dummyTexture.imageView;
+        localShadowInfo.sampler = m_localShadow.IsValid() ? m_directionalShadow.sampler : m_dummyTexture.sampler;
+
+        VkWriteDescriptorSet descriptorWrites[7] = {};
         
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = m_descriptorSets[i];
@@ -2093,7 +2211,14 @@ bool EngineFrameRenderer::createDescriptorSets()
         descriptorWrites[5].descriptorCount = 1;
         descriptorWrites[5].pImageInfo = &environmentMapInfo;
         
-        vkUpdateDescriptorSets(m_device->device, 6, descriptorWrites, 0, nullptr);
+        descriptorWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[6].dstSet = m_descriptorSets[i];
+        descriptorWrites[6].dstBinding = 6;
+        descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[6].descriptorCount = 1;
+        descriptorWrites[6].pImageInfo = &localShadowInfo;
+
+        vkUpdateDescriptorSets(m_device->device, 7, descriptorWrites, 0, nullptr);
     }
     
     return true;
@@ -2761,7 +2886,26 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
     
     lightUBO.pointLightCount = 0;
     lightUBO.spotLightCount = 0;
-    
+    for (int i = 0; i < 16; ++i) {
+        lightUBO.pointShadowParams[i] = Vec4(-1.0f, 0.0f, 0.0f, 0.0f);
+        lightUBO.spotShadowParams[i] = Vec4(-1.0f, 0.0f, 0.0f, 0.0f);
+    }
+    m_localShadowJobs.clear();
+    m_traceShadows = false;
+    m_sunRayTraced = false;
+    const bool canTrace = m_probeGI.HardwareRayTracingAvailable();
+    uint32_t nextShadowTile = 0;
+    int shadowedPoints = 0;
+    int shadowedSpots = 0;
+    constexpr float kLocalShadowNear = 0.05f;
+    auto addShadowTile = [&](const Vec3& pos, const Vec3& forward, const Vec3& up, float fovY, float range) {
+        const Mat4 view = Mat4::LookAt(pos, vadd(pos, forward), up);
+        const Mat4 proj = Mat4::Perspective(fovY, 1.0f, kLocalShadowNear, std::max(range, kLocalShadowNear * 2.0f));
+        const uint32_t tile = nextShadowTile++;
+        lightUBO.localShadowViewProj[tile] = Mat4::Multiply(proj, view);
+        m_localShadowJobs.push_back({lightUBO.localShadowViewProj[tile], pos, range, tile});
+    };
+
     // If scene is provided, gather lights from it
     if (scene) {
         auto envView = scene->GetEntitiesWith<EnvironmentComponent>();
@@ -2774,7 +2918,12 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 !env.hdriPath.empty() &&
                 m_skybox.hasHDRI;
             if (enableReflections) {
-                lightUBO.environmentReflectionParams = Vec4(std::max(0.0f, env.reflectionIntensity), 1.0f, 0.0f, 0.0f);
+                lightUBO.environmentReflectionParams = Vec4(std::max(0.0f, env.reflectionIntensity), 1.0f,
+                                                            1.0f, std::max(0.0f, env.hdriIntensity));
+                for (int i = 0; i < 9; ++i) {
+                    const auto& c = m_skybox.irradianceSH[i];
+                    lightUBO.skyIrradianceSH[i] = Vec4(c[0], c[1], c[2], 0.0f);
+                }
             }
             break;
         }
@@ -2839,13 +2988,25 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                     ComputeCascadeSplits(camera.nearPlane, maxRange, splits);
                     
                     // Compute VP matrix for each cascade
+                    float radii[CSM_CASCADE_COUNT] = {};
+                    float depthRanges[CSM_CASCADE_COUNT] = {};
                     for (int c = 0; c < CSM_CASCADE_COUNT; c++) {
                         lightUBO.cascadeViewProj[c] = ComputeCascadeShadowVP(
                             camera.positionX, camera.positionY, camera.positionZ,
                             camera.yawDeg, camera.pitchDeg,
                             splits[c], splits[c + 1],
-                            fovY, aspect, lightDir);
+                            fovY, aspect, lightDir, &radii[c], &depthRanges[c]);
                     }
+                    const float tileResolution = static_cast<float>(m_directionalShadow.resolution / 2);
+                    lightUBO.cascadeTexelWorld = Vec4(2.0f * radii[0] / tileResolution, 2.0f * radii[1] / tileResolution,
+                                                      2.0f * radii[2] / tileResolution, 2.0f * radii[3] / tileResolution);
+                    lightUBO.cascadeDepthRange = Vec4(depthRanges[0], depthRanges[1], depthRanges[2], depthRanges[3]);
+                    const float sunHalfAngle = std::clamp(light.sunAngularDiameter, 0.0f, 10.0f) * 0.5f * 0.01745329252f;
+                    m_sunRayTraced = canTrace && light.rayTracedShadows;
+                    m_traceShadows |= m_sunRayTraced;
+                    lightUBO.shadowBiasWorld = Vec4(std::max(0.0f, light.shadowBias),
+                                                    std::max(0.0f, light.shadowNormalBias), std::tan(sunHalfAngle),
+                                                    m_sunRayTraced ? 1.0f : 0.0f);
                     lightUBO.cascadeSplits = Vec4(splits[1], splits[2], splits[3], splits[4]);
                     lightUBO.cascadeCount = CSM_CASCADE_COUNT;
                     
@@ -2862,6 +3023,20 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 lightUBO.pointLightColors[pointLightIndex] = {light.color.x, light.color.y, light.color.z, light.intensity};
                 lightUBO.pointLightAttenuation[pointLightIndex] = {
                     light.constant, light.linear, light.quadratic, 0.0f};
+                if (light.castShadows && canTrace && light.rayTracedShadows) {
+                    lightUBO.pointShadowParams[pointLightIndex] = Vec4(-2.0f, light.shadowStrength, light.range, 0.0f);
+                    m_traceShadows = true;
+                } else if (light.castShadows && m_localShadow.IsValid() && shadowedPoints < kMaxShadowedPointLights) {
+                    const float base = static_cast<float>(nextShadowTile);
+                    const Vec3 faces[6] = {Vec3(1, 0, 0), Vec3(-1, 0, 0), Vec3(0, 1, 0),
+                                           Vec3(0, -1, 0), Vec3(0, 0, 1), Vec3(0, 0, -1)};
+                    for (int f = 0; f < 6; ++f) {
+                        const Vec3 up = (f == 2 || f == 3) ? Vec3(0, 0, 1) : Vec3(0, 1, 0);
+                        addShadowTile(lightPos, faces[f], up, 1.5707963f, light.range);
+                    }
+                    lightUBO.pointShadowParams[pointLightIndex] = Vec4(base, light.shadowStrength, light.range, 1.0f);
+                    ++shadowedPoints;
+                }
                 ++pointLightIndex;
             } else if (light.type == LightType::Spot && spotLightIndex < 16) {
                 lightUBO.spotLightPositions[spotLightIndex] = {lightPos.x, lightPos.y, lightPos.z, light.range};
@@ -2870,6 +3045,19 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 lightUBO.spotLightColors[spotLightIndex] = {light.color.x, light.color.y, light.color.z, light.intensity};
                 lightUBO.spotLightAttenuation[spotLightIndex] = {
                     light.constant, light.linear, light.quadratic, light.outerConeAngle};
+                if (light.castShadows && canTrace && light.rayTracedShadows) {
+                    lightUBO.spotShadowParams[spotLightIndex] = Vec4(-2.0f, light.shadowStrength, light.range, 0.0f);
+                    m_traceShadows = true;
+                } else if (light.castShadows && m_localShadow.IsValid() && shadowedSpots < kMaxShadowedSpotLights) {
+                    // outerConeAngle is the full aperture; pad it so filtering at the cone edge stays in the tile.
+                    const float fovY = std::min(light.outerConeAngle + 0.1f, 2.8f);
+                    const Vec3 up = std::fabs(lightDir.y) > 0.99f ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
+                    const float tile = static_cast<float>(nextShadowTile);
+                    addShadowTile(lightPos, lightDir, up, fovY, light.range);
+                    lightUBO.spotShadowParams[spotLightIndex] =
+                        Vec4(tile, light.shadowStrength, light.range, std::tan(fovY * 0.5f));
+                    ++shadowedSpots;
+                }
                 ++spotLightIndex;
             }
         }
@@ -2960,14 +3148,6 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
     vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_directionalShadow.pipeline);
     
-    auto meshView = registry.view<TransformComponent, MeshRendererComponent>();
-    int shadowMeshCount = 0;
-    
-    struct ShadowPushConstants {
-        Mat4 lightViewProj;
-        Mat4 model;
-    };
-    
     // 2x2 atlas offsets for 4 cascades
     uint32_t halfRes = m_directionalShadow.resolution / 2;
     int atlasOffsetX[4] = { 0, 1, 0, 1 };
@@ -2991,12 +3171,33 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
         sc.extent = { halfRes, halfRes };
         vkCmdSetScissor(cmd, 0, 1, &sc);
         
-        // Render all meshes with this cascade's VP matrix
+        drawShadowCasters(cmd, scene, config, cascadeVPs[cascade], nullptr, 0.0f);
+    }
+
+    static bool shadowPassDebugPrinted = false;
+    if (!shadowPassDebugPrinted) {
+        std::cout << "[ShadowPass] CSM: Rendered " << CSM_CASCADE_COUNT << " cascades\n";
+        shadowPassDebugPrinted = true;
+    }
+
+    vkCmdEndRenderPass(cmd);
+}
+
+void EngineFrameRenderer::drawShadowCasters(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config,
+                                            const Mat4& viewProj, const Vec3* cullCenter, float cullRadius)
+{
+    auto& registry = scene->GetRegistry();
+    auto meshView = registry.view<TransformComponent, MeshRendererComponent>();
+    struct ShadowPushConstants {
+        Mat4 lightViewProj;
+        Mat4 model;
+    };
+    {
         VkBuffer currentVertexBuffer = VK_NULL_HANDLE;
         VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
         bool usingSkinnedShadow = false;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_directionalShadow.pipeline);
-        
+
         for (auto entity : meshView) {
             auto& meshComp = meshView.get<MeshRendererComponent>(entity);
             if (!IsEditorEntityVisible(static_cast<uint32_t>(entity), config)) continue;
@@ -3034,25 +3235,120 @@ void EngineFrameRenderer::recordShadowPass(VkCommandBuffer cmd, Scene* scene, co
                 }
 
                 ShadowPushConstants pc;
-                pc.lightViewProj = cascadeVPs[cascade];
+                pc.lightViewProj = viewProj;
                 pc.model = CharacterAwareModelMatrix(scene, Entity(entity, scene), meshComp);
+                if (cullCenter) {
+                    // Bounding sphere of the mesh AABB against the light's range.
+                    const Vec3 lo = mesh.bounds.min, hi = mesh.bounds.max;
+                    const Vec3 local((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f);
+                    const float* m = pc.model.m;
+                    const Vec3 center(m[0] * local.x + m[4] * local.y + m[8] * local.z + m[12],
+                                      m[1] * local.x + m[5] * local.y + m[9] * local.z + m[13],
+                                      m[2] * local.x + m[6] * local.y + m[10] * local.z + m[14]);
+                    const float scale = std::max({vlen(Vec3(m[0], m[1], m[2])), vlen(Vec3(m[4], m[5], m[6])),
+                                                  vlen(Vec3(m[8], m[9], m[10]))});
+                    const float radius = 0.5f * vlen(vsub(hi, lo)) * scale;
+                    if (vlen(vsub(center, *cullCenter)) > cullRadius + radius) continue;
+                }
                 const VkPipelineLayout shadowLayout =
                     skinned ? m_skinned.shadowLayout : m_directionalShadow.pipelineLayout;
                 vkCmdPushConstants(cmd, shadowLayout, VK_SHADER_STAGE_VERTEX_BIT,
                                   0, sizeof(pc), &pc);
 
                 vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
-                shadowMeshCount++;
             }
         }
     }
-    
-    static bool shadowPassDebugPrinted = false;
-    if (!shadowPassDebugPrinted && shadowMeshCount > 0) {
-        std::cout << "[ShadowPass] CSM: Rendered " << shadowMeshCount << " draw calls across " << CSM_CASCADE_COUNT << " cascades\n";
-        shadowPassDebugPrinted = true;
+}
+
+bool EngineFrameRenderer::createLocalShadowResources()
+{
+    VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image.imageType = VK_IMAGE_TYPE_2D;
+    image.format = VK_FORMAT_D32_SFLOAT;
+    image.extent = {kLocalShadowTile * kLocalShadowColumns, kLocalShadowTile * kLocalShadowRows, 1};
+    image.mipLevels = 1;
+    image.arrayLayers = 1;
+    image.samples = VK_SAMPLE_COUNT_1_BIT;
+    image.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    VmaAllocationCreateInfo alloc{};
+    alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    if (vmaCreateImage(m_device->allocator, &image, &alloc, &m_localShadow.image, &m_localShadow.allocation,
+                       nullptr) != VK_SUCCESS) {
+        m_localShadow = ShadowMap{};
+        return false;
     }
-    
+    VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view.image = m_localShadow.image;
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.format = VK_FORMAT_D32_SFLOAT;
+    view.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    VkFramebufferCreateInfo fb{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    fb.renderPass = m_directionalShadow.renderPass;
+    fb.attachmentCount = 1;
+    fb.width = image.extent.width;
+    fb.height = image.extent.height;
+    fb.layers = 1;
+    if (vkCreateImageView(m_device->device, &view, nullptr, &m_localShadow.imageView) != VK_SUCCESS ||
+        (fb.pAttachments = &m_localShadow.imageView,
+         vkCreateFramebuffer(m_device->device, &fb, nullptr, &m_localShadow.framebuffer) != VK_SUCCESS)) {
+        if (m_localShadow.imageView) vkDestroyImageView(m_device->device, m_localShadow.imageView, nullptr);
+        vmaDestroyImage(m_device->allocator, m_localShadow.image, m_localShadow.allocation);
+        m_localShadow = ShadowMap{};
+        return false;
+    }
+    // Frames without shadowed point/spot lights never render the atlas but still bind it.
+    VkCommandBufferAllocateInfo cmdAlloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    cmdAlloc.commandPool = m_device->commandPool;
+    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAlloc.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(m_device->device, &cmdAlloc, &cmd);
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &begin);
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = m_localShadow.image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
+                         0, nullptr, 1, &barrier);
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &cmd;
+    vkQueueSubmit(m_device->graphicsQueue, 1, &submit, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_device->graphicsQueue);
+    vkFreeCommandBuffers(m_device->device, m_device->commandPool, 1, &cmd);
+    return true;
+}
+
+void EngineFrameRenderer::recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config)
+{
+    if (!scene) return;
+    VkClearValue clear{};
+    clear.depthStencil = {1.0f, 0};
+    VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    begin.renderPass = m_directionalShadow.renderPass;
+    begin.framebuffer = m_localShadow.framebuffer;
+    begin.renderArea.extent = {kLocalShadowTile * kLocalShadowColumns, kLocalShadowTile * kLocalShadowRows};
+    begin.clearValueCount = 1;
+    begin.pClearValues = &clear;
+    vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    for (const LocalShadowJob& job : m_localShadowJobs) {
+        const uint32_t x = (job.tile % kLocalShadowColumns) * kLocalShadowTile;
+        const uint32_t y = (job.tile / kLocalShadowColumns) * kLocalShadowTile;
+        const VkViewport viewport{static_cast<float>(x), static_cast<float>(y), static_cast<float>(kLocalShadowTile),
+                                  static_cast<float>(kLocalShadowTile), 0.0f, 1.0f};
+        const VkRect2D scissor{{static_cast<int32_t>(x), static_cast<int32_t>(y)}, {kLocalShadowTile, kLocalShadowTile}};
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+        drawShadowCasters(cmd, scene, config, job.viewProj, &job.lightPos, job.range);
+    }
     vkCmdEndRenderPass(cmd);
 }
 
@@ -3330,12 +3626,294 @@ void EngineFrameRenderer::flushPendingTextureDescriptorUpdates(uint32_t imageInd
     pending.clear();
 }
 
+EnvironmentComponent* EngineFrameRenderer::findEnvironment(Scene* scene)
+{
+    EnvironmentComponent* envComp = nullptr;
+    
+    // Prefer entity named "Environment"
+    auto envView = scene->GetEntitiesWith<EnvironmentComponent>();
+    for (auto ent : envView) {
+        auto* tagComp = scene->GetRegistry().try_get<TagComponent>(ent);
+        if (tagComp && tagComp->tag == "Environment") {
+            envComp = &scene->GetRegistry().get<EnvironmentComponent>(ent);
+            break;
+        }
+    }
+    // Fallback: first entity with EnvironmentComponent
+    if (!envComp) {
+        for (auto ent : envView) {
+            envComp = &scene->GetRegistry().get<EnvironmentComponent>(ent);
+            break;
+        }
+    }
+    return envComp;
+}
+
+void EngineFrameRenderer::prepareEnvironment(Scene* scene, const FrameRenderConfig& config,
+                                             uint32_t imageIndex)
+{
+    EnvironmentComponent* envComp =
+        (config.renderSkybox && m_skybox.initialized && scene) ? findEnvironment(scene) : nullptr;
+    if (envComp && envComp->type == EnvironmentComponent::BackgroundType::HDRI &&
+        !envComp->hdriPath.empty()) {
+        if (envComp->hdriPath != m_lastSkyboxPath) {
+            // Resolve the HDRI path
+            namespace fs = std::filesystem;
+            std::string resolvedPath;
+            
+            // Try multiple resolve strategies
+            auto tryResolve = [](const std::string& candidate) -> bool {
+                return std::filesystem::exists(candidate);
+            };
+            
+            std::vector<std::string> candidates;
+            
+            // If path is already absolute
+            if (fs::path(envComp->hdriPath).is_absolute()) {
+                candidates.push_back(envComp->hdriPath);
+            }
+            
+            // Strategy 1: relative to known project root (set by editor)
+            if (!m_projectRoot.empty()) {
+                fs::path pr(m_projectRoot);
+                candidates.push_back((pr / envComp->hdriPath).string());
+                candidates.push_back((pr / "assets" / envComp->hdriPath).string());
+            }
+            
+            // Strategy 2: relative to working directory
+            candidates.push_back(envComp->hdriPath);
+            candidates.push_back("assets/" + envComp->hdriPath);
+            candidates.push_back("../assets/" + envComp->hdriPath);
+            
+            // Strategy 3: walk up from CWD looking for .heproject (fallback)
+            {
+                fs::path cwd = fs::current_path();
+                fs::path search = cwd;
+                for (int i = 0; i < 10 && !search.empty(); ++i) {
+                    std::error_code ec;
+                    for (const auto& entry : fs::directory_iterator(search, fs::directory_options::skip_permission_denied, ec)) {
+                        if (entry.path().extension() == ".heproject") {
+                            candidates.push_back((search / envComp->hdriPath).string());
+                            candidates.push_back((search / "assets" / envComp->hdriPath).string());
+                            break;
+                        }
+                    }
+                    auto parent = search.parent_path();
+                    if (parent == search) break;
+                    search = parent;
+                }
+            }
+            
+            for (const auto& candidate : candidates) {
+                if (tryResolve(candidate)) {
+                    resolvedPath = candidate;
+                    break;
+                }
+            }
+            
+            if (!resolvedPath.empty()) {
+                static bool pathLogPrinted = false;
+                if (!pathLogPrinted) {
+                    std::cout << "[Skybox] Resolved HDRI path: " << resolvedPath << "\n";
+                    pathLogPrinted = true;
+                }
+                vkDeviceWaitIdle(m_device->device);
+                if (m_skybox.LoadHDRI(resolvedPath, m_device->allocator,
+                                      m_device->physicalDevice, m_device->commandPool,
+                                      m_device->graphicsQueue, m_device->device)) {
+                    m_lastSkyboxPath = envComp->hdriPath;
+                }
+            } else {
+                static bool failLogPrinted = false;
+                if (!failLogPrinted) {
+                    std::cerr << "[Skybox] Could not resolve HDRI path: " << envComp->hdriPath << "\n";
+                    failLogPrinted = true;
+                }
+            }
+        }
+    }
+    updateEnvironmentReflectionDescriptor(imageIndex);
+}
+
+const MaterialComponent* EngineFrameRenderer::resolveMaterialForSlot(Entity& entity,
+                                                                    const MeshRendererComponent& renderer,
+                                                                    int slot)
+{
+    if (slot < 0) slot = 0;
+    // 1) Check per-slot material path assignment (from ImGUI editor)
+    if (static_cast<size_t>(slot) < renderer.appliedMaterialPaths.size()) {
+        const std::string& slotPath = renderer.appliedMaterialPaths[slot];
+        if (!slotPath.empty()) {
+            if (const MaterialComponent* mat = resolveMaterialFromPath(slotPath)) {
+                return mat;
+            }
+        }
+    }
+    // 2) Fallback: entity's own MaterialComponent (single material for all submeshes)
+    if (entity.HasComponent<MaterialComponent>()) {
+        return &entity.GetComponent<MaterialComponent>();
+    }
+    // 3) No material assigned
+    return nullptr;
+}
+
+// Static geometry the probes bake against and the probe sun map draws.
+static bool IsProbeStaticMesh(Scene& scene, entt::entity handle, const MeshRendererComponent& renderer)
+{
+    if (!renderer.visible || renderer.hideInGame || !renderer.HasValidMesh()) {
+        return false;
+    }
+    const auto& registry = scene.GetRegistry();
+    if (registry.all_of<CharacterComponent>(handle) || registry.all_of<CharacterControllerComponent>(handle)) {
+        return false;
+    }
+    const auto* body = registry.try_get<RigidBodyComponent>(handle);
+    return !body || body->IsStatic();
+}
+
+static bool FindShadowCastingSun(Scene* scene, Vec3& outDirection)
+{
+    auto view = scene->GetRegistry().view<TransformComponent, LightComponent>();
+    for (auto entity : view) {
+        const auto& light = view.get<LightComponent>(entity);
+        if (light.type != LightType::Directional || !light.castShadows || !light.enabled) continue;
+        const auto& transform = view.get<TransformComponent>(entity);
+        Mat4 rotation = Mat4::RotationZ(transform.rotation.z);
+        rotation = Mat4::Multiply(Mat4::RotationY(transform.rotation.y), rotation);
+        rotation = Mat4::Multiply(Mat4::RotationX(transform.rotation.x), rotation);
+        outDirection = vnorm(Mat4::TransformDirection(rotation, Vec3(0, 0, -1)));
+        return true;
+    }
+    return false;
+}
+
+void EngineFrameRenderer::recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene)
+{
+    // The previous frame's probe update sampled this map.
+    VkMemoryBarrier reads{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    reads.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0,
+                         1, &reads, 0, nullptr, 0, nullptr);
+
+    VkClearValue clear{};
+    clear.depthStencil = {1.0f, 0};
+    VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    begin.renderPass = m_directionalShadow.renderPass;
+    begin.framebuffer = m_probeGI.SunFramebuffer();
+    begin.renderArea.extent = {ProbeGI::kSunMapResolution, ProbeGI::kSunMapResolution};
+    begin.clearValueCount = 1;
+    begin.pClearValues = &clear;
+    vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    VkViewport viewport{0.0f, 0.0f, static_cast<float>(ProbeGI::kSunMapResolution),
+                        static_cast<float>(ProbeGI::kSunMapResolution), 0.0f, 1.0f};
+    VkRect2D scissor{{0, 0}, {ProbeGI::kSunMapResolution, ProbeGI::kSunMapResolution}};
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_directionalShadow.pipeline);
+
+    struct ShadowPushConstants {
+        Mat4 lightViewProj;
+        Mat4 model;
+    } pc;
+    pc.lightViewProj = m_probeGI.SunViewProj();
+    auto view = scene->GetRegistry().view<MeshRendererComponent>();
+    for (entt::entity handle : view) {
+        const auto& renderer = view.get<MeshRendererComponent>(handle);
+        if (!IsProbeStaticMesh(*scene, handle, renderer)) continue;
+        pc.model = scene->GetWorldTransform(Entity(handle, scene));
+        for (size_t meshHandle : MeshHandlesForDraw(renderer)) {
+            if (meshHandle >= m_meshLibrary.size()) continue;
+            const MeshGPU& mesh = m_meshLibrary[meshHandle];
+            if (mesh.skinned || mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE) continue;
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, &offset);
+            vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdPushConstants(cmd, m_directionalShadow.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+            vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+        }
+    }
+    vkCmdEndRenderPass(cmd);
+
+    VkMemoryBarrier written{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    written.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    written.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                         &written, 0, nullptr, 0, nullptr);
+}
+
+ProbeBakeGeometry EngineFrameRenderer::CollectProbeBakeGeometry(Scene& scene)
+{
+    ProbeBakeGeometry geometry;
+    std::unordered_map<const MaterialComponent*, uint32_t> materialIndex;
+    auto addMaterial = [&](const MaterialComponent* material) {
+        const auto found = materialIndex.find(material);
+        if (found != materialIndex.end()) {
+            return found->second;
+        }
+        ProbeBakeMaterial baked;
+        if (material) {
+            baked.albedo = material->albedo;
+            baked.emissive = vscale(material->emissive, material->emissiveStrength);
+        }
+        const uint32_t index = static_cast<uint32_t>(geometry.materials.size());
+        geometry.materials.push_back(baked);
+        materialIndex.emplace(material, index);
+        return index;
+    };
+
+    auto view = scene.GetRegistry().view<MeshRendererComponent>();
+    for (entt::entity handle : view) {
+        Entity entity(handle, &scene);
+        const MeshRendererComponent& renderer = view.get<MeshRendererComponent>(handle);
+        if (!IsProbeStaticMesh(scene, handle, renderer)) {
+            continue;
+        }
+        const Mat4 world = scene.GetWorldTransform(entity);
+        auto toWorld = [&](const Vec3& p) {
+            const float* m = world.m;
+            return Vec3(m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12],
+                        m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13],
+                        m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14]);
+        };
+        for (size_t meshHandle : MeshHandlesForDraw(renderer)) {
+            if (meshHandle >= m_meshLibrary.size()) {
+                continue;
+            }
+            const MeshGPU& mesh = m_meshLibrary[meshHandle];
+            if (mesh.skinned || mesh.cpuIndices.empty()) {
+                continue;
+            }
+            auto addRange = [&](uint32_t first, uint32_t count, uint32_t material) {
+                for (uint32_t i = first; i + 2 < first + count && i + 2 < mesh.cpuIndices.size(); i += 3) {
+                    geometry.triangles.push_back({toWorld(mesh.cpuPositions[mesh.cpuIndices[i]]),
+                                                  toWorld(mesh.cpuPositions[mesh.cpuIndices[i + 1]]),
+                                                  toWorld(mesh.cpuPositions[mesh.cpuIndices[i + 2]]),
+                                                  material});
+                }
+            };
+            if (mesh.submeshes.empty()) {
+                addRange(0, static_cast<uint32_t>(mesh.cpuIndices.size()),
+                         addMaterial(resolveMaterialForSlot(entity, renderer, 0)));
+            } else {
+                for (const auto& submesh : mesh.submeshes) {
+                    addRange(submesh.indexOffset, submesh.indexCount,
+                             addMaterial(resolveMaterialForSlot(entity, renderer, submesh.materialSlot)));
+                }
+            }
+        }
+    }
+    return geometry;
+}
+
 void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageIndex, 
                                           Scene* scene, const FrameRenderConfig& config)
 {
-    VkClearValue clearValues[2];
-    clearValues[0].color = {{config.clearColorR, config.clearColorG, config.clearColorB, 1.0f}};
+    VkClearValue clearValues[3];
+    clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
     clearValues[1].depthStencil = {1.0f, 0};
+    clearValues[2].color = {{DisplayToSceneLinear(config.clearColorR),
+                             DisplayToSceneLinear(config.clearColorG),
+                             DisplayToSceneLinear(config.clearColorB), 1.0f}};
     
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -3343,7 +3921,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     renderPassInfo.framebuffer = m_swapchain->framebuffers[imageIndex];
     renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = m_swapchain->extent;
-    renderPassInfo.clearValueCount = 2;
+    renderPassInfo.clearValueCount = 3;
     renderPassInfo.pClearValues = clearValues;
     
     vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
@@ -3362,25 +3940,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     
     // ── Skybox / Environment background ──────────────────────────────
     if (config.renderSkybox && m_skybox.initialized && scene) {
-        // Find the EnvironmentComponent in the scene
-        EnvironmentComponent* envComp = nullptr;
-        
-        // Prefer entity named "Environment"
-        auto envView = scene->GetEntitiesWith<EnvironmentComponent>();
-        for (auto ent : envView) {
-            auto* tagComp = scene->GetRegistry().try_get<TagComponent>(ent);
-            if (tagComp && tagComp->tag == "Environment") {
-                envComp = &scene->GetRegistry().get<EnvironmentComponent>(ent);
-                break;
-            }
-        }
-        // Fallback: first entity with EnvironmentComponent
-        if (!envComp) {
-            for (auto ent : envView) {
-                envComp = &scene->GetRegistry().get<EnvironmentComponent>(ent);
-                break;
-            }
-        }
+        EnvironmentComponent* envComp = findEnvironment(scene);
         
         if (envComp) {
             Skybox::SkyboxPushConstants pc;
@@ -3388,82 +3948,6 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             if (envComp->type == EnvironmentComponent::BackgroundType::HDRI &&
                 !envComp->hdriPath.empty()) {
                 
-                // Live editing: reload HDRI if path changed
-                if (envComp->hdriPath != m_lastSkyboxPath) {
-                    // Resolve the HDRI path
-                    namespace fs = std::filesystem;
-                    std::string resolvedPath;
-                    
-                    // Try multiple resolve strategies
-                    auto tryResolve = [](const std::string& candidate) -> bool {
-                        return std::filesystem::exists(candidate);
-                    };
-                    
-                    std::vector<std::string> candidates;
-                    
-                    // If path is already absolute
-                    if (fs::path(envComp->hdriPath).is_absolute()) {
-                        candidates.push_back(envComp->hdriPath);
-                    }
-                    
-                    // Strategy 1: relative to known project root (set by editor)
-                    if (!m_projectRoot.empty()) {
-                        fs::path pr(m_projectRoot);
-                        candidates.push_back((pr / envComp->hdriPath).string());
-                        candidates.push_back((pr / "assets" / envComp->hdriPath).string());
-                    }
-                    
-                    // Strategy 2: relative to working directory
-                    candidates.push_back(envComp->hdriPath);
-                    candidates.push_back("assets/" + envComp->hdriPath);
-                    candidates.push_back("../assets/" + envComp->hdriPath);
-                    
-                    // Strategy 3: walk up from CWD looking for .heproject (fallback)
-                    {
-                        fs::path cwd = fs::current_path();
-                        fs::path search = cwd;
-                        for (int i = 0; i < 10 && !search.empty(); ++i) {
-                            std::error_code ec;
-                            for (const auto& entry : fs::directory_iterator(search, fs::directory_options::skip_permission_denied, ec)) {
-                                if (entry.path().extension() == ".heproject") {
-                                    candidates.push_back((search / envComp->hdriPath).string());
-                                    candidates.push_back((search / "assets" / envComp->hdriPath).string());
-                                    break;
-                                }
-                            }
-                            auto parent = search.parent_path();
-                            if (parent == search) break;
-                            search = parent;
-                        }
-                    }
-                    
-                    for (const auto& candidate : candidates) {
-                        if (tryResolve(candidate)) {
-                            resolvedPath = candidate;
-                            break;
-                        }
-                    }
-                    
-                    if (!resolvedPath.empty()) {
-                        static bool pathLogPrinted = false;
-                        if (!pathLogPrinted) {
-                            std::cout << "[Skybox] Resolved HDRI path: " << resolvedPath << "\n";
-                            pathLogPrinted = true;
-                        }
-                        vkDeviceWaitIdle(m_device->device);
-                        if (m_skybox.LoadHDRI(resolvedPath, m_device->allocator,
-                                              m_device->physicalDevice, m_device->commandPool,
-                                              m_device->graphicsQueue, m_device->device)) {
-                            m_lastSkyboxPath = envComp->hdriPath;
-                        }
-                    } else {
-                        static bool failLogPrinted = false;
-                        if (!failLogPrinted) {
-                            std::cerr << "[Skybox] Could not resolve HDRI path: " << envComp->hdriPath << "\n";
-                            failLogPrinted = true;
-                        }
-                    }
-                }
                 
                 if (m_skybox.hasHDRI) {
                     pc.intensity = envComp->hdriIntensity;
@@ -3490,8 +3974,6 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         }
     }
     // ── End Skybox ───────────────────────────────────────────────────
-
-    updateEnvironmentReflectionDescriptor(imageIndex);
     
     // Bind pipeline dynamically per-object (backface culling toggle)
     VkPipeline currentPipeline = VK_NULL_HANDLE;
@@ -3665,28 +4147,9 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         VkBuffer currentIndexBuffer = VK_NULL_HANDLE;
         bool materialOverflowLogged = false;
         VkPipelineLayout currentDrawLayout = m_pipeline->layout;
+        VkPipelineLayout probeSetLayout = VK_NULL_HANDLE;  // layout the probe set was last bound with
         VkDescriptorSet currentBoneSet = VK_NULL_HANDLE;
         
-        // Lambda: resolve material for a given submesh slot on an entity
-        auto resolveMaterialForSlot = [&](Entity& entity, MeshRendererComponent& renderer, int slot) -> const MaterialComponent* {
-            if (slot < 0) slot = 0;
-            // 1) Check per-slot material path assignment (from ImGUI editor)
-            if (static_cast<size_t>(slot) < renderer.appliedMaterialPaths.size()) {
-                const std::string& slotPath = renderer.appliedMaterialPaths[slot];
-                if (!slotPath.empty()) {
-                    if (const MaterialComponent* mat = resolveMaterialFromPath(slotPath)) {
-                        return mat;
-                    }
-                }
-            }
-            // 2) Fallback: entity's own MaterialComponent (single material for all submeshes)
-            if (entity.HasComponent<MaterialComponent>()) {
-                return &entity.GetComponent<MaterialComponent>();
-            }
-            // 3) No material assigned
-            return nullptr;
-        };
-
         // Lambda: upload material to dynamic UBO and issue draw call
         auto drawWithMaterial = [&](const MaterialComponent* material,
                                     uint32_t indexOffset, uint32_t indexCount,
@@ -3801,6 +4264,13 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 }
                 currentDrawLayout = skinned ? m_skinned.pipelineLayout : m_pipeline->layout;
                 currentBoneSet = skinned ? boneSet : VK_NULL_HANDLE;
+                if (currentDrawLayout != probeSetLayout) {
+                    // Set 2 layouts differ in set 1 between the two pipelines, so switching disturbs it.
+                    const VkDescriptorSet probeSet = m_probeGI.DrawSet(imageIndex);
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, currentDrawLayout, 2, 1, &probeSet,
+                                            0, nullptr);
+                    probeSetLayout = currentDrawLayout;
+                }
 
                 if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
                     VkBuffer vb = mesh.vertexBuffer.buffer;
@@ -3876,6 +4346,11 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         }
     }
     
+    if (config.isEditorMode && !config.isPlaying && m_probeGI.Active()) {
+        m_probeGI.RecordDebug(cmd, imageIndex, m_descriptorSets[imageIndex]);
+    }
+    recordToneMap(cmd);
+
     // Render editor grid (after opaque meshes, before transparent) — not in play/pause or shipped game
     if (config.isEditorMode && config.renderGrid && !config.isPlaying) {
         recordGrid(cmd, imageIndex, config);
@@ -4200,6 +4675,8 @@ void EngineFrameRenderer::cleanupSwapchainResources()
     if (!m_device || !m_device->device) return;
 
     cleanupSkinnedGraphicsPipelines();
+    cleanupToneMapResources();
+    m_probeGI.DestroySwapchainResources();
 
     cleanupBillboardResources();
     cleanupGizmoResources();
@@ -4409,6 +4886,13 @@ void EngineFrameRenderer::destroyAllResources()
     // Cleanup light direction gizmo
     cleanupLightGizmoResources();
 
+    cleanupToneMapResources();
+
+    if (m_localShadow.framebuffer) vkDestroyFramebuffer(m_device->device, m_localShadow.framebuffer, nullptr);
+    if (m_localShadow.imageView) vkDestroyImageView(m_device->device, m_localShadow.imageView, nullptr);
+    if (m_localShadow.image) vmaDestroyImage(m_device->allocator, m_localShadow.image, m_localShadow.allocation);
+    m_localShadow = ShadowMap{};
+
     // Cleanup shadow map resources
     if (m_directionalShadow.pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(m_device->device, m_directionalShadow.pipeline, nullptr);
@@ -4445,6 +4929,7 @@ void EngineFrameRenderer::destroyAllResources()
         m_pipeline->Cleanup();
         m_pipeline.reset();
     }
+    m_probeGI.Shutdown();  // after every pipeline layout that uses its set layouts
     
     m_device = nullptr;
     m_swapchain = nullptr;
@@ -4479,15 +4964,19 @@ bool EngineFrameRenderer::Skybox::LoadHDRI(const std::string& path, VmaAllocator
     environmentTexture.Destroy(allocator, device);
 
     // Load new HDRI
-    if (!environmentTexture.LoadHDRFromFile(allocator, device, physDevice, cmdPool, queue, path)) {
+    std::vector<float> pixels;
+    if (!environmentTexture.LoadHDRFromFile(allocator, device, physDevice, cmdPool, queue, path, &pixels)) {
         // Fallback to 1x1 white
         environmentTexture.CreateSolidColor(allocator, device, physDevice, cmdPool, queue, 0xFFFFFFFF);
+        irradianceSH = {};
         hasHDRI = false;
         loadedHDRIPath.clear();
         std::cerr << "[Skybox] Failed to load HDRI: " << path << " — falling back to solid color\n";
         return false;
     }
 
+    irradianceSH = ProjectEquirectIrradianceSH(pixels.data(), environmentTexture.width,
+                                               environmentTexture.height);
     hasHDRI = true;
     loadedHDRIPath = path;
     std::cout << "[Skybox] Loaded HDRI: " << path << " (" << environmentTexture.width << "x" << environmentTexture.height << ")\n";
@@ -5078,7 +5567,7 @@ void EngineFrameRenderer::EditorGrid::Init(VkDevice device, VkRenderPass renderP
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout;
     pipelineInfo.renderPass = renderPass;
-    pipelineInfo.subpass = 0;
+    pipelineInfo.subpass = VulkanSwapchain::kOverlaySubpass;
     
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS) {
         std::cerr << "[EditorGrid] Failed to create graphics pipeline\n";
@@ -5174,6 +5663,166 @@ bool EngineFrameRenderer::createGridResources()
                       cameraDescLayout, m_device->allocator);
     
     return m_editorGrid.initialized;
+}
+
+bool EngineFrameRenderer::createToneMapResources()
+{
+    VkDevice device = m_device->device;
+
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo layoutCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    layoutCI.bindingCount = 1;
+    layoutCI.pBindings = &binding;
+    if (vkCreateDescriptorSetLayout(device, &layoutCI, nullptr, &m_toneMap.setLayout) != VK_SUCCESS) {
+        return false;
+    }
+
+    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1};
+    VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    poolCI.maxSets = 1;
+    poolCI.poolSizeCount = 1;
+    poolCI.pPoolSizes = &poolSize;
+    if (vkCreateDescriptorPool(device, &poolCI, nullptr, &m_toneMap.descriptorPool) != VK_SUCCESS) {
+        cleanupToneMapResources();
+        return false;
+    }
+
+    VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    allocInfo.descriptorPool = m_toneMap.descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &m_toneMap.setLayout;
+    if (vkAllocateDescriptorSets(device, &allocInfo, &m_toneMap.descriptorSet) != VK_SUCCESS) {
+        cleanupToneMapResources();
+        return false;
+    }
+
+    VkDescriptorImageInfo hdrInfo{};
+    hdrInfo.imageView = m_swapchain->hdrImageView;
+    hdrInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = m_toneMap.descriptorSet;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+    write.pImageInfo = &hdrInfo;
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+
+    VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(uint32_t)};
+    VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &m_toneMap.setLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &pcr;
+    if (vkCreatePipelineLayout(device, &plci, nullptr, &m_toneMap.pipelineLayout) != VK_SUCCESS) {
+        cleanupToneMapResources();
+        return false;
+    }
+
+    VkShaderModule vert = LoadSpvModule(device, "tonemap.vert.spv");
+    VkShaderModule frag = LoadSpvModule(device, "tonemap.frag.spv");
+    if (!vert || !frag) {
+        std::cerr << "[EngineFrameRenderer] Missing tonemap.vert.spv or tonemap.frag.spv\n";
+        if (vert) vkDestroyShaderModule(device, vert, nullptr);
+        if (frag) vkDestroyShaderModule(device, frag, nullptr);
+        cleanupToneMapResources();
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vert;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = frag;
+    stages[1].pName = "main";
+
+    VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo vpState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    vpState.viewportCount = 1;
+    vpState.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.cullMode = VK_CULL_MODE_NONE;
+    raster.lineWidth = 1.0f;
+    VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    ds.depthTestEnable = VK_FALSE;
+    ds.depthWriteEnable = VK_FALSE;
+    VkPipelineColorBlendAttachmentState cba{};
+    cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    blend.attachmentCount = 1;
+    blend.pAttachments = &cba;
+    VkDynamicState dynStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynState{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynState.dynamicStateCount = 2;
+    dynState.pDynamicStates = dynStates;
+
+    VkGraphicsPipelineCreateInfo pci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    pci.stageCount = 2;
+    pci.pStages = stages;
+    pci.pVertexInputState = &vi;
+    pci.pInputAssemblyState = &ia;
+    pci.pViewportState = &vpState;
+    pci.pRasterizationState = &raster;
+    pci.pMultisampleState = &ms;
+    pci.pDepthStencilState = &ds;
+    pci.pColorBlendState = &blend;
+    pci.pDynamicState = &dynState;
+    pci.layout = m_toneMap.pipelineLayout;
+    pci.renderPass = m_swapchain->renderPass;
+    pci.subpass = VulkanSwapchain::kOverlaySubpass;
+
+    const VkResult result =
+        vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &m_toneMap.pipeline);
+    vkDestroyShaderModule(device, vert, nullptr);
+    vkDestroyShaderModule(device, frag, nullptr);
+    if (result != VK_SUCCESS) {
+        cleanupToneMapResources();
+        return false;
+    }
+    return true;
+}
+
+void EngineFrameRenderer::cleanupToneMapResources()
+{
+    VkDevice device = m_device->device;
+    DestroyPipeline(device, m_toneMap.pipeline);
+    if (m_toneMap.pipelineLayout) {
+        vkDestroyPipelineLayout(device, m_toneMap.pipelineLayout, nullptr);
+        m_toneMap.pipelineLayout = VK_NULL_HANDLE;
+    }
+    if (m_toneMap.descriptorPool) {
+        vkDestroyDescriptorPool(device, m_toneMap.descriptorPool, nullptr);
+        m_toneMap.descriptorPool = VK_NULL_HANDLE;
+    }
+    m_toneMap.descriptorSet = VK_NULL_HANDLE;
+    if (m_toneMap.setLayout) {
+        vkDestroyDescriptorSetLayout(device, m_toneMap.setLayout, nullptr);
+        m_toneMap.setLayout = VK_NULL_HANDLE;
+    }
+}
+
+void EngineFrameRenderer::recordToneMap(VkCommandBuffer cmd)
+{
+    vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_toneMap.pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_toneMap.pipelineLayout,
+                            0, 1, &m_toneMap.descriptorSet, 0, nullptr);
+    const uint32_t outputIsSrgb = IsSrgbFormat(m_swapchain->format) ? 1u : 0u;
+    vkCmdPushConstants(cmd, m_toneMap.pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(outputIsSrgb), &outputIsSrgb);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 
 bool EngineFrameRenderer::createDebugOverlayResources()
@@ -5304,6 +5953,7 @@ bool EngineFrameRenderer::createDebugOverlayResources()
     pci.pDynamicState = &dynState;
     pci.layout = m_debugOverlay.pipelineLayout;
     pci.renderPass = m_swapchain->renderPass;
+    pci.subpass = VulkanSwapchain::kOverlaySubpass;
 
     const VkResult pipeResult =
         vkCreateGraphicsPipelines(m_device->device, VK_NULL_HANDLE, 1, &pci, nullptr,
@@ -5586,7 +6236,7 @@ void EngineFrameRenderer::OutlineRenderer::Init(VkDevice device, VkRenderPass re
     pipelineInfo.pDynamicState = &dynamicStateInfo;
     pipelineInfo.layout = pipelineLayout;
     pipelineInfo.renderPass = renderPass;
-    pipelineInfo.subpass = 0;
+    pipelineInfo.subpass = VulkanSwapchain::kOverlaySubpass;
     
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS) {
         std::cerr << "[OutlineRenderer] Failed to create graphics pipeline\n";

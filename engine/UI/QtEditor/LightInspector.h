@@ -56,6 +56,8 @@ private:
     NumericPropertyEditor* m_shadowBias = nullptr;
     NumericPropertyEditor* m_shadowNormalBias = nullptr;
     NumericPropertyEditor* m_shadowStrength = nullptr;
+    NumericPropertyEditor* m_sunSize = nullptr;
+    BoolPropertyEditor* m_rayTracedShadows = nullptr;
     QWidget* m_shadowManualGroup = nullptr;
     NumericPropertyEditor* m_shadowDistance = nullptr;
     NumericPropertyEditor* m_shadowExtent = nullptr;

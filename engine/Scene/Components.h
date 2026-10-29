@@ -649,6 +649,8 @@ struct LightComponent {
     float shadowDistance;  // How far shadows extend from camera (used when shadowAutoFit=false)
     float shadowExtent;    // Size of orthographic shadow frustum (used when shadowAutoFit=false)
     float shadowMaxDistance; // Max shadow range when auto-fit is on (caps camera farPlane)
+    float sunAngularDiameter; // Directional only: apparent sun size in degrees; sets how fast shadows soften with distance
+    bool rayTracedShadows;   // Trace this light's shadow with ray queries on GPUs that support them
 
     LightComponent()
         : type(LightType::Point)
@@ -670,6 +672,8 @@ struct LightComponent {
         , shadowDistance(500.0f)
         , shadowExtent(500.0f)
         , shadowMaxDistance(500.0f)
+        , sunAngularDiameter(1.0f)
+        , rayTracedShadows(false)
     {}
 
     // Factory methods for common light types
@@ -739,6 +743,29 @@ struct EnvironmentComponent {
         , renderDistance(500.0f)
         , infiniteRenderDistance(false)
     {}
+};
+
+/**
+ * Probe volume - an axis-aligned grid of global illumination probes centred on
+ * the entity's world position. Rotation and scale of the entity are ignored.
+ */
+struct ProbeVolumeComponent {
+    bool enabled = true;
+    Vec3 size{10.0f, 5.0f, 10.0f};
+    int probeCountX = 8;
+    int probeCountY = 4;
+    int probeCountZ = 8;
+    float intensity = 1.0f;
+    std::string bakePath;  // project-relative .hpprobes written by "Bake Probes"
+    bool hardwareRayTracing = false;  // trace probe rays every frame when the GPU supports it, else use the bake
+
+    // Offset of probe (ix, iy, iz) from the volume centre; a single probe on an axis sits at the centre.
+    Vec3 ProbeOffset(int ix, int iy, int iz) const {
+        auto axis = [](int i, int count, float extent) {
+            return count > 1 ? extent * (static_cast<float>(i) / static_cast<float>(count - 1) - 0.5f) : 0.0f;
+        };
+        return Vec3(axis(ix, probeCountX, size.x), axis(iy, probeCountY, size.y), axis(iz, probeCountZ, size.z));
+    }
 };
 
 // ═══════════════════════════════════════════════════════════════

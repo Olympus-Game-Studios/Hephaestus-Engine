@@ -1,4 +1,8 @@
-#version 450
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#ifdef RAY_TRACED_SHADOWS
+#extension GL_EXT_ray_query : require
+#endif
 
 #define MAX_TEXTURE_SLOTS 128
 layout(location = 0) in vec3 fragWorldPos;
@@ -54,29 +58,17 @@ layout(set = 0, binding = 3) uniform sampler2D materialTextures[MAX_TEXTURE_SLOT
 layout(set = 0, binding = 5) uniform sampler2D environmentMap;
 
 // Lighting data
-layout(std140, set = 0, binding = 2) uniform LightingUBO {
-    mat4 dirLightViewProj;
-    vec4 dirShadowParams;          // x = bias, y = strength, z = texel size, w = enabled
-    vec4 dirLightDirIntensity;      // xyz = direction, w = intensity
-    vec4 dirLightColor;             // rgb = color, w = unused
-    vec4 ambientColorIntensity;     // rgb = ambient color, w = ambient intensity
-    vec4 environmentReflectionParams; // x = intensity, y = enabled, zw = unused
-    vec4 pointLightPositions[16];
-    vec4 pointLightColors[16];
-    vec4 pointLightAttenuation[16];
-    vec4 spotLightPositions[16];
-    vec4 spotLightDirections[16];
-    vec4 spotLightColors[16];
-    vec4 spotLightAttenuation[16];
-    int pointLightCount;
-    int spotLightCount;
-    int cascadeCount;
-    float csmPadding1;
-    mat4 cascadeViewProj[4];
-    vec4 cascadeSplits;
-} lighting;
+#define LIGHTING_SET 0
+#define LIGHTING_BINDING 2
+#include "lighting_common.glsl"
+#define GI_SET 2
+#include "probe_common.glsl"
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
+layout(set = 0, binding = 6) uniform sampler2D localShadowAtlas;  // 8 x 4 tiles of 512 (EngineFrameRenderer::kLocalShadowTile)
+#ifdef RAY_TRACED_SHADOWS
+layout(set = GI_SET, binding = 11) uniform accelerationStructureEXT sceneStructure;  // engine/Gfx/ProbeGI.cpp kScene
+#endif
 
 const float PI = 3.14159265359;
 
@@ -124,41 +116,6 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-// Calculate light attenuation for point lights
-float calculateAttenuation(float distance, vec3 attenuation) {
-    return 1.0 / (attenuation.x + attenuation.y * distance + attenuation.z * distance * distance);
-}
-
-// Calculate spotlight cone falloff (smooth transition between inner and outer cone)
-float calculateSpotlightFalloff(vec3 lightDir, vec3 lightToFrag, float innerAngle, float outerAngle) {
-    // Calculate cosine of angle between light direction and direction to fragment
-    float cosTheta = dot(normalize(lightDir), normalize(lightToFrag));
-    
-    // Cone angles are stored as full cone aperture, so we need half-angles for comparison
-    float halfInner = innerAngle * 0.5;
-    float halfOuter = outerAngle * 0.5;
-    
-    // Pre-calculate cosines of cone half-angles for comparison
-    float cosOuter = cos(halfOuter);
-    float cosInner = cos(halfInner);
-    
-    // If outside outer cone, no light
-    // Note: cosine decreases as angle increases, so we check if cosTheta < cosOuter
-    if (cosTheta < cosOuter) {
-        return 0.0;
-    }
-    
-    // If inside inner cone, full intensity
-    if (cosTheta >= cosInner) {
-        return 1.0;
-    }
-    
-    // Smooth falloff between inner and outer cone
-    // Map from [cosOuter, cosInner] to [0, 1]
-    float falloff = (cosTheta - cosOuter) / (cosInner - cosOuter);
-    return smoothstep(0.0, 1.0, falloff);
-}
-
 vec3 sampleEnvironmentReflection(vec3 direction) {
     vec3 dir = normalize(direction);
     vec2 uv;
@@ -167,60 +124,137 @@ vec3 sampleEnvironmentReflection(vec3 direction) {
     return texture(environmentMap, uv).rgb;
 }
 
-float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
-    if (lighting.dirShadowParams.w < 0.5) {
+// Point/spot shadow from one perspective tile, compared in linear depth so the bias is in metres.
+float localShadow(int tile, vec3 lightPos, vec4 params) {
+    const float TILE = 512.0;
+    const float nearPlane = 0.05;  // kLocalShadowNear in engine/Gfx/EngineFrameRenderer.cpp
+    float farPlane = params.z;
+    vec3 geometricNormal = normalize(fragNormal);
+    vec3 toLight = lightPos - fragWorldPos;
+    float dist = length(toLight);
+    float NdotL = clamp(dot(geometricNormal, toLight / max(dist, 1e-4)), 0.0, 1.0);
+    float texelWorld = 2.0 * dist * params.w / TILE;
+    vec3 shadowPos = fragWorldPos + geometricNormal * texelWorld * (0.5 + 1.5 * (1.0 - NdotL));
+    vec4 clip = lighting.localShadowViewProj[tile] * vec4(shadowPos, 1.0);
+    if (clip.w <= nearPlane) {
         return 1.0;
     }
+    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+        return 1.0;
+    }
+    vec2 tileOrigin = vec2(float(tile % 8), float(tile / 8));
+    float receiver = clip.w - texelWorld * 1.5;
+    float lit = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            vec2 local = clamp(uv + vec2(x, y) / TILE, vec2(0.5 / TILE), vec2(1.0 - 0.5 / TILE));
+            float depth = texture(localShadowAtlas, (tileOrigin + local) / vec2(8.0, 4.0)).r;
+            float blocker = nearPlane * farPlane / (farPlane - depth * (farPlane - nearPlane));
+            lit += receiver > blocker ? 0.0 : 1.0;
+        }
+    }
+    return mix(1.0, lit / 9.0, params.y);
+}
 
-    // Compute view-space depth of this fragment for cascade selection
-    // Engine LookAt maps forward to +Z, so view-space Z is positive for objects in front
-    float viewDepth = (ubo.view * vec4(fragWorldPos, 1.0)).z;
-    
-    // Select cascade based on view depth vs split distances
-    int cascade = 0;
-    if      (viewDepth < lighting.cascadeSplits.x) cascade = 0;
-    else if (viewDepth < lighting.cascadeSplits.y) cascade = 1;
-    else if (viewDepth < lighting.cascadeSplits.z) cascade = 2;
-    else                                           cascade = 3;
-    
-    // Transform world position by this cascade's VP matrix
-    vec4 cascadeLightSpace = lighting.cascadeViewProj[cascade] * vec4(fragWorldPos, 1.0);
+#ifdef RAY_TRACED_SHADOWS
+bool rayOccluded(vec3 origin, vec3 dir, float maxDistance) {
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, sceneStructure, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0xFF,
+                          origin, 0.0, dir, maxDistance);
+    while (rayQueryProceedEXT(query)) {}
+    return rayQueryGetIntersectionTypeEXT(query, true) != gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+vec3 rayOrigin() {
+    return fragWorldPos + normalize(fragNormal) * 0.01;
+}
+
+// Fraction of the sun's disc hidden from this fragment, from 8 rays spread over its angular size.
+float tracedSunOcclusion(vec3 toSun) {
+    float tanHalfSun = lighting.shadowBiasWorld.z;
+    vec3 origin = rayOrigin();
+    if (tanHalfSun <= 0.0) {
+        return rayOccluded(origin, toSun, 10000.0) ? 1.0 : 0.0;
+    }
+    const int RAYS = 8;
+    vec3 tangent = normalize(cross(abs(toSun.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), toSun));
+    vec3 bitangent = cross(toSun, tangent);
+    float rotation = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+    float hidden = 0.0;
+    for (int i = 0; i < RAYS; ++i) {
+        float radius = sqrt((float(i) + 0.5) / float(RAYS)) * tanHalfSun;
+        float angle = rotation + float(i) * 2.39996323;  // golden angle spiral over the disc
+        vec3 dir = normalize(toSun + (tangent * cos(angle) + bitangent * sin(angle)) * radius);
+        hidden += rayOccluded(origin, dir, 10000.0) ? 1.0 : 0.0;
+    }
+    return hidden / float(RAYS);
+}
+
+float tracedLocalShadow(vec3 lightPos, float strength) {
+    vec3 origin = rayOrigin();
+    vec3 toLight = lightPos - origin;
+    float dist = length(toLight);
+    bool hidden = dist > 0.02 && rayOccluded(origin, toLight / dist, dist - 0.01);
+    return hidden ? 1.0 - strength : 1.0;
+}
+#endif
+
+float pointShadow(int light, vec3 lightPos) {
+    vec4 params = lighting.pointShadowParams[light];
+#ifdef RAY_TRACED_SHADOWS
+    if (params.x < -1.5) {
+        return tracedLocalShadow(lightPos, params.y);
+    }
+#endif
+    if (params.x < 0.0) {
+        return 1.0;
+    }
+    vec3 d = fragWorldPos - lightPos;
+    vec3 a = abs(d);
+    int face = a.x >= a.y && a.x >= a.z ? (d.x >= 0.0 ? 0 : 1)
+             : a.y >= a.z ? (d.y >= 0.0 ? 2 : 3)
+             : (d.z >= 0.0 ? 4 : 5);
+    return localShadow(int(params.x) + face, lightPos, params);
+}
+
+float spotShadow(int light, vec3 lightPos) {
+    vec4 params = lighting.spotShadowParams[light];
+#ifdef RAY_TRACED_SHADOWS
+    if (params.x < -1.5) {
+        return tracedLocalShadow(lightPos, params.y);
+    }
+#endif
+    return params.x < 0.0 ? 1.0 : localShadow(int(params.x), lightPos, params);
+}
+
+// Fraction of the 16 Poisson taps in shadow for one cascade.
+float cascadeOcclusion(int cascade, vec3 lightDir) {
+    // Biases are sized from this cascade's texel footprint, so they stay a few centimetres near the camera
+    // instead of a fixed fraction of the cascade's whole depth range (which leaked light at contact points).
+    vec3 geometricNormal = normalize(fragNormal);
+    float NdotL = clamp(dot(geometricNormal, lightDir), 0.0, 1.0);
+    float texelWorld = lighting.cascadeTexelWorld[cascade];
+    float normalOffset = texelWorld * (0.5 + 1.5 * (1.0 - NdotL)) + lighting.shadowBiasWorld.y;
+    vec3 shadowPos = fragWorldPos + geometricNormal * normalOffset;
+    float bias = (texelWorld + lighting.shadowBiasWorld.x) / lighting.cascadeDepthRange[cascade];
+
+    vec4 cascadeLightSpace = lighting.cascadeViewProj[cascade] * vec4(shadowPos, 1.0);
     vec3 projCoords = cascadeLightSpace.xyz / cascadeLightSpace.w;
-    
-    // Transform from NDC [-1,1] to texture coordinates [0,1]
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
-    
-    // Fragment is outside the shadow map frustum - no shadow
-    if (projCoords.z > 1.0 || projCoords.z < 0.0) {
-        return 1.0;
+    if (projCoords.z > 1.0 || projCoords.z < 0.0 ||
+        any(lessThan(projCoords.xy, vec2(0.0))) || any(greaterThan(projCoords.xy, vec2(1.0)))) {
+        return 0.0;
     }
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 || 
-        projCoords.y < 0.0 || projCoords.y > 1.0) {
-        return 1.0;
-    }
-    
-    // Map UV to the correct 2x2 atlas quadrant
-    // Cascade 0: top-left, 1: top-right, 2: bottom-left, 3: bottom-right
-    vec2 atlasOffset;
-    if      (cascade == 0) atlasOffset = vec2(0.0, 0.0);
-    else if (cascade == 1) atlasOffset = vec2(0.5, 0.0);
-    else if (cascade == 2) atlasOffset = vec2(0.0, 0.5);
-    else                   atlasOffset = vec2(0.5, 0.5);
-    
+
+    // Cascade 0: top-left, 1: top-right, 2: bottom-left, 3: bottom-right of the 2x2 atlas
+    vec2 atlasOffset = vec2(float(cascade % 2), float(cascade / 2)) * 0.5;
     vec2 atlasUV = projCoords.xy * 0.5 + atlasOffset;
-
-    // Calculate slope-scaled bias — scale with cascade index for stability
-    float baseBias = lighting.dirShadowParams.x;
-    float NdotL = max(dot(normal, lightDir), 0.0);
-    float slopeBias = baseBias * tan(acos(clamp(NdotL, 0.001, 1.0)));
-    slopeBias = clamp(slopeBias, 0.0, baseBias * 5.0);
-    float cascadeBiasScale = 1.0 + float(cascade) * 0.75;
-    float bias = (baseBias + slopeBias) * cascadeBiasScale;
-    
-    // Texel size in full-atlas UV space (1 / full resolution)
     float texelSize = lighting.dirShadowParams.z;
+    // Keep filter taps inside this cascade's quadrant so they never read a neighbouring cascade.
+    vec2 quadrantMin = atlasOffset + vec2(0.5 * texelSize);
+    vec2 quadrantMax = atlasOffset + vec2(0.5 - 0.5 * texelSize);
 
-    // 16-sample Poisson disk for smooth soft shadows
     const vec2 poissonDisk[16] = vec2[](
         vec2(-0.9420, -0.3990), vec2( 0.9456, -0.7689),
         vec2(-0.0942, -0.9293), vec2( 0.3448,  0.2930),
@@ -234,27 +268,71 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
 
     // Per-fragment rotation angle from world position to break up banding
     float rotAngle = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
-    float cosA = cos(rotAngle);
-    float sinA = sin(rotAngle);
+    mat2 rotation = mat2(cos(rotAngle), sin(rotAngle), -sin(rotAngle), cos(rotAngle));
 
-    // Spread radius in atlas texels — wider for far cascades
-    float spreadTexels = 2.5 + float(cascade) * 1.0;
+    // Soft shadows (PCSS): the penumbra grows with the distance from the blocker to the receiver
+    // times the sun's angular size, so contact shadows stay sharp and long shadows soften.
+    const float MAX_TEXELS = 24.0;
+    const float BLOCKER_SEARCH_METRES = 4.0;  // occluders further than this from the receiver soften no more
+    float depthRange = lighting.cascadeDepthRange[cascade];
+    float tanHalfSun = lighting.shadowBiasWorld.z;
+    float receiver = projCoords.z - bias;
+    float searchTexels = clamp(tanHalfSun * BLOCKER_SEARCH_METRES / texelWorld, 1.5, MAX_TEXELS);
+    float blockerSum = 0.0;
+    float blockers = 0.0;
+    for (int i = 0; i < 16; i++) {
+        vec2 sampleCoord = clamp(atlasUV + rotation * poissonDisk[i] * searchTexels * texelSize, quadrantMin, quadrantMax);
+        float depth = texture(shadowMap, sampleCoord).r;
+        if (depth < receiver) {
+            blockerSum += depth;
+            blockers += 1.0;
+        }
+    }
+    if (blockers == 0.0) {
+        return 0.0;
+    }
+    float blockerDistance = (receiver - blockerSum / blockers) * depthRange;
+    float filterTexels = clamp(blockerDistance * tanHalfSun / texelWorld, 1.5, MAX_TEXELS);
 
     float shadow = 0.0;
     for (int i = 0; i < 16; i++) {
-        // Rotate sample around origin
-        vec2 offset = vec2(
-            poissonDisk[i].x * cosA - poissonDisk[i].y * sinA,
-            poissonDisk[i].x * sinA + poissonDisk[i].y * cosA
-        );
-        vec2 sampleCoord = atlasUV + offset * spreadTexels * texelSize;
+        vec2 sampleCoord = clamp(atlasUV + rotation * poissonDisk[i] * filterTexels * texelSize, quadrantMin, quadrantMax);
         float closestDepth = texture(shadowMap, sampleCoord).r;
-        shadow += (projCoords.z - bias > closestDepth) ? 1.0 : 0.0;
+        shadow += receiver > closestDepth ? 1.0 : 0.0;
     }
-    shadow /= 16.0;
+    return shadow / 16.0;
+}
 
-    float strength = lighting.dirShadowParams.y;
-    return 1.0 - shadow * strength;
+float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
+    if (lighting.dirShadowParams.w < 0.5) {
+        return 1.0;
+    }
+#ifdef RAY_TRACED_SHADOWS
+    if (lighting.shadowBiasWorld.w > 0.5) {
+        return 1.0 - tracedSunOcclusion(lightDir) * lighting.dirShadowParams.y;
+    }
+#endif
+
+    // Engine LookAt maps forward to +Z, so view-space Z is positive for objects in front
+    float viewDepth = (ubo.view * vec4(fragWorldPos, 1.0)).z;
+    vec4 splits = lighting.cascadeSplits;
+    if (viewDepth >= splits.w) {
+        return 1.0;
+    }
+    int cascade = viewDepth < splits.x ? 0 : viewDepth < splits.y ? 1 : viewDepth < splits.z ? 2 : 3;
+
+    // The last 10% of each cascade cross-fades into the next one, and the last 10% of the final
+    // cascade fades the shadow out, so neither the cascade seams nor the shadow distance show as a line.
+    float cascadeStart = cascade == 0 ? 0.0 : splits[cascade - 1];
+    float band = 0.1 * (splits[cascade] - cascadeStart);
+    float t = clamp((viewDepth - (splits[cascade] - band)) / max(band, 1e-4), 0.0, 1.0);
+    float occlusion = cascadeOcclusion(cascade, lightDir);
+    if (t > 0.0) {
+        occlusion = cascade < 3 ? mix(occlusion, cascadeOcclusion(cascade + 1, lightDir), t)
+                                : occlusion * (1.0 - t);
+    }
+
+    return 1.0 - occlusion * lighting.dirShadowParams.y;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -306,11 +384,9 @@ void main() {
         discard;
     }
 
-    // Unlit viewport mode: albedo (+ emissive), skip lighting / tonemap path mirrors lit gamma
+    // Unlit viewport mode: albedo (+ emissive), skip lighting
     if (ubo.shadingMode > 0.5) {
         vec3 unlit = albedo + material.emissive * material.emissiveStrength;
-        unlit = unlit / (unlit + vec3(1.0));
-        unlit = pow(unlit, vec3(1.0 / 2.2));
         outColor = vec4(unlit, opacity);
         return;
     }
@@ -409,7 +485,7 @@ void main() {
         vec3 H = normalize(V + L);
         
         float atten = calculateAttenuation(distance, attenuation);
-        vec3 radiance = lightColor * intensity * atten;
+        vec3 radiance = lightColor * intensity * atten * pointShadow(i, lightPos);
         
         // Cook-Torrance BRDF
         float NDF = DistributionGGX(N, H, roughness);
@@ -455,7 +531,7 @@ void main() {
         vec3 H = normalize(V + L);
         
         float atten = calculateAttenuation(distance, attenuation);
-        vec3 radiance = lightColor * intensity * atten * spotFalloff;
+        vec3 radiance = lightColor * intensity * atten * spotFalloff * spotShadow(i, lightPos);
         
         // Cook-Torrance BRDF
         float NDF = DistributionGGX(N, H, roughness);
@@ -476,6 +552,22 @@ void main() {
     
     // ── Ambient Lighting ─────────────────────────────────────
     vec3 ambient = lighting.ambientColorIntensity.rgb * lighting.ambientColorIntensity.w * albedo * ao;
+    if (lighting.environmentReflectionParams.z > 0.5) {
+        vec3 irradiance = evaluateSkyIrradiance(N) * lighting.environmentReflectionParams.w;
+        ambient = irradiance / PI * albedo * (1.0 - metallic) * ao;
+    }
+    if (gi.probeCounts.w == 1) {
+        // Fade from the probes to the sky/flat ambient over one probe spacing outside the volume.
+        vec3 halfExtent = 0.5 * gi.probeSpacing.xyz * vec3(gi.probeCounts.xyz - 1);
+        vec3 center = gi.firstProbe.xyz + halfExtent;
+        float spacing = max(max(gi.probeSpacing.x, gi.probeSpacing.y), max(gi.probeSpacing.z, 0.5));
+        vec3 outside = max(abs(fragWorldPos - center) - halfExtent, vec3(0.0));
+        float weight = clamp(1.0 - length(outside) / spacing, 0.0, 1.0);
+        if (weight > 0.0) {
+            vec3 probeLight = sampleProbeIrradiance(fragWorldPos, N, V) * gi.firstProbe.w;
+            ambient = mix(ambient, probeLight * albedo * (1.0 - metallic) * ao, weight);
+        }
+    }
     vec3 color = ambient + Lo;
 
     // ── Environment Reflections ──────────────────────────────
@@ -494,12 +586,6 @@ void main() {
     
     // Add emissive
     color += material.emissive * material.emissiveStrength;
-    
-    // HDR tonemapping (Reinhard)
-    color = color / (color + vec3(1.0));
-    
-    // Gamma correction
-    color = pow(color, vec3(1.0 / 2.2));
-    
+
     outColor = vec4(color, opacity);
 }

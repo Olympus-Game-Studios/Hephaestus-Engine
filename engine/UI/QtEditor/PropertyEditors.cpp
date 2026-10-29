@@ -71,7 +71,9 @@ bool TryReadSpin(const QDoubleSpinBox* spin, double& out)
 void SetCheckFromMixed(QCheckBox* box, const MixedBool& mixed)
 {
     if (!box) return;
-    box->setTristate(true);
+    // Tristate only for a mixed selection: otherwise a click on Unchecked cycles to PartiallyChecked,
+    // which TryReadCheck ignores, and the box can never be turned back on.
+    box->setTristate(!mixed.present || mixed.mixed);
     if (!mixed.present || mixed.mixed) {
         box->setCheckState(Qt::PartiallyChecked);
         return;

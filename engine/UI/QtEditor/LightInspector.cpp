@@ -67,6 +67,9 @@ void LightInspector::buildUI()
     auto* shadowLayout = new QVBoxLayout(m_shadowGroup);
     m_castShadows = new BoolPropertyEditor(tr("Cast Shadows"), m_shadowGroup);
     m_shadowAutoFit = new BoolPropertyEditor(tr("Auto-Fit"), m_shadowGroup);
+    m_rayTracedShadows = new BoolPropertyEditor(tr("Ray-Traced Shadows"), m_shadowGroup);
+    m_rayTracedShadows->setToolTip(tr("Trace this light's shadow on GPUs with hardware ray tracing. Other GPUs use "
+                                      "shadow maps. Animated characters do not cast ray-traced shadows."));
     m_shadowBias = new NumericPropertyEditor(tr("Bias"), m_shadowGroup);
     m_shadowBias->setRange(0.0, 0.1);
     m_shadowBias->setDecimals(4);
@@ -80,6 +83,12 @@ void LightInspector::buildUI()
     m_shadowStrength->setDecimals(3);
     m_shadowStrength->setSingleStep(0.05);
     m_shadowStrength->setSliderEnabled(true);
+    m_sunSize = new NumericPropertyEditor(tr("Sun Size"), m_shadowGroup);
+    m_sunSize->setSuffix(QString::fromUtf8("\xC2\xB0"));
+    m_sunSize->setToolTip(tr("Apparent size of the sun. Larger suns give softer shadows further from the object casting them."));
+    m_sunSize->setRange(0.0, 10.0);
+    m_sunSize->setDecimals(2);
+    m_sunSize->setSingleStep(0.1);
     m_shadowMaxDistance = new NumericPropertyEditor(tr("Max Distance"), m_shadowGroup);
     m_shadowMaxDistance->setRange(50.0, 100000.0);
     m_shadowMaxDistance->setDecimals(0);
@@ -93,10 +102,12 @@ void LightInspector::buildUI()
     m_shadowExtent->setDecimals(0);
     m_shadowExtent->setSingleStep(50.0);
     shadowLayout->addWidget(m_castShadows);
+    shadowLayout->addWidget(m_rayTracedShadows);
     shadowLayout->addWidget(m_shadowAutoFit);
     shadowLayout->addWidget(m_shadowBias);
     shadowLayout->addWidget(m_shadowNormalBias);
     shadowLayout->addWidget(m_shadowStrength);
+    shadowLayout->addWidget(m_sunSize);
     shadowLayout->addWidget(m_shadowMaxDistance);
     shadowLayout->addWidget(m_shadowDistance);
     shadowLayout->addWidget(m_shadowExtent);
@@ -157,6 +168,11 @@ void LightInspector::connectSignals()
         EndEdit();
         m_shadowBias->setEnabled(v);
     });
+    connect(m_rayTracedShadows, &BoolPropertyEditor::valueEdited, this, [this](bool v) {
+        BeginEdit("Edit light");
+        ForEachTarget<LightComponent>([&](LightComponent& lc, entt::entity) { lc.rayTracedShadows = v; });
+        EndEdit();
+    });
     connect(m_shadowAutoFit, &BoolPropertyEditor::valueEdited, this, [this](bool v) {
         BeginEdit("Edit light");
         ForEachTarget<LightComponent>([&](LightComponent& lc, entt::entity) { lc.shadowAutoFit = v; });
@@ -177,6 +193,7 @@ void LightInspector::connectSignals()
     writeFloat(m_shadowBias, &LightComponent::shadowBias);
     writeFloat(m_shadowNormalBias, &LightComponent::shadowNormalBias);
     writeFloat(m_shadowStrength, &LightComponent::shadowStrength);
+    writeFloat(m_sunSize, &LightComponent::sunAngularDiameter);
     writeFloat(m_shadowMaxDistance, &LightComponent::shadowMaxDistance);
     writeFloat(m_shadowDistance, &LightComponent::shadowDistance);
     writeFloat(m_shadowExtent, &LightComponent::shadowExtent);
@@ -192,14 +209,15 @@ void LightInspector::connectSignals()
 void LightInspector::Refresh()
 {
     EndEdit();
-    MixedBool enabled, shadows, autoFit;
-    MixedScalar intensity, range, inner, outer, bias, nBias, strength, dist, extent, maxDist;
+    MixedBool enabled, shadows, autoFit, rayTraced;
+    MixedScalar intensity, range, inner, outer, bias, nBias, strength, sunSize, dist, extent, maxDist;
     MixedScalar typeMix;
     MixedVec3Axes colorMix;
     VisitTargets<LightComponent>([&](LightComponent& lc, entt::entity) {
         AccumulateBool(enabled, lc.enabled);
         AccumulateBool(shadows, lc.castShadows);
         AccumulateBool(autoFit, lc.shadowAutoFit);
+        AccumulateBool(rayTraced, lc.rayTracedShadows);
         AccumulateScalar(intensity, lc.intensity);
         AccumulateScalar(range, lc.range);
         AccumulateScalar(inner, lc.innerConeAngle * 57.2957795);
@@ -207,6 +225,7 @@ void LightInspector::Refresh()
         AccumulateScalar(bias, lc.shadowBias);
         AccumulateScalar(nBias, lc.shadowNormalBias);
         AccumulateScalar(strength, lc.shadowStrength);
+        AccumulateScalar(sunSize, lc.sunAngularDiameter);
         AccumulateScalar(dist, lc.shadowDistance);
         AccumulateScalar(extent, lc.shadowExtent);
         AccumulateScalar(maxDist, lc.shadowMaxDistance);
@@ -228,9 +247,11 @@ void LightInspector::Refresh()
     m_outerCone->setFromMixed(outer);
     m_castShadows->setFromMixed(shadows);
     m_shadowAutoFit->setFromMixed(autoFit);
+    m_rayTracedShadows->setFromMixed(rayTraced);
     m_shadowBias->setFromMixed(bias);
     m_shadowNormalBias->setFromMixed(nBias);
     m_shadowStrength->setFromMixed(strength);
+    m_sunSize->setFromMixed(sunSize);
     m_shadowDistance->setFromMixed(dist);
     m_shadowExtent->setFromMixed(extent);
     m_shadowMaxDistance->setFromMixed(maxDist);
@@ -248,9 +269,11 @@ void LightInspector::updateTypeVisibility()
     const LightType type = hasType ? static_cast<LightType>(data) : LightType::Point;
     const bool pointOrSpot = !hasType || type == LightType::Point || type == LightType::Spot;
     const bool spot = !hasType || type == LightType::Spot;
+    const bool directional = !hasType || type == LightType::Directional;
     m_range->setVisible(pointOrSpot);
     m_innerCone->setVisible(spot);
     m_outerCone->setVisible(spot);
+    m_sunSize->setVisible(directional);
 }
 
 } // namespace QtEditor
