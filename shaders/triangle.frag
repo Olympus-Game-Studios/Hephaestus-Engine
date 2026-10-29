@@ -2,6 +2,8 @@
 #extension GL_GOOGLE_include_directive : require
 #ifdef RAY_TRACED_SHADOWS
 #extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
 #endif
 
 #define MAX_TEXTURE_SLOTS 128
@@ -63,14 +65,26 @@ layout(set = 0, binding = 5) uniform sampler2D environmentMap;
 #include "lighting_common.glsl"
 #define GI_SET 2
 #include "probe_common.glsl"
+#define CASCADE_SET 2
+#define CASCADE_SAMPLING
+#include "cascade_common.glsl"
+#include "probe_shading.glsl"
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
 layout(set = 0, binding = 6) uniform sampler2D localShadowAtlas;  // 8 x 4 tiles of 512 (EngineFrameRenderer::kLocalShadowTile)
+layout(set = 0, binding = 7) uniform sampler2D previousFrame;  // rgb = last frame's HDR result, a = its depth
 #ifdef RAY_TRACED_SHADOWS
 layout(set = GI_SET, binding = 11) uniform accelerationStructureEXT sceneStructure;  // engine/Gfx/ProbeGI.cpp kScene
+struct TraceInstance {
+    vec4 albedo;
+    vec4 emissive;
+    uvec2 vertices;  // address of Vertex[] (engine/Gfx/Vertex.h, 11 floats each)
+    uvec2 indices;   // address of uint[]
+};
+layout(std430, set = GI_SET, binding = 20) readonly buffer SceneInstances { TraceInstance sceneInstances[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer VertexFloats { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer IndexWords { uint i[]; };
 #endif
-
-const float PI = 3.14159265359;
 
 // ═══════════════════════════════════════════════════════════════
 // PBR FUNCTIONS
@@ -124,6 +138,43 @@ vec3 sampleEnvironmentReflection(vec3 direction) {
     return texture(environmentMap, uv).rgb;
 }
 
+// Screen-space reflection for GPUs without ray tracing: march along dir through last frame's depth (projected
+// with last frame's camera) and return its colour where the ray passes just behind a surface. a = confidence,
+// fading towards the screen edges and the end of the march; 0 where nothing on screen was hit.
+vec4 screenSpaceReflection(vec3 origin, vec3 dir) {
+    const int STEPS = 48;
+    float nearPlane = lighting.ssrParams.y;
+    // A per-pixel start offset that changes every frame turns step banding into noise the temporal pass removes.
+    float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453 +
+                         lighting.rayReflectionParams.w * 0.6180339887);
+    float stepLength = 0.08;
+    vec3 p = origin + dir * stepLength * jitter;
+    for (int i = 0; i < STEPS; ++i) {
+        vec3 previous = p;
+        p += dir * stepLength;
+        stepLength *= 1.08;
+        vec4 clip = lighting.previousViewProj * vec4(p, 1.0);
+        if (clip.w <= nearPlane) return vec4(0.0);
+        vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec4(0.0);
+        float sceneDepth = textureLod(previousFrame, uv, 0.0).a;  // linear depth (shaders/temporal_resolve.comp)
+        float behind = clip.w - sceneDepth;
+        if (behind > 0.0 && behind < max(0.25, stepLength * 2.0)) {
+            // Bisect between the last point in front and this one for a sharper contact.
+            for (int r = 0; r < 4; ++r) {
+                vec3 mid = 0.5 * (previous + p);
+                vec4 midClip = lighting.previousViewProj * vec4(mid, 1.0);
+                vec2 midUV = midClip.xy / midClip.w * 0.5 + 0.5;
+                float midScene = textureLod(previousFrame, midUV, 0.0).a;
+                if (midClip.w > midScene) { p = mid; uv = midUV; } else { previous = mid; }
+            }
+            vec2 edge = smoothstep(vec2(0.0), vec2(0.1), uv) * smoothstep(vec2(0.0), vec2(0.1), 1.0 - uv);
+            return vec4(textureLod(previousFrame, uv, 0.0).rgb, edge.x * edge.y * (1.0 - float(i) / float(STEPS)));
+        }
+    }
+    return vec4(0.0);
+}
+
 // Point/spot shadow from one perspective tile, compared in linear depth so the bias is in metres.
 float localShadow(int tile, vec3 lightPos, vec4 params) {
     const float TILE = 512.0;
@@ -170,6 +221,60 @@ vec3 rayOrigin() {
     return fragWorldPos + normalize(fragNormal) * 0.01;
 }
 
+vec3 hitVertex(VertexFloats vertices, uint index) {
+    uint base = index * 11u;
+    return vec3(vertices.v[base], vertices.v[base + 1u], vertices.v[base + 2u]);
+}
+
+// Radiance arriving along dir: what the ray hits, lit by the sun (traced shadow), point and spot lights
+// (unshadowed) and the probe grids' indirect light, or the sky when it hits nothing. Textures at the hit are not
+// sampled; each instance carries its first material's colour.
+vec3 tracedReflection(vec3 origin, vec3 dir) {
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, sceneStructure, gl_RayFlagsOpaqueEXT, 0xFF, origin, 0.0, dir, 10000.0);
+    while (rayQueryProceedEXT(query)) {}
+    if (rayQueryGetIntersectionTypeEXT(query, true) != gl_RayQueryCommittedIntersectionTriangleEXT) {
+        return lighting.environmentReflectionParams.y > 0.5
+            ? sampleEnvironmentReflection(dir) * lighting.environmentReflectionParams.x
+            : skyRadiance(dir);
+    }
+    TraceInstance inst = sceneInstances[rayQueryGetIntersectionInstanceCustomIndexEXT(query, true)];
+    uint primitive = uint(rayQueryGetIntersectionPrimitiveIndexEXT(query, true));
+    IndexWords indices = IndexWords(inst.indices);
+    VertexFloats vertices = VertexFloats(inst.vertices);
+    vec3 a = hitVertex(vertices, indices.i[primitive * 3u]);
+    vec3 b = hitVertex(vertices, indices.i[primitive * 3u + 1u]);
+    vec3 c = hitVertex(vertices, indices.i[primitive * 3u + 2u]);
+    mat3 objectToWorld = mat3(rayQueryGetIntersectionObjectToWorldEXT(query, true));
+    vec3 n = normalize(transpose(inverse(objectToWorld)) * cross(b - a, c - a));
+    if (dot(n, dir) > 0.0) n = -n;
+    vec3 hitPos = origin + dir * rayQueryGetIntersectionTEXT(query, true);
+
+    float sun = 1.0;
+    if (lighting.dirLightDirIntensity.w > 0.0) {
+        vec3 toSun = normalize(-lighting.dirLightDirIntensity.xyz);
+        bool shadowed = lighting.dirShadowParams.w > 0.5 && rayOccluded(hitPos + n * 0.01, toSun, 10000.0);
+        sun = dot(n, toSun) > 0.0 && !shadowed ? 1.0 : 0.0;
+    }
+    vec3 indirect = skyIrradiance(n);
+    if (cascades.counts.w > 0) {
+        vec4 probes = sampleCascades(hitPos, n, -dir);
+        indirect = mix(indirect, probes.rgb * PI, probes.w);
+    }
+    return inst.albedo.rgb / PI * (directIrradiance(hitPos, n, sun) + indirect) + inst.emissive.rgb;
+}
+
+// A GGX half vector around N for a rough reflection; xi in [0,1)^2 (Walter et al. 2007).
+vec3 sampleGGX(vec3 N, float roughness, vec2 xi) {
+    float alpha = roughness * roughness;
+    float phi = 2.0 * PI * xi.x;
+    float cosTheta = sqrt((1.0 - xi.y) / (1.0 + (alpha * alpha - 1.0) * xi.y));
+    float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+    vec3 tangent = normalize(cross(abs(N.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), N));
+    vec3 bitangent = cross(N, tangent);
+    return normalize(tangent * (sinTheta * cos(phi)) + bitangent * (sinTheta * sin(phi)) + N * cosTheta);
+}
+
 // Fraction of the sun's disc hidden from this fragment, from 8 rays spread over its angular size.
 float tracedSunOcclusion(vec3 toSun) {
     float tanHalfSun = lighting.shadowBiasWorld.z;
@@ -180,7 +285,8 @@ float tracedSunOcclusion(vec3 toSun) {
     const int RAYS = 8;
     vec3 tangent = normalize(cross(abs(toSun.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), toSun));
     vec3 bitangent = cross(toSun, tangent);
-    float rotation = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+    float rotation = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853 +
+                     lighting.rayReflectionParams.w * 2.39996323;
     float hidden = 0.0;
     for (int i = 0; i < RAYS; ++i) {
         float radius = sqrt((float(i) + 0.5) / float(RAYS)) * tanHalfSun;
@@ -266,8 +372,9 @@ float cascadeOcclusion(int cascade, vec3 lightDir) {
         vec2(-0.6168,  0.7338), vec2( 0.1120, -0.3690)
     );
 
-    // Per-fragment rotation angle from world position to break up banding
-    float rotAngle = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+    // Per-fragment rotation from world position, turned further each frame so the temporal pass averages it
+    float rotAngle = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853 +
+                     lighting.rayReflectionParams.w * 2.39996323;
     mat2 rotation = mat2(cos(rotAngle), sin(rotAngle), -sin(rotAngle), cos(rotAngle));
 
     // Soft shadows (PCSS): the penumbra grows with the distance from the blocker to the receiver
@@ -277,22 +384,26 @@ float cascadeOcclusion(int cascade, vec3 lightDir) {
     float depthRange = lighting.cascadeDepthRange[cascade];
     float tanHalfSun = lighting.shadowBiasWorld.z;
     float receiver = projCoords.z - bias;
-    float searchTexels = clamp(tanHalfSun * BLOCKER_SEARCH_METRES / texelWorld, 1.5, MAX_TEXELS);
-    float blockerSum = 0.0;
-    float blockers = 0.0;
-    for (int i = 0; i < 16; i++) {
-        vec2 sampleCoord = clamp(atlasUV + rotation * poissonDisk[i] * searchTexels * texelSize, quadrantMin, quadrantMax);
-        float depth = texture(shadowMap, sampleCoord).r;
-        if (depth < receiver) {
-            blockerSum += depth;
-            blockers += 1.0;
+    // A zero sun size (or the Low tier) skips the blocker search and keeps a fixed narrow filter.
+    float filterTexels = 1.5;
+    if (tanHalfSun > 0.0) {
+        float searchTexels = clamp(tanHalfSun * BLOCKER_SEARCH_METRES / texelWorld, 1.5, MAX_TEXELS);
+        float blockerSum = 0.0;
+        float blockers = 0.0;
+        for (int i = 0; i < 16; i++) {
+            vec2 sampleCoord = clamp(atlasUV + rotation * poissonDisk[i] * searchTexels * texelSize, quadrantMin, quadrantMax);
+            float depth = texture(shadowMap, sampleCoord).r;
+            if (depth < receiver) {
+                blockerSum += depth;
+                blockers += 1.0;
+            }
         }
+        if (blockers == 0.0) {
+            return 0.0;
+        }
+        float blockerDistance = (receiver - blockerSum / blockers) * depthRange;
+        filterTexels = clamp(blockerDistance * tanHalfSun / texelWorld, 1.5, MAX_TEXELS);
     }
-    if (blockers == 0.0) {
-        return 0.0;
-    }
-    float blockerDistance = (receiver - blockerSum / blockers) * depthRange;
-    float filterTexels = clamp(blockerDistance * tanHalfSun / texelWorld, 1.5, MAX_TEXELS);
 
     float shadow = 0.0;
     for (int i = 0; i < 16; i++) {
@@ -556,8 +667,13 @@ void main() {
         vec3 irradiance = evaluateSkyIrradiance(N) * lighting.environmentReflectionParams.w;
         ambient = irradiance / PI * albedo * (1.0 - metallic) * ao;
     }
+    if (cascades.counts.w > 0) {
+        // Camera-following probe grids replace the sky light wherever they cover the surface.
+        vec4 cascadeLight = sampleCascades(fragWorldPos, N, V);
+        ambient = mix(ambient, cascadeLight.rgb * albedo * (1.0 - metallic) * ao, cascadeLight.w);
+    }
     if (gi.probeCounts.w == 1) {
-        // Fade from the probes to the sky/flat ambient over one probe spacing outside the volume.
+        // A placed volume overrides the grids inside it, fading out over one probe spacing outside it.
         vec3 halfExtent = 0.5 * gi.probeSpacing.xyz * vec3(gi.probeCounts.xyz - 1);
         vec3 center = gi.firstProbe.xyz + halfExtent;
         float spacing = max(max(gi.probeSpacing.x, gi.probeSpacing.y), max(gi.probeSpacing.z, 0.5));
@@ -570,9 +686,57 @@ void main() {
     }
     vec3 color = ambient + Lo;
 
-    // ── Environment Reflections ──────────────────────────────
-    // Basic IBL foundation: reflect the active HDRI only. Nearby objects are not reflected yet.
-    if (lighting.environmentReflectionParams.y > 0.5 && material.reflectionStrength > 0.0) {
+    // ── Reflections ──────────────────────────────────────────
+    // High and Ultra trace a reflection ray on smooth enough surfaces (mirror on High, glossy too on Ultra);
+    // anything rougher, and every surface below High, reflects the HDRI as before.
+    bool traced = false;
+#ifdef RAY_TRACED_SHADOWS
+    float rayMode = lighting.rayReflectionParams.x;
+    float cutoff = rayMode > 1.5 ? lighting.rayReflectionParams.z : lighting.rayReflectionParams.y;
+    if (rayMode > 0.5 && material.reflectionStrength > 0.0 && roughness < cutoff) {
+        vec3 R = reflect(-V, N);
+        if (rayMode > 1.5 && roughness > 0.05) {
+            // One GGX sample per pixel, a new one each frame (R2 sequence); the temporal pass averages them.
+            vec2 xi = fract(sin(vec2(dot(fragWorldPos, vec3(12.9898, 78.233, 37.719)),
+                                     dot(fragWorldPos, vec3(39.346, 11.135, 83.155)))) * 43758.5453 +
+                            lighting.rayReflectionParams.w * vec2(0.7548776662, 0.5698402910));
+            R = reflect(-V, sampleGGX(N, roughness, xi));
+            if (dot(R, N) <= 0.0) R = reflect(-V, N);
+        }
+        vec3 reflected = tracedReflection(rayOrigin(), R);
+        float roughnessFactor = 1.0 - clamp(roughness, 0.0, 1.0);
+        roughnessFactor *= roughnessFactor;
+        vec3 reflectionFresnel = fresnelSchlick(max(dot(N, V), 0.0), F0);
+        color += reflected * reflectionFresnel * roughnessFactor * material.reflectionStrength * ao;
+        traced = true;
+    }
+#endif
+    if (!traced && cascades.counts.w > 0 && lighting.environmentReflectionParams.y < 0.5 &&
+        material.reflectionStrength > 0.0) {
+        // Too rough to trace and no HDRI: the probes' light from the reflection direction stands in for a
+        // blurred reflection, so rough metals are not black.
+        vec3 R = reflect(-V, N);
+        vec4 probes = sampleCascades(fragWorldPos, R, V);
+        vec3 reflected = mix(skyRadiance(R), probes.rgb, probes.w);
+        float roughnessFactor = 1.0 - clamp(roughness, 0.0, 1.0);
+        roughnessFactor *= roughnessFactor;
+        color += reflected * fresnelSchlick(max(dot(N, V), 0.0), F0) * roughnessFactor * material.reflectionStrength * ao;
+        traced = true;
+    }
+    if (!traced && lighting.ssrParams.x > 0.5 && material.reflectionStrength > 0.0 && roughness < 0.3) {
+        // No ray tracing: what is on screen, with the HDRI (when there is one) where the march finds nothing.
+        vec3 R = reflect(-V, N);
+        vec4 ssr = screenSpaceReflection(fragWorldPos + normalize(fragNormal) * 0.02, R);
+        vec3 fallback = lighting.environmentReflectionParams.y > 0.5
+            ? sampleEnvironmentReflection(R) * lighting.environmentReflectionParams.x
+            : vec3(0.0);
+        float roughnessFactor = 1.0 - clamp(roughness, 0.0, 1.0);
+        roughnessFactor *= roughnessFactor;
+        color += mix(fallback, ssr.rgb, ssr.a) * fresnelSchlick(max(dot(N, V), 0.0), F0) * roughnessFactor *
+                 material.reflectionStrength * ao;
+        traced = true;
+    }
+    if (!traced && lighting.environmentReflectionParams.y > 0.5 && material.reflectionStrength > 0.0) {
         vec3 R = reflect(-V, N);
         vec3 envReflection = sampleEnvironmentReflection(R);
         float roughnessFactor = 1.0 - clamp(roughness, 0.0, 1.0);

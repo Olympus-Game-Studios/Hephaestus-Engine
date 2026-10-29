@@ -405,7 +405,8 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
         << "\n\n[Display]\nwindow_width = " << request.window.width
         << "\nwindow_height = " << request.window.height << "\nfullscreen = "
         << (request.window.fullscreen ? "true" : "false") << "\nvsync = "
-        << (request.window.vsync ? "true" : "false") << "\n";
+        << (request.window.vsync ? "true" : "false") << "\n"
+        << "\n[Graphics]\nquality = " << request.renderQuality << "\n";
     if (request.enableRuntimeAutomation &&
         request.configuration == BuildConfiguration::Development) {
         ini << "\n[Automation]\nenabled = true\nport = 0\n";

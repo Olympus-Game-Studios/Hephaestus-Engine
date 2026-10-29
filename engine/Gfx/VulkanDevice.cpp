@@ -2,6 +2,7 @@
 #include "VulkanDevice.h"
 #include "vk_mem_alloc.h"
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <set>
@@ -299,6 +300,10 @@ void VulkanDevice::createLogicalDevice() {
       hasExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)) {
     vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
     m_rayQuery = vulkan12.bufferDeviceAddress && accelFeatures.accelerationStructure && rayQueryFeatures.rayQuery;
+  }
+  // Lets a ray-tracing GPU run the path every other GPU takes (testing the fallbacks).
+  if (const char* off = std::getenv("HEPHAESTUS_DISABLE_RAY_TRACING"); off && off[0] != '\0' && off[0] != '0') {
+    m_rayQuery = false;
   }
 
   VkPhysicalDeviceRayQueryFeaturesKHR enableRayQuery{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};

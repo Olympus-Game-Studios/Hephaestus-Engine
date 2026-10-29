@@ -22,7 +22,8 @@ struct VulkanSwapchain {
     VkSwapchainKHR swapchain{};
     std::vector<VkImage> images;
     std::vector<VkImageView> imageViews;
-    VkRenderPass renderPass{};
+    VkRenderPass renderPass{};  // loads HDR + depth, tone maps and draws overlays; pipelines are built against it
+    VkRenderPass scenePass{};   // same layout (compatible): clears and draws the scene, keeps HDR + depth
     std::vector<VkFramebuffer> framebuffers;
 
     // Depth resources

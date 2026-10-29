@@ -32,6 +32,7 @@
 #include "../Core/EngineLog.h"
 #include "../Core/Math.h"
 #include "../Input/InputSystem.h"
+#include "../Gfx/EngineFrameRenderer.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -1038,6 +1039,7 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterUtilityBindings();
     RegisterExposeBindings();
     RegisterApplicationBindings();
+    RegisterGraphicsBindings();
     RegisterCameraBindings();
     RegisterPhysicsBindings();
     RegisterCharacterBindings();
@@ -1202,6 +1204,69 @@ int LuaScriptEngine::Lua_Application_quit(lua_State* L) {
         }
     }
     return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+void LuaScriptEngine::RegisterGraphicsBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Graphics_getQuality);
+    lua_setfield(m_State, -2, "getQuality");
+    lua_pushcfunction(m_State, Lua_Graphics_setQuality);
+    lua_setfield(m_State, -2, "setQuality");
+    lua_pushcfunction(m_State, Lua_Graphics_isRayTracingAvailable);
+    lua_setfield(m_State, -2, "isRayTracingAvailable");
+    lua_setglobal(m_State, "Graphics");
+#endif
+}
+
+int LuaScriptEngine::Lua_Graphics_getQuality(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_FrameRenderer) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, Hephaestus::RenderQualityName(engine->m_FrameRenderer->GetRenderQuality()));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Graphics_setQuality(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const char* name = luaL_checkstring(L, 1);
+    const auto quality = Hephaestus::ParseRenderQuality(name);
+    if (!quality) {
+        return luaL_error(L, "Graphics.setQuality: unknown quality '%s' (use Low, Medium, High or Ultra)", name);
+    }
+    if (!engine || !engine->m_FrameRenderer) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    engine->m_FrameRenderer->SetRenderQuality(*quality);
+    if (engine->m_GraphicsQualityChangedCallback) {
+        engine->m_GraphicsQualityChangedCallback(Hephaestus::RenderQualityName(*quality));
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Graphics_isRayTracingAvailable(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushboolean(L, engine && engine->m_FrameRenderer && engine->m_FrameRenderer->RayTracingAvailable());
+    return 1;
 #else
     (void)L;
     return 0;

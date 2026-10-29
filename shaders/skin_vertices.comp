@@ -1,0 +1,43 @@
+#version 450
+
+// Poses a skinned mesh into the static vertex layout so the scene acceleration structure can hold it
+// (engine/Gfx/ProbeRayTracer.cpp). Same weighted bone sum as shaders/triangle_skinned.vert.
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Source { uint source[]; };  // SkinnedVertex, 17 words
+layout(std140, set = 0, binding = 1) uniform Bones { mat4 boneMats[128]; } bones;
+layout(std430, set = 0, binding = 2) writeonly buffer Posed { float posed[]; };   // Vertex, 11 floats
+
+layout(push_constant) uniform Push {
+    uint vertexCount;
+} pc;
+
+vec3 readVec3(uint word) {
+    return vec3(uintBitsToFloat(source[word]), uintBitsToFloat(source[word + 1u]), uintBitsToFloat(source[word + 2u]));
+}
+
+void main() {
+    uint v = gl_GlobalInvocationID.x;
+    if (v >= pc.vertexCount) return;
+    uint base = v * 17u;
+    vec3 position = readVec3(base);
+    vec3 normal = readVec3(base + 3u);
+    uvec4 joints = uvec4(source[base + 11u] & 0xFFFFu, source[base + 11u] >> 16u,
+                         source[base + 12u] & 0xFFFFu, source[base + 12u] >> 16u);
+    vec4 weights = vec4(uintBitsToFloat(source[base + 13u]), uintBitsToFloat(source[base + 14u]),
+                        uintBitsToFloat(source[base + 15u]), uintBitsToFloat(source[base + 16u]));
+    mat4 skin = weights.x * bones.boneMats[min(joints.x, 127u)] + weights.y * bones.boneMats[min(joints.y, 127u)] +
+                weights.z * bones.boneMats[min(joints.z, 127u)] + weights.w * bones.boneMats[min(joints.w, 127u)];
+    vec3 p = (skin * vec4(position, 1.0)).xyz;
+    vec3 n = normalize(mat3(skin) * normal);
+    uint out_ = v * 11u;
+    posed[out_] = p.x;
+    posed[out_ + 1u] = p.y;
+    posed[out_ + 2u] = p.z;
+    posed[out_ + 3u] = n.x;
+    posed[out_ + 4u] = n.y;
+    posed[out_ + 5u] = n.z;
+    for (uint i = 6u; i < 11u; ++i) {
+        posed[out_ + i] = uintBitsToFloat(source[base + i]);  // colour and texture coordinate unchanged
+    }
+}

@@ -1,0 +1,65 @@
+#version 450
+
+// Blends this frame's HDR scene into the reprojected history, clamped to the current 3x3 neighbourhood so moved
+// or newly visible surfaces do not drag old colour along. Stochastic terms (glossy reflections, ray-traced and
+// filtered soft shadows) change pattern every frame and average out here. engine/Gfx/TemporalResolve.cpp
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D currentColor;
+layout(set = 0, binding = 1) uniform sampler2D currentDepth;
+layout(set = 0, binding = 2) uniform sampler2D historyColor;
+layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D resolved;
+
+layout(push_constant) uniform Push {
+    mat4 currentToPrevious;  // previous view-projection * inverse(current view-projection)
+    vec4 params;             // x = weight of the current frame, y = 1 to discard history
+    vec4 cameraDepth;        // x = near, y = far, z = 1 for perspective, 0 for orthographic
+} pc;
+
+// Distance along the view axis in metres, from a [0, 1] depth-buffer value.
+float linearDepth(float d) {
+    float n = pc.cameraDepth.x, f = pc.cameraDepth.y;
+    return pc.cameraDepth.z > 0.5 ? n * f / (f - d * (f - n)) : n + d * (f - n);
+}
+
+void main() {
+    ivec2 size = textureSize(currentColor, 0);
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+
+    vec3 current = texelFetch(currentColor, pixel, 0).rgb;
+    // Alpha keeps this pixel's linear depth (half floats lose too much precision on raw depth): next frame's
+    // surfaces march screen-space reflections through it, and the next resolve rejects mismatched history.
+    float depth = texelFetch(currentDepth, pixel, 0).r;
+    float viewDepth = linearDepth(depth);
+    if (pc.params.y > 0.5) {
+        imageStore(resolved, pixel, vec4(current, viewDepth));
+        return;
+    }
+    vec3 lo = current, hi = current;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            vec3 c = texelFetch(currentColor, clamp(pixel + ivec2(x, y), ivec2(0), size - 1), 0).rgb;
+            lo = min(lo, c);
+            hi = max(hi, c);
+        }
+    }
+
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
+    vec4 previous = pc.currentToPrevious * vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec2 previousUV = previous.xy / previous.w * 0.5 + 0.5;
+    if (previous.w <= 0.0 || any(lessThan(previousUV, vec2(0.0))) || any(greaterThan(previousUV, vec2(1.0)))) {
+        imageStore(resolved, pixel, vec4(current, viewDepth));
+        return;
+    }
+    // History from a different surface (newly revealed background, or a foreground that moved away) is dropped
+    // before clamping, since both colours can sit in the 3x3 neighbourhood at a silhouette.
+    vec4 historySample = texture(historyColor, previousUV);
+    float expectedDepth = linearDepth(previous.z / previous.w);
+    if (abs(historySample.a - expectedDepth) > 0.05 * expectedDepth + 0.01) {
+        imageStore(resolved, pixel, vec4(current, viewDepth));
+        return;
+    }
+    vec3 history = clamp(historySample.rgb, lo, hi);
+    imageStore(resolved, pixel, vec4(mix(history, current, pc.params.x), viewDepth));
+}

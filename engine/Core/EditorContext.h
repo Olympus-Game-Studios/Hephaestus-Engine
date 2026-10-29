@@ -83,7 +83,9 @@ struct EditorViewportSettings {
     bool showShadows = true;
     bool showSkybox = true;
     bool showLightBillboards = true;
+    bool showGIProbes = false;  // the finest camera-following GI grid's probes
     int shadingMode = 0; // 0=Lit, 1=Unlit, 2=Wireframe (matches ViewShadingMode)
+    int renderQuality = -1; // Hephaestus::RenderQuality value; -1 keeps the renderer's GPU default
 };
 
 /**

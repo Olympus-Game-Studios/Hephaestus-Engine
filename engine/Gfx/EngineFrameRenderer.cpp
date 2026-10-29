@@ -175,6 +175,9 @@ struct LightingUBO {
     Mat4 localShadowViewProj[32];  // atlas tiles, see EngineFrameRenderer::kLocalShadowTile
     Vec4 pointShadowParams[16];    // x = first of six tiles (+X,-X,+Y,-Y,+Z,-Z), -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
     Vec4 spotShadowParams[16];     // x = tile, -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
+    Vec4 rayReflectionParams;      // x = 0 off, 1 mirror, 2 glossy; y = mirror roughness cutoff; z = glossy cutoff; w = frame number
+    Mat4 previousViewProj;         // camera of the previous temporal result (screen-space reflections)
+    Vec4 ssrParams;                // x = 1 when screen-space reflections run, y = near plane, z = far plane
 };
 
 static bool MeshAllowsHiddenEditorOutline(const MeshRendererComponent& renderer,
@@ -279,6 +282,7 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
         std::cerr << "[EngineFrameRenderer] Failed to create probe GI layouts\n";
         return false;
     }
+    m_renderQuality = DefaultRenderQuality(m_probeGI.HardwareRayTracingAvailable());
     
     // Create render resources
     if (!createPipeline()) {
@@ -374,9 +378,16 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
     if (!createSkinnedMainPipelines()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create skinned mesh pipelines\n";
     }
+    if (!m_temporal.Init(m_device) || !m_temporal.CreateSwapchainResources(*m_swapchain)) {
+        std::cerr << "[EngineFrameRenderer] Failed to create temporal accumulation resources\n";
+        return false;
+    }
     if (!createToneMapResources()) {
         std::cerr << "[EngineFrameRenderer] Failed to create tone map resources\n";
         return false;
+    }
+    if (!m_gpuTimer.Init(m_device, kMaxTimedImages)) {
+        std::cerr << "[EngineFrameRenderer] Warning: GPU frame timing unavailable\n";
     }
     if (m_directionalShadow.IsValid() && !m_probeGI.InitSunMap(m_directionalShadow.renderPass)) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create the probe sun map (probes see the sun unoccluded)\n";
@@ -652,6 +663,10 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             std::cerr << "[EngineFrameRenderer] Failed to recreate descriptor sets\n";
             return false;
         }
+        if (!m_temporal.CreateSwapchainResources(*m_swapchain)) {
+            std::cerr << "[EngineFrameRenderer] Failed to recreate temporal accumulation resources\n";
+            return false;
+        }
         if (!createToneMapResources()) {
             std::cerr << "[EngineFrameRenderer] Failed to recreate tone map resources\n";
             return false;
@@ -761,6 +776,9 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (imageIndex < m_imagesInFlight.size()) {
         m_imagesInFlight[imageIndex] = m_inFlightFences[m_currentFrame];
     }
+    if (imageIndex < kMaxTimedImages) {
+        m_gpuTimer.Collect(imageIndex);  // that image's last frame has finished
+    }
     
     vkResetFences(m_device->device, 1, &m_inFlightFences[m_currentFrame]);
     
@@ -770,26 +788,50 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         updateLightingUBO(imageIndex, scene, camera);
     }
     prepareEnvironment(scene, config, imageIndex);
+    if (m_temporal.HasLastResult()) {
+        // This image's set is idle (its fence was waited on), so it can point at the newest temporal result.
+        const VkDescriptorImageInfo previous{m_temporal.LinearSampler(), m_temporal.LastResultView(),
+                                             VK_IMAGE_LAYOUT_GENERAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = m_descriptorSets[imageIndex];
+        write.dstBinding = 7;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &previous;
+        vkUpdateDescriptorSets(m_device->device, 1, &write, 0, nullptr);
+    }
     {
         Vec3 sunDirection;
         const bool hasSun = scene && FindShadowCastingSun(scene, sunDirection);
-        // Hardware tracing sees every visible, non-skinned mesh, so moving objects block and bounce light too.
+        // Hardware tracing sees every visible mesh, posing animated ones each frame, so moving objects and
+        // characters block, bounce and reflect light too.
         auto collectInstances = [&]() {
             std::vector<ProbeTraceInstance> instances;
             auto view = scene->GetRegistry().view<MeshRendererComponent>();
             for (entt::entity handle : view) {
                 auto& renderer = view.get<MeshRendererComponent>(handle);
-                if (!renderer.visible || renderer.hideInGame || !renderer.HasValidMesh() ||
-                    scene->GetRegistry().all_of<CharacterComponent>(handle)) {
+                if (!renderer.visible || renderer.hideInGame || !renderer.HasValidMesh()) {
                     continue;
                 }
                 Entity entity(handle, scene);
-                const Mat4 world = scene->GetWorldTransform(entity);
+                const CharacterComponent* character = scene->GetRegistry().try_get<CharacterComponent>(handle);
+                const Mat4 world = CharacterAwareModelMatrix(scene, entity, renderer);
                 const MaterialComponent* material = resolveMaterialForSlot(entity, renderer, 0);
                 for (size_t meshHandle : MeshHandlesForDraw(renderer)) {
-                    if (meshHandle >= m_meshLibrary.size() || m_meshLibrary[meshHandle].skinned) continue;
+                    if (meshHandle >= m_meshLibrary.size()) continue;
+                    MeshGPU& mesh = m_meshLibrary[meshHandle];
                     ProbeTraceInstance instance;
-                    instance.mesh = &m_meshLibrary[meshHandle];
+                    if (mesh.skinned) {
+                        // Same palette the skinned draw uses: the character's live pose, else the mesh's rest pose.
+                        const VkDescriptorSet boneSet = resolveSkinnedBoneSet(handle, character, mesh);
+                        auto palette = m_characterBonePalettes.find(static_cast<uint32_t>(handle));
+                        instance.bones = palette != m_characterBonePalettes.end() &&
+                                                 boneSet == palette->second.set
+                                             ? palette->second.buffer.buffer
+                                             : mesh.boneBuffer.buffer;
+                        instance.poseKey = (static_cast<uint64_t>(static_cast<uint32_t>(handle)) << 32) | meshHandle;
+                    }
+                    instance.mesh = &mesh;
                     instance.world = world;
                     if (material) {
                         instance.albedo = material->albedo;
@@ -800,8 +842,12 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             }
             return instances;
         };
+        const RenderQualityProfile quality = GetRenderQualityProfile();
+        const Cell cascadeCounts = quality.requested == RenderQuality::Ultra ? Cell{32, 16, 32} : Cell{24, 12, 24};
         m_probeGI.Prepare(scene, m_projectRoot, imageIndex, m_lightingBuffers[imageIndex].buffer,
-                          hasSun ? &sunDirection : nullptr, scene && m_traceShadows, collectInstances);
+                          hasSun ? &sunDirection : nullptr, quality.rayTracing, scene && m_traceShadows,
+                          quality.rayTracing ? &cascadeCounts : nullptr,
+                          Vec3(camera.positionX, camera.positionY, camera.positionZ), collectInstances);
     }
 
     // Prepare the runtime HUI overlay geometry/uploads (queue work is allowed
@@ -818,6 +864,9 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cmd, &beginInfo);
     
+    const bool timed = imageIndex < kMaxTimedImages;
+    if (timed) m_gpuTimer.Begin(cmd, imageIndex);
+
     // Record ID pass for entity picking (editor only)
     if (config.isEditorMode && m_idPicker.initialized) {
         recordIdPass(cmd, imageIndex, scene, config);
@@ -864,10 +913,13 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (config.renderShadows && m_directionalShadow.IsValid() && !(scene && m_sunRayTraced)) {
         recordShadowPass(cmd, scene, camera, config);
     }
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::Shadows);
     m_probeGI.RecordScene(cmd, imageIndex);
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::RayTracing);
     if (config.renderShadows && m_localShadow.IsValid() && !m_localShadowJobs.empty()) {
         recordLocalShadowPass(cmd, scene, config);
     }
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::LocalShadows);
     if (m_probeGI.Active()) {
         m_probeGI.BeginTiming(cmd, imageIndex);
         if (m_probeGI.HasSunMap()) {
@@ -875,10 +927,20 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         }
         m_probeGI.RecordUpdate(cmd, imageIndex);
     }
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::ProbeVolume);
     
 // Record main render pass
     recordMainPass(cmd, imageIndex, scene, config);
     m_lastFrameStats.probeGIGpuMs = m_probeGI.Active() ? m_probeGI.LastGpuMilliseconds() : -1.0f;
+    m_lastFrameStats.gpu = m_gpuTimer.Smoothed();
+    if (m_lastFrameStats.gpu.valid && m_renderedFrameCount % 300 == 0) {
+        const GpuFrameTimes& t = m_lastFrameStats.gpu;
+        std::cout << "[GpuTime] total " << t.totalMs << " ms: sun shadows " << t.shadowMs << ", ray tracing + GI grids "
+                  << t.rayTracingMs << ", local shadows " << t.localShadowMs << ", probe volume " << t.probeVolumeMs
+                  << ", scene " << t.sceneMs << ", temporal " << t.temporalMs << ", tone map + overlays "
+                  << t.overlayMs << " (" << m_swapchain->extent.width << "x" << m_swapchain->extent.height << ", "
+                  << RenderQualityName(m_renderQuality) << ")\n";
+    }
     if (m_lastFrameStats.probeGIGpuMs >= 0.0f && m_renderedFrameCount % 600 == 0) {
         std::cout << "[ProbeGI] " << m_probeGI.ProbeCount() << " probes updated in "
                   << m_lastFrameStats.probeGIGpuMs << " ms GPU\n";
@@ -1135,7 +1197,12 @@ size_t EngineFrameRenderer::AddSkinnedMesh(const std::string& name,
         std::min(bonePalette.size(), static_cast<size_t>(128)));
 
     const VkDeviceSize vbSize = sizeof(SkinnedVertex) * vertices.size();
-    mesh.vertexBuffer.Create(m_device->allocator, vbSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+    // Ray tracing poses skinned meshes from this buffer (storage) and builds their BLAS with this index buffer.
+    const VkBufferUsageFlags rayTracingUsage = m_device->SupportsRayQuery()
+        ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+              VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+        : 0;
+    mesh.vertexBuffer.Create(m_device->allocator, vbSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | rayTracingUsage,
                              VMA_MEMORY_USAGE_CPU_TO_GPU);
     void* mapped = nullptr;
     if (vmaMapMemory(m_device->allocator, mesh.vertexBuffer.allocation, &mapped) == VK_SUCCESS) {
@@ -1145,7 +1212,7 @@ size_t EngineFrameRenderer::AddSkinnedMesh(const std::string& name,
     }
 
     const VkDeviceSize ibSize = sizeof(uint32_t) * indices.size();
-    mesh.indexBuffer.Create(m_device->allocator, ibSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+    mesh.indexBuffer.Create(m_device->allocator, ibSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | rayTracingUsage,
                             VMA_MEMORY_USAGE_CPU_TO_GPU);
     if (vmaMapMemory(m_device->allocator, mesh.indexBuffer.allocation, &mapped) == VK_SUCCESS) {
         std::memcpy(mapped, indices.data(), static_cast<size_t>(ibSize));
@@ -2080,7 +2147,7 @@ bool EngineFrameRenderer::createDescriptorSets()
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount) },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, static_cast<uint32_t>(imageCount) },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount) },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount) * (kTextureArraySize + 3) }
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount) * (kTextureArraySize + 4) }
     };
     
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -2158,7 +2225,7 @@ bool EngineFrameRenderer::createDescriptorSets()
         localShadowInfo.imageView = m_localShadow.IsValid() ? m_localShadow.imageView : m_dummyTexture.imageView;
         localShadowInfo.sampler = m_localShadow.IsValid() ? m_directionalShadow.sampler : m_dummyTexture.sampler;
 
-        VkWriteDescriptorSet descriptorWrites[7] = {};
+        VkWriteDescriptorSet descriptorWrites[8] = {};
         
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = m_descriptorSets[i];
@@ -2218,7 +2285,15 @@ bool EngineFrameRenderer::createDescriptorSets()
         descriptorWrites[6].descriptorCount = 1;
         descriptorWrites[6].pImageInfo = &localShadowInfo;
 
-        vkUpdateDescriptorSets(m_device->device, 7, descriptorWrites, 0, nullptr);
+        // Binding 7: the previous temporal result once one exists (RenderFrame rewrites it every frame).
+        descriptorWrites[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[7].dstSet = m_descriptorSets[i];
+        descriptorWrites[7].dstBinding = 7;
+        descriptorWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[7].descriptorCount = 1;
+        descriptorWrites[7].pImageInfo = &environmentMapInfo;
+
+        vkUpdateDescriptorSets(m_device->device, 8, descriptorWrites, 0, nullptr);
     }
     
     return true;
@@ -2859,6 +2934,9 @@ void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamer
         ubo.proj = Mat4::Perspective(fovDeg * DEG_TO_RAD, aspect, camera.nearPlane, camera.farPlane);
     }
     ubo.viewPos = position;
+    m_viewProj = Mat4::Multiply(ubo.proj, ubo.view);
+    m_cameraDepth = Vec4(camera.nearPlane, camera.farPlane,
+                         camera.projectionMode == ProjectionMode::Orthographic ? 0.0f : 1.0f, 0.0f);
     // Wireframe still uses Lit/Unlit shading branch; polygon mode is selected per draw.
     ubo.shadingMode = (config.shadingMode == ViewShadingMode::Unlit) ? 1.0f : 0.0f;
     
@@ -2893,7 +2971,20 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
     m_localShadowJobs.clear();
     m_traceShadows = false;
     m_sunRayTraced = false;
-    const bool canTrace = m_probeGI.HardwareRayTracingAvailable();
+    const RenderQualityProfile quality = GetRenderQualityProfile();
+    const bool canTrace = quality.rayTracing;
+    lightUBO.rayReflectionParams =
+        Vec4(canTrace ? (quality.requested == RenderQuality::Ultra ? 2.0f : 1.0f) : 0.0f, 0.3f, 0.6f,
+             static_cast<float>(m_frameIndex++ % 4096u));
+    // Without ray tracing, Medium and up march reflections through the previous frame (perspective cameras only),
+    // once that frame shows this scene.
+    const bool historyIsThisScene =
+        std::make_pair(scene->GetIdentity(), scene->GetRuntimeGeneration()) == m_temporalScene;
+    const bool screenSpaceReflections = !canTrace && quality.requested != RenderQuality::Low &&
+                                        m_temporal.HasLastResult() && historyIsThisScene &&
+                                        camera.projectionMode == ProjectionMode::Perspective;
+    lightUBO.previousViewProj = m_temporal.LastViewProj();
+    lightUBO.ssrParams = Vec4(screenSpaceReflections ? 1.0f : 0.0f, camera.nearPlane, camera.farPlane, 0.0f);
     uint32_t nextShadowTile = 0;
     int shadowedPoints = 0;
     int shadowedSpots = 0;
@@ -3001,7 +3092,9 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                     lightUBO.cascadeTexelWorld = Vec4(2.0f * radii[0] / tileResolution, 2.0f * radii[1] / tileResolution,
                                                       2.0f * radii[2] / tileResolution, 2.0f * radii[3] / tileResolution);
                     lightUBO.cascadeDepthRange = Vec4(depthRanges[0], depthRanges[1], depthRanges[2], depthRanges[3]);
-                    const float sunHalfAngle = std::clamp(light.sunAngularDiameter, 0.0f, 10.0f) * 0.5f * 0.01745329252f;
+                    const float sunHalfAngle = quality.softSunShadows
+                        ? std::clamp(light.sunAngularDiameter, 0.0f, 10.0f) * 0.5f * 0.01745329252f
+                        : 0.0f;
                     m_sunRayTraced = canTrace && light.rayTracedShadows;
                     m_traceShadows |= m_sunRayTraced;
                     lightUBO.shadowBiasWorld = Vec4(std::max(0.0f, light.shadowBias),
@@ -3026,7 +3119,8 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 if (light.castShadows && canTrace && light.rayTracedShadows) {
                     lightUBO.pointShadowParams[pointLightIndex] = Vec4(-2.0f, light.shadowStrength, light.range, 0.0f);
                     m_traceShadows = true;
-                } else if (light.castShadows && m_localShadow.IsValid() && shadowedPoints < kMaxShadowedPointLights) {
+                } else if (light.castShadows && quality.localShadows && m_localShadow.IsValid() &&
+                           shadowedPoints < kMaxShadowedPointLights) {
                     const float base = static_cast<float>(nextShadowTile);
                     const Vec3 faces[6] = {Vec3(1, 0, 0), Vec3(-1, 0, 0), Vec3(0, 1, 0),
                                            Vec3(0, -1, 0), Vec3(0, 0, 1), Vec3(0, 0, -1)};
@@ -3048,7 +3142,8 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 if (light.castShadows && canTrace && light.rayTracedShadows) {
                     lightUBO.spotShadowParams[spotLightIndex] = Vec4(-2.0f, light.shadowStrength, light.range, 0.0f);
                     m_traceShadows = true;
-                } else if (light.castShadows && m_localShadow.IsValid() && shadowedSpots < kMaxShadowedSpotLights) {
+                } else if (light.castShadows && quality.localShadows && m_localShadow.IsValid() &&
+                           shadowedSpots < kMaxShadowedSpotLights) {
                     // outerConeAngle is the full aperture; pad it so filtering at the cone edge stays in the tile.
                     const float fovY = std::min(light.outerConeAngle + 0.1f, 2.8f);
                     const Vec3 up = std::fabs(lightDir.y) > 0.99f ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
@@ -3917,7 +4012,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = m_swapchain->renderPass;
+    renderPassInfo.renderPass = m_swapchain->scenePass;
     renderPassInfo.framebuffer = m_swapchain->framebuffers[imageIndex];
     renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = m_swapchain->extent;
@@ -4349,6 +4444,29 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     if (config.isEditorMode && !config.isPlaying && m_probeGI.Active()) {
         m_probeGI.RecordDebug(cmd, imageIndex, m_descriptorSets[imageIndex]);
     }
+    if (config.isEditorMode && config.renderGIProbes) {
+        m_probeGI.RecordCascadeDebug(cmd, imageIndex, m_descriptorSets[imageIndex]);
+    }
+
+    // Scene done: accumulate it over frames, then tone map and draw overlays in the second render pass.
+    vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdEndRenderPass(cmd);
+    const bool timed = imageIndex < kMaxTimedImages;
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::Scene);
+    bool resetHistory = false;
+    if (scene) {
+        const std::pair<uint64_t, uint64_t> sceneKey{scene->GetIdentity(), scene->GetRuntimeGeneration()};
+        resetHistory = sceneKey != m_temporalScene;
+        m_temporalScene = sceneKey;
+    }
+    m_temporal.Record(cmd, m_viewProj, m_cameraDepth, resetHistory);
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::Temporal);
+    renderPassInfo.renderPass = m_swapchain->renderPass;
+    renderPassInfo.clearValueCount = 0;
+    renderPassInfo.pClearValues = nullptr;
+    vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
     recordToneMap(cmd);
 
     // Render editor grid (after opaque meshes, before transparent) — not in play/pause or shipped game
@@ -4385,6 +4503,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     recordHUIOverlay(cmd, imageIndex);
 
     vkCmdEndRenderPass(cmd);
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::End);
 }
 
 void EngineFrameRenderer::recordGizmo(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene)
@@ -4676,6 +4795,7 @@ void EngineFrameRenderer::cleanupSwapchainResources()
 
     cleanupSkinnedGraphicsPipelines();
     cleanupToneMapResources();
+    m_temporal.DestroySwapchainResources();
     m_probeGI.DestroySwapchainResources();
 
     cleanupBillboardResources();
@@ -4929,6 +5049,8 @@ void EngineFrameRenderer::destroyAllResources()
         m_pipeline->Cleanup();
         m_pipeline.reset();
     }
+    m_temporal.Shutdown();
+    m_gpuTimer.Shutdown();
     m_probeGI.Shutdown();  // after every pipeline layout that uses its set layouts
     
     m_device = nullptr;
@@ -5671,7 +5793,7 @@ bool EngineFrameRenderer::createToneMapResources()
 
     VkDescriptorSetLayoutBinding binding{};
     binding.binding = 0;
-    binding.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binding.descriptorCount = 1;
     binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo layoutCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -5681,9 +5803,9 @@ bool EngineFrameRenderer::createToneMapResources()
         return false;
     }
 
-    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1};
+    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
     VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    poolCI.maxSets = 1;
+    poolCI.maxSets = 2;
     poolCI.poolSizeCount = 1;
     poolCI.pPoolSizes = &poolSize;
     if (vkCreateDescriptorPool(device, &poolCI, nullptr, &m_toneMap.descriptorPool) != VK_SUCCESS) {
@@ -5691,25 +5813,29 @@ bool EngineFrameRenderer::createToneMapResources()
         return false;
     }
 
+    const VkDescriptorSetLayout layouts[2] = {m_toneMap.setLayout, m_toneMap.setLayout};
     VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     allocInfo.descriptorPool = m_toneMap.descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &m_toneMap.setLayout;
-    if (vkAllocateDescriptorSets(device, &allocInfo, &m_toneMap.descriptorSet) != VK_SUCCESS) {
+    allocInfo.descriptorSetCount = 2;
+    allocInfo.pSetLayouts = layouts;
+    if (vkAllocateDescriptorSets(device, &allocInfo, m_toneMap.descriptorSets) != VK_SUCCESS) {
         cleanupToneMapResources();
         return false;
     }
-
-    VkDescriptorImageInfo hdrInfo{};
-    hdrInfo.imageView = m_swapchain->hdrImageView;
-    hdrInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet = m_toneMap.descriptorSet;
-    write.dstBinding = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
-    write.pImageInfo = &hdrInfo;
-    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    // The tone map reads the temporal result in place (no copy back into the HDR attachment).
+    for (uint32_t i = 0; i < 2; ++i) {
+        VkDescriptorImageInfo resultInfo{};
+        resultInfo.sampler = m_temporal.LinearSampler();
+        resultInfo.imageView = m_temporal.ResultView(i);
+        resultInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = m_toneMap.descriptorSets[i];
+        write.dstBinding = 0;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &resultInfo;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
 
     VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(uint32_t)};
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -5806,7 +5932,7 @@ void EngineFrameRenderer::cleanupToneMapResources()
         vkDestroyDescriptorPool(device, m_toneMap.descriptorPool, nullptr);
         m_toneMap.descriptorPool = VK_NULL_HANDLE;
     }
-    m_toneMap.descriptorSet = VK_NULL_HANDLE;
+    m_toneMap.descriptorSets[0] = m_toneMap.descriptorSets[1] = VK_NULL_HANDLE;
     if (m_toneMap.setLayout) {
         vkDestroyDescriptorSetLayout(device, m_toneMap.setLayout, nullptr);
         m_toneMap.setLayout = VK_NULL_HANDLE;
@@ -5818,7 +5944,7 @@ void EngineFrameRenderer::recordToneMap(VkCommandBuffer cmd)
     vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_toneMap.pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_toneMap.pipelineLayout,
-                            0, 1, &m_toneMap.descriptorSet, 0, nullptr);
+                            0, 1, &m_toneMap.descriptorSets[m_temporal.LastResultIndex()], 0, nullptr);
     const uint32_t outputIsSrgb = IsSrgbFormat(m_swapchain->format) ? 1u : 0u;
     vkCmdPushConstants(cmd, m_toneMap.pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(outputIsSrgb), &outputIsSrgb);

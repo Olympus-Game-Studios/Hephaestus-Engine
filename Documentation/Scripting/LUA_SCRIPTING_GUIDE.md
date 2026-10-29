@@ -392,6 +392,21 @@ Available helpers:
 - `Audio.isPlaying(handle)` → `boolean`
 - `Audio.stopAll()`
 
+### Graphics
+
+Use these to build a graphics settings menu. The visual quality tier chooses the whole lighting path: High and Ultra use ray-traced lighting on GPUs that support it, while Medium and Low use baked probe GI and shadow maps.
+
+```lua
+if Graphics.isRayTracingAvailable() then
+    Graphics.setQuality("High")
+end
+print(Graphics.getQuality())  -- "Low", "Medium", "High" or "Ultra"
+```
+
+- `Graphics.getQuality()` → `string`, the tier the player chose (on a GPU without ray tracing, High and Ultra still light like Medium)
+- `Graphics.setQuality(name)` → `boolean`; `name` is `"Low"`, `"Medium"`, `"High"` or `"Ultra"` (any case), anything else raises an error. It takes effect on the next frame. Packaged games save the choice per player in `%APPDATA%/<project name>/graphics.ini` (`~/.config/<project name>/graphics.ini` elsewhere); the project default (Project Settings → Rendering → Default Visual Quality) applies until the player picks one.
+- `Graphics.isRayTracingAvailable()` → `boolean`
+
 ### Time
 
 ```lua

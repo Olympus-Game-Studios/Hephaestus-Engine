@@ -8,10 +8,15 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 # Application Details  (single source of truth — edit these, not C++ files)
 # ─────────────────────────────────────────────────────────────────────────────
-set(HEPHAESTUS_VERSION_MAJOR 2026)
-set(HEPHAESTUS_VERSION_MINOR 11)
-set(HEPHAESTUS_VERSION_PATCH 10)
+set(HEPHAESTUS_VERSION_MAJOR 2026) # Major Version = Year of Release
+set(HEPHAESTUS_VERSION_MINOR 11) # Minor Version = Month of Release
+set(HEPHAESTUS_VERSION_PATCH 29) # Patch Version = Day of Release
 set(HEPHAESTUS_VERSION "${HEPHAESTUS_VERSION_MAJOR}.${HEPHAESTUS_VERSION_MINOR}.${HEPHAESTUS_VERSION_PATCH}")
+
+# Large engine releases would ideally be released at the start of the year e.g 2026.0.0
+# Smaller but still significant updates would be released at the start of the month e.g 2026.1.0
+# Patches are for bug fixes and minor improvements and will be released throughout the month e.g 2026.1.13
+
 
 set(HEPHAESTUS_APP_NAME        "Hephaestus Engine")
 set(HEPHAESTUS_APP_DESCRIPTION "A 3D game engine built with C++20, Vulkan, Qt, and Lua.")
@@ -321,6 +326,11 @@ add_library(HephaestusRuntime STATIC
     engine/Gfx/VulkanLightGizmo.cpp
     engine/Gfx/BuiltinMeshes.cpp
     engine/Gfx/SkyIrradiance.cpp
+    engine/Gfx/RenderQuality.cpp
+    engine/Gfx/ProbeCascadeGrid.cpp
+    engine/Gfx/ProbeCascades.cpp
+    engine/Gfx/TemporalResolve.cpp
+    engine/Gfx/GpuFrameTimer.cpp
     engine/Gfx/ProbeBake.cpp
     engine/Gfx/ProbeGI.cpp
     engine/Gfx/ProbeRayTracer.cpp
@@ -997,13 +1007,21 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tonemap.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_update.comp
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_trace.comp
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/cascade_trace.comp
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/cascade_update.comp
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_debug.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_debug.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/cascade_debug.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/cascade_debug.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/temporal_resolve.comp
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/skin_vertices.comp
     )
 
     set(SHADER_INCLUDES
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/lighting_common.glsl
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_common.glsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_shading.glsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/cascade_common.glsl
     )
 
     set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders)
@@ -1015,7 +1033,7 @@ if (GLSLC_EXECUTABLE)
         get_filename_component(FN ${SRC} NAME)
         set(OUT ${SHADER_OUTPUT_DIR}/${FN}.spv)
         set(GLSLC_EXTRA_FLAGS)
-        if(FN STREQUAL "probe_trace.comp")
+        if(FN STREQUAL "probe_trace.comp" OR FN STREQUAL "cascade_trace.comp")
             set(GLSLC_EXTRA_FLAGS --target-env=vulkan1.2)  # ray queries need SPIR-V 1.4+
         endif()
         add_custom_command(
@@ -1542,6 +1560,20 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     target_link_libraries(LightShadowSettingsTests PRIVATE HephaestusRuntime)
     target_include_directories(LightShadowSettingsTests PRIVATE engine extern extern/entt/single_include)
     add_test(NAME LightShadowSettings COMMAND LightShadowSettingsTests)
+
+    add_executable(RenderQualityTests
+        engine/Tests/RenderQualityTests.cpp
+    )
+    target_link_libraries(RenderQualityTests PRIVATE HephaestusRuntime)
+    target_include_directories(RenderQualityTests PRIVATE engine extern)
+    add_test(NAME RenderQuality COMMAND RenderQualityTests)
+
+    add_executable(ProbeCascadeTests
+        engine/Tests/ProbeCascadeTests.cpp
+    )
+    target_link_libraries(ProbeCascadeTests PRIVATE HephaestusRuntime)
+    target_include_directories(ProbeCascadeTests PRIVATE engine extern)
+    add_test(NAME ProbeCascade COMMAND ProbeCascadeTests)
 
     add_executable(ProbeBakeTests
         engine/Tests/ProbeBakeTests.cpp

@@ -31,6 +31,9 @@
 #include "SkyIrradiance.h"
 #include "ProbeBake.h"
 #include "ProbeGI.h"
+#include "RenderQuality.h"
+#include "TemporalResolve.h"
+#include "GpuFrameTimer.h"
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
 #include "../Core/EditorDebugDraw.h"
@@ -102,6 +105,7 @@ struct FrameRenderConfig {
     bool renderBillboards = true;
     bool renderOutlines = true;
     bool renderGrid = true;         // World grid overlay (editor viewport only)
+    bool renderGIProbes = false;    // Camera-following GI probes as spheres (editor viewport only)
     bool isEditorMode = false;      // Editor sets true; game / standalone defaults off
     bool isPlaying = false;
     bool isPaused = false;
@@ -137,6 +141,7 @@ struct FrameStats {
     int meshesDrawn = 0;
     int entitiesSkipped = 0;
     float probeGIGpuMs = -1.0f;  // last measured probe GI update, negative when unknown or inactive
+    GpuFrameTimes gpu;           // per-stage GPU time, averaged over recent frames
 };
 
 /**
@@ -197,6 +202,14 @@ public:
     bool HasDeviceLost() const { return m_deviceLost; }
 
     const FrameStats& GetLastFrameStats() const { return m_lastFrameStats; }
+
+    // Visual quality tier; Init sets DefaultRenderQuality for the GPU. Takes effect on the next frame.
+    void SetRenderQuality(RenderQuality quality) { m_renderQuality = quality; }
+    RenderQuality GetRenderQuality() const { return m_renderQuality; }
+    bool RayTracingAvailable() const { return m_probeGI.HardwareRayTracingAvailable(); }
+    RenderQualityProfile GetRenderQualityProfile() const {
+        return ResolveRenderQuality(m_renderQuality, RayTracingAvailable());
+    }
 
     /**
      * @brief Set the project root directory for resolving relative asset paths (HDRI, fonts, UI images).
@@ -590,6 +603,7 @@ private:
     };
     std::vector<LocalShadowJob> m_localShadowJobs;  // filled by updateLightingUBO, drawn by recordLocalShadowPass
     bool m_traceShadows = false;    // some light asked for ray-traced shadows this frame (set by updateLightingUBO)
+    RenderQuality m_renderQuality = RenderQuality::High;
     bool m_sunRayTraced = false;    // the sun's shadow is ray traced, so the cascade pass is skipped
     bool createLocalShadowResources();
     void recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config);
@@ -601,6 +615,13 @@ private:
                            const Vec3* cullCenter, float cullRadius);
 
     ProbeGI m_probeGI;  // set 2 of the main and skinned surface pipelines
+    TemporalResolve m_temporal;  // between the scene pass and tone mapping
+    GpuFrameTimer m_gpuTimer;
+    static constexpr uint32_t kMaxTimedImages = 8;  // swapchain images beyond this are not timed
+    Mat4 m_viewProj = Mat4::Identity();  // this frame's camera, set by updateCameraUBO
+    Vec4 m_cameraDepth{0.1f, 1000.0f, 1.0f, 0.0f};  // near, far, 1 = perspective; set by updateCameraUBO
+    std::pair<uint64_t, uint64_t> m_temporalScene{0, 0};  // scene identity and generation the history belongs to
+    uint32_t m_frameIndex = 0;  // varies stochastic sampling patterns so the temporal pass averages them
     void recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene);
 
     // Billboard resources for light icons
@@ -728,7 +749,7 @@ private:
     struct ToneMap {
         VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
         VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
-        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+        VkDescriptorSet descriptorSets[2] = {};  // one per temporal history image
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
     };

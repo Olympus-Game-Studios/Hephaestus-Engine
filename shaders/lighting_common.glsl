@@ -28,6 +28,9 @@ layout(std140, set = LIGHTING_SET, binding = LIGHTING_BINDING) uniform LightingU
     mat4 localShadowViewProj[32];  // point/spot shadow atlas tiles
     vec4 pointShadowParams[16];    // x = first of six tiles (+X,-X,+Y,-Y,+Z,-Z), -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
     vec4 spotShadowParams[16];     // x = tile, -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
+    vec4 rayReflectionParams;      // x = 0 off, 1 mirror, 2 glossy; y = mirror roughness cutoff; z = glossy cutoff; w = frame number
+    mat4 previousViewProj;         // camera of the previous temporal result (screen-space reflections)
+    vec4 ssrParams;                // x = 1 when screen-space reflections run, y = near plane, z = far plane
 } lighting;
 
 // Calculate light attenuation for point lights

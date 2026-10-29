@@ -51,6 +51,7 @@ struct BuildRequest {
     std::string engineVersion = "unknown";
     std::string startupScene;
     std::string inputProfile = "assets/input/Default.hpinput";
+    std::string renderQuality = "High";  // default visual quality tier; players can change it in game
     WindowSettings window;
     BuildConfiguration configuration = BuildConfiguration::Development;
     BuildAction action = BuildAction::Package;

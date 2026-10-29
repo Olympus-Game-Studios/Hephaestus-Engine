@@ -248,6 +248,11 @@ public:
 
     using QuitRequestCallback = std::function<void()>;
     void SetQuitRequestCallback(QuitRequestCallback cb) { m_QuitRequestCallback = std::move(cb); }
+    // Called after Graphics.setQuality changes the renderer's tier, so a packaged game can save it per user.
+    using GraphicsQualityChangedCallback = std::function<void(const std::string& quality)>;
+    void SetGraphicsQualityChangedCallback(GraphicsQualityChangedCallback cb) {
+        m_GraphicsQualityChangedCallback = std::move(cb);
+    }
 
     using SceneReloadCallback = std::function<bool()>;
     void SetSceneReloadCallback(SceneReloadCallback cb) { m_SceneReloadCallback = std::move(cb); }
@@ -278,6 +283,7 @@ private:
     Hephaestus::InputSystem* m_InputSystem = nullptr;
     std::unordered_set<std::string> m_MissingInputNames;
     QuitRequestCallback m_QuitRequestCallback;
+    GraphicsQualityChangedCallback m_GraphicsQualityChangedCallback;
     SceneReloadCallback m_SceneReloadCallback;
     AudioEngine* m_AudioEngine = nullptr;
     Hephaestus::HephaestusUI::UISystem* m_UISystem = nullptr;
@@ -464,6 +470,9 @@ private:
     static int Lua_Time_deltaTime(lua_State* L);
 
     static int Lua_Application_quit(lua_State* L);
+    static int Lua_Graphics_getQuality(lua_State* L);
+    static int Lua_Graphics_setQuality(lua_State* L);
+    static int Lua_Graphics_isRayTracingAvailable(lua_State* L);
 
     static int Lua_Camera_setActive(lua_State* L);
     static int Lua_Camera_isActive(lua_State* L);
@@ -667,6 +676,7 @@ private:
     static int Lua_Character_GetSocketLocal(lua_State* L);
 
     void RegisterApplicationBindings();
+    void RegisterGraphicsBindings();
     void RegisterThisBindings();
     void RegisterSceneBindings();
 };

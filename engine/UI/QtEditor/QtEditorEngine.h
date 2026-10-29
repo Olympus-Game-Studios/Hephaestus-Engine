@@ -450,6 +450,7 @@ private:
     QTimer m_renderTimer;
     QElapsedTimer m_frameTimer;
     float m_lastFrameTime = 0.0f;
+    int m_appliedRenderQuality = -1;  // last viewport tier pushed to the renderer; Graphics.setQuality may change it between
     bool m_renderInProgress = false;
     bool m_reportedFatalRenderError = false;
     bool m_stepping = false;

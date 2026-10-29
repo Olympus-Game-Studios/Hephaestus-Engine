@@ -1,0 +1,125 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Blends the scheduled cascade probes' traced rays into their irradiance and visibility tiles.
+layout(local_size_x = 128) in;
+
+#define GI_SET 0
+#include "probe_common.glsl"
+#define LIGHTING_SET 0
+#define LIGHTING_BINDING 1
+#include "lighting_common.glsl"
+#include "probe_shading.glsl"
+#define CASCADE_SET 0
+#define CASCADE_STATE_WRITE
+#include "cascade_common.glsl"
+
+layout(set = 0, binding = 6, rgba16f) uniform image2D irradianceTiles;
+layout(set = 0, binding = 8, rg16f) uniform image2D visibilityTiles;
+layout(std430, set = 0, binding = 17) readonly buffer Jobs { uint jobs[]; };
+layout(std430, set = 0, binding = 18) readonly buffer Rays { vec4 rays[]; };
+
+const uint RAYS = 128u;
+
+shared vec3 sRadiance[RAYS];
+shared vec3 sDirection[RAYS];
+shared float sDistance[RAYS];
+shared float sTraced[RAYS];  // signed hit distance, < 0 for a backface
+shared float sHysteresis;
+
+// Relocation and classification (as RTXGI's DDGI): a probe that sees many backfaces is inside geometry and moves
+// toward the nearest backface, past it; one too close to a surface moves away; one still inside is switched off.
+// Offsets are in probe spacings, limited to 0.45 so a probe never leaves its cell.
+vec4 relocate(vec4 offset, float spacing) {
+    const float BACKFACE_LIMIT = 0.25;
+    float minFront = 0.2 * spacing;
+    int backfaces = 0;
+    float closestBack = 1e30, closestFront = 1e30, farthestFront = 0.0;
+    vec3 closestBackDir = vec3(0.0), closestFrontDir = vec3(0.0), farthestFrontDir = vec3(0.0);
+    for (uint r = 0u; r < RAYS; ++r) {
+        float t = sTraced[r];
+        if (t < 0.0) {
+            ++backfaces;
+            if (-t < closestBack) { closestBack = -t; closestBackDir = sDirection[r]; }
+        } else {
+            if (t < closestFront) { closestFront = t; closestFrontDir = sDirection[r]; }
+            if (t > farthestFront) { farthestFront = t; farthestFrontDir = sDirection[r]; }
+        }
+    }
+    bool inside = float(backfaces) > BACKFACE_LIMIT * float(RAYS);
+    vec3 moved = offset.xyz;
+    if (inside) {
+        moved += closestBackDir * (closestBack + 0.5 * minFront) / spacing;
+    } else if (closestFront < minFront) {
+        vec3 away = dot(closestFrontDir, farthestFrontDir) <= 0.0 ? farthestFrontDir : -closestFrontDir;
+        moved += away * min(farthestFront, spacing) * 0.5 / spacing;
+    }
+    if (max(max(abs(moved.x), abs(moved.y)), abs(moved.z)) <= 0.45) {
+        offset.xyz = moved;
+    }
+    offset.w = inside ? 1.0 : 0.0;
+    return offset;
+}
+
+void main() {
+    uint job = jobs[gl_WorkGroupID.x];
+    int c = int(job >> CASCADE_SLOT_BITS);
+    ivec3 slot = cascadeSlotCoord(int(job & ((1u << CASCADE_SLOT_BITS) - 1u)));
+    uint ray = gl_LocalInvocationID.x;
+    float maxDistance = cascades.settings.y * cascades.spacing[c];
+
+    vec4 traced = rays[gl_WorkGroupID.x * RAYS + ray];
+    sRadiance[ray] = traced.rgb;
+    sDirection[ray] = mat3(cascades.rotation) * probeRayDirection(ray, RAYS);
+    // Backfaces keep a short distance so the visibility test stops this probe lighting the far side of the wall.
+    sDistance[ray] = traced.a < 0.0 ? min(-traced.a * 0.2, maxDistance) : traced.a;
+    sTraced[ray] = traced.a;
+    barrier();
+    if (ray == 0u) {
+        // A probe that moved to a new cell starts over; young probes converge fast, then settle.
+        int index = cascadeStateIndex(c, slot);
+        ivec3 cell = cascadeCellOfSlot(c, slot);
+        ivec4 state = probeState[index];
+        bool sameCell = state.xyz == cell;
+        int updates = sameCell ? max(state.w, 0) : 0;
+        vec4 offset = relocate(sameCell ? probeOffset[index] : vec4(0.0), cascades.spacing[c]);
+        if (offset.w > 0.5) updates = 0;  // what an inside probe saw is not worth keeping
+        sHysteresis = min(cascades.settings.x, float(updates) / float(updates + 1));
+        probeState[index] = ivec4(cell, min(updates + 1, 1 << 20));
+        probeOffset[index] = offset;
+    }
+    barrier();
+
+    float hysteresis = sHysteresis;
+    ivec2 tile = cascadeTile(c, slot);
+    for (uint t = ray; t < uint(IRRADIANCE_TILE * IRRADIANCE_TILE); t += RAYS) {
+        ivec2 local = ivec2(int(t) % IRRADIANCE_TILE, int(t) / IRRADIANCE_TILE);
+        vec3 texDir = texelDirection(local, IRRADIANCE_INNER);
+        vec3 sum = vec3(0.0);
+        float weightSum = 0.0;
+        for (uint r = 0u; r < RAYS; ++r) {
+            float w = max(dot(texDir, sDirection[r]), 0.0);
+            sum += w * sRadiance[r];
+            weightSum += w;
+        }
+        ivec2 texel = tile * IRRADIANCE_TILE + local;
+        vec3 fresh = weightSum > 0.0 ? sum / weightSum : vec3(0.0);
+        vec3 previous = imageLoad(irradianceTiles, texel).rgb;
+        imageStore(irradianceTiles, texel, vec4(mix(fresh, previous, hysteresis), 1.0));
+    }
+    for (uint t = ray; t < uint(VISIBILITY_TILE * VISIBILITY_TILE); t += RAYS) {
+        ivec2 local = ivec2(int(t) % VISIBILITY_TILE, int(t) / VISIBILITY_TILE);
+        vec3 texDir = texelDirection(local, VISIBILITY_INNER);
+        vec2 sum = vec2(0.0);
+        float weightSum = 0.0;
+        for (uint r = 0u; r < RAYS; ++r) {
+            float w = pow(max(dot(texDir, sDirection[r]), 0.0), 50.0);
+            sum += w * vec2(sDistance[r], sDistance[r] * sDistance[r]);
+            weightSum += w;
+        }
+        ivec2 texel = tile * VISIBILITY_TILE + local;
+        vec2 fresh = weightSum > 0.0 ? sum / weightSum : vec2(maxDistance, maxDistance * maxDistance);
+        vec2 previous = imageLoad(visibilityTiles, texel).rg;
+        imageStore(visibilityTiles, texel, vec4(mix(fresh, previous, hysteresis), 0.0, 0.0));
+    }
+}

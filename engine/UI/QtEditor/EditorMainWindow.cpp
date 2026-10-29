@@ -3075,6 +3075,29 @@ void EditorMainWindow::setupCentralWidget()
     }
     tbLayout->addWidget(m_viewModeBtn);
 
+    m_qualityBtn = new QToolButton(m_viewportToolbar);
+    m_qualityBtn->setAutoRaise(true);
+    m_qualityBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_qualityBtn->setPopupMode(QToolButton::InstantPopup);
+    m_qualityBtn->setToolTip(tr("Visual quality previewed in the viewport. High and Ultra use ray-traced lighting; "
+                                "Medium and Low use baked GI. The project default is in Project Settings > Rendering."));
+    {
+        auto* qualityMenu = new QMenu(m_qualityBtn);
+        auto* qualityGroup = new QActionGroup(qualityMenu);
+        qualityGroup->setExclusive(true);
+        for (int q = 0; q < 4; ++q) {
+            QAction* action = qualityMenu->addAction(
+                QString::fromLatin1(Hephaestus::RenderQualityName(static_cast<Hephaestus::RenderQuality>(q))));
+            action->setCheckable(true);
+            qualityGroup->addAction(action);
+            m_qualityActions.push_back(action);
+            connect(action, &QAction::triggered, this, [this, q]() { applyViewportQuality(q); });
+        }
+        m_qualityBtn->setMenu(qualityMenu);
+    }
+    tbLayout->addWidget(m_qualityBtn);
+    applyProjectDefaultQuality();
+
     auto makeSep = [this]() {
         auto* sep = new QFrame(m_viewportToolbar);
         sep->setObjectName("VPToolbarSep");
@@ -3228,10 +3251,12 @@ void EditorMainWindow::setupCentralWidget()
 
         m_overlayFpsLabel       = new QLabel(tr("FPS 0.0"), statsFrame);
         m_overlayDrawCallsLabel = new QLabel(tr("Draw 0"),  statsFrame);
+        m_overlayGpuLabel       = new QLabel(tr("GPU --"),  statsFrame);
         m_overlayRamLabel       = new QLabel(tr("RAM --"),  statsFrame);
         m_overlaySceneLabel     = new QLabel(tr("Entities 0 | Meshes 0 | Lights 0 | Tris 0"), statsFrame);
         statsLayout->addWidget(m_overlayFpsLabel);
         statsLayout->addWidget(m_overlayDrawCallsLabel);
+        statsLayout->addWidget(m_overlayGpuLabel);
         statsLayout->addWidget(m_overlayRamLabel);
         statsLayout->addWidget(m_overlaySceneLabel);
         oLayout->addWidget(statsFrame);
@@ -3760,6 +3785,7 @@ void EditorMainWindow::setupViewportRenderingToggles()
     addToggle(tr("Selection Outline"), vs.showSelectionOutline);
     addToggle(tr("Skybox"), vs.showSkybox);
     addToggle(tr("Light Billboards"), vs.showLightBillboards);
+    addToggle(tr("GI Probes"), vs.showGIProbes);
     QAction* statsAction = viewportMenu->addAction(tr("Statistics"));
     statsAction->setCheckable(true);
     statsAction->setChecked(m_viewStatsBtn && m_viewStatsBtn->isChecked());
@@ -3909,6 +3935,22 @@ void EditorMainWindow::onFrameRendered(float dt)
         if (m_statusDrawCalls) m_statusDrawCalls->setText(QString("Draw %1").arg(drawCalls));
         if (m_overlayBottomLeft && m_overlayBottomLeft->isVisible()) {
             if (m_overlayDrawCallsLabel) m_overlayDrawCallsLabel->setText(QString("Draw %1").arg(drawCalls));
+            if (m_overlayGpuLabel && m_engine) {
+                auto* renderer = m_engine->GetFrameRenderer();
+                const GpuFrameTimes gpu = renderer ? renderer->GetLastFrameStats().gpu : GpuFrameTimes{};
+                if (gpu.valid) {
+                    m_overlayGpuLabel->setText(QString("GPU %1 ms").arg(gpu.totalMs, 0, 'f', 2));
+                    m_overlayGpuLabel->setToolTip(
+                        tr("Sun shadows %1 ms\nRay tracing + GI grids %2 ms\nPoint/spot shadows %3 ms\n"
+                           "Probe volume %4 ms\nScene %5 ms\nTemporal %6 ms\nTone map + overlays %7 ms")
+                            .arg(gpu.shadowMs, 0, 'f', 2).arg(gpu.rayTracingMs, 0, 'f', 2)
+                            .arg(gpu.localShadowMs, 0, 'f', 2).arg(gpu.probeVolumeMs, 0, 'f', 2)
+                            .arg(gpu.sceneMs, 0, 'f', 2).arg(gpu.temporalMs, 0, 'f', 2)
+                            .arg(gpu.overlayMs, 0, 'f', 2));
+                } else {
+                    m_overlayGpuLabel->setText(tr("GPU --"));
+                }
+            }
             if (m_overlayRamLabel) m_overlayRamLabel->setText(ramUsage);
             if (m_overlaySceneLabel && m_engine) {
                 auto* ctx = m_engine->GetEditorContext();
@@ -5793,6 +5835,7 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
     m_projectSettingsManager = std::make_unique<Hephaestus::Tools::ProjectSettingsManager>(
         QString::fromStdString(m_projectContext->GetProjectRootDir()));
     m_projectSettingsManager->Load();
+    applyProjectDefaultQuality();
 
     if (m_assetPipeline) {
         m_assetPipeline->Initialize(m_projectContext->GetProjectRootDir());
@@ -6466,6 +6509,7 @@ void EditorMainWindow::onOpenSettings()
                 this, [this]() {
             if (m_projectSettingsManager) {
                 m_projectSettingsManager->Load();
+                applyProjectDefaultQuality();
             }
         });
     }
@@ -6918,6 +6962,10 @@ void EditorMainWindow::startBuild(Build::BuildAction requestedAction)
     request.engineVersion = Tools::VersionInfo::EngineVersion().toStdString();
     request.startupScene = selected.startScene.toStdString();
     request.inputProfile = inputProfile.toStdString();
+    if (m_projectSettingsManager) {
+        request.renderQuality =
+            m_projectSettingsManager->Value(QStringLiteral("project.rendering.quality")).toString().toStdString();
+    }
     request.configuration = selected.configuration;
     request.action = selected.action;
     request.validateFirst = selected.validateFirst;
@@ -8572,6 +8620,45 @@ bool EditorMainWindow::runPrefabApply(entt::entity entity, const std::string& co
     refreshDetailsPanel();
     statusBar()->showMessage(tr("Applied changes to prefab"), 3000);
     return true;
+}
+
+void EditorMainWindow::applyViewportQuality(int quality)
+{
+    if (quality < 0 || quality >= m_qualityActions.size() || !m_qualityBtn) {
+        return;
+    }
+    m_qualityActions.at(quality)->setChecked(true);
+    const auto tier = static_cast<RenderQuality>(quality);
+    QString label = QString::fromLatin1(RenderQualityName(tier));
+    EngineFrameRenderer* renderer = m_engine ? m_engine->GetFrameRenderer() : nullptr;
+    if (renderer && !renderer->RayTracingAvailable() && ResolveRenderQuality(tier, false).lighting != tier) {
+        label += tr(" (baked GI)");
+    }
+    m_qualityBtn->setText(label);
+    // Applied directly too: after Lua's Graphics.setQuality the stored viewport tier can already equal this one,
+    // and the render loop only pushes changes of the stored tier.
+    if (renderer) {
+        renderer->SetRenderQuality(tier);
+    }
+    if (m_engine) {
+        if (auto* ctx = m_engine->GetEditorContext()) {
+            ctx->GetViewportSettings().renderQuality = quality;
+        }
+    }
+}
+
+void EditorMainWindow::applyProjectDefaultQuality()
+{
+    std::optional<RenderQuality> quality;
+    if (m_projectSettingsManager) {
+        quality = ParseRenderQuality(
+            m_projectSettingsManager->Value(QStringLiteral("project.rendering.quality")).toString().toStdString());
+    }
+    if (!quality) {
+        EngineFrameRenderer* renderer = m_engine ? m_engine->GetFrameRenderer() : nullptr;
+        quality = renderer ? renderer->GetRenderQuality() : RenderQuality::High;
+    }
+    applyViewportQuality(static_cast<int>(*quality));
 }
 
 } // namespace QtEditor

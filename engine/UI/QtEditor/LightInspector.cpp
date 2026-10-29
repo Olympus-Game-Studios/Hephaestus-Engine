@@ -79,6 +79,9 @@ void LightInspector::buildUI()
     m_shadowNormalBias->setDecimals(4);
     m_shadowNormalBias->setSingleStep(0.005);
     m_shadowStrength = new NumericPropertyEditor(tr("Strength"), m_shadowGroup);
+    m_shadowStrength->setToolTip(tr("How much of this light its shadows block. Below 1, part of the light passes "
+                                     "through everything, including into closed rooms; sky light and GI already "
+                                     "brighten shadows."));
     m_shadowStrength->setRange(0.0, 1.0);
     m_shadowStrength->setDecimals(3);
     m_shadowStrength->setSingleStep(0.05);
