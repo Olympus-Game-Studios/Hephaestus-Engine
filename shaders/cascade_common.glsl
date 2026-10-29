@@ -12,10 +12,14 @@ layout(std140, set = CASCADE_SET, binding = 12) uniform CascadeParams {
     mat4 rotation;          // applied to probeRayDirection, changes every frame
 } cascades;
 
+// probeOffset: xyz = move from the cell centre in probe spacings (|x| <= 0.45), w = 1 when the probe is switched
+// off (stuck inside geometry). Both belong to the probe in probeState's cell; a new cell starts from zero.
 #ifdef CASCADE_STATE_WRITE
 layout(std430, set = CASCADE_SET, binding = 13) buffer CascadeState { ivec4 probeState[]; };
+layout(std430, set = CASCADE_SET, binding = 19) buffer CascadeOffsets { vec4 probeOffset[]; };
 #else
 layout(std430, set = CASCADE_SET, binding = 13) readonly buffer CascadeState { ivec4 probeState[]; };
+layout(std430, set = CASCADE_SET, binding = 19) readonly buffer CascadeOffsets { vec4 probeOffset[]; };
 #endif
 
 // GLSL leaves % undefined for negative operands, and world cells go negative.
@@ -53,6 +57,12 @@ vec3 cascadeProbePosition(int c, ivec3 cell) {
     return (vec3(cell) + 0.5) * cascades.spacing[c];
 }
 
+// The probe's traced position: its cell centre plus its relocation, which only counts while it still holds that cell.
+vec4 cascadeProbeOffset(int c, ivec3 slot, ivec3 cell) {
+    int index = cascadeStateIndex(c, slot);
+    return probeState[index].xyz == cell ? probeOffset[index] : vec4(0.0);
+}
+
 // Tiles: x = slot x + y * count x, y = slot z + cascade * count z.
 ivec2 cascadeTile(int c, ivec3 s) {
     return ivec2(s.x + s.y * cascades.counts.x, s.z + c * cascades.counts.z);
@@ -86,8 +96,10 @@ vec4 sampleCascade(int c, vec3 pos, vec3 n, vec3 viewDir) {
         ivec3 slot = cascadeSlotOfCell(cell);
         ivec4 state = probeState[cascadeStateIndex(c, slot)];
         if (state.xyz != cell || state.w <= 0) continue;
+        vec4 relocation = probeOffset[cascadeStateIndex(c, slot)];
+        if (relocation.w > 0.5) continue;
         ivec2 tile = cascadeTile(c, slot);
-        vec3 probePos = cascadeProbePosition(c, cell);
+        vec3 probePos = cascadeProbePosition(c, cell) + relocation.xyz * spacing;
         vec3 tri = mix(1.0 - alpha, alpha, vec3(offset));
         float weight = tri.x * tri.y * tri.z;
 
@@ -105,8 +117,12 @@ vec4 sampleCascade(int c, vec3 pos, vec3 n, vec3 viewDir) {
             float variance = abs(moments.x * moments.x - moments.y);
             float d = dist - moments.x;
             float chebyshev = variance / (variance + d * d);
-            weight *= max(chebyshev * chebyshev * chebyshev, 0.05);
+            weight *= chebyshev * chebyshev * chebyshev;
         }
+        // No floor for hidden probes, and tiny weights crushed further (RTXGI): a lit probe on the far side of a
+        // wall must not tint a dark room through it.
+        const float CRUSH = 0.2;
+        if (weight < CRUSH) weight *= weight * weight / (CRUSH * CRUSH);
         weight = max(weight, 1e-6);
         sum += weight * texture(cascadeIrradiance, cascadeAtlasUV(tile, n, IRRADIANCE_TILE, IRRADIANCE_INNER, irrSize)).rgb;
         weightSum += weight;

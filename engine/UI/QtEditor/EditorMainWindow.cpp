@@ -3783,6 +3783,7 @@ void EditorMainWindow::setupViewportRenderingToggles()
     addToggle(tr("Selection Outline"), vs.showSelectionOutline);
     addToggle(tr("Skybox"), vs.showSkybox);
     addToggle(tr("Light Billboards"), vs.showLightBillboards);
+    addToggle(tr("GI Probes"), vs.showGIProbes);
     QAction* statsAction = viewportMenu->addAction(tr("Statistics"));
     statsAction->setCheckable(true);
     statsAction->setChecked(m_viewStatsBtn && m_viewStatsBtn->isChecked());

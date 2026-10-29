@@ -38,6 +38,8 @@ public:
     uint32_t JobCount() const { return m_jobCount; }
     VkBuffer ParamsBuffer(uint32_t imageIndex) const { return m_frames[imageIndex].params.buffer; }
     VkBuffer StateBuffer() const { return m_state.buffer; }
+    VkBuffer OffsetBuffer() const { return m_offsets.buffer; }
+    int ProbesPerCascade() const { return m_hasGrid ? m_grid.ProbesPerCascade() : 0; }
     VkImageView IrradianceView() const { return m_irradiance.view; }
     VkImageView VisibilityView() const { return m_visibility.view; }
 
@@ -74,6 +76,7 @@ private:
     Atlas m_irradiance;
     Atlas m_visibility;
     VulkanBuffer m_state;  // ivec4 per probe: world cell, updates
+    VulkanBuffer m_offsets;  // vec4 per probe: relocation in spacings, switched off
     VulkanBuffer m_rays;   // vec4 per traced ray: radiance, distance
     uint32_t m_jobCount = 0;
     bool m_active = false;

@@ -68,6 +68,8 @@ public:
     void BeginTiming(VkCommandBuffer cmd, uint32_t imageIndex);
     void RecordUpdate(VkCommandBuffer cmd, uint32_t imageIndex);
     void RecordDebug(VkCommandBuffer cmd, uint32_t imageIndex, VkDescriptorSet cameraSet);
+    // The finest camera-following grid's probes; switched-off probes draw red.
+    void RecordCascadeDebug(VkCommandBuffer cmd, uint32_t imageIndex, VkDescriptorSet cameraSet);
 
     // GPU time of the last completed sun map + probe update, in milliseconds (negative until known).
     float LastGpuMilliseconds() const { return m_lastGpuMs; }
@@ -109,6 +111,7 @@ private:
     std::vector<VulkanBuffer> m_paramBuffers;
     VkPipelineLayout m_debugLayout = VK_NULL_HANDLE;
     VkPipeline m_debugPipeline = VK_NULL_HANDLE;
+    VkPipeline m_cascadeDebugPipeline = VK_NULL_HANDLE;
     VkQueryPool m_queryPool = VK_NULL_HANDLE;
     std::vector<bool> m_queryWritten;
     float m_timestampPeriodNs = 0.0f;

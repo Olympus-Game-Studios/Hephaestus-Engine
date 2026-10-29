@@ -27,7 +27,7 @@ struct TraceInstance {
 };
 layout(std430, set = 0, binding = 16) readonly buffer Instances { TraceInstance instances[]; };
 layout(std430, set = 0, binding = 17) readonly buffer Jobs { uint jobs[]; };
-layout(std430, set = 0, binding = 18) writeonly buffer Rays { vec4 rays[]; };  // rgb = radiance, a = distance
+layout(std430, set = 0, binding = 18) writeonly buffer Rays { vec4 rays[]; };  // rgb = radiance, a = distance (< 0 = backface)
 
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Floats { float v[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Indices { uint i[]; };
@@ -54,7 +54,8 @@ void main() {
     ivec3 slot = cascadeSlotCoord(int(job & ((1u << CASCADE_SLOT_BITS) - 1u)));
     uint ray = gl_LocalInvocationID.x;
     float spacing = cascades.spacing[c];
-    vec3 origin = cascadeProbePosition(c, cascadeCellOfSlot(c, slot));
+    ivec3 cell = cascadeCellOfSlot(c, slot);
+    vec3 origin = cascadeProbePosition(c, cell) + cascadeProbeOffset(c, slot, cell).xyz * spacing;
     vec3 dir = mat3(cascades.rotation) * probeRayDirection(ray, RAYS);
     float maxDistance = cascades.settings.y * spacing;
 
@@ -75,9 +76,7 @@ void main() {
         vec3 n = normalize(transpose(inverse(objectToWorld)) * cross(b - a, e - a));
         float t = rayQueryGetIntersectionTEXT(q, true);
         if (dot(n, dir) > 0.0) {
-            // Inside geometry: no light, and a short distance so the visibility test keeps this probe
-            // from lighting the far side of the wall (DDGI, Majercik et al. 2019).
-            result = vec4(0.0, 0.0, 0.0, min(t * 0.2, maxDistance));
+            result = vec4(0.0, 0.0, 0.0, -t);
         } else {
             vec3 hitPos = origin + dir * t;
             float sun = 1.0;

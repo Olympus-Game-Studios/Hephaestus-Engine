@@ -1004,6 +1004,8 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/cascade_update.comp
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_debug.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_debug.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/cascade_debug.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/cascade_debug.frag
     )
 
     set(SHADER_INCLUDES

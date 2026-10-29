@@ -4359,6 +4359,9 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     if (config.isEditorMode && !config.isPlaying && m_probeGI.Active()) {
         m_probeGI.RecordDebug(cmd, imageIndex, m_descriptorSets[imageIndex]);
     }
+    if (config.isEditorMode && config.renderGIProbes) {
+        m_probeGI.RecordCascadeDebug(cmd, imageIndex, m_descriptorSets[imageIndex]);
+    }
     recordToneMap(cmd);
 
     // Render editor grid (after opaque meshes, before transparent) — not in play/pause or shipped game

@@ -38,6 +38,7 @@ enum Binding : uint32_t {
     kInstances = 16,
     kJobs = 17,
     kRays = 18,
+    kOffsets = 19,
 };
 
 } // namespace
@@ -64,6 +65,7 @@ bool ProbeCascades::Init(VulkanDevice* device, bool rayQueries) {
         {kInstances, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute, nullptr},
         {kJobs, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute, nullptr},
         {kRays, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute, nullptr},
+        {kOffsets, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute, nullptr},
     };
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     layoutInfo.bindingCount = static_cast<uint32_t>(std::size(bindings));
@@ -111,7 +113,7 @@ bool ProbeCascades::CreateSwapchainResources(uint32_t imageCount) {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * imageCount},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * imageCount},
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, imageCount},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 * imageCount},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5 * imageCount},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * imageCount},
     };
     VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -204,6 +206,9 @@ bool ProbeCascades::createGrid(const Cell& counts) {
         m_state.Create(m_device->allocator, probes * 4 * sizeof(int32_t),
                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                        VMA_MEMORY_USAGE_GPU_ONLY);
+        m_offsets.Create(m_device->allocator, probes * 4 * sizeof(float),
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                         VMA_MEMORY_USAGE_GPU_ONLY);
         m_rays.Create(m_device->allocator, static_cast<VkDeviceSize>(kProbeBudget) * kRaysPerProbe * 4 * sizeof(float),
                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
     } catch (const std::exception& e) {
@@ -227,6 +232,7 @@ bool ProbeCascades::createGrid(const Cell& counts) {
             vkCmdClearColorImage(cmd, atlas->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
         }
         vkCmdFillBuffer(cmd, m_state.buffer, 0, VK_WHOLE_SIZE, static_cast<uint32_t>(INT_MIN));
+        vkCmdFillBuffer(cmd, m_offsets.buffer, 0, VK_WHOLE_SIZE, 0);
         VkMemoryBarrier cleared{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         cleared.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         cleared.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
@@ -248,6 +254,7 @@ void ProbeCascades::destroyGrid() {
         *atlas = Atlas{};
     }
     m_state.Destroy(m_device->allocator);
+    m_offsets.Destroy(m_device->allocator);
     m_rays.Destroy(m_device->allocator);
     m_hasGrid = false;
 }
@@ -318,6 +325,7 @@ void ProbeCascades::Prepare(uint32_t imageIndex, const Cell* counts, const Vec3&
     const VkDescriptorBufferInfo instancesInfo{instances, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo jobsInfo{frame.jobs.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo raysInfo{m_rays.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo offsetsInfo{m_offsets.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo irrStore{VK_NULL_HANDLE, m_irradiance.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo visStore{VK_NULL_HANDLE, m_visibility.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo irrRead{m_sampler, m_irradiance.view, VK_IMAGE_LAYOUT_GENERAL};
@@ -347,6 +355,7 @@ void ProbeCascades::Prepare(uint32_t imageIndex, const Cell* counts, const Vec3&
         write(kInstances, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &instancesInfo, nullptr),
         write(kJobs, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &jobsInfo, nullptr),
         write(kRays, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &raysInfo, nullptr),
+        write(kOffsets, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &offsetsInfo, nullptr),
     };
     vkUpdateDescriptorSets(m_device->device, static_cast<uint32_t>(std::size(writes)), writes, 0, nullptr);
     m_active = true;

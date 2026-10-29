@@ -1948,6 +1948,7 @@ void QtEditorEngine::renderFrame()
     m_renderConfig.renderShadows = viewportSettings.showShadows
         && (m_camera.projectionMode != Hephaestus::ProjectionMode::Orthographic);
     m_renderConfig.renderSkybox = viewportSettings.showSkybox;
+    m_renderConfig.renderGIProbes = viewportSettings.showGIProbes;
     m_renderConfig.renderBillboards = viewportSettings.showLightBillboards && !m_playModeManager.ShouldSuppressEditorInteraction();
 
     if (m_frameRenderer && viewportSettings.renderQuality >= 0 &&

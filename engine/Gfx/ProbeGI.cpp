@@ -56,6 +56,7 @@ enum Binding : uint32_t {
     kCascadeState = 13,
     kCascadeIrradiance = 14,
     kCascadeVisibility = 15,
+    kCascadeOffsets = 19,
 };
 
 // Uniform random rotation (Shoemake): traced probes see new directions every frame, and hysteresis
@@ -134,10 +135,11 @@ bool ProbeGI::createLayouts() {
         {kVisibilityOut, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute, nullptr},
         {kIrradianceRead, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, all, nullptr},
         {kVisibilityRead, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, all, nullptr},
-        {kCascadeParams, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {kCascadeState, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {kCascadeParams, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {kCascadeState, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {kCascadeIrradiance, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {kCascadeVisibility, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {kCascadeOffsets, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {kScene, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
     };
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -270,7 +272,7 @@ bool ProbeGI::CreateSwapchainResources(VkRenderPass sceneRenderPass, uint32_t sc
     VkDevice device = m_device->device;
     const VkDescriptorPoolSize sizes[] = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 6 * imageCount},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6 * imageCount},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8 * imageCount},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10 * imageCount},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 * imageCount},
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 2 * imageCount},
@@ -323,17 +325,6 @@ bool ProbeGI::CreateSwapchainResources(VkRenderPass sceneRenderPass, uint32_t sc
     pl.pPushConstantRanges = &push;
     if (vkCreatePipelineLayout(device, &pl, nullptr, &m_debugLayout) != VK_SUCCESS) return false;
 
-    VkShaderModule vert = LoadShader(device, "probe_debug.vert.spv");
-    VkShaderModule frag = LoadShader(device, "probe_debug.frag.spv");
-    if (!vert || !frag) {
-        if (vert) vkDestroyShaderModule(device, vert, nullptr);
-        if (frag) vkDestroyShaderModule(device, frag, nullptr);
-        return false;
-    }
-    VkPipelineShaderStageCreateInfo stages[2] = {
-        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vert, "main", nullptr},
-        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, frag, "main", nullptr},
-    };
     VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -361,7 +352,6 @@ bool ProbeGI::CreateSwapchainResources(VkRenderPass sceneRenderPass, uint32_t sc
     dyn.pDynamicStates = dynamicStates;
     VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
     info.stageCount = 2;
-    info.pStages = stages;
     info.pVertexInputState = &vi;
     info.pInputAssemblyState = &ia;
     info.pViewportState = &vp;
@@ -373,10 +363,27 @@ bool ProbeGI::CreateSwapchainResources(VkRenderPass sceneRenderPass, uint32_t sc
     info.layout = m_debugLayout;
     info.renderPass = sceneRenderPass;
     info.subpass = sceneSubpass;
-    const VkResult result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &m_debugPipeline);
-    vkDestroyShaderModule(device, vert, nullptr);
-    vkDestroyShaderModule(device, frag, nullptr);
-    return result == VK_SUCCESS;
+    // Spheres drawn per probe: the placed volume's (probe_debug) and the finest camera-following grid's.
+    auto build = [&](const char* vertName, const char* fragName, VkPipeline& out) {
+        VkShaderModule vert = LoadShader(device, vertName);
+        VkShaderModule frag = LoadShader(device, fragName);
+        VkResult result = VK_ERROR_INITIALIZATION_FAILED;
+        if (vert && frag) {
+            const VkPipelineShaderStageCreateInfo stages[2] = {
+                {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vert,
+                 "main", nullptr},
+                {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, frag,
+                 "main", nullptr},
+            };
+            info.pStages = stages;
+            result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &out);
+        }
+        if (vert) vkDestroyShaderModule(device, vert, nullptr);
+        if (frag) vkDestroyShaderModule(device, frag, nullptr);
+        return result == VK_SUCCESS;
+    };
+    return build("probe_debug.vert.spv", "probe_debug.frag.spv", m_debugPipeline) &&
+           build("cascade_debug.vert.spv", "cascade_debug.frag.spv", m_cascadeDebugPipeline);
 }
 
 void ProbeGI::DestroySwapchainResources() {
@@ -385,6 +392,8 @@ void ProbeGI::DestroySwapchainResources() {
     m_tracer.DestroySwapchainResources();
     m_cascades.DestroySwapchainResources();
     if (m_debugPipeline) vkDestroyPipeline(device, m_debugPipeline, nullptr);
+    if (m_cascadeDebugPipeline) vkDestroyPipeline(device, m_cascadeDebugPipeline, nullptr);
+    m_cascadeDebugPipeline = VK_NULL_HANDLE;
     if (m_debugLayout) vkDestroyPipelineLayout(device, m_debugLayout, nullptr);
     if (m_queryPool) vkDestroyQueryPool(device, m_queryPool, nullptr);
     if (m_descriptorPool) vkDestroyDescriptorPool(device, m_descriptorPool, nullptr);
@@ -625,18 +634,20 @@ void ProbeGI::writeCascadeDescriptors(uint32_t imageIndex) {
     const bool grid = m_cascades.StateBuffer() != VK_NULL_HANDLE;
     const VkDescriptorBufferInfo params{m_cascades.ParamsBuffer(imageIndex), 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo state{grid ? m_cascades.StateBuffer() : m_placeholderBuffer.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo offsets{grid ? m_cascades.OffsetBuffer() : m_placeholderBuffer.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo irradiance{m_atlasSampler,
                                            grid ? m_cascades.IrradianceView() : m_placeholderAtlas.view,
                                            VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo visibility{m_atlasSampler,
                                            grid ? m_cascades.VisibilityView() : m_placeholderAtlas.view,
                                            VK_IMAGE_LAYOUT_GENERAL};
-    VkWriteDescriptorSet writes[4] = {};
-    const uint32_t bindings[4] = {kCascadeParams, kCascadeState, kCascadeIrradiance, kCascadeVisibility};
-    const VkDescriptorType types[4] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+    VkWriteDescriptorSet writes[5] = {};
+    const uint32_t bindings[5] = {kCascadeParams, kCascadeState, kCascadeIrradiance, kCascadeVisibility,
+                                  kCascadeOffsets};
+    const VkDescriptorType types[5] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                       VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
-    for (int i = 0; i < 4; ++i) {
+                                       VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
+    for (int i = 0; i < 5; ++i) {
         writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         writes[i].dstSet = m_sets[imageIndex][1];
         writes[i].dstBinding = bindings[i];
@@ -647,7 +658,8 @@ void ProbeGI::writeCascadeDescriptors(uint32_t imageIndex) {
     writes[1].pBufferInfo = &state;
     writes[2].pImageInfo = &irradiance;
     writes[3].pImageInfo = &visibility;
-    vkUpdateDescriptorSets(m_device->device, 4, writes, 0, nullptr);
+    writes[4].pBufferInfo = &offsets;
+    vkUpdateDescriptorSets(m_device->device, 5, writes, 0, nullptr);
 }
 
 void ProbeGI::prepareVolume(Scene* scene, const std::string& projectRoot, uint32_t imageIndex,
@@ -895,6 +907,18 @@ void ProbeGI::RecordDebug(VkCommandBuffer cmd, uint32_t imageIndex, VkDescriptor
     const float radius = spacing > 0.0f ? 0.12f * spacing : 0.25f;
     vkCmdPushConstants(cmd, m_debugLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(radius), &radius);
     vkCmdDraw(cmd, kDebugSphereVertices, static_cast<uint32_t>(m_probeCount), 0, 0);
+}
+
+void ProbeGI::RecordCascadeDebug(VkCommandBuffer cmd, uint32_t imageIndex, VkDescriptorSet cameraSet) {
+    if (!m_cascades.Active() || !m_cascadeDebugPipeline) return;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_cascadeDebugPipeline);
+    const uint32_t dynamicOffset = 0;
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_debugLayout, 0, 1, &cameraSet, 1, &dynamicOffset);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_debugLayout, 1, 1, &m_sets[imageIndex][1], 0,
+                            nullptr);
+    const float radius = 0.12f * ProbeCascades::kBaseSpacing;
+    vkCmdPushConstants(cmd, m_debugLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(radius), &radius);
+    vkCmdDraw(cmd, kDebugSphereVertices, static_cast<uint32_t>(m_cascades.ProbesPerCascade()), 0, 0);
 }
 
 } // namespace Hephaestus

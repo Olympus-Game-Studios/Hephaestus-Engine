@@ -103,6 +103,7 @@ struct FrameRenderConfig {
     bool renderBillboards = true;
     bool renderOutlines = true;
     bool renderGrid = true;         // World grid overlay (editor viewport only)
+    bool renderGIProbes = false;    // Camera-following GI probes as spheres (editor viewport only)
     bool isEditorMode = false;      // Editor sets true; game / standalone defaults off
     bool isPlaying = false;
     bool isPaused = false;
