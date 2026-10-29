@@ -84,6 +84,7 @@ struct EditorViewportSettings {
     bool showSkybox = true;
     bool showLightBillboards = true;
     int shadingMode = 0; // 0=Lit, 1=Unlit, 2=Wireframe (matches ViewShadingMode)
+    int renderQuality = -1; // Hephaestus::RenderQuality value; -1 keeps the renderer's GPU default
 };
 
 /**

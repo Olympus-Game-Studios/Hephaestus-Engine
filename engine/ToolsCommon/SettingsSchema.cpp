@@ -129,6 +129,8 @@ void SettingsSchemaRegistry::RegisterBuiltins()
 
         MakeDef("project.rendering.defaultSkybox", "rendering", "Rendering", "defaultSkybox", "Default Skybox", SettingControlType::Path,
             QString()),
+        MakeDef("project.rendering.quality", "rendering", "Rendering", "quality", "Default Visual Quality", SettingControlType::Enum,
+            QStringLiteral("High"), {}, {}, {QStringLiteral("Low"), QStringLiteral("Medium"), QStringLiteral("High"), QStringLiteral("Ultra")}),
         MakeDef("project.rendering.enableHdr", "rendering", "Rendering", "enableHdr", "Enable HDR", SettingControlType::Bool,
             true),
         MakeDef("project.rendering.defaultExposure", "rendering", "Rendering", "defaultExposure", "Default Exposure", SettingControlType::Float,

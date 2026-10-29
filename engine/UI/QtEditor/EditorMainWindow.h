@@ -399,6 +399,10 @@ private:
     QFrame* m_overlayBottomLeft = nullptr;
     QComboBox* m_viewPerspectiveCombo = nullptr;
     QToolButton* m_viewModeBtn = nullptr;
+    QToolButton* m_qualityBtn = nullptr;
+    QList<QAction*> m_qualityActions;  // Low, Medium, High, Ultra
+    void applyViewportQuality(int quality);
+    void applyProjectDefaultQuality();
     QAction* m_viewModeLitAction = nullptr;
     QAction* m_viewModeUnlitAction = nullptr;
     QAction* m_viewModeWireframeAction = nullptr;

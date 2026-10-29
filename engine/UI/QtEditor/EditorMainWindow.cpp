@@ -3075,6 +3075,29 @@ void EditorMainWindow::setupCentralWidget()
     }
     tbLayout->addWidget(m_viewModeBtn);
 
+    m_qualityBtn = new QToolButton(m_viewportToolbar);
+    m_qualityBtn->setAutoRaise(true);
+    m_qualityBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_qualityBtn->setPopupMode(QToolButton::InstantPopup);
+    m_qualityBtn->setToolTip(tr("Visual quality previewed in the viewport. High and Ultra use ray-traced lighting; "
+                                "Medium and Low use baked GI. The project default is in Project Settings > Rendering."));
+    {
+        auto* qualityMenu = new QMenu(m_qualityBtn);
+        auto* qualityGroup = new QActionGroup(qualityMenu);
+        qualityGroup->setExclusive(true);
+        for (int q = 0; q < 4; ++q) {
+            QAction* action = qualityMenu->addAction(
+                QString::fromLatin1(Hephaestus::RenderQualityName(static_cast<Hephaestus::RenderQuality>(q))));
+            action->setCheckable(true);
+            qualityGroup->addAction(action);
+            m_qualityActions.push_back(action);
+            connect(action, &QAction::triggered, this, [this, q]() { applyViewportQuality(q); });
+        }
+        m_qualityBtn->setMenu(qualityMenu);
+    }
+    tbLayout->addWidget(m_qualityBtn);
+    applyProjectDefaultQuality();
+
     auto makeSep = [this]() {
         auto* sep = new QFrame(m_viewportToolbar);
         sep->setObjectName("VPToolbarSep");
@@ -5793,6 +5816,7 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
     m_projectSettingsManager = std::make_unique<Hephaestus::Tools::ProjectSettingsManager>(
         QString::fromStdString(m_projectContext->GetProjectRootDir()));
     m_projectSettingsManager->Load();
+    applyProjectDefaultQuality();
 
     if (m_assetPipeline) {
         m_assetPipeline->Initialize(m_projectContext->GetProjectRootDir());
@@ -6466,6 +6490,7 @@ void EditorMainWindow::onOpenSettings()
                 this, [this]() {
             if (m_projectSettingsManager) {
                 m_projectSettingsManager->Load();
+                applyProjectDefaultQuality();
             }
         });
     }
@@ -6918,6 +6943,10 @@ void EditorMainWindow::startBuild(Build::BuildAction requestedAction)
     request.engineVersion = Tools::VersionInfo::EngineVersion().toStdString();
     request.startupScene = selected.startScene.toStdString();
     request.inputProfile = inputProfile.toStdString();
+    if (m_projectSettingsManager) {
+        request.renderQuality =
+            m_projectSettingsManager->Value(QStringLiteral("project.rendering.quality")).toString().toStdString();
+    }
     request.configuration = selected.configuration;
     request.action = selected.action;
     request.validateFirst = selected.validateFirst;
@@ -8572,6 +8601,40 @@ bool EditorMainWindow::runPrefabApply(entt::entity entity, const std::string& co
     refreshDetailsPanel();
     statusBar()->showMessage(tr("Applied changes to prefab"), 3000);
     return true;
+}
+
+void EditorMainWindow::applyViewportQuality(int quality)
+{
+    if (quality < 0 || quality >= m_qualityActions.size() || !m_qualityBtn) {
+        return;
+    }
+    m_qualityActions.at(quality)->setChecked(true);
+    const auto tier = static_cast<RenderQuality>(quality);
+    QString label = QString::fromLatin1(RenderQualityName(tier));
+    EngineFrameRenderer* renderer = m_engine ? m_engine->GetFrameRenderer() : nullptr;
+    if (renderer && !renderer->RayTracingAvailable() && ResolveRenderQuality(tier, false).lighting != tier) {
+        label += tr(" (baked GI)");
+    }
+    m_qualityBtn->setText(label);
+    if (m_engine) {
+        if (auto* ctx = m_engine->GetEditorContext()) {
+            ctx->GetViewportSettings().renderQuality = quality;
+        }
+    }
+}
+
+void EditorMainWindow::applyProjectDefaultQuality()
+{
+    std::optional<RenderQuality> quality;
+    if (m_projectSettingsManager) {
+        quality = ParseRenderQuality(
+            m_projectSettingsManager->Value(QStringLiteral("project.rendering.quality")).toString().toStdString());
+    }
+    if (!quality) {
+        EngineFrameRenderer* renderer = m_engine ? m_engine->GetFrameRenderer() : nullptr;
+        quality = renderer ? renderer->GetRenderQuality() : RenderQuality::High;
+    }
+    applyViewportQuality(static_cast<int>(*quality));
 }
 
 } // namespace QtEditor

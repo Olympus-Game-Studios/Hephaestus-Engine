@@ -277,22 +277,26 @@ float cascadeOcclusion(int cascade, vec3 lightDir) {
     float depthRange = lighting.cascadeDepthRange[cascade];
     float tanHalfSun = lighting.shadowBiasWorld.z;
     float receiver = projCoords.z - bias;
-    float searchTexels = clamp(tanHalfSun * BLOCKER_SEARCH_METRES / texelWorld, 1.5, MAX_TEXELS);
-    float blockerSum = 0.0;
-    float blockers = 0.0;
-    for (int i = 0; i < 16; i++) {
-        vec2 sampleCoord = clamp(atlasUV + rotation * poissonDisk[i] * searchTexels * texelSize, quadrantMin, quadrantMax);
-        float depth = texture(shadowMap, sampleCoord).r;
-        if (depth < receiver) {
-            blockerSum += depth;
-            blockers += 1.0;
+    // A zero sun size (or the Low tier) skips the blocker search and keeps a fixed narrow filter.
+    float filterTexels = 1.5;
+    if (tanHalfSun > 0.0) {
+        float searchTexels = clamp(tanHalfSun * BLOCKER_SEARCH_METRES / texelWorld, 1.5, MAX_TEXELS);
+        float blockerSum = 0.0;
+        float blockers = 0.0;
+        for (int i = 0; i < 16; i++) {
+            vec2 sampleCoord = clamp(atlasUV + rotation * poissonDisk[i] * searchTexels * texelSize, quadrantMin, quadrantMax);
+            float depth = texture(shadowMap, sampleCoord).r;
+            if (depth < receiver) {
+                blockerSum += depth;
+                blockers += 1.0;
+            }
         }
+        if (blockers == 0.0) {
+            return 0.0;
+        }
+        float blockerDistance = (receiver - blockerSum / blockers) * depthRange;
+        filterTexels = clamp(blockerDistance * tanHalfSun / texelWorld, 1.5, MAX_TEXELS);
     }
-    if (blockers == 0.0) {
-        return 0.0;
-    }
-    float blockerDistance = (receiver - blockerSum / blockers) * depthRange;
-    float filterTexels = clamp(blockerDistance * tanHalfSun / texelWorld, 1.5, MAX_TEXELS);
 
     float shadow = 0.0;
     for (int i = 0; i < 16; i++) {

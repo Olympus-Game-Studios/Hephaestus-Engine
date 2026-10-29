@@ -1950,6 +1950,12 @@ void QtEditorEngine::renderFrame()
     m_renderConfig.renderSkybox = viewportSettings.showSkybox;
     m_renderConfig.renderBillboards = viewportSettings.showLightBillboards && !m_playModeManager.ShouldSuppressEditorInteraction();
 
+    if (m_frameRenderer && viewportSettings.renderQuality >= 0 &&
+        viewportSettings.renderQuality != m_appliedRenderQuality) {
+        m_frameRenderer->SetRenderQuality(static_cast<Hephaestus::RenderQuality>(viewportSettings.renderQuality));
+        m_appliedRenderQuality = viewportSettings.renderQuality;
+    }
+
     // Viewport shading mode (Lit / Unlit / Wireframe)
     switch (viewportSettings.shadingMode) {
         case 1:

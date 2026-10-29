@@ -156,6 +156,7 @@ struct GameConfig {
     std::string scenePath;
     std::string projectName;
     std::string inputProfile = "assets/input/Default.hpinput";
+    std::string renderQuality;  // project default from game.ini; a player's saved choice wins
 #if HEPHAESTUS_RUNTIME_AUTOMATION
     bool automationEnabled = false;
     int automationPort = 0;
@@ -341,6 +342,33 @@ static bool ParseCommandLine(int argc, char* argv[], GameConfig& config) {
 // Configuration File Loading
 // ──────────────────────────────────────────────────────────────────────────────
 
+// Per-player settings live outside the install folder, which may not be writable.
+static fs::path UserGraphicsSettingsPath() {
+    std::string name = g_Config.projectName.empty() ? "HephaestusGame" : g_Config.projectName;
+    for (char& c : name) {
+        if (c == '<' || c == '>' || c == ':' || c == '"' || c == '/' || c == '\\' || c == '|' || c == '?' ||
+            c == '*') {
+            c = '_';
+        }
+    }
+#ifdef _WIN32
+    const char* base = std::getenv("APPDATA");
+    const fs::path dir = base ? fs::path(base) : g_RuntimeRoot;
+#else
+    const char* home = std::getenv("HOME");
+    const fs::path dir = home ? fs::path(home) / ".config" : g_RuntimeRoot;
+#endif
+    return dir / name / "graphics.ini";
+}
+
+static void SaveUserRenderQuality(const std::string& quality) {
+    const fs::path path = UserGraphicsSettingsPath();
+    const auto tier = Hephaestus::ParseRenderQuality(quality);
+    if (!tier || !Hephaestus::WriteRenderQualityFile(path, *tier)) {
+        HP_LOG(Warning, "Could not save graphics settings to " + path.string());
+    }
+}
+
 static void LoadConfigFile(GameConfig& config) {
     fs::path configPath = g_RuntimeRoot / "game.ini";
     
@@ -394,6 +422,8 @@ static void LoadConfigFile(GameConfig& config) {
             config.projectName = value;
         } else if (key == "input_profile") {
             config.inputProfile = value;
+        } else if (key == "quality") {
+            config.renderQuality = value;
         }
 #if HEPHAESTUS_RUNTIME_AUTOMATION
         else if (key == "enabled" && value == "true" || key == "enabled" && value == "1") {
@@ -616,7 +646,20 @@ int main(int argc, char* argv[]) {
         return -1;
     }
     HP_LOG(Info, "Swapchain extent: " + std::to_string(swap.extent.width) + "x" + std::to_string(swap.extent.height));
-    
+    {
+        std::optional<Hephaestus::RenderQuality> quality =
+            Hephaestus::ReadRenderQualityFile(UserGraphicsSettingsPath());
+        if (!quality) {
+            quality = Hephaestus::ParseRenderQuality(g_Config.renderQuality);
+        }
+        if (quality) {
+            frameRenderer.SetRenderQuality(*quality);
+        }
+        const Hephaestus::RenderQualityProfile profile = frameRenderer.GetRenderQualityProfile();
+        HP_LOG(Info, std::string("Visual quality: ") + Hephaestus::RenderQualityName(profile.requested) +
+                         " (lighting runs as " + Hephaestus::RenderQualityName(profile.lighting) + ")");
+    }
+
     Bootstrap::EndStage(InitStage::Renderer, true);
 
     // ── Scene Loading (early - needed by physics and scripting) ──────
@@ -725,6 +768,7 @@ int main(int argc, char* argv[]) {
         // Set project root so script search paths resolve correctly on any device
         luaEngine.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
         luaEngine.SetFrameRenderer(&frameRenderer);
+        luaEngine.SetGraphicsQualityChangedCallback(SaveUserRenderQuality);
         luaEngine.SetInputSystem(&inputSystem);
         luaEngine.SetAudioEngine(&audioEngine);
         luaEngine.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);

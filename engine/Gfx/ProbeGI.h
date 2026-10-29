@@ -43,8 +43,9 @@ public:
 
     // Before command recording for imageIndex: (re)loads the bake, fills the parameters and descriptor sets.
     // collectInstances is called only when the volume traces with hardware ray tracing or traceShadows is set.
+    // allowHardware = false makes volumes that ask for hardware ray tracing use their bakes (lower quality tiers).
     void Prepare(Scene* scene, const std::string& projectRoot, uint32_t imageIndex, VkBuffer lightingBuffer,
-                 const Vec3* sunDirection, bool traceShadows,
+                 const Vec3* sunDirection, bool allowHardware, bool traceShadows,
                  const std::function<std::vector<ProbeTraceInstance>()>& collectInstances);
     bool Active() const { return m_active; }
     // When true, DrawSet binds the scene acceleration structure at binding 11 and surfaces use triangle_rt.frag.
@@ -74,7 +75,7 @@ private:
     bool loadBake(const std::filesystem::path& file, std::string& outError);
     bool createHardwareVolume(const int counts[3], std::string& outError);
     void prepareVolume(Scene* scene, const std::string& projectRoot, uint32_t imageIndex, VkBuffer lightingBuffer,
-                       const Vec3* sunDirection);
+                       const Vec3* sunDirection, bool allowHardware);
     bool createAtlases(const int counts[3]);
     void destroyBake();
     void writeDescriptorSets(uint32_t imageIndex, VkBuffer lightingBuffer);

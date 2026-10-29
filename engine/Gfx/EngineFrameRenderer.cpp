@@ -279,6 +279,7 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
         std::cerr << "[EngineFrameRenderer] Failed to create probe GI layouts\n";
         return false;
     }
+    m_renderQuality = DefaultRenderQuality(m_probeGI.HardwareRayTracingAvailable());
     
     // Create render resources
     if (!createPipeline()) {
@@ -801,7 +802,8 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             return instances;
         };
         m_probeGI.Prepare(scene, m_projectRoot, imageIndex, m_lightingBuffers[imageIndex].buffer,
-                          hasSun ? &sunDirection : nullptr, scene && m_traceShadows, collectInstances);
+                          hasSun ? &sunDirection : nullptr, GetRenderQualityProfile().rayTracing,
+                          scene && m_traceShadows, collectInstances);
     }
 
     // Prepare the runtime HUI overlay geometry/uploads (queue work is allowed
@@ -2893,7 +2895,8 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
     m_localShadowJobs.clear();
     m_traceShadows = false;
     m_sunRayTraced = false;
-    const bool canTrace = m_probeGI.HardwareRayTracingAvailable();
+    const RenderQualityProfile quality = GetRenderQualityProfile();
+    const bool canTrace = quality.rayTracing;
     uint32_t nextShadowTile = 0;
     int shadowedPoints = 0;
     int shadowedSpots = 0;
@@ -3001,7 +3004,9 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                     lightUBO.cascadeTexelWorld = Vec4(2.0f * radii[0] / tileResolution, 2.0f * radii[1] / tileResolution,
                                                       2.0f * radii[2] / tileResolution, 2.0f * radii[3] / tileResolution);
                     lightUBO.cascadeDepthRange = Vec4(depthRanges[0], depthRanges[1], depthRanges[2], depthRanges[3]);
-                    const float sunHalfAngle = std::clamp(light.sunAngularDiameter, 0.0f, 10.0f) * 0.5f * 0.01745329252f;
+                    const float sunHalfAngle = quality.softSunShadows
+                        ? std::clamp(light.sunAngularDiameter, 0.0f, 10.0f) * 0.5f * 0.01745329252f
+                        : 0.0f;
                     m_sunRayTraced = canTrace && light.rayTracedShadows;
                     m_traceShadows |= m_sunRayTraced;
                     lightUBO.shadowBiasWorld = Vec4(std::max(0.0f, light.shadowBias),
@@ -3026,7 +3031,8 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 if (light.castShadows && canTrace && light.rayTracedShadows) {
                     lightUBO.pointShadowParams[pointLightIndex] = Vec4(-2.0f, light.shadowStrength, light.range, 0.0f);
                     m_traceShadows = true;
-                } else if (light.castShadows && m_localShadow.IsValid() && shadowedPoints < kMaxShadowedPointLights) {
+                } else if (light.castShadows && quality.localShadows && m_localShadow.IsValid() &&
+                           shadowedPoints < kMaxShadowedPointLights) {
                     const float base = static_cast<float>(nextShadowTile);
                     const Vec3 faces[6] = {Vec3(1, 0, 0), Vec3(-1, 0, 0), Vec3(0, 1, 0),
                                            Vec3(0, -1, 0), Vec3(0, 0, 1), Vec3(0, 0, -1)};
@@ -3048,7 +3054,8 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
                 if (light.castShadows && canTrace && light.rayTracedShadows) {
                     lightUBO.spotShadowParams[spotLightIndex] = Vec4(-2.0f, light.shadowStrength, light.range, 0.0f);
                     m_traceShadows = true;
-                } else if (light.castShadows && m_localShadow.IsValid() && shadowedSpots < kMaxShadowedSpotLights) {
+                } else if (light.castShadows && quality.localShadows && m_localShadow.IsValid() &&
+                           shadowedSpots < kMaxShadowedSpotLights) {
                     // outerConeAngle is the full aperture; pad it so filtering at the cone edge stays in the tile.
                     const float fovY = std::min(light.outerConeAngle + 0.1f, 2.8f);
                     const Vec3 up = std::fabs(lightDir.y) > 0.99f ? Vec3(1, 0, 0) : Vec3(0, 1, 0);

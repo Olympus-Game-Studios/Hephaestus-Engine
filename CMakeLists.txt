@@ -321,6 +321,7 @@ add_library(HephaestusRuntime STATIC
     engine/Gfx/VulkanLightGizmo.cpp
     engine/Gfx/BuiltinMeshes.cpp
     engine/Gfx/SkyIrradiance.cpp
+    engine/Gfx/RenderQuality.cpp
     engine/Gfx/ProbeBake.cpp
     engine/Gfx/ProbeGI.cpp
     engine/Gfx/ProbeRayTracer.cpp
@@ -1542,6 +1543,13 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     target_link_libraries(LightShadowSettingsTests PRIVATE HephaestusRuntime)
     target_include_directories(LightShadowSettingsTests PRIVATE engine extern extern/entt/single_include)
     add_test(NAME LightShadowSettings COMMAND LightShadowSettingsTests)
+
+    add_executable(RenderQualityTests
+        engine/Tests/RenderQualityTests.cpp
+    )
+    target_link_libraries(RenderQualityTests PRIVATE HephaestusRuntime)
+    target_include_directories(RenderQualityTests PRIVATE engine extern)
+    add_test(NAME RenderQuality COMMAND RenderQualityTests)
 
     add_executable(ProbeBakeTests
         engine/Tests/ProbeBakeTests.cpp

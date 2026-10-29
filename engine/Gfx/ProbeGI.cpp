@@ -599,9 +599,9 @@ bool ProbeGI::createAtlases(const int counts[3]) {
 }
 
 void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t imageIndex, VkBuffer lightingBuffer,
-                      const Vec3* sunDirection, bool traceShadows,
+                      const Vec3* sunDirection, bool allowHardware, bool traceShadows,
                       const std::function<std::vector<ProbeTraceInstance>()>& collectInstances) {
-    prepareVolume(scene, projectRoot, imageIndex, lightingBuffer, sunDirection);
+    prepareVolume(scene, projectRoot, imageIndex, lightingBuffer, sunDirection, allowHardware);
     m_sceneTraced = false;
     if (!m_tracerReady || imageIndex >= m_sets.size()) return;
     if (scene && (traceShadows || (m_active && m_hardware))) {
@@ -636,7 +636,8 @@ void ProbeGI::RecordScene(VkCommandBuffer cmd, uint32_t imageIndex) {
 }
 
 void ProbeGI::prepareVolume(Scene* scene, const std::string& projectRoot, uint32_t imageIndex,
-                            VkBuffer lightingBuffer, const Vec3* sunDirection) {
+                            VkBuffer lightingBuffer, const Vec3* sunDirection, bool allowHardware) {
+    const bool traceVolumes = m_tracerReady && allowHardware;
     m_active = false;
     if (!m_device || imageIndex >= m_sets.size()) return;
     auto writeInactive = [&]() {
@@ -665,7 +666,7 @@ void ProbeGI::prepareVolume(Scene* scene, const std::string& projectRoot, uint32
     entt::entity volumeEntity = entt::null;
     for (entt::entity handle : scene->GetRegistry().view<ProbeVolumeComponent>()) {
         const auto& candidate = scene->GetRegistry().get<ProbeVolumeComponent>(handle);
-        if (candidate.enabled && ((candidate.hardwareRayTracing && m_tracerReady) || !candidate.bakePath.empty())) {
+        if (candidate.enabled && ((candidate.hardwareRayTracing && traceVolumes) || !candidate.bakePath.empty())) {
             volume = &candidate;
             volumeEntity = handle;
             break;
@@ -680,7 +681,7 @@ void ProbeGI::prepareVolume(Scene* scene, const std::string& projectRoot, uint32
         return;
     }
 
-    const bool hardware = volume->hardwareRayTracing && m_tracerReady;
+    const bool hardware = volume->hardwareRayTracing && traceVolumes;
     const int counts[3] = {std::max(1, volume->probeCountX), std::max(1, volume->probeCountY),
                            std::max(1, volume->probeCountZ)};
     std::filesystem::path file = std::filesystem::path(projectRoot) / volume->bakePath;

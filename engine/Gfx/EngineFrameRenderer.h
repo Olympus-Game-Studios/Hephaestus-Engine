@@ -31,6 +31,7 @@
 #include "SkyIrradiance.h"
 #include "ProbeBake.h"
 #include "ProbeGI.h"
+#include "RenderQuality.h"
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
 #include "../Core/EditorDebugDraw.h"
@@ -197,6 +198,14 @@ public:
     bool HasDeviceLost() const { return m_deviceLost; }
 
     const FrameStats& GetLastFrameStats() const { return m_lastFrameStats; }
+
+    // Visual quality tier; Init sets DefaultRenderQuality for the GPU. Takes effect on the next frame.
+    void SetRenderQuality(RenderQuality quality) { m_renderQuality = quality; }
+    RenderQuality GetRenderQuality() const { return m_renderQuality; }
+    bool RayTracingAvailable() const { return m_probeGI.HardwareRayTracingAvailable(); }
+    RenderQualityProfile GetRenderQualityProfile() const {
+        return ResolveRenderQuality(m_renderQuality, RayTracingAvailable());
+    }
 
     /**
      * @brief Set the project root directory for resolving relative asset paths (HDRI, fonts, UI images).
@@ -590,6 +599,7 @@ private:
     };
     std::vector<LocalShadowJob> m_localShadowJobs;  // filled by updateLightingUBO, drawn by recordLocalShadowPass
     bool m_traceShadows = false;    // some light asked for ray-traced shadows this frame (set by updateLightingUBO)
+    RenderQuality m_renderQuality = RenderQuality::High;
     bool m_sunRayTraced = false;    // the sun's shadow is ray traced, so the cascade pass is skipped
     bool createLocalShadowResources();
     void recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config);
