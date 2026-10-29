@@ -28,6 +28,8 @@ int main() {
 
     pass &= Check(Near(LightComponent().sunAngularDiameter, 1.0f), "a new light has a 1 degree sun");
     pass &= Check(!LightComponent().rayTracedShadows, "a new light uses shadow maps");
+    pass &= Check(Near(LightComponent().shadowStrength, 1.0f),
+                  "a new light's shadows block all of its light; sky light and GI fill them in");
 
     {
         Scene scene("RoundTrip");

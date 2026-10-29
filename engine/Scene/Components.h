@@ -668,7 +668,7 @@ struct LightComponent {
         , shadowAutoFit(true)
         , shadowBias(0.002f)
         , shadowNormalBias(0.01f)
-        , shadowStrength(0.7f)
+        , shadowStrength(1.0f)
         , shadowDistance(500.0f)
         , shadowExtent(500.0f)
         , shadowMaxDistance(500.0f)
