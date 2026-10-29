@@ -410,6 +410,7 @@ private:
     QToolButton* m_viewStatsBtn = nullptr;
     QLabel* m_overlayFpsLabel = nullptr;
     QLabel* m_overlayDrawCallsLabel = nullptr;
+    QLabel* m_overlayGpuLabel = nullptr;
     QLabel* m_overlayRamLabel = nullptr;
     QLabel* m_overlaySceneLabel = nullptr;
 

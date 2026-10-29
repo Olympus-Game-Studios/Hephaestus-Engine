@@ -378,13 +378,16 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
     if (!createSkinnedMainPipelines()) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create skinned mesh pipelines\n";
     }
+    if (!m_temporal.Init(m_device) || !m_temporal.CreateSwapchainResources(*m_swapchain)) {
+        std::cerr << "[EngineFrameRenderer] Failed to create temporal accumulation resources\n";
+        return false;
+    }
     if (!createToneMapResources()) {
         std::cerr << "[EngineFrameRenderer] Failed to create tone map resources\n";
         return false;
     }
-    if (!m_temporal.Init(m_device) || !m_temporal.CreateSwapchainResources(*m_swapchain)) {
-        std::cerr << "[EngineFrameRenderer] Failed to create temporal accumulation resources\n";
-        return false;
+    if (!m_gpuTimer.Init(m_device, kMaxTimedImages)) {
+        std::cerr << "[EngineFrameRenderer] Warning: GPU frame timing unavailable\n";
     }
     if (m_directionalShadow.IsValid() && !m_probeGI.InitSunMap(m_directionalShadow.renderPass)) {
         std::cerr << "[EngineFrameRenderer] Warning: Failed to create the probe sun map (probes see the sun unoccluded)\n";
@@ -660,12 +663,12 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             std::cerr << "[EngineFrameRenderer] Failed to recreate descriptor sets\n";
             return false;
         }
-        if (!createToneMapResources()) {
-            std::cerr << "[EngineFrameRenderer] Failed to recreate tone map resources\n";
-            return false;
-        }
         if (!m_temporal.CreateSwapchainResources(*m_swapchain)) {
             std::cerr << "[EngineFrameRenderer] Failed to recreate temporal accumulation resources\n";
+            return false;
+        }
+        if (!createToneMapResources()) {
+            std::cerr << "[EngineFrameRenderer] Failed to recreate tone map resources\n";
             return false;
         }
         if (!m_probeGI.CreateSwapchainResources(m_swapchain->renderPass, VulkanSwapchain::kSceneSubpass,
@@ -773,6 +776,9 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (imageIndex < m_imagesInFlight.size()) {
         m_imagesInFlight[imageIndex] = m_inFlightFences[m_currentFrame];
     }
+    if (imageIndex < kMaxTimedImages) {
+        m_gpuTimer.Collect(imageIndex);  // that image's last frame has finished
+    }
     
     vkResetFences(m_device->device, 1, &m_inFlightFences[m_currentFrame]);
     
@@ -858,6 +864,9 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cmd, &beginInfo);
     
+    const bool timed = imageIndex < kMaxTimedImages;
+    if (timed) m_gpuTimer.Begin(cmd, imageIndex);
+
     // Record ID pass for entity picking (editor only)
     if (config.isEditorMode && m_idPicker.initialized) {
         recordIdPass(cmd, imageIndex, scene, config);
@@ -904,10 +913,13 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (config.renderShadows && m_directionalShadow.IsValid() && !(scene && m_sunRayTraced)) {
         recordShadowPass(cmd, scene, camera, config);
     }
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::Shadows);
     m_probeGI.RecordScene(cmd, imageIndex);
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::RayTracing);
     if (config.renderShadows && m_localShadow.IsValid() && !m_localShadowJobs.empty()) {
         recordLocalShadowPass(cmd, scene, config);
     }
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::LocalShadows);
     if (m_probeGI.Active()) {
         m_probeGI.BeginTiming(cmd, imageIndex);
         if (m_probeGI.HasSunMap()) {
@@ -915,10 +927,20 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         }
         m_probeGI.RecordUpdate(cmd, imageIndex);
     }
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::ProbeVolume);
     
 // Record main render pass
     recordMainPass(cmd, imageIndex, scene, config);
     m_lastFrameStats.probeGIGpuMs = m_probeGI.Active() ? m_probeGI.LastGpuMilliseconds() : -1.0f;
+    m_lastFrameStats.gpu = m_gpuTimer.Smoothed();
+    if (m_lastFrameStats.gpu.valid && m_renderedFrameCount % 300 == 0) {
+        const GpuFrameTimes& t = m_lastFrameStats.gpu;
+        std::cout << "[GpuTime] total " << t.totalMs << " ms: sun shadows " << t.shadowMs << ", ray tracing + GI grids "
+                  << t.rayTracingMs << ", local shadows " << t.localShadowMs << ", probe volume " << t.probeVolumeMs
+                  << ", scene " << t.sceneMs << ", temporal " << t.temporalMs << ", tone map + overlays "
+                  << t.overlayMs << " (" << m_swapchain->extent.width << "x" << m_swapchain->extent.height << ", "
+                  << RenderQualityName(m_renderQuality) << ")\n";
+    }
     if (m_lastFrameStats.probeGIGpuMs >= 0.0f && m_renderedFrameCount % 600 == 0) {
         std::cout << "[ProbeGI] " << m_probeGI.ProbeCount() << " probes updated in "
                   << m_lastFrameStats.probeGIGpuMs << " ms GPU\n";
@@ -4424,6 +4446,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     // Scene done: accumulate it over frames, then tone map and draw overlays in the second render pass.
     vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdEndRenderPass(cmd);
+    const bool timed = imageIndex < kMaxTimedImages;
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::Scene);
     bool resetHistory = false;
     if (scene) {
         const std::pair<uint64_t, uint64_t> sceneKey{scene->GetIdentity(), scene->GetRuntimeGeneration()};
@@ -4431,6 +4455,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         m_temporalScene = sceneKey;
     }
     m_temporal.Record(cmd, m_viewProj, resetHistory);
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::Temporal);
     renderPassInfo.renderPass = m_swapchain->renderPass;
     renderPassInfo.clearValueCount = 0;
     renderPassInfo.pClearValues = nullptr;
@@ -4473,6 +4498,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     recordHUIOverlay(cmd, imageIndex);
 
     vkCmdEndRenderPass(cmd);
+    if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::End);
 }
 
 void EngineFrameRenderer::recordGizmo(VkCommandBuffer cmd, uint32_t imageIndex, Scene* scene)
@@ -5019,6 +5045,7 @@ void EngineFrameRenderer::destroyAllResources()
         m_pipeline.reset();
     }
     m_temporal.Shutdown();
+    m_gpuTimer.Shutdown();
     m_probeGI.Shutdown();  // after every pipeline layout that uses its set layouts
     
     m_device = nullptr;
@@ -5761,7 +5788,7 @@ bool EngineFrameRenderer::createToneMapResources()
 
     VkDescriptorSetLayoutBinding binding{};
     binding.binding = 0;
-    binding.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binding.descriptorCount = 1;
     binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo layoutCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -5771,9 +5798,9 @@ bool EngineFrameRenderer::createToneMapResources()
         return false;
     }
 
-    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1};
+    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
     VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    poolCI.maxSets = 1;
+    poolCI.maxSets = 2;
     poolCI.poolSizeCount = 1;
     poolCI.pPoolSizes = &poolSize;
     if (vkCreateDescriptorPool(device, &poolCI, nullptr, &m_toneMap.descriptorPool) != VK_SUCCESS) {
@@ -5781,25 +5808,29 @@ bool EngineFrameRenderer::createToneMapResources()
         return false;
     }
 
+    const VkDescriptorSetLayout layouts[2] = {m_toneMap.setLayout, m_toneMap.setLayout};
     VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     allocInfo.descriptorPool = m_toneMap.descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &m_toneMap.setLayout;
-    if (vkAllocateDescriptorSets(device, &allocInfo, &m_toneMap.descriptorSet) != VK_SUCCESS) {
+    allocInfo.descriptorSetCount = 2;
+    allocInfo.pSetLayouts = layouts;
+    if (vkAllocateDescriptorSets(device, &allocInfo, m_toneMap.descriptorSets) != VK_SUCCESS) {
         cleanupToneMapResources();
         return false;
     }
-
-    VkDescriptorImageInfo hdrInfo{};
-    hdrInfo.imageView = m_swapchain->hdrImageView;
-    hdrInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet = m_toneMap.descriptorSet;
-    write.dstBinding = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
-    write.pImageInfo = &hdrInfo;
-    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    // The tone map reads the temporal result in place (no copy back into the HDR attachment).
+    for (uint32_t i = 0; i < 2; ++i) {
+        VkDescriptorImageInfo resultInfo{};
+        resultInfo.sampler = m_temporal.LinearSampler();
+        resultInfo.imageView = m_temporal.ResultView(i);
+        resultInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = m_toneMap.descriptorSets[i];
+        write.dstBinding = 0;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &resultInfo;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
 
     VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(uint32_t)};
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -5896,7 +5927,7 @@ void EngineFrameRenderer::cleanupToneMapResources()
         vkDestroyDescriptorPool(device, m_toneMap.descriptorPool, nullptr);
         m_toneMap.descriptorPool = VK_NULL_HANDLE;
     }
-    m_toneMap.descriptorSet = VK_NULL_HANDLE;
+    m_toneMap.descriptorSets[0] = m_toneMap.descriptorSets[1] = VK_NULL_HANDLE;
     if (m_toneMap.setLayout) {
         vkDestroyDescriptorSetLayout(device, m_toneMap.setLayout, nullptr);
         m_toneMap.setLayout = VK_NULL_HANDLE;
@@ -5908,7 +5939,7 @@ void EngineFrameRenderer::recordToneMap(VkCommandBuffer cmd)
     vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_toneMap.pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_toneMap.pipelineLayout,
-                            0, 1, &m_toneMap.descriptorSet, 0, nullptr);
+                            0, 1, &m_toneMap.descriptorSets[m_temporal.LastResultIndex()], 0, nullptr);
     const uint32_t outputIsSrgb = IsSrgbFormat(m_swapchain->format) ? 1u : 0u;
     vkCmdPushConstants(cmd, m_toneMap.pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(outputIsSrgb), &outputIsSrgb);

@@ -3251,10 +3251,12 @@ void EditorMainWindow::setupCentralWidget()
 
         m_overlayFpsLabel       = new QLabel(tr("FPS 0.0"), statsFrame);
         m_overlayDrawCallsLabel = new QLabel(tr("Draw 0"),  statsFrame);
+        m_overlayGpuLabel       = new QLabel(tr("GPU --"),  statsFrame);
         m_overlayRamLabel       = new QLabel(tr("RAM --"),  statsFrame);
         m_overlaySceneLabel     = new QLabel(tr("Entities 0 | Meshes 0 | Lights 0 | Tris 0"), statsFrame);
         statsLayout->addWidget(m_overlayFpsLabel);
         statsLayout->addWidget(m_overlayDrawCallsLabel);
+        statsLayout->addWidget(m_overlayGpuLabel);
         statsLayout->addWidget(m_overlayRamLabel);
         statsLayout->addWidget(m_overlaySceneLabel);
         oLayout->addWidget(statsFrame);
@@ -3933,6 +3935,22 @@ void EditorMainWindow::onFrameRendered(float dt)
         if (m_statusDrawCalls) m_statusDrawCalls->setText(QString("Draw %1").arg(drawCalls));
         if (m_overlayBottomLeft && m_overlayBottomLeft->isVisible()) {
             if (m_overlayDrawCallsLabel) m_overlayDrawCallsLabel->setText(QString("Draw %1").arg(drawCalls));
+            if (m_overlayGpuLabel && m_engine) {
+                auto* renderer = m_engine->GetFrameRenderer();
+                const GpuFrameTimes gpu = renderer ? renderer->GetLastFrameStats().gpu : GpuFrameTimes{};
+                if (gpu.valid) {
+                    m_overlayGpuLabel->setText(QString("GPU %1 ms").arg(gpu.totalMs, 0, 'f', 2));
+                    m_overlayGpuLabel->setToolTip(
+                        tr("Sun shadows %1 ms\nRay tracing + GI grids %2 ms\nPoint/spot shadows %3 ms\n"
+                           "Probe volume %4 ms\nScene %5 ms\nTemporal %6 ms\nTone map + overlays %7 ms")
+                            .arg(gpu.shadowMs, 0, 'f', 2).arg(gpu.rayTracingMs, 0, 'f', 2)
+                            .arg(gpu.localShadowMs, 0, 'f', 2).arg(gpu.probeVolumeMs, 0, 'f', 2)
+                            .arg(gpu.sceneMs, 0, 'f', 2).arg(gpu.temporalMs, 0, 'f', 2)
+                            .arg(gpu.overlayMs, 0, 'f', 2));
+                } else {
+                    m_overlayGpuLabel->setText(tr("GPU --"));
+                }
+            }
             if (m_overlayRamLabel) m_overlayRamLabel->setText(ramUsage);
             if (m_overlaySceneLabel && m_engine) {
                 auto* ctx = m_engine->GetEditorContext();

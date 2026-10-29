@@ -330,6 +330,7 @@ add_library(HephaestusRuntime STATIC
     engine/Gfx/ProbeCascadeGrid.cpp
     engine/Gfx/ProbeCascades.cpp
     engine/Gfx/TemporalResolve.cpp
+    engine/Gfx/GpuFrameTimer.cpp
     engine/Gfx/ProbeBake.cpp
     engine/Gfx/ProbeGI.cpp
     engine/Gfx/ProbeRayTracer.cpp

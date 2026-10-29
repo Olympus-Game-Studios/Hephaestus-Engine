@@ -94,7 +94,6 @@ bool TemporalResolve::Init(VulkanDevice* device) {
 
 bool TemporalResolve::CreateSwapchainResources(const VulkanSwapchain& swapchain) {
     VkDevice device = m_device->device;
-    m_hdrImage = swapchain.hdrImage;
     m_extent = swapchain.extent;
     for (Image& history : m_history) {
         VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -105,7 +104,7 @@ bool TemporalResolve::CreateSwapchainResources(const VulkanSwapchain& swapchain)
         image.arrayLayers = 1;
         image.samples = VK_SAMPLE_COUNT_1_BIT;
         image.tiling = VK_IMAGE_TILING_OPTIMAL;
-        image.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        image.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         VmaAllocationCreateInfo alloc{};
         alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
         if (vmaCreateImage(m_device->allocator, &image, &alloc, &history.image, &history.allocation, nullptr) !=
@@ -182,7 +181,6 @@ void TemporalResolve::DestroySwapchainResources() {
     if (m_pool) vkDestroyDescriptorPool(device, m_pool, nullptr);
     m_pool = VK_NULL_HANDLE;
     m_sets[0] = m_sets[1] = VK_NULL_HANDLE;
-    m_hdrImage = VK_NULL_HANDLE;
     m_historyValid = false;
 }
 
@@ -203,11 +201,11 @@ void TemporalResolve::Shutdown() {
 }
 
 void TemporalResolve::Record(VkCommandBuffer cmd, const Mat4& viewProj, bool reset) {
-    // Earlier frames' passes and copy are done with the history images.
+    // Earlier frames' passes, tone maps and reflections are done with the history images.
     VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-    before.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+    before.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
     before.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
 
     Push push;
@@ -219,26 +217,12 @@ void TemporalResolve::Record(VkCommandBuffer cmd, const Mat4& viewProj, bool res
     vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
     vkCmdDispatch(cmd, (m_extent.width + 7) / 8, (m_extent.height + 7) / 8, 1);
 
-    // The resolved frame replaces the HDR image the tone map reads.
+    // The tone map samples the result directly.
     VkMemoryBarrier written{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     written.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    written.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    VkImageMemoryBarrier toCopy{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    toCopy.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    toCopy.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    toCopy.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    toCopy.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    toCopy.srcQueueFamilyIndex = toCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toCopy.image = m_hdrImage;
-    toCopy.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &written, 0,
-                         nullptr, 1, &toCopy);
-    VkImageCopy region{};
-    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.extent = {m_extent.width, m_extent.height, 1};
-    vkCmdCopyImage(cmd, m_history[m_parity].image, VK_IMAGE_LAYOUT_GENERAL, m_hdrImage,
-                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    written.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
+                         &written, 0, nullptr, 0, nullptr);
 
     m_previousViewProj = viewProj;
     m_historyValid = true;

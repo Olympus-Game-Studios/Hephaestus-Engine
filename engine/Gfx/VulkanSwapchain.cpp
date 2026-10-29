@@ -244,7 +244,8 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
     // ── Render passes: scene → HDR, then (after temporal accumulation) tone map + overlays → swapchain ──
     // Both passes share one layout of attachments, subpasses and dependencies, so they are compatible and every
     // pipeline built against renderPass also works in scenePass. scenePass only draws in its first subpass and
-    // keeps HDR and depth for the temporal pass; renderPass loads them, tone maps and adds overlays.
+    // keeps HDR and depth for the temporal pass; renderPass loads depth, tone maps the temporal result (sampled,
+    // not the HDR attachment) and adds overlays.
     auto makePass = [&](bool scene) {
         VkAttachmentDescription colorAttachment{};
         colorAttachment.format = format;
@@ -270,11 +271,11 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
         VkAttachmentDescription hdrAttachment{};
         hdrAttachment.format = kHdrFormat;
         hdrAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-        hdrAttachment.loadOp = scene ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        hdrAttachment.loadOp = scene ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         hdrAttachment.storeOp = scene ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
         hdrAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         hdrAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        hdrAttachment.initialLayout = scene ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        hdrAttachment.initialLayout = scene ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         hdrAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
         VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
