@@ -2,6 +2,8 @@
 #extension GL_GOOGLE_include_directive : require
 #ifdef RAY_TRACED_SHADOWS
 #extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
 #endif
 
 #define MAX_TEXTURE_SLOTS 128
@@ -66,14 +68,22 @@ layout(set = 0, binding = 5) uniform sampler2D environmentMap;
 #define CASCADE_SET 2
 #define CASCADE_SAMPLING
 #include "cascade_common.glsl"
+#include "probe_shading.glsl"
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
 layout(set = 0, binding = 6) uniform sampler2D localShadowAtlas;  // 8 x 4 tiles of 512 (EngineFrameRenderer::kLocalShadowTile)
 #ifdef RAY_TRACED_SHADOWS
 layout(set = GI_SET, binding = 11) uniform accelerationStructureEXT sceneStructure;  // engine/Gfx/ProbeGI.cpp kScene
+struct TraceInstance {
+    vec4 albedo;
+    vec4 emissive;
+    uvec2 vertices;  // address of Vertex[] (engine/Gfx/Vertex.h, 11 floats each)
+    uvec2 indices;   // address of uint[]
+};
+layout(std430, set = GI_SET, binding = 20) readonly buffer SceneInstances { TraceInstance sceneInstances[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer VertexFloats { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer IndexWords { uint i[]; };
 #endif
-
-const float PI = 3.14159265359;
 
 // ═══════════════════════════════════════════════════════════════
 // PBR FUNCTIONS
@@ -171,6 +181,59 @@ bool rayOccluded(vec3 origin, vec3 dir, float maxDistance) {
 
 vec3 rayOrigin() {
     return fragWorldPos + normalize(fragNormal) * 0.01;
+}
+
+vec3 hitVertex(VertexFloats vertices, uint index) {
+    uint base = index * 11u;
+    return vec3(vertices.v[base], vertices.v[base + 1u], vertices.v[base + 2u]);
+}
+
+// Radiance arriving along dir: what the ray hits, lit by the sun (traced shadow), point and spot lights
+// (unshadowed) and the probe grids' indirect light, or the sky when it hits nothing. Textures at the hit are not
+// sampled; each instance carries its first material's colour.
+vec3 tracedReflection(vec3 origin, vec3 dir) {
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, sceneStructure, gl_RayFlagsOpaqueEXT, 0xFF, origin, 0.0, dir, 10000.0);
+    while (rayQueryProceedEXT(query)) {}
+    if (rayQueryGetIntersectionTypeEXT(query, true) != gl_RayQueryCommittedIntersectionTriangleEXT) {
+        return lighting.environmentReflectionParams.y > 0.5
+            ? sampleEnvironmentReflection(dir) * lighting.environmentReflectionParams.x
+            : skyRadiance(dir);
+    }
+    TraceInstance inst = sceneInstances[rayQueryGetIntersectionInstanceCustomIndexEXT(query, true)];
+    uint primitive = uint(rayQueryGetIntersectionPrimitiveIndexEXT(query, true));
+    IndexWords indices = IndexWords(inst.indices);
+    VertexFloats vertices = VertexFloats(inst.vertices);
+    vec3 a = hitVertex(vertices, indices.i[primitive * 3u]);
+    vec3 b = hitVertex(vertices, indices.i[primitive * 3u + 1u]);
+    vec3 c = hitVertex(vertices, indices.i[primitive * 3u + 2u]);
+    mat3 objectToWorld = mat3(rayQueryGetIntersectionObjectToWorldEXT(query, true));
+    vec3 n = normalize(transpose(inverse(objectToWorld)) * cross(b - a, c - a));
+    if (dot(n, dir) > 0.0) n = -n;
+    vec3 hitPos = origin + dir * rayQueryGetIntersectionTEXT(query, true);
+
+    float sun = 1.0;
+    if (lighting.dirLightDirIntensity.w > 0.0) {
+        vec3 toSun = normalize(-lighting.dirLightDirIntensity.xyz);
+        sun = dot(n, toSun) > 0.0 && !rayOccluded(hitPos + n * 0.01, toSun, 10000.0) ? 1.0 : 0.0;
+    }
+    vec3 indirect = skyRadiance(n) * PI;
+    if (cascades.counts.w > 0) {
+        vec4 probes = sampleCascades(hitPos, n, -dir);
+        indirect = mix(indirect, probes.rgb * PI, probes.w);
+    }
+    return inst.albedo.rgb / PI * (directIrradiance(hitPos, n, sun) + indirect) + inst.emissive.rgb;
+}
+
+// A GGX half vector around N for a rough reflection; xi in [0,1)^2 (Walter et al. 2007).
+vec3 sampleGGX(vec3 N, float roughness, vec2 xi) {
+    float alpha = roughness * roughness;
+    float phi = 2.0 * PI * xi.x;
+    float cosTheta = sqrt((1.0 - xi.y) / (1.0 + (alpha * alpha - 1.0) * xi.y));
+    float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+    vec3 tangent = normalize(cross(abs(N.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), N));
+    vec3 bitangent = cross(N, tangent);
+    return normalize(tangent * (sinTheta * cos(phi)) + bitangent * (sinTheta * sin(phi)) + N * cosTheta);
 }
 
 // Fraction of the sun's disc hidden from this fragment, from 8 rays spread over its angular size.
@@ -582,9 +645,44 @@ void main() {
     }
     vec3 color = ambient + Lo;
 
-    // ── Environment Reflections ──────────────────────────────
-    // Basic IBL foundation: reflect the active HDRI only. Nearby objects are not reflected yet.
-    if (lighting.environmentReflectionParams.y > 0.5 && material.reflectionStrength > 0.0) {
+    // ── Reflections ──────────────────────────────────────────
+    // High and Ultra trace a reflection ray on smooth enough surfaces (mirror on High, glossy too on Ultra);
+    // anything rougher, and every surface below High, reflects the HDRI as before.
+    bool traced = false;
+#ifdef RAY_TRACED_SHADOWS
+    float rayMode = lighting.rayReflectionParams.x;
+    float cutoff = rayMode > 1.5 ? lighting.rayReflectionParams.z : lighting.rayReflectionParams.y;
+    if (rayMode > 0.5 && material.reflectionStrength > 0.0 && roughness < cutoff) {
+        vec3 R = reflect(-V, N);
+        if (rayMode > 1.5 && roughness > 0.05) {
+            // One GGX sample per pixel; a fixed per-position pattern, so it does not flicker before
+            // temporal accumulation exists.
+            vec2 xi = fract(sin(vec2(dot(fragWorldPos, vec3(12.9898, 78.233, 37.719)),
+                                     dot(fragWorldPos, vec3(39.346, 11.135, 83.155)))) * 43758.5453);
+            R = reflect(-V, sampleGGX(N, roughness, xi));
+            if (dot(R, N) <= 0.0) R = reflect(-V, N);
+        }
+        vec3 reflected = tracedReflection(rayOrigin(), R);
+        float roughnessFactor = 1.0 - clamp(roughness, 0.0, 1.0);
+        roughnessFactor *= roughnessFactor;
+        vec3 reflectionFresnel = fresnelSchlick(max(dot(N, V), 0.0), F0);
+        color += reflected * reflectionFresnel * roughnessFactor * material.reflectionStrength * ao;
+        traced = true;
+    }
+#endif
+    if (!traced && cascades.counts.w > 0 && lighting.environmentReflectionParams.y < 0.5 &&
+        material.reflectionStrength > 0.0) {
+        // Too rough to trace and no HDRI: the probes' light from the reflection direction stands in for a
+        // blurred reflection, so rough metals are not black.
+        vec3 R = reflect(-V, N);
+        vec4 probes = sampleCascades(fragWorldPos, R, V);
+        vec3 reflected = mix(skyRadiance(R), probes.rgb, probes.w);
+        float roughnessFactor = 1.0 - clamp(roughness, 0.0, 1.0);
+        roughnessFactor *= roughnessFactor;
+        color += reflected * fresnelSchlick(max(dot(N, V), 0.0), F0) * roughnessFactor * material.reflectionStrength * ao;
+        traced = true;
+    }
+    if (!traced && lighting.environmentReflectionParams.y > 0.5 && material.reflectionStrength > 0.0) {
         vec3 R = reflect(-V, N);
         vec3 envReflection = sampleEnvironmentReflection(R);
         float roughnessFactor = 1.0 - clamp(roughness, 0.0, 1.0);

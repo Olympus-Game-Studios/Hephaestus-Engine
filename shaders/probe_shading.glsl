@@ -1,5 +1,5 @@
-// Lighting at a probe ray's hit and octahedral texel directions, shared by the probe volume and cascade updates.
-// Include after lighting_common.glsl and probe_common.glsl.
+// Lighting at a ray's hit and octahedral texel directions, shared by the probe updates and the surface shader's
+// traced reflections. Include after lighting_common.glsl and probe_common.glsl.
 
 const float PI = 3.14159265359;
 

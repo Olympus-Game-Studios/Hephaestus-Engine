@@ -57,6 +57,7 @@ enum Binding : uint32_t {
     kCascadeIrradiance = 14,
     kCascadeVisibility = 15,
     kCascadeOffsets = 19,
+    kSceneInstances = 20,  // per-instance materials for traced reflections, only with hardware ray tracing
 };
 
 // Uniform random rotation (Shoemake): traced probes see new directions every frame, and hysteresis
@@ -141,9 +142,10 @@ bool ProbeGI::createLayouts() {
         {kCascadeVisibility, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {kCascadeOffsets, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {kScene, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {kSceneInstances, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
     };
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layoutInfo.bindingCount = static_cast<uint32_t>(std::size(bindings)) - (m_tracerReady ? 0 : 1);
+    layoutInfo.bindingCount = static_cast<uint32_t>(std::size(bindings)) - (m_tracerReady ? 0 : 2);
     layoutInfo.pBindings = bindings;
     if (vkCreateDescriptorSetLayout(m_device->device, &layoutInfo, nullptr, &m_setLayout) != VK_SUCCESS) return false;
     VkDescriptorSetLayoutCreateInfo emptyInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -272,7 +274,7 @@ bool ProbeGI::CreateSwapchainResources(VkRenderPass sceneRenderPass, uint32_t sc
     VkDevice device = m_device->device;
     const VkDescriptorPoolSize sizes[] = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 6 * imageCount},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8 * imageCount},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10 * imageCount},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10 * imageCount},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 * imageCount},
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 2 * imageCount},
@@ -621,13 +623,19 @@ void ProbeGI::prepareScene(Scene* scene, uint32_t imageIndex, VkBuffer lightingB
     const VkAccelerationStructureKHR structure = m_tracer.SceneStructure(imageIndex);
     asWrite.accelerationStructureCount = 1;
     asWrite.pAccelerationStructures = &structure;
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.pNext = &asWrite;
-    write.dstSet = m_sets[imageIndex][1];
-    write.dstBinding = kScene;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    vkUpdateDescriptorSets(m_device->device, 1, &write, 0, nullptr);
+    const VkDescriptorBufferInfo instances{m_tracer.InstanceData(imageIndex), 0, VK_WHOLE_SIZE};
+    VkWriteDescriptorSet writes[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+    writes[0].pNext = &asWrite;
+    writes[0].dstSet = m_sets[imageIndex][1];
+    writes[0].dstBinding = kScene;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    writes[1].dstSet = m_sets[imageIndex][1];
+    writes[1].dstBinding = kSceneInstances;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[1].pBufferInfo = &instances;
+    vkUpdateDescriptorSets(m_device->device, 2, writes, 0, nullptr);
 }
 
 void ProbeGI::RecordScene(VkCommandBuffer cmd, uint32_t imageIndex) {

@@ -175,6 +175,7 @@ struct LightingUBO {
     Mat4 localShadowViewProj[32];  // atlas tiles, see EngineFrameRenderer::kLocalShadowTile
     Vec4 pointShadowParams[16];    // x = first of six tiles (+X,-X,+Y,-Y,+Z,-Z), -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
     Vec4 spotShadowParams[16];     // x = tile, -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
+    Vec4 rayReflectionParams;      // x = 0 off, 1 mirror, 2 glossy; y = mirror roughness cutoff; z = glossy cutoff
 };
 
 static bool MeshAllowsHiddenEditorOutline(const MeshRendererComponent& renderer,
@@ -2900,6 +2901,8 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
     m_sunRayTraced = false;
     const RenderQualityProfile quality = GetRenderQualityProfile();
     const bool canTrace = quality.rayTracing;
+    lightUBO.rayReflectionParams =
+        Vec4(canTrace ? (quality.requested == RenderQuality::Ultra ? 2.0f : 1.0f) : 0.0f, 0.3f, 0.6f, 0.0f);
     uint32_t nextShadowTile = 0;
     int shadowedPoints = 0;
     int shadowedSpots = 0;
