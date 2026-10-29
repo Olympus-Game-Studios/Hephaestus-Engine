@@ -376,12 +376,42 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
     const auto pluginContent = Hephaestus::Plugins::CollectEnabledPluginContent(
         request.engineRoot, request.projectRoot);
     for (const auto& plugin : pluginContent) {
-        const auto relative = std::filesystem::path("Plugins") / plugin.id / "Content";
-        if (!CopyTree(plugin.sourceRoot, staging / relative, output / relative,
-                      "Copying plugin content " + plugin.id, request, result)) {
-            return fail();
+        const auto pluginRelative = std::filesystem::path("Plugins") / plugin.id;
+        Hephaestus::Plugins::StagedPluginMount mount{plugin.id, {}, {}};
+        if (!plugin.sourceRoot.empty()) {
+            const auto relative = pluginRelative / "Content";
+            if (!CopyTree(plugin.sourceRoot, staging / relative, output / relative,
+                          "Copying plugin content " + plugin.id, request, result)) {
+                return fail();
+            }
+            mount.relativeRoot = relative;
         }
-        stagedMounts.push_back({plugin.id, relative});
+        if (!plugin.runtimeEntry.empty()) {
+            const auto module = plugin.pluginRoot / plugin.runtimeEntry;
+            if (!std::filesystem::is_regular_file(module, ec)) {
+                Problem(result, ProblemSeverity::Error, "PACKAGE_PLUGIN_RUNTIME_MISSING",
+                        "Plugin " + plugin.id + " runtime module was not found",
+                        module.generic_string() + " (build the plugin before packaging)");
+                return fail();
+            }
+            // The module's whole folder ships so a language runtime can bring its own libraries.
+            const auto folder = plugin.runtimeEntry.parent_path();
+            const auto staged = pluginRelative / plugin.runtimeEntry;
+            if (folder.empty()) {
+                if (!CopyOne(module, staging / staged, output / staged,
+                             request.incremental && !request.clean, copyError)) {
+                    Problem(result, ProblemSeverity::Error, "PACKAGE_PLUGIN_RUNTIME_COPY_FAILED",
+                            "Could not copy plugin runtime module", copyError);
+                    return fail();
+                }
+            } else if (!CopyTree(plugin.pluginRoot / folder, staging / pluginRelative / folder,
+                                 output / pluginRelative / folder,
+                                 "Copying plugin runtime " + plugin.id, request, result)) {
+                return fail();
+            }
+            mount.runtimeEntry = staged;
+        }
+        stagedMounts.push_back(std::move(mount));
     }
     {
         std::string mountsError;

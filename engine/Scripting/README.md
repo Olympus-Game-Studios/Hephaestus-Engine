@@ -4,7 +4,7 @@
 
 The scripting layer provides a framework for game developers to write game logic and control entity behavior in the Hephaestus Engine using **Lua**. Lua offers fast iteration without requiring recompilation, making it ideal for gameplay programming.
 
-**Future Roadmap**: C# scripting support is planned for future releases.
+Lua is built in. Other languages (C#, Python, JavaScript, ...) are added by plugins through a plain C interface; see [script-languages.md](../../docs/plugins/script-languages.md).
 
 ## 📚 Documentation
 
@@ -93,7 +93,7 @@ Transform.rotate(0, 45, 0)
 
 ## Future Roadmap
 
-- [ ] **C# Scripting** - Safe, fast, compiled scripting language
+- [ ] **C# Scripting** - as a scripting language plugin
 - [ ] Hot-reload during gameplay
 - [ ] Lua debugger integration
 - [ ] Script profiler

@@ -67,6 +67,7 @@
 #include "../../Gfx/VulkanSwapchain.h"
 #include "../../Scripting/ScriptComponent.h"
 #include "../../Scripting/LuaScriptComponent.h"
+#include "../../Scripting/ScriptLanguageRegistry.h"
 #include "../../UI/InspectorSelectionModel.h"
 #include "../../UI/ComponentClipboard.h"
 #include "../../Assets/AssetPathPolicy.h"
@@ -550,6 +551,9 @@ EditorMainWindow::EditorMainWindow(QWidget* parent,
     });
     m_pluginSystem->SetFirstPartyContextFactory([this]() -> Plugins::IFirstPartyPluginContext* {
         return m_firstPartyContext.get();
+    });
+    m_pluginSystem->SetRuntimeModuleLoader([](const std::filesystem::path& module, std::string& error) {
+        return ScriptLanguageRegistry::Instance().LoadModule(module, error);
     });
     m_pluginSystem->Discover(QCoreApplication::applicationDirPath().toStdString(), {});
     m_pluginSystem->LoadEnabled();
@@ -7640,8 +7644,9 @@ void EditorMainWindow::handleDragDrop(const QString& assetPath, const QString& t
     entt::entity entity = ctx->GetSelectedEntity();
     if (!reg.valid(entity)) return;
 
-    if (targetField == "lua_script" && assetPath.endsWith(".lua", Qt::CaseInsensitive)) {
-        EditorUndoManager::PushSnapshot(ctx, "Drag-drop lua script");
+    if (targetField == "lua_script" &&
+        ScriptLanguageRegistry::Instance().IsScriptPath(assetPath.toStdString())) {
+        EditorUndoManager::PushSnapshot(ctx, "Drag-drop script");
         if (!reg.all_of<LuaScriptComponent>(entity)) {
             reg.emplace<LuaScriptComponent>(entity, assetPath.toStdString());
         } else {

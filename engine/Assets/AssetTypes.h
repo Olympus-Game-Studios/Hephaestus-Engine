@@ -68,6 +68,18 @@ inline AssetType AssetTypeFromString(const std::string& value) {
     return AssetType::Unknown;
 }
 
+/// Script extensions added at runtime by scripting-language plugins.
+inline std::unordered_map<std::string, AssetType>& PluginScriptExtensions() {
+    static std::unordered_map<std::string, AssetType> extensions;
+    return extensions;
+}
+
+/// Makes files with a plugin language's extension show up as Script assets.
+/// The extension must be lowercase and start with a dot.
+inline void RegisterScriptAssetExtension(const std::string& extension) {
+    PluginScriptExtensions()[extension] = AssetType::Script;
+}
+
 /**
  * @brief Determine asset type from file extension.
  */
@@ -156,5 +168,9 @@ inline AssetType AssetTypeFromExtension(const std::string& extension) {
     }
     
     auto it = extensionMap.find(ext);
-    return (it != extensionMap.end()) ? it->second : AssetType::Unknown;
+    if (it != extensionMap.end()) {
+        return it->second;
+    }
+    const auto plugin = PluginScriptExtensions().find(ext);
+    return plugin != PluginScriptExtensions().end() ? plugin->second : AssetType::Unknown;
 }

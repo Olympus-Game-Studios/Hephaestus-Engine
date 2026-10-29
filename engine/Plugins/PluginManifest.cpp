@@ -43,6 +43,7 @@ ManifestParseResult ParsePluginManifest(const std::filesystem::path& path) {
         m.pluginVersion = json.value("pluginVersion", "");
         m.engineVersion = json.value("engineVersion", "");
         m.entry = json.value("entry", "");
+        m.runtimeEntry = json.value("runtimeEntry", "");
         m.content = json.value("content", "");
         m.icon = json.value("icon", "");
         m.defaultEnabled = json.value("defaultEnabled", true);
@@ -57,7 +58,12 @@ ManifestParseResult ParsePluginManifest(const std::filesystem::path& path) {
             throw std::runtime_error("id must be a lowercase reverse-domain identifier");
         if (m.name.empty() || m.pluginVersion.empty() || m.engineVersion.empty())
             throw std::runtime_error("name, pluginVersion, and engineVersion are required");
-        if (!SafeRelative(m.entry)) throw std::runtime_error("entry must be a safe relative path");
+        if (m.entry.empty() && m.runtimeEntry.empty())
+            throw std::runtime_error("entry or runtimeEntry is required");
+        if (!m.entry.empty() && !SafeRelative(m.entry))
+            throw std::runtime_error("entry must be a safe relative path");
+        if (!m.runtimeEntry.empty() && !SafeRelative(m.runtimeEntry))
+            throw std::runtime_error("runtimeEntry must be a safe relative path");
         if (!m.content.empty() && !SafeRelative(m.content))
             throw std::runtime_error("content must be a safe relative path");
         if (!m.icon.empty() && !SafeRelative(m.icon))

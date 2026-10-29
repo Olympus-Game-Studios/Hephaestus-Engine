@@ -19,7 +19,8 @@ struct PluginManifest {
     std::string engineVersion;
     PluginType type = PluginType::Editor;
     bool defaultEnabled = true;
-    std::filesystem::path entry;
+    std::filesystem::path entry;        // Editor module; optional when runtimeEntry is set.
+    std::filesystem::path runtimeEntry; // Qt-free module loaded by the editor and the packaged game.
     std::filesystem::path content;
     std::filesystem::path icon;
     std::filesystem::path manifestPath;

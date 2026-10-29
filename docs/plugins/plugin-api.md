@@ -32,3 +32,5 @@ The exported structure uses fixed-width integers and function pointers. The C++ 
 Plugin assets use `plugin://<id>/path` (also accepted as `/plugin/<id>/path`). Content mounts are read-only in the Asset Browser. Project assets and scenes can persist those portable keys; `AssetPathPolicy` resolves them only while the owning plugin is enabled.
 
 See `Plugins/PrimitiveTools` for a complete example that registers commands, a dock, a menu/toolbar/context action, scene edits with undo, a setting, and `.hptestasset` creation/editor support.
+
+Scripting languages use a separate plain C interface so they can run in packaged games and be written in any language. See [script-languages.md](script-languages.md).

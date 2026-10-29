@@ -38,6 +38,7 @@
 #include "../../Physics/CharacterMotor.h"
 #include "../../Physics/CharacterControllerSystem.h"
 #include "../../Scripting/LuaScriptEngine.h"
+#include "../../Scripting/PluginScriptHost.h"
 #include "../../Scripting/ScriptPhysicsBindings.h"
 #include "../../Core/SimulationStep.h"
 #include "../../Gfx/BuiltinMeshes.h"
@@ -2808,6 +2809,12 @@ void QtEditorEngine::StartPlayMode()
         m_luaScriptEngine->SetAudioEngine(m_audioEngine.get());
     }
     m_luaScriptEngine->SetInputSystem(&m_gameplayInput);
+    if (!m_pluginScriptHost) {
+        m_pluginScriptHost = std::make_unique<PluginScriptHost>();
+    }
+    m_pluginScriptHost->SetLuaEngine(m_luaScriptEngine.get());
+    m_pluginScriptHost->SetInputSystem(&m_gameplayInput);
+    m_luaScriptEngine->SetPluginScriptHost(m_pluginScriptHost.get());
     populateGameplayInput();
 
     // Rebind every play session. Initialize() resets simulation state and the
@@ -2892,6 +2899,7 @@ void QtEditorEngine::StartPlayMode()
         m_playModeManager.RequestStop();
     });
     m_playModeManager.SetCppScriptEngine(m_cppScriptEngine.get());
+    m_playModeManager.SetPluginScriptHost(m_pluginScriptHost.get());
     m_playModeManager.SetSceneReloadCallback([this](std::string& error) {
         return reloadRuntimeScene(error);
     });
@@ -3042,6 +3050,9 @@ bool QtEditorEngine::reloadRuntimeScene(std::string& outError)
     if (m_luaScriptEngine) {
         m_luaScriptEngine->OnSimulationStopped();
     }
+    if (m_pluginScriptHost) {
+        m_pluginScriptHost->OnSimulationStopped();
+    }
     if (m_cppScriptEngine) {
         m_cppScriptEngine->DestroyScripts();
     }
@@ -3108,6 +3119,9 @@ bool QtEditorEngine::ReloadScripts(std::string& outError)
         return false;
     }
     m_luaScriptEngine->RequestReloadAll();
+    if (m_pluginScriptHost) {
+        m_pluginScriptHost->RequestReloadAll();
+    }
     outError.clear();
     return true;
 }
@@ -3128,6 +3142,7 @@ void QtEditorEngine::simulateGameplayFrame(float dt)
     step.audio = m_audioEngine.get();
     step.physics = m_physicsInitialized ? m_joltPhysicsSystem.get() : nullptr;
     step.lua = m_luaScriptEngine.get();
+    step.pluginScripts = m_pluginScriptHost.get();
     step.cppScripts = m_cppScriptEngine.get();
     step.reloadAtSafePoint = [this]() {
         if (!m_playModeManager.HasPendingSceneReload()) {

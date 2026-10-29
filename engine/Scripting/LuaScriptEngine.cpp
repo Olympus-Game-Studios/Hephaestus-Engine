@@ -1,5 +1,7 @@
 #include "LuaScriptEngine.h"
 #include "LuaScriptComponent.h"
+#include "PluginScriptHost.h"
+#include "ScriptLanguageRegistry.h"
 #include "../Audio/AudioEngine.h"
 #include "../UI/HephaestusUI/UIContext.h"
 #include "../UI/HephaestusUI/UICanvas.h"
@@ -415,6 +417,52 @@ bool LuaScriptEngine::CallEntityFunction(const std::string& functionName, Entity
 #endif
 }
 
+bool LuaScriptEngine::CallEntityFunction(const std::string& functionName, Entity entity,
+                                         const std::vector<PropertyValue>& args) {
+#if LUA_AVAILABLE
+    if (!m_State || !entity) {
+        return false;
+    }
+    ScriptInstance* instance = FindInstance(static_cast<uint32_t>(entity), LuaScriptSlot::Gameplay);
+    if (!instance || !instance->valid || instance->environmentRef == kInvalidRef) {
+        return false;
+    }
+    lua_rawgeti(m_State, LUA_REGISTRYINDEX, instance->environmentRef);
+    if (!lua_istable(m_State, -1)) {
+        lua_pop(m_State, 1);
+        return false;
+    }
+    lua_getfield(m_State, -1, functionName.c_str());
+    lua_remove(m_State, -2);
+    if (!lua_isfunction(m_State, -1)) {
+        lua_pop(m_State, 1);
+        return false;
+    }
+    for (const PropertyValue& arg : args) {
+        PushPropertyValue(arg);
+    }
+    const uint32_t previousEntity = m_CurrentEntityId;
+    const float previousDelta = m_CurrentDeltaTime;
+    m_CurrentEntityId = instance->entityId;
+    SetupThisForEntity(instance->entityId);
+    const bool ok = lua_pcall(m_State, static_cast<int>(args.size()), 0, 0) == LUA_OK;
+    if (!ok) {
+        LogLuaError(functionName);
+    }
+    m_CurrentEntityId = previousEntity;
+    m_CurrentDeltaTime = previousDelta;
+    if (previousEntity != kInvalidEntityId) {
+        SetupThisForEntity(previousEntity);
+    }
+    return ok;
+#else
+    (void)functionName;
+    (void)entity;
+    (void)args;
+    return false;
+#endif
+}
+
 void LuaScriptEngine::AwakeInstanceIfNeeded(Scene& scene, entt::entity entityHandle, ScriptInstance& instance) {
 #if LUA_AVAILABLE
     if (instance.awakeCalled) {
@@ -484,7 +532,9 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
         const LuaScriptInstanceKey key = MakeInstanceKey(static_cast<uint32_t>(entityHandle),
                                                          LuaScriptSlot::Gameplay);
 
-        if (!component.enabled || (component.scriptPath.empty() && component.scriptSource.empty())) {
+        if (!component.enabled || (component.scriptPath.empty() && component.scriptSource.empty()) ||
+            ScriptLanguageRegistry::Instance().FindForPath(component.scriptPath)) {
+            // A plugin language runs scripts whose extension it claims.
             DestroyInstance(key, true);
             continue;
         }
@@ -3750,6 +3800,43 @@ int LuaScriptEngine::Lua_This_IsValid(lua_State* L) {
 #endif
 }
 
+#if LUA_AVAILABLE
+namespace {
+
+// Converts a Lua call argument for a script in another language. Tables with
+// x/y[/z[/w]] become vectors; anything else unsupported becomes nil.
+PropertyValue LuaArgToProperty(lua_State* L, int index) {
+    switch (lua_type(L, index)) {
+        case LUA_TBOOLEAN: return PropertyValue(lua_toboolean(L, index) != 0);
+        case LUA_TNUMBER: return PropertyValue(static_cast<double>(lua_tonumber(L, index)));
+        case LUA_TSTRING: return PropertyValue(std::string(lua_tostring(L, index)));
+        case LUA_TTABLE: {
+            float values[4] = {};
+            int count = 0;
+            for (const char* key : {"x", "y", "z", "w"}) {
+                lua_getfield(L, index, key);
+                const bool present = lua_isnumber(L, -1) != 0;
+                if (present) {
+                    values[count] = static_cast<float>(lua_tonumber(L, -1));
+                }
+                lua_pop(L, 1);
+                if (!present) {
+                    break;
+                }
+                ++count;
+            }
+            if (count == 2) return PropertyValue(Vec2(values[0], values[1]));
+            if (count == 3) return PropertyValue(Vec3(values[0], values[1], values[2]));
+            if (count == 4) return PropertyValue(Vec4(values[0], values[1], values[2], values[3]));
+            return {};
+        }
+        default: return {};
+    }
+}
+
+} // namespace
+#endif
+
 int LuaScriptEngine::CallNamedOnSlot(lua_State* L, LuaScriptSlot slot) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
@@ -3774,7 +3861,18 @@ int LuaScriptEngine::CallNamedOnSlot(lua_State* L, LuaScriptSlot slot) {
 
     ScriptInstance* instance = engine->FindInstance(*selfId, slot);
     if (!instance || !instance->valid || instance->environmentRef == kInvalidRef) {
-        lua_pushboolean(L, false);
+        // The target's script may be written in a plugin language.
+        bool handled = false;
+        if (slot == LuaScriptSlot::Gameplay && engine->m_PluginScripts) {
+            std::vector<PropertyValue> args;
+            args.reserve(static_cast<std::size_t>(argCount));
+            for (int i = 0; i < argCount; ++i) {
+                args.push_back(LuaArgToProperty(L, 3 + i));
+            }
+            handled = engine->m_PluginScripts->CallEntityFunction(
+                static_cast<std::uint32_t>(*selfId), functionName, args);
+        }
+        lua_pushboolean(L, handled);
         return 1;
     }
 

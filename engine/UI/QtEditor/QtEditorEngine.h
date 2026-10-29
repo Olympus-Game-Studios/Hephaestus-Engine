@@ -47,6 +47,7 @@ struct VulkanSwapchain;
 class VulkanPipeline;
 class Scene;
 class LuaScriptEngine;
+class PluginScriptHost;
 class ScriptEngine;
 class AudioEngine;
 struct GLFWwindow;
@@ -433,6 +434,8 @@ private:
     Hephaestus::PlayModeManager m_playModeManager;
     std::unique_ptr<AudioEngine> m_audioEngine;
     std::unique_ptr<LuaScriptEngine> m_luaScriptEngine;
+    // After Lua: destroyed first, since plugin scripts may call into Lua.
+    std::unique_ptr<PluginScriptHost> m_pluginScriptHost;
     std::unique_ptr<ScriptEngine>    m_cppScriptEngine;
     std::unique_ptr<Physics::JoltPhysicsEngine> m_joltPhysicsEngine;
     std::unique_ptr<Physics::JoltPhysicsSystem> m_joltPhysicsSystem;

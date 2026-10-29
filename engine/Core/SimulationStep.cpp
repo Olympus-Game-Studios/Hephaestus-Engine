@@ -6,6 +6,7 @@
 #include "../Scene/Components.h"
 #include "../Scene/Scene.h"
 #include "../Scripting/LuaScriptEngine.h"
+#include "../Scripting/PluginScriptHost.h"
 #include "../Scripting/ScriptEngine.h"
 
 namespace Hephaestus {
@@ -54,12 +55,19 @@ bool RunSimulationStep(const SimulationStepContext& context, float dt)
         context.lua->Update(scene, dt);
     }
     if (ReloadAtSafePoint(context)) return false;
+    if (context.pluginScripts) {
+        context.pluginScripts->Update(scene, dt);
+        if (ReloadAtSafePoint(context)) return false;
+    }
 
     // Fixed-step physics follows scripts so onUpdate can write this frame's motion.
     RunPhysics(context, physics, [&](Physics::JoltPhysicsSystem& p) {
         p.Update(scene, dt);
         if (context.lua) {
             context.lua->DispatchContactEvents(scene, p.FrameContactEvents());
+        }
+        if (context.pluginScripts) {
+            context.pluginScripts->DispatchContactEvents(scene, p.FrameContactEvents());
         }
     });
     if (ReloadAtSafePoint(context)) return false;
@@ -68,6 +76,9 @@ bool RunSimulationStep(const SimulationStepContext& context, float dt)
     if (context.lua) {
         context.lua->DispatchAnimationFinished(scene);
         context.lua->LateUpdate(scene, dt);
+    }
+    if (context.pluginScripts) {
+        context.pluginScripts->LateUpdate(scene, dt);
     }
     if (ReloadAtSafePoint(context)) return false;
 

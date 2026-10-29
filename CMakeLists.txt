@@ -153,7 +153,7 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 option(HEPHAESTUS_BUILD_EDITOR "Build the editor (HephaestusEngine.exe)" ON)
 option(HEPHAESTUS_BUILD_GAME "Build the standalone game runtime (HephaestusGame.exe)" ON)
-option(HEPHAESTUS_GAME_SCRIPTING "Start Lua scripting in the game runtime (Lua support itself follows LUA_FOUND)" ON)
+option(HEPHAESTUS_GAME_SCRIPTING "Start scripts (Lua and plugin languages) in the game runtime (Lua support itself follows LUA_FOUND)" ON)
 option(HEPHAESTUS_USE_QT "Enable Qt-based editor UI" ON)
 option(HEPHAESTUS_USE_SHARED_ASSETS "Use shared runtime/editor/launcher asset folders" ON)
 option(HEPHAESTUS_MCP_LEGACY_COMPAT "Enable MCP 2025-11-25 compatibility" ON)
@@ -348,6 +348,8 @@ add_library(HephaestusRuntime STATIC
     engine/Scripting/LuaExposeScanner.cpp
     engine/Scripting/LuaScriptVariableReconciler.cpp
     engine/Scripting/ScriptPhysicsBindings.cpp
+    engine/Scripting/ScriptLanguageRegistry.cpp
+    engine/Scripting/PluginScriptHost.cpp
     engine/UI/HephaestusUI/HUIAsset.cpp
     engine/UI/HephaestusUI/UIButton.cpp
     engine/UI/HephaestusUI/UICanvas.cpp
@@ -922,7 +924,8 @@ else()
     target_compile_definitions(HephaestusGame PRIVATE HEPHAESTUS_RUNTIME_AUTOMATION=0)
 endif()
 
-if(HEPHAESTUS_GAME_SCRIPTING AND LUA_FOUND)
+# Lua itself follows LUA_AVAILABLE, so plugin languages still run in a build without Lua.
+if(HEPHAESTUS_GAME_SCRIPTING)
     target_compile_definitions(HephaestusGame PRIVATE HEPHAESTUS_GAME_SCRIPTING=1)
 else()
     target_compile_definitions(HephaestusGame PRIVATE HEPHAESTUS_GAME_SCRIPTING=0)
@@ -1732,6 +1735,24 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${LUA_DLL_PATH}"
                     "$<TARGET_FILE_DIR:PhysicsLuaTests>/${PHYSICS_LUA_DLL_NAME}"
+            )
+        endif()
+
+        # A scripting language written in C, linked in and also loaded as a module.
+        add_library(ScriptLanguageTestPlugin SHARED engine/Tests/ScriptLanguageTestPlugin.c)
+        add_executable(ScriptLanguagePluginTests
+            engine/Tests/ScriptLanguagePluginTests.cpp
+            engine/Tests/ScriptLanguageTestPlugin.c
+        )
+        target_link_libraries(ScriptLanguagePluginTests PRIVATE HephaestusRuntime)
+        add_dependencies(ScriptLanguagePluginTests ScriptLanguageTestPlugin)
+        add_test(NAME ScriptLanguagePlugins
+            COMMAND ScriptLanguagePluginTests $<TARGET_FILE:ScriptLanguageTestPlugin>)
+        if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
+            add_custom_command(TARGET ScriptLanguagePluginTests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${LUA_DLL_PATH}"
+                    "$<TARGET_FILE_DIR:ScriptLanguagePluginTests>/${PHYSICS_LUA_DLL_NAME}"
             )
         endif()
 

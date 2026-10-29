@@ -34,6 +34,9 @@ void PluginSystem::SetContextFactory(ContextFactory factory) { contextFactory_ =
 void PluginSystem::SetFirstPartyContextFactory(FirstPartyContextFactory factory) {
     firstPartyFactory_ = std::move(factory);
 }
+void PluginSystem::SetRuntimeModuleLoader(RuntimeModuleLoader loader) {
+    runtimeModuleLoader_ = std::move(loader);
+}
 
 void PluginSystem::DiscoverRoot(const std::filesystem::path& root, PluginLocation location) {
     std::error_code ec;
@@ -150,6 +153,20 @@ void PluginSystem::LoadEnabled() {
 #endif
             candidate->module = nullptr;
         };
+        if (!record.manifest.runtimeEntry.empty() && runtimeModuleLoader_) {
+            std::string moduleError;
+            if (!runtimeModuleLoader_(record.manifest.root / record.manifest.runtimeEntry, moduleError)) {
+                AssetMountRegistry::Instance().Unmount("plugin://" + record.manifest.id);
+                AssetMountRegistry::Instance().Unmount("/plugin/" + record.manifest.id);
+                record.status = PluginStatus::Failed;
+                record.error = moduleError;
+                continue;
+            }
+        }
+        if (record.manifest.entry.empty()) {
+            record.status = PluginStatus::Loaded;
+            continue;
+        }
         try {
             const auto libraryPath = record.manifest.root / record.manifest.entry;
             if (!std::filesystem::is_regular_file(libraryPath))

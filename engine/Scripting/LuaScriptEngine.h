@@ -26,6 +26,7 @@
 
 // Forward declarations
 class Entity;
+class PluginScriptHost;
 class Scene;
 namespace Hephaestus {
 class InputSystem;
@@ -152,6 +153,20 @@ public:
     bool CallEntityFunction(const std::string& functionName, Entity entity);
 
     /**
+     * Call a function on the entity's gameplay Lua script with arguments.
+     * Returns false when the entity has no Lua script defining it.
+     */
+    bool CallEntityFunction(const std::string& functionName, Entity entity,
+                            const std::vector<PropertyValue>& args);
+
+    /// Resolve an authored script path against the project and plugin search paths.
+    std::filesystem::path ResolveScriptPath(const std::string& scriptPath) const;
+
+    /// Plugin-language scripts that entity:Call falls back to when the target
+    /// entity's script is not Lua.
+    void SetPluginScriptHost(PluginScriptHost* host) { m_PluginScripts = host; }
+
+    /**
      * Execute Lua code directly
      */
     bool ExecuteString(const std::string& luaCode);
@@ -268,6 +283,7 @@ private:
     friend struct LuaEntityReference;
 
     lua_State* m_State = nullptr;
+    PluginScriptHost* m_PluginScripts = nullptr;
     Scene* m_Scene = nullptr;
     GLFWwindow* m_Window = nullptr;
     std::filesystem::path m_ProjectRoot;
@@ -414,7 +430,6 @@ private:
     int FetchFunctionRef(int environmentRef, const std::string& functionName);
     bool CallInstanceFunction(ScriptInstance& instance, int functionRef, Entity entity, float deltaTime, bool includeDelta);
     bool CallInstanceFunctionByName(ScriptInstance& instance, const std::string& functionName, Entity entity, float deltaTime, bool includeDelta);
-    std::filesystem::path ResolveScriptPath(const std::string& scriptPath) const;
     Entity MakeEntity(uint32_t entityId) const;
     TransformComponent* GetTransform(uint32_t entityId) const;
     TagComponent* GetTag(uint32_t entityId) const;

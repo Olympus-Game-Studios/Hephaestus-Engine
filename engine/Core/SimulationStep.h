@@ -5,6 +5,7 @@
 
 class AudioEngine;
 class LuaScriptEngine;
+class PluginScriptHost;
 class Scene;
 class ScriptEngine;
 namespace Physics {
@@ -19,6 +20,7 @@ struct SimulationStepContext {
     AudioEngine* audio = nullptr;
     Physics::JoltPhysicsSystem* physics = nullptr;
     LuaScriptEngine* lua = nullptr;
+    PluginScriptHost* pluginScripts = nullptr;
     ScriptEngine* cppScripts = nullptr;
     // Processes a pending scene reload; returns true when the rest of the frame must be skipped.
     std::function<bool()> reloadAtSafePoint;

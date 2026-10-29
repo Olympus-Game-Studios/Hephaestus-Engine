@@ -90,6 +90,8 @@
 #include "../Core/SimulationStep.h"
 #if HEPHAESTUS_GAME_SCRIPTING
 #include "../Scripting/LuaScriptEngine.h"
+#include "../Scripting/PluginScriptHost.h"
+#include "../Scripting/ScriptLanguageRegistry.h"
 #include "../Scripting/ScriptPhysicsBindings.h"
 #endif
 #include "../Scripting/ScriptEngine.h"
@@ -719,6 +721,17 @@ int main(int argc, char* argv[]) {
     Bootstrap::BeginStage(InitStage::Scripting);
     
     LuaScriptEngine luaEngine;
+    PluginScriptHost pluginScripts;
+    pluginScripts.SetLuaEngine(&luaEngine);
+    pluginScripts.SetInputSystem(&inputSystem);
+    for (const fs::path& module : Hephaestus::Plugins::StagedRuntimeModules(g_RuntimeRoot)) {
+        std::string moduleError;
+        if (ScriptLanguageRegistry::Instance().LoadModule(module, moduleError)) {
+            HP_LOG(Info, "Loaded script language module: " + module.filename().string());
+        } else {
+            HP_LOG(Error, "Script language module failed to load: " + moduleError);
+        }
+    }
     bool sceneReloadRequested = false;
     try {
         luaEngine.Initialize(&scene, window);
@@ -728,6 +741,7 @@ int main(int argc, char* argv[]) {
         luaEngine.SetInputSystem(&inputSystem);
         luaEngine.SetAudioEngine(&audioEngine);
         luaEngine.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);
+        luaEngine.SetPluginScriptHost(&pluginScripts);
         luaEngine.SetSceneReloadCallback([&scene, &sceneReloadRequested, &sceneReloadProcessing]() {
             if (!scene.IsReloadable() || sceneReloadRequested || sceneReloadProcessing) {
                 return false;
@@ -1240,6 +1254,7 @@ int main(int argc, char* argv[]) {
         }
 
         luaEngine.OnSimulationStopped();
+        pluginScripts.OnSimulationStopped();
         cppScripts.DestroyScripts();
         characterControllers.Clear();
         physicsSystem.ClearAllBodies();
@@ -1327,6 +1342,7 @@ int main(int argc, char* argv[]) {
         step.cppScripts = &cppScripts;
 #if HEPHAESTUS_GAME_SCRIPTING
         step.lua = &luaEngine;
+        step.pluginScripts = &pluginScripts;
         step.reloadAtSafePoint = reloadSceneAtSafePoint;
 #endif
         if (!Hephaestus::RunSimulationStep(step, simulationDeltaTime)) return;

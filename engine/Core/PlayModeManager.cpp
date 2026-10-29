@@ -10,6 +10,7 @@
 #include "../Scene/Entity.h"
 #include "../Scene/SceneSerializer.h"
 #include "../Scripting/LuaScriptEngine.h"
+#include "../Scripting/PluginScriptHost.h"
 #include "../Scripting/ScriptEngine.h"
 #include "../Scripting/LuaScriptComponent.h"
 #include "../Gfx/EngineFrameRenderer.h"
@@ -47,6 +48,10 @@ void PlayModeManager::SetLuaScriptEngine(LuaScriptEngine* lua) {
 
 void PlayModeManager::SetCppScriptEngine(ScriptEngine* cpp) {
     m_cppEngine = cpp;
+}
+
+void PlayModeManager::SetPluginScriptHost(PluginScriptHost* host) {
+    m_pluginScripts = host;
 }
 
 void PlayModeManager::SetLogCallback(PlayModeLogCallback cb) {
@@ -142,6 +147,9 @@ void PlayModeManager::StopPlayMode() {
     // ── 1. Tear down scripts ───────────────────────────────────────────────
     if (m_luaEngine) {
         m_luaEngine->OnSimulationStopped();
+    }
+    if (m_pluginScripts) {
+        m_pluginScripts->OnSimulationStopped();
     }
     if (m_cppEngine) {
         m_cppEngine->DestroyScripts();

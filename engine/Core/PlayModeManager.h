@@ -23,6 +23,7 @@
 // Forward declarations
 class Scene;
 class LuaScriptEngine;
+class PluginScriptHost;
 class ScriptEngine;
 
 namespace Hephaestus {
@@ -94,6 +95,9 @@ public:
 
     /// Provide access to the C++ script engine (already initialised elsewhere).
     void SetCppScriptEngine(ScriptEngine* cpp);
+
+    /// Provide the host that runs scripts written in plugin languages.
+    void SetPluginScriptHost(PluginScriptHost* host);
 
     /// Set the log callback.
     void SetLogCallback(PlayModeLogCallback cb);
@@ -200,6 +204,7 @@ private:
     // Scripts
     LuaScriptEngine* m_luaEngine = nullptr;
     ScriptEngine*    m_cppEngine = nullptr;
+    PluginScriptHost* m_pluginScripts = nullptr;
 
     // Runtime camera
     RuntimeCameraState m_runtimeCamera;

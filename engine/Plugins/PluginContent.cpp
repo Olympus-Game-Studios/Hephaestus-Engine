@@ -95,16 +95,19 @@ std::vector<EnabledPluginContent> CollectEnabledPluginContent(
         if (override != overrides.end()) {
             enabled = override->second;
         }
-        if (!enabled || manifest.content.empty()) {
+        if (!enabled) {
             continue;
         }
-        const std::filesystem::path source = manifest.root / manifest.content;
+        std::filesystem::path source;
         std::error_code ec;
-        if (!std::filesystem::is_directory(source, ec)) {
+        if (!manifest.content.empty() && std::filesystem::is_directory(manifest.root / manifest.content, ec)) {
+            source = manifest.root / manifest.content;
+        }
+        if (source.empty() && manifest.runtimeEntry.empty()) {
             continue;
         }
         emitted.insert(manifest.id);
-        result.push_back(EnabledPluginContent{manifest.id, source});
+        result.push_back(EnabledPluginContent{manifest.id, source, manifest.root, manifest.runtimeEntry});
     }
     return result;
 }
@@ -137,10 +140,14 @@ bool WriteStagedPluginMounts(const std::filesystem::path& packageRoot,
     try {
         nlohmann::json plugins = nlohmann::json::array();
         for (const auto& mount : mounts) {
-            plugins.push_back({
+            nlohmann::json plugin = {
                 {"id", mount.id},
                 {"root", mount.relativeRoot.generic_string()}
-            });
+            };
+            if (!mount.runtimeEntry.empty()) {
+                plugin["runtimeEntry"] = mount.runtimeEntry.generic_string();
+            }
+            plugins.push_back(std::move(plugin));
         }
         const nlohmann::json json = {
             {"version", 1},
@@ -190,6 +197,30 @@ int MountStagedPluginContent(const std::filesystem::path& runtimeRoot)
         return mounted;
     }
     return mounted;
+}
+
+std::vector<std::filesystem::path> StagedRuntimeModules(const std::filesystem::path& runtimeRoot)
+{
+    std::vector<std::filesystem::path> modules;
+    std::ifstream input(runtimeRoot / kStagedPluginMountsRelative);
+    if (!input) {
+        return modules;
+    }
+    try {
+        const auto json = nlohmann::json::parse(input);
+        for (const auto& plugin : json.value("plugins", nlohmann::json::array())) {
+            const std::filesystem::path relative = plugin.value("runtimeEntry", "");
+            bool safe = !relative.empty() && relative.is_relative();
+            for (const auto& part : relative) {
+                safe = safe && part != "..";
+            }
+            if (safe) {
+                modules.push_back(runtimeRoot / relative);
+            }
+        }
+    } catch (...) {
+    }
+    return modules;
 }
 
 } // namespace Hephaestus::Plugins

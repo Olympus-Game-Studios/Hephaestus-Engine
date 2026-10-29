@@ -7,6 +7,7 @@
 #include "Scene/Scene.h"
 #include "Scene/SceneSerializer.h"
 #include "Scripting/LuaScriptEngine.h"
+#include "Scripting/PluginScriptHost.h"
 #include "Scripting/ScriptEngine.h"
 
 #include <filesystem>
@@ -49,6 +50,7 @@ void LuaScriptEngine::LateUpdate(Scene&, float) {}
 void LuaScriptEngine::DispatchAnimationFinished(Scene&) {}
 void LuaScriptEngine::DispatchContactEvents(
     Scene&, const std::vector<Physics::PhysicsContactEvent>&) {}
+void PluginScriptHost::OnSimulationStopped() {}
 void ScriptEngine::AwakeScripts() {}
 void ScriptEngine::DestroyScripts() {}
 void ScriptEngine::UpdateScripts(float) {}

@@ -18,6 +18,7 @@
 #include "../../Scripting/LuaExposeScanner.h"
 #include "../../Scripting/LuaScriptComponent.h"
 #include "../../Scripting/LuaScriptVariableReconciler.h"
+#include "../../Scripting/ScriptLanguageRegistry.h"
 
 #include <QFormLayout>
 #include <QMenu>
@@ -119,6 +120,13 @@ static LuaExposeScanResult ScanScriptSource(const LuaScriptComponent& component)
             path = std::filesystem::path(assets.GetProjectRoot()) / component.scriptPath;
         }
     }
+    if (const HPScriptLanguage* language = ScriptLanguageRegistry::Instance().FindForPath(component.scriptPath)) {
+        LuaExposeScanResult result;
+        if (!ScriptLanguageRegistry::DescribeFields(*language, path, result)) {
+            result = LuaExposeScanner::Scan({});
+        }
+        return result;
+    }
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
         LuaExposeScanResult result;
@@ -175,7 +183,7 @@ void LuaScriptInspector::buildUI()
     auto* form = new QFormLayout();
     form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
-    m_enabledCheck = new QCheckBox(tr("Lua Script Enabled"));
+    m_enabledCheck = new QCheckBox(tr("Script Enabled"));
     form->addRow(QString(), m_enabledCheck);
 
     m_pathEdit = new AssetReferenceEditor(QString(), AssetType::Script);
@@ -190,7 +198,7 @@ void LuaScriptInspector::buildUI()
     m_parametersLayout->setSpacing(4);
     mainLayout->addWidget(m_parametersGroup);
 
-    m_removeBtn = new QPushButton(tr("Remove Lua Script"));
+    m_removeBtn = new QPushButton(tr("Remove Script"));
     m_removeBtn->setStyleSheet("color: #cc3333;");
     mainLayout->addWidget(m_removeBtn);
 }
@@ -203,7 +211,7 @@ void LuaScriptInspector::connectSignals()
     });
     connect(m_pathEdit, &AssetReferenceEditor::pathEdited, this, [this](const QString& path) {
         if (m_updating) return;
-        BeginEdit("Attach Lua script");
+        BeginEdit("Attach script");
         const std::string newPath = path.toStdString();
         LuaScriptComponent scanComponent(newPath);
         const LuaExposeScanResult scan = ScanScriptSource(scanComponent);

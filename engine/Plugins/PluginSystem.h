@@ -36,6 +36,11 @@ public:
     /// export it never receive first-party capabilities.
     using FirstPartyContextFactory = std::function<IFirstPartyPluginContext*()>;
 
+    /// Loads a plugin's Qt-free runtimeEntry module (for example a scripting
+    /// language). Returns false with an error to mark the plugin as failed.
+    using RuntimeModuleLoader = std::function<bool(const std::filesystem::path& module,
+                                                   std::string& error)>;
+
     PluginSystem();
     ~PluginSystem();
     PluginSystem(const PluginSystem&) = delete;
@@ -44,6 +49,7 @@ public:
     void SetEngineVersion(std::string version);
     void SetContextFactory(ContextFactory factory);
     void SetFirstPartyContextFactory(FirstPartyContextFactory factory);
+    void SetRuntimeModuleLoader(RuntimeModuleLoader loader);
     void Discover(const std::filesystem::path& engineRoot,
                   const std::filesystem::path& projectRoot);
     void LoadEnabled();
@@ -64,6 +70,7 @@ private:
     std::filesystem::path projectRoot_;
     ContextFactory contextFactory_;
     FirstPartyContextFactory firstPartyFactory_;
+    RuntimeModuleLoader runtimeModuleLoader_;
     std::vector<PluginRecord> records_;
     std::vector<std::unique_ptr<LoadedPlugin>> loaded_;
 };
