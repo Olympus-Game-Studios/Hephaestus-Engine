@@ -30,6 +30,7 @@ struct VulkanBuffer {
             void* mappedData = nullptr;
             vmaMapMemory(allocator, allocation, &mappedData);
             std::memcpy(mappedData, data, static_cast<size_t>(size));
+            vmaFlushAllocation(allocator, allocation, 0, size);
             vmaUnmapMemory(allocator, allocation);
         }
     }

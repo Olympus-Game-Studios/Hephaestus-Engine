@@ -121,6 +121,8 @@ private:
     VulkanBuffer m_placeholderBuffer;
     size_t m_probeCount = 0;
     uint32_t m_parity = 0;
+    uint32_t m_tilesX = 0;  // atlas tiles per row and rows; also the update and trace workgroup grid
+    uint32_t m_tilesY = 0;
     uint32_t m_resetFrames = 0;
     float m_intensity = 1.0f;
     bool m_active = false;

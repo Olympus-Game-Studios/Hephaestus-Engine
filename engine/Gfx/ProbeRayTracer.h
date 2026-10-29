@@ -42,8 +42,9 @@ public:
     void WriteTraceSet(uint32_t imageIndex, VkBuffer params, VkBuffer lighting, VkBuffer offsets, VkBuffer hits);
     // Builds this frame's scene acceleration structure for compute and fragment ray queries.
     void RecordScene(VkCommandBuffer cmd, uint32_t imageIndex);
-    // Traces probeCount * 128 rays into the hits buffer; RecordScene must come first in the same frame.
-    void Record(VkCommandBuffer cmd, uint32_t imageIndex, uint32_t probeCount);
+    // Traces 128 rays per probe into the hits buffer, one workgroup per atlas tile (ProbeGI::createAtlases);
+    // RecordScene must come first in the same frame.
+    void Record(VkCommandBuffer cmd, uint32_t imageIndex, uint32_t tilesX, uint32_t tilesY);
 
 private:
     struct AccelerationStructure {

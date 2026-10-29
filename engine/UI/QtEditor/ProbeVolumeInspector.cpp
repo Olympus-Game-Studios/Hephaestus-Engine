@@ -10,6 +10,7 @@
 #include "../../Scene/Scene.h"
 
 #include <QFormLayout>
+#include <algorithm>
 #include <QGroupBox>
 #include <QVBoxLayout>
 
@@ -19,12 +20,12 @@ namespace {
 
 constexpr int kMaxProbesPerAxis = 64;
 
+constexpr double kMinSize = 0.1, kMaxSize = 10000.0, kMaxIntensity = 10.0;
+
 QDoubleSpinBox* makeSpin(double minValue, double maxValue, double step, int decimals)
 {
     auto* spin = new QDoubleSpinBox();
-    spin->setRange(minValue, maxValue);
-    spin->setDecimals(decimals);
-    spin->setSingleStep(step);
+    ConfigureMixedSpin(spin, minValue, maxValue, step, decimals);
     return spin;
 }
 
@@ -62,14 +63,14 @@ void ProbeVolumeInspector::buildUI()
     form->addRow(QString(), m_enabled);
     const QString axes[3] = {tr("X"), tr("Y"), tr("Z")};
     for (int i = 0; i < 3; ++i) {
-        m_size[i] = makeSpin(0.1, 10000.0, 0.5, 2);
+        m_size[i] = makeSpin(kMinSize, kMaxSize, 0.5, 2);
         form->addRow(tr("Size %1").arg(axes[i]), m_size[i]);
     }
     for (int i = 0; i < 3; ++i) {
         m_counts[i] = makeSpin(1, kMaxProbesPerAxis, 1, 0);
         form->addRow(tr("Probes %1").arg(axes[i]), m_counts[i]);
     }
-    m_intensity = makeSpin(0.0, 10.0, 0.05, 2);
+    m_intensity = makeSpin(0.0, kMaxIntensity, 0.05, 2);
     form->addRow(tr("Intensity"), m_intensity);
     m_total = new QLabel();
     form->addRow(tr("Total Probes"), m_total);
@@ -118,12 +119,14 @@ void ProbeVolumeInspector::connectSignals()
     connect(m_intensity, qOverload<double>(&QDoubleSpinBox::valueChanged), this, edited);
     connect(m_bake, &QPushButton::clicked, this, &ProbeVolumeInspector::bakeRequested);
     connect(m_remove, &QPushButton::clicked, this, [this]() {
+        BeginEdit("Remove Probe Volume");
         ForEachTarget<ProbeVolumeComponent>([&](ProbeVolumeComponent&, entt::entity entity) {
             if (m_ctx && m_ctx->HasActiveScene()) {
                 Entity sceneEntity(entity, m_ctx->GetActiveScene());
                 sceneEntity.RemoveComponent<ProbeVolumeComponent>();
             }
         });
+        EndEdit();
         emit componentRemoved(GetEntity(), QString::fromStdString(TypeName()));
     });
 }
@@ -138,10 +141,10 @@ void ProbeVolumeInspector::applyToComponent()
         float* sizes[3] = {&component.size.x, &component.size.y, &component.size.z};
         int* counts[3] = {&component.probeCountX, &component.probeCountY, &component.probeCountZ};
         for (int i = 0; i < 3; ++i) {
-            if (TryReadSpin(m_size[i], value)) *sizes[i] = static_cast<float>(value);
-            if (TryReadSpin(m_counts[i], value)) *counts[i] = static_cast<int>(value);
+            if (TryReadSpin(m_size[i], value)) *sizes[i] = static_cast<float>(std::clamp(value, kMinSize, kMaxSize));
+            if (TryReadSpin(m_counts[i], value)) *counts[i] = std::clamp(static_cast<int>(value), 1, kMaxProbesPerAxis);
         }
-        if (TryReadSpin(m_intensity, value)) component.intensity = static_cast<float>(value);
+        if (TryReadSpin(m_intensity, value)) component.intensity = static_cast<float>(std::clamp(value, 0.0, kMaxIntensity));
     });
     if (m_ctx) m_ctx->MarkDirty();
 }

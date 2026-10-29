@@ -337,9 +337,12 @@ bool ProbeRayTracer::PrepareScene(uint32_t imageIndex, const std::vector<ProbeTr
         void* mapped = nullptr;
         vmaMapMemory(m_device->allocator, frame.instanceBuffer.allocation, &mapped);
         std::memcpy(mapped, asInstances.data(), asInstances.size() * sizeof(asInstances[0]));
+        vmaFlushAllocation(m_device->allocator, frame.instanceBuffer.allocation, 0,
+                           asInstances.size() * sizeof(asInstances[0]));
         vmaUnmapMemory(m_device->allocator, frame.instanceBuffer.allocation);
         vmaMapMemory(m_device->allocator, frame.instanceData.allocation, &mapped);
         std::memcpy(mapped, data.data(), data.size() * sizeof(data[0]));
+        vmaFlushAllocation(m_device->allocator, frame.instanceData.allocation, 0, data.size() * sizeof(data[0]));
         vmaUnmapMemory(m_device->allocator, frame.instanceData.allocation);
     }
     return true;
@@ -405,11 +408,11 @@ void ProbeRayTracer::RecordScene(VkCommandBuffer cmd, uint32_t imageIndex) {
                          nullptr, 0, nullptr);
 }
 
-void ProbeRayTracer::Record(VkCommandBuffer cmd, uint32_t imageIndex, uint32_t probeCount) {
+void ProbeRayTracer::Record(VkCommandBuffer cmd, uint32_t imageIndex, uint32_t tilesX, uint32_t tilesY) {
     FrameResources& frame = m_frames[imageIndex];
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &frame.set, 0, nullptr);
-    vkCmdDispatch(cmd, probeCount, 1, 1);
+    vkCmdDispatch(cmd, tilesX, tilesY, 1);
 
     VkMemoryBarrier traced{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     traced.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;

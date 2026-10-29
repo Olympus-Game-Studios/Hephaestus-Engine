@@ -9,6 +9,7 @@ layout(std140, set = GI_SET, binding = 0) uniform ProbeGIParams {
     vec4 giParams;      // x = max ray distance, y = 1 when the sun map is valid, z = 1 to discard history,
                         // w = 1 when ray hits carry their own sun visibility (hardware ray tracing)
     mat4 rayRotation;   // applied to probeRayDirection; changes every frame when tracing, identity for bakes
+    uvec4 atlasTiles;   // x = atlas tiles per row (probe p sits at tile (p % x, p / x)); also the dispatch width
 } gi;
 
 layout(std430, set = GI_SET, binding = 3) readonly buffer ProbeOffsets { vec4 probeOffsets[]; };
@@ -60,7 +61,7 @@ vec3 probePosition(int p) {
 }
 
 ivec2 probeTile(int p) {
-    int tilesX = gi.probeCounts.x * gi.probeCounts.y;
+    int tilesX = int(gi.atlasTiles.x);
     return ivec2(p % tilesX, p / tilesX);
 }
 
@@ -107,8 +108,10 @@ vec3 sampleProbeIrradiance(vec3 pos, vec3 n, vec3 viewDir) {
 
         vec3 fromProbe = biasedPos - probePos;
         float dist = length(fromProbe);
+        // Stored as fractions of the max ray distance so squared distances stay within half-float range.
         vec2 moments = texture(visibilityAtlas,
-            probeAtlasUV(p, dist > 1e-4 ? fromProbe / dist : -n, VISIBILITY_TILE, VISIBILITY_INNER, visSize)).rg;
+            probeAtlasUV(p, dist > 1e-4 ? fromProbe / dist : -n, VISIBILITY_TILE, VISIBILITY_INNER, visSize)).rg *
+            vec2(gi.giParams.x, gi.giParams.x * gi.giParams.x);
         if (dist > moments.x) {
             float variance = abs(moments.x * moments.x - moments.y);
             float d = dist - moments.x;

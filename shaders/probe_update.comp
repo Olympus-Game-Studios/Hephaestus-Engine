@@ -42,7 +42,7 @@ float sunVisibility(vec3 pos) {
 
 vec3 skyRadiance(vec3 dir) {
     if (lighting.environmentReflectionParams.z > 0.5) {
-        return evaluateSkyIrradiance(dir) / PI * lighting.environmentReflectionParams.w;
+        return evaluateSkyRadiance(dir) * lighting.environmentReflectionParams.w;
     }
     return lighting.ambientColorIntensity.rgb * lighting.ambientColorIntensity.w;
 }
@@ -92,7 +92,9 @@ vec3 texelDirection(ivec2 local, int inner) {
 }
 
 void main() {
-    int probe = int(gl_WorkGroupID.x);
+    // One workgroup per atlas tile (engine/Gfx/ProbeGI.cpp:createAtlases); the last row may be partly empty.
+    int probe = int(gl_WorkGroupID.y * gi.atlasTiles.x + gl_WorkGroupID.x);
+    if (probe >= gi.probeCounts.x * gi.probeCounts.y * gi.probeCounts.z) return;
     uint ray = gl_LocalInvocationID.x;
     vec3 probePos = probePosition(probe);
     float maxDistance = gi.giParams.x;
@@ -118,7 +120,7 @@ void main() {
     }
     sRadiance[ray] = radiance;
     sDirection[ray] = dir;
-    sDistance[ray] = min(distance, maxDistance);
+    sDistance[ray] = min(distance, maxDistance) / maxDistance;  // normalized: see probe_common.glsl sampling
     barrier();
 
     float hysteresis = gi.giParams.z > 0.5 ? 0.0 : gi.probeSpacing.w;
@@ -151,7 +153,7 @@ void main() {
             weightSum += w;
         }
         ivec2 texel = tile * VISIBILITY_TILE + local;
-        vec2 fresh = weightSum > 0.0 ? sum / weightSum : vec2(maxDistance, maxDistance * maxDistance);
+        vec2 fresh = weightSum > 0.0 ? sum / weightSum : vec2(1.0);
         vec2 previous = texelFetch(visibilityAtlas, texel, 0).rg;
         imageStore(visibilityOut, texel, vec4(mix(fresh, previous, hysteresis), 0.0, 0.0));
     }

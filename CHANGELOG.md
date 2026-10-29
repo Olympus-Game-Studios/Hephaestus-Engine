@@ -120,6 +120,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-10-29: A corrupt or truncated probe bake file is reported as unreadable instead of trying to allocate many gigabytes and crashing the editor or game.
+- 2026-10-29: Probe volumes up to the full 64 x 64 x 64 probes now work on every GPU: the probe atlases are laid out in a square grid instead of one very wide row, which exceeded common GPU image-size and dispatch limits. Very large probe spacing (over about 256 m) no longer breaks probe visibility.
+- 2026-10-29: Probe volumes lit by the HDRI sky now match the ambient light outside the volume; the sky was blurred twice before. Turning off Cast Shadows on the sun now also stops it casting shadows into hardware-traced probe lighting, as it already did for baked probes.
+- 2026-10-29: Probe volume uploads now reach the GPU on graphics drivers whose upload memory is not automatically kept in sync, and the probe update shader enables the storage-image feature it needs (probe GI is skipped on the rare GPUs without it).
+- 2026-10-29: Probe Volume inspector: removing the component can be undone, and editing several volumes with different values no longer resets the differing sizes, counts or intensity.
 - 2026-10-28: Sun shadows now reach the base of walls and objects instead of leaving a lit strip where they meet the floor. The shadow bias is sized from each cascade's texel size, and the Light inspector's "Normal Bias" now does something (it is an extra offset in metres, as is "Bias").
 - 2026-10-28: Probe lighting no longer leaks light or darkness from probes buried inside walls, uses the DDGI view-dependent sampling offset, and, when hardware ray traced, varies its ray directions every frame. Together these remove most of the blotchy shading on shadowed surfaces. Re-bake baked volumes to pick up the wall detection.
 - 2026-10-28: Inspector checkboxes that start unchecked (Probe Volume "Enabled" and "Hardware ray tracing", Mesh Renderer, Camera, Lua Script and others) now turn back on with one click. Before, the click went to a half-checked state that was ignored.
