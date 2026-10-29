@@ -3,11 +3,20 @@
 
 const float PI = 3.14159265359;
 
+// Light arriving along dir from the sky (sun excluded), for rays that miss.
 vec3 skyRadiance(vec3 dir) {
     if (lighting.environmentReflectionParams.z > 0.5) {
-        return evaluateSkyIrradiance(dir) / PI * lighting.environmentReflectionParams.w;
+        return evaluateSkyRadiance(dir) * lighting.environmentReflectionParams.w;
     }
     return lighting.ambientColorIntensity.rgb * lighting.ambientColorIntensity.w;
+}
+
+// Sky light reaching a surface facing n, already integrated over the hemisphere.
+vec3 skyIrradiance(vec3 n) {
+    if (lighting.environmentReflectionParams.z > 0.5) {
+        return evaluateSkyIrradiance(n) * lighting.environmentReflectionParams.w;
+    }
+    return lighting.ambientColorIntensity.rgb * lighting.ambientColorIntensity.w * PI;
 }
 
 vec3 directIrradiance(vec3 pos, vec3 n, float sunVisibility) {

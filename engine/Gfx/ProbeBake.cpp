@@ -450,7 +450,18 @@ bool ReadProbeBake(const std::filesystem::path& path, ProbeBake& bake, std::stri
     if (!ReadHeader(in, path, result, outError)) {
         return false;
     }
-    const size_t probes = static_cast<size_t>(result.probeCounts[0]) * result.probeCounts[1] * result.probeCounts[2];
+    const uint64_t probes =
+        static_cast<uint64_t>(result.probeCounts[0]) * result.probeCounts[1] * result.probeCounts[2];
+    constexpr uint64_t kHitBytes = sizeof(float) + 2 * sizeof(int16_t) + 4 + sizeof(Vec3);
+    const uint64_t payload = probes * sizeof(Vec3) + probes * result.raysPerProbe * kHitBytes;
+    const std::streamoff dataStart = in.tellg();
+    in.seekg(0, std::ios::end);
+    const std::streamoff fileEnd = in.tellg();
+    in.seekg(dataStart);
+    if (dataStart < 0 || fileEnd < dataStart || payload > static_cast<uint64_t>(fileEnd - dataStart)) {
+        outError = path.generic_string() + " is truncated";
+        return false;
+    }
     result.probeOffsets.resize(probes);
     for (Vec3& offset : result.probeOffsets) {
         if (!Get(in, offset)) {

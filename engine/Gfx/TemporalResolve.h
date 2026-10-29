@@ -24,7 +24,8 @@ public:
 
     // After the scene pass (HDR in SHADER_READ_ONLY, depth in DEPTH_STENCIL_READ_ONLY). The result stays in its
     // history image (LastResultIndex), which the tone map samples. reset discards history (first frame, scene change).
-    void Record(VkCommandBuffer cmd, const Mat4& viewProj, bool reset);
+    // cameraDepth: near, far, 1 = perspective (0 = orthographic); history alpha stores linear depth from it.
+    void Record(VkCommandBuffer cmd, const Mat4& viewProj, const Vec4& cameraDepth, bool reset);
     VkImageView ResultView(uint32_t index) const { return m_history[index].view; }
     uint32_t LastResultIndex() const { return 1 - m_parity; }
 

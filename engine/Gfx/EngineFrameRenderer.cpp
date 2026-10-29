@@ -823,10 +823,10 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
                     ProbeTraceInstance instance;
                     if (mesh.skinned) {
                         // Same palette the skinned draw uses: the character's live pose, else the mesh's rest pose.
-                        resolveSkinnedBoneSet(handle, character, mesh);
+                        const VkDescriptorSet boneSet = resolveSkinnedBoneSet(handle, character, mesh);
                         auto palette = m_characterBonePalettes.find(static_cast<uint32_t>(handle));
-                        instance.bones = character && palette != m_characterBonePalettes.end() &&
-                                                 palette->second.buffer.buffer
+                        instance.bones = palette != m_characterBonePalettes.end() &&
+                                                 boneSet == palette->second.set
                                              ? palette->second.buffer.buffer
                                              : mesh.boneBuffer.buffer;
                         instance.poseKey = (static_cast<uint64_t>(static_cast<uint32_t>(handle)) << 32) | meshHandle;
@@ -2935,6 +2935,8 @@ void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamer
     }
     ubo.viewPos = position;
     m_viewProj = Mat4::Multiply(ubo.proj, ubo.view);
+    m_cameraDepth = Vec4(camera.nearPlane, camera.farPlane,
+                         camera.projectionMode == ProjectionMode::Orthographic ? 0.0f : 1.0f, 0.0f);
     // Wireframe still uses Lit/Unlit shading branch; polygon mode is selected per draw.
     ubo.shadingMode = (config.shadingMode == ViewShadingMode::Unlit) ? 1.0f : 0.0f;
     
@@ -2974,9 +2976,12 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
     lightUBO.rayReflectionParams =
         Vec4(canTrace ? (quality.requested == RenderQuality::Ultra ? 2.0f : 1.0f) : 0.0f, 0.3f, 0.6f,
              static_cast<float>(m_frameIndex++ % 4096u));
-    // Without ray tracing, Medium and up march reflections through the previous frame (perspective cameras only).
+    // Without ray tracing, Medium and up march reflections through the previous frame (perspective cameras only),
+    // once that frame shows this scene.
+    const bool historyIsThisScene =
+        std::make_pair(scene->GetIdentity(), scene->GetRuntimeGeneration()) == m_temporalScene;
     const bool screenSpaceReflections = !canTrace && quality.requested != RenderQuality::Low &&
-                                        m_temporal.HasLastResult() &&
+                                        m_temporal.HasLastResult() && historyIsThisScene &&
                                         camera.projectionMode == ProjectionMode::Perspective;
     lightUBO.previousViewProj = m_temporal.LastViewProj();
     lightUBO.ssrParams = Vec4(screenSpaceReflections ? 1.0f : 0.0f, camera.nearPlane, camera.farPlane, 0.0f);
@@ -4454,7 +4459,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         resetHistory = sceneKey != m_temporalScene;
         m_temporalScene = sceneKey;
     }
-    m_temporal.Record(cmd, m_viewProj, resetHistory);
+    m_temporal.Record(cmd, m_viewProj, m_cameraDepth, resetHistory);
     if (timed) m_gpuTimer.Mark(cmd, imageIndex, GpuFrameTimer::Temporal);
     renderPassInfo.renderPass = m_swapchain->renderPass;
     renderPassInfo.clearValueCount = 0;

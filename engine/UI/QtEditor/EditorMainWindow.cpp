@@ -8635,6 +8635,11 @@ void EditorMainWindow::applyViewportQuality(int quality)
         label += tr(" (baked GI)");
     }
     m_qualityBtn->setText(label);
+    // Applied directly too: after Lua's Graphics.setQuality the stored viewport tier can already equal this one,
+    // and the render loop only pushes changes of the stored tier.
+    if (renderer) {
+        renderer->SetRenderQuality(tier);
+    }
     if (m_engine) {
         if (auto* ctx = m_engine->GetEditorContext()) {
             ctx->GetViewportSettings().renderQuality = quality;

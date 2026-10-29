@@ -33,6 +33,7 @@ struct ProbeGIParams {
     Mat4 sunViewProj;
     Vec4 giParams;
     Mat4 rayRotation;
+    uint32_t atlasTilesX[4];
 };
 
 struct GpuRayHit {
@@ -210,6 +211,7 @@ bool ProbeGI::createPlaceholders() {
 }
 
 bool ProbeGI::createComputePipeline() {
+    if (!m_device->SupportsStorageImageExtendedFormats()) return false;
     VkShaderModule module = LoadShader(m_device->device, "probe_update.comp.spv");
     if (!module) return false;
     VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
@@ -526,8 +528,22 @@ bool ProbeGI::createHardwareVolume(const int counts[3], std::string& outError) {
 }
 
 bool ProbeGI::createAtlases(const int counts[3]) {
-    const uint32_t tilesX = static_cast<uint32_t>(counts[0] * counts[1]);
-    const uint32_t tilesY = static_cast<uint32_t>(counts[2]);
+    // Tiles fill a near-square grid so the atlas width and the workgroup count stay within device limits.
+    const uint32_t probes = static_cast<uint32_t>(counts[0] * counts[1] * counts[2]);
+    uint32_t tilesX = static_cast<uint32_t>(std::ceil(std::sqrt(static_cast<double>(probes))));
+    while (tilesX > 1 && (tilesX - 1) * (tilesX - 1) >= probes) --tilesX;
+    while (tilesX * tilesX < probes) ++tilesX;
+    const uint32_t tilesY = (probes + tilesX - 1) / tilesX;
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(m_device->physicalDevice, &props);
+    const uint32_t maxTile = static_cast<uint32_t>(std::max(kIrradianceTile, kVisibilityTile));
+    if (tilesX * maxTile > props.limits.maxImageDimension2D || tilesY * maxTile > props.limits.maxImageDimension2D ||
+        tilesX > props.limits.maxComputeWorkGroupCount[0] || tilesY > props.limits.maxComputeWorkGroupCount[1]) {
+        std::cerr << "[ProbeGI] " << probes << " probes exceed this GPU's image or dispatch limits\n";
+        return false;
+    }
+    m_tilesX = tilesX;
+    m_tilesY = tilesY;
     auto createAtlas = [&](Atlas& atlas, VkFormat format, uint32_t tile) {
         VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         image.imageType = VK_IMAGE_TYPE_2D;
@@ -687,6 +703,7 @@ void ProbeGI::prepareVolume(Scene* scene, const std::string& projectRoot, uint32
         void* mapped = nullptr;
         vmaMapMemory(m_device->allocator, m_paramBuffers[imageIndex].allocation, &mapped);
         std::memcpy(mapped, &params, sizeof(params));
+        vmaFlushAllocation(m_device->allocator, m_paramBuffers[imageIndex].allocation, 0, sizeof(params));
         vmaUnmapMemory(m_device->allocator, m_paramBuffers[imageIndex].allocation);
         writeDescriptorSets(imageIndex, lightingBuffer);
     };
@@ -804,6 +821,7 @@ void ProbeGI::prepareVolume(Scene* scene, const std::string& projectRoot, uint32
     params.probeCounts[1] = m_bakeGrid.probeCounts[1];
     params.probeCounts[2] = m_bakeGrid.probeCounts[2];
     params.probeCounts[3] = 1;
+    params.atlasTilesX[0] = m_tilesX;
     params.sunViewProj = m_sunViewProj;
     params.rayRotation = m_hardware ? RandomRotation(m_rng) : Mat4::Identity();
     params.giParams = Vec4(maxDistance, m_sunValid && !m_hardware ? 1.0f : 0.0f, m_resetFrames > 0 ? 1.0f : 0.0f,
@@ -811,6 +829,7 @@ void ProbeGI::prepareVolume(Scene* scene, const std::string& projectRoot, uint32
     void* mapped = nullptr;
     vmaMapMemory(m_device->allocator, m_paramBuffers[imageIndex].allocation, &mapped);
     std::memcpy(mapped, &params, sizeof(params));
+    vmaFlushAllocation(m_device->allocator, m_paramBuffers[imageIndex].allocation, 0, sizeof(params));
     vmaUnmapMemory(m_device->allocator, m_paramBuffers[imageIndex].allocation);
 
     writeDescriptorSets(imageIndex, lightingBuffer);
@@ -883,12 +902,12 @@ void ProbeGI::RecordUpdate(VkCommandBuffer cmd, uint32_t imageIndex) {
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
 
     if (m_hardware) {
-        m_tracer.Record(cmd, imageIndex, static_cast<uint32_t>(m_probeCount));
+        m_tracer.Record(cmd, imageIndex, m_tilesX, m_tilesY);
     }
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computePipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_computeLayout, 0, 1, &m_sets[imageIndex][0], 0,
                             nullptr);
-    vkCmdDispatch(cmd, static_cast<uint32_t>(m_probeCount), 1, 1);
+    vkCmdDispatch(cmd, m_tilesX, m_tilesY, 1);
 
     VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     after.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;

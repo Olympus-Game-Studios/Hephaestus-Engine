@@ -87,7 +87,9 @@ bool ProbeCascades::Init(VulkanDevice* device, bool rayQueries) {
         vkDestroyShaderModule(device->device, module, nullptr);
         return result == VK_SUCCESS;
     };
-    if (!build("cascade_trace.comp.spv", m_tracePipeline) || !build("cascade_update.comp.spv", m_updatePipeline)) {
+    // cascade_update.comp stores to rg16f, an extended storage image format.
+    if (!device->SupportsStorageImageExtendedFormats() || !build("cascade_trace.comp.spv", m_tracePipeline) ||
+        !build("cascade_update.comp.spv", m_updatePipeline)) {
         std::cerr << "[ProbeCascades] Pipelines unavailable; dynamic GI is off\n";
         if (m_tracePipeline) vkDestroyPipeline(device->device, m_tracePipeline, nullptr);
         if (m_updatePipeline) vkDestroyPipeline(device->device, m_updatePipeline, nullptr);
@@ -276,6 +278,7 @@ void ProbeCascades::writeParams(uint32_t imageIndex, bool active, const Mat4& ro
     void* mapped = nullptr;
     vmaMapMemory(m_device->allocator, m_frames[imageIndex].params.allocation, &mapped);
     std::memcpy(mapped, &params, sizeof(params));
+    vmaFlushAllocation(m_device->allocator, m_frames[imageIndex].params.allocation, 0, sizeof(params));
     vmaUnmapMemory(m_device->allocator, m_frames[imageIndex].params.allocation);
 }
 
@@ -311,6 +314,7 @@ void ProbeCascades::Prepare(uint32_t imageIndex, const Cell* counts, const Vec3&
         void* mapped = nullptr;
         vmaMapMemory(m_device->allocator, frame.jobs.allocation, &mapped);
         std::memcpy(mapped, jobs.data(), jobs.size() * sizeof(uint32_t));
+        vmaFlushAllocation(m_device->allocator, frame.jobs.allocation, 0, jobs.size() * sizeof(uint32_t));
         vmaUnmapMemory(m_device->allocator, frame.jobs.allocation);
     }
     writeParams(imageIndex, true, rotation);
@@ -405,8 +409,11 @@ void ProbeCascades::Record(VkCommandBuffer cmd, uint32_t imageIndex) {
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_updatePipeline);
     vkCmdDispatch(cmd, m_jobCount, 1, 1);
+    // Vertex: the GI Probes overlay (shaders/cascade_debug.vert) reads probe state and relocation.
     barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_SHADER_READ_BIT);
 }
 
 } // namespace Hephaestus

@@ -268,6 +268,9 @@ void VulkanDevice::createLogicalDevice() {
   features.samplerAnisotropy = VK_TRUE;
   features.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
   m_fillModeNonSolid = supportedFeatures.fillModeNonSolid == VK_TRUE;
+  // Probe GI stores to rg16f images, which SPIR-V treats as an extended storage format.
+  m_storageImageExtendedFormats = supportedFeatures.shaderStorageImageExtendedFormats == VK_TRUE;
+  features.shaderStorageImageExtendedFormats = supportedFeatures.shaderStorageImageExtendedFormats;
   if (m_fillModeNonSolid) {
     features.fillModeNonSolid = VK_TRUE;
   }

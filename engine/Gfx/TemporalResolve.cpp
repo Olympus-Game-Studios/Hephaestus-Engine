@@ -17,6 +17,7 @@ constexpr float kCurrentWeight = 0.1f;  // about ten frames of history
 struct Push {
     Mat4 currentToPrevious;
     Vec4 params;
+    Vec4 cameraDepth;
 };
 
 // General 4x4 inverse (Gauss-Jordan, partial pivoting) of a column-major matrix; identity when singular.
@@ -200,7 +201,7 @@ void TemporalResolve::Shutdown() {
     m_device = nullptr;
 }
 
-void TemporalResolve::Record(VkCommandBuffer cmd, const Mat4& viewProj, bool reset) {
+void TemporalResolve::Record(VkCommandBuffer cmd, const Mat4& viewProj, const Vec4& cameraDepth, bool reset) {
     // Earlier frames' passes, tone maps and reflections are done with the history images.
     VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     before.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
@@ -211,6 +212,7 @@ void TemporalResolve::Record(VkCommandBuffer cmd, const Mat4& viewProj, bool res
     Push push;
     push.currentToPrevious = Mat4::Multiply(m_previousViewProj, Inverse(viewProj));
     push.params = Vec4(kCurrentWeight, (reset || !m_historyValid) ? 1.0f : 0.0f, 0.0f, 0.0f);
+    push.cameraDepth = cameraDepth;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &m_sets[m_parity], 0,
                             nullptr);

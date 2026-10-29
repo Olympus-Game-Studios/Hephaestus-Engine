@@ -51,7 +51,9 @@ bool occluded(vec3 origin, vec3 dir) {
 }
 
 void main() {
-    int probe = int(gl_WorkGroupID.x);
+    // One workgroup per atlas tile (engine/Gfx/ProbeGI.cpp:createAtlases); the last row may be partly empty.
+    int probe = int(gl_WorkGroupID.y * gi.atlasTiles.x + gl_WorkGroupID.x);
+    if (probe >= gi.probeCounts.x * gi.probeCounts.y * gi.probeCounts.z) return;
     uint ray = gl_LocalInvocationID.x;
     vec3 origin = probePosition(probe);
     vec3 dir = mat3(gi.rayRotation) * probeRayDirection(ray, RAYS);
@@ -83,7 +85,8 @@ void main() {
         float sunVisibility = 1.0;
         if (lighting.dirLightDirIntensity.w > 0.0) {
             vec3 toSun = normalize(-lighting.dirLightDirIntensity.xyz);
-            sunVisibility = dot(n, toSun) > 0.0 && !occluded(hitPos + n * 0.01, toSun) ? 1.0 : 0.0;
+            bool shadowed = lighting.dirShadowParams.w > 0.5 && occluded(hitPos + n * 0.01, toSun);
+            sunVisibility = dot(n, toSun) > 0.0 && !shadowed ? 1.0 : 0.0;
         }
         hit.normalDistance = vec4(n, t);
         hit.albedo = vec4(inst.albedo.rgb, sunVisibility);

@@ -13,7 +13,14 @@ layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D resolved;
 layout(push_constant) uniform Push {
     mat4 currentToPrevious;  // previous view-projection * inverse(current view-projection)
     vec4 params;             // x = weight of the current frame, y = 1 to discard history
+    vec4 cameraDepth;        // x = near, y = far, z = 1 for perspective, 0 for orthographic
 } pc;
+
+// Distance along the view axis in metres, from a [0, 1] depth-buffer value.
+float linearDepth(float d) {
+    float n = pc.cameraDepth.x, f = pc.cameraDepth.y;
+    return pc.cameraDepth.z > 0.5 ? n * f / (f - d * (f - n)) : n + d * (f - n);
+}
 
 void main() {
     ivec2 size = textureSize(currentColor, 0);
@@ -21,10 +28,12 @@ void main() {
     if (pixel.x >= size.x || pixel.y >= size.y) return;
 
     vec3 current = texelFetch(currentColor, pixel, 0).rgb;
-    // Alpha keeps this pixel's depth: next frame's surfaces march screen-space reflections through it.
+    // Alpha keeps this pixel's linear depth (half floats lose too much precision on raw depth): next frame's
+    // surfaces march screen-space reflections through it, and the next resolve rejects mismatched history.
     float depth = texelFetch(currentDepth, pixel, 0).r;
+    float viewDepth = linearDepth(depth);
     if (pc.params.y > 0.5) {
-        imageStore(resolved, pixel, vec4(current, depth));
+        imageStore(resolved, pixel, vec4(current, viewDepth));
         return;
     }
     vec3 lo = current, hi = current;
@@ -40,9 +49,17 @@ void main() {
     vec4 previous = pc.currentToPrevious * vec4(uv * 2.0 - 1.0, depth, 1.0);
     vec2 previousUV = previous.xy / previous.w * 0.5 + 0.5;
     if (previous.w <= 0.0 || any(lessThan(previousUV, vec2(0.0))) || any(greaterThan(previousUV, vec2(1.0)))) {
-        imageStore(resolved, pixel, vec4(current, depth));
+        imageStore(resolved, pixel, vec4(current, viewDepth));
         return;
     }
-    vec3 history = clamp(texture(historyColor, previousUV).rgb, lo, hi);
-    imageStore(resolved, pixel, vec4(mix(history, current, pc.params.x), depth));
+    // History from a different surface (newly revealed background, or a foreground that moved away) is dropped
+    // before clamping, since both colours can sit in the 3x3 neighbourhood at a silhouette.
+    vec4 historySample = texture(historyColor, previousUV);
+    float expectedDepth = linearDepth(previous.z / previous.w);
+    if (abs(historySample.a - expectedDepth) > 0.05 * expectedDepth + 0.01) {
+        imageStore(resolved, pixel, vec4(current, viewDepth));
+        return;
+    }
+    vec3 history = clamp(historySample.rgb, lo, hi);
+    imageStore(resolved, pixel, vec4(mix(history, current, pc.params.x), viewDepth));
 }

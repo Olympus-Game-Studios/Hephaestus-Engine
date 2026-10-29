@@ -33,6 +33,7 @@ public:
     };
     /** True when VK_KHR_ray_query, acceleration structures and buffer device addresses are enabled. */
     bool SupportsRayQuery() const { return m_rayQuery; }
+    bool SupportsStorageImageExtendedFormats() const { return m_storageImageExtendedFormats; }
     const RayTracingFunctions& RayTracing() const { return m_rayTracing; }
 
     // Legacy GLFW-based initialization (runtime/legacy editor path)
@@ -63,5 +64,6 @@ private:
 
     bool m_fillModeNonSolid = false;
     bool m_rayQuery = false;
+    bool m_storageImageExtendedFormats = false;
     RayTracingFunctions m_rayTracing;
 };

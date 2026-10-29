@@ -144,7 +144,6 @@ vec3 sampleEnvironmentReflection(vec3 direction) {
 vec4 screenSpaceReflection(vec3 origin, vec3 dir) {
     const int STEPS = 48;
     float nearPlane = lighting.ssrParams.y;
-    float farPlane = lighting.ssrParams.z;
     // A per-pixel start offset that changes every frame turns step banding into noise the temporal pass removes.
     float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453 +
                          lighting.rayReflectionParams.w * 0.6180339887);
@@ -158,7 +157,7 @@ vec4 screenSpaceReflection(vec3 origin, vec3 dir) {
         if (clip.w <= nearPlane) return vec4(0.0);
         vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
         if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec4(0.0);
-        float sceneDepth = nearPlane * farPlane / (farPlane - textureLod(previousFrame, uv, 0.0).a * (farPlane - nearPlane));
+        float sceneDepth = textureLod(previousFrame, uv, 0.0).a;  // linear depth (shaders/temporal_resolve.comp)
         float behind = clip.w - sceneDepth;
         if (behind > 0.0 && behind < max(0.25, stepLength * 2.0)) {
             // Bisect between the last point in front and this one for a sharper contact.
@@ -166,8 +165,7 @@ vec4 screenSpaceReflection(vec3 origin, vec3 dir) {
                 vec3 mid = 0.5 * (previous + p);
                 vec4 midClip = lighting.previousViewProj * vec4(mid, 1.0);
                 vec2 midUV = midClip.xy / midClip.w * 0.5 + 0.5;
-                float midScene = nearPlane * farPlane /
-                                 (farPlane - textureLod(previousFrame, midUV, 0.0).a * (farPlane - nearPlane));
+                float midScene = textureLod(previousFrame, midUV, 0.0).a;
                 if (midClip.w > midScene) { p = mid; uv = midUV; } else { previous = mid; }
             }
             vec2 edge = smoothstep(vec2(0.0), vec2(0.1), uv) * smoothstep(vec2(0.0), vec2(0.1), 1.0 - uv);
@@ -255,9 +253,10 @@ vec3 tracedReflection(vec3 origin, vec3 dir) {
     float sun = 1.0;
     if (lighting.dirLightDirIntensity.w > 0.0) {
         vec3 toSun = normalize(-lighting.dirLightDirIntensity.xyz);
-        sun = dot(n, toSun) > 0.0 && !rayOccluded(hitPos + n * 0.01, toSun, 10000.0) ? 1.0 : 0.0;
+        bool shadowed = lighting.dirShadowParams.w > 0.5 && rayOccluded(hitPos + n * 0.01, toSun, 10000.0);
+        sun = dot(n, toSun) > 0.0 && !shadowed ? 1.0 : 0.0;
     }
-    vec3 indirect = skyRadiance(n) * PI;
+    vec3 indirect = skyIrradiance(n);
     if (cascades.counts.w > 0) {
         vec4 probes = sampleCascades(hitPos, n, -dir);
         indirect = mix(indirect, probes.rgb * PI, probes.w);

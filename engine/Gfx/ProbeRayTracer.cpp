@@ -143,7 +143,6 @@ bool ProbeRayTracer::initSkinning() {
         m_skinPipeline = VK_NULL_HANDLE;
         return false;
     }
-    constexpr uint32_t kMaxPosedMeshes = 64;
     const VkDescriptorPoolSize sizes[] = {
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * kMaxPosedMeshes},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kMaxPosedMeshes},
@@ -173,6 +172,7 @@ ProbeRayTracer::PosedMesh* ProbeRayTracer::posedMesh(uint64_t key, const MeshGPU
         found = m_posed.end();
     }
     if (found == m_posed.end()) {
+        if (m_posed.size() >= kMaxPosedMeshes) return nullptr;  // traced without this mesh until others expire
         PosedMesh posed;
         posed.mesh = &mesh;
         VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
@@ -223,7 +223,7 @@ ProbeRayTracer::PosedMesh* ProbeRayTracer::posedMesh(uint64_t key, const MeshGPU
         if (m_device->RayTracing().createAccelerationStructure(m_device->device, &create, nullptr,
                                                                &posed.blas.handle) != VK_SUCCESS ||
             vkAllocateDescriptorSets(m_device->device, &alloc, &posed.set) != VK_SUCCESS) {
-            posed.set = VK_NULL_HANDLE;  // pool full: more animated meshes than kMaxPosedMeshes
+            posed.set = VK_NULL_HANDLE;
             destroyPosed(posed);
             return nullptr;
         }
@@ -584,9 +584,12 @@ bool ProbeRayTracer::PrepareScene(uint32_t imageIndex, const std::vector<ProbeTr
         void* mapped = nullptr;
         vmaMapMemory(m_device->allocator, frame.instanceBuffer.allocation, &mapped);
         std::memcpy(mapped, asInstances.data(), asInstances.size() * sizeof(asInstances[0]));
+        vmaFlushAllocation(m_device->allocator, frame.instanceBuffer.allocation, 0,
+                           asInstances.size() * sizeof(asInstances[0]));
         vmaUnmapMemory(m_device->allocator, frame.instanceBuffer.allocation);
         vmaMapMemory(m_device->allocator, frame.instanceData.allocation, &mapped);
         std::memcpy(mapped, data.data(), data.size() * sizeof(data[0]));
+        vmaFlushAllocation(m_device->allocator, frame.instanceData.allocation, 0, data.size() * sizeof(data[0]));
         vmaUnmapMemory(m_device->allocator, frame.instanceData.allocation);
     }
     return true;
@@ -653,11 +656,11 @@ void ProbeRayTracer::RecordScene(VkCommandBuffer cmd, uint32_t imageIndex) {
                          nullptr, 0, nullptr);
 }
 
-void ProbeRayTracer::Record(VkCommandBuffer cmd, uint32_t imageIndex, uint32_t probeCount) {
+void ProbeRayTracer::Record(VkCommandBuffer cmd, uint32_t imageIndex, uint32_t tilesX, uint32_t tilesY) {
     FrameResources& frame = m_frames[imageIndex];
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &frame.set, 0, nullptr);
-    vkCmdDispatch(cmd, probeCount, 1, 1);
+    vkCmdDispatch(cmd, tilesX, tilesY, 1);
 
     VkMemoryBarrier traced{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     traced.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;

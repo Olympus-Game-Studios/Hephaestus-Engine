@@ -619,6 +619,7 @@ private:
     GpuFrameTimer m_gpuTimer;
     static constexpr uint32_t kMaxTimedImages = 8;  // swapchain images beyond this are not timed
     Mat4 m_viewProj = Mat4::Identity();  // this frame's camera, set by updateCameraUBO
+    Vec4 m_cameraDepth{0.1f, 1000.0f, 1.0f, 0.0f};  // near, far, 1 = perspective; set by updateCameraUBO
     std::pair<uint64_t, uint64_t> m_temporalScene{0, 0};  // scene identity and generation the history belongs to
     uint32_t m_frameIndex = 0;  // varies stochastic sampling patterns so the temporal pass averages them
     void recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene);

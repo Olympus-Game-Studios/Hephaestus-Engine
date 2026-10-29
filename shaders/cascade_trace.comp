@@ -82,10 +82,11 @@ void main() {
             float sun = 1.0;
             if (lighting.dirLightDirIntensity.w > 0.0) {
                 vec3 toSun = normalize(-lighting.dirLightDirIntensity.xyz);
-                sun = dot(n, toSun) > 0.0 && !occluded(hitPos + n * 0.01, toSun) ? 1.0 : 0.0;
+                bool shadowed = lighting.dirShadowParams.w > 0.5 && occluded(hitPos + n * 0.01, toSun);
+                sun = dot(n, toSun) > 0.0 && !shadowed ? 1.0 : 0.0;
             }
             vec4 bounce = sampleCascades(hitPos, n, -dir);
-            vec3 irradiance = mix(skyRadiance(n), bounce.rgb, bounce.w) * PI;
+            vec3 irradiance = mix(skyIrradiance(n), bounce.rgb * PI, bounce.w);
             vec3 radiance = inst.albedo.rgb / PI * (directIrradiance(hitPos, n, sun) + irradiance) + inst.emissive.rgb;
             result = vec4(radiance, min(t, maxDistance));
         }

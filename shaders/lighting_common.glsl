@@ -68,15 +68,26 @@ float calculateSpotlightFalloff(vec3 lightDir, vec3 lightToFrag, float innerAngl
     return smoothstep(0.0, 1.0, falloff);
 }
 
-vec3 evaluateSkyIrradiance(vec3 n) {
-    vec3 e = lighting.skyIrradianceSH[0].rgb * 0.282095;
-    e += lighting.skyIrradianceSH[1].rgb * (0.488603 * n.y);
-    e += lighting.skyIrradianceSH[2].rgb * (0.488603 * n.z);
-    e += lighting.skyIrradianceSH[3].rgb * (0.488603 * n.x);
-    e += lighting.skyIrradianceSH[4].rgb * (1.092548 * n.x * n.y);
-    e += lighting.skyIrradianceSH[5].rgb * (1.092548 * n.y * n.z);
-    e += lighting.skyIrradianceSH[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0));
-    e += lighting.skyIrradianceSH[7].rgb * (1.092548 * n.x * n.z);
-    e += lighting.skyIrradianceSH[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+// bandScale divides each SH band (0, 1, 2) of the stored, cosine-convolved coefficients.
+vec3 evaluateSkySH(vec3 n, vec3 bandScale) {
+    vec3 e = lighting.skyIrradianceSH[0].rgb * (0.282095 * bandScale.x);
+    e += lighting.skyIrradianceSH[1].rgb * (0.488603 * n.y * bandScale.y);
+    e += lighting.skyIrradianceSH[2].rgb * (0.488603 * n.z * bandScale.y);
+    e += lighting.skyIrradianceSH[3].rgb * (0.488603 * n.x * bandScale.y);
+    e += lighting.skyIrradianceSH[4].rgb * (1.092548 * n.x * n.y * bandScale.z);
+    e += lighting.skyIrradianceSH[5].rgb * (1.092548 * n.y * n.z * bandScale.z);
+    e += lighting.skyIrradianceSH[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0) * bandScale.z);
+    e += lighting.skyIrradianceSH[7].rgb * (1.092548 * n.x * n.z * bandScale.z);
+    e += lighting.skyIrradianceSH[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y) * bandScale.z);
     return max(e, vec3(0.0));
+}
+
+vec3 evaluateSkyIrradiance(vec3 n) {
+    return evaluateSkySH(n, vec3(1.0));
+}
+
+// Sky radiance (sun excluded, engine/Gfx/SkyIrradiance.cpp) along n: undoes the per-band cosine convolution
+// (pi, 2pi/3, pi/4), so callers that integrate over directions themselves do not convolve twice.
+vec3 evaluateSkyRadiance(vec3 n) {
+    return evaluateSkySH(n, vec3(1.0 / 3.14159265, 3.0 / (2.0 * 3.14159265), 4.0 / 3.14159265));
 }
