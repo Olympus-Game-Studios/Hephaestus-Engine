@@ -175,7 +175,7 @@ struct LightingUBO {
     Mat4 localShadowViewProj[32];  // atlas tiles, see EngineFrameRenderer::kLocalShadowTile
     Vec4 pointShadowParams[16];    // x = first of six tiles (+X,-X,+Y,-Y,+Z,-Z), -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
     Vec4 spotShadowParams[16];     // x = tile, -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
-    Vec4 rayReflectionParams;      // x = 0 off, 1 mirror, 2 glossy; y = mirror roughness cutoff; z = glossy cutoff
+    Vec4 rayReflectionParams;      // x = 0 off, 1 mirror, 2 glossy; y = mirror roughness cutoff; z = glossy cutoff; w = frame number
 };
 
 static bool MeshAllowsHiddenEditorOutline(const MeshRendererComponent& renderer,
@@ -378,6 +378,10 @@ bool EngineFrameRenderer::Init(VulkanDevice* device, VulkanSwapchain* swapchain,
     }
     if (!createToneMapResources()) {
         std::cerr << "[EngineFrameRenderer] Failed to create tone map resources\n";
+        return false;
+    }
+    if (!m_temporal.Init(m_device) || !m_temporal.CreateSwapchainResources(*m_swapchain)) {
+        std::cerr << "[EngineFrameRenderer] Failed to create temporal accumulation resources\n";
         return false;
     }
     if (m_directionalShadow.IsValid() && !m_probeGI.InitSunMap(m_directionalShadow.renderPass)) {
@@ -656,6 +660,10 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         }
         if (!createToneMapResources()) {
             std::cerr << "[EngineFrameRenderer] Failed to recreate tone map resources\n";
+            return false;
+        }
+        if (!m_temporal.CreateSwapchainResources(*m_swapchain)) {
+            std::cerr << "[EngineFrameRenderer] Failed to recreate temporal accumulation resources\n";
             return false;
         }
         if (!m_probeGI.CreateSwapchainResources(m_swapchain->renderPass, VulkanSwapchain::kSceneSubpass,
@@ -2865,6 +2873,7 @@ void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamer
         ubo.proj = Mat4::Perspective(fovDeg * DEG_TO_RAD, aspect, camera.nearPlane, camera.farPlane);
     }
     ubo.viewPos = position;
+    m_viewProj = Mat4::Multiply(ubo.proj, ubo.view);
     // Wireframe still uses Lit/Unlit shading branch; polygon mode is selected per draw.
     ubo.shadingMode = (config.shadingMode == ViewShadingMode::Unlit) ? 1.0f : 0.0f;
     
@@ -2902,7 +2911,8 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
     const RenderQualityProfile quality = GetRenderQualityProfile();
     const bool canTrace = quality.rayTracing;
     lightUBO.rayReflectionParams =
-        Vec4(canTrace ? (quality.requested == RenderQuality::Ultra ? 2.0f : 1.0f) : 0.0f, 0.3f, 0.6f, 0.0f);
+        Vec4(canTrace ? (quality.requested == RenderQuality::Ultra ? 2.0f : 1.0f) : 0.0f, 0.3f, 0.6f,
+             static_cast<float>(m_frameIndex++ % 4096u));
     uint32_t nextShadowTile = 0;
     int shadowedPoints = 0;
     int shadowedSpots = 0;
@@ -3930,7 +3940,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = m_swapchain->renderPass;
+    renderPassInfo.renderPass = m_swapchain->scenePass;
     renderPassInfo.framebuffer = m_swapchain->framebuffers[imageIndex];
     renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = m_swapchain->extent;
@@ -4365,6 +4375,23 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     if (config.isEditorMode && config.renderGIProbes) {
         m_probeGI.RecordCascadeDebug(cmd, imageIndex, m_descriptorSets[imageIndex]);
     }
+
+    // Scene done: accumulate it over frames, then tone map and draw overlays in the second render pass.
+    vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdEndRenderPass(cmd);
+    bool resetHistory = false;
+    if (scene) {
+        const std::pair<uint64_t, uint64_t> sceneKey{scene->GetIdentity(), scene->GetRuntimeGeneration()};
+        resetHistory = sceneKey != m_temporalScene;
+        m_temporalScene = sceneKey;
+    }
+    m_temporal.Record(cmd, m_viewProj, resetHistory);
+    renderPassInfo.renderPass = m_swapchain->renderPass;
+    renderPassInfo.clearValueCount = 0;
+    renderPassInfo.pClearValues = nullptr;
+    vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
     recordToneMap(cmd);
 
     // Render editor grid (after opaque meshes, before transparent) — not in play/pause or shipped game
@@ -4692,6 +4719,7 @@ void EngineFrameRenderer::cleanupSwapchainResources()
 
     cleanupSkinnedGraphicsPipelines();
     cleanupToneMapResources();
+    m_temporal.DestroySwapchainResources();
     m_probeGI.DestroySwapchainResources();
 
     cleanupBillboardResources();
@@ -4945,6 +4973,7 @@ void EngineFrameRenderer::destroyAllResources()
         m_pipeline->Cleanup();
         m_pipeline.reset();
     }
+    m_temporal.Shutdown();
     m_probeGI.Shutdown();  // after every pipeline layout that uses its set layouts
     
     m_device = nullptr;

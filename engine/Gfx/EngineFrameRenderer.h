@@ -32,6 +32,7 @@
 #include "ProbeBake.h"
 #include "ProbeGI.h"
 #include "RenderQuality.h"
+#include "TemporalResolve.h"
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Components.h"
 #include "../Core/EditorDebugDraw.h"
@@ -612,6 +613,10 @@ private:
                            const Vec3* cullCenter, float cullRadius);
 
     ProbeGI m_probeGI;  // set 2 of the main and skinned surface pipelines
+    TemporalResolve m_temporal;  // between the scene pass and tone mapping
+    Mat4 m_viewProj = Mat4::Identity();  // this frame's camera, set by updateCameraUBO
+    std::pair<uint64_t, uint64_t> m_temporalScene{0, 0};  // scene identity and generation the history belongs to
+    uint32_t m_frameIndex = 0;  // varies stochastic sampling patterns so the temporal pass averages them
     void recordProbeGISunPass(VkCommandBuffer cmd, Scene* scene);
 
     // Billboard resources for light icons

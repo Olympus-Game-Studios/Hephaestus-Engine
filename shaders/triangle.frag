@@ -246,7 +246,8 @@ float tracedSunOcclusion(vec3 toSun) {
     const int RAYS = 8;
     vec3 tangent = normalize(cross(abs(toSun.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), toSun));
     vec3 bitangent = cross(toSun, tangent);
-    float rotation = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+    float rotation = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853 +
+                     lighting.rayReflectionParams.w * 2.39996323;
     float hidden = 0.0;
     for (int i = 0; i < RAYS; ++i) {
         float radius = sqrt((float(i) + 0.5) / float(RAYS)) * tanHalfSun;
@@ -332,8 +333,9 @@ float cascadeOcclusion(int cascade, vec3 lightDir) {
         vec2(-0.6168,  0.7338), vec2( 0.1120, -0.3690)
     );
 
-    // Per-fragment rotation angle from world position to break up banding
-    float rotAngle = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+    // Per-fragment rotation from world position, turned further each frame so the temporal pass averages it
+    float rotAngle = fract(sin(dot(fragWorldPos.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853 +
+                     lighting.rayReflectionParams.w * 2.39996323;
     mat2 rotation = mat2(cos(rotAngle), sin(rotAngle), -sin(rotAngle), cos(rotAngle));
 
     // Soft shadows (PCSS): the penumbra grows with the distance from the blocker to the receiver
@@ -655,10 +657,10 @@ void main() {
     if (rayMode > 0.5 && material.reflectionStrength > 0.0 && roughness < cutoff) {
         vec3 R = reflect(-V, N);
         if (rayMode > 1.5 && roughness > 0.05) {
-            // One GGX sample per pixel; a fixed per-position pattern, so it does not flicker before
-            // temporal accumulation exists.
+            // One GGX sample per pixel, a new one each frame (R2 sequence); the temporal pass averages them.
             vec2 xi = fract(sin(vec2(dot(fragWorldPos, vec3(12.9898, 78.233, 37.719)),
-                                     dot(fragWorldPos, vec3(39.346, 11.135, 83.155)))) * 43758.5453);
+                                     dot(fragWorldPos, vec3(39.346, 11.135, 83.155)))) * 43758.5453 +
+                            lighting.rayReflectionParams.w * vec2(0.7548776662, 0.5698402910));
             R = reflect(-V, sampleGGX(N, roughness, xi));
             if (dot(R, N) <= 0.0) R = reflect(-V, N);
         }

@@ -231,127 +231,141 @@ void VulkanSwapchain::initInternal(uint32_t width, uint32_t height)
     // ── Depth format and image ─────────────────────────────────────────
     depthFormat = findDepthFormat(physicalDevice);
     createImage2D(device, allocator, extent.width, extent.height, depthFormat,
-                  VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                  VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                   depthImage, depthAllocation);
     depthImageView = createImageView(device, depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
 
     createImage2D(device, allocator, extent.width, extent.height, kHdrFormat,
-                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
+                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
+                      VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                   hdrImage, hdrAllocation);
     hdrImageView = createImageView(device, hdrImage, kHdrFormat, VK_IMAGE_ASPECT_COLOR_BIT);
 
-    // ── Create render pass: scene → HDR, then tone map + overlays → swapchain ──
-    VkAttachmentDescription colorAttachment{};
-    colorAttachment.format = format;
-    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    // ── Render passes: scene → HDR, then (after temporal accumulation) tone map + overlays → swapchain ──
+    // Both passes share one layout of attachments, subpasses and dependencies, so they are compatible and every
+    // pipeline built against renderPass also works in scenePass. scenePass only draws in its first subpass and
+    // keeps HDR and depth for the temporal pass; renderPass loads them, tone maps and adds overlays.
+    auto makePass = [&](bool scene) {
+        VkAttachmentDescription colorAttachment{};
+        colorAttachment.format = format;
+        colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        colorAttachment.storeOp = scene ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
+        colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colorAttachment.finalLayout = scene ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-    VkAttachmentDescription depthAttachment{};
-    depthAttachment.format = depthFormat;
-    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        VkAttachmentDescription depthAttachment{};
+        depthAttachment.format = depthFormat;
+        depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        depthAttachment.loadOp = scene ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        depthAttachment.storeOp = scene ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachment.initialLayout = scene ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthAttachment.finalLayout = scene ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                                            : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-    VkAttachmentDescription hdrAttachment{};
-    hdrAttachment.format = kHdrFormat;
-    hdrAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    hdrAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    hdrAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    hdrAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    hdrAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    hdrAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    hdrAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkAttachmentDescription hdrAttachment{};
+        hdrAttachment.format = kHdrFormat;
+        hdrAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        hdrAttachment.loadOp = scene ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        hdrAttachment.storeOp = scene ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        hdrAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        hdrAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        hdrAttachment.initialLayout = scene ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        hdrAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-    VkAttachmentReference colorRef{};
-    colorRef.attachment = 0;
-    colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkAttachmentReference depthRef{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+        VkAttachmentReference hdrWriteRef{2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkAttachmentReference hdrReadRef{2, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
 
-    VkAttachmentReference depthRef{};
-    depthRef.attachment = 1;
-    depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        VkSubpassDescription subpasses[2]{};
+        subpasses[kSceneSubpass].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpasses[kSceneSubpass].colorAttachmentCount = 1;
+        subpasses[kSceneSubpass].pColorAttachments = &hdrWriteRef;
+        subpasses[kSceneSubpass].pDepthStencilAttachment = &depthRef;
 
-    VkAttachmentReference hdrWriteRef{};
-    hdrWriteRef.attachment = 2;
-    hdrWriteRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        subpasses[kOverlaySubpass].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpasses[kOverlaySubpass].inputAttachmentCount = 1;
+        subpasses[kOverlaySubpass].pInputAttachments = &hdrReadRef;
+        subpasses[kOverlaySubpass].colorAttachmentCount = 1;
+        subpasses[kOverlaySubpass].pColorAttachments = &colorRef;
+        subpasses[kOverlaySubpass].pDepthStencilAttachment = &depthRef;
 
-    VkAttachmentReference hdrReadRef{};
-    hdrReadRef.attachment = 2;
-    hdrReadRef.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        // HDR and depth are shared by all frames in flight and go through the temporal compute pass and a copy
+        // between the two render passes.
+        VkSubpassDependency deps[4]{};
+        deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        deps[0].dstSubpass = kSceneSubpass;
+        deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                               VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                               VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                               VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                               VK_PIPELINE_STAGE_TRANSFER_BIT;
+        deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_TRANSFER_WRITE_BIT;
+        deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                               VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-    VkSubpassDescription subpasses[2]{};
-    subpasses[kSceneSubpass].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpasses[kSceneSubpass].colorAttachmentCount = 1;
-    subpasses[kSceneSubpass].pColorAttachments = &hdrWriteRef;
-    subpasses[kSceneSubpass].pDepthStencilAttachment = &depthRef;
+        deps[1].srcSubpass = kSceneSubpass;
+        deps[1].dstSubpass = kOverlaySubpass;
+        deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                               VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[1].dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        deps[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
-    subpasses[kOverlaySubpass].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpasses[kOverlaySubpass].inputAttachmentCount = 1;
-    subpasses[kOverlaySubpass].pInputAttachments = &hdrReadRef;
-    subpasses[kOverlaySubpass].colorAttachmentCount = 1;
-    subpasses[kOverlaySubpass].pColorAttachments = &colorRef;
-    subpasses[kOverlaySubpass].pDepthStencilAttachment = &depthRef;
+        deps[2].srcSubpass = VK_SUBPASS_EXTERNAL;
+        deps[2].dstSubpass = kOverlaySubpass;
+        deps[2].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        deps[2].srcAccessMask = 0;
+        deps[2].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        deps[2].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
-    // HDR and depth images are shared by all frames in flight: the previous frame must finish with them first.
-    VkSubpassDependency deps[3]{};
-    deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-    deps[0].dstSubpass = kSceneSubpass;
-    deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
-                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
-                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        deps[3].srcSubpass = kOverlaySubpass;
+        deps[3].dstSubpass = VK_SUBPASS_EXTERNAL;
+        deps[3].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                               VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        deps[3].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        deps[3].dstStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+        deps[3].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT |
+                                VK_ACCESS_TRANSFER_WRITE_BIT;
 
-    deps[1].srcSubpass = kSceneSubpass;
-    deps[1].dstSubpass = kOverlaySubpass;
-    deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
-                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    deps[1].dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT |
-                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    deps[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
-
-    deps[2].srcSubpass = VK_SUBPASS_EXTERNAL;
-    deps[2].dstSubpass = kOverlaySubpass;
-    deps[2].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    deps[2].srcAccessMask = 0;
-    deps[2].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    deps[2].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
-                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-    VkAttachmentDescription attachments[3] = { colorAttachment, depthAttachment, hdrAttachment };
-    VkRenderPassCreateInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 3;
-    renderPassInfo.pAttachments = attachments;
-    renderPassInfo.subpassCount = 2;
-    renderPassInfo.pSubpasses = subpasses;
-    renderPassInfo.dependencyCount = 3;
-    renderPassInfo.pDependencies = deps;
-
-    if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create render pass");
+        VkAttachmentDescription attachments[3] = { colorAttachment, depthAttachment, hdrAttachment };
+        VkRenderPassCreateInfo renderPassInfo{};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        renderPassInfo.attachmentCount = 3;
+        renderPassInfo.pAttachments = attachments;
+        renderPassInfo.subpassCount = 2;
+        renderPassInfo.pSubpasses = subpasses;
+        renderPassInfo.dependencyCount = 4;
+        renderPassInfo.pDependencies = deps;
+        VkRenderPass pass = VK_NULL_HANDLE;
+        if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &pass) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create render pass");
+        return pass;
+    };
+    scenePass = makePass(true);
+    renderPass = makePass(false);
 
     // ── Create framebuffers (color + depth + HDR) ─────────────────────
     framebuffers.resize(imageViews.size());
@@ -378,6 +392,7 @@ void VulkanSwapchain::Cleanup()
     for (auto fb : framebuffers) vkDestroyFramebuffer(device, fb, nullptr);
     framebuffers.clear();
     if (renderPass) { vkDestroyRenderPass(device, renderPass, nullptr); renderPass = VK_NULL_HANDLE; }
+    if (scenePass) { vkDestroyRenderPass(device, scenePass, nullptr); scenePass = VK_NULL_HANDLE; }
     for (auto view : imageViews) vkDestroyImageView(device, view, nullptr);
     imageViews.clear();
     if (swapchain) { vkDestroySwapchainKHR(device, swapchain, nullptr); swapchain = VK_NULL_HANDLE; }

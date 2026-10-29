@@ -324,6 +324,7 @@ add_library(HephaestusRuntime STATIC
     engine/Gfx/RenderQuality.cpp
     engine/Gfx/ProbeCascadeGrid.cpp
     engine/Gfx/ProbeCascades.cpp
+    engine/Gfx/TemporalResolve.cpp
     engine/Gfx/ProbeBake.cpp
     engine/Gfx/ProbeGI.cpp
     engine/Gfx/ProbeRayTracer.cpp
@@ -1006,6 +1007,7 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_debug.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/cascade_debug.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/cascade_debug.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/temporal_resolve.comp
     )
 
     set(SHADER_INCLUDES
