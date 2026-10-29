@@ -26,6 +26,13 @@ public:
     // TRANSFER_DST for the overlay pass to load. reset discards history (first frame, scene change, camera cut).
     void Record(VkCommandBuffer cmd, const Mat4& viewProj, bool reset);
 
+    // Last frame's result for screen-space reflections: rgb = HDR colour, a = depth (GENERAL layout), the camera
+    // it was drawn with, and whether one exists yet.
+    VkImageView LastResultView() const { return m_history[1 - m_parity].view; }
+    VkSampler LinearSampler() const { return m_linearSampler; }
+    const Mat4& LastViewProj() const { return m_previousViewProj; }
+    bool HasLastResult() const { return m_historyValid; }
+
 private:
     struct Image {
         VkImage image = VK_NULL_HANDLE;

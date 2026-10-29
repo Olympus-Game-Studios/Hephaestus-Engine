@@ -72,6 +72,7 @@ layout(set = 0, binding = 5) uniform sampler2D environmentMap;
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
 layout(set = 0, binding = 6) uniform sampler2D localShadowAtlas;  // 8 x 4 tiles of 512 (EngineFrameRenderer::kLocalShadowTile)
+layout(set = 0, binding = 7) uniform sampler2D previousFrame;  // rgb = last frame's HDR result, a = its depth
 #ifdef RAY_TRACED_SHADOWS
 layout(set = GI_SET, binding = 11) uniform accelerationStructureEXT sceneStructure;  // engine/Gfx/ProbeGI.cpp kScene
 struct TraceInstance {
@@ -135,6 +136,45 @@ vec3 sampleEnvironmentReflection(vec3 direction) {
     uv.x = atan(dir.z, dir.x) / (2.0 * PI) + 0.5;
     uv.y = asin(clamp(dir.y, -1.0, 1.0)) / PI + 0.5;
     return texture(environmentMap, uv).rgb;
+}
+
+// Screen-space reflection for GPUs without ray tracing: march along dir through last frame's depth (projected
+// with last frame's camera) and return its colour where the ray passes just behind a surface. a = confidence,
+// fading towards the screen edges and the end of the march; 0 where nothing on screen was hit.
+vec4 screenSpaceReflection(vec3 origin, vec3 dir) {
+    const int STEPS = 48;
+    float nearPlane = lighting.ssrParams.y;
+    float farPlane = lighting.ssrParams.z;
+    // A per-pixel start offset that changes every frame turns step banding into noise the temporal pass removes.
+    float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453 +
+                         lighting.rayReflectionParams.w * 0.6180339887);
+    float stepLength = 0.08;
+    vec3 p = origin + dir * stepLength * jitter;
+    for (int i = 0; i < STEPS; ++i) {
+        vec3 previous = p;
+        p += dir * stepLength;
+        stepLength *= 1.08;
+        vec4 clip = lighting.previousViewProj * vec4(p, 1.0);
+        if (clip.w <= nearPlane) return vec4(0.0);
+        vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec4(0.0);
+        float sceneDepth = nearPlane * farPlane / (farPlane - textureLod(previousFrame, uv, 0.0).a * (farPlane - nearPlane));
+        float behind = clip.w - sceneDepth;
+        if (behind > 0.0 && behind < max(0.25, stepLength * 2.0)) {
+            // Bisect between the last point in front and this one for a sharper contact.
+            for (int r = 0; r < 4; ++r) {
+                vec3 mid = 0.5 * (previous + p);
+                vec4 midClip = lighting.previousViewProj * vec4(mid, 1.0);
+                vec2 midUV = midClip.xy / midClip.w * 0.5 + 0.5;
+                float midScene = nearPlane * farPlane /
+                                 (farPlane - textureLod(previousFrame, midUV, 0.0).a * (farPlane - nearPlane));
+                if (midClip.w > midScene) { p = mid; uv = midUV; } else { previous = mid; }
+            }
+            vec2 edge = smoothstep(vec2(0.0), vec2(0.1), uv) * smoothstep(vec2(0.0), vec2(0.1), 1.0 - uv);
+            return vec4(textureLod(previousFrame, uv, 0.0).rgb, edge.x * edge.y * (1.0 - float(i) / float(STEPS)));
+        }
+    }
+    return vec4(0.0);
 }
 
 // Point/spot shadow from one perspective tile, compared in linear depth so the bias is in metres.
@@ -682,6 +722,19 @@ void main() {
         float roughnessFactor = 1.0 - clamp(roughness, 0.0, 1.0);
         roughnessFactor *= roughnessFactor;
         color += reflected * fresnelSchlick(max(dot(N, V), 0.0), F0) * roughnessFactor * material.reflectionStrength * ao;
+        traced = true;
+    }
+    if (!traced && lighting.ssrParams.x > 0.5 && material.reflectionStrength > 0.0 && roughness < 0.3) {
+        // No ray tracing: what is on screen, with the HDRI (when there is one) where the march finds nothing.
+        vec3 R = reflect(-V, N);
+        vec4 ssr = screenSpaceReflection(fragWorldPos + normalize(fragNormal) * 0.02, R);
+        vec3 fallback = lighting.environmentReflectionParams.y > 0.5
+            ? sampleEnvironmentReflection(R) * lighting.environmentReflectionParams.x
+            : vec3(0.0);
+        float roughnessFactor = 1.0 - clamp(roughness, 0.0, 1.0);
+        roughnessFactor *= roughnessFactor;
+        color += mix(fallback, ssr.rgb, ssr.a) * fresnelSchlick(max(dot(N, V), 0.0), F0) * roughnessFactor *
+                 material.reflectionStrength * ao;
         traced = true;
     }
     if (!traced && lighting.environmentReflectionParams.y > 0.5 && material.reflectionStrength > 0.0) {

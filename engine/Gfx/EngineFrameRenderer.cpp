@@ -176,6 +176,8 @@ struct LightingUBO {
     Vec4 pointShadowParams[16];    // x = first of six tiles (+X,-X,+Y,-Y,+Z,-Z), -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
     Vec4 spotShadowParams[16];     // x = tile, -1 unshadowed or -2 ray traced, y = shadow strength, z = far, w = tan(half fov)
     Vec4 rayReflectionParams;      // x = 0 off, 1 mirror, 2 glossy; y = mirror roughness cutoff; z = glossy cutoff; w = frame number
+    Mat4 previousViewProj;         // camera of the previous temporal result (screen-space reflections)
+    Vec4 ssrParams;                // x = 1 when screen-space reflections run, y = near plane, z = far plane
 };
 
 static bool MeshAllowsHiddenEditorOutline(const MeshRendererComponent& renderer,
@@ -780,6 +782,18 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         updateLightingUBO(imageIndex, scene, camera);
     }
     prepareEnvironment(scene, config, imageIndex);
+    if (m_temporal.HasLastResult()) {
+        // This image's set is idle (its fence was waited on), so it can point at the newest temporal result.
+        const VkDescriptorImageInfo previous{m_temporal.LinearSampler(), m_temporal.LastResultView(),
+                                             VK_IMAGE_LAYOUT_GENERAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = m_descriptorSets[imageIndex];
+        write.dstBinding = 7;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &previous;
+        vkUpdateDescriptorSets(m_device->device, 1, &write, 0, nullptr);
+    }
     {
         Vec3 sunDirection;
         const bool hasSun = scene && FindShadowCastingSun(scene, sunDirection);
@@ -2111,7 +2125,7 @@ bool EngineFrameRenderer::createDescriptorSets()
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount) },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, static_cast<uint32_t>(imageCount) },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(imageCount) },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount) * (kTextureArraySize + 3) }
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(imageCount) * (kTextureArraySize + 4) }
     };
     
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -2189,7 +2203,7 @@ bool EngineFrameRenderer::createDescriptorSets()
         localShadowInfo.imageView = m_localShadow.IsValid() ? m_localShadow.imageView : m_dummyTexture.imageView;
         localShadowInfo.sampler = m_localShadow.IsValid() ? m_directionalShadow.sampler : m_dummyTexture.sampler;
 
-        VkWriteDescriptorSet descriptorWrites[7] = {};
+        VkWriteDescriptorSet descriptorWrites[8] = {};
         
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = m_descriptorSets[i];
@@ -2249,7 +2263,15 @@ bool EngineFrameRenderer::createDescriptorSets()
         descriptorWrites[6].descriptorCount = 1;
         descriptorWrites[6].pImageInfo = &localShadowInfo;
 
-        vkUpdateDescriptorSets(m_device->device, 7, descriptorWrites, 0, nullptr);
+        // Binding 7: the previous temporal result once one exists (RenderFrame rewrites it every frame).
+        descriptorWrites[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[7].dstSet = m_descriptorSets[i];
+        descriptorWrites[7].dstBinding = 7;
+        descriptorWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[7].descriptorCount = 1;
+        descriptorWrites[7].pImageInfo = &environmentMapInfo;
+
+        vkUpdateDescriptorSets(m_device->device, 8, descriptorWrites, 0, nullptr);
     }
     
     return true;
@@ -2930,6 +2952,12 @@ void EngineFrameRenderer::updateLightingUBO(uint32_t imageIndex, Scene* scene, c
     lightUBO.rayReflectionParams =
         Vec4(canTrace ? (quality.requested == RenderQuality::Ultra ? 2.0f : 1.0f) : 0.0f, 0.3f, 0.6f,
              static_cast<float>(m_frameIndex++ % 4096u));
+    // Without ray tracing, Medium and up march reflections through the previous frame (perspective cameras only).
+    const bool screenSpaceReflections = !canTrace && quality.requested != RenderQuality::Low &&
+                                        m_temporal.HasLastResult() &&
+                                        camera.projectionMode == ProjectionMode::Perspective;
+    lightUBO.previousViewProj = m_temporal.LastViewProj();
+    lightUBO.ssrParams = Vec4(screenSpaceReflections ? 1.0f : 0.0f, camera.nearPlane, camera.farPlane, 0.0f);
     uint32_t nextShadowTile = 0;
     int shadowedPoints = 0;
     int shadowedSpots = 0;

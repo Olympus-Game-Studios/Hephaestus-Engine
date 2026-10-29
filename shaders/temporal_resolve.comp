@@ -21,8 +21,10 @@ void main() {
     if (pixel.x >= size.x || pixel.y >= size.y) return;
 
     vec3 current = texelFetch(currentColor, pixel, 0).rgb;
+    // Alpha keeps this pixel's depth: next frame's surfaces march screen-space reflections through it.
+    float depth = texelFetch(currentDepth, pixel, 0).r;
     if (pc.params.y > 0.5) {
-        imageStore(resolved, pixel, vec4(current, 1.0));
+        imageStore(resolved, pixel, vec4(current, depth));
         return;
     }
     vec3 lo = current, hi = current;
@@ -35,13 +37,12 @@ void main() {
     }
 
     vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
-    float depth = texelFetch(currentDepth, pixel, 0).r;
     vec4 previous = pc.currentToPrevious * vec4(uv * 2.0 - 1.0, depth, 1.0);
     vec2 previousUV = previous.xy / previous.w * 0.5 + 0.5;
     if (previous.w <= 0.0 || any(lessThan(previousUV, vec2(0.0))) || any(greaterThan(previousUV, vec2(1.0)))) {
-        imageStore(resolved, pixel, vec4(current, 1.0));
+        imageStore(resolved, pixel, vec4(current, depth));
         return;
     }
     vec3 history = clamp(texture(historyColor, previousUV).rgb, lo, hi);
-    imageStore(resolved, pixel, vec4(mix(history, current, pc.params.x), 1.0));
+    imageStore(resolved, pixel, vec4(mix(history, current, pc.params.x), depth));
 }
