@@ -783,23 +783,35 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     {
         Vec3 sunDirection;
         const bool hasSun = scene && FindShadowCastingSun(scene, sunDirection);
-        // Hardware tracing sees every visible, non-skinned mesh, so moving objects block and bounce light too.
+        // Hardware tracing sees every visible mesh, posing animated ones each frame, so moving objects and
+        // characters block, bounce and reflect light too.
         auto collectInstances = [&]() {
             std::vector<ProbeTraceInstance> instances;
             auto view = scene->GetRegistry().view<MeshRendererComponent>();
             for (entt::entity handle : view) {
                 auto& renderer = view.get<MeshRendererComponent>(handle);
-                if (!renderer.visible || renderer.hideInGame || !renderer.HasValidMesh() ||
-                    scene->GetRegistry().all_of<CharacterComponent>(handle)) {
+                if (!renderer.visible || renderer.hideInGame || !renderer.HasValidMesh()) {
                     continue;
                 }
                 Entity entity(handle, scene);
-                const Mat4 world = scene->GetWorldTransform(entity);
+                const CharacterComponent* character = scene->GetRegistry().try_get<CharacterComponent>(handle);
+                const Mat4 world = CharacterAwareModelMatrix(scene, entity, renderer);
                 const MaterialComponent* material = resolveMaterialForSlot(entity, renderer, 0);
                 for (size_t meshHandle : MeshHandlesForDraw(renderer)) {
-                    if (meshHandle >= m_meshLibrary.size() || m_meshLibrary[meshHandle].skinned) continue;
+                    if (meshHandle >= m_meshLibrary.size()) continue;
+                    MeshGPU& mesh = m_meshLibrary[meshHandle];
                     ProbeTraceInstance instance;
-                    instance.mesh = &m_meshLibrary[meshHandle];
+                    if (mesh.skinned) {
+                        // Same palette the skinned draw uses: the character's live pose, else the mesh's rest pose.
+                        resolveSkinnedBoneSet(handle, character, mesh);
+                        auto palette = m_characterBonePalettes.find(static_cast<uint32_t>(handle));
+                        instance.bones = character && palette != m_characterBonePalettes.end() &&
+                                                 palette->second.buffer.buffer
+                                             ? palette->second.buffer.buffer
+                                             : mesh.boneBuffer.buffer;
+                        instance.poseKey = (static_cast<uint64_t>(static_cast<uint32_t>(handle)) << 32) | meshHandle;
+                    }
+                    instance.mesh = &mesh;
                     instance.world = world;
                     if (material) {
                         instance.albedo = material->albedo;
@@ -1149,7 +1161,12 @@ size_t EngineFrameRenderer::AddSkinnedMesh(const std::string& name,
         std::min(bonePalette.size(), static_cast<size_t>(128)));
 
     const VkDeviceSize vbSize = sizeof(SkinnedVertex) * vertices.size();
-    mesh.vertexBuffer.Create(m_device->allocator, vbSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+    // Ray tracing poses skinned meshes from this buffer (storage) and builds their BLAS with this index buffer.
+    const VkBufferUsageFlags rayTracingUsage = m_device->SupportsRayQuery()
+        ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+              VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+        : 0;
+    mesh.vertexBuffer.Create(m_device->allocator, vbSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | rayTracingUsage,
                              VMA_MEMORY_USAGE_CPU_TO_GPU);
     void* mapped = nullptr;
     if (vmaMapMemory(m_device->allocator, mesh.vertexBuffer.allocation, &mapped) == VK_SUCCESS) {
@@ -1159,7 +1176,7 @@ size_t EngineFrameRenderer::AddSkinnedMesh(const std::string& name,
     }
 
     const VkDeviceSize ibSize = sizeof(uint32_t) * indices.size();
-    mesh.indexBuffer.Create(m_device->allocator, ibSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+    mesh.indexBuffer.Create(m_device->allocator, ibSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | rayTracingUsage,
                             VMA_MEMORY_USAGE_CPU_TO_GPU);
     if (vmaMapMemory(m_device->allocator, mesh.indexBuffer.allocation, &mapped) == VK_SUCCESS) {
         std::memcpy(mapped, indices.data(), static_cast<size_t>(ibSize));

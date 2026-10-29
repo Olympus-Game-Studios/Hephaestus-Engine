@@ -8,10 +8,15 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 # Application Details  (single source of truth — edit these, not C++ files)
 # ─────────────────────────────────────────────────────────────────────────────
-set(HEPHAESTUS_VERSION_MAJOR 2026)
-set(HEPHAESTUS_VERSION_MINOR 11)
-set(HEPHAESTUS_VERSION_PATCH 10)
+set(HEPHAESTUS_VERSION_MAJOR 2026) # Major Version = Year of Release
+set(HEPHAESTUS_VERSION_MINOR 11) # Minor Version = Month of Release
+set(HEPHAESTUS_VERSION_PATCH 29) # Patch Version = Day of Release
 set(HEPHAESTUS_VERSION "${HEPHAESTUS_VERSION_MAJOR}.${HEPHAESTUS_VERSION_MINOR}.${HEPHAESTUS_VERSION_PATCH}")
+
+# Large engine releases would ideally be released at the start of the year e.g 2026.0.0
+# Smaller but still significant updates would be released at the start of the month e.g 2026.1.0
+# Patches are for bug fixes and minor improvements and will be released throughout the month e.g 2026.1.13
+
 
 set(HEPHAESTUS_APP_NAME        "Hephaestus Engine")
 set(HEPHAESTUS_APP_DESCRIPTION "A 3D game engine built with C++20, Vulkan, Qt, and Lua.")
@@ -1008,6 +1013,7 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/cascade_debug.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/cascade_debug.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/temporal_resolve.comp
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/skin_vertices.comp
     )
 
     set(SHADER_INCLUDES

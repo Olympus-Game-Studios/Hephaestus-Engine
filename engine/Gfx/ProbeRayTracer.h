@@ -20,6 +20,10 @@ struct ProbeTraceInstance {
     Mat4 world;
     Vec3 albedo{1.0f, 1.0f, 1.0f};
     Vec3 emissive{0.0f, 0.0f, 0.0f};
+    // Skinned meshes: the bone palette (128 matrices, UBO) and a key that stays the same for one entity and mesh,
+    // so its posed copy and acceleration structure are kept and refitted from frame to frame.
+    VkBuffer bones = VK_NULL_HANDLE;
+    uint64_t poseKey = 0;
 };
 
 // Builds the scene acceleration structure each frame and fills probe ray hits from it with VK_KHR_ray_query
@@ -67,6 +71,30 @@ private:
     bool ensureCapacity(FrameResources& frame, uint32_t instanceCount);
     void destroyStructure(AccelerationStructure& as);
     VkDeviceAddress bufferAddress(VkBuffer buffer) const;
+
+    // A skinned mesh posed on the GPU each frame (shaders/skin_vertices.comp) with a refittable BLAS.
+    struct PosedMesh {
+        const MeshGPU* mesh = nullptr;
+        VkBuffer bones = VK_NULL_HANDLE;
+        VulkanBuffer vertices;  // Vertex[]
+        VulkanBuffer scratch;
+        AccelerationStructure blas;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        uint32_t lastFrame = 0;
+        bool built = false;
+    };
+    bool initSkinning();
+    PosedMesh* posedMesh(uint64_t key, const MeshGPU& mesh, VkBuffer bones);
+    void destroyPosed(PosedMesh& posed);
+    void recordPosing(VkCommandBuffer cmd);
+
+    VkDescriptorSetLayout m_skinSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout m_skinPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline m_skinPipeline = VK_NULL_HANDLE;
+    VkDescriptorPool m_skinPool = VK_NULL_HANDLE;
+    std::unordered_map<uint64_t, PosedMesh> m_posed;
+    std::vector<uint64_t> m_posedThisFrame;
+    uint32_t m_sceneFrame = 0;
 
     VulkanDevice* m_device = nullptr;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
