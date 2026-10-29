@@ -801,9 +801,12 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             }
             return instances;
         };
+        const RenderQualityProfile quality = GetRenderQualityProfile();
+        const Cell cascadeCounts = quality.requested == RenderQuality::Ultra ? Cell{32, 16, 32} : Cell{24, 12, 24};
         m_probeGI.Prepare(scene, m_projectRoot, imageIndex, m_lightingBuffers[imageIndex].buffer,
-                          hasSun ? &sunDirection : nullptr, GetRenderQualityProfile().rayTracing,
-                          scene && m_traceShadows, collectInstances);
+                          hasSun ? &sunDirection : nullptr, quality.rayTracing, scene && m_traceShadows,
+                          quality.rayTracing ? &cascadeCounts : nullptr,
+                          Vec3(camera.positionX, camera.positionY, camera.positionZ), collectInstances);
     }
 
     // Prepare the runtime HUI overlay geometry/uploads (queue work is allowed

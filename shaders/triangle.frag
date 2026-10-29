@@ -63,6 +63,9 @@ layout(set = 0, binding = 5) uniform sampler2D environmentMap;
 #include "lighting_common.glsl"
 #define GI_SET 2
 #include "probe_common.glsl"
+#define CASCADE_SET 2
+#define CASCADE_SAMPLING
+#include "cascade_common.glsl"
 
 layout(set = 0, binding = 4) uniform sampler2D shadowMap;
 layout(set = 0, binding = 6) uniform sampler2D localShadowAtlas;  // 8 x 4 tiles of 512 (EngineFrameRenderer::kLocalShadowTile)
@@ -560,8 +563,13 @@ void main() {
         vec3 irradiance = evaluateSkyIrradiance(N) * lighting.environmentReflectionParams.w;
         ambient = irradiance / PI * albedo * (1.0 - metallic) * ao;
     }
+    if (cascades.counts.w > 0) {
+        // Camera-following probe grids replace the sky light wherever they cover the surface.
+        vec4 cascadeLight = sampleCascades(fragWorldPos, N, V);
+        ambient = mix(ambient, cascadeLight.rgb * albedo * (1.0 - metallic) * ao, cascadeLight.w);
+    }
     if (gi.probeCounts.w == 1) {
-        // Fade from the probes to the sky/flat ambient over one probe spacing outside the volume.
+        // A placed volume overrides the grids inside it, fading out over one probe spacing outside it.
         vec3 halfExtent = 0.5 * gi.probeSpacing.xyz * vec3(gi.probeCounts.xyz - 1);
         vec3 center = gi.firstProbe.xyz + halfExtent;
         float spacing = max(max(gi.probeSpacing.x, gi.probeSpacing.y), max(gi.probeSpacing.z, 0.5));

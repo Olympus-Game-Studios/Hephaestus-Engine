@@ -1,0 +1,83 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Blends the scheduled cascade probes' traced rays into their irradiance and visibility tiles.
+layout(local_size_x = 128) in;
+
+#define GI_SET 0
+#include "probe_common.glsl"
+#define LIGHTING_SET 0
+#define LIGHTING_BINDING 1
+#include "lighting_common.glsl"
+#include "probe_shading.glsl"
+#define CASCADE_SET 0
+#define CASCADE_STATE_WRITE
+#include "cascade_common.glsl"
+
+layout(set = 0, binding = 6, rgba16f) uniform image2D irradianceTiles;
+layout(set = 0, binding = 8, rg16f) uniform image2D visibilityTiles;
+layout(std430, set = 0, binding = 17) readonly buffer Jobs { uint jobs[]; };
+layout(std430, set = 0, binding = 18) readonly buffer Rays { vec4 rays[]; };
+
+const uint RAYS = 128u;
+
+shared vec3 sRadiance[RAYS];
+shared vec3 sDirection[RAYS];
+shared float sDistance[RAYS];
+shared float sHysteresis;
+
+void main() {
+    uint job = jobs[gl_WorkGroupID.x];
+    int c = int(job >> CASCADE_SLOT_BITS);
+    ivec3 slot = cascadeSlotCoord(int(job & ((1u << CASCADE_SLOT_BITS) - 1u)));
+    uint ray = gl_LocalInvocationID.x;
+    float maxDistance = cascades.settings.y * cascades.spacing[c];
+
+    vec4 traced = rays[gl_WorkGroupID.x * RAYS + ray];
+    sRadiance[ray] = traced.rgb;
+    sDirection[ray] = mat3(cascades.rotation) * probeRayDirection(ray, RAYS);
+    sDistance[ray] = traced.a;
+    if (ray == 0u) {
+        // A probe that moved to a new cell starts over; young probes converge fast, then settle.
+        int index = cascadeStateIndex(c, slot);
+        ivec3 cell = cascadeCellOfSlot(c, slot);
+        ivec4 state = probeState[index];
+        int updates = state.xyz == cell ? max(state.w, 0) : 0;
+        sHysteresis = min(cascades.settings.x, float(updates) / float(updates + 1));
+        probeState[index] = ivec4(cell, min(updates + 1, 1 << 20));
+    }
+    barrier();
+
+    float hysteresis = sHysteresis;
+    ivec2 tile = cascadeTile(c, slot);
+    for (uint t = ray; t < uint(IRRADIANCE_TILE * IRRADIANCE_TILE); t += RAYS) {
+        ivec2 local = ivec2(int(t) % IRRADIANCE_TILE, int(t) / IRRADIANCE_TILE);
+        vec3 texDir = texelDirection(local, IRRADIANCE_INNER);
+        vec3 sum = vec3(0.0);
+        float weightSum = 0.0;
+        for (uint r = 0u; r < RAYS; ++r) {
+            float w = max(dot(texDir, sDirection[r]), 0.0);
+            sum += w * sRadiance[r];
+            weightSum += w;
+        }
+        ivec2 texel = tile * IRRADIANCE_TILE + local;
+        vec3 fresh = weightSum > 0.0 ? sum / weightSum : vec3(0.0);
+        vec3 previous = imageLoad(irradianceTiles, texel).rgb;
+        imageStore(irradianceTiles, texel, vec4(mix(fresh, previous, hysteresis), 1.0));
+    }
+    for (uint t = ray; t < uint(VISIBILITY_TILE * VISIBILITY_TILE); t += RAYS) {
+        ivec2 local = ivec2(int(t) % VISIBILITY_TILE, int(t) / VISIBILITY_TILE);
+        vec3 texDir = texelDirection(local, VISIBILITY_INNER);
+        vec2 sum = vec2(0.0);
+        float weightSum = 0.0;
+        for (uint r = 0u; r < RAYS; ++r) {
+            float w = pow(max(dot(texDir, sDirection[r]), 0.0), 50.0);
+            sum += w * vec2(sDistance[r], sDistance[r] * sDistance[r]);
+            weightSum += w;
+        }
+        ivec2 texel = tile * VISIBILITY_TILE + local;
+        vec2 fresh = weightSum > 0.0 ? sum / weightSum : vec2(maxDistance, maxDistance * maxDistance);
+        vec2 previous = imageLoad(visibilityTiles, texel).rg;
+        imageStore(visibilityTiles, texel, vec4(mix(fresh, previous, hysteresis), 0.0, 0.0));
+    }
+}

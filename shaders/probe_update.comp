@@ -9,6 +9,7 @@ layout(local_size_x = 128) in;
 #define LIGHTING_SET 0
 #define LIGHTING_BINDING 1
 #include "lighting_common.glsl"
+#include "probe_shading.glsl"
 
 struct RayHit {
     vec4 normalDistance;  // xyz = normal, w = distance (< 0 = sky)
@@ -20,7 +21,6 @@ layout(set = 0, binding = 4) uniform sampler2D sunDepth;
 layout(set = 0, binding = 6, rgba16f) uniform writeonly image2D irradianceOut;
 layout(set = 0, binding = 8, rg16f) uniform writeonly image2D visibilityOut;
 
-const float PI = 3.14159265359;
 const uint RAYS = 128u;
 
 shared vec3 sRadiance[RAYS];
@@ -38,57 +38,6 @@ float sunVisibility(vec3 pos) {
         return 1.0;
     }
     return ndc.z - 0.002 > texture(sunDepth, uv).r ? 0.0 : 1.0;
-}
-
-vec3 skyRadiance(vec3 dir) {
-    if (lighting.environmentReflectionParams.z > 0.5) {
-        return evaluateSkyIrradiance(dir) / PI * lighting.environmentReflectionParams.w;
-    }
-    return lighting.ambientColorIntensity.rgb * lighting.ambientColorIntensity.w;
-}
-
-vec3 directIrradiance(vec3 pos, vec3 n, float tracedSunVisibility) {
-    vec3 e = vec3(0.0);
-    if (lighting.dirLightDirIntensity.w > 0.0) {
-        vec3 l = normalize(-lighting.dirLightDirIntensity.xyz);
-        float visibility = gi.giParams.w > 0.5 ? tracedSunVisibility : sunVisibility(pos + n * 0.05);
-        e += lighting.dirLightColor.rgb * lighting.dirLightDirIntensity.w * max(dot(n, l), 0.0) * visibility;
-    }
-    for (int i = 0; i < lighting.pointLightCount && i < 16; ++i) {
-        vec3 toLight = lighting.pointLightPositions[i].xyz - pos;
-        float dist = length(toLight);
-        if (dist > lighting.pointLightPositions[i].w) continue;
-        float atten = calculateAttenuation(dist, lighting.pointLightAttenuation[i].xyz);
-        e += lighting.pointLightColors[i].rgb * lighting.pointLightColors[i].w * atten *
-             max(dot(n, toLight / max(dist, 1e-4)), 0.0);
-    }
-    for (int i = 0; i < lighting.spotLightCount && i < 16; ++i) {
-        vec3 toLight = lighting.spotLightPositions[i].xyz - pos;
-        float dist = length(toLight);
-        if (dist > lighting.spotLightPositions[i].w) continue;
-        vec3 l = toLight / max(dist, 1e-4);
-        float cone = calculateSpotlightFalloff(lighting.spotLightDirections[i].xyz, -l,
-                                               lighting.spotLightDirections[i].w,
-                                               lighting.spotLightAttenuation[i].w);
-        if (cone <= 0.0) continue;
-        float atten = calculateAttenuation(dist, lighting.spotLightAttenuation[i].xyz);
-        e += lighting.spotLightColors[i].rgb * lighting.spotLightColors[i].w * atten * cone * max(dot(n, l), 0.0);
-    }
-    return e;
-}
-
-vec3 texelDirection(ivec2 local, int inner) {
-    // Border texels (0 and inner + 1) take the direction just across the octahedral fold.
-    vec2 uv = (vec2(local) - 0.5) / float(inner) * 2.0 - 1.0;
-    if (abs(uv.x) > 1.0) {
-        uv.x = sign(uv.x) * 2.0 - uv.x;
-        uv.y = -uv.y;
-    }
-    if (abs(uv.y) > 1.0) {
-        uv.y = sign(uv.y) * 2.0 - uv.y;
-        uv.x = -uv.x;
-    }
-    return octDecode(uv);
 }
 
 void main() {
@@ -114,7 +63,8 @@ void main() {
         vec3 n = hit.normalDistance.xyz;
         vec3 hitPos = probePos + dir * distance;
         vec3 bounce = gi.giParams.z > 0.5 ? vec3(0.0) : sampleProbeIrradiance(hitPos, n, -dir) * PI;
-        radiance = hit.albedo.rgb / PI * (directIrradiance(hitPos, n, hit.albedo.w) + bounce) + hit.emissive.rgb;
+        float visibility = gi.giParams.w > 0.5 ? hit.albedo.w : sunVisibility(hitPos + n * 0.05);
+        radiance = hit.albedo.rgb / PI * (directIrradiance(hitPos, n, visibility) + bounce) + hit.emissive.rgb;
     }
     sRadiance[ray] = radiance;
     sDirection[ray] = dir;

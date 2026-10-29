@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ProbeBake.h"
+#include "ProbeCascades.h"
 #include "ProbeRayTracer.h"
 #include "VulkanBuffer.h"
 
@@ -44,16 +45,20 @@ public:
     // Before command recording for imageIndex: (re)loads the bake, fills the parameters and descriptor sets.
     // collectInstances is called only when the volume traces with hardware ray tracing or traceShadows is set.
     // allowHardware = false makes volumes that ask for hardware ray tracing use their bakes (lower quality tiers).
+    // cascadeCounts turns on the camera-following probe grids at that size (nullptr = off).
     void Prepare(Scene* scene, const std::string& projectRoot, uint32_t imageIndex, VkBuffer lightingBuffer,
-                 const Vec3* sunDirection, bool allowHardware, bool traceShadows,
-                 const std::function<std::vector<ProbeTraceInstance>()>& collectInstances);
+                 const Vec3* sunDirection, bool allowHardware, bool traceShadows, const Cell* cascadeCounts,
+                 const Vec3& camera, const std::function<std::vector<ProbeTraceInstance>()>& collectInstances);
     bool Active() const { return m_active; }
     // When true, DrawSet binds the scene acceleration structure at binding 11 and surfaces use triangle_rt.frag.
     bool HardwareRayTracingAvailable() const { return m_tracerReady; }
     // Whether this frame's scene acceleration structure holds the scene (Prepare collected instances).
     bool SceneTraced() const { return m_sceneTraced; }
-    // Builds the scene acceleration structure Prepare filled; before RecordUpdate and the scene pass.
+    // Builds the scene acceleration structure Prepare filled and updates the camera-following probe grids;
+    // before RecordUpdate and the scene pass.
     void RecordScene(VkCommandBuffer cmd, uint32_t imageIndex);
+    bool CascadesActive() const { return m_cascades.Active(); }
+    uint32_t CascadeProbesTraced() const { return m_cascades.JobCount(); }
     bool UsingHardwareRayTracing() const { return m_active && m_hardware; }
 
     bool HasSunMap() const { return m_active && m_sunValid && !m_hardware; }
@@ -79,6 +84,9 @@ private:
     bool createAtlases(const int counts[3]);
     void destroyBake();
     void writeDescriptorSets(uint32_t imageIndex, VkBuffer lightingBuffer);
+    void writeCascadeDescriptors(uint32_t imageIndex);
+    void prepareScene(Scene* scene, uint32_t imageIndex, VkBuffer lightingBuffer, bool traceScene,
+                      const std::function<std::vector<ProbeTraceInstance>()>& collectInstances);
 
     VulkanDevice* m_device = nullptr;
     VkSampler m_atlasSampler = VK_NULL_HANDLE;
@@ -129,6 +137,7 @@ private:
     std::mt19937 m_rng{0x5eed};
     ProbeRayTracer m_tracer;
     bool m_tracerReady = false;
+    ProbeCascades m_cascades;
     bool m_sceneTraced = false;
 };
 

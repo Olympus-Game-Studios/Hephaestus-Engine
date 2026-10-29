@@ -38,6 +38,8 @@ public:
     bool PrepareScene(uint32_t imageIndex, const std::vector<ProbeTraceInstance>& instances);
     // Valid from CreateSwapchainResources on; holds geometry only on frames that ran PrepareScene and RecordScene.
     VkAccelerationStructureKHR SceneStructure(uint32_t imageIndex) const { return m_frames[imageIndex].tlas.handle; }
+    // Per-instance material and buffer addresses (TraceInstance in the trace shaders), filled by PrepareScene.
+    VkBuffer InstanceData(uint32_t imageIndex) const { return m_frames[imageIndex].instanceData.buffer; }
     // Before recording a probe trace: writes this image's trace set.
     void WriteTraceSet(uint32_t imageIndex, VkBuffer params, VkBuffer lighting, VkBuffer offsets, VkBuffer hits);
     // Builds this frame's scene acceleration structure for compute and fragment ray queries.

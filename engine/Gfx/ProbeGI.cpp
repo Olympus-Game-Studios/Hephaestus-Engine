@@ -1,5 +1,6 @@
 #include "ProbeGI.h"
 
+#include "ProbeGpuUtil.h"
 #include "VulkanDevice.h"
 #include "../Scene/Components.h"
 #include "../Scene/Entity.h"
@@ -16,6 +17,9 @@
 namespace Hephaestus {
 
 namespace {
+
+using ProbeGpu::LoadShader;
+using ProbeGpu::SubmitOnce;
 
 constexpr int kIrradianceTile = 10;  // shaders/probe_common.glsl IRRADIANCE_TILE
 constexpr int kVisibilityTile = 18;  // shaders/probe_common.glsl VISIBILITY_TILE
@@ -48,50 +52,11 @@ enum Binding : uint32_t {
     kIrradianceRead = 9,
     kVisibilityRead = 10,
     kScene = 11,  // scene acceleration structure, only with hardware ray tracing
+    kCascadeParams = 12,  // camera-following grids (shaders/cascade_common.glsl), always bound
+    kCascadeState = 13,
+    kCascadeIrradiance = 14,
+    kCascadeVisibility = 15,
 };
-
-VkShaderModule LoadShader(VkDevice device, const std::string& name) {
-    const std::string candidates[] = {"shaders/" + name, "../shaders/" + name, "build/Release/shaders/" + name,
-                                      "../build/Release/shaders/" + name};
-    for (const auto& path : candidates) {
-        std::ifstream file(path, std::ios::ate | std::ios::binary);
-        if (!file.is_open()) continue;
-        const size_t size = static_cast<size_t>(file.tellg());
-        std::vector<char> code(size);
-        file.seekg(0);
-        file.read(code.data(), static_cast<std::streamsize>(size));
-        VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        info.codeSize = code.size();
-        info.pCode = reinterpret_cast<const uint32_t*>(code.data());
-        VkShaderModule module = VK_NULL_HANDLE;
-        if (vkCreateShaderModule(device, &info, nullptr, &module) == VK_SUCCESS) {
-            return module;
-        }
-        return VK_NULL_HANDLE;
-    }
-    std::cerr << "[ProbeGI] Missing shader " << name << "\n";
-    return VK_NULL_HANDLE;
-}
-
-void SubmitOnce(VulkanDevice* device, const std::function<void(VkCommandBuffer)>& record) {
-    VkCommandBufferAllocateInfo alloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    alloc.commandPool = device->commandPool;
-    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    alloc.commandBufferCount = 1;
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device->device, &alloc, &cmd);
-    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
-    record(cmd);
-    vkEndCommandBuffer(cmd);
-    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
-    vkQueueSubmit(device->graphicsQueue, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(device->graphicsQueue);
-    vkFreeCommandBuffers(device->device, device->commandPool, 1, &cmd);
-}
 
 // Uniform random rotation (Shoemake): traced probes see new directions every frame, and hysteresis
 // averages them, which removes the blotches a fixed set of 128 directions leaves.
@@ -148,6 +113,7 @@ bool ProbeGI::Init(VulkanDevice* device) {
     if (device->SupportsRayQuery() && !m_tracerReady) {
         std::cerr << "[ProbeGI] Hardware ray tracing unavailable; probe volumes use their bakes\n";
     }
+    if (!m_cascades.Init(device, m_tracerReady)) return false;
     if (!createLayouts() || !createPlaceholders()) return false;
     if (!createComputePipeline()) {
         std::cerr << "[ProbeGI] Probe update pipeline unavailable; probe volumes will not be lit\n";
@@ -168,6 +134,10 @@ bool ProbeGI::createLayouts() {
         {kVisibilityOut, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute, nullptr},
         {kIrradianceRead, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, all, nullptr},
         {kVisibilityRead, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, all, nullptr},
+        {kCascadeParams, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {kCascadeState, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {kCascadeIrradiance, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {kCascadeVisibility, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {kScene, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
     };
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -299,9 +269,9 @@ bool ProbeGI::CreateSwapchainResources(VkRenderPass sceneRenderPass, uint32_t sc
                                        VkDescriptorSetLayout cameraSetLayout, uint32_t imageCount) {
     VkDevice device = m_device->device;
     const VkDescriptorPoolSize sizes[] = {
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4 * imageCount},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 * imageCount},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 * imageCount},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 6 * imageCount},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6 * imageCount},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10 * imageCount},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 * imageCount},
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 2 * imageCount},
     };
@@ -337,6 +307,7 @@ bool ProbeGI::CreateSwapchainResources(VkRenderPass sceneRenderPass, uint32_t sc
     query.queryCount = 2 * imageCount;
     if (vkCreateQueryPool(device, &query, nullptr, &m_queryPool) != VK_SUCCESS) return false;
     m_queryWritten.assign(imageCount, false);
+    if (!m_cascades.CreateSwapchainResources(imageCount)) return false;
     // The surface pipelines were built to read the scene structure, so it must exist from here on.
     if (m_tracerReady && !m_tracer.CreateSwapchainResources(imageCount)) {
         std::cerr << "[ProbeGI] Hardware ray tracing resources failed\n";
@@ -412,6 +383,7 @@ void ProbeGI::DestroySwapchainResources() {
     if (!m_device) return;
     VkDevice device = m_device->device;
     m_tracer.DestroySwapchainResources();
+    m_cascades.DestroySwapchainResources();
     if (m_debugPipeline) vkDestroyPipeline(device, m_debugPipeline, nullptr);
     if (m_debugLayout) vkDestroyPipelineLayout(device, m_debugLayout, nullptr);
     if (m_queryPool) vkDestroyQueryPool(device, m_queryPool, nullptr);
@@ -432,6 +404,7 @@ void ProbeGI::Shutdown() {
     DestroySwapchainResources();
     destroyBake();
     m_tracer.Shutdown();
+    m_cascades.Shutdown();
     if (m_sunFramebuffer) vkDestroyFramebuffer(device, m_sunFramebuffer, nullptr);
     if (m_sunView) vkDestroyImageView(device, m_sunView, nullptr);
     if (m_sunImage) vmaDestroyImage(m_device->allocator, m_sunImage, m_sunAllocation);
@@ -599,12 +572,24 @@ bool ProbeGI::createAtlases(const int counts[3]) {
 }
 
 void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t imageIndex, VkBuffer lightingBuffer,
-                      const Vec3* sunDirection, bool allowHardware, bool traceShadows,
-                      const std::function<std::vector<ProbeTraceInstance>()>& collectInstances) {
+                      const Vec3* sunDirection, bool allowHardware, bool traceShadows, const Cell* cascadeCounts,
+                      const Vec3& camera, const std::function<std::vector<ProbeTraceInstance>()>& collectInstances) {
     prepareVolume(scene, projectRoot, imageIndex, lightingBuffer, sunDirection, allowHardware);
     m_sceneTraced = false;
-    if (!m_tracerReady || imageIndex >= m_sets.size()) return;
-    if (scene && (traceShadows || (m_active && m_hardware))) {
+    if (!m_device || imageIndex >= m_sets.size()) return;
+    const Cell* cascades = m_tracerReady ? cascadeCounts : nullptr;
+    if (m_tracerReady) {
+        prepareScene(scene, imageIndex, lightingBuffer, traceShadows || cascades, collectInstances);
+    }
+    m_cascades.Prepare(imageIndex, cascades, camera, RandomRotation(m_rng), lightingBuffer,
+                       m_sceneTraced ? m_tracer.SceneStructure(imageIndex) : VK_NULL_HANDLE,
+                       m_sceneTraced ? m_tracer.InstanceData(imageIndex) : VK_NULL_HANDLE);
+    writeCascadeDescriptors(imageIndex);
+}
+
+void ProbeGI::prepareScene(Scene* scene, uint32_t imageIndex, VkBuffer lightingBuffer, bool traceScene,
+                           const std::function<std::vector<ProbeTraceInstance>()>& collectInstances) {
+    if (scene && (traceScene || (m_active && m_hardware))) {
         m_sceneTraced = m_tracer.PrepareScene(imageIndex, collectInstances());
     }
     if (m_active && m_hardware) {
@@ -632,7 +617,37 @@ void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t ima
 void ProbeGI::RecordScene(VkCommandBuffer cmd, uint32_t imageIndex) {
     if (m_sceneTraced) {
         m_tracer.RecordScene(cmd, imageIndex);
+        m_cascades.Record(cmd, imageIndex);
     }
+}
+
+void ProbeGI::writeCascadeDescriptors(uint32_t imageIndex) {
+    const bool grid = m_cascades.StateBuffer() != VK_NULL_HANDLE;
+    const VkDescriptorBufferInfo params{m_cascades.ParamsBuffer(imageIndex), 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo state{grid ? m_cascades.StateBuffer() : m_placeholderBuffer.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorImageInfo irradiance{m_atlasSampler,
+                                           grid ? m_cascades.IrradianceView() : m_placeholderAtlas.view,
+                                           VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo visibility{m_atlasSampler,
+                                           grid ? m_cascades.VisibilityView() : m_placeholderAtlas.view,
+                                           VK_IMAGE_LAYOUT_GENERAL};
+    VkWriteDescriptorSet writes[4] = {};
+    const uint32_t bindings[4] = {kCascadeParams, kCascadeState, kCascadeIrradiance, kCascadeVisibility};
+    const VkDescriptorType types[4] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                       VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                       VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
+    for (int i = 0; i < 4; ++i) {
+        writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        writes[i].dstSet = m_sets[imageIndex][1];
+        writes[i].dstBinding = bindings[i];
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = types[i];
+    }
+    writes[0].pBufferInfo = &params;
+    writes[1].pBufferInfo = &state;
+    writes[2].pImageInfo = &irradiance;
+    writes[3].pImageInfo = &visibility;
+    vkUpdateDescriptorSets(m_device->device, 4, writes, 0, nullptr);
 }
 
 void ProbeGI::prepareVolume(Scene* scene, const std::string& projectRoot, uint32_t imageIndex,
