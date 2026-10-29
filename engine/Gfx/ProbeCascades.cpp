@@ -361,8 +361,31 @@ void ProbeCascades::Prepare(uint32_t imageIndex, const Cell* counts, const Vec3&
     m_active = true;
 }
 
+void ProbeCascades::Invalidate() {
+    if (!m_hasGrid) return;
+    m_scheduler.Reset(m_grid);
+    m_clearPending = true;
+}
+
 void ProbeCascades::Record(VkCommandBuffer cmd, uint32_t imageIndex) {
     if (!m_active || m_jobCount == 0) return;
+    if (m_clearPending) {
+        // Earlier frames may still read the state; then every probe reads as never traced.
+        VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        before.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        before.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                      VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
+        vkCmdFillBuffer(cmd, m_state.buffer, 0, VK_WHOLE_SIZE, static_cast<uint32_t>(INT_MIN));
+        vkCmdFillBuffer(cmd, m_offsets.buffer, 0, VK_WHOLE_SIZE, 0);
+        VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        after.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        after.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &after,
+                             0, nullptr, 0, nullptr);
+        m_clearPending = false;
+    }
     auto barrier = [&](VkPipelineStageFlags src, VkAccessFlags srcAccess, VkPipelineStageFlags dst,
                        VkAccessFlags dstAccess) {
         VkMemoryBarrier b{VK_STRUCTURE_TYPE_MEMORY_BARRIER};

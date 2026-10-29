@@ -33,6 +33,9 @@ public:
                  VkBuffer lighting, VkAccelerationStructureKHR scene, VkBuffer instances);
     // After the scene acceleration structure is built, before the scene pass.
     void Record(VkCommandBuffer cmd, uint32_t imageIndex);
+    // Forget every probe (a different scene was loaded): the next frames retrace from scratch instead of fading
+    // the old scene's light out over many seconds.
+    void Invalidate();
 
     bool Active() const { return m_active; }
     uint32_t JobCount() const { return m_jobCount; }
@@ -80,6 +83,7 @@ private:
     VulkanBuffer m_rays;   // vec4 per traced ray: radiance, distance
     uint32_t m_jobCount = 0;
     bool m_active = false;
+    bool m_clearPending = false;  // Record clears the probe state before tracing
 };
 
 } // namespace Hephaestus

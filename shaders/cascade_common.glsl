@@ -137,20 +137,25 @@ float cascadeInset(int c, vec3 pos) {
     return min(min(min(g.x, g.y), g.z), min(min(hi.x, hi.y), hi.z));
 }
 
-// xyz = irradiance / pi, w = how much of it to use over the sky (0 outside every grid). The finest grid that
-// holds pos is used, cross-fading into the next one over its outer two probes.
+// xyz = irradiance / pi, w = how much of it to use over the sky: 1 inside the grids, fading to 0 only over the
+// outermost grid's last two probes. The finest grid that holds pos is used, cross-fading into the next one over
+// its outer two probes. Probes not traced yet count as dark, never as sky: assuming sky there floods closed
+// rooms with light that then takes many seconds to bounce away.
 vec4 sampleCascades(vec3 pos, vec3 n, vec3 viewDir) {
     for (int c = 0; c < cascades.counts.w; ++c) {
         float inset = cascadeInset(c, pos);
         if (inset < 1.0) continue;
         vec4 here = sampleCascade(c, pos, n, viewDir);
-        float keep = clamp((inset - 1.0) / 2.0, 0.0, 1.0) * here.w;
-        if (keep >= 1.0) return here;
-        vec4 outer = vec4(0.0);
-        for (int o = c + 1; o < cascades.counts.w && outer.w == 0.0; ++o) {
-            if (cascadeInset(o, pos) >= 1.0) outer = sampleCascade(o, pos, n, viewDir);
+        float keep = clamp((inset - 1.0) / 2.0, 0.0, 1.0);
+        int o = c + 1;
+        while (o < cascades.counts.w && cascadeInset(o, pos) < 1.0) ++o;
+        bool hasOuter = o < cascades.counts.w;
+        vec3 rgb = here.rgb;
+        if (hasOuter && (keep < 1.0 || here.w == 0.0)) {
+            vec4 outer = sampleCascade(o, pos, n, viewDir);
+            if (outer.w > 0.0) rgb = here.w > 0.0 ? mix(outer.rgb, here.rgb, keep) : outer.rgb;
         }
-        return outer.w > 0.0 ? vec4(mix(outer.rgb, here.rgb, keep), 1.0) : vec4(here.rgb, keep);
+        return vec4(rgb, hasOuter ? 1.0 : keep);
     }
     return vec4(0.0);
 }

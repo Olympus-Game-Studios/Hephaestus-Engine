@@ -587,6 +587,13 @@ void ProbeGI::Prepare(Scene* scene, const std::string& projectRoot, uint32_t ima
     m_sceneTraced = false;
     if (!m_device || imageIndex >= m_sets.size()) return;
     const Cell* cascades = m_tracerReady ? cascadeCounts : nullptr;
+    if (scene) {
+        const std::pair<uint64_t, uint64_t> sceneKey{scene->GetIdentity(), scene->GetRuntimeGeneration()};
+        if (sceneKey != m_cascadeScene) {
+            m_cascades.Invalidate();
+            m_cascadeScene = sceneKey;
+        }
+    }
     if (m_tracerReady) {
         prepareScene(scene, imageIndex, lightingBuffer, traceShadows || cascades, collectInstances);
     }

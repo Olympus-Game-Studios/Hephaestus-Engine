@@ -94,6 +94,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- 2026-10-29: Dynamic GI no longer fills closed rooms with a faint glow. Probes that have not been traced yet now count as dark instead of as open sky, and loading a different scene clears the probes instead of letting the old scene's light fade out over a minute. A sealed room now goes dark within a few seconds of loading; open scenes look the same.
 - 2026-10-29: New lights default to a shadow Strength of 1, so their shadows block all of their light. The old default of 0.7 let 30% of the sun through every shadow, which lit the floors of fully closed rooms. Sky light and GI now brighten shadows instead. Lights already saved in scenes and prefabs keep their value; set Strength to 1 on them to stop sunlight reaching closed interiors.
 - 2026-10-28: Sun shadows blend smoothly from one cascade to the next instead of switching at a visible line, and fade out over the last part of the shadow distance instead of stopping at a hard edge. Shadow filtering no longer reads from the neighbouring cascade at the edge of a cascade.
 - 2026-10-28: Editor Play and packaged games render character controllers and dynamic rigid bodies interpolated between the last two fixed physics steps, so the first-person camera and moving bodies no longer advance in 60 Hz jumps at higher frame rates. Simulation state and script-visible transforms are unchanged; a pose moved after the step renders where it was moved. Character facing is not interpolated.

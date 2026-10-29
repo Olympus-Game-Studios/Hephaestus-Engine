@@ -14,6 +14,7 @@
 #include <functional>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 class Scene;
@@ -141,6 +142,7 @@ private:
     ProbeRayTracer m_tracer;
     bool m_tracerReady = false;
     ProbeCascades m_cascades;
+    std::pair<uint64_t, uint64_t> m_cascadeScene{0, 0};  // scene identity and runtime generation the probes saw
     bool m_sceneTraced = false;
 };
 
