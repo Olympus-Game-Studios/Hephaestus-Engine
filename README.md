@@ -182,6 +182,16 @@ loader and MoltenVK in `Contents/Frameworks`; it is ad-hoc signed, not notarized
 writes its logs to `~/Library/Logs/<Product>`. MoltenVK has no ray queries, so
 ray-traced shadows and probe GI fall back to shadow maps and baked probes.
 
+To make a distributable editor, run `tools/create_release_package_macos.sh` after a
+`macos-release` build. It writes `dist/macos/Hephaestus Engine.app` (which opens the
+launcher, with the editor, Qt, plugins and the game player inside) and a `.dmg`. Without
+options it is ad-hoc signed for local use. To ship it, sign with your Developer ID and
+notarize with a profile saved once via `xcrun notarytool store-credentials`:
+
+```bash
+tools/create_release_package_macos.sh --sign "Developer ID Application: Your Name (TEAMID)" --notary-profile hephaestus-notary
+```
+
 If you generate an Xcode project instead, use `cmake -S . -B build -G "Xcode"` and build with `cmake --build build --config Release` or open `build/HephaestusEngine.xcodeproj`.
 
 If you previously configured `build/`, rerun the single-line build command:

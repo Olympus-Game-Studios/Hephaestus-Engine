@@ -33,13 +33,14 @@ endfunction()
 bundle_library("${VULKAN}")
 bundle_library("${MOLTENVK}")
 
-# Absolute non-system dependencies, such as Homebrew's Lua.
+# Absolute non-system libraries, such as Homebrew's Lua.
 execute_process(COMMAND otool -L "${EXE}" OUTPUT_VARIABLE dependencies)
 string(REPLACE "\n" ";" dependencies "${dependencies}")
 foreach(line IN LISTS dependencies)
     if(line MATCHES "^[ \t]+(/[^ ]+) \\(")
         set(dependency "${CMAKE_MATCH_1}")
-        if(NOT dependency MATCHES "^/(System|usr/lib)/")
+        # Frameworks such as Qt are deployed by macdeployqt, not here.
+        if(NOT dependency MATCHES "^/(System|usr/lib)/" AND NOT dependency MATCHES "\\.framework/")
             bundle_library("${dependency}")
         endif()
     endif()

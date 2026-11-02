@@ -47,6 +47,7 @@
 !/CMakeLists.txt
 
 build/
+dist/
 !engine/Build/
 !engine/Build/**
 hephaestus.log

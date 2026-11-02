@@ -22,6 +22,11 @@ QString SiblingExecutablePath(const QString& executableBaseName)
         fileName += ".exe";
     }
 #elif defined(Q_OS_MACOS)
+    // A release ships the editor beside the launcher in one .app; the build tree has separate apps.
+    const QString sameBundle = QDir(QCoreApplication::applicationDirPath()).filePath(fileName);
+    if (QFileInfo::exists(sameBundle)) {
+        return sameBundle;
+    }
     const QString bundled = QDir(ExecutableDir()).filePath(
         fileName + QStringLiteral(".app/Contents/MacOS/") + fileName);
     if (QFileInfo::exists(bundled)) {
