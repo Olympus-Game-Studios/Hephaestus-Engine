@@ -9,6 +9,15 @@
 
 namespace Hephaestus::Build {
 
+// The generic player, relative to the folder that holds the editor's tools and shaders.
+#ifdef __APPLE__
+inline constexpr const char* kPlayerExecutable = "HephaestusGame.app/Contents/MacOS/HephaestusGame";
+#elif defined(_WIN32)
+inline constexpr const char* kPlayerExecutable = "HephaestusGame.exe";
+#else
+inline constexpr const char* kPlayerExecutable = "HephaestusGame";
+#endif
+
 #ifdef _WIN32
 inline constexpr const char* kExecutableSuffix = ".exe";
 inline constexpr bool kRuntimeShipsLua = true;

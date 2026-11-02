@@ -31,7 +31,7 @@ bool HasProblem(const RuntimeLocationResult& result, const std::string& code) {
 }
 
 void WriteRuntime(const fs::path& root, const char* luaName = "lua54.dll") {
-    Write(root / (std::string("HephaestusGame") + kExecutableSuffix));
+    Write(root / kPlayerExecutable);
     Write(root / luaName);
     Write(root / "shaders" / "fixture.spv");
 }
@@ -64,13 +64,13 @@ int main() {
     located = locator.locate(developer, developer / "build" / "Release",
                              BuildConfiguration::Development);
     ok &= Check(located.success(), "developer Debug runtime is found in the build tree");
-    ok &= Check(located.artifacts.executable.parent_path().filename() == "Debug",
+    ok &= Check(located.artifacts.executable == developer / "build" / "Debug" / kPlayerExecutable,
                 "Development prefers the Debug player");
     ok &= Check(RuntimeLocator::discoverEngineRoot(developer / "build" / "Release") == developer,
                 "developer source root is discovered from a build output");
 
     const fs::path incomplete = root / "incomplete";
-    Write(incomplete / (std::string("HephaestusGame") + kExecutableSuffix));
+    Write(incomplete / kPlayerExecutable);
     located = locator.locate(incomplete, incomplete, BuildConfiguration::Release);
     ok &= Check(!located.success(), "incomplete distributed runtime is rejected");
     ok &= Check(HasProblem(located, "BUILD_RUNTIME_SHADERS_MISSING"),

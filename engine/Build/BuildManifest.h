@@ -14,7 +14,13 @@ struct BuildManifestData {
     std::string company;
     std::string engineVersion;
     std::string configuration;
+#if defined(__APPLE__) && defined(__aarch64__)
+    std::string platform = "macos-arm64";
+#elif defined(__APPLE__)
+    std::string platform = "macos-x64";
+#else
     std::string platform = "windows-x64";
+#endif
     std::string timestampUtc;
     std::string startupScene;
     std::string executable;

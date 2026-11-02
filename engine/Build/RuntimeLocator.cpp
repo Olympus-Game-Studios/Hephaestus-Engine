@@ -58,7 +58,7 @@ std::filesystem::path FindLua(const std::filesystem::path& root) {
 RuntimeArtifacts ProbeRuntimeRoot(const std::filesystem::path& root) {
     RuntimeArtifacts artifacts;
     std::error_code ec;
-    const auto executable = root / (std::string("HephaestusGame") + kExecutableSuffix);
+    const auto executable = root / kPlayerExecutable;
     if (std::filesystem::is_regular_file(executable, ec)) {
         artifacts.executable = executable;
     }

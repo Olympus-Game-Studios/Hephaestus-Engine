@@ -76,7 +76,7 @@ int main() {
     Write(engine / ".engine" / "meshes" / "builtin.mesh", "mesh");
     Write(engine / ".engine" / "hdris" / "builtin.hdr", "builtin hdri");
     Write(engine / "LICENSE", "Engine license");
-    Write(runtime / "HephaestusGame.exe", "fake executable");
+    Write(runtime / kPlayerExecutable, "fake executable");
     Write(runtime / "lua.dll", "fake lua");
     Write(runtime / "shaders" / "basic.vert.spv", "fake shader");
     const std::string pluginManifest =
@@ -118,50 +118,51 @@ int main() {
     };
 
     RuntimeArtifacts artifacts{
-        runtime / "HephaestusGame.exe",
+        runtime / kPlayerExecutable,
         runtime / "shaders",
         runtime / "lua.dll"
     };
     PackageStager stager;
     auto result = stager.stage(request, artifacts);
     const fs::path package = outputRoot / "Tiny_Game";
+    const fs::path content = PackageStager::contentDirectory(package, "Tiny_Game");
     bool ok = true;
     ok &= Check(result.success, "initial package succeeds");
-    ok &= Check(fs::exists(package / (std::string("Tiny_Game") + kExecutableSuffix)), "runtime is renamed");
+    ok &= Check(fs::exists(PackageStager::launchPath(package, "Tiny_Game")), "runtime is renamed");
     ok &= Check(!kRuntimeShipsLua || fs::exists(package / "lua54.dll"), "Lua is normalized to lua54.dll");
-    ok &= Check(fs::exists(package / "assets" / "scenes" / "Main.hpscene"),
+    ok &= Check(fs::exists(content / "assets" / "scenes" / "Main.hpscene"),
                 "assets are packaged");
-    ok &= Check(fs::exists(package / "assets" / "prefabs" / "Ship.hpprefab"),
+    ok &= Check(fs::exists(content / "assets" / "prefabs" / "Ship.hpprefab"),
                 "prefabs are packaged");
-    ok &= Check(fs::exists(package / "assets" / "characters" / "Cultist.hpcharacter"),
+    ok &= Check(fs::exists(content / "assets" / "characters" / "Cultist.hpcharacter"),
                 "character assets are packaged");
-    ok &= Check(fs::exists(package / "assets" / "characters" / ".source" / "Cultist" / "mesh.glb"),
+    ok &= Check(fs::exists(content / "assets" / "characters" / ".source" / "Cultist" / "mesh.glb"),
                 "owned character sources are packaged");
-    ok &= Check(fs::exists(package / "assets" / "characters" / ".source" / "Cultist" /
+    ok &= Check(fs::exists(content / "assets" / "characters" / ".source" / "Cultist" /
                            "CultistCharacter.lua"),
                 "owned character controller scripts are packaged");
-    ok &= Check(fs::exists(package / "assets" / "ui" / "Hud.hui"),
+    ok &= Check(fs::exists(content / "assets" / "ui" / "Hud.hui"),
                 "HUI documents are packaged");
-    ok &= Check(fs::exists(package / "assets" / "audio" / "engine.wav"),
+    ok &= Check(fs::exists(content / "assets" / "audio" / "engine.wav"),
                 "audio is packaged");
-    ok &= Check(fs::exists(package / "assets" / "input" / "Default.hpinput"),
+    ok &= Check(fs::exists(content / "assets" / "input" / "Default.hpinput"),
                 "input map is packaged");
-    ok &= Check(fs::exists(package / "scripts" / "boot.lua"), "scripts are packaged");
-    ok &= Check(fs::exists(package / "Plugins" / "com.engine.content" / "Content" / "Scripts" /
+    ok &= Check(fs::exists(content / "scripts" / "boot.lua"), "scripts are packaged");
+    ok &= Check(fs::exists(content / "Plugins" / "com.engine.content" / "Content" / "Scripts" /
                            "Boot.lua"),
                 "enabled engine plugin content is staged");
-    ok &= Check(fs::exists(package / "Plugins" / "com.project.content" / "Content" / "UI" / "Hud.hui"),
+    ok &= Check(fs::exists(content / "Plugins" / "com.project.content" / "Content" / "UI" / "Hud.hui"),
                 "enabled project plugin content is staged");
-    ok &= Check(!fs::exists(package / "Plugins" / "com.disabled.content"),
+    ok &= Check(!fs::exists(content / "Plugins" / "com.disabled.content"),
                 "disabled plugin content is omitted");
-    ok &= Check(!fs::exists(package / "Plugins" / "com.engine.content" / "bin" / "HephaestusFPS.dll") &&
-                    !fs::exists(package / "Plugins" / "com.engine.content" / "Content" / "bin"),
+    ok &= Check(!fs::exists(content / "Plugins" / "com.engine.content" / "bin" / "HephaestusFPS.dll") &&
+                    !fs::exists(content / "Plugins" / "com.engine.content" / "Content" / "bin"),
                 "plugin entry DLLs are omitted");
-    ok &= Check(!fs::exists(package / "Plugins" / "com.engine.content" / "bin" / "Qt6Core.dll") &&
+    ok &= Check(!fs::exists(content / "Plugins" / "com.engine.content" / "bin" / "Qt6Core.dll") &&
                     !fs::exists(package / "Qt6Core.dll"),
                 "Qt is not packaged from plugin content");
     {
-        std::ifstream mountsStream(package / "Plugins" / "content-mounts.json");
+        std::ifstream mountsStream(content / "Plugins" / "content-mounts.json");
         nlohmann::json mounts;
         mountsStream >> mounts;
         bool engineMount = false;
@@ -183,17 +184,17 @@ int main() {
         ok &= Check(engineMount && projectMount && !disabledMount,
                     "each enabled plugin id mounts its own content root");
     }
-    ok &= Check(fs::exists(package / ".engine" / "meshes" / "builtin.mesh"),
+    ok &= Check(fs::exists(content / ".engine" / "meshes" / "builtin.mesh"),
                 "engine meshes are packaged");
-    ok &= Check(fs::exists(package / ".engine" / "meshes" / "project.mesh"),
+    ok &= Check(fs::exists(content / ".engine" / "meshes" / "project.mesh"),
                 "project meshes are packaged");
-    ok &= Check(fs::exists(package / ".engine" / "hdris" / "project.hdr"),
+    ok &= Check(fs::exists(content / ".engine" / "hdris" / "project.hdr"),
                 "project HDRIs are packaged");
-    ok &= Check(fs::exists(package / ".engine" / "hdris" / "builtin.hdr"),
+    ok &= Check(fs::exists(content / ".engine" / "hdris" / "builtin.hdr"),
                 "builtin HDRIs are packaged");
-    ok &= Check(fs::exists(package / ".hephaestus" / "physics_layers.json"),
+    ok &= Check(fs::exists(content / ".hephaestus" / "physics_layers.json"),
                 "physics_layers.json is packaged");
-    ok &= Check(!fs::exists(package / ".hephaestus" / "private.json"),
+    ok &= Check(!fs::exists(content / ".hephaestus" / "private.json"),
                 "other .hephaestus editor state is excluded");
     ok &= Check(fs::exists(package / "build_manifest.json"), "JSON manifest exists");
     ok &= Check(fs::exists(package / "export_manifest.txt"), "export manifest exists");
@@ -204,11 +205,11 @@ int main() {
         manifestStream >> manifest;
         ok &= Check(manifest.value("engineVersion", "") == "2026.9.0",
                     "manifest records engine version");
-        ok &= Check(manifest.value("platform", "") == "windows-x64",
+        ok &= Check(manifest.value("platform", "") == BuildManifestData{}.platform,
                     "manifest records platform");
     }
     {
-        std::ifstream iniStream(package / "game.ini");
+        std::ifstream iniStream(content / "game.ini");
         const std::string ini((std::istreambuf_iterator<char>(iniStream)),
                               std::istreambuf_iterator<char>());
         ok &= Check(ini.find("scene = assets/scenes/Main.hpscene") != std::string::npos,
@@ -250,7 +251,8 @@ int main() {
     request.outputRoot = root / "automation-output";
     auto automationResult = stager.stage(request, artifacts);
     {
-        std::ifstream iniStream(root / "automation-output" / "Tiny_Game" / "game.ini");
+        std::ifstream iniStream(PackageStager::contentDirectory(
+            root / "automation-output" / "Tiny_Game", "Tiny_Game") / "game.ini");
         const std::string ini((std::istreambuf_iterator<char>(iniStream)),
                               std::istreambuf_iterator<char>());
         ok &= Check(automationResult.success, "Development automation package succeeds");

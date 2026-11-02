@@ -44,7 +44,7 @@ int main() {
     const fs::path project = root / "project";
     const fs::path runtime = root / "runtime";
     Write(project / "assets" / "scenes" / "Main.hpscene", "{}");
-    Write(runtime / (std::string("HephaestusGame") + kExecutableSuffix));
+    Write(runtime / kPlayerExecutable);
     Write(runtime / "lua54.dll");
     Write(runtime / "shaders" / "fixture.spv");
 

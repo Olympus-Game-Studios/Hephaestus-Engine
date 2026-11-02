@@ -199,6 +199,8 @@ BuildResult BuildService::execute(const BuildRequest& originalRequest) const {
         progress(0.95F, "Launching packaged game");
 #ifdef _WIN32
         const std::string command = "start \"\" \"" + result.executablePath.string() + "\"";
+#elif defined(__APPLE__)
+        const std::string command = "open \"" + result.executablePath.string() + "\"";
 #else
         const std::string command = "\"" + result.executablePath.string() + "\" &";
 #endif

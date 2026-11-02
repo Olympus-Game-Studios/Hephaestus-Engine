@@ -10,6 +10,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "QtEditorEngine.h"
+#include "ToolsCommon/PathUtils.h"
 #include "../../Automation/PhysicsHostAdapter.h"
 #include "../../Automation/RuntimeUIHostAdapter.h"
 #include "AppConfig.h"
@@ -2455,7 +2456,7 @@ void QtEditorEngine::RebuildSceneMeshes()
 
         // 6. Last resort: next to the executable
         {
-            fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
+            fs::path exeDir = fs::path(Hephaestus::Tools::PathUtils::ExecutableDir().toStdWString());
             fs::path candidate = exeDir / assetPath;
             if (fs::exists(candidate)) return candidate;
         }

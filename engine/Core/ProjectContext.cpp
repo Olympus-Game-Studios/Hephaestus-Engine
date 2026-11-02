@@ -4,6 +4,7 @@
  */
 
 #include "ProjectContext.h"
+#include "AppPaths.h"
 #include "../Scene/Json.h"
 #include "../Scene/PrefabOverrideSystem.h"
 #include "../Assets/AssetManager.h"
@@ -448,7 +449,7 @@ void ProjectContext::SyncEngineAssets()
     if (!m_hasProject || m_projectRootDir.empty()) return;
 
     namespace fs = std::filesystem;
-    fs::path exeDir = getExecutableDir();
+    fs::path exeDir = ResourceRootFor(getExecutableDir());
     fs::path srcMeshDir = exeDir / "assets" / "meshes";
     fs::path srcDefaultHdri = exeDir / "assets" / "textures" / "hdris" / "studio_garden_1k.hdr";
     fs::path dstEngineDir = fs::path(m_projectRootDir) / ".engine";
