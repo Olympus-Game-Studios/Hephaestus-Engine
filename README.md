@@ -97,6 +97,7 @@ If you don't have `glslangValidator` available on PATH, use the Vulkan SDK's `bi
 - CMake (>= 3.16). Install with Homebrew: `brew install cmake`.
 - Vulkan SDK for macOS (includes MoltenVK). Run the SDK's `setup-env.sh` or export `VULKAN_SDK` so headers and dylibs resolve.
 - glslangValidator (install via `brew install glslang` or use the SDK build).
+- Qt 6 and Lua: `brew install qt lua`. Packaged games link this Lua, so the machine running them needs it too.
 - Git (preinstalled with the command line tools).
 
 Optional but useful:
@@ -170,6 +171,13 @@ cmake --build --preset windows-release
 
 The presets expect the Vulkan SDK and Qt 6 to be installed on the selected
 platform. Pass `-DQt6_DIR=...` to CMake when Qt is not in its standard location.
+
+On macOS the preset builds the editor, the game player, the tests and the engine
+plugins (no `build.bat` step is needed). Run the editor with
+`build/macos-release/Release/HephaestusEngine` and package a project with
+`build/macos-release/Release/tools/HephaestusBuild --project <path>`. The editor is
+not an `.app` bundle yet. MoltenVK has no ray queries, so ray-traced shadows and
+probe GI fall back to shadow maps and baked probes.
 
 If you generate an Xcode project instead, use `cmake -S . -B build -G "Xcode"` and build with `cmake --build build --config Release` or open `build/HephaestusEngine.xcodeproj`.
 

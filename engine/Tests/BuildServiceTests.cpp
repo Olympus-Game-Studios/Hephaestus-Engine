@@ -44,7 +44,7 @@ int main() {
     const fs::path project = root / "project";
     const fs::path runtime = root / "runtime";
     Write(project / "assets" / "scenes" / "Main.hpscene", "{}");
-    Write(runtime / "HephaestusGame.exe");
+    Write(runtime / (std::string("HephaestusGame") + kExecutableSuffix));
     Write(runtime / "lua54.dll");
     Write(runtime / "shaders" / "fixture.spv");
 
@@ -65,7 +65,7 @@ int main() {
     ok &= Check(result.success, "complete prebuilt runtime packages successfully");
     ok &= Check(builder->calls == 0, "prebuilt runtime skips compiler fallback");
 
-    fs::remove(runtime / "lua54.dll");
+    fs::remove(runtime / "shaders" / "fixture.spv");
     request.outputRoot = root / "missing-output";
     result = service.execute(request);
     ok &= Check(!result.success, "incomplete runtime fails packaging");

@@ -36,7 +36,12 @@ QtViewportWindow::QtViewportWindow(QWindow* parent)
 {
     // Ensure we get a native window handle
     // RasterSurface is sufficient - we don't need Qt's OpenGL/Vulkan integration
+#ifdef __APPLE__
+    // A raster window's backing layer is owned and swapped by Qt; Metal keeps a stable CAMetalLayer for Vulkan.
+    setSurfaceType(QWindow::MetalSurface);
+#else
     setSurfaceType(QWindow::RasterSurface);
+#endif
     
     // Set initial size
     resize(800, 600);

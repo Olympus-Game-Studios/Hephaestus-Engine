@@ -58,7 +58,7 @@ std::filesystem::path FindLua(const std::filesystem::path& root) {
 RuntimeArtifacts ProbeRuntimeRoot(const std::filesystem::path& root) {
     RuntimeArtifacts artifacts;
     std::error_code ec;
-    const auto executable = root / "HephaestusGame.exe";
+    const auto executable = root / (std::string("HephaestusGame") + kExecutableSuffix);
     if (std::filesystem::is_regular_file(executable, ec)) {
         artifacts.executable = executable;
     }
@@ -185,7 +185,7 @@ RuntimeLocationResult RuntimeLocator::locate(const std::filesystem::path& engine
                 ? "Build the Shaders target or provide a shaders directory beside the player."
                 : "This Editor distribution is missing compiled shaders beside the player."));
     }
-    if (result.artifacts.luaLibrary.empty()) {
+    if (kRuntimeShipsLua && result.artifacts.luaLibrary.empty()) {
         result.problems.push_back(Missing(
             "BUILD_RUNTIME_LUA_MISSING", "Lua runtime library was not found",
             "Expected lua54.dll or lua.dll beside HephaestusGame.exe."));

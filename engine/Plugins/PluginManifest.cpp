@@ -23,6 +23,20 @@ std::array<int, 3> ParseVersion(const std::string& value) {
     }
     return out;
 }
+
+// Manifests name the Windows module; other platforms load CMake's lib<name>.dylib / .so beside it.
+std::filesystem::path NativeModulePath(std::filesystem::path path) {
+#ifndef _WIN32
+    if (path.extension() == ".dll") {
+#ifdef __APPLE__
+        path.replace_filename("lib" + path.stem().string() + ".dylib");
+#else
+        path.replace_filename("lib" + path.stem().string() + ".so");
+#endif
+    }
+#endif
+    return path;
+}
 }
 
 ManifestParseResult ParsePluginManifest(const std::filesystem::path& path) {
@@ -42,8 +56,8 @@ ManifestParseResult ParsePluginManifest(const std::filesystem::path& path) {
         m.author = json.value("author", "");
         m.pluginVersion = json.value("pluginVersion", "");
         m.engineVersion = json.value("engineVersion", "");
-        m.entry = json.value("entry", "");
-        m.runtimeEntry = json.value("runtimeEntry", "");
+        m.entry = NativeModulePath(json.value("entry", ""));
+        m.runtimeEntry = NativeModulePath(json.value("runtimeEntry", ""));
         m.content = json.value("content", "");
         m.icon = json.value("icon", "");
         m.defaultEnabled = json.value("defaultEnabled", true);

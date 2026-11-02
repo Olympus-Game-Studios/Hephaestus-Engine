@@ -9,13 +9,23 @@
 
 namespace Hephaestus::Build {
 
+#ifdef _WIN32
+inline constexpr const char* kExecutableSuffix = ".exe";
+inline constexpr bool kRuntimeShipsLua = true;
+#else
+// The player links the platform's shared Lua library rather than shipping one beside it.
+inline constexpr const char* kExecutableSuffix = "";
+inline constexpr bool kRuntimeShipsLua = false;
+#endif
+
 struct RuntimeArtifacts {
     std::filesystem::path executable;
     std::filesystem::path shadersDirectory;
     std::filesystem::path luaLibrary;
 
     bool complete() const {
-        return !executable.empty() && !shadersDirectory.empty() && !luaLibrary.empty();
+        return !executable.empty() && !shadersDirectory.empty() &&
+               (!kRuntimeShipsLua || !luaLibrary.empty());
     }
 };
 

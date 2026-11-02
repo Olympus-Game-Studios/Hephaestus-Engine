@@ -127,8 +127,8 @@ int main() {
     const fs::path package = outputRoot / "Tiny_Game";
     bool ok = true;
     ok &= Check(result.success, "initial package succeeds");
-    ok &= Check(fs::exists(package / "Tiny_Game.exe"), "runtime is renamed");
-    ok &= Check(fs::exists(package / "lua54.dll"), "Lua is normalized to lua54.dll");
+    ok &= Check(fs::exists(package / (std::string("Tiny_Game") + kExecutableSuffix)), "runtime is renamed");
+    ok &= Check(!kRuntimeShipsLua || fs::exists(package / "lua54.dll"), "Lua is normalized to lua54.dll");
     ok &= Check(fs::exists(package / "assets" / "scenes" / "Main.hpscene"),
                 "assets are packaged");
     ok &= Check(fs::exists(package / "assets" / "prefabs" / "Ship.hpprefab"),

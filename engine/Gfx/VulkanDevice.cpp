@@ -249,10 +249,6 @@ void VulkanDevice::createLogicalDevice() {
   std::vector<const char *> deviceExtensions = {
       VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-#ifdef __APPLE__
-  deviceExtensions.push_back("VK_KHR_portability_subset");
-#endif
-
   VkPhysicalDeviceFeatures supportedFeatures{};
   vkGetPhysicalDeviceFeatures(physicalDevice, &supportedFeatures);
 
@@ -284,6 +280,9 @@ void VulkanDevice::createLogicalDevice() {
     return std::any_of(available.begin(), available.end(),
                        [&](const VkExtensionProperties& e) { return std::strcmp(e.extensionName, name) == 0; });
   };
+  // Required when advertised (MoltenVK); conformant drivers such as KosmicKrisp don't expose it.
+  if (hasExtension("VK_KHR_portability_subset"))
+    deviceExtensions.push_back("VK_KHR_portability_subset");
   VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeatures{
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};

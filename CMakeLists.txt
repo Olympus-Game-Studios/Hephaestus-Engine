@@ -214,6 +214,8 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build Jolt as static library" FORCE)
 set(JOLT_SANITIZE_UNDEFINED_BEHAVIOR OFF CACHE BOOL "" FORCE)
 set(JOLT_CROSS_PLATFORM_DETERMINISTIC ON CACHE BOOL "Enable deterministic behavior" FORCE)
 set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "Disable Jolt warnings-as-errors in superproject builds" FORCE)
+# The engine subclasses Jolt types (CharacterVirtual) with RTTI on; clang needs Jolt's typeinfo to link.
+set(CPP_RTTI_ENABLED ON CACHE BOOL "Enable C++ RTTI in Jolt" FORCE)
 # Disable static MSVC runtime to avoid linker conflicts
 set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "Use dynamic MSVC runtime" FORCE)
 add_subdirectory(extern/JoltPhysics/Build)
@@ -524,16 +526,8 @@ if (WIN32)
     target_sources(HephaestusEngine PRIVATE ${APP_ICON_RC})
     set_source_files_properties(${APP_ICON_RC} PROPERTIES GENERATED TRUE)
 elseif(APPLE)
-    # macOS App Bundle setup — version/metadata sourced from CMake variables
-    set_target_properties(HephaestusEngine PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "${HEPHAESTUS_APP_NAME}"
-        MACOSX_BUNDLE_GUI_IDENTIFIER "${HEPHAESTUS_DOMAIN}"
-        MACOSX_BUNDLE_INFO_STRING "${HEPHAESTUS_APP_DESCRIPTION}"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "${HEPHAESTUS_VERSION}"
-        MACOSX_BUNDLE_BUNDLE_VERSION "${HEPHAESTUS_VERSION}"
-        MACOSX_BUNDLE_COPYRIGHT "${HEPHAESTUS_COPYRIGHT}"
-    )
+    # shortcut: not an .app bundle, because the editor treats its executable directory as the engine root
+    # (shaders, Plugins, HephaestusGame); bundle it once those resolve from Contents/Resources.
 endif()
 
 target_link_libraries(HephaestusEngine PRIVATE HephaestusEditorCore HephaestusBuildCore HephaestusAutomationCore)

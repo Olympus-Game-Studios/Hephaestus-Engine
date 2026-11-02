@@ -70,8 +70,10 @@ std::string AssetPathPolicy::NormalizeSeparators(const std::string& path) {
     if (path.empty()) {
         return {};
     }
-    std::filesystem::path p(path);
-    return p.lexically_normal().generic_string();
+    // Projects authored on Windows store backslashes, which POSIX paths treat as filename characters.
+    std::string slashed = path;
+    std::replace(slashed.begin(), slashed.end(), '\\', '/');
+    return std::filesystem::path(slashed).lexically_normal().generic_string();
 }
 
 bool AssetPathPolicy::IsPortableKey(const std::string& path) {
@@ -194,7 +196,11 @@ AssetPathClassification AssetPathPolicy::Classify(const std::filesystem::path& p
     }
 
     std::filesystem::path input(path);
-    if (!input.is_absolute() && LooksLikeBareFilename(result.normalized)) {
+    // A Windows drive path ("C:/...") is external on every host, not project-relative.
+    const std::string& n = result.normalized;
+    const bool absolute = input.is_absolute() ||
+        (n.size() > 2 && std::isalpha(static_cast<unsigned char>(n[0])) && n[1] == ':' && n[2] == '/');
+    if (!absolute && LooksLikeBareFilename(result.normalized)) {
         result.kind = AssetPathKind::LegacyFilename;
         result.portableKey = result.normalized;
         result.isPortable = false;
@@ -203,8 +209,8 @@ AssetPathClassification AssetPathPolicy::Classify(const std::filesystem::path& p
 
     const std::string portable = ToPortableKey(projectRoot, path);
     if (IsPortableKey(portable)) {
-        result.kind = input.is_absolute() ? AssetPathKind::AbsoluteInProject
-                                          : AssetPathKind::PortableProjectRelative;
+        result.kind = absolute ? AssetPathKind::AbsoluteInProject
+                               : AssetPathKind::PortableProjectRelative;
         result.portableKey = portable;
         result.isPortable = (result.kind == AssetPathKind::PortableProjectRelative);
         // AbsoluteInProject is not yet portable until rewritten, but has a portable mapping.
@@ -214,14 +220,14 @@ AssetPathClassification AssetPathPolicy::Classify(const std::filesystem::path& p
         return result;
     }
 
-    if (input.is_absolute()) {
+    if (absolute) {
         result.kind = AssetPathKind::AbsoluteExternal;
         result.portableKey = portable;
         result.isPortable = false;
         return result;
     }
 
-    if (!input.is_absolute()) {
+    if (!absolute) {
         result.kind = AssetPathKind::PortableProjectRelative;
         result.portableKey = portable.empty() ? result.normalized : portable;
         result.isPortable = true;

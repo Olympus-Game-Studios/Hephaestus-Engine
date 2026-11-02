@@ -255,7 +255,7 @@ PackageStageResult PackageStager::clean(const BuildRequest& request) const {
     const auto output = request.outputRoot / product;
     result.outputPath = output;
 
-    if (IsLockedForReplacement(output / (product + ".exe")) ||
+    if (IsLockedForReplacement(output / (product + kExecutableSuffix)) ||
         IsLockedForReplacement(output / "lua54.dll") ||
         IsLockedForReplacement(output / "lua.dll")) {
         Problem(result, ProblemSeverity::Error, "PACKAGE_OUTPUT_LOCKED",
@@ -290,7 +290,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
     const auto backup = request.outputRoot / ("." + product + "_previous");
     result.outputPath = output;
 
-    if (IsLockedForReplacement(output / (product + ".exe")) ||
+    if (IsLockedForReplacement(output / (product + kExecutableSuffix)) ||
         IsLockedForReplacement(output / "lua54.dll") ||
         IsLockedForReplacement(output / "lua.dll")) {
         Problem(result, ProblemSeverity::Error, "PACKAGE_OUTPUT_LOCKED",
@@ -339,11 +339,12 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
     }
 
     std::string copyError;
-    const auto executable = staging / (product + ".exe");
-    if (!CopyOne(runtime.executable, executable, output / (product + ".exe"),
+    const auto executable = staging / (product + kExecutableSuffix);
+    if (!CopyOne(runtime.executable, executable, output / (product + kExecutableSuffix),
                  request.incremental && !request.clean, copyError) ||
-        !CopyOne(runtime.luaLibrary, staging / "lua54.dll", output / "lua54.dll",
-                 request.incremental && !request.clean, copyError)) {
+        (kRuntimeShipsLua &&
+         !CopyOne(runtime.luaLibrary, staging / "lua54.dll", output / "lua54.dll",
+                  request.incremental && !request.clean, copyError))) {
         Problem(result, ProblemSeverity::Error, "PACKAGE_RUNTIME_COPY_FAILED",
                 "Could not copy runtime prerequisite", copyError);
         return fail();
@@ -443,7 +444,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
     if (!WriteText(staging / "game.ini", ini.str(), result) ||
         !WriteText(staging / "README.txt",
                    request.productName + " " + request.version +
-                   "\n\nRun " + product + ".exe to start the game.\n"
+                   "\n\nRun " + product + kExecutableSuffix + " to start the game.\n"
                    "Requires Windows x64, a Vulkan-capable GPU with current drivers, "
                    "and the Microsoft Visual C++ 2015-2022 x64 Redistributable.\n"
                    "The Hephaestus Editor, engine source, CMake, and Vulkan SDK are "
@@ -473,7 +474,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
     manifest.configuration = ToString(request.configuration);
     manifest.timestampUtc = UtcTimestamp();
     manifest.startupScene = startup;
-    manifest.executable = product + ".exe";
+    manifest.executable = product + kExecutableSuffix;
     manifest.files = Inventory(staging);
     std::string manifestError;
     if (!BuildManifest::writeJson(staging / "build_manifest.json", manifest, &manifestError) ||
@@ -545,7 +546,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
                 "ZIP creation is currently supported only on Windows");
 #endif
     }
-    result.executablePath = output / (product + ".exe");
+    result.executablePath = output / (product + kExecutableSuffix);
     result.success = true;
     return result;
 }
