@@ -23,7 +23,7 @@ Plugin System 1.0 uses one JSON file with the `.hpplugin` extension. There is no
 
 IDs are lowercase reverse-domain identifiers. `entry`, `runtimeEntry`, `content`, and `icon` must be relative to the manifest directory and may not contain `..`. Manifest version 1 accepts `editor`, `runtime`, and `hybrid` as type values.
 
-`entry` is the editor module (it may use Qt). `runtimeEntry` is an optional Qt-free module that both the editor and packaged games load; today it provides scripting languages (see [script-languages.md](script-languages.md)). When a project is packaged, the folder holding `runtimeEntry` is copied into the game whole, so a language runtime can ship its own libraries beside its module.
+`entry` is the editor module (it may use Qt). `runtimeEntry` is an optional Qt-free module that both the editor and packaged games load; today it provides scripting languages (see [script-languages.md](script-languages.md)). When a project is packaged, the folder holding `runtimeEntry` is copied into the game whole, so a language runtime can ship its own libraries beside its module. Name modules by their Windows file (`bin/Name.dll`); on macOS and Linux the host loads `bin/libName.dylib` or `bin/libName.so` instead, matching CMake's default library names.
 
 The engine constraint supports an exact `major.minor.patch`, `=version`, `>=version`, `^version`, or `*`. A native library is loaded only when both the manifest API version and the exported API version equal `HP_PLUGIN_API_VERSION`.
 

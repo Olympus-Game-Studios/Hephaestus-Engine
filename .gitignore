@@ -47,6 +47,7 @@
 !/CMakeLists.txt
 
 build/
+dist/
 !engine/Build/
 !engine/Build/**
 hephaestus.log
@@ -55,3 +56,5 @@ logs/
 **/.hephaestus/editor/
 **/.hephaestus/build/
 docs/plans/
+
+*.DS_Store

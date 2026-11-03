@@ -707,7 +707,7 @@ void ProbeGI::prepareVolume(Scene* scene, const std::string& projectRoot, uint32
     const std::string key = hardware
         ? "rt|" + std::to_string(counts[0]) + "x" + std::to_string(counts[1]) + "x" + std::to_string(counts[2]) + "|" +
               std::to_string(static_cast<uint32_t>(volumeEntity))
-        : file.generic_string() + "|" + std::to_string(WriteTime(file).time_since_epoch().count()) + "|" +
+        : file.generic_string() + "|" + std::to_string(static_cast<long long>(WriteTime(file).time_since_epoch().count())) + "|" +
               std::to_string(static_cast<uint32_t>(volumeEntity));
     if (hardware && key != m_bakeKey) {
         vkDeviceWaitIdle(m_device->device);

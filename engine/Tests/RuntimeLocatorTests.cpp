@@ -31,7 +31,7 @@ bool HasProblem(const RuntimeLocationResult& result, const std::string& code) {
 }
 
 void WriteRuntime(const fs::path& root, const char* luaName = "lua54.dll") {
-    Write(root / "HephaestusGame.exe");
+    Write(root / kPlayerExecutable);
     Write(root / luaName);
     Write(root / "shaders" / "fixture.spv");
 }
@@ -48,7 +48,7 @@ int main() {
     WriteRuntime(distribution, "lua.dll");
     auto located = locator.locate(distribution, distribution, BuildConfiguration::Release);
     ok &= Check(located.success(), "distributed Release runtime is located beside the tools");
-    ok &= Check(located.artifacts.luaLibrary.filename() == "lua.dll",
+    ok &= Check(!kRuntimeShipsLua || located.artifacts.luaLibrary.filename() == "lua.dll",
                 "legacy supported Lua DLL name is accepted");
     ok &= Check(RuntimeLocator::discoverEngineRoot(distribution) == distribution,
                 "distribution root does not escape into arbitrary parents");
@@ -64,18 +64,18 @@ int main() {
     located = locator.locate(developer, developer / "build" / "Release",
                              BuildConfiguration::Development);
     ok &= Check(located.success(), "developer Debug runtime is found in the build tree");
-    ok &= Check(located.artifacts.executable.parent_path().filename() == "Debug",
+    ok &= Check(located.artifacts.executable == developer / "build" / "Debug" / kPlayerExecutable,
                 "Development prefers the Debug player");
     ok &= Check(RuntimeLocator::discoverEngineRoot(developer / "build" / "Release") == developer,
                 "developer source root is discovered from a build output");
 
     const fs::path incomplete = root / "incomplete";
-    Write(incomplete / "HephaestusGame.exe");
+    Write(incomplete / kPlayerExecutable);
     located = locator.locate(incomplete, incomplete, BuildConfiguration::Release);
     ok &= Check(!located.success(), "incomplete distributed runtime is rejected");
     ok &= Check(HasProblem(located, "BUILD_RUNTIME_SHADERS_MISSING"),
                 "missing shaders are actionable");
-    ok &= Check(HasProblem(located, "BUILD_RUNTIME_LUA_MISSING"),
+    ok &= Check(!kRuntimeShipsLua || HasProblem(located, "BUILD_RUNTIME_LUA_MISSING"),
                 "missing Lua is actionable");
 
     fs::remove_all(root);

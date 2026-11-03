@@ -217,7 +217,79 @@ bool IsLockedForReplacement(const std::filesystem::path& path) {
     return false;
 }
 
+#ifdef __APPLE__
+std::string XmlEscape(const std::string& text) {
+    std::string escaped;
+    for (const char character : text) {
+        switch (character) {
+            case '&': escaped += "&amp;"; break;
+            case '<': escaped += "&lt;"; break;
+            case '>': escaped += "&gt;"; break;
+            case '"': escaped += "&quot;"; break;
+            default: escaped.push_back(character);
+        }
+    }
+    return escaped;
+}
+
+std::string BundleIdPart(const std::string& text) {
+    std::string part;
+    for (const unsigned char character : text) {
+        if (std::isalnum(character)) {
+            part.push_back(static_cast<char>(std::tolower(character)));
+        } else if (!part.empty() && part.back() != '-') {
+            part.push_back('-');
+        }
+    }
+    while (!part.empty() && part.back() == '-') {
+        part.pop_back();
+    }
+    return part.empty() ? "hephaestus" : part;
+}
+
+std::string MacInfoPlist(const BuildRequest& request, const std::string& product) {
+    const std::string name = XmlEscape(request.productName.empty() ? product : request.productName);
+    const std::string version = XmlEscape(request.version);
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+           "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+           "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+           "<plist version=\"1.0\">\n<dict>\n"
+           "\t<key>CFBundleExecutable</key>\n\t<string>" + product + "</string>\n"
+           "\t<key>CFBundleIdentifier</key>\n\t<string>com." + BundleIdPart(request.company) + "." +
+               BundleIdPart(product) + "</string>\n"
+           "\t<key>CFBundleName</key>\n\t<string>" + name + "</string>\n"
+           "\t<key>CFBundleDisplayName</key>\n\t<string>" + name + "</string>\n"
+           "\t<key>CFBundleShortVersionString</key>\n\t<string>" + version + "</string>\n"
+           "\t<key>CFBundleVersion</key>\n\t<string>" + version + "</string>\n"
+           "\t<key>CFBundlePackageType</key>\n\t<string>APPL</string>\n"
+           "\t<key>CFBundleInfoDictionaryVersion</key>\n\t<string>6.0</string>\n"
+           "\t<key>CFBundleIconFile</key>\n\t<string>MacOS-Icon</string>\n"
+           "\t<key>CFBundleIconName</key>\n\t<string>MacOS-Icon</string>\n"
+           "\t<key>NSHighResolutionCapable</key>\n\t<true/>\n"
+           "</dict>\n</plist>\n";
+}
+#endif
+
 } // namespace
+
+std::filesystem::path PackageStager::contentDirectory(const std::filesystem::path& package,
+                                                      const std::string& product) {
+#ifdef __APPLE__
+    return package / (product + ".app") / "Contents" / "Resources";
+#else
+    (void)product;
+    return package;
+#endif
+}
+
+std::filesystem::path PackageStager::launchPath(const std::filesystem::path& package,
+                                                const std::string& product) {
+#ifdef __APPLE__
+    return package / (product + ".app");
+#else
+    return package / (product + kExecutableSuffix);
+#endif
+}
 
 std::string PackageStager::sanitizeProductName(const std::string& productName) {
     std::string result;
@@ -255,7 +327,7 @@ PackageStageResult PackageStager::clean(const BuildRequest& request) const {
     const auto output = request.outputRoot / product;
     result.outputPath = output;
 
-    if (IsLockedForReplacement(output / (product + ".exe")) ||
+    if (IsLockedForReplacement(output / (product + kExecutableSuffix)) ||
         IsLockedForReplacement(output / "lua54.dll") ||
         IsLockedForReplacement(output / "lua.dll")) {
         Problem(result, ProblemSeverity::Error, "PACKAGE_OUTPUT_LOCKED",
@@ -288,9 +360,11 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
     const auto output = request.outputRoot / product;
     const auto staging = request.outputRoot / ("." + product + "_building");
     const auto backup = request.outputRoot / ("." + product + "_previous");
+    const auto content = contentDirectory(staging, product);
+    const auto previousContent = contentDirectory(output, product);
     result.outputPath = output;
 
-    if (IsLockedForReplacement(output / (product + ".exe")) ||
+    if (IsLockedForReplacement(output / (product + kExecutableSuffix)) ||
         IsLockedForReplacement(output / "lua54.dll") ||
         IsLockedForReplacement(output / "lua.dll")) {
         Problem(result, ProblemSeverity::Error, "PACKAGE_OUTPUT_LOCKED",
@@ -323,36 +397,63 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
         result.cancelled = true;
         return fail();
     }
-    if (!CopyTree(request.projectRoot / "assets", staging / "assets", output / "assets",
+    if (!CopyTree(request.projectRoot / "assets", content / "assets", previousContent / "assets",
                   "Copying assets", request, result) ||
-        !CopyTree(request.projectRoot / "scripts", staging / "scripts", output / "scripts",
+        !CopyTree(request.projectRoot / "scripts", content / "scripts", previousContent / "scripts",
                   "Copying scripts", request, result) ||
-        !CopyTree(request.engineRoot / ".engine" / "meshes", staging / ".engine" / "meshes",
-                  output / ".engine" / "meshes", "Copying builtin meshes", request, result) ||
-        !CopyTree(request.engineRoot / ".engine" / "hdris", staging / ".engine" / "hdris",
-                  output / ".engine" / "hdris", "Copying builtin HDRIs", request, result) ||
-        !CopyTree(request.projectRoot / ".engine", staging / ".engine",
-                  output / ".engine", "Copying project runtime content", request, result) ||
-        !CopyTree(runtime.shadersDirectory, staging / "shaders", output / "shaders",
+        !CopyTree(request.engineRoot / ".engine" / "meshes", content / ".engine" / "meshes",
+                  previousContent / ".engine" / "meshes", "Copying builtin meshes", request, result) ||
+        !CopyTree(request.engineRoot / ".engine" / "hdris", content / ".engine" / "hdris",
+                  previousContent / ".engine" / "hdris", "Copying builtin HDRIs", request, result) ||
+        !CopyTree(request.projectRoot / ".engine", content / ".engine",
+                  previousContent / ".engine", "Copying project runtime content", request, result) ||
+        !CopyTree(runtime.shadersDirectory, content / "shaders", previousContent / "shaders",
                   "Copying shaders", request, result)) {
         return fail();
     }
 
     std::string copyError;
-    const auto executable = staging / (product + ".exe");
-    if (!CopyOne(runtime.executable, executable, output / (product + ".exe"),
+#ifdef __APPLE__
+    // The player bundle, with its Frameworks and icon, becomes <product>.app.
+    const auto app = launchPath(staging, product);
+    const auto playerBundle = runtime.executable.parent_path().parent_path().parent_path();
+    if (playerBundle.extension() != ".app" || !std::filesystem::is_regular_file(runtime.executable, ec)) {
+        Problem(result, ProblemSeverity::Error, "PACKAGE_RUNTIME_COPY_FAILED",
+                "Could not copy runtime prerequisite",
+                runtime.executable.generic_string() + " is not inside a player .app bundle");
+        return fail();
+    }
+    if (!CopyTree(playerBundle, app, launchPath(output, product), "Copying player", request,
+                  result)) {
+        return fail();
+    }
+    std::filesystem::rename(app / "Contents" / "MacOS" / runtime.executable.filename(),
+                            app / "Contents" / "MacOS" / product, ec);
+    if (ec) {
+        Problem(result, ProblemSeverity::Error, "PACKAGE_RUNTIME_COPY_FAILED",
+                "Could not name the game executable", ec.message());
+        return fail();
+    }
+    if (!WriteText(app / "Contents" / "Info.plist", MacInfoPlist(request, product), result)) {
+        return fail();
+    }
+#else
+    const auto executable = staging / (product + kExecutableSuffix);
+    if (!CopyOne(runtime.executable, executable, output / (product + kExecutableSuffix),
                  request.incremental && !request.clean, copyError) ||
-        !CopyOne(runtime.luaLibrary, staging / "lua54.dll", output / "lua54.dll",
-                 request.incremental && !request.clean, copyError)) {
+        (kRuntimeShipsLua &&
+         !CopyOne(runtime.luaLibrary, staging / "lua54.dll", output / "lua54.dll",
+                  request.incremental && !request.clean, copyError))) {
         Problem(result, ProblemSeverity::Error, "PACKAGE_RUNTIME_COPY_FAILED",
                 "Could not copy runtime prerequisite", copyError);
         return fail();
     }
+#endif
     const auto layerSource = request.projectRoot / ".hephaestus" / "physics_layers.json";
     if (std::filesystem::exists(layerSource)) {
-        std::filesystem::create_directories(staging / ".hephaestus", ec);
-        if (!CopyOne(layerSource, staging / ".hephaestus" / "physics_layers.json",
-                     output / ".hephaestus" / "physics_layers.json",
+        std::filesystem::create_directories(content / ".hephaestus", ec);
+        if (!CopyOne(layerSource, content / ".hephaestus" / "physics_layers.json",
+                     previousContent / ".hephaestus" / "physics_layers.json",
                      request.incremental && !request.clean, copyError)) {
             Problem(result, ProblemSeverity::Error, "PACKAGE_LAYER_COPY_FAILED",
                     "Could not copy physics_layers.json", copyError);
@@ -380,7 +481,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
         Hephaestus::Plugins::StagedPluginMount mount{plugin.id, {}, {}};
         if (!plugin.sourceRoot.empty()) {
             const auto relative = pluginRelative / "Content";
-            if (!CopyTree(plugin.sourceRoot, staging / relative, output / relative,
+            if (!CopyTree(plugin.sourceRoot, content / relative, previousContent / relative,
                           "Copying plugin content " + plugin.id, request, result)) {
                 return fail();
             }
@@ -398,14 +499,14 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
             const auto folder = plugin.runtimeEntry.parent_path();
             const auto staged = pluginRelative / plugin.runtimeEntry;
             if (folder.empty()) {
-                if (!CopyOne(module, staging / staged, output / staged,
+                if (!CopyOne(module, content / staged, previousContent / staged,
                              request.incremental && !request.clean, copyError)) {
                     Problem(result, ProblemSeverity::Error, "PACKAGE_PLUGIN_RUNTIME_COPY_FAILED",
                             "Could not copy plugin runtime module", copyError);
                     return fail();
                 }
-            } else if (!CopyTree(plugin.pluginRoot / folder, staging / pluginRelative / folder,
-                                 output / pluginRelative / folder,
+            } else if (!CopyTree(plugin.pluginRoot / folder, content / pluginRelative / folder,
+                                 previousContent / pluginRelative / folder,
                                  "Copying plugin runtime " + plugin.id, request, result)) {
                 return fail();
             }
@@ -415,7 +516,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
     }
     {
         std::string mountsError;
-        if (!Hephaestus::Plugins::WriteStagedPluginMounts(staging, stagedMounts, mountsError)) {
+        if (!Hephaestus::Plugins::WriteStagedPluginMounts(content, stagedMounts, mountsError)) {
             Problem(result, ProblemSeverity::Error, "PACKAGE_PLUGIN_MOUNTS_FAILED",
                     "Could not write staged plugin content mounts", mountsError);
             return fail();
@@ -440,12 +541,24 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
         request.configuration == BuildConfiguration::Development) {
         ini << "\n[Automation]\nenabled = true\nport = 0\n";
     }
-    if (!WriteText(staging / "game.ini", ini.str(), result) ||
+#ifdef __APPLE__
+    const std::string requirements =
+        "Open " + launchPath({}, product).string() + " to start the game.\n"
+        "Requires macOS on Apple silicon or Intel with Metal support.\n";
+#elif defined(__linux__)
+    const std::string requirements =
+        "Run ./" + product + " to start the game.\n"
+        "Requires Linux, a Vulkan-capable GPU with current drivers, and the system Lua "
+        "shared library.\n";
+#else
+    const std::string requirements =
+        "Run " + product + kExecutableSuffix + " to start the game.\n"
+        "Requires Windows x64, a Vulkan-capable GPU with current drivers, "
+        "and the Microsoft Visual C++ 2015-2022 x64 Redistributable.\n";
+#endif
+    if (!WriteText(content / "game.ini", ini.str(), result) ||
         !WriteText(staging / "README.txt",
-                   request.productName + " " + request.version +
-                   "\n\nRun " + product + ".exe to start the game.\n"
-                   "Requires Windows x64, a Vulkan-capable GPU with current drivers, "
-                   "and the Microsoft Visual C++ 2015-2022 x64 Redistributable.\n"
+                   request.productName + " " + request.version + "\n\n" + requirements +
                    "The Hephaestus Editor, engine source, CMake, and Vulkan SDK are "
                    "not required to run this package.\n", result)) {
         return fail();
@@ -465,6 +578,15 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
                 request.productName + " -> " + product);
     }
 
+#ifdef __APPLE__
+    // Renaming the executable and rewriting Info.plist invalidate the player's signature.
+    if (RunQuietly({"codesign", "--force", "--sign", "-", launchPath(staging, product).string()}) != 0) {
+        Problem(result, ProblemSeverity::Warning, "PACKAGE_SIGN_FAILED",
+                "Could not ad-hoc sign the game's app bundle",
+                "Run codesign --force --sign - on " + launchPath(output, product).string());
+    }
+#endif
+
     BuildManifestData manifest;
     manifest.productName = request.productName;
     manifest.version = request.version;
@@ -473,7 +595,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
     manifest.configuration = ToString(request.configuration);
     manifest.timestampUtc = UtcTimestamp();
     manifest.startupScene = startup;
-    manifest.executable = product + ".exe";
+    manifest.executable = launchPath({}, product).generic_string();
     manifest.files = Inventory(staging);
     std::string manifestError;
     if (!BuildManifest::writeJson(staging / "build_manifest.json", manifest, &manifestError) ||
@@ -545,7 +667,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
                 "ZIP creation is currently supported only on Windows");
 #endif
     }
-    result.executablePath = output / (product + ".exe");
+    result.executablePath = launchPath(output, product);
     result.success = true;
     return result;
 }

@@ -6,6 +6,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "AddActorsPanel.h"
+#include "ToolsCommon/PathUtils.h"
 #include "EditorMainWindow.h"
 
 #include <QVBoxLayout>
@@ -210,7 +211,7 @@ void AddActorsPanel::buildCategories()
         // Fallback: if no project is open yet, scan next to the executable
         // so the panel isn't completely empty before a project is loaded.
         if (meshDir.empty()) {
-            fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
+            fs::path exeDir = fs::path(Hephaestus::Tools::PathUtils::ExecutableDir().toStdWString());
             meshDir = exeDir / "assets" / "meshes";
         }
 

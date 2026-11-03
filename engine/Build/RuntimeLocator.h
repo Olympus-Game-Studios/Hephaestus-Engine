@@ -9,13 +9,38 @@
 
 namespace Hephaestus::Build {
 
+// The generic player, relative to the folder that holds the editor's tools and shaders.
+#ifdef __APPLE__
+inline constexpr const char* kPlayerExecutable = "HephaestusGame.app/Contents/MacOS/HephaestusGame";
+#elif defined(_WIN32)
+inline constexpr const char* kPlayerExecutable = "HephaestusGame.exe";
+#else
+inline constexpr const char* kPlayerExecutable = "HephaestusGame";
+#endif
+
+#ifdef _WIN32
+inline constexpr const char* kExecutableSuffix = ".exe";
+inline constexpr bool kRuntimeShipsLua = true;
+#else
+// The player links the platform's shared Lua library rather than shipping one beside it.
+inline constexpr const char* kExecutableSuffix = "";
+inline constexpr bool kRuntimeShipsLua = false;
+#endif
+
+#ifdef __APPLE__
+// Runs a program from PATH with its arguments passed directly, not through a shell, and
+// its output discarded. Returns its exit status, or -1 if it could not run.
+int RunQuietly(const std::vector<std::string>& arguments);
+#endif
+
 struct RuntimeArtifacts {
     std::filesystem::path executable;
     std::filesystem::path shadersDirectory;
     std::filesystem::path luaLibrary;
 
     bool complete() const {
-        return !executable.empty() && !shadersDirectory.empty() && !luaLibrary.empty();
+        return !executable.empty() && !shadersDirectory.empty() &&
+               (!kRuntimeShipsLua || !luaLibrary.empty());
     }
 };
 

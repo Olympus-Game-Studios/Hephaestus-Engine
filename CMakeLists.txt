@@ -214,6 +214,8 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build Jolt as static library" FORCE)
 set(JOLT_SANITIZE_UNDEFINED_BEHAVIOR OFF CACHE BOOL "" FORCE)
 set(JOLT_CROSS_PLATFORM_DETERMINISTIC ON CACHE BOOL "Enable deterministic behavior" FORCE)
 set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "Disable Jolt warnings-as-errors in superproject builds" FORCE)
+# The engine subclasses Jolt types (CharacterVirtual) with RTTI on; clang needs Jolt's typeinfo to link.
+set(CPP_RTTI_ENABLED ON CACHE BOOL "Enable C++ RTTI in Jolt" FORCE)
 # Disable static MSVC runtime to avoid linker conflicts
 set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "Use dynamic MSVC runtime" FORCE)
 add_subdirectory(extern/JoltPhysics/Build)
@@ -523,17 +525,6 @@ if (WIN32)
     add_dependencies(HephaestusEngine GenerateAppIcon)
     target_sources(HephaestusEngine PRIVATE ${APP_ICON_RC})
     set_source_files_properties(${APP_ICON_RC} PROPERTIES GENERATED TRUE)
-elseif(APPLE)
-    # macOS App Bundle setup — version/metadata sourced from CMake variables
-    set_target_properties(HephaestusEngine PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "${HEPHAESTUS_APP_NAME}"
-        MACOSX_BUNDLE_GUI_IDENTIFIER "${HEPHAESTUS_DOMAIN}"
-        MACOSX_BUNDLE_INFO_STRING "${HEPHAESTUS_APP_DESCRIPTION}"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "${HEPHAESTUS_VERSION}"
-        MACOSX_BUNDLE_BUNDLE_VERSION "${HEPHAESTUS_VERSION}"
-        MACOSX_BUNDLE_COPYRIGHT "${HEPHAESTUS_COPYRIGHT}"
-    )
 endif()
 
 target_link_libraries(HephaestusEngine PRIVATE HephaestusEditorCore HephaestusBuildCore HephaestusAutomationCore)
@@ -1065,34 +1056,40 @@ function(hephaestus_add_shared_assets_copy target_name)
     if(NOT TARGET ${target_name})
         return()
     endif()
+    # macOS .app bundles read these from the folder holding the bundle (see AppPaths.h).
+    if(APPLE)
+        set(asset_dir "${CMAKE_BINARY_DIR}/$<CONFIG>")
+    else()
+        set(asset_dir "$<TARGET_FILE_DIR:${target_name}>")
+    endif()
 
     if(HEPHAESTUS_USE_SHARED_ASSETS)
         add_custom_command(TARGET ${target_name} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-                "$<TARGET_FILE_DIR:${target_name}>/assets"
+                "${asset_dir}/assets"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/editor"
-                "$<TARGET_FILE_DIR:${target_name}>/editor"
+                "${asset_dir}/editor"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts"
-                "$<TARGET_FILE_DIR:${target_name}>/scripts"
+                "${asset_dir}/scripts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/.engine/meshes"
-                "$<TARGET_FILE_DIR:${target_name}>/.engine/meshes"
+                "${asset_dir}/.engine/meshes"
             COMMENT "Copying shared runtime/editor assets for ${target_name}"
         )
     else()
         add_custom_command(TARGET ${target_name} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-                "$<TARGET_FILE_DIR:${target_name}>/assets"
+                "${asset_dir}/assets"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts"
-                "$<TARGET_FILE_DIR:${target_name}>/scripts"
+                "${asset_dir}/scripts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/.engine/meshes"
-                "$<TARGET_FILE_DIR:${target_name}>/.engine/meshes"
+                "${asset_dir}/.engine/meshes"
             COMMENT "Copying runtime assets for ${target_name}"
         )
     endif()
@@ -1101,6 +1098,83 @@ endfunction()
 hephaestus_add_shared_assets_copy(HephaestusEngine)
 hephaestus_add_shared_assets_copy(HephaestusGame)
 hephaestus_add_shared_assets_copy(HephaestusLauncher)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# macOS .app bundles (Editor/Game/Launcher)
+# ─────────────────────────────────────────────────────────────────────────────
+if(APPLE)
+    # Compile the Icon Composer icon to Assets.car (Liquid Glass) plus a fallback .icns.
+    set(HEPHAESTUS_MAC_ICON_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/editor/Icons/logo/MacOS-Icon.icon")
+    set(HEPHAESTUS_MAC_ICON_DIR "${CMAKE_BINARY_DIR}/MacIcon")
+    set(HEPHAESTUS_MAC_ICON_FILES
+        "${HEPHAESTUS_MAC_ICON_DIR}/Assets.car"
+        "${HEPHAESTUS_MAC_ICON_DIR}/MacOS-Icon.icns")
+    file(GLOB HEPHAESTUS_MAC_ICON_INPUTS "${HEPHAESTUS_MAC_ICON_SOURCE}/*" "${HEPHAESTUS_MAC_ICON_SOURCE}/Assets/*")
+    add_custom_command(
+        OUTPUT ${HEPHAESTUS_MAC_ICON_FILES}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${HEPHAESTUS_MAC_ICON_DIR}"
+        COMMAND xcrun actool "${HEPHAESTUS_MAC_ICON_SOURCE}" --compile "${HEPHAESTUS_MAC_ICON_DIR}"
+                --platform macosx --minimum-deployment-target ${CMAKE_OSX_DEPLOYMENT_TARGET}
+                --app-icon MacOS-Icon
+                --output-partial-info-plist "${HEPHAESTUS_MAC_ICON_DIR}/partial.plist"
+        DEPENDS ${HEPHAESTUS_MAC_ICON_INPUTS}
+        COMMENT "Compiling macOS app icon"
+        VERBATIM
+    )
+    set_source_files_properties(${HEPHAESTUS_MAC_ICON_FILES} PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources GENERATED TRUE)
+    # One owner for the actool rule, so bundles that share the icon never run it in parallel.
+    add_custom_target(HephaestusMacIcon DEPENDS ${HEPHAESTUS_MAC_ICON_FILES})
+endif()
+
+function(hephaestus_mac_bundle target_name bundle_name bundle_id)
+    if(NOT APPLE OR NOT TARGET ${target_name})
+        return()
+    endif()
+    target_sources(${target_name} PRIVATE ${HEPHAESTUS_MAC_ICON_FILES})
+    add_dependencies(${target_name} HephaestusMacIcon)
+    set_target_properties(${target_name} PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/MacBundleInfo.plist.in"
+        MACOSX_BUNDLE_ICON_FILE "MacOS-Icon"
+        MACOSX_BUNDLE_BUNDLE_NAME "${bundle_name}"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "${bundle_id}"
+        MACOSX_BUNDLE_INFO_STRING "${HEPHAESTUS_APP_DESCRIPTION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${HEPHAESTUS_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${HEPHAESTUS_VERSION}"
+        MACOSX_BUNDLE_COPYRIGHT "${HEPHAESTUS_COPYRIGHT}"
+    )
+endfunction()
+
+hephaestus_mac_bundle(HephaestusEngine "${HEPHAESTUS_APP_NAME}" "${HEPHAESTUS_DOMAIN}")
+hephaestus_mac_bundle(HephaestusLauncher "Hephaestus Launcher" "${HEPHAESTUS_DOMAIN}.launcher")
+hephaestus_mac_bundle(HephaestusGame "HephaestusGame" "${HEPHAESTUS_DOMAIN}.game")
+
+if(APPLE AND TARGET HephaestusGame)
+    # The packager copies HephaestusGame.app into each game, so it carries its own libraries.
+    find_file(HEPHAESTUS_MOLTENVK_DYLIB libMoltenVK.dylib HINTS "$ENV{VULKAN_SDK}/lib" /usr/local/lib)
+    find_file(HEPHAESTUS_MOLTENVK_ICD MoltenVK_icd.json
+        HINTS "$ENV{VULKAN_SDK}/share/vulkan/icd.d" /usr/local/share/vulkan/icd.d)
+    if(HEPHAESTUS_MOLTENVK_DYLIB AND HEPHAESTUS_MOLTENVK_ICD)
+        set_target_properties(HephaestusGame PROPERTIES
+            BUILD_WITH_INSTALL_RPATH ON
+            INSTALL_RPATH "@executable_path/../Frameworks"
+        )
+        add_custom_command(TARGET HephaestusGame POST_BUILD
+            COMMAND ${CMAKE_COMMAND}
+                "-DAPP=$<TARGET_BUNDLE_DIR:HephaestusGame>"
+                "-DEXE=$<TARGET_FILE:HephaestusGame>"
+                "-DVULKAN=${Vulkan_LIBRARY}"
+                "-DMOLTENVK=${HEPHAESTUS_MOLTENVK_DYLIB}"
+                "-DMOLTENVK_ICD=${HEPHAESTUS_MOLTENVK_ICD}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BundleMacRuntime.cmake"
+            COMMENT "Bundling Lua, Vulkan and MoltenVK into HephaestusGame.app"
+            VERBATIM
+        )
+    else()
+        message(WARNING "MoltenVK not found; HephaestusGame.app will need the Vulkan SDK installed to run")
+    endif()
+endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Install Targets for Distribution
