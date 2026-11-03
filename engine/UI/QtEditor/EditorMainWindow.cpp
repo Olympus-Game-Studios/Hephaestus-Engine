@@ -3249,6 +3249,11 @@ void EditorMainWindow::setupCentralWidget()
     cameraSpeed->addWidget(m_cameraSpeedCombo);
     tbLayout->addLayout(cameraSpeed);
 
+    for (QWidget* dropdown : std::initializer_list<QWidget*>{ m_viewPerspectiveCombo, m_viewModeBtn, showBtn,
+                                                             m_cameraSpeedCombo, m_snapValueCombo }) {
+        dropdown->setFixedHeight(28);
+    }
+
     auto* maximizeBtn = new QToolButton(m_viewportToolbar);
     maximizeBtn->setIcon(Theme::Icon(QStringLiteral("maximize")));
     maximizeBtn->setToolTip(tr("Maximize viewport (hide panels)"));

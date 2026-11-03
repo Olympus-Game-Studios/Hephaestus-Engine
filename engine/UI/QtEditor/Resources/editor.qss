@@ -586,10 +586,6 @@ QWidget#ViewportToolbar QToolBar > QToolButton {
     max-height: 28px;
     padding: 0 6px;
 }
-QWidget#ViewportToolbar QComboBox {
-    min-height: 26px;
-    max-height: 26px;
-}
 QWidget#ViewportToolbar QToolButton::menu-indicator {
     image: none;
     width: 0;
@@ -1141,10 +1137,6 @@ QWidget#ViewportToolbar QToolButton#SegmentButton {
     min-height: 22px;
     max-height: 22px;
     padding: 0 8px;
-}
-QWidget#ViewportToolbar QToolButton#StripDropdown {
-    min-height: 26px;
-    max-height: 26px;
 }
 
 QWidget#EditorHeader QMenuBar::item {
