@@ -603,3 +603,82 @@ QFrame[overlayGroup="true"] {
 QFrame#ViewportOverlayBottomLeft QLabel {
     color: @text-secondary;
 }
+
+QWidget#EditorHeader {
+    background: @surface-base;
+    border-bottom: 1px solid @border-subtle;
+    min-height: 40px;
+    max-height: 40px;
+}
+QWidget#EditorHeader QMenuBar {
+    border: none;
+    background: transparent;
+}
+QLabel#EditorBrand {
+    font-weight: 600;
+}
+QToolButton#ProjectButton {
+    color: @text-secondary;
+    padding: 4px 22px 4px 8px;
+}
+QToolButton#ProjectButton::menu-indicator {
+    image: url(@icon/chevron-down/text-muted);
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    right: 4px;
+    width: 12px;
+    height: 12px;
+}
+QLineEdit#CommandSearch {
+    background: @surface-panel;
+    border-color: @border-subtle;
+    min-height: 24px;
+}
+QFrame#PlayControls {
+    background: @surface-panel;
+    border: 1px solid @border-subtle;
+    border-radius: 6px;
+}
+QFrame#PlayControls QToolButton {
+    padding: 4px;
+}
+QToolButton[variant="primary"] {
+    background: @accent-action;
+    color: @text-on-action;
+    padding: 4px 10px;
+}
+QToolButton[variant="primary"]:hover {
+    background: @accent-action-hover;
+}
+QToolButton[variant="primary"]:pressed {
+    background: @accent-action-pressed;
+}
+QToolButton[variant="primary"]:disabled {
+    background: @surface-raised;
+    color: @text-disabled;
+}
+QToolButton[variant="primary"][popupMode="1"] {
+    padding-right: 22px;
+}
+QToolButton[variant="primary"]::menu-button {
+    border-left: 1px solid @accent-action-pressed;
+    width: 18px;
+}
+QToolButton[variant="primary"]::menu-arrow {
+    image: url(@icon/chevron-down/text-on-action);
+}
+QToolBar#EditorTopToolbar QComboBox {
+    min-height: 24px;
+}
+QStatusBar#EditorStatusBar {
+    min-height: 26px;
+}
+QStatusBar#EditorStatusBar QLabel[state="saved"] {
+    color: @status-success;
+}
+QStatusBar#EditorStatusBar QLabel[state="dirty"] {
+    color: @status-warning;
+}
+QStatusBar#EditorStatusBar QLabel[role="muted"] {
+    color: @text-muted;
+}

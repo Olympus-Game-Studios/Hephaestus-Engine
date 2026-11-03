@@ -564,6 +564,8 @@ if(HEPHAESTUS_USE_QT)
         target_sources(HephaestusEngine PRIVATE
             engine/UI/QtEditor/EditorQtApp.cpp
             engine/UI/QtEditor/EditorQtApp.h
+            engine/UI/QtEditor/EditorCommandSearch.cpp
+            engine/UI/QtEditor/EditorCommandSearch.h
             engine/UI/QtEditor/EditorTheme.cpp
             engine/UI/QtEditor/EditorTheme.h
             engine/UI/QtEditor/Resources/EditorResources.qrc
@@ -2077,10 +2079,13 @@ if(HEPHAESTUS_BUILD_QT_TESTS AND HEPHAESTUS_USE_QT AND Qt6_FOUND)
             engine/Tests/EditorQtSmokeTests.cpp
             engine/UI/QtEditor/PropertyEditors.cpp
             engine/UI/QtEditor/PropertyEditors.h
+            engine/UI/QtEditor/EditorCommandSearch.cpp
+            engine/UI/QtEditor/EditorTheme.cpp
+            engine/UI/QtEditor/Resources/EditorResources.qrc
         )
-        set_target_properties(EditorQtSmokeTests PROPERTIES AUTOMOC ON)
+        set_target_properties(EditorQtSmokeTests PROPERTIES AUTOMOC ON AUTORCC ON)
         target_compile_definitions(EditorQtSmokeTests PRIVATE HEPHAESTUS_EDITOR_QT_UI=1)
-        target_link_libraries(EditorQtSmokeTests PRIVATE Qt6::Test Qt6::Widgets HephaestusEditorCore)
+        target_link_libraries(EditorQtSmokeTests PRIVATE Qt6::Test Qt6::Widgets Qt6::Svg HephaestusEditorCore)
         target_include_directories(EditorQtSmokeTests PRIVATE engine)
         add_test(NAME EditorQtSmoke COMMAND EditorQtSmokeTests)
     else()

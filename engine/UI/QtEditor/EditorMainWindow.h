@@ -189,6 +189,7 @@ private:
     void restoreOutlinerTreeSelection();
     QTreeWidgetItem* findOutlinerItemForEntity(entt::entity entity);
     void onOutlinerContextMenu(const QPoint& pos);
+    void createEmptyEntity();
     void createFolderInOutliner(entt::entity parentEntity);
     void deleteEntityFromOutliner(entt::entity entity);
     void deleteSelectedEntities();
@@ -208,7 +209,9 @@ private:
     void pasteInspectorComponentValues(const std::string& type);
     void resetInspectorComponent(const std::string& type);
     void removeInspectorComponent(const std::string& type);
-    void bakeProbeVolumes();
+    void bakeAllProbeVolumes();
+    void bakeSelectedProbeVolumes();
+    void bakeProbeVolumes(const std::vector<entt::entity>& volumes);
     ComponentInspector* focusedComponentInspector() const;
     void handleDragDrop(const QString& assetPath, const QString& targetField);
     void handleViewportSpawnDrop(const QByteArray& spawnPayload, const QPoint& dropPos);
@@ -312,10 +315,14 @@ private:
     QDockWidget* m_addActorsDock = nullptr;
 
     // Top toolbar
+    QMenuBar* m_menuBar = nullptr;
+    QToolButton* m_projectButton = nullptr;
     QToolBar* m_topToolbar = nullptr;
     QAction* m_playAction = nullptr;
     QAction* m_pauseAction = nullptr;
     QAction* m_stopAction = nullptr;
+    QAction* m_stepAction = nullptr;
+    QAction* m_selectAction = nullptr;
     QAction* m_translateAction = nullptr;
     QAction* m_rotateAction = nullptr;
     QAction* m_scaleAction = nullptr;
@@ -433,7 +440,9 @@ private:
     QLabel* m_statusFps = nullptr;
     QLabel* m_statusDrawCalls = nullptr;
     QLabel* m_statusRam = nullptr;
-    QLabel* m_statusVersion = nullptr;
+    QLabel* m_statusSaved = nullptr;
+    QLabel* m_statusScene = nullptr;
+    QLabel* m_statusSelection = nullptr;
 
     // Prevent re-entrant updates
     bool m_updatingDetails = false;

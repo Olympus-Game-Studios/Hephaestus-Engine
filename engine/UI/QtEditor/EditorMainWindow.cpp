@@ -38,6 +38,7 @@
 #include "BuildSettingsDialog.h"
 #include "RuntimeUIOverlayWidget.h"
 #include "EditorNotificationService.h"
+#include "EditorCommandSearch.h"
 #include "EditorTheme.h"
 #include "EditorPluginHost.h"
 #include "PluginManagerDialog.h"
@@ -1263,7 +1264,9 @@ void EditorMainWindow::keyReleaseEvent(QKeyEvent* event)
 
 void EditorMainWindow::setupMenuBar()
 {
-    QMenuBar* menuBar = this->menuBar();
+    m_menuBar = new QMenuBar(this);
+    m_menuBar->setObjectName(QStringLiteral("EditorMenuBar"));
+    QMenuBar* menuBar = m_menuBar;
 
     // ─────────────────────────────────────────────────────────────────────────
     // File Menu
@@ -1435,72 +1438,17 @@ void EditorMainWindow::setupMenuBar()
 
 void EditorMainWindow::setupTopToolbar()
 {
-    m_topToolbar = new QToolBar(tr("Editor Toolbar"), this);
-    m_topToolbar->setObjectName("EditorTopToolbar");
-    m_topToolbar->setMovable(false);
-    m_topToolbar->setFloatable(false);
-    m_topToolbar->setIconSize(QSize(16, 16));
-    addToolBar(Qt::TopToolBarArea, m_topToolbar);
+    m_playAction = new QAction(Theme::Icon(QStringLiteral("play"), Theme::IconTone::Success), tr("Play"), this);
+    m_playAction->setCheckable(true);
+    m_pauseAction = new QAction(Theme::Icon(QStringLiteral("pause")), tr("Pause"), this);
+    m_pauseAction->setCheckable(true);
+    m_stopAction = new QAction(Theme::Icon(QStringLiteral("stop"), Theme::IconTone::Error), tr("Stop"), this);
+    m_stepAction = new QAction(Theme::Icon(QStringLiteral("step")), tr("Step One Frame"), this);
+    m_pauseAction->setEnabled(false);
+    m_stopAction->setEnabled(false);
+    m_stepAction->setEnabled(false);
 
-    auto makeSection = [this](const QString& name) {
-        QWidget* section = new QWidget(this);
-        section->setObjectName(name);
-        auto* layout = new QHBoxLayout(section);
-        layout->setContentsMargins(8, 4, 8, 4);
-        layout->setSpacing(6);
-        return std::pair<QWidget*, QHBoxLayout*>(section, layout);
-    };
-
-    // Left section: file/playback controls
     {
-        auto [leftSection, leftLayout] = makeSection("TopToolbarLeft");
-        const QSize commandIconSize(18, 18);
-
-        auto* saveBtn = new QToolButton(leftSection);
-        saveBtn->setText(tr("Save"));
-        saveBtn->setIcon(Theme::Icon(QStringLiteral("save")));
-        saveBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        saveBtn->setIconSize(commandIconSize);
-        saveBtn->setFixedHeight(34);
-        connect(saveBtn, &QToolButton::clicked, this, &EditorMainWindow::onSaveLevel);
-        leftLayout->addWidget(saveBtn);
-
-        auto* undoBtn = new QToolButton(leftSection);
-        undoBtn->setText(tr("Undo"));
-        undoBtn->setIcon(Theme::Icon(QStringLiteral("undo")));
-        undoBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        undoBtn->setIconSize(commandIconSize);
-        undoBtn->setFixedHeight(34);
-        connect(undoBtn, &QToolButton::clicked, this, &EditorMainWindow::onUndo);
-        leftLayout->addWidget(undoBtn);
-
-        auto* redoBtn = new QToolButton(leftSection);
-        redoBtn->setText(tr("Redo"));
-        redoBtn->setIcon(Theme::Icon(QStringLiteral("redo")));
-        redoBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        redoBtn->setIconSize(commandIconSize);
-        redoBtn->setFixedHeight(34);
-        connect(redoBtn, &QToolButton::clicked, this, &EditorMainWindow::onRedo);
-        leftLayout->addWidget(redoBtn);
-
-        const QSize mediaIconSize(20, 20);
-        m_playAction = new QAction(
-            Theme::Icon(QStringLiteral("play"), Theme::IconTone::Primary),
-            tr("Play"),
-            this);
-        m_playAction->setCheckable(true);
-        m_pauseAction = new QAction(
-            Theme::Icon(QStringLiteral("pause"), Theme::IconTone::Primary),
-            tr("Pause"),
-            this);
-        m_pauseAction->setCheckable(true);
-        m_stopAction = new QAction(
-            Theme::Icon(QStringLiteral("stop"), Theme::IconTone::Primary),
-            tr("Stop"),
-            this);
-        m_pauseAction->setEnabled(false);
-        m_stopAction->setEnabled(false);
-
         connect(m_playAction, &QAction::triggered, this, [this](bool checked) {
             if (!m_engine) return;
 
@@ -1553,94 +1501,168 @@ void EditorMainWindow::setupTopToolbar()
             statusBar()->showMessage(tr("Play Mode stopped"), 2000);
         });
 
-        auto* playBtn = new QToolButton(leftSection);
-        playBtn->setObjectName("PlaybackButton");
-        playBtn->setDefaultAction(m_playAction);
-        playBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        playBtn->setIconSize(mediaIconSize);
-        playBtn->setFixedSize(44, 34);
-        leftLayout->addWidget(playBtn);
-        auto* pauseBtn = new QToolButton(leftSection);
-        pauseBtn->setObjectName("PlaybackButton");
-        pauseBtn->setDefaultAction(m_pauseAction);
-        pauseBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        pauseBtn->setIconSize(mediaIconSize);
-        pauseBtn->setFixedSize(44, 34);
-        leftLayout->addWidget(pauseBtn);
-        auto* stopBtn = new QToolButton(leftSection);
-        stopBtn->setObjectName("PlaybackButton");
-        stopBtn->setDefaultAction(m_stopAction);
-        stopBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        stopBtn->setIconSize(mediaIconSize);
-        stopBtn->setFixedSize(44, 34);
-        leftLayout->addWidget(stopBtn);
+    }
+    connect(m_stopAction, &QAction::changed, this, [this]() {
+        m_stepAction->setEnabled(m_stopAction->isEnabled());
+    });
+    connect(m_stepAction, &QAction::triggered, this, [this]() {
+        if (!m_engine || !m_engine->IsPlaying()) return;
+        if (!m_engine->IsPaused()) {
+            m_pauseAction->trigger();
+        }
+        std::string error;
+        if (!m_engine->StepFrames(1, 1.0f / 60.0f, error)) {
+            statusBar()->showMessage(QString::fromStdString(error), 3000);
+        }
+    });
 
-        m_topToolbar->addWidget(leftSection);
+    // Header: brand, project, menus, command search, history and play controls.
+    {
+        auto* header = new QWidget(this);
+        header->setObjectName(QStringLiteral("EditorHeader"));
+        header->setAttribute(Qt::WA_StyledBackground, true);
+        auto* layout = new QHBoxLayout(header);
+        layout->setContentsMargins(12, 0, 8, 0);
+        layout->setSpacing(8);
+
+        auto* logo = new QLabel(header);
+        logo->setPixmap(Theme::Icon(QStringLiteral("logo"), Theme::IconTone::Brand).pixmap(QSize(16, 16), devicePixelRatioF()));
+        layout->addWidget(logo);
+        auto* brand = new QLabel(tr("Hephaestus"), header);
+        brand->setObjectName(QStringLiteral("EditorBrand"));
+        layout->addWidget(brand);
+
+        m_projectButton = new QToolButton(header);
+        m_projectButton->setObjectName(QStringLiteral("ProjectButton"));
+        m_projectButton->setPopupMode(QToolButton::InstantPopup);
+        m_projectButton->setFocusPolicy(Qt::NoFocus);
+        m_projectButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        m_projectButton->setText(tr("No project"));
+        auto* projectMenu = new QMenu(m_projectButton);
+        projectMenu->addAction(tr("Open Project..."), this, &EditorMainWindow::onOpenProject);
+        projectMenu->addAction(tr("New Project..."), this, &EditorMainWindow::onNewProject);
+        projectMenu->addMenu(m_recentProjectsMenu);
+        projectMenu->addSeparator();
+        projectMenu->addAction(tr("Close Project"), this, &EditorMainWindow::onCloseProject);
+        m_projectButton->setMenu(projectMenu);
+        layout->addWidget(m_projectButton);
+
+        layout->addWidget(m_menuBar);
+        layout->addStretch(1);
+
+        auto* search = new EditorCommandSearch(m_menuBar, header);
+        search->setFixedWidth(380);
+        layout->addWidget(search);
+        auto* searchShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_K), this);
+        connect(searchShortcut, &QShortcut::activated, search, [search]() { search->setFocus(Qt::ShortcutFocusReason); });
+        search->setToolTip(tr("Search or run a command (%1)").arg(searchShortcut->key().toString(QKeySequence::NativeText)));
+        layout->addStretch(1);
+
+        auto* undoBtn = new QToolButton(header);
+        undoBtn->setIcon(Theme::Icon(QStringLiteral("undo")));
+        undoBtn->setToolTip(tr("Undo"));
+        connect(undoBtn, &QToolButton::clicked, this, &EditorMainWindow::onUndo);
+        layout->addWidget(undoBtn);
+        auto* redoBtn = new QToolButton(header);
+        redoBtn->setIcon(Theme::Icon(QStringLiteral("redo")));
+        redoBtn->setToolTip(tr("Redo"));
+        connect(redoBtn, &QToolButton::clicked, this, &EditorMainWindow::onRedo);
+        layout->addWidget(redoBtn);
+
+        auto* playGroup = new QFrame(header);
+        playGroup->setObjectName(QStringLiteral("PlayControls"));
+        auto* playLayout = new QHBoxLayout(playGroup);
+        playLayout->setContentsMargins(2, 2, 2, 2);
+        playLayout->setSpacing(0);
+        for (QAction* action : { m_playAction, m_pauseAction, m_stopAction, m_stepAction }) {
+            auto* button = new QToolButton(playGroup);
+            button->setDefaultAction(action);
+            button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+            playLayout->addWidget(button);
+        }
+        layout->addWidget(playGroup);
+
+        setMenuWidget(header);
     }
 
+    // Tool row: transform tools, gizmo space and snapping, creation, lighting and build.
+    m_topToolbar = new QToolBar(tr("Tools"), this);
+    m_topToolbar->setObjectName("EditorTopToolbar");
+    m_topToolbar->setMovable(false);
+    m_topToolbar->setFloatable(false);
+    m_topToolbar->setIconSize(QSize(16, 16));
+    m_topToolbar->toggleViewAction()->setEnabled(false);
+    addToolBar(Qt::TopToolBarArea, m_topToolbar);
+
+    QActionGroup* transformGroup = new QActionGroup(this);
+    transformGroup->setExclusive(true);
+    m_selectAction = new QAction(Theme::Icon(QStringLiteral("select")), tr("Select (Q)"), this);
+    m_translateAction = new QAction(Theme::Icon(QStringLiteral("move")), tr("Move (W)"), this);
+    m_rotateAction = new QAction(Theme::Icon(QStringLiteral("rotate")), tr("Rotate (E)"), this);
+    m_scaleAction = new QAction(Theme::Icon(QStringLiteral("scale")), tr("Scale (R)"), this);
+    for (QAction* action : { m_selectAction, m_translateAction, m_rotateAction, m_scaleAction }) {
+        action->setCheckable(true);
+        transformGroup->addAction(action);
+        m_topToolbar->addAction(action);
+    }
+    m_translateAction->setChecked(true);
     m_topToolbar->addSeparator();
 
-    // Center section: transform and camera controls
-    {
-        auto [centerSection, centerLayout] = makeSection("TopToolbarCenter");
-
-        QActionGroup* transformGroup = new QActionGroup(this);
-        transformGroup->setExclusive(true);
-
-        m_translateAction = new QAction(tr("Translate"), this);
-        m_translateAction->setCheckable(true);
-        m_rotateAction = new QAction(tr("Rotate"), this);
-        m_rotateAction->setCheckable(true);
-        m_scaleAction = new QAction(tr("Scale"), this);
-        m_scaleAction->setCheckable(true);
-        transformGroup->addAction(m_translateAction);
-        transformGroup->addAction(m_rotateAction);
-        transformGroup->addAction(m_scaleAction);
-        m_translateAction->setChecked(true);
-
-        auto* trBtn = new QToolButton(centerSection);
-        trBtn->setDefaultAction(m_translateAction);
-        centerLayout->addWidget(trBtn);
-        auto* rotBtn = new QToolButton(centerSection);
-        rotBtn->setDefaultAction(m_rotateAction);
-        centerLayout->addWidget(rotBtn);
-        auto* scBtn = new QToolButton(centerSection);
-        scBtn->setDefaultAction(m_scaleAction);
-        centerLayout->addWidget(scBtn);
-
-        m_worldLocalBtn = new QToolButton(centerSection);
-        m_worldLocalBtn->setText(tr("World"));
-        m_worldLocalBtn->setIcon(Theme::Icon(QStringLiteral("globe")));
-        m_worldLocalBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        m_worldLocalBtn->setCheckable(true);
-        connect(m_worldLocalBtn, &QToolButton::toggled, this, [this](bool checked) {
-            m_worldLocalBtn->setText(checked ? tr("Local") : tr("World"));
-            if (m_engine) {
-                if (auto* ctx = m_engine->GetEditorContext()) {
-                    ctx->SetGizmoSpace(checked ? GizmoSpace::Local : GizmoSpace::World);
-                }
+    m_worldLocalBtn = new QToolButton(m_topToolbar);
+    m_worldLocalBtn->setText(tr("World"));
+    m_worldLocalBtn->setIcon(Theme::Icon(QStringLiteral("globe")));
+    m_worldLocalBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_worldLocalBtn->setToolTip(tr("Gizmo space (X)"));
+    m_worldLocalBtn->setCheckable(true);
+    connect(m_worldLocalBtn, &QToolButton::toggled, this, [this](bool checked) {
+        m_worldLocalBtn->setText(checked ? tr("Local") : tr("World"));
+        m_worldLocalBtn->setIcon(Theme::Icon(checked ? QStringLiteral("cube") : QStringLiteral("globe")));
+        if (m_engine) {
+            if (auto* ctx = m_engine->GetEditorContext()) {
+                ctx->SetGizmoSpace(checked ? GizmoSpace::Local : GizmoSpace::World);
             }
-        });
-        centerLayout->addWidget(m_worldLocalBtn);
+        }
+    });
+    m_topToolbar->addWidget(m_worldLocalBtn);
 
-        m_snapToggleBtn = new QToolButton(centerSection);
-        m_snapToggleBtn->setText(tr("Snap"));
-        m_snapToggleBtn->setIcon(Theme::Icon(QStringLiteral("snap")));
-        m_snapToggleBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        m_snapToggleBtn->setCheckable(true);
-        centerLayout->addWidget(m_snapToggleBtn);
+    m_snapToggleBtn = new QToolButton(m_topToolbar);
+    m_snapToggleBtn->setIcon(Theme::Icon(QStringLiteral("snap")));
+    m_snapToggleBtn->setToolTip(tr("Snap to increments"));
+    m_snapToggleBtn->setCheckable(true);
+    m_topToolbar->addWidget(m_snapToggleBtn);
 
-        m_snapValueCombo = new QComboBox(centerSection);
-        m_snapValueCombo->addItems({ tr("0.01"), tr("0.1"), tr("0.25"), tr("0.5"),
-                                     tr("1"), tr("5"), tr("10"), tr("50"), tr("100") });
-        m_snapValueCombo->setCurrentText(tr("1"));
-        centerLayout->addWidget(m_snapValueCombo);
+    m_snapValueCombo = new QComboBox(m_topToolbar);
+    m_snapValueCombo->setToolTip(tr("Snap increment"));
+    m_snapValueCombo->addItems({ tr("0.01"), tr("0.1"), tr("0.25"), tr("0.5"),
+                                 tr("1"), tr("5"), tr("10"), tr("50"), tr("100") });
+    m_snapValueCombo->setCurrentText(tr("1"));
+    m_topToolbar->addWidget(m_snapValueCombo);
 
-        m_cameraSpeedCombo = new QComboBox(centerSection);
-        m_cameraSpeedCombo->addItems({ tr("Cam x0.5"), tr("Cam x1"), tr("Cam x2"), tr("Cam x4") });
-        m_cameraSpeedCombo->setCurrentIndex(1);
-        centerLayout->addWidget(m_cameraSpeedCombo);
+    m_cameraSpeedCombo = new QComboBox(m_topToolbar);
+    m_cameraSpeedCombo->setToolTip(tr("Camera speed"));
+    m_cameraSpeedCombo->addItems({ QStringLiteral("0.5\u00D7"), QStringLiteral("1.0\u00D7"),
+                                   QStringLiteral("2.0\u00D7"), QStringLiteral("4.0\u00D7") });
+    m_cameraSpeedCombo->setCurrentIndex(1);
+    m_topToolbar->addWidget(m_cameraSpeedCombo);
+    m_topToolbar->addSeparator();
 
+    auto* createBtn = new QToolButton(m_topToolbar);
+    createBtn->setText(tr("Create"));
+    createBtn->setIcon(Theme::Icon(QStringLiteral("plus")));
+    createBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    createBtn->setPopupMode(QToolButton::InstantPopup);
+    auto* createMenu = new QMenu(createBtn);
+    createMenu->addAction(Theme::Icon(QStringLiteral("cube")), tr("Empty Entity"), this, &EditorMainWindow::createEmptyEntity);
+    createMenu->addAction(Theme::Icon(QStringLiteral("folder")), tr("Folder"), this, [this]() { createFolderInOutliner(entt::null); });
+    createMenu->addSeparator();
+    createMenu->addAction(tr("Lights, Meshes and Prefabs..."), this, [this]() {
+        m_addActorsDock->show();
+        m_addActorsDock->raise();
+    });
+    createBtn->setMenu(createMenu);
+    m_topToolbar->addWidget(createBtn);
+
+    {
         auto updateSnapChoices = [this](GizmoMode mode) {
             if (!m_snapValueCombo) return;
             m_snapValueCombo->blockSignals(true);
@@ -1664,6 +1686,11 @@ void EditorMainWindow::setupTopToolbar()
             m_snapValueCombo->blockSignals(false);
         };
 
+        connect(m_selectAction, &QAction::triggered, this, [this]() {
+            if (m_engine) {
+                if (auto* ctx = m_engine->GetEditorContext()) ctx->SetGizmoMode(GizmoMode::None);
+            }
+        });
         connect(m_translateAction, &QAction::triggered, this, [this, updateSnapChoices]() {
             if (m_engine) {
                 if (auto* ctx = m_engine->GetEditorContext()) ctx->SetGizmoMode(GizmoMode::Translate);
@@ -1714,58 +1741,35 @@ void EditorMainWindow::setupTopToolbar()
                 camera->baseMoveSpeed = speeds[idx];
         });
 
-        m_topToolbar->addWidget(centerSection);
     }
 
-    QWidget* spring = new QWidget(this);
+    QWidget* spring = new QWidget(m_topToolbar);
     spring->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_topToolbar->addWidget(spring);
 
-    // Right section: build/settings/project
-    {
-        auto [rightSection, rightLayout] = makeSection("TopToolbarRight");
-
-        m_buildBtn = new QToolButton(rightSection);
-        m_buildBtn->setText(tr("Build"));
-        const QSize buildIconSize(18, 18);
-        m_buildBtn->setIcon(Theme::Icon(QStringLiteral("build"), Theme::IconTone::Primary));
-        m_buildBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        m_buildBtn->setIconSize(buildIconSize);
-        m_buildBtn->setFixedHeight(34);
-        auto* buildMenu = new QMenu(m_buildBtn);
-        QAction* validateAction = buildMenu->addAction(tr("Validate Project"));
-        QAction* packageAction = buildMenu->addAction(tr("Package"));
-        QAction* packageRunAction = buildMenu->addAction(tr("Package && Run"));
-        buildMenu->addSeparator();
-        QAction* runLastAction = buildMenu->addAction(tr("Run Last Package"));
-        QAction* cleanAction = buildMenu->addAction(tr("Clean Package"));
-        m_buildBtn->setMenu(buildMenu);
-        m_buildBtn->setPopupMode(QToolButton::MenuButtonPopup);
-        connect(m_buildBtn, &QToolButton::clicked, this, &EditorMainWindow::onBuildProject);
-        connect(validateAction, &QAction::triggered, this, &EditorMainWindow::onValidateProject);
-        connect(packageAction, &QAction::triggered, this, &EditorMainWindow::onBuildProject);
-        connect(packageRunAction, &QAction::triggered, this, &EditorMainWindow::onPackageAndRun);
-        connect(runLastAction, &QAction::triggered, this, &EditorMainWindow::onRunLastPackage);
-        connect(cleanAction, &QAction::triggered, this, &EditorMainWindow::onCleanPackage);
-        rightLayout->addWidget(m_buildBtn);
-
-        auto* settingsBtn = new QToolButton(rightSection);
-        settingsBtn->setText(tr("Settings"));
-        settingsBtn->setIcon(Theme::Icon(QStringLiteral("settings")));
-        settingsBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        settingsBtn->setToolTip(tr("Open editor and project settings (Ctrl+,)"));
-        connect(settingsBtn, &QToolButton::clicked, this, &EditorMainWindow::onOpenSettings);
-        rightLayout->addWidget(settingsBtn);
-
-        auto* projectBtn = new QToolButton(rightSection);
-        projectBtn->setText(tr("Project Manager"));
-        projectBtn->setIcon(Theme::Icon(QStringLiteral("folder")));
-        projectBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        connect(projectBtn, &QToolButton::clicked, this, &EditorMainWindow::onOpenProject);
-        rightLayout->addWidget(projectBtn);
-
-        m_topToolbar->addWidget(rightSection);
+    QAction* bakeAction = m_topToolbar->addAction(Theme::Icon(QStringLiteral("light")), tr("Bake lighting"));
+    bakeAction->setToolTip(tr("Bake every probe volume in the scene"));
+    connect(bakeAction, &QAction::triggered, this, &EditorMainWindow::bakeAllProbeVolumes);
+    if (auto* bakeButton = qobject_cast<QToolButton*>(m_topToolbar->widgetForAction(bakeAction))) {
+        bakeButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     }
+
+    m_buildBtn = new QToolButton(m_topToolbar);
+    m_buildBtn->setText(tr("Build && Run"));
+    m_buildBtn->setIcon(Theme::Icon(QStringLiteral("build"), Theme::IconTone::OnAction));
+    m_buildBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_buildBtn->setProperty("variant", "primary");
+    auto* buildMenu = new QMenu(m_buildBtn);
+    buildMenu->addAction(tr("Validate Project"), this, &EditorMainWindow::onValidateProject);
+    buildMenu->addAction(tr("Package"), this, &EditorMainWindow::onBuildProject);
+    buildMenu->addAction(tr("Package && Run"), this, &EditorMainWindow::onPackageAndRun);
+    buildMenu->addSeparator();
+    buildMenu->addAction(tr("Run Last Package"), this, &EditorMainWindow::onRunLastPackage);
+    buildMenu->addAction(tr("Clean Package"), this, &EditorMainWindow::onCleanPackage);
+    m_buildBtn->setMenu(buildMenu);
+    m_buildBtn->setPopupMode(QToolButton::MenuButtonPopup);
+    connect(m_buildBtn, &QToolButton::clicked, this, &EditorMainWindow::onPackageAndRun);
+    m_topToolbar->addWidget(m_buildBtn);
 }
 
 void EditorMainWindow::setupDockWidgets()
@@ -1962,22 +1966,7 @@ void EditorMainWindow::setupDockWidgets()
         }
     });
 
-    connect(m_addEntityBtn, &QPushButton::clicked, this, [this]() {
-        if (!m_engine) return;
-        auto* ctx = m_engine->GetEditorContext();
-        if (!ctx || !ctx->HasActiveScene()) return;
-
-        EditorUndoManager::PushSnapshot(ctx, "Create entity");
-        Entity created = ctx->GetActiveScene()->CreateEntity("Entity");
-        ctx->SetSelectionChangedCallback(nullptr);
-        ctx->SelectEntity(static_cast<entt::entity>(created));
-        ctx->SetSelectionChangedCallback([this](entt::entity) {
-            refreshDetailsPanel();
-        });
-        ctx->MarkDirty();
-        rebuildOutliner();
-        refreshDetailsPanel();
-    });
+    connect(m_addEntityBtn, &QPushButton::clicked, this, &EditorMainWindow::createEmptyEntity);
 
     connect(m_addFolderBtn, &QPushButton::clicked, this, [this]() {
         createFolderInOutliner(entt::null);
@@ -2651,8 +2640,8 @@ void EditorMainWindow::setupDockWidgets()
     // ─────────────────────────────────────────────────────────────────────────
     // Add dock visibility toggles to View menu
     // ─────────────────────────────────────────────────────────────────────────
-    QMenu* viewMenu = menuBar()->findChild<QMenu*>();
-    for (QMenu* menu : menuBar()->findChildren<QMenu*>()) {
+    QMenu* viewMenu = m_menuBar->findChild<QMenu*>();
+    for (QMenu* menu : m_menuBar->findChildren<QMenu*>()) {
         if (menu->title() == tr("&View")) {
             viewMenu = menu;
             break;
@@ -3039,17 +3028,20 @@ void EditorMainWindow::setupStatusBar()
     status->setObjectName("EditorStatusBar");
     status->setSizeGripEnabled(false);
 
-    m_statusFps = new QLabel(tr("FPS 0.0"), status);
-    m_statusDrawCalls = new QLabel(tr("Draw 0"), status);
-    m_statusRam = new QLabel(tr("RAM --"), status);
-    m_statusVersion = new QLabel(
-        QStringLiteral("%1 %2").arg(Hephaestus::Tools::VersionInfo::AppName(),
-                                    Hephaestus::Tools::VersionInfo::EngineVersion()), status);
+    m_statusSaved = new QLabel(status);
+    m_statusScene = new QLabel(status);
+    m_statusScene->setProperty("role", "muted");
+    m_statusSelection = new QLabel(status);
+    m_statusFps = new QLabel(status);
+    m_statusDrawCalls = new QLabel(status);
+    m_statusRam = new QLabel(status);
 
+    status->addWidget(m_statusSaved);
+    status->addWidget(m_statusScene);
+    status->addPermanentWidget(m_statusSelection);
     status->addPermanentWidget(m_statusFps);
     status->addPermanentWidget(m_statusDrawCalls);
     status->addPermanentWidget(m_statusRam);
-    status->addPermanentWidget(m_statusVersion);
     status->showMessage(tr("Initializing engine..."));
 }
 
@@ -3204,7 +3196,7 @@ void EditorMainWindow::setupViewportRenderingToggles()
     
     // Find the View menu
     QMenu* viewMenu = nullptr;
-    for (QMenu* menu : menuBar()->findChildren<QMenu*>()) {
+    for (QMenu* menu : m_menuBar->findChildren<QMenu*>()) {
         if (menu->title() == tr("&View")) {
             viewMenu = menu;
             break;
@@ -3340,6 +3332,7 @@ void EditorMainWindow::onFrameRendered(float dt)
     if (m_engine) {
         if (auto* ctx = m_engine->GetEditorContext()) {
             const GizmoMode mode = ctx->GetGizmoMode();
+            if (m_selectAction) m_selectAction->setChecked(mode == GizmoMode::None);
             if (m_translateAction) m_translateAction->setChecked(mode == GizmoMode::Translate);
             if (m_rotateAction) m_rotateAction->setChecked(mode == GizmoMode::Rotate);
             if (m_scaleAction) m_scaleAction->setChecked(mode == GizmoMode::Scale);
@@ -3359,7 +3352,7 @@ void EditorMainWindow::onFrameRendered(float dt)
     if (m_frameCount % 30 == 0) {
         float fps = (dt > 0.0f) ? (1.0f / dt) : 0.0f;
         if (m_statusFps) {
-            m_statusFps->setText(QString("FPS %1").arg(fps, 0, 'f', 1));
+            m_statusFps->setText(QStringLiteral("%1 fps \u00B7 %2 ms").arg(fps, 0, 'f', 0).arg(dt * 1000.0f, 0, 'f', 1));
         }
         if (m_overlayBottomLeft && m_overlayBottomLeft->isVisible()) {
             if (m_overlayFpsLabel) {
@@ -3378,7 +3371,12 @@ void EditorMainWindow::onFrameRendered(float dt)
             ? QString("RAM %1 MB").arg(ramMB, 0, 'f', 0)
             : QStringLiteral("RAM --");
 
-        if (m_statusDrawCalls) m_statusDrawCalls->setText(QString("Draw %1").arg(drawCalls));
+        if (m_statusDrawCalls) m_statusDrawCalls->setText(tr("%1 draws").arg(drawCalls));
+        if (m_statusSelection && m_engine) {
+            const auto* ctx = m_engine->GetEditorContext();
+            const size_t selected = ctx ? ctx->GetSelectedEntities().size() : 0;
+            m_statusSelection->setText(selected ? tr("%n selected", nullptr, static_cast<int>(selected)) : QString());
+        }
         if (m_overlayBottomLeft && m_overlayBottomLeft->isVisible()) {
             if (m_overlayDrawCallsLabel) m_overlayDrawCallsLabel->setText(QString("Draw %1").arg(drawCalls));
             if (m_overlayRamLabel) m_overlayRamLabel->setText(ramUsage);
@@ -3906,6 +3904,24 @@ void EditorMainWindow::onOutlinerContextMenu(const QPoint& pos)
 
     if (m_pluginHost) m_pluginHost->PopulateContextMenu("sceneHierarchy", menu);
     menu.exec(m_outlinerTree->viewport()->mapToGlobal(pos));
+}
+
+void EditorMainWindow::createEmptyEntity()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+
+    EditorUndoManager::PushSnapshot(ctx, "Create entity");
+    Entity created = ctx->GetActiveScene()->CreateEntity("Entity");
+    ctx->SetSelectionChangedCallback(nullptr);
+    ctx->SelectEntity(static_cast<entt::entity>(created));
+    ctx->SetSelectionChangedCallback([this](entt::entity) {
+        refreshDetailsPanel();
+    });
+    ctx->MarkDirty();
+    rebuildOutliner();
+    refreshDetailsPanel();
 }
 
 void EditorMainWindow::createFolderInOutliner(entt::entity parentEntity)
@@ -4937,6 +4953,27 @@ void EditorMainWindow::updateWindowTitle()
     }
     
     setWindowTitle(title);
+
+    if (m_projectButton) {
+        m_projectButton->setText(m_projectContext && m_projectContext->HasProject()
+            ? QString::fromStdString(m_projectContext->GetProjectName())
+            : tr("No project"));
+    }
+    if (m_statusSaved && m_statusScene) {
+        auto* ctx = m_engine ? m_engine->GetEditorContext() : nullptr;
+        const bool hasScene = ctx && ctx->HasActiveScene();
+        const bool dirty = hasScene && ctx->IsDirty();
+        m_statusSaved->setText(dirty ? tr("Unsaved changes") : tr("Saved"));
+        m_statusSaved->setProperty("state", dirty ? "dirty" : "saved");
+        m_statusSaved->style()->unpolish(m_statusSaved);
+        m_statusSaved->style()->polish(m_statusSaved);
+        m_statusSaved->setVisible(hasScene);
+        QString scene = hasScene ? QString::fromStdString(ctx->GetActiveScene()->GetName()) : QString();
+        if (hasScene && m_projectContext && m_projectContext->HasProject()) {
+            scene = QString::fromStdString(m_projectContext->GetProjectName()) + QStringLiteral(" / ") + scene;
+        }
+        m_statusScene->setText(scene);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6441,7 +6478,7 @@ void EditorMainWindow::startBuild(Build::BuildAction requestedAction)
         QMetaObject::invokeMethod(this, [this, result = std::move(result), openOutput,
                                          projectRoot = request.projectRoot,
                                          buildAction = request.action]() mutable {
-            m_buildBtn->setText(tr("Build"));
+            m_buildBtn->setText(tr("Build && Run"));
             m_buildBtn->setEnabled(true);
             m_buildProblems->clear();
             for (const auto& problem : result.problems) {
@@ -6769,7 +6806,7 @@ void EditorMainWindow::rebuildComponentInspectors()
         connect(insp, &ComponentInspector::resetComponentRequested, this,
                 [this](const QString& typeName) { resetInspectorComponent(typeName.toStdString()); });
         if (auto* probeVolume = qobject_cast<ProbeVolumeInspector*>(insp)) {
-            connect(probeVolume, &ProbeVolumeInspector::bakeRequested, this, &EditorMainWindow::bakeProbeVolumes);
+            connect(probeVolume, &ProbeVolumeInspector::bakeRequested, this, &EditorMainWindow::bakeSelectedProbeVolumes);
             if (m_engine && m_engine->GetFrameRenderer()) {
                 probeVolume->SetHardwareRayTracingAvailable(
                     m_engine->GetFrameRenderer()->ProbeHardwareRayTracingAvailable());
@@ -6985,7 +7022,38 @@ void EditorMainWindow::resetInspectorComponent(const std::string& type)
     statusBar()->showMessage(tr("Reset %1 to defaults").arg(QString::fromStdString(InspectorDisplayName(type))), 2500);
 }
 
-void EditorMainWindow::bakeProbeVolumes()
+void EditorMainWindow::bakeAllProbeVolumes()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    auto view = ctx->GetActiveScene()->GetRegistry().view<ProbeVolumeComponent>();
+    const std::vector<entt::entity> volumes(view.begin(), view.end());
+    if (volumes.empty()) {
+        statusBar()->showMessage(tr("This scene has no probe volumes to bake. Add one from Add Component, under Lighting."), 4000);
+        return;
+    }
+    bakeProbeVolumes(volumes);
+}
+
+void EditorMainWindow::bakeSelectedProbeVolumes()
+{
+    if (!m_engine) return;
+    auto* ctx = m_engine->GetEditorContext();
+    if (!ctx || !ctx->HasActiveScene()) return;
+    auto& reg = ctx->GetActiveScene()->GetRegistry();
+    std::vector<entt::entity> volumes;
+    for (entt::entity handle : resolveInspectorSelection().entities) {
+        if (reg.valid(handle) && reg.all_of<ProbeVolumeComponent>(handle)) {
+            volumes.push_back(handle);
+        }
+    }
+    if (!volumes.empty()) {
+        bakeProbeVolumes(volumes);
+    }
+}
+
+void EditorMainWindow::bakeProbeVolumes(const std::vector<entt::entity>& volumes)
 {
     if (!m_engine || !m_engine->GetFrameRenderer()) return;
     auto* ctx = m_engine->GetEditorContext();
@@ -6997,13 +7065,6 @@ void EditorMainWindow::bakeProbeVolumes()
     }
     Scene* scene = ctx->GetActiveScene();
     auto& reg = scene->GetRegistry();
-    std::vector<entt::entity> volumes;
-    for (entt::entity handle : resolveInspectorSelection().entities) {
-        if (reg.valid(handle) && reg.all_of<ProbeVolumeComponent>(handle)) {
-            volumes.push_back(handle);
-        }
-    }
-    if (volumes.empty()) return;
 
     namespace fs = std::filesystem;
     const fs::path projectRoot(m_projectContext->GetProjectRootDir());
