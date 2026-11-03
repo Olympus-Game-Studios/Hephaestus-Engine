@@ -79,6 +79,9 @@ public:
     /** Shows the contents as asset cards (true) or a compact list (false). */
     void SetGridView(bool grid);
 
+    /** Large cards with the folder tree hidden (Artist mode), or the normal layout. */
+    void SetLargeCards(bool large);
+
     /**
      * @brief Get current directory path.
      */
@@ -95,7 +98,8 @@ public:
         AssetTypeRole,
         IsDirectoryRole,
         SearchResultRole,
-        DetailRole
+        DetailRole,
+        TypeIconRole
     };
 
 signals:
@@ -194,6 +198,7 @@ private:
     QLineEdit* m_searchBox = nullptr;
 
     bool m_gridView = true;
+    bool m_largeCards = false;
 
     // Bottom status
     QLabel* m_statusLabel = nullptr;

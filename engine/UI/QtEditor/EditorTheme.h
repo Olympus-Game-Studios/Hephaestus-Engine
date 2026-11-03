@@ -12,6 +12,8 @@
 #include <QString>
 
 class QApplication;
+class QKeySequence;
+class QLineEdit;
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -93,6 +95,9 @@ QIcon Icon(const QString& name, IconTone tone = IconTone::Secondary);
 
 /** The Hephaestus logo from Branding/logo/svgs/HephaestusEngineLogo-Main.svg. */
 QIcon BrandLogo();
+
+/** Shows @p shortcut as a key hint inside the right edge of @p field while it is empty. */
+void AddShortcutHint(QLineEdit* field, const QKeySequence& shortcut);
 
 /** Installs fonts, the Fusion base style, the palette and the stylesheet. */
 void Apply(QApplication& app);

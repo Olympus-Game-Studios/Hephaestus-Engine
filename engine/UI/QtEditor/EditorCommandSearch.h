@@ -9,6 +9,7 @@
 
 #include <QLineEdit>
 #include <QPointer>
+#include <functional>
 
 class QCompleter;
 class QMenuBar;
@@ -23,8 +24,12 @@ class EditorCommandSearch final : public QLineEdit
 public:
     EditorCommandSearch(QMenuBar* menuBar, QWidget* parent);
 
+    /** Called when the search closes: Escape, a command run, or focus leaving it. */
+    void SetDismissHandler(std::function<void()> handler) { m_onDismiss = std::move(handler); }
+
 protected:
     void focusInEvent(QFocusEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
@@ -34,6 +39,7 @@ private:
     QPointer<QMenuBar> m_menuBar;
     QStandardItemModel* m_model = nullptr;
     QCompleter* m_completer = nullptr;
+    std::function<void()> m_onDismiss;
 };
 
 } // namespace QtEditor

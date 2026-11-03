@@ -74,7 +74,8 @@ QString ToProjectRelativeAssetPath(const QString& relativeFromAssetRoot)
     return path;
 }
 
-const QSize kAssetCardSize(148, 164);
+const QSize kAssetCardSize(160, 204);
+const QSize kAssetCardLargeSize(204, 276);
 
 /** Grid card: a dark thumbnail well with the asset icon, then the name and the type line. */
 class AssetCardDelegate final : public QStyledItemDelegate
@@ -82,9 +83,11 @@ class AssetCardDelegate final : public QStyledItemDelegate
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
 
+    void SetLarge(bool large) { m_large = large; }
+
     QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override
     {
-        return kAssetCardSize - QSize(8, 8);
+        return (m_large ? kAssetCardLargeSize : kAssetCardSize) - QSize(12, 12);
     }
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
@@ -110,7 +113,8 @@ public:
 
         const QIcon icon = index.data(Qt::DecorationRole).value<QIcon>();
         const QPoint center = well.center().toPoint();
-        icon.paint(painter, QRect(center.x() - 24, center.y() - 24, 48, 48));
+        const int iconSize = m_large ? 56 : 48;
+        icon.paint(painter, QRect(center.x() - iconSize / 2, center.y() - iconSize / 2, iconSize, iconSize));
 
         const QRect text = option.rect.adjusted(8, option.rect.height() - textHeight + 6, -8, -4);
         const QFontMetrics nameMetrics(option.font);
@@ -123,7 +127,13 @@ public:
         QFont detailFont = option.font;
         detailFont.setPixelSize(11);
         const QFontMetrics detailMetrics(detailFont);
-        const QRect detailRect(text.left(), nameRect.bottom() + 2, text.width(), detailMetrics.height());
+        QRect detailRect(text.left(), nameRect.bottom() + 2, text.width(), detailMetrics.height());
+        const QString typeIconName = index.data(AssetBrowserWidget::TypeIconRole).toString();
+        if (!typeIconName.isEmpty()) {
+            const QRect typeIcon(detailRect.left(), detailRect.center().y() - 6, 12, 12);
+            Theme::Icon(typeIconName, Theme::IconTone::Muted).paint(painter, typeIcon);
+            detailRect.setLeft(typeIcon.right() + 5);
+        }
         painter->setFont(detailFont);
         painter->setPen(Theme::Color(Theme::Token::TextMuted));
         painter->drawText(detailRect, Qt::AlignLeft | Qt::AlignVCenter,
@@ -131,6 +141,9 @@ public:
                                                    Qt::ElideRight, detailRect.width()));
         painter->restore();
     }
+
+private:
+    bool m_large = false;
 };
 
 /**
@@ -283,6 +296,15 @@ void AssetBrowserWidget::RevealAsset(const QString& relativePath)
     showInFolder(path);
 }
 
+void AssetBrowserWidget::SetLargeCards(bool large)
+{
+    m_largeCards = large;
+    if (m_folderTree) m_folderTree->parentWidget()->setVisible(!large);
+    if (m_gridView) m_contentsView->setGridSize(large ? kAssetCardLargeSize : kAssetCardSize);
+    if (auto* cards = dynamic_cast<AssetCardDelegate*>(m_cardDelegate)) cards->SetLarge(large);
+    m_contentsView->doItemsLayout();
+}
+
 void AssetBrowserWidget::SetGridView(bool grid)
 {
     (grid ? m_gridButton : m_listButton)->setChecked(true);
@@ -297,8 +319,8 @@ void AssetBrowserWidget::setupUI()
 {
     setObjectName("AssetBrowserRoot");
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(8, 8, 8, 8);
-    mainLayout->setSpacing(6);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Top Toolbar
@@ -316,15 +338,29 @@ void AssetBrowserWidget::setupUI()
     m_importButton->setMenu(importMenu);
     m_importButton->setToolTip(tr("Copy files into the current asset folder, or import a GLB character"));
     m_toolbar->addWidget(m_importButton);
+    auto* newFolderButton = new QToolButton(this);
+    newFolderButton->setIcon(Theme::Icon(QStringLiteral("folder")));
+    newFolderButton->setText(tr("New folder"));
+    newFolderButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    connect(newFolderButton, &QToolButton::clicked, this, [this]() { createNewFolder(m_currentPath); });
+    m_toolbar->addWidget(newFolderButton);
+
+    // Second row: where you are, and what kind of asset you are looking at.
+    auto* navRow = new QWidget(this);
+    navRow->setObjectName(QStringLiteral("AssetBrowserNavRow"));
+    auto* navLayout = new QHBoxLayout(navRow);
+    navLayout->setContentsMargins(8, 4, 8, 4);
+    navLayout->setSpacing(2);
 
     // Clickable breadcrumb bar
-    m_breadcrumbBar = new QWidget(this);
+    m_breadcrumbBar = new QWidget(navRow);
     m_breadcrumbLayout = new QHBoxLayout(m_breadcrumbBar);
     m_breadcrumbLayout->setContentsMargins(4, 0, 0, 0);
     m_breadcrumbLayout->setSpacing(0);
     m_breadcrumbLabel = new QLabel(tr("Assets"), m_breadcrumbBar); // kept for compatibility
     m_breadcrumbLabel->hide();
-    m_toolbar->addWidget(m_breadcrumbBar);
+    navLayout->addWidget(m_breadcrumbBar);
+    navLayout->addStretch(1);
 
     QWidget* spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -339,13 +375,13 @@ void AssetBrowserWidget::setupUI()
     m_filterCombo->hide();
     auto* chips = new QButtonGroup(this);
     for (const QString& label : { tr("All"), tr("Meshes"), tr("Materials"), tr("Textures"), tr("Prefabs") }) {
-        auto* chip = new QToolButton(this);
+        auto* chip = new QToolButton(navRow);
         chip->setObjectName(QStringLiteral("FilterChip"));
         chip->setText(label);
         chip->setCheckable(true);
         chip->setChecked(label == tr("All"));
         chips->addButton(chip);
-        m_toolbar->addWidget(chip);
+        navLayout->addWidget(chip);
         connect(chip, &QToolButton::clicked, m_filterCombo, [this, label]() { m_filterCombo->setCurrentText(label); });
     }
     auto* moreFilters = new QToolButton(this);
@@ -358,19 +394,16 @@ void AssetBrowserWidget::setupUI()
         filterMenu->addAction(label, m_filterCombo, [this, label]() { m_filterCombo->setCurrentText(label); });
     }
     moreFilters->setMenu(filterMenu);
-    m_toolbar->addWidget(moreFilters);
     connect(m_filterCombo, &QComboBox::currentTextChanged, this, [this, chips](const QString& text) {
         chips->setExclusive(false);
         for (QAbstractButton* chip : chips->buttons()) chip->setChecked(chip->text() == text);
         chips->setExclusive(true);
         rebuildContentsView();
     });
-    m_toolbar->addSeparator();
-
     // Search box — empty query browses current folder; non-empty searches project-wide
     m_searchBox = new QLineEdit(this);
     m_searchBox->setPlaceholderText(tr("Search assets..."));
-    m_searchBox->setMaximumWidth(240);
+    m_searchBox->setFixedWidth(240);
     m_searchBox->setClearButtonEnabled(true);
     m_searchBox->addAction(Theme::Icon(QStringLiteral("search"), Theme::IconTone::Muted), QLineEdit::LeadingPosition);
     m_searchBox->setToolTip(tr("Search all project assets by name or path. Clear to return to folder browse."));
@@ -378,6 +411,8 @@ void AssetBrowserWidget::setupUI()
         rebuildContentsView();
     });
     m_toolbar->addWidget(m_searchBox);
+    m_toolbar->addWidget(moreFilters);
+    Theme::AddShortcutHint(m_searchBox, QKeySequence(QKeySequence::Find));
     auto* findShortcut = new QShortcut(QKeySequence::Find, this);
     findShortcut->setContext(Qt::WidgetWithChildrenShortcut);
     connect(findShortcut, &QShortcut::activated, m_searchBox, [this]() { m_searchBox->setFocus(Qt::ShortcutFocusReason); });
@@ -388,7 +423,10 @@ void AssetBrowserWidget::setupUI()
     m_refreshButton->setProperty("iconOnly", true);
     m_refreshButton->setFlat(true);
     connect(m_refreshButton, &QPushButton::clicked, this, &AssetBrowserWidget::onRefreshButtonClicked);
-    m_toolbar->addWidget(m_refreshButton);
+    m_refreshButton->hide();
+    auto* refreshShortcut = new QShortcut(QKeySequence::Refresh, this);
+    refreshShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(refreshShortcut, &QShortcut::activated, this, &AssetBrowserWidget::onRefreshButtonClicked);
 
     m_gridButton = new QToolButton(this);
     m_gridButton->setIcon(Theme::Icon(QStringLiteral("grid")));
@@ -406,12 +444,13 @@ void AssetBrowserWidget::setupUI()
     connect(m_gridButton, &QToolButton::toggled, this, [this](bool grid) {
         m_gridView = grid;
         m_contentsView->setViewMode(grid ? QListView::IconMode : QListView::ListMode);
-        m_contentsView->setGridSize(grid ? kAssetCardSize : QSize());
+        m_contentsView->setGridSize(grid ? (m_largeCards ? kAssetCardLargeSize : kAssetCardSize) : QSize());
         m_contentsView->setIconSize(grid ? QSize(48, 48) : QSize(16, 16));
         m_contentsView->setItemDelegate(grid ? m_cardDelegate : m_listDelegate);
     });
 
     mainLayout->addWidget(m_toolbar);
+    mainLayout->addWidget(navRow);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Main Content Area
@@ -551,7 +590,7 @@ void AssetBrowserWidget::rebuildFolderTree()
     }
 
     // Root item
-    QStandardItem* rootItem = new QStandardItem(Theme::Icon(QStringLiteral("folder")), tr("Assets"));
+    QStandardItem* rootItem = new QStandardItem(Theme::Icon(QStringLiteral("folder")), tr("Content"));
     rootItem->setData("", RelativePathRole);
     rootItem->setData(true, IsDirectoryRole);
     m_folderModel->appendRow(rootItem);
@@ -673,6 +712,7 @@ void AssetBrowserWidget::rebuildContentsView()
             QStandardItem* item = new QStandardItem();
             item->setText(name);
             item->setData(QStringLiteral("%1 \u00B7 %2").arg(typeLabel(type, false), location), DetailRole);
+            item->setData(getAssetIcon(static_cast<int>(type), false).name(), TypeIconRole);
             item->setIcon(getAssetIcon(static_cast<int>(type), false));
             item->setData(rel, RelativePathRole);
             item->setData(static_cast<int>(type), AssetTypeRole);
@@ -706,6 +746,7 @@ void AssetBrowserWidget::rebuildContentsView()
         QStandardItem* item = new QStandardItem();
         item->setText(name);
         item->setData(customType.isEmpty() ? typeLabel(type, entry.isDirectory) : customType, DetailRole);
+        item->setData(getAssetIcon(static_cast<int>(entry.type), entry.isDirectory).name(), TypeIconRole);
         QIcon icon = getAssetIcon(static_cast<int>(entry.type), entry.isDirectory);
         if (!customType.isEmpty()) {
             const QIcon pluginIcon = m_mainWindow->PluginHost()->CustomAssetIcon(
@@ -759,7 +800,7 @@ void AssetBrowserWidget::updateBreadcrumb()
         m_breadcrumbLayout->addWidget(btn);
     };
 
-    addCrumb(tr("Assets"), QString(), m_currentPath.isEmpty());
+    addCrumb(tr("Content"), QString(), m_currentPath.isEmpty());
 
     if (!m_currentPath.isEmpty()) {
         const QStringList parts = m_currentPath.split(QLatin1Char('/'), Qt::SkipEmptyParts);

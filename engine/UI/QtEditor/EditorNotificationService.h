@@ -9,6 +9,8 @@
 
 #include <QObject>
 #include <QPointer>
+#include <QDateTime>
+#include <QList>
 #include <QString>
 
 class QFrame;
@@ -40,8 +42,22 @@ public:
     void ShowProgress(const QString& message);
     void CompleteProgress(const QString& message = QString());
 
-private:
     enum class Severity { Info, Warning, Error, Progress };
+    struct Entry
+    {
+        Severity severity;
+        QString message;
+        QDateTime time;
+    };
+    /** The most recent notifications, oldest first. */
+    const QList<Entry>& History() const { return m_history; }
+    int UnreadCount() const { return m_unread; }
+    void MarkRead();
+
+signals:
+    void historyChanged();
+
+private:
 
     void showMessage(Severity severity, const QString& message, int timeoutMs, bool sticky);
     bool shouldSuppress(const QString& message);
@@ -53,6 +69,11 @@ private:
     QPointer<QWidget> m_toastAnchor;
     QPointer<QFrame> m_toastFrame;
     QPointer<QLabel> m_toastLabel;
+    QPointer<QLabel> m_toastIcon;
+
+    QList<Entry> m_history;
+    int m_unread = 0;
+    static constexpr int kHistoryLimit = 50;
 
     QString m_lastMessage;
     qint64 m_lastMessageMs = 0;

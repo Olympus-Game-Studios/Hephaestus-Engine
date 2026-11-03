@@ -10,6 +10,9 @@
 #include <QFontDatabase>
 #include <QHash>
 #include <QIconEngine>
+#include <QKeySequence>
+#include <QLabel>
+#include <QLineEdit>
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
@@ -347,6 +350,36 @@ QIcon BrandLogo()
         }
     }
     return icon;
+}
+
+void AddShortcutHint(QLineEdit* field, const QKeySequence& shortcut)
+{
+    class Placer final : public QObject
+    {
+    public:
+        Placer(QLineEdit* field, QLabel* hint) : QObject(field), m_field(field), m_hint(hint) {}
+        bool eventFilter(QObject*, QEvent* event) override
+        {
+            if (event->type() == QEvent::Resize || event->type() == QEvent::Show) place();
+            return false;
+        }
+        void place()
+        {
+            m_hint->adjustSize();
+            m_hint->move(m_field->width() - m_hint->width() - 6, (m_field->height() - m_hint->height()) / 2);
+        }
+    private:
+        QLineEdit* m_field;
+        QLabel* m_hint;
+    };
+
+    auto* hint = new QLabel(shortcut.toString(QKeySequence::NativeText), field);
+    hint->setObjectName(QStringLiteral("ShortcutHint"));
+    hint->setAttribute(Qt::WA_TransparentForMouseEvents);
+    auto* placer = new Placer(field, hint);
+    field->installEventFilter(placer);
+    QObject::connect(field, &QLineEdit::textChanged, hint, [hint](const QString& text) { hint->setVisible(text.isEmpty()); });
+    placer->place();
 }
 
 void Apply(QApplication& app)

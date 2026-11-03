@@ -22,6 +22,7 @@
 #include <QMenuBar>
 #include <QMenu>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QToolBar>
 #include <QWidget>
 #include <QGroupBox>
@@ -197,6 +198,7 @@ private:
     void onOutlinerContextMenu(const QPoint& pos);
     void createEmptyEntity();
     void setEditorMode(EditorMode mode);
+    void syncGizmoSpaceButtons();
     void restoreModeLayout(EditorMode mode);
     void arrangeModeLayout(EditorMode mode);
     QWidget* wrapComponentCard(QGroupBox* body, const QString& title, const QString& type,
@@ -344,6 +346,10 @@ private:
     QAction* m_scaleAction = nullptr;
     QAction* m_settingsAction = nullptr;
     QToolButton* m_worldLocalBtn = nullptr;
+    QToolButton* m_worldBtn = nullptr;
+    QToolButton* m_notificationButton = nullptr;
+    QTabBar* m_sceneTabs = nullptr;
+    QByteArray m_stateBeforeMaximize;
     QToolButton* m_snapToggleBtn = nullptr;
     QComboBox* m_snapValueCombo = nullptr;
     QComboBox* m_cameraSpeedCombo = nullptr;
@@ -387,9 +393,10 @@ private:
     QLabel*      m_detailsEmptyHint  = nullptr;
     QLabel*      m_detailsPartialHint = nullptr;
     QToolButton* m_visibilityBtn    = nullptr;
-    QCheckBox*   m_lockCheck        = nullptr;
+    QToolButton* m_lockCheck        = nullptr;
     QPushButton* m_addComponentBtn  = nullptr;
-    QPushButton* m_deleteEntityBtn  = nullptr;
+    QToolButton* m_inspectorWorldBtn = nullptr;
+    QToolButton* m_inspectorLocalBtn = nullptr;
     bool         m_detailsLocked    = false;
     entt::entity m_lockedEntity     = entt::null;
 
@@ -454,10 +461,8 @@ private:
     float m_lastDt = 0.0f;
     int m_frameCount = 0;
     QLabel* m_statusFps = nullptr;
-    QLabel* m_statusDrawCalls = nullptr;
-    QLabel* m_statusRam = nullptr;
-    QLabel* m_statusSaved = nullptr;
-    QLabel* m_statusScene = nullptr;
+    QToolButton* m_statusSaved = nullptr;
+    QToolButton* m_statusScene = nullptr;
     QLabel* m_statusSelection = nullptr;
 
     // Prevent re-entrant updates

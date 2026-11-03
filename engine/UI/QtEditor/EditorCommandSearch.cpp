@@ -54,6 +54,15 @@ void EditorCommandSearch::focusInEvent(QFocusEvent* event)
     QLineEdit::focusInEvent(event);
 }
 
+void EditorCommandSearch::focusOutEvent(QFocusEvent* event)
+{
+    QLineEdit::focusOutEvent(event);
+    if (!m_completer->popup()->isVisible()) {
+        clear();
+        if (m_onDismiss) m_onDismiss();
+    }
+}
+
 void EditorCommandSearch::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_Escape) {

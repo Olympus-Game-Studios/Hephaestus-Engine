@@ -135,6 +135,8 @@
 #include <QSettings>
 #include <QButtonGroup>
 #include <QHash>
+#include <QLocale>
+#include <QTabBar>
 #include <QPainter>
 #include <QShortcut>
 #include <QStyledItemDelegate>
@@ -290,6 +292,22 @@ QString ComponentIconName(const QString& type)
     return icons.value(type, QStringLiteral("dot"));
 }
 
+QString OutlinerTypeLabel(const QString& iconName)
+{
+    static const QHash<QString, const char*> labels = {
+        { QStringLiteral("prefab"), QT_TRANSLATE_NOOP("EditorMainWindow", "Prefab") },
+        { QStringLiteral("folder"), QT_TRANSLATE_NOOP("EditorMainWindow", "Folder") },
+        { QStringLiteral("globe"), QT_TRANSLATE_NOOP("EditorMainWindow", "Environment") },
+        { QStringLiteral("light"), QT_TRANSLATE_NOOP("EditorMainWindow", "Light") },
+        { QStringLiteral("camera"), QT_TRANSLATE_NOOP("EditorMainWindow", "Camera") },
+        { QStringLiteral("character"), QT_TRANSLATE_NOOP("EditorMainWindow", "Character") },
+        { QStringLiteral("volume"), QT_TRANSLATE_NOOP("EditorMainWindow", "Probe volume") },
+        { QStringLiteral("audio"), QT_TRANSLATE_NOOP("EditorMainWindow", "Audio source") },
+        { QStringLiteral("cube"), QT_TRANSLATE_NOOP("EditorMainWindow", "Static mesh") },
+    };
+    return QCoreApplication::translate("EditorMainWindow", labels.value(iconName, QT_TRANSLATE_NOOP("EditorMainWindow", "Entity")));
+}
+
 /** Draws a row's trailing marker: the Prefab tag, or the hidden / locked icon. */
 class OutlinerRowDelegate final : public QStyledItemDelegate
 {
@@ -414,6 +432,44 @@ EditorMainWindow::EditorMainWindow(QWidget* parent,
     m_notifications = new EditorNotificationService(this);
     m_notifications->SetStatusBar(statusBar());
     m_notifications->SetToastAnchor(this);
+    {
+        auto* statusBell = new QToolButton(statusBar());
+        statusBell->setObjectName(QStringLiteral("StatusItem"));
+        statusBell->setIcon(Theme::Icon(QStringLiteral("bell"), Theme::IconTone::Muted));
+        statusBell->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        statusBell->setFocusPolicy(Qt::NoFocus);
+        statusBell->setAutoRaise(true);
+        statusBell->setPopupMode(QToolButton::InstantPopup);
+        statusBell->setMenu(m_notificationButton->menu());
+        statusBar()->addPermanentWidget(statusBell);
+        auto refreshBell = [this, statusBell]() {
+            const int unread = m_notifications->UnreadCount();
+            const QString count = unread ? QString::number(unread) : QString();
+            m_notificationButton->setText(count);
+            m_notificationButton->setToolButtonStyle(unread ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly);
+            statusBell->setText(count);
+        };
+        connect(m_notifications, &EditorNotificationService::historyChanged, this, refreshBell);
+        QMenu* history = m_notificationButton->menu();
+        connect(history, &QMenu::aboutToShow, this, [this, history]() {
+            history->clear();
+            const auto& entries = m_notifications->History();
+            if (entries.isEmpty()) {
+                history->addAction(tr("No notifications"))->setEnabled(false);
+            }
+            for (auto it = entries.crbegin(); it != entries.crend(); ++it) {
+                const char* icon = it->severity == EditorNotificationService::Severity::Error ? "error"
+                                 : it->severity == EditorNotificationService::Severity::Warning ? "warning" : "info";
+                const Theme::IconTone tone = it->severity == EditorNotificationService::Severity::Error ? Theme::IconTone::Error
+                                           : it->severity == EditorNotificationService::Severity::Warning ? Theme::IconTone::Warning
+                                                                                                          : Theme::IconTone::Info;
+                history->addAction(Theme::Icon(QString::fromLatin1(icon), tone),
+                                   QStringLiteral("%1  %2").arg(it->time.toString(QStringLiteral("HH:mm")), it->message));
+            }
+            m_notifications->MarkRead();
+        });
+        refreshBell();
+    }
     setupRecoveryTimers();
 
     // Restore previous window geometry / dock layout when available.
@@ -1498,6 +1554,8 @@ void EditorMainWindow::setupMenuBar()
     }
 
     QMenu* buildMenu = menuBar->addMenu(tr("&Build"));
+    buildMenu->addAction(Theme::Icon(QStringLiteral("light")), tr("Bake Lighting"), this, &EditorMainWindow::bakeAllProbeVolumes);
+    buildMenu->addSeparator();
     buildMenu->addAction(tr("Validate Project"), this, &EditorMainWindow::onValidateProject);
     QAction* packageProjectAction =
         buildMenu->addAction(tr("Package Project"), this, &EditorMainWindow::onBuildProject);
@@ -1615,26 +1673,11 @@ void EditorMainWindow::setupTopToolbar()
         layout->setSpacing(8);
 
         auto* logo = new QLabel(header);
-        logo->setPixmap(Theme::BrandLogo().pixmap(QSize(18, 18), devicePixelRatioF()));
+        logo->setPixmap(Theme::BrandLogo().pixmap(QSize(20, 20), devicePixelRatioF()));
+        logo->setToolTip(QStringLiteral("Hephaestus"));
         layout->addWidget(logo);
-        auto* brand = new QLabel(tr("Hephaestus"), header);
-        brand->setObjectName(QStringLiteral("EditorBrand"));
-        layout->addWidget(brand);
-
-        m_projectButton = new QToolButton(header);
-        m_projectButton->setObjectName(QStringLiteral("ProjectButton"));
-        m_projectButton->setPopupMode(QToolButton::InstantPopup);
-        m_projectButton->setFocusPolicy(Qt::NoFocus);
-        m_projectButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
-        m_projectButton->setText(tr("No project"));
-        auto* projectMenu = new QMenu(m_projectButton);
-        projectMenu->addAction(tr("Open Project..."), this, &EditorMainWindow::onOpenProject);
-        projectMenu->addAction(tr("New Project..."), this, &EditorMainWindow::onNewProject);
-        projectMenu->addMenu(m_recentProjectsMenu);
-        projectMenu->addSeparator();
-        projectMenu->addAction(tr("Close Project"), this, &EditorMainWindow::onCloseProject);
-        m_projectButton->setMenu(projectMenu);
-        layout->addWidget(m_projectButton);
+        layout->addWidget(m_menuBar);
+        layout->addStretch(1);
 
         auto* modeSwitch = new QFrame(header);
         modeSwitch->setObjectName(QStringLiteral("ModeSwitch"));
@@ -1664,56 +1707,105 @@ void EditorMainWindow::setupTopToolbar()
             setEditorMode(static_cast<EditorMode>(id));
         });
         layout->addWidget(modeSwitch);
-
-        layout->addWidget(m_menuBar);
         layout->addStretch(1);
 
         auto* search = new EditorCommandSearch(m_menuBar, header);
-        search->setFixedWidth(380);
+        search->setFixedWidth(360);
+        search->hide();
         layout->addWidget(search);
+        auto* searchBtn = new QToolButton(header);
+        searchBtn->setIcon(Theme::Icon(QStringLiteral("search")));
+        searchBtn->setFocusPolicy(Qt::NoFocus);
+        layout->addWidget(searchBtn);
         auto* searchShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_K), this);
-        connect(searchShortcut, &QShortcut::activated, search, [search]() { search->setFocus(Qt::ShortcutFocusReason); });
-        search->setToolTip(tr("Search or run a command (%1)").arg(searchShortcut->key().toString(QKeySequence::NativeText)));
-        layout->addStretch(1);
+        searchBtn->setToolTip(tr("Search or run a command (%1)").arg(searchShortcut->key().toString(QKeySequence::NativeText)));
+        auto openSearch = [search, searchBtn]() {
+            searchBtn->hide();
+            search->show();
+            search->setFocus(Qt::ShortcutFocusReason);
+        };
+        connect(searchBtn, &QToolButton::clicked, search, openSearch);
+        connect(searchShortcut, &QShortcut::activated, search, openSearch);
+        search->SetDismissHandler([search, searchBtn]() {
+            search->hide();
+            searchBtn->show();
+        });
 
-        auto* undoBtn = new QToolButton(header);
-        undoBtn->setIcon(Theme::Icon(QStringLiteral("undo")));
-        undoBtn->setToolTip(tr("Undo"));
-        undoBtn->setFocusPolicy(Qt::NoFocus);
-        connect(undoBtn, &QToolButton::clicked, this, &EditorMainWindow::onUndo);
-        layout->addWidget(undoBtn);
-        auto* redoBtn = new QToolButton(header);
-        redoBtn->setIcon(Theme::Icon(QStringLiteral("redo")));
-        redoBtn->setToolTip(tr("Redo"));
-        redoBtn->setFocusPolicy(Qt::NoFocus);
-        connect(redoBtn, &QToolButton::clicked, this, &EditorMainWindow::onRedo);
-        layout->addWidget(redoBtn);
+        m_notificationButton = new QToolButton(header);
+        m_notificationButton->setObjectName(QStringLiteral("NotificationButton"));
+        m_notificationButton->setIcon(Theme::Icon(QStringLiteral("bell")));
+        m_notificationButton->setToolTip(tr("Notifications"));
+        m_notificationButton->setPopupMode(QToolButton::InstantPopup);
+        m_notificationButton->setFocusPolicy(Qt::NoFocus);
+        m_notificationButton->setMenu(new QMenu(m_notificationButton));
+        layout->addWidget(m_notificationButton);
 
         auto* playGroup = new QFrame(header);
         playGroup->setObjectName(QStringLiteral("PlayControls"));
         auto* playLayout = new QHBoxLayout(playGroup);
-        playLayout->setContentsMargins(2, 2, 2, 2);
-        playLayout->setSpacing(0);
-        for (QAction* action : { m_playAction, m_pauseAction, m_stopAction, m_stepAction }) {
+        playLayout->setContentsMargins(0, 0, 0, 0);
+        playLayout->setSpacing(2);
+        auto* playBtn = new QToolButton(playGroup);
+        playBtn->setObjectName(QStringLiteral("PlayButton"));
+        playBtn->setDefaultAction(m_playAction);
+        playBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        playBtn->setPopupMode(QToolButton::MenuButtonPopup);
+        auto* playMenu = new QMenu(playBtn);
+        QAction* realtimeAction = playMenu->addAction(tr("Real-time"));
+        realtimeAction->setCheckable(true);
+        realtimeAction->setChecked(true);
+        realtimeAction->setToolTip(tr("Off: the simulation only advances with Step"));
+        connect(realtimeAction, &QAction::toggled, this, [this](bool realtime) {
+            if (m_engine) m_engine->SetRealtime(realtime);
+        });
+        connect(playMenu, &QMenu::aboutToShow, this, [this, realtimeAction]() {
+            if (m_engine) realtimeAction->setChecked(m_engine->IsRealtime());
+        });
+        playBtn->setMenu(playMenu);
+        playBtn->setFocusPolicy(Qt::NoFocus);
+        playLayout->addWidget(playBtn);
+        for (QAction* action : { m_pauseAction, m_stopAction, m_stepAction }) {
             auto* button = new QToolButton(playGroup);
             button->setDefaultAction(action);
             button->setToolButtonStyle(Qt::ToolButtonIconOnly);
             button->setFocusPolicy(Qt::NoFocus);
+            if (action == m_stopAction) button->setObjectName(QStringLiteral("StopButton"));
             playLayout->addWidget(button);
         }
+        connect(m_playAction, &QAction::toggled, this, [this](bool playing) {
+            m_playAction->setText(playing ? tr("Playing") : tr("Play"));
+            m_playAction->setIcon(playing ? Theme::Icon(QStringLiteral("dot"), Theme::IconTone::Success)
+                                          : Theme::Icon(QStringLiteral("play"), Theme::IconTone::OnAction));
+        });
         layout->addWidget(playGroup);
+
+        m_buildBtn = new QToolButton(header);
+        m_buildBtn->setObjectName(QStringLiteral("BuildRunButton"));
+        m_buildBtn->setText(tr("Build && Run"));
+        m_buildBtn->setIcon(Theme::Icon(QStringLiteral("build"), Theme::IconTone::Primary));
+        m_buildBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        m_buildBtn->setFocusPolicy(Qt::NoFocus);
+        auto* buildMenu = new QMenu(m_buildBtn);
+        buildMenu->addAction(tr("Validate Project"), this, &EditorMainWindow::onValidateProject);
+        buildMenu->addAction(tr("Package"), this, &EditorMainWindow::onBuildProject);
+        buildMenu->addAction(tr("Package && Run"), this, &EditorMainWindow::onPackageAndRun);
+        buildMenu->addSeparator();
+        buildMenu->addAction(tr("Run Last Package"), this, &EditorMainWindow::onRunLastPackage);
+        buildMenu->addAction(tr("Clean Package"), this, &EditorMainWindow::onCleanPackage);
+        m_buildBtn->setMenu(buildMenu);
+        m_buildBtn->setPopupMode(QToolButton::DelayedPopup);
+        connect(m_buildBtn, &QToolButton::clicked, this, &EditorMainWindow::onPackageAndRun);
+        layout->addWidget(m_buildBtn);
 
         setMenuWidget(header);
     }
 
-    // Tool row: transform tools, gizmo space and snapping, creation, lighting and build.
+    // Viewport strip tools; setupCentralWidget places this toolbar above the viewport.
     m_topToolbar = new QToolBar(tr("Tools"), this);
     m_topToolbar->setObjectName("EditorTopToolbar");
     m_topToolbar->setMovable(false);
     m_topToolbar->setFloatable(false);
     m_topToolbar->setIconSize(QSize(16, 16));
-    m_topToolbar->toggleViewAction()->setEnabled(false);
-    addToolBar(Qt::TopToolBarArea, m_topToolbar);
 
     QActionGroup* transformGroup = new QActionGroup(this);
     transformGroup->setExclusive(true);
@@ -1743,22 +1835,37 @@ void EditorMainWindow::setupTopToolbar()
     addToolBar(Qt::LeftToolBarArea, m_artistToolRail);
     m_artistToolRail->hide();
 
-    m_worldLocalBtn = new QToolButton(m_topToolbar);
-    m_worldLocalBtn->setText(tr("World"));
-    m_worldLocalBtn->setIcon(Theme::Icon(QStringLiteral("globe")));
-    m_worldLocalBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    m_worldLocalBtn->setToolTip(tr("Gizmo space (X)"));
-    m_worldLocalBtn->setCheckable(true);
-    connect(m_worldLocalBtn, &QToolButton::toggled, this, [this](bool checked) {
-        m_worldLocalBtn->setText(checked ? tr("Local") : tr("World"));
-        m_worldLocalBtn->setIcon(Theme::Icon(checked ? QStringLiteral("cube") : QStringLiteral("globe")));
+    auto* spaceSwitch = new QFrame(m_topToolbar);
+    spaceSwitch->setObjectName(QStringLiteral("SegmentedControl"));
+    auto* spaceLayout = new QHBoxLayout(spaceSwitch);
+    spaceLayout->setContentsMargins(2, 2, 2, 2);
+    spaceLayout->setSpacing(2);
+    m_worldBtn = new QToolButton(spaceSwitch);
+    m_worldBtn->setText(tr("World"));
+    m_worldBtn->setIcon(Theme::Icon(QStringLiteral("globe")));
+    m_worldLocalBtn = new QToolButton(spaceSwitch);
+    m_worldLocalBtn->setText(tr("Local"));
+    m_worldLocalBtn->setIcon(Theme::Icon(QStringLiteral("cube")));
+    for (QToolButton* button : { m_worldBtn, m_worldLocalBtn }) {
+        button->setObjectName(QStringLiteral("SegmentButton"));
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        button->setCheckable(true);
+        button->setToolTip(tr("Gizmo space (X)"));
+        button->setFocusPolicy(Qt::NoFocus);
+        spaceLayout->addWidget(button);
+    }
+    m_worldBtn->setChecked(true);
+    connect(m_worldBtn, &QToolButton::clicked, this, [this]() { m_worldLocalBtn->setChecked(false); syncGizmoSpaceButtons(); });
+    connect(m_worldLocalBtn, &QToolButton::toggled, this, [this](bool local) {
+        syncGizmoSpaceButtons();
         if (m_engine) {
             if (auto* ctx = m_engine->GetEditorContext()) {
-                ctx->SetGizmoSpace(checked ? GizmoSpace::Local : GizmoSpace::World);
+                ctx->SetGizmoSpace(local ? GizmoSpace::Local : GizmoSpace::World);
             }
         }
     });
-    m_topToolbar->addWidget(m_worldLocalBtn);
+    connect(m_worldLocalBtn, &QToolButton::clicked, this, [this]() { m_worldLocalBtn->setChecked(true); syncGizmoSpaceButtons(); });
+    m_topToolbar->addWidget(spaceSwitch);
 
     m_snapToggleBtn = new QToolButton(m_topToolbar);
     m_snapToggleBtn->setIcon(Theme::Icon(QStringLiteral("snap")));
@@ -1767,35 +1874,18 @@ void EditorMainWindow::setupTopToolbar()
     m_topToolbar->addWidget(m_snapToggleBtn);
 
     m_snapValueCombo = new QComboBox(m_topToolbar);
+    m_snapValueCombo->setObjectName(QStringLiteral("FlatCombo"));
     m_snapValueCombo->setToolTip(tr("Snap increment"));
-    m_snapValueCombo->addItems({ tr("0.01"), tr("0.1"), tr("0.25"), tr("0.5"),
-                                 tr("1"), tr("5"), tr("10"), tr("50"), tr("100") });
-    m_snapValueCombo->setCurrentText(tr("1"));
+    m_snapValueCombo->addItems({ tr("0.01 m"), tr("0.1 m"), tr("0.25 m"), tr("0.5 m"),
+                                 tr("1 m"), tr("5 m"), tr("10 m"), tr("50 m"), tr("100 m") });
+    m_snapValueCombo->setCurrentText(tr("1 m"));
     m_topToolbar->addWidget(m_snapValueCombo);
 
-    m_cameraSpeedCombo = new QComboBox(m_topToolbar);
+    m_cameraSpeedCombo = new QComboBox(this);
     m_cameraSpeedCombo->setToolTip(tr("Camera speed"));
-    m_cameraSpeedCombo->addItems({ QStringLiteral("0.5\u00D7"), QStringLiteral("1.0\u00D7"),
-                                   QStringLiteral("2.0\u00D7"), QStringLiteral("4.0\u00D7") });
+    m_cameraSpeedCombo->addItems({ QStringLiteral("0.5×"), QStringLiteral("1.0×"),
+                                   QStringLiteral("2.0×"), QStringLiteral("4.0×") });
     m_cameraSpeedCombo->setCurrentIndex(1);
-    m_topToolbar->addWidget(m_cameraSpeedCombo);
-    m_topToolbar->addSeparator();
-
-    auto* createBtn = new QToolButton(m_topToolbar);
-    createBtn->setText(tr("Create"));
-    createBtn->setIcon(Theme::Icon(QStringLiteral("plus")));
-    createBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    createBtn->setPopupMode(QToolButton::InstantPopup);
-    auto* createMenu = new QMenu(createBtn);
-    createMenu->addAction(Theme::Icon(QStringLiteral("cube")), tr("Empty Entity"), this, &EditorMainWindow::createEmptyEntity);
-    createMenu->addAction(Theme::Icon(QStringLiteral("folder")), tr("Folder"), this, [this]() { createFolderInOutliner(entt::null); });
-    createMenu->addSeparator();
-    createMenu->addAction(tr("Lights, Meshes and Prefabs..."), this, [this]() {
-        m_addActorsDock->show();
-        m_addActorsDock->raise();
-    });
-    createBtn->setMenu(createMenu);
-    m_topToolbar->addWidget(createBtn);
 
     {
         auto updateSnapChoices = [this](GizmoMode mode) {
@@ -1814,9 +1904,9 @@ void EditorMainWindow::setupTopToolbar()
                 m_snapValueCombo->setCurrentText(tr("0.1"));
             } else {
                 m_snapValueCombo->addItems(
-                    {tr("0.01"), tr("0.1"), tr("0.25"), tr("0.5"),
-                     tr("1"), tr("5"), tr("10"), tr("50"), tr("100")});
-                m_snapValueCombo->setCurrentText(tr("1"));
+                    {tr("0.01 m"), tr("0.1 m"), tr("0.25 m"), tr("0.5 m"),
+                     tr("1 m"), tr("5 m"), tr("10 m"), tr("50 m"), tr("100 m")});
+                m_snapValueCombo->setCurrentText(tr("1 m"));
             }
             m_snapValueCombo->blockSignals(false);
         };
@@ -1857,6 +1947,7 @@ void EditorMainWindow::setupTopToolbar()
             bool ok = false;
             QString clean = text;
             clean.remove(QChar(0x00B0));
+            clean.remove(QStringLiteral(" m"));
             float value = clean.toFloat(&ok);
             if (!ok || !m_engine) return;
             if (auto* ctx = m_engine->GetEditorContext()) {
@@ -1878,34 +1969,7 @@ void EditorMainWindow::setupTopToolbar()
 
     }
 
-    QWidget* spring = new QWidget(m_topToolbar);
-    spring->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    m_topToolbar->addWidget(spring);
     m_topToolbar->addSeparator()->setObjectName(QStringLiteral("PluginToolbarSlot"));
-
-    QAction* bakeAction = m_topToolbar->addAction(Theme::Icon(QStringLiteral("light")), tr("Bake lighting"));
-    bakeAction->setToolTip(tr("Bake every probe volume in the scene"));
-    connect(bakeAction, &QAction::triggered, this, &EditorMainWindow::bakeAllProbeVolumes);
-    if (auto* bakeButton = qobject_cast<QToolButton*>(m_topToolbar->widgetForAction(bakeAction))) {
-        bakeButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    }
-
-    m_buildBtn = new QToolButton(m_topToolbar);
-    m_buildBtn->setText(tr("Build && Run"));
-    m_buildBtn->setIcon(Theme::Icon(QStringLiteral("build"), Theme::IconTone::OnAction));
-    m_buildBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    m_buildBtn->setProperty("variant", "primary");
-    auto* buildMenu = new QMenu(m_buildBtn);
-    buildMenu->addAction(tr("Validate Project"), this, &EditorMainWindow::onValidateProject);
-    buildMenu->addAction(tr("Package"), this, &EditorMainWindow::onBuildProject);
-    buildMenu->addAction(tr("Package && Run"), this, &EditorMainWindow::onPackageAndRun);
-    buildMenu->addSeparator();
-    buildMenu->addAction(tr("Run Last Package"), this, &EditorMainWindow::onRunLastPackage);
-    buildMenu->addAction(tr("Clean Package"), this, &EditorMainWindow::onCleanPackage);
-    m_buildBtn->setMenu(buildMenu);
-    m_buildBtn->setPopupMode(QToolButton::MenuButtonPopup);
-    connect(m_buildBtn, &QToolButton::clicked, this, &EditorMainWindow::onPackageAndRun);
-    m_topToolbar->addWidget(m_buildBtn);
 }
 
 void EditorMainWindow::setupDockWidgets()
@@ -1913,6 +1977,8 @@ void EditorMainWindow::setupDockWidgets()
     // Allow docking on all sides
     setDockOptions(QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks);
     setTabPosition(Qt::AllDockWidgetAreas, QTabWidget::North);
+    setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Outliner Dock (Left) - Scene Hierarchy
@@ -1931,6 +1997,7 @@ void EditorMainWindow::setupDockWidgets()
     m_outlinerSearch->setPlaceholderText(tr("Search objects..."));
     m_outlinerSearch->setClearButtonEnabled(true);
     m_outlinerSearch->addAction(Theme::Icon(QStringLiteral("search"), Theme::IconTone::Muted), QLineEdit::LeadingPosition);
+    Theme::AddShortcutHint(m_outlinerSearch, QKeySequence(QKeySequence::Find));
     auto* outlinerFind = new QShortcut(QKeySequence::Find, m_outlinerPanel);
     outlinerFind->setContext(Qt::WidgetWithChildrenShortcut);
     connect(outlinerFind, &QShortcut::activated, m_outlinerSearch, [this]() { m_outlinerSearch->setFocus(Qt::ShortcutFocusReason); });
@@ -2137,32 +2204,52 @@ void EditorMainWindow::setupDockWidgets()
     m_detailsLayout->setContentsMargins(8, 8, 8, 8);
     m_detailsLayout->setSpacing(8);
 
-    // ── Header row: Entity ID + Lock checkbox ───────────────────────────
+    // Header card: type tile, name and type line, visibility, pin, gizmo space, transform clipboard.
     {
-        auto* headerRow = new QHBoxLayout();
-        m_entityIconLabel = new QLabel();
+        auto* card = new QFrame(m_detailsWidget);
+        card->setObjectName(QStringLiteral("InspectorHeader"));
+        auto* cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(0, 0, 0, 0);
+        cardLayout->setSpacing(8);
+
+        auto* identityRow = new QHBoxLayout();
+        identityRow->setSpacing(10);
+        m_entityIconLabel = new QLabel(card);
         m_entityIconLabel->setObjectName("DetailsEntityIcon");
-        headerRow->addWidget(m_entityIconLabel);
+        m_entityIconLabel->setFixedSize(36, 36);
+        m_entityIconLabel->setAlignment(Qt::AlignCenter);
+        identityRow->addWidget(m_entityIconLabel);
 
-        m_entityIdLabel = new QLabel(tr("Select an entity to inspect."));
+        auto* names = new QVBoxLayout();
+        names->setSpacing(0);
+        m_nameEdit = new QLineEdit(card);
+        m_nameEdit->setObjectName(QStringLiteral("InspectorName"));
+        m_nameEdit->setPlaceholderText(tr("(No selection)"));
+        m_nameEdit->setEnabled(false);
+        names->addWidget(m_nameEdit);
+        m_entityIdLabel = new QLabel(tr("Select an entity to inspect."), card);
         m_entityIdLabel->setObjectName("DetailsEntityId");
-        headerRow->addWidget(m_entityIdLabel);
+        names->addWidget(m_entityIdLabel);
+        identityRow->addLayout(names, 1);
 
-        headerRow->addStretch();
-
-        m_visibilityBtn = new QToolButton();
+        m_visibilityBtn = new QToolButton(card);
         m_visibilityBtn->setIcon(Theme::Icon(QStringLiteral("eye")));
         m_visibilityBtn->setToolTip(tr("Toggle mesh renderer visibility"));
         m_visibilityBtn->setCheckable(true);
         m_visibilityBtn->setChecked(true);
         m_visibilityBtn->setEnabled(false);
+        m_visibilityBtn->setProperty("quiet", true);
         connect(m_visibilityBtn, &QToolButton::toggled, this, &EditorMainWindow::onVisibilityToggled);
-        headerRow->addWidget(m_visibilityBtn);
+        identityRow->addWidget(m_visibilityBtn);
 
-        m_lockCheck = new QCheckBox(tr("Pin Inspector"));
+        m_lockCheck = new QToolButton(card);
+        m_lockCheck->setIcon(Theme::Icon(QStringLiteral("unlock")));
+        m_lockCheck->setCheckable(true);
+        m_lockCheck->setProperty("quiet", true);
         m_lockCheck->setToolTip(
-            tr("Pin this entity in the Details view; this does not lock viewport editing"));
-        connect(m_lockCheck, &QCheckBox::toggled, this, [this](bool checked) {
+            tr("Pin this entity in the Inspector; this does not lock viewport editing"));
+        connect(m_lockCheck, &QToolButton::toggled, this, [this](bool checked) {
+            m_lockCheck->setIcon(Theme::Icon(checked ? QStringLiteral("lock") : QStringLiteral("unlock")));
             m_detailsLocked = checked;
             if (checked && m_engine) {
                 auto* ctx = m_engine->GetEditorContext();
@@ -2172,9 +2259,62 @@ void EditorMainWindow::setupDockWidgets()
             }
             refreshDetailsPanel();
         });
-        headerRow->addWidget(m_lockCheck);
+        identityRow->addWidget(m_lockCheck);
+        cardLayout->addLayout(identityRow);
 
-        m_detailsLayout->addLayout(headerRow);
+        auto* spaceRow = new QHBoxLayout();
+        auto* spaceSwitch = new QFrame(card);
+        spaceSwitch->setObjectName(QStringLiteral("SegmentedControl"));
+        auto* spaceLayout = new QHBoxLayout(spaceSwitch);
+        spaceLayout->setContentsMargins(2, 2, 2, 2);
+        spaceLayout->setSpacing(2);
+        m_inspectorWorldBtn = new QToolButton(spaceSwitch);
+        m_inspectorWorldBtn->setText(tr("World"));
+        m_inspectorWorldBtn->setIcon(Theme::Icon(QStringLiteral("globe")));
+        m_inspectorLocalBtn = new QToolButton(spaceSwitch);
+        m_inspectorLocalBtn->setText(tr("Local"));
+        m_inspectorLocalBtn->setIcon(Theme::Icon(QStringLiteral("cube")));
+        for (QToolButton* button : { m_inspectorWorldBtn, m_inspectorLocalBtn }) {
+            button->setObjectName(QStringLiteral("SegmentButton"));
+            button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            button->setCheckable(true);
+            button->setFocusPolicy(Qt::NoFocus);
+            button->setToolTip(tr("Gizmo space only. Numeric transform fields always show local values."));
+            spaceLayout->addWidget(button);
+        }
+        m_inspectorWorldBtn->setChecked(!m_worldLocalBtn->isChecked());
+        m_inspectorLocalBtn->setChecked(m_worldLocalBtn->isChecked());
+        connect(m_inspectorWorldBtn, &QToolButton::clicked, this, [this]() { m_worldLocalBtn->setChecked(false); syncGizmoSpaceButtons(); });
+        connect(m_inspectorLocalBtn, &QToolButton::clicked, this, [this]() { m_worldLocalBtn->setChecked(true); syncGizmoSpaceButtons(); });
+        spaceRow->addWidget(spaceSwitch);
+        spaceRow->addStretch(1);
+        const struct { const char* icon; const char* tip; } transformTools[] = {
+            { "reset", QT_TR_NOOP("Reset transform") },
+            { "copy", QT_TR_NOOP("Copy transform") },
+            { "paste", QT_TR_NOOP("Paste transform") },
+        };
+        for (const auto& tool : transformTools) {
+            auto* button = new QToolButton(card);
+            button->setIcon(Theme::Icon(QString::fromLatin1(tool.icon)));
+            button->setToolTip(tr(tool.tip));
+            button->setProperty("quiet", true);
+            const QString icon = QString::fromLatin1(tool.icon);
+            connect(button, &QToolButton::clicked, this, [this, icon]() {
+                if (!m_transformGroup || !m_transformGroup->isEnabled()) return;
+                if (icon == QLatin1String("reset")) {
+                    for (QDoubleSpinBox* field : { m_posX, m_posY, m_posZ, m_rotX, m_rotY, m_rotZ }) field->setValue(0.0);
+                    for (QDoubleSpinBox* field : { m_scaleX, m_scaleY, m_scaleZ }) field->setValue(1.0);
+                    endCoalescedTransformUndo();
+                } else if (icon == QLatin1String("copy")) {
+                    copyInspectorComponent("Transform");
+                } else {
+                    pasteInspectorComponentValues("Transform");
+                }
+            });
+            spaceRow->addWidget(button);
+        }
+        cardLayout->addLayout(spaceRow);
+        m_detailsLayout->addWidget(card);
 
         m_detailsSharedHint = new QLabel();
         m_detailsSharedHint->setObjectName("DetailsSharedHint");
@@ -2194,14 +2334,6 @@ void EditorMainWindow::setupDockWidgets()
         m_detailsLayout->addWidget(m_detailsEmptyHint);
     }
 
-    // Name field
-    QFormLayout* nameLayout = new QFormLayout();
-    nameLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    m_nameEdit = new QLineEdit();
-    m_nameEdit->setPlaceholderText(tr("(No selection)"));
-    m_nameEdit->setEnabled(false);
-    nameLayout->addRow(tr("Name:"), m_nameEdit);
-    m_detailsLayout->addLayout(nameLayout);
     
     // Capture undo before the first character of a Details rename session.
     connect(m_nameEdit, &QLineEdit::textEdited, this, [this](const QString&) {
@@ -2291,31 +2423,6 @@ void EditorMainWindow::setupDockWidgets()
     transformLayout->setSpacing(8);
     transformLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
-    auto* transformControls = new QWidget(m_transformGroup);
-    auto* transformControlsLayout = new QHBoxLayout(transformControls);
-    transformControlsLayout->setContentsMargins(0, 0, 0, 0);
-    transformControlsLayout->setSpacing(6);
-
-    auto* detailsSpaceBtn = new QToolButton(transformControls);
-    detailsSpaceBtn->setText(tr("Gizmo: World"));
-    detailsSpaceBtn->setCheckable(true);
-    detailsSpaceBtn->setToolTip(tr("Gizmo space only. Numeric transform fields always show local values."));
-    connect(detailsSpaceBtn, &QToolButton::toggled, this, [this, detailsSpaceBtn](bool checked) {
-        detailsSpaceBtn->setText(checked ? tr("Gizmo: Local") : tr("Gizmo: World"));
-        if (m_worldLocalBtn && m_worldLocalBtn->isChecked() != checked) {
-            m_worldLocalBtn->setChecked(checked);
-        }
-    });
-    transformControlsLayout->addWidget(detailsSpaceBtn);
-
-    auto* uniformScaleBtn = new QToolButton(transformControls);
-    uniformScaleBtn->setText(tr("Uniform Scale"));
-    uniformScaleBtn->setCheckable(true);
-    transformControlsLayout->addWidget(uniformScaleBtn);
-    transformControlsLayout->addStretch();
-
-    transformLayout->addRow(QString(), transformControls);
-
     // Helper lambda to create a row of 3 spin boxes
     auto createVec3Row = [this](QDoubleSpinBox*& x, QDoubleSpinBox*& y, QDoubleSpinBox*& z, 
                                 double min, double max, double step, int decimals, double defaultValue) {
@@ -2364,6 +2471,12 @@ void EditorMainWindow::setupDockWidgets()
     
     // Scale
     QWidget* scaleRow = createVec3Row(m_scaleX, m_scaleY, m_scaleZ, 0.001, 10000.0, 0.1, 3, 1.0);
+    auto* uniformScaleBtn = new QToolButton(scaleRow);
+    uniformScaleBtn->setIcon(Theme::Icon(QStringLiteral("link")));
+    uniformScaleBtn->setToolTip(tr("Uniform scale"));
+    uniformScaleBtn->setCheckable(true);
+    uniformScaleBtn->setProperty("quiet", true);
+    static_cast<QHBoxLayout*>(scaleRow->layout())->addWidget(uniformScaleBtn);
     transformLayout->addRow(tr("Scale"), scaleRow);
 
     auto bindUniformScale = [this](QDoubleSpinBox* x, QDoubleSpinBox* y, QDoubleSpinBox* z,
@@ -2458,26 +2571,6 @@ void EditorMainWindow::setupDockWidgets()
     // Component cards are inserted before this stretch, which keeps Add Component at the bottom.
     m_detailsLayout->addStretch();
 
-    // ── Add Component + Delete Entity buttons ───────────────────────────
-    {
-        auto* actionRow = new QHBoxLayout();
-        m_addComponentBtn = new QPushButton(tr("+ Add Component"));
-        m_addComponentBtn->setObjectName("PrimaryActionButton");
-        m_addComponentBtn->setEnabled(false);
-        connect(m_addComponentBtn, &QPushButton::clicked, this, &EditorMainWindow::showAddComponentMenu);
-        actionRow->addWidget(m_addComponentBtn);
-
-        actionRow->addStretch();
-
-        m_deleteEntityBtn = new QPushButton(tr("Delete Entity"));
-        m_deleteEntityBtn->setObjectName("DangerActionButton");
-        m_deleteEntityBtn->setEnabled(false);
-        connect(m_deleteEntityBtn, &QPushButton::clicked, this, &EditorMainWindow::deleteSelectedEntities);
-        actionRow->addWidget(m_deleteEntityBtn);
-
-        m_detailsLayout->addLayout(actionRow);
-    }
-
     m_detailsPartialHint = new QLabel();
     m_detailsPartialHint->setWordWrap(true);
     m_detailsPartialHint->setProperty("role", "caption");
@@ -2485,7 +2578,23 @@ void EditorMainWindow::setupDockWidgets()
     m_detailsLayout->addWidget(m_detailsPartialHint);
 
     m_detailsScrollArea->setWidget(m_detailsWidget);
-    m_detailsDock->setWidget(m_detailsScrollArea);
+    auto* inspectorRoot = new QWidget(m_detailsDock);
+    inspectorRoot->setObjectName(QStringLiteral("InspectorRoot"));
+    auto* inspectorLayout = new QVBoxLayout(inspectorRoot);
+    inspectorLayout->setContentsMargins(0, 0, 0, 0);
+    inspectorLayout->setSpacing(0);
+    inspectorLayout->addWidget(m_detailsScrollArea, 1);
+    auto* addComponentBar = new QWidget(inspectorRoot);
+    addComponentBar->setObjectName(QStringLiteral("AddComponentBar"));
+    addComponentBar->setAttribute(Qt::WA_StyledBackground, true);
+    auto* addComponentLayout = new QHBoxLayout(addComponentBar);
+    addComponentLayout->setContentsMargins(12, 10, 12, 10);
+    m_addComponentBtn = new QPushButton(Theme::Icon(QStringLiteral("plus"), Theme::IconTone::Primary), tr("Add Component"), addComponentBar);
+    m_addComponentBtn->setEnabled(false);
+    connect(m_addComponentBtn, &QPushButton::clicked, this, &EditorMainWindow::showAddComponentMenu);
+    addComponentLayout->addWidget(m_addComponentBtn);
+    inspectorLayout->addWidget(addComponentBar);
+    m_detailsDock->setWidget(inspectorRoot);
     InstallDockTitleBar(m_detailsDock);
     addDockWidget(Qt::RightDockWidgetArea, m_detailsDock);
 
@@ -2827,11 +2936,14 @@ void EditorMainWindow::setupCentralWidget()
     m_viewportToolbar = new QWidget(m_viewportHost);
     m_viewportToolbar->setObjectName("ViewportToolbar");
     m_viewportToolbar->setAttribute(Qt::WA_StyledBackground, true);
-    m_viewportToolbar->setFixedHeight(30);
+    m_viewportToolbar->setFixedHeight(40);
 
     auto* tbLayout = new QHBoxLayout(m_viewportToolbar);
     tbLayout->setContentsMargins(6, 0, 6, 0);
     tbLayout->setSpacing(2);
+    m_topToolbar->setParent(m_viewportToolbar);
+    tbLayout->addWidget(m_topToolbar);
+    tbLayout->addStretch(1);
 
     const QSize tbIconSize(14, 14);
 
@@ -2932,14 +3044,12 @@ void EditorMainWindow::setupCentralWidget()
         }
         statusBar()->showMessage(tr("Camera view: %1").arg(m_viewPerspectiveCombo->currentText()), 2000);
     });
-    tbLayout->addWidget(m_viewPerspectiveCombo);
 
     // Left: Lit / Unlit / Wireframe shading modes
     m_viewModeBtn = new QToolButton(m_viewportToolbar);
-    m_viewModeBtn->setAutoRaise(true);
-    m_viewModeBtn->setIcon(Theme::Icon(QStringLiteral("light")));
+    m_viewModeBtn->setObjectName(QStringLiteral("StripDropdown"));
     m_viewModeBtn->setIconSize(tbIconSize);
-    m_viewModeBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_viewModeBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
     m_viewModeBtn->setText(tr("Lit"));
     m_viewModeBtn->setToolTip(tr("Viewport shading mode"));
     m_viewModeBtn->setPopupMode(QToolButton::InstantPopup);
@@ -2978,7 +3088,6 @@ void EditorMainWindow::setupCentralWidget()
             applyShadingMode(2, QObject::tr("Wireframe"));
         });
     }
-    tbLayout->addWidget(m_viewModeBtn);
 
     auto makeSep = [this]() {
         auto* sep = new QFrame(m_viewportToolbar);
@@ -2988,9 +3097,7 @@ void EditorMainWindow::setupCentralWidget()
         return sep;
     };
 
-    tbLayout->addWidget(makeSep());
-
-    // Left: Grid toggle
+    // Grid toggle
     m_viewGridBtn = new QToolButton(m_viewportToolbar);
     m_viewGridBtn->setAutoRaise(true);
     m_viewGridBtn->setIcon(Theme::Icon(QStringLiteral("grid")));
@@ -3000,7 +3107,7 @@ void EditorMainWindow::setupCentralWidget()
     m_viewGridBtn->setCheckable(true);
     m_viewGridBtn->setChecked(true);
     m_viewGridBtn->setCursor(Qt::PointingHandCursor);
-    tbLayout->addWidget(m_viewGridBtn);
+    m_viewGridBtn->hide();
 
     // Left: Stats toggle
     m_viewStatsBtn = new QToolButton(m_viewportToolbar);
@@ -3012,90 +3119,73 @@ void EditorMainWindow::setupCentralWidget()
     m_viewStatsBtn->setCheckable(true);
     m_viewStatsBtn->setChecked(false);
     m_viewStatsBtn->setCursor(Qt::PointingHandCursor);
-    tbLayout->addWidget(m_viewStatsBtn);
+    m_viewStatsBtn->hide();
 
-    // ── Center stretch ──────────────────────────────────────────────────────
-    tbLayout->addStretch(1);
 
-    // Right: Gizmo mode buttons (T / R / S)
-    auto* gizmoTranslate = new QToolButton(m_viewportToolbar);
-    gizmoTranslate->setAutoRaise(true);
-    gizmoTranslate->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    gizmoTranslate->setCursor(Qt::PointingHandCursor);
-    gizmoTranslate->setToolTip(tr("Translate"));
-    tbLayout->addWidget(gizmoTranslate);
+    tbLayout->addWidget(m_viewPerspectiveCombo);
+    tbLayout->addWidget(m_viewModeBtn);
 
-    auto* gizmoRotate = new QToolButton(m_viewportToolbar);
-    gizmoRotate->setAutoRaise(true);
-    gizmoRotate->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    gizmoRotate->setCursor(Qt::PointingHandCursor);
-    gizmoRotate->setToolTip(tr("Rotate"));
-    tbLayout->addWidget(gizmoRotate);
+    auto* showBtn = new QToolButton(m_viewportToolbar);
+    showBtn->setObjectName(QStringLiteral("StripDropdown"));
+    showBtn->setText(tr("Show"));
+    showBtn->setToolTip(tr("Viewport overlays"));
+    showBtn->setPopupMode(QToolButton::InstantPopup);
+    auto* showMenu = new QMenu(showBtn);
+    for (QToolButton* overlay : { m_viewGridBtn, m_viewStatsBtn }) {
+        QAction* action = showMenu->addAction(overlay->toolTip().replace(tr("Toggle "), QString()));
+        action->setCheckable(true);
+        action->setChecked(overlay->isChecked());
+        connect(action, &QAction::toggled, overlay, &QToolButton::setChecked);
+        connect(overlay, &QToolButton::toggled, action, &QAction::setChecked);
+    }
+    showBtn->setMenu(showMenu);
+    tbLayout->addWidget(showBtn);
 
-    auto* gizmoScale = new QToolButton(m_viewportToolbar);
-    gizmoScale->setAutoRaise(true);
-    gizmoScale->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    gizmoScale->setCursor(Qt::PointingHandCursor);
-    gizmoScale->setToolTip(tr("Scale"));
-    tbLayout->addWidget(gizmoScale);
+    auto* cameraIcon = new QLabel(m_viewportToolbar);
+    cameraIcon->setPixmap(Theme::Icon(QStringLiteral("camera"), Theme::IconTone::Muted).pixmap(QSize(16, 16), devicePixelRatioF()));
+    cameraIcon->setToolTip(tr("Camera speed"));
+    tbLayout->addSpacing(6);
+    tbLayout->addWidget(cameraIcon);
+    m_cameraSpeedCombo->setParent(m_viewportToolbar);
+    tbLayout->addWidget(m_cameraSpeedCombo);
 
-    auto* gizmoGroup = new QActionGroup(this);
-    gizmoGroup->setExclusive(true);
-    auto* aT = new QAction(tr("T"), this); aT->setCheckable(true); aT->setChecked(true);
-    auto* aR = new QAction(tr("R"), this); aR->setCheckable(true);
-    auto* aS = new QAction(tr("S"), this); aS->setCheckable(true);
-    gizmoGroup->addAction(aT);
-    gizmoGroup->addAction(aR);
-    gizmoGroup->addAction(aS);
-    gizmoTranslate->setDefaultAction(aT);
-    gizmoRotate->setDefaultAction(aR);
-    gizmoScale->setDefaultAction(aS);
-
-    connect(aT, &QAction::triggered, this, [this]() { if (m_translateAction) m_translateAction->trigger(); });
-    connect(aR, &QAction::triggered, this, [this]() { if (m_rotateAction)    m_rotateAction->trigger(); });
-    connect(aS, &QAction::triggered, this, [this]() { if (m_scaleAction)     m_scaleAction->trigger(); });
-
-    tbLayout->addWidget(makeSep());
-
-    // Right: Snap toggle
-    auto* snapBtn = new QToolButton(m_viewportToolbar);
-    snapBtn->setAutoRaise(true);
-    snapBtn->setIcon(Theme::Icon(QStringLiteral("snap")));
-    snapBtn->setIconSize(tbIconSize);
-    snapBtn->setToolTip(tr("Toggle Snap"));
-    snapBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    snapBtn->setCheckable(true);
-    snapBtn->setCursor(Qt::PointingHandCursor);
-    tbLayout->addWidget(snapBtn);
-    snapBtn->setVisible(false); // Main toolbar owns the single snap control.
-    connect(snapBtn, &QToolButton::toggled, this, [this](bool checked) {
-        if (m_snapToggleBtn) m_snapToggleBtn->setChecked(checked);
+    auto* maximizeBtn = new QToolButton(m_viewportToolbar);
+    maximizeBtn->setIcon(Theme::Icon(QStringLiteral("maximize")));
+    maximizeBtn->setToolTip(tr("Maximize viewport (hide panels)"));
+    maximizeBtn->setCheckable(true);
+    connect(maximizeBtn, &QToolButton::toggled, this, [this](bool maximize) {
+        if (maximize) {
+            m_stateBeforeMaximize = saveState(kDockLayoutVersion);
+            for (QDockWidget* dock : findChildren<QDockWidget*>()) {
+                if (!dock->isFloating()) dock->hide();
+            }
+        } else if (!m_stateBeforeMaximize.isEmpty()) {
+            restoreState(m_stateBeforeMaximize, kDockLayoutVersion);
+            m_stateBeforeMaximize.clear();
+        }
     });
+    tbLayout->addWidget(maximizeBtn);
 
-    // Right: Snap value
-    auto* snapValue = new QComboBox(m_viewportToolbar);
-    snapValue->addItems({ tr("0.1"), tr("0.5"), tr("1.0"), tr("5.0"), tr("15\u00B0") });
-    snapValue->setCurrentIndex(2);
-    tbLayout->addWidget(snapValue);
-    snapValue->setVisible(false);
-    connect(snapValue, &QComboBox::currentTextChanged, this, [this](const QString& value) {
-        if (m_snapValueCombo) m_snapValueCombo->setCurrentText(value);
-    });
-
-    // Right: World / Local toggle
-    auto* spaceBtn = new QToolButton(m_viewportToolbar);
-    spaceBtn->setAutoRaise(true);
-    spaceBtn->setText(tr("W"));
-    spaceBtn->setToolTip(tr("World / Local Space"));
-    spaceBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    spaceBtn->setCheckable(true);
-    spaceBtn->setCursor(Qt::PointingHandCursor);
-    tbLayout->addWidget(spaceBtn);
-    connect(spaceBtn, &QToolButton::toggled, this, [this, spaceBtn](bool checked) {
-        spaceBtn->setText(checked ? tr("L") : tr("W"));
-        if (m_worldLocalBtn) m_worldLocalBtn->setChecked(checked);
-    });
-
+    auto* sceneRow = new QWidget(m_viewportHost);
+    sceneRow->setObjectName(QStringLiteral("SceneTabRow"));
+    sceneRow->setAttribute(Qt::WA_StyledBackground, true);
+    auto* sceneLayout = new QHBoxLayout(sceneRow);
+    sceneLayout->setContentsMargins(0, 0, 6, 0);
+    sceneLayout->setSpacing(0);
+    m_sceneTabs = new QTabBar(sceneRow);
+    m_sceneTabs->setObjectName(QStringLiteral("SceneTabs"));
+    m_sceneTabs->setDrawBase(false);
+    m_sceneTabs->setExpanding(false);
+    m_sceneTabs->addTab(Theme::Icon(QStringLiteral("globe")), tr("Untitled"));
+    sceneLayout->addWidget(m_sceneTabs);
+    sceneLayout->addStretch(1);
+    auto* newSceneBtn = new QToolButton(sceneRow);
+    newSceneBtn->setIcon(Theme::Icon(QStringLiteral("plus")));
+    newSceneBtn->setToolTip(tr("New level"));
+    newSceneBtn->setFocusPolicy(Qt::NoFocus);
+    connect(newSceneBtn, &QToolButton::clicked, this, &EditorMainWindow::onNewLevel);
+    sceneLayout->addWidget(newSceneBtn);
+    hostVLayout->addWidget(sceneRow);
     hostVLayout->addWidget(m_viewportToolbar);
 
     // ── Viewport area (stacked: 3D view + runtime overlay + stats) ──────────
@@ -3176,20 +3266,22 @@ void EditorMainWindow::setupStatusBar()
     status->setObjectName("EditorStatusBar");
     status->setSizeGripEnabled(false);
 
-    m_statusSaved = new QLabel(status);
-    m_statusScene = new QLabel(status);
-    m_statusScene->setProperty("role", "muted");
+    m_statusSaved = new QToolButton(status);
+    m_statusScene = new QToolButton(status);
+    m_statusScene->setIcon(Theme::Icon(QStringLiteral("file"), Theme::IconTone::Muted));
+    for (QToolButton* item : { m_statusSaved, m_statusScene }) {
+        item->setObjectName(QStringLiteral("StatusItem"));
+        item->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        item->setFocusPolicy(Qt::NoFocus);
+        item->setAutoRaise(true);
+    }
     m_statusSelection = new QLabel(status);
     m_statusFps = new QLabel(status);
-    m_statusDrawCalls = new QLabel(status);
-    m_statusRam = new QLabel(status);
 
     status->addWidget(m_statusSaved);
     status->addWidget(m_statusScene);
     status->addPermanentWidget(m_statusSelection);
     status->addPermanentWidget(m_statusFps);
-    status->addPermanentWidget(m_statusDrawCalls);
-    status->addPermanentWidget(m_statusRam);
     status->showMessage(tr("Initializing engine..."));
 }
 
@@ -3489,7 +3581,7 @@ void EditorMainWindow::onFrameRendered(float dt)
                 if (m_worldLocalBtn->isChecked() != local) {
                     m_worldLocalBtn->blockSignals(true);
                     m_worldLocalBtn->setChecked(local);
-                    m_worldLocalBtn->setText(local ? tr("Local") : tr("World"));
+                    syncGizmoSpaceButtons();
                     m_worldLocalBtn->blockSignals(false);
                 }
             }
@@ -3519,11 +3611,26 @@ void EditorMainWindow::onFrameRendered(float dt)
             ? QString("RAM %1 MB").arg(ramMB, 0, 'f', 0)
             : QStringLiteral("RAM --");
 
-        if (m_statusDrawCalls) m_statusDrawCalls->setText(tr("%1 draws").arg(drawCalls));
         if (m_statusSelection && m_engine) {
             const auto* ctx = m_engine->GetEditorContext();
             const size_t selected = ctx ? ctx->GetSelectedEntities().size() : 0;
-            m_statusSelection->setText(selected ? tr("%n selected", nullptr, static_cast<int>(selected)) : QString());
+            QString selection;
+            if (selected && ctx->HasActiveScene()) {
+                auto& registry = ctx->GetActiveScene()->GetRegistry();
+                auto* renderer = m_engine->GetFrameRenderer();
+                uint64_t triangles = 0;
+                for (entt::entity handle : ctx->GetSelectedEntities()) {
+                    if (!renderer || !registry.valid(handle) || !registry.all_of<MeshRendererComponent>(handle)) continue;
+                    if (const MeshGPU* mesh = renderer->GetMesh(registry.get<MeshRendererComponent>(handle).meshHandle)) {
+                        triangles += mesh->indexCount / 3;
+                    }
+                }
+                selection = tr("%n selected", nullptr, static_cast<int>(selected));
+                if (triangles) {
+                    selection += QStringLiteral(" \u00B7 ") + tr("%1 tris").arg(QLocale().toString(static_cast<qulonglong>(triangles)));
+                }
+            }
+            m_statusSelection->setText(selection);
             if (m_outlinerFooter && ctx && ctx->HasActiveScene()) {
                 auto tags = ctx->GetActiveScene()->GetRegistry().view<TagComponent>();
                 const int objects = static_cast<int>(std::distance(tags.begin(), tags.end()));
@@ -3567,7 +3674,6 @@ void EditorMainWindow::onFrameRendered(float dt)
                 }
             }
         }
-        if (m_statusRam) m_statusRam->setText(ramUsage);
     }
 }
 
@@ -4057,6 +4163,16 @@ void EditorMainWindow::onOutlinerContextMenu(const QPoint& pos)
     menu.exec(m_outlinerTree->viewport()->mapToGlobal(pos));
 }
 
+void EditorMainWindow::syncGizmoSpaceButtons()
+{
+    const bool local = m_worldLocalBtn->isChecked();
+    for (auto [world, localBtn] : { std::pair{ m_worldBtn, m_worldLocalBtn }, std::pair{ m_inspectorWorldBtn, m_inspectorLocalBtn } }) {
+        if (!world || !localBtn) continue;
+        world->setChecked(!local);
+        localBtn->setChecked(local);
+    }
+}
+
 void EditorMainWindow::setEditorMode(EditorMode mode)
 {
     if (mode == m_mode) return;
@@ -4074,8 +4190,11 @@ void EditorMainWindow::restoreModeLayout(EditorMode mode)
     if (state.isEmpty() || !restoreState(state, kDockLayoutVersion)) {
         arrangeModeLayout(mode);
     }
+    m_topToolbar->setVisible(mode != EditorMode::Artist);
+    m_artistToolRail->setVisible(mode == EditorMode::Artist);
     if (m_assetBrowser) {
         m_assetBrowser->SetGridView(mode != EditorMode::Programmer);
+        m_assetBrowser->SetLargeCards(mode == EditorMode::Artist);
     }
 }
 
@@ -4092,6 +4211,25 @@ void EditorMainWindow::arrangeModeLayout(EditorMode mode)
         dock->show();
     };
 
+    // Dock sizes only apply once the new arrangement has been laid out.
+    QTimer::singleShot(0, this, [this, mode]() {
+        switch (mode) {
+        case EditorMode::Default:
+            resizeDocks({ m_outlinerDock, m_detailsDock }, { 280, 340 }, Qt::Horizontal);
+            resizeDocks({ m_assetBrowserDock }, { 320 }, Qt::Vertical);
+            break;
+        case EditorMode::Artist:
+            resizeDocks({ m_outlinerDock }, { 360 }, Qt::Horizontal);
+            resizeDocks({ m_outlinerDock, m_detailsDock }, { 1, 2 }, Qt::Vertical);
+            resizeDocks({ m_assetBrowserDock }, { 330 }, Qt::Vertical);
+            break;
+        case EditorMode::Programmer:
+            resizeDocks({ m_assetBrowserDock, m_detailsDock }, { 300, 340 }, Qt::Horizontal);
+            resizeDocks({ m_consoleDock }, { 300 }, Qt::Vertical);
+            break;
+        }
+    });
+
     switch (mode) {
     case EditorMode::Default:
         place(m_outlinerDock, Qt::LeftDockWidgetArea);
@@ -4107,8 +4245,6 @@ void EditorMainWindow::arrangeModeLayout(EditorMode mode)
         place(m_outlinerDock, Qt::RightDockWidgetArea);
         place(m_detailsDock, Qt::RightDockWidgetArea);
         splitDockWidget(m_outlinerDock, m_detailsDock, Qt::Vertical);
-        resizeDocks({ m_outlinerDock, m_detailsDock }, { 1, 2 }, Qt::Vertical);
-        resizeDocks({ m_outlinerDock }, { 360 }, Qt::Horizontal);
         place(m_assetBrowserDock, Qt::BottomDockWidgetArea);
         place(m_consoleDock, Qt::BottomDockWidgetArea);
         tabifyDockWidget(m_assetBrowserDock, m_consoleDock);
@@ -4124,12 +4260,8 @@ void EditorMainWindow::arrangeModeLayout(EditorMode mode)
         place(m_buildOutputDock, Qt::BottomDockWidgetArea);
         tabifyDockWidget(m_consoleDock, m_buildOutputDock);
         m_consoleDock->raise();
-        resizeDocks({ m_assetBrowserDock, m_detailsDock }, { 380, 380 }, Qt::Horizontal);
-        resizeDocks({ m_consoleDock }, { 260 }, Qt::Vertical);
         break;
     }
-    m_topToolbar->setVisible(mode != EditorMode::Artist);
-    m_artistToolRail->setVisible(mode == EditorMode::Artist);
 }
 
 QWidget* EditorMainWindow::componentCardOf(QWidget* body)
@@ -4397,7 +4529,6 @@ void EditorMainWindow::clearDetailsPanel()
     }
     if (m_detailsPartialHint) m_detailsPartialHint->hide();
     m_addComponentBtn->setEnabled(false);
-    m_deleteEntityBtn->setEnabled(false);
     if (m_visibilityBtn) {
         m_visibilityBtn->blockSignals(true);
         m_visibilityBtn->setChecked(true);
@@ -4461,7 +4592,6 @@ void EditorMainWindow::refreshDetailsPanel()
         m_nameEdit->setEnabled(false);
         m_transformGroup->setEnabled(false);
         m_addComponentBtn->setEnabled(false);
-        m_deleteEntityBtn->setEnabled(false);
         if (m_visibilityBtn) m_visibilityBtn->setEnabled(false);
         if (m_prefabBar) m_prefabBar->Clear();
         for (auto* insp : m_componentInspectors) {
@@ -4503,7 +4633,7 @@ void EditorMainWindow::refreshDetailsPanel()
 
     const size_t selectionCount = model.Count();
     if (selectionCount > 1) {
-        m_entityIdLabel->setText(tr("%1 entities selected").arg(static_cast<int>(selectionCount)));
+        m_entityIdLabel->setText(tr("%1 objects selected").arg(static_cast<int>(selectionCount)));
         m_entityIconLabel->clear();
         if (m_detailsSharedHint) {
             m_detailsSharedHint->setText(tr("Showing shared properties."));
@@ -4518,25 +4648,21 @@ void EditorMainWindow::refreshDetailsPanel()
         if (registry.all_of<TagComponent>(entity)) {
             AccumulateString(name, registry.get<TagComponent>(entity).tag);
         }
-        m_entityIdLabel->setText(name.present
-            ? QString::fromStdString(name.value)
-            : tr("Entity"));
+        QString typeLine = OutlinerTypeLabel(OutlinerIconName(registry, entity));
+        if (registry.all_of<PrefabNodeComponent>(entity) && !registry.all_of<PrefabInstanceComponent>(entity)) {
+            typeLine += QStringLiteral(" \u00B7 ") + tr("in prefab");
+        }
+        m_entityIdLabel->setText(typeLine);
         m_entityIconLabel->setPixmap(Theme::Icon(OutlinerIconName(registry, entity))
                                          .pixmap(QSize(16, 16), devicePixelRatioF()));
+        m_entityIconLabel->setToolTip(QStringLiteral("#%1").arg(static_cast<uint32_t>(entity)));
         if (m_detailsSharedHint) m_detailsSharedHint->hide();
         if (m_detailsAdvancedId) {
-            m_detailsAdvancedId->setText(QString("#%1").arg(static_cast<uint32_t>(entity)));
-            m_detailsAdvancedId->show();
+            m_detailsAdvancedId->hide();
         }
     }
 
     m_addComponentBtn->setEnabled(true);
-    m_deleteEntityBtn->setEnabled(true);
-    if (selectionCount > 1) {
-        m_deleteEntityBtn->setText(tr("Delete Entities"));
-    } else {
-        m_deleteEntityBtn->setText(tr("Delete Entity"));
-    }
 
     MixedBool vis;
     int meshCount = 0;
@@ -5269,6 +5395,8 @@ void EditorMainWindow::updateWindowTitle()
         const bool hasScene = ctx && ctx->HasActiveScene();
         const bool dirty = hasScene && ctx->IsDirty();
         m_statusSaved->setText(dirty ? tr("Unsaved changes") : tr("Saved"));
+        m_statusSaved->setIcon(dirty ? Theme::Icon(QStringLiteral("dot"), Theme::IconTone::Warning)
+                                     : Theme::Icon(QStringLiteral("check"), Theme::IconTone::Success));
         m_statusSaved->setProperty("state", dirty ? "dirty" : "saved");
         m_statusSaved->style()->unpolish(m_statusSaved);
         m_statusSaved->style()->polish(m_statusSaved);
@@ -5278,6 +5406,18 @@ void EditorMainWindow::updateWindowTitle()
             scene = QString::fromStdString(m_projectContext->GetProjectName()) + QStringLiteral(" / ") + scene;
         }
         m_statusScene->setText(scene);
+    }
+    if (m_sceneTabs) {
+        auto* ctx = m_engine ? m_engine->GetEditorContext() : nullptr;
+        const bool hasScene = ctx && ctx->HasActiveScene();
+        QString tab = hasScene ? QString::fromStdString(ctx->GetActiveScene()->GetName()) : tr("No scene");
+        if (hasScene && !ctx->GetScenePath().empty()) {
+            tab = QFileInfo(QString::fromStdString(ctx->GetScenePath())).fileName();
+        }
+        if (hasScene && ctx->IsDirty()) {
+            tab += QStringLiteral("  \u25CF");
+        }
+        m_sceneTabs->setTabText(0, tab);
     }
 }
 
