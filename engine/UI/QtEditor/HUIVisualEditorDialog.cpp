@@ -1,6 +1,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "HUIVisualEditorDialog.h"
+#include "EditorTheme.h"
 
 #include "../../Assets/AssetManager.h"
 #include "../HephaestusUI/HUIAsset.h"
@@ -1345,7 +1346,7 @@ private:
         m_toolbar->setIconSize(QSize(18, 18));
         rootLayout->addWidget(m_toolbar);
 
-        QAction* saveAction = m_toolbar->addAction(style()->standardIcon(QStyle::SP_DialogSaveButton), tr("Save"));
+        QAction* saveAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("save")), tr("Save"));
         QAction* saveAsAction = m_toolbar->addAction(tr("Save As"));
         QAction* undoAction = m_toolbar->addAction(tr("Undo"));
         QAction* redoAction = m_toolbar->addAction(tr("Redo"));

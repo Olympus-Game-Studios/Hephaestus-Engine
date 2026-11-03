@@ -7,6 +7,7 @@
 
 #include "EditorQtApp.h"
 #include "EditorMainWindow.h"
+#include "EditorTheme.h"
 #include "../../Core/EngineLog.h"
 #include "../../ToolsCommon/VersionInfo.h"
 
@@ -266,6 +267,8 @@ int RunQtEditor(int argc, char** argv)
         QApplication::setApplicationVersion(Hephaestus::Tools::VersionInfo::EngineVersion());
         QApplication::setOrganizationName(Hephaestus::Tools::VersionInfo::Organization());
         QApplication::setOrganizationDomain(Hephaestus::Tools::VersionInfo::Domain());
+
+        Hephaestus::QtEditor::Theme::Apply(app);
 
         Hephaestus::EngineLog::Info("Constructing EditorMainWindow (UI only, no Vulkan yet)");
         Hephaestus::Plugins::FirstPartyStartupOptions startupOptions;

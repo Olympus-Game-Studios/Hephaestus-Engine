@@ -178,7 +178,6 @@ private:
     void setupDockWidgets();
     void setupCentralWidget();
     void setupStatusBar();
-    void applyUnifiedStyle();
     bool initializeEngine();
     void setupEditorCallbacks();
     void setupViewportRenderingToggles();

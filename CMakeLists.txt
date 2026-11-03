@@ -564,6 +564,9 @@ if(HEPHAESTUS_USE_QT)
         target_sources(HephaestusEngine PRIVATE
             engine/UI/QtEditor/EditorQtApp.cpp
             engine/UI/QtEditor/EditorQtApp.h
+            engine/UI/QtEditor/EditorTheme.cpp
+            engine/UI/QtEditor/EditorTheme.h
+            engine/UI/QtEditor/Resources/EditorResources.qrc
             engine/UI/QtEditor/EditorMainWindow.cpp
             engine/UI/QtEditor/EditorMainWindow.h
             engine/UI/QtEditor/QtViewportWindow.cpp
@@ -668,7 +671,10 @@ if(HEPHAESTUS_USE_QT)
             )
         endif()
 
-        target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets)
+        if(NOT TARGET Qt6::Svg)
+            message(FATAL_ERROR "The Qt editor requires the Qt6 Svg module for its icon set.")
+        endif()
+        target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets Qt6::Svg)
         if(TARGET HephaestusToolsCommon)
             target_link_libraries(HephaestusEngine PRIVATE HephaestusToolsCommon)
         endif()
@@ -761,6 +767,9 @@ if(HEPHAESTUS_USE_QT)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${_qt6_bin_dir}/Qt6Widgets.dll"
                     "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Widgets.dll"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_qt6_bin_dir}/Qt6Svg.dll"
+                    "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Svg.dll"
                 COMMENT "Copying Qt6 DLLs to output directory"
             )
 

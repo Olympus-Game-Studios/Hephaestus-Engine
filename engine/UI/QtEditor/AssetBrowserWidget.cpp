@@ -10,6 +10,7 @@
 #include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "EditorMainWindow.h"
 #include "EditorPluginHost.h"
+#include "EditorTheme.h"
 #include "AddActorsPanel.h"
 #include "AssetDependencyDialog.h"
 #include "EditorAssetServices.h"
@@ -277,7 +278,7 @@ void AssetBrowserWidget::setupUI()
 
     // Up button
     m_upButton = new QPushButton(this);
-    m_upButton->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
+    m_upButton->setIcon(Theme::Icon(QStringLiteral("arrow-up")));
     m_upButton->setToolTip(tr("Go up one level"));
     m_upButton->setFixedSize(24, 24);
     connect(m_upButton, &QPushButton::clicked, this, &AssetBrowserWidget::onUpButtonClicked);
@@ -285,7 +286,7 @@ void AssetBrowserWidget::setupUI()
 
     // Refresh button
     m_refreshButton = new QPushButton(this);
-    m_refreshButton->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
+    m_refreshButton->setIcon(Theme::Icon(QStringLiteral("reset")));
     m_refreshButton->setToolTip(tr("Refresh"));
     m_refreshButton->setFixedSize(24, 24);
     connect(m_refreshButton, &QPushButton::clicked, this, &AssetBrowserWidget::onRefreshButtonClicked);
@@ -475,7 +476,7 @@ void AssetBrowserWidget::rebuildFolderTree()
     }
 
     // Root item
-    QStandardItem* rootItem = new QStandardItem(style()->standardIcon(QStyle::SP_DirIcon), tr("Assets"));
+    QStandardItem* rootItem = new QStandardItem(Theme::Icon(QStringLiteral("folder")), tr("Assets"));
     rootItem->setData("", RelativePathRole);
     rootItem->setData(true, IsDirectoryRole);
     m_folderModel->appendRow(rootItem);
@@ -487,7 +488,7 @@ void AssetBrowserWidget::rebuildFolderTree()
         for (const auto& entry : entries) {
             if (entry.isDirectory) {
                 QStandardItem* item = new QStandardItem(
-                    style()->standardIcon(QStyle::SP_DirIcon),
+                    Theme::Icon(QStringLiteral("folder")),
                     QString::fromStdString(entry.name)
                 );
                 item->setData(QString::fromStdString(entry.relativePath), RelativePathRole);
@@ -737,40 +738,22 @@ void AssetBrowserWidget::updateStatusBar()
 
 QIcon AssetBrowserWidget::getAssetIcon(int assetType, bool isDirectory) const
 {
-    QStyle* s = style();
-    
     if (isDirectory) {
-        return s->standardIcon(QStyle::SP_DirIcon);
+        return Theme::Icon(QStringLiteral("folder"));
     }
 
-    AssetType type = static_cast<AssetType>(assetType);
-    switch (type) {
-        case AssetType::Scene:
-            return s->standardIcon(QStyle::SP_FileDialogDetailedView);
-        case AssetType::Texture:
-            return s->standardIcon(QStyle::SP_FileDialogContentsView);
-        case AssetType::StaticMesh:
-            return s->standardIcon(QStyle::SP_ComputerIcon);
-        case AssetType::Material:
-            return s->standardIcon(QStyle::SP_DialogApplyButton);
-        case AssetType::Script:
-            return s->standardIcon(QStyle::SP_FileDialogListView);
-        case AssetType::Audio:
-            return s->standardIcon(QStyle::SP_MediaVolume);
-        case AssetType::Prefab:
-            return s->standardIcon(QStyle::SP_VistaShield);
-        case AssetType::Character:
-            return s->standardIcon(QStyle::SP_DirLinkIcon);
-        case AssetType::Shader:
-            return s->standardIcon(QStyle::SP_TitleBarMenuButton);
-        case AssetType::Font:
-            return s->standardIcon(QStyle::SP_FileDialogInfoView);
-        case AssetType::Text:
-            return s->standardIcon(QStyle::SP_FileIcon);
-        case AssetType::UILayout:
-            return s->standardIcon(QStyle::SP_DesktopIcon);
-        default:
-            return s->standardIcon(QStyle::SP_FileIcon);
+    switch (static_cast<AssetType>(assetType)) {
+        case AssetType::Scene:      return Theme::Icon(QStringLiteral("globe"));
+        case AssetType::Texture:    return Theme::Icon(QStringLiteral("texture"));
+        case AssetType::StaticMesh: return Theme::Icon(QStringLiteral("cube"));
+        case AssetType::Material:   return Theme::Icon(QStringLiteral("material"));
+        case AssetType::Script:     return Theme::Icon(QStringLiteral("code"));
+        case AssetType::Audio:      return Theme::Icon(QStringLiteral("audio"));
+        case AssetType::Prefab:     return Theme::Icon(QStringLiteral("prefab"));
+        case AssetType::Character:  return Theme::Icon(QStringLiteral("character"));
+        case AssetType::Shader:     return Theme::Icon(QStringLiteral("code"));
+        case AssetType::UILayout:   return Theme::Icon(QStringLiteral("ui"));
+        default:                    return Theme::Icon(QStringLiteral("file"));
     }
 }
 
@@ -879,9 +862,7 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
         AssetType assetType = static_cast<AssetType>(index.data(AssetTypeRole).toInt());
 
         if (relativePath.startsWith(QStringLiteral("plugin://"))) {
-            menu.addAction(isDirectory ? style()->standardIcon(QStyle::SP_DirOpenIcon)
-                                       : style()->standardIcon(QStyle::SP_DialogOpenButton),
-                           tr("Open"), [this, relativePath, isDirectory]() {
+            menu.addAction(tr("Open"), [this, relativePath, isDirectory]() {
                 if (isDirectory) NavigateTo(relativePath);
                 else if (!m_mainWindow || !m_mainWindow->PluginHost() ||
                          !m_mainWindow->PluginHost()->OpenCustomAsset(relativePath))
@@ -897,14 +878,14 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
         }
 
         if (isDirectory) {
-            menu.addAction(style()->standardIcon(QStyle::SP_DirOpenIcon), tr("Open"), [this, relativePath]() {
+            menu.addAction(tr("Open"), [this, relativePath]() {
                 NavigateTo(relativePath);
             });
             menu.addSeparator();
             showCreateMenu(menu, relativePath);
             menu.addSeparator();
         } else {
-            menu.addAction(style()->standardIcon(QStyle::SP_DialogOpenButton), tr("Open"), [this, relativePath]() {
+            menu.addAction(tr("Open"), [this, relativePath]() {
                 if (!m_mainWindow || !m_mainWindow->PluginHost() ||
                     !m_mainWindow->PluginHost()->OpenCustomAsset(relativePath)) {
                     emit assetOpenRequested(relativePath);
@@ -1052,10 +1033,9 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
             });
         }
 
-        QAction* deleteAct = menu.addAction(tr("Delete"), [this, relativePath, isDirectory]() {
+        menu.addAction(tr("Delete"), [this, relativePath, isDirectory]() {
             deleteAsset(relativePath, isDirectory);
         });
-        deleteAct->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
 
         menu.addSeparator();
         menu.addAction(tr("Show in Folder"), [this, relativePath]() {
@@ -1108,8 +1088,7 @@ void AssetBrowserWidget::onFolderTreeContextMenu(const QPoint& pos)
     }
 
     if (targetDir.startsWith(QStringLiteral("plugin://"))) {
-        menu.addAction(style()->standardIcon(QStyle::SP_DirOpenIcon), tr("Open"),
-                       [this, targetDir]() { NavigateTo(targetDir); });
+        menu.addAction(tr("Open"), [this, targetDir]() { NavigateTo(targetDir); });
         menu.addAction(tr("Show in Explorer"), [this, targetDir]() { showInExplorer(targetDir); });
         menu.exec(m_folderTree->viewport()->mapToGlobal(pos));
         return;
@@ -1122,10 +1101,9 @@ void AssetBrowserWidget::onFolderTreeContextMenu(const QPoint& pos)
         menu.addAction(tr("Rename"), [this, targetDir]() {
             renameAsset(targetDir, true);
         });
-        QAction* deleteAct = menu.addAction(tr("Delete"), [this, targetDir]() {
+        menu.addAction(tr("Delete"), [this, targetDir]() {
             deleteAsset(targetDir, true);
         });
-        deleteAct->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
     }
 
     menu.addSeparator();
@@ -1138,33 +1116,33 @@ void AssetBrowserWidget::onFolderTreeContextMenu(const QPoint& pos)
 
 void AssetBrowserWidget::showCreateMenu(QMenu& menu, const QString& targetDirectory)
 {
-    menu.addAction(style()->standardIcon(QStyle::SP_DirIcon), tr("New Folder"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("folder")), tr("New Folder"), [this, targetDirectory]() {
         createNewFolder(targetDirectory);
     });
 
     menu.addSeparator();
 
-    menu.addAction(style()->standardIcon(QStyle::SP_FileDialogListView), tr("New Lua Script"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("code")), tr("New Lua Script"), [this, targetDirectory]() {
         createNewLuaScript(targetDirectory);
     });
 
-    menu.addAction(style()->standardIcon(QStyle::SP_FileDialogDetailedView), tr("New Scene"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("globe")), tr("New Scene"), [this, targetDirectory]() {
         createNewScene(targetDirectory);
     });
 
-    menu.addAction(style()->standardIcon(QStyle::SP_DialogApplyButton), tr("New Material"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("material")), tr("New Material"), [this, targetDirectory]() {
         createNewMaterial(targetDirectory);
     });
 
-    menu.addAction(style()->standardIcon(QStyle::SP_DesktopIcon), tr("New UI File"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("ui")), tr("New UI File"), [this, targetDirectory]() {
         createNewUIFile(targetDirectory);
     });
 
-    menu.addAction(style()->standardIcon(QStyle::SP_VistaShield), tr("New Prefab"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("prefab")), tr("New Prefab"), [this, targetDirectory]() {
         createNewPrefab(targetDirectory);
     });
 
-    menu.addAction(style()->standardIcon(QStyle::SP_DirLinkIcon), tr("New Character"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("character")), tr("New Character"), [this, targetDirectory]() {
         createNewCharacter(targetDirectory);
     });
     menu.addAction(tr("Import Character…"), [this]() {
