@@ -821,3 +821,29 @@ QTreeWidget#ConsoleList {
 QTreeWidget#ConsoleList::item {
     min-height: 22px;
 }
+
+QFrame#ModeSwitch {
+    background: @surface-panel;
+    border: 1px solid @border-subtle;
+    border-radius: 6px;
+}
+QToolButton#ModeButton {
+    padding: 2px 8px;
+    color: @text-secondary;
+}
+QToolButton#ModeButton:checked {
+    background: @surface-selected-strong;
+    color: @text-primary;
+}
+QToolBar#ArtistToolRail {
+    background: @surface-panel;
+    border: none;
+    border-right: 1px solid @border-subtle;
+    padding: 4px;
+    spacing: 2px;
+}
+QToolBar#ArtistToolRail QToolButton {
+    font-size: 11px;
+    padding: 6px 4px;
+    min-width: 40px;
+}

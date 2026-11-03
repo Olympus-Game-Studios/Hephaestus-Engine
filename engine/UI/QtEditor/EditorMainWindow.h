@@ -30,6 +30,7 @@
 #include <QPushButton>
 #include <QComboBox>
 #include <QToolButton>
+#include <QButtonGroup>
 #include <QFrame>
 #include <QSet>
 #include <QPlainTextEdit>
@@ -132,6 +133,9 @@ class EditorMainWindow : public QMainWindow
     Q_OBJECT
 
 public:
+    /** Editor 2.0 workspace modes; each keeps its own saved dock layout. */
+    enum class EditorMode { Default, Artist, Programmer };
+
     explicit EditorMainWindow(
         QWidget* parent = nullptr,
         Hephaestus::Plugins::FirstPartyStartupOptions startupOptions = {});
@@ -192,6 +196,9 @@ private:
     QTreeWidgetItem* findOutlinerItemForEntity(entt::entity entity);
     void onOutlinerContextMenu(const QPoint& pos);
     void createEmptyEntity();
+    void setEditorMode(EditorMode mode);
+    void restoreModeLayout(EditorMode mode);
+    void arrangeModeLayout(EditorMode mode);
     QWidget* wrapComponentCard(QGroupBox* body, const QString& title, const QString& type,
                                std::function<void()> onReset);
     static QWidget* componentCardOf(QWidget* body);
@@ -324,6 +331,9 @@ private:
     QMenuBar* m_menuBar = nullptr;
     QToolButton* m_projectButton = nullptr;
     QToolBar* m_topToolbar = nullptr;
+    QToolBar* m_artistToolRail = nullptr;
+    QButtonGroup* m_modeButtons = nullptr;
+    EditorMode m_mode = EditorMode::Default;
     QAction* m_playAction = nullptr;
     QAction* m_pauseAction = nullptr;
     QAction* m_stopAction = nullptr;

@@ -133,6 +133,7 @@
 #include <QFrame>
 #include <QGridLayout>
 #include <QSettings>
+#include <QButtonGroup>
 #include <QHash>
 #include <QPainter>
 #include <QShortcut>
@@ -321,6 +322,13 @@ public:
 
 // Bump when the default dock layout changes so older saved layouts are not restored over it.
 constexpr int kDockLayoutVersion = 2;
+constexpr int kEditorModeCount = 3;
+
+QString ModeStateKey(EditorMainWindow::EditorMode mode)
+{
+    static const char* const names[kEditorModeCount] = { "default", "artist", "programmer" };
+    return QStringLiteral("mainWindow/state/%1").arg(QLatin1String(names[static_cast<int>(mode)]));
+}
 
 class EditorMainWindow::FirstPartyContext final : public Plugins::IFirstPartyPluginContext
 {
@@ -412,13 +420,16 @@ EditorMainWindow::EditorMainWindow(QWidget* parent,
     {
         QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
         const QByteArray geometry = settings.value(QStringLiteral("mainWindow/geometry")).toByteArray();
-        const QByteArray state = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
         if (!geometry.isEmpty()) {
             restoreGeometry(geometry);
         }
-        if (!state.isEmpty()) {
-            restoreState(state, kDockLayoutVersion);
+        const int savedMode = settings.value(QStringLiteral("mainWindow/mode"), 0).toInt();
+        m_mode = savedMode >= 0 && savedMode < kEditorModeCount ? static_cast<EditorMode>(savedMode) : EditorMode::Default;
+        if (QAbstractButton* button = m_modeButtons->button(static_cast<int>(m_mode))) {
+            const QSignalBlocker blocker(m_modeButtons);
+            button->setChecked(true);
         }
+        restoreModeLayout(m_mode);
     }
 
     EngineLog::Info("EditorMainWindow: UI construction complete (window not shown yet)");
@@ -1272,7 +1283,8 @@ void EditorMainWindow::closeEvent(QCloseEvent* event)
     {
         QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
         settings.setValue(QStringLiteral("mainWindow/geometry"), saveGeometry());
-        settings.setValue(QStringLiteral("mainWindow/state"), saveState(kDockLayoutVersion));
+        settings.setValue(ModeStateKey(m_mode), saveState(kDockLayoutVersion));
+        settings.setValue(QStringLiteral("mainWindow/mode"), static_cast<int>(m_mode));
     }
 
     // Close all prefab and character editor windows
@@ -1624,6 +1636,35 @@ void EditorMainWindow::setupTopToolbar()
         m_projectButton->setMenu(projectMenu);
         layout->addWidget(m_projectButton);
 
+        auto* modeSwitch = new QFrame(header);
+        modeSwitch->setObjectName(QStringLiteral("ModeSwitch"));
+        auto* modeLayout = new QHBoxLayout(modeSwitch);
+        modeLayout->setContentsMargins(2, 2, 2, 2);
+        modeLayout->setSpacing(2);
+        m_modeButtons = new QButtonGroup(this);
+        const struct { EditorMode mode; const char* icon; const char* label; const char* tip; } modes[] = {
+            { EditorMode::Default, "layout", QT_TR_NOOP("Default"), QT_TR_NOOP("Hierarchy, viewport, Inspector, Content Browser and Console") },
+            { EditorMode::Artist, "paint", QT_TR_NOOP("Artist"), QT_TR_NOOP("Viewport first, tools on a rail, large thumbnails") },
+            { EditorMode::Programmer, "code", QT_TR_NOOP("Programmer"), QT_TR_NOOP("Project files, viewport, Inspector, Console and build output") },
+        };
+        for (const auto& entry : modes) {
+            auto* button = new QToolButton(modeSwitch);
+            button->setObjectName(QStringLiteral("ModeButton"));
+            button->setIcon(Theme::Icon(QString::fromLatin1(entry.icon)));
+            button->setText(tr(entry.label));
+            button->setToolTip(tr(entry.tip));
+            button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            button->setCheckable(true);
+            button->setFocusPolicy(Qt::NoFocus);
+            m_modeButtons->addButton(button, static_cast<int>(entry.mode));
+            modeLayout->addWidget(button);
+        }
+        m_modeButtons->button(static_cast<int>(EditorMode::Default))->setChecked(true);
+        connect(m_modeButtons, &QButtonGroup::idClicked, this, [this](int id) {
+            setEditorMode(static_cast<EditorMode>(id));
+        });
+        layout->addWidget(modeSwitch);
+
         layout->addWidget(m_menuBar);
         layout->addStretch(1);
 
@@ -1638,11 +1679,13 @@ void EditorMainWindow::setupTopToolbar()
         auto* undoBtn = new QToolButton(header);
         undoBtn->setIcon(Theme::Icon(QStringLiteral("undo")));
         undoBtn->setToolTip(tr("Undo"));
+        undoBtn->setFocusPolicy(Qt::NoFocus);
         connect(undoBtn, &QToolButton::clicked, this, &EditorMainWindow::onUndo);
         layout->addWidget(undoBtn);
         auto* redoBtn = new QToolButton(header);
         redoBtn->setIcon(Theme::Icon(QStringLiteral("redo")));
         redoBtn->setToolTip(tr("Redo"));
+        redoBtn->setFocusPolicy(Qt::NoFocus);
         connect(redoBtn, &QToolButton::clicked, this, &EditorMainWindow::onRedo);
         layout->addWidget(redoBtn);
 
@@ -1655,6 +1698,7 @@ void EditorMainWindow::setupTopToolbar()
             auto* button = new QToolButton(playGroup);
             button->setDefaultAction(action);
             button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+            button->setFocusPolicy(Qt::NoFocus);
             playLayout->addWidget(button);
         }
         layout->addWidget(playGroup);
@@ -1684,6 +1728,20 @@ void EditorMainWindow::setupTopToolbar()
     }
     m_translateAction->setChecked(true);
     m_topToolbar->addSeparator();
+
+    m_artistToolRail = new QToolBar(tr("Tool Rail"), this);
+    m_artistToolRail->setObjectName(QStringLiteral("ArtistToolRail"));
+    m_artistToolRail->setMovable(false);
+    m_artistToolRail->setFloatable(false);
+    m_artistToolRail->setOrientation(Qt::Vertical);
+    m_artistToolRail->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+    m_artistToolRail->setIconSize(QSize(16, 16));
+    m_artistToolRail->toggleViewAction()->setEnabled(false);
+    for (QAction* action : { m_selectAction, m_translateAction, m_rotateAction, m_scaleAction }) {
+        m_artistToolRail->addAction(action);
+    }
+    addToolBar(Qt::LeftToolBarArea, m_artistToolRail);
+    m_artistToolRail->hide();
 
     m_worldLocalBtn = new QToolButton(m_topToolbar);
     m_worldLocalBtn->setText(tr("World"));
@@ -2436,7 +2494,7 @@ void EditorMainWindow::setupDockWidgets()
     // ─────────────────────────────────────────────────────────────────────────
     m_assetBrowserDock = new QDockWidget(tr("Content Browser"), this);
     m_assetBrowserDock->setObjectName("AssetBrowserDock");
-    m_assetBrowserDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
+    m_assetBrowserDock->setAllowedAreas(Qt::AllDockWidgetAreas);
 
     // Create the new asset browser widget
     m_assetBrowser = new AssetBrowserWidget(this, m_assetBrowserDock);
@@ -2627,7 +2685,7 @@ void EditorMainWindow::setupDockWidgets()
     // ─────────────────────────────────────────────────────────────────────────
     m_buildOutputDock = new QDockWidget(tr("Output"), this);
     m_buildOutputDock->setObjectName("BuildOutputDock");
-    m_buildOutputDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
+    m_buildOutputDock->setAllowedAreas(Qt::AllDockWidgetAreas);
 
     auto* buildOutputWidget = new QWidget(m_buildOutputDock);
     auto* buildOutputLayout = new QVBoxLayout(buildOutputWidget);
@@ -3997,6 +4055,81 @@ void EditorMainWindow::onOutlinerContextMenu(const QPoint& pos)
 
     if (m_pluginHost) m_pluginHost->PopulateContextMenu("sceneHierarchy", menu);
     menu.exec(m_outlinerTree->viewport()->mapToGlobal(pos));
+}
+
+void EditorMainWindow::setEditorMode(EditorMode mode)
+{
+    if (mode == m_mode) return;
+    QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
+    settings.setValue(ModeStateKey(m_mode), saveState(kDockLayoutVersion));
+    m_mode = mode;
+    settings.setValue(QStringLiteral("mainWindow/mode"), static_cast<int>(m_mode));
+    restoreModeLayout(m_mode);
+}
+
+void EditorMainWindow::restoreModeLayout(EditorMode mode)
+{
+    QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
+    const QByteArray state = settings.value(ModeStateKey(mode)).toByteArray();
+    if (state.isEmpty() || !restoreState(state, kDockLayoutVersion)) {
+        arrangeModeLayout(mode);
+    }
+    if (m_assetBrowser) {
+        m_assetBrowser->SetGridView(mode != EditorMode::Programmer);
+    }
+}
+
+void EditorMainWindow::arrangeModeLayout(EditorMode mode)
+{
+    const QList<QDockWidget*> editorDocks = { m_outlinerDock, m_detailsDock, m_assetBrowserDock,
+                                              m_consoleDock, m_buildOutputDock, m_addActorsDock };
+    for (QDockWidget* dock : editorDocks) {
+        dock->setFloating(false);
+        removeDockWidget(dock);
+    }
+    auto place = [this](QDockWidget* dock, Qt::DockWidgetArea area) {
+        addDockWidget(area, dock);
+        dock->show();
+    };
+
+    switch (mode) {
+    case EditorMode::Default:
+        place(m_outlinerDock, Qt::LeftDockWidgetArea);
+        place(m_detailsDock, Qt::RightDockWidgetArea);
+        place(m_assetBrowserDock, Qt::BottomDockWidgetArea);
+        place(m_consoleDock, Qt::BottomDockWidgetArea);
+        place(m_buildOutputDock, Qt::BottomDockWidgetArea);
+        tabifyDockWidget(m_assetBrowserDock, m_buildOutputDock);
+        tabifyDockWidget(m_assetBrowserDock, m_consoleDock);
+        m_assetBrowserDock->raise();
+        break;
+    case EditorMode::Artist:
+        place(m_outlinerDock, Qt::RightDockWidgetArea);
+        place(m_detailsDock, Qt::RightDockWidgetArea);
+        splitDockWidget(m_outlinerDock, m_detailsDock, Qt::Vertical);
+        resizeDocks({ m_outlinerDock, m_detailsDock }, { 1, 2 }, Qt::Vertical);
+        resizeDocks({ m_outlinerDock }, { 360 }, Qt::Horizontal);
+        place(m_assetBrowserDock, Qt::BottomDockWidgetArea);
+        place(m_consoleDock, Qt::BottomDockWidgetArea);
+        tabifyDockWidget(m_assetBrowserDock, m_consoleDock);
+        m_assetBrowserDock->raise();
+        break;
+    case EditorMode::Programmer:
+        place(m_assetBrowserDock, Qt::LeftDockWidgetArea);
+        place(m_outlinerDock, Qt::LeftDockWidgetArea);
+        tabifyDockWidget(m_assetBrowserDock, m_outlinerDock);
+        m_assetBrowserDock->raise();
+        place(m_detailsDock, Qt::RightDockWidgetArea);
+        place(m_consoleDock, Qt::BottomDockWidgetArea);
+        place(m_buildOutputDock, Qt::BottomDockWidgetArea);
+        tabifyDockWidget(m_consoleDock, m_buildOutputDock);
+        m_consoleDock->raise();
+        resizeDocks({ m_assetBrowserDock, m_detailsDock }, { 380, 380 }, Qt::Horizontal);
+        resizeDocks({ m_consoleDock }, { 260 }, Qt::Vertical);
+        break;
+    }
+    m_topToolbar->setVisible(mode != EditorMode::Artist);
+    m_artistToolRail->setVisible(mode == EditorMode::Artist);
 }
 
 QWidget* EditorMainWindow::componentCardOf(QWidget* body)

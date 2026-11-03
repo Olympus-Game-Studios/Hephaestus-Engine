@@ -76,6 +76,9 @@ public:
     void FindReferences(const QString& relativePath);
     void RevealAsset(const QString& relativePath);
 
+    /** Shows the contents as asset cards (true) or a compact list (false). */
+    void SetGridView(bool grid);
+
     /**
      * @brief Get current directory path.
      */

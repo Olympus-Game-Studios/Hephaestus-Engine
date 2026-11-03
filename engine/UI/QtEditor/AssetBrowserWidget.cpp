@@ -283,6 +283,11 @@ void AssetBrowserWidget::RevealAsset(const QString& relativePath)
     showInFolder(path);
 }
 
+void AssetBrowserWidget::SetGridView(bool grid)
+{
+    (grid ? m_gridButton : m_listButton)->setChecked(true);
+}
+
 void AssetBrowserWidget::SetOpenAssetCallback(OpenAssetCallback callback)
 {
     m_openAssetCallback = std::move(callback);
