@@ -2423,10 +2423,12 @@ void EditorMainWindow::setupDockWidgets()
     transformLayout->setContentsMargins(12, 12, 12, 12);
     transformLayout->setSpacing(8);
     transformLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    transformLayout->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
     // Helper lambda to create a row of 3 spin boxes
     auto createVec3Row = [this](QDoubleSpinBox*& x, QDoubleSpinBox*& y, QDoubleSpinBox*& z, 
-                                double min, double max, double step, int decimals, double defaultValue) {
+                                double min, double max, double step, int decimals, double defaultValue,
+                                QWidget* trailing = nullptr) {
         QWidget* rowWidget = new QWidget();
         QHBoxLayout* rowLayout = new QHBoxLayout(rowWidget);
         rowLayout->setContentsMargins(0, 0, 0, 0);
@@ -2439,6 +2441,7 @@ void EditorMainWindow::setupDockWidgets()
             chip->setText(QString::fromLatin1(axis));
             chip->setToolTip(tr("Reset %1").arg(QString::fromLatin1(axis)));
             chip->setFocusPolicy(Qt::NoFocus);
+            chip->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Ignored);
             sb = new QDoubleSpinBox();
             sb->setProperty("axisField", true);
             ConfigureMixedSpin(sb, min, max, step, decimals);
@@ -2456,6 +2459,10 @@ void EditorMainWindow::setupDockWidgets()
         createSpinBox(x, "X");
         createSpinBox(y, "Y");
         createSpinBox(z, "Z");
+        // Every row keeps the same trailing slot so the fields line up whether or not it holds a control.
+        QWidget* slot = trailing ? trailing : new QWidget();
+        slot->setFixedWidth(28);
+        rowLayout->addWidget(slot);
         return rowWidget;
     };
 
@@ -2471,13 +2478,12 @@ void EditorMainWindow::setupDockWidgets()
     transformLayout->addRow(tr("Rotation"), rotRow);
     
     // Scale
-    QWidget* scaleRow = createVec3Row(m_scaleX, m_scaleY, m_scaleZ, 0.001, 10000.0, 0.1, 3, 1.0);
-    auto* uniformScaleBtn = new QToolButton(scaleRow);
+    auto* uniformScaleBtn = new QToolButton();
     uniformScaleBtn->setIcon(Theme::Icon(QStringLiteral("link")));
     uniformScaleBtn->setToolTip(tr("Uniform scale"));
     uniformScaleBtn->setCheckable(true);
     uniformScaleBtn->setProperty("quiet", true);
-    static_cast<QHBoxLayout*>(scaleRow->layout())->addWidget(uniformScaleBtn);
+    QWidget* scaleRow = createVec3Row(m_scaleX, m_scaleY, m_scaleZ, 0.001, 10000.0, 0.1, 3, 1.0, uniformScaleBtn);
     transformLayout->addRow(tr("Scale"), scaleRow);
 
     auto bindUniformScale = [this](QDoubleSpinBox* x, QDoubleSpinBox* y, QDoubleSpinBox* z,
