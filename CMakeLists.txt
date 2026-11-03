@@ -493,7 +493,7 @@ add_executable(HephaestusEngine
 
 if (WIN32)
     # Raster icon sizes currently live in logo/Old; the SVG masters remain one level up.
-    set(APP_ICON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/editor/Icons/logo/Old")
+    set(APP_ICON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Branding/logo/Old")
     set(APP_ICON_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_app_icon.ps1")
     set(APP_ICON_OUTPUT "${CMAKE_BINARY_DIR}/HephaestusEngine.ico")
 
