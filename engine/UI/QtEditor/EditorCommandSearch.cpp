@@ -33,6 +33,7 @@ EditorCommandSearch::EditorCommandSearch(QMenuBar* menuBar, QWidget* parent)
     setObjectName(QStringLiteral("CommandSearch"));
     setPlaceholderText(tr("Search or run a command"));
     setClearButtonEnabled(true);
+    setFocusPolicy(Qt::ClickFocus);
     addAction(Theme::Icon(QStringLiteral("search"), Theme::IconTone::Muted), QLineEdit::LeadingPosition);
 
     m_model = new QStandardItemModel(this);

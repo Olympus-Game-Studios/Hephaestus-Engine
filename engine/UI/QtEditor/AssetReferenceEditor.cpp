@@ -72,7 +72,7 @@ AssetReferenceEditor::AssetReferenceEditor(const QString& label, AssetType type,
             menu.addAction(tr("Open Asset"), this, [this]() {
                 if (!m_path.isEmpty()) emit openRequested(m_path);
             });
-            menu.addAction(tr("Reveal in Asset Browser"), this, [this]() {
+            menu.addAction(tr("Reveal in Content Browser"), this, [this]() {
                 if (!m_path.isEmpty()) emit revealRequested(m_path);
             });
             menu.addAction(tr("Copy Asset Path"), this, [this]() { emit copyPathRequested(m_path); });

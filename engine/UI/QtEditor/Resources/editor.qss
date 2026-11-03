@@ -682,3 +682,30 @@ QStatusBar#EditorStatusBar QLabel[state="dirty"] {
 QStatusBar#EditorStatusBar QLabel[role="muted"] {
     color: @text-muted;
 }
+
+QWidget#PanelHeader {
+    background: @surface-panel;
+    border-bottom: 1px solid @border-subtle;
+    min-height: 32px;
+    max-height: 32px;
+}
+QLabel#PanelTitle {
+    font-weight: 600;
+}
+QToolButton#PanelMenuButton::menu-indicator, QWidget#PanelHeader QToolButton::menu-indicator {
+    image: none;
+    width: 0;
+}
+QWidget#PanelHeader QToolButton[popupMode="2"] {
+    padding: 4px;
+}
+QMainWindow > QTabBar {
+    background: @surface-panel;
+    border-bottom: 1px solid @border-subtle;
+}
+QMainWindow > QTabBar::tab {
+    padding: 8px 12px;
+}
+QWidget#OutlinerPanel QLineEdit {
+    min-height: 24px;
+}

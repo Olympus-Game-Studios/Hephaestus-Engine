@@ -335,8 +335,7 @@ private:
     // Outliner (scene hierarchy)
     QWidget* m_outlinerPanel = nullptr;
     QLineEdit* m_outlinerSearch = nullptr;
-    QPushButton* m_addEntityBtn = nullptr;
-    QPushButton* m_addFolderBtn = nullptr;
+    QLabel* m_outlinerFooter = nullptr;
     OutlinerTreeWidget* m_outlinerTree = nullptr;
     std::unordered_set<uint32_t> m_expandedOutlinerEntities;
     bool m_hasOutlinerExpansionState = false;

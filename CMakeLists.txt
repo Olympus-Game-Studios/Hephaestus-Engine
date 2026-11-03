@@ -566,6 +566,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/EditorQtApp.h
             engine/UI/QtEditor/EditorCommandSearch.cpp
             engine/UI/QtEditor/EditorCommandSearch.h
+            engine/UI/QtEditor/EditorDockTitleBar.cpp
+            engine/UI/QtEditor/EditorDockTitleBar.h
             engine/UI/QtEditor/EditorTheme.cpp
             engine/UI/QtEditor/EditorTheme.h
             engine/UI/QtEditor/Resources/EditorResources.qrc

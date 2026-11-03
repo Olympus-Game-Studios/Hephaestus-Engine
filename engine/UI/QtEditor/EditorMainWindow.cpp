@@ -39,6 +39,7 @@
 #include "RuntimeUIOverlayWidget.h"
 #include "EditorNotificationService.h"
 #include "EditorCommandSearch.h"
+#include "EditorDockTitleBar.h"
 #include "EditorTheme.h"
 #include "EditorPluginHost.h"
 #include "PluginManagerDialog.h"
@@ -131,7 +132,9 @@
 #include <QFrame>
 #include <QGridLayout>
 #include <QSettings>
+#include <QPainter>
 #include <QShortcut>
+#include <QStyledItemDelegate>
 #include <QClipboard>
 #include <QInputDialog>
 #include <QJsonDocument>
@@ -245,6 +248,57 @@ void appendSelectedEntitiesInDisplayOrder(QTreeWidgetItem* parent,
 
 } // namespace
 
+namespace {
+
+constexpr int kOutlinerTrailingRole = Qt::UserRole + 20;
+
+QString OutlinerIconName(const entt::registry& registry, entt::entity entity)
+{
+    if (registry.all_of<PrefabInstanceComponent>(entity)) return QStringLiteral("prefab");
+    if (registry.all_of<FolderComponent>(entity)) return QStringLiteral("folder");
+    if (registry.all_of<EnvironmentComponent>(entity)) return QStringLiteral("globe");
+    if (registry.all_of<LightComponent>(entity)) return QStringLiteral("light");
+    if (registry.all_of<CameraComponent>(entity)) return QStringLiteral("camera");
+    if (registry.any_of<CharacterComponent, CharacterControllerComponent>(entity)) return QStringLiteral("character");
+    if (registry.all_of<ProbeVolumeComponent>(entity)) return QStringLiteral("volume");
+    if (registry.all_of<AudioSourceComponent>(entity)) return QStringLiteral("audio");
+    if (registry.all_of<MeshRendererComponent>(entity)) return QStringLiteral("cube");
+    return QStringLiteral("dot");
+}
+
+/** Draws a row's trailing marker: the Prefab tag, or the hidden / locked icon. */
+class OutlinerRowDelegate final : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+        QStyledItemDelegate::paint(painter, option, index);
+        const QString trailing = index.data(kOutlinerTrailingRole).toString();
+        if (trailing.isEmpty()) return;
+        const QRect area = option.rect.adjusted(0, 0, -8, 0);
+        if (trailing == QLatin1String("prefab")) {
+            painter->save();
+            painter->setPen(Theme::Color(Theme::Token::TextMuted));
+            QFont font = option.font;
+            font.setPixelSize(11);
+            painter->setFont(font);
+            painter->drawText(area, Qt::AlignRight | Qt::AlignVCenter, QObject::tr("Prefab"));
+            painter->restore();
+            return;
+        }
+        const QString icon = trailing == QLatin1String("hidden") ? QStringLiteral("eye-off") : QStringLiteral("lock");
+        const QRect iconRect(area.right() - 16, area.center().y() - 8, 16, 16);
+        Theme::Icon(icon, Theme::IconTone::Muted).paint(painter, iconRect);
+    }
+};
+
+} // namespace
+
+// Bump when the default dock layout changes so older saved layouts are not restored over it.
+constexpr int kDockLayoutVersion = 2;
+
 class EditorMainWindow::FirstPartyContext final : public Plugins::IFirstPartyPluginContext
 {
 public:
@@ -340,7 +394,7 @@ EditorMainWindow::EditorMainWindow(QWidget* parent,
             restoreGeometry(geometry);
         }
         if (!state.isEmpty()) {
-            restoreState(state);
+            restoreState(state, kDockLayoutVersion);
         }
     }
 
@@ -1195,7 +1249,7 @@ void EditorMainWindow::closeEvent(QCloseEvent* event)
     {
         QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
         settings.setValue(QStringLiteral("mainWindow/geometry"), saveGeometry());
-        settings.setValue(QStringLiteral("mainWindow/state"), saveState());
+        settings.setValue(QStringLiteral("mainWindow/state"), saveState(kDockLayoutVersion));
     }
 
     // Close all prefab and character editor windows
@@ -1746,6 +1800,7 @@ void EditorMainWindow::setupTopToolbar()
     QWidget* spring = new QWidget(m_topToolbar);
     spring->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_topToolbar->addWidget(spring);
+    m_topToolbar->addSeparator()->setObjectName(QStringLiteral("PluginToolbarSlot"));
 
     QAction* bakeAction = m_topToolbar->addAction(Theme::Icon(QStringLiteral("light")), tr("Bake lighting"));
     bakeAction->setToolTip(tr("Bake every probe volume in the scene"));
@@ -1776,11 +1831,12 @@ void EditorMainWindow::setupDockWidgets()
 {
     // Allow docking on all sides
     setDockOptions(QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks);
+    setTabPosition(Qt::AllDockWidgetAreas, QTabWidget::North);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Outliner Dock (Left) - Scene Hierarchy
     // ─────────────────────────────────────────────────────────────────────────
-    m_outlinerDock = new QDockWidget(tr("Outliner"), this);
+    m_outlinerDock = new QDockWidget(tr("Hierarchy"), this);
     m_outlinerDock->setObjectName("OutlinerDock");
     m_outlinerDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
@@ -1790,21 +1846,20 @@ void EditorMainWindow::setupDockWidgets()
     outlinerLayout->setContentsMargins(8, 8, 8, 8);
     outlinerLayout->setSpacing(6);
 
-    auto* outlinerHeader = new QHBoxLayout();
     m_outlinerSearch = new QLineEdit(m_outlinerPanel);
-    m_outlinerSearch->setPlaceholderText(tr("Search entities..."));
-    outlinerHeader->addWidget(m_outlinerSearch, 1);
-
-    m_addFolderBtn = new QPushButton(tr("+ Folder"), m_outlinerPanel);
-    outlinerHeader->addWidget(m_addFolderBtn);
-
-    m_addEntityBtn = new QPushButton(tr("+ Add Entity"), m_outlinerPanel);
-    outlinerHeader->addWidget(m_addEntityBtn);
-    outlinerLayout->addLayout(outlinerHeader);
+    m_outlinerSearch->setPlaceholderText(tr("Search objects..."));
+    m_outlinerSearch->setClearButtonEnabled(true);
+    m_outlinerSearch->addAction(Theme::Icon(QStringLiteral("search"), Theme::IconTone::Muted), QLineEdit::LeadingPosition);
+    auto* outlinerFind = new QShortcut(QKeySequence::Find, m_outlinerPanel);
+    outlinerFind->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(outlinerFind, &QShortcut::activated, m_outlinerSearch, [this]() { m_outlinerSearch->setFocus(Qt::ShortcutFocusReason); });
+    outlinerLayout->addWidget(m_outlinerSearch);
 
     m_outlinerTree = new OutlinerTreeWidget(m_outlinerPanel);
     m_outlinerTree->setObjectName("OutlinerTree");
-    m_outlinerTree->setHeaderLabel(tr("Scene Hierarchy"));
+    m_outlinerTree->setHeaderHidden(true);
+    m_outlinerTree->setItemDelegate(new OutlinerRowDelegate(m_outlinerTree));
+    m_outlinerTree->setIconSize(QSize(16, 16));
     m_outlinerTree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_outlinerTree->setRootIsDecorated(true);
     m_outlinerTree->setIndentation(18);
@@ -1966,18 +2021,26 @@ void EditorMainWindow::setupDockWidgets()
         }
     });
 
-    connect(m_addEntityBtn, &QPushButton::clicked, this, &EditorMainWindow::createEmptyEntity);
+    m_outlinerFooter = new QLabel(m_outlinerPanel);
+    m_outlinerFooter->setProperty("role", "caption");
+    outlinerLayout->addWidget(m_outlinerFooter);
 
-    connect(m_addFolderBtn, &QPushButton::clicked, this, [this]() {
-        createFolderInOutliner(entt::null);
-    });
+    auto* addObjectBtn = new QToolButton();
+    addObjectBtn->setIcon(Theme::Icon(QStringLiteral("plus")));
+    addObjectBtn->setToolTip(tr("Add object"));
+    addObjectBtn->setPopupMode(QToolButton::InstantPopup);
+    auto* addObjectMenu = new QMenu(addObjectBtn);
+    addObjectMenu->addAction(Theme::Icon(QStringLiteral("cube")), tr("Empty Entity"), this, &EditorMainWindow::createEmptyEntity);
+    addObjectMenu->addAction(Theme::Icon(QStringLiteral("folder")), tr("Folder"), this, [this]() { createFolderInOutliner(entt::null); });
+    addObjectBtn->setMenu(addObjectMenu);
+    InstallDockTitleBar(m_outlinerDock, { addObjectBtn });
 
     addDockWidget(Qt::LeftDockWidgetArea, m_outlinerDock);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Details Dock (Right) - Entity Inspector
     // ─────────────────────────────────────────────────────────────────────────
-    m_detailsDock = new QDockWidget(tr("Details"), this);
+    m_detailsDock = new QDockWidget(tr("Inspector"), this);
     m_detailsDock->setObjectName("DetailsDock");
     m_detailsDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
@@ -2350,12 +2413,13 @@ void EditorMainWindow::setupDockWidgets()
 
     m_detailsScrollArea->setWidget(m_detailsWidget);
     m_detailsDock->setWidget(m_detailsScrollArea);
+    InstallDockTitleBar(m_detailsDock);
     addDockWidget(Qt::RightDockWidgetArea, m_detailsDock);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Asset Browser Dock (Bottom)
     // ─────────────────────────────────────────────────────────────────────────
-    m_assetBrowserDock = new QDockWidget(tr("Asset Browser"), this);
+    m_assetBrowserDock = new QDockWidget(tr("Content Browser"), this);
     m_assetBrowserDock->setObjectName("AssetBrowserDock");
     m_assetBrowserDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
 
@@ -2540,12 +2604,13 @@ void EditorMainWindow::setupDockWidgets()
                 statusBar()->showMessage(tr("Added mesh actor: %1").arg(QString::fromStdString(entityName)), 3000);
             });
 
+    InstallDockTitleBar(m_assetBrowserDock);
     addDockWidget(Qt::BottomDockWidgetArea, m_assetBrowserDock);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Build Output Dock (Bottom, tabbed with Asset Browser)
     // ─────────────────────────────────────────────────────────────────────────
-    m_buildOutputDock = new QDockWidget(tr("Build Output"), this);
+    m_buildOutputDock = new QDockWidget(tr("Output"), this);
     m_buildOutputDock->setObjectName("BuildOutputDock");
     m_buildOutputDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
 
@@ -2592,7 +2657,7 @@ void EditorMainWindow::setupDockWidgets()
         menu.addAction(tr("Open"), [this, path]() {
             if (m_assetActions) m_assetActions->Open(path);
         });
-        menu.addAction(tr("Reveal in Asset Browser"), [this, path]() {
+        menu.addAction(tr("Reveal in Content Browser"), [this, path]() {
             if (m_assetBrowser) m_assetBrowser->RevealAsset(path);
         });
         menu.addAction(tr("Find References"), [this, path]() {
@@ -2619,6 +2684,7 @@ void EditorMainWindow::setupDockWidgets()
     connect(clearLog, &QPushButton::clicked, m_buildOutputText, &QPlainTextEdit::clear);
     m_buildOutputDock->setWidget(buildOutputWidget);
 
+    InstallDockTitleBar(m_buildOutputDock);
     addDockWidget(Qt::BottomDockWidgetArea, m_buildOutputDock);
     tabifyDockWidget(m_assetBrowserDock, m_buildOutputDock);
     m_assetBrowserDock->raise(); // Asset browser stays visible by default
@@ -2633,9 +2699,9 @@ void EditorMainWindow::setupDockWidgets()
     m_addActorsPanel = new AddActorsPanel(this, m_addActorsDock);
     m_addActorsDock->setWidget(m_addActorsPanel);
 
+    InstallDockTitleBar(m_addActorsDock);
     addDockWidget(Qt::LeftDockWidgetArea, m_addActorsDock);
-    tabifyDockWidget(m_outlinerDock, m_addActorsDock);
-    m_outlinerDock->raise(); // Outliner stays visible by default
+    m_addActorsDock->hide();
 
     // ─────────────────────────────────────────────────────────────────────────
     // Add dock visibility toggles to View menu
@@ -3376,6 +3442,13 @@ void EditorMainWindow::onFrameRendered(float dt)
             const auto* ctx = m_engine->GetEditorContext();
             const size_t selected = ctx ? ctx->GetSelectedEntities().size() : 0;
             m_statusSelection->setText(selected ? tr("%n selected", nullptr, static_cast<int>(selected)) : QString());
+            if (m_outlinerFooter && ctx && ctx->HasActiveScene()) {
+                auto tags = ctx->GetActiveScene()->GetRegistry().view<TagComponent>();
+                const int objects = static_cast<int>(std::distance(tags.begin(), tags.end()));
+                QString footer = tr("%n objects", nullptr, objects);
+                if (selected) footer += QStringLiteral(" \u00B7 ") + tr("%n selected", nullptr, static_cast<int>(selected));
+                m_outlinerFooter->setText(footer);
+            }
         }
         if (m_overlayBottomLeft && m_overlayBottomLeft->isVisible()) {
             if (m_overlayDrawCallsLabel) m_overlayDrawCallsLabel->setText(QString("Draw %1").arg(drawCalls));
@@ -3558,7 +3631,7 @@ void EditorMainWindow::rebuildOutliner()
 
     if (sceneRoot->childCount() == 0) {
         auto* hint = new QTreeWidgetItem(sceneRoot);
-        hint->setText(0, tr("No entities — use + Add Entity or Add Actors"));
+        hint->setText(0, tr("Empty scene. Use + or Create to add objects."));
         hint->setFlags(hint->flags() & ~Qt::ItemIsSelectable & ~Qt::ItemIsDragEnabled);
         hint->setForeground(0, Theme::Color(Theme::Token::TextMuted));
     }
@@ -3587,32 +3660,28 @@ void EditorMainWindow::populateOutlinerItem(QTreeWidgetItem* parent, entt::entit
     item->setData(0, Qt::UserRole, static_cast<uint32_t>(entity));
     if (ctx->IsEditorHidden(entity)) {
         item->setForeground(0, Theme::Color(Theme::Token::TextDisabled));
+        item->setData(0, kOutlinerTrailingRole, QStringLiteral("hidden"));
         item->setToolTip(0, tr("Hidden in editor"));
-    }
-    if (ctx->IsEditorLocked(entity)) {
-        QFont lockedFont = item->font(0);
-        lockedFont.setItalic(true);
-        item->setFont(0, lockedFont);
-        item->setToolTip(0, tr("Locked in editor (selectable from Outliner only)"));
+    } else if (ctx->IsEditorLocked(entity)) {
+        item->setForeground(0, Theme::Color(Theme::Token::TextMuted));
+        item->setData(0, kOutlinerTrailingRole, QStringLiteral("locked"));
+        item->setToolTip(0, tr("Locked in editor (selectable from the Hierarchy only)"));
     }
 
-    // Set icon based on entity type
+    item->setIcon(0, Theme::Icon(OutlinerIconName(registry, entity)));
     if (registry.all_of<PrefabInstanceComponent>(entity)) {
-        item->setIcon(0, Theme::Icon(QStringLiteral("prefab")));
         const auto& inst = registry.get<PrefabInstanceComponent>(entity);
+        if (!item->data(0, kOutlinerTrailingRole).isValid()) {
+            item->setData(0, kOutlinerTrailingRole, QStringLiteral("prefab"));
+        }
         if (inst.missingPrefab) {
             item->setForeground(0, Theme::Color(Theme::Token::StatusError));
             item->setToolTip(0, QString::fromStdString("Missing prefab: " + inst.prefabPath));
         } else {
             item->setToolTip(0, QString::fromStdString("Prefab: " + inst.prefabPath));
         }
-    } else if (registry.all_of<PrefabNodeComponent>(entity)) {
-        item->setForeground(0, Theme::Color(Theme::Token::TextLink));
-    } else if (registry.all_of<FolderComponent>(entity)) {
-        item->setIcon(0, Theme::Icon(QStringLiteral("folder")));
-        item->setFlags(item->flags() | Qt::ItemIsDropEnabled);
-    } else if (registry.all_of<EnvironmentComponent>(entity)) {
-        item->setIcon(0, Theme::Icon(QStringLiteral("globe")));
+    }
+    if (registry.any_of<FolderComponent, EnvironmentComponent>(entity)) {
         item->setFlags(item->flags() | Qt::ItemIsDropEnabled);
     }
 
