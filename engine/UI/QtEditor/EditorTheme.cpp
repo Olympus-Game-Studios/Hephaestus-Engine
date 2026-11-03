@@ -363,8 +363,31 @@ QIcon FileIcon(const QString& fileName)
         { QStringLiteral("wgsl"), QStringLiteral("shader") },
         { QStringLiteral("shader"), QStringLiteral("shader") },
     };
-    const QString icon = kIconByExtension.value(QFileInfo(fileName).suffix().toLower());
-    return icon.isEmpty() ? QIcon() : QIcon(QStringLiteral(":/editor/fileicons/%1.svg").arg(icon));
+    const QString name = kIconByExtension.value(QFileInfo(fileName).suffix().toLower());
+    if (name.isEmpty()) {
+        return QIcon();
+    }
+    static QHash<QString, QIcon> cache;
+    auto it = cache.constFind(name);
+    if (it != cache.constEnd()) {
+        return it.value();
+    }
+    QIcon icon;
+    QSvgRenderer renderer(QStringLiteral(":/editor/fileicons/%1.svg").arg(name));
+    if (renderer.isValid()) {
+        for (int size : { 16, 20, 24, 32, 40, 48, 64, 96, 128 }) {
+            QPixmap pixmap(size, size);
+            pixmap.fill(Qt::transparent);
+            QPainter painter(&pixmap);
+            renderer.render(&painter);
+            painter.end();
+            icon.addPixmap(pixmap);
+        }
+    } else {
+        qWarning("Editor file icon '%s' is missing", qPrintable(name));
+    }
+    cache.insert(name, icon);
+    return icon;
 }
 
 QIcon BrandLogo()

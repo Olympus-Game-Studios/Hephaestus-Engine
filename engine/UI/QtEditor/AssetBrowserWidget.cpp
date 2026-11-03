@@ -751,7 +751,10 @@ void AssetBrowserWidget::rebuildContentsView()
         item->setData(customType.isEmpty() ? typeLabel(type, entry.isDirectory) : customType, DetailRole);
         item->setData(getAssetIcon(static_cast<int>(entry.type), entry.isDirectory).name(), TypeIconRole);
         QIcon icon = getAssetIcon(static_cast<int>(entry.type), entry.isDirectory);
-        if (!entry.isDirectory && !Theme::FileIcon(name).isNull()) icon = Theme::FileIcon(name);
+        if (!entry.isDirectory) {
+            const QIcon fileIcon = Theme::FileIcon(name);
+            if (!fileIcon.isNull()) icon = fileIcon;
+        }
         if (!customType.isEmpty()) {
             const QIcon pluginIcon = m_mainWindow->PluginHost()->CustomAssetIcon(
                 QString::fromStdString(entry.relativePath));

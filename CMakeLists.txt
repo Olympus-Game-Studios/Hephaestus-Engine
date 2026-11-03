@@ -10,7 +10,7 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 set(HEPHAESTUS_VERSION_MAJOR 2026) # Major = Year of release
 set(HEPHAESTUS_VERSION_MINOR 11) # Minor = Month of release
-set(HEPHAESTUS_VERSION_PATCH 03) # Patch = Day of release
+set(HEPHAESTUS_VERSION_PATCH 3) # Patch = Day of release, unpadded (the C++ macro must be a decimal literal)
 set(HEPHAESTUS_VERSION "${HEPHAESTUS_VERSION_MAJOR}.${HEPHAESTUS_VERSION_MINOR}.${HEPHAESTUS_VERSION_PATCH}")
 
 # Major versions of the engine are meant to be released by year

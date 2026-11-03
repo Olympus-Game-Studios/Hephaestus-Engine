@@ -1711,6 +1711,7 @@ void CodeEditorPanel::reloadFromDisk(CodeEditor* editor)
     const int line = editor->textCursor().blockNumber();
     const int column = editor->textCursor().positionInBlock();
     const int scroll = editor->verticalScrollBar()->value();
+    const QList<int> breakpoints = m_breakpoints.value(editor->path());
     // Replacing through a cursor keeps the reload on the undo stack.
     QTextCursor all(editor->document());
     all.select(QTextCursor::Document);
@@ -1718,6 +1719,8 @@ void CodeEditorPanel::reloadFromDisk(CodeEditor* editor)
     editor->diskBytes = bytes;
     editor->changedOnDisk = false;
     editor->document()->setModified(false);
+    editor->setBreakpoints(breakpoints);
+    syncBreakpoints(editor);
     editor->goToLine(line + 1, column + 1);
     editor->verticalScrollBar()->setValue(scroll);
     updateBanner();

@@ -53,6 +53,8 @@ public:
     void RequestResume(Action action);
 
     bool IsPaused() const { return m_pausedState != nullptr; }
+    /// Play mode has finished stopping; breakpoints may pause again.
+    void StopFinished() { m_stopping = false; }
     bool IsAttached() const { return m_state != nullptr; }
 
     /// Blocks Lua until it returns the next action. Called on the gameplay thread.
@@ -90,10 +92,11 @@ private:
     lua_State* m_pausedState = nullptr;
     bool m_inHook = false;
     bool m_pauseRequested = false;
+    bool m_stopping = false;
     Action m_stepMode = Action::Continue;
     int m_stepDepth = 0;
     lua_State* m_stepThread = nullptr;
     Action m_requestedAction = Action::Continue;
     std::unordered_map<std::string, std::set<int>> m_breakpoints;
-    std::unordered_map<const void*, std::string> m_sourceKeys;
+    std::unordered_map<std::string, std::string> m_sourceKeys;
 };

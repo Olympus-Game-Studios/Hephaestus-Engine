@@ -12,9 +12,13 @@ LuaDebugger& LuaDebugger::Instance() {
 
 std::string LuaDebugger::NormalizePath(const std::string& path) {
     std::error_code error;
-    std::filesystem::path normalized = std::filesystem::absolute(std::filesystem::path(path), error);
+    std::filesystem::path normalized = std::filesystem::weakly_canonical(std::filesystem::path(path), error);
     if (error) {
-        normalized = std::filesystem::path(path);
+        error.clear();
+        normalized = std::filesystem::absolute(std::filesystem::path(path), error);
+        if (error) {
+            normalized = std::filesystem::path(path);
+        }
     }
     std::string result = normalized.lexically_normal().generic_string();
 #ifdef _WIN32
@@ -26,6 +30,7 @@ std::string LuaDebugger::NormalizePath(const std::string& path) {
 
 void LuaDebugger::Attach(lua_State* state) {
     m_state = state;
+    m_stopping = false;
     m_sourceKeys.clear();
     UpdateHook();
 }
@@ -43,6 +48,7 @@ void LuaDebugger::Detach(lua_State* state) {
     m_stepMode = Action::Continue;
     m_stepThread = nullptr;
     m_pauseRequested = false;
+    m_stopping = false;
     m_sourceKeys.clear();
 }
 
@@ -108,6 +114,9 @@ int LuaDebugger::StackDepth(lua_State* state) {
 }
 
 void LuaDebugger::OnLine(lua_State* state, lua_Debug* ar) {
+    if (m_stopping) {
+        return;
+    }
     std::string reason;
     if (m_pauseRequested) {
         reason = "Paused";
@@ -119,9 +128,10 @@ void LuaDebugger::OnLine(lua_State* state, lua_Debug* ar) {
         if (!lua_getinfo(state, "S", ar) || !ar->source || ar->source[0] != '@') {
             return;
         }
-        auto cached = m_sourceKeys.find(ar->source);
+        const std::string source(ar->source);
+        auto cached = m_sourceKeys.find(source);
         if (cached == m_sourceKeys.end()) {
-            cached = m_sourceKeys.emplace(ar->source, NormalizePath(ar->source + 1)).first;
+            cached = m_sourceKeys.emplace(source, NormalizePath(source.substr(1))).first;
         }
         const auto file = m_breakpoints.find(cached->second);
         if (file == m_breakpoints.end() || !file->second.count(ar->currentline)) {
@@ -161,6 +171,7 @@ void LuaDebugger::OnLine(lua_State* state, lua_Debug* ar) {
     m_pausedState = nullptr;
 
     if (action == Action::Stop) {
+        m_stopping = true;
         UpdateHook();
         luaL_error(state, "stopped by the debugger");
         return;

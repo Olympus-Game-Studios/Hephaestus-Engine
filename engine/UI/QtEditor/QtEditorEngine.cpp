@@ -1814,6 +1814,11 @@ void QtEditorEngine::onTick()
     }
 
     // ── Play Mode tick ─────────────────────────────────────────────────────
+    // A Stop requested while Lua was paused outside the simulation step is still pending here.
+    if (m_playModeManager.IsStopRequested()) {
+        m_playModeManager.ClearStopRequest();
+        StopPlayMode();
+    }
     const bool isPlaying = m_playModeManager.IsPlaying();
     const bool isPaused  = m_playModeManager.IsPaused();
     const bool isPlayOrPause = !m_playModeManager.IsEditor();
@@ -2967,6 +2972,7 @@ void QtEditorEngine::StopPlayMode()
     }
 
     m_playModeManager.StopPlayMode();
+    LuaDebugger::Instance().StopFinished();
     m_editorContext.SyncSelectionFromScene();
 
     if (m_luaScriptEngine) {

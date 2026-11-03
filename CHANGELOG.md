@@ -130,6 +130,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-11-03: Pausing Play mode no longer resets the editor toolbar to "Play" and disables Stop while the game is still paused; the Play control keeps showing "Playing" until Play mode actually stops.
+- 2026-11-03: "Open in IDE" (and opening a script outside Programmer mode) opens the file with the system's default application instead of launching a second Hephaestus editor from the launcher's editor path.
 - 2026-10-29: A corrupt or truncated probe bake file is reported as unreadable instead of trying to allocate many gigabytes and crashing the editor or game.
 - 2026-10-29: Probe volumes up to the full 64 x 64 x 64 probes now work on every GPU: the probe atlases are laid out in a square grid instead of one very wide row, which exceeded common GPU image-size and dispatch limits. Very large probe spacing (over about 256 m) no longer breaks probe visibility.
 - 2026-10-29: Probe volumes lit by the HDRI sky now match the ambient light outside the volume; the sky was blurred twice before. Turning off Cast Shadows on the sun now also stops it casting shadows into hardware-traced probe lighting, as it already did for baked probes.

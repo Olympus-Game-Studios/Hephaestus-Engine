@@ -387,13 +387,29 @@ void LauncherWindow::ShowProjectContextMenu(const QPoint& position)
     menu.addSeparator();
     QAction* remove = menu.addAction(tr("Delete from disk..."));
 
+    const QString projectPath = index.data(ProjectCardModel::ProjectPathRole).toString();
     QAction* chosen = menu.exec(m_projectList->viewport()->mapToGlobal(position));
+    if (!chosen) {
+        return;
+    }
+    // The model can be reset while the menu is open, so find the project's row again.
+    QModelIndex current;
+    for (int row = 0; row < m_projectModel.rowCount(); ++row) {
+        const QModelIndex candidate = m_projectModel.index(row, 0);
+        if (candidate.data(ProjectCardModel::ProjectPathRole).toString() == projectPath) {
+            current = candidate;
+            break;
+        }
+    }
+    if (!current.isValid()) {
+        return;
+    }
     if (chosen == open) {
-        OpenProject(index);
+        OpenProject(current);
     } else if (chosen == reveal) {
-        ShowProjectInExplorer(index);
+        ShowProjectInExplorer(current);
     } else if (chosen == remove) {
-        DeleteProject(index);
+        DeleteProject(current);
     }
 }
 
