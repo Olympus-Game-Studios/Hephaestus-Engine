@@ -8,10 +8,15 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 # Application Details  (single source of truth — edit these, not C++ files)
 # ─────────────────────────────────────────────────────────────────────────────
-set(HEPHAESTUS_VERSION_MAJOR 2026)
-set(HEPHAESTUS_VERSION_MINOR 11)
-set(HEPHAESTUS_VERSION_PATCH 10)
+set(HEPHAESTUS_VERSION_MAJOR 2026) # Major = Year of release
+set(HEPHAESTUS_VERSION_MINOR 11) # Minor = Month of release
+set(HEPHAESTUS_VERSION_PATCH 03) # Patch = Day of release
 set(HEPHAESTUS_VERSION "${HEPHAESTUS_VERSION_MAJOR}.${HEPHAESTUS_VERSION_MINOR}.${HEPHAESTUS_VERSION_PATCH}")
+
+# Major versions of the engine are meant to be released by year
+# Minor versions are meant to be released by month
+# Patch versions are meant to be released by day
+# Version number format: Major.Minor.Patch
 
 set(HEPHAESTUS_APP_NAME        "Hephaestus Engine")
 set(HEPHAESTUS_APP_DESCRIPTION "A 3D game engine built with C++20, Vulkan, Qt, and Lua.")
