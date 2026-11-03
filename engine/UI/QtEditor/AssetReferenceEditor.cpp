@@ -1,6 +1,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "AssetReferenceEditor.h"
+#include "EditorTheme.h"
 #include "AssetPickerDialog.h"
 #include "InspectorMime.h"
 
@@ -13,6 +14,7 @@
 #include <QHBoxLayout>
 #include <QMenu>
 #include <QMimeData>
+#include <QStyle>
 #include <QVBoxLayout>
 #include <filesystem>
 
@@ -36,11 +38,13 @@ AssetReferenceEditor::AssetReferenceEditor(const QString& label, AssetType type,
     m_name = new QLineEdit(this);
     m_name->setReadOnly(true);
     m_name->setPlaceholderText(tr("(None)"));
-    m_browseBtn = new QPushButton(tr("…"), this);
-    m_browseBtn->setFixedWidth(28);
+    m_browseBtn = new QPushButton(this);
+    m_browseBtn->setIcon(Theme::Icon(QStringLiteral("search")));
+    m_browseBtn->setProperty("iconOnly", true);
     m_browseBtn->setToolTip(tr("Browse assets"));
-    m_clearBtn = new QPushButton(tr("×"), this);
-    m_clearBtn->setFixedWidth(24);
+    m_clearBtn = new QPushButton(this);
+    m_clearBtn->setIcon(Theme::Icon(QStringLiteral("close")));
+    m_clearBtn->setProperty("iconOnly", true);
     m_clearBtn->setToolTip(tr("Clear"));
     m_openBtn = new QPushButton(tr("Open"), this);
     row->addWidget(m_name, 1);
@@ -49,7 +53,7 @@ AssetReferenceEditor::AssetReferenceEditor(const QString& label, AssetType type,
     row->addWidget(m_openBtn);
     outer->addLayout(row);
     m_warning = new QLabel(this);
-    m_warning->setStyleSheet("color: #E6A5A5;");
+    m_warning->setProperty("role", "error");
     m_warning->hide();
     outer->addWidget(m_warning);
 
@@ -90,12 +94,20 @@ void AssetReferenceEditor::setPath(const QString& portablePath, bool mixed, bool
     refreshDisplay();
 }
 
+void AssetReferenceEditor::setInvalid(bool invalid)
+{
+    if (m_name->property("invalid").toBool() == invalid) return;
+    m_name->setProperty("invalid", invalid);
+    m_name->style()->unpolish(m_name);
+    m_name->style()->polish(m_name);
+}
+
 void AssetReferenceEditor::refreshDisplay()
 {
     if (m_mixed) {
         m_name->setText(QString());
         m_name->setPlaceholderText(QString::fromUtf8("\xE2\x80\x94 Mixed \xE2\x80\x94"));
-        m_name->setStyleSheet(QString());
+        setInvalid(false);
         m_warning->hide();
         m_openBtn->setEnabled(false);
         m_clearBtn->setEnabled(true);
@@ -105,7 +117,7 @@ void AssetReferenceEditor::refreshDisplay()
     if (m_path.isEmpty()) {
         m_name->clear();
         m_name->setToolTip(QString());
-        m_name->setStyleSheet(QString());
+        setInvalid(false);
         m_warning->hide();
         m_openBtn->setEnabled(false);
         return;
@@ -116,10 +128,10 @@ void AssetReferenceEditor::refreshDisplay()
     if (m_missing) {
         m_warning->setText(tr("Missing: %1").arg(m_path));
         m_warning->show();
-        m_name->setStyleSheet("QLineEdit { border: 1px solid #c45; }");
+        setInvalid(true);
     } else {
         m_warning->hide();
-        m_name->setStyleSheet(QString());
+        setInvalid(false);
     }
 }
 

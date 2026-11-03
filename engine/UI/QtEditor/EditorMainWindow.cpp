@@ -132,6 +132,7 @@
 #include <QFrame>
 #include <QGridLayout>
 #include <QSettings>
+#include <QHash>
 #include <QPainter>
 #include <QShortcut>
 #include <QStyledItemDelegate>
@@ -264,6 +265,27 @@ QString OutlinerIconName(const entt::registry& registry, entt::entity entity)
     if (registry.all_of<AudioSourceComponent>(entity)) return QStringLiteral("audio");
     if (registry.all_of<MeshRendererComponent>(entity)) return QStringLiteral("cube");
     return QStringLiteral("dot");
+}
+
+QString ComponentIconName(const QString& type)
+{
+    static const QHash<QString, QString> icons = {
+        { QStringLiteral("Transform"), QStringLiteral("move") },
+        { QStringLiteral("MeshRenderer"), QStringLiteral("cube") },
+        { QStringLiteral("Light"), QStringLiteral("light") },
+        { QStringLiteral("Camera"), QStringLiteral("camera") },
+        { QStringLiteral("AudioSource"), QStringLiteral("audio") },
+        { QStringLiteral("Environment"), QStringLiteral("globe") },
+        { QStringLiteral("ProbeVolume"), QStringLiteral("volume") },
+        { QStringLiteral("Character"), QStringLiteral("character") },
+        { QStringLiteral("CharacterController"), QStringLiteral("character") },
+        { QStringLiteral("RigidBody"), QStringLiteral("cube") },
+        { QStringLiteral("PhysicsShape"), QStringLiteral("grid") },
+        { QStringLiteral("MeshCollider"), QStringLiteral("grid") },
+        { QStringLiteral("ScriptComponent"), QStringLiteral("code") },
+        { QStringLiteral("LuaScript"), QStringLiteral("code") },
+    };
+    return icons.value(type, QStringLiteral("dot"));
 }
 
 /** Draws a row's trailing marker: the Prefab tag, or the hidden / locked icon. */
@@ -2059,7 +2081,7 @@ void EditorMainWindow::setupDockWidgets()
     // ── Header row: Entity ID + Lock checkbox ───────────────────────────
     {
         auto* headerRow = new QHBoxLayout();
-        m_entityIconLabel = new QLabel(QString::fromUtf8("◼"));
+        m_entityIconLabel = new QLabel();
         m_entityIconLabel->setObjectName("DetailsEntityIcon");
         headerRow->addWidget(m_entityIconLabel);
 
@@ -2237,65 +2259,56 @@ void EditorMainWindow::setupDockWidgets()
 
     // Helper lambda to create a row of 3 spin boxes
     auto createVec3Row = [this](QDoubleSpinBox*& x, QDoubleSpinBox*& y, QDoubleSpinBox*& z, 
-                                double min, double max, double step, int decimals) {
+                                double min, double max, double step, int decimals, double defaultValue) {
         QWidget* rowWidget = new QWidget();
         QHBoxLayout* rowLayout = new QHBoxLayout(rowWidget);
         rowLayout->setContentsMargins(0, 0, 0, 0);
-        rowLayout->setSpacing(4);
+        rowLayout->setSpacing(0);
 
-        auto createSpinBox = [&](QDoubleSpinBox*& sb) {
+        auto createSpinBox = [&](QDoubleSpinBox*& sb, const char* axis) {
+            auto* chip = new QToolButton();
+            chip->setObjectName(QStringLiteral("AxisChip"));
+            chip->setProperty("axis", QString::fromLatin1(axis).toLower());
+            chip->setText(QString::fromLatin1(axis));
+            chip->setToolTip(tr("Reset %1").arg(QString::fromLatin1(axis)));
+            chip->setFocusPolicy(Qt::NoFocus);
             sb = new QDoubleSpinBox();
+            sb->setProperty("axisField", true);
             ConfigureMixedSpin(sb, min, max, step, decimals);
             sb->setMinimumWidth(50);
-            rowLayout->addWidget(sb);
+            QDoubleSpinBox* field = sb;
+            connect(chip, &QToolButton::clicked, this, [field, defaultValue]() {
+                field->setValue(defaultValue);
+                emit field->editingFinished();
+            });
+            rowLayout->addWidget(chip);
+            rowLayout->addWidget(sb, 1);
+            if (axis[0] != 'Z') rowLayout->addSpacing(4);
         };
 
-        createSpinBox(x);
-        createSpinBox(y);
-        createSpinBox(z);
+        createSpinBox(x, "X");
+        createSpinBox(y, "Y");
+        createSpinBox(z, "Z");
         return rowWidget;
     };
 
     // Position (large range)
-    QWidget* posRow = createVec3Row(m_posX, m_posY, m_posZ, -100000.0, 100000.0, 0.1, 3);
-    transformLayout->addRow(tr("Position:"), posRow);
+    QWidget* posRow = createVec3Row(m_posX, m_posY, m_posZ, -100000.0, 100000.0, 0.1, 3, 0.0);
+    transformLayout->addRow(tr("Position"), posRow);
     
     // Rotation (degrees)
-    QWidget* rotRow = createVec3Row(m_rotX, m_rotY, m_rotZ, -360.0, 360.0, 1.0, 2);
+    QWidget* rotRow = createVec3Row(m_rotX, m_rotY, m_rotZ, -360.0, 360.0, 1.0, 2, 0.0);
     m_rotX->setSuffix(QString::fromUtf8("\xC2\xB0"));
     m_rotY->setSuffix(QString::fromUtf8("\xC2\xB0"));
     m_rotZ->setSuffix(QString::fromUtf8("\xC2\xB0"));
-    transformLayout->addRow(tr("Rotation:"), rotRow);
+    transformLayout->addRow(tr("Rotation"), rotRow);
     
     // Scale
-    QWidget* scaleRow = createVec3Row(m_scaleX, m_scaleY, m_scaleZ, 0.001, 10000.0, 0.1, 3);
-    transformLayout->addRow(tr("Scale:"), scaleRow);
+    QWidget* scaleRow = createVec3Row(m_scaleX, m_scaleY, m_scaleZ, 0.001, 10000.0, 0.1, 3, 1.0);
+    transformLayout->addRow(tr("Scale"), scaleRow);
 
-    auto makeAxisResetRow = [this](QDoubleSpinBox* x, QDoubleSpinBox* y, QDoubleSpinBox* z,
-                                   double defaultValue,
-                                   QToolButton* uniformScaleBtn = nullptr) {
-        QWidget* resetWidget = new QWidget();
-        auto* resetLayout = new QHBoxLayout(resetWidget);
-        resetLayout->setContentsMargins(0, 0, 0, 0);
-        resetLayout->setSpacing(4);
-
-        auto makeResetBtn = [resetLayout](const QString& axis) {
-            auto* btn = new QToolButton();
-            btn->setText(axis);
-            btn->setToolTip(QObject::tr("Reset %1 axis").arg(axis));
-            resetLayout->addWidget(btn);
-            return btn;
-        };
-
-        auto* resetX = makeResetBtn("X");
-        auto* resetY = makeResetBtn("Y");
-        auto* resetZ = makeResetBtn("Z");
-        resetLayout->addStretch();
-
-        connect(resetX, &QToolButton::clicked, this, [x, defaultValue]() { x->setValue(defaultValue); });
-        connect(resetY, &QToolButton::clicked, this, [y, defaultValue]() { y->setValue(defaultValue); });
-        connect(resetZ, &QToolButton::clicked, this, [z, defaultValue]() { z->setValue(defaultValue); });
-
+    auto bindUniformScale = [this](QDoubleSpinBox* x, QDoubleSpinBox* y, QDoubleSpinBox* z,
+                                   QToolButton* uniformScaleBtn) {
         if (uniformScaleBtn) {
             connect(x, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [=](double v) {
                 if (!uniformScaleBtn->isChecked()) return;
@@ -2316,13 +2329,9 @@ void EditorMainWindow::setupDockWidgets()
                 x->blockSignals(false); y->blockSignals(false);
             });
         }
-
-        return resetWidget;
     };
 
-    transformLayout->addRow(QString(), makeAxisResetRow(m_posX, m_posY, m_posZ, 0.0));
-    transformLayout->addRow(QString(), makeAxisResetRow(m_rotX, m_rotY, m_rotZ, 0.0));
-    transformLayout->addRow(QString(), makeAxisResetRow(m_scaleX, m_scaleY, m_scaleZ, 1.0, uniformScaleBtn));
+    bindUniformScale(m_scaleX, m_scaleY, m_scaleZ, uniformScaleBtn);
 
     // Connect position spinbox signals
     connect(m_posX, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &EditorMainWindow::onPositionChanged);
@@ -2377,10 +2386,18 @@ void EditorMainWindow::setupDockWidgets()
         menu.exec(m_transformGroup->mapToGlobal(pos));
     });
 
-    m_detailsLayout->addWidget(m_transformGroup);
+    m_transformGroup->setTitle(QString());
+    m_detailsLayout->addWidget(wrapComponentCard(m_transformGroup, tr("Transform"), QStringLiteral("Transform"), [this]() {
+        for (QDoubleSpinBox* field : { m_posX, m_posY, m_posZ, m_rotX, m_rotY, m_rotZ }) field->setValue(0.0);
+        for (QDoubleSpinBox* field : { m_scaleX, m_scaleY, m_scaleZ }) field->setValue(1.0);
+        endCoalescedTransformUndo();
+    }));
     
     // Component inspector widgets will be inserted here dynamically
     // (LightInspector, EnvironmentInspector, MeshRendererInspector, etc.)
+
+    // Component cards are inserted before this stretch, which keeps Add Component at the bottom.
+    m_detailsLayout->addStretch();
 
     // ── Add Component + Delete Entity buttons ───────────────────────────
     {
@@ -2401,9 +2418,6 @@ void EditorMainWindow::setupDockWidgets()
 
         m_detailsLayout->addLayout(actionRow);
     }
-
-    // Add stretch to push everything to top
-    m_detailsLayout->addStretch();
 
     m_detailsPartialHint = new QLabel();
     m_detailsPartialHint->setWordWrap(true);
@@ -3975,6 +3989,79 @@ void EditorMainWindow::onOutlinerContextMenu(const QPoint& pos)
     menu.exec(m_outlinerTree->viewport()->mapToGlobal(pos));
 }
 
+QWidget* EditorMainWindow::componentCardOf(QWidget* body)
+{
+    QWidget* parent = body ? body->parentWidget() : nullptr;
+    return parent && parent->objectName() == QLatin1String("ComponentCard") ? parent : body;
+}
+
+QWidget* EditorMainWindow::wrapComponentCard(QGroupBox* body, const QString& title, const QString& type,
+                                             std::function<void()> onReset)
+{
+    auto* card = new QFrame(m_detailsWidget);
+    card->setObjectName(QStringLiteral("ComponentCard"));
+    auto* layout = new QVBoxLayout(card);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    auto* header = new QWidget(card);
+    header->setObjectName(QStringLiteral("ComponentHeader"));
+    header->setAttribute(Qt::WA_StyledBackground, true);
+    auto* row = new QHBoxLayout(header);
+    row->setContentsMargins(4, 0, 4, 0);
+    row->setSpacing(4);
+
+    auto* toggle = new QToolButton(header);
+    toggle->setToolTip(tr("Collapse or expand"));
+    toggle->setFocusPolicy(Qt::NoFocus);
+    row->addWidget(toggle);
+
+    auto* icon = new QLabel(header);
+    icon->setPixmap(Theme::Icon(ComponentIconName(type)).pixmap(QSize(16, 16), devicePixelRatioF()));
+    row->addWidget(icon);
+
+    auto* titleLabel = new QLabel(title, header);
+    titleLabel->setObjectName(QStringLiteral("ComponentTitle"));
+    row->addWidget(titleLabel);
+    row->addStretch(1);
+
+    auto* reset = new QToolButton(header);
+    reset->setIcon(Theme::Icon(QStringLiteral("reset")));
+    reset->setToolTip(tr("Reset to default"));
+    connect(reset, &QToolButton::clicked, this, [body, onReset = std::move(onReset)]() {
+        if (body->isEnabled()) onReset();
+    });
+    row->addWidget(reset);
+
+    auto* more = new QToolButton(header);
+    more->setIcon(Theme::Icon(QStringLiteral("more")));
+    more->setToolTip(tr("Component options"));
+    connect(more, &QToolButton::clicked, this, [body, more]() {
+        if (body->isEnabled() && body->contextMenuPolicy() == Qt::CustomContextMenu) {
+            emit body->customContextMenuRequested(body->mapFromGlobal(more->mapToGlobal(QPoint(0, more->height()))));
+        }
+    });
+    row->addWidget(more);
+
+    body->setParent(card);
+    body->setObjectName(body->objectName().isEmpty() ? QStringLiteral("ComponentBody") : body->objectName());
+    body->setProperty("componentBody", true);
+    layout->addWidget(header);
+    layout->addWidget(body);
+
+    const bool collapsed = m_collapsedComponents.contains(type);
+    body->setVisible(!collapsed);
+    toggle->setIcon(Theme::Icon(collapsed ? QStringLiteral("chevron-right") : QStringLiteral("chevron-down"), Theme::IconTone::Muted));
+    connect(toggle, &QToolButton::clicked, this, [this, body, toggle, type]() {
+        const bool collapse = body->isVisible();
+        body->setVisible(!collapse);
+        toggle->setIcon(Theme::Icon(collapse ? QStringLiteral("chevron-right") : QStringLiteral("chevron-down"), Theme::IconTone::Muted));
+        if (collapse) m_collapsedComponents.insert(type);
+        else m_collapsedComponents.remove(type);
+    });
+    return card;
+}
+
 void EditorMainWindow::createEmptyEntity()
 {
     if (!m_engine) return;
@@ -4158,6 +4245,7 @@ void EditorMainWindow::clearDetailsPanel()
     }
 
     m_entityIdLabel->setText(tr("Select an entity to inspect."));
+    m_entityIconLabel->clear();
     if (m_detailsSharedHint) m_detailsSharedHint->hide();
     if (m_detailsAdvancedId) m_detailsAdvancedId->hide();
     if (m_detailsEmptyHint) {
@@ -4188,8 +4276,9 @@ void EditorMainWindow::clearDetailsPanel()
 
     // Destroy registry-based component inspectors
     for (auto* insp : m_componentInspectors) {
-        m_detailsLayout->removeWidget(insp);
-        delete insp;
+        QWidget* card = componentCardOf(insp);
+        m_detailsLayout->removeWidget(card);
+        delete card;
     }
     m_componentInspectors.clear();
 
@@ -4233,8 +4322,9 @@ void EditorMainWindow::refreshDetailsPanel()
         if (m_visibilityBtn) m_visibilityBtn->setEnabled(false);
         if (m_prefabBar) m_prefabBar->Clear();
         for (auto* insp : m_componentInspectors) {
-            m_detailsLayout->removeWidget(insp);
-            delete insp;
+            QWidget* card = componentCardOf(insp);
+            m_detailsLayout->removeWidget(card);
+            delete card;
         }
         m_componentInspectors.clear();
         if (m_lightInspector) {
@@ -4271,6 +4361,7 @@ void EditorMainWindow::refreshDetailsPanel()
     const size_t selectionCount = model.Count();
     if (selectionCount > 1) {
         m_entityIdLabel->setText(tr("%1 entities selected").arg(static_cast<int>(selectionCount)));
+        m_entityIconLabel->clear();
         if (m_detailsSharedHint) {
             m_detailsSharedHint->setText(tr("Showing shared properties."));
             m_detailsSharedHint->show();
@@ -4287,6 +4378,8 @@ void EditorMainWindow::refreshDetailsPanel()
         m_entityIdLabel->setText(name.present
             ? QString::fromStdString(name.value)
             : tr("Entity"));
+        m_entityIconLabel->setPixmap(Theme::Icon(OutlinerIconName(registry, entity))
+                                         .pixmap(QSize(16, 16), devicePixelRatioF()));
         if (m_detailsSharedHint) m_detailsSharedHint->hide();
         if (m_detailsAdvancedId) {
             m_detailsAdvancedId->setText(QString("#%1").arg(static_cast<uint32_t>(entity)));
@@ -6841,10 +6934,11 @@ void EditorMainWindow::rebuildComponentInspectors()
         m_environmentInspector = nullptr;
     }
     for (auto* insp : m_componentInspectors) {
-        m_detailsLayout->removeWidget(insp);
+        QWidget* card = componentCardOf(insp);
+        m_detailsLayout->removeWidget(card);
         insp->blockSignals(true);
         insp->disconnect(this);
-        delete insp;
+        delete card;
     }
     m_componentInspectors.clear();
 
@@ -6888,7 +6982,11 @@ void EditorMainWindow::rebuildComponentInspectors()
             });
         }
 
-        m_detailsLayout->insertWidget(stretchIndex, insp);
+        const std::string type = insp->TypeName();
+        const QString title = insp->title();
+        insp->setTitle(QString());
+        m_detailsLayout->insertWidget(stretchIndex, wrapComponentCard(insp, title, QString::fromStdString(type),
+            [this, type]() { resetInspectorComponent(type); }));
         decoratePrefabComponentInspector(insp, insp->TypeName());
         for (auto* field : insp->findChildren<AssetReferenceEditor*>()) {
             connect(field, &AssetReferenceEditor::openRequested, this, [this](const QString& path) {
@@ -8016,8 +8114,9 @@ void EditorMainWindow::decoratePrefabComponentInspector(QWidget* widget, const s
         }
     }
     if (overridden) {
-        widget->setStyleSheet(widget->styleSheet() +
-            QStringLiteral(" QGroupBox { border-left: 2px solid #c9a227; }"));
+        if (QWidget* card = componentCardOf(widget)) {
+            card->setProperty("overridden", true);
+        }
     }
 
     const bool allowApply = anyInstance && model.Count() == 1 && !mixedSources;

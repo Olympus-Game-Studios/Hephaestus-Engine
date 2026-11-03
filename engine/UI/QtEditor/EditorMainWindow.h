@@ -31,6 +31,7 @@
 #include <QComboBox>
 #include <QToolButton>
 #include <QFrame>
+#include <QSet>
 #include <QPlainTextEdit>
 #include <QThread>
 #include <QTimer>
@@ -40,6 +41,7 @@
 #include <atomic>
 #include <filesystem>
 #include <unordered_set>
+#include <functional>
 #include <vector>
 #include <entt/entt.hpp>
 
@@ -190,6 +192,9 @@ private:
     QTreeWidgetItem* findOutlinerItemForEntity(entt::entity entity);
     void onOutlinerContextMenu(const QPoint& pos);
     void createEmptyEntity();
+    QWidget* wrapComponentCard(QGroupBox* body, const QString& title, const QString& type,
+                               std::function<void()> onReset);
+    static QWidget* componentCardOf(QWidget* body);
     void createFolderInOutliner(entt::entity parentEntity);
     void deleteEntityFromOutliner(entt::entity entity);
     void deleteSelectedEntities();
@@ -336,6 +341,7 @@ private:
     QWidget* m_outlinerPanel = nullptr;
     QLineEdit* m_outlinerSearch = nullptr;
     QLabel* m_outlinerFooter = nullptr;
+    QSet<QString> m_collapsedComponents;
     OutlinerTreeWidget* m_outlinerTree = nullptr;
     std::unordered_set<uint32_t> m_expandedOutlinerEntities;
     bool m_hasOutlinerExpansionState = false;
