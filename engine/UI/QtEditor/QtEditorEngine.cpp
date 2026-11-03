@@ -3010,7 +3010,8 @@ void QtEditorEngine::TogglePause()
     if (m_joltPhysicsSystem && (wasPaused || m_playModeManager.IsPaused())) {
         m_joltPhysicsSystem->ClearAccumulator();
     }
-    emit playStateChanged(m_playModeManager.IsPlaying(), m_playModeManager.IsPaused());
+    // "playing" means a Play session is active, paused or not; the toolbar keeps Stop and Pause enabled while paused.
+    emit playStateChanged(!m_playModeManager.IsEditor(), m_playModeManager.IsPaused());
 }
 
 Hephaestus::PlayState QtEditorEngine::GetPlayState() const

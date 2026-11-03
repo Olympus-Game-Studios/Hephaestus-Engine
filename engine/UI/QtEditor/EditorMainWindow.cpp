@@ -1589,7 +1589,7 @@ void EditorMainWindow::setupTopToolbar()
     m_playAction->setCheckable(true);
     m_pauseAction = new QAction(Theme::Icon(QStringLiteral("pause")), tr("Pause"), this);
     m_pauseAction->setCheckable(true);
-    m_stopAction = new QAction(Theme::Icon(QStringLiteral("stop"), Theme::IconTone::Error), tr("Stop"), this);
+    m_stopAction = new QAction(Theme::Icon(QStringLiteral("stop"), Theme::IconTone::OnAction), tr("Stop"), this);
     m_stepAction = new QAction(Theme::Icon(QStringLiteral("step")), tr("Step One Frame"), this);
     m_pauseAction->setEnabled(false);
     m_stopAction->setEnabled(false);
@@ -1746,12 +1746,19 @@ void EditorMainWindow::setupTopToolbar()
         auto* playLayout = new QHBoxLayout(playGroup);
         playLayout->setContentsMargins(0, 0, 0, 0);
         playLayout->setSpacing(2);
+        // Play and its options are two plain buttons drawn from one "playing" property, not a
+        // checkable MenuButtonPopup, whose checked/pressed sub-control states left stale paint.
         auto* playBtn = new QToolButton(playGroup);
         playBtn->setObjectName(QStringLiteral("PlayButton"));
-        playBtn->setDefaultAction(m_playAction);
         playBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        playBtn->setPopupMode(QToolButton::MenuButtonPopup);
-        auto* playMenu = new QMenu(playBtn);
+        playBtn->setToolTip(m_playAction->toolTip());
+        connect(playBtn, &QToolButton::clicked, m_playAction, &QAction::trigger);
+        auto* playMenuBtn = new QToolButton(playGroup);
+        playMenuBtn->setObjectName(QStringLiteral("PlayMenuButton"));
+        playMenuBtn->setPopupMode(QToolButton::InstantPopup);
+        playMenuBtn->setToolTip(tr("Play options"));
+        playMenuBtn->setFocusPolicy(Qt::NoFocus);
+        auto* playMenu = new QMenu(playMenuBtn);
         QAction* realtimeAction = playMenu->addAction(tr("Real-time"));
         realtimeAction->setCheckable(true);
         realtimeAction->setChecked(true);
@@ -1762,9 +1769,13 @@ void EditorMainWindow::setupTopToolbar()
         connect(playMenu, &QMenu::aboutToShow, this, [this, realtimeAction]() {
             if (m_engine) realtimeAction->setChecked(m_engine->IsRealtime());
         });
-        playBtn->setMenu(playMenu);
+        playMenuBtn->setMenu(playMenu);
         playBtn->setFocusPolicy(Qt::NoFocus);
-        playLayout->addWidget(playBtn);
+        auto* playPair = new QHBoxLayout();
+        playPair->setSpacing(0);
+        playPair->addWidget(playBtn);
+        playPair->addWidget(playMenuBtn);
+        playLayout->addLayout(playPair);
         for (QAction* action : { m_pauseAction, m_stopAction, m_stepAction }) {
             auto* button = new QToolButton(playGroup);
             button->setDefaultAction(action);
@@ -1773,11 +1784,20 @@ void EditorMainWindow::setupTopToolbar()
             if (action == m_stopAction) button->setObjectName(QStringLiteral("StopButton"));
             playLayout->addWidget(button);
         }
-        connect(m_playAction, &QAction::toggled, this, [this](bool playing) {
-            m_playAction->setText(playing ? tr("Playing") : tr("Play"));
-            m_playAction->setIcon(playing ? Theme::Icon(QStringLiteral("dot"), Theme::IconTone::Success)
-                                          : Theme::Icon(QStringLiteral("play"), Theme::IconTone::OnAction));
-        });
+        auto showPlayState = [this, playBtn, playMenuBtn](bool playing) {
+            playBtn->setText(playing ? tr("Playing") : tr("Play"));
+            playBtn->setIcon(playing ? Theme::Icon(QStringLiteral("dot"), Theme::IconTone::Success)
+                                     : Theme::Icon(QStringLiteral("play"), Theme::IconTone::OnAction));
+            playMenuBtn->setIcon(Theme::Icon(QStringLiteral("chevron-down"),
+                                             playing ? Theme::IconTone::Success : Theme::IconTone::OnAction));
+            for (QToolButton* button : { playBtn, playMenuBtn }) {
+                button->setProperty("playing", playing);
+                button->style()->unpolish(button);
+                button->style()->polish(button);
+            }
+        };
+        connect(m_playAction, &QAction::toggled, this, showPlayState);
+        showPlayState(false);
         layout->addWidget(playGroup);
 
         m_buildBtn = new QToolButton(header);
