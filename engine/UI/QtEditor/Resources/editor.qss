@@ -828,8 +828,9 @@ QFrame#ModeSwitch {
     border-radius: 6px;
 }
 QToolButton#ModeButton {
-    padding: 2px 8px;
+    padding: 0 10px;
     color: @text-secondary;
+    max-height: 20px;
 }
 QToolButton#ModeButton:checked {
     background: @surface-selected-strong;
@@ -1041,4 +1042,8 @@ QWidget#ViewportToolbar QToolButton {
 
 QWidget#ViewportToolbar QToolBar {
     min-height: 32px;
+}
+
+QWidget#EditorHeader QMenuBar::item {
+    padding: 4px 8px;
 }

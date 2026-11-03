@@ -1676,13 +1676,13 @@ void EditorMainWindow::setupTopToolbar()
         logo->setPixmap(Theme::BrandLogo().pixmap(QSize(20, 20), devicePixelRatioF()));
         logo->setToolTip(QStringLiteral("Hephaestus"));
         layout->addWidget(logo);
-        layout->addWidget(m_menuBar);
+        layout->addWidget(m_menuBar, 0, Qt::AlignVCenter);
         layout->addStretch(1);
 
         auto* modeSwitch = new QFrame(header);
         modeSwitch->setObjectName(QStringLiteral("ModeSwitch"));
         auto* modeLayout = new QHBoxLayout(modeSwitch);
-        modeLayout->setContentsMargins(2, 2, 2, 2);
+        modeLayout->setContentsMargins(3, 3, 3, 3);
         modeLayout->setSpacing(2);
         m_modeButtons = new QButtonGroup(this);
         const struct { EditorMode mode; const char* icon; const char* label; const char* tip; } modes[] = {
@@ -1706,7 +1706,8 @@ void EditorMainWindow::setupTopToolbar()
         connect(m_modeButtons, &QButtonGroup::idClicked, this, [this](int id) {
             setEditorMode(static_cast<EditorMode>(id));
         });
-        layout->addWidget(modeSwitch);
+        modeSwitch->setFixedHeight(26);
+        layout->addWidget(modeSwitch, 0, Qt::AlignVCenter);
         layout->addStretch(1);
 
         auto* search = new EditorCommandSearch(m_menuBar, header);
