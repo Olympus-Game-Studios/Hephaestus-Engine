@@ -56,3 +56,5 @@ logs/
 **/.hephaestus/editor/
 **/.hephaestus/build/
 docs/plans/
+
+*.DS_Store

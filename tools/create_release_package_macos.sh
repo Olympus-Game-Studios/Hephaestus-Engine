@@ -81,9 +81,9 @@ done < <(find "$RESOURCES/Plugins" -name '*.dylib' -print0)
 echo "Signing with: $IDENTITY"
 SIGN=(codesign --force --sign "$IDENTITY")
 if [[ "$IDENTITY" != "-" ]]; then SIGN+=(--options runtime --timestamp); fi
-is_macho() { file -b "$1" | grep -q 'Mach-O'; }
+is_macho() { [[ "$(file -b "$1")" == *Mach-O* ]]; } # not a grep -q pipe: SIGPIPE + pipefail
 sign_loose_code() { # every Mach-O under $1 outside nested bundles, innermost first
-    find "$1" -type f -not -path '*.app/*' -not -path '*.framework/*' -print0 |
+    find "$1" -type f -not -path "$1/*.app/*" -not -path "$1/*.framework/*" -print0 |
         while IFS= read -r -d '' file; do
             if is_macho "$file"; then "${SIGN[@]}" "$file"; fi
         done
