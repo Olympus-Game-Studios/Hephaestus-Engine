@@ -93,6 +93,13 @@ enum class IconTone
  */
 QIcon Icon(const QString& name, IconTone tone = IconTone::Secondary);
 
+/**
+ * Full-colour icon for a code file from the Material Icon Theme
+ * (Branding/third-party/material-icon-theme), chosen by @p fileName's extension.
+ * Null when the extension has no icon there.
+ */
+QIcon FileIcon(const QString& fileName);
+
 /** The Hephaestus logo from Branding/logo/svgs/HephaestusEngineLogo-Main.svg. */
 QIcon BrandLogo();
 

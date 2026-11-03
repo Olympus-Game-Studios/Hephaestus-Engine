@@ -6,7 +6,10 @@
 
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
+#include <QRegularExpression>
 #include <QScrollBar>
 #include <QTimer>
 #include <QToolButton>
@@ -20,6 +23,8 @@ namespace {
 
 constexpr int kMaxRows = 5000;
 constexpr int kLevelRole = Qt::UserRole + 1;
+constexpr int kLocationRole = Qt::UserRole + 2;
+constexpr int kLineRole = Qt::UserRole + 3;
 
 enum class Severity { Info, Warning, Error };
 
@@ -97,12 +102,52 @@ EditorConsolePanel::EditorConsolePanel(QWidget* parent)
     m_list->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_list->header()->setStretchLastSection(true);
     layout->addWidget(m_list, 1);
+    connect(m_list, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
+        const QString location = item->data(0, kLocationRole).toString();
+        if (!location.isEmpty() && onOpenLocation) onOpenLocation(location, item->data(0, kLineRole).toInt());
+    });
+
+    auto* inputRow = new QWidget(this);
+    inputRow->setObjectName(QStringLiteral("ConsoleInputRow"));
+    auto* inputLayout = new QHBoxLayout(inputRow);
+    inputLayout->setContentsMargins(8, 4, 8, 4);
+    inputLayout->setSpacing(6);
+    auto* prompt = new QLabel(QStringLiteral("lua>"), inputRow);
+    prompt->setObjectName(QStringLiteral("ConsolePrompt"));
+    inputLayout->addWidget(prompt);
+    m_input = new QLineEdit(inputRow);
+    m_input->setObjectName(QStringLiteral("ConsoleInput"));
+    m_input->setPlaceholderText(tr("Lua expression or statement; runs in the game while playing, or in the paused frame"));
+    m_input->installEventFilter(this);
+    inputLayout->addWidget(m_input, 1);
+    layout->addWidget(inputRow);
+    connect(m_input, &QLineEdit::returnPressed, this, [this]() {
+        const QString code = m_input->text().trimmed();
+        if (code.isEmpty()) return;
+        if (m_history.isEmpty() || m_history.last() != code) m_history << code;
+        m_historyIndex = int(m_history.size());
+        m_input->clear();
+        if (onSubmit) onSubmit(code);
+    });
 
     updateCounts();
     m_timer = new QTimer(this);
     connect(m_timer, &QTimer::timeout, this, &EditorConsolePanel::poll);
     m_timer->start(150);
     poll();
+}
+
+bool EditorConsolePanel::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_input && event->type() == QEvent::KeyPress && !m_history.isEmpty()) {
+        const int key = static_cast<QKeyEvent*>(event)->key();
+        if (key == Qt::Key_Up || key == Qt::Key_Down) {
+            m_historyIndex = qBound(0, m_historyIndex + (key == Qt::Key_Up ? -1 : 1), int(m_history.size()));
+            m_input->setText(m_history.value(m_historyIndex));
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void EditorConsolePanel::poll()
@@ -132,6 +177,18 @@ void EditorConsolePanel::append(const EngineLogEntry& entry)
     item->setText(1, QString::fromStdString(entry.category).toUpper());
     item->setText(2, QString::fromStdString(entry.message).trimmed());
     item->setToolTip(2, item->text(2));
+    // Matches "path/file.ext:12:" as Lua and most compilers print it; Lua may shorten the path to "...tail".
+    static const QRegularExpression kLocation(QStringLiteral(R"(((?:\.\.\.)?(?:[A-Za-z]:)?[^\s:"'\[\]()]*\.[A-Za-z0-9]+):(\d+):)"));
+    const QRegularExpressionMatch location = kLocation.match(item->text(2));
+    if (location.hasMatch()) {
+        item->setData(0, kLocationRole, location.captured(1));
+        item->setData(0, kLineRole, location.captured(2).toInt());
+        item->setToolTip(2, item->text(2) + QStringLiteral("\n\n")
+                                + tr("Double-click to open %1 at line %2.").arg(location.captured(1), location.captured(2)));
+        if (severity == Severity::Error && onErrorLocation) {
+            onErrorLocation(location.captured(1), location.captured(2).toInt(), item->text(2));
+        }
+    }
     item->setData(0, kLevelRole, static_cast<int>(severity));
     item->setForeground(0, Theme::Color(Theme::Token::TextMuted));
     item->setForeground(1, Theme::Color(Theme::Token::TextSecondary));

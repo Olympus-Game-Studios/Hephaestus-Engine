@@ -13,6 +13,7 @@
 #include "ScriptLanguageTestPlugin.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -73,6 +74,13 @@ int main(int argc, char** argv)
     pass &= Check(RejectsLanguage(broken), "a plugin cannot claim .lua files");
 
     std::string error;
+    HPScriptLanguage firstRelease = *language;
+    firstRelease.id = "firstrelease";
+    firstRelease.extensions = ".v1script";
+    firstRelease.structSize = static_cast<uint32_t>(offsetof(HPScriptLanguage, syntax));
+    pass &= Check(registry.Register(&firstRelease, error) && registry.FindSyntaxForPath("a.v1script") == nullptr,
+                  "a language built before syntax tables existed still registers, as plain text");
+    registry.Clear();
     pass &= Check(registry.Register(language, error), "the C test language registers");
     pass &= Check(RejectsLanguage(*language), "the same language id cannot register twice");
     broken = *language;
@@ -89,6 +97,12 @@ int main(int argc, char** argv)
     pass &= Check(registry.IsScriptPath("a.lua") && registry.IsScriptPath("a.tscript") &&
                   !registry.IsScriptPath("a.txt"),
                   "IsScriptPath accepts Lua and plugin languages only");
+    const HPSyntax* luaSyntax = registry.FindSyntaxForPath("scripts/door.LUA");
+    pass &= Check(luaSyntax && luaSyntax->ruleCount > 0 && luaSyntax->blockCount > 0,
+                  "built-in Lua supplies its highlighting through the same syntax table");
+    pass &= Check(registry.FindSyntaxForPath("a.tscript") == language->syntax &&
+                  registry.FindSyntaxForPath("a.txt") == nullptr,
+                  "a plugin language supplies highlighting for its extensions");
     pass &= Check(AssetTypeFromExtension(".tsx") == AssetType::Script,
                   "plugin language files show up as Script assets");
 

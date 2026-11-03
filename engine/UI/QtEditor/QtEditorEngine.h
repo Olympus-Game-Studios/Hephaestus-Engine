@@ -220,6 +220,8 @@ public:
      */
     Hephaestus::PlayState GetPlayState() const;
     bool IsPlaying() const;
+    /// The gameplay Lua engine; null until Play has started once.
+    LuaScriptEngine* GetLuaScriptEngine() const { return m_luaScriptEngine.get(); }
     bool IsPaused() const;
     bool IsRealtime() const;
     void SetRealtime(bool realtime);

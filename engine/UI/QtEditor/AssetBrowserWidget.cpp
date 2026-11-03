@@ -348,6 +348,8 @@ void AssetBrowserWidget::setupUI()
     // Second row: where you are, and what kind of asset you are looking at.
     auto* navRow = new QWidget(this);
     navRow->setObjectName(QStringLiteral("AssetBrowserNavRow"));
+    // Clips instead of setting the panel's minimum width, so the Content Browser can be narrowed.
+    navRow->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* navLayout = new QHBoxLayout(navRow);
     navLayout->setContentsMargins(8, 4, 8, 4);
     navLayout->setSpacing(2);
@@ -713,7 +715,8 @@ void AssetBrowserWidget::rebuildContentsView()
             item->setText(name);
             item->setData(QStringLiteral("%1 \u00B7 %2").arg(typeLabel(type, false), location), DetailRole);
             item->setData(getAssetIcon(static_cast<int>(type), false).name(), TypeIconRole);
-            item->setIcon(getAssetIcon(static_cast<int>(type), false));
+            const QIcon fileIcon = Theme::FileIcon(name);
+            item->setIcon(fileIcon.isNull() ? getAssetIcon(static_cast<int>(type), false) : fileIcon);
             item->setData(rel, RelativePathRole);
             item->setData(static_cast<int>(type), AssetTypeRole);
             item->setData(false, IsDirectoryRole);
@@ -748,6 +751,7 @@ void AssetBrowserWidget::rebuildContentsView()
         item->setData(customType.isEmpty() ? typeLabel(type, entry.isDirectory) : customType, DetailRole);
         item->setData(getAssetIcon(static_cast<int>(entry.type), entry.isDirectory).name(), TypeIconRole);
         QIcon icon = getAssetIcon(static_cast<int>(entry.type), entry.isDirectory);
+        if (!entry.isDirectory && !Theme::FileIcon(name).isNull()) icon = Theme::FileIcon(name);
         if (!customType.isEmpty()) {
             const QIcon pluginIcon = m_mainWindow->PluginHost()->CustomAssetIcon(
                 QString::fromStdString(entry.relativePath));

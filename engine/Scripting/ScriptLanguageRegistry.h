@@ -2,6 +2,7 @@
 
 #include "../PluginAPI/ScriptLanguageAPI.h"
 #include "LuaExposeMetadata.h"
+#include "LuaLanguageService.h"
 
 #include <filesystem>
 #include <string>
@@ -25,6 +26,18 @@ public:
 
     /// The plugin language whose extension matches, or nullptr for Lua.
     const HPScriptLanguage* FindForPath(std::string_view scriptPath) const;
+
+    /// Highlighting for the code editor: Lua's built-in syntax for .lua files,
+    /// the claiming language's syntax otherwise, or nullptr for plain text.
+    const HPSyntax* FindSyntaxForPath(std::string_view path) const;
+
+    /// Completion candidates for the code editor at 1-based @p line and byte
+    /// @p column: built-in Lua's for .lua files, the claiming language's otherwise.
+    std::vector<LuaLanguageService::Completion> Complete(std::string_view path, const std::string& source,
+                                                         uint32_t line, uint32_t column) const;
+
+    /// Hover text for the symbol at the position, or empty.
+    std::string Hover(std::string_view path, const std::string& source, uint32_t line, uint32_t column) const;
 
     /// True for .lua files and for files a plugin language claims.
     bool IsScriptPath(std::string_view scriptPath) const;

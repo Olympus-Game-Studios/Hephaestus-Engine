@@ -354,6 +354,8 @@ add_library(HephaestusRuntime STATIC
     engine/Scripting/LuaScriptVariableReconciler.cpp
     engine/Scripting/ScriptPhysicsBindings.cpp
     engine/Scripting/ScriptLanguageRegistry.cpp
+    engine/Scripting/LuaDebugger.cpp
+    engine/Scripting/LuaLanguageService.cpp
     engine/Scripting/PluginScriptHost.cpp
     engine/UI/HephaestusUI/HUIAsset.cpp
     engine/UI/HephaestusUI/UIButton.cpp
@@ -569,6 +571,12 @@ if(HEPHAESTUS_USE_QT)
         target_sources(HephaestusEngine PRIVATE
             engine/UI/QtEditor/EditorQtApp.cpp
             engine/UI/QtEditor/EditorQtApp.h
+            engine/UI/QtEditor/CodeEditorPanel.cpp
+            engine/UI/QtEditor/CodeEditorPanel.h
+            engine/UI/QtEditor/DebuggerPanel.cpp
+            engine/UI/QtEditor/DebuggerPanel.h
+            engine/UI/QtEditor/ProjectSearchPanel.cpp
+            engine/UI/QtEditor/ProjectSearchPanel.h
             engine/UI/QtEditor/EditorCommandSearch.cpp
             engine/UI/QtEditor/EditorCommandSearch.h
             engine/UI/QtEditor/EditorDockTitleBar.cpp
@@ -1690,6 +1698,13 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     )
 
     if(LUA_FOUND)
+        add_executable(LuaDebuggerTests
+            engine/Tests/LuaDebuggerTests.cpp
+        )
+        target_link_libraries(LuaDebuggerTests PRIVATE HephaestusRuntime)
+        target_include_directories(LuaDebuggerTests PRIVATE engine extern)
+        add_test(NAME LuaDebugger COMMAND LuaDebuggerTests)
+
         add_executable(CharacterLuaTests
             engine/Tests/CharacterLuaTests.cpp
             engine/Assets/AssetPathPolicy.cpp
@@ -2090,6 +2105,8 @@ if(HEPHAESTUS_BUILD_QT_TESTS AND HEPHAESTUS_USE_QT AND Qt6_FOUND)
             engine/UI/QtEditor/PropertyEditors.h
             engine/UI/QtEditor/EditorCommandSearch.cpp
             engine/UI/QtEditor/EditorConsolePanel.cpp
+            engine/UI/QtEditor/CodeEditorPanel.cpp
+            engine/UI/QtEditor/ProjectSearchPanel.cpp
             engine/UI/QtEditor/EditorTheme.cpp
             engine/UI/QtEditor/Resources/EditorResources.qrc
         )

@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFont>
 #include <QFontDatabase>
+#include <QFileInfo>
 #include <QHash>
 #include <QIconEngine>
 #include <QKeySequence>
@@ -329,6 +330,41 @@ QIcon Icon(const QString& name, IconTone tone)
     QIcon icon = svg.isEmpty() ? QIcon() : QIcon(new ToneIconEngine(name, svg, ToneColor(tone)));
     cache.insert(key, icon);
     return icon;
+}
+
+QIcon FileIcon(const QString& fileName)
+{
+    static const QHash<QString, QString> kIconByExtension = {
+        { QStringLiteral("lua"), QStringLiteral("lua") },
+        { QStringLiteral("py"), QStringLiteral("python") },
+        { QStringLiteral("pyw"), QStringLiteral("python") },
+        { QStringLiteral("cpp"), QStringLiteral("cpp") },
+        { QStringLiteral("cc"), QStringLiteral("cpp") },
+        { QStringLiteral("cxx"), QStringLiteral("cpp") },
+        { QStringLiteral("c"), QStringLiteral("c") },
+        { QStringLiteral("h"), QStringLiteral("h") },
+        { QStringLiteral("hpp"), QStringLiteral("hpp") },
+        { QStringLiteral("hh"), QStringLiteral("hpp") },
+        { QStringLiteral("hxx"), QStringLiteral("hpp") },
+        { QStringLiteral("cs"), QStringLiteral("csharp") },
+        { QStringLiteral("js"), QStringLiteral("javascript") },
+        { QStringLiteral("mjs"), QStringLiteral("javascript") },
+        { QStringLiteral("ts"), QStringLiteral("typescript") },
+        { QStringLiteral("rs"), QStringLiteral("rust") },
+        { QStringLiteral("zig"), QStringLiteral("zig") },
+        { QStringLiteral("glsl"), QStringLiteral("shader") },
+        { QStringLiteral("hlsl"), QStringLiteral("shader") },
+        { QStringLiteral("vert"), QStringLiteral("shader") },
+        { QStringLiteral("frag"), QStringLiteral("shader") },
+        { QStringLiteral("comp"), QStringLiteral("shader") },
+        { QStringLiteral("geom"), QStringLiteral("shader") },
+        { QStringLiteral("tesc"), QStringLiteral("shader") },
+        { QStringLiteral("tese"), QStringLiteral("shader") },
+        { QStringLiteral("wgsl"), QStringLiteral("shader") },
+        { QStringLiteral("shader"), QStringLiteral("shader") },
+    };
+    const QString icon = kIconByExtension.value(QFileInfo(fileName).suffix().toLower());
+    return icon.isEmpty() ? QIcon() : QIcon(QStringLiteral(":/editor/fileicons/%1.svg").arg(icon));
 }
 
 QIcon BrandLogo()

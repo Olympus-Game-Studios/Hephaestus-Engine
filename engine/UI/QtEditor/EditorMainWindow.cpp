@@ -39,6 +39,10 @@
 #include "RuntimeUIOverlayWidget.h"
 #include "EditorNotificationService.h"
 #include "EditorCommandSearch.h"
+#include "CodeEditorPanel.h"
+#include "DebuggerPanel.h"
+#include "ProjectSearchPanel.h"
+#include "../../Scripting/LuaDebugger.h"
 #include "EditorConsolePanel.h"
 #include "EditorDockTitleBar.h"
 #include "EditorTheme.h"
@@ -339,7 +343,7 @@ public:
 } // namespace
 
 // Bump when the default dock layout changes so older saved layouts are not restored over it.
-constexpr int kDockLayoutVersion = 2;
+constexpr int kDockLayoutVersion = 5;
 constexpr int kEditorModeCount = 3;
 
 QString ModeStateKey(EditorMainWindow::EditorMode mode)
@@ -1300,7 +1304,7 @@ void EditorMainWindow::OpenProjectFromPath(const QString& filepath)
     }
 
     if (m_projectContext && m_projectContext->HasProject()) {
-        if (!promptSaveDirtyScene()) {
+        if (!promptSaveDirtyScene() || !m_codeEditor->CloseAll()) {
             return;
         }
     }
@@ -1310,6 +1314,13 @@ void EditorMainWindow::OpenProjectFromPath(const QString& filepath)
 
 void EditorMainWindow::closeEvent(QCloseEvent* event)
 {
+    // Lua is suspended inside the debugger's event loop; unwind it before tearing anything down.
+    if (LuaDebugger::Instance().IsPaused()) {
+        event->ignore();
+        if (m_engine) m_engine->StopPlayMode();
+        QTimer::singleShot(0, this, &QWidget::close);
+        return;
+    }
     EngineLog::Info("EditorMainWindow close event");
     std::cout << "[EditorMainWindow] Close event received\n";
 
@@ -1328,7 +1339,7 @@ void EditorMainWindow::closeEvent(QCloseEvent* event)
         m_buildThread->wait();
     }
 
-    if (!promptSaveDirtyScene()) {
+    if (!promptSaveDirtyScene() || !m_codeEditor->CloseAll()) {
         event->ignore();
         return;
     }
@@ -1672,9 +1683,13 @@ void EditorMainWindow::setupTopToolbar()
         layout->setContentsMargins(12, 0, 8, 0);
         layout->setSpacing(8);
 
-        auto* logo = new QLabel(header);
-        logo->setPixmap(Theme::BrandLogo().pixmap(QSize(20, 20), devicePixelRatioF()));
-        logo->setToolTip(QStringLiteral("Hephaestus"));
+        auto* logo = new QToolButton(header);
+        logo->setObjectName(QStringLiteral("HeaderLogo"));
+        logo->setIcon(Theme::BrandLogo());
+        logo->setIconSize(QSize(20, 20));
+        logo->setAutoRaise(true);
+        logo->setToolTip(tr("About Hephaestus"));
+        connect(logo, &QToolButton::clicked, this, &EditorMainWindow::onAbout);
         layout->addWidget(logo);
         layout->addWidget(m_menuBar, 0, Qt::AlignVCenter);
         layout->addStretch(1);
@@ -2900,11 +2915,60 @@ void EditorMainWindow::setupDockWidgets()
     // tabifyDockWidget inserts after the first dock's tab, so this keeps Content Browser, Console, Output.
     m_consoleDock = new QDockWidget(tr("Console"), this);
     m_consoleDock->setObjectName("ConsoleDock");
-    m_consoleDock->setWidget(new EditorConsolePanel(m_consoleDock));
+    auto* consolePanel = new EditorConsolePanel(m_consoleDock);
+    m_consoleDock->setWidget(consolePanel);
     InstallDockTitleBar(m_consoleDock);
     addDockWidget(Qt::BottomDockWidgetArea, m_consoleDock);
     tabifyDockWidget(m_assetBrowserDock, m_consoleDock);
     m_assetBrowserDock->raise(); // Asset browser stays visible by default
+
+    m_codeEditorDock = new QDockWidget(tr("Code"), this);
+    m_codeEditorDock->setObjectName("CodeEditorDock");
+    m_codeEditor = new CodeEditorPanel(m_codeEditorDock);
+    m_codeEditorDock->setWidget(m_codeEditor);
+    InstallDockTitleBar(m_codeEditorDock);
+    addDockWidget(Qt::LeftDockWidgetArea, m_codeEditorDock);
+    m_codeEditorDock->hide();
+    m_searchDock = new QDockWidget(tr("Search"), this);
+    m_searchDock->setObjectName("SearchDock");
+    m_searchPanel = new ProjectSearchPanel(m_searchDock);
+    m_searchDock->setWidget(m_searchPanel);
+    InstallDockTitleBar(m_searchDock);
+    addDockWidget(Qt::BottomDockWidgetArea, m_searchDock);
+    m_searchDock->hide();
+    m_searchPanel->onOpen = [this](const QString& path, int line, int) {
+        m_codeEditorDock->show();
+        m_codeEditor->OpenFileAt(path, line);
+    };
+    auto* searchShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F), this);
+    connect(searchShortcut, &QShortcut::activated, this, [this]() {
+        showProgrammerPanel(m_searchDock);
+        m_searchPanel->FocusSearch();
+    });
+
+    m_debuggerDock = new QDockWidget(tr("Debugger"), this);
+    m_debuggerDock->setObjectName("DebuggerDock");
+    m_debuggerPanel = new DebuggerPanel(m_debuggerDock);
+    m_debuggerDock->setWidget(m_debuggerPanel);
+    InstallDockTitleBar(m_debuggerDock);
+    addDockWidget(Qt::BottomDockWidgetArea, m_debuggerDock);
+    m_debuggerDock->hide();
+    setupLuaDebugger();
+
+    consolePanel->onSubmit = [this](const QString& code) { runConsoleLua(code); };
+    consolePanel->onErrorLocation = [this](const QString& location, int line, const QString& message) {
+        const QString path = CodeEditorPanel::ResolveLocation(location);
+        if (!path.isEmpty()) m_codeEditor->MarkError(path, line, message);
+    };
+    consolePanel->onOpenLocation = [this](const QString& location, int line) {
+        const QString path = CodeEditorPanel::ResolveLocation(location);
+        if (path.isEmpty()) {
+            statusBar()->showMessage(tr("Could not find %1 in the project.").arg(location), 4000);
+            return;
+        }
+        showProgrammerPanel(m_codeEditorDock);
+        m_codeEditor->OpenFileAt(path, line);
+    };
 
     // ─────────────────────────────────────────────────────────────────────────
     // Add Actors Dock (Left, tabbed with Outliner)
@@ -2938,6 +3002,9 @@ void EditorMainWindow::setupDockWidgets()
         viewMenu->addAction(m_assetBrowserDock->toggleViewAction());
         viewMenu->addAction(m_consoleDock->toggleViewAction());
         viewMenu->addAction(m_buildOutputDock->toggleViewAction());
+        viewMenu->addAction(m_codeEditorDock->toggleViewAction());
+        viewMenu->addAction(m_searchDock->toggleViewAction());
+        viewMenu->addAction(m_debuggerDock->toggleViewAction());
         
         // Viewport rendering toggles are added after engine initialization
         // (see setupViewportRenderingToggles called from initializeEngine)
@@ -3307,6 +3374,17 @@ void EditorMainWindow::setupStatusBar()
 
     status->addWidget(m_statusSaved);
     status->addWidget(m_statusScene);
+    auto* codeStatus = new QLabel(status);
+    codeStatus->setProperty("role", "muted");
+    codeStatus->hide();
+    m_codeEditor->onStatusChanged = [this, codeStatus](const QString& text) {
+        codeStatus->setText(text);
+        codeStatus->setVisible(!text.isEmpty() && m_codeEditorDock->isVisible());
+    };
+    connect(m_codeEditorDock, &QDockWidget::visibilityChanged, codeStatus, [codeStatus](bool visible) {
+        codeStatus->setVisible(visible && !codeStatus->text().isEmpty());
+    });
+    status->addPermanentWidget(codeStatus);
     status->addPermanentWidget(m_statusSelection);
     status->addPermanentWidget(m_statusFps);
     status->showMessage(tr("Initializing engine..."));
@@ -3358,6 +3436,7 @@ bool EditorMainWindow::initializeEngine()
             this, &EditorMainWindow::onEngineError);
     connect(m_engine.get(), &QtEditorEngine::playStateChanged,
             this, [this](bool playing, bool paused) {
+        if (m_debuggerPanel && !LuaDebugger::Instance().IsPaused()) m_debuggerPanel->ShowRunning(playing);
         if (m_playAction)  m_playAction->setChecked(playing);
         if (m_pauseAction) {
             m_pauseAction->setChecked(paused);
@@ -4210,6 +4289,101 @@ void EditorMainWindow::setEditorMode(EditorMode mode)
     restoreModeLayout(m_mode);
 }
 
+void EditorMainWindow::showProgrammerPanel(QDockWidget* dock)
+{
+    if (m_mode != EditorMode::Programmer) {
+        if (QAbstractButton* button = m_modeButtons->button(static_cast<int>(EditorMode::Programmer))) {
+            button->setChecked(true);
+        }
+        setEditorMode(EditorMode::Programmer);
+    }
+    dock->show();
+    dock->raise();
+}
+
+void EditorMainWindow::setupLuaDebugger()
+{
+    LuaDebugger& debugger = LuaDebugger::Instance();
+    const struct {
+        QKeySequence key;
+        LuaDebugger::Action action;
+    } keys[] = {
+        { QKeySequence(Qt::Key_F5), LuaDebugger::Action::Continue },
+        { QKeySequence(Qt::Key_F10), LuaDebugger::Action::StepOver },
+        { QKeySequence(Qt::Key_F11), LuaDebugger::Action::StepInto },
+        { QKeySequence(Qt::SHIFT | Qt::Key_F11), LuaDebugger::Action::StepOut },
+        { QKeySequence(Qt::SHIFT | Qt::Key_F5), LuaDebugger::Action::Stop },
+    };
+    auto act = [this](LuaDebugger::Action action) {
+        if (action == LuaDebugger::Action::Stop) {
+            if (m_engine) m_engine->StopPlayMode();
+        } else {
+            LuaDebugger::Instance().RequestResume(action);
+        }
+    };
+    for (const auto& entry : keys) {
+        // Enabled only while paused, so F5/F10/F11 keep their usual meaning otherwise.
+        auto* shortcut = new QShortcut(entry.key, this);
+        shortcut->setContext(Qt::ApplicationShortcut);
+        shortcut->setEnabled(false);
+        const LuaDebugger::Action action = entry.action;
+        connect(shortcut, &QShortcut::activated, this, [act, action]() { act(action); });
+        m_debuggerShortcuts << shortcut;
+    }
+    m_debuggerPanel->onAction = act;
+    m_debuggerPanel->onPauseRequested = []() { LuaDebugger::Instance().RequestPause(); };
+    m_debuggerPanel->onFrameSelected = [this](const QString& path, int line) {
+        const QString resolved = CodeEditorPanel::ResolveLocation(path);
+        if (!resolved.isEmpty()) m_codeEditor->OpenFileAt(resolved, line);
+    };
+
+    // Lua waits inside this callback; a nested event loop keeps the editor usable meanwhile.
+    debugger.onPause = [this](const LuaDebugger::PauseState& state) {
+        QEventLoop loop;
+        LuaDebugger::Instance().onResumeRequested = [&loop]() { loop.quit(); };
+        for (QShortcut* shortcut : m_debuggerShortcuts) shortcut->setEnabled(true);
+        showProgrammerPanel(m_debuggerDock);
+        m_codeEditorDock->show();
+        m_debuggerPanel->ShowPause(state);
+        QString where;
+        if (!state.frames.empty()) {
+            const LuaDebugger::Frame& top = state.frames.front();
+            const QString path = CodeEditorPanel::ResolveLocation(QString::fromStdString(top.source));
+            if (!path.isEmpty()) m_codeEditor->ShowExecutionLine(path, top.line);
+            where = QStringLiteral(" · %1:%2").arg(QFileInfo(QString::fromStdString(top.source)).fileName()).arg(top.line);
+        }
+        statusBar()->showMessage(tr("Paused at %1").arg(QString::fromStdString(state.reason).toLower()) + where);
+        loop.exec();
+        LuaDebugger::Instance().onResumeRequested = nullptr;
+        for (QShortcut* shortcut : m_debuggerShortcuts) shortcut->setEnabled(false);
+        statusBar()->clearMessage();
+        m_codeEditor->ShowExecutionLine({}, 0);
+        m_debuggerPanel->ShowRunning(m_engine && m_engine->IsPlaying());
+        return LuaDebugger::Instance().TakeRequestedAction();
+    };
+}
+
+void EditorMainWindow::runConsoleLua(const QString& code)
+{
+    EngineLog::Write(EngineLogLevel::Info, "lua> " + code.toStdString(), "Lua");
+    LuaDebugger& debugger = LuaDebugger::Instance();
+    if (debugger.IsPaused()) {
+        const LuaDebugger::Variable result = debugger.Evaluate(code.toStdString(), m_debuggerPanel->SelectedFrame());
+        EngineLog::Write(result.type == "error" ? EngineLogLevel::Error : EngineLogLevel::Info, result.value, "Lua");
+        return;
+    }
+    LuaScriptEngine* lua = m_engine ? m_engine->GetLuaScriptEngine() : nullptr;
+    if (!lua || !(m_engine->IsPlaying() || m_engine->IsPaused())) {
+        EngineLog::Write(EngineLogLevel::Warning, "Lua runs while the game is playing. Press Play first.", "Lua");
+        return;
+    }
+    bool ok = false;
+    const std::string result = lua->EvaluateConsole(code.toStdString(), ok);
+    if (!ok || !result.empty()) {
+        EngineLog::Write(ok ? EngineLogLevel::Info : EngineLogLevel::Error, result, "Lua");
+    }
+}
+
 void EditorMainWindow::restoreModeLayout(EditorMode mode)
 {
     QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
@@ -4228,7 +4402,8 @@ void EditorMainWindow::restoreModeLayout(EditorMode mode)
 void EditorMainWindow::arrangeModeLayout(EditorMode mode)
 {
     const QList<QDockWidget*> editorDocks = { m_outlinerDock, m_detailsDock, m_assetBrowserDock,
-                                              m_consoleDock, m_buildOutputDock, m_addActorsDock };
+                                              m_consoleDock, m_buildOutputDock, m_addActorsDock,
+                                              m_codeEditorDock, m_searchDock, m_debuggerDock };
     for (QDockWidget* dock : editorDocks) {
         dock->setFloating(false);
         removeDockWidget(dock);
@@ -4251,7 +4426,7 @@ void EditorMainWindow::arrangeModeLayout(EditorMode mode)
             resizeDocks({ m_assetBrowserDock }, { 330 }, Qt::Vertical);
             break;
         case EditorMode::Programmer:
-            resizeDocks({ m_assetBrowserDock, m_detailsDock }, { 300, 340 }, Qt::Horizontal);
+            resizeDocks({ m_assetBrowserDock, m_codeEditorDock, m_detailsDock }, { 280, 760, 340 }, Qt::Horizontal);
             resizeDocks({ m_consoleDock }, { 300 }, Qt::Vertical);
             break;
         }
@@ -4278,14 +4453,21 @@ void EditorMainWindow::arrangeModeLayout(EditorMode mode)
         m_assetBrowserDock->raise();
         break;
     case EditorMode::Programmer:
+        // Split before tabifying: splitting a dock that is already in a tab group drops the group off-screen.
         place(m_assetBrowserDock, Qt::LeftDockWidgetArea);
+        place(m_codeEditorDock, Qt::LeftDockWidgetArea);
+        splitDockWidget(m_assetBrowserDock, m_codeEditorDock, Qt::Horizontal);
         place(m_outlinerDock, Qt::LeftDockWidgetArea);
         tabifyDockWidget(m_assetBrowserDock, m_outlinerDock);
         m_assetBrowserDock->raise();
         place(m_detailsDock, Qt::RightDockWidgetArea);
         place(m_consoleDock, Qt::BottomDockWidgetArea);
         place(m_buildOutputDock, Qt::BottomDockWidgetArea);
+        place(m_searchDock, Qt::BottomDockWidgetArea);
+        place(m_debuggerDock, Qt::BottomDockWidgetArea);
         tabifyDockWidget(m_consoleDock, m_buildOutputDock);
+        tabifyDockWidget(m_consoleDock, m_searchDock);
+        tabifyDockWidget(m_consoleDock, m_debuggerDock);
         m_consoleDock->raise();
         break;
     }
@@ -5610,7 +5792,7 @@ bool EditorMainWindow::promptSaveDirtyScene()
 
 void EditorMainWindow::onNewProject()
 {
-    if (!promptSaveDirtyScene()) {
+    if (!promptSaveDirtyScene() || !m_codeEditor->CloseAll()) {
         return;
     }
 
@@ -5660,7 +5842,7 @@ void EditorMainWindow::onNewProject()
 void EditorMainWindow::onOpenProject()
 {
     // Prompt to save dirty scene
-    if (!promptSaveDirtyScene()) {
+    if (!promptSaveDirtyScene() || !m_codeEditor->CloseAll()) {
         return;
     }
 
@@ -5688,7 +5870,7 @@ void EditorMainWindow::onCloseProject()
     }
 
     // Prompt to save dirty scene
-    if (!promptSaveDirtyScene()) {
+    if (!promptSaveDirtyScene() || !m_codeEditor->CloseAll()) {
         return;
     }
 
@@ -5744,7 +5926,7 @@ void EditorMainWindow::onOpenRecentProject()
     if (projectPath.isEmpty()) return;
 
     // Prompt to save dirty scene
-    if (!promptSaveDirtyScene()) {
+    if (!promptSaveDirtyScene() || !m_codeEditor->CloseAll()) {
         return;
     }
 
@@ -6217,6 +6399,7 @@ void EditorMainWindow::setupProjectCallbacks()
     m_projectContext->SetProjectChangedCallback([this]() {
         updateWindowTitle();
         refreshAssetBrowser();
+        if (m_codeEditor) m_codeEditor->RestoreSession();
 
         if (m_settingsWindow) {
             const bool hasProject = m_projectContext && m_projectContext->HasProject();
@@ -6267,6 +6450,14 @@ void EditorMainWindow::setupProjectCallbacks()
             if (!m_prefabEditorManager) return false;
             auto* window = m_prefabEditorManager->OpenPrefab(absolutePath);
             return window != nullptr;
+        });
+
+        m_assetActions->SetOpenScriptCallback([this](const QString& absolutePath) -> bool {
+            if (m_mode != EditorMode::Programmer) return false;
+            m_codeEditorDock->show();
+            m_codeEditorDock->raise();
+            m_codeEditor->OpenFile(absolutePath);
+            return true;
         });
 
         m_assetActions->SetOpenCharacterCallback([this](const QString& absolutePath) -> bool {

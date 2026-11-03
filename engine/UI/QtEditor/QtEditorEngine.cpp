@@ -10,6 +10,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "QtEditorEngine.h"
+#include "../../Scripting/LuaDebugger.h"
 #include "../../Automation/PhysicsHostAdapter.h"
 #include "../../Automation/RuntimeUIHostAdapter.h"
 #include "AppConfig.h"
@@ -1757,7 +1758,8 @@ void QtEditorEngine::BeginPlacement(entt::entity previewEntity)
 
 void QtEditorEngine::onTick()
 {
-    if (m_state != EngineState::Running || m_renderInProgress) {
+    // While the debugger holds Lua at a breakpoint the frame stays frozen.
+    if (m_state != EngineState::Running || m_renderInProgress || LuaDebugger::Instance().IsPaused()) {
         return;
     }
     
@@ -2929,6 +2931,12 @@ void QtEditorEngine::StopPlayMode()
 {
     if (m_playModeManager.IsEditor()) {
         return;  // nothing to stop
+    }
+    // Lua is suspended inside a hook; unwind it first and stop once the frame has returned.
+    if (LuaDebugger::Instance().IsPaused()) {
+        LuaDebugger::Instance().RequestResume(LuaDebugger::Action::Stop);
+        m_playModeManager.RequestStop();
+        return;
     }
 
     if (m_joltPhysicsSystem && m_joltPhysicsEngine && m_joltPhysicsEngine->GetPhysicsSystem()) {

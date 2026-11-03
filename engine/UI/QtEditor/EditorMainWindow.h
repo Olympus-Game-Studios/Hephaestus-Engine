@@ -84,6 +84,9 @@ class QtViewportWindow;
 class QtEditorEngine;
 class AssetBrowserWidget;
 class AddActorsPanel;
+class CodeEditorPanel;
+class DebuggerPanel;
+class ProjectSearchPanel;
 class EditorAssetActions;
 class PrefabEditorManager;
 class CharacterEditorManager;
@@ -198,6 +201,10 @@ private:
     void onOutlinerContextMenu(const QPoint& pos);
     void createEmptyEntity();
     void setEditorMode(EditorMode mode);
+    /** Switches to Programmer mode if needed and brings @p dock to the front. */
+    void showProgrammerPanel(QDockWidget* dock);
+    void setupLuaDebugger();
+    void runConsoleLua(const QString& code);
     void syncGizmoSpaceButtons();
     void restoreModeLayout(EditorMode mode);
     void arrangeModeLayout(EditorMode mode);
@@ -328,6 +335,13 @@ private:
     QDockWidget* m_assetBrowserDock = nullptr;
     QDockWidget* m_consoleDock = nullptr;
     QDockWidget* m_addActorsDock = nullptr;
+    QDockWidget* m_codeEditorDock = nullptr;
+    QDockWidget* m_searchDock = nullptr;
+    QDockWidget* m_debuggerDock = nullptr;
+    ProjectSearchPanel* m_searchPanel = nullptr;
+    DebuggerPanel* m_debuggerPanel = nullptr;
+    QList<QShortcut*> m_debuggerShortcuts;
+    CodeEditorPanel* m_codeEditor = nullptr;
 
     // Top toolbar
     QMenuBar* m_menuBar = nullptr;

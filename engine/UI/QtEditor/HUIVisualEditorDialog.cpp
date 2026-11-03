@@ -41,7 +41,6 @@
 #include <QPaintEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QProcess>
 #include <QPushButton>
 #include <QPixmap>
 #include <QScrollArea>
@@ -2489,17 +2488,10 @@ private:
 
     void openInIde()
     {
-        QString editorPath = QSettings(QStringLiteral("Hephaestus"), QStringLiteral("Launcher"))
-                                 .value(QStringLiteral("settings/editorPath"))
-                                 .toString()
-                                 .trimmed();
-        if (!editorPath.isEmpty() && QFileInfo::exists(editorPath)) {
-            if (!QProcess::startDetached(editorPath, {m_absolutePath})) {
-                QMessageBox::warning(this, tr("Open in IDE"), tr("Failed to launch the configured editor."));
-            }
-            return;
+        if (!QDesktopServices::openUrl(QUrl::fromLocalFile(m_absolutePath))) {
+            QMessageBox::warning(this, tr("Open in IDE"),
+                                 tr("Failed to open %1 with its default application.").arg(m_absolutePath));
         }
-        QDesktopServices::openUrl(QUrl::fromLocalFile(m_absolutePath));
     }
 
     QString m_absolutePath;

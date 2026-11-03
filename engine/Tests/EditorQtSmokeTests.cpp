@@ -8,17 +8,29 @@
 
 #include "UI/QtEditor/PropertyEditors.h"
 #include "UI/QtEditor/EditorCommandSearch.h"
+#include "UI/QtEditor/CodeEditorPanel.h"
+#include "UI/QtEditor/ProjectSearchPanel.h"
+#include "Assets/AssetManager.h"
 #include "UI/QtEditor/EditorConsolePanel.h"
 #include "Core/EngineLog.h"
 #include "UI/QtEditor/EditorTheme.h"
 
 #include <QtTest/QtTest>
+#include <QAbstractItemView>
+#include <QApplication>
 #include <QCheckBox>
+#include <QCryptographicHash>
+#include <QDir>
+#include <QSettings>
 #include <QAbstractItemModel>
 #include <QCompleter>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QTemporaryDir>
+#include <QTextBlock>
 #include <QToolButton>
 #include <QTreeWidget>
 
@@ -122,6 +134,168 @@ private slots:
         QVERIFY(row->isHidden());
         warnings->setChecked(true);
         QVERIFY(!row->isHidden());
+    }
+
+    // Script errors that name "file:line" report the location, and Lua's shortened "...tail" form is kept.
+    void consolePanelReportsErrorLocations() {
+        Hephaestus::QtEditor::EditorConsolePanel panel;
+        QString location;
+        int line = 0;
+        panel.onErrorLocation = [&](const QString& file, int at, const QString&) {
+            location = file;
+            line = at;
+        };
+        Hephaestus::EngineLog::RecordOnly(Hephaestus::EngineLogLevel::Error,
+            "Error while executing ...cripts/door_trigger.lua:18: attempt to index a nil value", "Script");
+        QTRY_COMPARE(line, 18);
+        QCOMPARE(location, QStringLiteral("...cripts/door_trigger.lua"));
+    }
+
+    void codeEditorEditsAndSearches() {
+        using namespace Hephaestus::QtEditor;
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("door.lua"));
+        auto write = [&](const QByteArray& bytes) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(bytes);
+        };
+        write("local open = false\nif open then\n    print(open)\nend\n");
+
+        CodeEditorPanel panel;
+        QString status;
+        panel.onStatusChanged = [&](const QString& text) { status = text; };
+        panel.resize(900, 600);
+        panel.show();
+        QVERIFY(panel.OpenFile(path));
+        auto* editor = panel.findChild<QPlainTextEdit*>(QStringLiteral("CodeEditor"));
+        QVERIFY(editor);
+        QVERIFY(status.startsWith(QStringLiteral("Ln 1, Col 1")) && status.endsWith(QStringLiteral("Lua")));
+
+        // Ctrl+/ comments the line with Lua's "--" and uncomments it again.
+        QTest::keyClick(editor, Qt::Key_Slash, Qt::ControlModifier);
+        QCOMPARE(editor->document()->firstBlock().text(), QStringLiteral("-- local open = false"));
+        QTest::keyClick(editor, Qt::Key_Slash, Qt::ControlModifier);
+        QCOMPARE(editor->document()->firstBlock().text(), QStringLiteral("local open = false"));
+
+        // Brackets close themselves, and typing the closer steps over it.
+        editor->moveCursor(QTextCursor::End);
+        QTest::keyClicks(editor, QStringLiteral("f("));
+        QVERIFY(editor->toPlainText().endsWith(QStringLiteral("f()")));
+        QTest::keyClick(editor, Qt::Key_ParenRight);
+        QVERIFY(editor->toPlainText().endsWith(QStringLiteral("f()")));
+
+        // Alt+Up moves the line above its neighbour.
+        QTest::keyClick(editor, Qt::Key_Up, Qt::AltModifier);
+        QCOMPARE(editor->document()->findBlockByNumber(3).text(), QStringLiteral("f()"));
+
+        // Ctrl+H, find "open", replace all with "shut".
+        QTest::keyClick(editor, Qt::Key_H, Qt::ControlModifier);
+        auto* find = panel.findChild<QWidget*>(QStringLiteral("CodeFindBar"));
+        QVERIFY(find && find->isVisible());
+        const auto fields = find->findChildren<QLineEdit*>();
+        QLineEdit* findField = nullptr;
+        QLineEdit* replaceField = nullptr;
+        for (QLineEdit* field : fields) {
+            if (field->placeholderText() == QStringLiteral("Find")) findField = field;
+            if (field->placeholderText() == QStringLiteral("Replace")) replaceField = field;
+        }
+        QVERIFY(findField && replaceField);
+        findField->setText(QStringLiteral("open"));
+        replaceField->setText(QStringLiteral("shut"));
+        for (QPushButton* button : find->findChildren<QPushButton*>())
+            if (button->text() == QStringLiteral("Replace all")) button->click();
+        QVERIFY(!editor->toPlainText().contains(QStringLiteral("open")));
+        QCOMPARE(editor->toPlainText().count(QStringLiteral("shut")), 3);
+
+        // An unmodified tab reloads when the file changes on disk.
+        QTest::keyClick(editor, Qt::Key_S, Qt::ControlModifier);
+        QVERIFY(!editor->document()->isModified());
+        write("print('changed')\n");
+        QTRY_COMPARE(editor->toPlainText(), QStringLiteral("print('changed')\n"));
+
+        // Errors mark the line until the file is saved.
+        panel.MarkError(path, 1, QStringLiteral("door.lua:1: boom"));
+        QVERIFY(editor->document()->firstBlock().userData());
+        QCOMPARE(CodeEditorPanel::ResolveLocation(path), QFileInfo(path).canonicalFilePath());
+    }
+
+    // Breakpoints toggle from the gutter and come back with the project's tabs; Lua completion pops up.
+    void codeEditorBreakpointsSessionAndCompletion() {
+        using namespace Hephaestus::QtEditor;
+        QTemporaryDir project;
+        Hephaestus::AssetManager::GetInstance().SetProjectRoot(project.path().toStdString());
+        const QString path = project.filePath(QStringLiteral("door.lua"));
+        {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("local speed = 1\nprint(speed)\n");
+        }
+
+        CodeEditorPanel panel;
+        panel.resize(900, 600);
+        panel.show();
+        QVERIFY(panel.OpenFile(path));
+        auto* editor = panel.findChild<QPlainTextEdit*>(QStringLiteral("CodeEditor"));
+        auto* gutter = editor->findChild<QWidget*>(QStringLiteral("CodeGutter"));
+        QVERIFY(gutter);
+        const int lineHeight = editor->fontMetrics().lineSpacing();
+        QTest::mouseClick(gutter, Qt::LeftButton, {}, QPoint(10, editor->contentsMargins().top() + lineHeight + lineHeight / 2));
+        QVERIFY(editor->document()->findBlockByNumber(1).userData());
+
+        panel.SaveSession();
+        QVERIFY(panel.CloseAll());
+        QTRY_VERIFY(!panel.findChild<QPlainTextEdit*>(QStringLiteral("CodeEditor")));
+        panel.RestoreSession();
+        QTRY_VERIFY(panel.findChild<QPlainTextEdit*>(QStringLiteral("CodeEditor")));
+        editor = panel.findChild<QPlainTextEdit*>(QStringLiteral("CodeEditor"));
+        QVERIFY(editor->document()->findBlockByNumber(1).userData());
+        QVERIFY(!editor->document()->findBlockByNumber(0).userData());
+
+        editor->setFocus();
+        editor->moveCursor(QTextCursor::End);
+        QTest::keyClicks(editor, QStringLiteral("spe"));
+        QAbstractItemView* popup = nullptr;
+        for (QWidget* widget : QApplication::topLevelWidgets()) {
+            if (widget->objectName() == QStringLiteral("CodeCompletionPopup")) popup = qobject_cast<QAbstractItemView*>(widget);
+        }
+        QVERIFY(popup && popup->isVisible());
+        QCOMPARE(popup->currentIndex().data().toString(), QStringLiteral("speed"));
+        QTest::keyClick(popup, Qt::Key_Return);
+        QVERIFY(editor->toPlainText().endsWith(QStringLiteral("speed")));
+        QSettings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"))
+            .remove(QStringLiteral("codeEditor/") + QString::fromLatin1(QCryptographicHash::hash(
+                QByteArray::fromStdString(Hephaestus::AssetManager::GetInstance().GetProjectRoot()),
+                QCryptographicHash::Md5).toHex()));
+    }
+
+    void projectSearchFindsMatchesAcrossFiles() {
+        using namespace Hephaestus::QtEditor;
+        QTemporaryDir project;
+        Hephaestus::AssetManager::GetInstance().SetProjectRoot(project.path().toStdString());
+        QDir(project.path()).mkpath(QStringLiteral("assets/scripts"));
+        for (const QString& name : { QStringLiteral("assets/scripts/a.lua"), QStringLiteral("b.txt") }) {
+            QFile file(project.filePath(name));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("first line\nfind the Needle here\n");
+        }
+        ProjectSearchPanel panel;
+        QString openedPath;
+        int openedLine = 0;
+        panel.onOpen = [&](const QString& path, int line, int) {
+            openedPath = path;
+            openedLine = line;
+        };
+        panel.FocusSearch(QStringLiteral("needle"));
+        panel.Search();
+        auto* results = panel.findChild<QTreeWidget*>(QStringLiteral("SearchResults"));
+        QVERIFY(results);
+        QCOMPARE(results->topLevelItemCount(), 2);
+        QTreeWidgetItem* hit = results->topLevelItem(0)->child(0);
+        QVERIFY(hit);
+        emit results->itemActivated(hit, 0);
+        QCOMPARE(openedLine, 2);
+        QVERIFY(openedPath.endsWith(QStringLiteral(".lua")) || openedPath.endsWith(QStringLiteral(".txt")));
     }
 };
 

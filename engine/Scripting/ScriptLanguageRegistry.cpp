@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
+#include <iterator>
 #include <fstream>
 #include <sstream>
 
@@ -70,6 +72,26 @@ PropertyValue PropertyFor(const HPValue& value) {
     }
 }
 
+const HPSyntaxRule kLuaRules[] = {
+    { HP_SYNTAX_KEYWORD, R"(\b(?:and|break|do|else|elseif|end|false|for|function|goto|if|in|local|nil|not|or|repeat|return|then|true|until|while|self)\b)" },
+    { HP_SYNTAX_FUNCTION, R"(\b[A-Za-z_]\w*(?=\s*[({"']))" },
+    { HP_SYNTAX_TYPE, R"(\b[A-Z]\w*\b)" },
+    { HP_SYNTAX_NUMBER, R"(\b(?:0[xX][0-9A-Fa-f]+|\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)\b)" },
+    { HP_SYNTAX_STRING, R"("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?)" },
+    { HP_SYNTAX_COMMENT, R"(--(?!\[=*\[).*)" },
+};
+
+const HPSyntaxBlock kLuaBlocks[] = {
+    { HP_SYNTAX_COMMENT, R"(--\[=*\[)", R"(\]=*\])" },
+    { HP_SYNTAX_STRING, R"(\[=*\[)", R"(\]=*\])" },
+};
+
+const HPSyntax kLuaSyntax = {
+    kLuaRules, static_cast<uint32_t>(std::size(kLuaRules)),
+    kLuaBlocks, static_cast<uint32_t>(std::size(kLuaBlocks)),
+    "--",
+};
+
 } // namespace
 
 ScriptLanguageRegistry& ScriptLanguageRegistry::Instance() {
@@ -78,7 +100,7 @@ ScriptLanguageRegistry& ScriptLanguageRegistry::Instance() {
 }
 
 bool ScriptLanguageRegistry::Register(const HPScriptLanguage* language, std::string& error) {
-    if (!language || language->structSize < sizeof(HPScriptLanguage) ||
+    if (!language || language->structSize < offsetof(HPScriptLanguage, syntax) ||
         language->apiVersion != HP_SCRIPT_LANGUAGE_API_VERSION) {
         error = "script language table is missing or built for another API version";
         return false;
@@ -188,6 +210,73 @@ const HPScriptLanguage* ScriptLanguageRegistry::FindForPath(std::string_view scr
         }
     }
     return nullptr;
+}
+
+const HPSyntax* ScriptLanguageRegistry::FindSyntaxForPath(std::string_view path) const {
+    if (ToLower(std::filesystem::path(path).extension().string()) == ".lua") {
+        return &kLuaSyntax;
+    }
+    const HPScriptLanguage* language = FindForPath(path);
+    if (!language || language->structSize < offsetof(HPScriptLanguage, syntax) + sizeof(language->syntax)) {
+        return nullptr;
+    }
+    return language->syntax;
+}
+
+namespace {
+
+// Members appended after the first release exist only when the plugin's table is large enough.
+template <typename Member>
+bool Provides(const HPScriptLanguage& language, Member HPScriptLanguage::*member, std::size_t offset) {
+    return language.structSize >= offset + sizeof(language.*member) && language.*member;
+}
+
+bool IsLua(std::string_view path) {
+    return ToLower(std::filesystem::path(path).extension().string()) == ".lua";
+}
+
+} // namespace
+
+std::vector<LuaLanguageService::Completion> ScriptLanguageRegistry::Complete(std::string_view path,
+                                                                             const std::string& source,
+                                                                             uint32_t line, uint32_t column) const {
+    if (IsLua(path)) {
+        return LuaLanguageService::Complete(source, line, column);
+    }
+    std::vector<LuaLanguageService::Completion> completions;
+    const HPScriptLanguage* language = FindForPath(path);
+    if (!language || !Provides(*language, &HPScriptLanguage::complete, offsetof(HPScriptLanguage, complete))) {
+        return completions;
+    }
+    auto collect = [](void* user, const char* label, uint32_t kind, const char* detail) {
+        if (label && *label) {
+            static_cast<std::vector<LuaLanguageService::Completion>*>(user)->push_back(
+                { label, kind, detail ? detail : "" });
+        }
+    };
+    const std::string file(path);
+    language->complete(file.c_str(), source.c_str(), line, column, collect, &completions);
+    return completions;
+}
+
+std::string ScriptLanguageRegistry::Hover(std::string_view path, const std::string& source,
+                                          uint32_t line, uint32_t column) const {
+    if (IsLua(path)) {
+        return LuaLanguageService::Hover(source, line, column);
+    }
+    const HPScriptLanguage* language = FindForPath(path);
+    if (!language || !Provides(*language, &HPScriptLanguage::hover, offsetof(HPScriptLanguage, hover))) {
+        return {};
+    }
+    const std::string file(path);
+    const std::size_t size = language->hover(file.c_str(), source.c_str(), line, column, nullptr, 0);
+    if (size <= 1) {
+        return {};
+    }
+    std::string text(size, '\0');
+    language->hover(file.c_str(), source.c_str(), line, column, text.data(), text.size());
+    text.resize(size - 1);
+    return text;
 }
 
 bool ScriptLanguageRegistry::IsScriptPath(std::string_view scriptPath) const {
