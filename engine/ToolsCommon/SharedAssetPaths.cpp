@@ -1,4 +1,5 @@
 #include "SharedAssetPaths.h"
+#include "PathUtils.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -24,7 +25,7 @@ SharedAssetPaths SharedAssetPaths::Locate()
 {
     SharedAssetPaths paths;
 
-    const QString binDir = QDir::cleanPath(QCoreApplication::applicationDirPath());
+    const QString binDir = QDir::cleanPath(Hephaestus::Tools::PathUtils::ExecutableDir());
 
     const QString envOverride = qEnvironmentVariable("HEPHAESTUS_ASSETS_DIR");
     if (!envOverride.isEmpty()) {

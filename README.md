@@ -97,6 +97,7 @@ If you don't have `glslangValidator` available on PATH, use the Vulkan SDK's `bi
 - CMake (>= 3.16). Install with Homebrew: `brew install cmake`.
 - Vulkan SDK for macOS (includes MoltenVK). Run the SDK's `setup-env.sh` or export `VULKAN_SDK` so headers and dylibs resolve.
 - glslangValidator (install via `brew install glslang` or use the SDK build).
+- Qt 6 and Lua: `brew install qt lua`. Packaged games do not use Qt, and they carry their own Lua, Vulkan loader and MoltenVK, so players do not need Homebrew or the Vulkan SDK.
 - Git (preinstalled with the command line tools).
 
 Optional but useful:
@@ -170,6 +171,30 @@ cmake --build --preset windows-release
 
 The presets expect the Vulkan SDK and Qt 6 to be installed on the selected
 platform. Pass `-DQt6_DIR=...` to CMake when Qt is not in its standard location.
+
+On macOS the preset builds `HephaestusEngine.app`, `HephaestusLauncher.app` and
+`HephaestusGame.app` in `build/macos-release/Release/`, plus the tests and engine
+plugins (no `build.bat` step is needed). In the build tree the apps read assets,
+shaders and plugins from the folder beside them, like the Windows build. Packaging a
+project (from the editor, or `Release/tools/HephaestusBuild --project <path>`) produces
+`<Product>.app` with the game's content in `Contents/Resources` and Lua, the Vulkan
+loader and MoltenVK in `Contents/Frameworks`; it is ad-hoc signed, not notarized, and
+writes its logs to `~/Library/Logs/<Product>`. MoltenVK has no ray queries, so
+ray-traced shadows and probe GI fall back to shadow maps and baked probes.
+
+To make a distributable editor, run `tools/create_release_package_macos.sh` after a
+`macos-release` build. It writes `dist/macos/Hephaestus Engine.app` (which opens the
+launcher, with the editor, Qt, plugins and the game player inside) and a `.dmg`. Without
+options it is ad-hoc signed for local use. To ship it, sign with your Developer ID and
+notarize with a profile saved once via `xcrun notarytool store-credentials`:
+
+```bash
+tools/create_release_package_macos.sh --sign "Developer ID Application: Your Name (TEAMID)" --notary-profile hephaestus-notary
+```
+
+`./notarise-build.sh` does the build and that step in one go, using the first Developer ID
+certificate in your keychain and the `hephaestus-notary` profile (override with
+`HEPHAESTUS_SIGN_IDENTITY` and `HEPHAESTUS_NOTARY_PROFILE`).
 
 If you generate an Xcode project instead, use `cmake -S . -B build -G "Xcode"` and build with `cmake --build build --config Release` or open `build/HephaestusEngine.xcodeproj`.
 

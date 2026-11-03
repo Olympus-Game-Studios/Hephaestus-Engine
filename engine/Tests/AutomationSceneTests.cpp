@@ -55,7 +55,7 @@ public:
         std::filesystem::path absolute;
         if (!Automation::ResolveProjectScenePath(std::filesystem::temp_directory_path(),
                                                  path, absolute, error)) return false;
-        savedAs = absolute.lexically_relative(std::filesystem::temp_directory_path()).generic_string();
+        savedAs = absolute.lexically_relative(std::filesystem::weakly_canonical(std::filesystem::temp_directory_path())).generic_string();
         outPath = savedAs;
         return true;
     }

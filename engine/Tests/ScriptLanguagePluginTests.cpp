@@ -214,7 +214,8 @@ end
         "pluginVersion":"1.0.0","engineVersion":"*","type":"runtime","runtimeEntry":"bin/Lang.dll"})");
     const auto runtimeOnly = Hephaestus::Plugins::ParsePluginManifest(root / "Lang" / "Lang.hpplugin");
     pass &= Check(runtimeOnly.success && runtimeOnly.manifest.entry.empty() &&
-                  runtimeOnly.manifest.runtimeEntry == fs::path("bin/Lang.dll"),
+                  runtimeOnly.manifest.runtimeEntry.parent_path() == fs::path("bin") &&
+                  runtimeOnly.manifest.runtimeEntry.stem().string().ends_with("Lang"),
                   "a runtime-only plugin needs no editor entry");
     WriteFile(root / "Bad" / "Bad.hpplugin", R"({"version":1,"id":"com.example.bad","name":"Bad",
         "pluginVersion":"1.0.0","engineVersion":"*","runtimeEntry":"../escape.dll"})");

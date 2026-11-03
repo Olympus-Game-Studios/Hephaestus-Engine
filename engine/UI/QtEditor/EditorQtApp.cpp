@@ -6,6 +6,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "EditorQtApp.h"
+#include "ToolsCommon/PathUtils.h"
 #include "EditorMainWindow.h"
 #include "EditorTheme.h"
 #include "../../Core/EngineLog.h"
@@ -249,7 +250,7 @@ int RunQtEditor(int argc, char** argv)
 
         // Normalize working directory so relative shader/resource paths are stable.
         // "Open with" launches can start with CWD set to the .heproject folder.
-        const QString executableDir = QCoreApplication::applicationDirPath();
+        const QString executableDir = Hephaestus::Tools::PathUtils::ExecutableDir();
         if (!executableDir.isEmpty()) {
             if (!QDir::setCurrent(executableDir)) {
                 Hephaestus::EngineLog::Warn(std::string("Failed to set working directory to: ") +

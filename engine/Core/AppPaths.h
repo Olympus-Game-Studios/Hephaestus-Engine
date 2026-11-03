@@ -1,0 +1,58 @@
+#pragma once
+
+#include <cstdlib>
+#include <filesystem>
+#include <system_error>
+
+namespace Hephaestus {
+
+// The executable's folder, or <X>.app/Contents when it runs inside a macOS bundle.
+inline std::filesystem::path MacBundleContents(const std::filesystem::path& executableDirectory)
+{
+#ifdef __APPLE__
+    if (executableDirectory.filename() == "MacOS" &&
+        executableDirectory.parent_path().filename() == "Contents") {
+        return executableDirectory.parent_path();
+    }
+#endif
+    (void)executableDirectory;
+    return {};
+}
+
+// True for a shipped .app that carries its own assets in Contents/Resources.
+inline bool IsSelfContainedMacBundle(const std::filesystem::path& executableDirectory)
+{
+    const auto contents = MacBundleContents(executableDirectory);
+    std::error_code ec;
+    return !contents.empty() && std::filesystem::is_directory(contents / "Resources" / "assets", ec);
+}
+
+// Folder holding assets, shaders, Plugins and sibling tools: the executable's folder on
+// Windows and Linux. A macOS .app uses Contents/Resources when it ships its assets, and
+// otherwise the folder that contains the .app (the build tree, which matches Windows).
+inline std::filesystem::path ResourceRootFor(const std::filesystem::path& executableDirectory)
+{
+    const auto contents = MacBundleContents(executableDirectory);
+    if (contents.empty()) {
+        return executableDirectory;
+    }
+    if (IsSelfContainedMacBundle(executableDirectory)) {
+        return contents / "Resources";
+    }
+    return contents.parent_path().parent_path();
+}
+
+// Where logs go: beside the resources, except a shipped .app (which must not modify
+// itself) logs to ~/Library/Logs/<app name>.
+inline std::filesystem::path LogRootFor(const std::filesystem::path& executableDirectory)
+{
+    if (IsSelfContainedMacBundle(executableDirectory)) {
+        if (const char* home = std::getenv("HOME")) {
+            return std::filesystem::path(home) / "Library" / "Logs" /
+                   MacBundleContents(executableDirectory).parent_path().stem();
+        }
+    }
+    return ResourceRootFor(executableDirectory);
+}
+
+} // namespace Hephaestus

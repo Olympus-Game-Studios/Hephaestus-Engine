@@ -6,6 +6,7 @@
  */
 
 #include "RuntimeBootstrap.h"
+#include "AppPaths.h"
 #include "EngineLog.h"
 
 #include <chrono>
@@ -66,18 +67,18 @@ bool Bootstrap::Initialize(const BootstrapConfig& config) {
         return false;
     }
 
-    // Set working directory to exe location
+    // Determine runtime root (Contents/Resources inside a macOS .app)
+    s_RuntimeRoot = ResourceRootFor(s_ExeDirectory);
+
+    // Set working directory to the runtime root
     if (!SetWorkingDirectoryToExe()) {
         std::cerr << "[Bootstrap] WARNING: Could not set working directory to exe location" << std::endl;
         // Continue anyway, but log the warning
     }
 
-    // Determine runtime root
-    s_RuntimeRoot = s_ExeDirectory;
-
     // Initialize logging
     if (config.enableFileLogging) {
-        std::filesystem::path logDir = s_RuntimeRoot / config.logDirectory;
+        std::filesystem::path logDir = LogRootFor(s_ExeDirectory) / config.logDirectory;
         std::error_code ec;
         std::filesystem::create_directories(logDir, ec);
         
@@ -183,12 +184,12 @@ std::filesystem::path Bootstrap::GetRuntimeRoot() {
 }
 
 bool Bootstrap::SetWorkingDirectoryToExe() {
-    if (s_ExeDirectory.empty()) {
+    if (s_RuntimeRoot.empty()) {
         return false;
     }
     
     std::error_code ec;
-    std::filesystem::current_path(s_ExeDirectory, ec);
+    std::filesystem::current_path(s_RuntimeRoot, ec);
     return !ec;
 }
 
@@ -507,7 +508,7 @@ InitStage Bootstrap::GetCurrentStage() {
 
 bool Bootstrap::IsPackagedBuild() {
     // Check for markers that indicate a packaged build
-    std::filesystem::path exeDir = GetExecutableDirectory();
+    std::filesystem::path exeDir = ResourceRootFor(GetExecutableDirectory());
     
     // Packaged builds have these markers
     if (std::filesystem::exists(exeDir / "game.ini") ||

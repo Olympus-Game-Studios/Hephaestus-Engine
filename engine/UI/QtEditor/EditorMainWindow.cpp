@@ -431,7 +431,7 @@ EditorMainWindow::EditorMainWindow(QWidget* parent,
     m_pluginSystem->SetRuntimeModuleLoader([](const std::filesystem::path& module, std::string& error) {
         return ScriptLanguageRegistry::Instance().LoadModule(module, error);
     });
-    m_pluginSystem->Discover(QCoreApplication::applicationDirPath().toStdString(), {});
+    m_pluginSystem->Discover(Hephaestus::Tools::PathUtils::ExecutableDir().toStdString(), {});
     m_pluginSystem->LoadEnabled();
 
     m_notifications = new EditorNotificationService(this);
@@ -1056,7 +1056,7 @@ public:
         build.productName = m_owner->m_projectContext->GetProjectName();
         if (build.productName.empty()) build.productName = build.projectRoot.filename().string();
         const std::filesystem::path executableDirectory(
-            QCoreApplication::applicationDirPath().toStdWString());
+            Hephaestus::Tools::PathUtils::ExecutableDir().toStdWString());
         build.runtimeSearchRoot = executableDirectory;
         build.engineRoot = Build::RuntimeLocator::discoverEngineRoot(executableDirectory);
         if (request.outputRoot.empty()) {
@@ -1210,7 +1210,7 @@ public:
 private:
     QString BuildDirectory() const
     {
-        const QString executable = QCoreApplication::applicationDirPath();
+        const QString executable = Hephaestus::Tools::PathUtils::ExecutableDir();
         const QString parent = QDir(executable).absoluteFilePath("..");
         if (QFileInfo::exists(QDir(parent).filePath("CTestTestfile.cmake"))) {
             return QDir(parent).absolutePath();
@@ -5909,7 +5909,7 @@ void EditorMainWindow::onCloseProject()
     EditorAssetServices::Instance().OnProjectClosed();
 
     if (m_pluginSystem) {
-        m_pluginSystem->Discover(QCoreApplication::applicationDirPath().toStdString(), {});
+        m_pluginSystem->Discover(Hephaestus::Tools::PathUtils::ExecutableDir().toStdString(), {});
         m_pluginSystem->LoadEnabled();
     }
 
@@ -6001,7 +6001,7 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
     EditorAssetServices::Instance().OnProjectOpened(m_projectContext->GetProjectRootDir());
 
     if (m_pluginSystem) {
-        m_pluginSystem->Discover(QCoreApplication::applicationDirPath().toStdString(),
+        m_pluginSystem->Discover(Hephaestus::Tools::PathUtils::ExecutableDir().toStdString(),
                                  m_projectContext->GetProjectRootDir());
         m_pluginSystem->LoadEnabled();
     }
@@ -6707,7 +6707,7 @@ void EditorMainWindow::onBuildProject()
 
     // Determine the engine root directory (the folder containing the build/ directory).
     // The running executable lives in build/Release/ (or build/Debug/), so go up two levels.
-    QString appDir = QCoreApplication::applicationDirPath();
+    QString appDir = Hephaestus::Tools::PathUtils::ExecutableDir();
     QDir engineRoot(appDir);
     engineRoot.cdUp(); // build/Release -> build/
     engineRoot.cdUp(); // build/ -> engine root
@@ -6806,7 +6806,7 @@ void EditorMainWindow::onBuildProject()
                     // Compile succeeded — now run the export script
                     m_buildExportPhase = true;
 
-                    QString appDir = QCoreApplication::applicationDirPath();
+                    QString appDir = Hephaestus::Tools::PathUtils::ExecutableDir();
                     QDir engineRoot(appDir);
                     engineRoot.cdUp();
                     engineRoot.cdUp();
@@ -7100,7 +7100,7 @@ void EditorMainWindow::startBuild(Build::BuildAction requestedAction)
         selected.outputDirectory);
 
     const std::filesystem::path executableDirectory(
-        QCoreApplication::applicationDirPath().toStdWString());
+        Hephaestus::Tools::PathUtils::ExecutableDir().toStdWString());
     const std::filesystem::path engineRoot =
         Build::RuntimeLocator::discoverEngineRoot(executableDirectory);
 
@@ -8153,7 +8153,7 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         }
         // Fallback to exe dir for legacy paths like "assets/meshes/Cube.glb"
         if (meshPath.empty() || !fs::exists(meshPath)) {
-            fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
+            fs::path exeDir = fs::path(Hephaestus::Tools::PathUtils::ExecutableDir().toStdWString());
             meshPath = exeDir / entry.assetPath.toStdString();
             std::cout << "[SpawnDrop] fallback exe path: " << meshPath << "\n"; std::cout.flush();
         }
@@ -8309,7 +8309,7 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
                 camMeshPath = fs::path(m_projectContext->GetProjectRootDir()) / ".engine" / "meshes" / "Camera.glb";
             }
             if (camMeshPath.empty() || !fs::exists(camMeshPath)) {
-                fs::path exeDir = fs::path(QCoreApplication::applicationDirPath().toStdWString());
+                fs::path exeDir = fs::path(Hephaestus::Tools::PathUtils::ExecutableDir().toStdWString());
                 camMeshPath = exeDir / "assets" / "meshes" / "Camera.glb";
             }
             std::string camAssetPath = ".engine/meshes/Camera.glb";

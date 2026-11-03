@@ -5,6 +5,7 @@
 
 #include "EngineLog.h"
 #include "AppConfig.h"
+#include "AppPaths.h"
 
 #include <algorithm>
 #include <chrono>
@@ -296,7 +297,10 @@ bool EngineLog::Initialize(const char* applicationName, int argc, char** argv)
             exeDir = std::filesystem::current_path(ec);
         }
 
-        g_LogPath = exeDir / "hephaestus.log";
+        const std::filesystem::path logRoot = LogRootFor(exeDir);
+        std::error_code logDirError;
+        std::filesystem::create_directories(logRoot, logDirError);
+        g_LogPath = logRoot / "hephaestus.log";
         g_File.open(g_LogPath, std::ios::out | std::ios::trunc);
         if (!g_File.is_open()) {
             std::cerr << "[EngineLog] Failed to open " << PathToUtf8(g_LogPath) << std::endl;
