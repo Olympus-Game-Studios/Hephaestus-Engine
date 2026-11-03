@@ -1064,3 +1064,8 @@ QWidget#ViewportToolbar QToolBar {
 QWidget#EditorHeader QMenuBar::item {
     padding: 4px 8px;
 }
+
+QToolButton#NotificationButton::menu-indicator, QToolButton#StatusItem::menu-indicator {
+    image: none;
+    width: 0;
+}
