@@ -1874,6 +1874,7 @@ void EditorMainWindow::setupTopToolbar()
 
     auto* spaceSwitch = new QFrame(m_topToolbar);
     spaceSwitch->setObjectName(QStringLiteral("SegmentedControl"));
+    spaceSwitch->setFixedHeight(28);
     auto* spaceLayout = new QHBoxLayout(spaceSwitch);
     spaceLayout->setContentsMargins(2, 2, 2, 2);
     spaceLayout->setSpacing(2);
@@ -3031,13 +3032,15 @@ void EditorMainWindow::setupCentralWidget()
     m_viewportToolbar = new QWidget(m_viewportHost);
     m_viewportToolbar->setObjectName("ViewportToolbar");
     m_viewportToolbar->setAttribute(Qt::WA_StyledBackground, true);
-    m_viewportToolbar->setFixedHeight(40);
+    m_viewportToolbar->setFixedHeight(44);
 
     auto* tbLayout = new QHBoxLayout(m_viewportToolbar);
-    tbLayout->setContentsMargins(6, 0, 6, 0);
+    tbLayout->setContentsMargins(8, 0, 8, 0);
     tbLayout->setSpacing(2);
     m_topToolbar->setParent(m_viewportToolbar);
-    tbLayout->addWidget(m_topToolbar);
+    m_topToolbar->setContentsMargins(0, 0, 0, 0);
+    m_topToolbar->layout()->setContentsMargins(0, 0, 0, 0);
+    tbLayout->addWidget(m_topToolbar, 0, Qt::AlignVCenter);
     tbLayout->addStretch(1);
 
     const QSize tbIconSize(14, 14);

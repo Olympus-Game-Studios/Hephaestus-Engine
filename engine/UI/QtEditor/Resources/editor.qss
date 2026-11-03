@@ -580,8 +580,15 @@ QWidget#ViewportToolbar {
     background: @surface-panel;
     border-bottom: 1px solid @border-subtle;
 }
-QWidget#ViewportToolbar QToolButton, QWidget#ViewportToolbar QComboBox {
-    min-height: 24px;
+QWidget#ViewportToolbar QToolBar > QToolButton {
+    min-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+    padding: 0 6px;
+}
+QWidget#ViewportToolbar QComboBox {
+    min-height: 26px;
+    max-height: 26px;
 }
 QWidget#ViewportToolbar QToolButton::menu-indicator {
     image: none;
@@ -1130,12 +1137,14 @@ QWidget#AddComponentBar QPushButton:hover {
 QToolButton#PlayButton {
     min-width: 72px;
 }
-QWidget#ViewportToolbar QToolButton {
+QWidget#ViewportToolbar QToolButton#SegmentButton {
     min-height: 22px;
+    max-height: 22px;
+    padding: 0 8px;
 }
-
-QWidget#ViewportToolbar QToolBar {
-    min-height: 32px;
+QWidget#ViewportToolbar QToolButton#StripDropdown {
+    min-height: 26px;
+    max-height: 26px;
 }
 
 QWidget#EditorHeader QMenuBar::item {
