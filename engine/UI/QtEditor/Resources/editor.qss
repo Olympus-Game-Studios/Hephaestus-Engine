@@ -776,3 +776,26 @@ QLabel#DetailsEntityId {
     color: @text-primary;
     font-weight: 600;
 }
+
+QToolButton#FilterChip {
+    color: @text-secondary;
+    padding: 3px 10px;
+}
+QToolButton#FilterChip:checked {
+    background: @accent-action;
+    color: @text-on-action;
+}
+QToolButton#Breadcrumb {
+    color: @text-muted;
+    padding: 3px 6px;
+}
+QToolButton#Breadcrumb[current="true"] {
+    color: @text-primary;
+}
+QLabel#EmptyStateTitle {
+    font-size: 14px;
+    font-weight: 600;
+}
+QWidget#AssetBrowserRoot QSplitter::handle {
+    background: @border-subtle;
+}

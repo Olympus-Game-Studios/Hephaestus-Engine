@@ -91,7 +91,8 @@ public:
         RelativePathRole = Qt::UserRole + 1,
         AssetTypeRole,
         IsDirectoryRole,
-        SearchResultRole
+        SearchResultRole,
+        DetailRole
     };
 
 signals:
@@ -177,11 +178,12 @@ private:
 
     // Top bar
     QToolBar* m_toolbar = nullptr;
-    QToolButton* m_viewToggleButton = nullptr;
+    QToolButton* m_gridButton = nullptr;
+    QToolButton* m_listButton = nullptr;
+    QAbstractItemDelegate* m_cardDelegate = nullptr;
+    QAbstractItemDelegate* m_listDelegate = nullptr;
     QPushButton* m_importButton = nullptr;
     QComboBox* m_filterCombo = nullptr;
-    QPushButton* m_newFolderButton = nullptr;
-    QPushButton* m_upButton = nullptr;
     QPushButton* m_refreshButton = nullptr;
     QLabel* m_breadcrumbLabel = nullptr;
     QWidget* m_breadcrumbBar = nullptr;
