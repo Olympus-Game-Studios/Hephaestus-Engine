@@ -192,6 +192,10 @@ notarize with a profile saved once via `xcrun notarytool store-credentials`:
 tools/create_release_package_macos.sh --sign "Developer ID Application: Your Name (TEAMID)" --notary-profile hephaestus-notary
 ```
 
+`./notarise-build.sh` does the build and that step in one go, using the first Developer ID
+certificate in your keychain and the `hephaestus-notary` profile (override with
+`HEPHAESTUS_SIGN_IDENTITY` and `HEPHAESTUS_NOTARY_PROFILE`).
+
 If you generate an Xcode project instead, use `cmake -S . -B build -G "Xcode"` and build with `cmake --build build --config Release` or open `build/HephaestusEngine.xcodeproj`.
 
 If you previously configured `build/`, rerun the single-line build command:
