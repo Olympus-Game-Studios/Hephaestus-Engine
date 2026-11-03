@@ -139,3 +139,13 @@ Andrew saw dark blotches on shadowed walls in Redline, both baked and traced. Hi
 - `shaders/probe_trace.comp` only traces the sun shadow when `lighting.dirShadowParams.w` (shadow-casting sun) is set, matching the baked sun map path.
 - `engine/UI/QtEditor/ProbeVolumeInspector.cpp`: spins use `ConfigureMixedSpin` (reads clamp to the real ranges, since the mixed sentinel widens the spin range), and Remove Component is wrapped in `BeginEdit`/`EndEdit` for undo.
 - Check: Release build, 61 tests, editor captures of `Cornell` (baked) and `CornellRT` (hardware) show the same colour bleeding as before.
+
+## macOS PR review fixes (2026-11-03)
+
+- `cmake/BundleMacRuntime.cmake:bundle_library` copies each library into `Contents/Frameworks` once (tracked in the `HEPHAESTUS_BUNDLED_LIBRARIES` global property, which also stops cycles), then `bundle_dependencies` scans the copy with `otool -L`, bundles its absolute non-system, non-framework dependencies and rewrites them to `@rpath/<name>`. The same function scans `EXE`, replacing the old loop that only looked at the executable, so libraries pulled in by a bundled library are no longer left pointing at Homebrew.
+- `CMakeLists.txt`: `HephaestusMacIcon` owns the `actool` rule; `hephaestus_mac_bundle` still lists the icon files in each bundle's sources (for `MACOSX_PACKAGE_LOCATION`) and adds a dependency on that target, so the editor, launcher and game builds don't run the rule in parallel.
+- `engine/Build/RuntimeLocator.cpp:RunQuietly` (Apple only) runs a program with `posix_spawnp` and an argument vector, with output to `/dev/null`. `PackageStager::stage` uses it for the ad-hoc `codesign` and `BuildService` for `open`, so output paths are never parsed by a shell.
+- `engine/Build/BuildManifest.h:BuildManifestData::platform` is `linux-x64` / `linux-arm64` on Linux; `PackageStager::stage` writes Linux launch requirements into README.txt instead of the Windows ones.
+- `engine/Plugins/PluginManifest.cpp:NativeModulePath` turns backslashes into `/` on non-Windows platforms before mapping `.dll` names, so `SafeRelative` also sees `..` written with backslashes. `engine/Tests/PluginSystemTests.cpp` covers both.
+- `tools/create_release_package_macos.sh` builds the app and DMG in `$OUTPUT/.release.XXXXXX` and moves them into place only after signing, verification and notarization, so a failed run keeps the previous release.
+- Check: Windows Release build of the build, plugin and package targets; `RuntimeLocator`, `BuildService`, `PackageLayout`, `PluginSystem` and `ScriptLanguagePlugin` tests pass; `bash -n` on the release script. The macOS-only parts (bundling, icon target, `RunQuietly`, the release script) were not built or run.

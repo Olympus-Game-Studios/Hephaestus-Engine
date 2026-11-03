@@ -545,6 +545,11 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
     const std::string requirements =
         "Open " + launchPath({}, product).string() + " to start the game.\n"
         "Requires macOS on Apple silicon or Intel with Metal support.\n";
+#elif defined(__linux__)
+    const std::string requirements =
+        "Run ./" + product + " to start the game.\n"
+        "Requires Linux, a Vulkan-capable GPU with current drivers, and the system Lua "
+        "shared library.\n";
 #else
     const std::string requirements =
         "Run " + product + kExecutableSuffix + " to start the game.\n"
@@ -575,9 +580,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
 
 #ifdef __APPLE__
     // Renaming the executable and rewriting Info.plist invalidate the player's signature.
-    const std::string sign = "codesign --force --sign - \"" + launchPath(staging, product).string() +
-                             "\" >/dev/null 2>&1";
-    if (std::system(sign.c_str()) != 0) {
+    if (RunQuietly({"codesign", "--force", "--sign", "-", launchPath(staging, product).string()}) != 0) {
         Problem(result, ProblemSeverity::Warning, "PACKAGE_SIGN_FAILED",
                 "Could not ad-hoc sign the game's app bundle",
                 "Run codesign --force --sign - on " + launchPath(output, product).string());

@@ -25,7 +25,11 @@ std::array<int, 3> ParseVersion(const std::string& value) {
 }
 
 // Manifests name the Windows module; other platforms load CMake's lib<name>.dylib / .so beside it.
-std::filesystem::path NativeModulePath(std::filesystem::path path) {
+std::filesystem::path NativeModulePath(std::string value) {
+#ifndef _WIN32
+    std::replace(value.begin(), value.end(), '\\', '/');
+#endif
+    std::filesystem::path path(value);
 #ifndef _WIN32
     if (path.extension() == ".dll") {
 #ifdef __APPLE__

@@ -19,6 +19,8 @@ int main(){bool ok=true;auto root=fs::temp_directory_path()/"hephaestus-plugin-t
 #else
  ok&=Check(p.manifest.entry=="bin/libtest.so","entry mapped to native so");
 #endif
+ auto backslash=root/"backslash"/"Test.hpplugin";Write(backslash,Manifest("com.test.backslash",1,",\"runtimeEntry\":\"bin\\\\test.dll\""));ok&=Check(ParsePluginManifest(backslash).manifest.runtimeEntry==p.manifest.entry,"backslash entry mapped like a slash entry");
+ auto escape=root/"escape"/"Test.hpplugin";Write(escape,Manifest("com.test.escape",1,",\"runtimeEntry\":\"..\\\\escape.dll\""));ok&=Check(!ParsePluginManifest(escape).success,"backslash escape rejected");
  Write(root/"invalid.hpplugin","{\"version\":2}");ok&=Check(!ParsePluginManifest(root/"invalid.hpplugin").success,"invalid manifest rejected");
  ok&=Check(IsEngineVersionCompatible(">=2026.9.0","2026.9.12"),"minimum version accepted");ok&=Check(!IsEngineVersionCompatible(">=2027.1.0","2026.9.12"),"future version rejected");
  Write(root/"engine"/"Plugins"/"A"/"A.hpplugin",Manifest("com.test.duplicate"));Write(root/"project"/"Plugins"/"B"/"B.hpplugin",Manifest("com.test.duplicate"));

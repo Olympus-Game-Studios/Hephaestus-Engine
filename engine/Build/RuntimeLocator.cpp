@@ -10,7 +10,48 @@
 #include <windows.h>
 #endif
 
+#ifdef __APPLE__
+#include <cerrno>
+#include <crt_externs.h>
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 namespace Hephaestus::Build {
+
+#ifdef __APPLE__
+int RunQuietly(const std::vector<std::string>& arguments) {
+    if (arguments.empty()) {
+        return -1;
+    }
+    std::vector<char*> argv;
+    for (const auto& argument : arguments) {
+        argv.push_back(const_cast<char*>(argument.c_str()));
+    }
+    argv.push_back(nullptr);
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
+    pid_t pid = 0;
+    const int spawned =
+        posix_spawnp(&pid, argv[0], &actions, nullptr, argv.data(), *_NSGetEnviron());
+    posix_spawn_file_actions_destroy(&actions);
+    if (spawned != 0) {
+        return -1;
+    }
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) {
+            return -1;
+        }
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+#endif
+
 namespace {
 
 bool HasSpirv(const std::filesystem::path& directory) {

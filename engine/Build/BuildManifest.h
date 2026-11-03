@@ -18,6 +18,10 @@ struct BuildManifestData {
     std::string platform = "macos-arm64";
 #elif defined(__APPLE__)
     std::string platform = "macos-x64";
+#elif defined(__linux__) && defined(__aarch64__)
+    std::string platform = "linux-arm64";
+#elif defined(__linux__)
+    std::string platform = "linux-x64";
 #else
     std::string platform = "windows-x64";
 #endif

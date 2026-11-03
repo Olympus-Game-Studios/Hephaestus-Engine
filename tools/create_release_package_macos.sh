@@ -35,12 +35,14 @@ for app in HephaestusLauncher HephaestusEngine HephaestusGame; do
     [[ -d "$BUILD/$app.app" ]] || { echo "Missing $BUILD/$app.app; run: cmake --build --preset macos-release" >&2; exit 1; }
 done
 
-APP="$OUTPUT/Hephaestus Engine.app"
+# Publish only after signing and notarization succeed, so a failed run keeps the previous app and DMG.
+mkdir -p "$OUTPUT"
+WORK="$(mktemp -d "$OUTPUT/.release.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+APP="$WORK/Hephaestus Engine.app"
 CONTENTS="$APP/Contents"
 RESOURCES="$CONTENTS/Resources"
 echo "Assembling $APP"
-rm -rf "$APP"
-mkdir -p "$OUTPUT"
 cp -R "$BUILD/HephaestusLauncher.app" "$APP"
 cp "$BUILD/HephaestusEngine.app/Contents/MacOS/HephaestusEngine" "$CONTENTS/MacOS/"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName Hephaestus Engine" \
@@ -100,13 +102,12 @@ sign_loose_code "$RESOURCES"
 "${SIGN[@]}" --entitlements "$ROOT/tools/macos/HephaestusEditor.entitlements" "$APP"
 codesign --verify --deep --strict "$APP"
 
-DMG="$OUTPUT/Hephaestus-Engine.dmg"
+DMG="$WORK/Hephaestus-Engine.dmg"
 echo "Creating $DMG"
-STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
+STAGE="$WORK/dmg"
+mkdir "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-rm -f "$DMG"
 hdiutil create -volname "Hephaestus Engine" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 if [[ "$IDENTITY" != "-" ]]; then codesign --force --sign "$IDENTITY" --timestamp "$DMG"; fi
 
@@ -116,4 +117,10 @@ if [[ -n "$NOTARY_PROFILE" ]]; then
     xcrun stapler staple "$DMG"
     xcrun stapler staple "$APP"
 fi
-echo "Done: $APP and $DMG"
+
+PUBLISHED_APP="$OUTPUT/Hephaestus Engine.app"
+PUBLISHED_DMG="$OUTPUT/Hephaestus-Engine.dmg"
+rm -rf "$PUBLISHED_APP"
+mv "$APP" "$PUBLISHED_APP"
+mv -f "$DMG" "$PUBLISHED_DMG"
+echo "Done: $PUBLISHED_APP and $PUBLISHED_DMG"

@@ -17,34 +17,44 @@ function(run)
     endif()
 endfunction()
 
+# Copies a library into Frameworks once, with its own dependencies, and sets
+# bundled_name to its file name there.
 function(bundle_library library)
     file(REAL_PATH "${library}" real)
     execute_process(COMMAND otool -D "${real}" OUTPUT_VARIABLE id OUTPUT_STRIP_TRAILING_WHITESPACE)
     string(REGEX REPLACE ".*\n" "" id "${id}") # last line; universal binaries print one per arch
     get_filename_component(name "${id}" NAME)
-    file(COPY_FILE "${real}" "${frameworks}/${name}")
-    run(install_name_tool -id "@rpath/${name}" "${frameworks}/${name}")
-    if(NOT id STREQUAL "@rpath/${name}")
-        run(install_name_tool -change "${id}" "@rpath/${name}" "${EXE}")
+    get_property(bundled GLOBAL PROPERTY HEPHAESTUS_BUNDLED_LIBRARIES)
+    if(NOT name IN_LIST bundled)
+        set_property(GLOBAL APPEND PROPERTY HEPHAESTUS_BUNDLED_LIBRARIES "${name}")
+        file(COPY_FILE "${real}" "${frameworks}/${name}")
+        run(install_name_tool -id "@rpath/${name}" "${frameworks}/${name}")
+        bundle_dependencies("${frameworks}/${name}")
+        run(codesign --force --sign - "${frameworks}/${name}")
     endif()
-    run(codesign --force --sign - "${frameworks}/${name}")
+    set(bundled_name "${name}" PARENT_SCOPE)
+endfunction()
+
+# Bundles the absolute non-system libraries a binary links, such as Homebrew's Lua,
+# and points the binary at the bundled copies.
+function(bundle_dependencies binary)
+    execute_process(COMMAND otool -L "${binary}" OUTPUT_VARIABLE dependencies)
+    string(REPLACE "\n" ";" dependencies "${dependencies}")
+    foreach(line IN LISTS dependencies)
+        if(line MATCHES "^[ \t]+(/[^ ]+) \\(")
+            set(dependency "${CMAKE_MATCH_1}")
+            # Frameworks such as Qt are deployed by macdeployqt, not here.
+            if(NOT dependency MATCHES "^/(System|usr/lib)/" AND NOT dependency MATCHES "\\.framework/")
+                bundle_library("${dependency}")
+                run(install_name_tool -change "${dependency}" "@rpath/${bundled_name}" "${binary}")
+            endif()
+        endif()
+    endforeach()
 endfunction()
 
 bundle_library("${VULKAN}")
 bundle_library("${MOLTENVK}")
-
-# Absolute non-system libraries, such as Homebrew's Lua.
-execute_process(COMMAND otool -L "${EXE}" OUTPUT_VARIABLE dependencies)
-string(REPLACE "\n" ";" dependencies "${dependencies}")
-foreach(line IN LISTS dependencies)
-    if(line MATCHES "^[ \t]+(/[^ ]+) \\(")
-        set(dependency "${CMAKE_MATCH_1}")
-        # Frameworks such as Qt are deployed by macdeployqt, not here.
-        if(NOT dependency MATCHES "^/(System|usr/lib)/" AND NOT dependency MATCHES "\\.framework/")
-            bundle_library("${dependency}")
-        endif()
-    endif()
-endforeach()
+bundle_dependencies("${EXE}")
 
 # The Vulkan loader looks for drivers in the bundle's Resources/vulkan/icd.d.
 file(READ "${MOLTENVK_ICD}" icd)

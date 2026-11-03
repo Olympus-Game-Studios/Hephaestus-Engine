@@ -199,12 +199,14 @@ BuildResult BuildService::execute(const BuildRequest& originalRequest) const {
         progress(0.95F, "Launching packaged game");
 #ifdef _WIN32
         const std::string command = "start \"\" \"" + result.executablePath.string() + "\"";
+        const bool launched = std::system(command.c_str()) == 0;
 #elif defined(__APPLE__)
-        const std::string command = "open \"" + result.executablePath.string() + "\"";
+        const bool launched = RunQuietly({"open", result.executablePath.string()}) == 0;
 #else
         const std::string command = "\"" + result.executablePath.string() + "\" &";
+        const bool launched = std::system(command.c_str()) == 0;
 #endif
-        if (std::system(command.c_str()) != 0) {
+        if (!launched) {
             result.problems.push_back({ProblemSeverity::Warning, "BUILD_LAUNCH_FAILED",
                                        "The package succeeded but the game could not be launched",
                                        result.executablePath.generic_string()});

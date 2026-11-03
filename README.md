@@ -97,7 +97,7 @@ If you don't have `glslangValidator` available on PATH, use the Vulkan SDK's `bi
 - CMake (>= 3.16). Install with Homebrew: `brew install cmake`.
 - Vulkan SDK for macOS (includes MoltenVK). Run the SDK's `setup-env.sh` or export `VULKAN_SDK` so headers and dylibs resolve.
 - glslangValidator (install via `brew install glslang` or use the SDK build).
-- Qt 6 and Lua: `brew install qt lua`. Packaged games carry their own copy, so players do not need Homebrew or the Vulkan SDK.
+- Qt 6 and Lua: `brew install qt lua`. Packaged games do not use Qt, and they carry their own Lua, Vulkan loader and MoltenVK, so players do not need Homebrew or the Vulkan SDK.
 - Git (preinstalled with the command line tools).
 
 Optional but useful:

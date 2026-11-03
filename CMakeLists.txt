@@ -1123,6 +1123,8 @@ if(APPLE)
     )
     set_source_files_properties(${HEPHAESTUS_MAC_ICON_FILES} PROPERTIES
         MACOSX_PACKAGE_LOCATION Resources GENERATED TRUE)
+    # One owner for the actool rule, so bundles that share the icon never run it in parallel.
+    add_custom_target(HephaestusMacIcon DEPENDS ${HEPHAESTUS_MAC_ICON_FILES})
 endif()
 
 function(hephaestus_mac_bundle target_name bundle_name bundle_id)
@@ -1130,6 +1132,7 @@ function(hephaestus_mac_bundle target_name bundle_name bundle_id)
         return()
     endif()
     target_sources(${target_name} PRIVATE ${HEPHAESTUS_MAC_ICON_FILES})
+    add_dependencies(${target_name} HephaestusMacIcon)
     set_target_properties(${target_name} PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/MacBundleInfo.plist.in"

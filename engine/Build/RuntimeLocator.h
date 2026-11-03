@@ -27,6 +27,12 @@ inline constexpr const char* kExecutableSuffix = "";
 inline constexpr bool kRuntimeShipsLua = false;
 #endif
 
+#ifdef __APPLE__
+// Runs a program from PATH with its arguments passed directly, not through a shell, and
+// its output discarded. Returns its exit status, or -1 if it could not run.
+int RunQuietly(const std::vector<std::string>& arguments);
+#endif
+
 struct RuntimeArtifacts {
     std::filesystem::path executable;
     std::filesystem::path shadersDirectory;
