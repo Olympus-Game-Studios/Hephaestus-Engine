@@ -3036,7 +3036,7 @@ void EditorMainWindow::setupCentralWidget()
 
     auto* tbLayout = new QHBoxLayout(m_viewportToolbar);
     tbLayout->setContentsMargins(8, 0, 8, 0);
-    tbLayout->setSpacing(2);
+    tbLayout->setSpacing(8);
     m_topToolbar->setParent(m_viewportToolbar);
     m_topToolbar->setContentsMargins(0, 0, 0, 0);
     m_topToolbar->layout()->setContentsMargins(0, 0, 0, 0);
@@ -3242,10 +3242,12 @@ void EditorMainWindow::setupCentralWidget()
     auto* cameraIcon = new QLabel(m_viewportToolbar);
     cameraIcon->setPixmap(Theme::Icon(QStringLiteral("camera"), Theme::IconTone::Muted).pixmap(QSize(16, 16), devicePixelRatioF()));
     cameraIcon->setToolTip(tr("Camera speed"));
-    tbLayout->addSpacing(6);
-    tbLayout->addWidget(cameraIcon);
     m_cameraSpeedCombo->setParent(m_viewportToolbar);
-    tbLayout->addWidget(m_cameraSpeedCombo);
+    auto* cameraSpeed = new QHBoxLayout();
+    cameraSpeed->setSpacing(6);
+    cameraSpeed->addWidget(cameraIcon);
+    cameraSpeed->addWidget(m_cameraSpeedCombo);
+    tbLayout->addLayout(cameraSpeed);
 
     auto* maximizeBtn = new QToolButton(m_viewportToolbar);
     maximizeBtn->setIcon(Theme::Icon(QStringLiteral("maximize")));
