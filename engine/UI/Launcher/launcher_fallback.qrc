@@ -1,7 +1,0 @@
-<RCC>
-    <qresource prefix="/fallback">
-        <file>resources/folder.svg</file>
-        <file>resources/play.svg</file>
-        <file>resources/minimal_dark.qss</file>
-    </qresource>
-</RCC>

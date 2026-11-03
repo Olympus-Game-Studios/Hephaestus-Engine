@@ -1,182 +1,114 @@
 #include "ProjectCardDelegate.h"
 
 #include "ProjectCardModel.h"
+#include "../QtEditor/EditorTheme.h"
 
-#include <QAbstractItemModel>
-#include <QApplication>
-#include <QEvent>
-#include <QMouseEvent>
+#include <QDateTime>
+#include <QDir>
 #include <QPainter>
-#include <QPainterPath>
 
 namespace Hephaestus::Launcher {
+
+namespace Theme = Hephaestus::QtEditor::Theme;
+using Theme::Token;
+
+namespace {
+
+constexpr int kPadding = 16;
+constexpr int kIconSize = 16;
+constexpr int kTimeWidth = 96;
+constexpr int kBadgeHeight = 20;
+
+QFont SizedFont(const QFont& base, int pixelSize, QFont::Weight weight)
+{
+    QFont font = base;
+    font.setPixelSize(pixelSize);
+    font.setWeight(weight);
+    return font;
+}
+
+} // namespace
 
 ProjectCardDelegate::ProjectCardDelegate(QObject* parent)
     : QStyledItemDelegate(parent)
 {
 }
 
-void ProjectCardDelegate::SetPlaceholderImagePath(const QString& placeholderPath)
+QSize ProjectCardDelegate::sizeHint(const QStyleOptionViewItem& option, const QModelIndex&) const
 {
-    m_placeholderImagePath = placeholderPath;
-}
-
-QSize ProjectCardDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const
-{
-    return {320, 230};
-}
-
-QRect ProjectCardDelegate::CardRect(const QStyleOptionViewItem& option) const
-{
-    return option.rect.adjusted(8, 8, -8, -8);
-}
-
-QRect ProjectCardDelegate::StarRect(const QRect& cardRect) const
-{
-    return QRect(cardRect.right() - 34, cardRect.top() + 8, 24, 24);
+    return {option.rect.width(), kRowHeight};
 }
 
 void ProjectCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const
 {
     painter->save();
-    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setRenderHint(QPainter::Antialiasing);
 
-    const QRect card = CardRect(option);
-    const QRect thumbnailRect(card.left() + 10, card.top() + 10, card.width() - 20, 120);
-    const QRect textRect(card.left() + 12, thumbnailRect.bottom() + 10, card.width() - 24, 80);
-    const QRect starRect = StarRect(card);
-
-    const bool selected = (option.state & QStyle::State_Selected) != 0;
-    const bool hovered = (option.state & QStyle::State_MouseOver) != 0;
-
-    QColor base = QColor(35, 41, 52);
-    QColor border = QColor(68, 78, 98);
-    if (hovered) {
-        base = QColor(42, 50, 64);
-        border = QColor(111, 132, 193);
-    }
+    const QRect row = option.rect;
+    const bool selected = option.state.testFlag(QStyle::State_Selected);
     if (selected) {
-        base = QColor(47, 56, 74);
-        border = QColor(123, 151, 235);
+        painter->fillRect(row, Theme::Color(Token::SurfaceSelected));
+    } else if (option.state.testFlag(QStyle::State_MouseOver)) {
+        painter->fillRect(row, Theme::Color(Token::SurfaceRaised));
+    }
+    if (index.row() + 1 < index.model()->rowCount()) {
+        painter->setPen(Theme::Color(Token::BorderSubtle));
+        painter->drawLine(row.bottomLeft(), row.bottomRight());
     }
 
-    QLinearGradient grad(card.topLeft(), card.bottomLeft());
-    grad.setColorAt(0.0, base.lighter(106));
-    grad.setColorAt(1.0, base);
+    const QRect iconRect(row.left() + kPadding, row.center().y() - kIconSize / 2, kIconSize, kIconSize);
+    Theme::Icon(QStringLiteral("folder"), selected ? Theme::IconTone::Action : Theme::IconTone::Secondary)
+        .paint(painter, iconRect);
 
-    painter->setPen(QPen(border, 1.0));
-    painter->setBrush(grad);
-    painter->drawRoundedRect(card, 8, 8);
+    const QRect timeRect(row.right() - kPadding - kTimeWidth, row.top(), kTimeWidth, row.height());
+    const QFont timeFont = SizedFont(option.font, 12, QFont::Normal);
+    painter->setFont(timeFont);
+    painter->setPen(Theme::Color(Token::TextMuted));
+    painter->drawText(timeRect, Qt::AlignRight | Qt::AlignVCenter,
+                      RelativeTimeText(index.data(ProjectCardModel::LastModifiedRole).toDateTime(),
+                                       QDateTime::currentDateTime()));
 
-    if (hovered) {
+    int textRight = timeRect.left() - kPadding;
+    const QString mode = index.data(ProjectCardModel::EditorModeRole).toString();
+    if (mode == QLatin1String("default") || mode == QLatin1String("artist") || mode == QLatin1String("programmer")) {
+        QFont badgeFont = SizedFont(option.font, 11, QFont::Medium);
+        badgeFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.4);
+        const QString badgeText = mode.toUpper();
+        const int badgeWidth = QFontMetrics(badgeFont).horizontalAdvance(badgeText) + 12;
+        const QRect badgeRect(textRight - badgeWidth, row.center().y() - kBadgeHeight / 2, badgeWidth, kBadgeHeight);
         painter->setPen(Qt::NoPen);
-        painter->setBrush(QColor(110, 133, 208, 32));
-        painter->drawRoundedRect(card.adjusted(-2, -2, 2, 2), 10, 10);
+        painter->setBrush(Theme::Color(Token::SurfaceControl));
+        painter->drawRoundedRect(badgeRect, 3, 3);
+        painter->setFont(badgeFont);
+        painter->setPen(Theme::Color(Token::TextSecondary));
+        painter->drawText(badgeRect, Qt::AlignCenter, badgeText);
+        textRight = badgeRect.left() - kPadding;
     }
 
-    QString thumbnailPath = index.data(ProjectCardModel::ThumbnailRole).toString();
-    if (thumbnailPath.isEmpty()) {
-        thumbnailPath = m_placeholderImagePath;
-    }
+    const int textLeft = iconRect.right() + 13;
+    const int textWidth = qMax(0, textRight - textLeft);
+    const QFont nameFont = SizedFont(option.font, 13, QFont::Medium);
+    const QFont pathFont = SizedFont(option.font, 11, QFont::Normal);
+    const int nameHeight = QFontMetrics(nameFont).height();
+    const int pathHeight = QFontMetrics(pathFont).height();
+    const int textTop = row.center().y() - (nameHeight + 2 + pathHeight) / 2;
 
-    QPixmap thumb;
-    if (!thumbnailPath.isEmpty()) {
-        thumb.load(thumbnailPath);
-    }
-
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(QColor(25, 30, 38));
-    painter->drawRoundedRect(thumbnailRect, 6, 6);
-
-    if (!thumb.isNull()) {
-        const QPixmap scaled = thumb.scaled(thumbnailRect.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-        QPainterPath clipPath;
-        clipPath.addRoundedRect(thumbnailRect, 6, 6);
-        painter->setClipPath(clipPath);
-        painter->drawPixmap(thumbnailRect.topLeft(), scaled, QRect((scaled.width() - thumbnailRect.width()) / 2,
-                                                                  (scaled.height() - thumbnailRect.height()) / 2,
-                                                                  thumbnailRect.width(),
-                                                                  thumbnailRect.height()));
-        painter->setClipping(false);
-    } else {
-        painter->setPen(QColor(130, 142, 168));
-        painter->drawText(thumbnailRect, Qt::AlignCenter, QStringLiteral("Hephaestus"));
-    }
-
-    const bool favorite = index.data(ProjectCardModel::FavoriteRole).toBool();
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(QColor(18, 22, 29, 200));
-    painter->drawRoundedRect(starRect.adjusted(-2, -2, 2, 2), 4, 4);
-    painter->setPen(favorite ? QColor(255, 215, 102) : QColor(168, 176, 196));
-    painter->drawText(starRect, Qt::AlignCenter, favorite ? QStringLiteral("★") : QStringLiteral("☆"));
-
-    QString name = index.data(ProjectCardModel::NameRole).toString();
-    QString engineVersion = index.data(ProjectCardModel::EngineVersionRole).toString();
-    QStringList tags = index.data(ProjectCardModel::TagsRole).toStringList();
-
-    painter->setPen(QColor(233, 237, 247));
-    QFont nameFont = painter->font();
-    nameFont.setPointSize(10);
-    nameFont.setBold(true);
     painter->setFont(nameFont);
-    painter->drawText(QRect(textRect.left(), textRect.top(), textRect.width(), 24), Qt::AlignLeft | Qt::AlignVCenter,
-                      QFontMetrics(nameFont).elidedText(name, Qt::ElideRight, textRect.width()));
-
-    painter->setPen(QColor(157, 168, 192));
-    QFont infoFont = painter->font();
-    infoFont.setPointSize(8);
-    infoFont.setBold(false);
-    painter->setFont(infoFont);
-    painter->drawText(QRect(textRect.left(), textRect.top() + 24, textRect.width(), 18), Qt::AlignLeft | Qt::AlignVCenter,
-                      QStringLiteral("Engine %1").arg(engineVersion));
-
-    int tagX = textRect.left();
-    int tagY = textRect.top() + 48;
-    for (int i = 0; i < tags.size() && i < 3; ++i) {
-        const QString tag = tags[i];
-        const int w = qMin(92, QFontMetrics(infoFont).horizontalAdvance(tag) + 14);
-        QRect badge(tagX, tagY, w, 18);
-        painter->setPen(Qt::NoPen);
-        painter->setBrush(QColor(75, 88, 116, 190));
-        painter->drawRoundedRect(badge, 9, 9);
-        painter->setPen(QColor(222, 228, 243));
-        painter->drawText(badge, Qt::AlignCenter, QFontMetrics(infoFont).elidedText(tag, Qt::ElideRight, w - 8));
-        tagX += w + 6;
-    }
+    painter->setPen(Theme::Color(Token::TextPrimary));
+    painter->drawText(QRect(textLeft, textTop, textWidth, nameHeight), Qt::AlignLeft | Qt::AlignVCenter,
+                      QFontMetrics(nameFont).elidedText(index.data(ProjectCardModel::NameRole).toString(),
+                                                         Qt::ElideRight, textWidth));
 
     const bool broken = index.data(ProjectCardModel::BrokenRole).toBool();
-    if (broken) {
-        QRect overlay = QRect(card.left() + 10, card.top() + 10, card.width() - 20, 24);
-        painter->setPen(Qt::NoPen);
-        painter->setBrush(QColor(170, 56, 72, 210));
-        painter->drawRoundedRect(overlay, 5, 5);
-        painter->setPen(QColor(255, 239, 241));
-        painter->drawText(overlay, Qt::AlignCenter, QStringLiteral("⚠ Broken Project Metadata"));
-    }
+    const QString detail = broken
+        ? index.data(ProjectCardModel::BrokenReasonRole).toString()
+        : QDir::toNativeSeparators(index.data(ProjectCardModel::ProjectPathRole).toString());
+    painter->setFont(pathFont);
+    painter->setPen(Theme::Color(broken ? Token::StatusError : Token::TextMuted));
+    painter->drawText(QRect(textLeft, textTop + nameHeight + 2, textWidth, pathHeight), Qt::AlignLeft | Qt::AlignVCenter,
+                      QFontMetrics(pathFont).elidedText(detail, Qt::ElideMiddle, textWidth));
 
     painter->restore();
-}
-
-bool ProjectCardDelegate::editorEvent(QEvent* event,
-                                      QAbstractItemModel* model,
-                                      const QStyleOptionViewItem& option,
-                                      const QModelIndex& index)
-{
-    if (!event || !index.isValid()) {
-        return false;
-    }
-
-    if (event->type() == QEvent::MouseButtonRelease) {
-        auto* mouseEvent = static_cast<QMouseEvent*>(event);
-        const QRect starRect = StarRect(CardRect(option));
-        if (starRect.contains(mouseEvent->pos())) {
-            const bool favorite = index.data(ProjectCardModel::FavoriteRole).toBool();
-            emit FavoriteToggled(index, !favorite);
-            return true;
-        }
-    }
-
-    return QStyledItemDelegate::editorEvent(event, model, option, index);
 }
 
 } // namespace Hephaestus::Launcher

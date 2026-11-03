@@ -1210,3 +1210,66 @@ QToolButton#NotificationButton::menu-indicator, QToolButton#StatusItem::menu-ind
     image: none;
     width: 0;
 }
+
+QWidget#LauncherIntro {
+    background: @surface-panel;
+    border-right: 1px solid @border-subtle;
+}
+QWidget#LauncherProjects, QWidget#ModeCards {
+    background: @surface-base;
+}
+QLabel#LauncherTitle {
+    font-size: 20px;
+    font-weight: 600;
+}
+QLabel#LauncherTagline {
+    color: @text-secondary;
+}
+QPushButton#LauncherAction {
+    text-align: left;
+    font-weight: 600;
+    border-color: @border-default;
+}
+QPushButton#LauncherAction[variant="primary"] {
+    border-color: transparent;
+}
+QPushButton#LauncherAction:focus {
+    border-color: @border-focus;
+}
+QLabel#LauncherSectionTitle {
+    font-size: 16px;
+    font-weight: 600;
+}
+QListView#RecentProjects, QLabel#RecentProjectsEmpty {
+    background: @surface-panel;
+    border: 1px solid @border-default;
+    border-radius: 6px;
+}
+QLabel#RecentProjectsEmpty {
+    color: @text-muted;
+    padding: 32px;
+}
+QPushButton#ModeCard {
+    background: @surface-panel;
+    border: 1px solid @border-default;
+    border-radius: 6px;
+    padding: 0;
+    min-height: 92px;
+}
+QPushButton#ModeCard:hover {
+    background: @surface-raised;
+}
+QPushButton#ModeCard:checked {
+    background: @surface-selected;
+    border-color: @accent-selection;
+}
+QPushButton#ModeCard:focus {
+    border-color: @border-focus;
+}
+QLabel#ModeCardTitle {
+    font-size: 14px;
+    font-weight: 600;
+}
+QLabel#ModeCardDescription {
+    color: @text-secondary;
+}

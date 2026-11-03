@@ -68,7 +68,8 @@ bool ProjectCreationService::CreateBlankProject(const QString& parentDir,
                                                 const QString& engineVersion,
                                                 bool createDefaultScene,
                                                 Result* outResult,
-                                                QString* outError)
+                                                QString* outError,
+                                                const QString& editorMode)
 {
     const QString trimmedName = name.trimmed();
     if (trimmedName.isEmpty()) {
@@ -159,6 +160,9 @@ bool ProjectCreationService::CreateBlankProject(const QString& parentDir,
     root.insert(QStringLiteral("lastModified"), static_cast<double>(now.toSecsSinceEpoch()));
     if (!defaultSceneRelative.isEmpty()) {
         root.insert(QStringLiteral("defaultScene"), defaultSceneRelative);
+    }
+    if (!editorMode.isEmpty()) {
+        root.insert(QStringLiteral("editorMode"), editorMode);
     }
 
     const QString projectFile = projectDir.filePath(QStringLiteral("project.heproject"));

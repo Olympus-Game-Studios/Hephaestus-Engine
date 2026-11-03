@@ -345,11 +345,12 @@ public:
 // Bump when the default dock layout changes so older saved layouts are not restored over it.
 constexpr int kDockLayoutVersion = 5;
 constexpr int kEditorModeCount = 3;
+// Also the project file's "editorMode" values, which the launcher writes for new projects.
+constexpr const char* kEditorModeNames[kEditorModeCount] = { "default", "artist", "programmer" };
 
 QString ModeStateKey(EditorMainWindow::EditorMode mode)
 {
-    static const char* const names[kEditorModeCount] = { "default", "artist", "programmer" };
-    return QStringLiteral("mainWindow/state/%1").arg(QLatin1String(names[static_cast<int>(mode)]));
+    return QStringLiteral("mainWindow/state/%1").arg(QLatin1String(kEditorModeNames[static_cast<int>(mode)]));
 }
 
 class EditorMainWindow::FirstPartyContext final : public Plugins::IFirstPartyPluginContext
@@ -4286,6 +4287,9 @@ void EditorMainWindow::setEditorMode(EditorMode mode)
     settings.setValue(ModeStateKey(m_mode), saveState(kDockLayoutVersion));
     m_mode = mode;
     settings.setValue(QStringLiteral("mainWindow/mode"), static_cast<int>(m_mode));
+    if (m_projectSettingsManager) {
+        m_projectSettingsManager->SetEditorMode(QLatin1String(kEditorModeNames[static_cast<int>(m_mode)]));
+    }
     restoreModeLayout(m_mode);
 }
 
@@ -5955,6 +5959,18 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
     m_projectSettingsManager = std::make_unique<Hephaestus::Tools::ProjectSettingsManager>(
         QString::fromStdString(m_projectContext->GetProjectRootDir()));
     m_projectSettingsManager->Load();
+    {
+        const QString projectMode = m_projectSettingsManager->EditorMode();
+        if (projectMode.isEmpty()) {
+            m_projectSettingsManager->SetEditorMode(QLatin1String(kEditorModeNames[static_cast<int>(m_mode)]));
+        }
+        for (int i = 0; i < kEditorModeCount; ++i) {
+            if (projectMode == QLatin1String(kEditorModeNames[i]) && i != static_cast<int>(m_mode)) {
+                m_modeButtons->button(i)->setChecked(true);
+                setEditorMode(static_cast<EditorMode>(i));
+            }
+        }
+    }
 
     if (m_assetPipeline) {
         m_assetPipeline->Initialize(m_projectContext->GetProjectRootDir());

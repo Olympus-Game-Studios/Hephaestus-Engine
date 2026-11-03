@@ -2,9 +2,40 @@
 
 #include <QCollator>
 #include <QDir>
+#include <QLocale>
 #include <algorithm>
 
 namespace Hephaestus::Launcher {
+
+QString RelativeTimeText(const QDateTime& when, const QDateTime& now)
+{
+    if (!when.isValid()) {
+        return {};
+    }
+
+    const qint64 days = when.date().daysTo(now.date());
+    if (days <= 0) {
+        const qint64 minutes = when.secsTo(now) / 60;
+        if (minutes < 1) {
+            return QObject::tr("Just now");
+        }
+        if (minutes < 60) {
+            return minutes == 1 ? QObject::tr("1 minute ago") : QObject::tr("%1 minutes ago").arg(minutes);
+        }
+        const qint64 hours = minutes / 60;
+        return hours == 1 ? QObject::tr("1 hour ago") : QObject::tr("%1 hours ago").arg(hours);
+    }
+    if (days == 1) {
+        return QObject::tr("Yesterday");
+    }
+    if (days < 7) {
+        return QObject::tr("%1 days ago").arg(days);
+    }
+    if (days < 14) {
+        return QObject::tr("Last week");
+    }
+    return QLocale().toString(when.date(), QStringLiteral("d MMM yyyy"));
+}
 
 ProjectCardModel::ProjectCardModel(QObject* parent)
     : QAbstractListModel(parent)
@@ -51,6 +82,8 @@ QVariant ProjectCardModel::data(const QModelIndex& index, int role) const
             return project.created;
         case LastModifiedRole:
             return project.lastModified;
+        case EditorModeRole:
+            return project.editorMode;
         default:
             return {};
     }
@@ -69,7 +102,8 @@ QHash<int, QByteArray> ProjectCardModel::roleNames() const
         {ThumbnailRole, "thumbnailPath"},
         {ProjectPathRole, "projectPath"},
         {CreatedRole, "created"},
-        {LastModifiedRole, "lastModified"}
+        {LastModifiedRole, "lastModified"},
+        {EditorModeRole, "editorMode"}
     };
 }
 
@@ -117,22 +151,6 @@ int ProjectCardModel::RowForProjectPath(const QString& projectDir) const
         }
     }
     return -1;
-}
-
-bool ProjectCardModel::SetFavorite(const QModelIndex& index, bool favorite)
-{
-    if (!index.isValid() || index.row() < 0 || index.row() >= static_cast<int>(m_visibleIndices.size())) {
-        return false;
-    }
-
-    const int backingIndex = m_visibleIndices[index.row()];
-    if (backingIndex < 0 || backingIndex >= static_cast<int>(m_allProjects.size())) {
-        return false;
-    }
-
-    m_allProjects[backingIndex].favorite = favorite;
-    emit dataChanged(index, index, {FavoriteRole});
-    return true;
 }
 
 void ProjectCardModel::RebuildView()

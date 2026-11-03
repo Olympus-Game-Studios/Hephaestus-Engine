@@ -13,6 +13,7 @@ struct LauncherProject {
     QString name;
     QString description;
     QString engineVersion;
+    QString editorMode;
     QString screenshotPath;
     QString screenshotAbsolutePath;
     QStringList tags;

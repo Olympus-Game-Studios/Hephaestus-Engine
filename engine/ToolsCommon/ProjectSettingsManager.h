@@ -33,6 +33,10 @@ public:
     void SetValues(const QHash<QString, QVariant>& values);
     void ResetCategoryToDefaults(const QString& categoryId);
 
+    /** Workspace mode the editor opens this project in ("default", "artist" or "programmer"); empty when unset. */
+    QString EditorMode() const;
+    bool SetEditorMode(const QString& mode) const;
+
 private:
     static QVariant Validate(const SettingDefinition& definition, const QVariant& value);
 

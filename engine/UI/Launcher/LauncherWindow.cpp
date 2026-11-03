@@ -1,141 +1,130 @@
 #include "LauncherWindow.h"
-#include "../Shared/SettingsWindow.h"
 
+#include "../QtEditor/EditorTheme.h"
 #include "../../ToolsCommon/PathUtils.h"
 #include "../../ToolsCommon/VersionInfo.h"
-#include "../../ToolsCommon/EngineContext.h"
 
-#include <QApplication>
 #include <QAbstractItemView>
-#include <QComboBox>
+#include <QButtonGroup>
 #include <QCheckBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
-#include <QDirIterator>
-#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QFontDatabase>
+#include <QFormLayout>
 #include <QHBoxLayout>
-#include <QIcon>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
-#include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
-#include <QLocale>
-#include <QProcess>
+#include <QModelIndex>
+#include <QPainter>
 #include <QPushButton>
-#include <QStackedWidget>
-#include <QSettings>
-#include <QSplitter>
-#include <QStyle>
-#include <QStandardItemModel>
-#include <QFormLayout>
-#include <QFrame>
+#include <QRadialGradient>
+#include <QShortcut>
 #include <QTimer>
 #include <QVBoxLayout>
-#include <QModelIndex>
+
+#include <iterator>
+
+namespace Hephaestus::Launcher {
+
+namespace Theme = Hephaestus::QtEditor::Theme;
+using Theme::Token;
 
 namespace {
 
-QString BuiltinMinimalDarkQss()
+constexpr int kMaxVisibleProjectRows = 6;
+
+const QString kDocumentationUrl = QStringLiteral("https://github.com/Olympus-Game-Studios/Hephaestus-Engine/tree/main/Documentation");
+const QString kReleaseNotesUrl = QStringLiteral("https://github.com/Olympus-Game-Studios/Hephaestus-Engine/blob/main/CHANGELOG.md");
+
+struct ModeCard {
+    const char* id;
+    const char* icon;
+    const char* title;
+    const char* description;
+};
+
+// Ids are the project file's "editorMode" values; icons match the editor's mode switch.
+constexpr ModeCard kModeCards[] = {
+    { "default", "layout", QT_TRANSLATE_NOOP("LauncherWindow", "Default"),
+      QT_TRANSLATE_NOOP("LauncherWindow", "Balanced, familiar layout for everyone.") },
+    { "artist", "paint", QT_TRANSLATE_NOOP("LauncherWindow", "Artist"),
+      QT_TRANSLATE_NOOP("LauncherWindow", "Viewport first, tools on a rail, large thumbnails.") },
+    { "programmer", "code", QT_TRANSLATE_NOOP("LauncherWindow", "Programmer"),
+      QT_TRANSLATE_NOOP("LauncherWindow", "An IDE inside the engine with a live game view.") },
+};
+
+QPixmap LogoWithGlow(int size, int logoSize, qreal devicePixelRatio)
 {
-    return QString::fromUtf8(R"(
-QWidget {
-    background-color: #20242b;
-    color: #d8dee9;
-    font-size: 13px;
-}
-QLineEdit {
-    background-color: #1a1e24;
-    border: 1px solid #3b4252;
-    border-radius: 4px;
-    padding: 6px;
-}
-QPushButton {
-    background-color: #3b4252;
-    border: 1px solid #4c566a;
-    border-radius: 4px;
-    padding: 6px 10px;
-}
-QPushButton:hover {
-    background-color: #4c566a;
-}
-QPushButton:pressed {
-    background-color: #2e3440;
-}
-QLabel#status {
-    color: #88c0d0;
-}
-)");
+    QPixmap pixmap(QSize(size, size) * devicePixelRatio);
+    pixmap.setDevicePixelRatio(devicePixelRatio);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QColor glow = Theme::Color(Token::AccentBrand);
+    QRadialGradient gradient(QPointF(size / 2.0, size / 2.0), size / 2.0);
+    glow.setAlphaF(0.32);
+    gradient.setColorAt(0.0, glow);
+    glow.setAlphaF(0.12);
+    gradient.setColorAt(0.55, glow);
+    glow.setAlphaF(0.0);
+    gradient.setColorAt(1.0, glow);
+    painter.fillRect(QRectF(0, 0, size, size), gradient);
+
+    const int offset = (size - logoSize) / 2;
+    Theme::BrandLogo().paint(&painter, QRect(offset, offset, logoSize, logoSize));
+    return pixmap;
 }
 
-QString PickFirstExisting(const QStringList& candidates)
+QLabel* MakeLabel(const QString& text, const char* objectName, QWidget* parent)
 {
-    for (const QString& c : candidates) {
-        const QFileInfo info(c);
-        if (info.exists() && info.isFile()) {
-            return info.absoluteFilePath();
-        }
-    }
-    return {};
+    auto* label = new QLabel(text, parent);
+    label->setObjectName(QLatin1String(objectName));
+    return label;
 }
 
-QPushButton* CreateSidebarButton(const QIcon& icon, const QString& text)
+QLabel* MakeLink(const QString& text, const QString& url, QWidget* parent)
 {
-    auto* button = new QPushButton(icon, text);
-    button->setCheckable(true);
-    button->setCursor(Qt::PointingHandCursor);
-    button->setObjectName(QStringLiteral("SidebarButton"));
-    return button;
-}
-
-QFrame* BuildSeparator()
-{
-    auto* line = new QFrame();
-    line->setFrameShape(QFrame::HLine);
-    line->setObjectName(QStringLiteral("ThinSeparator"));
-    line->setFixedHeight(1);
-    return line;
+    auto* link = new QLabel(QStringLiteral("<a href=\"%1\" style=\"text-decoration: none;\">%2</a>").arg(url, text.toHtmlEscaped()), parent);
+    link->setObjectName(QStringLiteral("LauncherLink"));
+    link->setOpenExternalLinks(true);
+    link->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
+    return link;
 }
 
 } // namespace
 
-namespace Hephaestus::Launcher {
-
 LauncherWindow::LauncherWindow(QWidget* parent)
     : QWidget(parent)
-    , m_assets(Hephaestus::Tools::SharedAssetPaths::Locate())
     , m_projectManager(this)
     , m_projectScanner(this)
     , m_projectModel(this)
     , m_projectDelegate(this)
 {
-    m_engineSettingsManager.Load();
+    setWindowTitle(Hephaestus::Tools::VersionInfo::AppName());
+    setMinimumSize(1080, 680);
+    resize(1280, 800);
 
-    setWindowTitle(QStringLiteral("Hephaestus Project Browser"));
-    setMinimumSize(1320, 780);
+    m_settings = m_projectManager.LoadSettings();
 
-    BuildUiRoot();
-    BindSignals();
-    ApplyTheme();
-    LoadSettings();
+    auto* root = new QHBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
+    root->addWidget(BuildIntroPanel());
+    root->addWidget(BuildProjectsPanel(), 1);
+
+    connect(&m_projectScanner, &LauncherProjectScanner::ScanFinished, this, &LauncherWindow::OnProjectsScanned);
 
     const QVector<LauncherProject> cachedProjects = m_projectManager.LoadProjectIndex();
-    if (!cachedProjects.isEmpty()) {
-        m_projectModel.SetProjects(cachedProjects);
-        UpdateRecentEmptyState();
-        UpdateProjectDetailsPanel();
-        m_scanStatusLabel->setText(QStringLiteral("Loaded %1 cached projects. Confirming...").arg(cachedProjects.size()));
-
-        if (!m_settings.lastOpenedProject.isEmpty()) {
-            const int row = m_projectModel.RowForProjectPath(m_settings.lastOpenedProject);
-            if (row >= 0) {
-                const QModelIndex idx = m_projectModel.index(row, 0);
-                m_projectGrid->setCurrentIndex(idx);
-            }
-        }
-    }
+    m_projectModel.SetProjects(cachedProjects);
+    UpdateProjectListState();
+    SelectLastOpenedProject();
 
     m_projectRescanTimer = new QTimer(this);
     m_projectRescanTimer->setInterval(5000);
@@ -147,611 +136,192 @@ LauncherWindow::LauncherWindow(QWidget* parent)
     // One-shot: honor "Open last project on startup" after the window is shown.
     if (m_settings.openLastProjectOnStartup && !m_settings.lastOpenedProject.isEmpty()) {
         QTimer::singleShot(0, this, [this]() {
-            if (!m_settings.openLastProjectOnStartup || m_settings.lastOpenedProject.isEmpty()) {
-                return;
-            }
             const int row = m_projectModel.RowForProjectPath(m_settings.lastOpenedProject);
-            if (row < 0) {
-                if (m_scanStatusLabel) {
-                    m_scanStatusLabel->setText(
-                        QStringLiteral("Last project not found: %1").arg(m_settings.lastOpenedProject));
-                }
-                return;
+            if (row >= 0) {
+                OpenProject(m_projectModel.index(row, 0));
             }
-            OpenProject(m_projectModel.index(row, 0));
         });
     }
 }
 
-void LauncherWindow::BuildUiRoot()
+QWidget* LauncherWindow::BuildIntroPanel()
 {
-    auto* root = new QHBoxLayout(this);
-    root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(0);
+    auto* panel = new QWidget(this);
+    panel->setObjectName(QStringLiteral("LauncherIntro"));
+    panel->setFixedWidth(440);
 
-    BuildSidebar();
-    BuildPages();
+    auto* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(48, 32, 48, 44);
+    layout->setSpacing(0);
 
-    auto* sidebarContainer = m_sidebar->parentWidget();
-    root->addWidget(sidebarContainer);
-    root->addWidget(m_mainContent, 1);
+    auto* logo = new QLabel(panel);
+    logo->setPixmap(LogoWithGlow(192, 104, devicePixelRatioF()));
+    logo->setAccessibleName(Hephaestus::Tools::VersionInfo::AppName());
+    layout->addWidget(logo, 0, Qt::AlignLeft);
+    layout->addSpacing(12);
+
+    layout->addWidget(MakeLabel(Hephaestus::Tools::VersionInfo::AppName(), "LauncherTitle", panel));
+    layout->addSpacing(6);
+    auto* version = MakeLabel(tr("Version %1").arg(Hephaestus::Tools::VersionInfo::EngineVersion()), "LauncherVersion", panel);
+    version->setProperty("role", QStringLiteral("caption"));
+    layout->addWidget(version);
+    layout->addSpacing(20);
+
+    auto* tagline = MakeLabel(tr("Creativity before complexity. Pick up where you left off, or start something new."),
+                              "LauncherTagline", panel);
+    tagline->setWordWrap(true);
+    layout->addWidget(tagline);
+    layout->addSpacing(24);
+
+    auto* newButton = new QPushButton(Theme::Icon(QStringLiteral("plus"), Theme::IconTone::OnAction), tr("New project"), panel);
+    newButton->setProperty("variant", QStringLiteral("primary"));
+    auto* openButton = new QPushButton(Theme::Icon(QStringLiteral("folder")), tr("Open project..."), panel);
+    for (QPushButton* button : { newButton, openButton }) {
+        button->setObjectName(QStringLiteral("LauncherAction"));
+        button->setCursor(Qt::PointingHandCursor);
+        layout->addWidget(button);
+        layout->addSpacing(8);
+    }
+    layout->addStretch(1);
+
+    auto* links = new QHBoxLayout();
+    links->setSpacing(16);
+    links->addWidget(MakeLink(tr("Documentation"), kDocumentationUrl, panel));
+    links->addWidget(MakeLink(tr("Release notes"), kReleaseNotesUrl, panel));
+    links->addStretch(1);
+    layout->addLayout(links);
+
+    connect(newButton, &QPushButton::clicked, this, &LauncherWindow::CreateNewProject);
+    connect(openButton, &QPushButton::clicked, this, &LauncherWindow::OpenProjectFromDisk);
+    return panel;
 }
 
-void LauncherWindow::BuildSidebar()
+QWidget* LauncherWindow::BuildProjectsPanel()
 {
-    auto* sidebarContainer = new QWidget(this);
-    sidebarContainer->setObjectName(QStringLiteral("LauncherSidebar"));
-    sidebarContainer->setFixedWidth(240);
+    auto* panel = new QWidget(this);
+    panel->setObjectName(QStringLiteral("LauncherProjects"));
 
-    auto* sidebarLayout = new QVBoxLayout(sidebarContainer);
-    sidebarLayout->setContentsMargins(12, 14, 12, 14);
-    sidebarLayout->setSpacing(10);
-
-    auto* brand = new QLabel(QStringLiteral("Hephaestus\nProject Browser"), sidebarContainer);
-    brand->setObjectName(QStringLiteral("SidebarBrand"));
-    sidebarLayout->addWidget(brand);
-    sidebarLayout->addWidget(BuildSeparator());
-
-    m_sidebar = new QListWidget(sidebarContainer);
-    m_sidebar->setObjectName(QStringLiteral("SidebarList"));
-    m_sidebar->setSpacing(4);
-    m_sidebar->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_sidebar->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-
-    auto* recentItem = new QListWidgetItem(LoadIcon(QStringLiteral("icons/folder.png")), QStringLiteral("Recent Projects"));
-    auto* newItem = new QListWidgetItem(LoadIcon(QStringLiteral("icons/plus.svg")), QStringLiteral("New Project"));
-    auto* templatesItem = new QListWidgetItem(LoadIcon(QStringLiteral("icons/file-svg.png")), QStringLiteral("Templates"));
-    auto* settingsItem = new QListWidgetItem(style()->standardIcon(QStyle::SP_FileDialogDetailedView), QStringLiteral("Settings"));
-
-    templatesItem->setFlags(templatesItem->flags() & ~Qt::ItemIsEnabled);
-
-    m_sidebar->addItem(recentItem);
-    m_sidebar->addItem(newItem);
-    m_sidebar->addItem(templatesItem);
-    m_sidebar->addItem(settingsItem);
-    m_sidebar->setCurrentRow(RecentProjectsPage);
-
-    sidebarLayout->addWidget(m_sidebar, 1);
-}
-
-void LauncherWindow::BuildPages()
-{
-    m_mainContent = new QStackedWidget(this);
-    m_mainContent->setObjectName(QStringLiteral("LauncherMainContent"));
-
-    m_recentPage = BuildRecentProjectsPage();
-    m_newProjectPage = BuildNewProjectPage();
-    auto* templatesPage = BuildTemplatesPage();
-    m_settingsPage = BuildSettingsPage();
-
-    m_mainContent->addWidget(m_recentPage);
-    m_mainContent->addWidget(m_newProjectPage);
-    m_mainContent->addWidget(templatesPage);
-    m_mainContent->addWidget(m_settingsPage);
-    m_mainContent->setCurrentIndex(RecentProjectsPage);
-}
-
-QWidget* LauncherWindow::BuildRecentProjectsPage()
-{
-    auto* page = new QWidget(this);
-    auto* root = new QVBoxLayout(page);
-    root->setContentsMargins(24, 24, 24, 18);
-    root->setSpacing(12);
+    auto* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(48, 44, 48, 44);
+    layout->setSpacing(0);
 
     auto* header = new QHBoxLayout();
-    auto* title = new QLabel(QStringLiteral("Projects"), page);
-    title->setObjectName(QStringLiteral("PageTitle"));
-    m_openSettingsButton = new QPushButton(QStringLiteral("Settings"), page);
-    m_openSettingsButton->setObjectName(QStringLiteral("PrimaryButton"));
-    m_projectSearchEdit = new QLineEdit(page);
-    m_projectSearchEdit->setPlaceholderText(QStringLiteral("Filter Projects"));
-    m_projectSearchEdit->setObjectName(QStringLiteral("ProjectSearch"));
-    m_sortCombo = new QComboBox(page);
-    m_sortCombo->addItems({QStringLiteral("Last Modified"), QStringLiteral("Name")});
-    m_sortCombo->setObjectName(QStringLiteral("SortCombo"));
-
-    header->addWidget(title);
+    header->addWidget(MakeLabel(tr("Recent projects"), "LauncherSectionTitle", panel));
     header->addStretch(1);
-    header->addWidget(m_openSettingsButton);
-    header->addWidget(m_projectSearchEdit, 1);
-    header->addWidget(m_sortCombo);
-    root->addLayout(header);
+    m_projectSearchEdit = new QLineEdit(panel);
+    m_projectSearchEdit->setObjectName(QStringLiteral("ProjectSearch"));
+    m_projectSearchEdit->setPlaceholderText(tr("Search projects..."));
+    m_projectSearchEdit->setFixedWidth(260);
+    m_projectSearchEdit->addAction(Theme::Icon(QStringLiteral("search"), Theme::IconTone::Muted), QLineEdit::LeadingPosition);
+    Theme::AddShortcutHint(m_projectSearchEdit, QKeySequence(QKeySequence::Find));
+    header->addWidget(m_projectSearchEdit);
+    layout->addLayout(header);
+    layout->addSpacing(14);
 
-    auto* splitter = new QSplitter(Qt::Horizontal, page);
-    splitter->setObjectName(QStringLiteral("ProjectsSplitter"));
+    m_projectList = new QListView(panel);
+    m_projectList->setObjectName(QStringLiteral("RecentProjects"));
+    m_projectList->setModel(&m_projectModel);
+    m_projectList->setItemDelegate(&m_projectDelegate);
+    m_projectList->setMouseTracking(true);
+    m_projectList->setUniformItemSizes(true);
+    m_projectList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_projectList->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_projectList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_projectList->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_projectList->setAccessibleName(tr("Recent projects"));
+    layout->addWidget(m_projectList);
 
-    m_gridHostWidget = new QWidget(splitter);
-    auto* gridHostLayout = new QVBoxLayout(m_gridHostWidget);
-    gridHostLayout->setContentsMargins(0, 0, 0, 0);
-    gridHostLayout->setSpacing(0);
+    m_emptyStateLabel = MakeLabel(QString(), "RecentProjectsEmpty", panel);
+    m_emptyStateLabel->setAlignment(Qt::AlignCenter);
+    m_emptyStateLabel->setWordWrap(true);
+    layout->addWidget(m_emptyStateLabel);
+    layout->addSpacing(40);
 
-    m_projectGrid = new QListView(m_gridHostWidget);
-    m_projectGrid->setObjectName(QStringLiteral("ProjectGrid"));
-    m_projectGrid->setModel(&m_projectModel);
-    m_projectGrid->setItemDelegate(&m_projectDelegate);
-    m_projectGrid->setMouseTracking(true);
-    m_projectGrid->setViewMode(QListView::IconMode);
-    m_projectGrid->setFlow(QListView::LeftToRight);
-    m_projectGrid->setResizeMode(QListView::Adjust);
-    m_projectGrid->setUniformItemSizes(true);
-    m_projectGrid->setWordWrap(false);
-    m_projectGrid->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_projectGrid->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_projectGrid->setSpacing(10);
-
-    m_emptyStateWidget = new QWidget(m_gridHostWidget);
-    m_emptyStateWidget->setObjectName(QStringLiteral("EmptyState"));
-    auto* emptyLayout = new QVBoxLayout(m_emptyStateWidget);
-    emptyLayout->setAlignment(Qt::AlignCenter);
-
-    auto* emptyIcon = new QLabel(QStringLiteral("◈"), m_emptyStateWidget);
-    emptyIcon->setObjectName(QStringLiteral("EmptyIcon"));
-    auto* emptyText = new QLabel(QStringLiteral("No Projects Found"), m_emptyStateWidget);
-    emptyText->setObjectName(QStringLiteral("EmptyTitle"));
-    auto* emptyButton = new QPushButton(QStringLiteral("Create New Project"), m_emptyStateWidget);
-    emptyButton->setObjectName(QStringLiteral("PrimaryButton"));
-
-    emptyLayout->addWidget(emptyIcon, 0, Qt::AlignHCenter);
-    emptyLayout->addWidget(emptyText, 0, Qt::AlignHCenter);
-    emptyLayout->addWidget(emptyButton, 0, Qt::AlignHCenter);
-
-    gridHostLayout->addWidget(m_projectGrid);
-    gridHostLayout->addWidget(m_emptyStateWidget);
-
-    auto* detailsPanel = new QWidget(splitter);
-    detailsPanel->setObjectName(QStringLiteral("ProjectDetailsPanel"));
-    detailsPanel->setMinimumWidth(320);
-    auto* detailsLayout = new QVBoxLayout(detailsPanel);
-    detailsLayout->setContentsMargins(14, 14, 14, 14);
-    detailsLayout->setSpacing(10);
-
-    auto* detailsTitle = new QLabel(QStringLiteral("Project Details"), detailsPanel);
-    detailsTitle->setObjectName(QStringLiteral("SectionTitle"));
-    detailsLayout->addWidget(detailsTitle);
-
-    m_selectedNameLabel = new QLabel(detailsPanel);
-    m_selectedNameLabel->setObjectName(QStringLiteral("DetailsName"));
-    m_selectedDescriptionLabel = new QLabel(detailsPanel);
-    m_selectedDescriptionLabel->setWordWrap(true);
-    m_selectedCreatedLabel = new QLabel(detailsPanel);
-    m_selectedModifiedLabel = new QLabel(detailsPanel);
-    m_selectedPathLabel = new QLabel(detailsPanel);
-    m_selectedPathLabel->setWordWrap(true);
-
-    detailsLayout->addWidget(m_selectedNameLabel);
-    detailsLayout->addWidget(m_selectedDescriptionLabel);
-    detailsLayout->addWidget(m_selectedCreatedLabel);
-    detailsLayout->addWidget(m_selectedModifiedLabel);
-    detailsLayout->addWidget(m_selectedPathLabel);
-
-    detailsLayout->addWidget(BuildSeparator());
-
-    m_openButton = new QPushButton(QStringLiteral("Open"), detailsPanel);
-    m_openButton->setObjectName(QStringLiteral("PrimaryButton"));
-    m_showExplorerButton = new QPushButton(QStringLiteral("Show in Explorer"), detailsPanel);
-    m_duplicateButton = new QPushButton(QStringLiteral("Duplicate"), detailsPanel);
-    m_duplicateButton->setEnabled(false);
-    m_deleteButton = new QPushButton(QStringLiteral("Delete"), detailsPanel);
-    m_deleteButton->setObjectName(QStringLiteral("DangerButton"));
-
-    detailsLayout->addWidget(m_openButton);
-    detailsLayout->addWidget(m_showExplorerButton);
-    detailsLayout->addWidget(m_duplicateButton);
-    detailsLayout->addWidget(m_deleteButton);
-    detailsLayout->addStretch(1);
-
-    splitter->addWidget(m_gridHostWidget);
-    splitter->addWidget(detailsPanel);
-    splitter->setStretchFactor(0, 1);
-    splitter->setStretchFactor(1, 0);
-    splitter->setSizes({900, 360});
-    root->addWidget(splitter, 1);
-
-    auto* bottom = new QHBoxLayout();
-    m_scanStatusLabel = new QLabel(QStringLiteral("Ready"), page);
-    m_scanStatusLabel->setObjectName(QStringLiteral("status"));
-    auto* cancelButton = new QPushButton(QStringLiteral("Cancel"), page);
-    m_openBottomButton = new QPushButton(QStringLiteral("Open"), page);
-    m_openBottomButton->setObjectName(QStringLiteral("PrimaryButton"));
-    bottom->addWidget(m_scanStatusLabel);
-    bottom->addStretch(1);
-    bottom->addWidget(cancelButton);
-    bottom->addWidget(m_openBottomButton);
-    root->addLayout(bottom);
-
-    connect(cancelButton, &QPushButton::clicked, this, &QWidget::close);
-    connect(emptyButton, &QPushButton::clicked, this, [this]() {
-        NavigateToSidebarItem(NewProjectPage);
-    });
-
-    return page;
-}
-
-QWidget* LauncherWindow::BuildNewProjectPage()
-{
-    auto* page = new QWidget(this);
-    auto* root = new QVBoxLayout(page);
-    root->setContentsMargins(24, 24, 24, 20);
-    root->setSpacing(14);
-
-    auto* title = new QLabel(QStringLiteral("Create New Project"), page);
-    title->setObjectName(QStringLiteral("PageTitle"));
-    root->addWidget(title);
-
-    auto* content = new QHBoxLayout();
-    content->setSpacing(18);
-
-    auto* typePanel = new QWidget(page);
-    typePanel->setObjectName(QStringLiteral("Panel"));
-    typePanel->setMinimumWidth(280);
-    auto* typeLayout = new QVBoxLayout(typePanel);
-    auto* typeTitle = new QLabel(QStringLiteral("Project Type"), typePanel);
-    typeTitle->setObjectName(QStringLiteral("SectionTitle"));
-    m_projectTypeList = new QListWidget(typePanel);
-    m_projectTypeList->addItem(QStringLiteral("Blank Project"));
-    auto* futureTemplate = new QListWidgetItem(QStringLiteral("More templates coming soon"));
-    futureTemplate->setFlags(futureTemplate->flags() & ~Qt::ItemIsEnabled);
-    m_projectTypeList->addItem(futureTemplate);
-    m_projectTypeList->setCurrentRow(0);
-    typeLayout->addWidget(typeTitle);
-    typeLayout->addWidget(m_projectTypeList);
-
-    auto* formPanel = new QWidget(page);
-    formPanel->setObjectName(QStringLiteral("Panel"));
-    auto* formLayout = new QVBoxLayout(formPanel);
-
-    auto* form = new QFormLayout();
-    form->setLabelAlignment(Qt::AlignLeft);
-    form->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
-    form->setHorizontalSpacing(12);
-    form->setVerticalSpacing(10);
-
-    m_newProjectNameEdit = new QLineEdit(formPanel);
-    m_newProjectLocationEdit = new QLineEdit(formPanel);
-    auto* browseButton = new QPushButton(QStringLiteral("Browse"), formPanel);
-    auto* locationRow = new QWidget(formPanel);
-    auto* locationLayout = new QHBoxLayout(locationRow);
-    locationLayout->setContentsMargins(0, 0, 0, 0);
-    locationLayout->addWidget(m_newProjectLocationEdit, 1);
-    locationLayout->addWidget(browseButton);
-
-    m_engineVersionCombo = new QComboBox(formPanel);
-    m_engineVersionCombo->addItems({
-        Hephaestus::Tools::VersionInfo::EngineVersion(),
-        QStringLiteral("1.0.0")
-    });
-    m_createDefaultSceneCheck = new QCheckBox(QStringLiteral("Create default scene"), formPanel);
-    m_createDefaultSceneCheck->setChecked(true);
-    m_projectPathPreviewLabel = new QLabel(formPanel);
-    m_projectPathPreviewLabel->setObjectName(QStringLiteral("PathPreview"));
-    m_projectPathPreviewLabel->setWordWrap(true);
-
-    form->addRow(QStringLiteral("Project Name"), m_newProjectNameEdit);
-    form->addRow(QStringLiteral("Location"), locationRow);
-    form->addRow(QStringLiteral("Engine Version"), m_engineVersionCombo);
-    form->addRow(QStringLiteral(""), m_createDefaultSceneCheck);
-    form->addRow(QStringLiteral("Project Path"), m_projectPathPreviewLabel);
-    formLayout->addLayout(form);
-    formLayout->addStretch(1);
-
-    content->addWidget(typePanel);
-    content->addWidget(formPanel, 1);
-    root->addLayout(content, 1);
-
-    auto* bottom = new QHBoxLayout();
-    auto* backButton = new QPushButton(QStringLiteral("Back"), page);
-    auto* createButton = new QPushButton(QStringLiteral("Create"), page);
-    createButton->setObjectName(QStringLiteral("PrimaryButton"));
-    bottom->addStretch(1);
-    bottom->addWidget(backButton);
-    bottom->addWidget(createButton);
-    root->addLayout(bottom);
-
-    connect(backButton, &QPushButton::clicked, this, [this]() {
-        NavigateToSidebarItem(RecentProjectsPage);
-    });
-    connect(createButton, &QPushButton::clicked, this, &LauncherWindow::CreateNewProject);
-    connect(browseButton, &QPushButton::clicked, this, &LauncherWindow::OnBrowseNewProjectLocation);
-    connect(m_newProjectNameEdit, &QLineEdit::textChanged, this, &LauncherWindow::UpdateNewProjectPathPreview);
-    connect(m_newProjectLocationEdit, &QLineEdit::textChanged, this, &LauncherWindow::UpdateNewProjectPathPreview);
-
-    return page;
-}
-
-QWidget* LauncherWindow::BuildTemplatesPage()
-{
-    auto* page = new QWidget(this);
-    auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(24, 24, 24, 24);
-    auto* title = new QLabel(QStringLiteral("Templates"), page);
-    title->setObjectName(QStringLiteral("PageTitle"));
-    auto* msg = new QLabel(QStringLiteral("Template packs will arrive in a future update."), page);
-    msg->setObjectName(QStringLiteral("MutedLabel"));
-    layout->addWidget(title);
-    layout->addWidget(msg);
+    layout->addWidget(MakeLabel(tr("How do you want to work?"), "LauncherSectionTitle", panel));
+    layout->addSpacing(10);
+    auto* modeCaption = MakeLabel(tr("New projects open in this mode. You can switch at any time from the mode switcher in the header."),
+                                  "LauncherModeCaption", panel);
+    modeCaption->setProperty("role", QStringLiteral("muted"));
+    modeCaption->setWordWrap(true);
+    layout->addWidget(modeCaption);
+    layout->addSpacing(14);
+    layout->addWidget(BuildModeCards(panel));
     layout->addStretch(1);
-    return page;
-}
-
-QWidget* LauncherWindow::BuildSettingsPage()
-{
-    auto* page = new QWidget(this);
-    auto* root = new QVBoxLayout(page);
-    root->setContentsMargins(24, 24, 24, 20);
-    root->setSpacing(12);
-
-    auto* title = new QLabel(QStringLiteral("Settings"), page);
-    title->setObjectName(QStringLiteral("PageTitle"));
-    root->addWidget(title);
-
-    auto* panel = new QWidget(page);
-    panel->setObjectName(QStringLiteral("Panel"));
-    auto* form = new QFormLayout(panel);
-    form->setVerticalSpacing(10);
-    form->setHorizontalSpacing(12);
-
-    m_editorPathEdit = new QLineEdit(panel);
-    auto* browseEditor = new QPushButton(QStringLiteral("Browse"), panel);
-    auto* editorRow = new QWidget(panel);
-    auto* editorRowLayout = new QHBoxLayout(editorRow);
-    editorRowLayout->setContentsMargins(0, 0, 0, 0);
-    editorRowLayout->addWidget(m_editorPathEdit, 1);
-    editorRowLayout->addWidget(browseEditor);
-
-    m_runtimePathEdit = new QLineEdit(panel);
-    auto* browseRuntime = new QPushButton(QStringLiteral("Browse"), panel);
-    auto* runtimeRow = new QWidget(panel);
-    auto* runtimeRowLayout = new QHBoxLayout(runtimeRow);
-    runtimeRowLayout->setContentsMargins(0, 0, 0, 0);
-    runtimeRowLayout->addWidget(m_runtimePathEdit, 1);
-    runtimeRowLayout->addWidget(browseRuntime);
-
-    m_projectRootsList = new QListWidget(panel);
-    auto* rootsControls = new QWidget(panel);
-    auto* rootsControlsLayout = new QHBoxLayout(rootsControls);
-    rootsControlsLayout->setContentsMargins(0, 0, 0, 0);
-    auto* addRootButton = new QPushButton(QStringLiteral("Add"), rootsControls);
-    auto* removeRootButton = new QPushButton(QStringLiteral("Remove"), rootsControls);
-    rootsControlsLayout->addWidget(addRootButton);
-    rootsControlsLayout->addWidget(removeRootButton);
-    rootsControlsLayout->addStretch(1);
-
-    auto* rootsBlock = new QWidget(panel);
-    auto* rootsBlockLayout = new QVBoxLayout(rootsBlock);
-    rootsBlockLayout->setContentsMargins(0, 0, 0, 0);
-    rootsBlockLayout->setSpacing(6);
-    rootsBlockLayout->addWidget(m_projectRootsList);
-    rootsBlockLayout->addWidget(rootsControls);
-
-    m_themeCombo = new QComboBox(panel);
-    m_themeCombo->addItems({QStringLiteral("Dark")});
-
-    m_openLastProjectCheck = new QCheckBox(QStringLiteral("Open Last Project on Startup"), panel);
-
-    form->addRow(QStringLiteral("Editor Path"), editorRow);
-    form->addRow(QStringLiteral("Runtime Path"), runtimeRow);
-    form->addRow(QStringLiteral("Project Root Folders"), rootsBlock);
-    form->addRow(QStringLiteral("Theme"), m_themeCombo);
-    form->addRow(QString(), m_openLastProjectCheck);
-
-    root->addWidget(panel, 1);
-
-    connect(browseEditor, &QPushButton::clicked, this, &LauncherWindow::OnBrowseEditorPath);
-    connect(browseRuntime, &QPushButton::clicked, this, &LauncherWindow::OnBrowseRuntimePath);
-    connect(addRootButton, &QPushButton::clicked, this, &LauncherWindow::OnAddProjectRoot);
-    connect(removeRootButton, &QPushButton::clicked, this, &LauncherWindow::OnRemoveProjectRoot);
-
-    return page;
-}
-
-void LauncherWindow::BindSignals()
-{
-    connect(m_sidebar, &QListWidget::currentRowChanged, this, &LauncherWindow::NavigateToSidebarItem);
 
     connect(m_projectSearchEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
         m_projectModel.SetSearchText(text);
-        UpdateRecentEmptyState();
+        UpdateProjectListState();
     });
-    connect(m_sortCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
-        m_projectModel.SetSortMode(index == 1 ? ProjectSortMode::Name : ProjectSortMode::LastModified);
-        UpdateRecentEmptyState();
+    auto* findShortcut = new QShortcut(QKeySequence::Find, this);
+    connect(findShortcut, &QShortcut::activated, this, [this]() {
+        m_projectSearchEdit->setFocus(Qt::ShortcutFocusReason);
+        m_projectSearchEdit->selectAll();
     });
+    connect(m_projectList, &QListView::activated, this, &LauncherWindow::OpenProject);
+    connect(m_projectList, &QWidget::customContextMenuRequested, this, &LauncherWindow::ShowProjectContextMenu);
+    return panel;
+}
 
-    connect(m_projectGrid->selectionModel(), &QItemSelectionModel::selectionChanged,
-            this, [this]() { OnProjectSelectionChanged(); });
-    connect(m_projectGrid, &QListView::activated, this, [this](const QModelIndex& index) {
-        OpenProject(index);
-    });
+QWidget* LauncherWindow::BuildModeCards(QWidget* parent)
+{
+    auto* row = new QWidget(parent);
+    row->setObjectName(QStringLiteral("ModeCards"));
+    auto* rowLayout = new QHBoxLayout(row);
+    rowLayout->setContentsMargins(0, 0, 0, 0);
+    rowLayout->setSpacing(16);
 
-    connect(&m_projectDelegate, &ProjectCardDelegate::FavoriteToggled, this,
-            [this](const QModelIndex& index, bool favorite) {
-                SetProjectFavorite(index, favorite);
-            });
+    m_modeButtons = new QButtonGroup(this);
+    for (int i = 0; i < static_cast<int>(std::size(kModeCards)); ++i) {
+        const ModeCard& mode = kModeCards[i];
+        auto* card = new QPushButton(row);
+        card->setObjectName(QStringLiteral("ModeCard"));
+        card->setCheckable(true);
+        card->setCursor(Qt::PointingHandCursor);
+        card->setAccessibleName(tr(mode.title));
+        card->setAccessibleDescription(tr(mode.description));
 
-    connect(m_openButton, &QPushButton::clicked, this, [this]() {
-        OpenProject(CurrentProjectIndex());
-    });
-    connect(m_openBottomButton, &QPushButton::clicked, this, [this]() {
-        OpenProject(CurrentProjectIndex());
-    });
-    connect(m_showExplorerButton, &QPushButton::clicked, this, &LauncherWindow::ShowProjectInExplorer);
-    connect(m_deleteButton, &QPushButton::clicked, this, &LauncherWindow::DeleteSelectedProject);
-    connect(m_openSettingsButton, &QPushButton::clicked, this, &LauncherWindow::OpenSettingsWindow);
-
-    connect(&m_projectScanner, &LauncherProjectScanner::ScanStarted, this, [this]() {
-        m_scanStatusLabel->setText(QStringLiteral("Scanning projects..."));
-    });
-    connect(&m_projectScanner, &LauncherProjectScanner::ScanFinished, this, &LauncherWindow::OnProjectsScanned);
-
-    auto saveSettingsFn = [this]() {
-        if (!m_isInitializingUi) {
-            SaveSettings();
+        auto* cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(17, 15, 17, 15);
+        cardLayout->setSpacing(8);
+        auto* titleRow = new QHBoxLayout();
+        titleRow->setSpacing(8);
+        auto* icon = new QLabel(card);
+        auto* check = new QLabel(card);
+        check->setPixmap(Theme::Icon(QStringLiteral("check"), Theme::IconTone::Action).pixmap(16, 16));
+        titleRow->addWidget(icon);
+        titleRow->addWidget(MakeLabel(tr(mode.title), "ModeCardTitle", card));
+        titleRow->addStretch(1);
+        titleRow->addWidget(check);
+        cardLayout->addLayout(titleRow);
+        auto* description = MakeLabel(tr(mode.description), "ModeCardDescription", card);
+        description->setWordWrap(true);
+        cardLayout->addWidget(description);
+        cardLayout->addStretch(1);
+        for (QLabel* label : card->findChildren<QLabel*>()) {
+            label->setAttribute(Qt::WA_TransparentForMouseEvents);
         }
-    };
 
-    connect(m_editorPathEdit, &QLineEdit::editingFinished, this, saveSettingsFn);
-    connect(m_runtimePathEdit, &QLineEdit::editingFinished, this, saveSettingsFn);
-    connect(m_themeCombo, &QComboBox::currentIndexChanged, this, [saveSettingsFn](int) { saveSettingsFn(); });
-    connect(m_openLastProjectCheck, &QCheckBox::stateChanged, this, [saveSettingsFn](int) { saveSettingsFn(); });
-}
-
-void LauncherWindow::LoadSettings()
-{
-    m_isInitializingUi = true;
-    m_settings = m_projectManager.LoadSettings();
-
-    m_editorPathEdit->setText(m_settings.editorPath);
-    m_runtimePathEdit->setText(m_settings.runtimePath);
-
-    m_projectRootsList->clear();
-    for (const QString& root : m_settings.projectRootFolders) {
-        m_projectRootsList->addItem(root);
-    }
-
-    const int themeIndex = m_themeCombo->findText(m_settings.theme);
-    if (themeIndex >= 0) {
-        m_themeCombo->setCurrentIndex(themeIndex);
-    }
-
-    m_openLastProjectCheck->setChecked(m_settings.openLastProjectOnStartup);
-
-    QString docsRoot = QDir::homePath();
-    if (!m_settings.projectRootFolders.isEmpty()) {
-        docsRoot = m_settings.projectRootFolders.front();
-    }
-    m_newProjectLocationEdit->setText(docsRoot);
-    m_newProjectNameEdit->setText(QStringLiteral("MyHephaestusProject"));
-    UpdateNewProjectPathPreview();
-
-    m_projectDelegate.SetPlaceholderImagePath(ResolvePlaceholderThumbnail());
-
-    m_isInitializingUi = false;
-}
-
-void LauncherWindow::SaveSettings() const
-{
-    LauncherSettings settings = m_settings;
-    settings.editorPath = m_editorPathEdit->text().trimmed();
-    settings.runtimePath = m_runtimePathEdit->text().trimmed();
-    settings.theme = m_themeCombo->currentText();
-    settings.openLastProjectOnStartup = m_openLastProjectCheck->isChecked();
-
-    settings.projectRootFolders.clear();
-    for (int i = 0; i < m_projectRootsList->count(); ++i) {
-        settings.projectRootFolders.push_back(m_projectRootsList->item(i)->text());
-    }
-
-    m_projectManager.SaveSettings(settings);
-}
-
-void LauncherWindow::ApplyTheme()
-{
-#if !HEPHAESTUS_USE_SHARED_ASSETS
-    ApplyFallbackTheme();
-    return;
-#else
-    LoadSharedFonts();
-
-    const QStringList themeCandidates = {
-        ResolveAsset(QStringLiteral("styles/hephaestus_launcher_dark.qss")),
-        ResolveAsset(QStringLiteral("styles/editor_dark.qss")),
-        ResolveAsset(QStringLiteral("styles/hephaestus_dark.qss")),
-        ResolveAsset(QStringLiteral("styles/dark.qss"))
-    };
-
-    const QString themePath = PickFirstExisting(themeCandidates);
-    if (!themePath.isEmpty()) {
-        QFile file(themePath);
-        if (file.open(QIODevice::ReadOnly)) {
-            qApp->setStyleSheet(QString::fromUtf8(file.readAll()));
-            file.close();
-            return;
-        }
-    }
-
-    ApplyFallbackTheme();
-#endif
-}
-
-void LauncherWindow::ApplyFallbackTheme()
-{
-#if !HEPHAESTUS_USE_SHARED_ASSETS
-    QFile qssFile(QStringLiteral(":/fallback/minimal_dark.qss"));
-    if (qssFile.open(QIODevice::ReadOnly)) {
-        qApp->setStyleSheet(QString::fromUtf8(qssFile.readAll()));
-        qssFile.close();
-        return;
-    }
-#endif
-
-    qApp->setStyleSheet(BuiltinMinimalDarkQss());
-}
-
-void LauncherWindow::LoadSharedFonts()
-{
-#if HEPHAESTUS_USE_SHARED_ASSETS
-    if (m_assets.fontsDir.isEmpty()) {
-        return;
-    }
-
-    QDirIterator it(m_assets.fontsDir,
-        QStringList{QStringLiteral("*.ttf"), QStringLiteral("*.otf")},
-        QDir::Files,
-        QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        QFontDatabase::addApplicationFont(it.next());
-    }
-#endif
-}
-
-void LauncherWindow::NavigateToSidebarItem(int row)
-{
-    if (row < 0 || row >= m_mainContent->count()) {
-        return;
-    }
-    if (row == TemplatesPage) {
-        return;
-    }
-    if (row == SettingsPage) {
-        OpenSettingsWindow();
-        if (m_sidebar->currentRow() == SettingsPage) {
-            m_sidebar->setCurrentRow(RecentProjectsPage);
-        }
-        return;
-    }
-    m_mainContent->setCurrentIndex(row);
-}
-
-void LauncherWindow::OpenSettingsWindow()
-{
-    if (!m_settingsWindow) {
-        m_settingsWindow = new Hephaestus::UI::SettingsWindow(this);
-        connect(m_settingsWindow, &QObject::destroyed, this, [this]() {
-            m_settingsWindow = nullptr;
+        const bool chosen = m_settings.newProjectMode == QLatin1String(mode.id);
+        card->setChecked(chosen);
+        check->setVisible(chosen);
+        icon->setPixmap(Theme::Icon(QString::fromLatin1(mode.icon), chosen ? Theme::IconTone::Action : Theme::IconTone::Secondary).pixmap(16, 16));
+        connect(card, &QPushButton::toggled, this, [check, icon, iconName = QString::fromLatin1(mode.icon)](bool on) {
+            check->setVisible(on);
+            icon->setPixmap(Theme::Icon(iconName, on ? Theme::IconTone::Action : Theme::IconTone::Secondary).pixmap(16, 16));
         });
+
+        m_modeButtons->addButton(card, i);
+        rowLayout->addWidget(card, 1);
     }
 
-    m_settingsWindow->ConfigureContext(Hephaestus::EngineContext::Launcher, false, QString());
-    m_settingsWindow->show();
-    m_settingsWindow->raise();
-    m_settingsWindow->activateWindow();
-}
-
-QModelIndex LauncherWindow::CurrentProjectIndex() const
-{
-    if (!m_projectGrid || !m_projectGrid->selectionModel()) {
-        return {};
+    if (!m_modeButtons->checkedButton()) {
+        m_modeButtons->button(0)->setChecked(true);
     }
-    const QModelIndexList selected = m_projectGrid->selectionModel()->selectedIndexes();
-    if (selected.isEmpty()) {
-        return {};
-    }
-    return selected.front();
-}
-
-LauncherProject LauncherWindow::CurrentProject() const
-{
-    return m_projectModel.ProjectAt(CurrentProjectIndex());
+    connect(m_modeButtons, &QButtonGroup::idClicked, this, [this](int id) {
+        m_settings.newProjectMode = QLatin1String(kModeCards[id].id);
+        m_projectManager.SaveSettings(m_settings);
+    });
+    return row;
 }
 
 void LauncherWindow::RefreshProjectsAsync()
@@ -764,76 +334,67 @@ void LauncherWindow::RefreshProjectsAsync()
 
 void LauncherWindow::OnProjectsScanned(const QVector<LauncherProject>& projects)
 {
+    const QString selectedPath = m_projectList->currentIndex().data(ProjectCardModel::ProjectPathRole).toString();
+
     m_projectModel.SetProjects(projects);
     m_projectManager.SaveProjectIndex(projects);
-    UpdateRecentEmptyState();
-    UpdateProjectDetailsPanel();
+    UpdateProjectListState();
 
-    m_scanStatusLabel->setText(QStringLiteral("%1 projects found").arg(projects.size()));
-
-    if (!m_settings.lastOpenedProject.isEmpty()) {
-        const int row = m_projectModel.RowForProjectPath(m_settings.lastOpenedProject);
-        if (row >= 0) {
-            const QModelIndex idx = m_projectModel.index(row, 0);
-            m_projectGrid->setCurrentIndex(idx);
-        }
+    const int row = selectedPath.isEmpty() ? -1 : m_projectModel.RowForProjectPath(selectedPath);
+    if (row >= 0) {
+        m_projectList->setCurrentIndex(m_projectModel.index(row, 0));
+    } else {
+        SelectLastOpenedProject();
     }
 }
 
-void LauncherWindow::OnProjectSelectionChanged()
+void LauncherWindow::SelectLastOpenedProject()
 {
-    UpdateProjectDetailsPanel();
+    const int row = m_projectModel.RowForProjectPath(m_settings.lastOpenedProject);
+    if (row >= 0) {
+        m_projectList->setCurrentIndex(m_projectModel.index(row, 0));
+    }
 }
 
-void LauncherWindow::UpdateRecentEmptyState()
+void LauncherWindow::UpdateProjectListState()
 {
-    const bool empty = (m_projectModel.rowCount() == 0);
-    m_projectGrid->setVisible(!empty);
-    m_emptyStateWidget->setVisible(empty);
-}
-
-void LauncherWindow::UpdateProjectDetailsPanel()
-{
-    const QModelIndex idx = CurrentProjectIndex();
-    const bool hasSelection = idx.isValid();
-
-    if (!hasSelection) {
-        m_selectedNameLabel->setText(QStringLiteral("No project selected"));
-        m_selectedDescriptionLabel->clear();
-        m_selectedCreatedLabel->clear();
-        m_selectedModifiedLabel->clear();
-        m_selectedPathLabel->clear();
-        m_openButton->setEnabled(false);
-        m_openBottomButton->setEnabled(false);
-        m_showExplorerButton->setEnabled(false);
-        m_deleteButton->setEnabled(false);
+    const int rows = m_projectModel.rowCount();
+    m_projectList->setVisible(rows > 0);
+    m_emptyStateLabel->setVisible(rows == 0);
+    if (rows > 0) {
+        m_projectList->setFixedHeight(qMin(rows, kMaxVisibleProjectRows) * ProjectCardDelegate::kRowHeight
+                                      + 2 * m_projectList->frameWidth());
         return;
     }
 
-    const LauncherProject project = m_projectModel.ProjectAt(idx);
-    m_selectedNameLabel->setText(project.name);
-    m_selectedDescriptionLabel->setText(project.description.isEmpty() ? QStringLiteral("No description") : project.description);
-    const QLocale locale;
-    m_selectedCreatedLabel->setText(QStringLiteral("Created: %1").arg(project.created.isValid() ? locale.toString(project.created, QLocale::ShortFormat) : QStringLiteral("Unknown")));
-    m_selectedModifiedLabel->setText(QStringLiteral("Last Modified: %1").arg(project.lastModified.isValid() ? locale.toString(project.lastModified, QLocale::ShortFormat) : QStringLiteral("Unknown")));
-    m_selectedPathLabel->setText(QStringLiteral("Path: %1").arg(project.projectDir));
-
-    const bool canOpen = !project.broken;
-    m_openButton->setEnabled(canOpen);
-    m_openBottomButton->setEnabled(canOpen);
-    m_showExplorerButton->setEnabled(true);
-    m_deleteButton->setEnabled(true);
+    const QString search = m_projectSearchEdit->text().trimmed();
+    m_emptyStateLabel->setText(search.isEmpty()
+        ? tr("No projects yet. Create a new project or open one from disk.")
+        : tr("No projects match \"%1\".").arg(search));
 }
 
-void LauncherWindow::UpdateNewProjectPathPreview()
+void LauncherWindow::ShowProjectContextMenu(const QPoint& position)
 {
-    const QString name = m_newProjectNameEdit->text().trimmed();
-    const QString location = m_newProjectLocationEdit->text().trimmed();
-    if (name.isEmpty() || location.isEmpty()) {
-        m_projectPathPreviewLabel->setText(QStringLiteral("<invalid>"));
+    const QModelIndex index = m_projectList->indexAt(position);
+    if (!index.isValid()) {
         return;
     }
-    m_projectPathPreviewLabel->setText(QDir(location).filePath(name));
+
+    QMenu menu(this);
+    QAction* open = menu.addAction(tr("Open"));
+    open->setEnabled(!index.data(ProjectCardModel::BrokenRole).toBool());
+    QAction* reveal = menu.addAction(tr("Show in Explorer"));
+    menu.addSeparator();
+    QAction* remove = menu.addAction(tr("Delete from disk..."));
+
+    QAction* chosen = menu.exec(m_projectList->viewport()->mapToGlobal(position));
+    if (chosen == open) {
+        OpenProject(index);
+    } else if (chosen == reveal) {
+        ShowProjectInExplorer(index);
+    } else if (chosen == remove) {
+        DeleteProject(index);
+    }
 }
 
 void LauncherWindow::OpenProject(const QModelIndex& index)
@@ -845,108 +406,178 @@ void LauncherWindow::OpenProject(const QModelIndex& index)
     const LauncherProject project = m_projectModel.ProjectAt(index);
     if (project.broken) {
         QMessageBox::warning(this,
-            QStringLiteral("Broken project"),
-            QStringLiteral("This project has invalid metadata and cannot be opened until fixed."));
+            tr("Broken project"),
+            tr("This project has invalid metadata and cannot be opened until fixed."));
+        return;
+    }
+    LaunchEditor(project);
+}
+
+void LauncherWindow::OpenProjectFromDisk()
+{
+    const QString startFolder = m_settings.projectRootFolders.isEmpty() ? QDir::homePath() : m_settings.projectRootFolders.front();
+    const QString projectFile = QFileDialog::getOpenFileName(this, tr("Open project"), startFolder,
+                                                             tr("Hephaestus project (*.heproject)"));
+    if (projectFile.isEmpty()) {
         return;
     }
 
-    QString editorPath = EnsureExecutableExistsOrPrompt(m_editorPathEdit->text().trimmed(), QStringLiteral("Select Editor Executable"));
+    LauncherProject project;
+    if (!m_projectManager.ReadProject(projectFile, &project)) {
+        QMessageBox::warning(this, tr("Open project"), tr("Could not read the project file:\n%1").arg(projectFile));
+        return;
+    }
+
+    QDir parent(project.projectDir);
+    if (parent.cdUp()) {
+        AddProjectRoot(parent.absolutePath());
+    }
+    LaunchEditor(project);
+}
+
+void LauncherWindow::LaunchEditor(const LauncherProject& project)
+{
+    const QString editorPath = EnsureExecutableExistsOrPrompt(m_settings.editorPath, tr("Select Editor Executable"));
     if (editorPath.isEmpty()) {
         return;
     }
 
-    m_editorPathEdit->setText(editorPath);
+    m_settings.editorPath = editorPath;
     m_settings.lastOpenedProject = project.projectDir;
-    SaveSettings();
+    m_projectManager.SaveSettings(m_settings);
 
     QString error;
     if (!m_projectManager.OpenProjectInEditor(project, editorPath, &error)) {
-        QMessageBox::critical(this, QStringLiteral("Open failed"), error);
+        QMessageBox::critical(this, tr("Open failed"), error);
         return;
     }
 
     close();
 }
 
-void LauncherWindow::SetProjectFavorite(const QModelIndex& index, bool favorite)
+void LauncherWindow::DeleteProject(const QModelIndex& index)
 {
-    if (!index.isValid()) {
+    const LauncherProject project = m_projectModel.ProjectAt(index);
+    if (project.projectDir.isEmpty()) {
         return;
     }
 
-    LauncherProject project = m_projectModel.ProjectAt(index);
-    QString error;
-    if (!m_projectManager.SetFavorite(project, favorite, &error)) {
-        QMessageBox::warning(this, QStringLiteral("Favorite update failed"), error);
-        return;
-    }
-
-    m_projectModel.SetFavorite(index, favorite);
-}
-
-void LauncherWindow::DeleteSelectedProject()
-{
-    const QModelIndex idx = CurrentProjectIndex();
-    if (!idx.isValid()) {
-        return;
-    }
-
-    const LauncherProject project = m_projectModel.ProjectAt(idx);
     const QMessageBox::StandardButton answer = QMessageBox::warning(
         this,
-        QStringLiteral("Delete project"),
-        QStringLiteral("Delete project '%1' and all files on disk?\n\nThis cannot be undone.").arg(project.name),
+        tr("Delete project"),
+        tr("Delete project '%1' and all files on disk?\n\nThis cannot be undone.").arg(project.name),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
-
     if (answer != QMessageBox::Yes) {
         return;
     }
 
     QString error;
     if (!m_projectManager.DeleteProject(project, &error)) {
-        QMessageBox::critical(this, QStringLiteral("Delete failed"), error);
+        QMessageBox::critical(this, tr("Delete failed"), error);
         return;
     }
 
     RefreshProjectsAsync();
 }
 
-void LauncherWindow::ShowProjectInExplorer()
+void LauncherWindow::ShowProjectInExplorer(const QModelIndex& index)
 {
-    const LauncherProject project = CurrentProject();
-    if (project.projectDir.isEmpty()) {
-        return;
-    }
-
-    if (!m_projectManager.OpenInExplorer(project.projectDir)) {
-        QMessageBox::warning(this, QStringLiteral("Explorer"), QStringLiteral("Failed to open project folder."));
+    const LauncherProject project = m_projectModel.ProjectAt(index);
+    if (!project.projectDir.isEmpty() && !m_projectManager.OpenInExplorer(project.projectDir)) {
+        QMessageBox::warning(this, tr("Explorer"), tr("Failed to open project folder."));
     }
 }
 
 void LauncherWindow::CreateNewProject()
 {
-    LauncherProject created;
-    QString error;
-    if (!m_projectManager.CreateProject(
-            m_newProjectNameEdit->text().trimmed(),
-            m_newProjectLocationEdit->text().trimmed(),
-            m_engineVersionCombo->currentText(),
-            m_createDefaultSceneCheck->isChecked(),
-            &created,
-            &error)) {
-        QMessageBox::warning(this, QStringLiteral("Create project"), error);
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("New project"));
+    dialog.setMinimumWidth(480);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(20, 20, 20, 16);
+    layout->setSpacing(14);
+
+    auto* form = new QFormLayout();
+    form->setHorizontalSpacing(12);
+    form->setVerticalSpacing(10);
+
+    auto* nameEdit = new QLineEdit(QStringLiteral("MyHephaestusProject"), &dialog);
+    auto* locationEdit = new QLineEdit(m_settings.projectRootFolders.isEmpty() ? QDir::homePath()
+                                                                               : m_settings.projectRootFolders.front(), &dialog);
+    auto* browseButton = new QPushButton(tr("Browse..."), &dialog);
+    auto* locationRow = new QHBoxLayout();
+    locationRow->setSpacing(8);
+    locationRow->addWidget(locationEdit, 1);
+    locationRow->addWidget(browseButton);
+    auto* defaultSceneCheck = new QCheckBox(tr("Create a default scene"), &dialog);
+    defaultSceneCheck->setChecked(true);
+    auto* pathPreview = new QLabel(&dialog);
+    pathPreview->setProperty("role", QStringLiteral("caption"));
+    pathPreview->setWordWrap(true);
+
+    form->addRow(tr("Name"), nameEdit);
+    form->addRow(tr("Location"), locationRow);
+    form->addRow(QString(), defaultSceneCheck);
+    form->addRow(QString(), pathPreview);
+    layout->addLayout(form);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
+    QPushButton* createButton = buttons->addButton(tr("Create"), QDialogButtonBox::AcceptRole);
+    createButton->setDefault(true);
+    layout->addWidget(buttons);
+
+    const auto updatePreview = [&]() {
+        const QString name = nameEdit->text().trimmed();
+        const QString location = locationEdit->text().trimmed();
+        const bool valid = !name.isEmpty() && !location.isEmpty();
+        createButton->setEnabled(valid);
+        pathPreview->setText(valid ? QDir::toNativeSeparators(QDir(location).filePath(name)) : QString());
+    };
+    updatePreview();
+    connect(nameEdit, &QLineEdit::textChanged, &dialog, updatePreview);
+    connect(locationEdit, &QLineEdit::textChanged, &dialog, updatePreview);
+    connect(browseButton, &QPushButton::clicked, &dialog, [&]() {
+        const QString selected = QFileDialog::getExistingDirectory(&dialog, tr("Select Project Location"), locationEdit->text().trimmed());
+        if (!selected.isEmpty()) {
+            locationEdit->setText(selected);
+        }
+    });
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) {
         return;
     }
 
-    if (!m_settings.projectRootFolders.contains(m_newProjectLocationEdit->text().trimmed())) {
-        m_settings.projectRootFolders.push_back(m_newProjectLocationEdit->text().trimmed());
-        m_projectRootsList->addItem(m_newProjectLocationEdit->text().trimmed());
-        SaveSettings();
+    const QString location = locationEdit->text().trimmed();
+    QString error;
+    if (!m_projectManager.CreateProject(
+            nameEdit->text().trimmed(),
+            location,
+            Hephaestus::Tools::VersionInfo::EngineVersion(),
+            defaultSceneCheck->isChecked(),
+            m_settings.newProjectMode,
+            nullptr,
+            &error)) {
+        QMessageBox::warning(this, tr("Create project"), error);
+        return;
     }
 
-    NavigateToSidebarItem(RecentProjectsPage);
+    AddProjectRoot(location);
     RefreshProjectsAsync();
+}
+
+void LauncherWindow::AddProjectRoot(const QString& folder)
+{
+    for (const QString& root : m_settings.projectRootFolders) {
+        if (QDir::cleanPath(root) == QDir::cleanPath(folder)) {
+            return;
+        }
+    }
+    m_settings.projectRootFolders.push_back(folder);
+    m_projectManager.SaveSettings(m_settings);
 }
 
 QString LauncherWindow::EnsureExecutableExistsOrPrompt(const QString& currentPath, const QString& dialogTitle)
@@ -957,175 +588,18 @@ QString LauncherWindow::EnsureExecutableExistsOrPrompt(const QString& currentPat
     }
 
     QMessageBox::warning(this,
-        QStringLiteral("Executable not found"),
-        QStringLiteral("%1\n\nPlease choose the executable path.").arg(currentPath));
+        tr("Executable not found"),
+        tr("%1\n\nPlease choose the executable path.").arg(currentPath));
 
-    const QString picked = QFileDialog::getOpenFileName(this,
+    return QFileDialog::getOpenFileName(this,
         dialogTitle,
         Hephaestus::Tools::PathUtils::ExecutableDir(),
 #if defined(Q_OS_WIN)
-        QStringLiteral("Executable (*.exe)")
+        tr("Executable (*.exe)")
 #else
-        QStringLiteral("Executable (*)")
+        tr("Executable (*)")
 #endif
     );
-
-    return picked;
-}
-
-QIcon LauncherWindow::LoadIcon(const QString& relativePath) const
-{
-#if !HEPHAESTUS_USE_SHARED_ASSETS
-    const QString resourcePath = QStringLiteral(":/fallback/") + QFileInfo(relativePath).fileName();
-    QIcon icon(resourcePath);
-    if (!icon.isNull()) {
-        return icon;
-    }
-    return style()->standardIcon(QStyle::SP_FileIcon);
-#else
-    QString resolved = ResolveAsset(relativePath);
-    if (resolved.isEmpty()) {
-        return style()->standardIcon(QStyle::SP_FileIcon);
-    }
-
-#if !HEPHAESTUS_QT_SVG_AVAILABLE
-    if (resolved.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
-        resolved.chop(4);
-        resolved += QStringLiteral(".png");
-    }
-#endif
-
-    QIcon icon(resolved);
-    if (!icon.isNull()) {
-        return icon;
-    }
-
-    return style()->standardIcon(QStyle::SP_FileIcon);
-#endif
-}
-
-QString LauncherWindow::ResolveAsset(const QString& relativePath) const
-{
-#if !HEPHAESTUS_USE_SHARED_ASSETS
-    Q_UNUSED(relativePath);
-    return {};
-#else
-    if (m_assets.IsValid()) {
-        const QString direct = m_assets.Resolve(relativePath);
-        if (QFileInfo::exists(direct)) {
-            return direct;
-        }
-
-        if (!m_assets.iconsDir.isEmpty() && relativePath.startsWith(QStringLiteral("icons/"), Qt::CaseInsensitive)) {
-            const QString stripped = relativePath.mid(QStringLiteral("icons/").size());
-            const QString candidate = QDir(m_assets.iconsDir).filePath(stripped);
-            if (QFileInfo::exists(candidate)) {
-                return candidate;
-            }
-        }
-
-        if (!m_assets.imagesDir.isEmpty() && relativePath.startsWith(QStringLiteral("images/"), Qt::CaseInsensitive)) {
-            const QString stripped = relativePath.mid(QStringLiteral("images/").size());
-            const QString candidate = QDir(m_assets.imagesDir).filePath(stripped);
-            if (QFileInfo::exists(candidate)) {
-                return candidate;
-            }
-        }
-
-        if (!m_assets.stylesDir.isEmpty() && relativePath.startsWith(QStringLiteral("styles/"), Qt::CaseInsensitive)) {
-            const QString stripped = relativePath.mid(QStringLiteral("styles/").size());
-            const QString candidate = QDir(m_assets.stylesDir).filePath(stripped);
-            if (QFileInfo::exists(candidate)) {
-                return candidate;
-            }
-        }
-    }
-
-    return {};
-#endif
-}
-
-QString LauncherWindow::ResolvePlaceholderThumbnail() const
-{
-    const QStringList candidates = {
-        ResolveAsset(QStringLiteral("icons/logo/256px.png")),
-        ResolveAsset(QStringLiteral("icons/logo/128px.png")),
-        ResolveAsset(QStringLiteral("images/placeholder_project.png"))
-    };
-    return PickFirstExisting(candidates);
-}
-
-void LauncherWindow::OnBrowseNewProjectLocation()
-{
-    const QString selected = QFileDialog::getExistingDirectory(
-        this,
-        QStringLiteral("Select Project Location"),
-        m_newProjectLocationEdit->text().trimmed()
-    );
-
-    if (!selected.isEmpty()) {
-        m_newProjectLocationEdit->setText(selected);
-        UpdateNewProjectPathPreview();
-    }
-}
-
-void LauncherWindow::OnBrowseEditorPath()
-{
-    const QString resolved = EnsureExecutableExistsOrPrompt(m_editorPathEdit->text().trimmed(),
-        QStringLiteral("Select Editor Executable"));
-    if (resolved.isEmpty()) {
-        return;
-    }
-
-    m_editorPathEdit->setText(resolved);
-    SaveSettings();
-}
-
-void LauncherWindow::OnBrowseRuntimePath()
-{
-    const QString resolved = EnsureExecutableExistsOrPrompt(m_runtimePathEdit->text().trimmed(),
-        QStringLiteral("Select Runtime Executable"));
-    if (resolved.isEmpty()) {
-        return;
-    }
-
-    m_runtimePathEdit->setText(resolved);
-    SaveSettings();
-}
-
-void LauncherWindow::OnAddProjectRoot()
-{
-    const QString selected = QFileDialog::getExistingDirectory(
-        this,
-        QStringLiteral("Add Project Root Folder"),
-        QDir::homePath());
-    if (selected.isEmpty()) {
-        return;
-    }
-
-    for (int i = 0; i < m_projectRootsList->count(); ++i) {
-        if (QDir::cleanPath(m_projectRootsList->item(i)->text()) == QDir::cleanPath(selected)) {
-            return;
-        }
-    }
-
-    m_projectRootsList->addItem(selected);
-    SaveSettings();
-    m_settings = m_projectManager.LoadSettings();
-    RefreshProjectsAsync();
-}
-
-void LauncherWindow::OnRemoveProjectRoot()
-{
-    auto* item = m_projectRootsList->currentItem();
-    if (!item) {
-        return;
-    }
-
-    delete item;
-    SaveSettings();
-    m_settings = m_projectManager.LoadSettings();
-    RefreshProjectsAsync();
 }
 
 } // namespace Hephaestus::Launcher
