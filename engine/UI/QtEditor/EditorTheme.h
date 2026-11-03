@@ -91,6 +91,9 @@ enum class IconTone
  */
 QIcon Icon(const QString& name, IconTone tone = IconTone::Secondary);
 
+/** The Hephaestus logo from Branding/logo/svgs/HephaestusEngineLogo-Main.svg. */
+QIcon BrandLogo();
+
 /** Installs fonts, the Fusion base style, the palette and the stylesheet. */
 void Apply(QApplication& app);
 

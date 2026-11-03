@@ -328,11 +328,33 @@ QIcon Icon(const QString& name, IconTone tone)
     return icon;
 }
 
+QIcon BrandLogo()
+{
+    static QIcon icon;
+    if (icon.isNull()) {
+        QSvgRenderer renderer(QStringLiteral(":/editor/branding/logo.svg"));
+        if (!renderer.isValid()) {
+            qWarning("Editor theme: the brand logo resource is missing");
+            return icon;
+        }
+        for (int size : { 16, 24, 32, 48, 64, 128, 256 }) {
+            QPixmap pixmap(size, size);
+            pixmap.fill(Qt::transparent);
+            QPainter painter(&pixmap);
+            renderer.render(&painter);
+            painter.end();
+            icon.addPixmap(pixmap);
+        }
+    }
+    return icon;
+}
+
 void Apply(QApplication& app)
 {
     LoadBundledFonts();
 
     app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    app.setWindowIcon(BrandLogo());
     app.setPalette(BuildPalette());
 
     QFont font = app.font();

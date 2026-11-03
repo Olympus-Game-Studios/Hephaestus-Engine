@@ -2,6 +2,7 @@
 <RCC version="1.0">
 <qresource prefix="/editor">
     <file alias="theme/editor.qss">editor.qss</file>
+    <file alias="branding/logo.svg">../../../../Branding/logo/svgs/HephaestusEngineLogo-Main.svg</file>
     <file alias="icons/audio.svg">../../../../Branding/design-system-export/icons/audio.svg</file>
     <file alias="icons/bell.svg">../../../../Branding/design-system-export/icons/bell.svg</file>
     <file alias="icons/branch.svg">../../../../Branding/design-system-export/icons/branch.svg</file>
@@ -73,7 +74,6 @@
     <file alias="icons/unlock.svg">../../../../Branding/design-system-export/icons/unlock.svg</file>
     <file alias="icons/volume.svg">../../../../Branding/design-system-export/icons/volume.svg</file>
     <file alias="icons/warning.svg">../../../../Branding/design-system-export/icons/warning.svg</file>
-    <file alias="icons/arrow-up.svg">icons/arrow-up.svg</file>
     <file alias="icons/character.svg">icons/character.svg</file>
 </qresource>
 </RCC>

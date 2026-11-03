@@ -1615,7 +1615,7 @@ void EditorMainWindow::setupTopToolbar()
         layout->setSpacing(8);
 
         auto* logo = new QLabel(header);
-        logo->setPixmap(Theme::Icon(QStringLiteral("logo"), Theme::IconTone::Brand).pixmap(QSize(16, 16), devicePixelRatioF()));
+        logo->setPixmap(Theme::BrandLogo().pixmap(QSize(18, 18), devicePixelRatioF()));
         layout->addWidget(logo);
         auto* brand = new QLabel(tr("Hephaestus"), header);
         brand->setObjectName(QStringLiteral("EditorBrand"));
