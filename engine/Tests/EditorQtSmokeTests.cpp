@@ -8,6 +8,8 @@
 
 #include "UI/QtEditor/PropertyEditors.h"
 #include "UI/QtEditor/EditorCommandSearch.h"
+#include "UI/QtEditor/EditorConsolePanel.h"
+#include "Core/EngineLog.h"
 #include "UI/QtEditor/EditorTheme.h"
 
 #include <QtTest/QtTest>
@@ -17,6 +19,8 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
+#include <QToolButton>
+#include <QTreeWidget>
 
 class EditorQtSmokeTests : public QObject {
     Q_OBJECT
@@ -97,6 +101,27 @@ private slots:
         emit completer->activated(completer->completionModel()->index(0, 0));
         QCOMPARE(triggered.count(), 1);
         QVERIFY(search.text().isEmpty());
+    }
+
+    // The Console lists new engine log entries and filters them by level.
+    void consolePanelListsAndFiltersLogEntries() {
+        Hephaestus::QtEditor::EditorConsolePanel panel;
+        auto* list = panel.findChild<QTreeWidget*>(QStringLiteral("ConsoleList"));
+        QVERIFY(list);
+        const int before = list->topLevelItemCount();
+        Hephaestus::EngineLog::RecordOnly(Hephaestus::EngineLogLevel::Warning, "console test warning", "tests");
+        QTRY_COMPARE(list->topLevelItemCount(), before + 1);
+        QTreeWidgetItem* row = list->topLevelItem(list->topLevelItemCount() - 1);
+        QCOMPARE(row->text(1), QStringLiteral("TESTS"));
+        QCOMPARE(row->text(2), QStringLiteral("console test warning"));
+        QToolButton* warnings = nullptr;
+        for (auto* button : panel.findChildren<QToolButton*>(QStringLiteral("ConsoleLevel")))
+            if (button->property("level").toString() == QLatin1String("warning")) warnings = button;
+        QVERIFY(warnings && warnings->text().startsWith(QStringLiteral("Warnings")));
+        warnings->setChecked(false);
+        QVERIFY(row->isHidden());
+        warnings->setChecked(true);
+        QVERIFY(!row->isHidden());
     }
 };
 

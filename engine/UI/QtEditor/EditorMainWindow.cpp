@@ -39,6 +39,7 @@
 #include "RuntimeUIOverlayWidget.h"
 #include "EditorNotificationService.h"
 #include "EditorCommandSearch.h"
+#include "EditorConsolePanel.h"
 #include "EditorDockTitleBar.h"
 #include "EditorTheme.h"
 #include "EditorPluginHost.h"
@@ -2701,6 +2702,14 @@ void EditorMainWindow::setupDockWidgets()
     InstallDockTitleBar(m_buildOutputDock);
     addDockWidget(Qt::BottomDockWidgetArea, m_buildOutputDock);
     tabifyDockWidget(m_assetBrowserDock, m_buildOutputDock);
+
+    // tabifyDockWidget inserts after the first dock's tab, so this keeps Content Browser, Console, Output.
+    m_consoleDock = new QDockWidget(tr("Console"), this);
+    m_consoleDock->setObjectName("ConsoleDock");
+    m_consoleDock->setWidget(new EditorConsolePanel(m_consoleDock));
+    InstallDockTitleBar(m_consoleDock);
+    addDockWidget(Qt::BottomDockWidgetArea, m_consoleDock);
+    tabifyDockWidget(m_assetBrowserDock, m_consoleDock);
     m_assetBrowserDock->raise(); // Asset browser stays visible by default
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -2733,6 +2742,7 @@ void EditorMainWindow::setupDockWidgets()
         viewMenu->addAction(m_addActorsDock->toggleViewAction());
         viewMenu->addAction(m_detailsDock->toggleViewAction());
         viewMenu->addAction(m_assetBrowserDock->toggleViewAction());
+        viewMenu->addAction(m_consoleDock->toggleViewAction());
         viewMenu->addAction(m_buildOutputDock->toggleViewAction());
         
         // Viewport rendering toggles are added after engine initialization

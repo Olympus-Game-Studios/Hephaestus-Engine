@@ -317,6 +317,7 @@ private:
     QDockWidget* m_outlinerDock = nullptr;
     QDockWidget* m_detailsDock = nullptr;
     QDockWidget* m_assetBrowserDock = nullptr;
+    QDockWidget* m_consoleDock = nullptr;
     QDockWidget* m_addActorsDock = nullptr;
 
     // Top toolbar

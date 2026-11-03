@@ -568,6 +568,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/EditorCommandSearch.h
             engine/UI/QtEditor/EditorDockTitleBar.cpp
             engine/UI/QtEditor/EditorDockTitleBar.h
+            engine/UI/QtEditor/EditorConsolePanel.cpp
+            engine/UI/QtEditor/EditorConsolePanel.h
             engine/UI/QtEditor/EditorTheme.cpp
             engine/UI/QtEditor/EditorTheme.h
             engine/UI/QtEditor/Resources/EditorResources.qrc
@@ -2082,6 +2084,7 @@ if(HEPHAESTUS_BUILD_QT_TESTS AND HEPHAESTUS_USE_QT AND Qt6_FOUND)
             engine/UI/QtEditor/PropertyEditors.cpp
             engine/UI/QtEditor/PropertyEditors.h
             engine/UI/QtEditor/EditorCommandSearch.cpp
+            engine/UI/QtEditor/EditorConsolePanel.cpp
             engine/UI/QtEditor/EditorTheme.cpp
             engine/UI/QtEditor/Resources/EditorResources.qrc
         )

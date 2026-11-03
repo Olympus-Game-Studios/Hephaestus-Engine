@@ -799,3 +799,25 @@ QLabel#EmptyStateTitle {
 QWidget#AssetBrowserRoot QSplitter::handle {
     background: @border-subtle;
 }
+
+QWidget#ConsoleBar {
+    background: @surface-panel;
+    border-bottom: 1px solid @border-subtle;
+}
+QToolButton#ConsoleLevel {
+    padding: 3px 8px;
+    color: @text-muted;
+}
+QToolButton#ConsoleLevel:checked {
+    background: @surface-raised;
+}
+QToolButton#ConsoleLevel[level="warning"]:checked { color: @status-warning; }
+QToolButton#ConsoleLevel[level="error"]:checked { color: @status-error; }
+QToolButton#ConsoleLevel[level="info"]:checked { color: @text-secondary; }
+QTreeWidget#ConsoleList {
+    font-family: "JetBrains Mono", "Consolas", monospace;
+    font-size: 12px;
+}
+QTreeWidget#ConsoleList::item {
+    min-height: 22px;
+}
