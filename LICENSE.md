@@ -2,13 +2,13 @@
 
 Version 1.0
 
-Copyright (c) 2026 [LICENSOR LEGAL NAME]. All rights reserved except as granted below.
+Copyright (c) 2026 Andrew Zambazos. All rights reserved except as granted below.
 
 The Hephaestus Engine is source available. It is **not** open source. You can read the source, build it, use it to make games and contribute improvements. You can't redistribute the engine or sell a modified version of it without our written permission.
 
 ## 1. Definitions
 
-- **"Licensor"**, **"we"** and **"us"** mean [LICENSOR LEGAL NAME].
+- **"Licensor"**, **"we"** and **"us"** mean Andrew Zambazos and any person or company he assigns his rights in the Software to.
 - **"You"** means the person or legal entity exercising rights under this License.
 - **"Software"** means the Hephaestus Engine as made available by us, in source or binary form, including the editor, launcher, game runtime, tools, plugins, shaders, scripts, assets and documentation, wherever you got it (including GitHub and Steam).
 - **"Modification"** means any change to, addition to or work derived from the Software.
@@ -47,7 +47,7 @@ Anyone who wants to make a separate game with the editor must get the Software f
 
 ### Royalty
 
-1. Each Product is royalty free until its lifetime Gross Revenue reaches [THRESHOLD, e.g. USD 1,000,000]. After that, You owe us [ROYALTY, e.g. 5]% of the Product's Gross Revenue above that amount.
+1. Each Product is royalty free until its lifetime Gross Revenue reaches USD 1,000,000. After that, You owe us 5% of the Product's Gross Revenue above that amount.
 2. **"Gross Revenue"** means all money earned from a Product and its add-ons, in-app purchases, subscriptions and advertising, before deducting store fees, taxes or costs, less refunds and chargebacks actually given.
 3. You must tell us within 30 days of the end of the first calendar quarter in which a Product passes the threshold, and then report Gross Revenue and pay the royalty for each calendar quarter within 45 days of its end.
 4. We may agree different or reduced royalty terms with You in writing.
@@ -68,7 +68,7 @@ By submitting a Contribution You:
 
 ## 6. Commercial and custom licenses
 
-We offer other license terms, including source and redistribution rights for studios and companies. If You want rights this License doesn't give You, contact us at [CONTACT EMAIL].
+We offer other license terms, including source and redistribution rights for studios and companies. If You want rights this License doesn't give You, contact us at licensing@olympusgames.dev.
 
 ## 7. Third party components
 
