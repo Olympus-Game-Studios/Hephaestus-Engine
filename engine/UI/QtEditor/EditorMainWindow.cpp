@@ -44,6 +44,7 @@
 #include "ProjectSearchPanel.h"
 #include "../../Scripting/LuaDebugger.h"
 #include "EditorConsolePanel.h"
+#include "EditorSystemUsage.h"
 #include "EditorDockTitleBar.h"
 #include "EditorTheme.h"
 #include "EditorPluginHost.h"
@@ -343,7 +344,7 @@ public:
 } // namespace
 
 // Bump when the default dock layout changes so older saved layouts are not restored over it.
-constexpr int kDockLayoutVersion = 5;
+constexpr int kDockLayoutVersion = 6;
 constexpr int kEditorModeCount = 3;
 // Also the project file's "editorMode" values, which the launcher writes for new projects.
 constexpr const char* kEditorModeNames[kEditorModeCount] = { "default", "artist", "programmer" };
@@ -3398,7 +3399,58 @@ void EditorMainWindow::setupStatusBar()
     status->addPermanentWidget(codeStatus);
     status->addPermanentWidget(m_statusSelection);
     status->addPermanentWidget(m_statusFps);
+
+    m_systemUsage = std::make_unique<EditorSystemUsage>();
+    QMenu* statusMenu = nullptr;
+    for (QMenu* menu : m_menuBar->findChildren<QMenu*>()) {
+        if (menu->title() == tr("&View")) {
+            statusMenu = menu->addMenu(tr("Status Bar"));
+            break;
+        }
+    }
+    status->setContextMenuPolicy(Qt::ActionsContextMenu);
+    QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Editor"));
+    const struct { const char* key; const char* label; QLabel** target; bool available; } readouts[] = {
+        { "ram", QT_TR_NOOP("RAM usage"), &m_statusRam, true },
+        { "cpu", QT_TR_NOOP("CPU usage"), &m_statusCpu, true },
+        { "gpu", QT_TR_NOOP("GPU usage"), &m_statusGpu, m_systemUsage->GpuSupported() },
+    };
+    for (const auto& readout : readouts) {
+        auto* label = new QLabel(status);
+        label->setProperty("role", "muted");
+        *readout.target = label;
+        status->addPermanentWidget(label);
+        auto* toggle = new QAction(tr(readout.label), status);
+        toggle->setCheckable(true);
+        toggle->setEnabled(readout.available);
+        const QString key = QStringLiteral("statusBar/%1").arg(QLatin1String(readout.key));
+        toggle->setChecked(readout.available && settings.value(key, true).toBool());
+        if (!readout.available) toggle->setToolTip(tr("Not available on this platform"));
+        label->setVisible(toggle->isChecked());
+        connect(toggle, &QAction::toggled, label, [label, key](bool shown) {
+            label->setVisible(shown);
+            QSettings(QStringLiteral("Hephaestus"), QStringLiteral("Editor")).setValue(key, shown);
+        });
+        status->addAction(toggle);
+        if (statusMenu) statusMenu->addAction(toggle);
+    }
+    auto* usageTimer = new QTimer(this);
+    connect(usageTimer, &QTimer::timeout, this, &EditorMainWindow::updateSystemUsage);
+    usageTimer->start(1000);
+    updateSystemUsage();
+
     status->showMessage(tr("Initializing engine..."));
+}
+
+void EditorMainWindow::updateSystemUsage()
+{
+    m_systemUsage->Sample();
+    const double ramMB = getProcessMemoryMB();
+    m_statusRam->setText(ramMB >= 0.0 ? tr("RAM %1 MB").arg(ramMB, 0, 'f', 0) : tr("RAM --"));
+    const double cpu = m_systemUsage->CpuPercent();
+    m_statusCpu->setText(cpu >= 0.0 ? tr("CPU %1%").arg(cpu, 0, 'f', 1) : tr("CPU --"));
+    const double gpu = m_systemUsage->GpuPercent();
+    m_statusGpu->setText(gpu >= 0.0 ? tr("GPU %1%").arg(gpu, 0, 'f', 0) : tr("GPU --"));
 }
 
 bool EditorMainWindow::initializeEngine()
@@ -4426,6 +4478,21 @@ void EditorMainWindow::arrangeModeLayout(EditorMode mode)
         addDockWidget(area, dock);
         dock->show();
     };
+    // Default and Artist: Content Browser, Console, Output, Search, Debugger as one tab group.
+    auto placeBottomTabs = [this, &place]() {
+        for (QDockWidget* dock : { m_assetBrowserDock, m_consoleDock, m_buildOutputDock, m_searchDock, m_debuggerDock }) {
+            place(dock, Qt::BottomDockWidgetArea);
+        }
+        for (QDockWidget* dock : { m_consoleDock, m_buildOutputDock, m_searchDock, m_debuggerDock }) {
+            tabifyDockWidget(m_assetBrowserDock, dock);
+        }
+        m_assetBrowserDock->raise();
+    };
+    // The Code panel stays docked but closed outside Programmer mode; View opens it.
+    auto placeHiddenCodeDock = [this](Qt::DockWidgetArea area) {
+        addDockWidget(area, m_codeEditorDock);
+        m_codeEditorDock->hide();
+    };
 
     // Dock sizes only apply once the new arrangement has been laid out.
     QTimer::singleShot(0, this, [this, mode]() {
@@ -4450,21 +4517,15 @@ void EditorMainWindow::arrangeModeLayout(EditorMode mode)
     case EditorMode::Default:
         place(m_outlinerDock, Qt::LeftDockWidgetArea);
         place(m_detailsDock, Qt::RightDockWidgetArea);
-        place(m_assetBrowserDock, Qt::BottomDockWidgetArea);
-        place(m_consoleDock, Qt::BottomDockWidgetArea);
-        place(m_buildOutputDock, Qt::BottomDockWidgetArea);
-        tabifyDockWidget(m_assetBrowserDock, m_buildOutputDock);
-        tabifyDockWidget(m_assetBrowserDock, m_consoleDock);
-        m_assetBrowserDock->raise();
+        placeBottomTabs();
+        placeHiddenCodeDock(Qt::LeftDockWidgetArea);
         break;
     case EditorMode::Artist:
         place(m_outlinerDock, Qt::RightDockWidgetArea);
         place(m_detailsDock, Qt::RightDockWidgetArea);
         splitDockWidget(m_outlinerDock, m_detailsDock, Qt::Vertical);
-        place(m_assetBrowserDock, Qt::BottomDockWidgetArea);
-        place(m_consoleDock, Qt::BottomDockWidgetArea);
-        tabifyDockWidget(m_assetBrowserDock, m_consoleDock);
-        m_assetBrowserDock->raise();
+        placeBottomTabs();
+        placeHiddenCodeDock(Qt::LeftDockWidgetArea);
         break;
     case EditorMode::Programmer:
         // Split before tabifying: splitting a dock that is already in a tab group drops the group off-screen.
