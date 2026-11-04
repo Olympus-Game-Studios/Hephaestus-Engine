@@ -1274,3 +1274,54 @@ QLabel#ModeCardTitle {
 QLabel#ModeCardDescription {
     color: @text-secondary;
 }
+
+QWidget#EditorPanel {
+    background: @surface-panel;
+}
+QLabel#StatusBadge {
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: @text-secondary;
+    background: @surface-control;
+}
+QLabel#StatusBadge[tone="success"] {
+    color: @status-success;
+    background: @status-success-bg;
+}
+QLabel#StatusBadge[tone="error"] {
+    color: @status-error;
+    background: @status-error-bg;
+}
+QLabel#StatusBadge[tone="warning"] {
+    color: @status-warning;
+    background: @status-warning-bg;
+}
+QLabel#StatusBadge[tone="action"] {
+    color: @text-link;
+    background: @status-info-bg;
+}
+QLabel[role="section"] {
+    color: @text-muted;
+    font-size: 11px;
+    font-weight: 600;
+    padding-top: 12px;
+    padding-bottom: 2px;
+}
+QListWidget#WidgetPalette {
+    padding: 4px;
+}
+QListWidget#WidgetPalette::item {
+    background: @surface-raised;
+    border: 1px solid @border-subtle;
+    border-radius: 6px;
+    color: @text-secondary;
+}
+QListWidget#WidgetPalette::item:hover {
+    background: @surface-hover;
+}
+QListWidget#WidgetPalette::item:selected {
+    border-color: @border-focus;
+    background: @surface-selected;
+}

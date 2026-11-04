@@ -1,6 +1,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "HUIVisualEditorDialog.h"
+#include "EditorDockTitleBar.h"
 #include "EditorTheme.h"
 
 #include "../../Assets/AssetManager.h"
@@ -25,7 +26,6 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
-#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeySequence>
@@ -95,6 +95,44 @@ QString WidgetTypeLabel(HUIWidgetType type)
         case HUIWidgetType::Image: return QObject::tr("Image");
     }
     return QObject::tr("Widget");
+}
+
+QIcon WidgetTypeIcon(HUIWidgetType type, const QSize& size)
+{
+    const qreal dpr = 2.0;
+    QPixmap pixmap(size * dpr);
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QColor ink = Theme::Color(Theme::Token::TextSecondary);
+    const qreal w = size.width();
+    const qreal h = size.height();
+    const qreal u = std::min(w / 28.0, h / 20.0);
+    const QPointF o((w - 28.0 * u) * 0.5, (h - 20.0 * u) * 0.5);
+    auto box = [&](qreal x, qreal y, qreal bw, qreal bh) { return QRectF(o.x() + x * u, o.y() + y * u, bw * u, bh * u); };
+    auto outline = [&](const QRectF& r, qreal radius) {
+        painter.setPen(QPen(ink, 1.4));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRoundedRect(r.adjusted(0.7, 0.7, -0.7, -0.7), radius * u, radius * u);
+    };
+    auto fill = [&](const QRectF& r) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(ink);
+        painter.drawRoundedRect(r, u, u);
+    };
+    switch (type) {
+        case HUIWidgetType::Panel: outline(box(2, 2, 24, 16), 3); break;
+        case HUIWidgetType::Canvas: outline(box(2, 2, 24, 16), 1); fill(box(5, 5, 7, 5)); break;
+        case HUIWidgetType::VerticalBox: fill(box(4, 2, 20, 4)); fill(box(4, 8, 20, 4)); fill(box(4, 14, 20, 4)); break;
+        case HUIWidgetType::HorizontalBox: fill(box(3, 3, 6, 14)); fill(box(11, 3, 6, 14)); fill(box(19, 3, 6, 14)); break;
+        case HUIWidgetType::Grid: fill(box(5, 1, 8, 8)); fill(box(15, 1, 8, 8)); fill(box(5, 11, 8, 8)); fill(box(15, 11, 8, 8)); break;
+        case HUIWidgetType::Text: fill(box(3, 5, 22, 3)); fill(box(3, 12, 14, 3)); break;
+        case HUIWidgetType::Button: outline(box(2, 4, 24, 12), 6); fill(box(9, 9, 10, 2)); break;
+        case HUIWidgetType::Image: outline(box(2, 2, 24, 16), 2); fill(box(6, 6, 4, 4)); break;
+    }
+    painter.end();
+    return QIcon(pixmap);
 }
 
 QString WidgetTypeKey(HUIWidgetType type)
@@ -278,13 +316,14 @@ void StyleInspectorColorPickerButton(QPushButton* button, const QColor& color, c
         "QPushButton {"
         "  background-color: %1;"
         "  color: %2;"
-        "  border: 1px solid #555;"
+        "  border: 1px solid %3;"
         "  border-radius: 4px;"
         "  padding: 4px 8px;"
         "  font-family: monospace;"
         "}"
-        "QPushButton:hover { border: 1px solid #4C8DFF; }"
-    ).arg(color.name(QColor::HexArgb), fg));
+        "QPushButton:hover { border: 1px solid %4; }"
+    ).arg(color.name(QColor::HexArgb), fg, Theme::Color(Theme::Token::BorderDefault).name(),
+          Theme::Color(Theme::Token::BorderFocus).name()));
 }
 
 UIStyle EditorDefaultButtonBaseStyle()
@@ -842,14 +881,14 @@ protected:
     void paintEvent(QPaintEvent*) override
     {
         QPainter painter(this);
-        painter.fillRect(rect(), QColor(27, 28, 32));
+        painter.fillRect(rect(), Theme::Color(Theme::Token::SurfaceViewport));
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setRenderHint(QPainter::TextAntialiasing, true);
         painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
 
         const QRectF screen = previewRect();
-        painter.setPen(QPen(QColor(70, 74, 82), 1.0));
-        painter.setBrush(QColor(36, 39, 46));
+        painter.setPen(QPen(Theme::Color(Theme::Token::BorderDefault), 1.0));
+        painter.setBrush(Theme::Color(Theme::Token::SurfaceRaised));
         painter.drawRect(screen);
 
         painter.save();
@@ -877,7 +916,7 @@ protected:
 
         if (!m_previewMode && m_gridVisible) {
             painter.setOpacity(0.35);
-            painter.setPen(QPen(QColor(120, 125, 140, 80), 1.0));
+            painter.setPen(QPen(Theme::Color(Theme::Token::BorderDefault), 1.0));
             const float step = static_cast<float>(m_gridStep);
             for (float x = 0.0f; x <= static_cast<float>(m_previewSize.width()) + 0.5f; x += step) {
                 const QPointF a = designToScreen(QPointF(x, 0.0));
@@ -895,14 +934,14 @@ protected:
         if (!m_previewMode && m_showCenterGuides) {
             const float cx = static_cast<float>(m_previewSize.width()) * 0.5f;
             const float cy = static_cast<float>(m_previewSize.height()) * 0.5f;
-            painter.setPen(QPen(QColor(180, 120, 255, 90), 1.0));
+            painter.setPen(QPen(Theme::Color(Theme::Token::AccentBrand), 1.0, Qt::DashLine));
             painter.drawLine(designToScreen(QPointF(cx, 0.0)), designToScreen(QPointF(cx, static_cast<float>(m_previewSize.height()))));
             painter.drawLine(designToScreen(QPointF(0.0f, cy)), designToScreen(QPointF(static_cast<float>(m_previewSize.width()), cy)));
         }
 
         if (!m_guideLines.isEmpty() && m_guideAlpha > 0.01f) {
             painter.setOpacity(m_guideAlpha);
-            painter.setPen(QPen(QColor(255, 120, 200), 1.0));
+            painter.setPen(QPen(Theme::Color(Theme::Token::AccentBrand), 1.0));
             for (const QLineF& ln : m_guideLines) {
                 painter.drawLine(designToScreen(ln.p1()), designToScreen(ln.p2()));
             }
@@ -912,8 +951,10 @@ protected:
         painter.restore();
 
         if (!m_marqueeScreen.isNull()) {
-            painter.setPen(QPen(QColor(100, 180, 255), 1.0, Qt::DashLine));
-            painter.setBrush(QColor(100, 180, 255, 40));
+            QColor marqueeFill = Theme::Color(Theme::Token::AccentSelection);
+            marqueeFill.setAlpha(40);
+            painter.setPen(QPen(Theme::Color(Theme::Token::AccentSelection), 1.0, Qt::DashLine));
+            painter.setBrush(marqueeFill);
             painter.drawRect(m_marqueeScreen);
         }
 
@@ -924,7 +965,7 @@ protected:
                 }
                 const QRectF sr = designToScreen(rectDesignForPath(p));
                 if (!sr.isNull()) {
-                    painter.setPen(QPen(QColor(255, 194, 64, 140), 1.5));
+                    painter.setPen(QPen(Theme::Color(Theme::Token::AccentSelection), 1.0));
                     painter.setBrush(Qt::NoBrush);
                     painter.drawRect(sr.adjusted(-1.0, -1.0, 1.0, 1.0));
                 }
@@ -932,21 +973,21 @@ protected:
             if (!m_hoveredPath.isEmpty() && !m_selectionSet.contains(m_hoveredPath)) {
                 const QRectF hovered = designToScreen(rectDesignForPath(m_hoveredPath));
                 if (!hovered.isNull()) {
-                    painter.setPen(QPen(QColor(130, 170, 255, 160), 1.5));
+                    painter.setPen(QPen(Theme::Color(Theme::Token::TextMuted), 1.0));
                     painter.setBrush(Qt::NoBrush);
                     painter.drawRect(hovered.adjusted(-1.0, -1.0, 1.0, 1.0));
                 }
             }
             const QRectF primaryScreen = designToScreen(rectDesignForPath(m_primaryPath));
             if (!primaryScreen.isNull()) {
-                painter.setPen(QPen(QColor(255, 194, 64), 2.0));
+                painter.setPen(QPen(Theme::Color(Theme::Token::AccentSelection), 1.5));
                 painter.setBrush(Qt::NoBrush);
                 painter.drawRect(primaryScreen.adjusted(-2.0, -2.0, 2.0, 2.0));
             }
             if (m_selectionSet.size() > 1) {
                 const QRectF u = designToScreen(m_selectionUnionDesign);
                 if (!u.isNull()) {
-                    painter.setPen(QPen(QColor(255, 220, 120, 200), 1.0, Qt::DashLine));
+                    painter.setPen(QPen(Theme::Color(Theme::Token::AccentSelection), 1.0, Qt::DashLine));
                     painter.drawRect(u.adjusted(-2.0, -2.0, 2.0, 2.0));
                 }
             }
@@ -954,8 +995,8 @@ protected:
                 const QRectF r = designToScreen(m_selectionUnionDesign);
                 const qreal h = std::clamp(6.0, 4.0, 10.0 * m_zoom);
                 const qreal hh = h * 0.5;
-                painter.setPen(QPen(QColor(255, 255, 255), 1.0));
-                painter.setBrush(QColor(40, 44, 52));
+                painter.setPen(QPen(Theme::Color(Theme::Token::AccentSelection), 1.25));
+                painter.setBrush(Theme::Color(Theme::Token::TextOnAction));
                 const std::array<QPointF, 8> pts = {
                     r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight(),
                     QPointF(r.center().x(), r.top()), QPointF(r.center().x(), r.bottom()),
@@ -1342,19 +1383,62 @@ private:
         rootLayout->setSpacing(0);
 
         m_toolbar = new QToolBar(this);
-        m_toolbar->setIconSize(QSize(18, 18));
+        m_toolbar->setIconSize(QSize(16, 16));
         rootLayout->addWidget(m_toolbar);
 
-        QAction* saveAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("save")), tr("Save"));
-        QAction* saveAsAction = m_toolbar->addAction(tr("Save As"));
-        QAction* undoAction = m_toolbar->addAction(tr("Undo"));
-        QAction* redoAction = m_toolbar->addAction(tr("Redo"));
-        QAction* duplicateAction = m_toolbar->addAction(tr("Duplicate"));
-        QAction* deleteAction = m_toolbar->addAction(tr("Delete"));
+        auto addTextAction = [this](QAction* action) {
+            m_toolbar->addAction(action);
+            if (auto* button = qobject_cast<QToolButton*>(m_toolbar->widgetForAction(action))) {
+                button->setToolButtonStyle(action->icon().isNull() ? Qt::ToolButtonTextOnly : Qt::ToolButtonTextBesideIcon);
+            }
+        };
+        auto addMenuButton = [this](const QString& text, const QString& toolTip, QMenu* menu) {
+            auto* button = new QToolButton(m_toolbar);
+            button->setText(text);
+            button->setToolTip(toolTip);
+            button->setMenu(menu);
+            button->setPopupMode(QToolButton::InstantPopup);
+            m_toolbar->addWidget(button);
+            return button;
+        };
+
+        QAction* saveAction = new QAction(Theme::Icon(QStringLiteral("save")), tr("Save"), this);
+        saveAction->setToolTip(tr("Save (Ctrl+S)"));
+        QAction* saveAsAction = new QAction(tr("Save As..."), this);
+        auto* saveButton = new QToolButton(m_toolbar);
+        saveButton->setDefaultAction(saveAction);
+        auto* saveMenu = new QMenu(saveButton);
+        saveMenu->addAction(saveAsAction);
+        saveButton->setMenu(saveMenu);
+        saveButton->setPopupMode(QToolButton::MenuButtonPopup);
+        m_toolbar->addWidget(saveButton);
         m_toolbar->addSeparator();
-        m_previewAction = m_toolbar->addAction(tr("Preview"));
-        m_previewAction->setCheckable(true);
-        QAction* openIdeAction = m_toolbar->addAction(tr("Open in IDE"));
+
+        QAction* undoAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("undo")), tr("Undo"));
+        undoAction->setToolTip(tr("Undo (Ctrl+Z)"));
+        QAction* redoAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("redo")), tr("Redo"));
+        redoAction->setToolTip(tr("Redo (Ctrl+Y)"));
+        QAction* duplicateAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("copy")), tr("Duplicate"));
+        duplicateAction->setToolTip(tr("Duplicate (Ctrl+D)"));
+        QAction* deleteAction = new QAction(tr("Delete"), this);
+        deleteAction->setToolTip(tr("Delete the selected widgets (Del)"));
+        addTextAction(deleteAction);
+        m_toolbar->addSeparator();
+
+        auto* arrangeMenu = new QMenu(this);
+        QAction* bringForwardAction = arrangeMenu->addAction(tr("Bring forward"));
+        QAction* sendBackAction = arrangeMenu->addAction(tr("Send back"));
+        arrangeMenu->addSeparator();
+        QAction* groupAction = arrangeMenu->addAction(tr("Group"));
+        groupAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_G));
+        groupAction->setShortcutVisibleInContextMenu(true);
+        QAction* ungroupAction = arrangeMenu->addAction(tr("Ungroup"));
+        ungroupAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G));
+        ungroupAction->setShortcutVisibleInContextMenu(true);
+        for (QAction* action : arrangeMenu->actions()) {
+            action->setShortcutContext(Qt::WidgetShortcut);
+        }
+        addMenuButton(tr("Arrange"), tr("Z-order and grouping"), arrangeMenu);
         m_toolbar->addSeparator();
 
         {
@@ -1366,66 +1450,72 @@ private:
             m_showCenterGuidesSetting = ds.value(QStringLiteral("centerGuides"), true).toBool();
         }
 
-        m_gridVisibleAction = new QAction(tr("Grid"), m_toolbar);
+        m_gridVisibleAction = new QAction(Theme::Icon(QStringLiteral("grid")), tr("Grid"), m_toolbar);
+        m_gridVisibleAction->setToolTip(tr("Show grid"));
         m_gridVisibleAction->setCheckable(true);
         m_gridVisibleAction->setChecked(m_showGrid);
         m_toolbar->addAction(m_gridVisibleAction);
 
-        m_snapGridAction = new QAction(tr("Snap grid"), m_toolbar);
+        m_snapGridAction = new QAction(Theme::Icon(QStringLiteral("snap")), tr("Snap to grid"), m_toolbar);
         m_snapGridAction->setCheckable(true);
         m_snapGridAction->setChecked(m_snapToGrid);
         m_toolbar->addAction(m_snapGridAction);
 
-        m_snapGuidesAction = new QAction(tr("Snap guides"), m_toolbar);
-        m_snapGuidesAction->setCheckable(true);
-        m_snapGuidesAction->setChecked(m_snapToGuides);
-        m_toolbar->addAction(m_snapGuidesAction);
-
-        m_toolbar->addWidget(new QLabel(tr("Grid px"), m_toolbar));
         m_gridStepSpin = new QSpinBox(m_toolbar);
         m_gridStepSpin->setRange(2, 128);
+        m_gridStepSpin->setPrefix(tr("Grid "));
+        m_gridStepSpin->setSuffix(tr(" px"));
+        m_gridStepSpin->setToolTip(tr("Grid size in pixels"));
         m_gridStepSpin->setValue(m_gridStepSetting);
         m_toolbar->addWidget(m_gridStepSpin);
 
-        m_centerGuidesAction = new QAction(tr("Canvas center"), m_toolbar);
+        auto* guidesMenu = new QMenu(this);
+        m_snapGuidesAction = guidesMenu->addAction(tr("Snap to guides"));
+        m_snapGuidesAction->setCheckable(true);
+        m_snapGuidesAction->setChecked(m_snapToGuides);
+        m_centerGuidesAction = guidesMenu->addAction(tr("Canvas center guides"));
         m_centerGuidesAction->setCheckable(true);
         m_centerGuidesAction->setChecked(m_showCenterGuidesSetting);
-        m_toolbar->addAction(m_centerGuidesAction);
+        addMenuButton(tr("Guides"), tr("Guide snapping and canvas center guides"), guidesMenu);
 
-        m_toolbar->addSeparator();
-        QAction* bringForwardAction = m_toolbar->addAction(tr("Bring forward"));
-        QAction* sendBackAction = m_toolbar->addAction(tr("Send back"));
-        QAction* groupAction = m_toolbar->addAction(tr("Group"));
-        QAction* ungroupAction = m_toolbar->addAction(tr("Ungroup"));
-        m_toolbar->addSeparator();
+        auto* spacer = new QWidget(m_toolbar);
+        spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        m_toolbar->addWidget(spacer);
 
         m_resolutionCombo = new QComboBox(m_toolbar);
+        m_resolutionCombo->setToolTip(tr("Preview resolution"));
         m_resolutionCombo->addItem("1280x720");
         m_resolutionCombo->addItem("1920x1080");
         m_resolutionCombo->addItem("800x600");
-        m_toolbar->addWidget(new QLabel(tr("Preview: "), m_toolbar));
         m_toolbar->addWidget(m_resolutionCombo);
 
         m_zoomCombo = new QComboBox(m_toolbar);
+        m_zoomCombo->setToolTip(tr("Zoom"));
         m_zoomCombo->addItems({"50%", "75%", "100%", "150%", "200%"});
         m_zoomCombo->setEditable(true);
         m_zoomCombo->lineEdit()->setReadOnly(true);
         m_zoomCombo->setCurrentText("100%");
-        m_toolbar->addSeparator();
-        m_toolbar->addWidget(new QLabel(tr("Zoom: "), m_toolbar));
         m_toolbar->addWidget(m_zoomCombo);
+        m_toolbar->addSeparator();
+
+        QAction* openIdeAction = new QAction(Theme::Icon(QStringLiteral("code")), tr("Open in IDE"), this);
+        addTextAction(openIdeAction);
+        m_previewAction = new QAction(Theme::Icon(QStringLiteral("play")), tr("Preview"), this);
+        m_previewAction->setToolTip(tr("Interact with the UI as it runs"));
+        m_previewAction->setCheckable(true);
+        addTextAction(m_previewAction);
 
         auto* mainSplitter = new QSplitter(Qt::Horizontal, this);
         rootLayout->addWidget(mainSplitter, 1);
 
+        mainSplitter->setChildrenCollapsible(false);
         auto* leftPanel = new QWidget(mainSplitter);
+        leftPanel->setObjectName(QStringLiteral("EditorPanel"));
+        leftPanel->setAttribute(Qt::WA_StyledBackground, true);
         auto* leftLayout = new QVBoxLayout(leftPanel);
-        leftLayout->setContentsMargins(8, 8, 8, 8);
-        leftLayout->setSpacing(8);
-
-        auto* hierarchyLabel = new QLabel(tr("Hierarchy"), leftPanel);
-        hierarchyLabel->setStyleSheet("font-weight: 600;");
-        leftLayout->addWidget(hierarchyLabel);
+        leftLayout->setContentsMargins(0, 0, 0, 0);
+        leftLayout->setSpacing(0);
+        leftLayout->addWidget(CreatePanelHeader(tr("Hierarchy"), leftPanel));
 
         m_hierarchyTree = new HUIHierarchyTreeWidget();
         m_hierarchyTree->setHeaderHidden(true);
@@ -1433,6 +1523,7 @@ private:
         m_hierarchyTree->setDefaultDropAction(Qt::MoveAction);
         m_hierarchyTree->setSelectionMode(QAbstractItemView::SingleSelection);
         m_hierarchyTree->header()->setStretchLastSection(true);
+        m_hierarchyTree->setFrameShape(QFrame::NoFrame);
         m_hierarchyTree->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(m_hierarchyTree, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
             QTreeWidgetItem* item = m_hierarchyTree->itemAt(pos);
@@ -1452,33 +1543,47 @@ private:
         });
         leftLayout->addWidget(m_hierarchyTree, 2);
 
-        auto* paletteLabel = new QLabel(tr("Palette"), leftPanel);
-        paletteLabel->setStyleSheet("font-weight: 600;");
-        leftLayout->addWidget(paletteLabel);
+        leftLayout->addWidget(CreatePanelHeader(tr("Palette"), leftPanel));
 
         m_paletteList = new QListWidget(leftPanel);
-        for (HUIWidgetType type : {HUIWidgetType::Panel, HUIWidgetType::Canvas, HUIWidgetType::Text,
-                                   HUIWidgetType::Button, HUIWidgetType::Image, HUIWidgetType::VerticalBox,
-                                   HUIWidgetType::HorizontalBox, HUIWidgetType::Grid}) {
-            auto* item = new QListWidgetItem(WidgetTypeLabel(type), m_paletteList);
+        m_paletteList->setObjectName(QStringLiteral("WidgetPalette"));
+        m_paletteList->setViewMode(QListView::IconMode);
+        m_paletteList->setMovement(QListView::Static);
+        m_paletteList->setResizeMode(QListView::Adjust);
+        m_paletteList->setIconSize(QSize(28, 20));
+        m_paletteList->setGridSize(QSize(120, 60));
+        m_paletteList->setSpacing(4);
+        m_paletteList->setWordWrap(true);
+        m_paletteList->setFrameShape(QFrame::NoFrame);
+        m_paletteList->setToolTip(tr("Double-click to add to the selected container."));
+        for (HUIWidgetType type : {HUIWidgetType::Panel, HUIWidgetType::Canvas, HUIWidgetType::VerticalBox,
+                                   HUIWidgetType::HorizontalBox, HUIWidgetType::Grid, HUIWidgetType::Text,
+                                   HUIWidgetType::Button, HUIWidgetType::Image}) {
+            auto* item = new QListWidgetItem(WidgetTypeIcon(type, QSize(28, 20)), WidgetTypeLabel(type), m_paletteList);
             item->setData(Qt::UserRole, WidgetTypeKey(type));
+            item->setSizeHint(QSize(116, 56));
         }
         leftLayout->addWidget(m_paletteList, 1);
 
         auto* centerFrame = new QFrame(mainSplitter);
         auto* centerLayout = new QVBoxLayout(centerFrame);
-        centerLayout->setContentsMargins(8, 8, 8, 8);
-        centerLayout->setSpacing(8);
-
-        auto* controllerRow = new QHBoxLayout();
-        controllerRow->addWidget(new QLabel(tr("Controller"), centerFrame));
-        m_controllerEdit = new QLineEdit(centerFrame);
-        m_controllerEdit->setPlaceholderText(tr("Optional Lua controller path"));
-        controllerRow->addWidget(m_controllerEdit, 1);
-        centerLayout->addLayout(controllerRow);
+        centerLayout->setContentsMargins(0, 0, 0, 0);
+        centerLayout->setSpacing(0);
 
         m_canvas = new HUIDesignCanvas(centerFrame);
         centerLayout->addWidget(m_canvas, 1);
+
+        auto* controllerBar = new QWidget(centerFrame);
+        controllerBar->setObjectName(QStringLiteral("EditorPanel"));
+        controllerBar->setAttribute(Qt::WA_StyledBackground, true);
+        auto* controllerRow = new QHBoxLayout(controllerBar);
+        controllerRow->setContentsMargins(12, 8, 12, 8);
+        controllerRow->setSpacing(8);
+        controllerRow->addWidget(new QLabel(tr("Controller"), controllerBar));
+        m_controllerEdit = new QLineEdit(controllerBar);
+        m_controllerEdit->setPlaceholderText(tr("Optional Lua controller path"));
+        controllerRow->addWidget(m_controllerEdit, 1);
+        centerLayout->addWidget(controllerBar);
 
         m_previewThrottleTimer = new QTimer(this);
         m_previewThrottleTimer->setSingleShot(true);
@@ -1489,19 +1594,20 @@ private:
         connect(m_nudgeUndoTimer, &QTimer::timeout, this, [this]() { m_nudgeUndoSessionActive = false; });
 
         auto* inspectorPanel = new QWidget(mainSplitter);
+        inspectorPanel->setObjectName(QStringLiteral("EditorPanel"));
+        inspectorPanel->setAttribute(Qt::WA_StyledBackground, true);
         auto* inspectorLayout = new QVBoxLayout(inspectorPanel);
-        inspectorLayout->setContentsMargins(8, 8, 8, 8);
-        inspectorLayout->setSpacing(8);
-        auto* detailsLabel = new QLabel(tr("Details"), inspectorPanel);
-        detailsLabel->setStyleSheet("font-weight: 600;");
-        inspectorLayout->addWidget(detailsLabel);
+        inspectorLayout->setContentsMargins(0, 0, 0, 0);
+        inspectorLayout->setSpacing(0);
+        inspectorLayout->addWidget(CreatePanelHeader(tr("Details"), inspectorPanel));
 
         m_inspectorScroll = new QScrollArea(inspectorPanel);
         m_inspectorScroll->setWidgetResizable(true);
+        m_inspectorScroll->setFrameShape(QFrame::NoFrame);
         m_inspectorContainer = new QWidget(m_inspectorScroll);
         m_inspectorFormLayout = new QVBoxLayout(m_inspectorContainer);
-        m_inspectorFormLayout->setContentsMargins(4, 4, 4, 4);
-        m_inspectorFormLayout->setSpacing(10);
+        m_inspectorFormLayout->setContentsMargins(12, 4, 12, 12);
+        m_inspectorFormLayout->setSpacing(4);
         m_inspectorFormLayout->addStretch();
         m_inspectorScroll->setWidget(m_inspectorContainer);
         inspectorLayout->addWidget(m_inspectorScroll, 1);
@@ -1509,7 +1615,7 @@ private:
         mainSplitter->setStretchFactor(0, 0);
         mainSplitter->setStretchFactor(1, 1);
         mainSplitter->setStretchFactor(2, 0);
-        mainSplitter->setSizes({300, 900, 360});
+        mainSplitter->setSizes({264, 960, 380});
 
         connect(saveAction, &QAction::triggered, this, [this]() { save(); });
         connect(saveAsAction, &QAction::triggered, this, [this]() { saveAs(); });
@@ -1735,7 +1841,9 @@ private:
     void populateHierarchyItem(QTreeWidgetItem* item, const HUIWidgetNode& node, const QString& path)
     {
         const QString displayName = node.id.empty() ? WidgetTypeLabel(node.type) : ToQString(node.id);
-        item->setText(0, QStringLiteral("%1 (%2)").arg(displayName, WidgetTypeLabel(node.type)));
+        item->setText(0, displayName);
+        item->setIcon(0, WidgetTypeIcon(node.type, QSize(16, 16)));
+        item->setToolTip(0, WidgetTypeLabel(node.type));
         item->setData(0, Qt::UserRole, path);
         item->setFlags(item->flags() | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled | Qt::ItemIsSelectable | Qt::ItemIsEnabled);
 
@@ -1819,11 +1927,15 @@ private:
         }
 
         auto addSection = [this](const QString& title) {
-            auto* box = new QGroupBox(title, m_inspectorContainer);
-            auto* form = new QFormLayout(box);
+            auto* heading = new QLabel(title.toUpper(), m_inspectorContainer);
+            heading->setProperty("role", QStringLiteral("section"));
+            m_inspectorFormLayout->addWidget(heading);
+            auto* section = new QWidget(m_inspectorContainer);
+            auto* form = new QFormLayout(section);
+            form->setContentsMargins(0, 0, 0, 0);
+            form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
             form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-            box->setLayout(form);
-            m_inspectorFormLayout->addWidget(box);
+            m_inspectorFormLayout->addWidget(section);
             return form;
         };
 

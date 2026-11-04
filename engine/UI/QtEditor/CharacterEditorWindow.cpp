@@ -12,6 +12,8 @@
 #include "AssetReferenceEditor.h"
 #include "PropertyEditors.h"
 #include "MaterialGraphQtEditorDialog.h"
+#include "EditorDockTitleBar.h"
+#include "EditorTheme.h"
 
 #include "../../Assets/AssetPathPolicy.h"
 #include "../../Assets/CharacterImport.h"
@@ -42,6 +44,7 @@
 #include <QStatusBar>
 #include <QStyle>
 #include <QTimer>
+#include <QToolButton>
 #include <QToolBar>
 #include <QTreeWidget>
 #include <QAbstractItemView>
@@ -66,10 +69,28 @@ constexpr int kKindRole = Qt::UserRole;
 constexpr int kIdRole = Qt::UserRole + 1;
 constexpr int kIndexRole = Qt::UserRole + 2;
 
+QIcon KindIcon(CharacterEditorItemKind kind) {
+    switch (kind) {
+        case CharacterEditorItemKind::Mesh:
+        case CharacterEditorItemKind::MeshPart: return Theme::Icon(QStringLiteral("cube"));
+        case CharacterEditorItemKind::Skeleton: return Theme::Icon(QStringLiteral("branch"));
+        case CharacterEditorItemKind::Bone: return Theme::Icon(QStringLiteral("dot"), Theme::IconTone::Muted);
+        case CharacterEditorItemKind::Materials:
+        case CharacterEditorItemKind::MaterialSlot: return Theme::Icon(QStringLiteral("material"));
+        case CharacterEditorItemKind::Folder: return Theme::Icon(QStringLiteral("folder"));
+        case CharacterEditorItemKind::Clip: return Theme::Icon(QStringLiteral("keyframe"));
+        case CharacterEditorItemKind::Sockets: return Theme::Icon(QStringLiteral("link"));
+        case CharacterEditorItemKind::Socket: return Theme::Icon(QStringLiteral("pin"));
+        case CharacterEditorItemKind::Controller: return Theme::Icon(QStringLiteral("code"));
+        default: return {};
+    }
+}
+
 QTreeWidgetItem* AddItem(QTreeWidgetItem* parent, const QString& text, CharacterEditorItemKind kind,
                          const std::string& id = {}, int index = -1) {
     auto* item = new QTreeWidgetItem(parent);
     item->setText(0, text);
+    item->setIcon(0, KindIcon(kind));
     item->setData(0, kKindRole, static_cast<int>(kind));
     item->setData(0, kIdRole, QString::fromStdString(id));
     item->setData(0, kIndexRole, index);
@@ -80,6 +101,7 @@ QTreeWidgetItem* AddTop(QTreeWidget* tree, const QString& text, CharacterEditorI
                         const std::string& id = {}) {
     auto* item = new QTreeWidgetItem(tree);
     item->setText(0, text);
+    item->setIcon(0, KindIcon(kind));
     item->setData(0, kKindRole, static_cast<int>(kind));
     item->setData(0, kIdRole, QString::fromStdString(id));
     return item;
@@ -172,19 +194,13 @@ void CharacterEditorWindow::closeEvent(QCloseEvent* event) {
 }
 
 void CharacterEditorWindow::setupUI() {
-    setStyleSheet(
-        "QMainWindow { background: #1e1e1e; }"
-        "QDockWidget { color: #ccc; font-weight: bold; }"
-        "QDockWidget::title { background: #2a2a2a; padding: 6px; border-bottom: 1px solid #3a3a3a; }"
-        "QToolBar { background: #2d2d2d; border-bottom: 1px solid #3a3a3a; spacing: 3px; }"
-        "QToolBar QToolButton { color: #ccc; padding: 3px 6px; }"
-        "QStatusBar { background: #2d2d2d; color: #888; }"
-    );
     setupToolbar();
     setupViewport();
     setupDocks();
     auto* status = statusBar();
+    status->setObjectName(QStringLiteral("EditorStatusBar"));
     m_statusPath = new QLabel(status);
+    m_statusPath->setProperty("role", QStringLiteral("muted"));
     m_statusFps = new QLabel(tr("FPS --"), status);
     status->addWidget(m_statusPath, 1);
     status->addPermanentWidget(m_statusFps);
@@ -197,49 +213,73 @@ void CharacterEditorWindow::setupToolbar() {
     m_toolbar->setIconSize(QSize(16, 16));
     addToolBar(m_toolbar);
 
-    m_saveAction = m_toolbar->addAction(tr("Save"));
+    auto showText = [this](QAction* action) {
+        if (auto* button = qobject_cast<QToolButton*>(m_toolbar->widgetForAction(action))) {
+            button->setToolButtonStyle(action->icon().isNull() ? Qt::ToolButtonTextOnly : Qt::ToolButtonTextBesideIcon);
+        }
+    };
+
+    m_saveAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("save")), tr("Save"));
     m_saveAction->setShortcut(QKeySequence::Save);
+    m_saveAction->setToolTip(tr("Save (Ctrl+S)"));
     connect(m_saveAction, &QAction::triggered, this, &CharacterEditorWindow::onSave);
-    m_undoAction = m_toolbar->addAction(tr("Undo"));
+    m_toolbar->addSeparator();
+    m_undoAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("undo")), tr("Undo"));
     m_undoAction->setShortcut(QKeySequence::Undo);
+    m_undoAction->setToolTip(tr("Undo (Ctrl+Z)"));
     connect(m_undoAction, &QAction::triggered, this, &CharacterEditorWindow::onUndo);
-    m_redoAction = m_toolbar->addAction(tr("Redo"));
+    m_redoAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("redo")), tr("Redo"));
     m_redoAction->setShortcut(QKeySequence::Redo);
+    m_redoAction->setToolTip(tr("Redo (Ctrl+Y)"));
     connect(m_redoAction, &QAction::triggered, this, &CharacterEditorWindow::onRedo);
     m_toolbar->addSeparator();
 
     m_gizmoModeGroup = new QActionGroup(this);
-    m_translateAction = m_toolbar->addAction(tr("Move"));
+    m_translateAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("move")), tr("Move"));
     m_translateAction->setCheckable(true);
     m_translateAction->setChecked(true);
     m_gizmoModeGroup->addAction(m_translateAction);
+    showText(m_translateAction);
     connect(m_translateAction, &QAction::triggered, this, &CharacterEditorWindow::onSelectTranslate);
-    m_rotateAction = m_toolbar->addAction(tr("Rotate"));
+    m_rotateAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("rotate")), tr("Rotate"));
     m_rotateAction->setCheckable(true);
     m_gizmoModeGroup->addAction(m_rotateAction);
+    showText(m_rotateAction);
     connect(m_rotateAction, &QAction::triggered, this, &CharacterEditorWindow::onSelectRotate);
-    m_localWorldAction = m_toolbar->addAction(tr("Local"));
+    m_localWorldAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("cube")), tr("Local"));
     m_localWorldAction->setCheckable(true);
     m_localWorldAction->setChecked(true);
+    m_localWorldAction->setToolTip(tr("Gizmo space: local or world"));
+    showText(m_localWorldAction);
     connect(m_localWorldAction, &QAction::toggled, this, &CharacterEditorWindow::onToggleLocalWorld);
-    m_snapAction = m_toolbar->addAction(tr("Snap"));
+    m_snapAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("snap")), tr("Snap"));
     m_snapAction->setCheckable(true);
     connect(m_snapAction, &QAction::toggled, this, &CharacterEditorWindow::onToggleSnap);
     m_toolbar->addSeparator();
-    m_toolbar->addAction(tr("Frame"), this, &CharacterEditorWindow::onFrameSelected);
-    m_toolbar->addAction(tr("Frame All"), this, &CharacterEditorWindow::onFrameAll);
-    m_skeletonAction = m_toolbar->addAction(tr("Show Skeleton"));
+    QAction* frameAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("maximize")), tr("Frame selection"),
+                                                this, &CharacterEditorWindow::onFrameSelected);
+    frameAction->setToolTip(tr("Frame selection"));
+    QAction* frameAllAction = m_toolbar->addAction(tr("Frame all"), this, &CharacterEditorWindow::onFrameAll);
+    showText(frameAllAction);
+    m_toolbar->addSeparator();
+    m_skeletonAction = m_toolbar->addAction(Theme::Icon(QStringLiteral("branch")), tr("Skeleton"));
     m_skeletonAction->setCheckable(true);
     m_skeletonAction->setChecked(true);
+    m_skeletonAction->setToolTip(tr("Show skeleton"));
+    showText(m_skeletonAction);
     connect(m_skeletonAction, &QAction::toggled, this, &CharacterEditorWindow::onToggleSkeleton);
-    m_boneNamesAction = m_toolbar->addAction(tr("Bone Names"));
+    m_boneNamesAction = m_toolbar->addAction(tr("Bone names"));
     m_boneNamesAction->setCheckable(true);
+    m_boneNamesAction->setToolTip(tr("Show bone names"));
+    showText(m_boneNamesAction);
     connect(m_boneNamesAction, &QAction::toggled, this, &CharacterEditorWindow::onToggleBoneNames);
 }
 
 void CharacterEditorWindow::setupViewport() {
     m_viewportWindow = new QtViewportWindow();
     m_viewportHost = new QWidget(this);
+    m_viewportHost->setObjectName(QStringLiteral("ViewportHost"));
+    m_viewportHost->setAttribute(Qt::WA_StyledBackground, true);
     auto* container = QWidget::createWindowContainer(m_viewportWindow, m_viewportHost);
     container->setMinimumSize(200, 200);
     auto* stack = new QStackedLayout(m_viewportHost);
@@ -249,8 +289,9 @@ void CharacterEditorWindow::setupViewport() {
     auto* emptyLayout = new QVBoxLayout(m_emptyOverlay);
     emptyLayout->setAlignment(Qt::AlignCenter);
     m_banner = new QLabel(tr("No character mesh assigned."), m_emptyOverlay);
-    m_banner->setStyleSheet("color:#ccc; font-size:16px;");
-    auto* assignBtn = new QPushButton(tr("Import Character Source"), m_emptyOverlay);
+    m_banner->setObjectName(QStringLiteral("EmptyStateTitle"));
+    auto* assignBtn = new QPushButton(tr("Import character source"), m_emptyOverlay);
+    assignBtn->setProperty("variant", QStringLiteral("primary"));
     connect(assignBtn, &QPushButton::clicked, this, [this]() { assignSource(); });
     emptyLayout->addWidget(m_banner, 0, Qt::AlignCenter);
     emptyLayout->addWidget(assignBtn, 0, Qt::AlignCenter);
@@ -263,6 +304,7 @@ void CharacterEditorWindow::setupDocks() {
     m_treeDock->setObjectName("CharacterTreeDock");
     m_tree = new QTreeWidget(m_treeDock);
     m_tree->setHeaderHidden(true);
+    m_tree->setFrameShape(QFrame::NoFrame);
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_tree, &QTreeWidget::itemSelectionChanged, this, &CharacterEditorWindow::onTreeSelectionChanged);
     connect(m_tree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
@@ -298,33 +340,29 @@ void CharacterEditorWindow::setupDocks() {
     });
     m_treeDock->setWidget(m_tree);
     addDockWidget(Qt::LeftDockWidgetArea, m_treeDock);
+    InstallDockTitleBar(m_treeDock);
 
     m_inspectorDock = new QDockWidget(tr("Inspector"), this);
     m_inspectorDock->setObjectName("CharacterInspectorDock");
     auto* scroll = new QScrollArea(m_inspectorDock);
     scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
     m_inspectorHost = new QWidget(scroll);
-    new QVBoxLayout(m_inspectorHost);
+    auto* inspectorLayout = new QVBoxLayout(m_inspectorHost);
+    inspectorLayout->setContentsMargins(12, 10, 12, 12);
+    inspectorLayout->setSpacing(6);
     scroll->setWidget(m_inspectorHost);
     m_inspectorDock->setWidget(scroll);
-    addDockWidget(Qt::RightDockWidgetArea, m_inspectorDock);
 
     m_animationsDock = new QDockWidget(tr("Animations"), this);
     m_animationsDock->setObjectName("CharacterAnimationsDock");
     auto* animHost = new QWidget(m_animationsDock);
     auto* animLayout = new QVBoxLayout(animHost);
-    animLayout->setContentsMargins(8, 8, 8, 8);
-    auto* animButtons = new QHBoxLayout();
-    auto* importBtn = new QPushButton(tr("Import Animation"), animHost);
-    connect(importBtn, &QPushButton::clicked, this, &CharacterEditorWindow::importAnimation);
-    auto* folderBtn = new QPushButton(tr("Create Folder"), animHost);
-    connect(folderBtn, &QPushButton::clicked, this, &CharacterEditorWindow::createAnimationFolder);
-    animButtons->addWidget(importBtn);
-    animButtons->addWidget(folderBtn);
-    animButtons->addStretch();
-    animLayout->addLayout(animButtons);
+    animLayout->setContentsMargins(0, 0, 0, 0);
+    animLayout->setSpacing(0);
     m_animTree = new QTreeWidget(animHost);
     m_animTree->setHeaderHidden(true);
+    m_animTree->setFrameShape(QFrame::NoFrame);
     m_animTree->setContextMenuPolicy(Qt::CustomContextMenu);
     m_animTree->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::DoubleClicked);
     connect(m_animTree, &QTreeWidget::itemSelectionChanged, this,
@@ -370,19 +408,38 @@ void CharacterEditorWindow::setupDocks() {
         menu.exec(m_animTree->mapToGlobal(pos));
     });
     animLayout->addWidget(m_animTree, 1);
+    auto* animButtons = new QHBoxLayout();
+    animButtons->setContentsMargins(12, 8, 12, 12);
+    auto* importBtn = new QPushButton(Theme::Icon(QStringLiteral("plus"), Theme::IconTone::Primary), tr("Import animation"), animHost);
+    connect(importBtn, &QPushButton::clicked, this, &CharacterEditorWindow::importAnimation);
+    auto* folderBtn = new QPushButton(Theme::Icon(QStringLiteral("folder")), tr("New folder"), animHost);
+    connect(folderBtn, &QPushButton::clicked, this, &CharacterEditorWindow::createAnimationFolder);
+    animButtons->addWidget(importBtn);
+    animButtons->addWidget(folderBtn);
+    animButtons->addStretch();
+    animLayout->addLayout(animButtons);
     m_animationsDock->setWidget(animHost);
     addDockWidget(Qt::RightDockWidgetArea, m_animationsDock);
-    tabifyDockWidget(m_inspectorDock, m_animationsDock);
-    m_animationsDock->raise();
+    splitDockWidget(m_animationsDock, m_inspectorDock, Qt::Vertical);
+    InstallDockTitleBar(m_animationsDock);
+    InstallDockTitleBar(m_inspectorDock);
 
     m_timelineDock = new QDockWidget(tr("Playback"), this);
+    m_timelineDock->setObjectName("CharacterPlaybackDock");
     auto* timelineHost = new QWidget(m_timelineDock);
     auto* timelineLayout = new QVBoxLayout(timelineHost);
+    timelineLayout->setContentsMargins(8, 6, 8, 8);
+    timelineLayout->setSpacing(4);
     auto* controls = new QHBoxLayout();
-    auto* play = new QPushButton(tr("Play/Pause"), timelineHost);
-    auto* stop = new QPushButton(tr("Stop"), timelineHost);
-    connect(play, &QPushButton::clicked, this, &CharacterEditorWindow::onPlayPause);
-    connect(stop, &QPushButton::clicked, this, &CharacterEditorWindow::onStop);
+    controls->setSpacing(4);
+    auto* play = new QToolButton(timelineHost);
+    play->setIcon(Theme::Icon(QStringLiteral("play")));
+    play->setToolTip(tr("Play / pause"));
+    auto* stop = new QToolButton(timelineHost);
+    stop->setIcon(Theme::Icon(QStringLiteral("stop")));
+    stop->setToolTip(tr("Stop"));
+    connect(play, &QToolButton::clicked, this, &CharacterEditorWindow::onPlayPause);
+    connect(stop, &QToolButton::clicked, this, &CharacterEditorWindow::onStop);
     controls->addWidget(play);
     controls->addWidget(stop);
     controls->addStretch();
@@ -392,6 +449,7 @@ void CharacterEditorWindow::setupDocks() {
     timelineLayout->addWidget(m_timeline);
     m_timelineDock->setWidget(timelineHost);
     addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
+    InstallDockTitleBar(m_timelineDock);
 }
 
 void CharacterEditorWindow::initializeEngine() {
@@ -552,6 +610,7 @@ void CharacterEditorWindow::onSelectRotate() {
 void CharacterEditorWindow::onToggleLocalWorld(bool local) {
     m_gizmoSpace = local ? GizmoSpace::Local : GizmoSpace::World;
     m_localWorldAction->setText(local ? tr("Local") : tr("World"));
+    m_localWorldAction->setIcon(Theme::Icon(local ? QStringLiteral("cube") : QStringLiteral("globe")));
     if (m_engine && m_engine->GetEditorContext()) m_engine->GetEditorContext()->SetGizmoSpace(m_gizmoSpace);
 }
 
