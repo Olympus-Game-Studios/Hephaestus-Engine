@@ -343,7 +343,7 @@ public:
 } // namespace
 
 // Bump when the default dock layout changes so older saved layouts are not restored over it.
-constexpr int kDockLayoutVersion = 5;
+constexpr int kDockLayoutVersion = 6;
 constexpr int kEditorModeCount = 3;
 // Also the project file's "editorMode" values, which the launcher writes for new projects.
 constexpr const char* kEditorModeNames[kEditorModeCount] = { "default", "artist", "programmer" };
@@ -4426,6 +4426,21 @@ void EditorMainWindow::arrangeModeLayout(EditorMode mode)
         addDockWidget(area, dock);
         dock->show();
     };
+    // Default and Artist: Content Browser, Console, Output, Search, Debugger as one tab group.
+    auto placeBottomTabs = [this, &place]() {
+        for (QDockWidget* dock : { m_assetBrowserDock, m_consoleDock, m_buildOutputDock, m_searchDock, m_debuggerDock }) {
+            place(dock, Qt::BottomDockWidgetArea);
+        }
+        for (QDockWidget* dock : { m_consoleDock, m_buildOutputDock, m_searchDock, m_debuggerDock }) {
+            tabifyDockWidget(m_assetBrowserDock, dock);
+        }
+        m_assetBrowserDock->raise();
+    };
+    // The Code panel stays docked but closed outside Programmer mode; View opens it.
+    auto placeHiddenCodeDock = [this](Qt::DockWidgetArea area) {
+        addDockWidget(area, m_codeEditorDock);
+        m_codeEditorDock->hide();
+    };
 
     // Dock sizes only apply once the new arrangement has been laid out.
     QTimer::singleShot(0, this, [this, mode]() {
@@ -4450,21 +4465,15 @@ void EditorMainWindow::arrangeModeLayout(EditorMode mode)
     case EditorMode::Default:
         place(m_outlinerDock, Qt::LeftDockWidgetArea);
         place(m_detailsDock, Qt::RightDockWidgetArea);
-        place(m_assetBrowserDock, Qt::BottomDockWidgetArea);
-        place(m_consoleDock, Qt::BottomDockWidgetArea);
-        place(m_buildOutputDock, Qt::BottomDockWidgetArea);
-        tabifyDockWidget(m_assetBrowserDock, m_buildOutputDock);
-        tabifyDockWidget(m_assetBrowserDock, m_consoleDock);
-        m_assetBrowserDock->raise();
+        placeBottomTabs();
+        placeHiddenCodeDock(Qt::LeftDockWidgetArea);
         break;
     case EditorMode::Artist:
         place(m_outlinerDock, Qt::RightDockWidgetArea);
         place(m_detailsDock, Qt::RightDockWidgetArea);
         splitDockWidget(m_outlinerDock, m_detailsDock, Qt::Vertical);
-        place(m_assetBrowserDock, Qt::BottomDockWidgetArea);
-        place(m_consoleDock, Qt::BottomDockWidgetArea);
-        tabifyDockWidget(m_assetBrowserDock, m_consoleDock);
-        m_assetBrowserDock->raise();
+        placeBottomTabs();
+        placeHiddenCodeDock(Qt::LeftDockWidgetArea);
         break;
     case EditorMode::Programmer:
         // Split before tabifying: splitting a dock that is already in a tab group drops the group off-screen.
