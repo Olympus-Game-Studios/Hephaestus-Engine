@@ -13,6 +13,7 @@
 #include "EditorTheme.h"
 #include "AddActorsPanel.h"
 #include "AssetDependencyDialog.h"
+#include "AssetThumbnailCache.h"
 #include "EditorAssetServices.h"
 #include "../HephaestusUI/HUIAsset.h"
 #include "../../Assets/AssetManager.h"
@@ -111,10 +112,21 @@ public:
         painter->drawRoundedRect(well, 5, 5);
         painter->drawRect(well.adjusted(0, well.height() / 2.0, 0, 0));
 
-        const QIcon icon = index.data(Qt::DecorationRole).value<QIcon>();
-        const QPoint center = well.center().toPoint();
-        const int iconSize = m_large ? 56 : 48;
-        icon.paint(painter, QRect(center.x() - iconSize / 2, center.y() - iconSize / 2, iconSize, iconSize));
+        const QPixmap thumbnail = index.data(AssetBrowserWidget::ThumbnailRole).value<QPixmap>();
+        if (!thumbnail.isNull()) {
+            const QRectF area = well.adjusted(8, 8, -8, -8);
+            QSizeF fitted = thumbnail.size();
+            fitted.scale(area.size(), Qt::KeepAspectRatio);
+            QRectF target(QPointF(), fitted);
+            target.moveCenter(area.center());
+            painter->setRenderHint(QPainter::SmoothPixmapTransform);
+            painter->drawPixmap(target, thumbnail, QRectF(thumbnail.rect()));
+        } else {
+            const QIcon icon = index.data(Qt::DecorationRole).value<QIcon>();
+            const QPoint center = well.center().toPoint();
+            const int iconSize = m_large ? 56 : 48;
+            icon.paint(painter, QRect(center.x() - iconSize / 2, center.y() - iconSize / 2, iconSize, iconSize));
+        }
 
         const QRect text = option.rect.adjusted(8, option.rect.height() - textHeight + 6, -8, -4);
         const QFontMetrics nameMetrics(option.font);
@@ -229,7 +241,9 @@ protected:
 AssetBrowserWidget::AssetBrowserWidget(EditorMainWindow* mainWindow, QWidget* parent)
     : QWidget(parent)
     , m_mainWindow(mainWindow)
+    , m_thumbnails(new AssetThumbnailCache(this))
 {
+    connect(m_thumbnails, &AssetThumbnailCache::thumbnailReady, this, &AssetBrowserWidget::onThumbnailReady);
     setupUI();
     updateEmptyState();
 }
@@ -626,6 +640,8 @@ void AssetBrowserWidget::rebuildFolderTree()
 void AssetBrowserWidget::rebuildContentsView()
 {
     m_contentsModel->clear();
+    m_thumbnails->CancelPending();
+    m_thumbnails->Invalidate();
 
     auto& assetMgr = AssetManager::GetInstance();
     if (!assetMgr.HasValidAssetRoot()) {
@@ -723,6 +739,7 @@ void AssetBrowserWidget::rebuildContentsView()
             item->setData(true, SearchResultRole);
             item->setToolTip(QStringLiteral("assets/%1").arg(rel));
             item->setEditable(false);
+            setThumbnail(item);
             m_contentsModel->appendRow(item);
             ++matchCount;
         }
@@ -766,7 +783,10 @@ void AssetBrowserWidget::rebuildContentsView()
         item->setData(entry.isDirectory, IsDirectoryRole);
         item->setData(false, SearchResultRole);
         item->setEditable(false);
-        
+        if (!entry.isDirectory && customType.isEmpty()) {
+            setThumbnail(item);
+        }
+
         m_contentsModel->appendRow(item);
     }
 
@@ -776,6 +796,23 @@ void AssetBrowserWidget::rebuildContentsView()
 void AssetBrowserWidget::applyViewAndFilter()
 {
     rebuildContentsView();
+}
+
+void AssetBrowserWidget::setThumbnail(QStandardItem* item)
+{
+    const QPixmap thumbnail = m_thumbnails->Thumbnail(item->data(RelativePathRole).toString(),
+                                                      static_cast<AssetType>(item->data(AssetTypeRole).toInt()));
+    item->setData(thumbnail.isNull() ? QVariant() : QVariant(thumbnail), ThumbnailRole);
+}
+
+void AssetBrowserWidget::onThumbnailReady(const QString& relativePath)
+{
+    for (int row = 0; row < m_contentsModel->rowCount(); ++row) {
+        QStandardItem* item = m_contentsModel->item(row);
+        if (item && QDir::fromNativeSeparators(item->data(RelativePathRole).toString()) == relativePath) {
+            setThumbnail(item);
+        }
+    }
 }
 
 void AssetBrowserWidget::updateBreadcrumb()

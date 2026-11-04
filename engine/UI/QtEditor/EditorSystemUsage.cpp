@@ -87,15 +87,20 @@ struct EditorSystemUsage::GpuCounters
         }
         DWORD bytes = 0;
         DWORD count = 0;
-        if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &bytes, &count, nullptr) != PDH_MORE_DATA) return 0.0;
+        if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &bytes, &count, nullptr) != PDH_MORE_DATA) return -1.0;
         std::vector<unsigned char> buffer(bytes);
         auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
         if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &bytes, &count, items) != ERROR_SUCCESS) return -1.0;
         double total = 0.0;
+        bool valid = false;
         for (DWORD i = 0; i < count; ++i) {
-            if (items[i].FmtValue.CStatus == ERROR_SUCCESS) total += items[i].FmtValue.doubleValue;
+            const DWORD status = items[i].FmtValue.CStatus;
+            if (status == PDH_CSTATUS_VALID_DATA || status == PDH_CSTATUS_NEW_DATA) {
+                total += items[i].FmtValue.doubleValue;
+                valid = true;
+            }
         }
-        return std::min(total, 100.0);
+        return valid ? std::min(total, 100.0) : -1.0;
     }
 };
 #else
