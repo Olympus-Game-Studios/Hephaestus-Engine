@@ -419,6 +419,7 @@ add_library(HephaestusEditorCore STATIC
     engine/Assets/OpenDocumentRegistry.cpp
     engine/Assets/AssetOperationService.cpp
     engine/Assets/DerivedDataCache.cpp
+    engine/Assets/AssetThumbnailRenderer.cpp
     engine/Assets/EditorAssetPipeline.cpp
     engine/Assets/EditorAssetImportService.cpp
     engine/Assets/EditorViewState.cpp
@@ -589,6 +590,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/AssetBrowserWidget.h
             engine/UI/QtEditor/AssetDependencyDialog.cpp
             engine/UI/QtEditor/AssetDependencyDialog.h
+            engine/UI/QtEditor/AssetThumbnailCache.cpp
+            engine/UI/QtEditor/AssetThumbnailCache.h
             engine/UI/QtEditor/EditorAssetServices.cpp
             engine/UI/QtEditor/EditorAssetServices.h
             engine/UI/QtEditor/EditorPluginHost.cpp
@@ -1689,6 +1692,19 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         NAME AutomationAsset
         COMMAND AutomationAssetTests ${CMAKE_CURRENT_SOURCE_DIR}
     )
+
+    add_executable(AssetThumbnailRendererTests
+        engine/Tests/AssetThumbnailRendererTests.cpp
+    )
+    target_link_libraries(AssetThumbnailRendererTests PRIVATE HephaestusEditorCore Vulkan::Vulkan)
+    target_include_directories(AssetThumbnailRendererTests PRIVATE
+        engine
+        extern
+        extern/VMA
+        extern/entt/single_include
+    )
+    hephaestus_target_ufbx(AssetThumbnailRendererTests STATIC)
+    add_test(NAME AssetThumbnailRenderer COMMAND AssetThumbnailRendererTests)
 
     add_executable(AutomationMaterialTests
         engine/Tests/AutomationMaterialTests.cpp

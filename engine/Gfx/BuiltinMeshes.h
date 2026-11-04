@@ -1,5 +1,9 @@
 #pragma once
 
+#include <string>
+
+#include "../Assets/MeshAsset.h"
+
 namespace Hephaestus {
 
 class EngineFrameRenderer;
@@ -7,5 +11,8 @@ class EngineFrameRenderer;
 // Uploads builtin://cube (1x1x1), builtin://plane, builtin://sphere (radius 0.5)
 // and builtin://skinned_rest_fixture. Editor and packaged game share these.
 void AddBuiltinMeshes(EngineFrameRenderer& renderer);
+
+// CPU copy of builtin://cube, builtin://plane or builtin://sphere; false for any other key.
+bool BuildBuiltinMesh(const std::string& key, MeshData& outMesh);
 
 } // namespace Hephaestus

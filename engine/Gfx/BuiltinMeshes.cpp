@@ -132,6 +132,15 @@ void AddSkinnedRestFixture(EngineFrameRenderer& renderer)
 
 } // namespace
 
+bool BuildBuiltinMesh(const std::string& key, MeshData& outMesh)
+{
+    if (key == "builtin://cube") outMesh = BuildCube();
+    else if (key == "builtin://plane") outMesh = BuildPlane();
+    else if (key == "builtin://sphere") outMesh = BuildSphere();
+    else return false;
+    return true;
+}
+
 void AddBuiltinMeshes(EngineFrameRenderer& renderer)
 {
     renderer.AddStaticMesh("Default Cube", BuildCube(), "builtin://cube", false);
