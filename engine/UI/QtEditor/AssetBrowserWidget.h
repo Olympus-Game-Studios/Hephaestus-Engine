@@ -36,6 +36,7 @@ class ProjectContext;
 namespace QtEditor {
 
 class EditorMainWindow;
+class AssetThumbnailCache;
 
 /**
  * @brief Asset browser widget with folder tree and contents view.
@@ -99,7 +100,8 @@ public:
         IsDirectoryRole,
         SearchResultRole,
         DetailRole,
-        TypeIconRole
+        TypeIconRole,
+        ThumbnailRole
     };
 
 signals:
@@ -139,6 +141,8 @@ private:
     void updateBreadcrumb();
     void updateStatusBar();
     void applyViewAndFilter();
+    void setThumbnail(QStandardItem* item);
+    void onThumbnailReady(const QString& relativePath);
 
     // Get icon for asset type  
     QIcon getAssetIcon(int assetType, bool isDirectory) const;
@@ -182,6 +186,7 @@ private:
     QWidget* m_contentsPanel = nullptr;
     QListView* m_contentsView = nullptr;
     QStandardItemModel* m_contentsModel = nullptr;
+    AssetThumbnailCache* m_thumbnails = nullptr;
 
     // Top bar
     QToolBar* m_toolbar = nullptr;
