@@ -22,7 +22,7 @@ set(HEPHAESTUS_APP_NAME        "Hephaestus Engine")
 set(HEPHAESTUS_APP_DESCRIPTION "A 3D game engine built with C++20, Vulkan, Qt, and Lua.")
 set(HEPHAESTUS_ORGANIZATION    "Hephaestus")
 set(HEPHAESTUS_DOMAIN          "dev.olympusgames.hephaestus")
-set(HEPHAESTUS_WEBSITE         "https://hepheastus.olympusgames.dev")
+set(HEPHAESTUS_WEBSITE         "https://hephaestus.olympusgames.dev")
 set(HEPHAESTUS_COPYRIGHT       "Copyright (c) 2026 Andrew Zambazos")
 
 configure_file(
@@ -1280,10 +1280,8 @@ if(TARGET HephaestusEngine)
 endif()
 
 # Install Lua DLL if present
-if(EXISTS "$ENV{USERPROFILE}/vcpkg/installed/x64-windows/bin/lua.dll")
-    install(FILES "$ENV{USERPROFILE}/vcpkg/installed/x64-windows/bin/lua.dll"
-        DESTINATION .
-    )
+if(LUA_FOUND AND DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
+    install(FILES "${LUA_DLL_PATH}" DESTINATION .)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -28,14 +28,15 @@ void Usage() {
         << "  --zip\n";
 }
 
-std::filesystem::path ExecutableDirectory() {
+// The folder holding HephaestusGame and the engine content: the tool itself is in its tools/ folder.
+std::filesystem::path InstallRoot() {
 #ifdef _WIN32
     std::wstring path(32768, L'\0');
     const DWORD length = GetModuleFileNameW(nullptr, path.data(),
                                             static_cast<DWORD>(path.size()));
     if (length > 0) {
         path.resize(length);
-        return std::filesystem::path(path).parent_path();
+        return std::filesystem::path(path).parent_path().parent_path();
     }
 #endif
     return std::filesystem::current_path();
@@ -73,7 +74,7 @@ int main(int argc, char** argv) {
     using namespace Hephaestus::Build;
     BuildRequest request;
     request.engineVersion = HEPHAESTUS_VERSION_STRING;
-    request.runtimeSearchRoot = ExecutableDirectory();
+    request.runtimeSearchRoot = InstallRoot();
     request.engineRoot = RuntimeLocator::discoverEngineRoot(request.runtimeSearchRoot);
     request.action = BuildAction::Package;
 

@@ -1,239 +1,124 @@
-# Hephaestus Engine - Create Release Package
-# This script creates a portable release package that can run outside the repository
+# Hephaestus Engine - Create Windows Release Package
+# Builds Release from this checkout and writes the folder uploaded to Steam: the launcher,
+# editor, game player, build tool, Qt (via windeployqt), Lua, plugins and content, without
+# debug symbols, tests or development-only content. The VC++ runtime is not bundled; Steam
+# installs it.
+#
+#   tools\create_release_package.ps1 [-OutputPath <dir>] [-BuildDirectory <dir>] [-Qt6Dir <dir>]
 
 param(
-    [Parameter(Mandatory=$false)]
-    [string]$OutputPath = ".\dist",
-    
-    [Parameter(Mandatory=$false)]
-    [string]$Configuration = "Release",
-    
-    [Parameter(Mandatory=$false)]
-    [switch]$RuntimeMode = $false,
-    
-    [Parameter(Mandatory=$false)]
-    [switch]$CreateZip = $false
+    [string]$OutputPath = "",
+    [string]$BuildDirectory = "",
+    [string]$Qt6Dir = "C:/Qt/6.10.2/msvc2022_64/lib/cmake/Qt6"
 )
 
 $ErrorActionPreference = "Stop"
 
-# Color output helpers
-function Write-Success { param([string]$Message) Write-Host "[OK] $Message" -ForegroundColor Green }
-function Write-Info { param([string]$Message) Write-Host "[INFO] $Message" -ForegroundColor Cyan }
-function Write-Warn { param([string]$Message) Write-Host "[WARN] $Message" -ForegroundColor Yellow }
-function Write-Err { param([string]$Message) Write-Host "[ERROR] $Message" -ForegroundColor Red }
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
+if (-not $OutputPath) { $OutputPath = Join-Path $ProjectRoot "dist\windows" }
+if (-not $BuildDirectory) { $BuildDirectory = Join-Path $ProjectRoot "build\steam-windows" }
+$OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
+$BuildDirectory = [System.IO.Path]::GetFullPath($BuildDirectory)
+$BuildOutput = Join-Path $BuildDirectory "Release"
 
-# Get script and project directories
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectRoot = Split-Path -Parent $ScriptDir
-$BuildDir = Join-Path $ProjectRoot "build\$Configuration"
-
-Write-Info "Hephaestus Engine Release Packager"
-Write-Info "==================================="
-Write-Host ""
-Write-Info "Project Root: $ProjectRoot"
-Write-Info "Build Directory: $BuildDir"
-Write-Info "Output: $OutputPath"
-Write-Host ""
-
-# Verify build exists
-if (-not (Test-Path (Join-Path $BuildDir "HephaestusEngine.exe"))) {
-    Write-Err "Build not found at $BuildDir"
-    Write-Info "Run 'cmake --build build --config $Configuration' first"
-    exit 1
+$Qt6Dir = [System.IO.Path]::GetFullPath($Qt6Dir)
+$WinDeployQt = Join-Path $Qt6Dir "..\..\..\bin\windeployqt.exe"
+if (-not (Test-Path (Join-Path $Qt6Dir "Qt6Config.cmake") -PathType Leaf) -or
+    -not (Test-Path $WinDeployQt -PathType Leaf)) {
+    throw "Qt not found at $Qt6Dir (expected Qt6Config.cmake and ..\..\..\bin\windeployqt.exe). Pass -Qt6Dir."
 }
 
-# Create output directory
-$OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
+# Plugins that only exist for development, not for users.
+$ExcludedPlugins = @("HephaestusFPS")
+
+Write-Host "Building Release in $BuildDirectory with Qt from $Qt6Dir"
+if (-not (Test-Path (Join-Path $ProjectRoot "extern\JoltPhysics\Build\CMakeLists.txt")) -or
+    -not (Test-Path (Join-Path $ProjectRoot "extern\glfw\CMakeLists.txt")) -or
+    -not (Test-Path (Join-Path $ProjectRoot "extern\ufbx\ufbx.h"))) {
+    git -C $ProjectRoot submodule update --init --recursive
+    if ($LASTEXITCODE -ne 0) { throw "git submodule update failed" }
+}
+cmake -S $ProjectRoot -B $BuildDirectory -G "Visual Studio 17 2022" -A x64 `
+    "-DQt6_DIR=$Qt6Dir" `
+    -DHEPHAESTUS_BUILD_EDITOR=ON -DHEPHAESTUS_BUILD_GAME=ON -DHEPHAESTUS_USE_QT=ON `
+    -DHEPHAESTUS_BUILD_COMPAT_TESTS=OFF -DHEPHAESTUS_BUILD_QT_TESTS=OFF `
+    -DHEPHAESTUS_RUNTIME_AUTOMATION=OFF
+if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
+$configuredQt = (Select-String -Path (Join-Path $BuildDirectory "CMakeCache.txt") -Pattern "^Qt6_DIR:PATH=(.*)$").Matches[0].Groups[1].Value
+if ([System.IO.Path]::GetFullPath($configuredQt) -ne $Qt6Dir) {
+    throw "The build is configured with Qt from $configuredQt, not $Qt6Dir"
+}
+cmake --build $BuildDirectory --config Release --parallel
+if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+
+foreach ($required in @("HephaestusLauncher.exe", "HephaestusEngine.exe", "HephaestusGame.exe",
+                        "tools\HephaestusBuild.exe")) {
+    if (-not (Test-Path (Join-Path $BuildOutput $required) -PathType Leaf)) {
+        throw "The build did not produce $required"
+    }
+}
+$luaDll = Get-ChildItem $BuildOutput -Filter "lua*.dll" -File | Select-Object -First 1
+if (-not $luaDll) { throw "The build did not copy a Lua DLL into $BuildOutput" }
+
 if (Test-Path $OutputPath) {
-    Write-Warn "Output directory exists, cleaning: $OutputPath"
+    $existing = @(Get-ChildItem -Force $OutputPath)
+    if ($existing.Count -gt 0 -and -not (Test-Path (Join-Path $OutputPath "HephaestusEngine.exe"))) {
+        throw "$OutputPath is not empty and is not a previous release package; choose another -OutputPath"
+    }
     Remove-Item -Recurse -Force $OutputPath
 }
-New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
+New-Item -ItemType Directory -Path $OutputPath | Out-Null
+Write-Host "Staging $OutputPath"
 
-Write-Info "Creating release package..."
-
-# Copy executable
-Write-Info "Copying executable..."
-Copy-Item (Join-Path $BuildDir "HephaestusEngine.exe") $OutputPath
-Write-Success "HephaestusEngine.exe"
-
-$launcherExe = Join-Path $BuildDir "HephaestusLauncher.exe"
-if (Test-Path $launcherExe) {
-    Copy-Item $launcherExe $OutputPath
-    Write-Success "HephaestusLauncher.exe"
+foreach ($file in @("HephaestusLauncher.exe", "HephaestusEngine.exe", "HephaestusGame.exe", $luaDll.Name)) {
+    Copy-Item (Join-Path $BuildOutput $file) $OutputPath
 }
-
-# Include the generic player so projects can be packaged from this portable
-# editor without requiring CMake or an engine source checkout.
-$gameExe = Join-Path $BuildDir "HephaestusGame.exe"
-if (Test-Path $gameExe) {
-    Copy-Item $gameExe $OutputPath
-    Write-Success "HephaestusGame.exe"
-} else {
-    Write-Warn "HephaestusGame.exe is missing; this editor package cannot package games without developer tools"
-}
-$buildCli = Join-Path $BuildDir "tools\HephaestusBuild.exe"
-if (Test-Path $buildCli) {
-    $toolsOutput = Join-Path $OutputPath "tools"
-    New-Item -ItemType Directory -Path $toolsOutput -Force | Out-Null
-    Copy-Item $buildCli $toolsOutput
-    Write-Success "tools/HephaestusBuild.exe"
-}
-
-# Copy the Qt runtime already deployed beside the built Editor/Launcher.
-Get-ChildItem $BuildDir -Filter "Qt6*.dll" -File | ForEach-Object {
-    Copy-Item $_.FullName $OutputPath
-    Write-Success $_.Name
-}
-foreach ($pluginDirectory in @("platforms", "iconengines")) {
-    $pluginSource = Join-Path $BuildDir $pluginDirectory
-    if (Test-Path $pluginSource) {
-        Copy-Item -Recurse $pluginSource (Join-Path $OutputPath $pluginDirectory)
-        Write-Success "$pluginDirectory/"
-    }
-}
-
-# Normalize Lua's packaged filename to the name expected by game distributions.
-$luaDll = @(
-    (Join-Path $BuildDir "lua54.dll"),
-    (Join-Path $BuildDir "lua.dll")
-) | Where-Object { Test-Path $_ } | Select-Object -First 1
-if ($luaDll) {
-    Copy-Item $luaDll (Join-Path $OutputPath "lua54.dll")
-    Write-Success "lua54.dll"
-}
-
-# Copy shaders
-Write-Info "Copying shaders..."
-$shadersSource = Join-Path $BuildDir "shaders"
-$shadersDest = Join-Path $OutputPath "shaders"
-if (Test-Path $shadersSource) {
-    Copy-Item -Recurse $shadersSource $shadersDest
-    $shaderCount = (Get-ChildItem $shadersDest -Filter "*.spv").Count
-    Write-Success "shaders/ ($shaderCount SPV files)"
-} else {
-    # Fall back to source shaders
-    $shadersSource = Join-Path $ProjectRoot "shaders"
-    if (Test-Path $shadersSource) {
-        New-Item -ItemType Directory -Path $shadersDest -Force | Out-Null
-        Get-ChildItem $shadersSource -Filter "*.spv" | Copy-Item -Destination $shadersDest
-        $shaderCount = (Get-ChildItem $shadersDest -Filter "*.spv").Count
-        Write-Success "shaders/ ($shaderCount SPV files from source)"
-    } else {
-        Write-Err "No shaders found!"
-        exit 1
-    }
-}
-
-# Copy assets
-Write-Info "Copying assets..."
-$assetsSource = Join-Path $BuildDir "assets"
-$assetsDest = Join-Path $OutputPath "assets"
-if (-not (Test-Path $assetsSource)) {
-    $assetsSource = Join-Path $ProjectRoot "assets"
-}
-if (Test-Path $assetsSource) {
-    Copy-Item -Recurse $assetsSource $assetsDest
-    $assetCount = (Get-ChildItem $assetsDest -Recurse -File).Count
-    Write-Success "assets/ ($assetCount files)"
-} else {
-    Write-Warn "No assets directory found"
-    New-Item -ItemType Directory -Path $assetsDest -Force | Out-Null
-}
-
-# Copy editor resources (icons, fonts)
-Write-Info "Copying editor resources..."
-$editorSource = Join-Path $BuildDir "editor"
-$editorDest = Join-Path $OutputPath "editor"
-if (-not (Test-Path $editorSource)) {
-    $editorSource = Join-Path $ProjectRoot "editor"
-}
-if (Test-Path $editorSource) {
-    Copy-Item -Recurse $editorSource $editorDest
-    $editorCount = (Get-ChildItem $editorDest -Recurse -File).Count
-    Write-Success "editor/ ($editorCount files)"
-} else {
-    Write-Warn "No editor directory found"
-}
-
-# Copy builtin runtime content required when packaging without a source checkout.
-foreach ($engineContent in @("meshes", "hdris")) {
-    $engineContentSource = Join-Path $ProjectRoot ".engine\$engineContent"
-    if ($engineContent -eq "hdris" -and -not (Test-Path $engineContentSource)) {
-        $engineContentSource = Join-Path $ProjectRoot "assets\textures\hdris"
-    }
-    if (Test-Path $engineContentSource) {
-        $engineContentDest = Join-Path $OutputPath ".engine\$engineContent"
-        New-Item -ItemType Directory -Path (Split-Path $engineContentDest -Parent) -Force | Out-Null
-        Copy-Item -Recurse $engineContentSource $engineContentDest
-        Write-Success ".engine/$engineContent"
-    }
-}
-
+New-Item -ItemType Directory -Path (Join-Path $OutputPath "tools") | Out-Null
+Copy-Item (Join-Path $BuildOutput "tools\HephaestusBuild.exe") (Join-Path $OutputPath "tools")
 foreach ($notice in @("LICENSE.md", "THIRD_PARTY_NOTICES.md")) {
     Copy-Item (Join-Path $ProjectRoot $notice) $OutputPath
-    Write-Success $notice
 }
 
-# Create README file (doesn't trigger runtime mode)
-$readmePath = Join-Path $OutputPath "README.txt"
-$packageType = if ($RuntimeMode) { "Runtime" } else { "Editor" }
-@"
-# Hephaestus Engine - Portable $packageType Package
-# =============================================
-# Generated: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-# Configuration: $Configuration
-# Package Type: $packageType
-#
-# To run: Double-click HephaestusEngine.exe
-#
-# Required folder structure:
-#   HephaestusEngine.exe  - Main executable
-#   HephaestusGame.exe    - Generic game player used by Project > Package
-#   shaders/              - Compiled SPIR-V shaders
-#   assets/               - Game assets (textures, meshes, scenes)
-#   editor/               - Editor resources (icons, fonts)
-#   .engine/              - Builtin meshes and HDRIs used by packaged projects
-#   lua54.dll             - Lua runtime used by packaged games
-#
-# System Requirements:
-#   - Windows 10/11 (64-bit)
-#   - Vulkan-capable GPU with up-to-date drivers
-#   - Visual C++ Redistributable 2019 or later
-"@ | Out-File -FilePath $readmePath -Encoding UTF8
-Write-Success "README.txt"
+New-Item -ItemType Directory -Path (Join-Path $OutputPath "shaders") | Out-Null
+Copy-Item (Join-Path $BuildOutput "shaders\*.spv") (Join-Path $OutputPath "shaders")
+Copy-Item -Recurse (Join-Path $ProjectRoot "assets") (Join-Path $OutputPath "assets")
+Remove-Item -Recurse -Force (Join-Path $OutputPath "assets\tests")
+Copy-Item -Recurse (Join-Path $ProjectRoot "editor") (Join-Path $OutputPath "editor")
+New-Item -ItemType Directory -Path (Join-Path $OutputPath "scripts") | Out-Null
+Copy-Item (Join-Path $ProjectRoot "scripts\*.lua") (Join-Path $OutputPath "scripts")
+New-Item -ItemType Directory -Path (Join-Path $OutputPath ".engine") | Out-Null
+Copy-Item -Recurse (Join-Path $ProjectRoot ".engine\meshes") (Join-Path $OutputPath ".engine\meshes")
+Copy-Item -Recurse (Join-Path $ProjectRoot "assets\textures\hdris") (Join-Path $OutputPath ".engine\hdris")
 
-# Only create runtime markers if -RuntimeMode is specified
-if ($RuntimeMode) {
-    # Create runtime marker file (triggers runtime mode detection)
-    $manifestPath = Join-Path $OutputPath "PACKAGE_MANIFEST.txt"
-    "Hephaestus Runtime Package - $(Get-Date)" | Out-File -FilePath $manifestPath -Encoding UTF8
-    Write-Success "PACKAGE_MANIFEST.txt (runtime marker)"
-    
+New-Item -ItemType Directory -Path (Join-Path $OutputPath "Plugins") | Out-Null
+Get-ChildItem (Join-Path $BuildOutput "Plugins") -Directory |
+    Where-Object { $ExcludedPlugins -notcontains $_.Name } |
+    ForEach-Object { Copy-Item -Recurse $_.FullName (Join-Path $OutputPath "Plugins\$($_.Name)") }
+Get-ChildItem $OutputPath -Recurse -File -Include *.pdb, *.lib, *.exp, *.ilk | Remove-Item -Force
 
+Write-Host "Deploying Qt"
+$qtTargets = @((Join-Path $OutputPath "HephaestusEngine.exe"), (Join-Path $OutputPath "HephaestusLauncher.exe")) +
+    @(Get-ChildItem (Join-Path $OutputPath "Plugins") -Recurse -Filter "*.dll" | ForEach-Object FullName)
+& $WinDeployQt --release --dir $OutputPath --no-translations --no-compiler-runtime `
+    --no-system-d3d-compiler --no-system-dxc-compiler --no-opengl-sw `
+    --skip-plugin-types generic,networkinformation,tls $qtTargets
+if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
+# windeployqt copies Windows' own ICU from System32; Windows 10 and later already have it.
+Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $OutputPath "icuuc.dll")
+
+$problems = @()
+foreach ($required in @("HephaestusLauncher.exe", "HephaestusEngine.exe", "HephaestusGame.exe",
+                        "tools\HephaestusBuild.exe", "Qt6Core.dll", "Qt6Widgets.dll", "Qt6Svg.dll",
+                        "platforms\qwindows.dll", "LICENSE.md", "THIRD_PARTY_NOTICES.md",
+                        "editor", "assets", "shaders", ".engine\meshes", ".engine\hdris", "Plugins")) {
+    if (-not (Test-Path (Join-Path $OutputPath $required))) { $problems += "missing $required" }
 }
-
-# Summary
-Write-Host ""
-Write-Info "==================================="
-Write-Success "$packageType package created successfully!"
-Write-Host ""
-Write-Info "Package location: $OutputPath"
-Write-Info "Package size: $([math]::Round((Get-ChildItem $OutputPath -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB, 2)) MB"
-Write-Host ""
-
-# Create ZIP if requested
-if ($CreateZip) {
-    $zipName = "HephaestusEngine_${packageType}_$(Get-Date -Format 'yyyyMMdd').zip"
-    $zipPath = Join-Path (Split-Path $OutputPath -Parent) $zipName
-    Write-Info "Creating ZIP archive: $zipName"
-    Compress-Archive -Path "$OutputPath\*" -DestinationPath $zipPath -Force
-    Write-Success "Created: $zipPath"
-    Write-Info "ZIP size: $([math]::Round((Get-Item $zipPath).Length / 1MB, 2)) MB"
+$problems += @(Get-ChildItem $OutputPath -Recurse -File -Include *.pdb, vc_redist*, msvcp*.dll, vcruntime*.dll, icu*.dll, dxcompiler.dll, Qt6Network.dll |
+    ForEach-Object { "unexpected $($_.FullName)" })
+foreach ($plugin in $ExcludedPlugins) {
+    if (Test-Path (Join-Path $OutputPath "Plugins\$plugin")) { $problems += "excluded plugin $plugin is present" }
 }
+if ($problems.Count -gt 0) { throw "Release package check failed:`n  " + ($problems -join "`n  ") }
 
-Write-Host ""
-Write-Info "To test the package:"
-Write-Host "  1. Copy the '$OutputPath' folder to any location" -ForegroundColor White
-Write-Host "  2. Run HephaestusEngine.exe or RunGame.bat" -ForegroundColor White
+$size = (Get-ChildItem $OutputPath -Recurse -File | Measure-Object -Property Length -Sum).Sum
+Write-Host ("Release package: {0} ({1:N0} MB)" -f $OutputPath, ($size / 1MB))
