@@ -440,6 +440,10 @@ See the guides above for complete examples and best practices.
 Contributions welcome! This is a learning project demonstrating modern engine architecture patterns. Review [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup steps, coding guidelines, and the pull request checklist.
 - Small improvements: documentation edits, issue templates, and automated shader checks are great starting points.
 
+## License
+
+Hephaestus Engine is source available, not open source. See [`LICENSE.md`](LICENSE.md) for the terms.
+
 ## References
 
 - Vulkan SDK: https://vulkan.lunarg.com/
