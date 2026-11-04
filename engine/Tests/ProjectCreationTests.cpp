@@ -142,6 +142,47 @@ bool TestEditorModeRoundTrip()
     return pass;
 }
 
+bool TestRecordEngineVersion()
+{
+    QTemporaryDir temp;
+    if (!Check(temp.isValid(), "temp dir valid")) {
+        return false;
+    }
+
+    Hephaestus::Tools::ProjectCreationService::Result result;
+    QString error;
+    if (!Check(Hephaestus::Tools::ProjectCreationService::CreateBlankProject(
+                   temp.path(), QStringLiteral("VersionProj"), QStringLiteral("2026.10.5"), false, &result, &error),
+               "CreateBlankProject succeeded: " + error.toStdString())) {
+        return false;
+    }
+
+    QDir project(result.projectDir);
+    auto recordedIn = [&](const QString& relative) {
+        QFile file(project.filePath(relative));
+        if (!file.open(QIODevice::ReadOnly)) {
+            return QString();
+        }
+        return QJsonDocument::fromJson(file.readAll()).object().value(QStringLiteral("engineVersion")).toString();
+    };
+
+    const Hephaestus::Tools::ProjectSettingsManager settings(result.projectDir);
+    bool pass = true;
+    pass &= Check(settings.RecordEngineVersion(QStringLiteral("2026.9.30")) == QStringLiteral("2026.10.5"),
+                  "an older engine is told the newer version that opened the project");
+    pass &= Check(recordedIn(QStringLiteral("project.heproject")) == QStringLiteral("2026.10.5"),
+                  "an older engine does not lower the recorded version");
+    pass &= Check(settings.RecordEngineVersion(QStringLiteral("2026.11.3")).isEmpty(),
+                  "a newer engine opens without a warning");
+    for (const QString& relative : { QStringLiteral("project.heproject"), QStringLiteral(".hephaestus/project.heproject") }) {
+        pass &= Check(recordedIn(relative) == QStringLiteral("2026.11.3"),
+                      "a newer engine records its version in " + relative.toStdString());
+    }
+    pass &= Check(settings.RecordEngineVersion(QStringLiteral("2026.11.3")).isEmpty(),
+                  "the same engine opens without a warning");
+    return pass;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -150,6 +191,7 @@ int main(int argc, char** argv)
     bool ok = true;
     ok &= TestCreateBlankProjectLayout();
     ok &= TestEditorModeRoundTrip();
+    ok &= TestRecordEngineVersion();
     if (!ok) {
         std::cerr << "ProjectCreationTests FAILED\n";
         return 1;
