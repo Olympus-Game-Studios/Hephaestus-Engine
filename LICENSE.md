@@ -96,4 +96,4 @@ TO THE EXTENT PERMITTED BY LAW, IN NO EVENT WILL WE BE LIABLE FOR ANY CLAIM, DAM
 
 ## 13. Governing law
 
-This License is governed by the laws of [JURISDICTION], without regard to its conflict of law rules.
+This License is governed by the laws of New Zealand, without regard to its conflict of law rules, and the courts of New Zealand have non-exclusive jurisdiction over any dispute arising from it.
