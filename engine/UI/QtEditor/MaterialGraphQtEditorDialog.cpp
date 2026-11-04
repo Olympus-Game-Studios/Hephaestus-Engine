@@ -1,6 +1,8 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "MaterialGraphQtEditorDialog.h"
+#include "EditorDockTitleBar.h"
+#include "EditorTheme.h"
 
 #include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "../MaterialEditor/MaterialGraphEvaluator.h"
@@ -20,12 +22,10 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDialog>
-#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QGroupBox>
 #include <QGuiApplication>
 #include <QClipboard>
 #include <QFormLayout>
@@ -53,7 +53,10 @@
 #include <QScrollBar>
 #include <QSlider>
 #include <QSplitter>
+#include <QStatusBar>
+#include <QStyle>
 #include <QTimer>
+#include <QToolBar>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QUndoCommand>
@@ -79,6 +82,35 @@ namespace {
 using namespace MaterialEditor;
 
 constexpr const char* DEFAULT_PREVIEW_HDRI_PATH = ".engine/hdris/studio_garden_1k.hdr";
+
+QToolButton* MakeToolButton(QWidget* parent, const QString& icon, const QString& toolTip, const QString& text = QString()) {
+    auto* button = new QToolButton(parent);
+    if (!icon.isEmpty()) {
+        button->setIcon(Theme::Icon(icon));
+    }
+    if (!text.isEmpty()) {
+        button->setText(text);
+        button->setToolButtonStyle(icon.isEmpty() ? Qt::ToolButtonTextOnly : Qt::ToolButtonTextBesideIcon);
+    }
+    button->setToolTip(toolTip);
+    return button;
+}
+
+QWidget* MakePanel(QWidget* parent) {
+    auto* panel = new QWidget(parent);
+    panel->setObjectName(QStringLiteral("EditorPanel"));
+    panel->setAttribute(Qt::WA_StyledBackground, true);
+    auto* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    return panel;
+}
+
+void SetStyleProperty(QWidget* widget, const char* name, const QString& value) {
+    widget->setProperty(name, value);
+    widget->style()->unpolish(widget);
+    widget->style()->polish(widget);
+}
 
 QString NodeTypeLabel(NodeType type) {
     return QString::fromUtf8(GetNodeDefinition(type).typeName.data(), static_cast<int>(GetNodeDefinition(type).typeName.size()));
@@ -561,7 +593,7 @@ public:
         p.cubicTo(start + QPointF(dx, 0.0), end - QPointF(dx, 0.0), end);
         setPath(p);
 
-        QPen pen(isSelected() ? QColor(255, 230, 130) : QColor(200, 200, 200));
+        QPen pen(isSelected() ? Theme::Color(Theme::Token::AccentSelection) : Theme::Color(Theme::Token::TextMuted));
         pen.setWidthF(isSelected() ? 3.0 : 2.0);
         setPen(pen);
     }
@@ -653,18 +685,18 @@ public:
         painter->setRenderHint(QPainter::Antialiasing, true);
 
         QRectF rect = boundingRect();
-        painter->setPen(QPen(isSelected() ? QColor(250, 230, 140) : QColor(40, 40, 40), isSelected() ? 2.0 : 1.0));
-        painter->setBrush(m_type == NodeType::MaterialOutput ? QColor(44, 38, 40) : QColor(36, 36, 40));
+        painter->setPen(QPen(isSelected() ? Theme::Color(Theme::Token::BorderFocus) : Theme::Color(Theme::Token::BorderDefault), isSelected() ? 2.0 : 1.0));
+        painter->setBrush(Theme::Color(Theme::Token::SurfaceRaised));
         painter->drawRoundedRect(rect, m_type == NodeType::MaterialOutput ? 10.0 : 6.0, m_type == NodeType::MaterialOutput ? 10.0 : 6.0);
 
         QRectF titleRect(0.0, 0.0, rect.width(), 30.0);
         painter->setPen(Qt::NoPen);
         painter->setBrush(NodeTitleColor(m_type));
         painter->drawRoundedRect(titleRect, 6.0, 6.0);
-        painter->setBrush(QColor(36, 36, 40));
+        painter->setBrush(Theme::Color(Theme::Token::SurfaceRaised));
         painter->drawRect(0.0, 26.0, rect.width(), 4.0);
 
-        painter->setPen(Qt::white);
+        painter->setPen(Theme::Color(Theme::Token::TextPrimary));
         QFont titleFont = painter->font();
         titleFont.setBold(m_type == NodeType::MaterialOutput);
         painter->setFont(titleFont);
@@ -672,7 +704,7 @@ public:
         titleFont.setBold(false);
         painter->setFont(titleFont);
 
-        painter->setPen(QColor(210, 210, 210));
+        painter->setPen(Theme::Color(Theme::Token::TextSecondary));
         for (PinItem* p : m_inputs) {
             const QPointF lp = p->pos();
             painter->drawText(QRectF(18.0, lp.y() - 8.0, m_width * 0.5, 16.0), Qt::AlignVCenter | Qt::AlignLeft, p->label());
@@ -683,20 +715,20 @@ public:
         }
 
         if (m_issueSeverity.has_value()) {
-            QColor issueColor(110, 170, 255);
+            QColor issueColor = Theme::Color(Theme::Token::StatusInfo);
             QString marker = QStringLiteral("i");
             if (*m_issueSeverity == GraphIssue::Severity::Error) {
-                issueColor = QColor(235, 90, 80);
+                issueColor = Theme::Color(Theme::Token::StatusError);
                 marker = QStringLiteral("!");
             } else if (*m_issueSeverity == GraphIssue::Severity::Warning) {
-                issueColor = QColor(240, 185, 70);
+                issueColor = Theme::Color(Theme::Token::StatusWarning);
                 marker = QStringLiteral("!");
             }
             const QRectF badge(rect.width() - 26.0, 6.0, 18.0, 18.0);
             painter->setPen(Qt::NoPen);
             painter->setBrush(issueColor);
             painter->drawEllipse(badge);
-            painter->setPen(Qt::black);
+            painter->setPen(Theme::Color(Theme::Token::SurfaceBase));
             painter->drawText(badge, Qt::AlignCenter, marker);
         }
 
@@ -844,7 +876,7 @@ class MaterialGraphScene final : public QGraphicsScene {
 public:
     explicit MaterialGraphScene(Graph* graph, QUndoStack* undoStack, QObject* parent = nullptr)
         : QGraphicsScene(parent), m_graph(graph), m_undo(undoStack) {
-        setBackgroundBrush(QColor(30, 30, 34));
+        setBackgroundBrush(Theme::Color(Theme::Token::SurfaceViewport));
         connect(this, &QGraphicsScene::selectionChanged, this, [this]() {
             if (!m_selectionChanged) {
                 return;
@@ -1194,7 +1226,7 @@ protected:
         constexpr qreal grid = 32.0;
         const qreal left = std::floor(rect.left() / grid) * grid;
         const qreal top = std::floor(rect.top() / grid) * grid;
-        QPen minor(QColor(42, 42, 48), 1.0);
+        QPen minor(Theme::Color(Theme::Token::SurfaceRaised), 1.0);
         painter->setPen(minor);
         for (qreal x = left; x < rect.right(); x += grid) {
             painter->drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()));
@@ -1209,7 +1241,7 @@ protected:
         if (m_alignmentGuideLines.empty()) {
             return;
         }
-        QPen guidePen(QColor(110, 185, 255, 180), 1.0, Qt::DashLine);
+        QPen guidePen(Theme::Color(Theme::Token::BorderFocus), 1.0, Qt::DashLine);
         painter->setPen(guidePen);
         for (const QLineF& line : m_alignmentGuideLines) {
             painter->drawLine(line);
@@ -1782,160 +1814,194 @@ private:
 
     void buildUi() {
         auto* root = new QVBoxLayout(this);
-        root->setContentsMargins(10, 10, 10, 10);
-        root->setSpacing(8);
+        root->setContentsMargins(0, 0, 0, 0);
+        root->setSpacing(0);
 
-        auto* toolbar = new QHBoxLayout();
-        toolbar->setSpacing(6);
-        m_saveButton = new QPushButton(QObject::tr("Save"), this);
-        m_applyButton = new QPushButton(QObject::tr("Apply"), this);
-        m_compileButton = new QPushButton(QObject::tr("Compile"), this);
-        m_addNodeButton = new QPushButton(QObject::tr("Add Node"), this);
-        auto* undoButton = new QPushButton(QObject::tr("Undo"), this);
-        auto* redoButton = new QPushButton(QObject::tr("Redo"), this);
-        undoButton->setObjectName(QStringLiteral("MaterialUndoButton"));
-        redoButton->setObjectName(QStringLiteral("MaterialRedoButton"));
-        m_viewButton = new QToolButton(this);
-        m_viewButton->setText(QObject::tr("Reset View"));
-        m_snapCheck = new QCheckBox(QObject::tr("Snap"), this);
-        m_dirtyLabel = new QLabel(QObject::tr("Saved"), this);
-        m_dirtyLabel->setToolTip(QObject::tr("Shows whether this material has unsaved editor changes."));
-        m_syncLegacyCheck = new QCheckBox(QObject::tr("Sync legacy fields from graph"), this);
-        m_syncLegacyCheck->setChecked(true);
+        auto* toolbar = new QToolBar(this);
+        toolbar->setIconSize(QSize(16, 16));
+        m_saveButton = MakeToolButton(toolbar, QStringLiteral("save"), QObject::tr("Save (Ctrl+S)"));
+        m_applyButton = MakeToolButton(toolbar, QString(), QObject::tr("Compile and apply to the scene"), QObject::tr("Apply"));
+        auto* undoButton = MakeToolButton(toolbar, QStringLiteral("undo"), QObject::tr("Undo (Ctrl+Z)"));
+        auto* redoButton = MakeToolButton(toolbar, QStringLiteral("redo"), QObject::tr("Redo (Ctrl+Y)"));
+        m_addNodeButton = new QPushButton(Theme::Icon(QStringLiteral("plus"), Theme::IconTone::Primary), QObject::tr("Add node"), toolbar);
+        m_addNodeButton->setToolTip(QObject::tr("Search nodes to add (Tab)"));
+        m_compileButton = MakeToolButton(toolbar, QStringLiteral("build"), QObject::tr("Compile the graph"), QObject::tr("Compile"));
+        m_statusLabel = new QLabel(toolbar);
+        m_graphBanner = new QLabel(toolbar);
+        for (QLabel* badge : {m_statusLabel, m_graphBanner}) {
+            badge->setObjectName(QStringLiteral("StatusBadge"));
+        }
+        m_snapCheck = MakeToolButton(toolbar, QStringLiteral("snap"), QObject::tr("Snap nodes to the grid"));
+        m_snapCheck->setCheckable(true);
+        m_viewButton = MakeToolButton(toolbar, QStringLiteral("maximize"), QObject::tr("Frame selection (F)"));
+        auto* spacer = new QWidget(toolbar);
+        spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         toolbar->addWidget(m_saveButton);
         toolbar->addWidget(m_applyButton);
-        toolbar->addWidget(m_compileButton);
-        toolbar->addWidget(m_addNodeButton);
+        toolbar->addSeparator();
         toolbar->addWidget(undoButton);
         toolbar->addWidget(redoButton);
-        toolbar->addWidget(m_viewButton);
+        toolbar->addSeparator();
+        toolbar->addWidget(m_addNodeButton);
+        toolbar->addSeparator();
+        toolbar->addWidget(m_compileButton);
+        toolbar->addWidget(m_statusLabel);
+        toolbar->addWidget(m_graphBanner);
+        toolbar->addWidget(spacer);
         toolbar->addWidget(m_snapCheck);
-        toolbar->addStretch(1);
-        toolbar->addWidget(m_syncLegacyCheck);
-        toolbar->addWidget(m_dirtyLabel);
-        root->addLayout(toolbar);
+        toolbar->addWidget(m_viewButton);
+        root->addWidget(toolbar);
 
         m_graphScene = new MaterialGraphScene(&m_graph, m_undo, this);
         m_graphView = new MaterialGraphView(this);
         m_graphView->setScene(m_graphScene);
+        m_graphView->setFrameShape(QFrame::NoFrame);
 
         auto* horizontalSplitter = new QSplitter(Qt::Horizontal, this);
+        horizontalSplitter->setChildrenCollapsible(false);
 
-        auto* paletteHost = new QGroupBox(QObject::tr("Node Palette"), this);
-        auto* paletteLayout = new QVBoxLayout(paletteHost);
-        paletteLayout->setContentsMargins(8, 8, 8, 8);
+        auto* paletteHost = MakePanel(this);
+        auto* paletteLayout = static_cast<QVBoxLayout*>(paletteHost->layout());
+        paletteLayout->addWidget(CreatePanelHeader(QObject::tr("Node library"), paletteHost));
         m_paletteSearchEdit = new QLineEdit(paletteHost);
-        m_paletteSearchEdit->setPlaceholderText(QObject::tr("Search nodes (try \"tex\")"));
+        m_paletteSearchEdit->setPlaceholderText(QObject::tr("Search nodes"));
+        m_paletteSearchEdit->addAction(Theme::Icon(QStringLiteral("search"), Theme::IconTone::Muted), QLineEdit::LeadingPosition);
+        m_paletteSearchEdit->setClearButtonEnabled(true);
+        auto* searchRow = new QWidget(paletteHost);
+        auto* searchLayout = new QVBoxLayout(searchRow);
+        searchLayout->setContentsMargins(8, 8, 8, 4);
+        searchLayout->addWidget(m_paletteSearchEdit);
+        paletteLayout->addWidget(searchRow);
         m_nodePalette = new QTreeWidget(paletteHost);
         m_nodePalette->setHeaderHidden(true);
         m_nodePalette->setRootIsDecorated(true);
         m_nodePalette->setUniformRowHeights(true);
-        paletteLayout->addWidget(m_paletteSearchEdit);
+        m_nodePalette->setFrameShape(QFrame::NoFrame);
+        m_nodePalette->setToolTip(QObject::tr("Double-click a node to add it to the graph."));
         paletteLayout->addWidget(m_nodePalette, 1);
         horizontalSplitter->addWidget(paletteHost);
 
         auto* centerSplitter = new QSplitter(Qt::Vertical, this);
-        auto* graphHost = new QGroupBox(QObject::tr("Graph"), this);
-        auto* graphLayout = new QVBoxLayout(graphHost);
-        graphLayout->setContentsMargins(4, 4, 4, 4);
-        graphLayout->addWidget(m_graphView, 1);
-        centerSplitter->addWidget(graphHost);
+        centerSplitter->setChildrenCollapsible(false);
+        centerSplitter->addWidget(m_graphView);
 
-        auto* statusFrame = new QGroupBox(QObject::tr("Errors / Validation"), this);
-        auto* statusLayout = new QVBoxLayout(statusFrame);
-        statusLayout->setContentsMargins(8, 8, 8, 8);
-        m_statusLabel = new QLabel(QObject::tr("Status: Ready"), statusFrame);
-        statusLayout->addWidget(m_statusLabel);
+        auto* statusFrame = MakePanel(this);
+        auto* statusLayout = static_cast<QVBoxLayout*>(statusFrame->layout());
+        m_issueCountLabel = new QLabel(statusFrame);
+        m_issueCountLabel->setProperty("role", QStringLiteral("muted"));
+        statusLayout->addWidget(CreatePanelHeader(QObject::tr("Validation"), statusFrame, {m_issueCountLabel}));
         m_errorList = new QListWidget(statusFrame);
         m_errorList->setSelectionMode(QAbstractItemView::SingleSelection);
-        m_errorList->setMaximumHeight(150);
-        statusLayout->addWidget(m_errorList);
+        m_errorList->setFrameShape(QFrame::NoFrame);
+        m_errorList->setToolTip(QObject::tr("Click an issue to select its node."));
+        statusLayout->addWidget(m_errorList, 1);
         centerSplitter->addWidget(statusFrame);
         centerSplitter->setStretchFactor(0, 5);
         centerSplitter->setStretchFactor(1, 1);
+        centerSplitter->setSizes({600, 170});
         horizontalSplitter->addWidget(centerSplitter);
 
         auto* rightSplitter = new QSplitter(Qt::Vertical, this);
+        rightSplitter->setChildrenCollapsible(false);
 
-        auto* inspectorHost = new QGroupBox(QObject::tr("Details"), this);
-        auto* inspectorLayout = new QVBoxLayout(inspectorHost);
-        inspectorLayout->setContentsMargins(8, 8, 8, 8);
-        m_nameEdit = new QLineEdit(QString::fromStdString(m_displayName), inspectorHost);
-        inspectorLayout->addWidget(new QLabel(QObject::tr("Material Name"), inspectorHost));
-        inspectorLayout->addWidget(m_nameEdit);
-
-        m_graphBanner = new QLabel(inspectorHost);
-        m_graphBanner->setWordWrap(true);
-        inspectorLayout->addWidget(m_graphBanner);
-
-        auto* scroll = new QScrollArea(inspectorHost);
-        scroll->setWidgetResizable(true);
-        m_inspectorContent = new QWidget(scroll);
-        m_inspectorForm = new QFormLayout(m_inspectorContent);
-        m_inspectorForm->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        scroll->setWidget(m_inspectorContent);
-        inspectorLayout->addWidget(scroll, 1);
-
-        m_convertButton = new QPushButton(QObject::tr("Convert to Graph"), inspectorHost);
-        inspectorLayout->addWidget(m_convertButton);
-
-        rightSplitter->addWidget(inspectorHost);
-
-        auto* previewHost = new QGroupBox(QObject::tr("Preview"), this);
-        auto* previewLayout = new QVBoxLayout(previewHost);
-        previewLayout->setContentsMargins(8, 8, 8, 8);
-        auto* previewControls = new QHBoxLayout();
-        previewControls->addWidget(new QLabel(QObject::tr("Mesh:"), previewHost));
-        m_previewMeshCombo = new QComboBox(previewHost);
-        m_previewMeshCombo->addItems({QObject::tr("Sphere"), QObject::tr("Cube"), QObject::tr("Plane")});
-        previewControls->addWidget(m_previewMeshCombo, 1);
-        previewLayout->addLayout(previewControls);
-        auto* previewHdriControls = new QHBoxLayout();
-        previewHdriControls->addWidget(new QLabel(QObject::tr("HDRI:"), previewHost));
-        m_previewHdriEdit = new QLineEdit(QString::fromUtf8(DEFAULT_PREVIEW_HDRI_PATH), previewHost);
-        m_previewHdriEdit->setReadOnly(true);
-        m_previewHdriEdit->setToolTip(QObject::tr("Environment map used only by this material preview."));
-        m_previewHdriChooseButton = new QPushButton(QObject::tr("Choose..."), previewHost);
-        m_previewHdriDefaultButton = new QPushButton(QObject::tr("Default"), previewHost);
-        previewHdriControls->addWidget(m_previewHdriEdit, 1);
-        previewHdriControls->addWidget(m_previewHdriChooseButton);
-        previewHdriControls->addWidget(m_previewHdriDefaultButton);
-        previewLayout->addLayout(previewHdriControls);
+        auto* previewHost = MakePanel(this);
+        auto* previewLayout = static_cast<QVBoxLayout*>(previewHost->layout());
+        previewLayout->addWidget(CreatePanelHeader(QObject::tr("Preview"), previewHost));
         m_previewViewportHost = new QWidget(previewHost);
-        m_previewViewportHost->setMinimumHeight(180);
-        m_previewViewportHost->setStyleSheet(QStringLiteral("background: #202026; border: 1px solid #3a3a44;"));
+        m_previewViewportHost->setObjectName(QStringLiteral("ViewportHost"));
+        m_previewViewportHost->setAttribute(Qt::WA_StyledBackground, true);
+        m_previewViewportHost->setMinimumHeight(220);
         auto* previewViewportLayout = new QVBoxLayout(m_previewViewportHost);
         previewViewportLayout->setContentsMargins(0, 0, 0, 0);
         m_previewPlaceholderLabel = new QLabel(QObject::tr("Preview initializing..."), m_previewViewportHost);
         m_previewPlaceholderLabel->setAlignment(Qt::AlignCenter);
+        m_previewPlaceholderLabel->setProperty("role", QStringLiteral("muted"));
         previewViewportLayout->addWidget(m_previewPlaceholderLabel);
         previewLayout->addWidget(m_previewViewportHost, 1);
+        auto* previewStrip = new QWidget(previewHost);
+        auto* previewControls = new QHBoxLayout(previewStrip);
+        previewControls->setContentsMargins(8, 8, 8, 4);
+        previewControls->setSpacing(6);
+        m_previewMeshCombo = new QComboBox(previewStrip);
+        m_previewMeshCombo->addItems({QObject::tr("Sphere"), QObject::tr("Cube"), QObject::tr("Plane")});
+        m_previewMeshCombo->setToolTip(QObject::tr("Preview mesh"));
+        m_previewHdriEdit = new QLineEdit(QString::fromUtf8(DEFAULT_PREVIEW_HDRI_PATH), previewStrip);
+        m_previewHdriEdit->setReadOnly(true);
+        m_previewHdriEdit->setToolTip(QObject::tr("Environment map used only by this material preview."));
+        m_previewHdriChooseButton = MakeToolButton(previewStrip, QStringLiteral("folder"), QObject::tr("Choose preview HDRI..."));
+        m_previewHdriDefaultButton = MakeToolButton(previewStrip, QStringLiteral("reset"), QObject::tr("Use the default HDRI"));
+        previewControls->addWidget(m_previewMeshCombo);
+        previewControls->addWidget(m_previewHdriEdit, 1);
+        previewControls->addWidget(m_previewHdriChooseButton);
+        previewControls->addWidget(m_previewHdriDefaultButton);
+        previewLayout->addWidget(previewStrip);
         m_previewStatusLabel = new QLabel(previewLightingStatus(), previewHost);
         m_previewStatusLabel->setWordWrap(true);
+        m_previewStatusLabel->setProperty("role", QStringLiteral("caption"));
+        m_previewStatusLabel->setContentsMargins(10, 0, 10, 8);
         previewLayout->addWidget(m_previewStatusLabel);
         rightSplitter->addWidget(previewHost);
-        rightSplitter->setStretchFactor(0, 3);
-        rightSplitter->setStretchFactor(1, 2);
+
+        auto* inspectorHost = MakePanel(this);
+        auto* inspectorLayout = static_cast<QVBoxLayout*>(inspectorHost->layout());
+        inspectorLayout->addWidget(CreatePanelHeader(QObject::tr("Details"), inspectorHost));
+        auto* materialSection = new QWidget(inspectorHost);
+        auto* materialForm = new QFormLayout(materialSection);
+        materialForm->setContentsMargins(12, 10, 12, 6);
+        materialForm->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        m_nameEdit = new QLineEdit(QString::fromStdString(m_displayName), materialSection);
+        materialForm->addRow(QObject::tr("Name"), m_nameEdit);
+        m_syncLegacyCheck = new QCheckBox(QObject::tr("Sync legacy fields from graph"), materialSection);
+        m_syncLegacyCheck->setChecked(true);
+        m_syncLegacyCheck->setToolTip(QObject::tr("When saving, also write the graph's result into the legacy PBR fields."));
+        materialForm->addRow(QString(), m_syncLegacyCheck);
+        inspectorLayout->addWidget(materialSection);
+
+        auto* scroll = new QScrollArea(inspectorHost);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        m_inspectorContent = new QWidget(scroll);
+        m_inspectorForm = new QFormLayout(m_inspectorContent);
+        m_inspectorForm->setContentsMargins(12, 6, 12, 8);
+        m_inspectorForm->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        scroll->setWidget(m_inspectorContent);
+        inspectorLayout->addWidget(scroll, 1);
+
+        m_convertButton = new QPushButton(QObject::tr("Convert to graph"), inspectorHost);
+        m_convertButton->setProperty("variant", QStringLiteral("primary"));
+        auto* convertRow = new QWidget(inspectorHost);
+        auto* convertLayout = new QVBoxLayout(convertRow);
+        convertLayout->setContentsMargins(12, 4, 12, 12);
+        convertLayout->addWidget(m_convertButton);
+        inspectorLayout->addWidget(convertRow);
+        rightSplitter->addWidget(inspectorHost);
+        rightSplitter->setStretchFactor(0, 2);
+        rightSplitter->setStretchFactor(1, 3);
         horizontalSplitter->addWidget(rightSplitter);
         horizontalSplitter->setStretchFactor(0, 1);
         horizontalSplitter->setStretchFactor(1, 5);
         horizontalSplitter->setStretchFactor(2, 2);
+        horizontalSplitter->setSizes({260, 900, 380});
 
         root->addWidget(horizontalSplitter, 1);
 
-        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
-        root->addWidget(buttons);
-        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::close);
+        auto* statusBar = new QStatusBar(this);
+        statusBar->setObjectName(QStringLiteral("EditorStatusBar"));
+        statusBar->setSizeGripEnabled(false);
+        m_dirtyLabel = new QLabel(QObject::tr("Saved"), statusBar);
+        m_dirtyLabel->setToolTip(QObject::tr("Shows whether this material has unsaved editor changes."));
+        statusBar->addWidget(m_dirtyLabel);
+        root->addWidget(statusBar);
 
-        connect(m_applyButton, &QPushButton::clicked, this, [this]() { compileAndApply(); });
-        connect(m_compileButton, &QPushButton::clicked, this, [this]() { compileAndApply(); });
-        connect(m_saveButton, &QPushButton::clicked, this, [this]() { saveMaterial(); });
+        connect(m_applyButton, &QToolButton::clicked, this, [this]() { compileAndApply(); });
+        connect(m_compileButton, &QToolButton::clicked, this, [this]() { compileAndApply(); });
+        connect(m_saveButton, &QToolButton::clicked, this, [this]() { saveMaterial(); });
         connect(m_convertButton, &QPushButton::clicked, this, [this]() { convertLegacyToGraph(); });
         connect(m_addNodeButton, &QPushButton::clicked, this, [this]() {
             showNodeSearchPopup(m_addNodeButton->mapToGlobal(QPoint(0, m_addNodeButton->height())), graphViewCenter());
         });
         connect(m_viewButton, &QToolButton::clicked, this, [this]() { m_graphScene->focusSelection(); });
-        connect(m_snapCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        connect(m_snapCheck, &QToolButton::toggled, this, [this](bool checked) {
             m_graphScene->setSnapToGrid(checked);
         });
         connect(m_paletteSearchEdit, &QLineEdit::textChanged, this, [this]() { populateNodePalette(); });
@@ -1949,8 +2015,8 @@ private:
         connect(m_previewMeshCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
             updatePreviewMesh();
         });
-        connect(m_previewHdriChooseButton, &QPushButton::clicked, this, [this]() { choosePreviewHDRI(); });
-        connect(m_previewHdriDefaultButton, &QPushButton::clicked, this, [this]() {
+        connect(m_previewHdriChooseButton, &QToolButton::clicked, this, [this]() { choosePreviewHDRI(); });
+        connect(m_previewHdriDefaultButton, &QToolButton::clicked, this, [this]() {
             setPreviewHDRI(QString::fromUtf8(DEFAULT_PREVIEW_HDRI_PATH));
         });
 
@@ -1982,16 +2048,13 @@ private:
 
         new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Z), this, [this]() { m_undo->undo(); });
         new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y), this, [this]() { m_undo->redo(); });
-        if (auto* undoButton = findChild<QPushButton*>(QStringLiteral("MaterialUndoButton"))) {
-            connect(undoButton, &QPushButton::clicked, this, [this]() { m_undo->undo(); });
-            connect(m_undo, &QUndoStack::canUndoChanged, undoButton, &QPushButton::setEnabled);
-            undoButton->setEnabled(m_undo->canUndo());
-        }
-        if (auto* redoButton = findChild<QPushButton*>(QStringLiteral("MaterialRedoButton"))) {
-            connect(redoButton, &QPushButton::clicked, this, [this]() { m_undo->redo(); });
-            connect(m_undo, &QUndoStack::canRedoChanged, redoButton, &QPushButton::setEnabled);
-            redoButton->setEnabled(m_undo->canRedo());
-        }
+        connect(undoButton, &QToolButton::clicked, this, [this]() { m_undo->undo(); });
+        connect(m_undo, &QUndoStack::canUndoChanged, undoButton, &QToolButton::setEnabled);
+        undoButton->setEnabled(m_undo->canUndo());
+        connect(redoButton, &QToolButton::clicked, this, [this]() { m_undo->redo(); });
+        connect(m_undo, &QUndoStack::canRedoChanged, redoButton, &QToolButton::setEnabled);
+        redoButton->setEnabled(m_undo->canRedo());
+        new QShortcut(QKeySequence::Save, this, [this]() { saveMaterial(); });
         new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_D), this, [this]() { m_graphScene->duplicateSelected(); });
         new QShortcut(QKeySequence(Qt::Key_Delete), this, [this]() { m_graphScene->removeSelected(); });
         new QShortcut(QKeySequence(Qt::Key_F), this, [this]() { m_graphScene->focusSelection(); });
@@ -2023,13 +2086,19 @@ private:
 
     void refreshGraphBanner() {
         if (m_graph.IsLegacyMode()) {
-            m_graphBanner->setText(QObject::tr("Legacy PBR mode: graph is missing/invalid. Use Convert to Graph to enter Graph Mode."));
+            m_graphBanner->setText(QObject::tr("Legacy PBR"));
+            m_graphBanner->setToolTip(QObject::tr("The graph is missing or invalid. Use Convert to graph to enter graph mode."));
+            SetStyleProperty(m_graphBanner, "tone", QStringLiteral("warning"));
             m_convertButton->setVisible(true);
         } else if (m_graph.HasSourceGraph()) {
-            m_graphBanner->setText(QObject::tr("Graph Mode: node graph is editable. Legacy fields are preserved for backwards compatibility."));
+            m_graphBanner->setText(QObject::tr("Graph mode"));
+            m_graphBanner->setToolTip(QObject::tr("The node graph is editable. Legacy fields are preserved for backwards compatibility."));
+            SetStyleProperty(m_graphBanner, "tone", QStringLiteral("action"));
             m_convertButton->setVisible(false);
         } else {
-            m_graphBanner->setText(QObject::tr("PBR material fields."));
+            m_graphBanner->setText(QObject::tr("PBR fields"));
+            m_graphBanner->setToolTip(QObject::tr("This material uses PBR fields. Use Convert to graph to edit it as a node graph."));
+            SetStyleProperty(m_graphBanner, "tone", QStringLiteral("neutral"));
             m_convertButton->setVisible(true);
         }
     }
@@ -2172,10 +2241,8 @@ private:
         const QString baseTitle = QObject::tr("Material Editor - %1").arg(QFileInfo(m_absolutePath).fileName());
         setWindowTitle(dirty ? baseTitle + QStringLiteral(" *") : baseTitle);
         if (m_dirtyLabel) {
-            m_dirtyLabel->setText(dirty ? QObject::tr("Unsaved") : QObject::tr("Saved"));
-            QPalette pal = m_dirtyLabel->palette();
-            pal.setColor(QPalette::WindowText, dirty ? QColor(240, 185, 70) : QColor(140, 230, 140));
-            m_dirtyLabel->setPalette(pal);
+            m_dirtyLabel->setText(dirty ? QObject::tr("Unsaved changes") : QObject::tr("Saved"));
+            SetStyleProperty(m_dirtyLabel, "state", dirty ? QStringLiteral("dirty") : QStringLiteral("saved"));
         }
     }
 
@@ -3050,14 +3117,7 @@ private:
         GraphValidationResult validation = ValidateGraph(m_graph);
         m_errorList->clear();
         for (const GraphIssue& issue : validation.issues) {
-            QString prefix = QObject::tr("Error");
-            if (issue.severity == GraphIssue::Severity::Warning) {
-                prefix = QObject::tr("Warning");
-            } else if (issue.severity == GraphIssue::Severity::Info) {
-                prefix = QObject::tr("Info");
-            }
-            auto* item = new QListWidgetItem(QObject::tr("[%1] %2").arg(prefix, issue.message), m_errorList);
-            item->setData(Qt::UserRole, issue.nodeId);
+            addIssueItem(issue.message, issue.nodeId, issue.severity);
         }
         m_graphScene->applyValidation(validation);
 
@@ -3072,15 +3132,13 @@ private:
         if (m_graph.HasSourceGraph() && !m_graph.IsLegacyMode()) {
             MaterialShaderGenerationResult shaderResult = GenerateMaterialShader(m_graph);
             for (const std::string& diagnostic : shaderResult.diagnostics) {
-                auto* item = new QListWidgetItem(QObject::tr("[Shader] %1").arg(QString::fromStdString(diagnostic)), m_errorList);
-                item->setData(Qt::UserRole, 0);
+                addIssueItem(QObject::tr("Shader: %1").arg(QString::fromStdString(diagnostic)), 0, GraphIssue::Severity::Error);
             }
             MaterialComponent evaluated = m_material;
             std::string evalError;
             if (!EvaluateGraph(m_graph, evaluated, evalError)) {
                 refreshStatus(QObject::tr("Compile error: %1").arg(QString::fromStdString(evalError)), false);
-                auto* item = new QListWidgetItem(QString::fromStdString(evalError), m_errorList);
-                item->setData(Qt::UserRole, 0);
+                addIssueItem(QString::fromStdString(evalError), 0, GraphIssue::Severity::Error);
                 return;
             }
             m_material = evaluated;
@@ -3108,8 +3166,8 @@ private:
         if (m_syncLegacyCheck->isChecked() && m_graph.HasSourceGraph() && !m_graph.IsLegacyMode()) {
             SyncResult sync = SyncLegacyFieldsFromGraph(m_graph, toSave);
             if (!sync.representable && !sync.warning.isEmpty()) {
-                auto* item = new QListWidgetItem(sync.warning, m_errorList);
-                item->setData(Qt::UserRole, 0);
+                addIssueItem(sync.warning, 0, GraphIssue::Severity::Warning);
+                refreshIssueCount();
             }
         }
 
@@ -3132,10 +3190,31 @@ private:
     }
 
     void refreshStatus(const QString& text, bool ok) {
-        m_statusLabel->setText(QObject::tr("Status: %1").arg(text));
-        QPalette pal = m_statusLabel->palette();
-        pal.setColor(QPalette::WindowText, ok ? QColor(140, 230, 140) : QColor(255, 120, 120));
-        m_statusLabel->setPalette(pal);
+        m_statusLabel->setText(text);
+        SetStyleProperty(m_statusLabel, "tone", ok ? QStringLiteral("success") : QStringLiteral("error"));
+        refreshIssueCount();
+    }
+
+    void addIssueItem(const QString& text, NodeID nodeId, GraphIssue::Severity severity) {
+        QString icon = QStringLiteral("error");
+        Theme::IconTone tone = Theme::IconTone::Error;
+        if (severity == GraphIssue::Severity::Warning) {
+            icon = QStringLiteral("warning");
+            tone = Theme::IconTone::Warning;
+        } else if (severity == GraphIssue::Severity::Info) {
+            icon = QStringLiteral("info");
+            tone = Theme::IconTone::Info;
+        }
+        auto* item = new QListWidgetItem(Theme::Icon(icon, tone), text, m_errorList);
+        item->setData(Qt::UserRole, nodeId);
+    }
+
+    void refreshIssueCount() {
+        if (!m_issueCountLabel) {
+            return;
+        }
+        const int count = m_errorList->count();
+        m_issueCountLabel->setText(count == 0 ? QObject::tr("No issues") : QObject::tr("%n issue(s)", nullptr, count));
     }
 
 private:
@@ -3154,12 +3233,12 @@ private:
     QLineEdit* m_nameEdit = nullptr;
     QLabel* m_graphBanner = nullptr;
     QPushButton* m_convertButton = nullptr;
-    QPushButton* m_applyButton = nullptr;
-    QPushButton* m_compileButton = nullptr;
-    QPushButton* m_saveButton = nullptr;
+    QToolButton* m_applyButton = nullptr;
+    QToolButton* m_compileButton = nullptr;
+    QToolButton* m_saveButton = nullptr;
     QPushButton* m_addNodeButton = nullptr;
     QToolButton* m_viewButton = nullptr;
-    QCheckBox* m_snapCheck = nullptr;
+    QToolButton* m_snapCheck = nullptr;
     QCheckBox* m_syncLegacyCheck = nullptr;
     QLabel* m_dirtyLabel = nullptr;
     bool m_dirty = false;
@@ -3170,11 +3249,12 @@ private:
     QWidget* m_inspectorContent = nullptr;
     QFormLayout* m_inspectorForm = nullptr;
     QLabel* m_statusLabel = nullptr;
+    QLabel* m_issueCountLabel = nullptr;
     QListWidget* m_errorList = nullptr;
     QComboBox* m_previewMeshCombo = nullptr;
     QLineEdit* m_previewHdriEdit = nullptr;
-    QPushButton* m_previewHdriChooseButton = nullptr;
-    QPushButton* m_previewHdriDefaultButton = nullptr;
+    QToolButton* m_previewHdriChooseButton = nullptr;
+    QToolButton* m_previewHdriDefaultButton = nullptr;
     QString m_previewHdriPath = QString::fromUtf8(DEFAULT_PREVIEW_HDRI_PATH);
     QWidget* m_previewViewportHost = nullptr;
     QLabel* m_previewPlaceholderLabel = nullptr;

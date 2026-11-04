@@ -1,6 +1,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "CharacterTimelineWidget.h"
+#include "EditorTheme.h"
 
 #include <QPainter>
 #include <QMouseEvent>
@@ -38,19 +39,28 @@ int CharacterTimelineWidget::xAtTime(float time) const {
 }
 
 void CharacterTimelineWidget::paintEvent(QPaintEvent*) {
+    using Theme::Token;
     QPainter p(this);
-    p.fillRect(rect(), QColor(30, 30, 30));
-    const QRect track(12, height() / 2 - 6, width() - 24, 12);
-    p.fillRect(track, QColor(50, 50, 50));
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.fillRect(rect(), Theme::Color(Token::SurfaceBase));
+    const QRectF track(12.0, height() / 2.0 - 8.0, width() - 24.0, 16.0);
+    p.setPen(Qt::NoPen);
+    p.setBrush(Theme::Color(Token::SurfaceControl));
+    p.drawRoundedRect(track, 4.0, 4.0);
     const int x0 = xAtTime(m_trimStart);
     const int x1 = xAtTime(m_trimEnd);
-    p.fillRect(QRect(QPoint(x0, track.top()), QPoint(x1, track.bottom())), QColor(70, 120, 180));
+    const QRectF trimmed(x0, track.top(), x1 - x0, track.height());
+    p.setBrush(Theme::Color(Token::SurfaceSelectedStrong));
+    p.setPen(QPen(Theme::Color(Token::AccentSelection), 1.0));
+    p.drawRoundedRect(trimmed.adjusted(0.5, 0.5, -0.5, -0.5), 4.0, 4.0);
     const int playX = xAtTime(m_time);
-    p.setPen(QPen(QColor(255, 200, 80), 2));
-    p.drawLine(playX, 8, playX, height() - 8);
-    p.setPen(QColor(180, 180, 180));
-    p.drawText(12, 14, QString("%1s").arg(m_trimStart, 0, 'f', 2));
-    p.drawText(width() - 80, 14, QString("%1s").arg(m_trimEnd, 0, 'f', 2));
+    p.setPen(QPen(Theme::Color(Token::AccentBrand), 2));
+    p.drawLine(playX, 6, playX, height() - 6);
+    p.setPen(Theme::Color(Token::TextMuted));
+    p.drawText(QRect(12, 0, width() - 24, 16), Qt::AlignLeft | Qt::AlignVCenter, QString("%1 s").arg(m_trimStart, 0, 'f', 2));
+    p.drawText(QRect(12, 0, width() - 24, 16), Qt::AlignRight | Qt::AlignVCenter, QString("%1 s").arg(m_trimEnd, 0, 'f', 2));
+    p.setPen(Theme::Color(Token::TextPrimary));
+    p.drawText(QRect(12, 0, width() - 24, 16), Qt::AlignHCenter | Qt::AlignVCenter, QString("%1 s").arg(m_time, 0, 'f', 2));
 }
 
 void CharacterTimelineWidget::mousePressEvent(QMouseEvent* event) {

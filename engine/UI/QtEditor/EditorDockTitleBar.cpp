@@ -31,25 +31,33 @@ void SyncHeaderWithTabs(QDockWidget* dock, QWidget* header, QWidget* collapsed)
 
 } // namespace
 
-void InstallDockTitleBar(QDockWidget* dock, const QList<QWidget*>& actions)
+QWidget* CreatePanelHeader(const QString& title, QWidget* parent, const QList<QWidget*>& actions)
 {
-    auto* header = new QWidget(dock);
+    auto* header = new QWidget(parent);
     header->setObjectName(QStringLiteral("PanelHeader"));
     header->setAttribute(Qt::WA_StyledBackground, true);
     auto* layout = new QHBoxLayout(header);
     layout->setContentsMargins(12, 0, 6, 0);
     layout->setSpacing(2);
 
-    auto* title = new QLabel(dock->windowTitle(), header);
-    title->setObjectName(QStringLiteral("PanelTitle"));
-    QObject::connect(dock, &QDockWidget::windowTitleChanged, title, &QLabel::setText);
-    layout->addWidget(title);
+    auto* titleLabel = new QLabel(title, header);
+    titleLabel->setObjectName(QStringLiteral("PanelTitle"));
+    layout->addWidget(titleLabel);
     layout->addStretch(1);
 
     for (QWidget* action : actions) {
         action->setParent(header);
         layout->addWidget(action);
     }
+    return header;
+}
+
+void InstallDockTitleBar(QDockWidget* dock, const QList<QWidget*>& actions)
+{
+    QWidget* header = CreatePanelHeader(dock->windowTitle(), dock, actions);
+    auto* layout = static_cast<QHBoxLayout*>(header->layout());
+    auto* title = header->findChild<QLabel*>(QStringLiteral("PanelTitle"));
+    QObject::connect(dock, &QDockWidget::windowTitleChanged, title, &QLabel::setText);
 
     auto* more = new QToolButton(header);
     more->setObjectName(QStringLiteral("PanelMenuButton"));
