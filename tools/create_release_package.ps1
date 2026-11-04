@@ -171,6 +171,11 @@ foreach ($engineContent in @("meshes", "hdris")) {
     }
 }
 
+foreach ($notice in @("LICENSE.md", "THIRD_PARTY_NOTICES.md")) {
+    Copy-Item (Join-Path $ProjectRoot $notice) $OutputPath
+    Write-Success $notice
+}
+
 # Create README file (doesn't trigger runtime mode)
 $readmePath = Join-Path $OutputPath "README.txt"
 $packageType = if ($RuntimeMode) { "Runtime" } else { "Editor" }

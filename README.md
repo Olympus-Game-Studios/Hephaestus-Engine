@@ -442,7 +442,7 @@ Contributions welcome! This is a learning project demonstrating modern engine ar
 
 ## License
 
-Hephaestus Engine is source available, not open source. See [`LICENSE.md`](LICENSE.md) for the terms.
+Hephaestus Engine is source available, not open source. See [`LICENSE.md`](LICENSE.md) for the terms, and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the licences of the third-party components it includes.
 
 ## References
 

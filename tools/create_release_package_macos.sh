@@ -48,7 +48,7 @@ cp "$BUILD/HephaestusEngine.app/Contents/MacOS/HephaestusEngine" "$CONTENTS/MacO
 /usr/libexec/PlistBuddy -c "Set :CFBundleName Hephaestus Engine" \
     -c "Set :CFBundleIdentifier $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
         "$BUILD/HephaestusEngine.app/Contents/Info.plist")" "$CONTENTS/Info.plist"
-for item in assets editor scripts .engine shaders Plugins tools HephaestusGame.app; do
+for item in assets editor scripts .engine shaders Plugins tools HephaestusGame.app LICENSE.md THIRD_PARTY_NOTICES.md; do
     if [[ -e "$BUILD/$item" ]]; then cp -R "$BUILD/$item" "$RESOURCES/"; fi
 done
 

@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <nlohmann/json.hpp>
 
 #ifdef _WIN32
@@ -75,7 +76,7 @@ int main() {
     Write(project / ".hephaestus" / "physics_layers.json", "{\"version\":1}");
     Write(engine / ".engine" / "meshes" / "builtin.mesh", "mesh");
     Write(engine / ".engine" / "hdris" / "builtin.hdr", "builtin hdri");
-    Write(engine / "LICENSE", "Engine license");
+    Write(engine / "THIRD_PARTY_NOTICES.md", "Third-party notices");
     Write(runtime / kPlayerExecutable, "fake executable");
     Write(runtime / "lua.dll", "fake lua");
     Write(runtime / "shaders" / "basic.vert.spv", "fake shader");
@@ -198,7 +199,13 @@ int main() {
                 "other .hephaestus editor state is excluded");
     ok &= Check(fs::exists(package / "build_manifest.json"), "JSON manifest exists");
     ok &= Check(fs::exists(package / "export_manifest.txt"), "export manifest exists");
-    ok &= Check(fs::exists(package / "ThirdPartyNotices.txt"), "license notices exist");
+    {
+        std::ifstream noticesStream(package / "ThirdPartyNotices.txt", std::ios::binary);
+        const std::string notices((std::istreambuf_iterator<char>(noticesStream)),
+                                  std::istreambuf_iterator<char>());
+        ok &= Check(notices == "Third-party notices",
+                    "THIRD_PARTY_NOTICES.md is packaged as ThirdPartyNotices.txt");
+    }
     {
         std::ifstream manifestStream(package / "build_manifest.json");
         nlohmann::json manifest;

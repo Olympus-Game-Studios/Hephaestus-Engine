@@ -153,26 +153,9 @@ std::vector<FileSizeEntry> Inventory(const std::filesystem::path& root) {
 }
 
 std::string LicenseNotices(const std::filesystem::path& engineRoot) {
-    const std::vector<std::filesystem::path> licenses = {
-        engineRoot / "extern" / "JoltPhysics" / "LICENSE",
-        engineRoot / "extern" / "glfw" / "LICENSE.md",
-        engineRoot / "extern" / "entt" / "LICENSE",
-        engineRoot / "extern" / "ufbx" / "LICENSE"
-    };
+    std::ifstream stream(engineRoot / "THIRD_PARTY_NOTICES.md", std::ios::binary);
     std::ostringstream output;
-    output << "Hephaestus third-party notices\n\n";
-    output << "Notice review required: Lua, Vulkan headers/loader, VMA, nlohmann/json, "
-              "stb, and the Microsoft Visual C++ runtime do not have complete "
-              "standalone notice metadata in this repository.\n\n";
-    for (const auto& license : licenses) {
-        std::ifstream stream(license, std::ios::binary);
-        if (!stream) {
-            continue;
-        }
-        output << "===== " << license.lexically_relative(engineRoot).generic_string()
-               << " =====\n";
-        output << stream.rdbuf() << "\n\n";
-    }
+    output << stream.rdbuf();
     return output.str();
 }
 
@@ -564,14 +547,14 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
         return fail();
     }
     const std::string notices = LicenseNotices(request.engineRoot);
-    if (!notices.empty() &&
-        !WriteText(staging / "ThirdPartyNotices.txt", notices, result)) {
+    if (notices.empty()) {
+        Problem(result, ProblemSeverity::Warning, "THIRD_PARTY_NOTICES_MISSING",
+                "Third-party notices were not found",
+                "Expected " + (request.engineRoot / "THIRD_PARTY_NOTICES.md").generic_string() +
+                "; the package has no ThirdPartyNotices.txt.");
+    } else if (!WriteText(staging / "ThirdPartyNotices.txt", notices, result)) {
         return fail();
     }
-    Problem(result, ProblemSeverity::Warning, "THIRD_PARTY_LICENSE_REVIEW_REQUIRED",
-            "Third-party notice metadata is incomplete",
-            "Review Lua, Vulkan, VMA, nlohmann/json, stb, and MSVC redistribution "
-            "requirements before a public release.");
     if (product != request.productName) {
         Problem(result, ProblemSeverity::Warning, "PACKAGE_PRODUCT_NAME_SANITIZED",
                 "The product name was adjusted for a Windows filename",

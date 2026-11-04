@@ -80,7 +80,7 @@ MyGame/
 ├── game.ini                # Game configuration
 ├── build_manifest.json     # Package metadata and contents
 ├── export_manifest.txt     # Compatibility package marker
-├── ThirdPartyNotices.txt   # Redistributed dependency notices
+├── ThirdPartyNotices.txt   # Copy of the engine's THIRD_PARTY_NOTICES.md
 ├── assets/
 │   ├── scenes/
 │   │   └── MainLevel.hpscene

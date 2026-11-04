@@ -2,6 +2,7 @@
 
 #include "AboutDialog.h"
 #include "EditorTheme.h"
+#include "../../ToolsCommon/PathUtils.h"
 #include "../../ToolsCommon/VersionInfo.h"
 
 #include <QButtonGroup>
@@ -43,6 +44,7 @@ const Credit kCredits[] = {
     { QT_TRANSLATE_NOOP("AboutDialog", "Libraries"), "cpp-httplib", "Automation server", "MIT", "https://github.com/yhirose/cpp-httplib" },
     { QT_TRANSLATE_NOOP("AboutDialog", "Libraries"), "ufbx", "FBX import", "MIT / public domain", "https://github.com/ufbx/ufbx" },
     { QT_TRANSLATE_NOOP("AboutDialog", "Libraries"), "stb", "Images and font rasterising", "MIT / public domain", "https://github.com/nothings/stb" },
+    { QT_TRANSLATE_NOOP("AboutDialog", "Libraries"), "MoltenVK", "Vulkan on macOS", "Apache 2.0", "https://github.com/KhronosGroup/MoltenVK" },
     { QT_TRANSLATE_NOOP("AboutDialog", "Fonts and icons"), "Inter", "Interface typeface", "OFL 1.1", "https://rsms.me/inter" },
     { QT_TRANSLATE_NOOP("AboutDialog", "Fonts and icons"), "JetBrains Mono", "Code typeface", "OFL 1.1", "https://www.jetbrains.com/lp/mono" },
     { QT_TRANSLATE_NOOP("AboutDialog", "Fonts and icons"), "Roboto", "Runtime UI typeface", "Apache 2.0", "https://github.com/googlefonts/roboto" },
@@ -178,6 +180,13 @@ QWidget* BuildCredits(QWidget* parent)
         }
         layout->addWidget(new CreditCard(credit, list));
     }
+    auto* notices = CenteredLabel(QStringLiteral("<a href=\"%1\">%2</a>")
+                                      .arg(QUrl::fromLocalFile(Hephaestus::Tools::PathUtils::ExecutableDir() +
+                                                               QStringLiteral("/THIRD_PARTY_NOTICES.md")).toString(),
+                                           QCoreApplication::translate("AboutDialog", "Full licence texts")),
+                                  "AboutLink", list);
+    notices->setOpenExternalLinks(true);
+    layout->addWidget(notices);
     layout->addStretch(1);
     scroll->setWidget(list);
     return scroll;

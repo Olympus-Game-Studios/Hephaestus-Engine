@@ -1098,6 +1098,10 @@ function(hephaestus_add_shared_assets_copy target_name)
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/.engine/meshes"
                 "${asset_dir}/.engine/meshes"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.md"
+                "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+                "${asset_dir}"
             COMMENT "Copying shared runtime/editor assets for ${target_name}"
         )
     else()
@@ -1111,6 +1115,10 @@ function(hephaestus_add_shared_assets_copy target_name)
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/.engine/meshes"
                 "${asset_dir}/.engine/meshes"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.md"
+                "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+                "${asset_dir}"
             COMMENT "Copying runtime assets for ${target_name}"
         )
     endif()
@@ -1244,6 +1252,12 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/.engine/meshes/
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/hdris/
     DESTINATION .engine/hdris
     OPTIONAL
+)
+
+install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.md
+    ${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md
+    DESTINATION .
 )
 
 # Install assets
