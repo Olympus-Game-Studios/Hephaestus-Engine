@@ -54,6 +54,7 @@ hephaestus.log
 **/hephaestus.log
 logs/
 **/.hephaestus/editor/
+**/.hephaestus/thumbnails/
 **/.hephaestus/build/
 docs/plans/
 
