@@ -42,8 +42,12 @@ inline std::filesystem::path ResourceRootFor(const std::filesystem::path& execut
     return contents.parent_path().parent_path();
 }
 
-// Where logs go: beside the resources, except a shipped .app (which must not modify
-// itself) logs to ~/Library/Logs/<app name>.
+// %LOCALAPPDATA%\<appName> on Windows, where logs and crash dumps go so the install folder
+// stays read-only; empty on other platforms or when Windows can't provide the folder.
+std::filesystem::path LocalAppDataFor(const std::filesystem::path& appName);
+
+// Where logs go when LocalAppDataFor is empty: beside the resources, except a shipped .app
+// (which must not modify itself) logs to ~/Library/Logs/<app name>.
 inline std::filesystem::path LogRootFor(const std::filesystem::path& executableDirectory)
 {
     if (IsSelfContainedMacBundle(executableDirectory)) {

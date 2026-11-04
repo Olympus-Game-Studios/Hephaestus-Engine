@@ -319,6 +319,7 @@ add_library(HephaestusRuntime STATIC
     engine/Animation/CharacterPlayback.cpp
     engine/Core/ProjectContext.cpp
     engine/Core/EngineLog.cpp
+    engine/Core/AppPaths.cpp
     engine/Core/SimulationStep.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
