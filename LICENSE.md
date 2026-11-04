@@ -30,8 +30,20 @@ Subject to this License, we grant You a worldwide, non-exclusive, non-transferab
 You may distribute Products, including for money, and You own the Products You make, subject to the royalty below. A Product may include the Engine Runtime in binary form. A Product must not:
 
 1. include any part of the Software in source code form (Your own scripts and content are fine);
-2. include the editor, launcher or other development tools, or otherwise let end users create or edit content with the Software beyond what is normally possible in a game (such as mod support that You build on top of the Engine Runtime); or
+2. include the editor, launcher or other development tools, except as a Mod Editor under section 3A; or
 3. be a game engine, editor, development toolkit or similar product that competes with the Software.
+
+### 3A. Mod Editors
+
+You may distribute the editor in binary form with a Product, or as a free companion download for it, so that players can make mods for that Product with the same tools You used (a **"Mod Editor"**), as long as:
+
+1. the Mod Editor is provided free of charge to people who own the Product;
+2. it contains no source code of the Software;
+3. its terms of use say that it may only be used to create content for that Product, and that anything made with it can only be used with that Product;
+4. this License, or end user terms we publish for Mod Editors, is shown to its users and kept intact; and
+5. You follow any technical requirements we publish for Mod Editors, such as using a supported build of the editor.
+
+Anyone who wants to make a separate game with the editor must get the Software from us under this License.
 
 ### Royalty
 
@@ -43,7 +55,7 @@ You may distribute Products, including for money, and You own the Products You m
 ## 4. Sharing the Software and Modifications
 
 1. **Without permission:** You may share the Software and Your Modifications in source code form only if (a) it is free of charge, (b) this License and all copyright, license and attribution notices are kept intact, (c) the recipient gets it under this License and (d) it is shared through a public fork of our official repository on the same hosting platform, or as a Contribution to us.
-2. **With permission only:** Any other distribution of the Software or Modifications needs our prior written permission. This includes distributing binaries of the editor, launcher or tools (modified or not), selling or charging for access to the Software or a Modification, sublicensing, bundling the Software with another product, and hosting the Software as a service.
+2. **With permission only:** Any other distribution of the Software or Modifications needs our prior written permission. This includes distributing binaries of the editor, launcher or tools (modified or not) other than a Mod Editor under section 3A, selling or charging for access to the Software or a Modification, sublicensing, bundling the Software with another product, and hosting the Software as a service.
 3. Any distribution that contains source code of the Software must always be free of charge, unless we agree otherwise in writing.
 
 ## 5. Contributions
