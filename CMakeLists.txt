@@ -576,6 +576,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/EditorConsolePanel.h
             engine/UI/QtEditor/EditorTheme.cpp
             engine/UI/QtEditor/EditorTheme.h
+            engine/UI/QtEditor/EditorSystemUsage.cpp
+            engine/UI/QtEditor/EditorSystemUsage.h
             engine/UI/QtEditor/Resources/EditorResources.qrc
             engine/UI/QtEditor/EditorMainWindow.cpp
             engine/UI/QtEditor/EditorMainWindow.h

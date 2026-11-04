@@ -80,6 +80,7 @@ class AutomationBackend;
 namespace QtEditor {
 
 // Forward declarations
+class EditorSystemUsage;
 class QtViewportWindow;
 class QtEditorEngine;
 class AssetBrowserWidget;
@@ -200,6 +201,7 @@ private:
     QTreeWidgetItem* findOutlinerItemForEntity(entt::entity entity);
     void onOutlinerContextMenu(const QPoint& pos);
     void createEmptyEntity();
+    void updateSystemUsage();
     void setEditorMode(EditorMode mode);
     /** Switches to Programmer mode if needed and brings @p dock to the front. */
     void showProgrammerPanel(QDockWidget* dock);
@@ -476,6 +478,10 @@ private:
     int m_frameCount = 0;
     QLabel* m_statusFps = nullptr;
     QToolButton* m_statusSaved = nullptr;
+    QLabel* m_statusRam = nullptr;
+    QLabel* m_statusCpu = nullptr;
+    QLabel* m_statusGpu = nullptr;
+    std::unique_ptr<EditorSystemUsage> m_systemUsage;
     QToolButton* m_statusScene = nullptr;
     QLabel* m_statusSelection = nullptr;
 
