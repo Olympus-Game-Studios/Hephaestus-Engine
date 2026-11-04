@@ -6,13 +6,16 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "EditorNotificationService.h"
+#include "EditorTheme.h"
 
 #include <QDateTime>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QStatusBar>
+#include <QStyle>
 #include <QTimer>
+#include <QToolButton>
 #include <QWidget>
 #include <algorithm>
 
@@ -69,6 +72,13 @@ void EditorNotificationService::CompleteProgress(const QString& message)
     hideToast();
 }
 
+void EditorNotificationService::MarkRead()
+{
+    if (m_unread == 0) return;
+    m_unread = 0;
+    emit historyChanged();
+}
+
 bool EditorNotificationService::shouldSuppress(const QString& message)
 {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -99,6 +109,10 @@ void EditorNotificationService::showMessage(Severity severity, const QString& me
     }
 
     if (!sticky) {
+        m_history.append({ severity, message, QDateTime::currentDateTime() });
+        if (m_history.size() > kHistoryLimit) m_history.removeFirst();
+        ++m_unread;
+        emit historyChanged();
         showToast(severity, message, timeoutMs > 0 ? timeoutMs : 4000);
     }
 }
@@ -114,44 +128,41 @@ void EditorNotificationService::showToast(Severity severity, const QString& mess
         m_toastFrame = new QFrame(anchor);
         m_toastFrame->setObjectName(QStringLiteral("EditorNotificationToast"));
         m_toastFrame->setAttribute(Qt::WA_ShowWithoutActivating);
-        m_toastFrame->setAttribute(Qt::WA_TransparentForMouseEvents);
+        m_toastFrame->setAttribute(Qt::WA_StyledBackground);
         m_toastFrame->setFocusPolicy(Qt::NoFocus);
 
         auto* layout = new QHBoxLayout(m_toastFrame);
-        layout->setContentsMargins(12, 8, 12, 8);
+        layout->setContentsMargins(12, 10, 8, 10);
+        layout->setSpacing(10);
+        m_toastIcon = new QLabel(m_toastFrame);
+        layout->addWidget(m_toastIcon, 0, Qt::AlignTop);
         m_toastLabel = new QLabel(m_toastFrame);
         m_toastLabel->setWordWrap(true);
+        m_toastLabel->setMinimumWidth(260);
         m_toastLabel->setMaximumWidth(420);
-        layout->addWidget(m_toastLabel);
+        layout->addWidget(m_toastLabel, 1);
+        auto* close = new QToolButton(m_toastFrame);
+        close->setIcon(Theme::Icon(QStringLiteral("close")));
+        close->setToolTip(tr("Dismiss"));
+        close->setFocusPolicy(Qt::NoFocus);
+        connect(close, &QToolButton::clicked, this, &EditorNotificationService::hideToast);
+        layout->addWidget(close, 0, Qt::AlignTop);
     }
 
-    QString bg = QStringLiteral("#2C2F36");
-    QString fg = QStringLiteral("#E6E8EB");
-    QString border = QStringLiteral("#4C8DFF");
+    const char* icon = "info";
+    Theme::IconTone tone = Theme::IconTone::Info;
+    const char* level = "info";
     switch (severity) {
-    case Severity::Warning:
-        border = QStringLiteral("#E0A100");
-        break;
-    case Severity::Error:
-        border = QStringLiteral("#E05555");
-        break;
-    case Severity::Progress:
-        border = QStringLiteral("#7A7F8C");
-        break;
+    case Severity::Warning: icon = "warning"; tone = Theme::IconTone::Warning; level = "warning"; break;
+    case Severity::Error:   icon = "error";   tone = Theme::IconTone::Error;   level = "error";   break;
+    case Severity::Progress: icon = "spinner"; tone = Theme::IconTone::Muted;  break;
     case Severity::Info:
-    default:
-        break;
+    default: break;
     }
-
-    m_toastFrame->setStyleSheet(QStringLiteral(
-        "QFrame#EditorNotificationToast {"
-        "  background: %1;"
-        "  color: %2;"
-        "  border: 1px solid %3;"
-        "  border-radius: 6px;"
-        "}"
-        "QLabel { color: %2; background: transparent; }")
-                                    .arg(bg, fg, border));
+    m_toastIcon->setPixmap(Theme::Icon(QString::fromLatin1(icon), tone).pixmap(QSize(16, 16), m_toastFrame->devicePixelRatioF()));
+    m_toastFrame->setProperty("level", QString::fromLatin1(level));
+    m_toastFrame->style()->unpolish(m_toastFrame);
+    m_toastFrame->style()->polish(m_toastFrame);
 
     if (m_toastLabel) {
         m_toastLabel->setText(message);
@@ -176,7 +187,7 @@ void EditorNotificationService::repositionToast()
     const QWidget* anchor = m_toastAnchor;
     const int margin = 12;
     const int statusReserve = m_statusBar ? m_statusBar->height() + 8 : 28;
-    const int x = margin;
+    const int x = anchor->width() - m_toastFrame->width() - margin;
     const int y = anchor->height() - statusReserve - m_toastFrame->height();
     m_toastFrame->move(x, std::max(margin, y));
 }

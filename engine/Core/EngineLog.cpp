@@ -608,6 +608,7 @@ void EngineLog::LogEnvironment(int argc, char** argv)
         exeDir / "Qt6Core.dll",
         exeDir / "Qt6Gui.dll",
         exeDir / "Qt6Widgets.dll",
+        exeDir / "Qt6Svg.dll",
         exeDir / "platforms" / "qwindows.dll",
         exeDir / "vulkan-1.dll"
     };

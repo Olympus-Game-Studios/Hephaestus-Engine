@@ -10,6 +10,7 @@
 #include "../MaterialEditor/MaterialAssetSerializer.h"
 #include "EditorMainWindow.h"
 #include "EditorPluginHost.h"
+#include "EditorTheme.h"
 #include "AddActorsPanel.h"
 #include "AssetDependencyDialog.h"
 #include "EditorAssetServices.h"
@@ -45,6 +46,8 @@
 #include <QProcess>
 #include <QDrag>
 #include <QMimeData>
+#include <QStyledItemDelegate>
+#include <QButtonGroup>
 #include <QPainter>
 #include <QFileInfo>
 #include <QDir>
@@ -70,6 +73,78 @@ QString ToProjectRelativeAssetPath(const QString& relativeFromAssetRoot)
     }
     return path;
 }
+
+const QSize kAssetCardSize(160, 204);
+const QSize kAssetCardLargeSize(204, 276);
+
+/** Grid card: a dark thumbnail well with the asset icon, then the name and the type line. */
+class AssetCardDelegate final : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    void SetLarge(bool large) { m_large = large; }
+
+    QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override
+    {
+        return (m_large ? kAssetCardLargeSize : kAssetCardSize) - QSize(12, 12);
+    }
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        const bool selected = option.state & QStyle::State_Selected;
+        const bool hovered = option.state & QStyle::State_MouseOver;
+        const QRectF card = QRectF(option.rect).adjusted(0.5, 0.5, -0.5, -0.5);
+        painter->setPen(selected ? QPen(Theme::Color(Theme::Token::AccentSelection), 1.5)
+                                 : QPen(Theme::Color(Theme::Token::BorderSubtle), 1.0));
+        painter->setBrush(selected  ? Theme::Color(Theme::Token::SurfaceSelected)
+                          : hovered ? Theme::Color(Theme::Token::SurfaceHover)
+                                    : Theme::Color(Theme::Token::SurfaceRaised));
+        painter->drawRoundedRect(card, 6, 6);
+
+        const int textHeight = 42;
+        const QRectF well = QRectF(option.rect).adjusted(1.5, 1.5, -1.5, -textHeight);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(Theme::Color(Theme::Token::SurfaceBase));
+        painter->drawRoundedRect(well, 5, 5);
+        painter->drawRect(well.adjusted(0, well.height() / 2.0, 0, 0));
+
+        const QIcon icon = index.data(Qt::DecorationRole).value<QIcon>();
+        const QPoint center = well.center().toPoint();
+        const int iconSize = m_large ? 56 : 48;
+        icon.paint(painter, QRect(center.x() - iconSize / 2, center.y() - iconSize / 2, iconSize, iconSize));
+
+        const QRect text = option.rect.adjusted(8, option.rect.height() - textHeight + 6, -8, -4);
+        const QFontMetrics nameMetrics(option.font);
+        const QRect nameRect(text.left(), text.top(), text.width(), nameMetrics.height());
+        painter->setFont(option.font);
+        painter->setPen(Theme::Color(Theme::Token::TextPrimary));
+        painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
+                          nameMetrics.elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight, nameRect.width()));
+
+        QFont detailFont = option.font;
+        detailFont.setPixelSize(11);
+        const QFontMetrics detailMetrics(detailFont);
+        QRect detailRect(text.left(), nameRect.bottom() + 2, text.width(), detailMetrics.height());
+        const QString typeIconName = index.data(AssetBrowserWidget::TypeIconRole).toString();
+        if (!typeIconName.isEmpty()) {
+            const QRect typeIcon(detailRect.left(), detailRect.center().y() - 6, 12, 12);
+            Theme::Icon(typeIconName, Theme::IconTone::Muted).paint(painter, typeIcon);
+            detailRect.setLeft(typeIcon.right() + 5);
+        }
+        painter->setFont(detailFont);
+        painter->setPen(Theme::Color(Theme::Token::TextMuted));
+        painter->drawText(detailRect, Qt::AlignLeft | Qt::AlignVCenter,
+                          detailMetrics.elidedText(index.data(AssetBrowserWidget::DetailRole).toString(),
+                                                   Qt::ElideRight, detailRect.width()));
+        painter->restore();
+    }
+
+private:
+    bool m_large = false;
+};
 
 /**
  * Asset browser contents view that can drag Prefab / StaticMesh assets into the viewport.
@@ -133,10 +208,10 @@ protected:
         drag->setMimeData(mimeData);
 
         QPixmap pixmap(180, 36);
-        pixmap.fill(QColor(37, 39, 45, 220));
+        pixmap.fill(Theme::Color(Theme::Token::SurfaceRaised));
         {
             QPainter p(&pixmap);
-            p.setPen(QColor(230, 232, 235));
+            p.setPen(Theme::Color(Theme::Token::TextPrimary));
             p.setFont(font());
             if (!entry.icon.isNull()) {
                 entry.icon.paint(&p, 4, 4, 28, 28);
@@ -221,6 +296,20 @@ void AssetBrowserWidget::RevealAsset(const QString& relativePath)
     showInFolder(path);
 }
 
+void AssetBrowserWidget::SetLargeCards(bool large)
+{
+    m_largeCards = large;
+    if (m_folderTree) m_folderTree->parentWidget()->setVisible(!large);
+    if (m_gridView) m_contentsView->setGridSize(large ? kAssetCardLargeSize : kAssetCardSize);
+    if (auto* cards = dynamic_cast<AssetCardDelegate*>(m_cardDelegate)) cards->SetLarge(large);
+    m_contentsView->doItemsLayout();
+}
+
+void AssetBrowserWidget::SetGridView(bool grid)
+{
+    (grid ? m_gridButton : m_listButton)->setChecked(true);
+}
+
 void AssetBrowserWidget::SetOpenAssetCallback(OpenAssetCallback callback)
 {
     m_openAssetCallback = std::move(callback);
@@ -230,8 +319,8 @@ void AssetBrowserWidget::setupUI()
 {
     setObjectName("AssetBrowserRoot");
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(8, 8, 8, 8);
-    mainLayout->setSpacing(6);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Top Toolbar
@@ -242,83 +331,128 @@ void AssetBrowserWidget::setupUI()
     m_toolbar->setMovable(false);
     m_toolbar->setFloatable(false);
 
-    m_viewToggleButton = new QToolButton(this);
-    m_viewToggleButton->setText(tr("Grid"));
-    m_viewToggleButton->setCheckable(true);
-    m_viewToggleButton->setChecked(true);
-    connect(m_viewToggleButton, &QToolButton::toggled, this, [this](bool checked) {
-        m_gridView = checked;
-        m_viewToggleButton->setText(checked ? tr("Grid") : tr("List"));
-        m_contentsView->setViewMode(checked ? QListView::IconMode : QListView::ListMode);
-        m_contentsView->setGridSize(checked ? QSize(140, 110) : QSize());
-        m_contentsView->setIconSize(checked ? QSize(56, 56) : QSize(20, 20));
-    });
-    m_toolbar->addWidget(m_viewToggleButton);
-
-    m_importButton = new QPushButton(tr("Import"), this);
+    m_importButton = new QPushButton(Theme::Icon(QStringLiteral("plus")), tr("Import"), this);
     auto* importMenu = new QMenu(m_importButton);
-    importMenu->addAction(tr("Import Assets…"), this, &AssetBrowserWidget::importAssets);
-    importMenu->addAction(tr("Import Character…"), this, &AssetBrowserWidget::importCharacter);
+    importMenu->addAction(tr("Import Assets..."), this, &AssetBrowserWidget::importAssets);
+    importMenu->addAction(tr("Import Character..."), this, &AssetBrowserWidget::importCharacter);
     m_importButton->setMenu(importMenu);
     m_importButton->setToolTip(tr("Copy files into the current asset folder, or import a GLB character"));
     m_toolbar->addWidget(m_importButton);
+    auto* newFolderButton = new QToolButton(this);
+    newFolderButton->setIcon(Theme::Icon(QStringLiteral("folder")));
+    newFolderButton->setText(tr("New folder"));
+    newFolderButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    connect(newFolderButton, &QToolButton::clicked, this, [this]() { createNewFolder(m_currentPath); });
+    m_toolbar->addWidget(newFolderButton);
 
+    // Second row: where you are, and what kind of asset you are looking at.
+    auto* navRow = new QWidget(this);
+    navRow->setObjectName(QStringLiteral("AssetBrowserNavRow"));
+    // Clips instead of setting the panel's minimum width, so the Content Browser can be narrowed.
+    navRow->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto* navLayout = new QHBoxLayout(navRow);
+    navLayout->setContentsMargins(8, 4, 8, 4);
+    navLayout->setSpacing(2);
+
+    // Clickable breadcrumb bar
+    m_breadcrumbBar = new QWidget(navRow);
+    m_breadcrumbLayout = new QHBoxLayout(m_breadcrumbBar);
+    m_breadcrumbLayout->setContentsMargins(4, 0, 0, 0);
+    m_breadcrumbLayout->setSpacing(0);
+    m_breadcrumbLabel = new QLabel(tr("Assets"), m_breadcrumbBar); // kept for compatibility
+    m_breadcrumbLabel->hide();
+    navLayout->addWidget(m_breadcrumbBar);
+    navLayout->addStretch(1);
+
+    QWidget* spacer = new QWidget(this);
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_toolbar->addWidget(spacer);
+
+    // Filter chips drive the hidden category combo that rebuildContentsView reads.
     m_filterCombo = new QComboBox(this);
     m_filterCombo->addItems({
         tr("All"), tr("Meshes"), tr("Textures"), tr("Materials"), tr("Scenes"),
         tr("Scripts"), tr("UI Layouts"), tr("Prefabs"), tr("Characters"), tr("Audio")
     });
-    connect(m_filterCombo, &QComboBox::currentTextChanged, this, [this](const QString&) {
+    m_filterCombo->hide();
+    auto* chips = new QButtonGroup(this);
+    for (const QString& label : { tr("All"), tr("Meshes"), tr("Materials"), tr("Textures"), tr("Prefabs") }) {
+        auto* chip = new QToolButton(navRow);
+        chip->setObjectName(QStringLiteral("FilterChip"));
+        chip->setText(label);
+        chip->setCheckable(true);
+        chip->setChecked(label == tr("All"));
+        chips->addButton(chip);
+        navLayout->addWidget(chip);
+        connect(chip, &QToolButton::clicked, m_filterCombo, [this, label]() { m_filterCombo->setCurrentText(label); });
+    }
+    auto* moreFilters = new QToolButton(this);
+    moreFilters->setIcon(Theme::Icon(QStringLiteral("filter")));
+    moreFilters->setToolTip(tr("Filter by type"));
+    moreFilters->setPopupMode(QToolButton::InstantPopup);
+    auto* filterMenu = new QMenu(moreFilters);
+    for (int i = 0; i < m_filterCombo->count(); ++i) {
+        const QString label = m_filterCombo->itemText(i);
+        filterMenu->addAction(label, m_filterCombo, [this, label]() { m_filterCombo->setCurrentText(label); });
+    }
+    moreFilters->setMenu(filterMenu);
+    connect(m_filterCombo, &QComboBox::currentTextChanged, this, [this, chips](const QString& text) {
+        chips->setExclusive(false);
+        for (QAbstractButton* chip : chips->buttons()) chip->setChecked(chip->text() == text);
+        chips->setExclusive(true);
         rebuildContentsView();
     });
-    m_toolbar->addWidget(m_filterCombo);
-
-    m_toolbar->addSeparator();
-
-    // Up button
-    m_upButton = new QPushButton(this);
-    m_upButton->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
-    m_upButton->setToolTip(tr("Go up one level"));
-    m_upButton->setFixedSize(24, 24);
-    connect(m_upButton, &QPushButton::clicked, this, &AssetBrowserWidget::onUpButtonClicked);
-    m_toolbar->addWidget(m_upButton);
-
-    // Refresh button
-    m_refreshButton = new QPushButton(this);
-    m_refreshButton->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
-    m_refreshButton->setToolTip(tr("Refresh"));
-    m_refreshButton->setFixedSize(24, 24);
-    connect(m_refreshButton, &QPushButton::clicked, this, &AssetBrowserWidget::onRefreshButtonClicked);
-    m_toolbar->addWidget(m_refreshButton);
-
-    m_toolbar->addSeparator();
-
-    // Clickable breadcrumb bar
-    m_breadcrumbBar = new QWidget(this);
-    m_breadcrumbLayout = new QHBoxLayout(m_breadcrumbBar);
-    m_breadcrumbLayout->setContentsMargins(0, 0, 0, 0);
-    m_breadcrumbLayout->setSpacing(2);
-    m_breadcrumbLabel = new QLabel(tr("Assets"), m_breadcrumbBar); // kept for compatibility
-    m_breadcrumbLabel->hide();
-    m_toolbar->addWidget(m_breadcrumbBar);
-
-    // Spacer
-    QWidget* spacer = new QWidget(this);
-    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    m_toolbar->addWidget(spacer);
-
     // Search box — empty query browses current folder; non-empty searches project-wide
     m_searchBox = new QLineEdit(this);
-    m_searchBox->setPlaceholderText(tr("Search project..."));
-    m_searchBox->setMaximumWidth(220);
+    m_searchBox->setPlaceholderText(tr("Search assets..."));
+    m_searchBox->setFixedWidth(240);
     m_searchBox->setClearButtonEnabled(true);
+    m_searchBox->addAction(Theme::Icon(QStringLiteral("search"), Theme::IconTone::Muted), QLineEdit::LeadingPosition);
     m_searchBox->setToolTip(tr("Search all project assets by name or path. Clear to return to folder browse."));
     connect(m_searchBox, &QLineEdit::textChanged, this, [this](const QString&) {
         rebuildContentsView();
     });
     m_toolbar->addWidget(m_searchBox);
+    m_toolbar->addWidget(moreFilters);
+    Theme::AddShortcutHint(m_searchBox, QKeySequence(QKeySequence::Find));
+    auto* findShortcut = new QShortcut(QKeySequence::Find, this);
+    findShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(findShortcut, &QShortcut::activated, m_searchBox, [this]() { m_searchBox->setFocus(Qt::ShortcutFocusReason); });
+
+    m_refreshButton = new QPushButton(this);
+    m_refreshButton->setIcon(Theme::Icon(QStringLiteral("reset")));
+    m_refreshButton->setToolTip(tr("Refresh"));
+    m_refreshButton->setProperty("iconOnly", true);
+    m_refreshButton->setFlat(true);
+    connect(m_refreshButton, &QPushButton::clicked, this, &AssetBrowserWidget::onRefreshButtonClicked);
+    m_refreshButton->hide();
+    auto* refreshShortcut = new QShortcut(QKeySequence::Refresh, this);
+    refreshShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(refreshShortcut, &QShortcut::activated, this, &AssetBrowserWidget::onRefreshButtonClicked);
+
+    m_gridButton = new QToolButton(this);
+    m_gridButton->setIcon(Theme::Icon(QStringLiteral("grid")));
+    m_gridButton->setToolTip(tr("Grid"));
+    m_listButton = new QToolButton(this);
+    m_listButton->setIcon(Theme::Icon(QStringLiteral("list")));
+    m_listButton->setToolTip(tr("List"));
+    auto* viewGroup = new QButtonGroup(this);
+    for (QToolButton* button : { m_gridButton, m_listButton }) {
+        button->setCheckable(true);
+        viewGroup->addButton(button);
+        m_toolbar->addWidget(button);
+    }
+    m_gridButton->setChecked(true);
+    connect(m_gridButton, &QToolButton::toggled, this, [this](bool grid) {
+        m_gridView = grid;
+        m_contentsView->setViewMode(grid ? QListView::IconMode : QListView::ListMode);
+        m_contentsView->setGridSize(grid ? (m_largeCards ? kAssetCardLargeSize : kAssetCardSize) : QSize());
+        m_contentsView->setIconSize(grid ? QSize(48, 48) : QSize(16, 16));
+        m_contentsView->setItemDelegate(grid ? m_cardDelegate : m_listDelegate);
+    });
 
     mainLayout->addWidget(m_toolbar);
+    mainLayout->addWidget(navRow);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Main Content Area
@@ -330,19 +464,6 @@ void AssetBrowserWidget::setupUI()
     auto* leftLayout = new QVBoxLayout(leftPanel);
     leftLayout->setContentsMargins(0, 0, 0, 0);
     leftLayout->setSpacing(6);
-
-    auto* leftHeader = new QHBoxLayout();
-    auto* foldersLabel = new QLabel(tr("Folders"), leftPanel);
-    leftHeader->addWidget(foldersLabel);
-    leftHeader->addStretch();
-    m_newFolderButton = new QPushButton(tr("+"), leftPanel);
-    m_newFolderButton->setFixedSize(24, 24);
-    m_newFolderButton->setToolTip(tr("Create a new folder in the current directory"));
-    connect(m_newFolderButton, &QPushButton::clicked, this, [this]() {
-        createNewFolder(m_currentPath);
-    });
-    leftHeader->addWidget(m_newFolderButton);
-    leftLayout->addLayout(leftHeader);
 
     m_folderTree = new QTreeView(leftPanel);
     m_folderModel = new QStandardItemModel(this);
@@ -370,9 +491,12 @@ void AssetBrowserWidget::setupUI()
     m_contentsModel = new QStandardItemModel(this);
     m_contentsView->setModel(m_contentsModel);
     m_contentsView->setViewMode(QListView::IconMode);
-    m_contentsView->setIconSize(QSize(56, 56));
-    m_contentsView->setSpacing(12);
-    m_contentsView->setGridSize(QSize(140, 110));
+    m_contentsView->setIconSize(QSize(48, 48));
+    m_contentsView->setSpacing(8);
+    m_contentsView->setGridSize(kAssetCardSize);
+    m_listDelegate = m_contentsView->itemDelegate();
+    m_cardDelegate = new AssetCardDelegate(m_contentsView);
+    m_contentsView->setItemDelegate(m_cardDelegate);
     m_contentsView->setResizeMode(QListView::Adjust);
     m_contentsView->setWordWrap(true);
     m_contentsView->setUniformItemSizes(true);
@@ -408,23 +532,18 @@ void AssetBrowserWidget::setupUI()
     emptyLayout->setSpacing(4);
 
     QLabel* emptyIcon = new QLabel(this);
-    emptyIcon->setText(QString::fromUtf8("\xF0\x9F\x93\x81"));
-    QFont iconFont = emptyIcon->font();
-    iconFont.setPointSize(28);
-    emptyIcon->setFont(iconFont);
+    emptyIcon->setPixmap(Theme::Icon(QStringLiteral("folder"), Theme::IconTone::Muted).pixmap(QSize(32, 32), devicePixelRatioF()));
     emptyIcon->setAlignment(Qt::AlignCenter);
     emptyLayout->addWidget(emptyIcon);
 
     QLabel* emptyLabel = new QLabel(tr("No project open"), this);
-    QFont labelFont = emptyLabel->font();
-    labelFont.setPointSize(11);
-    emptyLabel->setFont(labelFont);
+    emptyLabel->setObjectName(QStringLiteral("EmptyStateTitle"));
     emptyLabel->setAlignment(Qt::AlignCenter);
     emptyLayout->addWidget(emptyLabel);
 
     QLabel* emptySubLabel = new QLabel(tr("Open a project to browse assets"), this);
     emptySubLabel->setAlignment(Qt::AlignCenter);
-    emptySubLabel->setStyleSheet("color: gray;");
+    emptySubLabel->setProperty("role", "muted");
     emptyLayout->addWidget(emptySubLabel);
 
     m_openProjectButton = new QPushButton(tr("Open Project..."), this);
@@ -453,13 +572,11 @@ void AssetBrowserWidget::updateEmptyState()
         // Show empty state, hide content
         m_splitter->hide();
         m_emptyStateWidget->show();
-        m_upButton->setEnabled(false);
         m_refreshButton->setEnabled(false);
     } else {
         // Show content, hide empty state
         m_emptyStateWidget->hide();
         m_splitter->show();
-        m_upButton->setEnabled(!m_currentPath.isEmpty());
         m_refreshButton->setEnabled(true);
     }
 }
@@ -475,7 +592,7 @@ void AssetBrowserWidget::rebuildFolderTree()
     }
 
     // Root item
-    QStandardItem* rootItem = new QStandardItem(style()->standardIcon(QStyle::SP_DirIcon), tr("Assets"));
+    QStandardItem* rootItem = new QStandardItem(Theme::Icon(QStringLiteral("folder")), tr("Content"));
     rootItem->setData("", RelativePathRole);
     rootItem->setData(true, IsDirectoryRole);
     m_folderModel->appendRow(rootItem);
@@ -487,7 +604,7 @@ void AssetBrowserWidget::rebuildFolderTree()
         for (const auto& entry : entries) {
             if (entry.isDirectory) {
                 QStandardItem* item = new QStandardItem(
-                    style()->standardIcon(QStyle::SP_DirIcon),
+                    Theme::Icon(QStringLiteral("folder")),
                     QString::fromStdString(entry.name)
                 );
                 item->setData(QString::fromStdString(entry.relativePath), RelativePathRole);
@@ -533,22 +650,22 @@ void AssetBrowserWidget::rebuildContentsView()
         return true;
     };
 
-    auto typeBadge = [](AssetType type, bool isDirectory) -> QString {
-        if (isDirectory) return QStringLiteral("[Folder]");
+    auto typeLabel = [this](AssetType type, bool isDirectory) -> QString {
+        if (isDirectory) return tr("Folder");
         switch (type) {
-            case AssetType::Scene: return QStringLiteral("[Scene]");
-            case AssetType::Texture: return QStringLiteral("[Texture]");
-            case AssetType::StaticMesh: return QStringLiteral("[Mesh]");
-            case AssetType::Material: return QStringLiteral("[Material]");
-            case AssetType::Script: return QStringLiteral("[Script]");
-            case AssetType::Audio: return QStringLiteral("[Audio]");
-            case AssetType::Prefab: return QStringLiteral("[Prefab]");
-            case AssetType::Character: return QStringLiteral("[Character]");
-            case AssetType::Shader: return QStringLiteral("[Shader]");
-            case AssetType::Font: return QStringLiteral("[Font]");
-            case AssetType::Text: return QStringLiteral("[Text]");
-            case AssetType::UILayout: return QStringLiteral("[UI Layout]");
-            default: return QStringLiteral("[Asset]");
+            case AssetType::Scene: return tr("Scene");
+            case AssetType::Texture: return tr("Texture");
+            case AssetType::StaticMesh: return tr("Static mesh");
+            case AssetType::Material: return tr("Material");
+            case AssetType::Script: return tr("Script");
+            case AssetType::Audio: return tr("Audio");
+            case AssetType::Prefab: return tr("Prefab");
+            case AssetType::Character: return tr("Character");
+            case AssetType::Shader: return tr("Shader");
+            case AssetType::Font: return tr("Font");
+            case AssetType::Text: return tr("Text");
+            case AssetType::UILayout: return tr("UI layout");
+            default: return tr("Asset");
         }
     };
 
@@ -595,9 +712,11 @@ void AssetBrowserWidget::rebuildContentsView()
             const QString folder = parentFolderOf(rel);
             const QString location = folder.isEmpty() ? tr("assets/") : (QStringLiteral("assets/") + folder);
             QStandardItem* item = new QStandardItem();
-            item->setText(QString("%1\n%2  ·  %3")
-                              .arg(name, typeBadge(type, false), location));
-            item->setIcon(getAssetIcon(static_cast<int>(type), false));
+            item->setText(name);
+            item->setData(QStringLiteral("%1 \u00B7 %2").arg(typeLabel(type, false), location), DetailRole);
+            item->setData(getAssetIcon(static_cast<int>(type), false).name(), TypeIconRole);
+            const QIcon fileIcon = Theme::FileIcon(name);
+            item->setIcon(fileIcon.isNull() ? getAssetIcon(static_cast<int>(type), false) : fileIcon);
             item->setData(rel, RelativePathRole);
             item->setData(static_cast<int>(type), AssetTypeRole);
             item->setData(false, IsDirectoryRole);
@@ -628,10 +747,14 @@ void AssetBrowserWidget::rebuildContentsView()
         }
 
         QStandardItem* item = new QStandardItem();
-        item->setText(QString("%1\n%2").arg(name,
-            customType.isEmpty() ? typeBadge(type, entry.isDirectory)
-                                 : QStringLiteral("[%1]").arg(customType)));
+        item->setText(name);
+        item->setData(customType.isEmpty() ? typeLabel(type, entry.isDirectory) : customType, DetailRole);
+        item->setData(getAssetIcon(static_cast<int>(entry.type), entry.isDirectory).name(), TypeIconRole);
         QIcon icon = getAssetIcon(static_cast<int>(entry.type), entry.isDirectory);
+        if (!entry.isDirectory) {
+            const QIcon fileIcon = Theme::FileIcon(name);
+            if (!fileIcon.isNull()) icon = fileIcon;
+        }
         if (!customType.isEmpty()) {
             const QIcon pluginIcon = m_mainWindow->PluginHost()->CustomAssetIcon(
                 QString::fromStdString(entry.relativePath));
@@ -673,11 +796,9 @@ void AssetBrowserWidget::updateBreadcrumb()
         btn->setAutoRaise(true);
         btn->setText(label);
         btn->setCursor(Qt::PointingHandCursor);
+        btn->setObjectName(QStringLiteral("Breadcrumb"));
         if (isLast) {
-            QFont f = btn->font();
-            f.setBold(true);
-            btn->setFont(f);
-            btn->setEnabled(false);
+            btn->setProperty("current", true);
         } else {
             connect(btn, &QToolButton::clicked, this, [this, targetPath]() {
                 NavigateTo(targetPath);
@@ -686,13 +807,14 @@ void AssetBrowserWidget::updateBreadcrumb()
         m_breadcrumbLayout->addWidget(btn);
     };
 
-    addCrumb(tr("Assets"), QString(), m_currentPath.isEmpty());
+    addCrumb(tr("Content"), QString(), m_currentPath.isEmpty());
 
     if (!m_currentPath.isEmpty()) {
         const QStringList parts = m_currentPath.split(QLatin1Char('/'), Qt::SkipEmptyParts);
         QString accum;
         for (int i = 0; i < parts.size(); ++i) {
-            auto* sep = new QLabel(QStringLiteral("/"), m_breadcrumbBar);
+            auto* sep = new QLabel(m_breadcrumbBar);
+            sep->setPixmap(Theme::Icon(QStringLiteral("chevron-right"), Theme::IconTone::Muted).pixmap(QSize(12, 12), devicePixelRatioF()));
             m_breadcrumbLayout->addWidget(sep);
             if (!accum.isEmpty()) accum += QLatin1Char('/');
             accum += parts[i];
@@ -701,7 +823,6 @@ void AssetBrowserWidget::updateBreadcrumb()
     }
 
     m_breadcrumbLayout->addStretch();
-    m_upButton->setEnabled(!m_currentPath.isEmpty());
 }
 
 void AssetBrowserWidget::updateStatusBar()
@@ -737,40 +858,22 @@ void AssetBrowserWidget::updateStatusBar()
 
 QIcon AssetBrowserWidget::getAssetIcon(int assetType, bool isDirectory) const
 {
-    QStyle* s = style();
-    
     if (isDirectory) {
-        return s->standardIcon(QStyle::SP_DirIcon);
+        return Theme::Icon(QStringLiteral("folder"));
     }
 
-    AssetType type = static_cast<AssetType>(assetType);
-    switch (type) {
-        case AssetType::Scene:
-            return s->standardIcon(QStyle::SP_FileDialogDetailedView);
-        case AssetType::Texture:
-            return s->standardIcon(QStyle::SP_FileDialogContentsView);
-        case AssetType::StaticMesh:
-            return s->standardIcon(QStyle::SP_ComputerIcon);
-        case AssetType::Material:
-            return s->standardIcon(QStyle::SP_DialogApplyButton);
-        case AssetType::Script:
-            return s->standardIcon(QStyle::SP_FileDialogListView);
-        case AssetType::Audio:
-            return s->standardIcon(QStyle::SP_MediaVolume);
-        case AssetType::Prefab:
-            return s->standardIcon(QStyle::SP_VistaShield);
-        case AssetType::Character:
-            return s->standardIcon(QStyle::SP_DirLinkIcon);
-        case AssetType::Shader:
-            return s->standardIcon(QStyle::SP_TitleBarMenuButton);
-        case AssetType::Font:
-            return s->standardIcon(QStyle::SP_FileDialogInfoView);
-        case AssetType::Text:
-            return s->standardIcon(QStyle::SP_FileIcon);
-        case AssetType::UILayout:
-            return s->standardIcon(QStyle::SP_DesktopIcon);
-        default:
-            return s->standardIcon(QStyle::SP_FileIcon);
+    switch (static_cast<AssetType>(assetType)) {
+        case AssetType::Scene:      return Theme::Icon(QStringLiteral("globe"));
+        case AssetType::Texture:    return Theme::Icon(QStringLiteral("texture"));
+        case AssetType::StaticMesh: return Theme::Icon(QStringLiteral("cube"));
+        case AssetType::Material:   return Theme::Icon(QStringLiteral("material"));
+        case AssetType::Script:     return Theme::Icon(QStringLiteral("code"));
+        case AssetType::Audio:      return Theme::Icon(QStringLiteral("audio"));
+        case AssetType::Prefab:     return Theme::Icon(QStringLiteral("prefab"));
+        case AssetType::Character:  return Theme::Icon(QStringLiteral("character"));
+        case AssetType::Shader:     return Theme::Icon(QStringLiteral("code"));
+        case AssetType::UILayout:   return Theme::Icon(QStringLiteral("ui"));
+        default:                    return Theme::Icon(QStringLiteral("file"));
     }
 }
 
@@ -879,9 +982,7 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
         AssetType assetType = static_cast<AssetType>(index.data(AssetTypeRole).toInt());
 
         if (relativePath.startsWith(QStringLiteral("plugin://"))) {
-            menu.addAction(isDirectory ? style()->standardIcon(QStyle::SP_DirOpenIcon)
-                                       : style()->standardIcon(QStyle::SP_DialogOpenButton),
-                           tr("Open"), [this, relativePath, isDirectory]() {
+            menu.addAction(tr("Open"), [this, relativePath, isDirectory]() {
                 if (isDirectory) NavigateTo(relativePath);
                 else if (!m_mainWindow || !m_mainWindow->PluginHost() ||
                          !m_mainWindow->PluginHost()->OpenCustomAsset(relativePath))
@@ -897,14 +998,14 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
         }
 
         if (isDirectory) {
-            menu.addAction(style()->standardIcon(QStyle::SP_DirOpenIcon), tr("Open"), [this, relativePath]() {
+            menu.addAction(tr("Open"), [this, relativePath]() {
                 NavigateTo(relativePath);
             });
             menu.addSeparator();
             showCreateMenu(menu, relativePath);
             menu.addSeparator();
         } else {
-            menu.addAction(style()->standardIcon(QStyle::SP_DialogOpenButton), tr("Open"), [this, relativePath]() {
+            menu.addAction(tr("Open"), [this, relativePath]() {
                 if (!m_mainWindow || !m_mainWindow->PluginHost() ||
                     !m_mainWindow->PluginHost()->OpenCustomAsset(relativePath)) {
                     emit assetOpenRequested(relativePath);
@@ -1052,10 +1153,9 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
             });
         }
 
-        QAction* deleteAct = menu.addAction(tr("Delete"), [this, relativePath, isDirectory]() {
+        menu.addAction(tr("Delete"), [this, relativePath, isDirectory]() {
             deleteAsset(relativePath, isDirectory);
         });
-        deleteAct->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
 
         menu.addSeparator();
         menu.addAction(tr("Show in Folder"), [this, relativePath]() {
@@ -1108,8 +1208,7 @@ void AssetBrowserWidget::onFolderTreeContextMenu(const QPoint& pos)
     }
 
     if (targetDir.startsWith(QStringLiteral("plugin://"))) {
-        menu.addAction(style()->standardIcon(QStyle::SP_DirOpenIcon), tr("Open"),
-                       [this, targetDir]() { NavigateTo(targetDir); });
+        menu.addAction(tr("Open"), [this, targetDir]() { NavigateTo(targetDir); });
         menu.addAction(tr("Show in Explorer"), [this, targetDir]() { showInExplorer(targetDir); });
         menu.exec(m_folderTree->viewport()->mapToGlobal(pos));
         return;
@@ -1122,10 +1221,9 @@ void AssetBrowserWidget::onFolderTreeContextMenu(const QPoint& pos)
         menu.addAction(tr("Rename"), [this, targetDir]() {
             renameAsset(targetDir, true);
         });
-        QAction* deleteAct = menu.addAction(tr("Delete"), [this, targetDir]() {
+        menu.addAction(tr("Delete"), [this, targetDir]() {
             deleteAsset(targetDir, true);
         });
-        deleteAct->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
     }
 
     menu.addSeparator();
@@ -1138,33 +1236,33 @@ void AssetBrowserWidget::onFolderTreeContextMenu(const QPoint& pos)
 
 void AssetBrowserWidget::showCreateMenu(QMenu& menu, const QString& targetDirectory)
 {
-    menu.addAction(style()->standardIcon(QStyle::SP_DirIcon), tr("New Folder"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("folder")), tr("New Folder"), [this, targetDirectory]() {
         createNewFolder(targetDirectory);
     });
 
     menu.addSeparator();
 
-    menu.addAction(style()->standardIcon(QStyle::SP_FileDialogListView), tr("New Lua Script"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("code")), tr("New Lua Script"), [this, targetDirectory]() {
         createNewLuaScript(targetDirectory);
     });
 
-    menu.addAction(style()->standardIcon(QStyle::SP_FileDialogDetailedView), tr("New Scene"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("globe")), tr("New Scene"), [this, targetDirectory]() {
         createNewScene(targetDirectory);
     });
 
-    menu.addAction(style()->standardIcon(QStyle::SP_DialogApplyButton), tr("New Material"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("material")), tr("New Material"), [this, targetDirectory]() {
         createNewMaterial(targetDirectory);
     });
 
-    menu.addAction(style()->standardIcon(QStyle::SP_DesktopIcon), tr("New UI File"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("ui")), tr("New UI File"), [this, targetDirectory]() {
         createNewUIFile(targetDirectory);
     });
 
-    menu.addAction(style()->standardIcon(QStyle::SP_VistaShield), tr("New Prefab"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("prefab")), tr("New Prefab"), [this, targetDirectory]() {
         createNewPrefab(targetDirectory);
     });
 
-    menu.addAction(style()->standardIcon(QStyle::SP_DirLinkIcon), tr("New Character"), [this, targetDirectory]() {
+    menu.addAction(Theme::Icon(QStringLiteral("character")), tr("New Character"), [this, targetDirectory]() {
         createNewCharacter(targetDirectory);
     });
     menu.addAction(tr("Import Character…"), [this]() {

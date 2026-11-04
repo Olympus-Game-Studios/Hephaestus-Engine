@@ -76,6 +76,12 @@ public:
     void FindReferences(const QString& relativePath);
     void RevealAsset(const QString& relativePath);
 
+    /** Shows the contents as asset cards (true) or a compact list (false). */
+    void SetGridView(bool grid);
+
+    /** Large cards with the folder tree hidden (Artist mode), or the normal layout. */
+    void SetLargeCards(bool large);
+
     /**
      * @brief Get current directory path.
      */
@@ -91,7 +97,9 @@ public:
         RelativePathRole = Qt::UserRole + 1,
         AssetTypeRole,
         IsDirectoryRole,
-        SearchResultRole
+        SearchResultRole,
+        DetailRole,
+        TypeIconRole
     };
 
 signals:
@@ -177,11 +185,12 @@ private:
 
     // Top bar
     QToolBar* m_toolbar = nullptr;
-    QToolButton* m_viewToggleButton = nullptr;
+    QToolButton* m_gridButton = nullptr;
+    QToolButton* m_listButton = nullptr;
+    QAbstractItemDelegate* m_cardDelegate = nullptr;
+    QAbstractItemDelegate* m_listDelegate = nullptr;
     QPushButton* m_importButton = nullptr;
     QComboBox* m_filterCombo = nullptr;
-    QPushButton* m_newFolderButton = nullptr;
-    QPushButton* m_upButton = nullptr;
     QPushButton* m_refreshButton = nullptr;
     QLabel* m_breadcrumbLabel = nullptr;
     QWidget* m_breadcrumbBar = nullptr;
@@ -189,6 +198,7 @@ private:
     QLineEdit* m_searchBox = nullptr;
 
     bool m_gridView = true;
+    bool m_largeCards = false;
 
     // Bottom status
     QLabel* m_statusLabel = nullptr;

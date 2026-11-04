@@ -6,6 +6,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "PhysicsInspectors.h"
+#include "EditorTheme.h"
 #include "EditorUndoCommand.h"
 #include "PropertyEditors.h"
 
@@ -29,7 +30,7 @@ namespace QtEditor {
 static QPushButton* makeResetBtn(QWidget* parent)
 {
     auto* btn = new QPushButton(parent);
-    btn->setIcon(btn->style()->standardIcon(QStyle::SP_BrowserReload));
+    btn->setIcon(Theme::Icon(QStringLiteral("reset")));
     btn->setFixedSize(20, 20);
     btn->setToolTip("Reset to default");
     btn->setFlat(true);

@@ -6,6 +6,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "EnvironmentInspector.h"
+#include "EditorTheme.h"
 #include "EditorUndoCommand.h"
 #include "AssetPickerDialog.h"
 #include "AssetReferenceEditor.h"
@@ -58,7 +59,7 @@ static Vec3 qcolorToVec3(const QColor& c)
 static QPushButton* makeResetBtn(QWidget* parent)
 {
     auto* btn = new QPushButton(parent);
-    btn->setIcon(btn->style()->standardIcon(QStyle::SP_BrowserReload));
+    btn->setIcon(Theme::Icon(QStringLiteral("reset")));
     btn->setFixedSize(20, 20);
     btn->setToolTip("Reset to default");
     btn->setFlat(true);
@@ -133,7 +134,7 @@ void EnvironmentInspector::buildUI()
         m_hdriChooseBtn = new QPushButton(tr("Choose..."));
         m_hdriChooseBtn->setFixedWidth(70);
         m_hdriReloadBtn = new QPushButton();
-        m_hdriReloadBtn->setIcon(m_hdriReloadBtn->style()->standardIcon(QStyle::SP_BrowserReload));
+        m_hdriReloadBtn->setIcon(Theme::Icon(QStringLiteral("reset")));
         m_hdriReloadBtn->setFixedSize(24, 24);
         m_hdriReloadBtn->setToolTip(tr("Reimport / Reload"));
         fileRow->addWidget(m_hdriPathEdit, 1);

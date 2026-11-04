@@ -2,6 +2,7 @@
 #include "LuaScriptComponent.h"
 #include "PluginScriptHost.h"
 #include "ScriptLanguageRegistry.h"
+#include "LuaDebugger.h"
 #include "../Audio/AudioEngine.h"
 #include "../UI/HephaestusUI/UIContext.h"
 #include "../UI/HephaestusUI/UICanvas.h"
@@ -295,6 +296,7 @@ void LuaScriptEngine::Initialize(Scene* scene, GLFWwindow* window) {
     luaL_openlibs(m_State);
     RegisterBindings();
     RebuildSearchPaths();
+    LuaDebugger::Instance().Attach(m_State);
     std::cout << "[Lua] Scripting engine initialized" << std::endl;
 #else
     (void)scene;
@@ -343,6 +345,77 @@ bool LuaScriptEngine::LoadScript(const std::string& filepath) {
     (void)filepath;
     return false;
 #endif
+}
+
+std::string LuaScriptEngine::EvaluateConsole(const std::string& code, bool& ok) {
+    ok = false;
+#if LUA_AVAILABLE
+    if (!m_State) {
+        return "Lua is not running";
+    }
+    const int top = lua_gettop(m_State);
+    std::string chunk = "return " + code;
+    if (luaL_loadbuffer(m_State, chunk.c_str(), chunk.size(), "=console") != LUA_OK) {
+        lua_pop(m_State, 1);
+        if (luaL_loadbuffer(m_State, code.c_str(), code.size(), "=console") != LUA_OK) {
+            std::string error = lua_tostring(m_State, -1) ? lua_tostring(m_State, -1) : "syntax error";
+            lua_settop(m_State, top);
+            return error;
+        }
+    }
+    if (lua_pcall(m_State, 0, LUA_MULTRET, 0) != LUA_OK) {
+        std::string error = lua_tostring(m_State, -1) ? lua_tostring(m_State, -1) : "error";
+        lua_settop(m_State, top);
+        return error;
+    }
+    ok = true;
+    std::string result;
+    for (int i = top + 1; i <= lua_gettop(m_State); ++i) {
+        result += (i > top + 1 ? ", " : "") + LuaDebugger::Describe(m_State, i, 2);
+    }
+    lua_settop(m_State, top);
+    return result;
+#else
+    (void)code;
+    return "Lua is not available in this build";
+#endif
+}
+
+std::vector<LuaScriptEngine::ApiEntry> LuaScriptEngine::DescribeApi() {
+    std::vector<ApiEntry> entries;
+#if LUA_AVAILABLE
+    // A throwaway engine registers the same bindings as gameplay, so the list cannot drift.
+    LuaScriptEngine* previous = s_Instance;
+    {
+        LuaScriptEngine probe;
+        if (probe.m_State) {
+            luaL_openlibs(probe.m_State);
+            probe.RegisterBindings();
+            lua_State* L = probe.m_State;
+            lua_pushglobaltable(L);
+            lua_pushnil(L);
+            while (lua_next(L, -2)) {
+                if (lua_type(L, -2) == LUA_TSTRING) {
+                    const std::string name = lua_tostring(L, -2);
+                    entries.push_back({ name, lua_typename(L, lua_type(L, -1)) });
+                    if (lua_type(L, -1) == LUA_TTABLE && name != "_G" && name != "package") {
+                        lua_pushnil(L);
+                        while (lua_next(L, -2)) {
+                            if (lua_type(L, -2) == LUA_TSTRING) {
+                                entries.push_back({ name + "." + lua_tostring(L, -2), lua_typename(L, lua_type(L, -1)) });
+                            }
+                            lua_pop(L, 1);
+                        }
+                    }
+                }
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+    }
+    s_Instance = previous;
+#endif
+    return entries;
 }
 
 bool LuaScriptEngine::ExecuteString(const std::string& luaCode) {
@@ -949,6 +1022,7 @@ void LuaScriptEngine::Shutdown() {
             ReleaseInstanceResources(instance);
         }
         m_ScriptInstances.clear();
+        LuaDebugger::Instance().Detach(m_State);
         lua_close(m_State);
         m_State = nullptr;
     }
@@ -2187,7 +2261,9 @@ bool LuaScriptEngine::LoadScriptForInstance(ScriptInstance& instance, const LuaS
         lua_setfield(m_State, envIndex, key.c_str());
     }
 
-    if (luaL_loadbuffer(m_State, code.c_str(), code.size(), debugName.c_str()) != LUA_OK) {
+    // "@" makes Lua report errors as "path:line:" rather than [string "..."].
+    const std::string chunkName = "@" + debugName;
+    if (luaL_loadbuffer(m_State, code.c_str(), code.size(), chunkName.c_str()) != LUA_OK) {
         LogLuaError("loading " + debugName);
         lua_pop(m_State, 1);
         return false;
@@ -2563,7 +2639,8 @@ void LuaScriptEngine::LogLuaError(const std::string& context) {
         return;
     }
     const char* message = lua_tostring(m_State, -1);
-    std::cerr << "[Lua] Error while " << context << ": " << (message ? message : "<unknown>") << std::endl;
+    Hephaestus::EngineLog::Write(Hephaestus::EngineLogLevel::Error,
+                                 "Error while " + context + ": " + (message ? message : "<unknown>"), "Script");
     lua_pop(m_State, 1);
 #else
     (void)context;

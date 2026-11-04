@@ -28,13 +28,15 @@ public:
      * @param createDefaultScene When true, writes assets/scenes/default.hpscene.
      * @param outResult Optional result paths on success.
      * @param outError Optional human-readable error on failure.
+     * @param editorMode Optional workspace mode the editor opens the project in ("default", "artist", "programmer").
      */
     static bool CreateBlankProject(const QString& parentDir,
                                    const QString& name,
                                    const QString& engineVersion = QString(),
                                    bool createDefaultScene = true,
                                    Result* outResult = nullptr,
-                                   QString* outError = nullptr);
+                                   QString* outError = nullptr,
+                                   const QString& editorMode = QString());
 
     /**
      * @brief Persist a project-relative last/default scene path via ProjectSettingsManager.

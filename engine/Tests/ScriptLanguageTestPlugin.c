@@ -147,6 +147,15 @@ static int32_t DescribeFields(const char* resolvedPath, HPFieldCallback callback
     return 1;
 }
 
+static const HPSyntaxRule g_syntaxRules[] = {
+    { HP_SYNTAX_KEYWORD, "\\b(?:when|then)\\b" },
+    { HP_SYNTAX_COMMENT, "#.*" }
+};
+
+static const HPSyntax g_syntax = {
+    g_syntaxRules, 2, NULL, 0, "#"
+};
+
 static const HPScriptLanguage g_language = {
     sizeof(HPScriptLanguage),
     HP_SCRIPT_LANGUAGE_API_VERSION,
@@ -162,7 +171,8 @@ static const HPScriptLanguage g_language = {
     LateUpdate,
     Contact,
     Call,
-    DescribeFields
+    DescribeFields,
+    &g_syntax
 };
 
 static const HPScriptLanguage* const g_languages[] = { &g_language };

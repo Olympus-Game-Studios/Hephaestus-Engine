@@ -171,6 +171,18 @@ public:
      */
     bool ExecuteString(const std::string& luaCode);
 
+    /// Runs console input in the global environment: an expression's values,
+    /// or a statement. Returns the values or the error; ok says which.
+    std::string EvaluateConsole(const std::string& code, bool& ok);
+
+    struct ApiEntry {
+        std::string name; // "print", "Input", "Input.isActionDown"
+        std::string kind; // Lua type name of the value
+    };
+
+    /// Globals and the members of global tables that scripts can use.
+    static std::vector<ApiEntry> DescribeApi();
+
     /**
      * Get the Lua state (for advanced usage)
      */

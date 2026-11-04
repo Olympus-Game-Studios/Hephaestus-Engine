@@ -15,6 +15,7 @@ struct LauncherSettings {
     QString theme = QStringLiteral("Dark");
     bool openLastProjectOnStartup = false;
     QString lastOpenedProject;
+    QString newProjectMode = QStringLiteral("default");
 };
 
 class LauncherProjectManager : public QObject {
@@ -32,11 +33,11 @@ public:
     QString DetectRuntimePath() const;
 
     bool ReadProject(const QString& projectFilePath, LauncherProject* outProject) const;
-    bool SetFavorite(const LauncherProject& project, bool favorite, QString* outError);
     bool CreateProject(const QString& projectName,
                        const QString& locationFolder,
                        const QString& engineVersion,
                        bool createDefaultScene,
+                       const QString& editorMode,
                        LauncherProject* outProject,
                        QString* outError);
     bool DeleteProject(const LauncherProject& project, QString* outError);

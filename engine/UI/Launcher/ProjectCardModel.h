@@ -7,6 +7,9 @@
 
 namespace Hephaestus::Launcher {
 
+/** "2 hours ago", "Yesterday", "3 days ago", "Last week", then the date, for a project's last change. */
+QString RelativeTimeText(const QDateTime& when, const QDateTime& now);
+
 enum class ProjectSortMode {
     Name,
     LastModified
@@ -27,7 +30,8 @@ public:
         ThumbnailRole,
         ProjectPathRole,
         CreatedRole,
-        LastModifiedRole
+        LastModifiedRole,
+        EditorModeRole
     };
 
     explicit ProjectCardModel(QObject* parent = nullptr);
@@ -43,8 +47,6 @@ public:
     LauncherProject ProjectAt(const QModelIndex& index) const;
     LauncherProject ProjectAtRow(int row) const;
     int RowForProjectPath(const QString& projectDir) const;
-
-    bool SetFavorite(const QModelIndex& index, bool favorite);
 
 private:
     void RebuildView();

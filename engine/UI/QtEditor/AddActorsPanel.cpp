@@ -6,6 +6,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "AddActorsPanel.h"
+#include "EditorTheme.h"
 #include "ToolsCommon/PathUtils.h"
 #include "EditorMainWindow.h"
 
@@ -163,27 +164,6 @@ void AddActorsPanel::setupUI()
 // Category / entry building
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Helper: generate a solid-colour placeholder icon with a letter.
-static QIcon makePlaceholderIcon(QChar letter, QColor bg)
-{
-    QPixmap pm(48, 48);
-    pm.fill(Qt::transparent);
-    {
-        QPainter p(&pm);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setBrush(bg);
-        p.setPen(Qt::NoPen);
-        p.drawRoundedRect(4, 4, 40, 40, 8, 8);
-        p.setPen(QColor(230, 232, 235));
-        QFont f = p.font();
-        f.setPixelSize(22);
-        f.setBold(true);
-        p.setFont(f);
-        p.drawText(QRect(4, 4, 40, 40), Qt::AlignCenter, QString(letter));
-    }
-    return QIcon(pm);
-}
-
 void AddActorsPanel::buildCategories()
 {
     m_categories.clear();
@@ -238,7 +218,7 @@ void AddActorsPanel::buildCategories()
                     ? QStringLiteral(".engine/meshes/")
                     : QStringLiteral("assets/meshes/");
                 se.assetPath = prefix + QString::fromStdString(entry.path().filename().string());
-                se.icon      = makePlaceholderIcon(display[0].toUpper(), QColor(76, 141, 255));
+                se.icon      = Theme::Icon(se.kind == SpawnableEntry::Kind::Camera ? QStringLiteral("camera") : QStringLiteral("cube"));
 
                 cat.entries.push_back(std::move(se));
             }
@@ -261,7 +241,7 @@ void AddActorsPanel::buildCategories()
         SpawnableCategory cat;
         cat.name = tr("Lights");
 
-        QIcon lightIcon = makePlaceholderIcon(QChar('L'), QColor(255, 190, 60));
+        const QIcon lightIcon = Theme::Icon(QStringLiteral("light"));
 
         SpawnableEntry dir;
         dir.kind        = SpawnableEntry::Kind::Light;
@@ -302,7 +282,7 @@ void AddActorsPanel::buildCategories()
         }
 
         if (!prefabDir.empty() && fs::is_directory(prefabDir)) {
-            QIcon prefabIcon = makePlaceholderIcon(QChar('P'), QColor(140, 100, 220));
+            const QIcon prefabIcon = Theme::Icon(QStringLiteral("prefab"));
             for (auto& entry : fs::directory_iterator(prefabDir)) {
                 if (!entry.is_regular_file()) continue;
                 auto ext = entry.path().extension().string();

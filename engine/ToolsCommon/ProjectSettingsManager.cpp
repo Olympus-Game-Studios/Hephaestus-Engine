@@ -209,6 +209,40 @@ bool ProjectSettingsManager::Save() const
     return true;
 }
 
+QString ProjectSettingsManager::EditorMode() const
+{
+    QJsonObject projectMetadata;
+    if (!IsAvailable() || !JsonUtils::ReadJsonObject(ResolveProjectFilePath(m_projectRoot), &projectMetadata)) {
+        return {};
+    }
+    return projectMetadata.value(QStringLiteral("editorMode")).toString();
+}
+
+bool ProjectSettingsManager::SetEditorMode(const QString& mode) const
+{
+    if (!IsAvailable()) {
+        return false;
+    }
+
+    const QString projectFilePath = ResolveProjectFilePath(m_projectRoot);
+    QJsonObject projectMetadata;
+    if (!JsonUtils::ReadJsonObject(projectFilePath, &projectMetadata)) {
+        return false;
+    }
+    projectMetadata[QStringLiteral("editorMode")] = mode;
+    if (!JsonUtils::WriteJsonObject(projectFilePath, projectMetadata)) {
+        return false;
+    }
+
+    const QString secondaryPath = SecondaryProjectFilePath(m_projectRoot);
+    QJsonObject secondaryMetadata;
+    if (secondaryPath != projectFilePath && JsonUtils::ReadJsonObject(secondaryPath, &secondaryMetadata)) {
+        secondaryMetadata[QStringLiteral("editorMode")] = mode;
+        JsonUtils::WriteJsonObject(secondaryPath, secondaryMetadata);
+    }
+    return true;
+}
+
 QString ProjectSettingsManager::SettingsFilePath() const
 {
     return QDir(m_projectRoot).filePath(QStringLiteral(".hephaestus/project_settings.json"));

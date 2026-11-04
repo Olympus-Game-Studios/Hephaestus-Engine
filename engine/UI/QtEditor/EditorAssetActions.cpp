@@ -14,8 +14,6 @@
 
 #include <QDesktopServices>
 #include <QFileInfo>
-#include <QProcess>
-#include <QSettings>
 #include <QUrl>
 #include <QMessageBox>
 #include <QFile>
@@ -132,6 +130,11 @@ void EditorAssetActions::SetOpenCharacterCallback(OpenCharacterCallback callback
     m_openCharacterCallback = std::move(callback);
 }
 
+void EditorAssetActions::SetOpenScriptCallback(OpenScriptCallback callback)
+{
+    m_openScriptCallback = std::move(callback);
+}
+
 bool EditorAssetActions::openScene(const QString& absolutePath)
 {
     if (m_loadSceneCallback) {
@@ -181,7 +184,7 @@ bool EditorAssetActions::openHUI(const QString& absolutePath)
 
 bool EditorAssetActions::openScript(const QString& absolutePath)
 {
-    // Open in external editor (IDE, VS Code, etc.)
+    if (m_openScriptCallback && m_openScriptCallback(absolutePath)) return true;
     return openInIDEAbsolute(absolutePath);
 }
 
@@ -246,18 +249,6 @@ bool EditorAssetActions::openExternal(const QString& absolutePath)
 
 bool EditorAssetActions::openInIDEAbsolute(const QString& absolutePath)
 {
-    QSettings settings(QStringLiteral("Hephaestus"), QStringLiteral("Launcher"));
-    const QString editorPath = settings.value(QStringLiteral("settings/editorPath")).toString().trimmed();
-    if (!editorPath.isEmpty() && QFileInfo::exists(editorPath)) {
-        const bool started = QProcess::startDetached(editorPath, {absolutePath});
-        if (!started) {
-            QMessageBox::warning(m_mainWindow,
-                QObject::tr("Cannot Open File"),
-                QObject::tr("Failed to launch configured editor:\n%1").arg(editorPath));
-        }
-        return started;
-    }
-
     return openExternal(absolutePath);
 }
 

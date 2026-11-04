@@ -10,6 +10,7 @@
 #if HEPHAESTUS_EDITOR_QT_UI
 
 #include "QtEditorEngine.h"
+#include "../../Scripting/LuaDebugger.h"
 #include "ToolsCommon/PathUtils.h"
 #include "../../Automation/PhysicsHostAdapter.h"
 #include "../../Automation/RuntimeUIHostAdapter.h"
@@ -1766,7 +1767,8 @@ void QtEditorEngine::BeginPlacement(entt::entity previewEntity)
 
 void QtEditorEngine::onTick()
 {
-    if (m_state != EngineState::Running || m_renderInProgress) {
+    // While the debugger holds Lua at a breakpoint the frame stays frozen.
+    if (m_state != EngineState::Running || m_renderInProgress || LuaDebugger::Instance().IsPaused()) {
         return;
     }
     
@@ -1812,6 +1814,11 @@ void QtEditorEngine::onTick()
     }
 
     // ── Play Mode tick ─────────────────────────────────────────────────────
+    // A Stop requested while Lua was paused outside the simulation step is still pending here.
+    if (m_playModeManager.IsStopRequested()) {
+        m_playModeManager.ClearStopRequest();
+        StopPlayMode();
+    }
     const bool isPlaying = m_playModeManager.IsPlaying();
     const bool isPaused  = m_playModeManager.IsPaused();
     const bool isPlayOrPause = !m_playModeManager.IsEditor();
@@ -2939,6 +2946,12 @@ void QtEditorEngine::StopPlayMode()
     if (m_playModeManager.IsEditor()) {
         return;  // nothing to stop
     }
+    // Lua is suspended inside a hook; unwind it first and stop once the frame has returned.
+    if (LuaDebugger::Instance().IsPaused()) {
+        LuaDebugger::Instance().RequestResume(LuaDebugger::Action::Stop);
+        m_playModeManager.RequestStop();
+        return;
+    }
 
     if (m_joltPhysicsSystem && m_joltPhysicsEngine && m_joltPhysicsEngine->GetPhysicsSystem()) {
         Hephaestus::EngineLog::Write(
@@ -2959,6 +2972,7 @@ void QtEditorEngine::StopPlayMode()
     }
 
     m_playModeManager.StopPlayMode();
+    LuaDebugger::Instance().StopFinished();
     m_editorContext.SyncSelectionFromScene();
 
     if (m_luaScriptEngine) {
@@ -3019,7 +3033,8 @@ void QtEditorEngine::TogglePause()
     if (m_joltPhysicsSystem && (wasPaused || m_playModeManager.IsPaused())) {
         m_joltPhysicsSystem->ClearAccumulator();
     }
-    emit playStateChanged(m_playModeManager.IsPlaying(), m_playModeManager.IsPaused());
+    // "playing" means a Play session is active, paused or not; the toolbar keeps Stop and Pause enabled while paused.
+    emit playStateChanged(!m_playModeManager.IsEditor(), m_playModeManager.IsPaused());
 }
 
 Hephaestus::PlayState QtEditorEngine::GetPlayState() const
@@ -3195,6 +3210,10 @@ bool QtEditorEngine::StepFrames(std::uint32_t count, float fixedDt, std::string&
     }
     if (m_stepping) {
         outError = "A stepping sequence is already in progress";
+        return false;
+    }
+    if (LuaDebugger::Instance().IsPaused()) {
+        outError = "The Lua debugger is paused at a breakpoint";
         return false;
     }
     if (fixedDt <= 0.0f) {

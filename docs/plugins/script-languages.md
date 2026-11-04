@@ -38,6 +38,60 @@ The editor loads the module when the plugin is enabled. Packaged games copy the 
 
 A language cannot use the id `lua`, claim `.lua`, or claim an extension another language already registered. Registration errors mark the plugin as failed in the Plugin Manager.
 
+## Syntax highlighting
+
+The editor's Code panel (Programmer mode) highlights a file with the syntax table of the language that claims its extension. Set `syntax` on your `HPScriptLanguage` to an `HPSyntax`, or leave it `NULL` for plain text. Built-in Lua supplies its table the same way.
+
+```c
+static const HPSyntaxRule g_rules[] = {
+    { HP_SYNTAX_KEYWORD, "\\b(?:def|class|return|if|else|for|while|import)\\b" },
+    { HP_SYNTAX_FUNCTION, "\\b[A-Za-z_]\\w*(?=\\s*\\()" },
+    { HP_SYNTAX_NUMBER, "\\b\\d+(?:\\.\\d*)?\\b" },
+    { HP_SYNTAX_STRING, "\"(?:[^\"\\\\]|\\\\.)*\"" },
+    { HP_SYNTAX_COMMENT, "#.*" }
+};
+static const HPSyntaxBlock g_blocks[] = {
+    { HP_SYNTAX_STRING, "\"\"\"", "\"\"\"" }
+};
+static const HPSyntax g_syntax = { g_rules, 5, g_blocks, 1, "#" };
+```
+
+- Patterns are Perl-compatible regular expressions (PCRE2), matched within one line.
+- Each line is scanned left to right. The earliest match wins, a tie goes to the rule listed first, and scanning resumes after the match, so `#` inside a string stays part of the string.
+- A block (`HPSyntaxBlock`) starts at `startPattern` and runs, across lines if needed, to the next `endPattern`.
+- Styles are roles (`HP_SYNTAX_KEYWORD`, `TYPE`, `FUNCTION`, `STRING`, `NUMBER`, `COMMENT`); the editor theme picks the colours.
+- An invalid pattern is skipped and reported in the Output log.
+- `lineComment` is what Toggle Comment (Ctrl+/) adds and removes; `NULL` turns it off.
+- Script errors that name a file as `path:line:` in the Console underline that line in the editor, and double-clicking the Console entry opens it. Write your runtime's errors in that form to get the same.
+
+### Completion and hover
+
+Two optional callbacks give your language autocomplete and hover documentation in the Code panel:
+
+```c
+static int32_t Complete(const char* path, const char* source, uint32_t line, uint32_t column,
+                        HPCompletionCallback callback, void* user) {
+    callback(user, "spawn", HP_COMPLETION_FUNCTION, "Scene");
+    return 1;
+}
+static size_t Hover(const char* path, const char* source, uint32_t line, uint32_t column,
+                    char* buffer, size_t bufferSize) {
+    const char* text = "spawn(prefab) creates an entity";
+    const size_t size = strlen(text) + 1;
+    if (bufferSize >= size) memcpy(buffer, text, size);
+    return size;
+}
+```
+
+- Both receive the whole file as the editor has it, including unsaved edits. `line` and `column` are 1-based; the column counts bytes of that line's UTF-8 text.
+- `complete` lists every candidate for the position. The editor filters them by the word being typed. Typing two letters, `.` or `:` opens the list, and so does Ctrl+Space.
+- `hover` follows the same buffer convention as `getEntityName`: return the length including the terminator, and the editor calls again with a buffer that size.
+- Without `complete`, the editor offers the words already in the file. Lua's completion lists keywords, the engine API (read from the functions the engine registers, so it stays current), and the file's own locals and functions.
+
+The debugger (breakpoints, stepping, call stack, locals and watches) works with Lua only.
+
+`syntax`, `complete` and `hover` were added after the first release. Modules built before them still load, with their files shown as plain text and no language services.
+
 ## Lifecycle
 
 All calls happen on the gameplay thread, after Lua each frame:

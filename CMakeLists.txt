@@ -8,10 +8,15 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 # Application Details  (single source of truth — edit these, not C++ files)
 # ─────────────────────────────────────────────────────────────────────────────
-set(HEPHAESTUS_VERSION_MAJOR 2026)
-set(HEPHAESTUS_VERSION_MINOR 11)
-set(HEPHAESTUS_VERSION_PATCH 10)
+set(HEPHAESTUS_VERSION_MAJOR 2026) # Major = Year of release
+set(HEPHAESTUS_VERSION_MINOR 11) # Minor = Month of release
+set(HEPHAESTUS_VERSION_PATCH 3) # Patch = Day of release, unpadded (the C++ macro must be a decimal literal)
 set(HEPHAESTUS_VERSION "${HEPHAESTUS_VERSION_MAJOR}.${HEPHAESTUS_VERSION_MINOR}.${HEPHAESTUS_VERSION_PATCH}")
+
+# Major versions of the engine are meant to be released by year
+# Minor versions are meant to be released by month
+# Patch versions are meant to be released by day
+# Version number format: Major.Minor.Patch
 
 set(HEPHAESTUS_APP_NAME        "Hephaestus Engine")
 set(HEPHAESTUS_APP_DESCRIPTION "A 3D game engine built with C++20, Vulkan, Qt, and Lua.")
@@ -351,6 +356,8 @@ add_library(HephaestusRuntime STATIC
     engine/Scripting/LuaScriptVariableReconciler.cpp
     engine/Scripting/ScriptPhysicsBindings.cpp
     engine/Scripting/ScriptLanguageRegistry.cpp
+    engine/Scripting/LuaDebugger.cpp
+    engine/Scripting/LuaLanguageService.cpp
     engine/Scripting/PluginScriptHost.cpp
     engine/UI/HephaestusUI/HUIAsset.cpp
     engine/UI/HephaestusUI/UIButton.cpp
@@ -495,7 +502,7 @@ add_executable(HephaestusEngine
 
 if (WIN32)
     # Raster icon sizes currently live in logo/Old; the SVG masters remain one level up.
-    set(APP_ICON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/editor/Icons/logo/Old")
+    set(APP_ICON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Branding/logo/Old")
     set(APP_ICON_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_app_icon.ps1")
     set(APP_ICON_OUTPUT "${CMAKE_BINARY_DIR}/HephaestusEngine.ico")
 
@@ -555,6 +562,21 @@ if(HEPHAESTUS_USE_QT)
         target_sources(HephaestusEngine PRIVATE
             engine/UI/QtEditor/EditorQtApp.cpp
             engine/UI/QtEditor/EditorQtApp.h
+            engine/UI/QtEditor/CodeEditorPanel.cpp
+            engine/UI/QtEditor/CodeEditorPanel.h
+            engine/UI/QtEditor/DebuggerPanel.cpp
+            engine/UI/QtEditor/DebuggerPanel.h
+            engine/UI/QtEditor/ProjectSearchPanel.cpp
+            engine/UI/QtEditor/ProjectSearchPanel.h
+            engine/UI/QtEditor/EditorCommandSearch.cpp
+            engine/UI/QtEditor/EditorCommandSearch.h
+            engine/UI/QtEditor/EditorDockTitleBar.cpp
+            engine/UI/QtEditor/EditorDockTitleBar.h
+            engine/UI/QtEditor/EditorConsolePanel.cpp
+            engine/UI/QtEditor/EditorConsolePanel.h
+            engine/UI/QtEditor/EditorTheme.cpp
+            engine/UI/QtEditor/EditorTheme.h
+            engine/UI/QtEditor/Resources/EditorResources.qrc
             engine/UI/QtEditor/EditorMainWindow.cpp
             engine/UI/QtEditor/EditorMainWindow.h
             engine/UI/QtEditor/QtViewportWindow.cpp
@@ -659,7 +681,10 @@ if(HEPHAESTUS_USE_QT)
             )
         endif()
 
-        target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets)
+        if(NOT TARGET Qt6::Svg)
+            message(FATAL_ERROR "The Qt editor requires the Qt6 Svg module for its icon set.")
+        endif()
+        target_link_libraries(HephaestusEngine PRIVATE Qt6::Widgets Qt6::Svg)
         if(TARGET HephaestusToolsCommon)
             target_link_libraries(HephaestusEngine PRIVATE HephaestusToolsCommon)
         endif()
@@ -752,6 +777,9 @@ if(HEPHAESTUS_USE_QT)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${_qt6_bin_dir}/Qt6Widgets.dll"
                     "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Widgets.dll"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_qt6_bin_dir}/Qt6Svg.dll"
+                    "$<TARGET_FILE_DIR:HephaestusEngine>/Qt6Svg.dll"
                 COMMENT "Copying Qt6 DLLs to output directory"
             )
 
@@ -789,6 +817,9 @@ endif() # End HEPHAESTUS_BUILD_EDITOR
 # HephaestusLauncher (Qt-based launcher)
 # ─────────────────────────────────────────────────────────────────────────────
 if(HEPHAESTUS_USE_QT AND Qt6_FOUND)
+if(NOT TARGET Qt6::Svg)
+    message(FATAL_ERROR "The Qt launcher requires the Qt6 Svg module for the editor icon set.")
+endif()
 add_executable(HephaestusLauncher
     engine/UI/Launcher/LauncherMain.cpp
     engine/UI/Launcher/LauncherProject.h
@@ -802,22 +833,10 @@ add_executable(HephaestusLauncher
     engine/UI/Launcher/ProjectCardDelegate.cpp
     engine/UI/Launcher/LauncherWindow.h
     engine/UI/Launcher/LauncherWindow.cpp
-    engine/UI/Shared/SettingsWindow.h
-    engine/UI/Shared/SettingsWindow.cpp
-    engine/UI/Shared/InputMapEditorWidget.h
-    engine/UI/Shared/InputMapEditorWidget.cpp
-    engine/UI/Shared/PhysicsLayerEditorWidget.h
-    engine/UI/Shared/PhysicsLayerEditorWidget.cpp
-    engine/Physics/PhysicsLayerConfig.cpp
-    engine/Scene/Json.cpp
-    engine/Core/EngineLog.cpp
+    engine/UI/QtEditor/EditorTheme.h
+    engine/UI/QtEditor/EditorTheme.cpp
+    engine/UI/QtEditor/Resources/EditorResources.qrc
 )
-
-if(NOT HEPHAESTUS_USE_SHARED_ASSETS)
-    target_sources(HephaestusLauncher PRIVATE
-        engine/UI/Launcher/launcher_fallback.qrc
-    )
-endif()
 
 set_target_properties(HephaestusLauncher PROPERTIES
     AUTOMOC ON
@@ -830,19 +849,13 @@ set_target_properties(HephaestusLauncher PROPERTIES
 
 target_link_libraries(HephaestusLauncher PRIVATE
     Qt6::Widgets
+    Qt6::Svg
     HephaestusToolsCommon
-    HephaestusInputCore
 )
+target_compile_definitions(HephaestusLauncher PRIVATE HEPHAESTUS_EDITOR_QT_UI=1)
 
 if(TARGET Qt6::Concurrent)
     target_link_libraries(HephaestusLauncher PRIVATE Qt6::Concurrent)
-endif()
-
-if(TARGET Qt6::Svg)
-    target_link_libraries(HephaestusLauncher PRIVATE Qt6::Svg)
-    target_compile_definitions(HephaestusLauncher PRIVATE HEPHAESTUS_QT_SVG_AVAILABLE=1)
-else()
-    target_compile_definitions(HephaestusLauncher PRIVATE HEPHAESTUS_QT_SVG_AVAILABLE=0)
 endif()
 
 if(WIN32)
@@ -859,6 +872,9 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_qt6_bin_dir}/Qt6Widgets.dll"
             "$<TARGET_FILE_DIR:HephaestusLauncher>/Qt6Widgets.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_qt6_bin_dir}/Qt6Svg.dll"
+            "$<TARGET_FILE_DIR:HephaestusLauncher>/Qt6Svg.dll"
         COMMENT "Copying Qt6 DLLs for launcher"
     )
 
@@ -1744,6 +1760,13 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     )
 
     if(LUA_FOUND)
+        add_executable(LuaDebuggerTests
+            engine/Tests/LuaDebuggerTests.cpp
+        )
+        target_link_libraries(LuaDebuggerTests PRIVATE HephaestusRuntime)
+        target_include_directories(LuaDebuggerTests PRIVATE engine extern)
+        add_test(NAME LuaDebugger COMMAND LuaDebuggerTests)
+
         add_executable(CharacterLuaTests
             engine/Tests/CharacterLuaTests.cpp
             engine/Assets/AssetPathPolicy.cpp
@@ -2022,6 +2045,18 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
             endif()
             set_tests_properties(ProjectCreationLayout PROPERTIES
                 ENVIRONMENT_MODIFICATION "${_heph_project_creation_path}")
+
+            add_executable(LauncherModelTests
+                engine/Tests/LauncherModelTests.cpp
+                engine/UI/Launcher/ProjectCardModel.h
+                engine/UI/Launcher/ProjectCardModel.cpp
+            )
+            set_target_properties(LauncherModelTests PROPERTIES AUTOMOC ON)
+            target_link_libraries(LauncherModelTests PRIVATE Qt6::Core)
+            target_include_directories(LauncherModelTests PRIVATE engine)
+            add_test(NAME LauncherModel COMMAND LauncherModelTests)
+            set_tests_properties(LauncherModel PROPERTIES
+                ENVIRONMENT_MODIFICATION "${_heph_project_creation_path}")
         endif()
     endif()
 
@@ -2142,10 +2177,16 @@ if(HEPHAESTUS_BUILD_QT_TESTS AND HEPHAESTUS_USE_QT AND Qt6_FOUND)
             engine/Tests/EditorQtSmokeTests.cpp
             engine/UI/QtEditor/PropertyEditors.cpp
             engine/UI/QtEditor/PropertyEditors.h
+            engine/UI/QtEditor/EditorCommandSearch.cpp
+            engine/UI/QtEditor/EditorConsolePanel.cpp
+            engine/UI/QtEditor/CodeEditorPanel.cpp
+            engine/UI/QtEditor/ProjectSearchPanel.cpp
+            engine/UI/QtEditor/EditorTheme.cpp
+            engine/UI/QtEditor/Resources/EditorResources.qrc
         )
-        set_target_properties(EditorQtSmokeTests PROPERTIES AUTOMOC ON)
+        set_target_properties(EditorQtSmokeTests PROPERTIES AUTOMOC ON AUTORCC ON)
         target_compile_definitions(EditorQtSmokeTests PRIVATE HEPHAESTUS_EDITOR_QT_UI=1)
-        target_link_libraries(EditorQtSmokeTests PRIVATE Qt6::Test Qt6::Widgets HephaestusEditorCore)
+        target_link_libraries(EditorQtSmokeTests PRIVATE Qt6::Test Qt6::Widgets Qt6::Svg HephaestusEditorCore)
         target_include_directories(EditorQtSmokeTests PRIVATE engine)
         add_test(NAME EditorQtSmoke COMMAND EditorQtSmokeTests)
     else()

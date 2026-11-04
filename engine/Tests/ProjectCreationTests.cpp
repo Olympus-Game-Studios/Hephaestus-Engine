@@ -1,4 +1,5 @@
 #include "ToolsCommon/ProjectCreationService.h"
+#include "ToolsCommon/ProjectSettingsManager.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -100,6 +101,47 @@ bool TestCreateBlankProjectLayout()
     return pass;
 }
 
+bool TestEditorModeRoundTrip()
+{
+    QTemporaryDir temp;
+    if (!Check(temp.isValid(), "temp dir valid")) {
+        return false;
+    }
+
+    Hephaestus::Tools::ProjectCreationService::Result result;
+    QString error;
+    if (!Check(Hephaestus::Tools::ProjectCreationService::CreateBlankProject(
+                   temp.path(), QStringLiteral("ModeProj"), QString(), false, &result, &error,
+                   QStringLiteral("programmer")),
+               "CreateBlankProject succeeded: " + error.toStdString())) {
+        return false;
+    }
+
+    const Hephaestus::Tools::ProjectSettingsManager settings(result.projectDir);
+    bool pass = true;
+    pass &= Check(settings.EditorMode() == QStringLiteral("programmer"), "new project starts in the chosen mode");
+    pass &= Check(settings.SetEditorMode(QStringLiteral("artist")), "SetEditorMode succeeded");
+    pass &= Check(settings.EditorMode() == QStringLiteral("artist"), "editor mode reads back");
+
+    QDir project(result.projectDir);
+    for (const QString& relative : { QStringLiteral("project.heproject"), QStringLiteral(".hephaestus/project.heproject") }) {
+        QFile file(project.filePath(relative));
+        if (!file.open(QIODevice::ReadOnly)) {
+            pass &= Check(false, "read " + relative.toStdString());
+            continue;
+        }
+        const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+        pass &= Check(root.value(QStringLiteral("editorMode")).toString() == QStringLiteral("artist"),
+                      "editorMode written to " + relative.toStdString());
+        pass &= Check(root.value(QStringLiteral("name")).toString() == QStringLiteral("ModeProj"),
+                      "other metadata kept in " + relative.toStdString());
+    }
+
+    pass &= Check(!Hephaestus::Tools::ProjectSettingsManager(temp.filePath(QStringLiteral("missing"))).SetEditorMode(QStringLiteral("artist")),
+                  "SetEditorMode fails without a project file");
+    return pass;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -107,6 +149,7 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     bool ok = true;
     ok &= TestCreateBlankProjectLayout();
+    ok &= TestEditorModeRoundTrip();
     if (!ok) {
         std::cerr << "ProjectCreationTests FAILED\n";
         return 1;

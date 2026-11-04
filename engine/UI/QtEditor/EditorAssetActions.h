@@ -4,7 +4,7 @@
  *
  * Handles opening different asset types:
  * - Scenes: Load into the editor
- * - Scripts: Open in external editor
+ * - Scripts: Open in the code editor (Programmer mode) or the external IDE
  * - Text: Open in dialog or external
  * - Others: Show info or "not implemented"
  */
@@ -29,6 +29,8 @@ class PrefabEditorManager;
 using LoadSceneCallback = std::function<bool(const QString& absolutePath)>;
 using OpenPrefabCallback = std::function<bool(const QString& absolutePath)>;
 using OpenCharacterCallback = std::function<bool(const QString& absolutePath)>;
+/// Returns false to fall back to the external IDE.
+using OpenScriptCallback = std::function<bool(const QString& absolutePath)>;
 
 /**
  * @brief Central handler for opening assets from the browser.
@@ -60,6 +62,7 @@ public:
     void SetLoadSceneCallback(LoadSceneCallback callback);
     void SetOpenPrefabCallback(OpenPrefabCallback callback);
     void SetOpenCharacterCallback(OpenCharacterCallback callback);
+    void SetOpenScriptCallback(OpenScriptCallback callback);
 
 private:
     bool openScene(const QString& absolutePath);
@@ -77,6 +80,7 @@ private:
     LoadSceneCallback m_loadSceneCallback;
     OpenPrefabCallback m_openPrefabCallback;
     OpenCharacterCallback m_openCharacterCallback;
+    OpenScriptCallback m_openScriptCallback;
 };
 
 } // namespace QtEditor

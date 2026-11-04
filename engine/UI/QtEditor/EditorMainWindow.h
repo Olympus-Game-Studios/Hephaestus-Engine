@@ -22,6 +22,7 @@
 #include <QMenuBar>
 #include <QMenu>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QToolBar>
 #include <QWidget>
 #include <QGroupBox>
@@ -30,7 +31,9 @@
 #include <QPushButton>
 #include <QComboBox>
 #include <QToolButton>
+#include <QButtonGroup>
 #include <QFrame>
+#include <QSet>
 #include <QPlainTextEdit>
 #include <QThread>
 #include <QTimer>
@@ -40,6 +43,7 @@
 #include <atomic>
 #include <filesystem>
 #include <unordered_set>
+#include <functional>
 #include <vector>
 #include <entt/entt.hpp>
 
@@ -80,6 +84,9 @@ class QtViewportWindow;
 class QtEditorEngine;
 class AssetBrowserWidget;
 class AddActorsPanel;
+class CodeEditorPanel;
+class DebuggerPanel;
+class ProjectSearchPanel;
 class EditorAssetActions;
 class PrefabEditorManager;
 class CharacterEditorManager;
@@ -130,6 +137,9 @@ class EditorMainWindow : public QMainWindow
     Q_OBJECT
 
 public:
+    /** Editor 2.0 workspace modes; each keeps its own saved dock layout. */
+    enum class EditorMode { Default, Artist, Programmer };
+
     explicit EditorMainWindow(
         QWidget* parent = nullptr,
         Hephaestus::Plugins::FirstPartyStartupOptions startupOptions = {});
@@ -178,7 +188,6 @@ private:
     void setupDockWidgets();
     void setupCentralWidget();
     void setupStatusBar();
-    void applyUnifiedStyle();
     bool initializeEngine();
     void setupEditorCallbacks();
     void setupViewportRenderingToggles();
@@ -190,6 +199,18 @@ private:
     void restoreOutlinerTreeSelection();
     QTreeWidgetItem* findOutlinerItemForEntity(entt::entity entity);
     void onOutlinerContextMenu(const QPoint& pos);
+    void createEmptyEntity();
+    void setEditorMode(EditorMode mode);
+    /** Switches to Programmer mode if needed and brings @p dock to the front. */
+    void showProgrammerPanel(QDockWidget* dock);
+    void setupLuaDebugger();
+    void runConsoleLua(const QString& code);
+    void syncGizmoSpaceButtons();
+    void restoreModeLayout(EditorMode mode);
+    void arrangeModeLayout(EditorMode mode);
+    QWidget* wrapComponentCard(QGroupBox* body, const QString& title, const QString& type,
+                               std::function<void()> onReset);
+    static QWidget* componentCardOf(QWidget* body);
     void createFolderInOutliner(entt::entity parentEntity);
     void deleteEntityFromOutliner(entt::entity entity);
     void deleteSelectedEntities();
@@ -209,7 +230,9 @@ private:
     void pasteInspectorComponentValues(const std::string& type);
     void resetInspectorComponent(const std::string& type);
     void removeInspectorComponent(const std::string& type);
-    void bakeProbeVolumes();
+    void bakeAllProbeVolumes();
+    void bakeSelectedProbeVolumes();
+    void bakeProbeVolumes(const std::vector<entt::entity>& volumes);
     ComponentInspector* focusedComponentInspector() const;
     void handleDragDrop(const QString& assetPath, const QString& targetField);
     void handleViewportSpawnDrop(const QByteArray& spawnPayload, const QPoint& dropPos);
@@ -310,18 +333,37 @@ private:
     QDockWidget* m_outlinerDock = nullptr;
     QDockWidget* m_detailsDock = nullptr;
     QDockWidget* m_assetBrowserDock = nullptr;
+    QDockWidget* m_consoleDock = nullptr;
     QDockWidget* m_addActorsDock = nullptr;
+    QDockWidget* m_codeEditorDock = nullptr;
+    QDockWidget* m_searchDock = nullptr;
+    QDockWidget* m_debuggerDock = nullptr;
+    ProjectSearchPanel* m_searchPanel = nullptr;
+    DebuggerPanel* m_debuggerPanel = nullptr;
+    QList<QShortcut*> m_debuggerShortcuts;
+    CodeEditorPanel* m_codeEditor = nullptr;
 
     // Top toolbar
+    QMenuBar* m_menuBar = nullptr;
+    QToolButton* m_projectButton = nullptr;
     QToolBar* m_topToolbar = nullptr;
+    QToolBar* m_artistToolRail = nullptr;
+    QButtonGroup* m_modeButtons = nullptr;
+    EditorMode m_mode = EditorMode::Default;
     QAction* m_playAction = nullptr;
     QAction* m_pauseAction = nullptr;
     QAction* m_stopAction = nullptr;
+    QAction* m_stepAction = nullptr;
+    QAction* m_selectAction = nullptr;
     QAction* m_translateAction = nullptr;
     QAction* m_rotateAction = nullptr;
     QAction* m_scaleAction = nullptr;
     QAction* m_settingsAction = nullptr;
     QToolButton* m_worldLocalBtn = nullptr;
+    QToolButton* m_worldBtn = nullptr;
+    QToolButton* m_notificationButton = nullptr;
+    QTabBar* m_sceneTabs = nullptr;
+    QByteArray m_stateBeforeMaximize;
     QToolButton* m_snapToggleBtn = nullptr;
     QComboBox* m_snapValueCombo = nullptr;
     QComboBox* m_cameraSpeedCombo = nullptr;
@@ -329,8 +371,8 @@ private:
     // Outliner (scene hierarchy)
     QWidget* m_outlinerPanel = nullptr;
     QLineEdit* m_outlinerSearch = nullptr;
-    QPushButton* m_addEntityBtn = nullptr;
-    QPushButton* m_addFolderBtn = nullptr;
+    QLabel* m_outlinerFooter = nullptr;
+    QSet<QString> m_collapsedComponents;
     OutlinerTreeWidget* m_outlinerTree = nullptr;
     std::unordered_set<uint32_t> m_expandedOutlinerEntities;
     bool m_hasOutlinerExpansionState = false;
@@ -365,9 +407,10 @@ private:
     QLabel*      m_detailsEmptyHint  = nullptr;
     QLabel*      m_detailsPartialHint = nullptr;
     QToolButton* m_visibilityBtn    = nullptr;
-    QCheckBox*   m_lockCheck        = nullptr;
+    QToolButton* m_lockCheck        = nullptr;
     QPushButton* m_addComponentBtn  = nullptr;
-    QPushButton* m_deleteEntityBtn  = nullptr;
+    QToolButton* m_inspectorWorldBtn = nullptr;
+    QToolButton* m_inspectorLocalBtn = nullptr;
     bool         m_detailsLocked    = false;
     entt::entity m_lockedEntity     = entt::null;
 
@@ -432,9 +475,9 @@ private:
     float m_lastDt = 0.0f;
     int m_frameCount = 0;
     QLabel* m_statusFps = nullptr;
-    QLabel* m_statusDrawCalls = nullptr;
-    QLabel* m_statusRam = nullptr;
-    QLabel* m_statusVersion = nullptr;
+    QToolButton* m_statusSaved = nullptr;
+    QToolButton* m_statusScene = nullptr;
+    QLabel* m_statusSelection = nullptr;
 
     // Prevent re-entrant updates
     bool m_updatingDetails = false;

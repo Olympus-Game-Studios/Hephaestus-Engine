@@ -41,6 +41,7 @@ protected:
 private:
     void browse();
     void clearPath();
+    void setInvalid(bool invalid);
     void refreshDisplay();
     bool acceptDrop(const QMimeData* mime, QString* outPath) const;
 

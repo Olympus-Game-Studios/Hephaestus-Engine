@@ -40,27 +40,6 @@ QDateTime ReadEpochDate(const QJsonObject& obj, const QString& key, const QDateT
     return QDateTime::fromSecsSinceEpoch(epoch);
 }
 
-QJsonObject BuildProjectJson(const Hephaestus::Launcher::LauncherProject& project)
-{
-    QJsonObject root;
-    root[QStringLiteral("formatVersion")] = 1;
-    root[QStringLiteral("name")] = project.name;
-    root[QStringLiteral("description")] = project.description;
-    root[QStringLiteral("engineVersion")] = project.engineVersion;
-    root[QStringLiteral("created")] = project.created.toSecsSinceEpoch();
-    root[QStringLiteral("lastModified")] = project.lastModified.toSecsSinceEpoch();
-    root[QStringLiteral("isFavorite")] = project.favorite;
-    root[QStringLiteral("screenshot")] = project.screenshotPath;
-
-    QJsonArray tags;
-    for (const QString& tag : project.tags) {
-        tags.append(tag);
-    }
-    root[QStringLiteral("tags")] = tags;
-
-    return root;
-}
-
 QJsonObject BuildProjectIndexEntry(const Hephaestus::Launcher::LauncherProject& project)
 {
     QJsonObject entry;
@@ -69,6 +48,7 @@ QJsonObject BuildProjectIndexEntry(const Hephaestus::Launcher::LauncherProject& 
     entry[QStringLiteral("name")] = project.name;
     entry[QStringLiteral("description")] = project.description;
     entry[QStringLiteral("engineVersion")] = project.engineVersion;
+    entry[QStringLiteral("editorMode")] = project.editorMode;
     entry[QStringLiteral("screenshot")] = project.screenshotPath;
     entry[QStringLiteral("screenshotAbsolutePath")] = project.screenshotAbsolutePath;
     entry[QStringLiteral("isFavorite")] = project.favorite;
@@ -94,6 +74,7 @@ Hephaestus::Launcher::LauncherProject ParseProjectIndexEntry(const QJsonObject& 
     project.name = entry.value(QStringLiteral("name")).toString(QFileInfo(project.projectDir).fileName());
     project.description = entry.value(QStringLiteral("description")).toString();
     project.engineVersion = entry.value(QStringLiteral("engineVersion")).toString(QStringLiteral("1.0.0"));
+    project.editorMode = entry.value(QStringLiteral("editorMode")).toString();
     project.screenshotPath = entry.value(QStringLiteral("screenshot")).toString();
     project.screenshotAbsolutePath = entry.value(QStringLiteral("screenshotAbsolutePath")).toString();
     project.favorite = entry.value(QStringLiteral("isFavorite")).toBool(false);
@@ -173,6 +154,7 @@ LauncherSettings LauncherProjectManager::LoadSettings() const
     settings.theme = qsettings.value(QStringLiteral("settings/theme"), QStringLiteral("Dark")).toString();
     settings.openLastProjectOnStartup = qsettings.value(QStringLiteral("settings/openLastProjectOnStartup"), false).toBool();
     settings.lastOpenedProject = qsettings.value(QStringLiteral("settings/lastOpenedProject")).toString();
+    settings.newProjectMode = qsettings.value(QStringLiteral("settings/newProjectMode"), settings.newProjectMode).toString();
 
     if (settings.editorPath.isEmpty()) {
         settings.editorPath = DetectEditorPath();
@@ -201,6 +183,7 @@ void LauncherProjectManager::SaveSettings(const LauncherSettings& settings) cons
     qsettings.setValue(QStringLiteral("settings/theme"), settings.theme);
     qsettings.setValue(QStringLiteral("settings/openLastProjectOnStartup"), settings.openLastProjectOnStartup);
     qsettings.setValue(QStringLiteral("settings/lastOpenedProject"), settings.lastOpenedProject);
+    qsettings.setValue(QStringLiteral("settings/newProjectMode"), settings.newProjectMode);
 }
 
 QVector<LauncherProject> LauncherProjectManager::LoadProjectIndex() const
@@ -314,6 +297,7 @@ bool LauncherProjectManager::ReadProject(const QString& projectFilePath, Launche
     project.name = root.value(QStringLiteral("name")).toString(projectDirInfo.fileName());
     project.description = root.value(QStringLiteral("description")).toString();
     project.engineVersion = root.value(QStringLiteral("engineVersion")).toString(QStringLiteral("1.0.0"));
+    project.editorMode = root.value(QStringLiteral("editorMode")).toString();
     project.favorite = root.value(QStringLiteral("isFavorite")).toBool(false);
     project.screenshotPath = root.value(QStringLiteral("screenshot")).toString();
 
@@ -349,26 +333,6 @@ bool LauncherProjectManager::ReadProject(const QString& projectFilePath, Launche
     return true;
 }
 
-bool LauncherProjectManager::SetFavorite(const LauncherProject& project, bool favorite, QString* outError)
-{
-    LauncherProject updated = project;
-    updated.favorite = favorite;
-    updated.lastModified = QDateTime::currentDateTime();
-
-    const QJsonObject root = BuildProjectJson(updated);
-    if (!Hephaestus::Tools::JsonUtils::WriteJsonObject(updated.projectFilePath, root)) {
-        if (outError) {
-            *outError = QStringLiteral("Failed to write project file: %1").arg(updated.projectFilePath);
-        }
-        return false;
-    }
-
-    QDir projectDir(updated.projectDir);
-    const QString secondaryPath = projectDir.filePath(QStringLiteral(".hephaestus/project.heproject"));
-    Hephaestus::Tools::JsonUtils::WriteJsonObject(secondaryPath, root);
-    return true;
-}
-
 QString LauncherProjectManager::ProjectFilePathForNewProject(const QString& projectDir) const
 {
     return QDir(projectDir).filePath(QStringLiteral("project.heproject"));
@@ -378,12 +342,13 @@ bool LauncherProjectManager::CreateProject(const QString& projectName,
                                            const QString& locationFolder,
                                            const QString& engineVersion,
                                            bool createDefaultScene,
+                                           const QString& editorMode,
                                            LauncherProject* outProject,
                                            QString* outError)
 {
     Hephaestus::Tools::ProjectCreationService::Result created;
     if (!Hephaestus::Tools::ProjectCreationService::CreateBlankProject(
-            locationFolder, projectName, engineVersion, createDefaultScene, &created, outError)) {
+            locationFolder, projectName, engineVersion, createDefaultScene, &created, outError, editorMode)) {
         return false;
     }
 
@@ -395,6 +360,7 @@ bool LauncherProjectManager::CreateProject(const QString& projectName,
         project.name = projectName.trimmed();
         project.description = QStringLiteral("New Hephaestus project");
         project.engineVersion = engineVersion.isEmpty() ? QStringLiteral("1.0.0") : engineVersion;
+        project.editorMode = editorMode;
         project.favorite = false;
         project.tags = {QStringLiteral("New")};
         project.created = QDateTime::currentDateTime();

@@ -142,6 +142,51 @@ typedef struct HPContactEvent {
 
 typedef void (*HPFieldCallback)(void* user, const char* name, HPValue defaultValue);
 
+/* Colour roles for editor syntax highlighting; the editor theme picks the colours. */
+typedef enum HPSyntaxStyle {
+    HP_SYNTAX_KEYWORD = 0,
+    HP_SYNTAX_TYPE = 1,
+    HP_SYNTAX_FUNCTION = 2,
+    HP_SYNTAX_STRING = 3,
+    HP_SYNTAX_NUMBER = 4,
+    HP_SYNTAX_COMMENT = 5
+} HPSyntaxStyle;
+
+/* Patterns are Perl-compatible regular expressions (PCRE2) matched within one
+   line. The editor scans each line left to right: the earliest match wins, a
+   tie goes to the rule listed first, and scanning resumes after the match. */
+typedef struct HPSyntaxRule {
+    uint32_t style; /* HPSyntaxStyle */
+    const char* pattern;
+} HPSyntaxRule;
+
+/* A span that can cross lines, such as a block comment or long string. */
+typedef struct HPSyntaxBlock {
+    uint32_t style; /* HPSyntaxStyle */
+    const char* startPattern;
+    const char* endPattern;
+} HPSyntaxBlock;
+
+typedef enum HPCompletionKind {
+    HP_COMPLETION_KEYWORD = 0,
+    HP_COMPLETION_FUNCTION = 1,
+    HP_COMPLETION_VARIABLE = 2,
+    HP_COMPLETION_FIELD = 3,
+    HP_COMPLETION_TYPE = 4
+} HPCompletionKind;
+
+/* One suggestion. `detail` (may be NULL) is shown beside the label. */
+typedef void (*HPCompletionCallback)(void* user, const char* label, uint32_t kind, const char* detail);
+
+typedef struct HPSyntax {
+    const HPSyntaxRule* rules;
+    uint32_t ruleCount;
+    const HPSyntaxBlock* blocks;
+    uint32_t blockCount;
+    /* Inserted by the editor's Toggle Comment (Ctrl+/), e.g. "#". NULL disables it. */
+    const char* lineComment;
+} HPSyntax;
+
 /*
  * One scripting language. Required members: id, displayName, extensions,
  * createRuntime, destroyRuntime, createInstance and destroyInstance. Every
@@ -177,6 +222,24 @@ typedef struct HPScriptLanguage {
     /* Lists the inspector-editable fields of a script file and their default
        values, without a runtime. Return 0 when the file cannot be read. */
     int32_t (*describeFields)(const char* resolvedPath, HPFieldCallback callback, void* user);
+
+    /* Added after the first release: read only when structSize covers it.
+       Highlighting for the editor's code editor; NULL shows plain text. */
+    const HPSyntax* syntax;
+
+    /* Editor language services, read only when structSize covers them. Both
+       get the whole unsaved file in `source`; `line` and `column` are 1-based,
+       column counted in bytes of that line's UTF-8 text. */
+
+    /* Suggestions for the cursor position. The editor filters them by the
+       word being typed, so return every candidate. Return 0 for none. */
+    int32_t (*complete)(const char* path, const char* source, uint32_t line, uint32_t column,
+                        HPCompletionCallback callback, void* user);
+    /* Plain-text documentation for the symbol under the position, written into
+       `buffer`. Returns the length including the terminator (0 for nothing),
+       so a call with bufferSize 0 sizes the buffer. */
+    size_t (*hover)(const char* path, const char* source, uint32_t line, uint32_t column,
+                    char* buffer, size_t bufferSize);
 } HPScriptLanguage;
 
 /* Signature of the HP_GetScriptLanguages export. Return NULL when
