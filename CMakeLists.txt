@@ -841,7 +841,39 @@ add_executable(HephaestusLauncher
     engine/UI/QtEditor/EditorTheme.h
     engine/UI/QtEditor/EditorTheme.cpp
     engine/UI/QtEditor/Resources/EditorResources.qrc
+    engine/UI/Launcher/LauncherResources.qrc
 )
+
+if(WIN32)
+    set(LAUNCHER_ICON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Branding/logo/Launcher")
+    set(LAUNCHER_ICON_OUTPUT "${CMAKE_BINARY_DIR}/HephaestusLauncher.ico")
+
+    add_custom_command(
+        OUTPUT ${LAUNCHER_ICON_OUTPUT}
+        COMMAND powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_app_icon.ps1"
+                -SourceDir "${LAUNCHER_ICON_SOURCE_DIR}"
+                -OutputIcon "${LAUNCHER_ICON_OUTPUT}"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_app_icon.ps1"
+            "${LAUNCHER_ICON_SOURCE_DIR}/256px.png"
+            "${LAUNCHER_ICON_SOURCE_DIR}/128px.png"
+            "${LAUNCHER_ICON_SOURCE_DIR}/64px.png"
+            "${LAUNCHER_ICON_SOURCE_DIR}/48px.png"
+            "${LAUNCHER_ICON_SOURCE_DIR}/32px.png"
+            "${LAUNCHER_ICON_SOURCE_DIR}/16px.png"
+        COMMENT "Generating launcher application icon (.ico)"
+        VERBATIM
+    )
+    add_custom_target(GenerateLauncherIcon DEPENDS ${LAUNCHER_ICON_OUTPUT})
+
+    set(LAUNCHER_ICON_RC "${CMAKE_BINARY_DIR}/HephaestusLauncher_icon.rc")
+    set(APP_ICON_PATH ${LAUNCHER_ICON_OUTPUT})
+    configure_file(engine/Core/HephaestusEngine.rc.in ${LAUNCHER_ICON_RC} @ONLY)
+
+    add_dependencies(HephaestusLauncher GenerateLauncherIcon)
+    target_sources(HephaestusLauncher PRIVATE ${LAUNCHER_ICON_RC})
+    set_source_files_properties(${LAUNCHER_ICON_RC} PROPERTIES GENERATED TRUE)
+endif()
 
 set_target_properties(HephaestusLauncher PROPERTIES
     AUTOMOC ON

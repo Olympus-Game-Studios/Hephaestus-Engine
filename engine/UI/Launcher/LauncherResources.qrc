@@ -1,0 +1,11 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+<qresource prefix="/launcher">
+    <file alias="icon/16px.png">../../../Branding/logo/Launcher/16px.png</file>
+    <file alias="icon/32px.png">../../../Branding/logo/Launcher/32px.png</file>
+    <file alias="icon/48px.png">../../../Branding/logo/Launcher/48px.png</file>
+    <file alias="icon/64px.png">../../../Branding/logo/Launcher/64px.png</file>
+    <file alias="icon/128px.png">../../../Branding/logo/Launcher/128px.png</file>
+    <file alias="icon/256px.png">../../../Branding/logo/Launcher/256px.png</file>
+</qresource>
+</RCC>
