@@ -94,7 +94,8 @@ struct EditorSystemUsage::GpuCounters
         double total = 0.0;
         bool valid = false;
         for (DWORD i = 0; i < count; ++i) {
-            if (items[i].FmtValue.CStatus == ERROR_SUCCESS) {
+            const DWORD status = items[i].FmtValue.CStatus;
+            if (status == PDH_CSTATUS_VALID_DATA || status == PDH_CSTATUS_NEW_DATA) {
                 total += items[i].FmtValue.doubleValue;
                 valid = true;
             }
