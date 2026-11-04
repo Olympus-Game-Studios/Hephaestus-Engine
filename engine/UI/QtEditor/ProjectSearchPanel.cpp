@@ -142,7 +142,10 @@ void ProjectSearchPanel::Search()
         const QDir dir(pending.takeFirst());
         for (const QFileInfo& entry : dir.entryInfoList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot, QDir::Name)) {
             if (entry.isDir()) {
-                if (!IsSkippedFolder(entry.fileName())) pending << entry.filePath();
+                // Links and junctions can point back up the tree, so the walk only follows real folders.
+                if (!entry.isSymbolicLink() && !entry.isJunction() && !IsSkippedFolder(entry.fileName())) {
+                    pending << entry.filePath();
+                }
                 continue;
             }
             if (!IsSearchable(entry) || entry.size() > kMaxFileBytes) continue;

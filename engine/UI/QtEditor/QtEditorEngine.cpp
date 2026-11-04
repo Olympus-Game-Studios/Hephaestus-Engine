@@ -3212,6 +3212,10 @@ bool QtEditorEngine::StepFrames(std::uint32_t count, float fixedDt, std::string&
         outError = "A stepping sequence is already in progress";
         return false;
     }
+    if (LuaDebugger::Instance().IsPaused()) {
+        outError = "The Lua debugger is paused at a breakpoint";
+        return false;
+    }
     if (fixedDt <= 0.0f) {
         outError = "fixedDt must be positive";
         return false;
