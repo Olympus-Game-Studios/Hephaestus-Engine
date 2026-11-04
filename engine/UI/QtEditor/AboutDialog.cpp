@@ -45,6 +45,7 @@ const Credit kCredits[] = {
     { QT_TRANSLATE_NOOP("AboutDialog", "Libraries"), "stb", "Images and font rasterising", "MIT / public domain", "https://github.com/nothings/stb" },
     { QT_TRANSLATE_NOOP("AboutDialog", "Fonts and icons"), "Inter", "Interface typeface", "OFL 1.1", "https://rsms.me/inter" },
     { QT_TRANSLATE_NOOP("AboutDialog", "Fonts and icons"), "JetBrains Mono", "Code typeface", "OFL 1.1", "https://www.jetbrains.com/lp/mono" },
+    { QT_TRANSLATE_NOOP("AboutDialog", "Fonts and icons"), "Roboto", "Runtime UI typeface", "Apache 2.0", "https://github.com/googlefonts/roboto" },
     { QT_TRANSLATE_NOOP("AboutDialog", "Fonts and icons"), "Font Awesome Free", "Icon font", "OFL 1.1", "https://fontawesome.com" },
     { QT_TRANSLATE_NOOP("AboutDialog", "Fonts and icons"), "Material Icon Theme", "Code file icons", "MIT", "https://github.com/material-extensions/vscode-material-icon-theme" },
 };
