@@ -227,7 +227,7 @@ Andrew saw dark blotches on shadowed walls in Redline, both baked and traced. Hi
 - `engine/UI/QtEditor/CodeEditorPanel.cpp:CodeEditorPanel::reloadFromDisk` — breakpoints live on the text blocks, which a whole-document replacement discards, so the reload reapplies the panel's stored lines for that file and resyncs them, leaving the debugger's set unchanged.
 - `engine/UI/QtEditor/EditorTheme.cpp:FileIcon` — renders the Material Icon Theme SVGs with `QSvgRenderer` into pixmaps at several sizes, like the rest of the theme, so they show without the Qt SVG icon-engine plugin (which only the launcher deploys).
 - `engine/UI/Launcher/LauncherWindow.cpp:LauncherWindow::ShowProjectContextMenu` — remembers the project path, not the model index, while the menu is open, and finds the project's current row afterwards; a rescan during the menu can reset the model.
-- `engine/UI/QtEditor/EditorMainWindow.cpp:kDockLayoutVersion` is 5: the Search and Debugger docks joined the Programmer layout (tabbed with Console and Output) and are hidden in the other modes.
+- `engine/UI/QtEditor/EditorMainWindow.cpp:kDockLayoutVersion` is 6: in Default and Artist, Search and Debugger are tabs beside Content Browser, Console and Output, and the Code panel is docked on the left but closed until View opens it. In Programmer they stay tabbed with Console and Output.
 
 ## Launcher redesign (2026-11-03)
 
