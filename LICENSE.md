@@ -55,7 +55,7 @@ Anyone who wants to make a separate game with the editor must get the Software f
 ## 4. Sharing the Software and Modifications
 
 1. **Without permission:** You may share the Software and Your Modifications in source code form only if (a) it is free of charge, (b) this License and all copyright, license and attribution notices are kept intact, (c) the recipient gets it under this License and (d) it is shared through a public fork of our official repository on the same hosting platform, or as a Contribution to us.
-2. **With permission only:** Any other distribution of the Software or Modifications needs our prior written permission. This includes distributing binaries of the editor, launcher or tools (modified or not) other than a Mod Editor under section 3A, selling or charging for access to the Software or a Modification, sublicensing, bundling the Software with another product, and hosting the Software as a service.
+2. **With permission only:** Any other distribution of the Software or Modifications needs our prior written permission. This includes distributing binaries of the editor, launcher or tools (modified or not) other than a Mod Editor under section 3A, selling or charging for access to the Software or a Modification, sublicensing, bundling the Software with another product (other than a Product or Mod Editor distributed under section 3 or 3A), and hosting the Software as a service.
 3. Any distribution that contains source code of the Software must always be free of charge, unless we agree otherwise in writing.
 
 ## 5. Contributions

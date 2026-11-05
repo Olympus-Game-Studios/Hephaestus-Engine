@@ -154,8 +154,14 @@ std::vector<FileSizeEntry> Inventory(const std::filesystem::path& root) {
 
 std::string LicenseNotices(const std::filesystem::path& engineRoot) {
     std::ifstream stream(engineRoot / "THIRD_PARTY_NOTICES.md", std::ios::binary);
+    if (!stream) {
+        return {};
+    }
     std::ostringstream output;
     output << stream.rdbuf();
+    if (!output || stream.bad()) {
+        return {};
+    }
     return output.str();
 }
 

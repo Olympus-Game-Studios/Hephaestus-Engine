@@ -193,8 +193,9 @@ void ShowFatalStartupError(const std::string& message)
 {
     Hephaestus::EngineLog::Fatal(message);
 #ifdef _WIN32
-    const std::string full = message + "\n\nSee " + Hephaestus::EngineLog::LogFilePath() + ".";
-    MessageBoxA(nullptr, full.c_str(), "Hephaestus Engine - Startup Failed", MB_OK | MB_ICONERROR);
+    const std::wstring full =
+        QString::fromStdString(message + "\n\nSee " + Hephaestus::EngineLog::LogFilePath() + ".").toStdWString();
+    MessageBoxW(nullptr, full.c_str(), L"Hephaestus Engine - Startup Failed", MB_OK | MB_ICONERROR);
 #endif
 }
 

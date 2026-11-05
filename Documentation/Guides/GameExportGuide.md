@@ -148,7 +148,7 @@ The game runtime includes automatic crash handling:
    - Timestamp and initialization stage
 4. **User Notification**: Shows message box with crash info
 
-Crash files are saved to the `crashes/` folder next to the executable.
+Crash files are saved to the game's `Crashes` folder (see the log and crash report locations above), or to `crashes/` next to the executable if Windows can't provide the local app data folder.
 
 ## Troubleshooting
 

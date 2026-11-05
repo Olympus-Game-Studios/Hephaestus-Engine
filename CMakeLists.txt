@@ -150,6 +150,13 @@ if(NOT Lua_FOUND)
     endif()
 else()
     message(STATUS "Found Lua: ${LUA_LIBRARIES}")
+    if(WIN32)
+        list(GET LUA_LIBRARIES 0 _lua_import_library)
+        get_filename_component(_lua_library_dir "${_lua_import_library}" DIRECTORY)
+        get_filename_component(_lua_library_name "${_lua_import_library}" NAME_WE)
+        find_file(LUA_DLL_PATH "${_lua_library_name}.dll"
+            HINTS "${_lua_library_dir}/../bin" "${_lua_library_dir}" NO_DEFAULT_PATH)
+    endif()
 endif()
 
 # Jolt Physics Engine
