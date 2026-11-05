@@ -3,6 +3,7 @@
 #include "JsonUtils.h"
 
 #include <algorithm>
+#include <utility>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonValue>
@@ -235,28 +236,35 @@ QString ProjectSettingsManager::RecordEngineVersion(const QString& engineVersion
     if (!JsonUtils::ReadJsonObject(projectFilePath, &projectMetadata)) {
         return {};
     }
-    const QVersionNumber current = QVersionNumber::fromString(engineVersion);
-    const QString recorded = projectMetadata.value(QStringLiteral("engineVersion")).toString();
-    if (QVersionNumber::fromString(recorded) > current) {
-        return recorded;
+    QList<std::pair<QString, QJsonObject>> files{ { projectFilePath, projectMetadata } };
+    const QString secondaryPath = SecondaryProjectFilePath(m_projectRoot);
+    QJsonObject secondaryMetadata;
+    if (secondaryPath != projectFilePath && JsonUtils::ReadJsonObject(secondaryPath, &secondaryMetadata)) {
+        files.append({ secondaryPath, secondaryMetadata });
     }
 
-    const auto record = [&](const QString& path, QJsonObject metadata) {
-        const QString fileVersion = metadata.value(QStringLiteral("engineVersion")).toString();
-        if (fileVersion == engineVersion || QVersionNumber::fromString(fileVersion) > current) {
-            return;
+    const auto versionIn = [](const QJsonObject& metadata) {
+        return metadata.value(QStringLiteral("engineVersion")).toString();
+    };
+    QString newest = engineVersion;
+    for (const auto& [path, metadata] : files) {
+        if (QVersionNumber::fromString(versionIn(metadata)) > QVersionNumber::fromString(newest)) {
+            newest = versionIn(metadata);
+        }
+    }
+    if (newest != engineVersion) {
+        return newest;
+    }
+
+    for (auto& [path, metadata] : files) {
+        if (versionIn(metadata) == engineVersion) {
+            continue;
         }
         metadata[QStringLiteral("engineVersion")] = engineVersion;
         if (!JsonUtils::WriteJsonObject(path, metadata)) {
             qWarning("Could not record engine version %s in %s", qUtf8Printable(engineVersion),
                      qUtf8Printable(path));
         }
-    };
-    record(projectFilePath, projectMetadata);
-    const QString secondaryPath = SecondaryProjectFilePath(m_projectRoot);
-    QJsonObject secondaryMetadata;
-    if (secondaryPath != projectFilePath && JsonUtils::ReadJsonObject(secondaryPath, &secondaryMetadata)) {
-        record(secondaryPath, secondaryMetadata);
     }
     return {};
 }

@@ -198,7 +198,10 @@ bool TestRecordEngineVersion()
     pass &= Check(recordedIn(secondary) == QStringLiteral("2026.11.3"),
                   "a stale secondary project file is updated even when the primary is current");
     pass &= Check(setSecondary(QStringLiteral("2099.1.1")), "make the secondary project file newer");
-    settings.RecordEngineVersion(QStringLiteral("2026.11.3"));
+    pass &= Check(settings.RecordEngineVersion(QStringLiteral("2026.11.3")) == QStringLiteral("2099.1.1"),
+                  "a newer version in the secondary project file is reported");
+    pass &= Check(recordedIn(QStringLiteral("project.heproject")) == QStringLiteral("2026.11.3"),
+                  "the primary project file is left alone while a newer version is recorded");
     pass &= Check(recordedIn(secondary) == QStringLiteral("2099.1.1"),
                   "a newer version in the secondary project file is not lowered");
     return pass;
