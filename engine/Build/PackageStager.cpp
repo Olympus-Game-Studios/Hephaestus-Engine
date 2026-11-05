@@ -558,7 +558,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
                 "Third-party notices were not found",
                 "Expected " + (request.engineRoot / "THIRD_PARTY_NOTICES.md").generic_string() +
                 "; the package has no ThirdPartyNotices.txt.");
-    } else if (!WriteText(staging / "ThirdPartyNotices.txt", notices, result)) {
+    } else if (!WriteText(content / "ThirdPartyNotices.txt", notices, result)) {
         return fail();
     }
     if (product != request.productName) {

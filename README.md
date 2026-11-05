@@ -192,8 +192,13 @@ and debug symbols, and include `LICENSE.md` and `THIRD_PARTY_NOTICES.md`.
 On Windows, from a Developer PowerShell for Visual Studio:
 
 ```powershell
-tools\create_release_package.ps1 [-OutputPath dist\windows] [-Qt6Dir C:/Qt/6.10.2/msvc2022_64/lib/cmake/Qt6]
+tools\create_release_package.ps1
 ```
+
+Optional parameters:
+
+- `-OutputPath <dir>`: where to write the package (default `dist\windows`).
+- `-Qt6Dir <dir>`: Qt's CMake folder (default `C:/Qt/6.10.2/msvc2022_64/lib/cmake/Qt6`).
 
 It builds in `build\steam-windows`, deploys Qt with `windeployqt`, and writes
 `dist\windows` with the launcher, editor, game player, `tools\HephaestusBuild.exe`, Lua

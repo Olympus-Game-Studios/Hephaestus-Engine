@@ -75,9 +75,10 @@ cp "$BUILD/HephaestusEngine.app/Contents/MacOS/HephaestusEngine" "$CONTENTS/MacO
 /usr/libexec/PlistBuddy -c "Set :CFBundleName Hephaestus Engine" \
     -c "Set :CFBundleIdentifier $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
         "$BUILD/HephaestusEngine.app/Contents/Info.plist")" "$CONTENTS/Info.plist"
-for item in assets editor scripts .engine shaders Plugins tools HephaestusGame.app LICENSE.md THIRD_PARTY_NOTICES.md; do
+for item in assets editor scripts .engine shaders Plugins tools HephaestusGame.app; do
     if [[ -e "$BUILD/$item" ]]; then cp -R "$BUILD/$item" "$RESOURCES/"; fi
 done
+cp "$ROOT/LICENSE.md" "$ROOT/THIRD_PARTY_NOTICES.md" "$RESOURCES/"
 rm -rf "$RESOURCES/assets/tests"
 for plugin in "${EXCLUDED_PLUGINS[@]}"; do rm -rf "$RESOURCES/Plugins/$plugin"; done
 

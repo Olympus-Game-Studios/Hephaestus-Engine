@@ -227,17 +227,36 @@ bool ProjectSettingsManager::SetEditorMode(const QString& mode) const
 
 QString ProjectSettingsManager::RecordEngineVersion(const QString& engineVersion) const
 {
-    QJsonObject projectMetadata;
-    if (!IsAvailable() || !JsonUtils::ReadJsonObject(ResolveProjectFilePath(m_projectRoot), &projectMetadata)) {
+    if (!IsAvailable()) {
         return {};
     }
+    const QString projectFilePath = ResolveProjectFilePath(m_projectRoot);
+    QJsonObject projectMetadata;
+    if (!JsonUtils::ReadJsonObject(projectFilePath, &projectMetadata)) {
+        return {};
+    }
+    const QVersionNumber current = QVersionNumber::fromString(engineVersion);
     const QString recorded = projectMetadata.value(QStringLiteral("engineVersion")).toString();
-    if (QVersionNumber::fromString(recorded) > QVersionNumber::fromString(engineVersion)) {
+    if (QVersionNumber::fromString(recorded) > current) {
         return recorded;
     }
-    if (recorded != engineVersion && !SetProjectMetadata(QStringLiteral("engineVersion"), engineVersion)) {
-        qWarning("Could not record engine version %s in %s", qUtf8Printable(engineVersion),
-                 qUtf8Printable(ResolveProjectFilePath(m_projectRoot)));
+
+    const auto record = [&](const QString& path, QJsonObject metadata) {
+        const QString fileVersion = metadata.value(QStringLiteral("engineVersion")).toString();
+        if (fileVersion == engineVersion || QVersionNumber::fromString(fileVersion) > current) {
+            return;
+        }
+        metadata[QStringLiteral("engineVersion")] = engineVersion;
+        if (!JsonUtils::WriteJsonObject(path, metadata)) {
+            qWarning("Could not record engine version %s in %s", qUtf8Printable(engineVersion),
+                     qUtf8Printable(path));
+        }
+    };
+    record(projectFilePath, projectMetadata);
+    const QString secondaryPath = SecondaryProjectFilePath(m_projectRoot);
+    QJsonObject secondaryMetadata;
+    if (secondaryPath != projectFilePath && JsonUtils::ReadJsonObject(secondaryPath, &secondaryMetadata)) {
+        record(secondaryPath, secondaryMetadata);
     }
     return {};
 }

@@ -200,7 +200,7 @@ int main() {
     ok &= Check(fs::exists(package / "build_manifest.json"), "JSON manifest exists");
     ok &= Check(fs::exists(package / "export_manifest.txt"), "export manifest exists");
     {
-        std::ifstream noticesStream(package / "ThirdPartyNotices.txt", std::ios::binary);
+        std::ifstream noticesStream(content / "ThirdPartyNotices.txt", std::ios::binary);
         const std::string notices((std::istreambuf_iterator<char>(noticesStream)),
                                   std::istreambuf_iterator<char>());
         ok &= Check(notices == "Third-party notices",

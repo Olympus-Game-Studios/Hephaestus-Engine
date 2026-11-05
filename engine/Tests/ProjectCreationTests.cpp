@@ -180,6 +180,27 @@ bool TestRecordEngineVersion()
     }
     pass &= Check(settings.RecordEngineVersion(QStringLiteral("2026.11.3")).isEmpty(),
                   "the same engine opens without a warning");
+
+    const QString secondary = QStringLiteral(".hephaestus/project.heproject");
+    auto setSecondary = [&](const QString& version) {
+        QFile file(project.filePath(secondary));
+        if (!file.open(QIODevice::ReadOnly)) {
+            return false;
+        }
+        QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+        file.close();
+        root[QStringLiteral("engineVersion")] = version;
+        return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+               file.write(QJsonDocument(root).toJson()) > 0;
+    };
+    pass &= Check(setSecondary(QStringLiteral("2026.1.1")), "make the secondary project file stale");
+    settings.RecordEngineVersion(QStringLiteral("2026.11.3"));
+    pass &= Check(recordedIn(secondary) == QStringLiteral("2026.11.3"),
+                  "a stale secondary project file is updated even when the primary is current");
+    pass &= Check(setSecondary(QStringLiteral("2099.1.1")), "make the secondary project file newer");
+    settings.RecordEngineVersion(QStringLiteral("2026.11.3"));
+    pass &= Check(recordedIn(secondary) == QStringLiteral("2099.1.1"),
+                  "a newer version in the secondary project file is not lowered");
     return pass;
 }
 
