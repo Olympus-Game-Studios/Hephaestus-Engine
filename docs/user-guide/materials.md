@@ -66,4 +66,4 @@ Per pixel materials are on the way. Until then, if a material looks different in
 
 ## Older materials
 
-Materials from earlier versions of Hephaestus that don't have a graph open in **Legacy PBR** mode, where you edit the values directly. Click **Convert to graph** when you want node editing. Nothing is lost either way.
+If a material from an earlier version of Hephaestus has no graph, it opens in **Legacy PBR** mode, where you edit the values directly. Click **Convert to graph** when you want node editing. Nothing is lost either way.

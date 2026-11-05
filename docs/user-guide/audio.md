@@ -29,10 +29,12 @@ Audio.play("assets/audio/pickup.wav")
 -- Looping music at 40% volume, keeping the handle to control it later
 local music = Audio.play("assets/audio/theme.mp3", true, 0.4)
 
-Audio.setVolume(music, 0.2)
-Audio.pause(music)
-Audio.resume(music)
-Audio.stop(music)
+if music ~= 0 then             -- 0 means the sound couldn't be played
+    Audio.setVolume(music, 0.2)
+    Audio.pause(music)
+    Audio.resume(music)
+    Audio.stop(music)
+end
 ```
 
 All the functions are in the [Lua API reference](lua-api.md#audio).
