@@ -3,6 +3,7 @@
 #include "JsonUtils.h"
 
 #include <algorithm>
+#include <utility>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonValue>
@@ -227,17 +228,43 @@ bool ProjectSettingsManager::SetEditorMode(const QString& mode) const
 
 QString ProjectSettingsManager::RecordEngineVersion(const QString& engineVersion) const
 {
-    QJsonObject projectMetadata;
-    if (!IsAvailable() || !JsonUtils::ReadJsonObject(ResolveProjectFilePath(m_projectRoot), &projectMetadata)) {
+    if (!IsAvailable()) {
         return {};
     }
-    const QString recorded = projectMetadata.value(QStringLiteral("engineVersion")).toString();
-    if (QVersionNumber::fromString(recorded) > QVersionNumber::fromString(engineVersion)) {
-        return recorded;
+    const QString projectFilePath = ResolveProjectFilePath(m_projectRoot);
+    QJsonObject projectMetadata;
+    if (!JsonUtils::ReadJsonObject(projectFilePath, &projectMetadata)) {
+        return {};
     }
-    if (recorded != engineVersion && !SetProjectMetadata(QStringLiteral("engineVersion"), engineVersion)) {
-        qWarning("Could not record engine version %s in %s", qUtf8Printable(engineVersion),
-                 qUtf8Printable(ResolveProjectFilePath(m_projectRoot)));
+    QList<std::pair<QString, QJsonObject>> files{ { projectFilePath, projectMetadata } };
+    const QString secondaryPath = SecondaryProjectFilePath(m_projectRoot);
+    QJsonObject secondaryMetadata;
+    if (secondaryPath != projectFilePath && JsonUtils::ReadJsonObject(secondaryPath, &secondaryMetadata)) {
+        files.append({ secondaryPath, secondaryMetadata });
+    }
+
+    const auto versionIn = [](const QJsonObject& metadata) {
+        return metadata.value(QStringLiteral("engineVersion")).toString();
+    };
+    QString newest = engineVersion;
+    for (const auto& [path, metadata] : files) {
+        if (QVersionNumber::fromString(versionIn(metadata)) > QVersionNumber::fromString(newest)) {
+            newest = versionIn(metadata);
+        }
+    }
+    if (newest != engineVersion) {
+        return newest;
+    }
+
+    for (auto& [path, metadata] : files) {
+        if (versionIn(metadata) == engineVersion) {
+            continue;
+        }
+        metadata[QStringLiteral("engineVersion")] = engineVersion;
+        if (!JsonUtils::WriteJsonObject(path, metadata)) {
+            qWarning("Could not record engine version %s in %s", qUtf8Printable(engineVersion),
+                     qUtf8Printable(path));
+        }
     }
     return {};
 }

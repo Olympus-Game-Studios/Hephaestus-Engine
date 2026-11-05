@@ -87,7 +87,7 @@ try {
     $process.WaitForExit()
     $process.Refresh()
 
-    $runtimeLog = Join-Path $env:LOCALAPPDATA "Stage_6_Portability\Logs\runtime.log"
+    $runtimeLog = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "Stage_6_Portability\Logs\runtime.log"
     if (-not (Test-Path $runtimeLog -PathType Leaf) -or
         (Get-Item $runtimeLog).LastWriteTime -lt $launchedAt) {
         throw "Relocated game did not write $runtimeLog"

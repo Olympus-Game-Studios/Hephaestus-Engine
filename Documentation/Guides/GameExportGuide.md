@@ -149,7 +149,7 @@ The game runtime includes automatic crash handling:
    - Timestamp and initialization stage
 4. **User Notification**: Shows message box with crash info
 
-Crash files are saved to the game's `Crashes` folder (see the log and crash report locations above), or to `crashes/` next to the executable if Windows can't provide the local app data folder.
+Minidumps and crash logs are written on Windows only. Crash files are saved to the game's `%LOCALAPPDATA%\<Product>\Crashes` folder, or to `crashes\` next to the executable if Windows can't provide the local app data folder. On macOS, crash reports are in the Console app.
 
 ## Troubleshooting
 
@@ -164,7 +164,7 @@ reports a blocking error when it is unavailable.
 
 ### Game crashes immediately
 1. Check the game's `runtime.log` for startup progress (see above for where it is)
-2. Check the `Crashes` folder for crash reports
+2. On Windows, check the game's `Crashes` folder for crash reports; on macOS, look in the Console app
 3. Verify all required DLLs are present
 4. Ensure shaders are compiled (`.spv` files in `shaders/`)
 
