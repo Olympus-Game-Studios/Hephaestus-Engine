@@ -1,1 +1,0 @@
-(This file was empty in the root Documentation folder; archived copy.)

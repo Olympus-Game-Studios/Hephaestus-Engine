@@ -1,1 +1,0 @@
-(Archived ray picking reference)

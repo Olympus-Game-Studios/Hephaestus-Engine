@@ -62,6 +62,7 @@ Hephaestus is young, and I'd rather you know its gaps up front than discover the
 ## Editor
 
 - **Nested prefabs and prefab variants** aren't supported.
+- The Character Editor's **Bone names** toggle doesn't draw names yet.
 - **Deleted assets** go to `.hephaestus/trash` but there's no button to restore them.
 - The Content Browser doesn't notice when files change on disk; use **Reimport**.
 - **Some settings don't do anything yet:** Theme, Default RHI, Default Shadow Quality, Default HDR Enabled, Gizmo Size, Asset Browser Thumbnail Size, SDK Path and External Tools Path in Engine Settings, and Default Skybox, Enable HDR, Default Exposure, Physics Enabled, Mouse Sensitivity Default and Target Platform in Project Settings.

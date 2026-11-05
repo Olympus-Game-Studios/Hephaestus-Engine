@@ -29,7 +29,7 @@ Double click a character to open the **Character Editor**. It has its own previe
 
 - An **animation library**. **Import Animation** adds clips from other GLB or FBX files (extra Mixamo animations work fine). Name them as you import, and rename them later with `F2`. Organise them into folders.
 - A **timeline** for scrubbing through a clip.
-- A **skeleton overlay** with optional bone names.
+- A **skeleton overlay**. (The Bone names toggle next to it doesn't draw anything yet.)
 - **Sockets**: named attachment points on bones, for things like a weapon in the right hand. Move them with the gizmo.
 - **Materials** grouped by mesh part.
 - The character's **controller** script.
