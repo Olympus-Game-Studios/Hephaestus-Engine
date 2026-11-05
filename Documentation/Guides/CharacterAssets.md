@@ -4,7 +4,7 @@ Stage E product workflow for `.hpcharacter` files. Timeline, clip folders, and p
 
 ## Import
 
-In the Asset Browser:
+In the Content Browser:
 
 1. **Import → Import Character…** (or the folder context menu)
 2. Choose a **GLB** (`*.glb`) or **FBX** (`*.fbx`). Raw `.gltf` with external `.bin` / images is refused.
@@ -24,7 +24,7 @@ Output:
 <dest>/.source/<Name>/<Name>Character.lua   # if “Create character controller” is on
 ```
 
-Owned `.source/` folders are hidden in the Asset Browser (dot-directories). Use the character Inspector to pick the controller script; the picker still lists those Lua files.
+Owned `.source/` folders are hidden in the Content Browser (dot-directories). Use the character Inspector to pick the controller script; the picker still lists those Lua files.
 
 **Import Assets…** is unchanged copy-import for meshes, textures, audio, and so on. Do not copy a `.hpcharacter` JSON without its owned source folder.
 

@@ -1,124 +1,45 @@
-Developer To-Do (Current Focus)
---------------------------------
-- ✅ Complete PBR material system with texture support (Albedo, Normal, Roughness, AO)
-- ✅ Implement node-based material graph editor (ImNodes integration)
-- ✅ Add material asset save/load system with scene serialization
-- Finalize render graph lighting parity and verify HDR output across reference scenes.
-- Complete FBX/GLTF import bridge with validation suite and error surfacing in editor.
-- Implement transform gizmo undo/redo history stack with visual diff preview.
-- Wire up convex collider authoring UI and fixed timestep integrator instrumentation.
-- Stand up nightly smoke test workflow in CI with crash dump collection.
+# Hephaestus Engine Roadmap
 
-Hephaestus Engine Roadmap
-=========================
+This is where Hephaestus is heading. It's a direction, not a promise of dates. For what has already shipped, see [`CHANGELOG.md`](CHANGELOG.md); for what's missing today, see [What's not there yet](docs/user-guide/whats-not-there-yet.md).
 
-Vision
-------
-- Deliver a modern, data-driven rendering and gameplay engine that powers Olympus Game Studios titles and scales to external teams.
-- Maintain a tight iteration loop through hot-reloadable assets, an integrated editor, and robust tooling.
-- Prioritize stability and developer ergonomics without sacrificing high-end graphics features.
-- *Feature Highlights:* clustered lighting renderer, ECS-driven scene management, modular plugin surfaces, real-time profiling HUD.
+## Principles
 
-Guiding Principles
-------------------
-- Incrementally ship vertical slices to validate workflow end-to-end.
-- Keep ECS-centric architecture consistent across runtime, editor, and tooling.
-- Automate validation (CI, tests, linting) before expanding feature breadth.
-- Document features alongside implementation to ensure onboarding remains lightweight.
+- **Creativity before complexity.** Simplify how people make games, never what they can make.
+- **Artist first, programmer friendly.** Default, Artist and Programmer modes over one shared editor.
+- **Extensible.** Editor tools, asset types and scripting languages can come from plugins.
+- **Readable files.** Projects stay plain files that diff and merge well.
+- **Honest docs.** Unfinished features are labelled as unfinished.
 
-Milestones
-----------
+## Where things are (November 2026)
 
-### 2025 Q4 – Alpha Foundations ✅ (Material System Complete)
-- ✅ **Material System:** Complete PBR workflow with Albedo, Normal, Roughness, and AO texture support
-- ✅ **Material Editor:** Node-based visual material graph editor using ImNodes
-- ✅ **Asset Pipeline:** Material asset save/load system integrated with scene serialization
-- ✅ **Texture Integration:** Dynamic texture loading, caching, and descriptor array management
-- Lock down rendering core: finalize render graph implementation, lighting pass parity with reference scenes, HDR pipeline, and ImGui overlay updates.
-- Ship stable asset ingestion path: mesh/material importers, texture compression presets, hot reload for shaders and materials.
-- Complete editor selection & gizmo tooling round-trip (translation, rotation, scaling) with undo/redo history.
-- Integrate core physics hooks for rigid bodies and colliders, ensuring deterministic stepping.
-- Establish automated nightly builds and smoke tests on Windows; capture crash dumps.
-- Publish developer quickstart and ECS overview updates in `Documentation/`.
-- *Feature Highlights:*
-  - Rendering: ✅ PBR material workflow, ✅ texture sampling (4 types), tile-based light culling, tone mapping pipeline, debug lighting visualizers.
-  - Editor: ✅ Material graph editor, transform gizmos with axis constraints, selection outline pass, history stack inspector.
-  - Assets: ✅ Material asset system, FBX/GLTF import bridge, GPU texture atlas generator, shader reload without editor restart.
-  - Physics: convex collider authoring, fixed timestep integrator, collision event bus.
+Shipped and in daily use: the Editor 2.0 redesign with workspace modes and the new launcher; Vulkan PBR rendering with soft shadows for every light type, HDRI ambient light, probe volume GI and ray traced shadows; prefabs with overrides; Jolt physics with layers, triggers and a character controller; skinned characters with a Character Editor; Lua with Inspector variables, a code editor and a debugger; scripting language plugins; HephaestusUI with a visual editor; input actions and axes; packaging for Windows and macOS; and the Steam release pipeline.
 
-### 2026 Q1 – Beta Content Workflow
-- Expand scene serialization (prefabs, hierarchies, scene variants) with versioning support.
-- Introduce scripted gameplay layer (C# or Lua bindings) with component access sandboxing.
-- Implement asset dependency graph and background streaming for large scenes.
-- Add lighting authoring tools in editor: light probes, shadow config, post-processing stack controls.
-- Harden physics: broadphase optimizations, trigger volumes, physics debugger overlay.
-- Stand up CI coverage for unit/integration tests; add linting and static analysis gates.
-- *Feature Highlights:*
-  - Scene: prefab override diffing, scene diff viewer, drag-and-drop hierarchy parenting.
-  - Scripting: hot-reload scripts, component bindings generator, sandboxed console REPL.
-  - Assets: streaming texture cache, dependency heatmap view, automated LOD baking.
-  - Lighting: interactive probe placement, area light authoring, filmic color grading presets.
-  - Physics: collision layer matrix editor, trigger callbacks, gizmo visualization for colliders.
+## Next
 
-### 2026 Q2 – Feature Complete (RC)
-- Optimize GPU workload: batching, draw call consolidation, async compute passes, and shader permutation pruning.
-- Deliver VFX pipeline: particle system authoring, curve editors, GPU particles prototype.
-- Finalize audio integration path (spatial audio, mixer, basic DSP effects) and editor tooling.
-- ✅ Implement save/load runtime persistence and project packaging workflow. **(Completed Nov 2025)**
-- Complete localization pipeline: resource tables, font atlas generation, text rendering validation.
-- Conduct performance profiling sessions; document optimization playbook.
-- *Feature Highlights:*
-  - Rendering: automatic instancing, GPU-driven occlusion culling, RenderDoc capture integration.
-  - VFX: node-based particle graph, curve-driven emitters, flipbook sprite support.
-  - Audio: middleware bridge (Wwise/FMOD), spatial attenuation debugger, real-time mixer panel.
-  - Persistence: ✅ binary scene snapshotter, ✅ deployment packager CLI, patch-based save upgrades.
-  - Localization: string table editor, right-to-left text preview, locale fallback rules.
-  - Tooling: frame capture analyzer, performance budget dashboards, automated regression detection.
+### Rendering
 
-### 2026 H2 – 1.0 Launch
-- Ship cross-platform rendering path (Windows + Linux) with platform abstraction validated.
-- Provide extensibility SDK: plugin templates, scripting API docs, and sample integrations.
-- Reach feature parity in editor vs runtime (prefab overrides, animation timeline, navmesh baking).
-- Finalize user-facing documentation site, tutorial videos, and example projects.
-- Execute release hardening: regression sweeps, compatibility testing, security review, license audit.
-- *Feature Highlights:*
-  - Platform: Vulkan backend parity, Linux packaging scripts, cross-platform input stack.
-  - Extensibility: plugin project generator, API reference site, sample gameplay plugin.
-  - Editor: animation timeline scrubbing, navmesh visualization, prefab diff/merge tool.
-  - Docs: interactive tutorial scenes, searchable documentation portal, automated changelog publishing.
-  - QA: compatibility matrix dashboard, crash telemetry pipeline, build notarization workflow.
+The long term goal is fully dynamic lighting that needs no manual setup: global illumination and reflections without placed probe volumes, many shadowed lights and virtualized geometry. The order:
 
-### Post-1.0 Horizons
-- Console platform bring-up (Xbox, PlayStation) with certification tooling.
-- Ray-tracing pipeline exploration (DXR/Vulkan RT) and advanced GI solutions.
-- Networked multiplayer framework (rollback-friendly replication, dedicated server tooling).
-- Procedural world tools (open-world streaming, terrain authoring, foliage systems).
-- Marketplace ecosystem for community assets and extensions.
-- *Feature Highlights:*
-  - Consoles: platform abstraction layers, TRC compliance harness, controller remapping UI.
-  - Ray Tracing: hybrid ray/path tracing prototype, denoising suite, ray query debug views.
-  - Multiplayer: deterministic ECS replication, rollback netcode simulator, dedicated server orchestration CLI.
-  - Procedural: heightmap sculpting, spline-based road systems, foliage scatter rules editor.
-  - Marketplace: asset packaging standard, in-editor marketplace browser, licensing metadata support.
+1. **Visual quality tiers** (Low, Medium, High, Ultra) that choose the lighting path. High and Ultra get ray traced GI cascades that follow the camera and ray traced reflections on GPUs that support them; Medium and Low use baked probe volumes. Projects can cap the tier. *In progress on `feature/probe-gi`.*
+2. **Temporal accumulation, screen space reflections** for GPUs without ray tracing, and animated meshes in the ray traced scene. *In progress on the same branch.*
+3. **Many shadowed lights**, lifting today's limit of 4 point and 8 spot shadows.
+4. **Virtualized geometry**, which needs a visibility buffer and GPU culling first.
 
-Cross-Track Initiatives
------------------------
-- **Rendering:** ✅ PBR material system with texture support, Deferred + forward+ hybrid pipeline, volumetrics, temporal AA upgrades.
-- **Editor UX:** ✅ Material graph editor, Dockable panels, customizable workspaces, UI theme polish, accessibility compliance.
-- **Content Pipeline:** ✅ Texture discovery and loading, Continuous import daemons, version control integration (Perforce/Git LFS), dependency audits.
-- **Tooling & Automation:** Deterministic builds via CMake presets, asset validation bots, crash telemetry dashboards.
-- **QA & Testing:** Headless test harness, ECS regression scenarios, graphics screenshot comparisons, performance budget tracking.
-- **Community & Support:** Contributor guidelines, issue triage rotations, roadmap transparency updates each quarter.
+Alongside that, materials need to compile to real per pixel shaders so nodes like Noise, Fresnel and Time affect the result, and transparency needs proper blending.
 
-Dependencies & Risks
---------------------
-- Rendering roadmap contingent on Vulkan backend stability; allocate buffer for API churn.
-- Third-party library updates (ImGui, EnTT, GLFW) tracked quarterly; pin versions after RC.
-- Tooling depends on Windows build farm availability; secure hardware before scaling CI.
-- Scripting language decision blocks gameplay tooling; resolve by end of 2025 Q4.
+### Editor
 
-Review Cadence
---------------
-- Revisit roadmap at the end of each milestone; capture adjustments and retrospective learnings.
-- Maintain a living KPI dashboard (build health, perf regressions, bug backlog) to inform scope decisions.
-- Communicate updates via monthly internal demos and shared changelog in `Documentation/`.
+- UI Editor **Design mode**: Illustrator and Photoshop style drawing tools where any shape can be given a role (a rectangle becomes a Button) and its states drawn in a state editor.
+- Alternative UI authoring (for example HTML) provided entirely by plugins.
+
+### Gameplay systems
+
+Gaps the user guide lists that games commonly need: 3D audio and a mixer, save games, more UI widgets (text input, sliders, scrolling lists, keyboard and gamepad navigation), gamepad input in editor Play, animation graphs, particles, terrain, navigation and networking.
+
+### Scripting
+
+First party scripting language plugins, starting with C#.
+
+## How this file is kept
+
+Update it when priorities change, move finished items into `CHANGELOG.md` and keep it short enough to read in a couple of minutes.

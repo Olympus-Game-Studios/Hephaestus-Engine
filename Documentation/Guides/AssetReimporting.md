@@ -39,7 +39,7 @@ When a change is detected, it:
 - Queues a low-priority reimport job
 
 ## Manual Reimport
-From the Asset Browser:
+From the Content Browser:
 - Right click → **Reimport**
 - **Reimport All Changed** button
 

@@ -2,7 +2,7 @@
 
 Designer-facing authoring and preview for `.hpcharacter` assets. This is not a gameplay sandbox and does not add animation graphs, blend spaces, IK, or retargeting. Runtime `this:GetAnimator()` / `this:GetCharacter()` live in Play Mode and `HephaestusGame`; see [CharacterControllers.md](./CharacterControllers.md).
 
-Open a character by double-clicking it in the Asset Browser, or **Open**. Empty New Character files show **Import Character Source** until a mesh GLB or FBX is assigned.
+Open a character by double-clicking it in the Content Browser, or **Open**. Empty New Character files show **Import Character Source** until a mesh GLB or FBX is assigned.
 
 ## Preview
 

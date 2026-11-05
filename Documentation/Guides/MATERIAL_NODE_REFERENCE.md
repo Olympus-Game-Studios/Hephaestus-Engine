@@ -2,6 +2,10 @@
 
 This guide covers the Qt Material Editor node graph. Nodes serialize into `.hematerial` graph JSON and are evaluated through the editor material graph path. Shader-capable nodes also expose GLSL snippets through the material shader generator so future per-pixel material compilation can reuse the same node definitions.
 
+## What renders today
+
+`MaterialGraphEvaluator` (`engine/UI/MaterialEditor/MaterialGraphEvaluator.cpp`) evaluates the graph once into the material's PBR values and texture slots, and the renderer draws those with the fixed `triangle.frag` shader. Per pixel and time based nodes have no evaluated value, so they currently have no effect on the rendered material: TexCoord, Screen Position, Transform, Texture Tiling Offset, Noise, Gradient, Fresnel, UV Distortion, Time, Camera Vector, View Direction, Reflection Vector, World Position, Object Position, Distance To Camera and Static Switch Parameter. `MaterialShaderGenerator` produces GLSL for these nodes for diagnostics only; it is not compiled to SPIR-V or used by the renderer. The `Refraction` input is reserved.
+
 ## PBR
 
 - `Material Output`: final material node. Inputs are Base Color, Metallic, Roughness, Emissive, Normal Map, Roughness Map, AO Map, Specular, Opacity, Opacity Mask, and Refraction. Existing materials that only have the older seven pins keep loading; new pins use default material values when disconnected.

@@ -9,15 +9,15 @@ Hephaestus uses **Lua** as its primary scripting language. Lua provides:
 - **Great performance** - Plenty fast for gameplay logic
 - **Rich API** - Access to transform, input, camera, and more
 
-This is the complete guide to scripting in Hephaestus Engine. For a 5-minute quick start, see [SCRIPTING_QUICK_START.md](SCRIPTING_QUICK_START.md).
+This is the technical reference for Lua in Hephaestus: exact callback order, binding semantics and edge cases. For a friendlier introduction, start with the user guide's [Scripting with Lua](../../docs/user-guide/scripting-lua.md) and [Lua API reference](../../docs/user-guide/lua-api.md).
 
-**Note**: C++ scripting has been removed. C# scripting support is planned for future releases.
+Lua 5.4 is built in. Other languages are added by plugins through a C interface; see [script-languages.md](../../docs/plugins/script-languages.md). The old C++ `ScriptComponent` path still exists for engine code but is not a gameplay scripting option.
 
 ## Quick Start
 
 ### 1. Create a Lua Script
 
-Create a file `scripts/MyGame.lua`:
+In the Content Browser, right click `assets/scripts` and choose **New Lua Script**, or create `assets/scripts/MyGame.lua` yourself:
 
 ```lua
 -- Called when the script is attached to an entity
@@ -39,9 +39,8 @@ end
 ### 2. Attach via Editor
 
 1. Select an entity
-2. Details Panel → Scripts
-3. Select your `.lua` file in Asset Browser
-4. Click "Attach"
+2. In the Inspector, **Add Component > Lua Script**
+3. Set **Script** to your `.lua` file (or drag the script from the Content Browser onto the field)
 
 ### 3. Run
 
@@ -425,7 +424,7 @@ Also available:
 
 ### Physics
 
-Play steps physics at a fixed `1/60` second after `onUpdate`, with at most four substeps. There is no `FixedUpdate` and no render interpolation. Callbacks below run on the main thread after the fixed step that produced them.
+Play steps physics at a fixed `1/60` second after `onUpdate`, with at most four substeps. There is no `FixedUpdate`. Character controllers and dynamic bodies are drawn interpolated between the last two fixed steps; script-visible transforms are the simulated ones. Callbacks below run on the main thread after the fixed step that produced them.
 
 ```lua
 -- Hitscan (ignores the calling entity's body when possible)
@@ -496,44 +495,9 @@ Available helpers:
 
 ## Performance Considerations
 
-- **Lua is ideal for**: Game logic, UI, AI, event handling, input processing
-- **Lua is not ideal for**: Tight rendering loops, heavy physics calculations
-- **Performance**: ~100x slower than native code, but still very fast for gameplay
-- Call C++ from Lua (planned) for performance-critical operations
-- Avoid tight loops in Lua - keep them simple
-
-## Best Practices
-
-### ✅ Good Lua Usage
-```lua
--- Game logic
-function onUpdate(dt)
-    -- Check conditions
-    if shouldJump() then
-        -- Call C++ for physics
-        Player.jump()
-    end
-end
-
--- Event handling
-function onItemCollected(item)
-    Inventory.add(item)
-    UI.updateDisplay()
-end
-```
-
-### ❌ Avoid in Lua
-```lua
--- DON'T: Tight render loop
-for i=1,1000000 do
-    -- Complex math
-end
-
--- DON'T: Heavy physics calculations every frame
-for i=1,10000 do
-    -- Physics calculations
-end
-```
+- Lua is a good fit for game logic, UI, AI, event handling and input.
+- Avoid large per frame loops over many entities; cache entity and transform handles in `onAwake` instead of looking them up every frame.
+- There is no profiler for Lua yet. Use the editor status bar's frame time and `engine_log` timing to find slow scripts.
 
 ## Complete Script Example
 
@@ -591,57 +555,28 @@ function onDestroy()
 end
 ```
 
-## Hybrid Example
+## Hot Reload
 
-`scripts/Player.lua` - Game logic in Lua:
-```lua
-local speed = 5.0
+Saving a script while Play is running reloads it: the old instance receives `onDisable` and `onDestroy`, then the new file loads and receives `onAwake` and `onEnable`. Script local state is lost; values set through `Expose` are kept.
 
-function onUpdate(dt)
-    if Input.isKeyPressed("W") then
-        local transform = this:GetTransform()
-        transform:Translate(speed * dt, 0, 0)
-    end
-end
-```
+## Debugging
 
-This approach lets you write all gameplay logic in Lua while keeping engine systems in C++.
-
-## Hot-Reload
-
-(Planned) Save a Lua file while game is running → automatically reload without restarting game.
-
-## Debugging (Planned)
-
-- Breakpoints
-- Variable watches
-- Step through code
-- Profiler integration
+The editor's Code panel has a Lua debugger: gutter breakpoints, the Debugger panel (call stack, locals, watches), Continue `F5`, Step over `F10`, Step into `F11`, Step out `Shift+F11` and Stop `Shift+F5`. The Console's `lua>` prompt evaluates Lua in the running game, or in the selected frame while stopped at a breakpoint. Script errors are written to the Console as `path:line: message`.
 
 ## Troubleshooting
 
 **"Lua script not found"**
-- Check file path is correct
-- File must have `.lua` extension
-- Must be in project assets or workspace scripts directory
+- Check the path on the Lua Script component; paths are project relative, such as `assets/scripts/Player.lua`
+- `require("Name")` searches `assets/scripts/` and the `Scripts` folder of enabled plugins
 
 **"Function not defined"**
-- Lua functions must be defined at global scope
-- Check spelling (Lua is case-sensitive)
-- Avoid local functions at module level
+- Callbacks (`onUpdate` and so on) and functions called through `entity:Call` must be global in the script, not `local`
+- Lua is case sensitive
 
-**"Script runs slow"**
-- Profile with `engine_log()` to measure frame time
-- Move heavy calculations to C++
-- Reduce number of script updates per frame
+## Not Yet Supported
 
-## Future Roadmap
-
-- [ ] Full Entity/Component bindings
-- [ ] Scene query functions
-- [x] Action/axis input system bindings
-- [ ] Coroutines for time-based logic
-- [ ] Hot-reload during gameplay
-- [ ] Lua debugger integration
-- [ ] Profiler for Lua code
-- [ ] Precompiled Lua (bytecode) support
+- No sandbox: scripts have the full Lua standard library, including `io` and `os`
+- No coroutine scheduling helpers (plain Lua coroutines work)
+- No Lua profiler
+- No precompiled bytecode in packages
+- No material, navigation or save game bindings

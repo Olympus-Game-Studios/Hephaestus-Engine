@@ -1,33 +1,51 @@
-# Documentation — Sitemap & Quick Overview
+# Hephaestus technical reference
 
-This Documentation folder has been reorganized into topic-based subfolders to make content easier to find.
+This folder is the technical reference for people working on or deeply with the engine: file formats, runtime contracts and exact API behaviour.
 
-Top-level structure
+**Making a game?** Start with the [user guide](../docs/user-guide/README.md) instead. It covers the editor and every system from a game maker's point of view. Plugin authors want [`docs/plugins/`](../docs/plugins/plugin-system-1.0.md).
 
-- [Guides/GUIDES_README.md](./Guides/GUIDES_README.md) — How-tos and long-form guides (ECS, lighting, custom components).
-- [Architecture/ARCHITECTURE_README.md](./Architecture/ARCHITECTURE_README.md) — Architecture diagrams and implementation summaries.
-- [Integration/INTEGRATION_README.md](./Integration/INTEGRATION_README.md) — Integrations and editor/plugin notes (ImGuizmo, icons).
-- [Lighting/LIGHTING_README.md](./Lighting/LIGHTING_README.md) — Lighting & materials guides and visual references.
-- [ProjectManager/PROJECTMANAGER_README.md](./ProjectManager/PROJECTMANAGER_README.md) — Project Manager documentation and quickstart.
-- [Features/FEATURES_README.md](./Features/FEATURES_README.md) — Feature proposals and notes.
-- [Reference/REFERENCE_README.md](./Reference/REFERENCE_README.md) — Short API references and cheat sheets (currently empty).
-- [Tutorials/TUTORIALS_README.md](./Tutorials/TUTORIALS_README.md) — Step-by-step tutorials (currently empty).
+## Projects and assets
 
-Archive of originals
+- [ProjectFormat.md](ProjectFormat.md): `project.heproject`, engine versions and the project folder layout
+- [Guides/AssetImporting.md](Guides/AssetImporting.md): mesh, FBX and character import rules
+- [Guides/AssetReimporting.md](Guides/AssetReimporting.md): the reimport pipeline and asset database
+- [PrefabSystem.md](PrefabSystem.md): prefab files, instances, overrides and the Prefab Editor
 
-- All original top-level documentation files have been moved to `./Archive/` for review and backup. If you want the originals permanently removed, tell me and I'll delete them after confirmation.
+## Rendering and materials
 
-How to navigate
+- [Guides/MATERIAL_NODE_REFERENCE.md](Guides/MATERIAL_NODE_REFERENCE.md): every Material Editor node, and which ones affect rendering today
+- [Guides/MATERIAL_EDITOR_COMPATIBILITY.md](Guides/MATERIAL_EDITOR_COMPATIBILITY.md): `.hematerial` compatibility guarantees and legacy materials
 
-- Each subfolder contains a `SUBJECT_README.md` (e.g. `GUIDES_README.md`) that lists the documents in that folder and links to them.
-- Use these indexes to find detailed docs. If you want, I can also add a search-friendly index or regenerate links to include short excerpts.
+## Physics, characters and animation
 
-Next recommended steps
+- [Guides/Physics.md](Guides/Physics.md): the Jolt runtime contract (stepping, motion ownership, layers, triggers, contacts)
+- [Guides/CharacterAssets.md](Guides/CharacterAssets.md): `.hpcharacter` import, placement and reimport
+- [Guides/CharacterEditor.md](Guides/CharacterEditor.md): the Character Editor
+- [Guides/CharacterControllers.md](Guides/CharacterControllers.md): controller scripts, the animator API and tick order
 
-1. Review the new per-folder indexes and verify links and filenames.
-2. If you want, I can scan and fix simple relative links inside docs that may have pointed to other top-level docs.
-3. When ready, I can either:
-   - Move the archived originals into a separate branch for safekeeping, or
-   - Permanently delete them from `Documentation/Archive/`.
+## Scripting
 
-If you'd like any tweaks to naming or layout (e.g., different README naming), tell me and I will adjust.
+- [Scripting/LUA_SCRIPTING_GUIDE.md](Scripting/LUA_SCRIPTING_GUIDE.md): Lua lifecycle, bindings and physics callback semantics
+- [Scripting/LUA_UI_API_REFERENCE.md](Scripting/LUA_UI_API_REFERENCE.md): the `UI` table
+- [Scripting/LUA_DISPLAY_DESTROY_API.md](Scripting/LUA_DISPLAY_DESTROY_API.md): `display.ui` and `destroy.ui`
+- [Guides/RuntimeSceneLifecycle.md](Guides/RuntimeSceneLifecycle.md): `Scene.reload()` and scene identity
+- Scripting language plugins: [`docs/plugins/script-languages.md`](../docs/plugins/script-languages.md)
+
+## Game UI (HephaestusUI)
+
+- [Features/HUI_FORMAT_REFERENCE.md](Features/HUI_FORMAT_REFERENCE.md): the `.hui` file format and controllers
+- [Features/HEPHAESTUS_UI_RUNTIME_GUIDE.md](Features/HEPHAESTUS_UI_RUNTIME_GUIDE.md): the runtime UI system and Vulkan renderer
+- [Features/VISUAL_UI_EDITOR.md](Features/VISUAL_UI_EDITOR.md): the UI Editor
+- [Features/HUI_VISUAL_EDITOR_DESIGN_TOOLS.md](Features/HUI_VISUAL_EDITOR_DESIGN_TOOLS.md): canvas, snapping, guides and grouping internals
+
+## Editor
+
+- [Features/EDITOR_SHORTCUTS.md](Features/EDITOR_SHORTCUTS.md): every keyboard shortcut
+
+## Building and shipping games
+
+- [Guides/GameExportGuide.md](Guides/GameExportGuide.md): the editor and game player split, package layout, `game.ini` and troubleshooting
+- [Guides/HeadlessBuilds.md](Guides/HeadlessBuilds.md): `HephaestusBuild` for command line and CI packaging
+- [Guides/AutomationExecution.md](Guides/AutomationExecution.md): manual simulation control for automation
+
+Building the engine itself is covered in the root [README](../README.md).

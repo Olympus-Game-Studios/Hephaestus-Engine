@@ -6,7 +6,7 @@ The Qt editor starts in `EditorQtApp`, constructs one `EditorMainWindow`, then i
 
 Project state is centralized in `ProjectContext`; scene state, selection, and dirty state are centralized in `EditorContext`. Scene undo is the snapshot-based `EditorUndoManager`. Plugin scene and transaction services are narrow adapters over these objects. They do not expose the renderer, EnTT registry, Vulkan objects, physics backend, allocator, or platform layer.
 
-The Asset Browser uses `AssetManager` and hard-coded native `AssetType` values. Plugin types are resolved through the editor asset registry before native fallback. `AssetMountRegistry` generalizes browsing and `AssetPathPolicy` resolution for `plugin://id/...` content. `OpenDocumentRegistry` gains a plugin document kind so registered custom asset editors participate in save/dirty prompts, close, rename/move retargeting, and the existing open-document inventory.
+The Content Browser uses `AssetManager` and hard-coded native `AssetType` values. Plugin types are resolved through the editor asset registry before native fallback. `AssetMountRegistry` generalizes browsing and `AssetPathPolicy` resolution for `plugin://id/...` content. `OpenDocumentRegistry` gains a plugin document kind so registered custom asset editors participate in save/dirty prompts, close, rename/move retargeting, and the existing open-document inventory.
 
 Project settings already have editor and project managers. Plugin settings are namespaced under their owner ID and cannot modify unrelated settings. Packaging remains centered on `HephaestusBuildCore`; Plugin 1.0 does not load editor DLLs in packaged games.
 
@@ -18,7 +18,7 @@ Partial initialization is unwound: `OnUnload` is attempted, the instance is dest
 
 ## Extension flow
 
-Commands are the reusable unit. Menus, toolbars, and the Asset Browser/scene hierarchy/viewport context menus reference command IDs. Dock panels use native Qt docking. Custom extensions and importers live in registries rather than central extension switches. Scene mutations go through high-level operations and a standard undo transaction.
+Commands are the reusable unit. Menus, toolbars, and the Content Browser/scene hierarchy/viewport context menus reference command IDs. Dock panels use native Qt docking. Custom extensions and importers live in registries rather than central extension switches. Scene mutations go through high-level operations and a standard undo transaction.
 
 Plugin content is browsable as a visually named `Plugin - <id>` read-only root. Its stable serialized address is `plugin://<id>/...`. It is not copied into the host project.
 
@@ -33,7 +33,7 @@ An atlas plugin can register `.hpatlas` and `.hpatlasmodel`, create an integrate
 ## Known 1.0 limits and 1.1 direction
 
 - Plugin dependencies and optional dependencies are reserved but not parsed in manifest version 1.
-- Plugin importers are exposed from the Asset Browser creation menu; richer batch-import options are deferred.
+- Plugin importers are exposed from the Content Browser creation menu; richer batch-import options are deferred.
 - Viewport tools can contribute commands/context actions, but continuous pointer/raycast input is not public yet.
 - Runtime/hybrid types are recognized for forward compatibility; packaged-game loading and runtime staging are not enabled.
 - `File -> Open Plugin` is deferred. A `.hpplugin` already defines a root with `Content`, `Source`, and `Resources`, and its mounted-content abstraction is independent of `ProjectContext`, so a shared workspace facade can be added without cloning the project system.

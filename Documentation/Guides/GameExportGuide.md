@@ -50,7 +50,7 @@ cmake --build build --config Release --target HephaestusEngine
 1. Open your project in the editor
 2. Load the scene you want to export
 3. Set **Project Settings > Startup Scene**
-4. Open **Build > Package**
+4. Open **Build > Package Project** (`Ctrl+Shift+B`)
 5. Choose Development or Release and an output directory
 6. Select **Package** or **Package & Run**
 
@@ -88,8 +88,9 @@ MyGame/
 │   └── textures/
 ├── scripts/
 │   └── *.lua               # Game scripts
-└── shaders/
-    └── *.spv               # Compiled shaders
+├── shaders/
+│   └── *.spv               # Compiled shaders
+└── Plugins/                # Content and runtime modules of enabled plugins
 ```
 
 The game writes its log and crash reports outside its install folder, under its executable's name:
@@ -148,7 +149,7 @@ The game runtime includes automatic crash handling:
    - Timestamp and initialization stage
 4. **User Notification**: Shows message box with crash info
 
-Crash files are saved to the `crashes/` folder next to the executable.
+Crash files are saved to the crash folder listed under [Exported Package Structure](#exported-package-structure).
 
 ## Troubleshooting
 
@@ -172,24 +173,9 @@ reports a blocking error when it is unavailable.
 - Check the path in `game.ini` is correct (use forward slashes)
 - Look for errors in the game's `runtime.log`
 
-## Why Two Executables?
-
-**Problem**: The original design used a single executable with runtime flags to toggle editor features. This caused:
-- Ultralight DLLs were always required (even for games)
-- Editor code was still linked, increasing size
-- Initialization order issues caused crashes
-- Complex conditional paths at runtime
-
-**Solution**: Compile-time separation:
-- Game runtime doesn't link Ultralight or ImGui (by default)
-- Smaller executable size (~50% reduction)
-- No editor code paths to accidentally trigger
-- Cleaner dependency management
-- Proper crash handling without editor overhead
-
 ## Requirements for End Users
 
 - Windows 10/11 (64-bit)
 - Vulkan-compatible GPU
-- Visual C++ Redistributable 2019 or later
-- (Optionally) Install Vulkan Runtime from LunarG if not bundled with drivers
+- Visual C++ Redistributable 2015 to 2022 (x64)
+- A GPU driver with Vulkan support; players do not need the Vulkan SDK

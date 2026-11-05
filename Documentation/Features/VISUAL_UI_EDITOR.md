@@ -17,7 +17,7 @@ The Visual UI Editor is now the default editor for `.hui` files inside the Hepha
 
 ### Default behavior
 
-In the Asset Browser:
+In the Content Browser:
 
 - double-clicking a `.hui` file opens the Visual UI Editor
 - right-clicking a `.hui` file and choosing `Open` also opens the Visual UI Editor
@@ -30,7 +30,7 @@ The Visual UI Editor includes an `Open in IDE` action in its toolbar.
 
 This opens the real `.hui` file on disk in the user's configured external editor when available. If no configured editor path is available, the engine falls back to the operating system's default file handler.
 
-The Asset Browser also exposes `Open in IDE` for `.hui` assets.
+The Content Browser also exposes `Open in IDE` for `.hui` assets.
 
 ## Main Layout
 
@@ -65,8 +65,8 @@ These match the widget types supported by the runtime `.hui` parser and builder.
 
 You can:
 
-- create a new `.hui` file from the Asset Browser using `New UI File`
-- open an existing `.hui` file from the Asset Browser
+- create a new `.hui` file from the Content Browser using `New UI File`
+- open an existing `.hui` file from the Content Browser
 
 New `.hui` files use the shared default generator so starter layouts stay consistent across tools.
 
@@ -200,7 +200,7 @@ This keeps layout and behavior cleanly separated.
 
 ## Beginner Quick Start
 
-1. In the Asset Browser, create `New UI File`.
+1. In the Content Browser, create `New UI File`.
 2. Double-click the new `.hui`.
 3. In `Palette`, add a `VerticalBox`.
 4. Add a `Text` widget for the title.
