@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QJsonValue>
 #include <QVersionNumber>
+#include <QtGlobal>
 
 namespace {
 
@@ -234,8 +235,9 @@ QString ProjectSettingsManager::RecordEngineVersion(const QString& engineVersion
     if (QVersionNumber::fromString(recorded) > QVersionNumber::fromString(engineVersion)) {
         return recorded;
     }
-    if (recorded != engineVersion) {
-        SetProjectMetadata(QStringLiteral("engineVersion"), engineVersion);
+    if (recorded != engineVersion && !SetProjectMetadata(QStringLiteral("engineVersion"), engineVersion)) {
+        qWarning("Could not record engine version %s in %s", qUtf8Printable(engineVersion),
+                 qUtf8Printable(ResolveProjectFilePath(m_projectRoot)));
     }
     return {};
 }

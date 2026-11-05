@@ -427,7 +427,7 @@ static LONG WINAPI UnhandledExceptionHandler(EXCEPTION_POINTERS* exceptionInfo) 
         
         crashLog << "Current initialization stage: " << 
             static_cast<int>(Bootstrap::GetCurrentStage()) << "\n";
-        crashLog << "\nA minidump file has been created: " << dumpPathFs.string() << "\n";
+        crashLog << "\nA minidump file has been created: " << dumpPathFs.filename().string() << "\n";
         crashLog.close();
     }
     
