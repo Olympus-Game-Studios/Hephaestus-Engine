@@ -6030,6 +6030,16 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
     m_projectSettingsManager = std::make_unique<Hephaestus::Tools::ProjectSettingsManager>(
         QString::fromStdString(m_projectContext->GetProjectRootDir()));
     m_projectSettingsManager->Load();
+    const QString newerEngineVersion =
+        m_projectSettingsManager->RecordEngineVersion(Hephaestus::Tools::VersionInfo::EngineVersion());
+    if (!newerEngineVersion.isEmpty()) {
+        QMessageBox::warning(this, tr("Project From a Newer Version"),
+            tr("%1 has been opened with Hephaestus %2, which is newer than this editor (%3).\n\n"
+               "It may use features this version doesn't support, and saving it here could lose "
+               "that work. Update Hephaestus to %2 or later to edit it safely.")
+                .arg(QString::fromStdString(m_projectContext->GetProjectName()), newerEngineVersion,
+                     Hephaestus::Tools::VersionInfo::EngineVersion()));
+    }
     {
         const QString projectMode = m_projectSettingsManager->EditorMode();
         if (projectMode.isEmpty()) {

@@ -297,7 +297,9 @@ bool EngineLog::Initialize(const char* applicationName, int argc, char** argv)
             exeDir = std::filesystem::current_path(ec);
         }
 
-        const std::filesystem::path logRoot = LogRootFor(exeDir);
+        const std::filesystem::path localData = LocalAppDataFor(HEPHAESTUS_ORGANIZATION);
+        const std::filesystem::path logRoot =
+            localData.empty() ? LogRootFor(exeDir) : localData / "Logs";
         std::error_code logDirError;
         std::filesystem::create_directories(logRoot, logDirError);
         g_LogPath = logRoot / "hephaestus.log";

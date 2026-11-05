@@ -2,7 +2,7 @@
 /**
  * Early file logger for Hephaestus Engine.
  *
- * Writes hephaestus.log next to the executable and mirrors stdout/stderr
+ * Writes hephaestus.log (see LogFilePath) and mirrors stdout/stderr
  * into the same file so startup hangs (console-only, no window) can be
  * diagnosed from disk even if the Qt window never appears.
  */

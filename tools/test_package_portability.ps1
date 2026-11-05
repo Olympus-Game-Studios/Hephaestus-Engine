@@ -71,6 +71,7 @@ try {
     $relocatedPackage = Join-Path $relocatedRoot "Stage_6_Portability"
     Copy-Item -Recurse $package $relocatedPackage
     $executable = Join-Path $relocatedPackage "Stage_6_Portability.exe"
+    $launchedAt = Get-Date
     $process = Start-Process -FilePath $executable `
         -WorkingDirectory $relocatedPackage `
         -RedirectStandardOutput $stdoutPath `
@@ -86,9 +87,15 @@ try {
     $process.WaitForExit()
     $process.Refresh()
 
-    $runtimeLog = Join-Path $relocatedPackage "logs\runtime.log"
-    if (-not (Test-Path $runtimeLog -PathType Leaf)) {
-        throw "Relocated game did not create logs/runtime.log"
+    $runtimeLog = Join-Path $env:LOCALAPPDATA "Stage_6_Portability\Logs\runtime.log"
+    if (-not (Test-Path $runtimeLog -PathType Leaf) -or
+        (Get-Item $runtimeLog).LastWriteTime -lt $launchedAt) {
+        throw "Relocated game did not write $runtimeLog"
+    }
+    foreach ($inside in @("logs", "crashes")) {
+        if (Test-Path (Join-Path $relocatedPackage $inside)) {
+            throw "Relocated game wrote $inside/ inside its install folder"
+        }
     }
     $combinedLog = (
         (Get-Content $runtimeLog -Raw) + "`n" +

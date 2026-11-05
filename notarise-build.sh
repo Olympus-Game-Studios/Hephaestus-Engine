@@ -1,6 +1,6 @@
 #!/bin/bash
-# Builds the macos-release preset, then signs, notarizes and staples "Hephaestus Engine.app"
-# and its DMG in dist/macos. Uses the first "Developer ID Application" certificate in the
+# Builds Release, then signs, notarizes and staples "Hephaestus Engine.app" and its DMG in
+# dist/macos (see tools/create_release_package_macos.sh). Uses the first "Developer ID Application" certificate in the
 # keychain and the "hephaestus-notary" notarytool profile unless these are set:
 #   HEPHAESTUS_SIGN_IDENTITY  e.g. "Developer ID Application: Your Name (TEAMID)"
 #   HEPHAESTUS_NOTARY_PROFILE e.g. my-notary-profile
@@ -15,6 +15,4 @@ if [[ -z "$IDENTITY" ]]; then
     exit 1
 fi
 
-cmake --preset macos-release
-cmake --build --preset macos-release
 tools/create_release_package_macos.sh --sign "$IDENTITY" --notary-profile "$PROFILE"
