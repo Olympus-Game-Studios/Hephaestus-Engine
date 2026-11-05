@@ -142,6 +142,71 @@ bool TestEditorModeRoundTrip()
     return pass;
 }
 
+bool TestRecordEngineVersion()
+{
+    QTemporaryDir temp;
+    if (!Check(temp.isValid(), "temp dir valid")) {
+        return false;
+    }
+
+    Hephaestus::Tools::ProjectCreationService::Result result;
+    QString error;
+    if (!Check(Hephaestus::Tools::ProjectCreationService::CreateBlankProject(
+                   temp.path(), QStringLiteral("VersionProj"), QStringLiteral("2026.10.5"), false, &result, &error),
+               "CreateBlankProject succeeded: " + error.toStdString())) {
+        return false;
+    }
+
+    QDir project(result.projectDir);
+    auto recordedIn = [&](const QString& relative) {
+        QFile file(project.filePath(relative));
+        if (!file.open(QIODevice::ReadOnly)) {
+            return QString();
+        }
+        return QJsonDocument::fromJson(file.readAll()).object().value(QStringLiteral("engineVersion")).toString();
+    };
+
+    const Hephaestus::Tools::ProjectSettingsManager settings(result.projectDir);
+    bool pass = true;
+    pass &= Check(settings.RecordEngineVersion(QStringLiteral("2026.9.30")) == QStringLiteral("2026.10.5"),
+                  "an older engine is told the newer version that opened the project");
+    pass &= Check(recordedIn(QStringLiteral("project.heproject")) == QStringLiteral("2026.10.5"),
+                  "an older engine does not lower the recorded version");
+    pass &= Check(settings.RecordEngineVersion(QStringLiteral("2026.11.3")).isEmpty(),
+                  "a newer engine opens without a warning");
+    for (const QString& relative : { QStringLiteral("project.heproject"), QStringLiteral(".hephaestus/project.heproject") }) {
+        pass &= Check(recordedIn(relative) == QStringLiteral("2026.11.3"),
+                      "a newer engine records its version in " + relative.toStdString());
+    }
+    pass &= Check(settings.RecordEngineVersion(QStringLiteral("2026.11.3")).isEmpty(),
+                  "the same engine opens without a warning");
+
+    const QString secondary = QStringLiteral(".hephaestus/project.heproject");
+    auto setSecondary = [&](const QString& version) {
+        QFile file(project.filePath(secondary));
+        if (!file.open(QIODevice::ReadOnly)) {
+            return false;
+        }
+        QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+        file.close();
+        root[QStringLiteral("engineVersion")] = version;
+        return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+               file.write(QJsonDocument(root).toJson()) > 0;
+    };
+    pass &= Check(setSecondary(QStringLiteral("2026.1.1")), "make the secondary project file stale");
+    settings.RecordEngineVersion(QStringLiteral("2026.11.3"));
+    pass &= Check(recordedIn(secondary) == QStringLiteral("2026.11.3"),
+                  "a stale secondary project file is updated even when the primary is current");
+    pass &= Check(setSecondary(QStringLiteral("2099.1.1")), "make the secondary project file newer");
+    pass &= Check(settings.RecordEngineVersion(QStringLiteral("2026.11.3")) == QStringLiteral("2099.1.1"),
+                  "a newer version in the secondary project file is reported");
+    pass &= Check(recordedIn(QStringLiteral("project.heproject")) == QStringLiteral("2026.11.3"),
+                  "the primary project file is left alone while a newer version is recorded");
+    pass &= Check(recordedIn(secondary) == QStringLiteral("2099.1.1"),
+                  "a newer version in the secondary project file is not lowered");
+    return pass;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -150,6 +215,7 @@ int main(int argc, char** argv)
     bool ok = true;
     ok &= TestCreateBlankProjectLayout();
     ok &= TestEditorModeRoundTrip();
+    ok &= TestRecordEngineVersion();
     if (!ok) {
         std::cerr << "ProjectCreationTests FAILED\n";
         return 1;

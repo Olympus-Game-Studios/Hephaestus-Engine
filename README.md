@@ -182,19 +182,43 @@ loader and MoltenVK in `Contents/Frameworks`; it is ad-hoc signed, not notarized
 writes its logs to `~/Library/Logs/<Product>`. MoltenVK has no ray queries, so
 ray-traced shadows and probe GI fall back to shadow maps and baked probes.
 
-To make a distributable editor, run `tools/create_release_package_macos.sh` after a
-`macos-release` build. It writes `dist/macos/Hephaestus Engine.app` (which opens the
-launcher, with the editor, Qt, plugins and the game player inside) and a `.dmg`. Without
-options it is ad-hoc signed for local use. To ship it, sign with your Developer ID and
-notarize with a profile saved once via `xcrun notarytool store-credentials`:
+#### Release packages (Steam)
+
+Each platform has one script that builds Release from the checkout in its own build
+folder and writes the folder to upload to Steam. Both pin Qt 6.10.2 (override the Qt
+CMake folder if yours is elsewhere), leave out the FPS plugin, `assets/tests`, tests
+and debug symbols, and include `LICENSE.md` and `THIRD_PARTY_NOTICES.md`.
+
+On Windows, from a Developer PowerShell for Visual Studio:
+
+```powershell
+tools\create_release_package.ps1
+```
+
+Optional parameters:
+
+- `-OutputPath <dir>`: where to write the package (default `dist\windows`).
+- `-Qt6Dir <dir>`: Qt's CMake folder (default `C:/Qt/6.10.2/msvc2022_64/lib/cmake/Qt6`).
+
+It builds in `build\steam-windows`, deploys Qt with `windeployqt`, and writes
+`dist\windows` with the launcher, editor, game player, `tools\HephaestusBuild.exe`, Lua
+and plugins. The Visual C++ runtime is not included; Steam installs it.
+
+On macOS, `tools/create_release_package_macos.sh` builds in `build/steam-macos` (Qt
+from `~/Qt/6.10.2/macos` unless `--qt6-dir` is given) and writes
+`dist/macos/Hephaestus Engine.app` (which opens the launcher, with the editor, Qt,
+plugins and the game player inside) and a `.dmg`; pass `--no-dmg` when the output folder
+is the Steam content. Without options it is ad-hoc signed for local use. To ship it,
+sign with your Developer ID and notarize with a profile saved once via
+`xcrun notarytool store-credentials`:
 
 ```bash
 tools/create_release_package_macos.sh --sign "Developer ID Application: Your Name (TEAMID)" --notary-profile hephaestus-notary
 ```
 
-`./notarise-build.sh` does the build and that step in one go, using the first Developer ID
-certificate in your keychain and the `hephaestus-notary` profile (override with
-`HEPHAESTUS_SIGN_IDENTITY` and `HEPHAESTUS_NOTARY_PROFILE`).
+`./notarise-build.sh` runs that step using the first Developer ID certificate in your
+keychain and the `hephaestus-notary` profile (override with `HEPHAESTUS_SIGN_IDENTITY`
+and `HEPHAESTUS_NOTARY_PROFILE`).
 
 If you generate an Xcode project instead, use `cmake -S . -B build -G "Xcode"` and build with `cmake --build build --config Release` or open `build/HephaestusEngine.xcodeproj`.
 
@@ -439,6 +463,10 @@ See the guides above for complete examples and best practices.
 
 Contributions welcome! This is a learning project demonstrating modern engine architecture patterns. Review [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup steps, coding guidelines, and the pull request checklist.
 - Small improvements: documentation edits, issue templates, and automated shader checks are great starting points.
+
+## License
+
+Hephaestus Engine is source available, not open source. See [`LICENSE.md`](LICENSE.md) for the terms, and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the licences of the third-party components it includes.
 
 ## References
 

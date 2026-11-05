@@ -22,6 +22,11 @@ Thanks for your interest in improving the project! This guide explains how to se
 	- `cmake --build --preset windows-release`
 	- On Windows, run these from a Visual Studio Developer PowerShell. Substitute the matching preset on macOS or Linux.
 
+## Licensing your contribution
+- Hephaestus Engine is source available under [`LICENSE.md`](LICENSE.md); it is not open source.
+- By submitting a contribution (pull request, patch, issue attachment or similar) you agree to section 5 of `LICENSE.md`: you grant the licensor named in `LICENSE.md` a perpetual, irrevocable licence to use, modify, distribute, sublicense and relicense it under any terms, and you confirm the work is yours to give.
+- Do not submit code or assets you don't have the right to license this way, such as code copied from projects under incompatible licences.
+
 ## Development Workflow
 - Work from feature branches created off `main`. Use a descriptive branch name, such as `feature/ecs-undo-stack` or `fix/crash-on-exit`.
 - Keep your fork up to date by regularly pulling from `upstream/main` before pushing a PR.

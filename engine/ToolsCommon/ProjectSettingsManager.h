@@ -37,8 +37,13 @@ public:
     QString EditorMode() const;
     bool SetEditorMode(const QString& mode) const;
 
+    /** Records engineVersion as the project's "engineVersion" (the newest engine that has opened it)
+        unless the project already records a newer one, which it then returns; otherwise returns empty. */
+    QString RecordEngineVersion(const QString& engineVersion) const;
+
 private:
     static QVariant Validate(const SettingDefinition& definition, const QVariant& value);
+    bool SetProjectMetadata(const QString& key, const QJsonValue& value) const;
 
     QString m_projectRoot;
     QHash<QString, QVariant> m_values;

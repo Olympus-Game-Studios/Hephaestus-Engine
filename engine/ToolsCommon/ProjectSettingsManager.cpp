@@ -3,9 +3,12 @@
 #include "JsonUtils.h"
 
 #include <algorithm>
+#include <utility>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonValue>
+#include <QVersionNumber>
+#include <QtGlobal>
 
 namespace {
 
@@ -220,6 +223,54 @@ QString ProjectSettingsManager::EditorMode() const
 
 bool ProjectSettingsManager::SetEditorMode(const QString& mode) const
 {
+    return SetProjectMetadata(QStringLiteral("editorMode"), mode);
+}
+
+QString ProjectSettingsManager::RecordEngineVersion(const QString& engineVersion) const
+{
+    if (!IsAvailable()) {
+        return {};
+    }
+    const QString projectFilePath = ResolveProjectFilePath(m_projectRoot);
+    QJsonObject projectMetadata;
+    if (!JsonUtils::ReadJsonObject(projectFilePath, &projectMetadata)) {
+        return {};
+    }
+    QList<std::pair<QString, QJsonObject>> files{ { projectFilePath, projectMetadata } };
+    const QString secondaryPath = SecondaryProjectFilePath(m_projectRoot);
+    QJsonObject secondaryMetadata;
+    if (secondaryPath != projectFilePath && JsonUtils::ReadJsonObject(secondaryPath, &secondaryMetadata)) {
+        files.append({ secondaryPath, secondaryMetadata });
+    }
+
+    const auto versionIn = [](const QJsonObject& metadata) {
+        return metadata.value(QStringLiteral("engineVersion")).toString();
+    };
+    QString newest = engineVersion;
+    for (const auto& [path, metadata] : files) {
+        if (QVersionNumber::fromString(versionIn(metadata)) > QVersionNumber::fromString(newest)) {
+            newest = versionIn(metadata);
+        }
+    }
+    if (newest != engineVersion) {
+        return newest;
+    }
+
+    for (auto& [path, metadata] : files) {
+        if (versionIn(metadata) == engineVersion) {
+            continue;
+        }
+        metadata[QStringLiteral("engineVersion")] = engineVersion;
+        if (!JsonUtils::WriteJsonObject(path, metadata)) {
+            qWarning("Could not record engine version %s in %s", qUtf8Printable(engineVersion),
+                     qUtf8Printable(path));
+        }
+    }
+    return {};
+}
+
+bool ProjectSettingsManager::SetProjectMetadata(const QString& key, const QJsonValue& value) const
+{
     if (!IsAvailable()) {
         return false;
     }
@@ -229,7 +280,7 @@ bool ProjectSettingsManager::SetEditorMode(const QString& mode) const
     if (!JsonUtils::ReadJsonObject(projectFilePath, &projectMetadata)) {
         return false;
     }
-    projectMetadata[QStringLiteral("editorMode")] = mode;
+    projectMetadata[key] = value;
     if (!JsonUtils::WriteJsonObject(projectFilePath, projectMetadata)) {
         return false;
     }
@@ -237,7 +288,7 @@ bool ProjectSettingsManager::SetEditorMode(const QString& mode) const
     const QString secondaryPath = SecondaryProjectFilePath(m_projectRoot);
     QJsonObject secondaryMetadata;
     if (secondaryPath != projectFilePath && JsonUtils::ReadJsonObject(secondaryPath, &secondaryMetadata)) {
-        secondaryMetadata[QStringLiteral("editorMode")] = mode;
+        secondaryMetadata[key] = value;
         JsonUtils::WriteJsonObject(secondaryPath, secondaryMetadata);
     }
     return true;

@@ -41,12 +41,21 @@ The `.heproject` file uses JSON format for maximum extensibility and human reada
 | `formatVersion` | Integer | Yes | Format version for backwards compatibility. Currently `1` |
 | `name` | String | Yes | Human-readable project name |
 | `description` | String | No | Project description (empty string if not provided) |
-| `engineVersion` | String | Yes | Version of Hephaestus Engine used |
+| `engineVersion` | String | Yes | Newest Hephaestus Engine version that has opened the project in the editor (see [Engine versions](#engine-versions)) |
 | `created` | Integer | Yes | Unix timestamp of project creation |
 | `lastModified` | Integer | Yes | Unix timestamp of last modification |
 | `isFavorite` | Boolean | No | Whether project is marked as favorite in editor |
 | `screenshot` | String | No | Relative path to project screenshot (for thumbnail display) |
 | `tags` | Array[String] | No | Array of category/template tags |
+
+## Engine versions
+
+New projects record the engine version that created them. Each time the editor opens a project it compares `engineVersion` with its own version (`Major.Minor.Patch`, compared number by number):
+
+- **Older, equal or missing:** the editor writes its own version to `engineVersion` in `project.heproject` and `.hephaestus/project.heproject`.
+- **Newer:** the editor leaves `engineVersion` alone and warns that the project has been opened with a newer Hephaestus, that it may use features this version doesn't support, and that saving it could lose that work. The project still opens.
+
+A project whose `formatVersion` this editor doesn't support (anything but `1`) is refused with an error instead.
 
 ## Project Migration
 

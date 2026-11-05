@@ -80,7 +80,7 @@ MyGame/
 ├── game.ini                # Game configuration
 ├── build_manifest.json     # Package metadata and contents
 ├── export_manifest.txt     # Compatibility package marker
-├── ThirdPartyNotices.txt   # Redistributed dependency notices
+├── ThirdPartyNotices.txt   # Copy of the engine's THIRD_PARTY_NOTICES.md
 ├── assets/
 │   ├── scenes/
 │   │   └── MainLevel.hpscene
@@ -88,14 +88,18 @@ MyGame/
 │   └── textures/
 ├── scripts/
 │   └── *.lua               # Game scripts
-├── shaders/
-│   └── *.spv               # Compiled shaders
-├── logs/                   # Created at runtime
-│   └── runtime.log
-└── crashes/                # Created if crash occurs
-    ├── crash_YYYYMMDD_HHMMSS.dmp
-    └── crash_YYYYMMDD_HHMMSS.txt
+└── shaders/
+    └── *.spv               # Compiled shaders
 ```
+
+The game writes its log and crash reports outside its install folder, under its executable's name:
+
+| | Windows | macOS |
+| --- | --- | --- |
+| Log | `%LOCALAPPDATA%\<Product>\Logs\runtime.log` | `~/Library/Logs/<Product>/logs/runtime.log` |
+| Crash reports | `%LOCALAPPDATA%\<Product>\Crashes\crash_YYYYMMDD_HHMMSS.dmp` and `.txt` | macOS's own crash reports (Console app) |
+
+If Windows can't provide the local app data folder, the game falls back to `logs\` and `crashes\` beside the executable.
 
 ## Game Configuration (game.ini)
 
@@ -144,7 +148,7 @@ The game runtime includes automatic crash handling:
    - Timestamp and initialization stage
 4. **User Notification**: Shows message box with crash info
 
-Crash files are saved to the `crashes/` folder next to the executable.
+Minidumps and crash logs are written on Windows only. Crash files are saved to the game's `%LOCALAPPDATA%\<Product>\Crashes` folder, or to `crashes\` next to the executable if Windows can't provide the local app data folder. On macOS, crash reports are in the Console app.
 
 ## Troubleshooting
 
@@ -158,15 +162,15 @@ reports a blocking error when it is unavailable.
   require the Vulkan SDK.
 
 ### Game crashes immediately
-1. Check `logs/runtime.log` for startup progress
-2. Check `crashes/` folder for crash reports
+1. Check the game's `runtime.log` for startup progress (see above for where it is)
+2. On Windows, check the game's `Crashes` folder for crash reports; on macOS, look in the Console app
 3. Verify all required DLLs are present
 4. Ensure shaders are compiled (`.spv` files in `shaders/`)
 
 ### Scene not loading
 - Verify the scene file exists in `assets/scenes/`
 - Check the path in `game.ini` is correct (use forward slashes)
-- Look for errors in `logs/runtime.log`
+- Look for errors in the game's `runtime.log`
 
 ## Why Two Executables?
 

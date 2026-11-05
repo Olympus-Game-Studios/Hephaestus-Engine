@@ -22,8 +22,8 @@ set(HEPHAESTUS_APP_NAME        "Hephaestus Engine")
 set(HEPHAESTUS_APP_DESCRIPTION "A 3D game engine built with C++20, Vulkan, Qt, and Lua.")
 set(HEPHAESTUS_ORGANIZATION    "Hephaestus")
 set(HEPHAESTUS_DOMAIN          "dev.olympusgames.hephaestus")
-set(HEPHAESTUS_WEBSITE         "https://hepheastus.olympusgames.dev")
-set(HEPHAESTUS_COPYRIGHT       "Copyright (c) 2026 Hephaestus Contributors")
+set(HEPHAESTUS_WEBSITE         "https://hephaestus.olympusgames.dev")
+set(HEPHAESTUS_COPYRIGHT       "Copyright (c) 2026 Andrew Zambazos")
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/engine/Core/AppConfig.h.in"
@@ -150,6 +150,13 @@ if(NOT Lua_FOUND)
     endif()
 else()
     message(STATUS "Found Lua: ${LUA_LIBRARIES}")
+    if(WIN32)
+        list(GET LUA_LIBRARIES 0 _lua_import_library)
+        get_filename_component(_lua_library_dir "${_lua_import_library}" DIRECTORY)
+        get_filename_component(_lua_library_name "${_lua_import_library}" NAME_WE)
+        find_file(LUA_DLL_PATH "${_lua_library_name}.dll"
+            HINTS "${_lua_library_dir}/../bin" "${_lua_library_dir}" NO_DEFAULT_PATH)
+    endif()
 endif()
 
 # Jolt Physics Engine
@@ -319,6 +326,7 @@ add_library(HephaestusRuntime STATIC
     engine/Animation/CharacterPlayback.cpp
     engine/Core/ProjectContext.cpp
     engine/Core/EngineLog.cpp
+    engine/Core/AppPaths.cpp
     engine/Core/SimulationStep.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
@@ -1098,6 +1106,10 @@ function(hephaestus_add_shared_assets_copy target_name)
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/.engine/meshes"
                 "${asset_dir}/.engine/meshes"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.md"
+                "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+                "${asset_dir}"
             COMMENT "Copying shared runtime/editor assets for ${target_name}"
         )
     else()
@@ -1111,6 +1123,10 @@ function(hephaestus_add_shared_assets_copy target_name)
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/.engine/meshes"
                 "${asset_dir}/.engine/meshes"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.md"
+                "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+                "${asset_dir}"
             COMMENT "Copying runtime assets for ${target_name}"
         )
     endif()
@@ -1246,6 +1262,12 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures/hdris/
     OPTIONAL
 )
 
+install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.md
+    ${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md
+    DESTINATION .
+)
+
 # Install assets
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets/
     DESTINATION assets
@@ -1265,10 +1287,8 @@ if(TARGET HephaestusEngine)
 endif()
 
 # Install Lua DLL if present
-if(EXISTS "$ENV{USERPROFILE}/vcpkg/installed/x64-windows/bin/lua.dll")
-    install(FILES "$ENV{USERPROFILE}/vcpkg/installed/x64-windows/bin/lua.dll"
-        DESTINATION .
-    )
+if(LUA_FOUND AND DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
+    install(FILES "${LUA_DLL_PATH}" DESTINATION .)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────

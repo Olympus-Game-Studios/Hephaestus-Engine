@@ -48,8 +48,26 @@ std::ofstream Bootstrap::s_LogFile;
 // Windows crash handler
 static LONG WINAPI UnhandledExceptionHandler(EXCEPTION_POINTERS* exceptionInfo);
 static LPTOP_LEVEL_EXCEPTION_FILTER s_PreviousExceptionFilter = nullptr;
-static std::filesystem::path s_CrashDumpPath;
-static std::filesystem::path s_CrashLogPath;
+static std::filesystem::path s_CrashDirectory;
+
+static std::filesystem::path ExecutablePath() {
+    std::wstring buffer(MAX_PATH, L'\0');
+    while (true) {
+        DWORD result = GetModuleFileNameW(nullptr, buffer.data(),
+                                          static_cast<DWORD>(buffer.size()));
+        if (result == 0) {
+            return {};
+        }
+        if (result < buffer.size() - 1) {
+            buffer.resize(result);
+            return std::filesystem::path(buffer);
+        }
+        buffer.resize(buffer.size() * 2);
+        if (buffer.size() > 32768) {
+            return {};
+        }
+    }
+}
 #endif
 
 bool Bootstrap::Initialize(const BootstrapConfig& config) {
@@ -76,9 +94,18 @@ bool Bootstrap::Initialize(const BootstrapConfig& config) {
         // Continue anyway, but log the warning
     }
 
+#ifdef _WIN32
+    const std::filesystem::path localData = LocalAppDataFor(ExecutablePath().stem());
+    s_CrashDirectory = localData.empty() ? s_RuntimeRoot / "crashes" : localData / "Crashes";
+#else
+    const std::filesystem::path localData;
+#endif
+
     // Initialize logging
     if (config.enableFileLogging) {
-        std::filesystem::path logDir = LogRootFor(s_ExeDirectory) / config.logDirectory;
+        std::filesystem::path logDir = localData.empty()
+            ? LogRootFor(s_ExeDirectory) / config.logDirectory
+            : localData / "Logs";
         std::error_code ec;
         std::filesystem::create_directories(logDir, ec);
         
@@ -140,22 +167,7 @@ void Bootstrap::Shutdown() {
 
 std::filesystem::path Bootstrap::GetExecutableDirectory() {
 #ifdef _WIN32
-    std::wstring buffer(MAX_PATH, L'\0');
-    while (true) {
-        DWORD result = GetModuleFileNameW(nullptr, buffer.data(),
-                                          static_cast<DWORD>(buffer.size()));
-        if (result == 0) {
-            return {};
-        }
-        if (result < buffer.size() - 1) {
-            buffer.resize(result);
-            return std::filesystem::path(buffer).parent_path();
-        }
-        buffer.resize(buffer.size() * 2);
-        if (buffer.size() > 32768) {
-            return {};
-        }
-    }
+    return ExecutablePath().parent_path();
 #elif defined(__APPLE__)
     char buffer[4096];
     uint32_t size = sizeof(buffer);
@@ -330,7 +342,7 @@ static LONG WINAPI UnhandledExceptionHandler(EXCEPTION_POINTERS* exceptionInfo) 
     std::ostringstream timestamp;
     timestamp << std::put_time(&tm, "%Y%m%d_%H%M%S");
     
-    std::filesystem::path crashDir = Bootstrap::GetRuntimeRoot() / "crashes";
+    const std::filesystem::path& crashDir = s_CrashDirectory;
     std::error_code ec;
     std::filesystem::create_directories(crashDir, ec);
     
@@ -415,7 +427,7 @@ static LONG WINAPI UnhandledExceptionHandler(EXCEPTION_POINTERS* exceptionInfo) 
         
         crashLog << "Current initialization stage: " << 
             static_cast<int>(Bootstrap::GetCurrentStage()) << "\n";
-        crashLog << "\nA minidump file has been created: " << dumpPathFs.string() << "\n";
+        crashLog << "\nA minidump file has been created: " << dumpPathFs.filename().string() << "\n";
         crashLog.close();
     }
     
