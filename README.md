@@ -1,478 +1,147 @@
-
 # Hephaestus Engine
 
-A modern, lightweight Vulkan-based game engine with Entity-Component-System (ECS) architecture. This repository contains a rendering engine, scene graph, ImGui-based editor, and tools for learning and experimentation.
+Hephaestus is a game engine built from the ground up in C++20, with a Vulkan renderer and a Qt editor. The idea behind it is simple: put creativity before complexity. It should be approachable on your first day and still get out of the way once you know what you're doing.
 
-## Overview
+It's made by Olympus Game Studios and is **source available**: you can read it, build it and make games with it. See [License](#license).
 
-This project demonstrates a modern engine architecture with:
-- **Vulkan rendering pipeline**
-- **Entity-Component-System (ECS)** using EnTT
-- **Scene graph** with hierarchical transforms
-- **ImGui-based editor** with ImGuizmo integration
-- **Ray picking** for object selection
-- **Unreal-style camera controls**
+> **Just want to make games?** You don't need this repository. Get Hephaestus on Steam and read the [user guide](docs/user-guide/README.md) (also on the website at <https://hephaestus.olympusgames.dev/doc/hephaestus>). This README is for people building the engine from source or working on it.
 
-Key parts:
-- `engine/` — Core engine code (graphics, scene/ECS, platform, physics hooks)
-  - `Core/` — Application entry point and math utilities
-  - `Gfx/` — Vulkan rendering abstraction
-  - `Scene/` — **NEW!** ECS system (Entity, Scene, Components)
-  - `UI/` — Editor panels including material graph editor
-  - `Assets/` — Asset loading and management (models, textures)
-- `editor/` — Editor application and widgets
-- `extern/` — Third-party libraries (glfw, imgui, ImGuizmo, ImNodes, EnTT, VMA, stb_image)
-- `shaders/` — GLSL shader sources and compiled SPIR-V
-- `build/` — CMake/Visual Studio generated build files
+## What's in it
 
-## Features
+- **Editor** with Default, Artist and Programmer workspace modes, a launcher, command search, undo for nearly everything and autosave recovery
+- **Rendering**: Vulkan, PBR materials, directional, point and spot lights with soft shadows, HDRI skies with ambient lighting, probe volume global illumination (baked, or ray traced on GPUs with ray queries) and ray traced shadows
+- **Scenes** built from EnTT entities and components, prefabs with overrides, Apply, Revert and Unpack
+- **Materials** authored in a node based Material Editor
+- **Physics** with Jolt: rigid bodies, mesh colliders, triggers, collision layers and a character controller
+- **Characters**: skinned GLB and FBX import, a Character Editor, clip playback and crossfades
+- **Lua 5.4 scripting** with Inspector variables, hot reload, a built in code editor and a debugger, plus scripting languages added by plugins
+- **Game UI** (HephaestusUI) with a visual UI Editor and `.hui` layouts
+- **Input** actions and axes for keyboard, mouse and gamepad
+- **Plugins**: native editor plugins and scripting language plugins
+- **Packaging** to a standalone Windows game (and a macOS `.app`) from the editor or the `HephaestusBuild` command line tool
 
-### ✨ Entity-Component-System (ECS)
-- Modern, data-oriented architecture using **EnTT**
-- Compose entities from reusable components
-- Efficient component queries and iteration
-- Type-safe component access
-- Scene graph with parent-child hierarchy
+What's missing or unfinished is listed honestly in [What's not there yet](docs/user-guide/whats-not-there-yet.md).
 
-### 🎮 Built-in Components
-- **TagComponent** - Entity naming
-- **TransformComponent** - Position, rotation, scale with hierarchy
-- **MeshRendererComponent** - Rendering data and bounding boxes
-- **MaterialComponent** - Full PBR material properties with texture support
-- **SelectionComponent** - Editor selection state
-- **CameraComponent** - Camera properties
+## Repository layout
 
-### 🎨 Material System
-- **PBR Workflow** - Physically-based rendering with metallic/roughness workflow
-- **Texture Support** - Albedo, Normal Maps, Roughness Maps, Ambient Occlusion
-- **Node-Based Editor** - Visual material graph editor with real-time preview
-- **Material Assets** - Save and reuse materials across multiple entities
-- **Simple & Advanced Modes** - UI properties editor and visual node graph
+| Path | What's there |
+| --- | --- |
+| `engine/` | All engine and editor source. `Gfx` (Vulkan renderer), `Scene` (ECS, prefabs, serialization), `Physics`, `Scripting`, `Animation`, `Audio`, `Input`, `Assets`, `Build` (packaging), `Game` (packaged game player), `UI/QtEditor` (editor), `UI/Launcher`, `UI/HephaestusUI` (game UI), `PluginAPI`, `Automation`, `Tests` |
+| `shaders/` | GLSL sources, compiled to SPIR-V by the build |
+| `Plugins/` | First party plugins: Primitive Tools (example), Hephaestus MCP (AI automation) and the FPS plugin (development only, not shipped) |
+| `assets/`, `.engine/` | Engine content: built in meshes, skies, fonts, test content |
+| `editor/` | Editor fonts, icons and styles |
+| `extern/` | Third party code (Jolt, GLFW and ufbx as submodules; EnTT, VMA, Lua, nlohmann/json, cpp-httplib and stb vendored) |
+| `tools/` | Release packaging scripts and the packaged game portability test |
+| `docs/` | The user guide, plugin docs, code notes, plans and audits |
+| `Documentation/` | Technical reference for engine developers (see [Documentation](#documentation)) |
+| `Branding/` | Logos and editor design sources |
 
-### 🛠️ Editor Tools
-- Scene hierarchy window
-- Entity properties inspector
-- **Material Editor** - Visual node-based material authoring
-- ImGuizmo transform manipulation (Translate/Rotate/Scale)
-- Ray-based object picking
-- Real-time component editing
-- **Export & Packaging** - One-click scene export with automatic asset collection
+## Building from source
 
-### 📦 Export & Distribution
-- **One-Click Export** - Export button in editor toolbar
-- **Asset Collection** - Automatically gathers all referenced assets (meshes, textures, materials, scripts)
-- **Packaging Script** - PowerShell tool for validation and manifest generation
-- **Reproducible Builds** - Create distributable runtime packages
-- **Pure Runtime Binary** - Exported `HephaestusEngine.exe` auto-detects packaged builds, hides the editor UI, and boots straight into gameplay (use `--editor` to override)
-- **See:** `Documentation/Features/EXPORT_PACKAGING.md` for complete guide
+### Windows
 
-### 📝 Scripting System (Lua)
-- **Lua Scripts** - Interpreted, rapid iteration and the primary supported scripting language
-  - No recompilation needed
-  - Fast prototyping and iteration
-  - Attach scripts via the Editor Details Panel
-  - Unified lifecycle callbacks (onAwake, onUpdate, onLateUpdate, onDestroy)
+You need:
 
-**Note:** C++-based scripting is deprecated in this repository. Use Lua for game scripting; keep C++ for engine internals and performance-critical systems.
+- **Visual Studio 2022** with the Desktop development with C++ workload
+- **CMake 3.24** or newer
+- **Vulkan SDK** (the build uses `glslc` from it to compile shaders)
+- **Qt 6** for MSVC 64 bit (releases use 6.10.2). CMake looks under `C:\Qt\6.*\msvc*`; pass `-DQt6_DIR=<Qt>/lib/cmake/Qt6` if yours is elsewhere
+- **Git**, cloning with submodules
 
-**Quick Start**: See `Documentation/Scripting/SCRIPTING_QUICK_START.md` for immediate examples.
-
-## Prerequisites (Windows)
-
-- Visual Studio 2019 or 2022 with Desktop development for C++ workload.
-- CMake (>= 3.16 recommended).
-- Vulkan SDK (for headers, loader and validation tools). Set `VULKAN_SDK` environment variable via the SDK installer.
-- glslangValidator (usually included with the Vulkan SDK) to compile GLSL to SPIR-V.
-- Git (to clone the repo and submodules, including `extern/ufbx`). Use `git clone --recurse-submodules` or `git submodule update --init --recursive` after a plain clone.
-
-Optional but useful:
-- Python for small helper scripts.
-
-If you don't have `glslangValidator` available on PATH, use the Vulkan SDK's `bin` folder (for example `%VULKAN_SDK%\Bin\glslangValidator.exe`).
-
-## Prerequisites (macOS)
-
-- macOS 12 or newer (Apple Silicon or Intel) with Metal/Vulkan support.
-- Xcode Command Line Tools (`xcode-select --install`).
-- CMake (>= 3.16). Install with Homebrew: `brew install cmake`.
-- Vulkan SDK for macOS (includes MoltenVK). Run the SDK's `setup-env.sh` or export `VULKAN_SDK` so headers and dylibs resolve.
-- glslangValidator (install via `brew install glslang` or use the SDK build).
-- Qt 6 and Lua: `brew install qt lua`. Packaged games do not use Qt, and they carry their own Lua, Vulkan loader and MoltenVK, so players do not need Homebrew or the Vulkan SDK.
-- Git (preinstalled with the command line tools).
-
-Optional but useful:
-- Ninja generator (`brew install ninja`) for faster local builds.
-- PowerShell Core (`brew install powershell`) to reuse the existing setup scripts.
-
-## Quick Start
-
-### 1. Setup EnTT (First time only)
-
-Run the setup script to download EnTT:
+Lua is bundled in `extern/lua`, so there's nothing extra to install for it.
 
 ```powershell
-.\setup_entt.ps1
-```
-
-This downloads EnTT v3.13.2 and extracts it to `extern/entt/`.
-
-On macOS, run the script with PowerShell Core (`pwsh ./setup_entt.ps1`) or manually copy EnTT into `extern/entt/` if you prefer staying in a POSIX shell.
-
-### 2. Build
-
-#### Windows (PowerShell)
-
-The repository uses an out-of-source CMake build. From a PowerShell prompt run:
-
-```powershell
-# from repo root
-git clone --recurse-submodules <repo-url>
-mkdir build; cd build
-cmake -S .. -B . -A x64 -DCMAKE_BUILD_TYPE=Release
-cmake --build . --config Release
-```
-
-This will generate a Visual Studio solution in `build/` and build the projects in Release mode. You can also open `build/HephaestusEngine.sln` in Visual Studio and build there.
-
-If you already have a `build/` folder from earlier runs, you can simply run:
-
-```powershell
-cmake --build build --config Release
-```
-
-#### macOS (Terminal)
-
-Choose your preferred generator (Ninja recommended for command-line workflows, Xcode if you want an IDE project):
-
-```bash
-# from repo root
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-```
-
-#### Platform profiles (CMake presets)
-
-The repository uses one source tree for all supported desktop platforms. Use the
-platform preset on that platform; no platform-specific branch is required:
-
-```bash
-cmake --preset macos-release    # macOS + Ninja
-cmake --build --preset macos-release
-cmake --preset linux-release    # Linux + Ninja
-cmake --build --preset linux-release
-```
-
-On Windows, use a Developer PowerShell for Visual Studio:
-
-```powershell
+git clone --recurse-submodules https://github.com/Olympus-Game-Studios/Hephaestus-Engine.git
+cd Hephaestus-Engine
 cmake --preset windows-release
 cmake --build --preset windows-release
 ```
 
-The presets expect the Vulkan SDK and Qt 6 to be installed on the selected
-platform. Pass `-DQt6_DIR=...` to CMake when Qt is not in its standard location.
+Run those from a Developer PowerShell for Visual Studio. The binaries land in `build\windows-release\Release\`: `HephaestusLauncher.exe`, `HephaestusEngine.exe` (the editor), `HephaestusGame.exe` (the game player) and `tools\HephaestusBuild.exe`.
 
-On macOS the preset builds `HephaestusEngine.app`, `HephaestusLauncher.app` and
-`HephaestusGame.app` in `build/macos-release/Release/`, plus the tests and engine
-plugins (no `build.bat` step is needed). In the build tree the apps read assets,
-shaders and plugins from the folder beside them, like the Windows build. Packaging a
-project (from the editor, or `Release/tools/HephaestusBuild --project <path>`) produces
-`<Product>.app` with the game's content in `Contents/Resources` and Lua, the Vulkan
-loader and MoltenVK in `Contents/Frameworks`; it is ad-hoc signed, not notarized, and
-writes its logs to `~/Library/Logs/<Product>`. MoltenVK has no ray queries, so
-ray-traced shadows and probe GI fall back to shadow maps and baked probes.
+`build.bat` is a shortcut for a plain `build\` folder: `build.bat`, `build.bat debug` or `build.bat --clean --reconfigure`.
 
-#### Release packages (Steam)
+If you already cloned without submodules, run `git submodule update --init --recursive`.
 
-Each platform has one script that builds Release from the checkout in its own build
-folder and writes the folder to upload to Steam. Both pin Qt 6.10.2 (override the Qt
-CMake folder if yours is elsewhere), leave out the FPS plugin, `assets/tests`, tests
-and debug symbols, and include `LICENSE.md` and `THIRD_PARTY_NOTICES.md`.
+### macOS
 
-On Windows, from a Developer PowerShell for Visual Studio:
-
-```powershell
-tools\create_release_package.ps1
-```
-
-Optional parameters:
-
-- `-OutputPath <dir>`: where to write the package (default `dist\windows`).
-- `-Qt6Dir <dir>`: Qt's CMake folder (default `C:/Qt/6.10.2/msvc2022_64/lib/cmake/Qt6`).
-
-It builds in `build\steam-windows`, deploys Qt with `windeployqt`, and writes
-`dist\windows` with the launcher, editor, game player, `tools\HephaestusBuild.exe`, Lua
-and plugins. The Visual C++ runtime is not included; Steam installs it.
-
-On macOS, `tools/create_release_package_macos.sh` builds in `build/steam-macos` (Qt
-from `~/Qt/6.10.2/macos` unless `--qt6-dir` is given) and writes
-`dist/macos/Hephaestus Engine.app` (which opens the launcher, with the editor, Qt,
-plugins and the game player inside) and a `.dmg`; pass `--no-dmg` when the output folder
-is the Steam content. Without options it is ad-hoc signed for local use. To ship it,
-sign with your Developer ID and notarize with a profile saved once via
-`xcrun notarytool store-credentials`:
+You need the Xcode command line tools, CMake, Ninja, the Vulkan SDK (with MoltenVK) and Qt 6 for macOS.
 
 ```bash
-tools/create_release_package_macos.sh --sign "Developer ID Application: Your Name (TEAMID)" --notary-profile hephaestus-notary
+cmake --preset macos-release
+cmake --build --preset macos-release
 ```
 
-`./notarise-build.sh` runs that step using the first Developer ID certificate in your
-keychain and the `hephaestus-notary` profile (override with `HEPHAESTUS_SIGN_IDENTITY`
-and `HEPHAESTUS_NOTARY_PROFILE`).
+This builds `HephaestusEngine.app`, `HephaestusLauncher.app` and `HephaestusGame.app` in `build/macos-release/Release/`. MoltenVK has no ray queries, so ray traced shadows and probe lighting use their fallbacks. Sound doesn't play on macOS yet. Pass `-DQt6_DIR=...` if CMake can't find Qt.
 
-If you generate an Xcode project instead, use `cmake -S . -B build -G "Xcode"` and build with `cmake --build build --config Release` or open `build/HephaestusEngine.xcodeproj`.
+### Linux
 
-If you previously configured `build/`, rerun the single-line build command:
+There's a `linux-release` preset, but Linux isn't a supported platform yet and the editor viewport doesn't work there.
+
+### CMake options
+
+| Option | Default | Does |
+| --- | --- | --- |
+| `HEPHAESTUS_BUILD_EDITOR` | ON | Build the editor and launcher |
+| `HEPHAESTUS_BUILD_GAME` | ON | Build the game player |
+| `HEPHAESTUS_USE_QT` | ON | Build the Qt editor UI |
+| `HEPHAESTUS_GAME_SCRIPTING` | ON | Start Lua and plugin language scripts in the game player |
+| `HEPHAESTUS_RUNTIME_AUTOMATION` | OFF | Compile MCP automation into the game player |
+| `HEPHAESTUS_BUILD_QT_TESTS` | OFF | Build the optional Qt Test editor harness |
+
+### Tests
+
+The engine has headless CTest suites for assets, prefabs, scenes, packaging, physics layers, characters, input, UI, scripting languages and more:
+
+```powershell
+ctest --test-dir build\windows-release -C Release --output-on-failure
+```
+
+## Running
+
+Start `HephaestusLauncher` to create or open a project, which then opens the editor. The editor can also be started directly and asked to open a project from **File > Open Project...**.
+
+The editor writes its log to `%LOCALAPPDATA%\Hephaestus\Logs\hephaestus.log` on Windows and to `~/Library/Logs/` on macOS. The Console panel shows the same log live.
+
+## Making a release (Steam)
+
+Each platform has one script that builds Release from a clean checkout in its own build folder and writes the folder that's uploaded to Steam. Both pin Qt 6.10.2, leave out the FPS plugin, `assets/tests`, tests and debug symbols, and include `LICENSE.md` and `THIRD_PARTY_NOTICES.md`.
+
+Windows, from a Developer PowerShell for Visual Studio:
+
+```powershell
+tools\create_release_package.ps1 [-OutputPath dist\windows] [-Qt6Dir C:/Qt/6.10.2/msvc2022_64/lib/cmake/Qt6]
+```
+
+It builds in `build\steam-windows`, deploys Qt with `windeployqt` and writes `dist\windows`. The Visual C++ runtime isn't included because Steam installs it.
+
+macOS:
 
 ```bash
-cmake --build build
+tools/create_release_package_macos.sh [--qt6-dir <dir>] [--no-dmg] [--sign "Developer ID Application: Name (TEAMID)" --notary-profile hephaestus-notary]
 ```
 
-> Note: When launching binaries outside the build tree you may need to export `DYLD_LIBRARY_PATH=$VULKAN_SDK/lib` (or source the Vulkan SDK `setup-env.sh`) so MoltenVK is discoverable.
+It builds in `build/steam-macos` and writes `dist/macos/Hephaestus Engine.app` (which opens the launcher) and a `.dmg`. Use `--no-dmg` when the output is the Steam content. Without `--sign` it's ad hoc signed for local use. `./notarise-build.sh` signs and notarizes with the first Developer ID certificate in your keychain and the `hephaestus-notary` profile (override with `HEPHAESTUS_SIGN_IDENTITY` and `HEPHAESTUS_NOTARY_PROFILE`).
 
-## Compile shaders
-
-Shaders live in the `shaders/` folder. You can compile the GLSL source to SPIR-V using `glslangValidator` (PowerShell):
-
-```powershell
-cd shaders
-glslangValidator -V triangle.vert -o triangle.vert.spv
-glslangValidator -V triangle.frag -o triangle.frag.spv
-cd ..
-```
-
-If `glslangValidator` is not on your PATH, run it from the Vulkan SDK bin folder, for example:
-
-```powershell
-& "$env:VULKAN_SDK\Bin\glslangValidator.exe" -V shaders\triangle.vert -o shaders\triangle.vert.spv
-```
-
-The project includes precompiled SPIR-V files (`*.spv`) used by the sample application. Recompile shaders whenever you change GLSL sources.
-
-## Run
-
-After a successful build the main executable(s) will be in `build/` under the selected configuration (for example `build/Release/`). Run the executable directly or launch from Visual Studio.
-
-Example (PowerShell):
-
-```powershell
-.
-# If the binary is in build\Release
-& .\build\Release\HephaestusEngine.exe
-```
-
-Paths and executable names may vary depending on generator and configuration.
-
-## Project Layout
-
-```
-Hephaestus-Engine/
-├── CMakeLists.txt           # Main build configuration
-├── setup_entt.ps1           # EnTT setup script
-├── engine/
-│   ├── Core/                # Application entry and math
-│   ├── Gfx/                 # Vulkan rendering abstraction
-│   ├── Scene/               # ✨ ECS system (NEW!)
-│   │   ├── Entity.h/cpp     # Entity wrapper
-│   │   ├── Scene.h/cpp      # Scene manager
-│   │   ├── Components.h     # All component definitions
-│   │   └── SceneSerializer.cpp # Scene save/load
-│   ├── UI/                  # ✨ Editor UI panels
-│   │   └── MaterialEditor/  # Node-based material graph
-│   ├── Assets/              # Asset loading (models, textures)
-│   ├── Physics/             # Physics hooks
-│   └── Platform/            # Platform abstraction
-├── editor/                  # Editor widgets
-├── extern/
-│   ├── entt/                # ✨ EnTT ECS library (NEW!)
-│   ├── glfw/                # Window & input
-│   ├── imgui/               # UI library
-│   ├── ImGuizmo/            # Transform gizmos
-│   ├── imnodes/             # ✨ Node graph editor (NEW!)
-│   ├── stb_image.h          # Image loading
-│   └── VMA/                 # Vulkan Memory Allocator
-├── shaders/                 # GLSL shaders and SPIR-V
-├── build/                   # CMake build output
-└── Documentation:
-    ├── ECS_GUIDE.md                    # ✨ Comprehensive ECS guide
-    ├── ECS_IMPLEMENTATION_SUMMARY.md   # ✨ What was added
-    ├── CUSTOM_COMPONENTS_GUIDE.md      # ✨ How to extend
-    ├── LIGHTING_AND_MATERIALS_GUIDE.md # ✨ PBR material system
-    ├── TEXTURE_RENDERING_GUIDE.md      # ✨ Texture integration
-    ├── RAY_PICKING.md                  # Ray picking documentation
-    └── IMGUIZMO_INTEGRATION.md         # ImGuizmo docs
-```
+`tools/test_package_portability.ps1` packages a test project, moves it away from the source tree and checks that it still runs.
 
 ## Documentation
 
-### Markdown Reference
-
-| File | Summary |
+| Where | For |
 | --- | --- |
-| [`README.md`](README.md) | Project overview, build instructions, controls, and feature tour. |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution workflow, coding standards, and pull request checklist. |
-| [`ROADMAP.md`](ROADMAP.md) | Long-term roadmap, milestones, and active developer to-do list. |
-| [`Documentation/Guides/CUSTOM_COMPONENTS_GUIDE.md`](Documentation/Guides/CUSTOM_COMPONENTS_GUIDE.md) | Step-by-step tutorial for extending the ECS with custom components and systems. |
-| [`Documentation/Architecture/ECS_ARCHITECTURE_DIAGRAM.md`](Documentation/Architecture/ECS_ARCHITECTURE_DIAGRAM.md) | ASCII architecture diagram showing scene, entity, component, and system relationships. |
-| [`Documentation/Guides/ECS_GUIDE.md`](Documentation/Guides/ECS_GUIDE.md) | Comprehensive deep dive into the ECS API, scene management, and usage patterns. |
-| [`Documentation/Architecture/ECS_IMPLEMENTATION_SUMMARY.md`](Documentation/Architecture/ECS_IMPLEMENTATION_SUMMARY.md) | Summary of files, features, and integration work added during the ECS migration. |
-| [`Documentation/Architecture/ECS_SUCCESS.md`](Documentation/Architecture/ECS_SUCCESS.md) | Release-style recap of ECS deliverables, editor features, and setup steps. |
-| [`Documentation/Archive/ICON_INTEGRATION.md`](Documentation/Archive/ICON_INTEGRATION.md) | Reserved for icon pipeline documentation (currently a placeholder). |
-| [`Documentation/Archive/IMGUIZMO_INTEGRATION.md`](Documentation/Archive/IMGUIZMO_INTEGRATION.md) | Notes on integrating ImGuizmo with the editor, including math helpers and UI wiring. |
-| [`Documentation/Guides/LIGHTING_AND_MATERIALS_GUIDE.md`](Documentation/Guides/LIGHTING_AND_MATERIALS_GUIDE.md) | Overview of the PBR material system, light types, and usage examples. |
-| [`Documentation/Lighting/LIGHTING_ADVANCED_EXAMPLES.md`](Documentation/Lighting/LIGHTING_ADVANCED_EXAMPLES.md) | Expanded code examples for advanced materials, presets, and lighting scenarios. |
-| [`Documentation/Lighting/LIGHTING_VISUAL_GUIDE.md`](Documentation/Lighting/LIGHTING_VISUAL_GUIDE.md) | Visual reference describing demo scene lighting setups and material appearances. |
-| [`Documentation/Archive/TEXTURE_DROPDOWN_FEATURE.md`](Documentation/Archive/TEXTURE_DROPDOWN_FEATURE.md) | Implementation details for the texture selection UI in the material editor. |
-| [`Documentation/Archive/RAY_PICKING.md`](Documentation/Archive/RAY_PICKING.md) | Detailed explanation of the ray picking implementation and input handling. |
-| [`Documentation/Archive/RAY_PICKING_REFERENCE.md`](Documentation/Archive/RAY_PICKING_REFERENCE.md) | Quick reference for ray picking code changes and helper APIs. |
-| [`Documentation/Roadmaps/ROADMAP_1-0.md`](Documentation/Roadmaps/ROADMAP_1-0.md) | 1.0 release roadmap, project status checklist, and acceptance criteria. |
-| [`Documentation/Roadmaps/ROADMAP_1-0_issues_plan.md`](Documentation/Roadmaps/ROADMAP_1-0_issues_plan.md) | Suggested 10-week issues plan and schedule for a single developer. |
-
-Third-party dependencies include their own documentation inside `extern/`; refer to those folders when working with vendor libraries.
-
-Issue drafts & helper script
-----------------------------
-We've added a set of draft GitHub issues and a helper script to make converting roadmap items into issues easy. The drafts live under `.github/ISSUE_DRAFTS/` and the script to create issues using the GitHub CLI is at `tools/create_github_issues.ps1`.
-
-To create issues locally (requires GitHub CLI `gh` and repo permissions):
-
-```powershell
-gh auth login
-.\tools\create_github_issues.ps1
-```
-
-The script reads each draft markdown file (skipping `README.md`) and creates an issue with the first markdown heading as the title and the file body as the issue description.
-
-### New ECS System Documentation
-
-- **[ECS_GUIDE.md](Documentation/ECS_GUIDE.md)** - Complete guide to the Entity-Component System
-- **[ECS_IMPLEMENTATION_SUMMARY.md](Documentation/ECS_IMPLEMENTATION_SUMMARY.md)** - Implementation details and migration guide
-- **[CUSTOM_COMPONENTS_GUIDE.md](Documentation/CUSTOM_COMPONENTS_GUIDE.md)** - Examples for creating custom components
-
-### Usage Examples
-
-#### Creating Entities
-```cpp
-Scene scene("My Scene");
-
-Entity cube = scene.CreateEntity("Cube");
-cube.AddComponent<TransformComponent>(Vec3(0, 0, 0));
-cube.AddComponent<MeshRendererComponent>();
-```
-
-#### Querying Entities
-```cpp
-auto view = scene.GetEntitiesWith<TransformComponent, MeshRendererComponent>();
-for (auto handle : view) {
-    Entity entity(handle, &scene);
-    auto& transform = entity.GetComponent<TransformComponent>();
-    // Process entity...
-}
-```
-
-#### Hierarchical Transforms
-```cpp
-Entity parent = scene.CreateEntity("Parent");
-Entity child = scene.CreateEntity("Child");
-scene.SetParent(child, parent);
-```
-
-#### Creating Materials
-```cpp
-// Simple material with colors
-Entity cube = scene.CreateEntity("Cube");
-auto& material = cube.AddComponent<MaterialComponent>();
-material.baseColor = {1.0f, 0.0f, 0.0f}; // Red
-material.metallic = 0.0f;
-material.roughness = 0.5f;
-
-// Material with textures
-material.useAlbedoTexture = true;
-material.albedoTexturePath = "assets/textures/brick_albedo.png";
-material.useNormalTexture = true;
-material.normalTexturePath = "assets/textures/brick_normal.png";
-material.useRoughnessTexture = true;
-material.roughnessTexturePath = "assets/textures/brick_roughness.png";
-```
-
-#### Using the Material Graph Editor
-1. Open the Material Editor panel
-2. Right-click in the graph canvas
-3. Add texture nodes: **Textures** → **Albedo/Normal/Roughness/AO Texture**
-4. Select a texture node and choose a texture from the dropdown
-5. Connect texture outputs to the **Material Output** node inputs
-6. Click **Apply To Selected Entity** to assign the material
-
-See the guides above for complete examples and best practices.
-
-## Controls
-
-- **Right Mouse Button** - Hold to look around and move (Unreal-style)
-- **WASD** - Move camera (when RMB held)
-- **Q/E** - Move up/down (when RMB held)
-- **Mouse Wheel** - Adjust camera speed
-- **Left Click** - Select entity in viewport
-- **T** - Translate gizmo mode
-- **R** - Rotate gizmo mode
-- **Y** - Scale gizmo mode
-
-## Notes & Troubleshooting
-
-- **Vulkan errors**: Ensure the Vulkan SDK is installed and correct GPU drivers are present
-- **Missing `glslangValidator`**: Install Vulkan SDK or add the binary to PATH
-- **EnTT not found**: Run `.\setup_entt.ps1` to download EnTT
-- **CMake generator mismatch**: Specify correct generator (`-G "Visual Studio 17 2022" -A x64`)
-- **Build errors from external libraries**: Verify `extern/` folder is complete
-
-## Dependencies
-
-- **Vulkan SDK** - Graphics API
-- **GLFW** - Window/input management
-- **ImGui** - Editor UI
-- **ImGuizmo** - Transform gizmos
-- **ImNodes** - Node-based graph editor for materials
-- **EnTT** - Entity-Component-System (header-only)
-- **stb_image** - Image loading for textures
-- **VMA** - Vulkan Memory Allocator
-
-## Next Steps & Roadmap
-
-### Recently Completed ✅
-- [x] Entity-Component-System (EnTT)
-- [x] Scene serialization (Save/Load)
-- [x] Material system with PBR workflow
-- [x] Texture support (Albedo, Normal, Roughness, AO)
-- [x] Node-based material graph editor
-- [x] Material asset save/load system
-
-### Immediate
-- [ ] Add more component types (RigidBody, Light)
-- [ ] Implement system patterns (Physics, Animation)
-- [ ] Enhanced asset browser with thumbnails
-- [ ] Material library and presets
-
-### Future
-- [ ] Advanced lighting (Point, Spot, Directional lights)
-- [ ] Shadow mapping
-- [ ] Post-processing effects
-- [ ] Scripting integration (Lua/C#)
-- [ ] Multi-threading support
-- [ ] GPU profiling tools
+| [`docs/user-guide/`](docs/user-guide/README.md) | Using Hephaestus: the guide for people making games |
+| [`Documentation/`](Documentation/README.md) | Technical reference: file formats, runtime contracts, the HUI format and Lua binding details |
+| [`docs/plugins/`](docs/plugins/plugin-system-1.0.md) | Writing native and scripting language plugins |
+| [`docs/code-notes/hephaestus.md`](docs/code-notes/hephaestus.md) | Implementation notes, keyed by source file and symbol |
+| [`docs/plans/`](docs/plans) and [`docs/audit/`](docs/audit) | Design plans and dated capability audits (snapshots, not current documentation) |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed, newest first |
+| [`ROADMAP.md`](ROADMAP.md) | Where things are heading |
 
 ## Contributing
 
-Contributions welcome! This is a learning project demonstrating modern engine architecture patterns. Review [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup steps, coding guidelines, and the pull request checklist.
-- Small improvements: documentation edits, issue templates, and automated shader checks are great starting points.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for coding guidelines and the pull request checklist, and [`AGENTS.md`](AGENTS.md) for the engineering rules (they apply to people as much as AI tools).
 
 ## License
 
-Hephaestus Engine is source available, not open source. See [`LICENSE.md`](LICENSE.md) for the terms, and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the licences of the third-party components it includes.
-
-## References
-
-- Vulkan SDK: https://vulkan.lunarg.com/
-- glslangValidator (part of the Vulkan SDK)
-- CMake: https://cmake.org/
-
----
-
+Hephaestus Engine is source available, not open source. See [`LICENSE.md`](LICENSE.md) for the terms, and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the licences of the third party components it includes.

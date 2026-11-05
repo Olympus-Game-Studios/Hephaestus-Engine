@@ -8,7 +8,6 @@ Shortcuts are context-aware: they do not override text-field editing when focus 
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+S` | Save Level |
-| `Ctrl+Shift+S` | Save Level As |
 | `Ctrl+N` | New Level |
 | `Ctrl+O` | Open Level |
 | `Ctrl+Shift+O` | Open Project |
@@ -25,11 +24,13 @@ Shortcuts are context-aware: they do not override text-field editing when focus 
 | `Ctrl+Alt+1` … `Ctrl+Alt+9` | Save camera bookmark |
 | `Ctrl+,` | Settings |
 | `Ctrl+Shift+B` | Package Project |
+| `Ctrl+K` | Command search (find and run any menu command) |
+| `Ctrl+Shift+F` | Search the project's scripts and text files |
 | `Esc` | Stop Play Mode (while playing) |
 
-## Outliner (Scene Hierarchy)
+## Hierarchy
 
-Active when the Outliner tree has focus (not the search box):
+Active when the Hierarchy tree has focus (not the search box):
 
 | Shortcut | Action |
 |----------|--------|
@@ -39,7 +40,7 @@ Active when the Outliner tree has focus (not the search box):
 | `Ctrl+A` | Select all entities |
 | `Esc` | Clear selection |
 
-## Details (Inspector)
+## Inspector
 
 Active when a component inspector has focus (does not steal `Ctrl+C` entity copy):
 
@@ -49,7 +50,7 @@ Active when a component inspector has focus (does not steal `Ctrl+C` entity copy
 | `Ctrl+Shift+V` | Paste component values onto the selection |
 | `Ctrl+Shift+R` | Reset component to constructor defaults |
 
-Numeric Inspector fields remain **local** transform values. The Details World/Local control is labelled **Gizmo space** and only syncs the viewport gizmo.
+Numeric Inspector fields remain **local** transform values. The World/Local control in the tool row sets the gizmo space only.
 
 Component headers offer Copy / Paste Values / Reset to Default / Remove. Prefab instances also show Revert; Apply to Prefab is hidden for multi-select or mixed prefab sources.
 
@@ -90,6 +91,7 @@ cancel.
 
 | Shortcut | Action |
 |----------|--------|
+| `Ctrl+S` | Save |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / Redo |
 | `Ctrl+D` | Duplicate selected nodes |
 | `Delete` | Remove selected nodes/links |
@@ -107,13 +109,34 @@ cancel.
 | `Ctrl+G` / `Ctrl+Shift+G` | Group / Ungroup |
 | Arrow keys | Nudge selection |
 
-## Asset Browser
+## Content Browser
 
 | Shortcut / Action | Notes |
 |-------------------|-------|
 | Context menu Rename / Duplicate / Delete / Copy Path | Right-click assets |
-| Import toolbar button | Copies files into the current folder |
+| Import button | Copies files into the current folder |
 | Clickable breadcrumbs | Navigate ancestor folders |
+
+## Code Panel (Programmer mode)
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+S` | Save |
+| `Ctrl+W` | Close tab |
+| `Ctrl+F` / `Ctrl+H` | Find / Find and replace |
+| `Ctrl+G` | Go to line |
+| `Ctrl+/` | Toggle comment |
+| `Alt+Up` / `Alt+Down` | Move line |
+| `Alt+Shift+Up` / `Alt+Shift+Down` | Duplicate line |
+| `F5` | Continue (debugger) |
+| `F10` / `F11` / `Shift+F11` | Step over / into / out |
+| `Shift+F5` | Stop debugging |
+
+## Launcher
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+F` | Search projects |
 
 ## Notes
 

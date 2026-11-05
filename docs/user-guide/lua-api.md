@@ -1,0 +1,183 @@
+---
+title: Lua API reference
+description: Every table and function Hephaestus gives your Lua scripts.
+order: 12
+---
+
+# Lua API reference
+
+This is the full list of what the engine gives your scripts. For how to use it, start with [Scripting with Lua](scripting-lua.md).
+
+Two conventions to keep in mind:
+
+- **Entity methods use a colon** (`this:GetName()`), engine tables use a dot (`Scene.destroy(e)`).
+- **Global tables like `Transform`, `Mesh`, `Physics` and `Character` act on the entity the script is attached to.** To act on a different entity, use that entity's methods instead.
+
+Vectors come back as tables with `x`, `y` and `z`. Rotations on transforms are in **degrees**; `Camera` and `Physics` rotations are in **radians**.
+
+## Entities
+
+`this` is the script's own entity. Entities you get from `Scene.instantiate`, `Scene.findAllWithPrefix`, raycasts and physics callbacks have the same methods.
+
+| Method | Does |
+| --- | --- |
+| `e:GetName()` / `e:SetName(name)` | Read or change the entity's name. |
+| `e:IsValid()` | False once the entity has been destroyed. Check this before using an entity you've held onto. |
+| `e:GetTransform()` | Its transform (see below). |
+| `e:GetCamera()` | Its camera, or `nil`. |
+| `e:GetAnimator()` / `e:GetCharacter()` | Animation control for characters, or `nil`. |
+| `e:Call(name, ...)` | Run a function by name in that entity's gameplay scripts. Returns whether it found one. |
+| `e:CallController(name, ...)` | Same, but in the entity's character controller script. |
+
+The `Entity` table has `Entity.isValid()`, `Entity.getName()` and `Entity.setName(name)` for the script's own entity.
+
+## Transforms
+
+| Method | Does |
+| --- | --- |
+| `t:GetPosition()` / `t:SetPosition(x, y, z)` | Position. `SetPosition` also takes a `{x, y, z}` table. |
+| `t:GetRotation()` / `t:SetRotation(x, y, z)` | Rotation in degrees. |
+| `t:GetScale()` / `t:SetScale(x, y, z)` | Scale. |
+| `t:Translate(dx, dy, dz)` | Move by an amount. |
+| `t:Rotate(dx, dy, dz)` | Rotate by an amount, in degrees. |
+
+The `Transform` table has the same as functions for the script's own entity: `getPosition`, `setPosition`, `getRotation`, `setRotation`, `getScale`, `setScale`, `translate` and `rotate`.
+
+## Scene
+
+| Function | Does |
+| --- | --- |
+| `Scene.instantiate(path, options)` | Spawn a prefab. `options` can have `position`, `rotation` (degrees) and `vars` (overrides for the prefab's `Expose` values). Returns the new entity. |
+| `Scene.destroy(entity)` | Remove an entity at the end of this frame's update. |
+| `Scene.findAllWithPrefix(prefix)` | Every entity whose name starts with `prefix`. |
+| `Scene.FindFirstCamera()` / `Scene.FindCameras()` | Find camera entities. |
+| `Scene.GetActiveCamera()` / `Scene.SetActiveCamera(entity)` | Which camera the player sees through. |
+| `Scene.reload()` | Restart the current scene from its saved file (at a safe point after this frame). |
+
+## Mesh
+
+| Function | Does |
+| --- | --- |
+| `Mesh.setVisible(visible)` / `Mesh.isVisible()` | Show or hide the script's own mesh. |
+
+## Time and application
+
+| Function | Does |
+| --- | --- |
+| `Time.deltaTime()` | Seconds since the last frame. Same as the `dt` passed to `onUpdate`. |
+| `Application.quit()` | Close the game. In the editor, it stops Play. |
+| `print(...)` / `engine_log(text)` | Write to the Console and log. |
+
+## Input
+
+| Function | Does |
+| --- | --- |
+| `Input.isActionPressed(name)` | True on the frame the action was pressed. |
+| `Input.isActionDown(name)` | True every frame it's held. |
+| `Input.isActionReleased(name)` | True on the frame it was let go. |
+| `Input.getAxis(name)` | The axis value, usually -1 to 1. |
+| `Input.getMouseDelta()` | Mouse movement since the last frame, `{x, y}` in pixels. |
+| `Input.getMousePosition()` | Mouse position in the window, `{x, y}`. |
+| `Input.getScrollDelta()` | Wheel movement since the last frame. |
+| `Input.isMouseButtonPressed(button)` | True while the button is held. `button` is `"left"`, `"right"` or `"middle"` (or `0`, `1`, `2`). |
+| `Input.isGamepadConnected()` | Whether player one's gamepad is plugged in. |
+| `Input.isKeyPressed(key)` | Raw key check. Prefer actions so players can use a pad. |
+| `Input.setCursorMode(mode)` | Low level cursor control. Use `UI.setCursorMode` instead. |
+
+See [Input](input.md) for setting up actions and axes.
+
+## Camera
+
+These control a free script camera, separate from Camera components. Call `Camera.setActive(true)` first.
+
+| Function | Does |
+| --- | --- |
+| `Camera.setActive(on)` / `Camera.isActive()` | Take or release control of the view. |
+| `Camera.setPosition(x, y, z)` / `Camera.getPosition()` | Camera position. |
+| `Camera.setRotation(pitch, yaw, roll)` / `Camera.getRotation()` | Rotation in radians. |
+| `Camera.translate(dx, dy, dz)` | Move in world space. |
+
+If the script's entity has a Camera component, these move that entity instead.
+
+## Physics
+
+| Function | Does |
+| --- | --- |
+| `Physics.raycast(ox, oy, oz, dx, dy, dz, maxDistance[, layer])` | Cast a ray. Returns `nil`, or a hit with `point`, `normal`, `distance` and `entity`. Ignores the calling entity. `layer` is a layer name from your collision matrix. |
+| `Physics.isAvailable()` / `Physics.hasBody()` | Whether physics is running and this entity has a body. |
+| `Physics.getLinearVelocity()` / `Physics.setLinearVelocity(x, y, z)` | Body velocity. |
+| `Physics.setAngularVelocity(x, y, z)` | Spin the body. |
+| `Physics.setRotation(x, y, z)` | Set the body's rotation, in radians. |
+| `Physics.move(x, z, speed)` / `Physics.jump(speed)` / `Physics.isGrounded()` | Simple movement. Uses the Character Controller if there is one. |
+
+Physics callbacks are covered in [Scripting with Lua](scripting-lua.md#reacting-to-physics).
+
+## Character
+
+For entities with a [Character Controller](physics.md#character-controller).
+
+| Function | Does |
+| --- | --- |
+| `Character.move(x, z)` or `Character.move(x, y, z)` | Set the direction to walk this step, in world space. |
+| `Character.jump()` | Jump on the next physics step, if standing on something. |
+| `Character.setCrouched(on)` / `Character.isCrouched()` | Crouch. |
+| `Character.isStandBlocked()` | True if there's no room to stand up. |
+| `Character.isGrounded()` / `Character.getGroundState()` | Whether and how it's standing on something. |
+| `Character.getVelocity()` | Current velocity. |
+| `Character.getGroundNormal()` / `Character.getGroundVelocity()` | The slope underfoot and how fast the ground is moving (moving platforms). |
+| `Character.setSpeedMultiplier(m)` / `Character.getSpeedMultiplier()` | Scale walk speed, for sprinting or slowing effects. |
+| `Character.teleport(x, y, z)` | Move instantly. |
+| `Character.setFacingYaw(radians)` | Turn to face a direction. |
+
+## Characters and animation
+
+From `this:GetAnimator()` on an entity with a Character component. Clips are referred to by their id (their name in the Character Editor).
+
+| Method | Does |
+| --- | --- |
+| `a:Play(clip)` | Play a clip from the start. |
+| `a:CrossFade(clip, seconds)` | Blend into a clip. |
+| `a:Pause()` / `a:Resume()` / `a:Stop()` | Playback control. |
+| `a:SetSpeed(multiplier)` | Playback speed. Must be above 0; use `Pause` to freeze. |
+| `a:IsPlaying([clip])` | Whether anything (or a given clip) is playing. |
+| `a:GetCurrentAnimation()` / `a:GetTime()` / `a:GetDuration([clip])` | Where playback is. |
+
+From `this:GetCharacter()`: `c:GetSocket(name)` (world space) and `c:GetSocketLocal(name)` (character space), each returning `position` and `rotation`, or `nil`.
+
+## Audio
+
+| Function | Does |
+| --- | --- |
+| `Audio.play(path, loop, volume)` | Play a `.wav` or `.mp3`. `loop` defaults to false, `volume` (0 to 1) to 1. Returns a handle, or `0` if it failed. |
+| `Audio.stop(h)` / `Audio.pause(h)` / `Audio.resume(h)` | Control a sound. |
+| `Audio.setVolume(h, volume)` | Change its volume. |
+| `Audio.isPlaying(h)` | Whether it's still playing. |
+| `Audio.stopAll()` | Silence everything. |
+| `Audio.isAvailable()` | Whether sound works on this machine. |
+
+## UI
+
+Showing and removing `.hui` layouts:
+
+| Function | Does |
+| --- | --- |
+| `display.ui(path)` | Show a layout. Returns a handle, or `nil` and an error. |
+| `destroy.ui(handle)` | Remove it. Also takes `"current"` or `"all"`. |
+| `UI.getWidget(handle, id)` | Find a widget by its ID. |
+| `UI.setCursorMode(CursorMode.UI)` / `UI.setCursorMode(CursorMode.Game)` | Free the mouse for menus, or capture it for gameplay. `UI.getCursorMode()` reads it. |
+
+Changing widgets (each takes the widget first):
+
+- **Content:** `setText`, `setImage`, `setImageTint`, `setImageScaleMode`
+- **Visibility and order:** `setVisible`, `setOpacity`, `setZOrder`, `setEnabled`, `setFocused`
+- **Placement:** `setPosition`, `setSize`, `setMinSize`, `setMaxSize`, `setAnchor`, `setAlignment`, `setPadding`, `setMargin`, `setSpacing`, `setChildAlignment`, `setGridColumns`, `setGridSpacing`
+- **Look:** `setBackgroundColor`, `setBorderColor`, `setBorderWidth`, `setCornerRadius`, `setTextColor`, `setFontSize`, `setFontBold`, `setFontItalic`, `setTextAlignment`, `setTextShadow`, `setWordWrap`, `setStyle`, `setButtonStyle`, `registerThemeStyle`, `applyThemeStyle`
+- **Events:** `setOnClick(widget, function)`, `setOnHover(widget, function(isHovered))`
+
+Building UI in code: `UI.createScreen`, `UI.getRoot`, `UI.createPanel`, `UI.createText`, `UI.createButton`, `UI.createImage`, `UI.createVerticalBox`, `UI.createHorizontalBox`, `UI.createGrid`, `UI.setScreenVisible`, `UI.setScreenActive`, `UI.clearScreens` and `UI.getScreenCount`. `UI.loadHUI(path)` loads a layout without the bookkeeping `display.ui` does.
+
+Constants: `UIAnchor` (`TopLeft`, `TopCenter`, `TopRight`, `CenterLeft`, `Center`, `CenterRight`, `BottomLeft`, `BottomCenter`, `BottomRight`, `Stretch`), `UIAlign` (`Left`, `Center`, `Right`, `Top`, `Bottom`, `Stretch`), `UIScaleMode` (`Stretch`, `Fit`, `Fill`, `Center`) and `CursorMode` (`Game`, `UI`).
+
+## Inspector variables
+
+`Expose.number`, `Expose.integer`, `Expose.bool`, `Expose.string`, `Expose.vec2`, `Expose.vec3` and `Expose.color`. See [Scripting with Lua](scripting-lua.md#inspector-variables-with-expose).

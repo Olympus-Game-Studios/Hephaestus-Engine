@@ -379,13 +379,22 @@ end
 local screen = assertHandle(UI.createScreen("HUD"), "Failed to create HUD screen")
 ```
 
-## 8. Current Limitations
+## 8. More Functions
+
+Sections 2 to 4 cover the core calls. The `UI` table also has the following; each takes the element handle first. For exact argument lists see the bindings in `engine/Scripting/LuaScriptEngine.cpp` (`RegisterUIBindings`) and the examples in [HUI_FORMAT_REFERENCE.md](../Features/HUI_FORMAT_REFERENCE.md).
+
+- **Grids:** `UI.createGrid(parent)`, `UI.setGridColumns`, `UI.setGridSpacing`
+- **Layout:** `UI.setPadding`, `UI.setMargin`, `UI.setMinSize`, `UI.setMaxSize`, `UI.setAnchor` (`UIAnchor.*`), `UI.setAlignment` (`UIAlign.*`), `UI.setChildAlignment`
+- **State:** `UI.setEnabled`, `UI.setFocused`
+- **Style:** `UI.setBackgroundColor`, `UI.setBorderColor`, `UI.setBorderWidth`, `UI.setCornerRadius`, `UI.setTextColor`, `UI.setFontSize`, `UI.setFontBold`, `UI.setFontItalic`, `UI.setTextAlignment`, `UI.setTextShadow`, `UI.setWordWrap`, `UI.setStyle`, `UI.setButtonStyle`, `UI.registerThemeStyle`, `UI.applyThemeStyle`
+- **Images:** `UI.setImageScaleMode` (`UIScaleMode.*`), `UI.setImageTint`
+- **Events:** `UI.setOnHover(element, function(isHovered) end)` alongside `UI.setOnClick`
+- **`.hui` files:** `UI.loadHUI(path)` and `UI.getWidget(handle, id)`; prefer the managed `display.ui` / `destroy.ui` described in [LUA_DISPLAY_DESTROY_API.md](./LUA_DISPLAY_DESTROY_API.md)
+
+## 9. Current Limitations
 
 Not yet exposed in Lua:
-- Widget removal API
-- Child enumeration API
-- Style/color/font setters
-- Per-widget clipping/padding/margin/anchor setters
-- Hover enter/exit callbacks
+- Widget removal (destroy whole screens with `destroy.ui` or `UI.clearScreens`)
+- Child enumeration
 
-These are planned extension points for the next API iteration.
+Not in HephaestusUI at all yet: text input fields, sliders, checkboxes, scrolling lists and keyboard or gamepad focus navigation.

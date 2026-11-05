@@ -249,8 +249,8 @@ Full Lua API reference:
 - `Documentation/Scripting/LUA_UI_API_REFERENCE.md`
 - `Documentation/Scripting/LUA_DISPLAY_DESTROY_API.md`
 
-Script-only workflow (no engine source access):
-- `Documentation/Guides/NO_SOURCE_RUNTIME_UI_GUIDE.md`
+Game maker walkthrough (UI Editor, `display.ui`, widgets by ID):
+- `docs/user-guide/game-ui.md`
 
 `.hui` asset format:
 - `Documentation/Features/HUI_FORMAT_REFERENCE.md`

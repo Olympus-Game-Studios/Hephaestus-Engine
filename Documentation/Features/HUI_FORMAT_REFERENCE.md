@@ -442,7 +442,7 @@ end
 
 ### Creating .hui files in the editor
 
-1. Open the **Asset Browser**.
+1. Open the **Content Browser**.
 2. Navigate to the desired directory (or right-click a folder).
 3. Right-click to open the context menu.
 4. Select **New UI File**.

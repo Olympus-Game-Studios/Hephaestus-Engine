@@ -13,10 +13,8 @@ Thanks for your interest in improving the project! This guide explains how to se
 
 ## Getting Started
 1. Fork the repository and clone your fork locally.
-2. Install the required tooling (Visual Studio 2022 with C++, CMake ≥ 3.24, Vulkan SDK, Git). Optional: Python for helper scripts. See `README.md` for setup details.
-3. Pull dependencies:
-	- Run `./setup_entt.ps1` once to download EnTT into `extern/entt/`.
-	- Check that the `extern/` directory contains the rest of the vendor libraries after cloning (GLFW, ImGui, ImGuizmo, etc.).
+2. Install the required tooling (Visual Studio 2022 with C++, CMake 3.24 or newer, the Vulkan SDK, Qt 6 for MSVC and Git). See `README.md` for setup details.
+3. Pull dependencies: clone with `--recurse-submodules` (or run `git submodule update --init --recursive`) to get Jolt, GLFW and ufbx. EnTT, Lua and the other vendored libraries are already in `extern/`.
 4. Configure and build with the CMake preset for your host (`windows-release`, `macos-release`, or `linux-release`):
 	- `cmake --preset windows-release`
 	- `cmake --build --preset windows-release`
@@ -42,14 +40,14 @@ Thanks for your interest in improving the project! This guide explains how to se
 
 ## Testing & Validation
 - **C++ builds and tests**: Build the affected target/configuration and run the relevant CTest tests when available. For the full preset workflow, see `CMakePresets.json` and `AGENTS.md`.
-- **Runtime smoke test**: Launch `build/Release/HephaestusEngine.exe` (or Debug) and confirm the affected features behave as expected.
-- **Shaders**: If you change GLSL files, recompile SPIR-V with `glslangValidator` and include updated `.spv` outputs.
+- **Runtime smoke test**: Launch the editor from your build folder (for example `build/windows-release/Release/HephaestusEngine.exe`) and confirm the affected features behave as expected, including in Play and, for runtime changes, a packaged game.
+- **Shaders**: The build compiles GLSL in `shaders/` with `glslc` from the Vulkan SDK. Make sure changed shaders compile cleanly.
 - **Documentation/examples**: Update or add markdown snippets to reflect behaviour changes; run spell checks where possible.
 - Provide logs, screenshots, or captures when fixing rendering or editor issues to help reviewers verify results.
 
 ## Documentation Expectations
-- Keep `README.md`, `CONTRIBUTING.md`, and `roadmap.md` accurate when workflows or priorities change.
-- All new systems should ship with a markdown explainer in `Documentation/` (diagram, quickstart, or reference guide).
+- Keep `README.md`, `CONTRIBUTING.md` and `ROADMAP.md` accurate when workflows or priorities change.
+- User facing changes update the matching page in `docs/user-guide/` (and "What's not there yet" when a gap closes). Technical contracts and file formats go in `Documentation/`.
 - Include code comments and inline documentation for new public APIs.
 
 ## Pull Request Checklist
@@ -65,7 +63,7 @@ Thanks for your interest in improving the project! This guide explains how to se
 - Squash or amend commits when requested to keep history readable.
 
 ## Release Notes & Changelog
-- Major features and user-facing fixes should add an entry to the appropriate documentation (for now, `Documentation/` or `roadmap.md`).
+- Major features and user-facing fixes add a dated entry under `## [Unreleased]` in `CHANGELOG.md` (see `.agents/changelog.md` for the format) and update the user guide.
 - Tag follow-up issues if additional work is required post-merge.
 
 Thanks again for contributing! Your work helps the engine grow and stay healthy for everyone.

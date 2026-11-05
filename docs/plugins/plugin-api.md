@@ -29,7 +29,7 @@ The host copies every descriptor during `OnLoad`; descriptor strings need only r
 
 The exported structure uses fixed-width integers and function pointers. The C++ service interface and optional Qt widget boundary still require the same compiler family, architecture, Qt major version, and compatible C++ runtime as the editor. API version 1 is therefore an engine-versioned native SDK, not a permanent cross-toolchain ABI promise. STL containers are not passed in public descriptors.
 
-Plugin assets use `plugin://<id>/path` (also accepted as `/plugin/<id>/path`). Content mounts are read-only in the Asset Browser. Project assets and scenes can persist those portable keys; `AssetPathPolicy` resolves them only while the owning plugin is enabled.
+Plugin assets use `plugin://<id>/path` (also accepted as `/plugin/<id>/path`). Content mounts are read-only in the Content Browser. Project assets and scenes can persist those portable keys; `AssetPathPolicy` resolves them only while the owning plugin is enabled.
 
 See `Plugins/PrimitiveTools` for a complete example that registers commands, a dock, a menu/toolbar/context action, scene edits with undo, a setting, and `.hptestasset` creation/editor support.
 

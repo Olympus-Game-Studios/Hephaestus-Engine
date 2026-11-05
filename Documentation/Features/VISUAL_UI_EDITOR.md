@@ -17,7 +17,7 @@ The Visual UI Editor is now the default editor for `.hui` files inside the Hepha
 
 ### Default behavior
 
-In the Asset Browser:
+In the Content Browser:
 
 - double-clicking a `.hui` file opens the Visual UI Editor
 - right-clicking a `.hui` file and choosing `Open` also opens the Visual UI Editor
@@ -30,17 +30,19 @@ The Visual UI Editor includes an `Open in IDE` action in its toolbar.
 
 This opens the real `.hui` file on disk in the user's configured external editor when available. If no configured editor path is available, the engine falls back to the operating system's default file handler.
 
-The Asset Browser also exposes `Open in IDE` for `.hui` assets.
+The Content Browser also exposes `Open in IDE` for `.hui` assets.
 
 ## Main Layout
 
-The first version of the Visual UI Editor uses a dedicated internal editor window with a familiar visual-tool layout:
+The Visual UI Editor opens in its own window with the Editor 2.0 layout:
 
-- `Hierarchy`: widget tree for the current `.hui`
-- `Palette`: available widget types that can be added visually
-- `Canvas`: central design surface and live preview
-- `Details`: inspector for the selected widget
-- `Toolbar`: save, undo, redo, duplicate, delete, preview toggle, resolution preview, zoom, and `Open in IDE`
+- `Hierarchy`: widget tree for the current `.hui`, with widget type icons
+- `Palette`: tiles for the widget types that can be added (the `Text` type is shown as `Label`, the boxes as `Vertical Stack` and `Horizontal Stack`)
+- `Canvas`: central design surface and live preview, with the `Controller` field for the optional Lua controller underneath
+- `Details`: sectioned inspector for the selected widget (Identity, Transform, Layout, Content, Style)
+- `Toolbar`: save, undo, redo, duplicate, delete, the `Arrange` menu (z order, group and ungroup), the `Guides` menu (grid, snapping and canvas center guides), preview toggle, resolution preview, zoom and `Open in IDE`
+
+Grid, snapping, resize handles, multi-select and grouping are described in [HUI_VISUAL_EDITOR_DESIGN_TOOLS.md](./HUI_VISUAL_EDITOR_DESIGN_TOOLS.md).
 
 ## Supported Widget Types
 
@@ -63,8 +65,8 @@ These match the widget types supported by the runtime `.hui` parser and builder.
 
 You can:
 
-- create a new `.hui` file from the Asset Browser using `New UI File`
-- open an existing `.hui` file from the Asset Browser
+- create a new `.hui` file from the Content Browser using `New UI File`
+- open an existing `.hui` file from the Content Browser
 
 New `.hui` files use the shared default generator so starter layouts stay consistent across tools.
 
@@ -99,7 +101,7 @@ The editor exposes a first-pass set of grouped properties:
 - `Identity`: ID, class, widget type
 - `Layout`: position, size, opacity, anchor, alignment, visibility, enabled state, hit-testing, clipping
 - `Content`: text, image reference, stack spacing, grid columns, and other widget-specific fields
-- `Primary Style`: background color, text color, corner radius, font size
+- `Primary Style`: background color, text color, corner radius, font size, and separate `Hovered` and `Pressed` colors for buttons
 
 Changes update the canvas immediately.
 
@@ -198,7 +200,7 @@ This keeps layout and behavior cleanly separated.
 
 ## Beginner Quick Start
 
-1. In the Asset Browser, create `New UI File`.
+1. In the Content Browser, create `New UI File`.
 2. Double-click the new `.hui`.
 3. In `Palette`, add a `VerticalBox`.
 4. Add a `Text` widget for the title.
@@ -222,33 +224,14 @@ To create a pause menu:
 8. Save the `.hui`.
 9. In Lua, bind each button by ID and attach click handlers.
 
-## Limitations In This Version
+## Limitations
 
-The first version intentionally focuses on a solid editing foundation.
-
-Current limitations:
-
-- no multi-select yet
-- no box-resize gizmos yet
-- no copy/paste workflow yet
-- no per-state visual editor for all button states yet
-- no reusable widget/prefab system yet
-- no animation or responsive-layout authoring tools yet
-- preview mode is visual cleanup first, not full runtime interaction simulation
-
-## Future Expansion
-
-The editor is structured so future additions can be layered on without replacing the core workflow:
-
-- richer visual manipulation tools
-- copy/paste and multi-select
-- alignment guides and snapping
-- reusable components and prefabs
-- themes and style classes
-- animation timelines
-- responsive device previews
-- localization previews
-- richer button/input state previews
+- no copy and paste between `.hui` files
+- no reusable widget or prefab system
+- no animation or responsive layout authoring
+- no text input, slider, checkbox or scrolling list widgets (the runtime doesn't have them yet)
+- resize handles only work on widgets anchored top left (see the design tools document)
+- a planned Design mode (freeform drawing with roles and state editing) is not built yet
 
 ## Summary
 

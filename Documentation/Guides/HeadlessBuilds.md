@@ -1,7 +1,10 @@
 # Headless Project Validation and Packaging
 
 The `HephaestusBuild` command uses the same non-Qt `BuildService` as the
-editor's Build Project window. It packages the generic game player and all
+editor's Build Project window. In a source build it is at
+`build\Release\HephaestusBuild.exe`; in an installed copy of Hephaestus (such
+as Steam) it is `tools\HephaestusBuild.exe`, and it finds the game player and
+engine content in the folder above it. Run it with `--help` for every option. It packages the generic game player and all
 project assets; it does not compile project-specific gameplay code.
 
 ```powershell

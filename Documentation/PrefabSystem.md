@@ -156,14 +156,14 @@ Apply All asks for confirmation because it affects every instance.
 
 ### Place Prefab in Scene
 
-- Drag a `.hpprefab` from the Asset Browser onto the viewport, or from **Add Actors → Prefabs**
-- Or right-click the prefab in the Asset Browser and choose **Instantiate in Scene**
+- Drag a `.hpprefab` from the Content Browser onto the viewport, or from **Add Actors → Prefabs**
+- Or right-click the prefab in the Content Browser and choose **Instantiate in Scene**
 
 Placement is in front of the editor camera. The instance records `rootTransform` and is undoable.
 
 ### Create Prefab From Selection
 
-Outliner action on a **non-prefab** entity.
+Hierarchy action on a **non-prefab** entity.
 
 1. Captures the full hierarchy and all `PrefabComponentIO` types (not just transforms)
 2. Writes a new `.hpprefab` (root local transform is identity; scene placement is instance `rootTransform`)
@@ -176,7 +176,7 @@ Outliner action on a **non-prefab** entity.
 Shown only when they apply:
 
 - **Open Prefab** — Prefab Editor
-- **Select Prefab Asset** — Asset Browser
+- **Select Prefab Asset** — Content Browser
 - **Refresh From Prefab** — reload asset, rebuild instance, reapply overrides, drop stale override keys
 - **Unpack Prefab** — instance root only: bake defaults + overrides into ordinary entities, remove `PrefabInstanceComponent` / `PrefabNodeComponent`, then serialize as normal scene entities. Undoable.
 
@@ -201,7 +201,7 @@ You can add/remove components, assign meshes/materials, and edit physics, lights
 
 ---
 
-## 8. Outliner identification
+## 8. Hierarchy identification
 
 - Shield icon on instance roots
 - Tinted children

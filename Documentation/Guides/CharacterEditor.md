@@ -2,17 +2,17 @@
 
 Designer-facing authoring and preview for `.hpcharacter` assets. This is not a gameplay sandbox and does not add animation graphs, blend spaces, IK, or retargeting. Runtime `this:GetAnimator()` / `this:GetCharacter()` live in Play Mode and `HephaestusGame`; see [CharacterControllers.md](./CharacterControllers.md).
 
-Open a character by double-clicking it in the Asset Browser, or **Open**. Empty New Character files show **Import Character Source** until a mesh GLB or FBX is assigned.
+Open a character by double-clicking it in the Content Browser, or **Open**. Empty New Character files show **Import Character Source** until a mesh GLB or FBX is assigned.
 
 ## Preview
 
 The window hosts an isolated preview scene (environment, light, character). Playback ticks only the preview character. Play Mode is not started.
 
-Use **Frame** / **Frame All** to fit the camera around **all mesh parts**. **Show Skeleton** draws the one canonical skeleton; **Bone Names** is reserved for a later overlay. Transform gizmos apply to the selected socket. Animation playback deforms every part from the same pose.
+Use **Frame** / **Frame All** to fit the camera around **all mesh parts**. **Show Skeleton** draws the one canonical skeleton. The **Bone names** toolbar toggle exists but does not draw names yet. Transform gizmos apply to the selected socket. Animation playback deforms every part from the same pose.
 
 ## Animations
 
-The **Animations** dock is tabbed with Inspector on the right. It lists clips and folders (they are not in the Character tree). **Import Animation** and **Create Folder** sit at the top of that tab. Select a clip to play, pause, stop, or scrub the timeline; clip fields appear in Inspector.
+The **Animations** dock sits above the Inspector on the right. It lists clips and folders (they are not in the Character tree). **Import Animation** and **Create Folder** sit at the top of that dock. Select a clip to play, pause, stop, or scrub the timeline; clip fields appear in Inspector.
 
 Inspector fields:
 
