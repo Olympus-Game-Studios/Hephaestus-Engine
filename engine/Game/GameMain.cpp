@@ -714,6 +714,7 @@ int main(int argc, char* argv[]) {
     HUI::UIRenderer uiRenderer;
     uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
     bool sceneReloadFailed = false;
+    bool physicsFailed = false;
     bool sceneReloadProcessing = false;
 
     // ── Scripting ─────────────────────────────────
@@ -1338,8 +1339,14 @@ int main(int argc, char* argv[]) {
         Hephaestus::SimulationStepContext step;
         step.scene = &scene;
         step.audio = &audioEngine;
-        step.physics = &physicsSystem;
+        step.physics = physicsFailed ? nullptr : &physicsSystem;
         step.cppScripts = &cppScripts;
+        step.onPhysicsError = [&](const std::exception& e) {
+            physicsFailed = true;
+            Bootstrap::ShowFatalError("Physics Error",
+                std::string("The physics simulation failed and the game must close:\n") + e.what());
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        };
 #if HEPHAESTUS_GAME_SCRIPTING
         step.lua = &luaEngine;
         step.pluginScripts = &pluginScripts;

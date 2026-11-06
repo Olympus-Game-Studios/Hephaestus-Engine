@@ -3176,7 +3176,10 @@ void QtEditorEngine::simulateGameplayFrame(float dt)
         return true;
     };
     step.onPhysicsError = [this](const std::exception& e) {
-        std::cerr << "[QtEditorEngine] Physics error: " << e.what() << "\n";
+        Hephaestus::EngineLog::Write(
+            Hephaestus::EngineLogLevel::Error,
+            std::string("Physics stopped for this Play session after an error: ") + e.what(),
+            "Physics");
         m_physicsInitialized = false;
     };
     Hephaestus::RunSimulationStep(step, dt);
