@@ -446,7 +446,9 @@ private:
     std::unique_ptr<Physics::JoltPhysicsSystem> m_joltPhysicsSystem;
     std::unique_ptr<Physics::CharacterControllerSystem> m_characterControllers;
     void handlePlayPhysicsError(const std::exception& e);
+    bool physicsActive() const { return m_physicsInitialized && !m_physicsFailedThisSession; }
     bool m_physicsInitialized = false;
+    bool m_physicsFailedThisSession = false;
     float m_gizmoSize = 1.0f;
     bool m_playPhysicsEnabled = true;
     bool m_gamepadBackendTried = false;

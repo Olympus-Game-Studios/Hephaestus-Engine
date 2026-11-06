@@ -1874,7 +1874,7 @@ void QtEditorEngine::onTick()
     }
 
     Scene* interpolatedScene = nullptr;
-    if (isPlaying && m_playModeManager.ShouldAdvanceRealtime() && m_physicsInitialized &&
+    if (isPlaying && m_playModeManager.ShouldAdvanceRealtime() && physicsActive() &&
         m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
         interpolatedScene = m_editorContext.GetActiveScene();
         m_joltPhysicsSystem->ApplyRenderInterpolation(*interpolatedScene);
@@ -2784,6 +2784,18 @@ void QtEditorEngine::StartPlayMode()
         }
     }
 
+    if (m_physicsFailedThisSession) {
+        m_editorContext.SetCharacterControllers(nullptr);
+        m_characterControllers.reset();
+        m_joltPhysicsSystem.reset();
+        if (m_joltPhysicsEngine && m_physicsInitialized) {
+            m_joltPhysicsEngine->Shutdown();
+        }
+        m_joltPhysicsEngine.reset();
+        m_physicsInitialized = false;
+        m_physicsFailedThisSession = false;
+    }
+
     // Ensure Jolt physics is ready in Play Mode (do not depend on FocusOnSelection side-effects).
     if (!m_joltPhysicsEngine) {
         m_joltPhysicsEngine = std::make_unique<Physics::JoltPhysicsEngine>();
@@ -2933,7 +2945,7 @@ void QtEditorEngine::StartPlayMode()
     const ScriptPhysicsAccessor physicsAccess = [this]() {
         ScriptPhysicsAccess access;
         access.characterControllers = m_characterControllers.get();
-        if (m_physicsInitialized) {
+        if (physicsActive()) {
             access.physicsEngine = m_joltPhysicsEngine.get();
             access.physicsSystem = m_joltPhysicsSystem.get();
             access.scene = m_editorContext.HasActiveScene() ? m_editorContext.GetActiveScene() : nullptr;
@@ -3173,7 +3185,7 @@ bool QtEditorEngine::reloadRuntimeScene(std::string& outError)
     }
     Hephaestus::CharacterRuntime::BindScene(*scene, projectRoot, m_frameRenderer.get());
     m_editorContext.RequestRebuildSceneVisuals();
-    if (m_physicsInitialized && m_joltPhysicsSystem && m_playPhysicsEnabled) {
+    if (physicsActive() && m_joltPhysicsSystem && m_playPhysicsEnabled) {
         try {
             m_joltPhysicsSystem->PrepareSceneBodies(*scene);
         } catch (const std::exception& e) {
@@ -3205,14 +3217,14 @@ void QtEditorEngine::simulateGameplayFrame(float dt)
         return;
     }
     m_playModeManager.AdvanceFrameTime(dt);
-    if (m_physicsInitialized && m_joltPhysicsSystem) {
+    if (physicsActive() && m_joltPhysicsSystem) {
         m_joltPhysicsSystem->SetEnabled(true);
     }
 
     Hephaestus::SimulationStepContext step;
     step.scene = scene;
     step.audio = m_audioEngine.get();
-    step.physics = m_physicsInitialized && m_playPhysicsEnabled ? m_joltPhysicsSystem.get() : nullptr;
+    step.physics = physicsActive() && m_playPhysicsEnabled ? m_joltPhysicsSystem.get() : nullptr;
     step.lua = m_luaScriptEngine.get();
     step.pluginScripts = m_pluginScriptHost.get();
     step.cppScripts = m_cppScriptEngine.get();
@@ -3233,7 +3245,7 @@ void QtEditorEngine::handlePlayPhysicsError(const std::exception& e)
         Hephaestus::EngineLogLevel::Error,
         std::string("Physics stopped for this Play session after an error: ") + e.what(),
         "Physics");
-    m_physicsInitialized = false;
+    m_physicsFailedThisSession = true;
 }
 
 void QtEditorEngine::SetGizmoSize(float size)
@@ -3424,7 +3436,7 @@ bool QtEditorEngine::PhysicsRaycast(const Hephaestus::Automation::AutomationBack
                                     std::string& outError, const std::string* layerName)
 {
     return Hephaestus::Automation::CastPhysicsRay(
-        m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
+        physicsActive(), m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
         m_editorContext.GetActiveScene(), origin, direction, maxDistance, ignore, out, outError, layerName);
 }
 
@@ -3432,7 +3444,7 @@ bool QtEditorEngine::ListPhysicsBodies(
     std::vector<Hephaestus::Automation::AutomationBackend::PhysicsBodySnapshot>& out, std::string& outError)
 {
     return Hephaestus::Automation::ListPhysicsSnapshots(
-        m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
+        physicsActive(), m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
         m_editorContext.GetActiveScene(), out, outError);
 }
 
@@ -3441,7 +3453,7 @@ bool QtEditorEngine::GetPhysicsBody(entt::entity entity,
                                     std::string& outError)
 {
     return Hephaestus::Automation::ReadPhysicsSnapshot(
-        m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
+        physicsActive(), m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
         m_editorContext.GetActiveScene(), entity, out, outError);
 }
 
@@ -3450,7 +3462,7 @@ bool QtEditorEngine::GetCharacterState(entt::entity entity,
                                        bool& grounded, std::string& outError)
 {
     return Hephaestus::Automation::ReadCharacterSnapshot(
-        m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
+        physicsActive(), m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
         m_editorContext.GetActiveScene(), entity, pose, grounded, outError,
         m_characterControllers.get());
 }
