@@ -69,7 +69,6 @@ private slots:
     void onToggleLocalWorld(bool local);
     void onToggleSnap(bool enabled);
     void onToggleSkeleton(bool enabled);
-    void onToggleBoneNames(bool enabled);
     void onTreeSelectionChanged();
     void onAnimTreeSelectionChanged();
     void onAnimTreeItemChanged(QTreeWidgetItem* item, int column);
@@ -137,7 +136,6 @@ private:
     QAction* m_localWorldAction = nullptr;
     QAction* m_snapAction = nullptr;
     QAction* m_skeletonAction = nullptr;
-    QAction* m_boneNamesAction = nullptr;
     QActionGroup* m_gizmoModeGroup = nullptr;
     QLabel* m_statusFps = nullptr;
     QLabel* m_statusPath = nullptr;
@@ -151,7 +149,6 @@ private:
     bool m_framedOnce = false;
     bool m_gizmoDragging = false;
     bool m_showSkeleton = true;
-    bool m_showBoneNames = false;
     GizmoMode m_gizmoMode = GizmoMode::Translate;
     GizmoSpace m_gizmoSpace = GizmoSpace::Local;
     bool m_snapEnabled = false;

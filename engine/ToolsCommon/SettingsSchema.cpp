@@ -84,33 +84,17 @@ bool SettingsSchemaRegistry::ContainsId(const QVector<SettingDefinition>& defini
 void SettingsSchemaRegistry::RegisterBuiltins()
 {
     m_engineDefinitions = {
-        MakeDef("engine.general.theme", "general", "General", "theme", "Theme", SettingControlType::Enum,
-            QStringLiteral("Dark"), {}, {}, {QStringLiteral("Dark"), QStringLiteral("Light"), QStringLiteral("Custom")}),
         MakeDef("engine.general.autosaveInterval", "general", "General", "autosaveInterval", "Autosave Interval (s)", SettingControlType::Int,
             120, 10, 7200),
         MakeDef("engine.general.defaultProjectLocation", "general", "General", "defaultProjectLocation", "Default Project Location", SettingControlType::Path,
             QString()),
-
-        MakeDef("engine.rendering.defaultRhi", "rendering", "Rendering", "defaultRhi", "Default RHI", SettingControlType::Enum,
-            QStringLiteral("Vulkan"), {}, {}, {QStringLiteral("Vulkan")}),
-        MakeDef("engine.rendering.defaultShadowQuality", "rendering", "Rendering", "defaultShadowQuality", "Default Shadow Quality", SettingControlType::Enum,
-            QStringLiteral("High"), {}, {}, {QStringLiteral("Low"), QStringLiteral("Medium"), QStringLiteral("High"), QStringLiteral("Epic")}),
-        MakeDef("engine.rendering.defaultHdrEnabled", "rendering", "Rendering", "defaultHdrEnabled", "Default HDR Enabled", SettingControlType::Bool,
-            true),
 
         MakeDef("engine.editor.gizmoSize", "editor", "Editor", "gizmoSize", "Gizmo Size", SettingControlType::Float,
             1.0, 0.1, 5.0),
         MakeDef("engine.editor.gridSnappingDefault", "editor", "Editor", "gridSnappingDefault", "Grid Snapping Default", SettingControlType::Bool,
             true),
         MakeDef("engine.editor.cameraSpeedDefault", "editor", "Editor", "cameraSpeedDefault", "Camera Speed Default", SettingControlType::Float,
-            4.0, 0.1, 50.0),
-        MakeDef("engine.editor.assetBrowserThumbnailSize", "editor", "Editor", "assetBrowserThumbnailSize", "Asset Browser Thumbnail Size", SettingControlType::Int,
-            96, 32, 256),
-
-        MakeDef("engine.paths.sdkPath", "paths", "Paths", "sdkPath", "SDK Path", SettingControlType::Path,
-            QString()),
-        MakeDef("engine.paths.externalToolsPath", "paths", "Paths", "externalToolsPath", "External Tools Path", SettingControlType::Path,
-            QString())
+            4.0, 0.1, 50.0)
     };
 
     m_projectDefinitions = {
@@ -129,20 +113,12 @@ void SettingsSchemaRegistry::RegisterBuiltins()
 
         MakeDef("project.rendering.defaultSkybox", "rendering", "Rendering", "defaultSkybox", "Default Skybox", SettingControlType::Path,
             QString()),
-        MakeDef("project.rendering.enableHdr", "rendering", "Rendering", "enableHdr", "Enable HDR", SettingControlType::Bool,
-            true),
-        MakeDef("project.rendering.defaultExposure", "rendering", "Rendering", "defaultExposure", "Default Exposure", SettingControlType::Float,
-            1.0, 0.1, 10.0),
         MakeDef("project.rendering.physicsEnabled", "rendering", "Rendering", "physicsEnabled", "Physics Enabled", SettingControlType::Bool,
             true),
 
         MakeDef("project.input.defaultInputProfile", "input", "Input", "defaultInputProfile", "Default Input Profile", SettingControlType::String,
             QStringLiteral("assets/input/Default.hpinput")),
-        MakeDef("project.input.mouseSensitivityDefault", "input", "Input", "mouseSensitivityDefault", "Mouse Sensitivity Default", SettingControlType::Float,
-            1.0, 0.1, 10.0),
 
-        MakeDef("project.build.targetPlatform", "build", "Build", "targetPlatform", "Target Platform", SettingControlType::Enum,
-            QStringLiteral("Windows x64"), {}, {}, {QStringLiteral("Windows x64")}),
         MakeDef("project.build.defaultConfiguration", "build", "Build", "defaultConfiguration", "Default Configuration", SettingControlType::Enum,
             QStringLiteral("Development"), {}, {}, {QStringLiteral("Development"), QStringLiteral("Release")}),
         MakeDef("project.build.windowTitle", "build", "Build", "windowTitle", "Window Title", SettingControlType::String,

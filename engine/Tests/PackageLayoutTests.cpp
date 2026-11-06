@@ -113,6 +113,7 @@ int main() {
     request.version = "1.2.3";
     request.engineVersion = "2026.9.0";
     request.startupScene = "assets/scenes/Main.hpscene";
+    request.physicsEnabled = false;
     std::vector<std::string> stages;
     request.onProgress = [&](float, const std::string& stage) {
         stages.push_back(stage);
@@ -223,6 +224,8 @@ int main() {
                     "game.ini records the startup scene");
         ok &= Check(ini.find("input_profile = assets/input/Default.hpinput") != std::string::npos,
                     "game.ini records the input profile");
+        ok &= Check(ini.find("physics_enabled = false") != std::string::npos,
+                    "game.ini records the project physics switch");
         ok &= Check(ini.find("version =") == std::string::npos &&
                     ini.find("company =") == std::string::npos &&
                     ini.find("resizable=") == std::string::npos,

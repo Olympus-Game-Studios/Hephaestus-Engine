@@ -10,7 +10,7 @@ Hephaestus is young, and I'd rather you know its gaps up front than discover the
 
 ## Rendering and materials
 
-- **Material graphs aren't per pixel yet.** The graph is worked out once into PBR values, so nodes like Noise, Fresnel, Time, World Position and UV distortion don't affect what you see. [Details](materials.md#what-the-graph-cant-do-yet).
+- **Material graphs aren't per pixel yet.** The graph is worked out once into PBR values, so nodes like Noise, Fresnel, Time, World Position and UV distortion don't affect what you see. The Material Editor marks them **(no effect yet)** and warns when a graph uses one. [Details](materials.md#what-the-graph-cant-do-yet).
 - **No true transparency.** Opacity Mask cuts holes, but glass and water style blending isn't supported.
 - **No changing materials from scripts.**
 - **No post processing** like bloom, ambient occlusion, fog or depth of field, and no anti aliasing.
@@ -22,7 +22,7 @@ Hephaestus is young, and I'd rather you know its gaps up front than discover the
 
 - No joints, ragdolls or vehicles.
 - Raycasts are the only physics query (no overlap or shape casts).
-- The **Debug Draw Collider** and **Debug Draw Bounds** checkboxes don't draw anything.
+- There's no way to draw a Rigid Body's collision shape in the viewport yet. A Mesh Collider's **Debug Draw Bounds** does draw its box.
 - No coyote time or jump buffering in the Character Controller; script them if you want them.
 
 ## Animation
@@ -42,7 +42,7 @@ Hephaestus is young, and I'd rather you know its gaps up front than discover the
 
 ## Input
 
-- Gamepads work in packaged games but not while playing in the editor.
+- On macOS, gamepads work in packaged games but not while playing in the editor. On Windows they work in both.
 - One gamepad only, and no in game rebinding or input contexts.
 
 ## Scripting
@@ -62,10 +62,8 @@ Hephaestus is young, and I'd rather you know its gaps up front than discover the
 ## Editor
 
 - **Nested prefabs and prefab variants** aren't supported.
-- The Character Editor's **Bone names** toggle doesn't draw names yet.
-- **Deleted assets** go to `.hephaestus/trash` but there's no button to restore them.
-- The Content Browser doesn't notice when files change on disk; use **Reimport**.
-- **Some settings don't do anything yet:** Theme, Default RHI, Default Shadow Quality, Default HDR Enabled, Gizmo Size, Asset Browser Thumbnail Size, SDK Path and External Tools Path in Engine Settings, and Default Skybox, Enable HDR, Default Exposure, Physics Enabled, Mouse Sensitivity Default and Target Platform in Project Settings.
+- The Character Editor can't show bone names in its viewport.
+- No light theme, HDR output, exposure control or shadow quality setting yet.
 - **Plugins need C++** and the source headers from GitHub. Content only plugins aren't supported.
 
 ## Platforms

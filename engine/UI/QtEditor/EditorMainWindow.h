@@ -317,6 +317,7 @@ private:
     void onAutosaveTick();
     void writeRecoverySnapshot();
     int autosaveIntervalSeconds() const;
+    void applyPlayPhysicsSetting();
     void loadEditorViewState();
     void saveEditorViewState();
     void hideSelectedInEditor();

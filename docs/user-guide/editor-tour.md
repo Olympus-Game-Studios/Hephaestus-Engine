@@ -86,4 +86,8 @@ In the Inspector, `Ctrl+Shift+C` and `Ctrl+Shift+V` copy and paste a whole compo
 
 **Edit > Settings** (`Ctrl+,`) has two tabs. **Engine Settings** apply to the editor on your machine, and **Project Settings** travel with the project: its name, startup scene, input, physics layers and build options.
 
-A heads up: a few settings in that window are placeholders for features that aren't hooked up yet. The ones that currently do something are the autosave interval, grid snapping default, camera speed, the project info (including **Startup Scene**), the input map, physics layers and the build options (window title, icon, resolution, fullscreen and VSync). The rest (theme, default RHI, shadow quality, HDR and exposure, gizmo size, thumbnail size, SDK and tools paths, mouse sensitivity and target platform) don't change anything yet. They're listed in [What's not there yet](whats-not-there-yet.md).
+Every setting in that window does something. A few worth knowing about:
+
+- **Gizmo Size** (Engine Settings > Editor) scales the move, rotate and scale handles in the viewport.
+- **Default Skybox** (Project Settings > Rendering) is the HDRI that **File > New Level** starts with. New projects point it at the starter sky.
+- **Physics Enabled** (Project Settings > Rendering) switches physics off for the whole project, both when you press Play and in packaged games. Handy for a menu only project or a puzzle game that doesn't need it.

@@ -97,6 +97,8 @@ public:
     Mat4 HandleDrag(const Ray& ray, bool bypassSnap = false);
     void EndDrag();
     Mat4 CancelDrag();
+    void SetSizeMultiplier(float multiplier) { m_SizeMultiplier = multiplier > 0.0f ? multiplier : 1.0f; }
+
     void SetSnapSettings(bool enabled, float increment) {
         m_SnapEnabled = enabled;
         m_SnapIncrement = increment;
@@ -189,5 +191,6 @@ private:
     const float m_AxisThickness = 0.08f;
     const float m_RotationPickWidth = 0.18f;
     const float m_ScreenScaleFactor = 0.2f;
+    float m_SizeMultiplier = 1.0f;
     const float m_UniformScaleCubeSize = 0.25f;  // Size of center cube for uniform scale
 };

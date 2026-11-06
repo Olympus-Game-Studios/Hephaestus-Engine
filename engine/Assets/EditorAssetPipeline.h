@@ -11,7 +11,7 @@
 /**
  * @brief Editor-facing owner of AssetDatabase, DerivedDataCache, and ReimportManager.
  *
- * Manual reimport only — does not start FileWatcher / auto-reimport.
+ * Starts FileWatcher auto-reimport for registered sources when initialized.
  */
 class EditorAssetPipeline {
 public:

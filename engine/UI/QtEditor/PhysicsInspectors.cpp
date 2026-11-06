@@ -141,9 +141,6 @@ void RigidBodyInspector::buildUI()
     auto* angVelRow = makeVec3Row(m_angVelX, m_angVelY, m_angVelZ, -1000, 1000, 0.1, 3);
     form->addRow(tr("Angular Vel:"), angVelRow);
 
-    m_debugDrawCheck = new QCheckBox(tr("Debug Draw Collider"));
-    form->addRow(QString(), m_debugDrawCheck);
-
     mainLayout->addLayout(form);
 
     m_removeBtn = new QPushButton(tr("Remove Rigid Body"));
@@ -196,11 +193,6 @@ void RigidBodyInspector::connectSignals()
     for (auto* spin : {m_linVelX, m_linVelY, m_linVelZ, m_angVelX, m_angVelY, m_angVelZ}) {
         connect(spin, &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
     }
-    connect(m_debugDrawCheck, &QCheckBox::toggled, this, [this](bool) {
-        applyToComponent();
-        EndEdit();
-    });
-
     // Presets
     connect(m_presetPlayerBtn, &QPushButton::clicked, this, [this]() { applyPreset(true); });
     connect(m_presetGroundBtn, &QPushButton::clicked, this, [this]() { applyPreset(false); });
@@ -240,7 +232,7 @@ Physics::PhysicsLayerConfig LoadProjectLayers()
 void RigidBodyInspector::Refresh()
 {
     EndEdit();
-    MixedBool isTrigger, useGravity, freezeRot, debugDraw;
+    MixedBool isTrigger, useGravity, freezeRot;
     MixedScalar layer;
     int motionIndex = -1;
     bool motionMixed = false;
@@ -257,7 +249,6 @@ void RigidBodyInspector::Refresh()
         AccumulateBool(isTrigger, rb.isTrigger);
         AccumulateBool(useGravity, rb.useGravity);
         AccumulateBool(freezeRot, rb.freezeRotation);
-        AccumulateBool(debugDraw, rb.debugDraw);
         AccumulateScalar(mass, rb.mass);
         AccumulateScalar(linDamp, rb.linearDamping);
         AccumulateScalar(angDamp, rb.angularDamping);
@@ -323,7 +314,6 @@ void RigidBodyInspector::Refresh()
     SetSpinFromMixed(m_angVelX, angX);
     SetSpinFromMixed(m_angVelY, angY);
     SetSpinFromMixed(m_angVelZ, angZ);
-    SetCheckFromMixed(m_debugDrawCheck, debugDraw);
     blockAllSignals(false);
     m_updating = false;
     updateDynamicFieldsVisibility();
@@ -350,7 +340,6 @@ void RigidBodyInspector::applyToComponent()
     writeBool(m_triggerCheck, &RigidBodyComponent::isTrigger);
     writeBool(m_gravityCheck, &RigidBodyComponent::useGravity);
     writeBool(m_freezeRotCheck, &RigidBodyComponent::freezeRotation);
-    writeBool(m_debugDrawCheck, &RigidBodyComponent::debugDraw);
 
     auto writeScalar = [&](QDoubleSpinBox* spin, float RigidBodyComponent::* field) {
         double value = 0.0;
@@ -443,7 +432,6 @@ void RigidBodyInspector::blockAllSignals(bool block)
     m_angVelX->blockSignals(block);
     m_angVelY->blockSignals(block);
     m_angVelZ->blockSignals(block);
-    m_debugDrawCheck->blockSignals(block);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

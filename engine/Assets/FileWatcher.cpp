@@ -58,10 +58,19 @@ void FileWatcher::Run() {
             if (!projectRoot.empty() && sourcePath.is_relative()) {
                 sourcePath = (projectRoot / sourcePath).lexically_normal();
             }
+            std::error_code existsError;
+            if (!std::filesystem::exists(sourcePath, existsError)) {
+                continue;
+            }
             auto fingerprint = AssetDatabase::BuildFastFingerprint(sourcePath);
 
             std::lock_guard<std::mutex> lock(stateMutex_);
-            auto& state = states_[record.assetId];
+            auto [stateIt, firstSeen] = states_.try_emplace(record.assetId);
+            auto& state = stateIt->second;
+            if (firstSeen) {
+                state.fingerprint = fingerprint;
+                continue;
+            }
             bool changed = (fingerprint.sizeBytes != state.fingerprint.sizeBytes) ||
                            (fingerprint.lastWriteTime != state.fingerprint.lastWriteTime);
 

@@ -47,6 +47,8 @@ public:
     ReimportResult RequestReimport(const std::string& assetId, ReimportPolicy policy);
     ReimportResult RequestReimportByPath(const std::filesystem::path& sourcePath, ReimportPolicy policy = ReimportPolicy::Manual);
     ReimportResult ReimportAllChanged();
+    // Reimports registered source files whose size or write time changes after this call.
+    void StartAutoReimport();
 
     std::vector<CompletedReimport> DrainCompleted();
 

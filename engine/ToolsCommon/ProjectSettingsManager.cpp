@@ -93,6 +93,12 @@ void ApplyProjectInfoFromMetadata(QHash<QString, QVariant>& values, const QJsonO
     if (companyNameValue.isString()) {
         values[QStringLiteral("project.info.companyName")] = companyNameValue.toString();
     }
+
+    const QString defaultSceneId = QStringLiteral("project.info.defaultScene");
+    const QJsonValue defaultSceneValue = projectMetadata.value(QStringLiteral("defaultScene"));
+    if (values.value(defaultSceneId).toString().trimmed().isEmpty() && defaultSceneValue.isString()) {
+        values[defaultSceneId] = defaultSceneValue.toString();
+    }
 }
 
 } // namespace

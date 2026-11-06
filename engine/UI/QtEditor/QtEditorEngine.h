@@ -184,6 +184,9 @@ public:
      */
     Hephaestus::EditorCameraController* GetCameraController() { return &m_cameraController; }
 
+    void SetGizmoSize(float size);
+    void SetPlayPhysicsEnabled(bool enabled) { m_playPhysicsEnabled = enabled; }
+
     /**
      * @brief Get the frame renderer (for direct mesh library access if needed).
      */
@@ -442,7 +445,14 @@ private:
     std::unique_ptr<Physics::JoltPhysicsEngine> m_joltPhysicsEngine;
     std::unique_ptr<Physics::JoltPhysicsSystem> m_joltPhysicsSystem;
     std::unique_ptr<Physics::CharacterControllerSystem> m_characterControllers;
+    void handlePlayPhysicsError(const std::exception& e);
+    bool physicsActive() const { return m_physicsInitialized && !m_physicsFailedThisSession; }
     bool m_physicsInitialized = false;
+    bool m_physicsFailedThisSession = false;
+    float m_gizmoSize = 1.0f;
+    bool m_playPhysicsEnabled = true;
+    bool m_gamepadBackendTried = false;
+    bool m_gamepadBackendReady = false;
     std::uint64_t m_runtimeUIUpdateSerial = 0;
     GLFWwindow* m_glfwWindow = nullptr;   // borrowed from main if GLFW path exists
     bool m_editorGizmoVisibleBeforePlay = true;

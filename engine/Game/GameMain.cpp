@@ -41,6 +41,7 @@
 
 #include "AppConfig.h"
 #include "Core/RuntimeBootstrap.h"
+#include "../Input/GlfwGamepad.h"
 #include "../Input/InputSystem.h"
 
 #if HEPHAESTUS_RUNTIME_AUTOMATION
@@ -158,6 +159,7 @@ struct GameConfig {
     std::string scenePath;
     std::string projectName;
     std::string inputProfile = "assets/input/Default.hpinput";
+    bool physicsEnabled = true;
 #if HEPHAESTUS_RUNTIME_AUTOMATION
     bool automationEnabled = false;
     int automationPort = 0;
@@ -396,6 +398,8 @@ static void LoadConfigFile(GameConfig& config) {
             config.projectName = value;
         } else if (key == "input_profile") {
             config.inputProfile = value;
+        } else if (key == "physics_enabled") {
+            config.physicsEnabled = (value == "true" || value == "1");
         }
 #if HEPHAESTUS_RUNTIME_AUTOMATION
         else if (key == "enabled" && value == "true" || key == "enabled" && value == "1") {
@@ -714,6 +718,7 @@ int main(int argc, char* argv[]) {
     HUI::UIRenderer uiRenderer;
     uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
     bool sceneReloadFailed = false;
+    bool physicsFailed = false;
     bool sceneReloadProcessing = false;
 
     // ── Scripting ─────────────────────────────────
@@ -1235,6 +1240,13 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<Hephaestus::Runtime::PackagedAutomation> packagedAutomation;
 #endif
 
+    auto reportPhysicsError = [&](const std::exception& e) {
+        physicsFailed = true;
+        Bootstrap::ShowFatalError("Physics Error",
+            std::string("The physics simulation failed and the game must close:\n") + e.what());
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+    };
+
 #if HEPHAESTUS_GAME_SCRIPTING
     auto reloadSceneAtSafePoint = [&]() {
         if (!sceneReloadRequested) return false;
@@ -1280,7 +1292,15 @@ int main(int argc, char* argv[]) {
         Hephaestus::CharacterRuntime::BindScene(scene, characterRoot, &frameRenderer);
         luaEngine.OnSimulationStarted();
         cppScripts.AwakeScripts();
-        physicsSystem.PrepareSceneBodies(scene);
+        if (!physicsFailed && g_Config.physicsEnabled) {
+            try {
+                physicsSystem.PrepareSceneBodies(scene);
+            } catch (const std::exception& e) {
+                sceneReloadProcessing = false;
+                reportPhysicsError(e);
+                return true;
+            }
+        }
         HP_LOG(Info, "Gameplay scene restarted: " + scene.GetSourceAssetPath());
         sceneReloadProcessing = false;
         return true;
@@ -1313,33 +1333,16 @@ int main(int argc, char* argv[]) {
         g_ScrollDeltaX = 0.0;
         g_ScrollDeltaY = 0.0;
 
-        GLFWgamepadstate gamepadState{};
-        const bool gamepadConnected =
-            glfwJoystickIsGamepad(GLFW_JOYSTICK_1) == GLFW_TRUE &&
-            glfwGetGamepadState(GLFW_JOYSTICK_1, &gamepadState) == GLFW_TRUE;
-        inputSystem.SetGamepadConnected(gamepadConnected);
-        if (gamepadConnected) {
-            for (int button = 0; button <= GLFW_GAMEPAD_BUTTON_LAST; ++button) {
-                inputSystem.SetGamepadButtonState(
-                    button, gamepadState.buttons[button] == GLFW_PRESS);
-            }
-            for (int axis = 0; axis <= GLFW_GAMEPAD_AXIS_LAST; ++axis) {
-                float value = gamepadState.axes[axis];
-                if (axis == GLFW_GAMEPAD_AXIS_LEFT_TRIGGER ||
-                    axis == GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER) {
-                    value = (value + 1.0f) * 0.5f;
-                }
-                inputSystem.SetGamepadAxisState(axis, value);
-            }
-        }
+        Hephaestus::PollGlfwGamepad(inputSystem);
 
         uiContext.SetDeltaTimeSeconds(simulationDeltaTime);
 
         Hephaestus::SimulationStepContext step;
         step.scene = &scene;
         step.audio = &audioEngine;
-        step.physics = &physicsSystem;
+        step.physics = physicsFailed || !g_Config.physicsEnabled ? nullptr : &physicsSystem;
         step.cppScripts = &cppScripts;
+        step.onPhysicsError = reportPhysicsError;
 #if HEPHAESTUS_GAME_SCRIPTING
         step.lua = &luaEngine;
         step.pluginScripts = &pluginScripts;
@@ -1477,5 +1480,5 @@ int main(int argc, char* argv[]) {
 
     Bootstrap::Shutdown();
     
-    return 0;
+    return physicsFailed ? 1 : 0;
 }

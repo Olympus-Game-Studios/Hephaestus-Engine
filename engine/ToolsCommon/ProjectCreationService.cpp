@@ -11,6 +11,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 
 namespace Hephaestus::Tools {
@@ -59,6 +61,59 @@ bool TryCopyDefaultHdri(const QDir& projectDir, QString* warningOut)
         return false;
     }
     return true;
+}
+
+QJsonArray Vec3Json(double x, double y, double z)
+{
+    return QJsonArray{x, y, z};
+}
+
+QJsonObject TransformJson(const QJsonArray& position, const QJsonArray& rotation, const QJsonArray& scale)
+{
+    return QJsonObject{{"position", position}, {"rotation", rotation}, {"scale", scale}};
+}
+
+QJsonObject EntityJson(int id, const QString& name, const QJsonObject& components)
+{
+    return QJsonObject{{"id", id}, {"name", name}, {"parent", QJsonValue::Null}, {"components", components}};
+}
+
+QByteArray BuildDefaultSceneJson(bool hasHdri)
+{
+    QJsonObject environment{
+        {"type", hasHdri ? "HDRI" : "SolidColor"},
+        {"solidColor", Vec3Json(0.45, 0.55, 0.7)},
+        {"hdriPath", hasHdri ? QString::fromUtf8(kDefaultHdriDest) : QString()},
+        {"hdriIntensity", 1.0},
+        {"useAsIBL", true},
+        {"reflectionIntensity", 1.0}};
+    QJsonObject sun{
+        {"Transform", TransformJson(Vec3Json(0.0, 10.0, 0.0), Vec3Json(-0.9, 0.6, 0.0), Vec3Json(1.0, 1.0, 1.0))},
+        {"Light", QJsonObject{{"type", "Directional"}, {"enabled", true}, {"color", Vec3Json(1.0, 0.96, 0.9)},
+                              {"intensity", 1.0}, {"castsShadow", true}}}};
+    QJsonObject floor{
+        {"Transform", TransformJson(Vec3Json(0.0, 0.0, 0.0), Vec3Json(0.0, 0.0, 0.0), Vec3Json(20.0, 1.0, 20.0))},
+        {"MeshRenderer", QJsonObject{{"visible", true}, {"meshSource", "builtin://plane"}, {"submeshCount", 1},
+                                     {"materialIndices", QJsonArray{0}},
+                                     {"localBounds", QJsonObject{{"min", Vec3Json(-0.75, 0.0, -0.75)},
+                                                                 {"max", Vec3Json(0.75, 0.0, 0.75)}}}}},
+        {"Material", QJsonObject{{"albedo", Vec3Json(0.6, 0.6, 0.6)}, {"metallic", 0.0}, {"roughness", 0.9}}},
+        {"PhysicsShape", QJsonObject{{"type", "Box"}, {"extents", Vec3Json(0.75, 0.05, 0.75)},
+                                     {"offset", Vec3Json(0.0, -0.05, 0.0)}}},
+        {"RigidBody", QJsonObject{{"isStatic", true}, {"motion", "static"}}}};
+    QJsonObject camera{
+        {"Transform", TransformJson(Vec3Json(0.0, 2.0, 8.0), Vec3Json(-0.15, 0.0, 0.0), Vec3Json(1.0, 1.0, 1.0))},
+        {"Camera", QJsonObject{{"fov", 60.0}, {"near", 0.1}, {"far", 1000.0},
+                               {"projection", "Perspective"}, {"isActive", true}}}};
+
+    const QJsonObject root{
+        {"scene", QJsonObject{{"name", "DefaultScene"}, {"version", "1.0"}}},
+        {"entities", QJsonArray{
+            EntityJson(1, QStringLiteral("Environment"), QJsonObject{{"Environment", environment}}),
+            EntityJson(2, QStringLiteral("Sun"), sun),
+            EntityJson(3, QStringLiteral("Floor"), floor),
+            EntityJson(4, QStringLiteral("Main Camera"), camera)}}};
+    return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
 
 } // namespace
@@ -135,7 +190,7 @@ bool ProjectCreationService::CreateBlankProject(const QString& parentDir,
 
     // HDRI is optional convenience content — never fail project creation.
     QString hdriWarning;
-    TryCopyDefaultHdri(projectDir, &hdriWarning);
+    const bool hasHdri = TryCopyDefaultHdri(projectDir, &hdriWarning);
     Q_UNUSED(hdriWarning);
 
     QString defaultSceneRelative;
@@ -143,7 +198,7 @@ bool ProjectCreationService::CreateBlankProject(const QString& parentDir,
         defaultSceneRelative = QString::fromUtf8(kDefaultSceneRelative);
         QFile defaultScene(projectDir.filePath(defaultSceneRelative));
         if (defaultScene.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            defaultScene.write("{\n  \"version\": 1,\n  \"name\": \"DefaultScene\",\n  \"entities\": []\n}\n");
+            defaultScene.write(BuildDefaultSceneJson(hasHdri));
             defaultScene.close();
         }
     }
@@ -173,6 +228,16 @@ bool ProjectCreationService::CreateBlankProject(const QString& parentDir,
         return false;
     }
     JsonUtils::WriteJsonObject(projectDir.filePath(QStringLiteral(".hephaestus/project.heproject")), root);
+
+    if (hasHdri) {
+        ProjectSettingsManager settings(projectDirPath);
+        settings.Load();
+        settings.SetValue(QStringLiteral("project.rendering.defaultSkybox"), QString::fromUtf8(kDefaultHdriDest));
+        if (!settings.Save()) {
+            qWarning("Project created, but its Default Skybox setting could not be saved to %s",
+                     qPrintable(settings.SettingsFilePath()));
+        }
+    }
 
     if (outResult) {
         outResult->projectDir = projectDirPath;

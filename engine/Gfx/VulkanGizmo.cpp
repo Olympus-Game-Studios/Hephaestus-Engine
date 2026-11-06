@@ -944,14 +944,14 @@ float VulkanGizmo::CalculateGizmoScale(const Vec3& gizmoPos, const Vec3& cameraP
     if (std::abs(projMatrix.m[15] - 1.0f) < 0.001f &&
         std::abs(projMatrix.m[5]) > 1e-5f) {
         const float halfHeight = 1.0f / std::abs(projMatrix.m[5]);
-        return std::max(halfHeight * 2.0f * m_ScreenScaleFactor, 0.001f);
+        return std::max(halfHeight * 2.0f * m_ScreenScaleFactor * m_SizeMultiplier, 0.001f);
     }
     float distance = vlen(vsub(gizmoPos, cameraPos));
     float f = std::abs(projMatrix.m[5]);
     if (f > 1e-5f) {
         float fovY = 2.0f * std::atan(1.0f / f);
-        float scale = distance * std::tan(fovY * 0.5f) * m_ScreenScaleFactor;
+        float scale = distance * std::tan(fovY * 0.5f) * m_ScreenScaleFactor * m_SizeMultiplier;
         return std::max(scale, 0.001f);
     }
-    return std::max(distance * m_ScreenScaleFactor, 0.001f);
+    return std::max(distance * m_ScreenScaleFactor * m_SizeMultiplier, 0.001f);
 }

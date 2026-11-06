@@ -22,7 +22,7 @@ If a project shows up as broken, its `project.heproject` file is damaged or unre
 
 Click **New project**, give it a **Name** and a **Location** (it defaults to `Documents\HephaestusProjects`) and hit **Create**.
 
-Leave **Create a default scene** ticked unless you have a reason not to. It gives you an empty `default.hpscene` and sets it as the scene your game starts in, so Play and packaging work straight away. The scene really is empty, by the way: no light, no sky, no camera. The first few minutes of [Scenes, entities and components](scenes-and-entities.md) cover filling it in.
+Leave **Create a default scene** ticked unless you have a reason not to. It gives you a `default.hpscene` with a sun, the starter sky, a floor and a camera, and sets it as the scene your game starts in, so you can press Play straight away and see something. The floor has a collider, so anything you give a Rigid Body lands on it instead of falling forever.
 
 ## Default, Artist or Programmer?
 

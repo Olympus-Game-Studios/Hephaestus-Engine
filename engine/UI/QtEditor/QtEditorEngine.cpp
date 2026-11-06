@@ -52,6 +52,7 @@
 
 #include <QCoreApplication>
 #include <GLFW/glfw3.h>  // Shared physical key/button numbering
+#include "../../Input/GlfwGamepad.h"
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <nlohmann/json.hpp>
@@ -432,6 +433,7 @@ bool QtEditorEngine::createSwapchain()
         if (!m_frameRenderer->Init(m_device.get(), m_swapchain.get(), true)) {
             throw std::runtime_error("Failed to initialize frame renderer");
         }
+        m_frameRenderer->GetGizmo()->SetSizeMultiplier(m_gizmoSize);
         
         // Create a default scene only if one wasn't already loaded
         // (e.g. project startup may load a configured default scene first).
@@ -483,6 +485,10 @@ void QtEditorEngine::Shutdown()
     
     // Stop render timer
     m_renderTimer.stop();
+    if (m_gamepadBackendReady) {
+        glfwTerminate();
+        m_gamepadBackendReady = false;
+    }
     
     // Wait for GPU to finish
     if (m_device && m_device->device) {
@@ -1543,9 +1549,24 @@ void QtEditorEngine::populateGameplayInput()
     m_gameplayInput.SetMousePosition(m_runtimeMouseX, m_runtimeMouseY);
     m_gameplayInput.AddMouseDelta(m_runtimeMouseDeltaX, m_runtimeMouseDeltaY);
     m_gameplayInput.AddScrollDelta(0.0, m_runtimeScrollDeltaY);
-    // GLFW joystick polling is intentionally confined to the GLFW runtime.
-    // Qt Play still receives the same keyboard/mouse action map.
+#ifdef _WIN32
+    // GLFW's macOS init replaces the NSApp delegate Qt owns, so editor gamepads are Windows only.
+    if (!m_gamepadBackendTried) {
+        m_gamepadBackendTried = true;
+        m_gamepadBackendReady = glfwInit() == GLFW_TRUE;
+        if (!m_gamepadBackendReady) {
+            Hephaestus::EngineLog::Write(Hephaestus::EngineLogLevel::Warning,
+                "Gamepad input is unavailable in Play: GLFW failed to initialize", "Input");
+        }
+    }
+    if (m_gamepadBackendReady) {
+        Hephaestus::PollGlfwGamepad(m_gameplayInput);
+    } else {
+        m_gameplayInput.SetGamepadConnected(false);
+    }
+#else
     m_gameplayInput.SetGamepadConnected(false);
+#endif
     m_runtimeMouseDeltaX = 0.0;
     m_runtimeMouseDeltaY = 0.0;
     m_runtimeScrollDeltaY = 0.0;
@@ -1853,7 +1874,7 @@ void QtEditorEngine::onTick()
     }
 
     Scene* interpolatedScene = nullptr;
-    if (isPlaying && m_playModeManager.ShouldAdvanceRealtime() && m_physicsInitialized &&
+    if (isPlaying && m_playModeManager.ShouldAdvanceRealtime() && physicsActive() &&
         m_joltPhysicsSystem && m_editorContext.HasActiveScene()) {
         interpolatedScene = m_editorContext.GetActiveScene();
         m_joltPhysicsSystem->ApplyRenderInterpolation(*interpolatedScene);
@@ -1926,6 +1947,28 @@ static void AppendProbeVolumeDebugDraw(Scene& scene, std::vector<EditorDebugLine
                     const Vec3 offset = volume.ProbeOffset(x, y, z);
                     points.push_back({Vec3(center.x + offset.x, center.y + offset.y, center.z + offset.z),
                                       color, 0.08f});
+                }
+            }
+        }
+    }
+}
+
+static void AppendMeshColliderBoundsDebugDraw(Scene& scene, std::vector<EditorDebugLine>& lines)
+{
+    auto view = scene.GetRegistry().view<MeshColliderComponent, MeshRendererComponent>();
+    for (entt::entity handle : view) {
+        if (!view.get<MeshColliderComponent>(handle).debugDraw) continue;
+        const AABB& bounds = view.get<MeshRendererComponent>(handle).localBounds;
+        const Mat4 world = scene.GetWorldTransform(Entity(handle, &scene));
+        auto corner = [&](int i) {
+            return Mat4::TransformPoint(world, Vec3((i & 1) ? bounds.max.x : bounds.min.x,
+                                                    (i & 2) ? bounds.max.y : bounds.min.y,
+                                                    (i & 4) ? bounds.max.z : bounds.min.z));
+        };
+        for (int i = 0; i < 8; ++i) {
+            for (int bit = 1; bit < 8; bit <<= 1) {
+                if (!(i & bit)) {
+                    lines.push_back({corner(i), corner(i | bit), Vec3(0.3f, 1.0f, 0.4f)});
                 }
             }
         }
@@ -2010,6 +2053,7 @@ void QtEditorEngine::renderFrame()
     m_renderConfig.debugLines = m_debugLines;
     m_renderConfig.debugPoints = m_debugPoints;
     AppendProbeVolumeDebugDraw(*scene, m_renderConfig.debugLines, m_renderConfig.debugPoints);
+    AppendMeshColliderBoundsDebugDraw(*scene, m_renderConfig.debugLines);
     // Set snap value based on current gizmo mode
     switch (m_editorContext.GetGizmoMode()) {
         case Hephaestus::GizmoMode::Translate:
@@ -2740,6 +2784,18 @@ void QtEditorEngine::StartPlayMode()
         }
     }
 
+    if (m_physicsFailedThisSession) {
+        m_editorContext.SetCharacterControllers(nullptr);
+        m_characterControllers.reset();
+        m_joltPhysicsSystem.reset();
+        if (m_joltPhysicsEngine && m_physicsInitialized) {
+            m_joltPhysicsEngine->Shutdown();
+        }
+        m_joltPhysicsEngine.reset();
+        m_physicsInitialized = false;
+        m_physicsFailedThisSession = false;
+    }
+
     // Ensure Jolt physics is ready in Play Mode (do not depend on FocusOnSelection side-effects).
     if (!m_joltPhysicsEngine) {
         m_joltPhysicsEngine = std::make_unique<Physics::JoltPhysicsEngine>();
@@ -2889,7 +2945,7 @@ void QtEditorEngine::StartPlayMode()
     const ScriptPhysicsAccessor physicsAccess = [this]() {
         ScriptPhysicsAccess access;
         access.characterControllers = m_characterControllers.get();
-        if (m_physicsInitialized) {
+        if (physicsActive()) {
             access.physicsEngine = m_joltPhysicsEngine.get();
             access.physicsSystem = m_joltPhysicsSystem.get();
             access.scene = m_editorContext.HasActiveScene() ? m_editorContext.GetActiveScene() : nullptr;
@@ -3129,8 +3185,12 @@ bool QtEditorEngine::reloadRuntimeScene(std::string& outError)
     }
     Hephaestus::CharacterRuntime::BindScene(*scene, projectRoot, m_frameRenderer.get());
     m_editorContext.RequestRebuildSceneVisuals();
-    if (m_joltPhysicsSystem) {
-        m_joltPhysicsSystem->PrepareSceneBodies(*scene);
+    if (physicsActive() && m_joltPhysicsSystem && m_playPhysicsEnabled) {
+        try {
+            m_joltPhysicsSystem->PrepareSceneBodies(*scene);
+        } catch (const std::exception& e) {
+            handlePlayPhysicsError(e);
+        }
     }
     outError.clear();
     return true;
@@ -3157,14 +3217,14 @@ void QtEditorEngine::simulateGameplayFrame(float dt)
         return;
     }
     m_playModeManager.AdvanceFrameTime(dt);
-    if (m_physicsInitialized && m_joltPhysicsSystem) {
+    if (physicsActive() && m_joltPhysicsSystem) {
         m_joltPhysicsSystem->SetEnabled(true);
     }
 
     Hephaestus::SimulationStepContext step;
     step.scene = scene;
     step.audio = m_audioEngine.get();
-    step.physics = m_physicsInitialized ? m_joltPhysicsSystem.get() : nullptr;
+    step.physics = physicsActive() && m_playPhysicsEnabled ? m_joltPhysicsSystem.get() : nullptr;
     step.lua = m_luaScriptEngine.get();
     step.pluginScripts = m_pluginScriptHost.get();
     step.cppScripts = m_cppScriptEngine.get();
@@ -3175,11 +3235,25 @@ void QtEditorEngine::simulateGameplayFrame(float dt)
         m_playModeManager.ProcessSceneReload();
         return true;
     };
-    step.onPhysicsError = [this](const std::exception& e) {
-        std::cerr << "[QtEditorEngine] Physics error: " << e.what() << "\n";
-        m_physicsInitialized = false;
-    };
+    step.onPhysicsError = [this](const std::exception& e) { handlePlayPhysicsError(e); };
     Hephaestus::RunSimulationStep(step, dt);
+}
+
+void QtEditorEngine::handlePlayPhysicsError(const std::exception& e)
+{
+    Hephaestus::EngineLog::Write(
+        Hephaestus::EngineLogLevel::Error,
+        std::string("Physics stopped for this Play session after an error: ") + e.what(),
+        "Physics");
+    m_physicsFailedThisSession = true;
+}
+
+void QtEditorEngine::SetGizmoSize(float size)
+{
+    m_gizmoSize = size;
+    if (m_frameRenderer) {
+        m_frameRenderer->GetGizmo()->SetSizeMultiplier(size);
+    }
 }
 
 void QtEditorEngine::runSimulationFrame(float dt)
@@ -3362,7 +3436,7 @@ bool QtEditorEngine::PhysicsRaycast(const Hephaestus::Automation::AutomationBack
                                     std::string& outError, const std::string* layerName)
 {
     return Hephaestus::Automation::CastPhysicsRay(
-        m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
+        physicsActive(), m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
         m_editorContext.GetActiveScene(), origin, direction, maxDistance, ignore, out, outError, layerName);
 }
 
@@ -3370,7 +3444,7 @@ bool QtEditorEngine::ListPhysicsBodies(
     std::vector<Hephaestus::Automation::AutomationBackend::PhysicsBodySnapshot>& out, std::string& outError)
 {
     return Hephaestus::Automation::ListPhysicsSnapshots(
-        m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
+        physicsActive(), m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
         m_editorContext.GetActiveScene(), out, outError);
 }
 
@@ -3379,7 +3453,7 @@ bool QtEditorEngine::GetPhysicsBody(entt::entity entity,
                                     std::string& outError)
 {
     return Hephaestus::Automation::ReadPhysicsSnapshot(
-        m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
+        physicsActive(), m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
         m_editorContext.GetActiveScene(), entity, out, outError);
 }
 
@@ -3388,7 +3462,7 @@ bool QtEditorEngine::GetCharacterState(entt::entity entity,
                                        bool& grounded, std::string& outError)
 {
     return Hephaestus::Automation::ReadCharacterSnapshot(
-        m_physicsInitialized, m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
+        physicsActive(), m_joltPhysicsEngine.get(), m_joltPhysicsSystem.get(),
         m_editorContext.GetActiveScene(), entity, pose, grounded, outError,
         m_characterControllers.get());
 }

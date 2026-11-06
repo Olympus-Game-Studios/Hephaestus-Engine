@@ -35,7 +35,7 @@ A few tips:
 - If you import a **rigged FBX** through Import Assets, you'll be asked whether to import it as a character. Say yes if you want it to animate; otherwise it comes in as a static mesh. [Characters and animation](characters-and-animation.md) has the details.
 - Meshes bring their **material slots** across, but not the materials themselves. You assign Hephaestus materials in the editor, which takes a minute and gives you proper PBR control.
 
-When you change a source file outside the editor (say you tweak a texture in your paint app), right click it and choose **Reimport**, or use **Reimport All Changed** to catch everything at once. Hephaestus doesn't watch your folders for changes automatically.
+When you change a source file outside the editor (say you tweak a texture in your paint app), Hephaestus notices. Imported meshes, textures and sounds reimport on their own about half a second after you save, and the Content Browser refreshes when files are added, removed or edited in the folder you're looking at. If something was changed while the editor was closed, right click it and choose **Reimport**, or right click empty space and use **Reimport All Changed** to catch everything at once.
 
 ## Making new assets
 
@@ -55,7 +55,7 @@ Double click an asset to open it in the right editor. Scripts open in the built 
 This is the bit that saves you real headaches. When you **Rename** or move an asset from the Content Browser, Hephaestus updates every scene, prefab, material, UI layout and setting that points at it. Before anything changes you'll see what's affected.
 
 - **Find References...** shows what an asset depends on and everything that uses it. Check it before deleting anything you're unsure about.
-- **Delete** moves the asset into the project's `.hephaestus/trash` folder rather than wiping it. There's no restore button yet, so if you change your mind, fish it out of that folder by hand.
+- **Delete** moves the asset into the project's `.hephaestus/trash` folder rather than wiping it. Changed your mind? Right click empty space in the Content Browser, choose **Restore Deleted Asset...** and pick it from the list. It goes back where it was, as long as nothing new has taken its place.
 - **Copy Asset Path** gives you the path to paste into a script, like `assets/prefabs/Enemy.hpprefab`.
 - **Show in Explorer** opens the folder on disk.
 

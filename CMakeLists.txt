@@ -237,8 +237,10 @@ add_subdirectory(extern/JoltPhysics/Build)
 add_library(HephaestusInputCore STATIC
     engine/Input/InputMap.cpp
     engine/Input/InputSystem.cpp
+    engine/Input/GlfwGamepad.cpp
 )
 target_include_directories(HephaestusInputCore PUBLIC engine extern extern/glfw/include)
+target_link_libraries(HephaestusInputCore PUBLIC glfw)
 
 # Transport-independent automation registry and main-thread dispatch core.
 # This library is intentionally free of any MCP/HTTP protocol implementation;
@@ -1760,6 +1762,32 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     hephaestus_target_ufbx(AssetThumbnailRendererTests STATIC)
     add_test(NAME AssetThumbnailRenderer COMMAND AssetThumbnailRendererTests)
 
+    add_executable(MaterialNodeSupportTests
+        engine/Tests/MaterialNodeSupportTests.cpp
+    )
+    target_link_libraries(MaterialNodeSupportTests PRIVATE HephaestusEditorCore Vulkan::Vulkan)
+    target_include_directories(MaterialNodeSupportTests PRIVATE
+        engine
+        extern
+        extern/VMA
+        extern/entt/single_include
+    )
+    hephaestus_target_ufbx(MaterialNodeSupportTests STATIC)
+    add_test(NAME MaterialNodeSupport COMMAND MaterialNodeSupportTests)
+
+    add_executable(FileWatcherTests
+        engine/Tests/FileWatcherTests.cpp
+    )
+    target_link_libraries(FileWatcherTests PRIVATE HephaestusEditorCore Vulkan::Vulkan)
+    target_include_directories(FileWatcherTests PRIVATE
+        engine
+        extern
+        extern/VMA
+        extern/entt/single_include
+    )
+    hephaestus_target_ufbx(FileWatcherTests STATIC)
+    add_test(NAME FileWatcher COMMAND FileWatcherTests)
+
     add_executable(AutomationMaterialTests
         engine/Tests/AutomationMaterialTests.cpp
         engine/Assets/AssetPathPolicy.cpp
@@ -2098,7 +2126,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         add_executable(ProjectCreationTests
             engine/Tests/ProjectCreationTests.cpp
         )
-        target_link_libraries(ProjectCreationTests PRIVATE HephaestusToolsCommon Qt6::Core)
+        target_link_libraries(ProjectCreationTests PRIVATE HephaestusToolsCommon HephaestusRuntime Qt6::Core)
         target_include_directories(ProjectCreationTests PRIVATE
             engine
             "${CMAKE_BINARY_DIR}/generated"

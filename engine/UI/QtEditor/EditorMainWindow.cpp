@@ -3468,6 +3468,8 @@ bool EditorMainWindow::initializeEngine()
             QStringLiteral("engine.editor.cameraSpeedDefault")).toFloat();
         if (speed > 0.0f) camera->baseMoveSpeed = speed;
     }
+    m_engine->SetGizmoSize(m_engineSettingsManager.Value(QStringLiteral("engine.editor.gizmoSize")).toFloat());
+    applyPlayPhysicsSetting();
     
     // Set up viewport rendering toggles now that engine context is available
     setupViewportRenderingToggles();
@@ -5731,6 +5733,16 @@ void EditorMainWindow::onNewLevel()
     }
     
     ctx->NewScene("New Scene");
+    const QString skybox = m_projectSettingsManager
+        ? m_projectSettingsManager->Value(QStringLiteral("project.rendering.defaultSkybox")).toString().trimmed()
+        : QString();
+    if (!skybox.isEmpty()) {
+        Entity environment = ctx->GetActiveScene()->CreateEntity("Environment");
+        auto& env = environment.AddComponent<EnvironmentComponent>();
+        env.type = EnvironmentComponent::BackgroundType::HDRI;
+        env.hdriPath = skybox.toStdString();
+        rebuildOutliner();
+    }
     statusBar()->showMessage(tr("New level created"), 3000);
 }
 
@@ -5967,6 +5979,7 @@ void EditorMainWindow::onCloseProject()
     }
     m_projectContext->CloseProject();
     m_projectSettingsManager.reset();
+    applyPlayPhysicsSetting();
     EditorAssetServices::Instance().OnProjectClosed();
 
     if (m_pluginSystem) {
@@ -6030,6 +6043,7 @@ bool EditorMainWindow::openProjectFile(const QString& filepath)
     m_projectSettingsManager = std::make_unique<Hephaestus::Tools::ProjectSettingsManager>(
         QString::fromStdString(m_projectContext->GetProjectRootDir()));
     m_projectSettingsManager->Load();
+    applyPlayPhysicsSetting();
     const QString newerEngineVersion =
         m_projectSettingsManager->RecordEngineVersion(Hephaestus::Tools::VersionInfo::EngineVersion());
     if (!newerEngineVersion.isEmpty()) {
@@ -6248,6 +6262,13 @@ void EditorMainWindow::stopRecoverySession()
     if (m_recoveryStore.HasActiveSession()) {
         m_recoveryStore.EndSessionClean();
     }
+}
+
+void EditorMainWindow::applyPlayPhysicsSetting()
+{
+    if (!m_engine) return;
+    m_engine->SetPlayPhysicsEnabled(!m_projectSettingsManager ||
+        m_projectSettingsManager->Value(QStringLiteral("project.rendering.physicsEnabled")).toBool());
 }
 
 int EditorMainWindow::autosaveIntervalSeconds() const
@@ -6732,9 +6753,15 @@ void EditorMainWindow::onOpenSettings()
         });
         connect(m_settingsWindow, &Hephaestus::UI::SettingsWindow::settingsApplied,
                 this, [this]() {
+            m_engineSettingsManager.Load();
+            if (m_engine) {
+                m_engine->SetGizmoSize(
+                    m_engineSettingsManager.Value(QStringLiteral("engine.editor.gizmoSize")).toFloat());
+            }
             if (m_projectSettingsManager) {
                 m_projectSettingsManager->Load();
             }
+            applyPlayPhysicsSetting();
         });
     }
 
@@ -7198,6 +7225,10 @@ void EditorMainWindow::startBuild(Build::BuildAction requestedAction)
     request.window.height = selected.windowHeight;
     request.window.fullscreen = selected.fullscreen;
     request.window.vsync = selected.vsync;
+    if (m_projectSettingsManager) {
+        request.physicsEnabled =
+            m_projectSettingsManager->Value(QStringLiteral("project.rendering.physicsEnabled")).toBool();
+    }
     if (!applicationIcon.trimmed().isEmpty()) {
         const std::filesystem::path icon(applicationIcon.toStdWString());
         request.applicationIcon = icon.is_absolute()
