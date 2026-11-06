@@ -448,6 +448,8 @@ private:
     bool m_physicsInitialized = false;
     float m_gizmoSize = 1.0f;
     bool m_playPhysicsEnabled = true;
+    bool m_gamepadBackendTried = false;
+    bool m_gamepadBackendReady = false;
     std::uint64_t m_runtimeUIUpdateSerial = 0;
     GLFWwindow* m_glfwWindow = nullptr;   // borrowed from main if GLFW path exists
     bool m_editorGizmoVisibleBeforePlay = true;

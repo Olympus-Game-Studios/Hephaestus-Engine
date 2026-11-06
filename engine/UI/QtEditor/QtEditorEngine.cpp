@@ -52,6 +52,7 @@
 
 #include <QCoreApplication>
 #include <GLFW/glfw3.h>  // Shared physical key/button numbering
+#include "../../Input/GlfwGamepad.h"
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <nlohmann/json.hpp>
@@ -484,6 +485,10 @@ void QtEditorEngine::Shutdown()
     
     // Stop render timer
     m_renderTimer.stop();
+    if (m_gamepadBackendReady) {
+        glfwTerminate();
+        m_gamepadBackendReady = false;
+    }
     
     // Wait for GPU to finish
     if (m_device && m_device->device) {
@@ -1544,9 +1549,24 @@ void QtEditorEngine::populateGameplayInput()
     m_gameplayInput.SetMousePosition(m_runtimeMouseX, m_runtimeMouseY);
     m_gameplayInput.AddMouseDelta(m_runtimeMouseDeltaX, m_runtimeMouseDeltaY);
     m_gameplayInput.AddScrollDelta(0.0, m_runtimeScrollDeltaY);
-    // GLFW joystick polling is intentionally confined to the GLFW runtime.
-    // Qt Play still receives the same keyboard/mouse action map.
+#ifdef _WIN32
+    // GLFW's macOS init replaces the NSApp delegate Qt owns, so editor gamepads are Windows only.
+    if (!m_gamepadBackendTried) {
+        m_gamepadBackendTried = true;
+        m_gamepadBackendReady = glfwInit() == GLFW_TRUE;
+        if (!m_gamepadBackendReady) {
+            Hephaestus::EngineLog::Write(Hephaestus::EngineLogLevel::Warning,
+                "Gamepad input is unavailable in Play: GLFW failed to initialize", "Input");
+        }
+    }
+    if (m_gamepadBackendReady) {
+        Hephaestus::PollGlfwGamepad(m_gameplayInput);
+    } else {
+        m_gameplayInput.SetGamepadConnected(false);
+    }
+#else
     m_gameplayInput.SetGamepadConnected(false);
+#endif
     m_runtimeMouseDeltaX = 0.0;
     m_runtimeMouseDeltaY = 0.0;
     m_runtimeScrollDeltaY = 0.0;

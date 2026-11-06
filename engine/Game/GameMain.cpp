@@ -41,6 +41,7 @@
 
 #include "AppConfig.h"
 #include "Core/RuntimeBootstrap.h"
+#include "../Input/GlfwGamepad.h"
 #include "../Input/InputSystem.h"
 
 #if HEPHAESTUS_RUNTIME_AUTOMATION
@@ -1317,25 +1318,7 @@ int main(int argc, char* argv[]) {
         g_ScrollDeltaX = 0.0;
         g_ScrollDeltaY = 0.0;
 
-        GLFWgamepadstate gamepadState{};
-        const bool gamepadConnected =
-            glfwJoystickIsGamepad(GLFW_JOYSTICK_1) == GLFW_TRUE &&
-            glfwGetGamepadState(GLFW_JOYSTICK_1, &gamepadState) == GLFW_TRUE;
-        inputSystem.SetGamepadConnected(gamepadConnected);
-        if (gamepadConnected) {
-            for (int button = 0; button <= GLFW_GAMEPAD_BUTTON_LAST; ++button) {
-                inputSystem.SetGamepadButtonState(
-                    button, gamepadState.buttons[button] == GLFW_PRESS);
-            }
-            for (int axis = 0; axis <= GLFW_GAMEPAD_AXIS_LAST; ++axis) {
-                float value = gamepadState.axes[axis];
-                if (axis == GLFW_GAMEPAD_AXIS_LEFT_TRIGGER ||
-                    axis == GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER) {
-                    value = (value + 1.0f) * 0.5f;
-                }
-                inputSystem.SetGamepadAxisState(axis, value);
-            }
-        }
+        Hephaestus::PollGlfwGamepad(inputSystem);
 
         uiContext.SetDeltaTimeSeconds(simulationDeltaTime);
 

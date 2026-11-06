@@ -237,8 +237,10 @@ add_subdirectory(extern/JoltPhysics/Build)
 add_library(HephaestusInputCore STATIC
     engine/Input/InputMap.cpp
     engine/Input/InputSystem.cpp
+    engine/Input/GlfwGamepad.cpp
 )
 target_include_directories(HephaestusInputCore PUBLIC engine extern extern/glfw/include)
+target_link_libraries(HephaestusInputCore PUBLIC glfw)
 
 # Transport-independent automation registry and main-thread dispatch core.
 # This library is intentionally free of any MCP/HTTP protocol implementation;
