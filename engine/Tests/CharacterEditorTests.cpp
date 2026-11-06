@@ -387,6 +387,19 @@ bool TestDuplicateSourceClipNamesBind(const fs::path& project) {
                     "preview keeps jog id: " + error);
         ok &= Check(FindClip(previewClips, addedWalk.front(), error) != nullptr,
                     "preview keeps walk id: " + error);
+
+        auto& previewCharacter = preview.GetComponent<CharacterComponent>();
+        ok &= Check(CharacterAnimationSystem::Play(previewCharacter, addedJog.front(), error),
+                    "play jog in preview: " + error);
+        CharacterAnimationSystem::Tick(scene, 0.0f);
+        ok &= Check(doc.SetClipLoop(addedJog.front(), false, error), "edit jog loop: " + error);
+        ok &= Check(previewCharacter.player.playing, "editing the playing clip keeps it playing");
+
+        ok &= Check(CharacterAnimationSystem::Play(previewCharacter, addedWalk.front(), error),
+                    "play walk in preview: " + error);
+        CharacterAnimationSystem::Tick(scene, 0.0f);
+        ok &= Check(doc.DeleteClip(addedWalk.front(), error), "delete walk: " + error);
+        ok &= Check(!previewCharacter.player.playing, "deleting the playing clip stops the preview");
     } else {
         ok &= Check(false, "preview character exists");
     }

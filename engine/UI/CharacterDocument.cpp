@@ -194,6 +194,11 @@ void CharacterDocument::SyncPreviewClipMetadata() {
     character.clips = CharacterRuntime::BindAuthoredClips(
         asset_, projectRoot_, CharacterImporter::MakeSettings(asset_.import), character.skeleton,
         previewMeshClips_, previewExtraClipSources_, warnings);
+    std::string missing;
+    if (!character.player.currentClip.empty() &&
+        !FindClip(character.clips, character.player.currentClip, missing)) {
+        CharacterAnimationSystem::Stop(character);
+    }
 }
 
 void CharacterDocument::BeginAuthoredEdit() {
