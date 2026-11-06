@@ -408,6 +408,43 @@ bool TestDuplicateSourceClipNamesBind(const fs::path& project) {
     return ok;
 }
 
+bool TestMixamoTakeFilter() {
+    auto takes = [](std::initializer_list<const char*> names) {
+        std::vector<AnimationClip> clips;
+        for (const char* name : names) {
+            AnimationClip clip;
+            clip.name = name;
+            clip.sourceClip = name;
+            clips.push_back(clip);
+        }
+        return clips;
+    };
+    auto names = [](const std::vector<AnimationClip>& clips) {
+        std::vector<std::string> out;
+        for (const AnimationClip& clip : clips) {
+            out.push_back(clip.sourceClip);
+        }
+        return out;
+    };
+    bool ok = true;
+    ok &= Check(names(CharacterImporter::ImportableClips(takes({"Take 001", "mixamo.com"}))) ==
+                    std::vector<std::string>{"mixamo.com"},
+                "Mixamo file keeps only mixamo.com");
+    ok &= Check(names(CharacterImporter::ImportableClips(
+                    takes({"Armature|mixamo.com", "Take 001", "Wave"}))) ==
+                    std::vector<std::string>{"Armature|mixamo.com", "Wave"},
+                "Mixamo file keeps named takes");
+    ok &= Check(names(CharacterImporter::ImportableClips(takes({"Take 001", "Walk"}))) ==
+                    std::vector<std::string>{"Take 001", "Walk"},
+                "non-Mixamo file keeps every take");
+    ok &= Check(CharacterImporter::IsGenericTakeName("Take") &&
+                    CharacterImporter::IsGenericTakeName("Take 001") &&
+                    !CharacterImporter::IsGenericTakeName("Takedown"),
+                "generic take names");
+    ok &= Check(!CharacterImporter::IsMixamoTake("notmixamo.com"), "mixamo suffix needs a separator");
+    return ok;
+}
+
 bool TestSampleAtTimeClamp() {
     bool ok = true;
     Skeleton skeleton;
@@ -605,6 +642,7 @@ int main() {
     ok &= TestClipRenameAndImportNames(root / "ClipRename");
     ok &= TestImportUndoLeavesGlb(root / "ImportUndo");
     ok &= TestDuplicateSourceClipNamesBind(root / "DupClips");
+    ok &= TestMixamoTakeFilter();
     ok &= TestSampleAtTimeClamp();
     ok &= TestSocketParentKeepsLocal(root / "Sockets");
     ok &= TestReimportRefusal(root / "Reimport");

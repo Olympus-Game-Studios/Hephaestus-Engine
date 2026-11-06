@@ -130,9 +130,10 @@ void MergeClipsFromImport(CharacterAsset& asset,
 
     CharacterAsset taken;
     taken.clips = otherSourceClips;
+    const std::vector<AnimationClip> importable = CharacterImporter::ImportableClips(imported.clips);
     std::vector<CharacterClipEntry> merged;
-    merged.reserve(imported.clips.size() + otherSourceClips.size());
-    for (const AnimationClip& clip : imported.clips) {
+    merged.reserve(importable.size() + otherSourceClips.size());
+    for (const AnimationClip& clip : importable) {
         CharacterClipEntry entry;
         const auto it = previous.find(clip.sourceClip.empty() ? clip.name : clip.sourceClip);
         if (it != previous.end()) {
@@ -299,6 +300,57 @@ void RewriteMeshSourceKeys(CharacterAsset& asset,
 }
 
 } // namespace
+
+bool CharacterImporter::IsMixamoTake(const std::string& takeName) {
+    const std::string lower = ToLowerCopy(takeName);
+    const std::string mixamo = "mixamo.com";
+    if (lower == mixamo) {
+        return true;
+    }
+    if (lower.size() <= mixamo.size() ||
+        lower.compare(lower.size() - mixamo.size(), mixamo.size(), mixamo) != 0) {
+        return false;
+    }
+    const char separator = lower[lower.size() - mixamo.size() - 1];
+    return separator == '|' || separator == '/';
+}
+
+bool CharacterImporter::IsGenericTakeName(const std::string& takeName) {
+    std::string compact;
+    for (char c : ToLowerCopy(takeName)) {
+        if (c != ' ' && c != '\t') {
+            compact.push_back(c);
+        }
+    }
+    if (compact.empty() || IsMixamoTake(takeName)) {
+        return true;
+    }
+    if (compact.rfind("take", 0) != 0) {
+        return false;
+    }
+    return std::all_of(compact.begin() + 4, compact.end(),
+                       [](unsigned char c) { return std::isdigit(c) != 0; });
+}
+
+std::vector<AnimationClip> CharacterImporter::ImportableClips(const std::vector<AnimationClip>& clips) {
+    auto takeName = [](const AnimationClip& clip) {
+        return clip.sourceClip.empty() ? clip.name : clip.sourceClip;
+    };
+    const bool hasMixamoTake = std::any_of(clips.begin(), clips.end(), [&](const AnimationClip& clip) {
+        return IsMixamoTake(takeName(clip));
+    });
+    if (!hasMixamoTake) {
+        return clips;
+    }
+    std::vector<AnimationClip> importable;
+    for (const AnimationClip& clip : clips) {
+        const std::string name = takeName(clip);
+        if (IsMixamoTake(name) || !IsGenericTakeName(name)) {
+            importable.push_back(clip);
+        }
+    }
+    return importable;
+}
 
 bool CharacterImporter::IsGlbPath(const std::filesystem::path& path) {
     return EqualsInsensitive(path.extension().string(), ".glb");
