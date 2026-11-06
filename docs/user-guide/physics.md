@@ -78,5 +78,5 @@ end
 ## Good to know
 
 - Physics steps at a fixed 60 times a second. Moving bodies and characters are drawn smoothly between steps, so it still looks right at high frame rates.
-- The **Debug Draw Collider** and **Debug Draw Bounds** checkboxes don't draw anything yet.
+- Tick **Debug Draw Bounds** on a Mesh Collider to see its box as a green outline in the viewport. There's no matching view for Rigid Body shapes yet.
 - There are no joints, ragdolls or vehicles yet, and no overlap or shape cast queries; raycasts are the only physics query for now.

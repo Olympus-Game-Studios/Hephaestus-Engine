@@ -20,10 +20,10 @@ The File menu calls scenes **levels**:
 
 ### Your first five minutes
 
-A fresh scene is completely empty, so here's a quick way to get something on screen:
+A new project's default scene already has a sun, a sky, a floor and a camera. A scene you make with **File > New Level** only gets the project's sky, so here's a quick way to fill one in:
 
 1. Right click in the viewport and choose **Create > Directional Light**. That's your sun.
-2. Select any entity, click **Add Component** in the Inspector and add **Environment** (under Lighting). Set its background to **HDRI** and pick the starter sky from `.engine/hdris`. Only one Environment is allowed per scene.
+2. If the Hierarchy has no **Environment** yet, select any entity, click **Add Component** in the Inspector and add **Environment** (under Lighting). Set its background to **HDRI** and pick the starter sky from `.engine/hdris`. Only one Environment is allowed per scene.
 3. **Create > Plane** for a floor and **Create > Cube** for something to look at.
 4. **Create > Camera**, move it somewhere sensible and tick **Active** on its Camera card. That's what the player sees when you press Play.
 5. Press **Play**. Press `Esc` to stop.

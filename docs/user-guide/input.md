@@ -61,6 +61,6 @@ While you're playing in the editor, `Esc` always stops the game and releases the
 
 ## Limitations
 
-- **Gamepads only work in packaged games**, not while playing inside the editor. Test pad controls with **Package & Run**.
+- **On Windows, gamepads work when you press Play** as well as in packaged games. On macOS they only work in packaged games for now, so test pad controls there with **Package & Run**.
 - One gamepad (player one) for now, so no local multiplayer yet.
 - Players can't rebind controls in your game yet, and there are no input contexts (separate maps for driving and walking, say). You can still switch behaviour in your scripts.

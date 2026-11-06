@@ -58,7 +58,7 @@ This is the important bit, so I'll be straight with you. Right now the graph is 
 That means:
 
 - **Textures, constants, colours and maths on those work great.** Tinting a texture, mixing two colours, scaling roughness: all fine.
-- **Nodes that need to change per pixel or over time don't affect the rendered result yet.** That's TexCoord, Screen Position, Transform, Texture Tiling Offset, Noise, Gradient, Fresnel, UV Distortion, Time, Camera Vector, View Direction, Reflection Vector, World Position, Object Position, Distance To Camera and Static Switch Parameter. You can place and wire them, and they'll be ready when per pixel materials land, but today they won't animate or vary across a surface.
+- **Nodes that need to change per pixel or over time don't affect the rendered result yet.** That's TexCoord, Screen Position, Transform, Texture Tiling Offset, Noise, Gradient, Fresnel, UV Distortion, Time, Camera Vector, View Direction, Reflection Vector, World Position, Object Position, Distance To Camera and Static Switch Parameter. The library and the Add Node search label them **(no effect yet)**, and the Validation panel warns you when a graph uses one. You can still place and wire them, and they'll be ready when per pixel materials land, but today they won't animate or vary across a surface.
 - **Proper see through materials (glass, water) aren't supported.** Opacity Mask cuts clean holes; partial transparency isn't blended.
 - **Scripts can't change materials while the game runs.** There's no material API in Lua yet.
 
