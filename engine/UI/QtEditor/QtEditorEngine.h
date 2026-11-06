@@ -445,6 +445,7 @@ private:
     std::unique_ptr<Physics::JoltPhysicsEngine> m_joltPhysicsEngine;
     std::unique_ptr<Physics::JoltPhysicsSystem> m_joltPhysicsSystem;
     std::unique_ptr<Physics::CharacterControllerSystem> m_characterControllers;
+    void handlePlayPhysicsError(const std::exception& e);
     bool m_physicsInitialized = false;
     float m_gizmoSize = 1.0f;
     bool m_playPhysicsEnabled = true;

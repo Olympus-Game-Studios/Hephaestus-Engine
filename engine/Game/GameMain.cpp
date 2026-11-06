@@ -1240,6 +1240,13 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<Hephaestus::Runtime::PackagedAutomation> packagedAutomation;
 #endif
 
+    auto reportPhysicsError = [&](const std::exception& e) {
+        physicsFailed = true;
+        Bootstrap::ShowFatalError("Physics Error",
+            std::string("The physics simulation failed and the game must close:\n") + e.what());
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+    };
+
 #if HEPHAESTUS_GAME_SCRIPTING
     auto reloadSceneAtSafePoint = [&]() {
         if (!sceneReloadRequested) return false;
@@ -1286,7 +1293,13 @@ int main(int argc, char* argv[]) {
         luaEngine.OnSimulationStarted();
         cppScripts.AwakeScripts();
         if (!physicsFailed && g_Config.physicsEnabled) {
-            physicsSystem.PrepareSceneBodies(scene);
+            try {
+                physicsSystem.PrepareSceneBodies(scene);
+            } catch (const std::exception& e) {
+                sceneReloadProcessing = false;
+                reportPhysicsError(e);
+                return true;
+            }
         }
         HP_LOG(Info, "Gameplay scene restarted: " + scene.GetSourceAssetPath());
         sceneReloadProcessing = false;
@@ -1329,12 +1342,7 @@ int main(int argc, char* argv[]) {
         step.audio = &audioEngine;
         step.physics = physicsFailed || !g_Config.physicsEnabled ? nullptr : &physicsSystem;
         step.cppScripts = &cppScripts;
-        step.onPhysicsError = [&](const std::exception& e) {
-            physicsFailed = true;
-            Bootstrap::ShowFatalError("Physics Error",
-                std::string("The physics simulation failed and the game must close:\n") + e.what());
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
-        };
+        step.onPhysicsError = reportPhysicsError;
 #if HEPHAESTUS_GAME_SCRIPTING
         step.lua = &luaEngine;
         step.pluginScripts = &pluginScripts;

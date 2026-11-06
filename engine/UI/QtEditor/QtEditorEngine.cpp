@@ -3173,8 +3173,12 @@ bool QtEditorEngine::reloadRuntimeScene(std::string& outError)
     }
     Hephaestus::CharacterRuntime::BindScene(*scene, projectRoot, m_frameRenderer.get());
     m_editorContext.RequestRebuildSceneVisuals();
-    if (m_joltPhysicsSystem && m_playPhysicsEnabled) {
-        m_joltPhysicsSystem->PrepareSceneBodies(*scene);
+    if (m_physicsInitialized && m_joltPhysicsSystem && m_playPhysicsEnabled) {
+        try {
+            m_joltPhysicsSystem->PrepareSceneBodies(*scene);
+        } catch (const std::exception& e) {
+            handlePlayPhysicsError(e);
+        }
     }
     outError.clear();
     return true;
@@ -3219,14 +3223,17 @@ void QtEditorEngine::simulateGameplayFrame(float dt)
         m_playModeManager.ProcessSceneReload();
         return true;
     };
-    step.onPhysicsError = [this](const std::exception& e) {
-        Hephaestus::EngineLog::Write(
-            Hephaestus::EngineLogLevel::Error,
-            std::string("Physics stopped for this Play session after an error: ") + e.what(),
-            "Physics");
-        m_physicsInitialized = false;
-    };
+    step.onPhysicsError = [this](const std::exception& e) { handlePlayPhysicsError(e); };
     Hephaestus::RunSimulationStep(step, dt);
+}
+
+void QtEditorEngine::handlePlayPhysicsError(const std::exception& e)
+{
+    Hephaestus::EngineLog::Write(
+        Hephaestus::EngineLogLevel::Error,
+        std::string("Physics stopped for this Play session after an error: ") + e.what(),
+        "Physics");
+    m_physicsInitialized = false;
 }
 
 void QtEditorEngine::SetGizmoSize(float size)
