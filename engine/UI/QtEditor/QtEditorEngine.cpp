@@ -3173,7 +3173,7 @@ bool QtEditorEngine::reloadRuntimeScene(std::string& outError)
     }
     Hephaestus::CharacterRuntime::BindScene(*scene, projectRoot, m_frameRenderer.get());
     m_editorContext.RequestRebuildSceneVisuals();
-    if (m_joltPhysicsSystem) {
+    if (m_joltPhysicsSystem && m_playPhysicsEnabled) {
         m_joltPhysicsSystem->PrepareSceneBodies(*scene);
     }
     outError.clear();

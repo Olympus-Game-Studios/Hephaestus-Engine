@@ -233,7 +233,10 @@ bool ProjectCreationService::CreateBlankProject(const QString& parentDir,
         ProjectSettingsManager settings(projectDirPath);
         settings.Load();
         settings.SetValue(QStringLiteral("project.rendering.defaultSkybox"), QString::fromUtf8(kDefaultHdriDest));
-        settings.Save();
+        if (!settings.Save()) {
+            qWarning("Project created, but its Default Skybox setting could not be saved to %s",
+                     qPrintable(settings.SettingsFilePath()));
+        }
     }
 
     if (outResult) {

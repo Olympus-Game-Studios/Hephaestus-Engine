@@ -9,8 +9,11 @@ namespace Hephaestus {
 void PollGlfwGamepad(InputSystem& input)
 {
     GLFWgamepadstate state{};
-    const bool connected = glfwJoystickIsGamepad(GLFW_JOYSTICK_1) == GLFW_TRUE &&
-                           glfwGetGamepadState(GLFW_JOYSTICK_1, &state) == GLFW_TRUE;
+    bool connected = false;
+    for (int joystick = GLFW_JOYSTICK_1; joystick <= GLFW_JOYSTICK_LAST && !connected; ++joystick) {
+        connected = glfwJoystickIsGamepad(joystick) == GLFW_TRUE &&
+                    glfwGetGamepadState(joystick, &state) == GLFW_TRUE;
+    }
     input.SetGamepadConnected(connected);
     if (!connected) {
         return;

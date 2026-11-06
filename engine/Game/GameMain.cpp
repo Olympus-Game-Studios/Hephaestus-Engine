@@ -1285,7 +1285,9 @@ int main(int argc, char* argv[]) {
         Hephaestus::CharacterRuntime::BindScene(scene, characterRoot, &frameRenderer);
         luaEngine.OnSimulationStarted();
         cppScripts.AwakeScripts();
-        physicsSystem.PrepareSceneBodies(scene);
+        if (!physicsFailed && g_Config.physicsEnabled) {
+            physicsSystem.PrepareSceneBodies(scene);
+        }
         HP_LOG(Info, "Gameplay scene restarted: " + scene.GetSourceAssetPath());
         sceneReloadProcessing = false;
         return true;
@@ -1470,5 +1472,5 @@ int main(int argc, char* argv[]) {
 
     Bootstrap::Shutdown();
     
-    return 0;
+    return physicsFailed ? 1 : 0;
 }

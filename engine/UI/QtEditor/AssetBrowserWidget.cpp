@@ -1641,8 +1641,9 @@ void AssetBrowserWidget::restoreFromTrash()
         for (const std::string& path : entry.originalPortablePaths) {
             paths << QString::fromStdString(path);
         }
-        labels << tr("%1  (deleted %2)").arg(paths.join(QStringLiteral(", ")),
-                                             QString::fromStdString(entry.timestamp));
+        labels << tr("%1. %2  (deleted %3)").arg(QString::number(labels.size() + 1),
+                                                 paths.join(QStringLiteral(", ")),
+                                                 QString::fromStdString(entry.timestamp));
     }
 
     bool ok = false;
