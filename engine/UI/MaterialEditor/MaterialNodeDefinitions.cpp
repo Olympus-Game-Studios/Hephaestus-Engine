@@ -108,6 +108,30 @@ const std::vector<NodeDefinition>& GetAllNodeDefinitions() {
     return Definitions();
 }
 
+bool NodeAffectsRenderedMaterial(NodeType type) {
+    switch (type) {
+    case NodeType::TexCoord:
+    case NodeType::ScreenPosition:
+    case NodeType::Transform:
+    case NodeType::TextureTilingOffset:
+    case NodeType::Noise:
+    case NodeType::Gradient:
+    case NodeType::Fresnel:
+    case NodeType::UVDistortion:
+    case NodeType::Time:
+    case NodeType::CameraVector:
+    case NodeType::ViewDirection:
+    case NodeType::ReflectionVector:
+    case NodeType::WorldPosition:
+    case NodeType::ObjectPosition:
+    case NodeType::DistanceToCamera:
+    case NodeType::StaticSwitchParameter:
+        return false;
+    default:
+        return true;
+    }
+}
+
 std::string_view NodeTypeName(NodeType type) {
     return GetNodeDefinition(type).typeName;
 }

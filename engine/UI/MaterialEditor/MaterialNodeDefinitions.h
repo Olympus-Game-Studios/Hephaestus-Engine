@@ -27,6 +27,9 @@ struct NodeDefinition {
 const NodeDefinition& GetNodeDefinition(NodeType type);
 const std::vector<NodeDefinition>& GetAllNodeDefinitions();
 
+// False for nodes EvaluateGraph ignores: they do not change the rendered material yet.
+bool NodeAffectsRenderedMaterial(NodeType type);
+
 std::string_view NodeTypeName(NodeType type);
 bool TryNodeTypeName(std::string_view typeName, NodeType& outType);
 

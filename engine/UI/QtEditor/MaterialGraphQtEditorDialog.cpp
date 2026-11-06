@@ -116,6 +116,19 @@ QString NodeTypeLabel(NodeType type) {
     return QString::fromUtf8(GetNodeDefinition(type).typeName.data(), static_cast<int>(GetNodeDefinition(type).typeName.size()));
 }
 
+QString NodeTooltip(NodeType type) {
+    const auto tooltip = GetNodeDefinition(type).tooltip;
+    QString text = QString::fromUtf8(tooltip.data(), static_cast<int>(tooltip.size()));
+    if (!NodeAffectsRenderedMaterial(type)) {
+        text += QObject::tr("\nDoes not affect the rendered material yet: its output is ignored.");
+    }
+    return text;
+}
+
+QString NodeMenuLabel(NodeType type, const QString& label) {
+    return NodeAffectsRenderedMaterial(type) ? label : QObject::tr("%1 (no effect yet)").arg(label);
+}
+
 QString NodeCategory(NodeType type) {
     const auto category = GetNodeDefinition(type).category;
     return QString::fromUtf8(category.data(), static_cast<int>(category.size()));
@@ -323,6 +336,9 @@ GraphValidationResult ValidateGraph(const Graph& graph) {
     }
 
     for (const Node& node : graph.GetNodes()) {
+        if (!NodeAffectsRenderedMaterial(node.type)) {
+            result.issues.push_back({QObject::tr("%1 does not affect the rendered material yet. Its output is ignored.").arg(QString::fromStdString(node.displayName)), node.id, GraphIssue::Severity::Warning});
+        }
         if (IsTextureNode(node.type) && node.resourcePath.empty()) {
             result.issues.push_back({QObject::tr("%1 has no texture assigned.").arg(QString::fromStdString(node.displayName)), node.id, GraphIssue::Severity::Warning});
         } else if (IsTextureNode(node.type) && !node.resourcePath.empty()) {
@@ -614,8 +630,7 @@ public:
         setFlag(QGraphicsItem::ItemIsMovable, true);
         setFlag(QGraphicsItem::ItemIsSelectable, true);
         setFlag(QGraphicsItem::ItemSendsGeometryChanges, true);
-        const auto tooltip = GetNodeDefinition(node.type).tooltip;
-        setToolTip(QString::fromUtf8(tooltip.data(), static_cast<int>(tooltip.size())));
+        setToolTip(NodeTooltip(node.type));
         setZValue(3.0);
         if (m_type == NodeType::MaterialOutput) {
             m_width = 270.0;
@@ -1335,7 +1350,7 @@ protected:
             };
 
             for (const NodeMenuEntry& entry : NodeMenuEntries()) {
-                addAction(categoryMenu(entry.type), entry.label, entry.type);
+                addAction(categoryMenu(entry.type), NodeMenuLabel(entry.type, entry.label), entry.type);
             }
 
             menu.addSeparator();
@@ -2142,9 +2157,9 @@ private:
                 continue;
             }
             auto* child = new QTreeWidgetItem(getCategoryItem(QObject::tr("Recently Used")));
-            child->setText(0, label);
+            child->setText(0, NodeMenuLabel(recent, label));
             child->setData(0, Qt::UserRole, static_cast<int>(recent));
-            child->setToolTip(0, QString::fromUtf8(GetNodeDefinition(recent).tooltip.data(), static_cast<int>(GetNodeDefinition(recent).tooltip.size())));
+            child->setToolTip(0, NodeTooltip(recent));
         }
 
         for (const NodeMenuEntry& entry : NodeMenuEntries()) {
@@ -2155,9 +2170,9 @@ private:
                 continue;
             }
             auto* child = new QTreeWidgetItem(getCategoryItem(NodeCategory(entry.type)));
-            child->setText(0, entry.label);
+            child->setText(0, NodeMenuLabel(entry.type, entry.label));
             child->setData(0, Qt::UserRole, static_cast<int>(entry.type));
-            child->setToolTip(0, QString::fromUtf8(tooltip.data(), static_cast<int>(tooltip.size())));
+            child->setToolTip(0, NodeTooltip(entry.type));
         }
         m_nodePalette->expandAll();
     }
@@ -2196,9 +2211,10 @@ private:
                 if (!FuzzyMatch(filter, searchable)) {
                     return;
                 }
-                auto* item = new QListWidgetItem(prefix.isEmpty() ? label : QObject::tr("%1  -  %2").arg(prefix, label), results);
+                const QString shown = NodeMenuLabel(type, label);
+                auto* item = new QListWidgetItem(prefix.isEmpty() ? shown : QObject::tr("%1  -  %2").arg(prefix, shown), results);
                 item->setData(Qt::UserRole, static_cast<int>(type));
-                item->setToolTip(QString::fromUtf8(tooltip.data(), static_cast<int>(tooltip.size())));
+                item->setToolTip(NodeTooltip(type));
             };
             for (NodeType recent : m_recentNodeTypes) {
                 addEntry(QObject::tr("Recent"), recent, NodeTypeLabel(recent));
