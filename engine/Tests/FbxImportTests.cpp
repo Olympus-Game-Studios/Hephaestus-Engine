@@ -205,6 +205,13 @@ bool TestYBotAnimationClips(const fs::path& repoRoot) {
     ok &= Check(SkeletalModelImporter::LoadClips(walk, settings, character.skeleton, clips, error),
                 "load YBot-Walking clips: " + error);
 
+    const std::vector<Hephaestus::AnimationClip> importable =
+        Hephaestus::CharacterImporter::ImportableClips(clips);
+    ok &= Check(clips.size() > 1, "YBot-Walking also carries Mixamo's Take 001");
+    ok &= Check(importable.size() == 1 &&
+                    Hephaestus::CharacterImporter::IsMixamoTake(importable.front().sourceClip),
+                "only the mixamo.com take is importable from YBot-Walking");
+
     const Hephaestus::AnimationClip* take = nullptr;
     for (const Hephaestus::AnimationClip& clip : clips) {
         if (clip.sourceClip == "mixamo.com" || clip.name == "mixamo.com") {

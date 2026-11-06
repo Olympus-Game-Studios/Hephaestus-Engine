@@ -51,6 +51,14 @@ public:
     static bool IsCharacterSourcePath(const std::filesystem::path& path);
     static SkeletalImportSettings MakeSettings(const CharacterImportSettings& import);
 
+    /// True for Mixamo's motion take ("mixamo.com", optionally prefixed "<rig>|" or "<rig>/").
+    static bool IsMixamoTake(const std::string& takeName);
+    /// True for takes that carry no meaningful name: empty, "Take", "Take 001", or a Mixamo take.
+    static bool IsGenericTakeName(const std::string& takeName);
+    /// The clips worth importing from one source file. When it has a Mixamo take, the other
+    /// generically named takes (Mixamo's empty "Take 001") are dropped.
+    static std::vector<AnimationClip> ImportableClips(const std::vector<AnimationClip>& clips);
+
     static bool Inspect(const std::filesystem::path& sourceGlb,
                         CharacterInspectResult& outResult,
                         std::string& outError);

@@ -114,6 +114,8 @@ private:
     std::filesystem::path projectRoot_;
     std::string portablePath_;
     std::string lastError_;
+    std::vector<AnimationClip> previewMeshClips_;
+    CharacterClipSourceCache previewExtraClipSources_;
 };
 
 } // namespace Hephaestus

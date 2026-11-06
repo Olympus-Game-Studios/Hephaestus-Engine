@@ -141,6 +141,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-11-06: Importing a Mixamo FBX (as an animation or as the character itself) no longer brings in Mixamo's empty "Take 001" take, only the `mixamo.com` motion. In the Import Animation dialog, a file with a single take, or a take with a generic name, is named after the file (for example `YBot-Walking`) instead of the name inside it.
+- 2026-11-06: Character animations imported from separate files no longer stop working. In the Character Editor preview, every Mixamo animation after the first played as the first one (or not at all), because all Mixamo takes are named `mixamo.com`; the preview now binds each clip by its own ID and source file, the same way the game does, and picks up renames, duplicates and deletes straight away. Reimporting the character mesh no longer removes animations imported from other files.
 - 2026-11-03: Pausing Play mode no longer resets the editor toolbar to "Play" and disables Stop while the game is still paused; the Play control keeps showing "Playing" until Play mode actually stops.
 - 2026-11-03: "Open in IDE" (and opening a script outside Programmer mode) opens the file with the system's default application instead of launching a second Hephaestus editor from the launcher's editor path.
 - 2026-10-29: A corrupt or truncated probe bake file is reported as unreadable instead of trying to allocate many gigabytes and crashing the editor or game.

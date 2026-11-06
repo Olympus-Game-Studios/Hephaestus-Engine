@@ -378,6 +378,83 @@ bool TestDuplicateSourceClipNamesBind(const fs::path& project) {
                 "bind: " + error);
     ok &= Check(CharacterAnimationSystem::SampleAtTime(character, addedWalk.front(), 0.5f, error),
                 "sample unique Mixamo id: " + error);
+
+    ok &= Check(doc.BindPreview(nullptr, true, false, error), "bind preview: " + error);
+    Entity preview = doc.FindPreviewCharacter();
+    if (preview && preview.HasComponent<CharacterComponent>()) {
+        const auto& previewClips = preview.GetComponent<CharacterComponent>().clips;
+        ok &= Check(FindClip(previewClips, addedJog.front(), error) != nullptr,
+                    "preview keeps jog id: " + error);
+        ok &= Check(FindClip(previewClips, addedWalk.front(), error) != nullptr,
+                    "preview keeps walk id: " + error);
+
+        auto& previewCharacter = preview.GetComponent<CharacterComponent>();
+        ok &= Check(CharacterAnimationSystem::Play(previewCharacter, addedJog.front(), error),
+                    "play jog in preview: " + error);
+        CharacterAnimationSystem::Tick(scene, 0.0f);
+        ok &= Check(doc.SetClipLoop(addedJog.front(), false, error), "edit jog loop: " + error);
+        ok &= Check(previewCharacter.player.playing, "editing the playing clip keeps it playing");
+
+        ok &= Check(CharacterAnimationSystem::Play(previewCharacter, addedWalk.front(), error),
+                    "play walk in preview: " + error);
+        CharacterAnimationSystem::Tick(scene, 0.0f);
+        ok &= Check(doc.DeleteClip(addedWalk.front(), error), "delete walk: " + error);
+        ok &= Check(!previewCharacter.player.playing, "deleting the playing clip stops the preview");
+    } else {
+        ok &= Check(false, "preview character exists");
+    }
+
+    const fs::path heroSource = project / "hero_reimport.glb";
+    ok &= Check(WriteSkinnedGlb(heroSource, "Child", "Idle"), "write hero reimport glb");
+    ok &= Check(CharacterImporter::Reimport(project, portable, heroSource, error),
+                "reimport hero: " + error);
+    CharacterAsset reimported;
+    ok &= Check(CharacterSerializer::Deserialize(reimported, assetPath, error),
+                "read reimported asset: " + error);
+    bool jogKept = false;
+    bool walkKept = false;
+    for (const CharacterClipEntry& entry : reimported.clips) {
+        jogKept |= entry.id == addedJog.front();
+        walkKept |= entry.id == addedWalk.front();
+    }
+    ok &= Check(jogKept && walkKept, "mesh reimport keeps clips imported from other files");
+    return ok;
+}
+
+bool TestMixamoTakeFilter() {
+    auto takes = [](std::initializer_list<const char*> names) {
+        std::vector<AnimationClip> clips;
+        for (const char* name : names) {
+            AnimationClip clip;
+            clip.name = name;
+            clip.sourceClip = name;
+            clips.push_back(clip);
+        }
+        return clips;
+    };
+    auto names = [](const std::vector<AnimationClip>& clips) {
+        std::vector<std::string> out;
+        for (const AnimationClip& clip : clips) {
+            out.push_back(clip.sourceClip);
+        }
+        return out;
+    };
+    bool ok = true;
+    ok &= Check(names(CharacterImporter::ImportableClips(takes({"Take 001", "mixamo.com"}))) ==
+                    std::vector<std::string>{"mixamo.com"},
+                "Mixamo file keeps only mixamo.com");
+    ok &= Check(names(CharacterImporter::ImportableClips(
+                    takes({"Armature|mixamo.com", "Take 001", "Wave"}))) ==
+                    std::vector<std::string>{"Armature|mixamo.com", "Wave"},
+                "Mixamo file keeps named takes");
+    ok &= Check(names(CharacterImporter::ImportableClips(takes({"Take 001", "Walk"}))) ==
+                    std::vector<std::string>{"Take 001", "Walk"},
+                "non-Mixamo file keeps every take");
+    ok &= Check(CharacterImporter::IsGenericTakeName("Take") &&
+                    CharacterImporter::IsGenericTakeName("Take 001") &&
+                    !CharacterImporter::IsGenericTakeName("Takedown"),
+                "generic take names");
+    ok &= Check(!CharacterImporter::IsMixamoTake("notmixamo.com"), "mixamo suffix needs a separator");
     return ok;
 }
 
@@ -578,6 +655,7 @@ int main() {
     ok &= TestClipRenameAndImportNames(root / "ClipRename");
     ok &= TestImportUndoLeavesGlb(root / "ImportUndo");
     ok &= TestDuplicateSourceClipNamesBind(root / "DupClips");
+    ok &= TestMixamoTakeFilter();
     ok &= TestSampleAtTimeClamp();
     ok &= TestSocketParentKeepsLocal(root / "Sockets");
     ok &= TestReimportRefusal(root / "Reimport");

@@ -15,31 +15,6 @@ namespace Hephaestus {
 namespace QtEditor {
 namespace {
 
-bool IsGenericTakeName(const QString& name) {
-    const QString lower = name.trimmed().toLower();
-    if (lower.isEmpty()) {
-        return true;
-    }
-    if (lower == QLatin1String("mixamo.com") || lower.endsWith(QLatin1String("|mixamo.com")) ||
-        lower.endsWith(QLatin1String("/mixamo.com"))) {
-        return true;
-    }
-    if (lower.startsWith(QLatin1String("take"))) {
-        QString rest = name.trimmed().mid(4);
-        rest.remove(QLatin1Char(' '));
-        bool ok = false;
-        rest.toInt(&ok);
-        return ok;
-    }
-    return false;
-}
-
-bool IsMixamoTake(const QString& name) {
-    const QString lower = name.trimmed().toLower();
-    return lower == QLatin1String("mixamo.com") || lower.endsWith(QLatin1String("|mixamo.com")) ||
-           lower.endsWith(QLatin1String("/mixamo.com"));
-}
-
 QString SourceTakeName(const AnimationClip& clip) {
     return QString::fromStdString(clip.sourceClip.empty() ? clip.name : clip.sourceClip);
 }
@@ -68,23 +43,15 @@ CharacterAnimationImportDialog::CharacterAnimationImportDialog(const std::vector
     m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-    m_table->setRowCount(static_cast<int>(clips.size()));
-
-    bool hasMixamoTake = false;
-    for (const AnimationClip& clip : clips) {
-        if (IsMixamoTake(SourceTakeName(clip))) {
-            hasMixamoTake = true;
-            break;
-        }
-    }
+    const std::vector<AnimationClip> importable = CharacterImporter::ImportableClips(clips);
+    m_table->setRowCount(static_cast<int>(importable.size()));
 
     QSet<QString> usedNames;
-    for (int row = 0; row < static_cast<int>(clips.size()); ++row) {
-        const QString sourceTake = SourceTakeName(clips[static_cast<size_t>(row)]);
+    for (int row = 0; row < static_cast<int>(importable.size()); ++row) {
+        const QString sourceTake = SourceTakeName(importable[static_cast<size_t>(row)]);
         auto* importItem = new QTableWidgetItem();
         importItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
-        const bool restTake = hasMixamoTake && IsGenericTakeName(sourceTake) && !IsMixamoTake(sourceTake);
-        importItem->setCheckState(restTake ? Qt::Unchecked : Qt::Checked);
+        importItem->setCheckState(Qt::Checked);
         m_table->setItem(row, 0, importItem);
 
         auto* sourceItem = new QTableWidgetItem(sourceTake);
@@ -92,7 +59,8 @@ CharacterAnimationImportDialog::CharacterAnimationImportDialog(const std::vector
         m_table->setItem(row, 1, sourceItem);
 
         QString suggested = sourceTake;
-        if (!sourceStem.trimmed().isEmpty() && IsGenericTakeName(sourceTake)) {
+        if (!sourceStem.trimmed().isEmpty() &&
+            (importable.size() == 1 || CharacterImporter::IsGenericTakeName(sourceTake.toStdString()))) {
             suggested = sourceStem.trimmed();
         }
         if (usedNames.contains(suggested)) {
