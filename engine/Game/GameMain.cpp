@@ -158,6 +158,7 @@ struct GameConfig {
     std::string scenePath;
     std::string projectName;
     std::string inputProfile = "assets/input/Default.hpinput";
+    bool physicsEnabled = true;
 #if HEPHAESTUS_RUNTIME_AUTOMATION
     bool automationEnabled = false;
     int automationPort = 0;
@@ -396,6 +397,8 @@ static void LoadConfigFile(GameConfig& config) {
             config.projectName = value;
         } else if (key == "input_profile") {
             config.inputProfile = value;
+        } else if (key == "physics_enabled") {
+            config.physicsEnabled = (value == "true" || value == "1");
         }
 #if HEPHAESTUS_RUNTIME_AUTOMATION
         else if (key == "enabled" && value == "true" || key == "enabled" && value == "1") {
@@ -1339,7 +1342,7 @@ int main(int argc, char* argv[]) {
         Hephaestus::SimulationStepContext step;
         step.scene = &scene;
         step.audio = &audioEngine;
-        step.physics = physicsFailed ? nullptr : &physicsSystem;
+        step.physics = physicsFailed || !g_Config.physicsEnabled ? nullptr : &physicsSystem;
         step.cppScripts = &cppScripts;
         step.onPhysicsError = [&](const std::exception& e) {
             physicsFailed = true;

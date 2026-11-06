@@ -447,7 +447,17 @@ QWidget* SettingsWindow::BuildEditor(const Hephaestus::Tools::SettingDefinition&
         });
 
         connect(browse, &QPushButton::clicked, this, [this, edit, key = tab.key, id = definition.id]() {
-            const QString selected = QFileDialog::getExistingDirectory(this, QStringLiteral("Select Path"), edit->text());
+            QString selected;
+            if (id == QStringLiteral("project.rendering.defaultSkybox")) {
+                selected = QFileDialog::getOpenFileName(this, QStringLiteral("Select Skybox"), m_projectRoot,
+                                                        QStringLiteral("HDR images (*.hdr *.exr)"));
+                const QString relative = QDir(m_projectRoot).relativeFilePath(selected);
+                if (!selected.isEmpty() && !relative.startsWith(QStringLiteral(".."))) {
+                    selected = relative;
+                }
+            } else {
+                selected = QFileDialog::getExistingDirectory(this, QStringLiteral("Select Path"), edit->text());
+            }
             if (!selected.isEmpty()) {
                 edit->setText(selected);
                 PendingForTab(key)[id] = selected;

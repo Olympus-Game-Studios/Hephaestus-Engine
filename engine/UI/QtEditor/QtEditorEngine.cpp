@@ -432,6 +432,7 @@ bool QtEditorEngine::createSwapchain()
         if (!m_frameRenderer->Init(m_device.get(), m_swapchain.get(), true)) {
             throw std::runtime_error("Failed to initialize frame renderer");
         }
+        m_frameRenderer->GetGizmo()->SetSizeMultiplier(m_gizmoSize);
         
         // Create a default scene only if one wasn't already loaded
         // (e.g. project startup may load a configured default scene first).
@@ -3164,7 +3165,7 @@ void QtEditorEngine::simulateGameplayFrame(float dt)
     Hephaestus::SimulationStepContext step;
     step.scene = scene;
     step.audio = m_audioEngine.get();
-    step.physics = m_physicsInitialized ? m_joltPhysicsSystem.get() : nullptr;
+    step.physics = m_physicsInitialized && m_playPhysicsEnabled ? m_joltPhysicsSystem.get() : nullptr;
     step.lua = m_luaScriptEngine.get();
     step.pluginScripts = m_pluginScriptHost.get();
     step.cppScripts = m_cppScriptEngine.get();
@@ -3183,6 +3184,14 @@ void QtEditorEngine::simulateGameplayFrame(float dt)
         m_physicsInitialized = false;
     };
     Hephaestus::RunSimulationStep(step, dt);
+}
+
+void QtEditorEngine::SetGizmoSize(float size)
+{
+    m_gizmoSize = size;
+    if (m_frameRenderer) {
+        m_frameRenderer->GetGizmo()->SetSizeMultiplier(size);
+    }
 }
 
 void QtEditorEngine::runSimulationFrame(float dt)

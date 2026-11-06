@@ -60,6 +60,7 @@ struct BuildRequest {
     bool incremental = true;
     bool clean = false;
     bool enableRuntimeAutomation = false;
+    bool physicsEnabled = true;
     std::filesystem::path applicationIcon;
     LogCallback onLog;
     ProgressCallback onProgress;
