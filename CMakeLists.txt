@@ -1775,6 +1775,19 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     hephaestus_target_ufbx(MaterialNodeSupportTests STATIC)
     add_test(NAME MaterialNodeSupport COMMAND MaterialNodeSupportTests)
 
+    add_executable(FileWatcherTests
+        engine/Tests/FileWatcherTests.cpp
+    )
+    target_link_libraries(FileWatcherTests PRIVATE HephaestusEditorCore Vulkan::Vulkan)
+    target_include_directories(FileWatcherTests PRIVATE
+        engine
+        extern
+        extern/VMA
+        extern/entt/single_include
+    )
+    hephaestus_target_ufbx(FileWatcherTests STATIC)
+    add_test(NAME FileWatcher COMMAND FileWatcherTests)
+
     add_executable(AutomationMaterialTests
         engine/Tests/AutomationMaterialTests.cpp
         engine/Assets/AssetPathPolicy.cpp

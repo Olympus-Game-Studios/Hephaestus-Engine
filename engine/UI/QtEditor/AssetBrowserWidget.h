@@ -28,6 +28,9 @@
 #include <QString>
 #include <functional>
 
+class QFileSystemWatcher;
+class QTimer;
+
 namespace Hephaestus {
 
 // Forward declaration
@@ -161,6 +164,8 @@ private:
     void duplicateAsset(const QString& relativePath, bool isDirectory);
     void copyAssetPath(const QString& relativePath);
     void deleteAsset(const QString& relativePath, bool isDirectory);
+    void restoreFromTrash();
+    void watchCurrentDirectory();
     void renameAsset(const QString& relativePath, bool isDirectory);
     void findAssetReferences(const QString& relativePath);
     void showInExplorer(const QString& relativePath);
@@ -174,6 +179,9 @@ private:
 
     // Current directory (relative to asset root)
     QString m_currentPath;
+
+    QFileSystemWatcher* m_directoryWatcher = nullptr;
+    QTimer* m_directoryRefreshTimer = nullptr;
 
     // UI Elements
     QSplitter* m_splitter = nullptr;

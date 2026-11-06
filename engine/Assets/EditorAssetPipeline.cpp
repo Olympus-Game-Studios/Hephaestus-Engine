@@ -17,8 +17,8 @@ bool EditorAssetPipeline::Initialize(const std::filesystem::path& projectRoot) {
     reimport_ = std::make_unique<ReimportManager>(db_, ddc_);
     registerDefaultImporters();
 
-    // Loads assetdb + sets DDC root. Does not start FileWatcher.
     reimport_->SetProjectRoot(projectRoot);
+    reimport_->StartAutoReimport();
     initialized_ = true;
     return true;
 }

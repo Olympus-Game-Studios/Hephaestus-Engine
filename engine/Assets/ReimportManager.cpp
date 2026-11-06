@@ -6,7 +6,6 @@
 
 ReimportManager::ReimportManager(AssetDatabase& db, DerivedDataCache& ddc)
     : db_(db), ddc_(ddc) {
-    // FileWatcher / auto-reimport is opt-in; EditorAssetPipeline uses manual reimport only.
     watcher_.SetDebounce(std::chrono::milliseconds(500));
     watcher_.SetStabilityWait(std::chrono::milliseconds(200));
 
@@ -14,12 +13,18 @@ ReimportManager::ReimportManager(AssetDatabase& db, DerivedDataCache& ddc)
 }
 
 ReimportManager::~ReimportManager() {
+    watcher_.Stop();
     running_ = false;
     queueCv_.notify_all();
     if (worker_.joinable()) {
         worker_.join();
     }
-    watcher_.Stop();
+}
+
+void ReimportManager::StartAutoReimport() {
+    watcher_.Start(&db_, [this](const std::string& assetId, const std::filesystem::path&) {
+        RequestReimport(assetId, ReimportPolicy::Auto);
+    });
 }
 
 void ReimportManager::SetProjectRoot(const std::filesystem::path& projectRoot) {

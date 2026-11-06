@@ -55,6 +55,7 @@
 #include <QClipboard>
 #include <QRegularExpression>
 #include <QTimer>
+#include <QFileSystemWatcher>
 #include <QShortcut>
 #include <iostream>
 #include <fstream>
@@ -244,6 +245,13 @@ AssetBrowserWidget::AssetBrowserWidget(EditorMainWindow* mainWindow, QWidget* pa
     , m_thumbnails(new AssetThumbnailCache(this))
 {
     connect(m_thumbnails, &AssetThumbnailCache::thumbnailReady, this, &AssetBrowserWidget::onThumbnailReady);
+    m_directoryWatcher = new QFileSystemWatcher(this);
+    m_directoryRefreshTimer = new QTimer(this);
+    m_directoryRefreshTimer->setSingleShot(true);
+    m_directoryRefreshTimer->setInterval(300);
+    connect(m_directoryWatcher, &QFileSystemWatcher::directoryChanged, m_directoryRefreshTimer,
+            qOverload<>(&QTimer::start));
+    connect(m_directoryRefreshTimer, &QTimer::timeout, this, &AssetBrowserWidget::Refresh);
     setupUI();
     updateEmptyState();
 }
@@ -273,6 +281,27 @@ void AssetBrowserWidget::Refresh()
     updateBreadcrumb();
     updateStatusBar();
     updateEmptyState();
+    watchCurrentDirectory();
+}
+
+void AssetBrowserWidget::watchCurrentDirectory()
+{
+    const QStringList watched = m_directoryWatcher->directories();
+    if (!watched.isEmpty()) {
+        m_directoryWatcher->removePaths(watched);
+    }
+    auto& assetMgr = AssetManager::GetInstance();
+    if (!assetMgr.HasValidAssetRoot()) {
+        return;
+    }
+    const QString root = QString::fromStdString(assetMgr.GetAssetRoot());
+    const QString current = m_currentPath.isEmpty()
+        ? root
+        : QString::fromStdString(assetMgr.ToAbsolutePath(m_currentPath.toStdString()));
+    m_directoryWatcher->addPath(root);
+    if (current != root) {
+        m_directoryWatcher->addPath(current);
+    }
 }
 
 void AssetBrowserWidget::NavigateTo(const QString& relativePath)
@@ -293,6 +322,7 @@ void AssetBrowserWidget::NavigateTo(const QString& relativePath)
     updateBreadcrumb();
     updateStatusBar();
     syncFolderTreeSelection();
+    watchCurrentDirectory();
 }
 
 void AssetBrowserWidget::FindReferences(const QString& relativePath)
@@ -1223,6 +1253,10 @@ void AssetBrowserWidget::onContentsContextMenu(const QPoint& pos)
             });
             menu.addSeparator();
         }
+        if (EditorAssetServices::Instance().HasProject()) {
+            menu.addAction(tr("Restore Deleted Asset..."), [this]() { restoreFromTrash(); });
+            menu.addSeparator();
+        }
         menu.addAction(tr("Show in Explorer"), [this]() {
             showInExplorer(m_currentPath);
         });
@@ -1592,6 +1626,41 @@ void AssetBrowserWidget::createNewCharacter(const QString& parentRelativePath)
     std::cout << "[AssetBrowser] Created character: " << filePath.string() << "\n";
 }
 
+void AssetBrowserWidget::restoreFromTrash()
+{
+    auto& ops = EditorAssetServices::Instance().Operations();
+    const std::vector<TrashEntryInfo> entries = ops.ListTrash();
+    if (entries.empty()) {
+        QMessageBox::information(this, tr("Restore Deleted Asset"), tr("The project trash is empty."));
+        return;
+    }
+
+    QStringList labels;
+    for (const TrashEntryInfo& entry : entries) {
+        QStringList paths;
+        for (const std::string& path : entry.originalPortablePaths) {
+            paths << QString::fromStdString(path);
+        }
+        labels << tr("%1  (deleted %2)").arg(paths.join(QStringLiteral(", ")),
+                                             QString::fromStdString(entry.timestamp));
+    }
+
+    bool ok = false;
+    const QString chosen = QInputDialog::getItem(this, tr("Restore Deleted Asset"),
+                                                 tr("Asset to restore:"), labels, 0, false, &ok);
+    if (!ok) return;
+    const auto index = labels.indexOf(chosen);
+    if (index < 0) return;
+
+    const auto result = ops.RestoreFromTrash(entries[static_cast<size_t>(index)].opId);
+    if (!result.success) {
+        QMessageBox::critical(this, tr("Restore Deleted Asset"),
+            tr("Failed to restore:\n%1").arg(QString::fromStdString(result.error)));
+        return;
+    }
+    Refresh();
+}
+
 void AssetBrowserWidget::deleteAsset(const QString& relativePath, bool isDirectory)
 {
     if (relativePath.isEmpty()) return;
@@ -1615,7 +1684,7 @@ void AssetBrowserWidget::deleteAsset(const QString& relativePath, bool isDirecto
                           .arg(referrerCount);
         } else {
             message = tr("Move this asset to trash?\n\n%1\n\n"
-                         "You can restore it later from .hephaestus/trash.")
+                         "You can restore it later with Restore Deleted Asset in the Content Browser menu.")
                           .arg(portable);
         }
 
