@@ -1,5 +1,8 @@
 #include "ToolsCommon/ProjectCreationService.h"
 #include "ToolsCommon/ProjectSettingsManager.h"
+#include "Scene/Components.h"
+#include "Scene/Scene.h"
+#include "Scene/SceneSerializer.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -76,6 +79,50 @@ bool TestCreateBlankProjectLayout()
                   ".hephaestus/physics_layers.json");
     pass &= Check(result.defaultSceneRelativePath == QStringLiteral("assets/scenes/default.hpscene"),
                   "defaultSceneRelativePath");
+
+    {
+        Scene scene;
+        std::string sceneError;
+        const bool loaded = SceneSerializer::Deserialize(
+            scene, std::filesystem::path(project.filePath(result.defaultSceneRelativePath).toStdWString()),
+            sceneError);
+        pass &= Check(loaded, "default scene loads: " + sceneError);
+        auto& registry = scene.GetRegistry();
+        int directional = 0;
+        for (auto entity : registry.view<LightComponent>()) {
+            directional += registry.get<LightComponent>(entity).type == LightType::Directional ? 1 : 0;
+        }
+        pass &= Check(directional == 1, "default scene has a directional sun");
+        int activeCameras = 0;
+        for (auto entity : registry.view<CameraComponent>()) {
+            activeCameras += registry.get<CameraComponent>(entity).isActive ? 1 : 0;
+        }
+        pass &= Check(activeCameras == 1, "default scene has an active camera");
+        bool floor = false;
+        for (auto entity : registry.view<MeshRendererComponent, RigidBodyComponent, PhysicsShapeComponent>()) {
+            floor |= registry.get<MeshRendererComponent>(entity).meshAssetPath == "builtin://plane" &&
+                     registry.get<RigidBodyComponent>(entity).motion == RigidBodyMotion::Static;
+        }
+        pass &= Check(floor, "default scene has a static floor plane with a collider");
+
+        const bool hdriCopied = FileExists(project, QStringLiteral(".engine/hdris/studio_garden_1k.hdr"));
+        bool environmentMatches = false;
+        for (auto entity : registry.view<EnvironmentComponent>()) {
+            const auto& env = registry.get<EnvironmentComponent>(entity);
+            environmentMatches = hdriCopied
+                ? env.type == EnvironmentComponent::BackgroundType::HDRI &&
+                      env.hdriPath == ".engine/hdris/studio_garden_1k.hdr"
+                : env.type == EnvironmentComponent::BackgroundType::SolidColor;
+        }
+        pass &= Check(environmentMatches, hdriCopied ? "default scene uses the starter HDRI sky"
+                                                     : "default scene falls back to a solid sky colour");
+
+        Hephaestus::Tools::ProjectSettingsManager settings(result.projectDir);
+        settings.Load();
+        const QString skybox = settings.Value(QStringLiteral("project.rendering.defaultSkybox")).toString();
+        pass &= Check(hdriCopied ? skybox == QStringLiteral(".engine/hdris/studio_garden_1k.hdr") : skybox.isEmpty(),
+                      "project default skybox matches the copied HDRI");
+    }
 
     QFile projectFile(result.projectFilePath);
     if (!Check(projectFile.open(QIODevice::ReadOnly), "open project.heproject")) {

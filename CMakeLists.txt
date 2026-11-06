@@ -2126,7 +2126,7 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         add_executable(ProjectCreationTests
             engine/Tests/ProjectCreationTests.cpp
         )
-        target_link_libraries(ProjectCreationTests PRIVATE HephaestusToolsCommon Qt6::Core)
+        target_link_libraries(ProjectCreationTests PRIVATE HephaestusToolsCommon HephaestusRuntime Qt6::Core)
         target_include_directories(ProjectCreationTests PRIVATE
             engine
             "${CMAKE_BINARY_DIR}/generated"
