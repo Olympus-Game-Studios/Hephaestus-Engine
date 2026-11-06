@@ -119,6 +119,9 @@ bool TestCreateBlankProjectLayout()
 
         Hephaestus::Tools::ProjectSettingsManager settings(result.projectDir);
         settings.Load();
+        pass &= Check(settings.Value(QStringLiteral("project.info.defaultScene")).toString() ==
+                          QStringLiteral("assets/scenes/default.hpscene"),
+                      "the editor's Startup Scene setting resolves to the new default scene");
         const QString skybox = settings.Value(QStringLiteral("project.rendering.defaultSkybox")).toString();
         pass &= Check(hdriCopied ? skybox == QStringLiteral(".engine/hdris/studio_garden_1k.hdr") : skybox.isEmpty(),
                       "project default skybox matches the copied HDRI");
