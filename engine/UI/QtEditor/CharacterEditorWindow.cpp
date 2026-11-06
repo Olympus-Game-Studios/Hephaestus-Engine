@@ -1101,7 +1101,6 @@ void CharacterEditorWindow::refreshInspector() {
             connect(loop, &BoolPropertyEditor::valueEdited, this, [this](bool value) {
                 std::string error;
                 m_document->SetClipLoop(m_selection.id, value, error);
-                m_document->SyncPreviewClipMetadata();
                 updateWindowTitle();
             });
             layout->addWidget(loop);
@@ -1111,7 +1110,6 @@ void CharacterEditorWindow::refreshInspector() {
             connect(speed, &NumericPropertyEditor::valueEdited, this, [this](double value) {
                 std::string error;
                 m_document->SetClipSpeed(m_selection.id, static_cast<float>(value), error);
-                m_document->SyncPreviewClipMetadata();
                 updateWindowTitle();
             });
             layout->addWidget(speed);
@@ -1125,7 +1123,6 @@ void CharacterEditorWindow::refreshInspector() {
                 std::string error;
                 m_document->SetClipTrim(m_selection.id, static_cast<float>(start->value()),
                                         static_cast<float>(end->value()), error);
-                m_document->SyncPreviewClipMetadata();
                 updateWindowTitle();
             };
             connect(start, &NumericPropertyEditor::editingFinished, this, applyTrim);

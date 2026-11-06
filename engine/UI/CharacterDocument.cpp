@@ -2,7 +2,6 @@
 
 #include "../Assets/AssetPathPolicy.h"
 #include "../Assets/CharacterImport.h"
-#include "../Assets/SkeletalModelImporter.h"
 #include "../Animation/AnimationClip.h"
 #include "../Animation/CharacterPlayback.h"
 #include "../Scene/Components.h"
@@ -164,33 +163,14 @@ bool CharacterDocument::BindPreview(EngineFrameRenderer* renderer, bool applyAss
         return false;
     }
     character.suppressAutoPlay = true;
-    SyncPreviewClipMetadata();
 
-    const std::string meshKey =
-        !asset_.mesh.source.empty() ? asset_.mesh.source : asset_.skeleton.source;
-    const SkeletalImportSettings settings = CharacterImporter::MakeSettings(asset_.import);
-    for (const CharacterClipEntry& entry : asset_.clips) {
-        if (entry.source.empty() || entry.source == meshKey) {
-            continue;
-        }
-        bool already = false;
-        for (const AnimationClip& clip : character.clips) {
-            if (clip.sourceClip == entry.sourceClip || clip.id == entry.id) {
-                already = true;
-                break;
-            }
-        }
-        if (already) {
-            continue;
-        }
-        const std::filesystem::path extraAbs =
-            AssetPathPolicy::ResolvePortableKey(projectRoot_, entry.source);
-        std::vector<AnimationClip> extra;
-        std::string extraError;
-        if (SkeletalModelImporter::LoadClips(extraAbs, settings, character.skeleton, extra, extraError)) {
-            character.clips.insert(character.clips.end(), extra.begin(), extra.end());
-        }
+    CharacterRuntimeData data;
+    if (!CharacterRuntime::Load(projectRoot_, portablePath_, data, outError)) {
+        lastError_ = outError;
+        return false;
     }
+    previewMeshClips_ = std::move(data.imported.clips);
+    previewExtraClipSources_.clear();
     SyncPreviewClipMetadata();
 
     if (!CharacterRuntime::UploadVisual(preview, projectRoot_, renderer, outError, forceGpuReload)) {
@@ -207,21 +187,13 @@ void CharacterDocument::SyncPreviewClipMetadata() {
         return;
     }
     auto& character = preview.GetComponent<CharacterComponent>();
-    for (AnimationClip& clip : character.clips) {
-        for (const CharacterClipEntry& entry : asset_.clips) {
-            if ((!entry.sourceClip.empty() && (entry.sourceClip == clip.sourceClip || entry.sourceClip == clip.name)) ||
-                (!entry.id.empty() && (entry.id == clip.id || entry.id == clip.name))) {
-                if (!entry.id.empty()) {
-                    clip.id = entry.id;
-                }
-                clip.loop = entry.loop;
-                clip.speed = entry.speed;
-                clip.startTime = entry.startTime;
-                clip.endTime = entry.endTime;
-                break;
-            }
-        }
+    if (!character.runtimeReady) {
+        return;
     }
+    std::vector<std::string> warnings;
+    character.clips = CharacterRuntime::BindAuthoredClips(
+        asset_, projectRoot_, CharacterImporter::MakeSettings(asset_.import), character.skeleton,
+        previewMeshClips_, previewExtraClipSources_, warnings);
 }
 
 void CharacterDocument::BeginAuthoredEdit() {
@@ -230,6 +202,7 @@ void CharacterDocument::BeginAuthoredEdit() {
 
 void CharacterDocument::MarkAuthoredChanged() {
     SetDirty(true);
+    SyncPreviewClipMetadata();
 }
 
 CharacterClipEntry* CharacterDocument::FindClipById(const std::string& clipId) {

@@ -378,6 +378,33 @@ bool TestDuplicateSourceClipNamesBind(const fs::path& project) {
                 "bind: " + error);
     ok &= Check(CharacterAnimationSystem::SampleAtTime(character, addedWalk.front(), 0.5f, error),
                 "sample unique Mixamo id: " + error);
+
+    ok &= Check(doc.BindPreview(nullptr, true, false, error), "bind preview: " + error);
+    Entity preview = doc.FindPreviewCharacter();
+    if (preview && preview.HasComponent<CharacterComponent>()) {
+        const auto& previewClips = preview.GetComponent<CharacterComponent>().clips;
+        ok &= Check(FindClip(previewClips, addedJog.front(), error) != nullptr,
+                    "preview keeps jog id: " + error);
+        ok &= Check(FindClip(previewClips, addedWalk.front(), error) != nullptr,
+                    "preview keeps walk id: " + error);
+    } else {
+        ok &= Check(false, "preview character exists");
+    }
+
+    const fs::path heroSource = project / "hero_reimport.glb";
+    ok &= Check(WriteSkinnedGlb(heroSource, "Child", "Idle"), "write hero reimport glb");
+    ok &= Check(CharacterImporter::Reimport(project, portable, heroSource, error),
+                "reimport hero: " + error);
+    CharacterAsset reimported;
+    ok &= Check(CharacterSerializer::Deserialize(reimported, assetPath, error),
+                "read reimported asset: " + error);
+    bool jogKept = false;
+    bool walkKept = false;
+    for (const CharacterClipEntry& entry : reimported.clips) {
+        jogKept |= entry.id == addedJog.front();
+        walkKept |= entry.id == addedWalk.front();
+    }
+    ok &= Check(jogKept && walkKept, "mesh reimport keeps clips imported from other files");
     return ok;
 }
 

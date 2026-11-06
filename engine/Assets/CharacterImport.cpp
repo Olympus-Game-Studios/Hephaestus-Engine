@@ -112,21 +112,26 @@ std::string FormatCompatibilityFailure(const SkeletonCompatibilityReport& report
     return message;
 }
 
+std::string MakeUniqueClipId(const CharacterAsset& asset, const std::string& desired);
+
 void MergeClipsFromImport(CharacterAsset& asset,
                           const SkeletalImportResult& imported,
                           const std::string& meshPortable,
                           bool preserveAuthored) {
     std::unordered_map<std::string, CharacterClipEntry> previous;
-    if (preserveAuthored) {
-        for (const CharacterClipEntry& clip : asset.clips) {
-            if (!clip.sourceClip.empty()) {
-                previous[clip.sourceClip] = clip;
-            }
+    std::vector<CharacterClipEntry> otherSourceClips;
+    for (const CharacterClipEntry& clip : asset.clips) {
+        if (!clip.source.empty() && clip.source != meshPortable) {
+            otherSourceClips.push_back(clip);
+        } else if (preserveAuthored && !clip.sourceClip.empty()) {
+            previous[clip.sourceClip] = clip;
         }
     }
 
+    CharacterAsset taken;
+    taken.clips = otherSourceClips;
     std::vector<CharacterClipEntry> merged;
-    merged.reserve(imported.clips.size());
+    merged.reserve(imported.clips.size() + otherSourceClips.size());
     for (const AnimationClip& clip : imported.clips) {
         CharacterClipEntry entry;
         const auto it = previous.find(clip.sourceClip.empty() ? clip.name : clip.sourceClip);
@@ -145,11 +150,16 @@ void MergeClipsFromImport(CharacterAsset& asset,
         if (entry.id.empty()) {
             entry.id = entry.sourceClip;
         }
+        if (it == previous.end()) {
+            entry.id = MakeUniqueClipId(taken, entry.id);
+        }
         if (entry.displayName.empty()) {
             entry.displayName = entry.sourceClip;
         }
+        taken.clips.push_back(entry);
         merged.push_back(std::move(entry));
     }
+    merged.insert(merged.end(), otherSourceClips.begin(), otherSourceClips.end());
     asset.clips = std::move(merged);
 }
 

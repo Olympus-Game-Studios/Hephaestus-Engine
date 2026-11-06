@@ -32,6 +32,8 @@ struct CharacterRuntimeData {
     std::vector<std::string> warnings;
 };
 
+using CharacterClipSourceCache = std::unordered_map<std::string, std::vector<AnimationClip>>;
+
 std::string ChooseDefaultAnimation(const std::vector<CharacterClipEntry>& clips);
 
 class CharacterRuntime {
@@ -40,6 +42,16 @@ public:
                      const std::string& portableCharacterPath,
                      CharacterRuntimeData& outData,
                      std::string& outError);
+
+    /// Resolve each authored clip entry against its own source file. Clips from the mesh
+    /// source come from meshClips; other sources load on demand into extraSources.
+    static std::vector<AnimationClip> BindAuthoredClips(const CharacterAsset& asset,
+                                                        const std::filesystem::path& projectRoot,
+                                                        const SkeletalImportSettings& settings,
+                                                        const Skeleton& characterSkeleton,
+                                                        const std::vector<AnimationClip>& meshClips,
+                                                        CharacterClipSourceCache& extraSources,
+                                                        std::vector<std::string>& warnings);
 
     static void Invalidate(const std::string& portableCharacterPath);
     static void InvalidateAll();
