@@ -74,7 +74,6 @@ private:
     QDoubleSpinBox* m_angVelX = nullptr;
     QDoubleSpinBox* m_angVelY = nullptr;
     QDoubleSpinBox* m_angVelZ = nullptr;
-    QCheckBox*      m_debugDrawCheck   = nullptr;
     QPushButton*    m_removeBtn        = nullptr;
 };
 

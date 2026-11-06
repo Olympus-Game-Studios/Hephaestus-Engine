@@ -268,11 +268,6 @@ void CharacterEditorWindow::setupToolbar() {
     m_skeletonAction->setToolTip(tr("Show skeleton"));
     showText(m_skeletonAction);
     connect(m_skeletonAction, &QAction::toggled, this, &CharacterEditorWindow::onToggleSkeleton);
-    m_boneNamesAction = m_toolbar->addAction(tr("Bone names"));
-    m_boneNamesAction->setCheckable(true);
-    m_boneNamesAction->setToolTip(tr("Show bone names"));
-    showText(m_boneNamesAction);
-    connect(m_boneNamesAction, &QAction::toggled, this, &CharacterEditorWindow::onToggleBoneNames);
 }
 
 void CharacterEditorWindow::setupViewport() {
@@ -620,7 +615,6 @@ void CharacterEditorWindow::onToggleSnap(bool enabled) {
 }
 
 void CharacterEditorWindow::onToggleSkeleton(bool enabled) { m_showSkeleton = enabled; }
-void CharacterEditorWindow::onToggleBoneNames(bool enabled) { m_showBoneNames = enabled; }
 
 void CharacterEditorWindow::onPlayPause() {
     Entity entity = previewCharacter();

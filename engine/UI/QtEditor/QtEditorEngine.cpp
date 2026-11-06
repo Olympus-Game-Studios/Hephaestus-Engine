@@ -1933,6 +1933,28 @@ static void AppendProbeVolumeDebugDraw(Scene& scene, std::vector<EditorDebugLine
     }
 }
 
+static void AppendMeshColliderBoundsDebugDraw(Scene& scene, std::vector<EditorDebugLine>& lines)
+{
+    auto view = scene.GetRegistry().view<MeshColliderComponent, MeshRendererComponent>();
+    for (entt::entity handle : view) {
+        if (!view.get<MeshColliderComponent>(handle).debugDraw) continue;
+        const AABB& bounds = view.get<MeshRendererComponent>(handle).localBounds;
+        const Mat4 world = scene.GetWorldTransform(Entity(handle, &scene));
+        auto corner = [&](int i) {
+            return Mat4::TransformPoint(world, Vec3((i & 1) ? bounds.max.x : bounds.min.x,
+                                                    (i & 2) ? bounds.max.y : bounds.min.y,
+                                                    (i & 4) ? bounds.max.z : bounds.min.z));
+        };
+        for (int i = 0; i < 8; ++i) {
+            for (int bit = 1; bit < 8; bit <<= 1) {
+                if (!(i & bit)) {
+                    lines.push_back({corner(i), corner(i | bit), Vec3(0.3f, 1.0f, 0.4f)});
+                }
+            }
+        }
+    }
+}
+
 void QtEditorEngine::renderFrame()
 {
     static std::string lastSceneName;
@@ -2011,6 +2033,7 @@ void QtEditorEngine::renderFrame()
     m_renderConfig.debugLines = m_debugLines;
     m_renderConfig.debugPoints = m_debugPoints;
     AppendProbeVolumeDebugDraw(*scene, m_renderConfig.debugLines, m_renderConfig.debugPoints);
+    AppendMeshColliderBoundsDebugDraw(*scene, m_renderConfig.debugLines);
     // Set snap value based on current gizmo mode
     switch (m_editorContext.GetGizmoMode()) {
         case Hephaestus::GizmoMode::Translate:
