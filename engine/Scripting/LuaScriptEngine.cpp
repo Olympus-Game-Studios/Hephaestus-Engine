@@ -491,12 +491,12 @@ bool LuaScriptEngine::CallEntityFunction(const std::string& functionName, Entity
 }
 
 bool LuaScriptEngine::CallEntityFunction(const std::string& functionName, Entity entity,
-                                         const std::vector<PropertyValue>& args) {
+                                         const std::vector<PropertyValue>& args, LuaScriptSlot slot) {
 #if LUA_AVAILABLE
     if (!m_State || !entity) {
         return false;
     }
-    ScriptInstance* instance = FindInstance(static_cast<uint32_t>(entity), LuaScriptSlot::Gameplay);
+    ScriptInstance* instance = FindInstance(static_cast<uint32_t>(entity), slot);
     if (!instance || !instance->valid || instance->environmentRef == kInvalidRef) {
         return false;
     }
@@ -532,6 +532,7 @@ bool LuaScriptEngine::CallEntityFunction(const std::string& functionName, Entity
     (void)functionName;
     (void)entity;
     (void)args;
+    (void)slot;
     return false;
 #endif
 }
@@ -637,7 +638,8 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
         const LuaScriptInstanceKey key = MakeInstanceKey(static_cast<uint32_t>(entityHandle),
                                                          LuaScriptSlot::CharacterController);
 
-        if (!character.runController || character.controllerScriptPath.empty()) {
+        if (!character.runController || character.controllerScriptPath.empty() ||
+            ScriptLanguageRegistry::Instance().FindForPath(character.controllerScriptPath)) {
             DestroyInstance(key, true);
             continue;
         }
@@ -4044,14 +4046,14 @@ int LuaScriptEngine::CallNamedOnSlot(lua_State* L, LuaScriptSlot slot) {
     if (!instance || !instance->valid || instance->environmentRef == kInvalidRef) {
         // The target's script may be written in a plugin language.
         bool handled = false;
-        if (slot == LuaScriptSlot::Gameplay && engine->m_PluginScripts) {
+        if (engine->m_PluginScripts) {
             std::vector<PropertyValue> args;
             args.reserve(static_cast<std::size_t>(argCount));
             for (int i = 0; i < argCount; ++i) {
                 args.push_back(LuaArgToProperty(L, 3 + i));
             }
             handled = engine->m_PluginScripts->CallEntityFunction(
-                static_cast<std::uint32_t>(*selfId), functionName, args);
+                static_cast<std::uint32_t>(*selfId), functionName, args, slot);
         }
         lua_pushboolean(L, handled);
         return 1;

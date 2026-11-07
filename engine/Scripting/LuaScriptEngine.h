@@ -153,11 +153,13 @@ public:
     bool CallEntityFunction(const std::string& functionName, Entity entity);
 
     /**
-     * Call a function on the entity's gameplay Lua script with arguments.
-     * Returns false when the entity has no Lua script defining it.
+     * Call a function on the entity's Lua script with arguments: its gameplay
+     * script, or its character controller script. Returns false when that
+     * script is not Lua or does not define the function.
      */
     bool CallEntityFunction(const std::string& functionName, Entity entity,
-                            const std::vector<PropertyValue>& args);
+                            const std::vector<PropertyValue>& args,
+                            LuaScriptSlot slot = LuaScriptSlot::Gameplay);
 
     /// Resolve an authored script path against the project and plugin search paths.
     std::filesystem::path ResolveScriptPath(const std::string& scriptPath) const;

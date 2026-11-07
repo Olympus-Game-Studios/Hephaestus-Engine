@@ -48,10 +48,12 @@ A script is a class that derives from `hp::Script`, and `HP_SCRIPT(ClassName)` a
 | Function | When it's called |
 | --- | --- |
 | `OnAwake()` | Once, when the script first starts. |
+| `OnEnable()` / `OnDisable()` | Straight after `OnAwake`, and straight before `OnDestroy`, the same as Lua's. |
 | `OnUpdate(float deltaSeconds)` | Every frame. |
 | `OnLateUpdate(float deltaSeconds)` | Every frame, after every script's `OnUpdate`. |
-| `OnDestroy()` | When the entity is removed, the script reloads or the game stops. Your destructor runs straight after. |
+| `OnDestroy()` | When the entity is removed, the script is switched off or reloads, or the game stops. Your destructor runs straight after. |
 | `OnTriggerEnter(other, contact)` and friends | Physics events, [below](#reacting-to-physics). |
+| `OnAnimationFinished(clip)` | A non looping clip of this entity's animated character has finished. |
 | `OnCall(function, args)` | Another script called a function on this entity. |
 
 `GetEntity()` is the entity the script is attached to, the same as `this` in Lua. Your class is constructed when the script starts, so you can set things up in the constructor too, and every instance has its own member variables.
@@ -130,6 +132,10 @@ void OnTriggerEnter(hp::Entity other, const hp::Contact* contact) override {
 
 The full set is `OnTriggerEnter`, `OnTriggerStay`, `OnTriggerExit`, `OnCollisionEnter`, `OnCollisionStay` and `OnCollisionExit`. `contact` (with `point`, `normal`, `relativeVelocity` and `penetration`) is sometimes null, and the exit callbacks never get one, so check it. `other` is empty if the other entity was destroyed.
 
+## Character controller scripts
+
+A Character component's **Controller Script** can be a `.cpp` file too. It's an ordinary C++ script on the same entity, alongside any Script component, and its number and true/false `HP_FIELD`s show in the Character card, the same as a Lua controller's `Expose` values. Other scripts reach it with `entity.CallController("Name", ...)` in C++ or `entity:CallController("Name", ...)` in Lua.
+
 ## When things go wrong
 
 - **Compile errors** appear in the Console as `file:line: message`, just like Lua errors. Double click one to jump to the line. The script doesn't run until it compiles.
@@ -148,4 +154,4 @@ When you package the game, every C++ script is compiled (if it isn't already) an
 - A script recompiles when its own `.cpp` file changes. If you `#include` a header of your own and only change the header, save the `.cpp` too.
 - A `.cpp` file without `HP_SCRIPT` is skipped when packaging, but it isn't compiled into other scripts either. To share code between scripts, put it in a header and `#include` it.
 - Scripts are native code with full access to your computer, so only run scripts you trust.
-- The C++ API covers everything Lua's does except `onAnimationFinished`, `onEnable`/`onDisable` and character controller scripts, which are still Lua only for now. So is the debugger built into the Code panel (use Visual Studio's, above).
+- The C++ API covers everything Lua's does. The one Lua only tool is the debugger built into the Code panel; use Visual Studio's, above.

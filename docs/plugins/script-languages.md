@@ -4,7 +4,7 @@ Lua is built into the engine and stays the default. Any other language (C, C++, 
 
 ## How a script picks its language
 
-Scripts are attached with the same Script component Lua uses (`LuaScriptComponent`, saved as `"LuaScript"` in scenes and prefabs). The file extension decides who runs it:
+Scripts are attached with the same Script component Lua uses (`LuaScriptComponent`, saved as `"LuaScript"` in scenes and prefabs), or as a Character component's controller script. The file extension decides who runs it:
 
 - a file whose extension a plugin language registered (for example `.py`) runs in that language;
 - every other file, and embedded source, stays with Lua.
@@ -118,6 +118,7 @@ All calls happen on the gameplay thread, after Lua each frame:
 | `awake` | Once, before the instance's first update |
 | `update`, `lateUpdate` | Every frame, around physics, in the same order as Lua |
 | `contact` | Trigger and collision events for the entity |
+| `animationFinished` | A non-looping clip of the entity's character finished (Lua's `onAnimationFinished`) |
 | `call` | Another script called a function on this entity |
 | `describeFields` | The editor inspects the script file; no runtime exists |
 
@@ -133,8 +134,7 @@ New services are only appended to the table. Check `structSize` before using a m
 
 ## Not covered yet
 
-- Character controller scripts (`CharacterComponent`) are still Lua only, and so is `CallController`.
-- `onAnimationFinished`, `onEnable` and `onDisable` have no callbacks yet; disabling a component destroys a plugin script.
+- There are no separate enable and disable callbacks. As in Lua, switching a script off destroys it, so run `onEnable` after `awake` and `onDisable` in `destroyInstance`, the way the C++ plugin does.
 - Languages stay registered until the editor restarts, even if their plugin is disabled.
 
 `engine/Tests/ScriptLanguageTestPlugin.c` is a complete minimal language written in C, used by `ScriptLanguagePluginTests` and `PackageLayoutTests`. `Plugins/CppScripting` is a full first-party language: it compiles each `.cpp` script into a DLL with the user's Visual Studio and implements every optional callback.

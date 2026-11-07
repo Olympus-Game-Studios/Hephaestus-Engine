@@ -523,6 +523,7 @@ void DestroyInstance(void* runtime, void* handle) {
 struct CallContext {
     const HPCppScriptExports* exports;
     void* script;
+    const char* clip;
     float deltaSeconds;
     const HPContactEvent* event;
     const char* function;
@@ -575,6 +576,15 @@ void ContactCallback(void*, void* handle, const HPContactEvent* event) {
     Dispatch(handle, "a physics callback", [](void* c) {
         auto& ctx = *static_cast<CallContext*>(c);
         ctx.exports->contact(ctx.script, ctx.event);
+    }, context);
+}
+
+void AnimationFinished(void*, void* handle, const char* clip) {
+    CallContext context{};
+    context.clip = clip;
+    Dispatch(handle, "OnAnimationFinished", [](void* c) {
+        auto& ctx = *static_cast<CallContext*>(c);
+        ctx.exports->animationFinished(ctx.script, ctx.clip);
     }, context);
 }
 
@@ -955,6 +965,10 @@ const ApiEntry kApi[] = {
     {"UIAnchor", HP_COMPLETION_TYPE, "hp::UIAnchor", "TopLeft, TopCenter, ..., BottomRight, Stretch."},
     {"UIAlign", HP_COMPLETION_TYPE, "hp::UIAlign", "Left, Center, Right, Top, Bottom, Stretch."},
     {"UI", HP_COMPLETION_TYPE, "hp::UI", "Game UI: displaying .hui layouts and building screens."},
+    {"OnEnable", HP_COMPLETION_FUNCTION, "void OnEnable() override", "Called right after OnAwake."},
+    {"OnDisable", HP_COMPLETION_FUNCTION, "void OnDisable() override", "Called right before OnDestroy."},
+    {"OnAnimationFinished", HP_COMPLETION_FUNCTION, "void OnAnimationFinished(std::string_view clip) override", "A non-looping clip of this entity's character finished."},
+    {"CallController", HP_COMPLETION_FUNCTION, "bool CallController(std::string_view function, args...) const", "Runs a function in the entity's character controller script."},
     {"HP_FIELD", HP_COMPLETION_KEYWORD, "HP_FIELD(type, name, default...)",
      "Declares an Inspector field, e.g. HP_FIELD(float, speed, 5.0f) or HP_FIELD(hp::Vec3, offset, 0, 1, 0)."},
     {"HP_SCRIPT", HP_COMPLETION_KEYWORD, "HP_SCRIPT(ClassName)", "Makes the class this file's script."},
@@ -1033,7 +1047,7 @@ const HPScriptLanguage kLanguage = {
     sizeof(HPScriptLanguage), HP_SCRIPT_LANGUAGE_API_VERSION, "cpp", "C++", ".cpp",
     CreateRuntime, DestroyRuntime, CreateInstance, DestroyInstance,
     Awake, Update, LateUpdate, ContactCallback, Call, DescribeFields,
-    &kSyntax, Complete, Hover, PackageScript, kTemplate,
+    &kSyntax, Complete, Hover, PackageScript, kTemplate, AnimationFinished,
 };
 
 const HPScriptLanguage* const kLanguages[] = {&kLanguage};

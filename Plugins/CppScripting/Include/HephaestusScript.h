@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-#define HP_CPP_SCRIPT_SDK_VERSION 3u
+#define HP_CPP_SCRIPT_SDK_VERSION 4u
 #define HP_CPP_SCRIPT_EXPORT_NAME "HP_GetCppScript"
 
 extern "C" {
@@ -28,6 +28,7 @@ typedef struct HPCppScriptExports {
     void (*lateUpdate)(void* script, float deltaSeconds);
     void (*contact)(void* script, const HPContactEvent* event);
     int32_t (*call)(void* script, const char* function, const HPValue* args, uint32_t argCount);
+    void (*animationFinished)(void* script, const char* clip);
 } HPCppScriptExports;
 
 typedef const HPCppScriptExports* (*HPGetCppScriptFn)(void);
@@ -379,6 +380,18 @@ public:
         }
         return detail::Host().callEntityFunction(detail::Host().host, m_Id, std::string(function).c_str(), raw,
                                                  static_cast<uint32_t>(sizeof...(A))) != 0;
+    }
+
+    /// Like Call, but runs the function in the entity's character controller script.
+    template <class... A>
+    bool CallController(std::string_view function, A&&... args) const {
+        const Value values[] = {Value(), Value(std::forward<A>(args))...};
+        HPValue raw[sizeof...(A) + 1];
+        for (size_t i = 0; i < sizeof...(A); ++i) {
+            raw[i] = values[i + 1].Raw();
+        }
+        return detail::Host().callControllerFunction(detail::Host().host, m_Id, std::string(function).c_str(), raw,
+                                                     static_cast<uint32_t>(sizeof...(A))) != 0;
     }
 
 private:
@@ -793,6 +806,11 @@ struct Contact {
     float penetration = 0.0f;
 };
 
+namespace detail {
+inline void Awake(void* handle);
+inline void Destroy(void* handle);
+} // namespace detail
+
 /// Base class for a gameplay script. Override the callbacks you need.
 class Script {
 public:
@@ -807,9 +825,15 @@ public:
     Script& operator=(const Script&) = delete;
 
     virtual void OnAwake() {}
+    /// Right after OnAwake, and OnDisable right before OnDestroy, as in Lua.
+    virtual void OnEnable() {}
+    virtual void OnDisable() {}
     virtual void OnUpdate(float deltaSeconds) { (void)deltaSeconds; }
     virtual void OnLateUpdate(float deltaSeconds) { (void)deltaSeconds; }
+    /// Only for scripts that woke up, like Lua's onDestroy.
     virtual void OnDestroy() {}
+    /// A non-looping clip of this entity's animated character finished.
+    virtual void OnAnimationFinished(std::string_view clip) { (void)clip; }
 
     /// `contact` is null when the physics step had no contact point; exit callbacks never get one.
     /// `other` is empty when the other entity was destroyed.
@@ -851,6 +875,9 @@ protected:
     }
 
 private:
+    friend void detail::Awake(void*);
+    friend void detail::Destroy(void*);
+
     template <class T>
     static T Convert(const Value& value, T fallback) {
         if constexpr (std::is_same_v<T, bool>) {
@@ -873,6 +900,7 @@ private:
 
     Entity m_Entity;
     std::string m_ScriptPath;
+    bool m_Awake = false;
 };
 
 namespace detail {
@@ -916,12 +944,22 @@ inline Script* AsScript(void* script) { return static_cast<Script*>(script); }
 
 inline void Destroy(void* handle) {
     Script* script = AsScript(handle);
-    Guard(script, "OnDestroy", [&] { script->OnDestroy(); });
+    if (script->m_Awake) {
+        Guard(script, "OnDisable", [&] { script->OnDisable(); });
+        Guard(script, "OnDestroy", [&] { script->OnDestroy(); });
+    }
     Guard(script, "destructor", [&] { delete script; });
 }
 
 inline void Awake(void* handle) {
-    Guard(AsScript(handle), "OnAwake", [&] { AsScript(handle)->OnAwake(); });
+    Script* script = AsScript(handle);
+    Guard(script, "OnAwake", [&] { script->OnAwake(); });
+    script->m_Awake = true;
+    Guard(script, "OnEnable", [&] { script->OnEnable(); });
+}
+
+inline void AnimationFinished(void* handle, const char* clip) {
+    Guard(AsScript(handle), "OnAnimationFinished", [&] { AsScript(handle)->OnAnimationFinished(clip ? clip : ""); });
 }
 
 inline void Update(void* handle, float dt) {
@@ -967,7 +1005,7 @@ const HPCppScriptExports* ExportsFor() {
     static_assert(std::is_base_of_v<Script, T>, "HP_SCRIPT needs a class derived from hp::Script");
     static const HPCppScriptExports exports = {
         sizeof(HPCppScriptExports), HP_CPP_SCRIPT_SDK_VERSION,
-        &Create<T>, &Destroy, &Awake, &Update, &LateUpdate, &ContactEvent, &CallFunction,
+        &Create<T>, &Destroy, &Awake, &Update, &LateUpdate, &ContactEvent, &CallFunction, &AnimationFinished,
     };
     return &exports;
 }

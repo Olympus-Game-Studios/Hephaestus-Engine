@@ -18,7 +18,8 @@ A few conventions:
 
 | Member of `hp::Script` | Does |
 | --- | --- |
-| `OnAwake`, `OnUpdate`, `OnLateUpdate`, `OnDestroy` | Lifecycle callbacks. |
+| `OnAwake`, `OnEnable`, `OnUpdate`, `OnLateUpdate`, `OnDisable`, `OnDestroy` | Lifecycle callbacks. |
+| `OnAnimationFinished(clip)` | Lua's `onAnimationFinished`. |
 | `OnTriggerEnter/Stay/Exit`, `OnCollisionEnter/Stay/Exit` | Physics callbacks, each with `(hp::Entity other, const hp::Contact* contact)`. |
 | `OnCall(function, args)` | Another script ran `Call(function, ...)` on this entity. |
 | `GetEntity()` | The entity the script is on (Lua's `this`). |
@@ -35,6 +36,7 @@ A few conventions:
 | `GetScale()` / `SetScale(v)` | Transform scale |
 | `SetVisible(on)` / `IsVisible()` | `Mesh.setVisible`, `Mesh.isVisible` |
 | `Call(name, args...)` | `e:Call(name, ...)` |
+| `CallController(name, args...)` | `e:CallController(name, ...)` |
 | `GetBody()` | `Physics.*` for this entity |
 | `GetController()` | `Character.*` for this entity |
 | `GetAnimator()` | `e:GetAnimator()` |
@@ -146,7 +148,3 @@ bool OnCall(std::string_view function, hp::Args args) override {
 ## Values
 
 `hp::Vec2`, `hp::Vec3` (with `+`, `-`, `*`, `Length` and `Normalized`), `hp::Vec4` and `hp::Color`. `hp::Value` carries numbers, booleans, strings and vectors between scripts; read one with `AsFloat`, `AsInt`, `AsBool`, `AsString` and `AsVec2/3/4`.
-
-## Not in C++ yet
-
-`onAnimationFinished`, `onEnable`/`onDisable`, character controller scripts and `CallController` are still Lua only.

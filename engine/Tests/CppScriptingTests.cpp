@@ -2,6 +2,7 @@
 #include "Core/SimulationStep.h"
 #include "Physics/PhysicsContactEvents.h"
 #include "Scene/Components.h"
+#include "Scene/CharacterComponent.h"
 #include "Scene/CharacterControllerComponent.h"
 #include "Scene/Entity.h"
 #include "Scene/PrefabAsset.h"
@@ -279,6 +280,37 @@ public:
 };
 
 HP_SCRIPT(Hud)
+)cpp";
+
+const char* kController = R"cpp(#include "HephaestusScript.h"
+
+class Walker : public hp::Script {
+public:
+    HP_FIELD(float, speed, 1.0f);
+    void OnUpdate(float dt) override { GetEntity().Translate({0, 0, speed * dt}); }
+    void OnAnimationFinished(std::string_view clip) override { hp::Log("controller finished " + std::string(clip)); }
+    bool OnCall(std::string_view function, hp::Args args) override {
+        if (function != "Boost") return false;
+        GetEntity().Translate({args.empty() ? 0.0f : args[0].AsFloat(), 0, 0});
+        return true;
+    }
+};
+
+HP_SCRIPT(Walker)
+)cpp";
+
+const char* kLifecycle = R"cpp(#include "HephaestusScript.h"
+
+class Life : public hp::Script {
+public:
+    void OnAwake() override { hp::Log("life:awake"); GetEntity().CallController("Boost", 1); }
+    void OnEnable() override { hp::Log("life:enable"); }
+    void OnDisable() override { hp::Log("life:disable"); }
+    void OnDestroy() override { hp::Log("life:destroy"); }
+    void OnAnimationFinished(std::string_view clip) override { hp::Log("gameplay finished " + std::string(clip)); }
+};
+
+HP_SCRIPT(Life)
 )cpp";
 
 } // namespace
@@ -624,6 +656,69 @@ function remember(handle) _G.luaSetText = UI.setText(handle, "Set from Lua") end
         if (button && uiSystem.FindScreenByName("Hud")) {
             button->OnClicked();
         }
+        lua.Shutdown();
+    }
+
+    {
+        log.clear();
+        WriteFile(root / "scripts" / "walker.cpp", kController);
+        WriteFile(root / "scripts" / "life.cpp", kLifecycle);
+        Scene scene("Controllers");
+        Entity hero = scene.CreateEntity("Hero");
+        auto& character = hero.AddComponent<CharacterComponent>();
+        character.controllerScriptPath = "scripts/walker.cpp";
+        character.controllerVariables["speed"] = PropertyValue(4.0);
+        hero.AddComponent<LuaScriptComponent>("scripts/life.cpp");
+        scene.CreateEntity("LuaCaller").AddComponent<LuaScriptComponent>().scriptSource = R"lua(
+function onUpdate(dt)
+    if not _G.boosted then
+        local hero = Scene.findAllWithPrefix("Hero")[1]
+        _G.boosted = hero ~= nil and hero:CallController("Boost", 10)
+    end
+end
+)lua";
+
+        LuaScriptEngine lua;
+        PluginScriptHost host;
+        lua.Initialize(&scene, nullptr);
+        lua.SetProjectRoot(root);
+        lua.SetPluginScriptHost(&host);
+        host.SetLuaEngine(&lua);
+        lua.OnSimulationStarted();
+        Hephaestus::SimulationStepContext step;
+        step.scene = &scene;
+        step.lua = &lua;
+        step.pluginScripts = &host;
+        Hephaestus::RunSimulationStep(step, 0.5f);
+        Hephaestus::RunSimulationStep(step, 0.5f);
+
+        const Vec3 position = hero.GetComponent<TransformComponent>().position;
+        pass &= Check(host.InstanceCount() == 2, "an entity runs a C++ gameplay script and a C++ character controller");
+        pass &= Check(Near(position.z, 4.0f), "the controller script runs with its controller variables");
+        pass &= Check(Near(position.x, 11.0f) && lua.ExecuteString("assert(_G.boosted == true)"),
+                      "CallController reaches the C++ controller from C++ and from Lua");
+
+        auto& player = hero.GetComponent<CharacterComponent>().player;
+        player.finishedThisFrame = true;
+        player.finishedClip = "Wave";
+        host.DispatchAnimationFinished(scene);
+        pass &= Check(logged("controller finished Wave") && logged("gameplay finished Wave"),
+                      "OnAnimationFinished reaches both of the entity's C++ scripts");
+
+        hero.GetComponent<LuaScriptComponent>().enabled = false;
+        Hephaestus::RunSimulationStep(step, 0.5f);
+        std::vector<std::string> life;
+        for (const std::string& line : log) {
+            if (line.rfind("life:", 0) == 0) life.push_back(line);
+        }
+        pass &= Check(life == std::vector<std::string>{"life:awake", "life:enable", "life:disable", "life:destroy"},
+                      "OnEnable follows OnAwake and OnDisable precedes OnDestroy, as in Lua");
+        hero.GetComponent<CharacterComponent>().runController = false;
+        Hephaestus::RunSimulationStep(step, 0.5f);
+        pass &= Check(host.InstanceCount() == 0, "turning the controller off destroys its script");
+
+        host.OnSimulationStopped();
+        lua.OnSimulationStopped();
         lua.Shutdown();
     }
 

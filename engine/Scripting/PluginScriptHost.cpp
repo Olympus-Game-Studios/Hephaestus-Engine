@@ -15,6 +15,7 @@
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
 
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -754,7 +755,7 @@ struct PluginScriptHost::HostApi {
         const std::string name = function;
         return [&self, alive, entity, name](const HPValue* args, uint32_t count) {
             if (!alive.expired() && entity != 0) {
-                self.ForwardCall(ToEntityId(entity), name.c_str(), args, count);
+                self.ForwardCall(ToEntityId(entity), name.c_str(), args, count, LuaScriptSlot::Gameplay);
             }
         };
     }
@@ -832,6 +833,11 @@ struct PluginScriptHost::HostApi {
         };
         api.uiSetOnClick = &UISetOnClick;
         api.uiSetOnHover = &UISetOnHover;
+        api.callControllerFunction = [](void* host, HPEntityId entity, const char* function, const HPValue* args,
+                                        uint32_t argCount) -> int32_t {
+            return entity != 0 &&
+                   Host(host).ForwardCall(ToEntityId(entity), function, args, argCount, LuaScriptSlot::CharacterController);
+        };
     }
 
     static void Install(HPScriptHostAPI& api) {
@@ -963,14 +969,50 @@ void* PluginScriptHost::RuntimeFor(const HPScriptLanguage* language) {
     return runtime.handle;
 }
 
-void PluginScriptHost::DestroyInstance(uint32_t entityId) {
-    const auto it = m_Instances.find(entityId);
+void PluginScriptHost::DestroyInstance(uint64_t key) {
+    const auto it = m_Instances.find(key);
     if (it == m_Instances.end()) {
         return;
     }
     const Instance instance = it->second;
     m_Instances.erase(it);
     instance.language->destroyInstance(instance.runtime, instance.handle);
+}
+
+namespace {
+
+// The script, and its Inspector values, that a slot of an entity runs.
+struct ScriptSource {
+    const std::string* path = nullptr;
+    const std::unordered_map<std::string, PropertyValue>* variables = nullptr;
+};
+
+ScriptSource SourceFor(entt::registry& registry, entt::entity handle, LuaScriptSlot slot) {
+    if (!registry.valid(handle)) {
+        return {};
+    }
+    if (slot == LuaScriptSlot::Gameplay) {
+        const auto* component = registry.try_get<LuaScriptComponent>(handle);
+        return component && component->enabled && !component->scriptPath.empty()
+            ? ScriptSource{&component->scriptPath, &component->variables} : ScriptSource{};
+    }
+    const auto* character = registry.try_get<CharacterComponent>(handle);
+    return character && character->runController && !character->controllerScriptPath.empty()
+        ? ScriptSource{&character->controllerScriptPath, &character->controllerVariables} : ScriptSource{};
+}
+
+} // namespace
+
+uint64_t PluginScriptHost::Key(uint32_t entityId, LuaScriptSlot slot) {
+    return (static_cast<uint64_t>(entityId) << 1) | (slot == LuaScriptSlot::CharacterController ? 1u : 0u);
+}
+
+uint32_t PluginScriptHost::EntityOf(uint64_t key) {
+    return static_cast<uint32_t>(key >> 1);
+}
+
+LuaScriptSlot PluginScriptHost::SlotOf(uint64_t key) {
+    return (key & 1u) ? LuaScriptSlot::CharacterController : LuaScriptSlot::Gameplay;
 }
 
 void PluginScriptHost::Update(Scene& scene, float deltaTime) {
@@ -980,47 +1022,52 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
     auto& registry = scene.GetRegistry();
     const ScriptLanguageRegistry& languages = ScriptLanguageRegistry::Instance();
 
-    std::vector<uint32_t> stale;
-    for (const auto& [entityId, instance] : m_Instances) {
-        const auto handle = static_cast<entt::entity>(entityId);
-        const LuaScriptComponent* component = registry.valid(handle)
-            ? registry.try_get<LuaScriptComponent>(handle) : nullptr;
-        if (!component || !component->enabled || component->scriptPath != instance.scriptPath) {
-            stale.push_back(entityId);
+    std::vector<uint64_t> stale;
+    for (const auto& [key, instance] : m_Instances) {
+        const ScriptSource source = SourceFor(registry, static_cast<entt::entity>(EntityOf(key)), SlotOf(key));
+        if (!source.path || *source.path != instance.scriptPath) {
+            stale.push_back(key);
         }
     }
-    for (uint32_t entityId : stale) {
-        DestroyInstance(entityId);
+    for (uint64_t key : stale) {
+        DestroyInstance(key);
     }
     if (languages.Languages().empty()) {
         return;
     }
 
-    auto view = registry.view<LuaScriptComponent>();
-    std::vector<entt::entity> entities(view.begin(), view.end());
-    for (entt::entity handle : entities) {
-        const auto& component = registry.get<LuaScriptComponent>(handle);
-        if (!component.enabled || component.scriptPath.empty()) {
+    // Gameplay scripts first, then character controllers, as Lua orders them.
+    std::vector<uint64_t> candidates;
+    for (entt::entity handle : registry.view<LuaScriptComponent>()) {
+        candidates.push_back(Key(static_cast<uint32_t>(handle), LuaScriptSlot::Gameplay));
+    }
+    for (entt::entity handle : registry.view<CharacterComponent>()) {
+        candidates.push_back(Key(static_cast<uint32_t>(handle), LuaScriptSlot::CharacterController));
+    }
+    for (uint64_t key : candidates) {
+        const uint32_t entityId = EntityOf(key);
+        const ScriptSource source = SourceFor(registry, static_cast<entt::entity>(entityId), SlotOf(key));
+        if (!source.path) {
             continue;
         }
-        const HPScriptLanguage* language = languages.FindForPath(component.scriptPath);
+        const std::string& scriptPath = *source.path;
+        const HPScriptLanguage* language = languages.FindForPath(scriptPath);
         if (!language) {
             continue;
         }
-        const uint32_t entityId = static_cast<uint32_t>(handle);
         const std::filesystem::path resolved = m_Lua
-            ? m_Lua->ResolveScriptPath(component.scriptPath)
-            : std::filesystem::path(component.scriptPath);
+            ? m_Lua->ResolveScriptPath(scriptPath)
+            : std::filesystem::path(scriptPath);
         const auto writeTime = WriteTime(resolved);
 
-        auto existing = m_Instances.find(entityId);
+        auto existing = m_Instances.find(key);
         if (existing != m_Instances.end() && existing->second.writeTime != writeTime) {
-            DestroyInstance(entityId);
+            DestroyInstance(key);
             existing = m_Instances.end();
         }
         if (existing == m_Instances.end()) {
-            const auto failed = m_Failed.find(entityId);
-            if (failed != m_Failed.end() && failed->second.scriptPath == component.scriptPath &&
+            const auto failed = m_Failed.find(key);
+            if (failed != m_Failed.end() && failed->second.scriptPath == scriptPath &&
                 failed->second.writeTime == writeTime) {
                 continue;
             }
@@ -1029,36 +1076,37 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
                 continue;
             }
             std::vector<HPNamedValue> variables;
-            variables.reserve(component.variables.size());
-            for (const auto& [name, value] : component.variables) {
+            variables.reserve(source.variables->size());
+            for (const auto& [name, value] : *source.variables) {
                 variables.push_back(HPNamedValue{name.c_str(), ToHPValue(value)});
             }
             const std::string resolvedText = resolved.string();
+            const std::string path = scriptPath;
             HPScriptInstanceInfo info{};
             info.entity = ToHandle(entityId);
-            info.scriptPath = component.scriptPath.c_str();
+            info.scriptPath = path.c_str();
             info.resolvedPath = resolvedText.c_str();
             info.variables = variables.data();
             info.variableCount = static_cast<uint32_t>(variables.size());
             char error[1024] = {};
             void* handleOut = language->createInstance(runtime, &info, error, sizeof(error));
             if (!handleOut) {
-                m_Failed[entityId] = FailedScript{component.scriptPath, writeTime};
-                Log(HP_LOG_ERROR, "[" + std::string(language->displayName) + "] " + component.scriptPath +
+                m_Failed[key] = FailedScript{path, writeTime};
+                Log(HP_LOG_ERROR, "[" + std::string(language->displayName) + "] " + path +
                     ": " + (error[0] ? error : "script failed to load"));
                 continue;
             }
-            m_Failed.erase(entityId);
-            m_Instances[entityId] = Instance{language, runtime, handleOut, component.scriptPath, writeTime, false};
+            m_Failed.erase(key);
+            m_Instances[key] = Instance{language, runtime, handleOut, path, writeTime, false};
         }
-        m_UpdateOrder.push_back(entityId);
+        m_UpdateOrder.push_back(key);
     }
 
     if (m_Lua) {
         m_Lua->BeginScriptPass();
     }
-    for (uint32_t entityId : m_UpdateOrder) {
-        auto it = m_Instances.find(entityId);
+    for (uint64_t key : m_UpdateOrder) {
+        auto it = m_Instances.find(key);
         if (it == m_Instances.end() || it->second.awake) {
             continue;
         }
@@ -1067,8 +1115,8 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
             it->second.language->awake(it->second.runtime, it->second.handle);
         }
     }
-    for (uint32_t entityId : m_UpdateOrder) {
-        auto it = m_Instances.find(entityId);
+    for (uint64_t key : m_UpdateOrder) {
+        auto it = m_Instances.find(key);
         if (it != m_Instances.end() && it->second.language->update) {
             it->second.language->update(it->second.runtime, it->second.handle, deltaTime);
         }
@@ -1081,8 +1129,8 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
 void PluginScriptHost::LateUpdate(Scene& scene, float deltaTime) {
     m_Scene = &scene;
     m_DeltaTime = deltaTime;
-    for (uint32_t entityId : m_UpdateOrder) {
-        auto it = m_Instances.find(entityId);
+    for (uint64_t key : m_UpdateOrder) {
+        auto it = m_Instances.find(key);
         if (it != m_Instances.end() && it->second.language->lateUpdate) {
             it->second.language->lateUpdate(it->second.runtime, it->second.handle, deltaTime);
         }
@@ -1093,10 +1141,6 @@ void PluginScriptHost::DispatchContactEvents(Scene& scene,
                                              const std::vector<Physics::PhysicsContactEvent>& events) {
     m_Scene = &scene;
     for (const Physics::PhysicsContactEvent& event : events) {
-        auto it = m_Instances.find(event.receiver);
-        if (it == m_Instances.end() || !it->second.language->contact) {
-            continue;
-        }
         HPContactEvent contact{};
         contact.kind = static_cast<uint32_t>(event.kind);
         contact.other = event.otherAlive ? ToHandle(event.other) : 0;
@@ -1105,7 +1149,35 @@ void PluginScriptHost::DispatchContactEvents(Scene& scene,
         contact.normal = HPVec3{event.normalX, event.normalY, event.normalZ};
         contact.relativeVelocity = HPVec3{event.relativeVelocityX, event.relativeVelocityY, event.relativeVelocityZ};
         contact.penetration = event.penetration;
-        it->second.language->contact(it->second.runtime, it->second.handle, &contact);
+        for (LuaScriptSlot slot : {LuaScriptSlot::CharacterController, LuaScriptSlot::Gameplay}) {
+            auto it = m_Instances.find(Key(event.receiver, slot));
+            if (it != m_Instances.end() && it->second.language->contact) {
+                it->second.language->contact(it->second.runtime, it->second.handle, &contact);
+            }
+        }
+    }
+}
+
+void PluginScriptHost::DispatchAnimationFinished(Scene& scene) {
+    m_Scene = &scene;
+    auto view = scene.GetRegistry().view<CharacterComponent>();
+    for (entt::entity handle : view) {
+        const CharacterComponent& character = view.get<CharacterComponent>(handle);
+        if (!character.player.finishedThisFrame || character.player.finishedClip.empty()) {
+            continue;
+        }
+        const std::string clip = character.player.finishedClip;
+        for (LuaScriptSlot slot : {LuaScriptSlot::CharacterController, LuaScriptSlot::Gameplay}) {
+            auto it = m_Instances.find(Key(static_cast<uint32_t>(handle), slot));
+            if (it == m_Instances.end()) {
+                continue;
+            }
+            const HPScriptLanguage& language = *it->second.language;
+            if (language.structSize >= offsetof(HPScriptLanguage, animationFinished) + sizeof(language.animationFinished) &&
+                language.animationFinished) {
+                language.animationFinished(it->second.runtime, it->second.handle, clip.c_str());
+            }
+        }
     }
 }
 
@@ -1131,8 +1203,8 @@ void PluginScriptHost::RequestReloadAll() {
 }
 
 bool PluginScriptHost::CallEntityFunction(uint32_t entityId, const std::string& functionName,
-                                          const std::vector<PropertyValue>& args) {
-    auto it = m_Instances.find(entityId);
+                                          const std::vector<PropertyValue>& args, LuaScriptSlot slot) {
+    auto it = m_Instances.find(Key(entityId, slot));
     if (it == m_Instances.end() || !it->second.language->call) {
         return false;
     }
@@ -1147,7 +1219,7 @@ bool PluginScriptHost::CallEntityFunction(uint32_t entityId, const std::string& 
 }
 
 bool PluginScriptHost::ForwardCall(uint32_t entityId, const char* functionName,
-                                   const HPValue* args, uint32_t argCount) {
+                                   const HPValue* args, uint32_t argCount, LuaScriptSlot slot) {
     if (!functionName || !*functionName) {
         return false;
     }
@@ -1156,13 +1228,13 @@ bool PluginScriptHost::ForwardCall(uint32_t entityId, const char* functionName,
     for (uint32_t i = 0; i < argCount; ++i) {
         values.push_back(ToPropertyValue(args[i]));
     }
-    if (CallEntityFunction(entityId, functionName, values)) {
+    if (CallEntityFunction(entityId, functionName, values, slot)) {
         return true;
     }
     if (!m_Lua || !m_Scene || !m_Scene->GetRegistry().valid(static_cast<entt::entity>(entityId))) {
         return false;
     }
-    return m_Lua->CallEntityFunction(functionName, Entity(static_cast<entt::entity>(entityId), m_Scene), values);
+    return m_Lua->CallEntityFunction(functionName, Entity(static_cast<entt::entity>(entityId), m_Scene), values, slot);
 }
 
 // ── Host API ────────────────────────────────────────────────────────────────
@@ -1279,7 +1351,7 @@ int32_t PluginScriptHost::HostCallEntityFunction(void* host, HPEntityId entity, 
     if (entity == 0) {
         return 0;
     }
-    return Self(host).ForwardCall(ToEntityId(entity), function, args, argCount) ? 1 : 0;
+    return Self(host).ForwardCall(ToEntityId(entity), function, args, argCount, LuaScriptSlot::Gameplay) ? 1 : 0;
 }
 
 size_t PluginScriptHost::HostGetProjectRoot(void* host, char* buffer, size_t bufferSize) {

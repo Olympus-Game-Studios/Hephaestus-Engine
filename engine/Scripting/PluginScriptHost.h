@@ -12,6 +12,7 @@
 
 class LuaScriptEngine;
 class Scene;
+enum class LuaScriptSlot : uint8_t;
 
 namespace Hephaestus {
 class InputSystem;
@@ -42,15 +43,17 @@ public:
     void Update(Scene& scene, float deltaTime);
     void LateUpdate(Scene& scene, float deltaTime);
     void DispatchContactEvents(Scene& scene, const std::vector<Physics::PhysicsContactEvent>& events);
+    /// onAnimationFinished for characters whose clip ended this frame. Run before Lua's dispatch, which clears the flag.
+    void DispatchAnimationFinished(Scene& scene);
 
     /// Destroys every script and language runtime. The next Update starts fresh.
     void OnSimulationStopped();
     void RequestReloadAll();
 
-    /// Calls a function on the plugin-language script attached to an entity.
-    /// Returns true when a script handled it.
+    /// Calls a function on the plugin-language script in an entity's slot
+    /// (its Script component, or its character controller). Returns true when a script handled it.
     bool CallEntityFunction(uint32_t entityId, const std::string& functionName,
-                            const std::vector<PropertyValue>& args);
+                            const std::vector<PropertyValue>& args, LuaScriptSlot slot);
 
     std::size_t InstanceCount() const { return m_Instances.size(); }
 
@@ -75,9 +78,13 @@ private:
     };
 
     void* RuntimeFor(const HPScriptLanguage* language);
-    void DestroyInstance(uint32_t entityId);
+    static uint64_t Key(uint32_t entityId, LuaScriptSlot slot);
+    static uint32_t EntityOf(uint64_t key);
+    static LuaScriptSlot SlotOf(uint64_t key);
+    void DestroyInstance(uint64_t key);
     void Log(HPLogLevel level, const std::string& message) const;
-    bool ForwardCall(uint32_t entityId, const char* functionName, const HPValue* args, uint32_t argCount);
+    bool ForwardCall(uint32_t entityId, const char* functionName, const HPValue* args, uint32_t argCount,
+                     LuaScriptSlot slot);
 
     static void HostLog(void* host, uint32_t level, const char* message);
     static int32_t HostIsEntityValid(void* host, HPEntityId entity);
@@ -104,7 +111,7 @@ private:
     float m_DeltaTime = 0.0f;
     std::shared_ptr<bool> m_Alive = std::make_shared<bool>(true);
     std::vector<Runtime> m_Runtimes;
-    std::unordered_map<uint32_t, Instance> m_Instances;
-    std::unordered_map<uint32_t, FailedScript> m_Failed;
-    std::vector<uint32_t> m_UpdateOrder;
+    std::unordered_map<uint64_t, Instance> m_Instances;
+    std::unordered_map<uint64_t, FailedScript> m_Failed;
+    std::vector<uint64_t> m_UpdateOrder;
 };

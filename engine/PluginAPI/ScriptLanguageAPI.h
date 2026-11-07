@@ -346,9 +346,16 @@ typedef struct HPScriptHostAPI {
        language it is written; hovering runs it with one BOOL, true on enter. */
     int32_t (*uiSetOnClick)(void* host, uint32_t widget, HPEntityId entity, const char* function);
     int32_t (*uiSetOnHover)(void* host, uint32_t widget, HPEntityId entity, const char* function);
+
+    /* Like callEntityFunction, but reaches the entity's character controller
+       script (Lua's entity:CallController). */
+    int32_t (*callControllerFunction)(void* host, HPEntityId entity, const char* function,
+                                      const HPValue* args, uint32_t argCount);
 } HPScriptHostAPI;
 
-/* Describes the script a runtime is asked to load for one entity. */
+/* Describes the script a runtime is asked to load for one entity: its Script
+   component's, or the character controller script of its Character
+   component, which runs the same way. */
 typedef struct HPScriptInstanceInfo {
     HPEntityId entity;
     const char* scriptPath;   /* As authored, e.g. "assets/scripts/player.py". */
@@ -490,6 +497,10 @@ typedef struct HPScriptLanguage {
        structSize covers it; NULL leaves the language out of the menu. Every
        "$NAME" becomes the name the user typed, which is a valid identifier. */
     const char* newScriptTemplate;
+
+    /* Read only when structSize covers it. A character's non-looping clip
+       finished this frame (Lua's onAnimationFinished); `clip` is its id. */
+    void (*animationFinished)(void* runtime, void* instance, const char* clip);
 } HPScriptLanguage;
 
 /* Signature of the HP_GetScriptLanguages export. Return NULL when
