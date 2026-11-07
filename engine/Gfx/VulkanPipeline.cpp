@@ -558,11 +558,11 @@ void VulkanPipeline::CreateBillboardPipeline(VkDevice dev, VkRenderPass rp, VkEx
     dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
     dynamicState.pDynamicStates = dynamicStates.data();
 
-    // Push constants for billboard position and size
+    // Push constants for billboard position, size and glyph tint
     VkPushConstantRange pushConstant{};
-    pushConstant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstant.offset = 0;
-    pushConstant.size = sizeof(float) * 4; // vec3 position + float size
+    pushConstant.size = sizeof(float) * 8; // vec3 position + float size + vec4 tint
 
     // Pipeline layout
     VkPipelineLayoutCreateInfo layoutInfo{};

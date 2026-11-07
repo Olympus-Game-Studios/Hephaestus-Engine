@@ -70,7 +70,7 @@ struct alignas(16) MaterialUBO {
 };
 
 constexpr VkDeviceSize kBoneUboSize = 128 * sizeof(Mat4);
-constexpr float kLightIconHalfExtent = 0.5f;
+constexpr float kLightIconHalfExtent = 0.045f; // fraction of the viewport half-height
 
 // Mixamo-style characters often have the pivot at the hips. Lift the mesh so
 // feet sit on the entity origin without moving the physics capsule. Use the
@@ -4439,17 +4439,26 @@ void EngineFrameRenderer::recordBillboards(VkCommandBuffer cmd, uint32_t imageIn
 
         // Compute world position — use the entity's world transform translation
         Mat4 worldMat = scene->GetWorldTransform(Entity(entityHandle, scene));
-        // Push constants: vec3 position + float size
         struct {
             float x, y, z, size;
+            float r, g, b, a;
         } pc;
         pc.x    = worldMat.m[12];
         pc.y    = worldMat.m[13];
         pc.z    = worldMat.m[14];
         pc.size = kLightIconHalfExtent;
 
+        // Hue of the light at full brightness, lifted towards white so dim colours stay legible.
+        const float peak = std::max({light.color.x, light.color.y, light.color.z});
+        const Vec3 hue = peak > 1e-4f ? vscale(light.color, 1.0f / peak) : Vec3(1.0f, 1.0f, 1.0f);
+        pc.r = 0.3f + 0.7f * hue.x;
+        pc.g = 0.3f + 0.7f * hue.y;
+        pc.b = 0.3f + 0.7f * hue.z;
+        pc.a = 1.0f;
+
         vkCmdPushConstants(cmd, m_billboardPipeline.layout,
-                           VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(pc), &pc);
 
         // Draw a quad (4 verts, triangle strip, generated in vertex shader)
         vkCmdDraw(cmd, 4, 1, 0, 0);
@@ -6861,7 +6870,8 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
     }
 
     // ── Billboard ID pass: render editor icon billboards into the ID buffer ──
-    if (m_billboardIdPipeline.initialized) {
+    if (m_billboardIdPipeline.initialized && config.isEditorMode &&
+        config.renderBillboards && !config.isPlaying) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_billboardIdPipeline.pipeline);
 
         uint32_t dynOff = 0;
