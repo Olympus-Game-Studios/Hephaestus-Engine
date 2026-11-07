@@ -178,9 +178,14 @@ if(HEPHAESTUS_USE_QT)
     # Try to auto-locate Qt6Config.cmake under common Qt layout
     # IMPORTANT: Must use MSVC builds when compiling with Visual Studio
     if(EXISTS "${HEPHAESTUS_QT_ROOT}" AND NOT Qt6_DIR)
-        # First try to find MSVC builds specifically
+        # First try to find MSVC builds for the target architecture
+        if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+            set(_qt6_msvc_arch "arm64")
+        else()
+            set(_qt6_msvc_arch "64")
+        endif()
         file(GLOB _qt6_msvc_candidates
-            "${HEPHAESTUS_QT_ROOT}/6.*/msvc*/lib/cmake/Qt6/Qt6Config.cmake"
+            "${HEPHAESTUS_QT_ROOT}/6.*/msvc*_${_qt6_msvc_arch}/lib/cmake/Qt6/Qt6Config.cmake"
         )
         list(LENGTH _qt6_msvc_candidates _qt6_msvc_count)
         if(_qt6_msvc_count GREATER 0)
