@@ -2859,6 +2859,9 @@ void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamer
         ubo.proj = Mat4::Perspective(fovDeg * DEG_TO_RAD, aspect, camera.nearPlane, camera.farPlane);
     }
     ubo.viewPos = position;
+    m_frameViewMatrix = ubo.view;
+    m_frameProjectionMatrix = ubo.proj;
+    m_frameCameraPos = position;
     // Wireframe still uses Lit/Unlit shading branch; polygon mode is selected per draw.
     ubo.shadingMode = (config.shadingMode == ViewShadingMode::Unlit) ? 1.0f : 0.0f;
     
@@ -4610,8 +4613,8 @@ void EngineFrameRenderer::recordLightGizmos(VkCommandBuffer cmd, uint32_t imageI
         Mat4 worldMat = scene->GetWorldTransform(Entity(entityHandle, scene));
 
         m_lightGizmo.Draw(cmd, m_descriptorSets[imageIndex],
-                          worldMat, m_gizmoCameraPos, m_gizmoProjectionMatrix,
-                          isSelected, isHovered);
+                          worldMat, m_frameViewMatrix, m_frameProjectionMatrix,
+                          m_frameCameraPos, isSelected, isHovered);
     }
 }
 

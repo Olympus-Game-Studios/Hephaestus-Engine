@@ -1,6 +1,7 @@
 #include "VulkanGizmo.h"
 #include "VulkanBuffer.h"
 #include "VulkanSwapchain.h"
+#include "GizmoGeometry.h"
 #include <iostream>
 #include <cmath>
 #include <fstream>
@@ -35,6 +36,62 @@ static VkShaderModule createShaderModule(VkDevice device, const std::vector<char
     return shaderModule;
 }
 
+namespace {
+
+using namespace GizmoGeometry;
+
+const Vec3 kCenterColor(0.80f, 0.82f, 0.86f);
+const Vec3 kAxes[3] = { Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1) };
+
+} // namespace
+
+float GizmoScreenScale(const Vec3& gizmoPos, const Vec3& cameraPos, const Mat4& projMatrix,
+                       float screenFactor) {
+    if (std::abs(projMatrix.m[15] - 1.0f) < 0.001f &&
+        std::abs(projMatrix.m[5]) > 1e-5f) {
+        const float halfHeight = 1.0f / std::abs(projMatrix.m[5]);
+        return std::max(halfHeight * 2.0f * screenFactor, 0.001f);
+    }
+    float distance = vlen(vsub(gizmoPos, cameraPos));
+    float f = std::abs(projMatrix.m[5]);
+    if (f > 1e-5f) {
+        float fovY = 2.0f * std::atan(1.0f / f);
+        float scale = distance * std::tan(fovY * 0.5f) * screenFactor;
+        return std::max(scale, 0.001f);
+    }
+    return std::max(distance * screenFactor, 0.001f);
+}
+
+Vec3 GizmoToCamera(const Vec3& gizmoPos, const Vec3& cameraPos, const Mat4& viewMatrix,
+                   const Mat4& projMatrix) {
+    // Mat4::LookAt stores the camera forward in view row 2.
+    const Vec3 forward = vnorm(Vec3(viewMatrix.m[2], viewMatrix.m[6], viewMatrix.m[10]));
+    const bool ortho = std::abs(projMatrix.m[15] - 1.0f) < 0.001f;
+    const Vec3 toEye = vsub(cameraPos, gizmoPos);
+    if (ortho || vdot(toEye, toEye) < 1e-8f) {
+        return vscale(forward, -1.0f);
+    }
+    return vnorm(toEye);
+}
+
+Mat4 GizmoBasis(const Vec3& x, const Vec3& y, const Vec3& z) {
+    Mat4 m = Mat4::Identity();
+    m.m[0] = x.x; m.m[1] = x.y; m.m[2] = x.z;
+    m.m[4] = y.x; m.m[5] = y.y; m.m[6] = y.z;
+    m.m[8] = z.x; m.m[9] = z.y; m.m[10] = z.z;
+    return m;
+}
+
+Mat4 GizmoBillboardRotation(const Vec3& toCamera, const Mat4& viewMatrix) {
+    Vec3 up = vnorm(Vec3(viewMatrix.m[1], viewMatrix.m[5], viewMatrix.m[9]));
+    if (std::abs(vdot(up, toCamera)) > 0.999f) {
+        up = vnorm(Vec3(viewMatrix.m[0], viewMatrix.m[4], viewMatrix.m[8]));
+    }
+    const Vec3 right = vnorm(vcross(up, toCamera));
+    const Vec3 trueUp = vcross(toCamera, right);
+    return GizmoBasis(right, trueUp, toCamera);
+}
+
 VulkanGizmo::VulkanGizmo() {
 }
 
@@ -43,12 +100,11 @@ VulkanGizmo::~VulkanGizmo() {
 
 void VulkanGizmo::Init(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
                        VkDescriptorSetLayout cameraDescriptorLayout, VmaAllocator allocator) {
-    // Generate geometry for all gizmo types
-    GenerateTranslateGeometry(device, allocator);
-    GenerateRotateGeometry(device, allocator);
-    GenerateScaleGeometry(device, allocator);
+    GenerateTranslateGeometry(allocator);
+    GenerateRotateGeometry(allocator);
+    GenerateScaleGeometry(allocator);
+    GenerateBillboardGeometry(allocator);
 
-    // Create rendering pipeline
     CreatePipeline(device, renderPass, extent, cameraDescriptorLayout);
 
     std::cout << "VulkanGizmo initialized" << std::endl;
@@ -71,126 +127,104 @@ void VulkanGizmo::Recreate(VkDevice device, VkRenderPass renderPass, VkExtent2D 
 void VulkanGizmo::Cleanup(VkDevice device, VmaAllocator allocator) {
     if (m_Pipeline) vkDestroyPipeline(device, m_Pipeline, nullptr);
     if (m_PipelineLayout) vkDestroyPipelineLayout(device, m_PipelineLayout, nullptr);
+    m_Pipeline = VK_NULL_HANDLE;
+    m_PipelineLayout = VK_NULL_HANDLE;
 
-    // Cleanup geometry buffers
-    if (m_TranslateGeo.vertexBuffer) {
-        m_TranslateGeo.vertexBuffer->Destroy(allocator);
-        delete m_TranslateGeo.vertexBuffer;
-    }
-    if (m_TranslateGeo.indexBuffer) {
-        m_TranslateGeo.indexBuffer->Destroy(allocator);
-        delete m_TranslateGeo.indexBuffer;
-    }
-
-    if (m_RotateGeo.vertexBuffer) {
-        m_RotateGeo.vertexBuffer->Destroy(allocator);
-        delete m_RotateGeo.vertexBuffer;
-    }
-    if (m_RotateGeo.indexBuffer) {
-        m_RotateGeo.indexBuffer->Destroy(allocator);
-        delete m_RotateGeo.indexBuffer;
-    }
-
-    if (m_ScaleGeo.vertexBuffer) {
-        m_ScaleGeo.vertexBuffer->Destroy(allocator);
-        delete m_ScaleGeo.vertexBuffer;
-    }
-    if (m_ScaleGeo.indexBuffer) {
-        m_ScaleGeo.indexBuffer->Destroy(allocator);
-        delete m_ScaleGeo.indexBuffer;
+    for (GeometryBuffers* geo : { &m_TranslateGeo, &m_RotateGeo, &m_ScaleGeo, &m_BillboardGeo }) {
+        if (geo->vertexBuffer) {
+            geo->vertexBuffer->Destroy(allocator);
+            delete geo->vertexBuffer;
+            geo->vertexBuffer = nullptr;
+        }
+        if (geo->indexBuffer) {
+            geo->indexBuffer->Destroy(allocator);
+            delete geo->indexBuffer;
+            geo->indexBuffer = nullptr;
+        }
+        geo->indexCount = 0;
     }
 }
 
-void VulkanGizmo::GenerateTranslateGeometry(VkDevice device, VmaAllocator allocator) {
-    std::vector<GizmoVertex> vertices;
-    std::vector<uint16_t> indices;
+void VulkanGizmo::GenerateTranslateGeometry(VmaAllocator allocator) {
+    Vertices vertices;
+    Indices indices;
 
-    // Generate three arrows along X, Y, Z axes
-    // X axis - Red
-    AddArrow(vertices, indices, Vec3(1, 0, 0), m_TranslateLength, m_AxisThickness * 0.5f, Vec3(1, 0, 0));
-    // Y axis - Green
-    AddArrow(vertices, indices, Vec3(0, 1, 0), m_TranslateLength, m_AxisThickness * 0.5f, Vec3(0, 1, 0));
-    // Z axis - Blue
-    AddArrow(vertices, indices, Vec3(0, 0, 1), m_TranslateLength, m_AxisThickness * 0.5f, Vec3(0, 0, 1));
-    // Center handle for free movement in the camera-facing plane.
-    AddCube(vertices, indices, Vec3(0, 0, 0),
-            m_UniformScaleCubeSize * 0.8f, Vec3(0.9f, 0.9f, 0.9f));
-    auto addPlane = [&](const Vec3& a, const Vec3& b, const Vec3& color) {
-        const uint16_t base = static_cast<uint16_t>(vertices.size());
-        const Vec3 normal = vnorm(vcross(a, b));
-        const float inner = 0.35f;
-        const float outer = 0.70f;
-        vertices.push_back({vadd(vscale(a, inner), vscale(b, inner)), normal, color});
-        vertices.push_back({vadd(vscale(a, outer), vscale(b, inner)), normal, color});
-        vertices.push_back({vadd(vscale(a, outer), vscale(b, outer)), normal, color});
-        vertices.push_back({vadd(vscale(a, inner), vscale(b, outer)), normal, color});
-        indices.insert(indices.end(), {base, static_cast<uint16_t>(base + 1),
-            static_cast<uint16_t>(base + 2), base,
-            static_cast<uint16_t>(base + 2), static_cast<uint16_t>(base + 3)});
-    };
-    addPlane(Vec3(1,0,0), Vec3(0,1,0), Vec3(0.8f, 0.8f, 0.1f));
-    addPlane(Vec3(1,0,0), Vec3(0,0,1), Vec3(0.8f, 0.1f, 0.8f));
-    addPlane(Vec3(0,1,0), Vec3(0,0,1), Vec3(0.1f, 0.8f, 0.8f));
+    const float coneLength = 0.3f;
+    for (int axis = 0; axis < 3; ++axis) {
+        const Vec3 color = GizmoAxisColor(axis);
+        const float handle = GizmoHandle::AxisX + axis;
+        const Vec3 shaftEnd = vscale(kAxes[axis], kTranslateLength - coneLength);
+        AddCylinder(vertices, indices, vscale(kAxes[axis], kCenterDotRadius * 1.5f), shaftEnd,
+                    kShaftRadius, color, handle);
+        AddCone(vertices, indices, shaftEnd, vscale(kAxes[axis], kTranslateLength),
+                0.075f, color, handle);
+    }
 
-    m_TranslateGeo.indexCount = static_cast<uint32_t>(indices.size());
+    // Each plane square takes the colour of the axis it locks.
+    AddPlaneSquare(vertices, indices, kAxes[0], kAxes[1], kPlaneMin, kPlaneMax,
+                   GizmoAxisColor(2), GizmoHandle::PlaneXY);
+    AddPlaneSquare(vertices, indices, kAxes[0], kAxes[2], kPlaneMin, kPlaneMax,
+                   GizmoAxisColor(1), GizmoHandle::PlaneXZ);
+    AddPlaneSquare(vertices, indices, kAxes[1], kAxes[2], kPlaneMin, kPlaneMax,
+                   GizmoAxisColor(0), GizmoHandle::PlaneYZ);
 
-    // Upload to GPU buffers
-    m_TranslateGeo.vertexBuffer = new VulkanBuffer();
-    m_TranslateGeo.vertexBuffer->Create(allocator, vertices.size() * sizeof(GizmoVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU, vertices.data());
-    m_TranslateGeo.indexBuffer = new VulkanBuffer();
-    m_TranslateGeo.indexBuffer->Create(allocator, indices.size() * sizeof(uint16_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU, indices.data());
+    UploadGeometry(m_TranslateGeo.vertexBuffer, m_TranslateGeo.indexBuffer,
+                   m_TranslateGeo.indexCount, allocator, vertices, indices);
 }
 
-void VulkanGizmo::GenerateRotateGeometry(VkDevice device, VmaAllocator allocator) {
-    std::vector<GizmoVertex> vertices;
-    std::vector<uint16_t> indices;
+void VulkanGizmo::GenerateRotateGeometry(VmaAllocator allocator) {
+    Vertices vertices;
+    Indices indices;
 
-    // Generate three torus segments for rotation handles
-    // X axis - Red (rotation around X)
-    AddTorusSegment(vertices, indices, Vec3(1, 0, 0), m_RotateRadius, 64, Vec3(1, 0, 0));
-    // Y axis - Green (rotation around Y)
-    AddTorusSegment(vertices, indices, Vec3(0, 1, 0), m_RotateRadius, 64, Vec3(0, 1, 0));
-    // Z axis - Blue (rotation around Z)
-    AddTorusSegment(vertices, indices, Vec3(0, 0, 1), m_RotateRadius, 64, Vec3(0, 0, 1));
+    for (int axis = 0; axis < 3; ++axis) {
+        AddTorus(vertices, indices, kAxes[axis], kRotateRadius, kRingTubeRadius,
+                 GizmoAxisColor(axis), GizmoHandle::RingX + axis);
+    }
 
-    m_RotateGeo.indexCount = static_cast<uint32_t>(indices.size());
-
-    // Upload to GPU buffers
-    m_RotateGeo.vertexBuffer = new VulkanBuffer();
-    m_RotateGeo.vertexBuffer->Create(allocator, vertices.size() * sizeof(GizmoVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU, vertices.data());
-    m_RotateGeo.indexBuffer = new VulkanBuffer();
-    m_RotateGeo.indexBuffer->Create(allocator, indices.size() * sizeof(uint16_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU, indices.data());
+    UploadGeometry(m_RotateGeo.vertexBuffer, m_RotateGeo.indexBuffer,
+                   m_RotateGeo.indexCount, allocator, vertices, indices);
 }
 
-void VulkanGizmo::GenerateScaleGeometry(VkDevice device, VmaAllocator allocator) {
-    std::vector<GizmoVertex> vertices;
-    std::vector<uint16_t> indices;
+void VulkanGizmo::GenerateScaleGeometry(VmaAllocator allocator) {
+    Vertices vertices;
+    Indices indices;
 
-    // Generate three lines with cubes at the end for scale handles
-    const float cubeSize = 0.18f;
+    for (int axis = 0; axis < 3; ++axis) {
+        const Vec3 color = GizmoAxisColor(axis);
+        const float handle = GizmoHandle::AxisX + axis;
+        const Vec3 tip = vscale(kAxes[axis], kScaleLength);
+        AddCylinder(vertices, indices, vscale(kAxes[axis], kUniformCubeSize * 0.6f),
+                    vscale(kAxes[axis], kScaleLength - kScaleCubeSize * 0.5f),
+                    kShaftRadius, color, handle);
+        AddBox(vertices, indices, tip, kScaleCubeSize, color, handle);
+    }
+    AddBox(vertices, indices, Vec3(0, 0, 0), kUniformCubeSize, kCenterColor,
+           GizmoHandle::Center);
 
-    // X axis - Red
-    AddArrow(vertices, indices, Vec3(1, 0, 0), m_ScaleLength, m_AxisThickness * 0.5f, Vec3(1, 0, 0));
-    AddCube(vertices, indices, Vec3(m_ScaleLength, 0, 0), cubeSize, Vec3(1, 0, 0));
-    
-    // Y axis - Green
-    AddArrow(vertices, indices, Vec3(0, 1, 0), m_ScaleLength, m_AxisThickness * 0.5f, Vec3(0, 1, 0));
-    AddCube(vertices, indices, Vec3(0, m_ScaleLength, 0), cubeSize, Vec3(0, 1, 0));
-    
-    // Z axis - Blue
-    AddArrow(vertices, indices, Vec3(0, 0, 1), m_ScaleLength, m_AxisThickness * 0.5f, Vec3(0, 0, 1));
-    AddCube(vertices, indices, Vec3(0, 0, m_ScaleLength), cubeSize, Vec3(0, 0, 1));
+    UploadGeometry(m_ScaleGeo.vertexBuffer, m_ScaleGeo.indexBuffer,
+                   m_ScaleGeo.indexCount, allocator, vertices, indices);
+}
 
-    // Center cube for uniform scale (white/light gray)
-    AddCube(vertices, indices, Vec3(0, 0, 0), m_UniformScaleCubeSize, Vec3(0.9f, 0.9f, 0.9f));
+void VulkanGizmo::GenerateBillboardGeometry(VmaAllocator allocator) {
+    Vertices vertices;
+    Indices indices;
 
-    m_ScaleGeo.indexCount = static_cast<uint32_t>(indices.size());
+    m_CenterDotRange.first = static_cast<uint32_t>(indices.size());
+    AddDisc(vertices, indices, kCenterDotRadius, kCenterColor, GizmoHandle::Center, 32);
+    m_CenterDotRange.count = static_cast<uint32_t>(indices.size()) - m_CenterDotRange.first;
 
-    // Upload to GPU buffers
-    m_ScaleGeo.vertexBuffer = new VulkanBuffer();
-    m_ScaleGeo.vertexBuffer->Create(allocator, vertices.size() * sizeof(GizmoVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU, vertices.data());
-    m_ScaleGeo.indexBuffer = new VulkanBuffer();
-    m_ScaleGeo.indexBuffer->Create(allocator, indices.size() * sizeof(uint16_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU, indices.data());
+    m_ViewRingRange.first = static_cast<uint32_t>(indices.size());
+    AddAnnulus(vertices, indices, kViewRingRadius - kRingTubeRadius * 0.8f,
+               kViewRingRadius + kRingTubeRadius * 0.8f, Vec3(0.62f, 0.66f, 0.72f),
+               GizmoHandle::ViewRing);
+    m_ViewRingRange.count = static_cast<uint32_t>(indices.size()) - m_ViewRingRange.first;
+
+    m_ArcDiscRange.first = static_cast<uint32_t>(indices.size());
+    AddDisc(vertices, indices, 1.0f, Vec3(1, 1, 1), GizmoHandle::RotateArc, 128);
+    m_ArcDiscRange.count = static_cast<uint32_t>(indices.size()) - m_ArcDiscRange.first;
+
+    UploadGeometry(m_BillboardGeo.vertexBuffer, m_BillboardGeo.indexBuffer,
+                   m_BillboardGeo.indexCount, allocator, vertices, indices);
 }
 
 VulkanGizmo::GeometryBuffers* VulkanGizmo::GetGeometryForMode() {
@@ -208,11 +242,24 @@ const VulkanGizmo::GeometryBuffers* VulkanGizmo::GetGeometryForMode() const {
 
 float VulkanGizmo::GetAxisLengthForCurrentMode() const {
     switch (m_Mode) {
-        case Mode::Translate: return m_CurrentScale * m_TranslateLength;
-        case Mode::Scale:     return m_CurrentScale * m_ScaleLength;
-        case Mode::Rotate:    return m_CurrentScale * m_RotateRadius;
+        case Mode::Translate: return m_CurrentScale * kTranslateLength;
+        case Mode::Scale:     return m_CurrentScale * (kScaleLength + kScaleCubeSize * 0.5f);
+        case Mode::Rotate:    return m_CurrentScale * kRotateRadius;
         default:              return m_CurrentScale;
     }
+}
+
+bool VulkanGizmo::IsAxisPickable(int axis) const {
+    return std::abs(vdot(m_AxisDirections[axis], m_ToCamera)) < 0.97f;
+}
+
+bool VulkanGizmo::IsPlanePickable(int plane) const {
+    const int normalAxes[3] = {2, 1, 0};
+    return std::abs(vdot(m_AxisDirections[normalAxes[plane]], m_ToCamera)) > 0.15f;
+}
+
+float VulkanGizmo::AxisSignTowardCamera(int axis) const {
+    return vdot(m_AxisDirections[axis], m_ToCamera) >= 0.0f ? 1.0f : -1.0f;
 }
 
 bool VulkanGizmo::ClosestPointOnAxis(const Ray& ray, const Vec3& origin, const Vec3& axisDir,
@@ -250,27 +297,27 @@ bool VulkanGizmo::ClosestPointOnAxis(const Ray& ray, const Vec3& origin, const V
     return true;
 }
 
-bool VulkanGizmo::IntersectRotationRing(const Ray& ray, const Vec3& axisDir,
-                                        float& outDistanceFromRing) const {
-    Vec3 dirNorm = vnorm(axisDir);
-    if (vlen(dirNorm) < 1e-6f) return false;
-
-    float denom = vdot(dirNorm, ray.direction);
-    if (std::abs(denom) < 1e-6f) return false;
-
-    float t = vdot(dirNorm, vsub(m_GizmoOrigin, ray.origin)) / denom;
-    if (t < 0.0f) return false;
-
-    Vec3 hitPoint = vadd(ray.origin, vscale(ray.direction, t));
-    Vec3 diff = vsub(hitPoint, m_GizmoOrigin);
-    float axial = vdot(diff, dirNorm);
-    Vec3 radial = vsub(diff, vscale(dirNorm, axial));
-    float radialLength = vlen(radial);
-    if (radialLength < 1e-6f) return false;
-
-    float ringRadius = m_CurrentScale * m_RotateRadius;
-    outDistanceFromRing = std::abs(radialLength - ringRadius);
-    return true;
+float VulkanGizmo::RayDistanceToRing(const Ray& ray, const Vec3& axisDir, float radius,
+                                     bool frontHalfOnly) const {
+    // Sampling the ring keeps rings pickable when they are seen edge on.
+    Vec3 u, v;
+    OrthonormalBasis(vnorm(axisDir), u, v);
+    const int samples = 96;
+    float best = std::numeric_limits<float>::max();
+    for (int i = 0; i < samples; ++i) {
+        const float a = i * 2.0f * kPi / samples;
+        const Vec3 offset = vscale(vadd(vscale(u, std::cos(a)), vscale(v, std::sin(a))), radius);
+        if (frontHalfOnly && vdot(offset, m_ToCamera) < -0.02f * radius) {
+            continue;
+        }
+        const Vec3 toPoint = vsub(vadd(m_GizmoOrigin, offset), ray.origin);
+        const float t = vdot(toPoint, ray.direction);
+        if (t < 0.0f) {
+            continue;
+        }
+        best = std::min(best, vlen(vsub(toPoint, vscale(ray.direction, t))));
+    }
+    return best;
 }
 
 bool VulkanGizmo::IntersectPlane(const Ray& ray, const Vec3& planeOrigin, const Vec3& planeNormal, Vec3& outPoint) const {
@@ -287,168 +334,6 @@ bool VulkanGizmo::IntersectPlane(const Ray& ray, const Vec3& planeOrigin, const 
 
     outPoint = vadd(ray.origin, vscale(ray.direction, t));
     return true;
-}
-
-void VulkanGizmo::AddArrow(std::vector<GizmoVertex>& vertices, std::vector<uint16_t>& indices,
-                           const Vec3& direction, float length, float radius, const Vec3& color) {
-    // Simple arrow: cylinder shaft + cone tip
-    uint16_t baseIndex = static_cast<uint16_t>(vertices.size());
-    Vec3 dirNorm = vnorm(direction);
-    Vec3 start(0, 0, 0);
-    float coneLength = length * 0.25f;
-    float shaftLength = std::max(length - coneLength, 0.001f);
-    Vec3 shaftEnd = vscale(dirNorm, shaftLength);
-    Vec3 coneEnd = vscale(dirNorm, length);
-
-    Vec3 perp = (std::abs(dirNorm.x) < 0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
-    Vec3 tangent = vnorm(vcross(dirNorm, perp));
-    Vec3 bitangent = vnorm(vcross(dirNorm, tangent));
-
-    const int segments = 16;
-
-    // Shaft vertices (cylinder)
-    for (int i = 0; i < segments; ++i) {
-        float angle = i * 3.14159265f * 2.0f / segments;
-        Vec3 offset = vadd(vscale(tangent, std::cos(angle) * radius),
-                           vscale(bitangent, std::sin(angle) * radius));
-
-        vertices.push_back({vadd(start, offset), dirNorm, color});
-        vertices.push_back({vadd(shaftEnd, offset), dirNorm, color});
-    }
-
-    for (int i = 0; i < segments; ++i) {
-        int next = (i + 1) % segments;
-        uint16_t i0 = baseIndex + i * 2;
-        uint16_t i1 = baseIndex + i * 2 + 1;
-        uint16_t i2 = baseIndex + next * 2;
-        uint16_t i3 = baseIndex + next * 2 + 1;
-
-        indices.push_back(i0);
-        indices.push_back(i1);
-        indices.push_back(i2);
-
-        indices.push_back(i2);
-        indices.push_back(i1);
-        indices.push_back(i3);
-    }
-
-    // Cone vertices
-    uint16_t tipBase = static_cast<uint16_t>(vertices.size());
-    float coneRadius = radius * 2.0f;
-    for (int i = 0; i < segments; ++i) {
-        float angle = i * 3.14159265f * 2.0f / segments;
-        Vec3 offset = vadd(vscale(tangent, std::cos(angle) * coneRadius),
-                           vscale(bitangent, std::sin(angle) * coneRadius));
-        vertices.push_back({vadd(shaftEnd, offset), dirNorm, color});
-    }
-    vertices.push_back({coneEnd, dirNorm, color});
-
-    uint16_t tipPoint = static_cast<uint16_t>(vertices.size() - 1);
-    for (int i = 0; i < segments; ++i) {
-        int next = (i + 1) % segments;
-        indices.push_back(tipBase + i);
-        indices.push_back(tipPoint);
-        indices.push_back(tipBase + next);
-    }
-}
-
-void VulkanGizmo::AddTorusSegment(std::vector<GizmoVertex>& vertices, std::vector<uint16_t>& indices,
-                                  const Vec3& axis, float radius, int segments, const Vec3& color) {
-    // Create a ring/torus segment for rotation visualization
-    uint16_t baseIndex = static_cast<uint16_t>(vertices.size());
-    float tubeRadius = m_AxisThickness * 0.5f;
-
-    // Generate vertices around the ring
-    for (int i = 0; i <= segments; ++i) {
-        float angle = i * 3.14159f * 2.0f / segments;
-        
-        // Calculate position on the ring
-        Vec3 ringPos;
-        Vec3 tangent;
-        Vec3 normal;
-        
-        if (std::abs(axis.x) > 0.5f) {
-            // Rotation around X axis
-            ringPos = Vec3(0, std::cos(angle) * radius, std::sin(angle) * radius);
-            tangent = Vec3(0, -std::sin(angle), std::cos(angle));
-            normal = vnorm(vsub(ringPos, Vec3(0, 0, 0)));
-        } else if (std::abs(axis.y) > 0.5f) {
-            // Rotation around Y axis
-            ringPos = Vec3(std::cos(angle) * radius, 0, std::sin(angle) * radius);
-            tangent = Vec3(-std::sin(angle), 0, std::cos(angle));
-            normal = vnorm(vsub(ringPos, Vec3(0, 0, 0)));
-        } else {
-            // Rotation around Z axis
-            ringPos = Vec3(std::cos(angle) * radius, std::sin(angle) * radius, 0);
-            tangent = Vec3(-std::sin(angle), std::cos(angle), 0);
-            normal = vnorm(vsub(ringPos, Vec3(0, 0, 0)));
-        }
-
-        // Add two vertices for tube cross-section
-        Vec3 offset1 = vscale(axis, tubeRadius);
-        Vec3 offset2 = vscale(axis, -tubeRadius);
-        
-        vertices.push_back({vadd(ringPos, offset1), normal, color});
-        vertices.push_back({vadd(ringPos, offset2), normal, color});
-    }
-
-    // Add indices for the tube
-    for (int i = 0; i < segments; ++i) {
-        uint16_t i0 = baseIndex + i * 2;
-        uint16_t i1 = baseIndex + i * 2 + 1;
-        uint16_t i2 = baseIndex + (i + 1) * 2;
-        uint16_t i3 = baseIndex + (i + 1) * 2 + 1;
-
-        indices.push_back(i0);
-        indices.push_back(i1);
-        indices.push_back(i2);
-        
-        indices.push_back(i2);
-        indices.push_back(i1);
-        indices.push_back(i3);
-    }
-}
-
-void VulkanGizmo::AddCube(std::vector<GizmoVertex>& vertices, std::vector<uint16_t>& indices,
-                         const Vec3& position, float size, const Vec3& color) {
-    uint16_t baseIndex = static_cast<uint16_t>(vertices.size());
-    float hs = size * 0.5f;  // half size
-
-    // 8 cube vertices
-    Vec3 corners[8] = {
-        vadd(position, Vec3(-hs, -hs, -hs)),
-        vadd(position, Vec3( hs, -hs, -hs)),
-        vadd(position, Vec3( hs,  hs, -hs)),
-        vadd(position, Vec3(-hs,  hs, -hs)),
-        vadd(position, Vec3(-hs, -hs,  hs)),
-        vadd(position, Vec3( hs, -hs,  hs)),
-        vadd(position, Vec3( hs,  hs,  hs)),
-        vadd(position, Vec3(-hs,  hs,  hs))
-    };
-
-    // Add vertices with normals for each face
-    // Front face
-    vertices.push_back({corners[4], Vec3(0, 0, 1), color});
-    vertices.push_back({corners[5], Vec3(0, 0, 1), color});
-    vertices.push_back({corners[6], Vec3(0, 0, 1), color});
-    vertices.push_back({corners[7], Vec3(0, 0, 1), color});
-
-    // Back face
-    vertices.push_back({corners[1], Vec3(0, 0, -1), color});
-    vertices.push_back({corners[0], Vec3(0, 0, -1), color});
-    vertices.push_back({corners[3], Vec3(0, 0, -1), color});
-    vertices.push_back({corners[2], Vec3(0, 0, -1), color});
-
-    // Add indices for the cube (12 triangles)
-    uint16_t cubeIndices[] = {
-        0, 1, 2,  2, 3, 0,  // Front
-        4, 5, 6,  6, 7, 4,  // Back
-        // Add remaining faces as needed
-    };
-
-    for (uint16_t idx : cubeIndices) {
-        indices.push_back(baseIndex + idx);
-    }
 }
 
 void VulkanGizmo::CreatePipeline(VkDevice device, VkRenderPass renderPass,
@@ -514,7 +399,13 @@ void VulkanGizmo::CreatePipeline(VkDevice device, VkRenderPass renderPass,
 
     VkPipelineColorBlendAttachmentState colorAttach{};
     colorAttach.colorWriteMask = 0xF;
-    colorAttach.blendEnable = VK_FALSE;
+    colorAttach.blendEnable = VK_TRUE;
+    colorAttach.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    colorAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorAttach.colorBlendOp = VK_BLEND_OP_ADD;
+    colorAttach.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorAttach.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorAttach.alphaBlendOp = VK_BLEND_OP_ADD;
 
     VkPipelineColorBlendStateCreateInfo blend{};
     blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -574,6 +465,7 @@ void VulkanGizmo::UpdateState(const Mat4& objectTransform, const Mat4& viewMatri
     m_ProjMatrix = projMatrix;
     m_CameraPos = cameraPos;
     m_GizmoOrigin = Vec3(objectTransform.m[12], objectTransform.m[13], objectTransform.m[14]);
+    m_ToCamera = GizmoToCamera(m_GizmoOrigin, cameraPos, viewMatrix, projMatrix);
 
     if (m_Space == Space::World) {
         m_AxisDirections[0] = Vec3(1, 0, 0);
@@ -594,6 +486,24 @@ void VulkanGizmo::UpdateState(const Mat4& objectTransform, const Mat4& viewMatri
     }
 }
 
+void VulkanGizmo::DrawRange(VkCommandBuffer cmd, const GeometryBuffers& geo, IndexRange range,
+                            const Mat4& model) const {
+    if (!geo.vertexBuffer || !geo.indexBuffer || range.count == 0) return;
+
+    GizmoPushConstants pc;
+    pc.model = model;
+    pc.state = Vec4(static_cast<float>(m_HoveredAxis), static_cast<float>(m_ActiveAxis),
+                    m_CurrentScale, m_RotationAngle);
+    vkCmdPushConstants(cmd, m_PipelineLayout,
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+        0, sizeof(GizmoPushConstants), &pc);
+
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &geo.vertexBuffer->buffer, &offset);
+    vkCmdBindIndexBuffer(cmd, geo.indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdDrawIndexed(cmd, range.count, 1, range.first, 0, 0);
+}
+
 void VulkanGizmo::Render(VkCommandBuffer cmd, VkDescriptorSet cameraDescriptor) {
     if (!m_StateValid || !m_Pipeline) return;
 
@@ -605,30 +515,32 @@ void VulkanGizmo::Render(VkCommandBuffer cmd, VkDescriptorSet cameraDescriptor) 
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout,
                            0, 1, &cameraDescriptor, 1, &zeroOffset);
 
-    // Build transform from origin, orientation, and scale
-    Mat4 rotation = Mat4::Identity();
-    rotation.m[0] = m_AxisDirections[0].x; rotation.m[1] = m_AxisDirections[0].y; rotation.m[2] = m_AxisDirections[0].z;
-    rotation.m[4] = m_AxisDirections[1].x; rotation.m[5] = m_AxisDirections[1].y; rotation.m[6] = m_AxisDirections[1].z;
-    rotation.m[8] = m_AxisDirections[2].x; rotation.m[9] = m_AxisDirections[2].y; rotation.m[10] = m_AxisDirections[2].z;
+    const Mat4 translation = Mat4::Translation(m_GizmoOrigin);
+    const Mat4 scale = Mat4::Scale(Vec3(m_CurrentScale, m_CurrentScale, m_CurrentScale));
+    const Mat4 rotation = GizmoBasis(m_AxisDirections[0], m_AxisDirections[1], m_AxisDirections[2]);
+    const Mat4 billboard = Mat4::Multiply(translation,
+        Mat4::Multiply(GizmoBillboardRotation(m_ToCamera, m_ViewMatrix), scale));
 
-    Mat4 translation = Mat4::Translation(m_GizmoOrigin);
-    Mat4 scale = Mat4::Scale(Vec3(m_CurrentScale, m_CurrentScale, m_CurrentScale));
+    if (m_Mode == Mode::Rotate && m_IsDragging && m_RotationStartValid &&
+        m_ActiveAxis >= 0 && m_ActiveAxis <= 3) {
+        const float radius = m_ActiveAxis == 3 ? kViewRingRadius : kRotateRadius;
+        const Vec3 u = m_RotationStartVector;
+        const Vec3 w = vnorm(m_DragAxisDir);
+        const Vec3 v = vcross(w, u);
+        const Mat4 arcScale = Mat4::Scale(Vec3(m_CurrentScale * radius, m_CurrentScale * radius,
+                                               m_CurrentScale * radius));
+        DrawRange(cmd, m_BillboardGeo, m_ArcDiscRange,
+                  Mat4::Multiply(translation, Mat4::Multiply(GizmoBasis(u, v, w), arcScale)));
+    }
 
-    Mat4 transform = Mat4::Multiply(rotation, scale);
-    transform = Mat4::Multiply(translation, transform);
+    DrawRange(cmd, *geo, {0, geo->indexCount},
+              Mat4::Multiply(translation, Mat4::Multiply(rotation, scale)));
 
-    GizmoPushConstants pc;
-    pc.model = transform;
-    pc.state = Vec4(static_cast<float>(m_HoveredAxis), static_cast<float>(m_ActiveAxis), m_CurrentScale, 0.0f);
-
-    vkCmdPushConstants(cmd, m_PipelineLayout,
-        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-        0, sizeof(GizmoPushConstants), &pc);
-
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cmd, 0, 1, &geo->vertexBuffer->buffer, &offset);
-    vkCmdBindIndexBuffer(cmd, geo->indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT16);
-    vkCmdDrawIndexed(cmd, geo->indexCount, 1, 0, 0, 0);
+    if (m_Mode == Mode::Translate) {
+        DrawRange(cmd, m_BillboardGeo, m_CenterDotRange, billboard);
+    } else if (m_Mode == Mode::Rotate) {
+        DrawRange(cmd, m_BillboardGeo, m_ViewRingRange, billboard);
+    }
 }
 
 int VulkanGizmo::CheckHover(const Ray& ray) const {
@@ -638,64 +550,67 @@ int VulkanGizmo::CheckHover(const Ray& ray) const {
     float bestScore = std::numeric_limits<float>::max();
 
     if (m_Mode == Mode::Rotate) {
-        float threshold = m_CurrentScale * m_RotationPickWidth;
+        const float threshold = m_CurrentScale * kRingPickRadius;
         for (int axis = 0; axis < 3; ++axis) {
-            float distance = 0.0f;
-            if (IntersectRotationRing(ray, m_AxisDirections[axis], distance)) {
-                if (distance < threshold && distance < bestScore) {
-                    bestScore = distance;
-                    bestAxis = axis;
-                }
+            const float distance = RayDistanceToRing(ray, m_AxisDirections[axis],
+                                                     m_CurrentScale * kRotateRadius, true);
+            if (distance < threshold && distance < bestScore) {
+                bestScore = distance;
+                bestAxis = axis;
             }
         }
-    } else {
-        float threshold = m_CurrentScale * m_AxisThickness * 1.5f;
-        for (int axis = 0; axis < 3; ++axis) {
-            float axisParam = 0.0f;
-            float distance = 0.0f;
-            if (ClosestPointOnAxis(ray, m_GizmoOrigin, m_AxisDirections[axis],
-                                   axisParam, distance, true)) {
-                if (distance < threshold && distance < bestScore) {
-                    bestScore = distance;
-                    bestAxis = axis;
-                }
+        Vec3 hit;
+        if (IntersectPlane(ray, m_GizmoOrigin, m_ToCamera, hit)) {
+            const float distance = std::abs(vlen(vsub(hit, m_GizmoOrigin)) -
+                                            m_CurrentScale * kViewRingRadius);
+            if (distance < threshold && distance < bestScore) {
+                bestAxis = 3;
             }
         }
+        return bestAxis;
+    }
 
-        // Check center cube for uniform scale or free translation.
-        if (m_Mode == Mode::Scale || m_Mode == Mode::Translate) {
-            float cubeDist = vlen(vsub(m_GizmoOrigin, ray.origin));
-            Vec3 toOrigin = vsub(m_GizmoOrigin, ray.origin);
-            float t = vdot(toOrigin, ray.direction);
-            if (t > 0.0f) {
-                Vec3 closestPoint = vadd(ray.origin, vscale(ray.direction, t));
-                float dist = vlen(vsub(closestPoint, m_GizmoOrigin));
-                float cubeThreshold = m_CurrentScale * m_UniformScaleCubeSize * 0.7f;
-                if (dist < cubeThreshold && dist < bestScore) {
-                    bestScore = dist;
-                    bestAxis = 3; // Uniform scale
-                }
+    // The centre handle wins over the axes, which also start at the origin.
+    const Vec3 toOrigin = vsub(m_GizmoOrigin, ray.origin);
+    const float tCenter = vdot(toOrigin, ray.direction);
+    if (tCenter > 0.0f &&
+        vlen(vsub(vadd(ray.origin, vscale(ray.direction, tCenter)), m_GizmoOrigin)) <
+            m_CurrentScale * kCenterPickRadius) {
+        return 3;
+    }
+
+    const float threshold = m_CurrentScale * kAxisPickRadius;
+    for (int axis = 0; axis < 3; ++axis) {
+        if (!IsAxisPickable(axis)) continue;
+        float axisParam = 0.0f;
+        float distance = 0.0f;
+        if (ClosestPointOnAxis(ray, m_GizmoOrigin, m_AxisDirections[axis],
+                               axisParam, distance, true)) {
+            if (distance < threshold && distance < bestScore) {
+                bestScore = distance;
+                bestAxis = axis;
             }
         }
-        if (m_Mode == Mode::Translate && bestAxis < 0) {
-            const int axisPairs[3][2] = {{0, 1}, {0, 2}, {1, 2}};
-            const int normalAxes[3] = {2, 1, 0};
-            for (int plane = 0; plane < 3; ++plane) {
-                Vec3 hit;
-                if (!IntersectPlane(ray, m_GizmoOrigin,
-                                    m_AxisDirections[normalAxes[plane]], hit)) {
-                    continue;
-                }
-                const Vec3 offset = vsub(hit, m_GizmoOrigin);
-                const float u = vdot(offset,
-                    m_AxisDirections[axisPairs[plane][0]]) / m_CurrentScale;
-                const float v = vdot(offset,
-                    m_AxisDirections[axisPairs[plane][1]]) / m_CurrentScale;
-                if (u >= 0.30f && u <= 0.78f &&
-                    v >= 0.30f && v <= 0.78f) {
-                    bestAxis = 4 + plane; // 4=XY, 5=XZ, 6=YZ
-                    break;
-                }
+    }
+
+    if (m_Mode == Mode::Translate && bestAxis < 0) {
+        const int axisPairs[3][2] = {{0, 1}, {0, 2}, {1, 2}};
+        const int normalAxes[3] = {2, 1, 0};
+        for (int plane = 0; plane < 3; ++plane) {
+            if (!IsPlanePickable(plane)) continue;
+            Vec3 hit;
+            if (!IntersectPlane(ray, m_GizmoOrigin,
+                                m_AxisDirections[normalAxes[plane]], hit)) {
+                continue;
+            }
+            const int a = axisPairs[plane][0];
+            const int b = axisPairs[plane][1];
+            const Vec3 offset = vsub(hit, m_GizmoOrigin);
+            const float u = AxisSignTowardCamera(a) * vdot(offset, m_AxisDirections[a]) / m_CurrentScale;
+            const float v = AxisSignTowardCamera(b) * vdot(offset, m_AxisDirections[b]) / m_CurrentScale;
+            if (u >= kPlaneMin && u <= kPlaneMax && v >= kPlaneMin && v <= kPlaneMax) {
+                bestAxis = 4 + plane; // 4=XY, 5=XZ, 6=YZ
+                break;
             }
         }
     }
@@ -716,9 +631,12 @@ void VulkanGizmo::BeginDrag(const Ray& ray, int axis) {
     m_DragStartPosition = Vec3(m_ObjectTransform.m[12], m_ObjectTransform.m[13], m_ObjectTransform.m[14]);
     if (axis < 3)
         m_DragAxisDir = m_AxisDirections[axis];
+    else if (axis == 3 && m_Mode == Mode::Rotate)
+        m_DragAxisDir = m_ToCamera;
     m_DragStartAxisParam = 0.0f;
     m_DragStartScale = Vec3(1, 1, 1);
     m_RotationStartValid = false;
+    m_RotationAngle = 0.0f;
     m_UniformDragStartDistance = 1.0f;
 
     float axisParam = 0.0f;
@@ -740,9 +658,8 @@ void VulkanGizmo::BeginDrag(const Ray& ray, int axis) {
 
         if (axis == 3) {
             // Uniform scale: compute initial distance on camera-facing plane
-            Vec3 viewDir = vnorm(vsub(m_GizmoOrigin, m_CameraPos));
             Vec3 hitPoint;
-            if (IntersectPlane(ray, m_GizmoOrigin, viewDir, hitPoint)) {
+            if (IntersectPlane(ray, m_GizmoOrigin, m_ToCamera, hitPoint)) {
                 m_UniformDragStartDistance = std::max(vlen(vsub(hitPoint, m_GizmoOrigin)), 0.01f);
             }
         } else {
@@ -753,8 +670,7 @@ void VulkanGizmo::BeginDrag(const Ray& ray, int axis) {
     }
 
     if (m_Mode == Mode::Translate && axis == 3) {
-        const Vec3 viewNormal = vnorm(vsub(m_GizmoOrigin, m_CameraPos));
-        IntersectPlane(ray, m_GizmoOrigin, viewNormal, m_FreeMoveStartPoint);
+        IntersectPlane(ray, m_GizmoOrigin, m_ToCamera, m_FreeMoveStartPoint);
     } else if (m_Mode == Mode::Translate && axis >= 4) {
         const int normalAxis = axis == 4 ? 2 : (axis == 5 ? 1 : 0);
         m_DragPlaneNormal = m_AxisDirections[normalAxis];
@@ -762,7 +678,7 @@ void VulkanGizmo::BeginDrag(const Ray& ray, int axis) {
                        m_FreeMoveStartPoint);
     }
 
-    if (m_Mode == Mode::Rotate) {
+    if (m_Mode == Mode::Rotate && axis <= 3) {
         Vec3 hitPoint;
         if (IntersectPlane(ray, m_GizmoOrigin, m_DragAxisDir, hitPoint)) {
             Vec3 fromOrigin = vsub(hitPoint, m_GizmoOrigin);
@@ -798,9 +714,8 @@ Mat4 VulkanGizmo::HandleDrag(const Ray& ray, bool bypassSnap) {
             result.m[14] = newPosition.z;
         }
     } else if (m_ActiveAxis == 3 && m_Mode == Mode::Translate) {
-        const Vec3 viewNormal = vnorm(vsub(m_GizmoOrigin, m_CameraPos));
         Vec3 point;
-        if (IntersectPlane(ray, m_GizmoOrigin, viewNormal, point)) {
+        if (IntersectPlane(ray, m_GizmoOrigin, m_ToCamera, point)) {
             Vec3 newPosition = vadd(m_DragStartPosition,
                                     vsub(point, m_FreeMoveStartPoint));
             if (m_SnapEnabled && !bypassSnap && m_SnapIncrement > 0.0f) {
@@ -846,9 +761,8 @@ Mat4 VulkanGizmo::HandleDrag(const Ray& ray, bool bypassSnap) {
 
         if (m_ActiveAxis == 3) {
             // Uniform scale: use camera-facing plane distance ratio
-            Vec3 viewDir = vnorm(vsub(m_GizmoOrigin, m_CameraPos));
             Vec3 hitPoint;
-            if (IntersectPlane(ray, m_GizmoOrigin, viewDir, hitPoint)) {
+            if (IntersectPlane(ray, m_GizmoOrigin, m_ToCamera, hitPoint)) {
                 float currentDist = vlen(vsub(hitPoint, m_GizmoOrigin));
                 float ratio = currentDist / m_UniformDragStartDistance;
                 if (!std::isfinite(ratio)) ratio = 1.0f;
@@ -889,16 +803,12 @@ Mat4 VulkanGizmo::HandleDrag(const Ray& ray, bool bypassSnap) {
         Vec3 normY = vnorm(basisY);
         Vec3 normZ = vnorm(basisZ);
 
-        Mat4 rotation = Mat4::Identity();
-        rotation.m[0] = normX.x; rotation.m[1] = normX.y; rotation.m[2] = normX.z;
-        rotation.m[4] = normY.x; rotation.m[5] = normY.y; rotation.m[6] = normY.z;
-        rotation.m[8] = normZ.x; rotation.m[9] = normZ.y; rotation.m[10] = normZ.z;
-
+        Mat4 rotation = GizmoBasis(normX, normY, normZ);
         Mat4 translate = Mat4::Translation(translation);
         Mat4 scale = Mat4::Scale(Vec3(scaleX, scaleY, scaleZ));
 
         result = Mat4::Multiply(translate, Mat4::Multiply(rotation, scale));
-    } else if (m_ActiveAxis >= 0 && m_ActiveAxis < 3 && m_Mode == Mode::Rotate) {
+    } else if (m_ActiveAxis >= 0 && m_ActiveAxis <= 3 && m_Mode == Mode::Rotate) {
         if (m_RotationStartValid) {
             Vec3 hitPoint;
             if (IntersectPlane(ray, m_GizmoOrigin, m_DragAxisDir, hitPoint)) {
@@ -914,6 +824,7 @@ Mat4 VulkanGizmo::HandleDrag(const Ray& ray, bool bypassSnap) {
                         const float incrementRad = m_SnapIncrement * 3.1415926535f / 180.0f;
                         angle = std::round(angle / incrementRad) * incrementRad;
                     }
+                    m_RotationAngle = angle;
 
                     Mat4 toOrigin = Mat4::Translation(vscale(m_GizmoOrigin, -1.0f));
                     Mat4 back = Mat4::Translation(m_GizmoOrigin);
@@ -931,6 +842,7 @@ Mat4 VulkanGizmo::HandleDrag(const Ray& ray, bool bypassSnap) {
 void VulkanGizmo::EndDrag() {
     m_IsDragging = false;
     m_ActiveAxis = -1;
+    m_RotationAngle = 0.0f;
 }
 
 Mat4 VulkanGizmo::CancelDrag() {
@@ -941,17 +853,6 @@ Mat4 VulkanGizmo::CancelDrag() {
 
 float VulkanGizmo::CalculateGizmoScale(const Vec3& gizmoPos, const Vec3& cameraPos,
                                       const Mat4& projMatrix) const {
-    if (std::abs(projMatrix.m[15] - 1.0f) < 0.001f &&
-        std::abs(projMatrix.m[5]) > 1e-5f) {
-        const float halfHeight = 1.0f / std::abs(projMatrix.m[5]);
-        return std::max(halfHeight * 2.0f * m_ScreenScaleFactor * m_SizeMultiplier, 0.001f);
-    }
-    float distance = vlen(vsub(gizmoPos, cameraPos));
-    float f = std::abs(projMatrix.m[5]);
-    if (f > 1e-5f) {
-        float fovY = 2.0f * std::atan(1.0f / f);
-        float scale = distance * std::tan(fovY * 0.5f) * m_ScreenScaleFactor * m_SizeMultiplier;
-        return std::max(scale, 0.001f);
-    }
-    return std::max(distance * m_ScreenScaleFactor * m_SizeMultiplier, 0.001f);
+    return GizmoScreenScale(gizmoPos, cameraPos, projMatrix,
+                            kScreenScaleFactor * m_SizeMultiplier);
 }

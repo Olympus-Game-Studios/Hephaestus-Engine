@@ -10,13 +10,10 @@ struct VulkanBuffer;
 /**
  * @brief Editor-only visual gizmo for directional lights.
  *
- * Renders a wireframe arrow + parallel ray indicators to show the light's
- * forward direction (the direction light rays travel).  The gizmo:
- *   - Always aligns with the light entity's rotation (-Z forward).
- *   - Ignores depth testing so it's always visible.
- *   - Scales to a constant screen size regardless of camera distance.
- *   - Highlights on hover and selection.
- *   - Reuses the existing gizmo.vert/gizmo.frag shaders and GizmoVertex format.
+ * Draws a camera-facing sun glyph at the light, plus a direction arrow and
+ * dashed parallel rays along the light's forward axis (-Z, the direction the
+ * light travels). It ignores depth, keeps a constant screen size, brightens
+ * when the light is selected, and shares gizmo.vert/gizmo.frag with VulkanGizmo.
  *
  * Only rendered in editor mode; never included in play/runtime builds.
  */
@@ -37,31 +34,21 @@ public:
     void Cleanup(VkDevice device, VmaAllocator allocator);
 
     /**
-     * @brief Draw one directional-light gizmo.
+     * @brief Draw one directional-light gizmo inside the main render pass.
      *
-     * Call this once per directional light entity while recording the main
-     * render pass (after billboards, before / with the transform gizmo).
-     *
-     * @param cmd           Active command buffer inside the main render pass.
-     * @param cameraDescSet Camera UBO descriptor set for the current frame.
      * @param worldMatrix   Full world transform of the light entity.
-     * @param cameraPos     Current camera position (for constant-size scaling).
-     * @param projMatrix    Current projection matrix (for constant-size scaling).
+     * @param viewMatrix    Current view matrix (orients the sun glyph).
+     * @param projMatrix    Current projection matrix (constant screen size).
+     * @param cameraPos     Current camera position.
      * @param isSelected    True when this entity is the editor selection.
      * @param isHovered     True when the cursor is hovering the entity.
      */
     void Draw(VkCommandBuffer cmd, VkDescriptorSet cameraDescSet,
-              const Mat4& worldMatrix, const Vec3& cameraPos,
-              const Mat4& projMatrix, bool isSelected, bool isHovered);
+              const Mat4& worldMatrix, const Mat4& viewMatrix,
+              const Mat4& projMatrix, const Vec3& cameraPos,
+              bool isSelected, bool isHovered);
 
 private:
-    // Push constants – identical layout to GizmoPushConstants so the same
-    // gizmo.vert / gizmo.frag shaders can be used.
-    struct PushConstants {
-        Mat4 model;
-        Vec4 state; // x = hoveredAxis(-1/0), y = activeAxis(-1/0), z = scale, w = 0
-    };
-
     struct GeometryBuffers {
         VulkanBuffer* vertexBuffer = nullptr;
         VulkanBuffer* indexBuffer  = nullptr;
@@ -72,39 +59,22 @@ private:
     void CreatePipeline(VkDevice device, VkRenderPass renderPass,
                         VkExtent2D extent,
                         VkDescriptorSetLayout cameraDescLayout);
-
-    // Helpers to add geometry pieces ---
-    void AddArrow(std::vector<struct GizmoVertex>& verts,
-                  std::vector<uint16_t>& indices,
-                  const Vec3& start, const Vec3& direction,
-                  float length, float radius, const Vec3& color);
-
-    void AddLine(std::vector<struct GizmoVertex>& verts,
-                 std::vector<uint16_t>& indices,
-                 const Vec3& start, const Vec3& end,
-                 float radius, const Vec3& color);
-
-    void AddCircle(std::vector<struct GizmoVertex>& verts,
-                   std::vector<uint16_t>& indices,
-                   const Vec3& center, const Vec3& axis,
-                   float radius, float tubeRadius,
-                   int segments, const Vec3& color);
-
-    float CalculateScale(const Vec3& gizmoPos, const Vec3& cameraPos,
-                         const Mat4& projMatrix) const;
+    void DrawRange(VkCommandBuffer cmd, uint32_t firstIndex, uint32_t indexCount,
+                   const Mat4& model, const Vec4& state) const;
 
     // Vulkan resources
     VkPipeline       m_pipeline       = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     GeometryBuffers  m_geo;
+    uint32_t         m_bodyIndexCount = 0;   // arrow and rays; the sun glyph follows
 
-    // Tuning
-    static constexpr float kArrowLength    = 2.2f;  // Length of central direction arrow
-    static constexpr float kArrowRadius    = 0.04f;  // Cylinder radius of shaft
-    static constexpr float kRayLength      = 1.6f;  // Length of peripheral rays
-    static constexpr float kRayRadius      = 0.025f; // Thinner peripheral rays
-    static constexpr float kRayOffset      = 0.35f;  // Distance of rays from centre
-    static constexpr float kCircleRadius   = 0.4f;   // Origin disk radius
-    static constexpr float kCircleTube     = 0.025f;  // Tube radius of origin ring
-    static constexpr float kScreenScale    = 0.18f;  // Constant-screen-size factor
+    // Tuning, in gizmo units
+    static constexpr float kArrowLength  = 2.0f;
+    static constexpr float kArrowRadius  = 0.028f;
+    static constexpr float kRayOffset    = 0.34f;
+    static constexpr float kRayStart     = 0.4f;
+    static constexpr float kRayLength    = 1.5f;
+    static constexpr float kRayRadius    = 0.014f;
+    static constexpr float kSunRadius    = 0.2f;
+    static constexpr float kScreenScale  = 0.18f;
 };
