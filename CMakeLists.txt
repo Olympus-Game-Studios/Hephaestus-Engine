@@ -37,6 +37,7 @@ endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/$<CONFIG>")
 
 find_package(Vulkan REQUIRED)
 
@@ -177,9 +178,14 @@ if(HEPHAESTUS_USE_QT)
     # Try to auto-locate Qt6Config.cmake under common Qt layout
     # IMPORTANT: Must use MSVC builds when compiling with Visual Studio
     if(EXISTS "${HEPHAESTUS_QT_ROOT}" AND NOT Qt6_DIR)
-        # First try to find MSVC builds specifically
+        # First try to find MSVC builds for the target architecture
+        if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+            set(_qt6_msvc_arch "arm64")
+        else()
+            set(_qt6_msvc_arch "64")
+        endif()
         file(GLOB _qt6_msvc_candidates
-            "${HEPHAESTUS_QT_ROOT}/6.*/msvc*/lib/cmake/Qt6/Qt6Config.cmake"
+            "${HEPHAESTUS_QT_ROOT}/6.*/msvc*_${_qt6_msvc_arch}/lib/cmake/Qt6/Qt6Config.cmake"
         )
         list(LENGTH _qt6_msvc_candidates _qt6_msvc_count)
         if(_qt6_msvc_count GREATER 0)
@@ -2297,7 +2303,7 @@ endif()
 # tests directly buildable and discoverable by CTest.
 get_property(HEPHAESTUS_DIRECTORY_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(HEPHAESTUS_TARGET IN LISTS HEPHAESTUS_DIRECTORY_TARGETS)
-    if(HEPHAESTUS_TARGET MATCHES "Tests$")
+    if(HEPHAESTUS_TARGET MATCHES "Test(s|Plugin)$")
         set_target_properties(${HEPHAESTUS_TARGET} PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
             RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release/tests"
