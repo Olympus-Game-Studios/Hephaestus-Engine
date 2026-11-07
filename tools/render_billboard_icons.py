@@ -28,5 +28,6 @@ for svg in sorted(source_dir.glob("*.svg")):
     renderer.render(painter, QRectF(GLYPH_INSET, GLYPH_INSET, SIZE - 2 * GLYPH_INSET, SIZE - 2 * GLYPH_INSET))
     painter.end()
     target = output_dir / (svg.stem + ".png")
-    image.convertToFormat(QImage.Format_ARGB32).save(str(target))
+    if not image.convertToFormat(QImage.Format_ARGB32).save(str(target)):
+        sys.exit(f"Could not write {target}")
     print(f"Wrote {target.relative_to(root)}")

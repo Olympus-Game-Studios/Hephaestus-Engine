@@ -6867,7 +6867,8 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
     }
 
     // ── Billboard ID pass: render editor icon billboards into the ID buffer ──
-    if (m_billboardIdPipeline.initialized) {
+    if (m_billboardIdPipeline.initialized && config.isEditorMode &&
+        config.renderBillboards && !config.isPlaying) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_billboardIdPipeline.pipeline);
 
         uint32_t dynOff = 0;

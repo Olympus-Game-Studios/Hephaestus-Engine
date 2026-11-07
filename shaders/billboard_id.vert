@@ -19,6 +19,8 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     float padding;
 } camera;
 
+layout(location = 0) out vec2 outQuadPos;
+
 void main() {
     // Generate quad corners from gl_VertexIndex (triangle strip: 4 verts)
     vec2 quadCorners[4] = vec2[](
@@ -30,6 +32,7 @@ void main() {
 
     int cornerIndex = gl_VertexIndex % 4;
     vec2 corner = quadCorners[cornerIndex];
+    outQuadPos = corner * 0.5;
 
     // Camera-facing billboard using view matrix axes
     vec3 cameraUp    = vec3(camera.view[0][1], camera.view[1][1], camera.view[2][1]);
