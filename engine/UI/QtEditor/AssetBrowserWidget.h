@@ -29,6 +29,7 @@
 #include <functional>
 
 class QFileSystemWatcher;
+struct HPScriptLanguage;
 class QTimer;
 
 namespace Hephaestus {
@@ -154,6 +155,7 @@ private:
     void showCreateMenu(QMenu& menu, const QString& targetDirectory);
     void createNewFolder(const QString& parentRelativePath);
     void createNewLuaScript(const QString& parentRelativePath);
+    void createNewPluginScript(const QString& parentRelativePath, const HPScriptLanguage& language);
     void createNewScene(const QString& parentRelativePath);
     void createNewMaterial(const QString& parentRelativePath);
     void createNewUIFile(const QString& parentRelativePath);

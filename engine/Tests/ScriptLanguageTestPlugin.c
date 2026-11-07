@@ -147,6 +147,40 @@ static int32_t DescribeFields(const char* resolvedPath, HPFieldCallback callback
     return 1;
 }
 
+static int32_t PackageScript(const char* projectRoot, const char* scriptPath, const char* packageRoot,
+                             char* error, size_t errorSize) {
+    char head[5] = {0};
+    char target[4096];
+    const char* name = scriptPath;
+    const char* p;
+    FILE* file = fopen(scriptPath, "rb");
+    (void)projectRoot;
+    if (!file) {
+        snprintf(error, errorSize, "cannot open %s", scriptPath);
+        return 0;
+    }
+    fread(head, 1, 4, file);
+    fclose(file);
+    if (strcmp(head, "fail") == 0) {
+        snprintf(error, errorSize, "script asked to fail");
+        return 0;
+    }
+    for (p = scriptPath; *p; ++p) {
+        if (*p == '/' || *p == '\\') {
+            name = p + 1;
+        }
+    }
+    snprintf(target, sizeof(target), "%s/%s.packaged", packageRoot, name);
+    file = fopen(target, "wb");
+    if (!file) {
+        snprintf(error, errorSize, "cannot write %s", target);
+        return 0;
+    }
+    fputs("ok", file);
+    fclose(file);
+    return 1;
+}
+
 static const HPSyntaxRule g_syntaxRules[] = {
     { HP_SYNTAX_KEYWORD, "\\b(?:when|then)\\b" },
     { HP_SYNTAX_COMMENT, "#.*" }
@@ -172,7 +206,10 @@ static const HPScriptLanguage g_language = {
     Contact,
     Call,
     DescribeFields,
-    &g_syntax
+    &g_syntax,
+    NULL,
+    NULL,
+    PackageScript
 };
 
 static const HPScriptLanguage* const g_languages[] = { &g_language };

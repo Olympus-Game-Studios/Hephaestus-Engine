@@ -247,6 +247,7 @@ public:
      * Configure where Lua should search for script files
      */
     void SetProjectRoot(const std::filesystem::path& rootPath);
+    const std::filesystem::path& GetProjectRoot() const { return m_ProjectRoot; }
 
     /**
      * Renderer used to upload Character visuals when Scene.instantiate spawns a prefab.

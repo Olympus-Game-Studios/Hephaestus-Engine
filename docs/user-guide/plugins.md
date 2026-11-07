@@ -1,7 +1,7 @@
 ---
 title: Plugins
 description: What plugins can do, the ones that come with Hephaestus, turning them on and off and making your own.
-order: 16
+order: 17
 ---
 
 # Plugins
@@ -22,6 +22,7 @@ Which plugins are on is saved per project in `.hephaestus/plugins.json`, so your
 ## What comes with Hephaestus
 
 - **Primitive Tools**: an example plugin that adds a few scene authoring commands, a panel and a custom asset type. It's mostly there to show plugin authors how things fit together.
+- **C++ Scripting**: write gameplay scripts in C++. Off by default; see [Scripting with C++](scripting-cpp.md).
 - **Hephaestus MCP**: lets AI assistants that speak the Model Context Protocol drive the editor (inspect the scene, play, step frames, take screenshots, package builds). It only listens on your own machine (`127.0.0.1`) and you can change its port in its settings. It's enabled by default, so switch it off in the Plugin Manager if you don't use AI tools.
 
 ## Plugins in your game

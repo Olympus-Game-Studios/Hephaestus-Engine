@@ -69,6 +69,14 @@ PropertyValue ToPropertyValue(const HPValue& value) {
     }
 }
 
+size_t CopyOut(const std::string& text, char* buffer, size_t bufferSize) {
+    const size_t needed = text.size() + 1;
+    if (buffer && bufferSize >= needed) {
+        std::memcpy(buffer, text.c_str(), needed);
+    }
+    return needed;
+}
+
 HPVec3 ToHPVec3(const Vec3& value) {
     return HPVec3{value.x, value.y, value.z};
 }
@@ -100,6 +108,7 @@ PluginScriptHost::PluginScriptHost() {
     m_Api.isActionReleased = &HostIsActionReleased;
     m_Api.getAxis = &HostGetAxis;
     m_Api.callEntityFunction = &HostCallEntityFunction;
+    m_Api.getProjectRoot = &HostGetProjectRoot;
 }
 
 PluginScriptHost::~PluginScriptHost() {
@@ -367,11 +376,7 @@ size_t PluginScriptHost::HostGetEntityName(void* host, HPEntityId entity, char* 
     if (!tag) {
         return 0;
     }
-    const size_t needed = tag->tag.size() + 1;
-    if (buffer && bufferSize >= needed) {
-        std::memcpy(buffer, tag->tag.c_str(), needed);
-    }
-    return needed;
+    return CopyOut(tag->tag, buffer, bufferSize);
 }
 
 int32_t PluginScriptHost::HostGetPosition(void* host, HPEntityId entity, HPVec3* out) {
@@ -442,4 +447,12 @@ int32_t PluginScriptHost::HostCallEntityFunction(void* host, HPEntityId entity, 
         return 0;
     }
     return Self(host).ForwardCall(ToEntityId(entity), function, args, argCount) ? 1 : 0;
+}
+
+size_t PluginScriptHost::HostGetProjectRoot(void* host, char* buffer, size_t bufferSize) {
+    const LuaScriptEngine* lua = Self(host).m_Lua;
+    if (!lua || lua->GetProjectRoot().empty()) {
+        return 0;
+    }
+    return CopyOut(lua->GetProjectRoot().string(), buffer, bufferSize);
 }

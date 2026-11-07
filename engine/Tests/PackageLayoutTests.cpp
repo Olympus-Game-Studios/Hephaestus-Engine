@@ -48,7 +48,7 @@ bool HasStage(const std::vector<std::string>& stages, const std::string& prefix)
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     const fs::path root = fs::temp_directory_path() / "hephaestus_package_layout_tests";
     fs::remove_all(root);
     const fs::path project = root / "project";
@@ -281,6 +281,30 @@ int main() {
     ok &= Check(fs::exists(package / "preserve.marker"),
                 "a missing enabled plugin preserves previous output");
     fs::remove(project / ".hephaestus" / "plugins.json");
+
+    if (argc > 2) {
+        const fs::path testModule = argv[2];
+        const fs::path languagePlugin = engine / "Plugins" / "com.test.language";
+        Write(languagePlugin / "com.test.language.hpplugin",
+              R"({"version":1,"apiVersion":1,"id":"com.test.language","name":"Language","author":"Tests",)"
+              R"("pluginVersion":"1.0.0","engineVersion":">=2026.9.0","type":"runtime",)"
+              R"("runtimeEntry":"bin/ScriptLanguageTestPlugin.dll"})");
+        fs::create_directories(languagePlugin / "bin");
+        fs::copy_file(testModule, languagePlugin / "bin" / testModule.filename(),
+                      fs::copy_options::overwrite_existing);
+        Write(project / "scripts" / "mover.tscript", "ok");
+        result = stager.stage(request, artifacts);
+        ok &= Check(result.success && fs::exists(content / "mover.tscript.packaged") &&
+                        HasStage(stages, "Preparing Test Language script mover.tscript"),
+                    "a script language prepares its scripts while packaging");
+        Write(project / "scripts" / "broken.tscript", "fail");
+        result = stager.stage(request, artifacts);
+        ok &= Check(!result.success && HasProblem(result.problems, "PACKAGE_SCRIPT_PREPARE_FAILED"),
+                    "a script the language cannot prepare fails the package");
+        fs::remove(project / "scripts" / "broken.tscript");
+        fs::remove(project / "scripts" / "mover.tscript");
+        fs::remove_all(languagePlugin);
+    }
 
 #ifdef _WIN32
     HANDLE lockedExecutable = CreateFileW(

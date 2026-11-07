@@ -27,6 +27,7 @@
 #include "../../Assets/CharacterRuntime.h"
 #include "../../Assets/FbxDocument.h"
 #include "../../Assets/AssetPathPolicy.h"
+#include "../../Scripting/ScriptLanguageRegistry.h"
 #include "CharacterImportDialog.h"
 
 #include <QVBoxLayout>
@@ -1316,6 +1317,14 @@ void AssetBrowserWidget::showCreateMenu(QMenu& menu, const QString& targetDirect
     menu.addAction(Theme::Icon(QStringLiteral("code")), tr("New Lua Script"), [this, targetDirectory]() {
         createNewLuaScript(targetDirectory);
     });
+    for (const HPScriptLanguage* language : ScriptLanguageRegistry::Instance().Languages()) {
+        if (!ScriptLanguageRegistry::NewScriptTemplate(*language)) {
+            continue;
+        }
+        menu.addAction(Theme::Icon(QStringLiteral("code")),
+                       tr("New %1 Script").arg(QString::fromUtf8(language->displayName)),
+                       [this, targetDirectory, language]() { createNewPluginScript(targetDirectory, *language); });
+    }
 
     menu.addAction(Theme::Icon(QStringLiteral("globe")), tr("New Scene"), [this, targetDirectory]() {
         createNewScene(targetDirectory);
@@ -1425,6 +1434,42 @@ void AssetBrowserWidget::createNewLuaScript(const QString& parentRelativePath)
 
     Refresh();
     std::cout << "[AssetBrowser] Created Lua script: " << filePath.string() << "\n";
+}
+
+void AssetBrowserWidget::createNewPluginScript(const QString& parentRelativePath, const HPScriptLanguage& language)
+{
+    const QString title = tr("New %1 Script").arg(QString::fromUtf8(language.displayName));
+    const QString extension = QString::fromUtf8(language.extensions).section(QLatin1Char(';'), 0, 0);
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, title, tr("Script name (without %1):").arg(extension),
+                                               QLineEdit::Normal, tr("NewScript"), &ok).trimmed();
+    if (!ok || name.isEmpty()) return;
+    static const QRegularExpression kIdentifier(QStringLiteral("^[A-Za-z_][A-Za-z0-9_]*$"));
+    if (!kIdentifier.match(name).hasMatch()) {
+        QMessageBox::warning(this, title, tr("Use letters, digits and underscores, starting with a letter."));
+        return;
+    }
+
+    auto& assetMgr = AssetManager::GetInstance();
+    const std::string parentAbs = parentRelativePath.isEmpty()
+        ? assetMgr.GetAssetRoot()
+        : assetMgr.ToAbsolutePath(parentRelativePath.toStdString());
+    const std::filesystem::path filePath =
+        std::filesystem::path(parentAbs) / (name + extension).toStdString();
+    if (std::filesystem::exists(filePath)) {
+        QMessageBox::warning(this, title, tr("A file with that name already exists."));
+        return;
+    }
+    std::ofstream file(filePath, std::ios::binary);
+    file << QString::fromUtf8(ScriptLanguageRegistry::NewScriptTemplate(language))
+                .replace(QStringLiteral("$NAME"), name)
+                .toStdString();
+    if (!file) {
+        QMessageBox::critical(this, title, tr("Failed to create script file."));
+        return;
+    }
+    file.close();
+    Refresh();
 }
 
 void AssetBrowserWidget::createNewScene(const QString& parentRelativePath)

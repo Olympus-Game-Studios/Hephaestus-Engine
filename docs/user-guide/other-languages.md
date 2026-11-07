@@ -1,7 +1,7 @@
 ---
 title: Other languages through plugins
 description: How Hephaestus supports C#, Python, JavaScript and other languages through scripting language plugins.
-order: 15
+order: 16
 ---
 
 # Other languages through plugins
@@ -22,6 +22,6 @@ Once a language plugin is installed and enabled:
 
 ## Where things stand
 
-Here's the honest bit: **the plumbing is finished, but no language plugins ship with Hephaestus yet.** Out of the box you've got Lua. A language plugin is native code, so someone has to write one; the plan is for first party ones (C# is the obvious first) and for the community to add more.
+Hephaestus ships one language plugin so far: **C++ Scripting**, covered in [Scripting with C++](scripting-cpp.md). Out of the box you've got Lua, and C++ once you enable it. Any other language plugin is native code, so someone has to write one; the plan is for more first party ones (C# is the obvious next) and for the community to add more.
 
 If you're a programmer who wants to write one, the interface is documented in the engine repository at `docs/plugins/script-languages.md`, alongside the `ScriptLanguageAPI.h` header. See [Plugins](plugins.md) for how plugins are put together.

@@ -92,6 +92,7 @@ private:
     static float HostGetAxis(void* host, const char* axis);
     static int32_t HostCallEntityFunction(void* host, HPEntityId entity, const char* function,
                                           const HPValue* args, uint32_t argCount);
+    static size_t HostGetProjectRoot(void* host, char* buffer, size_t bufferSize);
 
     HPScriptHostAPI m_Api{};
     LuaScriptEngine* m_Lua = nullptr;

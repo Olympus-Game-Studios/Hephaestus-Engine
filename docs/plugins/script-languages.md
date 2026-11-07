@@ -92,6 +92,21 @@ The debugger (breakpoints, stepping, call stack, locals and watches) works with 
 
 `syntax`, `complete` and `hover` were added after the first release. Modules built before them still load, with their files shown as plain text and no language services.
 
+### New script template
+
+Set `newScriptTemplate` to the contents of a new file and the Content Browser's create menu gets **New <displayName> Script**, which writes a file with your first extension. Every `$NAME` in the template becomes the name the user typed; the editor only accepts names that are identifiers (letters, digits and `_`, not starting with a digit), so the name can be used as a class name.
+
+## Packaging
+
+When a game is packaged, the packager loads each enabled plugin's `runtimeEntry` module (the plugin's own copy, not the staged one) and calls `packageScript` once for every file under the package's `assets` and `scripts` folders whose extension the language claims:
+
+```c
+static int32_t PackageScript(const char* projectRoot, const char* scriptPath, const char* packageRoot,
+                             char* error, size_t errorSize);
+```
+
+`scriptPath` is the source file in the project and `packageRoot` is the staged game's root, which the packaged game sees as its project root (`getProjectRoot`). Write anything the script needs at runtime under `packageRoot`, such as compiled code. Return 0 with a message in `error` to fail the package; the message appears in the build's problems. Leave `packageScript` `NULL` when the source file is all a script needs. The packager runs in the editor and in `HephaestusBuild`, so the callback must not rely on a play session.
+
 ## Lifecycle
 
 All calls happen on the gameplay thread, after Lua each frame:
@@ -110,7 +125,7 @@ A script that fails to load is reported once in the Output log and retried when 
 
 ## Engine services
 
-`createRuntime` receives an `HPScriptHostAPI` table: logging, finding entities, entity names, transform get/set (radians for rotation), named input actions and axes, and `callEntityFunction`. `callEntityFunction` reaches the script on any entity, Lua included, and Lua's `entity:Call(name, ...)` reaches plugin scripts, so languages can be mixed in one game. Values crossing languages are nil, bool, number, string, and 2–4 component vectors.
+`createRuntime` receives an `HPScriptHostAPI` table: logging, finding entities, entity names, transform get/set (radians for rotation), named input actions and axes, `callEntityFunction` and `getProjectRoot` (the project folder in the editor, the game's root when packaged). `callEntityFunction` reaches the script on any entity, Lua included, and Lua's `entity:Call(name, ...)` reaches plugin scripts, so languages can be mixed in one game. Values crossing languages are nil, bool, number, string, and 2–4 component vectors.
 
 New services are only appended to the table. Check `structSize` before using a member newer than the version you built against.
 
@@ -120,4 +135,4 @@ New services are only appended to the table. Check `structSize` before using a m
 - `onAnimationFinished` and the wider Lua API (physics queries, audio, UI, scene spawning, camera) are not in the host table yet.
 - Languages stay registered until the editor restarts, even if their plugin is disabled.
 
-`engine/Tests/ScriptLanguageTestPlugin.c` is a complete minimal language written in C, used by `ScriptLanguagePluginTests`.
+`engine/Tests/ScriptLanguageTestPlugin.c` is a complete minimal language written in C, used by `ScriptLanguagePluginTests` and `PackageLayoutTests`. `Plugins/CppScripting` is a full first-party language: it compiles each `.cpp` script into a DLL with the user's Visual Studio and implements every optional callback.

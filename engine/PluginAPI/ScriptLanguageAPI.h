@@ -110,6 +110,11 @@ typedef struct HPScriptHostAPI {
        it is written in (Lua included). Returns 1 when a script handled it. */
     int32_t (*callEntityFunction)(void* host, HPEntityId entity, const char* function,
                                   const HPValue* args, uint32_t argCount);
+
+    /* Added after the first release: check structSize before use.
+       The project folder (the game's content folder when packaged), copied
+       with the getEntityName buffer convention. */
+    size_t (*getProjectRoot)(void* host, char* buffer, size_t bufferSize);
 } HPScriptHostAPI;
 
 /* Describes the script a runtime is asked to load for one entity. */
@@ -240,6 +245,20 @@ typedef struct HPScriptLanguage {
        so a call with bufferSize 0 sizes the buffer. */
     size_t (*hover)(const char* path, const char* source, uint32_t line, uint32_t column,
                     char* buffer, size_t bufferSize);
+
+    /* Packaging, read only when structSize covers it. Called once for every
+       file of this language a package contains, with absolute paths, before
+       the package is committed. Write whatever the script needs at runtime
+       (for example compiled code) under packageRoot, which becomes the
+       game's project root. Return 0 and write a message into `error` to fail
+       the build. */
+    int32_t (*packageScript)(const char* projectRoot, const char* scriptPath, const char* packageRoot,
+                             char* error, size_t errorSize);
+
+    /* Contents of a new script made from the Content Browser, read only when
+       structSize covers it; NULL leaves the language out of the menu. Every
+       "$NAME" becomes the name the user typed, which is a valid identifier. */
+    const char* newScriptTemplate;
 } HPScriptLanguage;
 
 /* Signature of the HP_GetScriptLanguages export. Return NULL when
