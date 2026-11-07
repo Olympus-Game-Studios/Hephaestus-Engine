@@ -26,7 +26,8 @@ float roundedBox(vec2 p, vec2 halfSize, float radius) {
 }
 
 void main() {
-    if (roundedBox(inQuadPos, vec2(kTileHalf), kTileRadius) > 0.0) {
+    float d = roundedBox(inQuadPos, vec2(kTileHalf), kTileRadius);
+    if (d >= max(fwidth(d), 1e-4)) {
         discard;
     }
 
