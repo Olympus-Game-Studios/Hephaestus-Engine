@@ -13,6 +13,7 @@ struct GizmoVertex {
     Vec3 position;
     Vec3 normal;
     Vec3 color;
+    float handle = -1.0f; // GizmoHandle id; -1 draws with plain vertex colour
 
     static VkVertexInputBindingDescription getBindingDescription() {
         VkVertexInputBindingDescription binding{};
@@ -23,7 +24,7 @@ struct GizmoVertex {
     }
 
     static std::vector<VkVertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<VkVertexInputAttributeDescription> attribs(3);
+        std::vector<VkVertexInputAttributeDescription> attribs(4);
         attribs[0].binding = 0;
         attribs[0].location = 0;
         attribs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -38,9 +39,45 @@ struct GizmoVertex {
         attribs[2].location = 2;
         attribs[2].format = VK_FORMAT_R32G32B32_SFLOAT;
         attribs[2].offset = offsetof(GizmoVertex, color);
+
+        attribs[3].binding = 0;
+        attribs[3].location = 3;
+        attribs[3].format = VK_FORMAT_R32_SFLOAT;
+        attribs[3].offset = offsetof(GizmoVertex, handle);
         return attribs;
     }
 };
+
+// Keep in sync with the handle ids in shaders/gizmo.vert and shaders/gizmo.frag.
+namespace GizmoHandle {
+    constexpr float AxisX = 0.0f, AxisY = 1.0f, AxisZ = 2.0f;
+    constexpr float Center = 3.0f;
+    constexpr float PlaneXY = 4.0f, PlaneXZ = 5.0f, PlaneYZ = 6.0f;
+    constexpr float RingX = 10.0f, RingY = 11.0f, RingZ = 12.0f;
+    constexpr float ViewRing = 13.0f;
+    constexpr float RotateArc = 20.0f;
+    constexpr float LightBody = 30.0f;
+}
+
+// Editor theme axis-x/axis-y/axis-z tokens (EditorTheme.cpp).
+inline Vec3 GizmoAxisColor(int axis) {
+    switch (axis) {
+        case 0:  return Vec3(0xE5 / 255.0f, 0x53 / 255.0f, 0x4B / 255.0f);
+        case 1:  return Vec3(0x5D / 255.0f, 0xBB / 255.0f, 0x63 / 255.0f);
+        default: return Vec3(0x5A / 255.0f, 0x8D / 255.0f, 0xEE / 255.0f);
+    }
+}
+
+// World units that keep a gizmo at a constant on-screen size.
+float GizmoScreenScale(const Vec3& gizmoPos, const Vec3& cameraPos, const Mat4& projMatrix,
+                       float screenFactor);
+// Unit vector from the gizmo towards the viewer (the view axis for orthographic cameras).
+Vec3 GizmoToCamera(const Vec3& gizmoPos, const Vec3& cameraPos, const Mat4& viewMatrix,
+                   const Mat4& projMatrix);
+// Rotation whose Z axis is toCamera, so XY-plane geometry faces the viewer.
+Mat4 GizmoBillboardRotation(const Vec3& toCamera, const Mat4& viewMatrix);
+// Rotation matrix with the given orthonormal basis as its X, Y and Z columns.
+Mat4 GizmoBasis(const Vec3& x, const Vec3& y, const Vec3& z);
 
 /**
  * VulkanGizmo - Custom gizmo renderer using Vulkan
@@ -61,20 +98,20 @@ public:
 
     struct GizmoPushConstants {
         Mat4 model;
-        Vec4 state;  // x = hovered axis, y = active axis, z = gizmo scale, w unused
+        Vec4 state;  // x = hovered axis, y = active axis, z = gizmo scale, w = rotate arc sweep (radians)
     };
 
     VulkanGizmo();
     ~VulkanGizmo();
 
     // Initialize the gizmo system
-    void Init(VkDevice device, VkRenderPass renderPass, VkExtent2D extent, 
+    void Init(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
               VkDescriptorSetLayout cameraDescriptorLayout, VmaAllocator allocator);
 
     // Recreate pipeline resources when swapchain/renderpass changes
     void Recreate(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
                   VkDescriptorSetLayout cameraDescriptorLayout);
-    
+
     // Cleanup resources
     void Cleanup(VkDevice device, VmaAllocator allocator);
 
@@ -106,54 +143,52 @@ public:
     bool IsDragging() const { return m_IsDragging; }
 
 private:
-    struct GeometryBuffers;
-
-    // Generate geometry for different gizmo types
-    void GenerateTranslateGeometry(VkDevice device, VmaAllocator allocator);
-    void GenerateRotateGeometry(VkDevice device, VmaAllocator allocator);
-    void GenerateScaleGeometry(VkDevice device, VmaAllocator allocator);
-
-    // Create pipeline for gizmo rendering
-    void CreatePipeline(VkDevice device, VkRenderPass renderPass, 
-                       VkExtent2D extent, VkDescriptorSetLayout cameraDescriptorLayout);
-
-    // Helper to create arrow geometry (for translate)
-    void AddArrow(std::vector<GizmoVertex>& vertices, std::vector<uint16_t>& indices,
-                  const Vec3& direction, float length, float radius, const Vec3& color);
-
-    // Helper to create torus segment (for rotate)
-    void AddTorusSegment(std::vector<GizmoVertex>& vertices, std::vector<uint16_t>& indices,
-                        const Vec3& axis, float radius, int segments, const Vec3& color);
-
-    // Helper to create cube handle (for scale)
-    void AddCube(std::vector<GizmoVertex>& vertices, std::vector<uint16_t>& indices,
-                const Vec3& position, float size, const Vec3& color);
-
-    // Calculate gizmo size based on distance to camera (constant screen size)
-    float CalculateGizmoScale(const Vec3& gizmoPos, const Vec3& cameraPos, 
-                             const Mat4& projMatrix) const;
-
-    GeometryBuffers* GetGeometryForMode();
-    const GeometryBuffers* GetGeometryForMode() const;
-    float GetAxisLengthForCurrentMode() const;
-    bool ClosestPointOnAxis(const Ray& ray, const Vec3& origin, const Vec3& axisDir,
-                            float& outAxisParam, float& outDistance, bool clampToAxis) const;
-    bool IntersectRotationRing(const Ray& ray, const Vec3& axisDir,
-                               float& outDistanceFromRing) const;
-    bool IntersectPlane(const Ray& ray, const Vec3& planeOrigin, const Vec3& planeNormal, Vec3& outPoint) const;
-
-    VkPipeline m_Pipeline = VK_NULL_HANDLE;
-    VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
-
     struct GeometryBuffers {
         VulkanBuffer* vertexBuffer = nullptr;
         VulkanBuffer* indexBuffer = nullptr;
         uint32_t indexCount = 0;
     };
 
+    struct IndexRange {
+        uint32_t first = 0;
+        uint32_t count = 0;
+    };
+
+    void GenerateTranslateGeometry(VmaAllocator allocator);
+    void GenerateRotateGeometry(VmaAllocator allocator);
+    void GenerateScaleGeometry(VmaAllocator allocator);
+    void GenerateBillboardGeometry(VmaAllocator allocator);
+
+    void CreatePipeline(VkDevice device, VkRenderPass renderPass,
+                       VkExtent2D extent, VkDescriptorSetLayout cameraDescriptorLayout);
+
+    float CalculateGizmoScale(const Vec3& gizmoPos, const Vec3& cameraPos,
+                             const Mat4& projMatrix) const;
+
+    GeometryBuffers* GetGeometryForMode();
+    const GeometryBuffers* GetGeometryForMode() const;
+    float GetAxisLengthForCurrentMode() const;
+    bool IsAxisPickable(int axis) const;
+    bool IsPlanePickable(int plane) const;
+    float AxisSignTowardCamera(int axis) const;
+    bool ClosestPointOnAxis(const Ray& ray, const Vec3& origin, const Vec3& axisDir,
+                            float& outAxisParam, float& outDistance, bool clampToAxis) const;
+    float RayDistanceToRing(const Ray& ray, const Vec3& axisDir, float radius,
+                            bool frontHalfOnly) const;
+    bool IntersectPlane(const Ray& ray, const Vec3& planeOrigin, const Vec3& planeNormal, Vec3& outPoint) const;
+    void DrawRange(VkCommandBuffer cmd, const GeometryBuffers& geo, IndexRange range,
+                   const Mat4& model) const;
+
+    VkPipeline m_Pipeline = VK_NULL_HANDLE;
+    VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
+
     GeometryBuffers m_TranslateGeo;
     GeometryBuffers m_RotateGeo;
     GeometryBuffers m_ScaleGeo;
+    GeometryBuffers m_BillboardGeo;   // camera-facing pieces and the rotate arc disc
+    IndexRange m_CenterDotRange;
+    IndexRange m_ViewRingRange;
+    IndexRange m_ArcDiscRange;
 
     // Cached state
     Mode m_Mode = Mode::Translate;
@@ -164,11 +199,12 @@ private:
     Mat4 m_ProjMatrix = Mat4::Identity();
     Vec3 m_CameraPos = Vec3(0, 0, 0);
     Vec3 m_GizmoOrigin = Vec3(0, 0, 0);
+    Vec3 m_ToCamera = Vec3(0, 0, 1);
     Vec3 m_AxisDirections[3] = { Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1) };
     float m_CurrentScale = 1.0f;
 
     // Interaction state
-    int m_HoveredAxis = -1;     // 0=X, 1=Y, 2=Z, 3=uniform (center cube)
+    int m_HoveredAxis = -1;     // 0-2 = X/Y/Z, 3 = centre (free move, uniform scale, view rotate), 4-6 = XY/XZ/YZ planes
     int m_ActiveAxis = -1;
     bool m_IsDragging = false;
     Mat4 m_DragStartTransform = Mat4::Identity();
@@ -177,6 +213,7 @@ private:
     float m_DragStartAxisParam = 0.0f;
     Vec3 m_DragStartScale = Vec3(1, 1, 1);
     Vec3 m_RotationStartVector = Vec3(1, 0, 0);
+    float m_RotationAngle = 0.0f;
     Vec3 m_FreeMoveStartPoint = Vec3(0, 0, 0);
     Vec3 m_DragPlaneNormal = Vec3(0, 1, 0);
     bool m_RotationStartValid = false;
@@ -184,13 +221,21 @@ private:
     bool m_SnapEnabled = false;
     float m_SnapIncrement = 1.0f;
 
-    // Tuning constants
-    const float m_TranslateLength = 1.6f;
-    const float m_ScaleLength = 1.5f;
-    const float m_RotateRadius = 1.2f;
-    const float m_AxisThickness = 0.08f;
-    const float m_RotationPickWidth = 0.18f;
-    const float m_ScreenScaleFactor = 0.2f;
+    // Tuning constants, in gizmo units (multiplied by m_CurrentScale)
+    static constexpr float kTranslateLength = 1.6f;
+    static constexpr float kScaleLength = 1.5f;
+    static constexpr float kRotateRadius = 1.2f;
+    static constexpr float kViewRingRadius = 1.4f;
+    static constexpr float kShaftRadius = 0.022f;
+    static constexpr float kRingTubeRadius = 0.022f;
+    static constexpr float kAxisPickRadius = 0.14f;
+    static constexpr float kRingPickRadius = 0.12f;
+    static constexpr float kPlaneMin = 0.30f;
+    static constexpr float kPlaneMax = 0.56f;
+    static constexpr float kCenterDotRadius = 0.08f;
+    static constexpr float kCenterPickRadius = 0.16f;
+    static constexpr float kScaleCubeSize = 0.15f;
+    static constexpr float kUniformCubeSize = 0.2f;
+    static constexpr float kScreenScaleFactor = 0.2f;
     float m_SizeMultiplier = 1.0f;
-    const float m_UniformScaleCubeSize = 0.25f;  // Size of center cube for uniform scale
 };
