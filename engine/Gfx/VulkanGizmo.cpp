@@ -64,11 +64,12 @@ float GizmoScreenScale(const Vec3& gizmoPos, const Vec3& cameraPos, const Mat4& 
 
 Vec3 GizmoToCamera(const Vec3& gizmoPos, const Vec3& cameraPos, const Mat4& viewMatrix,
                    const Mat4& projMatrix) {
-    const Vec3 viewZ = vnorm(Vec3(viewMatrix.m[2], viewMatrix.m[6], viewMatrix.m[10]));
+    // Mat4::LookAt stores the camera forward in view row 2.
+    const Vec3 forward = vnorm(Vec3(viewMatrix.m[2], viewMatrix.m[6], viewMatrix.m[10]));
     const bool ortho = std::abs(projMatrix.m[15] - 1.0f) < 0.001f;
     const Vec3 toEye = vsub(cameraPos, gizmoPos);
     if (ortho || vdot(toEye, toEye) < 1e-8f) {
-        return viewZ;
+        return vscale(forward, -1.0f);
     }
     return vnorm(toEye);
 }
@@ -569,6 +570,15 @@ int VulkanGizmo::CheckHover(const Ray& ray) const {
         return bestAxis;
     }
 
+    // The centre handle wins over the axes, which also start at the origin.
+    const Vec3 toOrigin = vsub(m_GizmoOrigin, ray.origin);
+    const float tCenter = vdot(toOrigin, ray.direction);
+    if (tCenter > 0.0f &&
+        vlen(vsub(vadd(ray.origin, vscale(ray.direction, tCenter)), m_GizmoOrigin)) <
+            m_CurrentScale * kCenterPickRadius) {
+        return 3;
+    }
+
     const float threshold = m_CurrentScale * kAxisPickRadius;
     for (int axis = 0; axis < 3; ++axis) {
         if (!IsAxisPickable(axis)) continue;
@@ -580,18 +590,6 @@ int VulkanGizmo::CheckHover(const Ray& ray) const {
                 bestScore = distance;
                 bestAxis = axis;
             }
-        }
-    }
-
-    // Centre handle: free translation or uniform scale.
-    Vec3 toOrigin = vsub(m_GizmoOrigin, ray.origin);
-    float t = vdot(toOrigin, ray.direction);
-    if (t > 0.0f) {
-        Vec3 closestPoint = vadd(ray.origin, vscale(ray.direction, t));
-        float dist = vlen(vsub(closestPoint, m_GizmoOrigin));
-        if (dist < m_CurrentScale * kCenterPickRadius && dist < bestScore) {
-            bestScore = dist;
-            bestAxis = 3;
         }
     }
 

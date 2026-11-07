@@ -30,8 +30,8 @@ void main() {
     vec3 origin = gizmo.model[3].xyz;
     bool ortho = abs(camera.proj[3][3] - 1.0) < 1e-3;
     vec3 toEye = camera.viewPos - origin;
-    vec3 viewZ = vec3(camera.view[0][2], camera.view[1][2], camera.view[2][2]);
-    toCamera = (ortho || dot(toEye, toEye) < 1e-8) ? normalize(viewZ) : normalize(toEye);
+    vec3 forward = vec3(camera.view[0][2], camera.view[1][2], camera.view[2][2]);
+    toCamera = (ortho || dot(toEye, toEye) < 1e-8) ? -normalize(forward) : normalize(toEye);
 
     int handle = int(round(inHandle));
     vec3 pos = inPosition;
