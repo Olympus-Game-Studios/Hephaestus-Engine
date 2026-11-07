@@ -3,14 +3,22 @@
 #include "LuaScriptComponent.h"
 #include "LuaScriptEngine.h"
 #include "ScriptLanguageRegistry.h"
+#include "../Animation/CharacterPlayback.h"
+#include "../Audio/AudioEngine.h"
 #include "../Core/EngineLog.h"
+#include "../Input/InputMap.h"
 #include "../Input/InputSystem.h"
 #include "../Physics/PhysicsContactEvents.h"
+#include "../Scene/CharacterComponent.h"
+#include "../Scene/CharacterControllerComponent.h"
 #include "../Scene/Components.h"
 #include "../Scene/Entity.h"
 #include "../Scene/Scene.h"
 
+#include <cstdio>
 #include <cstring>
+#include <limits>
+#include <utility>
 
 namespace {
 
@@ -89,6 +97,665 @@ std::filesystem::file_time_type WriteTime(const std::filesystem::path& path) {
 
 } // namespace
 
+struct PluginScriptHost::HostApi {
+    static PluginScriptHost& Host(void* host) { return *static_cast<PluginScriptHost*>(host); }
+    static LuaScriptEngine* Lua(void* host) { return Host(host).m_Lua; }
+
+    static bool Valid(void* host, HPEntityId entity) {
+        Scene* scene = Host(host).m_Scene;
+        return scene && entity != 0 && scene->GetRegistry().valid(static_cast<entt::entity>(ToEntityId(entity)));
+    }
+
+    // Only for entities that exist, so a stale handle never reaches the bindings.
+    static uint32_t Id(void* host, HPEntityId entity) {
+        return Valid(host, entity) ? ToEntityId(entity) : kNoEntity;
+    }
+
+    static constexpr uint32_t kNoEntity = std::numeric_limits<uint32_t>::max();
+
+    static uint32_t WriteEntities(const std::vector<entt::entity>& entities, HPEntityId* out, uint32_t capacity) {
+        for (uint32_t i = 0; out && i < capacity && i < entities.size(); ++i) {
+            out[i] = ToHandle(static_cast<uint32_t>(entities[i]));
+        }
+        return static_cast<uint32_t>(entities.size());
+    }
+
+    static bool Out(HPVec3* out, bool ok, const Vec3& value) {
+        if (ok && out) {
+            *out = ToHPVec3(value);
+        }
+        return ok;
+    }
+
+    static CharacterComponent* Character(void* host, HPEntityId entity) {
+        Scene* scene = Host(host).m_Scene;
+        return Valid(host, entity)
+            ? scene->GetRegistry().try_get<CharacterComponent>(static_cast<entt::entity>(ToEntityId(entity)))
+            : nullptr;
+    }
+
+    static CameraComponent* Camera(void* host, HPEntityId entity) {
+        Scene* scene = Host(host).m_Scene;
+        return Valid(host, entity)
+            ? scene->GetRegistry().try_get<CameraComponent>(static_cast<entt::entity>(ToEntityId(entity)))
+            : nullptr;
+    }
+
+    static AudioEngine* Audio(void* host) {
+        LuaScriptEngine* lua = Lua(host);
+        return lua ? lua->GetAudioEngine() : nullptr;
+    }
+
+    static const PhysicsBinding* Physics(void* host) {
+        LuaScriptEngine* lua = Lua(host);
+        return lua ? &lua->GetPhysicsBinding() : nullptr;
+    }
+
+    static const CharacterBinding* Characters(void* host) {
+        LuaScriptEngine* lua = Lua(host);
+        return lua ? &lua->GetCharacterBinding() : nullptr;
+    }
+
+    static const CameraBinding* ViewCamera(void* host) {
+        LuaScriptEngine* lua = Lua(host);
+        return lua ? &lua->GetCameraBinding() : nullptr;
+    }
+
+    // Time and application
+
+    static float GetDeltaTime(void* host) { return Host(host).m_DeltaTime; }
+
+    static void Quit(void* host) {
+        if (LuaScriptEngine* lua = Lua(host)) {
+            lua->RequestQuit();
+        }
+    }
+
+    // Entities and scene
+
+    static int32_t SetEntityName(void* host, HPEntityId entity, const char* name) {
+        LuaScriptEngine* lua = Lua(host);
+        return lua && name && Valid(host, entity) && lua->SetEntityName(ToEntityId(entity), name);
+    }
+
+    static int32_t HasComponent(void* host, HPEntityId entity, uint32_t kind) {
+        if (!Valid(host, entity)) {
+            return 0;
+        }
+        auto& registry = Host(host).m_Scene->GetRegistry();
+        const auto handle = static_cast<entt::entity>(ToEntityId(entity));
+        switch (kind) {
+            case HP_COMPONENT_CAMERA: return registry.all_of<CameraComponent>(handle);
+            case HP_COMPONENT_CHARACTER: return registry.all_of<CharacterComponent>(handle);
+            case HP_COMPONENT_MESH: return registry.all_of<MeshRendererComponent>(handle);
+            case HP_COMPONENT_CHARACTER_CONTROLLER: return registry.all_of<CharacterControllerComponent>(handle);
+            default: return 0;
+        }
+    }
+
+    static uint32_t FindEntitiesWithPrefix(void* host, const char* prefix, HPEntityId* out, uint32_t capacity) {
+        Scene* scene = Host(host).m_Scene;
+        if (!scene) {
+            return 0;
+        }
+        std::vector<entt::entity> entities;
+        for (Entity entity : scene->FindEntitiesWithNamePrefix(prefix ? prefix : "")) {
+            if (entity) {
+                entities.push_back(static_cast<entt::entity>(entity));
+            }
+        }
+        return WriteEntities(entities, out, capacity);
+    }
+
+    static HPEntityId InstantiatePrefab(void* host, const char* path, const HPVec3* position,
+                                        const HPVec3* rotationDegrees, const HPNamedValue* vars, uint32_t varCount) {
+        LuaScriptEngine* lua = Lua(host);
+        if (!lua || !path || !*path) {
+            return 0;
+        }
+        LuaScriptEngine::PrefabSpawn spawn;
+        spawn.prefabPath = path;
+        if (position) {
+            spawn.hasPosition = true;
+            spawn.position = Vec3(position->x, position->y, position->z);
+        }
+        if (rotationDegrees) {
+            spawn.hasRotation = true;
+            spawn.rotationDegrees = Vec3(rotationDegrees->x, rotationDegrees->y, rotationDegrees->z);
+        }
+        for (uint32_t i = 0; vars && i < varCount; ++i) {
+            if (vars[i].name) {
+                spawn.vars[vars[i].name] = ToPropertyValue(vars[i].value);
+            }
+        }
+        const Entity root = lua->SpawnPrefab(spawn);
+        return root ? ToHandle(static_cast<uint32_t>(static_cast<entt::entity>(root))) : 0;
+    }
+
+    static int32_t DestroyEntity(void* host, HPEntityId entity) {
+        LuaScriptEngine* lua = Lua(host);
+        if (!lua || !Valid(host, entity)) {
+            return 0;
+        }
+        lua->DestroyEntity(ToEntityId(entity));
+        return 1;
+    }
+
+    static int32_t ReloadScene(void* host) {
+        LuaScriptEngine* lua = Lua(host);
+        return lua && lua->RequestSceneReload();
+    }
+
+    static int32_t SetMeshVisible(void* host, HPEntityId entity, int32_t visible) {
+        LuaScriptEngine* lua = Lua(host);
+        return lua && Valid(host, entity) && lua->SetMeshVisible(ToEntityId(entity), visible != 0);
+    }
+
+    static int32_t IsMeshVisible(void* host, HPEntityId entity) {
+        LuaScriptEngine* lua = Lua(host);
+        return lua && Valid(host, entity) && lua->IsMeshVisible(ToEntityId(entity));
+    }
+
+    // Raw input
+
+    static int32_t IsKeyDown(void* host, const char* key) {
+        const auto* input = Host(host).m_Input;
+        const int code = key ? Hephaestus::ResolveInputControl(Hephaestus::InputBindingType::Keyboard, key) : -1;
+        return input && code >= 0 && input->IsKeyDown(code);
+    }
+
+    static int32_t IsMouseButtonDown(void* host, int32_t button) {
+        const auto* input = Host(host).m_Input;
+        return input && button >= 0 && button <= 7 && input->IsMouseButtonDown(button);
+    }
+
+    static HPVec2 GetMousePosition(void* host) {
+        const auto* input = Host(host).m_Input;
+        return input ? HPVec2{static_cast<float>(input->GetMouseX()), static_cast<float>(input->GetMouseY())}
+                     : HPVec2{0.0f, 0.0f};
+    }
+
+    static HPVec2 GetMouseDelta(void* host) {
+        const auto* input = Host(host).m_Input;
+        return input ? HPVec2{static_cast<float>(input->GetMouseDeltaX()), static_cast<float>(input->GetMouseDeltaY())}
+                     : HPVec2{0.0f, 0.0f};
+    }
+
+    static HPVec2 GetScrollDelta(void* host) {
+        const auto* input = Host(host).m_Input;
+        return input ? HPVec2{static_cast<float>(input->GetScrollDeltaX()), static_cast<float>(input->GetScrollDeltaY())}
+                     : HPVec2{0.0f, 0.0f};
+    }
+
+    static int32_t IsGamepadConnected(void* host) {
+        const auto* input = Host(host).m_Input;
+        return input && input->IsGamepadConnected();
+    }
+
+    static void SetCursorMode(void* host, uint32_t mode) {
+        if (LuaScriptEngine* lua = Lua(host)) {
+            lua->ApplyCursorMode(mode == HP_CURSOR_CAPTURED ? 1 : 0);
+        }
+    }
+
+    static uint32_t GetCursorMode(void* host) {
+        LuaScriptEngine* lua = Lua(host);
+        return lua && lua->GetCursorMode() == 1 ? HP_CURSOR_CAPTURED : HP_CURSOR_NORMAL;
+    }
+
+    // Script view camera
+
+    static void ViewCameraSetActive(void* host, int32_t active) {
+        const CameraBinding* camera = ViewCamera(host);
+        if (camera && camera->setActive) camera->setActive(active != 0);
+    }
+
+    static int32_t ViewCameraIsActive(void* host) {
+        const CameraBinding* camera = ViewCamera(host);
+        return camera && camera->isActive && camera->isActive();
+    }
+
+    static void ViewCameraSetPosition(void* host, HPVec3 position) {
+        const CameraBinding* camera = ViewCamera(host);
+        if (camera && camera->setPosition) camera->setPosition(Vec3(position.x, position.y, position.z));
+    }
+
+    static HPVec3 ViewCameraGetPosition(void* host) {
+        const CameraBinding* camera = ViewCamera(host);
+        return camera && camera->getPosition ? ToHPVec3(camera->getPosition()) : HPVec3{0.0f, 0.0f, 0.0f};
+    }
+
+    static void ViewCameraSetRotation(void* host, HPVec3 radians) {
+        const CameraBinding* camera = ViewCamera(host);
+        if (camera && camera->setRotation) camera->setRotation(Vec3(radians.x, radians.y, radians.z));
+    }
+
+    static HPVec3 ViewCameraGetRotation(void* host) {
+        const CameraBinding* camera = ViewCamera(host);
+        return camera && camera->getRotation ? ToHPVec3(camera->getRotation()) : HPVec3{0.0f, 0.0f, 0.0f};
+    }
+
+    static void ViewCameraTranslate(void* host, HPVec3 delta) {
+        const CameraBinding* camera = ViewCamera(host);
+        if (!camera) {
+            return;
+        }
+        const Vec3 d(delta.x, delta.y, delta.z);
+        if (camera->translate) {
+            camera->translate(d);
+        } else if (camera->getPosition && camera->setPosition) {
+            camera->setPosition(vadd(camera->getPosition(), d));
+        }
+    }
+
+    // Camera components
+
+    static uint32_t FindCameras(void* host, HPEntityId* out, uint32_t capacity) {
+        Scene* scene = Host(host).m_Scene;
+        if (!scene) {
+            return 0;
+        }
+        std::vector<entt::entity> cameras;
+        for (auto handle : scene->GetEntitiesWith<CameraComponent>()) {
+            cameras.push_back(handle);
+        }
+        return WriteEntities(cameras, out, capacity);
+    }
+
+    static HPEntityId GetActiveCamera(void* host) {
+        LuaScriptEngine* lua = Lua(host);
+        const Entity camera = lua ? lua->FindActiveCamera() : Entity{};
+        return camera ? ToHandle(static_cast<uint32_t>(static_cast<entt::entity>(camera))) : 0;
+    }
+
+    static int32_t SetCameraActive(void* host, HPEntityId camera, int32_t active) {
+        LuaScriptEngine* lua = Lua(host);
+        return lua && Valid(host, camera) && lua->SetCameraActive(ToEntityId(camera), active != 0);
+    }
+
+    static int32_t IsCameraActive(void* host, HPEntityId entity) {
+        const CameraComponent* camera = Camera(host, entity);
+        return camera && camera->isActive;
+    }
+
+    static int32_t GetCameraLens(void* host, HPEntityId entity, HPCameraLens* out) {
+        const CameraComponent* camera = Camera(host, entity);
+        if (!camera || !out) {
+            return 0;
+        }
+        *out = HPCameraLens{camera->fov, camera->nearPlane, camera->farPlane};
+        return 1;
+    }
+
+    static int32_t SetCameraLens(void* host, HPEntityId entity, const HPCameraLens* lens) {
+        CameraComponent* camera = Camera(host, entity);
+        if (!camera || !lens) {
+            return 0;
+        }
+        camera->fov = lens->fieldOfView;
+        camera->nearPlane = lens->nearPlane;
+        camera->farPlane = lens->farPlane;
+        return 1;
+    }
+
+    // Physics
+
+    static int32_t IsPhysicsAvailable(void* host) {
+        const PhysicsBinding* physics = Physics(host);
+        return physics && physics->hasBody;
+    }
+
+    static int32_t HasBody(void* host, HPEntityId entity) {
+        const PhysicsBinding* physics = Physics(host);
+        const uint32_t id = Id(host, entity);
+        return physics && physics->hasBody && id != kNoEntity && physics->hasBody(id);
+    }
+
+    static int32_t GetLinearVelocity(void* host, HPEntityId entity, HPVec3* out) {
+        const PhysicsBinding* physics = Physics(host);
+        const uint32_t id = Id(host, entity);
+        Vec3 velocity{};
+        return Out(out, physics && physics->getLinearVelocity && id != kNoEntity &&
+                            physics->getLinearVelocity(id, velocity), velocity);
+    }
+
+    static int32_t SetLinearVelocity(void* host, HPEntityId entity, HPVec3 velocity, int32_t activate) {
+        const PhysicsBinding* physics = Physics(host);
+        const uint32_t id = Id(host, entity);
+        return physics && physics->setLinearVelocity && id != kNoEntity &&
+               physics->setLinearVelocity(id, Vec3(velocity.x, velocity.y, velocity.z), activate != 0);
+    }
+
+    static int32_t SetAngularVelocity(void* host, HPEntityId entity, HPVec3 velocity, int32_t activate) {
+        const PhysicsBinding* physics = Physics(host);
+        const uint32_t id = Id(host, entity);
+        return physics && physics->setAngularVelocity && id != kNoEntity &&
+               physics->setAngularVelocity(id, Vec3(velocity.x, velocity.y, velocity.z), activate != 0);
+    }
+
+    static int32_t SetBodyRotation(void* host, HPEntityId entity, HPVec3 radians, int32_t activate) {
+        const PhysicsBinding* physics = Physics(host);
+        const uint32_t id = Id(host, entity);
+        return physics && physics->setRotation && id != kNoEntity &&
+               physics->setRotation(id, Vec3(radians.x, radians.y, radians.z), activate != 0);
+    }
+
+    static int32_t Raycast(void* host, HPEntityId ignore, HPVec3 origin, HPVec3 direction, float maxDistance,
+                           const char* layer, int32_t ignoreSensors, HPRaycastHit* out, char* error, size_t errorSize) {
+        const PhysicsBinding* physics = Physics(host);
+        if (!physics || !physics->raycast) {
+            return 0;
+        }
+        PhysicsRaycastHit hit{};
+        std::string message;
+        const bool ok = physics->raycast(ignore == 0 ? kNoEntity : ToEntityId(ignore),
+                                         Vec3(origin.x, origin.y, origin.z),
+                                         Vec3(direction.x, direction.y, direction.z), maxDistance, hit,
+                                         layer && *layer ? layer : nullptr, message, ignoreSensors != 0);
+        if (!message.empty() && error && errorSize > 0) {
+            std::snprintf(error, errorSize, "%s", message.c_str());
+        }
+        if (!ok || !hit.hit) {
+            return 0;
+        }
+        if (out) {
+            out->point = ToHPVec3(hit.point);
+            out->normal = ToHPVec3(hit.normal);
+            out->distance = hit.distance;
+            out->entity = hit.entityId != kNoEntity ? ToHandle(hit.entityId) : 0;
+        }
+        return 1;
+    }
+
+    static int32_t PhysicsIsGrounded(void* host, HPEntityId entity) {
+        const PhysicsBinding* physics = Physics(host);
+        const uint32_t id = Id(host, entity);
+        return physics && physics->isGrounded && id != kNoEntity && physics->isGrounded(id);
+    }
+
+    static int32_t PhysicsMove(void* host, HPEntityId entity, float x, float z, float speed) {
+        const PhysicsBinding* physics = Physics(host);
+        const uint32_t id = Id(host, entity);
+        return physics && physics->move && id != kNoEntity && physics->move(id, x, z, speed);
+    }
+
+    static int32_t PhysicsJump(void* host, HPEntityId entity, float speed) {
+        const PhysicsBinding* physics = Physics(host);
+        const uint32_t id = Id(host, entity);
+        return physics && physics->jump && id != kNoEntity && physics->jump(id, speed);
+    }
+
+    // Character controllers
+
+    template <class Member, class... A>
+    static int32_t CharacterCall(void* host, HPEntityId entity, Member member, A&&... args) {
+        const CharacterBinding* binding = Characters(host);
+        const uint32_t id = Id(host, entity);
+        return binding && binding->*member && id != kNoEntity && (binding->*member)(id, std::forward<A>(args)...);
+    }
+
+    static int32_t CharacterMove(void* host, HPEntityId e, float x, float z) {
+        return CharacterCall(host, e, &CharacterBinding::move, x, z);
+    }
+    static int32_t CharacterJump(void* host, HPEntityId e) { return CharacterCall(host, e, &CharacterBinding::jump); }
+    static int32_t CharacterSetCrouched(void* host, HPEntityId e, int32_t crouched) {
+        return CharacterCall(host, e, &CharacterBinding::setCrouched, crouched != 0);
+    }
+    static int32_t CharacterIsCrouched(void* host, HPEntityId e) {
+        return CharacterCall(host, e, &CharacterBinding::isCrouched);
+    }
+    static int32_t CharacterIsStandBlocked(void* host, HPEntityId e) {
+        return CharacterCall(host, e, &CharacterBinding::isStandBlocked);
+    }
+    static int32_t CharacterIsGrounded(void* host, HPEntityId e) {
+        return CharacterCall(host, e, &CharacterBinding::isGrounded);
+    }
+    static size_t CharacterGetGroundState(void* host, HPEntityId e, char* buffer, size_t bufferSize) {
+        std::string state;
+        return CharacterCall(host, e, &CharacterBinding::getGroundState, state) ? CopyOut(state, buffer, bufferSize)
+                                                                                 : 0;
+    }
+    static int32_t CharacterGetVelocity(void* host, HPEntityId e, HPVec3* out) {
+        Vec3 value{};
+        return Out(out, CharacterCall(host, e, &CharacterBinding::getVelocity, value) != 0, value);
+    }
+    static int32_t CharacterGetGroundNormal(void* host, HPEntityId e, HPVec3* out) {
+        Vec3 value{};
+        return Out(out, CharacterCall(host, e, &CharacterBinding::getGroundNormal, value) != 0, value);
+    }
+    static int32_t CharacterGetGroundVelocity(void* host, HPEntityId e, HPVec3* out) {
+        Vec3 value{};
+        return Out(out, CharacterCall(host, e, &CharacterBinding::getGroundVelocity, value) != 0, value);
+    }
+    static int32_t CharacterSetSpeedMultiplier(void* host, HPEntityId e, float multiplier) {
+        return CharacterCall(host, e, &CharacterBinding::setSpeedMultiplier, multiplier);
+    }
+    static float CharacterGetSpeedMultiplier(void* host, HPEntityId e) {
+        float multiplier = 1.0f;
+        CharacterCall(host, e, &CharacterBinding::getSpeedMultiplier, multiplier);
+        return multiplier;
+    }
+    static int32_t CharacterTeleport(void* host, HPEntityId e, HPVec3 position) {
+        return CharacterCall(host, e, &CharacterBinding::teleport, position.x, position.y, position.z);
+    }
+    static int32_t CharacterSetFacingYaw(void* host, HPEntityId e, float radians) {
+        return CharacterCall(host, e, &CharacterBinding::setFacingYaw, radians);
+    }
+
+    // Animated characters
+
+    static void LogAnimationError(void* host, HPEntityId entity, const std::string& error) {
+        if (!error.empty()) {
+            const char* name = "";
+            if (Scene* scene = Host(host).m_Scene) {
+                if (const auto* tag = scene->GetRegistry().try_get<TagComponent>(static_cast<entt::entity>(ToEntityId(entity)))) {
+                    name = tag->tag.c_str();
+                }
+            }
+            Host(host).Log(HP_LOG_ERROR, std::string("Animation on '") + name + "': " + error);
+        }
+    }
+
+    static int32_t AnimationPlay(void* host, HPEntityId entity, const char* clip) {
+        CharacterComponent* character = Character(host, entity);
+        std::string error;
+        const bool ok = character && clip && Hephaestus::CharacterAnimationSystem::Play(*character, clip, error);
+        LogAnimationError(host, entity, error);
+        return ok;
+    }
+
+    static int32_t AnimationCrossFade(void* host, HPEntityId entity, const char* clip, float seconds) {
+        CharacterComponent* character = Character(host, entity);
+        std::string error;
+        const bool ok = character && clip &&
+                        Hephaestus::CharacterAnimationSystem::CrossFade(*character, clip, seconds, error);
+        LogAnimationError(host, entity, error);
+        return ok;
+    }
+
+    static int32_t AnimationPause(void* host, HPEntityId entity) {
+        CharacterComponent* character = Character(host, entity);
+        if (character) Hephaestus::CharacterAnimationSystem::Pause(*character);
+        return character != nullptr;
+    }
+
+    static int32_t AnimationResume(void* host, HPEntityId entity) {
+        CharacterComponent* character = Character(host, entity);
+        if (character) Hephaestus::CharacterAnimationSystem::Resume(*character);
+        return character != nullptr;
+    }
+
+    static int32_t AnimationStop(void* host, HPEntityId entity) {
+        CharacterComponent* character = Character(host, entity);
+        if (character) Hephaestus::CharacterAnimationSystem::Stop(*character);
+        return character != nullptr;
+    }
+
+    static int32_t AnimationSetSpeed(void* host, HPEntityId entity, float speed) {
+        CharacterComponent* character = Character(host, entity);
+        const bool ok = character && Hephaestus::CharacterAnimationSystem::SetSpeed(*character, speed);
+        if (character && !ok) {
+            LogAnimationError(host, entity, "SetSpeed requires a speed greater than 0. Use Pause() to freeze.");
+        }
+        return ok;
+    }
+
+    static int32_t AnimationIsPlaying(void* host, HPEntityId entity, const char* clip) {
+        const CharacterComponent* character = Character(host, entity);
+        return character && Hephaestus::CharacterAnimationSystem::IsPlaying(*character, clip);
+    }
+
+    static size_t AnimationGetCurrent(void* host, HPEntityId entity, char* buffer, size_t bufferSize) {
+        const CharacterComponent* character = Character(host, entity);
+        return character && !character->player.currentClip.empty()
+            ? CopyOut(character->player.currentClip, buffer, bufferSize) : 0;
+    }
+
+    static float AnimationGetTime(void* host, HPEntityId entity) {
+        const CharacterComponent* character = Character(host, entity);
+        return character ? character->player.time : 0.0f;
+    }
+
+    static float AnimationGetDuration(void* host, HPEntityId entity, const char* clip) {
+        const CharacterComponent* character = Character(host, entity);
+        return character ? Hephaestus::CharacterAnimationSystem::ClipDuration(*character, clip) : 0.0f;
+    }
+
+    static int32_t GetSocket(void* host, HPEntityId entity, const char* socket, int32_t worldSpace,
+                             HPVec3* position, HPVec3* rotation) {
+        LuaScriptEngine* lua = Lua(host);
+        Vec3 p{};
+        Vec3 r{};
+        if (!lua || !socket || !Valid(host, entity) ||
+            !lua->EvaluateSocket(ToEntityId(entity), socket, worldSpace != 0, p, r)) {
+            return 0;
+        }
+        Out(position, true, p);
+        Out(rotation, true, r);
+        return 1;
+    }
+
+    // Audio
+
+    static int32_t IsAudioAvailable(void* host) {
+        AudioEngine* audio = Audio(host);
+        return audio && audio->IsBackendAvailable();
+    }
+
+    static uint32_t AudioPlay(void* host, const char* path, int32_t loop, float volume) {
+        AudioEngine* audio = Audio(host);
+        return audio && path ? audio->Play(path, loop != 0, volume) : 0;
+    }
+
+    static int32_t AudioStop(void* host, uint32_t sound) {
+        AudioEngine* audio = Audio(host);
+        return audio && audio->Stop(sound);
+    }
+
+    static int32_t AudioPause(void* host, uint32_t sound) {
+        AudioEngine* audio = Audio(host);
+        return audio && audio->Pause(sound);
+    }
+
+    static int32_t AudioResume(void* host, uint32_t sound) {
+        AudioEngine* audio = Audio(host);
+        return audio && audio->Resume(sound);
+    }
+
+    static int32_t AudioSetVolume(void* host, uint32_t sound, float volume) {
+        AudioEngine* audio = Audio(host);
+        return audio && audio->SetVolume(sound, volume);
+    }
+
+    static int32_t AudioIsPlaying(void* host, uint32_t sound) {
+        AudioEngine* audio = Audio(host);
+        return audio && audio->IsPlaying(sound);
+    }
+
+    static void AudioStopAll(void* host) {
+        if (AudioEngine* audio = Audio(host)) {
+            audio->StopAll();
+        }
+    }
+
+    static void Install(HPScriptHostAPI& api) {
+        api.getDeltaTime = &GetDeltaTime;
+        api.quit = &Quit;
+        api.setEntityName = &SetEntityName;
+        api.hasComponent = &HasComponent;
+        api.findEntitiesWithPrefix = &FindEntitiesWithPrefix;
+        api.instantiatePrefab = &InstantiatePrefab;
+        api.destroyEntity = &DestroyEntity;
+        api.reloadScene = &ReloadScene;
+        api.setMeshVisible = &SetMeshVisible;
+        api.isMeshVisible = &IsMeshVisible;
+        api.isKeyDown = &IsKeyDown;
+        api.isMouseButtonDown = &IsMouseButtonDown;
+        api.getMousePosition = &GetMousePosition;
+        api.getMouseDelta = &GetMouseDelta;
+        api.getScrollDelta = &GetScrollDelta;
+        api.isGamepadConnected = &IsGamepadConnected;
+        api.setCursorMode = &SetCursorMode;
+        api.getCursorMode = &GetCursorMode;
+        api.viewCameraSetActive = &ViewCameraSetActive;
+        api.viewCameraIsActive = &ViewCameraIsActive;
+        api.viewCameraSetPosition = &ViewCameraSetPosition;
+        api.viewCameraGetPosition = &ViewCameraGetPosition;
+        api.viewCameraSetRotation = &ViewCameraSetRotation;
+        api.viewCameraGetRotation = &ViewCameraGetRotation;
+        api.viewCameraTranslate = &ViewCameraTranslate;
+        api.findCameras = &FindCameras;
+        api.getActiveCamera = &GetActiveCamera;
+        api.setCameraActive = &SetCameraActive;
+        api.isCameraActive = &IsCameraActive;
+        api.getCameraLens = &GetCameraLens;
+        api.setCameraLens = &SetCameraLens;
+        api.isPhysicsAvailable = &IsPhysicsAvailable;
+        api.hasBody = &HasBody;
+        api.getLinearVelocity = &GetLinearVelocity;
+        api.setLinearVelocity = &SetLinearVelocity;
+        api.setAngularVelocity = &SetAngularVelocity;
+        api.setBodyRotation = &SetBodyRotation;
+        api.raycast = &Raycast;
+        api.physicsIsGrounded = &PhysicsIsGrounded;
+        api.physicsMove = &PhysicsMove;
+        api.physicsJump = &PhysicsJump;
+        api.characterMove = &CharacterMove;
+        api.characterJump = &CharacterJump;
+        api.characterSetCrouched = &CharacterSetCrouched;
+        api.characterIsCrouched = &CharacterIsCrouched;
+        api.characterIsStandBlocked = &CharacterIsStandBlocked;
+        api.characterIsGrounded = &CharacterIsGrounded;
+        api.characterGetGroundState = &CharacterGetGroundState;
+        api.characterGetVelocity = &CharacterGetVelocity;
+        api.characterGetGroundNormal = &CharacterGetGroundNormal;
+        api.characterGetGroundVelocity = &CharacterGetGroundVelocity;
+        api.characterSetSpeedMultiplier = &CharacterSetSpeedMultiplier;
+        api.characterGetSpeedMultiplier = &CharacterGetSpeedMultiplier;
+        api.characterTeleport = &CharacterTeleport;
+        api.characterSetFacingYaw = &CharacterSetFacingYaw;
+        api.animationPlay = &AnimationPlay;
+        api.animationCrossFade = &AnimationCrossFade;
+        api.animationPause = &AnimationPause;
+        api.animationResume = &AnimationResume;
+        api.animationStop = &AnimationStop;
+        api.animationSetSpeed = &AnimationSetSpeed;
+        api.animationIsPlaying = &AnimationIsPlaying;
+        api.animationGetCurrent = &AnimationGetCurrent;
+        api.animationGetTime = &AnimationGetTime;
+        api.animationGetDuration = &AnimationGetDuration;
+        api.getSocket = &GetSocket;
+        api.isAudioAvailable = &IsAudioAvailable;
+        api.audioPlay = &AudioPlay;
+        api.audioStop = &AudioStop;
+        api.audioPause = &AudioPause;
+        api.audioResume = &AudioResume;
+        api.audioSetVolume = &AudioSetVolume;
+        api.audioIsPlaying = &AudioIsPlaying;
+        api.audioStopAll = &AudioStopAll;
+    }
+};
+
 PluginScriptHost::PluginScriptHost() {
     m_Api.structSize = sizeof(HPScriptHostAPI);
     m_Api.apiVersion = HP_SCRIPT_LANGUAGE_API_VERSION;
@@ -109,6 +776,7 @@ PluginScriptHost::PluginScriptHost() {
     m_Api.getAxis = &HostGetAxis;
     m_Api.callEntityFunction = &HostCallEntityFunction;
     m_Api.getProjectRoot = &HostGetProjectRoot;
+    HostApi::Install(m_Api);
 }
 
 PluginScriptHost::~PluginScriptHost() {
@@ -150,6 +818,7 @@ void PluginScriptHost::DestroyInstance(uint32_t entityId) {
 
 void PluginScriptHost::Update(Scene& scene, float deltaTime) {
     m_Scene = &scene;
+    m_DeltaTime = deltaTime;
     m_UpdateOrder.clear();
     auto& registry = scene.GetRegistry();
     const ScriptLanguageRegistry& languages = ScriptLanguageRegistry::Instance();
@@ -228,6 +897,9 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
         m_UpdateOrder.push_back(entityId);
     }
 
+    if (m_Lua) {
+        m_Lua->BeginScriptPass();
+    }
     for (uint32_t entityId : m_UpdateOrder) {
         auto it = m_Instances.find(entityId);
         if (it == m_Instances.end() || it->second.awake) {
@@ -244,10 +916,14 @@ void PluginScriptHost::Update(Scene& scene, float deltaTime) {
             it->second.language->update(it->second.runtime, it->second.handle, deltaTime);
         }
     }
+    if (m_Lua) {
+        m_Lua->EndScriptPass(scene);
+    }
 }
 
 void PluginScriptHost::LateUpdate(Scene& scene, float deltaTime) {
     m_Scene = &scene;
+    m_DeltaTime = deltaTime;
     for (uint32_t entityId : m_UpdateOrder) {
         auto it = m_Instances.find(entityId);
         if (it != m_Instances.end() && it->second.language->lateUpdate) {

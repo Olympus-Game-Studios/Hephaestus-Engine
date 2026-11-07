@@ -1,7 +1,7 @@
 ---
 title: Plugins
 description: What plugins can do, the ones that come with Hephaestus, turning them on and off and making your own.
-order: 17
+order: 18
 ---
 
 # Plugins

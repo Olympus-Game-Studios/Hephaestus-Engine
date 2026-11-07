@@ -2,7 +2,11 @@
 #include "Core/SimulationStep.h"
 #include "Physics/PhysicsContactEvents.h"
 #include "Scene/Components.h"
+#include "Scene/CharacterControllerComponent.h"
 #include "Scene/Entity.h"
+#include "Scene/PrefabAsset.h"
+#include "Scene/PrefabOverrideSystem.h"
+#include "Scene/PrefabSerializer.h"
 #include "Scene/Scene.h"
 #include "Scripting/LuaScriptComponent.h"
 #include "Scripting/LuaScriptEngine.h"
@@ -115,6 +119,100 @@ public:
 };
 
 HP_SCRIPT(Faulty)
+)cpp";
+
+const char* kProbe = R"cpp(#include "HephaestusScript.h"
+#include <string>
+
+static void Report(const std::string& key, const std::string& value) { hp::Log("probe:" + key + "=" + value); }
+static std::string Flag(bool value) { return value ? "1" : "0"; }
+static std::string Number(float value) { return std::to_string(static_cast<int>(value * 100.0f + (value < 0 ? -0.5f : 0.5f))); }
+
+class Probe : public hp::Script {
+public:
+    HP_FIELD(std::string, prefab, "");
+    int frame = 0;
+
+    void OnAwake() override {
+        hp::Entity self = GetEntity();
+        self.SetName("ProbeRenamed");
+        Report("name", self.GetName());
+        Report("dt", Number(hp::Time::DeltaTime()));
+        Report("enemies", std::to_string(hp::Scene::FindAllWithPrefix("Enemy").size()));
+
+        hp::Entity mesh = hp::Scene::Find("Mesh");
+        mesh.SetVisible(false);
+        Report("meshVisible", Flag(mesh.IsVisible()));
+        Report("selfHasMesh", Flag(self.SetVisible(true)));
+
+        Report("cameras", std::to_string(hp::Scene::FindCameras().size()));
+        hp::Entity cam2 = hp::Scene::Find("Cam2");
+        hp::Scene::SetActiveCamera(cam2);
+        Report("activeIsCam2", Flag(hp::Scene::GetActiveCamera() == cam2));
+        auto camera = cam2.GetCamera();
+        Report("cam2HasCamera", Flag(camera.has_value()));
+        if (camera) {
+            camera->SetFov(75.0f);
+            Report("fov", Number(camera->GetFov()));
+            Report("cam1Active", Flag(hp::Scene::Find("Cam1").GetCamera()->IsActive()));
+        }
+        Report("meshHasNoCamera", Flag(!mesh.GetCamera().has_value()));
+
+        hp::ViewCamera::SetPosition({1, 2, 3});
+        hp::ViewCamera::Translate({1, 0, 0});
+        Report("viewX", Number(hp::ViewCamera::GetPosition().x));
+
+        hp::Entity ball = hp::Scene::Find("Ball");
+        hp::Body body = ball.GetBody();
+        Report("ballBody", Flag(body.Exists()));
+        Report("selfBody", Flag(self.GetBody().Exists()));
+        Report("ballVelY", Number(body.GetLinearVelocity().y));
+        body.SetLinearVelocity({0, 9, 0});
+        auto hit = Raycast({0, 0, 0}, {0, -1, 0}, 10.0f, "Ground");
+        Report("hit", Flag(hit.has_value()));
+        if (hit) {
+            Report("hitIsBall", Flag(hit->entity == ball));
+            Report("hitDistance", Number(hit->distance));
+        }
+        Report("missWithBadLayer", Flag(!Raycast({0, 0, 0}, {0, -1, 0}, 10.0f, "Nope").has_value()));
+
+        auto controller = hp::Scene::Find("Hero").GetController();
+        Report("heroController", Flag(controller.has_value()));
+        if (controller) {
+            controller->Move(0.5f, -1.0f);
+            Report("groundState", controller->GetGroundState());
+            Report("speedMultiplier", Number(controller->GetSpeedMultiplier()));
+        }
+        Report("selfNoController", Flag(!self.GetController().has_value()));
+        Report("noAnimator", Flag(!self.GetAnimator().has_value()));
+        Report("noSocket", Flag(!self.GetSocket("hand").has_value()));
+
+        Report("audio", Flag(hp::Audio::IsAvailable()));
+        Report("sound", std::to_string(hp::Audio::Play("missing.wav")));
+        Report("key", Flag(hp::Input::IsKeyDown("space")));
+
+        hp::SpawnOptions options;
+        options.position = hp::Vec3{5, 0, 0};
+        options.vars.emplace_back("health", 40);
+        hp::Entity crate = hp::Scene::Instantiate(prefab, options);
+        Report("spawned", Flag(crate.IsValid()));
+        Report("spawnX", Number(crate.GetPosition().x));
+        Report("missingPrefab", Flag(!hp::Scene::Instantiate("nope.hpprefab")));
+    }
+
+    void OnUpdate(float) override {
+        if (++frame == 1) {
+            hp::Entity doomed = hp::Scene::Find("Doomed");
+            hp::Scene::Destroy(doomed);
+            Report("doomedDuringPass", Flag(doomed.IsValid()));
+            hp::Input::SetCursorMode(hp::CursorMode::Captured);
+            Report("cursor", Flag(hp::Input::GetCursorMode() == hp::CursorMode::Captured));
+            hp::Application::Quit();
+        }
+    }
+};
+
+HP_SCRIPT(Probe)
 )cpp";
 
 } // namespace
@@ -258,6 +356,138 @@ end
         lua.Shutdown();
     }
 
+    {
+        log.clear();
+        const fs::path probePath = root / "scripts" / "probe.cpp";
+        WriteFile(probePath, kProbe);
+
+        Scene scratch("Scratch");
+        Entity crateRoot = scratch.CreateEntity("Crate");
+        crateRoot.AddComponent<LuaScriptComponent>("scripts/crate.lua").variables["health"] = PropertyValue(10.0);
+        PrefabAsset crate;
+        const fs::path cratePath = root / "assets" / "prefabs" / "Crate.hpprefab";
+        fs::create_directories(cratePath.parent_path());
+        std::string prefabError;
+        pass &= Check(PrefabOverrideSystem::CaptureHierarchy(scratch, crateRoot, crate) &&
+                      PrefabSerializer::Serialize(crate, cratePath, prefabError),
+                      "test prefab saved " + prefabError);
+        PrefabOverrideSystem::InvalidateAssetCache(cratePath.generic_string());
+
+        Scene scene("Probe");
+        Entity prober = scene.CreateEntity("Prober");
+        prober.AddComponent<LuaScriptComponent>("scripts/probe.cpp").variables["prefab"] =
+            PropertyValue(cratePath.generic_string());
+        scene.CreateEntity("Enemy1");
+        scene.CreateEntity("Enemy2");
+        scene.CreateEntity("Mesh").AddComponent<MeshRendererComponent>();
+        scene.CreateEntity("Cam1").AddComponent<CameraComponent>().isActive = true;
+        scene.CreateEntity("Cam2").AddComponent<CameraComponent>();
+        Entity ball = scene.CreateEntity("Ball");
+        Entity hero = scene.CreateEntity("Hero");
+        hero.AddComponent<CharacterControllerComponent>();
+        Entity doomed = scene.CreateEntity("Doomed");
+        const uint32_t ballId = static_cast<uint32_t>(static_cast<entt::entity>(ball));
+        const uint32_t heroId = static_cast<uint32_t>(static_cast<entt::entity>(hero));
+
+        LuaScriptEngine lua;
+        PluginScriptHost host;
+        lua.Initialize(&scene, nullptr);
+        lua.SetProjectRoot(root);
+        lua.SetPluginScriptHost(&host);
+        host.SetLuaEngine(&lua);
+
+        Vec3 ballVelocity(0.0f, 2.0f, 0.0f);
+        PhysicsBinding physics;
+        physics.hasBody = [&](uint32_t id) { return id == ballId; };
+        physics.getLinearVelocity = [&](uint32_t id, Vec3& out) { out = ballVelocity; return id == ballId; };
+        physics.setLinearVelocity = [&](uint32_t id, const Vec3& v, bool) {
+            if (id == ballId) ballVelocity = v;
+            return id == ballId;
+        };
+        physics.raycast = [&](uint32_t ignore, const Vec3&, const Vec3&, float, PhysicsRaycastHit& hit,
+                              const char* layer, std::string& error, bool) {
+            if (layer && std::string(layer) != "Ground") {
+                error = std::string("unknown layer ") + layer;
+                return false;
+            }
+            hit.hit = ignore != ballId;
+            hit.distance = 2.5f;
+            hit.entityId = ballId;
+            return true;
+        };
+        lua.SetPhysicsBinding(physics);
+        Vec3 heroWish(0.0f, 0.0f, 0.0f);
+        CharacterBinding characters;
+        characters.move = [&](uint32_t id, float x, float z) { heroWish = Vec3(x, 0.0f, z); return id == heroId; };
+        characters.getGroundState = [&](uint32_t id, std::string& out) { out = "walking"; return id == heroId; };
+        characters.getSpeedMultiplier = [&](uint32_t id, float& out) { out = 1.5f; return id == heroId; };
+        lua.SetCharacterBinding(characters);
+        Vec3 viewPosition(0.0f, 0.0f, 0.0f);
+        CameraBinding view;
+        view.setPosition = [&](const Vec3& v) { viewPosition = v; };
+        view.getPosition = [&]() { return viewPosition; };
+        lua.SetCameraBinding(view);
+        bool quit = false;
+        lua.SetQuitRequestCallback([&]() { quit = true; });
+        lua.OnSimulationStarted();
+
+        Hephaestus::SimulationStepContext step;
+        step.scene = &scene;
+        step.lua = &lua;
+        step.pluginScripts = &host;
+        Hephaestus::RunSimulationStep(step, 0.25f);
+
+        const auto probe = [&log](const std::string& key, const std::string& value) {
+            const std::string line = "probe:" + key + "=" + value;
+            return std::any_of(log.begin(), log.end(), [&](const std::string& entry) { return entry == line; });
+        };
+        pass &= Check(probe("name", "ProbeRenamed"), "entities can be renamed");
+        pass &= Check(probe("dt", "25"), "Time::DeltaTime matches the frame");
+        pass &= Check(probe("enemies", "2"), "Scene::FindAllWithPrefix finds entities by name");
+        pass &= Check(probe("meshVisible", "0") && probe("selfHasMesh", "0"),
+                      "meshes can be hidden, and entities without one report it");
+        pass &= Check(probe("cameras", "2") && probe("activeIsCam2", "1") && probe("cam2HasCamera", "1") &&
+                      probe("cam1Active", "0") && probe("meshHasNoCamera", "1"),
+                      "cameras are found and activating one deactivates the others");
+        pass &= Check(probe("fov", "7500"), "camera lenses can be changed");
+        pass &= Check(probe("viewX", "200") && Near(viewPosition.z, 3.0f), "the view camera moves through its binding");
+        pass &= Check(probe("ballBody", "1") && probe("selfBody", "0") && probe("ballVelY", "200") &&
+                      Near(ballVelocity.y, 9.0f),
+                      "physics bodies report and take velocities");
+        pass &= Check(probe("hit", "1") && probe("hitIsBall", "1") && probe("hitDistance", "250"),
+                      "raycasts return the hit and its entity");
+        pass &= Check(probe("missWithBadLayer", "1") && logged("unknown layer Nope"),
+                      "a raycast with an unknown layer misses and logs why");
+        pass &= Check(probe("heroController", "1") && probe("groundState", "walking") &&
+                      probe("speedMultiplier", "150") && Near(heroWish.x, 0.5f) && Near(heroWish.z, -1.0f),
+                      "character controllers move and report through their binding");
+        pass &= Check(probe("selfNoController", "1") && probe("noAnimator", "1") && probe("noSocket", "1"),
+                      "missing components come back empty");
+        pass &= Check(probe("audio", "0") && probe("sound", "0") && probe("key", "0"),
+                      "audio and input answer safely without a backend");
+        pass &= Check(probe("spawned", "1") && probe("spawnX", "500") && probe("missingPrefab", "1"),
+                      "prefabs spawn where asked, and a missing prefab gives an empty entity");
+        bool overridden = false;
+        for (Entity spawned : scene.FindEntitiesWithNamePrefix("Crate")) {
+            if (!spawned.HasComponent<LuaScriptComponent>()) {
+                continue;
+            }
+            const auto& variables = spawned.GetComponent<LuaScriptComponent>().variables;
+            const auto health = variables.find("health");
+            overridden |= health != variables.end() && health->second.AsNumber() &&
+                          *health->second.AsNumber() == 40.0;
+        }
+        pass &= Check(overridden, "spawn options override the prefab's Inspector values");
+        pass &= Check(probe("doomedDuringPass", "1") && !scene.GetRegistry().valid(static_cast<entt::entity>(doomed)),
+                      "Scene::Destroy waits for the end of the script pass");
+        pass &= Check(probe("cursor", "1") && lua.GetCursorMode() == 1, "the cursor can be captured");
+        pass &= Check(quit, "Application::Quit asks the host to quit");
+
+        host.OnSimulationStopped();
+        lua.OnSimulationStopped();
+        lua.Shutdown();
+    }
+
     const fs::path package = root / "package";
     char packageError[4096] = {};
     pass &= Check(language->packageScript(root.string().c_str(), moverPath.string().c_str(),
@@ -282,6 +512,7 @@ end
             text.replace(at, 5, "Spinner");
         }
         const fs::path spinner = root / "scripts" / "Spinner.cpp";
+        packageError[0] = 0;
         WriteFile(spinner, text);
         pass &= Check(language->packageScript(root.string().c_str(), spinner.string().c_str(),
                                               package.string().c_str(), packageError, sizeof(packageError)) == 1,

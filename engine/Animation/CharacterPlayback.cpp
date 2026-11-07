@@ -188,6 +188,28 @@ bool CharacterAnimationSystem::SetSpeed(CharacterComponent& character, float spe
     return true;
 }
 
+bool CharacterAnimationSystem::IsPlaying(const CharacterComponent& character, const char* clipId) {
+    const bool playing = character.player.playing && !character.player.paused;
+    if (!clipId) {
+        return playing;
+    }
+    std::string error;
+    const AnimationClip* clip = FindClip(character.clips, clipId, error);
+    const std::string resolved = clip ? (clip->id.empty() ? clip->name : clip->id) : std::string();
+    return playing && !resolved.empty() && character.player.currentClip == resolved;
+}
+
+float CharacterAnimationSystem::ClipDuration(const CharacterComponent& character, const char* clipId) {
+    std::string error;
+    const AnimationClip* clip = nullptr;
+    if (clipId) {
+        clip = FindClip(character.clips, clipId, error);
+    } else if (!character.player.currentClip.empty()) {
+        clip = FindClip(character.clips, character.player.currentClip, error);
+    }
+    return clip ? (std::max)(0.0f, ClipRangeEnd(*clip) - ClipRangeStart(*clip)) : 0.0f;
+}
+
 void CharacterAnimationSystem::Stop(CharacterComponent& character) {
     character.player.Stop(0.0f);
     if (character.runtimeReady) {

@@ -54,6 +54,8 @@ public:
     std::size_t InstanceCount() const { return m_Instances.size(); }
 
 private:
+    struct HostApi;
+
     struct Runtime {
         const HPScriptLanguage* language = nullptr;
         void* handle = nullptr;
@@ -98,6 +100,7 @@ private:
     LuaScriptEngine* m_Lua = nullptr;
     Hephaestus::InputSystem* m_Input = nullptr;
     Scene* m_Scene = nullptr;
+    float m_DeltaTime = 0.0f;
     std::vector<Runtime> m_Runtimes;
     std::unordered_map<uint32_t, Instance> m_Instances;
     std::unordered_map<uint32_t, FailedScript> m_Failed;

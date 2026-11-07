@@ -1,7 +1,7 @@
 ---
 title: What's not there yet
 description: The honest list of features that are missing, unfinished or only partly hooked up.
-order: 19
+order: 20
 ---
 
 # What's not there yet
@@ -47,7 +47,7 @@ Hephaestus is young, and I'd rather you know its gaps up front than discover the
 
 ## Scripting
 
-- C++ is the only other scripting language that ships, and it's Windows only. Its API doesn't reach everything Lua can yet (character controllers, camera, audio, animation, UI and spawning are Lua only), and the Code panel's debugger is Lua only. See [Scripting with C++](scripting-cpp.md).
+- C++ is the only other scripting language that ships, and it's Windows only. Its API doesn't reach everything Lua can yet (game UI, `onAnimationFinished`, `onEnable`/`onDisable` and character controller scripts are Lua only), and the Code panel's debugger is Lua only. See [Scripting with C++](scripting-cpp.md).
 - Lua scripts aren't sandboxed. Only run scripts you trust.
 
 ## World and gameplay systems

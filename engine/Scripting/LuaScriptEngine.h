@@ -292,6 +292,40 @@ public:
                        Hephaestus::HephaestusUI::UIContext* uiContext,
                        Hephaestus::HephaestusUI::UIRenderer* uiRenderer);
 
+    /// A prefab spawn request; Scene.instantiate's options.
+    struct PrefabSpawn {
+        std::string prefabPath;
+        bool hasPosition = false;
+        Vec3 position{0.0f, 0.0f, 0.0f};
+        bool hasRotation = false;
+        Vec3 rotationDegrees{0.0f, 0.0f, 0.0f};
+        std::unordered_map<std::string, PropertyValue> vars;
+    };
+
+    // Engine services the Lua bindings share with plugin languages (PluginScriptHost).
+    const PhysicsBinding& GetPhysicsBinding() const { return m_PhysicsBinding; }
+    const CharacterBinding& GetCharacterBinding() const { return m_CharacterBinding; }
+    const CameraBinding& GetCameraBinding() const { return m_CameraBinding; }
+    AudioEngine* GetAudioEngine() const { return m_AudioEngine; }
+    int GetCursorMode() const { return m_CurrentCursorMode; }
+    void ApplyCursorMode(int mode);
+    void RequestQuit();
+    bool RequestSceneReload();
+    bool SetEntityName(uint32_t entityId, const std::string& name);
+    bool SetMeshVisible(uint32_t entityId, bool visible);
+    bool IsMeshVisible(uint32_t entityId) const;
+    Entity SpawnPrefab(const PrefabSpawn& spawn);
+    /// Destroys at the end of the current script pass, or now outside one.
+    void DestroyEntity(uint32_t entityId);
+    /// Scripts that run outside Lua's Update bracket their pass with these so
+    /// destroys are deferred and spawned characters are bound, as in Lua.
+    void BeginScriptPass();
+    void EndScriptPass(Scene& scene);
+    Entity FindActiveCamera() const;
+    bool SetCameraActive(uint32_t entityId, bool active);
+    bool EvaluateSocket(uint32_t entityId, const std::string& socketName, bool sceneWorld,
+                        Vec3& outPosition, Vec3& outRotation);
+
 private:
     friend struct LuaEntityReference;
 
@@ -347,14 +381,7 @@ private:
     std::vector<LuaScriptInstanceKey> m_ActiveUpdateOrder;
     std::vector<std::filesystem::path> m_SearchPaths;
 
-    struct PendingSpawn {
-        std::string prefabPath;
-        bool hasPosition = false;
-        Vec3 position{0.0f, 0.0f, 0.0f};
-        bool hasRotation = false;
-        Vec3 rotationDegrees{0.0f, 0.0f, 0.0f};
-        std::unordered_map<std::string, PropertyValue> vars;
-    };
+    using PendingSpawn = PrefabSpawn;
 
     struct PendingDestroy {
         uint32_t entityId = 0;

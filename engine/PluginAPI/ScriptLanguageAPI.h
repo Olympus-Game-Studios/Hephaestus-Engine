@@ -41,6 +41,11 @@ typedef struct HPVec3 {
     float z;
 } HPVec3;
 
+typedef struct HPVec2 {
+    float x;
+    float y;
+} HPVec2;
+
 typedef enum HPValueType {
     HP_VALUE_NIL = 0,
     HP_VALUE_BOOL = 1,
@@ -65,6 +70,33 @@ typedef struct HPNamedValue {
     const char* name;
     HPValue value;
 } HPNamedValue;
+
+/* Result of HPScriptHostAPI.raycast. */
+typedef struct HPRaycastHit {
+    HPVec3 point;
+    HPVec3 normal;
+    float distance;
+    HPEntityId entity; /* 0 when the hit has no entity. */
+} HPRaycastHit;
+
+/* Lens of a Camera component. Field of view in degrees. */
+typedef struct HPCameraLens {
+    float fieldOfView;
+    float nearPlane;
+    float farPlane;
+} HPCameraLens;
+
+typedef enum HPCursorMode {
+    HP_CURSOR_NORMAL = 0,  /* Visible and free, for menus. */
+    HP_CURSOR_CAPTURED = 1 /* Hidden and locked, for mouse look. */
+} HPCursorMode;
+
+typedef enum HPComponentKind {
+    HP_COMPONENT_CAMERA = 0,
+    HP_COMPONENT_CHARACTER = 1, /* Animated character: animation and sockets. */
+    HP_COMPONENT_MESH = 2,
+    HP_COMPONENT_CHARACTER_CONTROLLER = 3
+} HPComponentKind;
 
 typedef enum HPLogLevel {
     HP_LOG_INFO = 0,
@@ -115,6 +147,116 @@ typedef struct HPScriptHostAPI {
        The project folder (the game's content folder when packaged), copied
        with the getEntityName buffer convention. */
     size_t (*getProjectRoot)(void* host, char* buffer, size_t bufferSize);
+
+    /* Everything below was added together, after getProjectRoot: check
+       structSize covers the member you use. They mirror the Lua API of the
+       same name (see docs/user-guide/lua-api.md); differences are noted. */
+
+    /* Time and application */
+    float (*getDeltaTime)(void* host);
+    void (*quit)(void* host); /* Closes the game; stops Play in the editor. */
+
+    /* Entities and scene. findEntitiesWithPrefix and findCameras write up to
+       `capacity` ids and return how many exist, so a call with capacity 0
+       sizes the array. */
+    int32_t (*setEntityName)(void* host, HPEntityId entity, const char* name);
+    int32_t (*hasComponent)(void* host, HPEntityId entity, uint32_t kind); /* HPComponentKind */
+    uint32_t (*findEntitiesWithPrefix)(void* host, const char* prefix, HPEntityId* out, uint32_t capacity);
+    /* position and rotationDegrees may be NULL to keep the prefab's own. vars
+       override the prefab scripts' Inspector values. Returns 0 on failure. */
+    HPEntityId (*instantiatePrefab)(void* host, const char* path, const HPVec3* position,
+                                    const HPVec3* rotationDegrees, const HPNamedValue* vars, uint32_t varCount);
+    /* Removes the entity (a prefab instance as a whole) once this frame's scripts have run. */
+    int32_t (*destroyEntity)(void* host, HPEntityId entity);
+    int32_t (*reloadScene)(void* host);
+    int32_t (*setMeshVisible)(void* host, HPEntityId entity, int32_t visible);
+    int32_t (*isMeshVisible)(void* host, HPEntityId entity);
+
+    /* Raw input. Keys use the names Lua's Input.isKeyPressed takes ("w",
+       "space", "left_shift", ...); mouse buttons are 0 left, 1 right, 2 middle. */
+    int32_t (*isKeyDown)(void* host, const char* key);
+    int32_t (*isMouseButtonDown)(void* host, int32_t button);
+    HPVec2 (*getMousePosition)(void* host);
+    HPVec2 (*getMouseDelta)(void* host);
+    HPVec2 (*getScrollDelta)(void* host);
+    int32_t (*isGamepadConnected)(void* host);
+    void (*setCursorMode)(void* host, uint32_t mode); /* HPCursorMode */
+    uint32_t (*getCursorMode)(void* host);
+
+    /* The script view camera (Lua's Camera table). Rotation is pitch, yaw,
+       roll in radians. */
+    void (*viewCameraSetActive)(void* host, int32_t active);
+    int32_t (*viewCameraIsActive)(void* host);
+    void (*viewCameraSetPosition)(void* host, HPVec3 position);
+    HPVec3 (*viewCameraGetPosition)(void* host);
+    void (*viewCameraSetRotation)(void* host, HPVec3 radians);
+    HPVec3 (*viewCameraGetRotation)(void* host);
+    void (*viewCameraTranslate)(void* host, HPVec3 delta);
+
+    /* Camera components. Making one active makes every other inactive. */
+    uint32_t (*findCameras)(void* host, HPEntityId* out, uint32_t capacity);
+    HPEntityId (*getActiveCamera)(void* host); /* The active camera, else the first, else 0. */
+    int32_t (*setCameraActive)(void* host, HPEntityId camera, int32_t active);
+    int32_t (*isCameraActive)(void* host, HPEntityId camera);
+    int32_t (*getCameraLens)(void* host, HPEntityId camera, HPCameraLens* out);
+    int32_t (*setCameraLens)(void* host, HPEntityId camera, const HPCameraLens* lens);
+
+    /* Physics bodies. `activate` wakes a sleeping body (Lua's default is 1).
+       raycast ignores `ignore` (pass 0 for none) and returns 1 on a hit; a bad
+       layer name returns 0 with a message in `error`. */
+    int32_t (*isPhysicsAvailable)(void* host);
+    int32_t (*hasBody)(void* host, HPEntityId entity);
+    int32_t (*getLinearVelocity)(void* host, HPEntityId entity, HPVec3* out);
+    int32_t (*setLinearVelocity)(void* host, HPEntityId entity, HPVec3 velocity, int32_t activate);
+    int32_t (*setAngularVelocity)(void* host, HPEntityId entity, HPVec3 velocity, int32_t activate);
+    int32_t (*setBodyRotation)(void* host, HPEntityId entity, HPVec3 radians, int32_t activate);
+    int32_t (*raycast)(void* host, HPEntityId ignore, HPVec3 origin, HPVec3 direction, float maxDistance,
+                       const char* layer, int32_t ignoreSensors, HPRaycastHit* out, char* error, size_t errorSize);
+    int32_t (*physicsIsGrounded)(void* host, HPEntityId entity);
+    int32_t (*physicsMove)(void* host, HPEntityId entity, float x, float z, float speed);
+    int32_t (*physicsJump)(void* host, HPEntityId entity, float speed);
+
+    /* Character controllers. getGroundState copies with the getEntityName convention. */
+    int32_t (*characterMove)(void* host, HPEntityId entity, float worldX, float worldZ);
+    int32_t (*characterJump)(void* host, HPEntityId entity);
+    int32_t (*characterSetCrouched)(void* host, HPEntityId entity, int32_t crouched);
+    int32_t (*characterIsCrouched)(void* host, HPEntityId entity);
+    int32_t (*characterIsStandBlocked)(void* host, HPEntityId entity);
+    int32_t (*characterIsGrounded)(void* host, HPEntityId entity);
+    size_t (*characterGetGroundState)(void* host, HPEntityId entity, char* buffer, size_t bufferSize);
+    int32_t (*characterGetVelocity)(void* host, HPEntityId entity, HPVec3* out);
+    int32_t (*characterGetGroundNormal)(void* host, HPEntityId entity, HPVec3* out);
+    int32_t (*characterGetGroundVelocity)(void* host, HPEntityId entity, HPVec3* out);
+    int32_t (*characterSetSpeedMultiplier)(void* host, HPEntityId entity, float multiplier);
+    float (*characterGetSpeedMultiplier)(void* host, HPEntityId entity);
+    int32_t (*characterTeleport)(void* host, HPEntityId entity, HPVec3 position);
+    int32_t (*characterSetFacingYaw)(void* host, HPEntityId entity, float radians);
+
+    /* Animated characters. A NULL clip means "whatever is playing". Sockets
+       are in world space, or character space when worldSpace is 0; rotation
+       is Euler radians. */
+    int32_t (*animationPlay)(void* host, HPEntityId entity, const char* clip);
+    int32_t (*animationCrossFade)(void* host, HPEntityId entity, const char* clip, float seconds);
+    int32_t (*animationPause)(void* host, HPEntityId entity);
+    int32_t (*animationResume)(void* host, HPEntityId entity);
+    int32_t (*animationStop)(void* host, HPEntityId entity);
+    int32_t (*animationSetSpeed)(void* host, HPEntityId entity, float speed);
+    int32_t (*animationIsPlaying)(void* host, HPEntityId entity, const char* clip);
+    size_t (*animationGetCurrent)(void* host, HPEntityId entity, char* buffer, size_t bufferSize);
+    float (*animationGetTime)(void* host, HPEntityId entity);
+    float (*animationGetDuration)(void* host, HPEntityId entity, const char* clip);
+    int32_t (*getSocket)(void* host, HPEntityId entity, const char* socket, int32_t worldSpace,
+                         HPVec3* position, HPVec3* rotation);
+
+    /* Audio. Handles are 0 when a sound failed to start. */
+    int32_t (*isAudioAvailable)(void* host);
+    uint32_t (*audioPlay)(void* host, const char* path, int32_t loop, float volume);
+    int32_t (*audioStop)(void* host, uint32_t sound);
+    int32_t (*audioPause)(void* host, uint32_t sound);
+    int32_t (*audioResume)(void* host, uint32_t sound);
+    int32_t (*audioSetVolume)(void* host, uint32_t sound, float volume);
+    int32_t (*audioIsPlaying)(void* host, uint32_t sound);
+    void (*audioStopAll)(void* host);
 } HPScriptHostAPI;
 
 /* Describes the script a runtime is asked to load for one entity. */

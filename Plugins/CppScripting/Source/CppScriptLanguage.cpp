@@ -28,7 +28,7 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr const char* kCacheFolder = ".hephaestus/build/cpp-scripts";
-constexpr const char* kBuildKey = "sdk1 " __DATE__ " " __TIME__;
+constexpr const char* kBuildKey = __DATE__ " " __TIME__;
 
 struct Module {
     HMODULE handle = nullptr;
@@ -332,8 +332,7 @@ bool Compile(const fs::path& source, const fs::path& dll, const std::string& ste
         L" /I" + Quote(include) + L" /I" + Quote(source.parent_path()) +
         L" /Fo" + Quote(intermediate / (dll.stem().wstring() + L".obj")) +
         L" /Fd" + Quote(intermediate / (dll.stem().wstring() + L".vc.pdb")) + L" " + Quote(source) +
-        L" /link /NOLOGO /INCREMENTAL:NO /OUT:" + Quote(building) + L" /PDB:" + Quote(pdb) +
-        L" /IMPLIB:" + Quote(intermediate / (dll.stem().wstring() + L".lib"));
+        L" /link /NOLOGO /INCREMENTAL:NO /NOIMPLIB /NOEXP /OUT:" + Quote(building) + L" /PDB:" + Quote(pdb);
     std::string output;
     const int exitCode = Run(compiler.cl.wstring(), command, &compiler.environment, output);
     const auto messages = Diagnostics(output, source, displayPath);
@@ -424,6 +423,10 @@ fs::path ProjectRootOf(const HPScriptHostAPI* host) {
 
 
 void* CreateRuntime(const HPScriptHostAPI* host) {
+    if (!host || host->structSize < sizeof(HPScriptHostAPI)) {
+        HostLog(host, HP_LOG_ERROR, "C++ scripts need the engine this plugin was built with; rebuild the plugin");
+        return nullptr;
+    }
     auto* runtime = new Runtime();
     runtime->host = host;
     runtime->projectRoot = ProjectRootOf(host);
@@ -849,6 +852,80 @@ const ApiEntry kApi[] = {
     {"Log", HP_COMPLETION_FUNCTION, "void hp::Log(std::string_view message)", "Writes to the Console."},
     {"LogWarning", HP_COMPLETION_FUNCTION, "void hp::LogWarning(std::string_view message)", "Writes a warning."},
     {"LogError", HP_COMPLETION_FUNCTION, "void hp::LogError(std::string_view message)", "Writes an error."},
+    {"SetName", HP_COMPLETION_FUNCTION, "void SetName(std::string_view name) const", "Renames the entity."},
+    {"SetVisible", HP_COMPLETION_FUNCTION, "bool SetVisible(bool visible) const", "Shows or hides the entity's mesh."},
+    {"IsVisible", HP_COMPLETION_FUNCTION, "bool IsVisible() const", "Whether the entity's mesh is shown."},
+    {"GetBody", HP_COMPLETION_FUNCTION, "hp::Body GetBody() const", "The entity's physics body."},
+    {"GetController", HP_COMPLETION_FUNCTION, "std::optional<hp::CharacterController> GetController() const", "The entity's Character Controller, or nothing."},
+    {"GetAnimator", HP_COMPLETION_FUNCTION, "std::optional<hp::Animator> GetAnimator() const", "Animation control for an animated character, or nothing."},
+    {"GetCamera", HP_COMPLETION_FUNCTION, "std::optional<hp::Camera> GetCamera() const", "The entity's Camera component, or nothing."},
+    {"GetSocket", HP_COMPLETION_FUNCTION, "std::optional<hp::Socket> GetSocket(std::string_view name, bool worldSpace = true) const", "A socket of an animated character: position and rotation (radians)."},
+    {"Raycast", HP_COMPLETION_FUNCTION, "std::optional<hp::RaycastHit> Raycast(origin, direction, maxDistance, ...)", "hp::Physics::Raycast, or the script's own Raycast that passes through its entity."},
+    {"Instantiate", HP_COMPLETION_FUNCTION, "hp::Entity hp::Scene::Instantiate(std::string_view path, const hp::SpawnOptions& options = {})", "Spawns a prefab with an optional position, rotation (degrees) and Inspector overrides."},
+    {"Destroy", HP_COMPLETION_FUNCTION, "void hp::Scene::Destroy(hp::Entity entity)", "Removes the entity once this frame's scripts have run."},
+    {"Reload", HP_COMPLETION_FUNCTION, "bool hp::Scene::Reload()", "Restarts the current scene from its saved file."},
+    {"FindAllWithPrefix", HP_COMPLETION_FUNCTION, "std::vector<hp::Entity> hp::Scene::FindAllWithPrefix(std::string_view prefix)", "Every entity whose name starts with prefix."},
+    {"FindCameras", HP_COMPLETION_FUNCTION, "std::vector<hp::Entity> hp::Scene::FindCameras()", "Every entity with a Camera component."},
+    {"FindFirstCamera", HP_COMPLETION_FUNCTION, "hp::Entity hp::Scene::FindFirstCamera()", "The first camera entity."},
+    {"GetActiveCamera", HP_COMPLETION_FUNCTION, "hp::Entity hp::Scene::GetActiveCamera()", "The camera the player sees through."},
+    {"SetActiveCamera", HP_COMPLETION_FUNCTION, "void hp::Scene::SetActiveCamera(hp::Entity camera)", "Makes this the camera the player sees through."},
+    {"DeltaTime", HP_COMPLETION_FUNCTION, "float hp::Time::DeltaTime()", "Seconds since the last frame."},
+    {"Quit", HP_COMPLETION_FUNCTION, "void hp::Application::Quit()", "Closes the game. In the editor, it stops Play."},
+    {"IsKeyDown", HP_COMPLETION_FUNCTION, "bool hp::Input::IsKeyDown(std::string_view key)", "Raw key check by name, e.g. \"w\" or \"space\"."},
+    {"IsMouseButtonDown", HP_COMPLETION_FUNCTION, "bool hp::Input::IsMouseButtonDown(hp::MouseButton button)", "True while the button is held."},
+    {"GetMousePosition", HP_COMPLETION_FUNCTION, "hp::Vec2 hp::Input::GetMousePosition()", "Mouse position in the window, in pixels."},
+    {"GetMouseDelta", HP_COMPLETION_FUNCTION, "hp::Vec2 hp::Input::GetMouseDelta()", "Mouse movement since the last frame."},
+    {"GetScrollDelta", HP_COMPLETION_FUNCTION, "hp::Vec2 hp::Input::GetScrollDelta()", "Wheel movement since the last frame."},
+    {"IsGamepadConnected", HP_COMPLETION_FUNCTION, "bool hp::Input::IsGamepadConnected()", "Whether player one's gamepad is plugged in."},
+    {"SetCursorMode", HP_COMPLETION_FUNCTION, "void hp::Input::SetCursorMode(hp::CursorMode mode)", "Captured for mouse look, Normal for menus."},
+    {"GetCursorMode", HP_COMPLETION_FUNCTION, "hp::CursorMode hp::Input::GetCursorMode()", "The current cursor mode."},
+    {"IsAvailable", HP_COMPLETION_FUNCTION, "bool hp::Physics::IsAvailable() / hp::Audio::IsAvailable()", "Whether physics is running, or sound works on this machine."},
+    {"Exists", HP_COMPLETION_FUNCTION, "bool hp::Body::Exists() const", "Whether the entity has a physics body."},
+    {"GetLinearVelocity", HP_COMPLETION_FUNCTION, "hp::Vec3 hp::Body::GetLinearVelocity() const", "The body's velocity."},
+    {"SetLinearVelocity", HP_COMPLETION_FUNCTION, "bool hp::Body::SetLinearVelocity(hp::Vec3 velocity, bool activate = true) const", "Sets the body's velocity."},
+    {"SetAngularVelocity", HP_COMPLETION_FUNCTION, "bool hp::Body::SetAngularVelocity(hp::Vec3 velocity, bool activate = true) const", "Spins the body."},
+    {"Move", HP_COMPLETION_FUNCTION, "bool Move(...) const", "Body::Move(x, z, speed) for simple movement; CharacterController::Move(x, z) sets this step's walk direction."},
+    {"Jump", HP_COMPLETION_FUNCTION, "bool Jump(...) const", "Body::Jump(speed), or CharacterController::Jump() on the next physics step."},
+    {"IsGrounded", HP_COMPLETION_FUNCTION, "bool IsGrounded() const", "Whether the body or character is standing on something."},
+    {"SetCrouched", HP_COMPLETION_FUNCTION, "bool hp::CharacterController::SetCrouched(bool crouched) const", "Crouch or stand."},
+    {"IsCrouched", HP_COMPLETION_FUNCTION, "bool hp::CharacterController::IsCrouched() const", "Whether the character is crouched."},
+    {"IsStandBlocked", HP_COMPLETION_FUNCTION, "bool hp::CharacterController::IsStandBlocked() const", "True when there is no room to stand up."},
+    {"GetGroundState", HP_COMPLETION_FUNCTION, "std::string hp::CharacterController::GetGroundState() const", "How the character is standing on something."},
+    {"GetVelocity", HP_COMPLETION_FUNCTION, "hp::Vec3 hp::CharacterController::GetVelocity() const", "The character's velocity."},
+    {"GetGroundNormal", HP_COMPLETION_FUNCTION, "hp::Vec3 hp::CharacterController::GetGroundNormal() const", "The slope underfoot."},
+    {"GetGroundVelocity", HP_COMPLETION_FUNCTION, "hp::Vec3 hp::CharacterController::GetGroundVelocity() const", "How fast the ground is moving."},
+    {"SetSpeedMultiplier", HP_COMPLETION_FUNCTION, "bool hp::CharacterController::SetSpeedMultiplier(float multiplier) const", "Scales walk speed."},
+    {"GetSpeedMultiplier", HP_COMPLETION_FUNCTION, "float hp::CharacterController::GetSpeedMultiplier() const", "The walk speed scale."},
+    {"Teleport", HP_COMPLETION_FUNCTION, "bool hp::CharacterController::Teleport(hp::Vec3 position) const", "Moves the character instantly."},
+    {"SetFacingYaw", HP_COMPLETION_FUNCTION, "bool hp::CharacterController::SetFacingYaw(float radians) const", "Turns the character to face a direction."},
+    {"Play", HP_COMPLETION_FUNCTION, "Play(...)", "Animator::Play(clip) plays a clip from the start; Audio::Play(path, loop, volume) plays a sound."},
+    {"CrossFade", HP_COMPLETION_FUNCTION, "bool hp::Animator::CrossFade(std::string_view clip, float seconds) const", "Blends into a clip."},
+    {"Pause", HP_COMPLETION_FUNCTION, "Pause(...)", "Pauses an animation or a sound."},
+    {"Resume", HP_COMPLETION_FUNCTION, "Resume(...)", "Resumes an animation or a sound."},
+    {"Stop", HP_COMPLETION_FUNCTION, "Stop(...)", "Stops an animation or a sound."},
+    {"SetSpeed", HP_COMPLETION_FUNCTION, "bool hp::Animator::SetSpeed(float multiplier) const", "Playback speed; must be above 0."},
+    {"IsPlaying", HP_COMPLETION_FUNCTION, "IsPlaying(...)", "Whether an animation (or a given clip) or a sound is playing."},
+    {"GetCurrentAnimation", HP_COMPLETION_FUNCTION, "std::string hp::Animator::GetCurrentAnimation() const", "The clip that is playing."},
+    {"GetTime", HP_COMPLETION_FUNCTION, "float hp::Animator::GetTime() const", "Playback time in seconds."},
+    {"GetDuration", HP_COMPLETION_FUNCTION, "float hp::Animator::GetDuration() const", "Length of the current clip, or of a given clip."},
+    {"SetFov", HP_COMPLETION_FUNCTION, "void hp::Camera::SetFov(float degrees) const", "Field of view in degrees."},
+    {"SetVolume", HP_COMPLETION_FUNCTION, "bool hp::Audio::SetVolume(hp::Sound sound, float volume)", "Changes a sound's volume."},
+    {"StopAll", HP_COMPLETION_FUNCTION, "void hp::Audio::StopAll()", "Silences every sound."},
+    {"Body", HP_COMPLETION_TYPE, "hp::Body", "A physics body."},
+    {"CharacterController", HP_COMPLETION_TYPE, "hp::CharacterController", "A Character Controller."},
+    {"Animator", HP_COMPLETION_TYPE, "hp::Animator", "Clip playback on an animated character."},
+    {"Camera", HP_COMPLETION_TYPE, "hp::Camera", "A Camera component."},
+    {"Socket", HP_COMPLETION_TYPE, "hp::Socket", "position and rotation of a character socket."},
+    {"SpawnOptions", HP_COMPLETION_TYPE, "hp::SpawnOptions", "position, rotation (degrees) and vars for Scene::Instantiate."},
+    {"RaycastHit", HP_COMPLETION_TYPE, "hp::RaycastHit", "point, normal, distance and entity."},
+    {"RaycastOptions", HP_COMPLETION_TYPE, "hp::RaycastOptions", "layer, ignoreSensors and ignore for Physics::Raycast."},
+    {"Sound", HP_COMPLETION_TYPE, "hp::Sound", "A playing sound; 0 when it failed to start."},
+    {"Scene", HP_COMPLETION_TYPE, "hp::Scene", "Finding, spawning and destroying entities."},
+    {"Physics", HP_COMPLETION_TYPE, "hp::Physics", "Raycasts."},
+    {"Audio", HP_COMPLETION_TYPE, "hp::Audio", "Playing sounds."},
+    {"Input", HP_COMPLETION_TYPE, "hp::Input", "Actions, axes, keys, mouse and gamepad."},
+    {"Time", HP_COMPLETION_TYPE, "hp::Time", "Frame timing."},
+    {"ViewCamera", HP_COMPLETION_TYPE, "hp::ViewCamera", "The free script camera."},
     {"HP_FIELD", HP_COMPLETION_KEYWORD, "HP_FIELD(type, name, default...)",
      "Declares an Inspector field, e.g. HP_FIELD(float, speed, 5.0f) or HP_FIELD(hp::Vec3, offset, 0, 1, 0)."},
     {"HP_SCRIPT", HP_COMPLETION_KEYWORD, "HP_SCRIPT(ClassName)", "Makes the class this file's script."},

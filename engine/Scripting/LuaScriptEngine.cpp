@@ -724,24 +724,7 @@ void LuaScriptEngine::Update(Scene& scene, float deltaTime) {
         DestroyInstance(key, true);
     }
 
-    m_UpdatingScripts = false;
-    if (m_SceneReloadRequested) {
-        ClearDeferredSceneOps();
-    } else {
-        FlushDeferredSceneOps();
-    }
-
-    // Bind characters spawned this tick after Lua returns. Doing FBX load / GPU
-    // upload inside Scene.instantiate (Director onUpdate) can abort the spawn.
-    if (!m_ProjectRoot.empty()) {
-        try {
-            Hephaestus::CharacterRuntime::BindScene(scene, m_ProjectRoot, m_FrameRenderer);
-        } catch (const std::exception& ex) {
-            std::cerr << "[Lua] Character bind after spawn failed: " << ex.what() << "\n";
-        } catch (...) {
-            std::cerr << "[Lua] Character bind after spawn failed\n";
-        }
-    }
+    EndScriptPass(scene);
 #else
     (void)scene;
     (void)deltaTime;
@@ -1317,13 +1300,8 @@ void LuaScriptEngine::RegisterApplicationBindings() {
 
 int LuaScriptEngine::Lua_Application_quit(lua_State* L) {
 #if LUA_AVAILABLE
-    LuaScriptEngine* engine = GetInstance();
-    if (engine) {
-        if (engine->m_Window) {
-            glfwSetWindowShouldClose(engine->m_Window, GLFW_TRUE);
-        } else if (engine->m_QuitRequestCallback) {
-            engine->m_QuitRequestCallback();
-        }
+    if (LuaScriptEngine* engine = GetInstance()) {
+        engine->RequestQuit();
     }
     return 0;
 #else
@@ -2853,18 +2831,8 @@ int LuaScriptEngine::Lua_Transform_setScale(lua_State* L) {
 int LuaScriptEngine::Lua_Mesh_setVisible(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
-        lua_pushboolean(L, false);
-        return 1;
-    }
-    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
-    auto& registry = engine->m_Scene->GetRegistry();
-    if (!registry.all_of<MeshRendererComponent>(handle)) {
-        lua_pushboolean(L, false);
-        return 1;
-    }
-    registry.get<MeshRendererComponent>(handle).visible = lua_toboolean(L, 1) != 0;
-    lua_pushboolean(L, true);
+    lua_pushboolean(L, engine && engine->CurrentEntityValid() &&
+                           engine->SetMeshVisible(engine->m_CurrentEntityId, lua_toboolean(L, 1) != 0));
     return 1;
 #else
     (void)L;
@@ -2875,17 +2843,7 @@ int LuaScriptEngine::Lua_Mesh_setVisible(lua_State* L) {
 int LuaScriptEngine::Lua_Mesh_isVisible(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
-        lua_pushboolean(L, false);
-        return 1;
-    }
-    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
-    auto& registry = engine->m_Scene->GetRegistry();
-    if (!registry.all_of<MeshRendererComponent>(handle)) {
-        lua_pushboolean(L, false);
-        return 1;
-    }
-    lua_pushboolean(L, registry.get<MeshRendererComponent>(handle).visible);
+    lua_pushboolean(L, engine && engine->CurrentEntityValid() && engine->IsMeshVisible(engine->m_CurrentEntityId));
     return 1;
 #else
     (void)L;
@@ -2932,17 +2890,8 @@ int LuaScriptEngine::Lua_Entity_setName(lua_State* L) {
         return 0;
     }
     const char* name = luaL_checkstring(L, 1);
-    if (!name) {
-        return 0;
-    }
-    Entity entity = engine->MakeEntity(engine->m_CurrentEntityId);
-    if (!entity) {
-        return 0;
-    }
-    if (!entity.HasComponent<TagComponent>()) {
-        entity.AddComponent<TagComponent>(name);
-    } else {
-        entity.GetComponent<TagComponent>().tag = name;
+    if (name) {
+        engine->SetEntityName(engine->m_CurrentEntityId, name);
     }
     return 0;
 #else
@@ -3158,26 +3107,7 @@ int LuaScriptEngine::Lua_Input_setCursorMode(lua_State* L) {
         return 0;
     }
 
-    // Always store the request so the host picks it up on the next tick
-    // (covers calls made during onAwake before the first host input tick).
-    if (engine->m_InputSystem) {
-        engine->m_InputSystem->SetCursorModeRequest(newMode);
-    }
-
-    // GLFW runtime: apply immediately since there is no host tick to consume the request
-    if (engine->m_Window) {
-        int glfwMode = (newMode == 1) ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
-        glfwSetInputMode(engine->m_Window, GLFW_CURSOR, glfwMode);
-
-        if (newMode == 1 && glfwRawMouseMotionSupported()) {
-            glfwSetInputMode(engine->m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-        } else if (newMode == 0) {
-            glfwSetInputMode(engine->m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
-        }
-
-    }
-
-    engine->m_CurrentCursorMode = newMode;
+    engine->ApplyCursorMode(newMode);
     return 0;
 #else
     (void)L;
@@ -3748,6 +3678,180 @@ void LuaScriptEngine::ExecuteDestroy(uint32_t entityId) {
     }
 }
 
+void LuaScriptEngine::BeginScriptPass() {
+    m_UpdatingScripts = true;
+}
+
+void LuaScriptEngine::EndScriptPass(Scene& scene) {
+    m_UpdatingScripts = false;
+    if (m_SceneReloadRequested) {
+        ClearDeferredSceneOps();
+    } else {
+        FlushDeferredSceneOps();
+    }
+
+    // Bind characters spawned this tick after the scripts return. Doing FBX load / GPU
+    // upload inside Scene.instantiate (Director onUpdate) can abort the spawn.
+    if (!m_ProjectRoot.empty()) {
+        try {
+            Hephaestus::CharacterRuntime::BindScene(scene, m_ProjectRoot, m_FrameRenderer);
+        } catch (const std::exception& ex) {
+            std::cerr << "[Lua] Character bind after spawn failed: " << ex.what() << "\n";
+        } catch (...) {
+            std::cerr << "[Lua] Character bind after spawn failed\n";
+        }
+    }
+}
+
+void LuaScriptEngine::DestroyEntity(uint32_t entityId) {
+    if (m_UpdatingScripts) {
+        PendingDestroy pending;
+        pending.entityId = entityId;
+        m_PendingDestroys.push_back(pending);
+    } else {
+        ExecuteDestroy(entityId);
+    }
+}
+
+Entity LuaScriptEngine::SpawnPrefab(const PrefabSpawn& spawn) {
+    return ExecuteSpawn(spawn);
+}
+
+void LuaScriptEngine::RequestQuit() {
+    if (m_Window) {
+        glfwSetWindowShouldClose(m_Window, GLFW_TRUE);
+    } else if (m_QuitRequestCallback) {
+        m_QuitRequestCallback();
+    }
+}
+
+bool LuaScriptEngine::RequestSceneReload() {
+    if (!m_SceneReloadCallback) {
+        return false;
+    }
+    bool requested = false;
+    try {
+        requested = m_SceneReloadCallback();
+        if (requested) {
+            m_SceneReloadRequested = true;
+        } else {
+            LogBindingError(nullptr,
+                "Scene.reload rejected: current runtime scene is not reloadable or a reload is already pending");
+        }
+    } catch (const std::exception& exception) {
+        LogBindingError(nullptr, std::string("Scene.reload failed: ") + exception.what());
+    } catch (...) {
+        LogBindingError(nullptr, "Scene.reload failed");
+    }
+    return requested;
+}
+
+void LuaScriptEngine::ApplyCursorMode(int mode) {
+    // Always store the request so the host picks it up on the next tick
+    // (covers calls made during onAwake before the first host input tick).
+    if (m_InputSystem) {
+        m_InputSystem->SetCursorModeRequest(mode);
+    }
+    // GLFW runtime: apply immediately since there is no host tick to consume the request
+    if (m_Window) {
+        glfwSetInputMode(m_Window, GLFW_CURSOR, mode == 1 ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+        if (mode == 1 && glfwRawMouseMotionSupported()) {
+            glfwSetInputMode(m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+        } else if (mode == 0) {
+            glfwSetInputMode(m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+        }
+    }
+    m_CurrentCursorMode = mode;
+}
+
+bool LuaScriptEngine::SetEntityName(uint32_t entityId, const std::string& name) {
+    Entity entity = MakeEntity(entityId);
+    if (!entity) {
+        return false;
+    }
+    if (!entity.HasComponent<TagComponent>()) {
+        entity.AddComponent<TagComponent>(name);
+    } else {
+        entity.GetComponent<TagComponent>().tag = name;
+    }
+    return true;
+}
+
+bool LuaScriptEngine::SetMeshVisible(uint32_t entityId, bool visible) {
+    Entity entity = MakeEntity(entityId);
+    if (!entity || !entity.HasComponent<MeshRendererComponent>()) {
+        return false;
+    }
+    entity.GetComponent<MeshRendererComponent>().visible = visible;
+    return true;
+}
+
+bool LuaScriptEngine::IsMeshVisible(uint32_t entityId) const {
+    Entity entity = MakeEntity(entityId);
+    return entity && entity.HasComponent<MeshRendererComponent>() &&
+           entity.GetComponent<MeshRendererComponent>().visible;
+}
+
+Entity LuaScriptEngine::FindActiveCamera() const {
+    if (!m_Scene) {
+        return {};
+    }
+    auto cameraView = m_Scene->GetEntitiesWith<CameraComponent>();
+    for (auto entityHandle : cameraView) {
+        if (cameraView.get<CameraComponent>(entityHandle).isActive) {
+            return Entity(entityHandle, m_Scene);
+        }
+    }
+    for (auto entityHandle : cameraView) {
+        return Entity(entityHandle, m_Scene);
+    }
+    return {};
+}
+
+bool LuaScriptEngine::SetCameraActive(uint32_t entityId, bool active) {
+    Entity target = MakeEntity(entityId);
+    if (!m_Scene || !target || !target.HasComponent<CameraComponent>()) {
+        return false;
+    }
+    if (active) {
+        auto cameraView = m_Scene->GetEntitiesWith<CameraComponent>();
+        for (auto entityHandle : cameraView) {
+            cameraView.get<CameraComponent>(entityHandle).isActive = false;
+        }
+    }
+    target.GetComponent<CameraComponent>().isActive = active;
+    return true;
+}
+
+bool LuaScriptEngine::EvaluateSocket(uint32_t entityId, const std::string& socketName, bool sceneWorld,
+                                     Vec3& outPosition, Vec3& outRotation) {
+    Entity entity = MakeEntity(entityId);
+    if (!entity || !entity.HasComponent<CharacterComponent>()) {
+        return false;
+    }
+    CharacterComponent& character = entity.GetComponent<CharacterComponent>();
+    Hephaestus::CharacterSocket socket;
+    std::string error;
+    if (!Hephaestus::CharacterRuntime::FindSocket(character.characterPath, socketName, socket, error)) {
+        LogBindingErrorForEntity(entityId, error);
+        return false;
+    }
+    Mat4 model{};
+    if (!Hephaestus::EvaluateSocketWorld(character, socket, model, error)) {
+        LogBindingErrorForEntity(entityId, error);
+        return false;
+    }
+    Mat4 result = model;
+    if (sceneWorld && m_Scene) {
+        result = Mat4::Multiply(m_Scene->GetWorldTransform(entity), model);
+    }
+    TransformComponent decomposed;
+    decomposed.SetFromMatrix(result);
+    outPosition = decomposed.position;
+    outRotation = decomposed.rotation;
+    return true;
+}
+
 void LuaScriptEngine::FlushDeferredSceneOps() {
     // Destrovers first, then spawns (plan order).
     std::vector<PendingDestroy> destroys = std::move(m_PendingDestroys);
@@ -4246,20 +4350,12 @@ int LuaScriptEngine::Lua_Animator_IsPlaying(lua_State* L) {
         lua_pushboolean(L, false);
         return 1;
     }
-    const bool playing = character->player.playing && !character->player.paused;
     if (lua_gettop(L) < 2 || lua_isnoneornil(L, 2)) {
-        lua_pushboolean(L, playing);
+        lua_pushboolean(L, Hephaestus::CharacterAnimationSystem::IsPlaying(*character));
         return 1;
     }
     const char* clipId = lua_tostring(L, 2);
-    if (!clipId) {
-        lua_pushboolean(L, false);
-        return 1;
-    }
-    std::string error;
-    const Hephaestus::AnimationClip* clip = Hephaestus::FindClip(character->clips, clipId, error);
-    const std::string resolved = clip ? (clip->id.empty() ? clip->name : clip->id) : std::string();
-    lua_pushboolean(L, playing && !resolved.empty() && character->player.currentClip == resolved);
+    lua_pushboolean(L, clipId && Hephaestus::CharacterAnimationSystem::IsPlaying(*character, clipId));
     return 1;
 #else
     (void)L;
@@ -4303,21 +4399,12 @@ int LuaScriptEngine::Lua_Animator_GetDuration(lua_State* L) {
         lua_pushnumber(L, 0.0);
         return 1;
     }
-    std::string error;
-    const Hephaestus::AnimationClip* clip = nullptr;
     if (lua_gettop(L) >= 2 && !lua_isnoneornil(L, 2)) {
         const char* clipId = lua_tostring(L, 2);
-        if (clipId) {
-            clip = Hephaestus::FindClip(character->clips, clipId, error);
-        }
-    } else if (!character->player.currentClip.empty()) {
-        clip = Hephaestus::FindClip(character->clips, character->player.currentClip, error);
-    }
-    if (!clip) {
-        lua_pushnumber(L, 0.0);
+        lua_pushnumber(L, clipId ? Hephaestus::CharacterAnimationSystem::ClipDuration(*character, clipId) : 0.0f);
         return 1;
     }
-    lua_pushnumber(L, (std::max)(0.0f, Hephaestus::ClipRangeEnd(*clip) - Hephaestus::ClipRangeStart(*clip)));
+    lua_pushnumber(L, Hephaestus::CharacterAnimationSystem::ClipDuration(*character));
     return 1;
 #else
     (void)L;
@@ -4327,35 +4414,16 @@ int LuaScriptEngine::Lua_Animator_GetDuration(lua_State* L) {
 
 bool LuaScriptEngine::PushSocketTable(lua_State* L, uint32_t entityId, const char* socketName, bool sceneWorld) {
 #if LUA_AVAILABLE
-    Entity entity = MakeEntity(entityId);
-    if (!entity || !entity.HasComponent<CharacterComponent>() || !socketName) {
+    Vec3 position;
+    Vec3 rotation;
+    if (!socketName || !EvaluateSocket(entityId, socketName, sceneWorld, position, rotation)) {
         lua_pushnil(L);
         return false;
     }
-    CharacterComponent& character = entity.GetComponent<CharacterComponent>();
-    Hephaestus::CharacterSocket socket;
-    std::string error;
-    if (!Hephaestus::CharacterRuntime::FindSocket(character.characterPath, socketName, socket, error)) {
-        LogBindingErrorForEntity(entityId, error);
-        lua_pushnil(L);
-        return false;
-    }
-    Mat4 model{};
-    if (!Hephaestus::EvaluateSocketWorld(character, socket, model, error)) {
-        LogBindingErrorForEntity(entityId, error);
-        lua_pushnil(L);
-        return false;
-    }
-    Mat4 result = model;
-    if (sceneWorld && m_Scene) {
-        result = Mat4::Multiply(m_Scene->GetWorldTransform(entity), model);
-    }
-    TransformComponent decomposed;
-    decomposed.SetFromMatrix(result);
     lua_newtable(L);
-    PushVec3Table(L, decomposed.position);
+    PushVec3Table(L, position);
     lua_setfield(L, -2, "position");
-    PushVec3Table(L, decomposed.rotation);
+    PushVec3Table(L, rotation);
     lua_setfield(L, -2, "rotation");
     return true;
 #else
@@ -4934,35 +5002,13 @@ int LuaScriptEngine::Lua_CameraObj_IsActive(lua_State* L) {
 int LuaScriptEngine::Lua_CameraObj_SetActive(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->m_Scene) {
+    if (!engine) {
         return 0;
     }
-    
     LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusCamera"));
-    if (!pEntityId) {
-        return 0;
+    if (pEntityId) {
+        engine->SetCameraActive(*pEntityId, lua_toboolean(L, 2) != 0);
     }
-    
-    Entity entity = engine->MakeEntity(*pEntityId);
-    if (!entity || !entity.HasComponent<CameraComponent>()) {
-        return 0;
-    }
-    
-    bool active = lua_toboolean(L, 2) != 0;
-    
-    // If setting to active, deactivate all other cameras first
-    if (active) {
-        auto cameraView = engine->m_Scene->GetEntitiesWith<CameraComponent>();
-        for (auto otherHandle : cameraView) {
-            Entity other(otherHandle, engine->m_Scene);
-            if (other != entity && other.HasComponent<CameraComponent>()) {
-                other.GetComponent<CameraComponent>().isActive = false;
-            }
-        }
-    }
-    
-    auto& camera = entity.GetComponent<CameraComponent>();
-    camera.isActive = active;
     return 0;
 #else
     (void)L;
@@ -5028,34 +5074,14 @@ int LuaScriptEngine::Lua_Scene_FindCameras(lua_State* L) {
 int LuaScriptEngine::Lua_Scene_GetActiveCamera(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->m_Scene) {
+    const Entity camera = engine ? engine->FindActiveCamera() : Entity{};
+    if (!camera) {
         lua_pushnil(L);
         return 1;
     }
-    
-    auto cameraView = engine->m_Scene->GetEntitiesWith<CameraComponent>();
-    
-    // First pass: find camera with isActive=true
-    for (auto entityHandle : cameraView) {
-        Entity entity(entityHandle, engine->m_Scene);
-        auto& camera = entity.GetComponent<CameraComponent>();
-        if (camera.isActive) {
-            LuaEntityReference::Create(L, engine, static_cast<std::uint32_t>(entityHandle));
-            luaL_getmetatable(L, "HephaestusEntity");
-            lua_setmetatable(L, -2);
-            return 1;
-        }
-    }
-    
-    // Second pass: return first camera if none active
-    for (auto entityHandle : cameraView) {
-        LuaEntityReference::Create(L, engine, static_cast<std::uint32_t>(entityHandle));
-        luaL_getmetatable(L, "HephaestusEntity");
-        lua_setmetatable(L, -2);
-        return 1;
-    }
-    
-    lua_pushnil(L);
+    LuaEntityReference::Create(L, engine, static_cast<std::uint32_t>(static_cast<entt::entity>(camera)));
+    luaL_getmetatable(L, "HephaestusEntity");
+    lua_setmetatable(L, -2);
     return 1;
 #else
     (void)L;
@@ -5066,10 +5092,9 @@ int LuaScriptEngine::Lua_Scene_GetActiveCamera(lua_State* L) {
 int LuaScriptEngine::Lua_Scene_SetActiveCamera(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->m_Scene) {
+    if (!engine) {
         return 0;
     }
-    
     // Accept entity ID as number or userdata
     uint32_t targetEntityId = 0;
     if (lua_isnumber(L, 1)) {
@@ -5082,20 +5107,7 @@ int LuaScriptEngine::Lua_Scene_SetActiveCamera(lua_State* L) {
     } else {
         return 0;
     }
-    
-    Entity targetEntity = engine->MakeEntity(targetEntityId);
-    if (!targetEntity || !targetEntity.HasComponent<CameraComponent>()) {
-        return 0;
-    }
-    
-    // Deactivate all cameras, then activate the target
-    auto cameraView = engine->m_Scene->GetEntitiesWith<CameraComponent>();
-    for (auto entityHandle : cameraView) {
-        Entity entity(entityHandle, engine->m_Scene);
-        auto& camera = entity.GetComponent<CameraComponent>();
-        camera.isActive = (entityHandle == static_cast<entt::entity>(targetEntity));
-    }
-    
+    engine->SetCameraActive(targetEntityId, true);
     return 0;
 #else
     (void)L;
@@ -5257,13 +5269,7 @@ int LuaScriptEngine::Lua_Scene_Destroy(lua_State* L) {
         return 0;
     }
 
-    if (engine->m_UpdatingScripts) {
-        PendingDestroy pending;
-        pending.entityId = entityId;
-        engine->m_PendingDestroys.push_back(pending);
-    } else {
-        engine->ExecuteDestroy(entityId);
-    }
+    engine->DestroyEntity(entityId);
     return 0;
 #else
     (void)L;
@@ -6314,24 +6320,7 @@ int LuaScriptEngine::Lua_UI_setCursorMode(lua_State* L) {
         return 0;
     }
 
-    // Always store the request so the host picks it up on the next tick
-    // (covers calls made during onAwake before the first host input tick).
-    const int legacyMode = (mode == "ui") ? 0 : 1;
-    if (engine->m_InputSystem) {
-        engine->m_InputSystem->SetCursorModeRequest(legacyMode);
-    }
-
-    // GLFW runtime: apply immediately since there is no host tick to consume the request
-    if (engine->m_Window) {
-        int glfwMode = (legacyMode == 1) ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
-        glfwSetInputMode(engine->m_Window, GLFW_CURSOR, glfwMode);
-        if (legacyMode == 1 && glfwRawMouseMotionSupported()) {
-            glfwSetInputMode(engine->m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-        } else if (legacyMode == 0) {
-            glfwSetInputMode(engine->m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
-        }
-    }
-    engine->m_CurrentCursorMode = legacyMode;
+    engine->ApplyCursorMode(mode == "ui" ? 0 : 1);
 
     lua_pushboolean(L, true);
     return 1;
@@ -7824,26 +7813,7 @@ int LuaScriptEngine::Lua_Destroy_ui(lua_State* L) {
 int LuaScriptEngine::Lua_Scene_Reload(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
-    if (!engine || !engine->m_SceneReloadCallback) {
-        lua_pushboolean(L, false);
-        return 1;
-    }
-
-    bool requested = false;
-    try {
-        requested = engine->m_SceneReloadCallback();
-        if (requested) {
-            engine->m_SceneReloadRequested = true;
-        } else {
-            engine->LogBindingError(nullptr,
-                "Scene.reload rejected: current runtime scene is not reloadable or a reload is already pending");
-        }
-    } catch (const std::exception& exception) {
-        engine->LogBindingError(nullptr, std::string("Scene.reload failed: ") + exception.what());
-    } catch (...) {
-        engine->LogBindingError(nullptr, "Scene.reload failed");
-    }
-    lua_pushboolean(L, requested);
+    lua_pushboolean(L, engine && engine->RequestSceneReload());
     return 1;
 #else
     (void)L;

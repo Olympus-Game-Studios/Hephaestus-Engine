@@ -34,6 +34,11 @@ public:
     static void Stop(CharacterComponent& character);
     static bool SetSpeed(CharacterComponent& character, float speed);
 
+    /// Playing and not paused; with a clip id, only while that clip plays.
+    static bool IsPlaying(const CharacterComponent& character, const char* clipId = nullptr);
+    /// Trimmed length of the clip, or of the current clip when clipId is null; 0 when unknown.
+    static float ClipDuration(const CharacterComponent& character, const char* clipId = nullptr);
+
     /// Sample `clipId` at absolute clip time (clamped to authored trim) and rebuild pose/palette.
     static bool SampleAtTime(CharacterComponent& character,
                              const std::string& clipId,

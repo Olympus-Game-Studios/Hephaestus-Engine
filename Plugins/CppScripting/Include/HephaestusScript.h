@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <exception>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -12,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-#define HP_CPP_SCRIPT_SDK_VERSION 1u
+#define HP_CPP_SCRIPT_SDK_VERSION 2u
 #define HP_CPP_SCRIPT_EXPORT_NAME "HP_GetCppScript"
 
 extern "C" {
@@ -133,6 +134,8 @@ inline constexpr float kDegreesToRadians = 3.14159265358979323846f / 180.0f;
 inline Vec3 FromHP(HPVec3 v) { return {v.x, v.y, v.z}; }
 inline HPVec3 ToHP(Vec3 v) { return {v.x, v.y, v.z}; }
 
+inline Vec2 FromHP(HPVec2 v) { return {v.x, v.y}; }
+
 inline std::string ReadString(size_t (*get)(void*, HPEntityId, char*, size_t), HPEntityId entity) {
     const size_t size = get(Host().host, entity, nullptr, 0);
     if (size == 0) {
@@ -142,6 +145,24 @@ inline std::string ReadString(size_t (*get)(void*, HPEntityId, char*, size_t), H
     get(Host().host, entity, text.data(), text.size());
     text.resize(size - 1);
     return text;
+}
+
+inline std::vector<HPEntityId> ReadEntities(uint32_t (*get)(void*, const char*, HPEntityId*, uint32_t),
+                                            const char* filter) {
+    std::vector<HPEntityId> ids(get(Host().host, filter, nullptr, 0));
+    if (!ids.empty()) {
+        ids.resize(get(Host().host, filter, ids.data(), static_cast<uint32_t>(ids.size())));
+    }
+    return ids;
+}
+
+inline Vec3 ReadVec3(int32_t (*get)(void*, HPEntityId, HPVec3*), HPEntityId entity, bool* ok = nullptr) {
+    HPVec3 out{};
+    const bool read = get(Host().host, entity, &out) != 0;
+    if (ok) {
+        *ok = read;
+    }
+    return FromHP(out);
 }
 
 } // namespace detail
@@ -156,6 +177,138 @@ inline void LogError(std::string_view message) {
     detail::Host().log(detail::Host().host, HP_LOG_ERROR, std::string(message).c_str());
 }
 
+/// The physics body on an entity (Lua's Physics table). Rotations are radians.
+class Body {
+public:
+    explicit Body(HPEntityId id) : m_Id(id) {}
+    bool Exists() const { return detail::Host().hasBody(detail::Host().host, m_Id) != 0; }
+    Vec3 GetLinearVelocity() const { return detail::ReadVec3(detail::Host().getLinearVelocity, m_Id); }
+    bool SetLinearVelocity(Vec3 velocity, bool activate = true) const {
+        return detail::Host().setLinearVelocity(detail::Host().host, m_Id, detail::ToHP(velocity), activate) != 0;
+    }
+    bool SetAngularVelocity(Vec3 velocity, bool activate = true) const {
+        return detail::Host().setAngularVelocity(detail::Host().host, m_Id, detail::ToHP(velocity), activate) != 0;
+    }
+    bool SetRotation(Vec3 radians, bool activate = true) const {
+        return detail::Host().setBodyRotation(detail::Host().host, m_Id, detail::ToHP(radians), activate) != 0;
+    }
+    /// Simple movement; uses the Character Controller when the entity has one.
+    bool Move(float x, float z, float speed) const {
+        return detail::Host().physicsMove(detail::Host().host, m_Id, x, z, speed) != 0;
+    }
+    bool Jump(float speed) const { return detail::Host().physicsJump(detail::Host().host, m_Id, speed) != 0; }
+    bool IsGrounded() const { return detail::Host().physicsIsGrounded(detail::Host().host, m_Id) != 0; }
+
+private:
+    HPEntityId m_Id;
+};
+
+/// The Character Controller on an entity (Lua's Character table).
+class CharacterController {
+public:
+    explicit CharacterController(HPEntityId id) : m_Id(id) {}
+    /// The direction to walk this step, in world space.
+    bool Move(float worldX, float worldZ) const {
+        return detail::Host().characterMove(detail::Host().host, m_Id, worldX, worldZ) != 0;
+    }
+    bool Jump() const { return detail::Host().characterJump(detail::Host().host, m_Id) != 0; }
+    bool SetCrouched(bool crouched) const {
+        return detail::Host().characterSetCrouched(detail::Host().host, m_Id, crouched) != 0;
+    }
+    bool IsCrouched() const { return detail::Host().characterIsCrouched(detail::Host().host, m_Id) != 0; }
+    bool IsStandBlocked() const { return detail::Host().characterIsStandBlocked(detail::Host().host, m_Id) != 0; }
+    bool IsGrounded() const { return detail::Host().characterIsGrounded(detail::Host().host, m_Id) != 0; }
+    std::string GetGroundState() const {
+        return detail::ReadString(detail::Host().characterGetGroundState, m_Id);
+    }
+    Vec3 GetVelocity() const { return detail::ReadVec3(detail::Host().characterGetVelocity, m_Id); }
+    Vec3 GetGroundNormal() const { return detail::ReadVec3(detail::Host().characterGetGroundNormal, m_Id); }
+    Vec3 GetGroundVelocity() const { return detail::ReadVec3(detail::Host().characterGetGroundVelocity, m_Id); }
+    bool SetSpeedMultiplier(float multiplier) const {
+        return detail::Host().characterSetSpeedMultiplier(detail::Host().host, m_Id, multiplier) != 0;
+    }
+    float GetSpeedMultiplier() const { return detail::Host().characterGetSpeedMultiplier(detail::Host().host, m_Id); }
+    bool Teleport(Vec3 position) const {
+        return detail::Host().characterTeleport(detail::Host().host, m_Id, detail::ToHP(position)) != 0;
+    }
+    bool SetFacingYaw(float radians) const {
+        return detail::Host().characterSetFacingYaw(detail::Host().host, m_Id, radians) != 0;
+    }
+
+private:
+    HPEntityId m_Id;
+};
+
+/// Clip playback on an animated character. Clips are named by their id in the Character Editor.
+class Animator {
+public:
+    explicit Animator(HPEntityId id) : m_Id(id) {}
+    bool Play(std::string_view clip) const {
+        return detail::Host().animationPlay(detail::Host().host, m_Id, std::string(clip).c_str()) != 0;
+    }
+    bool CrossFade(std::string_view clip, float seconds) const {
+        return detail::Host().animationCrossFade(detail::Host().host, m_Id, std::string(clip).c_str(), seconds) != 0;
+    }
+    void Pause() const { detail::Host().animationPause(detail::Host().host, m_Id); }
+    void Resume() const { detail::Host().animationResume(detail::Host().host, m_Id); }
+    void Stop() const { detail::Host().animationStop(detail::Host().host, m_Id); }
+    /// Must be above 0; use Pause() to freeze.
+    bool SetSpeed(float multiplier) const {
+        return detail::Host().animationSetSpeed(detail::Host().host, m_Id, multiplier) != 0;
+    }
+    bool IsPlaying() const { return detail::Host().animationIsPlaying(detail::Host().host, m_Id, nullptr) != 0; }
+    bool IsPlaying(std::string_view clip) const {
+        return detail::Host().animationIsPlaying(detail::Host().host, m_Id, std::string(clip).c_str()) != 0;
+    }
+    std::string GetCurrentAnimation() const { return detail::ReadString(detail::Host().animationGetCurrent, m_Id); }
+    float GetTime() const { return detail::Host().animationGetTime(detail::Host().host, m_Id); }
+    float GetDuration() const { return detail::Host().animationGetDuration(detail::Host().host, m_Id, nullptr); }
+    float GetDuration(std::string_view clip) const {
+        return detail::Host().animationGetDuration(detail::Host().host, m_Id, std::string(clip).c_str());
+    }
+
+private:
+    HPEntityId m_Id;
+};
+
+/// A Camera component. Field of view in degrees.
+class Camera {
+public:
+    explicit Camera(HPEntityId id) : m_Id(id) {}
+    bool IsActive() const { return detail::Host().isCameraActive(detail::Host().host, m_Id) != 0; }
+    /// Making a camera active makes every other camera inactive.
+    void SetActive(bool active) const { detail::Host().setCameraActive(detail::Host().host, m_Id, active); }
+    float GetFov() const { return Lens().fieldOfView; }
+    void SetFov(float degrees) const { Edit([&](HPCameraLens& l) { l.fieldOfView = degrees; }); }
+    float GetNear() const { return Lens().nearPlane; }
+    void SetNear(float distance) const { Edit([&](HPCameraLens& l) { l.nearPlane = distance; }); }
+    float GetFar() const { return Lens().farPlane; }
+    void SetFar(float distance) const { Edit([&](HPCameraLens& l) { l.farPlane = distance; }); }
+
+private:
+    HPCameraLens Lens() const {
+        HPCameraLens lens{};
+        detail::Host().getCameraLens(detail::Host().host, m_Id, &lens);
+        return lens;
+    }
+    template <class F>
+    void Edit(F&& change) const {
+        HPCameraLens lens{};
+        if (detail::Host().getCameraLens(detail::Host().host, m_Id, &lens)) {
+            change(lens);
+            detail::Host().setCameraLens(detail::Host().host, m_Id, &lens);
+        }
+    }
+
+    HPEntityId m_Id;
+};
+
+/// A socket on an animated character. Rotation is Euler radians.
+struct Socket {
+    Vec3 position;
+    Vec3 rotation;
+};
+
 /// A scene entity. Copy it freely; check IsValid() before using one you kept.
 class Entity {
 public:
@@ -168,6 +321,9 @@ public:
 
     bool IsValid() const { return m_Id != 0 && detail::Host().isEntityValid(detail::Host().host, m_Id); }
     std::string GetName() const { return detail::ReadString(detail::Host().getEntityName, m_Id); }
+    void SetName(std::string_view name) const {
+        detail::Host().setEntityName(detail::Host().host, m_Id, std::string(name).c_str());
+    }
 
     Vec3 GetPosition() const { return Read(detail::Host().getPosition); }
     void SetPosition(Vec3 value) const { detail::Host().setPosition(detail::Host().host, m_Id, detail::ToHP(value)); }
@@ -183,6 +339,35 @@ public:
     Vec3 GetScale() const { return Read(detail::Host().getScale); }
     void SetScale(Vec3 value) const { detail::Host().setScale(detail::Host().host, m_Id, detail::ToHP(value)); }
 
+    /// Show or hide the entity's mesh (Lua's Mesh table).
+    bool SetVisible(bool visible) const { return detail::Host().setMeshVisible(detail::Host().host, m_Id, visible) != 0; }
+    bool IsVisible() const { return detail::Host().isMeshVisible(detail::Host().host, m_Id) != 0; }
+
+    /// The entity's physics body. Body::Exists() says whether it has one.
+    Body GetBody() const { return Body(m_Id); }
+    /// The entity's Character Controller, or nothing.
+    std::optional<CharacterController> GetController() const {
+        return Has(HP_COMPONENT_CHARACTER_CONTROLLER) ? std::optional(CharacterController(m_Id)) : std::nullopt;
+    }
+    /// Animation control for an animated character, or nothing.
+    std::optional<Animator> GetAnimator() const {
+        return Has(HP_COMPONENT_CHARACTER) ? std::optional(Animator(m_Id)) : std::nullopt;
+    }
+    /// The entity's Camera component, or nothing.
+    std::optional<Camera> GetCamera() const {
+        return Has(HP_COMPONENT_CAMERA) ? std::optional(Camera(m_Id)) : std::nullopt;
+    }
+    /// A socket of an animated character, in world space or character space.
+    std::optional<Socket> GetSocket(std::string_view name, bool worldSpace = true) const {
+        HPVec3 position{};
+        HPVec3 rotation{};
+        if (!detail::Host().getSocket(detail::Host().host, m_Id, std::string(name).c_str(), worldSpace, &position,
+                                      &rotation)) {
+            return std::nullopt;
+        }
+        return Socket{detail::FromHP(position), detail::FromHP(rotation)};
+    }
+
     /// Runs a function by name in this entity's script, whatever its language.
     /// Returns whether a script handled it.
     template <class... A>
@@ -197,6 +382,8 @@ public:
     }
 
 private:
+    bool Has(uint32_t kind) const { return detail::Host().hasComponent(detail::Host().host, m_Id, kind) != 0; }
+
     Vec3 Read(int32_t (*get)(void*, HPEntityId, HPVec3*)) const {
         HPVec3 out{};
         get(detail::Host().host, m_Id, &out);
@@ -206,13 +393,100 @@ private:
     HPEntityId m_Id = 0;
 };
 
+namespace detail {
+inline std::vector<Entity> ToEntities(const std::vector<HPEntityId>& ids) {
+    std::vector<Entity> entities;
+    entities.reserve(ids.size());
+    for (HPEntityId id : ids) {
+        entities.emplace_back(id);
+    }
+    return entities;
+}
+} // namespace detail
+
+/// Options for Scene::Instantiate. Rotation is in degrees; vars override the
+/// prefab scripts' Inspector values.
+struct SpawnOptions {
+    std::optional<Vec3> position;
+    std::optional<Vec3> rotation;
+    std::vector<std::pair<std::string, Value>> vars;
+};
+
 namespace Scene {
 inline Entity Find(std::string_view name) {
     return Entity(detail::Host().findEntity(detail::Host().host, std::string(name).c_str()));
 }
+/// Every entity whose name starts with prefix.
+inline std::vector<Entity> FindAllWithPrefix(std::string_view prefix) {
+    return detail::ToEntities(detail::ReadEntities(detail::Host().findEntitiesWithPrefix, std::string(prefix).c_str()));
+}
+/// Spawns a prefab. Returns an empty entity when it fails.
+inline Entity Instantiate(std::string_view path, const SpawnOptions& options = {}) {
+    std::vector<HPNamedValue> vars;
+    vars.reserve(options.vars.size());
+    for (const auto& [name, value] : options.vars) {
+        vars.push_back(HPNamedValue{name.c_str(), value.Raw()});
+    }
+    const HPVec3 position = detail::ToHP(options.position.value_or(Vec3{}));
+    const HPVec3 rotation = detail::ToHP(options.rotation.value_or(Vec3{}));
+    return Entity(detail::Host().instantiatePrefab(detail::Host().host, std::string(path).c_str(),
+                                                   options.position ? &position : nullptr,
+                                                   options.rotation ? &rotation : nullptr, vars.data(),
+                                                   static_cast<uint32_t>(vars.size())));
+}
+/// Removes the entity (a whole prefab instance) once this frame's scripts have run.
+inline void Destroy(Entity entity) { detail::Host().destroyEntity(detail::Host().host, entity.Id()); }
+/// Restarts the current scene from its saved file at a safe point after this frame.
+inline bool Reload() { return detail::Host().reloadScene(detail::Host().host) != 0; }
+inline std::vector<Entity> FindCameras() {
+    std::vector<HPEntityId> ids(detail::Host().findCameras(detail::Host().host, nullptr, 0));
+    if (!ids.empty()) {
+        ids.resize(detail::Host().findCameras(detail::Host().host, ids.data(), static_cast<uint32_t>(ids.size())));
+    }
+    return detail::ToEntities(ids);
+}
+inline Entity FindFirstCamera() {
+    HPEntityId first = 0;
+    detail::Host().findCameras(detail::Host().host, &first, 1);
+    return Entity(first);
+}
+/// The camera the player sees through: the active one, else the first.
+inline Entity GetActiveCamera() { return Entity(detail::Host().getActiveCamera(detail::Host().host)); }
+inline void SetActiveCamera(Entity camera) { detail::Host().setCameraActive(detail::Host().host, camera.Id(), 1); }
 } // namespace Scene
 
+namespace Time {
+/// Seconds since the last frame, the same as OnUpdate's deltaSeconds.
+inline float DeltaTime() { return detail::Host().getDeltaTime(detail::Host().host); }
+} // namespace Time
+
+namespace Application {
+/// Closes the game. In the editor, it stops Play.
+inline void Quit() { detail::Host().quit(detail::Host().host); }
+} // namespace Application
+
+enum class MouseButton : int32_t { Left = 0, Right = 1, Middle = 2 };
+enum class CursorMode : uint32_t { Normal = HP_CURSOR_NORMAL, Captured = HP_CURSOR_CAPTURED };
+
 namespace Input {
+/// Raw key check by name ("w", "space", "left_shift"). Prefer actions so players can use a pad.
+inline bool IsKeyDown(std::string_view key) {
+    return detail::Host().isKeyDown(detail::Host().host, std::string(key).c_str()) != 0;
+}
+inline bool IsMouseButtonDown(MouseButton button) {
+    return detail::Host().isMouseButtonDown(detail::Host().host, static_cast<int32_t>(button)) != 0;
+}
+/// Mouse position in the window, in pixels.
+inline Vec2 GetMousePosition() { return detail::FromHP(detail::Host().getMousePosition(detail::Host().host)); }
+/// Mouse movement since the last frame, in pixels.
+inline Vec2 GetMouseDelta() { return detail::FromHP(detail::Host().getMouseDelta(detail::Host().host)); }
+inline Vec2 GetScrollDelta() { return detail::FromHP(detail::Host().getScrollDelta(detail::Host().host)); }
+inline bool IsGamepadConnected() { return detail::Host().isGamepadConnected(detail::Host().host) != 0; }
+/// Captured hides and locks the mouse for mouse look; Normal frees it for menus.
+inline void SetCursorMode(CursorMode mode) {
+    detail::Host().setCursorMode(detail::Host().host, static_cast<uint32_t>(mode));
+}
+inline CursorMode GetCursorMode() { return static_cast<CursorMode>(detail::Host().getCursorMode(detail::Host().host)); }
 inline bool IsActionDown(std::string_view action) {
     return detail::Host().isActionDown(detail::Host().host, std::string(action).c_str()) != 0;
 }
@@ -226,6 +500,70 @@ inline float GetAxis(std::string_view axis) {
     return detail::Host().getAxis(detail::Host().host, std::string(axis).c_str());
 }
 } // namespace Input
+
+/// The free script camera (Lua's Camera table), separate from Camera components.
+/// Call SetActive(true) first. Rotation is pitch, yaw and roll in radians.
+namespace ViewCamera {
+inline void SetActive(bool active) { detail::Host().viewCameraSetActive(detail::Host().host, active); }
+inline bool IsActive() { return detail::Host().viewCameraIsActive(detail::Host().host) != 0; }
+inline void SetPosition(Vec3 position) { detail::Host().viewCameraSetPosition(detail::Host().host, detail::ToHP(position)); }
+inline Vec3 GetPosition() { return detail::FromHP(detail::Host().viewCameraGetPosition(detail::Host().host)); }
+inline void SetRotation(Vec3 radians) { detail::Host().viewCameraSetRotation(detail::Host().host, detail::ToHP(radians)); }
+inline Vec3 GetRotation() { return detail::FromHP(detail::Host().viewCameraGetRotation(detail::Host().host)); }
+inline void Translate(Vec3 delta) { detail::Host().viewCameraTranslate(detail::Host().host, detail::ToHP(delta)); }
+} // namespace ViewCamera
+
+struct RaycastHit {
+    Vec3 point;
+    Vec3 normal;
+    float distance = 0.0f;
+    Entity entity; ///< Empty when the hit has no entity.
+};
+
+struct RaycastOptions {
+    std::string layer; ///< A layer name from the collision matrix; empty for every layer.
+    bool ignoreSensors = false;
+    Entity ignore;     ///< An entity the ray passes through, usually the caster.
+};
+
+namespace Physics {
+inline bool IsAvailable() { return detail::Host().isPhysicsAvailable(detail::Host().host) != 0; }
+/// Casts a ray. Returns nothing when it hits nothing. An unknown layer is logged as an error.
+inline std::optional<RaycastHit> Raycast(Vec3 origin, Vec3 direction, float maxDistance,
+                                         const RaycastOptions& options = {}) {
+    HPRaycastHit hit{};
+    char error[512] = {};
+    const bool found = detail::Host().raycast(detail::Host().host, options.ignore.Id(), detail::ToHP(origin),
+                                              detail::ToHP(direction), maxDistance, options.layer.c_str(),
+                                              options.ignoreSensors, &hit, error, sizeof(error)) != 0;
+    if (error[0]) {
+        LogError(std::string("Physics::Raycast: ") + error);
+    }
+    if (!found) {
+        return std::nullopt;
+    }
+    return RaycastHit{detail::FromHP(hit.point), detail::FromHP(hit.normal), hit.distance, Entity(hit.entity)};
+}
+} // namespace Physics
+
+/// A playing sound. 0 means it failed to start.
+using Sound = uint32_t;
+
+namespace Audio {
+inline bool IsAvailable() { return detail::Host().isAudioAvailable(detail::Host().host) != 0; }
+/// Plays a .wav or .mp3; volume is 0 to 1.
+inline Sound Play(std::string_view path, bool loop = false, float volume = 1.0f) {
+    return detail::Host().audioPlay(detail::Host().host, std::string(path).c_str(), loop, volume);
+}
+inline bool Stop(Sound sound) { return detail::Host().audioStop(detail::Host().host, sound) != 0; }
+inline bool Pause(Sound sound) { return detail::Host().audioPause(detail::Host().host, sound) != 0; }
+inline bool Resume(Sound sound) { return detail::Host().audioResume(detail::Host().host, sound) != 0; }
+inline bool SetVolume(Sound sound, float volume) {
+    return detail::Host().audioSetVolume(detail::Host().host, sound, volume) != 0;
+}
+inline bool IsPlaying(Sound sound) { return detail::Host().audioIsPlaying(detail::Host().host, sound) != 0; }
+inline void StopAll() { detail::Host().audioStopAll(detail::Host().host); }
+} // namespace Audio
 
 /// Contact details for collision and trigger callbacks.
 struct Contact {
@@ -267,6 +605,12 @@ public:
 
     /// The entity this script is attached to.
     Entity GetEntity() const { return m_Entity; }
+
+    /// Physics::Raycast that passes through this script's entity, like Lua's Physics.raycast.
+    std::optional<RaycastHit> Raycast(Vec3 origin, Vec3 direction, float maxDistance,
+                                      std::string_view layer = {}) const {
+        return Physics::Raycast(origin, direction, maxDistance, RaycastOptions{std::string(layer), false, m_Entity});
+    }
     const std::string& GetScriptPath() const { return m_ScriptPath; }
 
 protected:

@@ -125,14 +125,17 @@ A script that fails to load is reported once in the Output log and retried when 
 
 ## Engine services
 
-`createRuntime` receives an `HPScriptHostAPI` table: logging, finding entities, entity names, transform get/set (radians for rotation), named input actions and axes, `callEntityFunction` and `getProjectRoot` (the project folder in the editor, the game's root when packaged). `callEntityFunction` reaches the script on any entity, Lua included, and Lua's `entity:Call(name, ...)` reaches plugin scripts, so languages can be mixed in one game. Values crossing languages are nil, bool, number, string, and 2–4 component vectors.
+`createRuntime` receives an `HPScriptHostAPI` table. The first release had logging, finding entities, entity names, transform get/set (radians for rotation), named input actions and axes and `callEntityFunction`. The table now also has `getProjectRoot` (the project folder in the editor, the game's root when packaged) and a member for every Lua engine function: time and quit, entity names and components, prefab spawning (`instantiatePrefab`, with Inspector overrides), deferred `destroyEntity`, `reloadScene`, mesh visibility, raw keys, mouse, gamepad and cursor mode, the script view camera, camera components and lenses, physics bodies and `raycast`, character controllers, animation and sockets, and audio. Each is commented in `ScriptLanguageAPI.h` with how it differs from Lua, if at all. The Lua and plugin paths share one implementation for anything with logic in it (spawning, deferred destroy, active cameras, sockets, cursor mode), so they behave the same.
+
+Members take the entity they act on, where Lua's global tables act on the calling script's entity. Functions that return a list (`findEntitiesWithPrefix`, `findCameras`) write up to `capacity` ids and return how many exist; functions that return a string use the `getEntityName` buffer convention. Destroys requested during `update` happen after every plugin script's update, as Lua's do after `onUpdate`. `callEntityFunction` reaches the script on any entity, Lua included, and Lua's `entity:Call(name, ...)` reaches plugin scripts, so languages can be mixed in one game. Values crossing languages are nil, bool, number, string, and 2–4 component vectors.
 
 New services are only appended to the table. Check `structSize` before using a member newer than the version you built against.
 
 ## Not covered yet
 
-- Character controller scripts (`CharacterComponent`) are still Lua only.
-- `onAnimationFinished` and the wider Lua API (physics queries, audio, UI, scene spawning, camera) are not in the host table yet.
+- Character controller scripts (`CharacterComponent`) are still Lua only, and so is `CallController`.
+- `onAnimationFinished`, `onEnable` and `onDisable` have no callbacks yet; disabling a component destroys a plugin script.
+- Game UI (`display.ui`, `destroy.ui` and `UI.*`) is not in the host table yet.
 - Languages stay registered until the editor restarts, even if their plugin is disabled.
 
 `engine/Tests/ScriptLanguageTestPlugin.c` is a complete minimal language written in C, used by `ScriptLanguagePluginTests` and `PackageLayoutTests`. `Plugins/CppScripting` is a full first-party language: it compiles each `.cpp` script into a DLL with the user's Visual Studio and implements every optional callback.
