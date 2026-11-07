@@ -12,6 +12,12 @@
 #include "Scripting/LuaScriptEngine.h"
 #include "Scripting/PluginScriptHost.h"
 #include "Scripting/ScriptLanguageRegistry.h"
+#include "UI/HephaestusUI/UIButton.h"
+#include "UI/HephaestusUI/UICanvas.h"
+#include "UI/HephaestusUI/UIContext.h"
+#include "UI/HephaestusUI/UIRenderer.h"
+#include "UI/HephaestusUI/UIScreen.h"
+#include "UI/HephaestusUI/UISystem.h"
 
 #include <algorithm>
 #include <chrono>
@@ -19,6 +25,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -213,6 +220,65 @@ public:
 };
 
 HP_SCRIPT(Probe)
+)cpp";
+
+const char* kHud = R"cpp(#include "HephaestusScript.h"
+#include <string>
+
+static void Report(const std::string& key, bool value) { hp::Log("hud:" + key + "=" + (value ? "1" : "0")); }
+
+class Hud : public hp::Script {
+public:
+    HP_FIELD(std::string, layout, "");
+
+    void OnAwake() override {
+        Report("available", hp::UI::IsAvailable());
+        hp::Screen screen = hp::UI::CreateScreen("Hud");
+        hp::Widget panel = screen.GetRoot().AddPanel();
+        Report("panel", static_cast<bool>(panel));
+        Report("background", panel.SetBackgroundColor({1, 0, 0, 1}));
+        Report("anchor", panel.SetAnchor(hp::UIAnchor::TopCenter));
+        Report("padding", panel.SetPadding(4, 8, 4, 8));
+        hp::Widget button = panel.AddButton("Play");
+        Report("click", SetOnClick(button, "OnPlay"));
+        Report("hover", SetOnHover(button, "OnHoverPlay"));
+        Report("buttonStyle", button.SetButtonStyle(hp::ButtonState::Hovered,
+                                                    hp::UIStyle().Set("backgroundColor", hp::Color{0, 1, 0, 1})));
+        hp::Widget text = panel.AddText("Score");
+        Report("text", text.SetText("Score: 10") && text.SetFontSize(24) && text.SetTextShadow(true, {0, 0, 0, 1}));
+        Report("wrongKind", !text.SetGridColumns(3));
+        Report("textClick", !SetOnClick(text, "OnPlay"));
+        Report("theme", hp::UI::RegisterThemeStyle("Danger", hp::UIStyle().Set("backgroundColor", hp::Color{1, 0, 0, 1})
+                                                                        .Set("padding", 6)) &&
+                        panel.ApplyThemeStyle("Danger"));
+        Report("missingTheme", !panel.ApplyThemeStyle("Nope"));
+        hp::Scene::Find("LuaTarget").Call("remember", static_cast<double>(text.Handle()));
+
+        hp::Screen shown = hp::UI::Display(layout);
+        Report("displayed", static_cast<bool>(shown));
+        Report("widget", shown.GetWidget("Title").SetText("Hello"));
+        Report("missingWidget", !shown.GetWidget("Nope"));
+        std::string error;
+        Report("missingFile", !hp::UI::Display("assets/ui/Nope.hui", &error) && !error.empty());
+        Report("cursor", hp::UI::SetCursorMode(hp::CursorMode::Normal) &&
+                         hp::UI::GetCursorMode() == hp::CursorMode::Normal);
+        Report("destroyCurrent", hp::UI::DestroyCurrent());
+    }
+
+    bool OnCall(std::string_view function, hp::Args args) override {
+        if (function == "OnPlay") {
+            Report("clicked", true);
+            return true;
+        }
+        if (function == "OnHoverPlay") {
+            Report("hovered", !args.empty() && args[0].AsBool());
+            return true;
+        }
+        return false;
+    }
+};
+
+HP_SCRIPT(Hud)
 )cpp";
 
 } // namespace
@@ -485,6 +551,79 @@ end
 
         host.OnSimulationStopped();
         lua.OnSimulationStopped();
+        lua.Shutdown();
+    }
+
+    {
+        log.clear();
+        WriteFile(root / "scripts" / "hud.cpp", kHud);
+        const fs::path layoutPath = root / "assets" / "ui" / "Menu.hui";
+        WriteFile(layoutPath, R"({"version": 1, "controller": "", "root": {"type": "Panel", "id": "MenuRoot",
+            "children": [{"type": "Text", "id": "Title", "properties": {"text": "Menu"}}]}})");
+
+        Scene scene("Hud");
+        scene.CreateEntity("HudOwner").AddComponent<LuaScriptComponent>("scripts/hud.cpp").variables["layout"] =
+            PropertyValue(layoutPath.generic_string());
+        scene.CreateEntity("LuaTarget").AddComponent<LuaScriptComponent>().scriptSource = R"lua(
+function remember(handle) _G.luaSetText = UI.setText(handle, "Set from Lua") end
+)lua";
+
+        LuaScriptEngine lua;
+        PluginScriptHost host;
+        lua.Initialize(&scene, nullptr);
+        lua.SetProjectRoot(root);
+        Hephaestus::HephaestusUI::UISystem uiSystem;
+        Hephaestus::HephaestusUI::UIContext uiContext;
+        Hephaestus::HephaestusUI::UIRenderer uiRenderer;
+        lua.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);
+        lua.SetPluginScriptHost(&host);
+        host.SetLuaEngine(&lua);
+        lua.OnSimulationStarted();
+
+        Hephaestus::SimulationStepContext step;
+        step.scene = &scene;
+        step.lua = &lua;
+        step.pluginScripts = &host;
+        Hephaestus::RunSimulationStep(step, 0.1f);
+        Hephaestus::RunSimulationStep(step, 0.1f);
+
+        const auto hud = [&log](const std::string& key) {
+            const std::string line = "hud:" + key + "=1";
+            return std::any_of(log.begin(), log.end(), [&](const std::string& entry) { return entry == line; });
+        };
+        pass &= Check(hud("available") && hud("panel"), "C++ scripts build UI screens and widgets");
+        pass &= Check(hud("background") && hud("anchor") && hud("padding") && hud("text"),
+                      "widget properties can be set from C++");
+        pass &= Check(hud("wrongKind") && hud("textClick"), "properties a widget does not have are refused");
+        pass &= Check(hud("buttonStyle") && hud("theme") && hud("missingTheme"),
+                      "button styles and theme styles apply");
+        pass &= Check(lua.ExecuteString("assert(_G.luaSetText == true)"),
+                      "Lua can change a widget a C++ script made");
+        pass &= Check(hud("displayed") && hud("widget") && hud("missingWidget"),
+                      "UI::Display shows a .hui layout and finds its widgets by ID");
+        pass &= Check(hud("missingFile") && hud("cursor") && hud("destroyCurrent"),
+                      "display errors, cursor mode and destroy work");
+
+        Hephaestus::HephaestusUI::UIButton* button = nullptr;
+        if (const auto screen = uiSystem.FindScreenByName("Hud")) {
+            std::function<void(Hephaestus::HephaestusUI::UIElement*)> find = [&](Hephaestus::HephaestusUI::UIElement* e) {
+                if (auto* b = dynamic_cast<Hephaestus::HephaestusUI::UIButton*>(e)) button = b;
+                for (auto& child : e->GetChildren()) find(child.get());
+            };
+            find(screen->GetRootCanvas());
+        }
+        pass &= Check(button != nullptr, "the C++ button is in the UI system");
+        if (button) {
+            button->OnClicked();
+            button->OnHoverEnter();
+        }
+        pass &= Check(hud("clicked") && hud("hovered"), "button clicks and hovers reach the C++ script's OnCall");
+
+        host.OnSimulationStopped();
+        lua.OnSimulationStopped();
+        if (button && uiSystem.FindScreenByName("Hud")) {
+            button->OnClicked();
+        }
         lua.Shutdown();
     }
 

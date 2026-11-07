@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -101,6 +102,7 @@ private:
     Hephaestus::InputSystem* m_Input = nullptr;
     Scene* m_Scene = nullptr;
     float m_DeltaTime = 0.0f;
+    std::shared_ptr<bool> m_Alive = std::make_shared<bool>(true);
     std::vector<Runtime> m_Runtimes;
     std::unordered_map<uint32_t, Instance> m_Instances;
     std::unordered_map<uint32_t, FailedScript> m_Failed;

@@ -98,6 +98,56 @@ typedef enum HPComponentKind {
     HP_COMPONENT_CHARACTER_CONTROLLER = 3
 } HPComponentKind;
 
+typedef enum HPUIWidgetKind {
+    HP_UI_PANEL = 0,
+    HP_UI_TEXT = 1,
+    HP_UI_BUTTON = 2,
+    HP_UI_IMAGE = 3,
+    HP_UI_VERTICAL_BOX = 4,
+    HP_UI_HORIZONTAL_BOX = 5,
+    HP_UI_GRID = 6
+} HPUIWidgetKind;
+
+/* What HPScriptHostAPI.uiSet changes, one per Lua UI.set* function, with the
+   value type it takes. */
+typedef enum HPUIProperty {
+    HP_UI_POSITION = 0,          /* VEC2 */
+    HP_UI_SIZE = 1,              /* VEC2 */
+    HP_UI_VISIBLE = 2,           /* BOOL */
+    HP_UI_OPACITY = 3,           /* NUMBER */
+    HP_UI_Z_ORDER = 4,           /* NUMBER */
+    HP_UI_TEXT_CONTENT = 5,      /* STRING, a Text's text or a Button's label */
+    HP_UI_IMAGE_ID = 6,          /* STRING */
+    HP_UI_SPACING = 7,           /* NUMBER, boxes */
+    HP_UI_GRID_COLUMNS = 8,      /* NUMBER */
+    HP_UI_GRID_SPACING = 9,      /* VEC2, horizontal and vertical */
+    HP_UI_ENABLED = 10,          /* BOOL */
+    HP_UI_PADDING = 11,          /* NUMBER for every side, or VEC4 top, right, bottom, left */
+    HP_UI_MARGIN = 12,           /* as HP_UI_PADDING */
+    HP_UI_MIN_SIZE = 13,         /* VEC2 */
+    HP_UI_MAX_SIZE = 14,         /* VEC2 */
+    HP_UI_ANCHOR = 15,           /* STRING: topLeft, topCenter, ..., bottomRight, stretch */
+    HP_UI_H_ALIGNMENT = 16,      /* STRING: left, center, right, stretch */
+    HP_UI_V_ALIGNMENT = 17,      /* STRING: top, center, bottom, stretch */
+    HP_UI_BACKGROUND_COLOR = 18, /* VEC4 r, g, b, a */
+    HP_UI_BORDER_COLOR = 19,     /* VEC4 */
+    HP_UI_BORDER_WIDTH = 20,     /* NUMBER */
+    HP_UI_CORNER_RADIUS = 21,    /* NUMBER */
+    HP_UI_TEXT_COLOR = 22,       /* VEC4 */
+    HP_UI_FONT_SIZE = 23,        /* NUMBER */
+    HP_UI_FONT_BOLD = 24,        /* BOOL */
+    HP_UI_FONT_ITALIC = 25,      /* BOOL */
+    HP_UI_TEXT_ALIGNMENT = 26,   /* STRING: left, center, right */
+    HP_UI_TEXT_SHADOW = 27,      /* BOOL */
+    HP_UI_TEXT_SHADOW_COLOR = 28,  /* VEC4 */
+    HP_UI_TEXT_SHADOW_OFFSET = 29, /* VEC2 */
+    HP_UI_WORD_WRAP = 30,        /* BOOL */
+    HP_UI_FOCUSED = 31,          /* BOOL, buttons */
+    HP_UI_CHILD_ALIGNMENT = 32,  /* STRING, boxes: left, center, right / top, center, bottom */
+    HP_UI_IMAGE_SCALE_MODE = 33, /* STRING: stretch, fit, fill, center */
+    HP_UI_IMAGE_TINT = 34        /* VEC4 */
+} HPUIProperty;
+
 typedef enum HPLogLevel {
     HP_LOG_INFO = 0,
     HP_LOG_WARNING = 1,
@@ -257,6 +307,45 @@ typedef struct HPScriptHostAPI {
     int32_t (*audioSetVolume)(void* host, uint32_t sound, float volume);
     int32_t (*audioIsPlaying)(void* host, uint32_t sound);
     void (*audioStopAll)(void* host);
+
+    /* Game UI (Lua's UI, display and destroy tables). Screens and widgets are
+       handles shared with Lua, so either language can change a widget the
+       other made; 0 means none. uiDisplay and uiLoad write a message into
+       `error` when they return 0. uiDestroy with screen 0 destroys the most
+       recently displayed one. Style fields use the names of Lua's style
+       tables (backgroundColor, fontSize, padding, textShadowOffset, ...),
+       with colours as VEC4 and enums as strings; buttonState is NULL for
+       UI.setStyle, or normal, hovered, pressed, focused or disabled. */
+    int32_t (*uiIsAvailable)(void* host);
+    uint32_t (*uiDisplay)(void* host, const char* path, char* error, size_t errorSize);
+    int32_t (*uiDestroy)(void* host, uint32_t screen);
+    void (*uiDestroyAll)(void* host);
+    uint32_t (*uiLoad)(void* host, const char* path, char* error, size_t errorSize);
+    uint32_t (*uiGetWidget)(void* host, uint32_t screen, const char* id);
+    uint32_t (*uiCreateScreen)(void* host, const char* name);
+    uint32_t (*uiCreateSimpleMenu)(void* host);
+    uint32_t (*uiGetRoot)(void* host, uint32_t screen);
+    /* text is a Text's text, a Button's label or an Image's image id. */
+    uint32_t (*uiCreateWidget)(void* host, uint32_t parent, uint32_t kind, const char* text); /* HPUIWidgetKind */
+    void (*uiClearScreens)(void* host);
+    uint32_t (*uiGetScreenCount)(void* host);
+    int32_t (*uiSetScreenVisible)(void* host, const char* name, int32_t visible);
+    int32_t (*uiSetScreenActive)(void* host, const char* name, int32_t active);
+    int32_t (*uiSetViewportSize)(void* host, float width, float height);
+    uint32_t (*uiGetDrawCommandCount)(void* host);
+    int32_t (*uiSet)(void* host, uint32_t widget, uint32_t property, const HPValue* value); /* HPUIProperty */
+    int32_t (*uiSetStyle)(void* host, uint32_t widget, const char* buttonState, const HPNamedValue* fields,
+                          uint32_t fieldCount);
+    int32_t (*uiRegisterThemeStyle)(void* host, const char* name, const HPNamedValue* fields, uint32_t fieldCount);
+    int32_t (*uiApplyThemeStyle)(void* host, uint32_t widget, const char* name);
+    /* HP_CURSOR_NORMAL frees the mouse for menus (Lua's CursorMode.UI);
+       HP_CURSOR_CAPTURED gives it back to the game (CursorMode.Game). */
+    int32_t (*uiSetCursorMode)(void* host, uint32_t mode);
+    uint32_t (*uiGetCursorMode)(void* host);
+    /* Clicking the button runs `function` on the entity's script, in whatever
+       language it is written; hovering runs it with one BOOL, true on enter. */
+    int32_t (*uiSetOnClick)(void* host, uint32_t widget, HPEntityId entity, const char* function);
+    int32_t (*uiSetOnHover)(void* host, uint32_t widget, HPEntityId entity, const char* function);
 } HPScriptHostAPI;
 
 /* Describes the script a runtime is asked to load for one entity. */

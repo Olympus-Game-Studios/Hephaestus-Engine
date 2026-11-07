@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-#define HP_CPP_SCRIPT_SDK_VERSION 2u
+#define HP_CPP_SCRIPT_SDK_VERSION 3u
 #define HP_CPP_SCRIPT_EXPORT_NAME "HP_GetCppScript"
 
 extern "C" {
@@ -565,6 +565,226 @@ inline bool IsPlaying(Sound sound) { return detail::Host().audioIsPlaying(detail
 inline void StopAll() { detail::Host().audioStopAll(detail::Host().host); }
 } // namespace Audio
 
+enum class UIAnchor { TopLeft, TopCenter, TopRight, CenterLeft, Center, CenterRight, BottomLeft, BottomCenter, BottomRight, Stretch };
+enum class UIAlign { Left, Center, Right, Top, Bottom, Stretch };
+enum class UIScaleMode { Stretch, Fit, Fill, Center };
+enum class ButtonState { Normal, Hovered, Pressed, Focused, Disabled };
+
+namespace detail {
+inline const char* Name(UIAnchor a) {
+    static const char* names[] = {"topLeft", "topCenter", "topRight", "centerLeft", "center",
+                                  "centerRight", "bottomLeft", "bottomCenter", "bottomRight", "stretch"};
+    return names[static_cast<int>(a)];
+}
+inline const char* Name(UIAlign a) {
+    static const char* names[] = {"left", "center", "right", "top", "bottom", "stretch"};
+    return names[static_cast<int>(a)];
+}
+inline const char* Name(UIScaleMode m) {
+    static const char* names[] = {"stretch", "fit", "fill", "center"};
+    return names[static_cast<int>(m)];
+}
+inline const char* Name(ButtonState b) {
+    static const char* names[] = {"normal", "hovered", "pressed", "focused", "disabled"};
+    return names[static_cast<int>(b)];
+}
+} // namespace detail
+
+/// A UI style, as a list of fields named like Lua's style tables:
+/// backgroundColor, backgroundImageId, imageTint, borderColor, borderWidth,
+/// cornerRadius, textColor, fontFamily, fontSize, fontBold, fontItalic,
+/// padding (a number, or Vec4 top, right, bottom, left), opacity, scale,
+/// textShadow, textShadowColor, textShadowOffset (Vec2), textAlignment
+/// ("left", "center", "right") and imageScaleMode ("stretch", "fit", "fill", "center").
+struct UIStyle {
+    std::vector<std::pair<std::string, Value>> fields;
+    UIStyle& Set(std::string name, Value value) {
+        fields.emplace_back(std::move(name), std::move(value));
+        return *this;
+    }
+};
+
+namespace detail {
+inline std::vector<HPNamedValue> Fields(const UIStyle& style) {
+    std::vector<HPNamedValue> fields;
+    fields.reserve(style.fields.size());
+    for (const auto& [name, value] : style.fields) {
+        fields.push_back(HPNamedValue{name.c_str(), value.Raw()});
+    }
+    return fields;
+}
+} // namespace detail
+
+/// A UI widget: a panel, text, button, image, box or grid. Setters return
+/// false when the widget is gone or is the wrong kind for that property.
+class Widget {
+public:
+    Widget() = default;
+    explicit Widget(uint32_t handle) : m_Handle(handle) {}
+    uint32_t Handle() const { return m_Handle; }
+    explicit operator bool() const { return m_Handle != 0; }
+
+    bool SetPosition(Vec2 position) const { return Set(HP_UI_POSITION, Value(position)); }
+    bool SetSize(Vec2 size) const { return Set(HP_UI_SIZE, Value(size)); }
+    bool SetMinSize(Vec2 size) const { return Set(HP_UI_MIN_SIZE, Value(size)); }
+    bool SetMaxSize(Vec2 size) const { return Set(HP_UI_MAX_SIZE, Value(size)); }
+    bool SetVisible(bool visible) const { return Set(HP_UI_VISIBLE, Value(visible)); }
+    bool SetEnabled(bool enabled) const { return Set(HP_UI_ENABLED, Value(enabled)); }
+    bool SetFocused(bool focused) const { return Set(HP_UI_FOCUSED, Value(focused)); }
+    bool SetOpacity(float opacity) const { return Set(HP_UI_OPACITY, Value(opacity)); }
+    bool SetZOrder(int order) const { return Set(HP_UI_Z_ORDER, Value(order)); }
+    bool SetText(std::string_view text) const { return Set(HP_UI_TEXT_CONTENT, Value(std::string(text))); }
+    bool SetImage(std::string_view imageId) const { return Set(HP_UI_IMAGE_ID, Value(std::string(imageId))); }
+    bool SetImageTint(Color tint) const { return Set(HP_UI_IMAGE_TINT, Value(tint)); }
+    bool SetImageScaleMode(UIScaleMode mode) const { return Set(HP_UI_IMAGE_SCALE_MODE, Value(detail::Name(mode))); }
+    bool SetSpacing(float spacing) const { return Set(HP_UI_SPACING, Value(spacing)); }
+    bool SetChildAlignment(UIAlign alignment) const { return Set(HP_UI_CHILD_ALIGNMENT, Value(detail::Name(alignment))); }
+    bool SetGridColumns(int columns) const { return Set(HP_UI_GRID_COLUMNS, Value(columns)); }
+    bool SetGridSpacing(float horizontal, float vertical) const { return Set(HP_UI_GRID_SPACING, Value(Vec2{horizontal, vertical})); }
+    bool SetPadding(float all) const { return Set(HP_UI_PADDING, Value(all)); }
+    bool SetPadding(float top, float right, float bottom, float left) const {
+        return Set(HP_UI_PADDING, Value(Vec4{top, right, bottom, left}));
+    }
+    bool SetMargin(float all) const { return Set(HP_UI_MARGIN, Value(all)); }
+    bool SetMargin(float top, float right, float bottom, float left) const {
+        return Set(HP_UI_MARGIN, Value(Vec4{top, right, bottom, left}));
+    }
+    bool SetAnchor(UIAnchor anchor) const { return Set(HP_UI_ANCHOR, Value(detail::Name(anchor))); }
+    bool SetAlignment(UIAlign horizontal) const { return Set(HP_UI_H_ALIGNMENT, Value(detail::Name(horizontal))); }
+    bool SetAlignment(UIAlign horizontal, UIAlign vertical) const {
+        return SetAlignment(horizontal) && Set(HP_UI_V_ALIGNMENT, Value(detail::Name(vertical)));
+    }
+    bool SetBackgroundColor(Color color) const { return Set(HP_UI_BACKGROUND_COLOR, Value(color)); }
+    bool SetBorderColor(Color color) const { return Set(HP_UI_BORDER_COLOR, Value(color)); }
+    bool SetBorderWidth(float width) const { return Set(HP_UI_BORDER_WIDTH, Value(width)); }
+    bool SetCornerRadius(float radius) const { return Set(HP_UI_CORNER_RADIUS, Value(radius)); }
+    bool SetTextColor(Color color) const { return Set(HP_UI_TEXT_COLOR, Value(color)); }
+    bool SetFontSize(float size) const { return Set(HP_UI_FONT_SIZE, Value(size)); }
+    bool SetFontBold(bool bold) const { return Set(HP_UI_FONT_BOLD, Value(bold)); }
+    bool SetFontItalic(bool italic) const { return Set(HP_UI_FONT_ITALIC, Value(italic)); }
+    bool SetTextAlignment(UIAlign alignment) const { return Set(HP_UI_TEXT_ALIGNMENT, Value(detail::Name(alignment))); }
+    bool SetWordWrap(bool wrap) const { return Set(HP_UI_WORD_WRAP, Value(wrap)); }
+    bool SetTextShadow(bool enabled) const { return Set(HP_UI_TEXT_SHADOW, Value(enabled)); }
+    bool SetTextShadow(bool enabled, Color color, Vec2 offset = {1, 1}) const {
+        return SetTextShadow(enabled) && Set(HP_UI_TEXT_SHADOW_COLOR, Value(color)) &&
+               Set(HP_UI_TEXT_SHADOW_OFFSET, Value(offset));
+    }
+    bool SetStyle(const UIStyle& style) const {
+        const auto fields = detail::Fields(style);
+        return detail::Host().uiSetStyle(detail::Host().host, m_Handle, nullptr, fields.data(),
+                                         static_cast<uint32_t>(fields.size())) != 0;
+    }
+    bool SetButtonStyle(ButtonState state, const UIStyle& style) const {
+        const auto fields = detail::Fields(style);
+        return detail::Host().uiSetStyle(detail::Host().host, m_Handle, detail::Name(state), fields.data(),
+                                         static_cast<uint32_t>(fields.size())) != 0;
+    }
+    bool ApplyThemeStyle(std::string_view name) const {
+        return detail::Host().uiApplyThemeStyle(detail::Host().host, m_Handle, std::string(name).c_str()) != 0;
+    }
+    /// Clicking this button runs `function` on the entity's script, in any language.
+    bool SetOnClick(Entity entity, std::string_view function) const {
+        return detail::Host().uiSetOnClick(detail::Host().host, m_Handle, entity.Id(), std::string(function).c_str()) != 0;
+    }
+    /// Hovering this button runs `function(bool entered)` on the entity's script.
+    bool SetOnHover(Entity entity, std::string_view function) const {
+        return detail::Host().uiSetOnHover(detail::Host().host, m_Handle, entity.Id(), std::string(function).c_str()) != 0;
+    }
+
+    Widget AddPanel() const { return Add(HP_UI_PANEL, ""); }
+    Widget AddText(std::string_view text = {}) const { return Add(HP_UI_TEXT, text); }
+    Widget AddButton(std::string_view label = "Button") const { return Add(HP_UI_BUTTON, label); }
+    Widget AddImage(std::string_view imageId = {}) const { return Add(HP_UI_IMAGE, imageId); }
+    Widget AddVerticalBox() const { return Add(HP_UI_VERTICAL_BOX, ""); }
+    Widget AddHorizontalBox() const { return Add(HP_UI_HORIZONTAL_BOX, ""); }
+    Widget AddGrid() const { return Add(HP_UI_GRID, ""); }
+
+private:
+    bool Set(uint32_t property, const Value& value) const {
+        const HPValue raw = value.Raw();
+        return detail::Host().uiSet(detail::Host().host, m_Handle, property, &raw) != 0;
+    }
+    Widget Add(uint32_t kind, std::string_view text) const {
+        return Widget(detail::Host().uiCreateWidget(detail::Host().host, m_Handle, kind, std::string(text).c_str()));
+    }
+
+    uint32_t m_Handle = 0;
+};
+
+/// A UI screen: a displayed or loaded .hui layout, or one built in code.
+class Screen {
+public:
+    Screen() = default;
+    explicit Screen(uint32_t handle) : m_Handle(handle) {}
+    uint32_t Handle() const { return m_Handle; }
+    explicit operator bool() const { return m_Handle != 0; }
+    /// The root canvas, to add widgets to.
+    Widget GetRoot() const { return Widget(detail::Host().uiGetRoot(detail::Host().host, m_Handle)); }
+    /// A widget of a .hui layout by its ID.
+    Widget GetWidget(std::string_view id) const {
+        return Widget(detail::Host().uiGetWidget(detail::Host().host, m_Handle, std::string(id).c_str()));
+    }
+
+private:
+    uint32_t m_Handle = 0;
+};
+
+namespace UI {
+inline bool IsAvailable() { return detail::Host().uiIsAvailable(detail::Host().host) != 0; }
+/// Shows a .hui layout (Lua's display.ui). Errors go to `error`, or the Console when it is null.
+inline Screen Display(std::string_view path, std::string* error = nullptr) {
+    char message[512] = {};
+    const Screen screen(detail::Host().uiDisplay(detail::Host().host, std::string(path).c_str(), message, sizeof(message)));
+    if (!screen) {
+        if (error) *error = message;
+        else LogError(std::string("UI::Display: ") + message);
+    }
+    return screen;
+}
+/// Removes a displayed layout (Lua's destroy.ui).
+inline bool Destroy(Screen screen) { return screen && detail::Host().uiDestroy(detail::Host().host, screen.Handle()) != 0; }
+/// Removes the most recently displayed layout (destroy.ui("current")).
+inline bool DestroyCurrent() { return detail::Host().uiDestroy(detail::Host().host, 0) != 0; }
+/// Removes every displayed layout (destroy.ui("all")).
+inline void DestroyAll() { detail::Host().uiDestroyAll(detail::Host().host); }
+/// Loads a .hui layout without display's bookkeeping (Lua's UI.loadHUI).
+inline Screen Load(std::string_view path, std::string* error = nullptr) {
+    char message[512] = {};
+    const Screen screen(detail::Host().uiLoad(detail::Host().host, std::string(path).c_str(), message, sizeof(message)));
+    if (!screen) {
+        if (error) *error = message;
+        else LogError(std::string("UI::Load: ") + message);
+    }
+    return screen;
+}
+inline Screen CreateScreen(std::string_view name) {
+    return Screen(detail::Host().uiCreateScreen(detail::Host().host, std::string(name).c_str()));
+}
+inline Screen CreateSimpleMenu() { return Screen(detail::Host().uiCreateSimpleMenu(detail::Host().host)); }
+inline void ClearScreens() { detail::Host().uiClearScreens(detail::Host().host); }
+inline uint32_t GetScreenCount() { return detail::Host().uiGetScreenCount(detail::Host().host); }
+inline bool SetScreenVisible(std::string_view name, bool visible) {
+    return detail::Host().uiSetScreenVisible(detail::Host().host, std::string(name).c_str(), visible) != 0;
+}
+inline bool SetScreenActive(std::string_view name, bool active) {
+    return detail::Host().uiSetScreenActive(detail::Host().host, std::string(name).c_str(), active) != 0;
+}
+inline bool SetViewportSize(float width, float height) {
+    return detail::Host().uiSetViewportSize(detail::Host().host, width, height) != 0;
+}
+inline uint32_t GetDrawCommandCount() { return detail::Host().uiGetDrawCommandCount(detail::Host().host); }
+inline bool RegisterThemeStyle(std::string_view name, const UIStyle& style) {
+    const auto fields = detail::Fields(style);
+    return detail::Host().uiRegisterThemeStyle(detail::Host().host, std::string(name).c_str(), fields.data(),
+                                               static_cast<uint32_t>(fields.size())) != 0;
+}
+/// Normal frees the mouse for menus (Lua's CursorMode.UI); Captured gives it back to the game.
+inline bool SetCursorMode(CursorMode mode) {
+    return detail::Host().uiSetCursorMode(detail::Host().host, static_cast<uint32_t>(mode)) != 0;
+}
+inline CursorMode GetCursorMode() { return static_cast<CursorMode>(detail::Host().uiGetCursorMode(detail::Host().host)); }
+} // namespace UI
+
 /// Contact details for collision and trigger callbacks.
 struct Contact {
     Vec3 point;
@@ -605,6 +825,11 @@ public:
 
     /// The entity this script is attached to.
     Entity GetEntity() const { return m_Entity; }
+
+    /// Clicking the button runs `function` (an OnCall name) on this script's entity.
+    bool SetOnClick(Widget button, std::string_view function) const { return button.SetOnClick(m_Entity, function); }
+    /// Hovering the button runs `function(bool entered)` on this script's entity.
+    bool SetOnHover(Widget button, std::string_view function) const { return button.SetOnHover(m_Entity, function); }
 
     /// Physics::Raycast that passes through this script's entity, like Lua's Physics.raycast.
     std::optional<RaycastHit> Raycast(Vec3 origin, Vec3 direction, float maxDistance,

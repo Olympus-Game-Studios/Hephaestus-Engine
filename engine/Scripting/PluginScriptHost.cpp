@@ -17,7 +17,9 @@
 
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <limits>
+#include <memory>
 #include <utility>
 
 namespace {
@@ -96,6 +98,13 @@ std::filesystem::file_time_type WriteTime(const std::filesystem::path& path) {
 }
 
 } // namespace
+
+static_assert(static_cast<uint32_t>(LuaScriptEngine::UIWidgetProperty::ImageTint) == HP_UI_IMAGE_TINT &&
+              static_cast<uint32_t>(LuaScriptEngine::UIWidgetProperty::Text) == HP_UI_TEXT_CONTENT &&
+              static_cast<uint32_t>(LuaScriptEngine::UIWidgetProperty::ChildAlignment) == HP_UI_CHILD_ALIGNMENT,
+              "HPUIProperty must list LuaScriptEngine::UIWidgetProperty in the same order");
+static_assert(static_cast<uint32_t>(LuaScriptEngine::UIWidgetKind::Grid) == HP_UI_GRID,
+              "HPUIWidgetKind must list LuaScriptEngine::UIWidgetKind in the same order");
 
 struct PluginScriptHost::HostApi {
     static PluginScriptHost& Host(void* host) { return *static_cast<PluginScriptHost*>(host); }
@@ -678,7 +687,155 @@ struct PluginScriptHost::HostApi {
         }
     }
 
+    // Game UI
+
+    static uint32_t UIDisplay(void* host, const char* path, char* error, size_t errorSize) {
+        LuaScriptEngine* lua = Lua(host);
+        std::string message = lua ? std::string() : "UI is not available";
+        const uint32_t screen = lua && path ? lua->UIDisplay(path, message) : 0;
+        if (screen == 0 && error && errorSize > 0) {
+            std::snprintf(error, errorSize, "%s", message.c_str());
+        }
+        return screen;
+    }
+
+    static uint32_t UILoad(void* host, const char* path, char* error, size_t errorSize) {
+        LuaScriptEngine* lua = Lua(host);
+        std::string message = lua ? std::string() : "UI is not available";
+        const uint32_t screen = lua && path ? lua->UILoadHUI(path, message) : 0;
+        if (screen == 0 && error && errorSize > 0) {
+            std::snprintf(error, errorSize, "%s", message.c_str());
+        }
+        return screen;
+    }
+
+    static int32_t UIDestroy(void* host, uint32_t screen) {
+        LuaScriptEngine* lua = Lua(host);
+        return lua && (screen == 0 ? lua->UIDestroyCurrent() : lua->UIDestroy(screen));
+    }
+
+    static PropertyValue::Object Fields(const HPNamedValue* fields, uint32_t count) {
+        PropertyValue::Object object;
+        for (uint32_t i = 0; fields && i < count; ++i) {
+            if (fields[i].name) {
+                object[fields[i].name] = ToPropertyValue(fields[i].value);
+            }
+        }
+        return object;
+    }
+
+    static int32_t UISet(void* host, uint32_t widget, uint32_t property, const HPValue* value) {
+        LuaScriptEngine* lua = Lua(host);
+        if (!lua || !value || property > HP_UI_IMAGE_TINT) {
+            return 0;
+        }
+        return lua->UISet(widget, static_cast<LuaScriptEngine::UIWidgetProperty>(property), ToPropertyValue(*value));
+    }
+
+    static int32_t UISetStyle(void* host, uint32_t widget, const char* buttonState, const HPNamedValue* fields,
+                              uint32_t count) {
+        LuaScriptEngine* lua = Lua(host);
+        if (!lua) {
+            return 0;
+        }
+        return buttonState ? lua->UISetButtonStyle(widget, buttonState, Fields(fields, count))
+                           : lua->UISetStyle(widget, Fields(fields, count));
+    }
+
+    static int32_t UIRegisterThemeStyle(void* host, const char* name, const HPNamedValue* fields, uint32_t count) {
+        LuaScriptEngine* lua = Lua(host);
+        return lua && name && lua->UIRegisterThemeStyle(name, Fields(fields, count));
+    }
+
+    // The UI can outlive this host in some editor teardown orders, so callbacks hold a weak token.
+    static std::function<void(const HPValue*, uint32_t)> Callback(void* host, HPEntityId entity, const char* function) {
+        PluginScriptHost& self = Host(host);
+        std::weak_ptr<bool> alive = self.m_Alive;
+        const std::string name = function;
+        return [&self, alive, entity, name](const HPValue* args, uint32_t count) {
+            if (!alive.expired() && entity != 0) {
+                self.ForwardCall(ToEntityId(entity), name.c_str(), args, count);
+            }
+        };
+    }
+
+    static int32_t UISetOnClick(void* host, uint32_t widget, HPEntityId entity, const char* function) {
+        LuaScriptEngine* lua = Lua(host);
+        if (!lua || !function || !*function) {
+            return 0;
+        }
+        auto call = Callback(host, entity, function);
+        return lua->UISetOnClick(widget, [call]() { call(nullptr, 0); });
+    }
+
+    static int32_t UISetOnHover(void* host, uint32_t widget, HPEntityId entity, const char* function) {
+        LuaScriptEngine* lua = Lua(host);
+        if (!lua || !function || !*function) {
+            return 0;
+        }
+        auto call = Callback(host, entity, function);
+        return lua->UISetOnHover(widget, [call](bool entered) {
+            HPValue value{};
+            value.type = HP_VALUE_BOOL;
+            value.boolean = entered ? 1 : 0;
+            call(&value, 1);
+        });
+    }
+
+    static void InstallUI(HPScriptHostAPI& api) {
+        api.uiIsAvailable = [](void* host) -> int32_t { return Lua(host) && Lua(host)->UIIsAvailable(); };
+        api.uiDisplay = &UIDisplay;
+        api.uiDestroy = &UIDestroy;
+        api.uiDestroyAll = [](void* host) { if (Lua(host)) Lua(host)->UIDestroyAll(); };
+        api.uiLoad = &UILoad;
+        api.uiGetWidget = [](void* host, uint32_t screen, const char* id) -> uint32_t {
+            return Lua(host) && id ? Lua(host)->UIGetWidget(screen, id) : 0;
+        };
+        api.uiCreateScreen = [](void* host, const char* name) -> uint32_t {
+            return Lua(host) && name ? Lua(host)->UICreateScreen(name) : 0;
+        };
+        api.uiCreateSimpleMenu = [](void* host) -> uint32_t { return Lua(host) ? Lua(host)->UICreateSimpleMenu() : 0; };
+        api.uiGetRoot = [](void* host, uint32_t screen) -> uint32_t { return Lua(host) ? Lua(host)->UIGetRoot(screen) : 0; };
+        api.uiCreateWidget = [](void* host, uint32_t parent, uint32_t kind, const char* text) -> uint32_t {
+            if (!Lua(host) || kind > HP_UI_GRID) {
+                return 0;
+            }
+            return Lua(host)->UICreateWidget(parent, static_cast<LuaScriptEngine::UIWidgetKind>(kind), text ? text : "");
+        };
+        api.uiClearScreens = [](void* host) { if (Lua(host)) Lua(host)->UIClearScreens(); };
+        api.uiGetScreenCount = [](void* host) -> uint32_t {
+            return Lua(host) ? static_cast<uint32_t>(Lua(host)->UIGetScreenCount()) : 0;
+        };
+        api.uiSetScreenVisible = [](void* host, const char* name, int32_t visible) -> int32_t {
+            return Lua(host) && name && Lua(host)->UISetScreenVisible(name, visible != 0);
+        };
+        api.uiSetScreenActive = [](void* host, const char* name, int32_t active) -> int32_t {
+            return Lua(host) && name && Lua(host)->UISetScreenActive(name, active != 0);
+        };
+        api.uiSetViewportSize = [](void* host, float width, float height) -> int32_t {
+            return Lua(host) && Lua(host)->UISetViewportSize(width, height);
+        };
+        api.uiGetDrawCommandCount = [](void* host) -> uint32_t {
+            return Lua(host) ? static_cast<uint32_t>(Lua(host)->UIGetDrawCommandCount()) : 0;
+        };
+        api.uiSet = &UISet;
+        api.uiSetStyle = &UISetStyle;
+        api.uiRegisterThemeStyle = &UIRegisterThemeStyle;
+        api.uiApplyThemeStyle = [](void* host, uint32_t widget, const char* name) -> int32_t {
+            return Lua(host) && name && Lua(host)->UIApplyThemeStyle(widget, name);
+        };
+        api.uiSetCursorMode = [](void* host, uint32_t mode) -> int32_t {
+            return Lua(host) && Lua(host)->UISetCursorMode(mode == HP_CURSOR_NORMAL);
+        };
+        api.uiGetCursorMode = [](void* host) -> uint32_t {
+            return Lua(host) && Lua(host)->UIIsCursorModeUI() ? HP_CURSOR_NORMAL : HP_CURSOR_CAPTURED;
+        };
+        api.uiSetOnClick = &UISetOnClick;
+        api.uiSetOnHover = &UISetOnHover;
+    }
+
     static void Install(HPScriptHostAPI& api) {
+        InstallUI(api);
         api.getDeltaTime = &GetDeltaTime;
         api.quit = &Quit;
         api.setEntityName = &SetEntityName;

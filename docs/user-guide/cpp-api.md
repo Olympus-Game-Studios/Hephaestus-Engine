@@ -103,10 +103,50 @@ hp::Entity enemy = hp::Scene::Instantiate("assets/prefabs/Enemy.hpprefab", optio
 | `Stop(s)` / `Pause(s)` / `Resume(s)` / `SetVolume(s, volume)` / `IsPlaying(s)` | Control a sound. |
 | `StopAll()` / `IsAvailable()` | Silence everything, or check sound works. |
 
+## Game UI
+
+`hp::UI` is Lua's `UI`, `display` and `destroy` tables. Screens and widgets are shared with Lua, so a C++ script can change a widget a Lua script made, and the other way round.
+
+| Function in `hp::UI` | Lua |
+| --- | --- |
+| `Display(path[, &error])` | `display.ui(path)`. Returns an `hp::Screen`, empty on failure; errors go to the Console unless you pass a string. |
+| `Destroy(screen)` / `DestroyCurrent()` / `DestroyAll()` | `destroy.ui(handle)`, `destroy.ui("current")`, `destroy.ui("all")` |
+| `Load(path)` | `UI.loadHUI` |
+| `CreateScreen(name)` / `CreateSimpleMenu()` | `UI.createScreen`, `UI.createSimpleMenu` |
+| `ClearScreens()`, `GetScreenCount()`, `SetScreenVisible(name, on)`, `SetScreenActive(name, on)`, `SetViewportSize(w, h)`, `GetDrawCommandCount()` | The same names |
+| `RegisterThemeStyle(name, style)` | `UI.registerThemeStyle` |
+| `SetCursorMode(hp::CursorMode::Normal)` / `GetCursorMode()` | `UI.setCursorMode(CursorMode.UI)`. `Captured` is `CursorMode.Game`. |
+
+An `hp::Screen` has `GetRoot()` (the canvas to build on) and `GetWidget(id)` (a `.hui` widget by its ID).
+
+An `hp::Widget` has every `UI.set*` function as a method: `SetPosition`, `SetSize`, `SetMinSize`, `SetMaxSize`, `SetVisible`, `SetEnabled`, `SetFocused`, `SetOpacity`, `SetZOrder`, `SetText`, `SetImage`, `SetImageTint`, `SetImageScaleMode`, `SetSpacing`, `SetChildAlignment`, `SetGridColumns`, `SetGridSpacing`, `SetPadding`, `SetMargin`, `SetAnchor`, `SetAlignment`, `SetBackgroundColor`, `SetBorderColor`, `SetBorderWidth`, `SetCornerRadius`, `SetTextColor`, `SetFontSize`, `SetFontBold`, `SetFontItalic`, `SetTextAlignment`, `SetWordWrap`, `SetTextShadow`, `SetStyle`, `SetButtonStyle` and `ApplyThemeStyle`. Each returns false when the widget is gone or doesn't have that property (a text has no grid columns). Enums are `hp::UIAnchor`, `hp::UIAlign`, `hp::UIScaleMode` and `hp::ButtonState`; styles are an `hp::UIStyle` with fields named like Lua's style tables.
+
+It builds children with `AddPanel`, `AddText`, `AddButton`, `AddImage`, `AddVerticalBox`, `AddHorizontalBox` and `AddGrid`.
+
+Button events name a function instead of passing one, so they work across languages and survive a reload. The function arrives in `OnCall`, and a hover gets one bool, true on enter:
+
+```cpp
+void OnAwake() override {
+    hp::Screen menu = hp::UI::Display("assets/ui/MainMenu.hui");
+    SetOnClick(menu.GetWidget("PlayButton"), "OnPlay");
+}
+
+bool OnCall(std::string_view function, hp::Args args) override {
+    if (function == "OnPlay") {
+        hp::UI::DestroyCurrent();
+        hp::UI::SetCursorMode(hp::CursorMode::Captured);
+        return true;
+    }
+    return false;
+}
+```
+
+`widget.SetOnClick(entity, "Name")` does the same for another entity's script, in any language.
+
 ## Values
 
 `hp::Vec2`, `hp::Vec3` (with `+`, `-`, `*`, `Length` and `Normalized`), `hp::Vec4` and `hp::Color`. `hp::Value` carries numbers, booleans, strings and vectors between scripts; read one with `AsFloat`, `AsInt`, `AsBool`, `AsString` and `AsVec2/3/4`.
 
 ## Not in C++ yet
 
-Game UI (`display.ui`, `UI.*`), `onAnimationFinished`, `onEnable`/`onDisable`, character controller scripts and `CallController` are still Lua only.
+`onAnimationFinished`, `onEnable`/`onDisable`, character controller scripts and `CallController` are still Lua only.

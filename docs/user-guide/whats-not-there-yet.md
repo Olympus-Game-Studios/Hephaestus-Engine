@@ -47,7 +47,7 @@ Hephaestus is young, and I'd rather you know its gaps up front than discover the
 
 ## Scripting
 
-- C++ is the only other scripting language that ships, and it's Windows only. Its API doesn't reach everything Lua can yet (game UI, `onAnimationFinished`, `onEnable`/`onDisable` and character controller scripts are Lua only), and the Code panel's debugger is Lua only. See [Scripting with C++](scripting-cpp.md).
+- C++ is the only other scripting language that ships, and it's Windows only. Its API doesn't reach everything Lua can yet (`onAnimationFinished`, `onEnable`/`onDisable` and character controller scripts are Lua only), and the Code panel's debugger is Lua only. See [Scripting with C++](scripting-cpp.md).
 - Lua scripts aren't sandboxed. Only run scripts you trust.
 
 ## World and gameplay systems

@@ -100,7 +100,7 @@ bool OnCall(std::string_view function, hp::Args args) override {
 
 Arguments can be numbers, booleans, strings and 2 to 4 component vectors. `hp::Log`, `hp::LogWarning` and `hp::LogError` write to the Console.
 
-The rest of the engine is there too, and it matches Lua's API piece by piece: spawning and destroying prefabs, cameras, raycasts and physics bodies, character controllers, animation, sound and input. A taste:
+The rest of the engine is there too, and it matches Lua's API piece by piece: spawning and destroying prefabs, cameras, raycasts and physics bodies, character controllers, animation, sound, input and game UI. A taste:
 
 ```cpp
 void OnUpdate(float deltaSeconds) override {
@@ -148,4 +148,4 @@ When you package the game, every C++ script is compiled (if it isn't already) an
 - A script recompiles when its own `.cpp` file changes. If you `#include` a header of your own and only change the header, save the `.cpp` too.
 - A `.cpp` file without `HP_SCRIPT` is skipped when packaging, but it isn't compiled into other scripts either. To share code between scripts, put it in a header and `#include` it.
 - Scripts are native code with full access to your computer, so only run scripts you trust.
-- The C++ API covers everything Lua's does except game UI, `onAnimationFinished`, `onEnable`/`onDisable` and character controller scripts, which are still Lua only for now. So is the debugger built into the Code panel (use Visual Studio's, above).
+- The C++ API covers everything Lua's does except `onAnimationFinished`, `onEnable`/`onDisable` and character controller scripts, which are still Lua only for now. So is the debugger built into the Code panel (use Visual Studio's, above).

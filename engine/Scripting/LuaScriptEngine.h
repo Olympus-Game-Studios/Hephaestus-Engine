@@ -326,6 +326,49 @@ public:
     bool EvaluateSocket(uint32_t entityId, const std::string& socketName, bool sceneWorld,
                         Vec3& outPosition, Vec3& outRotation);
 
+    // Game UI, shared by Lua's UI, display and destroy tables and plugin languages.
+    // Screens and widgets are handles; 0 means none.
+    enum class UIWidgetKind : uint32_t { Panel, Text, Button, Image, VerticalBox, HorizontalBox, Grid };
+    /// One per Lua UI.set* function. Enums are the Lua strings ("topCenter", "fit", ...).
+    enum class UIWidgetProperty : uint32_t {
+        Position, Size, Visible, Opacity, ZOrder, Text, Image, Spacing, GridColumns, GridSpacing,
+        Enabled, Padding, Margin, MinSize, MaxSize, Anchor, HAlignment, VAlignment, BackgroundColor,
+        BorderColor, BorderWidth, CornerRadius, TextColor, FontSize, FontBold, FontItalic,
+        TextAlignment, TextShadow, TextShadowColor, TextShadowOffset, WordWrap, Focused,
+        ChildAlignment, ImageScaleMode, ImageTint
+    };
+    bool UIIsAvailable() const;
+    uint32_t UICreateSimpleMenu();
+    uint32_t UICreateScreen(const std::string& name);
+    uint32_t UIGetRoot(uint32_t screenHandle);
+    /// text is a Text's text, a Button's label or an Image's image id.
+    uint32_t UICreateWidget(uint32_t parentHandle, UIWidgetKind kind, const std::string& text);
+    void UIClearScreens();
+    size_t UIGetScreenCount() const;
+    bool UISetScreenVisible(const std::string& name, bool visible);
+    bool UISetScreenActive(const std::string& name, bool active);
+    bool UISetViewportSize(float width, float height);
+    size_t UIGetDrawCommandCount() const;
+    /// Positions and sizes are Vec2, colours Vec4 (r, g, b, a), padding and
+    /// margin a number or Vec4 (top, right, bottom, left), enums strings.
+    bool UISet(uint32_t handle, UIWidgetProperty property, const PropertyValue& value);
+    /// Style fields use the names of Lua's style tables (backgroundColor, fontSize, padding, ...).
+    bool UISetStyle(uint32_t handle, const PropertyValue::Object& fields);
+    bool UISetButtonStyle(uint32_t handle, const std::string& state, const PropertyValue::Object& fields);
+    bool UIRegisterThemeStyle(const std::string& name, const PropertyValue::Object& fields);
+    bool UIApplyThemeStyle(uint32_t handle, const std::string& name);
+    bool UISetCursorMode(bool uiMode);
+    bool UIIsCursorModeUI() const;
+    bool UIIsButton(uint32_t handle) const;
+    bool UISetOnClick(uint32_t handle, std::function<void()> callback);
+    bool UISetOnHover(uint32_t handle, std::function<void(bool)> callback);
+    uint32_t UILoadHUI(const std::string& filePath, std::string& outError);
+    uint32_t UIGetWidget(uint32_t screenHandle, const std::string& widgetId) const;
+    uint32_t UIDisplay(const std::string& filePath, std::string& outError);
+    bool UIDestroy(uint32_t screenHandle);
+    bool UIDestroyCurrent();
+    void UIDestroyAll();
+
 private:
     friend struct LuaEntityReference;
 
@@ -628,7 +671,10 @@ private:
     static int Lua_Destroy_ui(lua_State* L);
     void RegisterDisplayDestroyBindings();
 
-    static Hephaestus::HephaestusUI::UIStyle ParseStyleTable(lua_State* L, int tableIndex);
+    PropertyValue::Object StyleFieldsFromLua(lua_State* L, int tableIndex);
+    void ReleaseLuaUICallback(std::unordered_map<uint32_t, int>& callbacks, uint32_t handle);
+    std::filesystem::path ResolveHUIPath(const std::string& filePath, std::string& outError) const;
+    void LoadHUIController(const std::string& controller, const std::filesystem::path& huiFile, const char* context);
     static void ApplyStyleToPanel(Hephaestus::HephaestusUI::UIElement* element,
                                   const Hephaestus::HephaestusUI::UIStyle& style);
 
