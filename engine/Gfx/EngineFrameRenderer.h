@@ -827,6 +827,9 @@ private:
     // Directional light gizmo (editor-only)
     VulkanLightGizmo m_lightGizmo;
     bool m_lightGizmoInitialized = false;
+    Mat4 m_frameViewMatrix = Mat4::Identity();        // camera of the frame being recorded
+    Mat4 m_frameProjectionMatrix = Mat4::Identity();
+    Vec3 m_frameCameraPos = Vec3(0, 0, 0);
 
     bool m_editorOverlays = false;
 };

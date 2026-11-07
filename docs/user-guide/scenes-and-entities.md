@@ -61,6 +61,9 @@ Every component has its own page in this guide: [Materials](materials.md), [Ligh
 ## Moving things around
 
 - `W`, `E` and `R` switch the gizmo between move, rotate and scale. `X` toggles World and Local space.
+- Drag an arrow to move along one axis, a small square to move along a plane, or the dot in the middle to move parallel to the screen. Squares always sit on the side facing you.
+- In rotate mode, drag a coloured ring to turn around that axis, or the grey outer ring to turn around the direction you're looking. A wedge shows how far you've turned.
+- In scale mode, drag an end cube to stretch along one axis, or the cube in the middle to scale evenly.
 - **Snapping** lives in the tool row, with separate steps for move, rotate and scale. Hold `Ctrl` while dragging to ignore snapping for a moment.
 - Hold `Shift` while moving to slide the object along whatever surface is under it.
 - Hold `Alt` while dragging the gizmo to drag out a copy.

@@ -1,5 +1,6 @@
 #include "VulkanLightGizmo.h"
-#include "VulkanGizmo.h"   // for GizmoVertex
+#include "VulkanGizmo.h"
+#include "GizmoGeometry.h"
 #include "VulkanBuffer.h"
 #include "VulkanSwapchain.h"
 #include <iostream>
@@ -32,8 +33,6 @@ static VkShaderModule createShaderModule(VkDevice device,
         throw std::runtime_error("VulkanLightGizmo: failed to create shader module");
     return sm;
 }
-
-static constexpr float PI = 3.14159265358979f;
 
 // ── VulkanLightGizmo implementation ─────────────────────────────────────────
 
@@ -144,7 +143,7 @@ void VulkanLightGizmo::CreatePipeline(VkDevice device, VkRenderPass renderPass,
     VkPushConstantRange pcr{};
     pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pcr.offset     = 0;
-    pcr.size       = sizeof(PushConstants);
+    pcr.size       = sizeof(VulkanGizmo::GizmoPushConstants);
 
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     plci.setLayoutCount         = 1;
@@ -183,249 +182,106 @@ void VulkanLightGizmo::CreatePipeline(VkDevice device, VkRenderPass renderPass,
 
 // ── Draw ────────────────────────────────────────────────────────────────────
 
-float VulkanLightGizmo::CalculateScale(const Vec3& gizmoPos,
-                                       const Vec3& cameraPos,
-                                       const Mat4& projMatrix) const {
-    float dist = vlen(vsub(gizmoPos, cameraPos));
-    float projScale = 1.0f / std::max(std::abs(projMatrix.m[0]), 0.001f);
-    return dist * projScale * kScreenScale;
+void VulkanLightGizmo::DrawRange(VkCommandBuffer cmd, uint32_t firstIndex, uint32_t indexCount,
+                                 const Mat4& model, const Vec4& state) const {
+    VulkanGizmo::GizmoPushConstants pc;
+    pc.model = model;
+    pc.state = state;
+    vkCmdPushConstants(cmd, m_pipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(pc), &pc);
+    vkCmdDrawIndexed(cmd, indexCount, 1, firstIndex, 0, 0);
 }
 
 void VulkanLightGizmo::Draw(VkCommandBuffer cmd, VkDescriptorSet cameraDescSet,
-                            const Mat4& worldMatrix, const Vec3& cameraPos,
-                            const Mat4& projMatrix, bool isSelected,
-                            bool isHovered) {
+                            const Mat4& worldMatrix, const Mat4& viewMatrix,
+                            const Mat4& projMatrix, const Vec3& cameraPos,
+                            bool isSelected, bool isHovered) {
     if (!m_pipeline || !m_geo.vertexBuffer || !m_geo.indexBuffer) return;
 
-    Vec3 origin(worldMatrix.m[12], worldMatrix.m[13], worldMatrix.m[14]);
-    float scale = std::max(CalculateScale(origin, cameraPos, projMatrix), 0.001f);
+    const Vec3 origin(worldMatrix.m[12], worldMatrix.m[13], worldMatrix.m[14]);
+    const float scale = GizmoScreenScale(origin, cameraPos, projMatrix, kScreenScale);
+    const Mat4 translation = Mat4::Translation(origin);
+    const Mat4 scaleMat = Mat4::Scale(Vec3(scale, scale, scale));
 
-    // Build orientation from world matrix columns (entity's local axes)
-    Mat4 rotation = Mat4::Identity();
-    // X axis
-    rotation.m[0]  = worldMatrix.m[0];
-    rotation.m[1]  = worldMatrix.m[1];
-    rotation.m[2]  = worldMatrix.m[2];
-    // Y axis
-    rotation.m[4]  = worldMatrix.m[4];
-    rotation.m[5]  = worldMatrix.m[5];
-    rotation.m[6]  = worldMatrix.m[6];
-    // Z axis
-    rotation.m[8]  = worldMatrix.m[8];
-    rotation.m[9]  = worldMatrix.m[9];
-    rotation.m[10] = worldMatrix.m[10];
+    // Entity scale must not stretch the gizmo, so only the orientation is kept.
+    const Mat4 rotation = GizmoBasis(
+        vnorm(Vec3(worldMatrix.m[0], worldMatrix.m[1], worldMatrix.m[2])),
+        vnorm(Vec3(worldMatrix.m[4], worldMatrix.m[5], worldMatrix.m[6])),
+        vnorm(Vec3(worldMatrix.m[8], worldMatrix.m[9], worldMatrix.m[10])));
+    const Vec3 toCamera = GizmoToCamera(origin, cameraPos, viewMatrix, projMatrix);
+    const Mat4 billboard = GizmoBillboardRotation(toCamera, viewMatrix);
 
-    Mat4 translation = Mat4::Translation(origin);
-    Mat4 scaleMat    = Mat4::Scale(Vec3(scale, scale, scale));
-    Mat4 model       = Mat4::Multiply(translation, Mat4::Multiply(rotation, scaleMat));
-
-    // Encode hover/selection into gizmo state so the fragment shader highlights.
-    // The gizmo.frag "hovered axis" and "active axis" use colour-channel matching:
-    //   axis 0 = mostly-red, 1 = mostly-green, 2 = mostly-blue
-    // Our geometry is golden-yellow (R≈1, G≈0.85) which the shader maps to axis 0
-    // (red-dominant). So hover = 0 and active = 0 triggers the highlight.
-    float hoveredAxis = isHovered  ? 0.0f : -1.0f;
-    float activeAxis  = isSelected ? 0.0f : -1.0f;
-
-    PushConstants pc;
-    pc.model = model;
-    pc.state = Vec4(hoveredAxis, activeAxis, scale, 0.0f);
+    const Vec4 state(isHovered ? GizmoHandle::LightBody : -1.0f,
+                     isSelected ? GizmoHandle::LightBody : -1.0f, scale, 0.0f);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-
     uint32_t zeroOffset = 0;
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout,
                             0, 1, &cameraDescSet, 1, &zeroOffset);
-
-    vkCmdPushConstants(cmd, m_pipelineLayout,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                       0, sizeof(PushConstants), &pc);
-
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &m_geo.vertexBuffer->buffer, &offset);
     vkCmdBindIndexBuffer(cmd, m_geo.indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT16);
-    vkCmdDrawIndexed(cmd, m_geo.indexCount, 1, 0, 0, 0);
+
+    DrawRange(cmd, 0, m_bodyIndexCount,
+              Mat4::Multiply(translation, Mat4::Multiply(rotation, scaleMat)), state);
+    DrawRange(cmd, m_bodyIndexCount, m_geo.indexCount - m_bodyIndexCount,
+              Mat4::Multiply(translation, Mat4::Multiply(billboard, scaleMat)), state);
 }
 
-// ── Geometry generation ─────────────────────────────────────────────────────
-//
-// The gizmo is built at the origin pointing along -Z (the conventional
-// "forward" direction in Hephaestus).  It consists of:
-//   1.  A central direction arrow (shaft + cone tip).
-//   2.  Four peripheral parallel ray lines showing light spread.
-//   3.  A small circle/disk at the base to mark the origin.
-//
-// All geometry uses a warm golden colour (Vec3(1.0, 0.85, 0.35)) so it's
-// clearly distinguishable from the RGB transform gizmo.
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Geometry ────────────────────────────────────────────────────────────────
 
 void VulkanLightGizmo::GenerateGeometry(VmaAllocator allocator) {
-    std::vector<GizmoVertex> verts;
-    std::vector<uint16_t>    indices;
+    using namespace GizmoGeometry;
+    Vertices verts;
+    Indices  indices;
 
-    const Vec3 forward(0.0f, 0.0f, -1.0f);       // -Z forward
-    const Vec3 color(1.0f, 0.85f, 0.35f);         // warm golden yellow
+    const Vec3 forward(0.0f, 0.0f, -1.0f);
+    const Vec3 color(0xE3 / 255.0f, 0xA2 / 255.0f, 0x3B / 255.0f); // theme status-warning
+    const float handle = GizmoHandle::LightBody;
 
-    // 1. Central arrow — shaft + cone tip
-    AddArrow(verts, indices, Vec3(0, 0, 0), forward, kArrowLength, kArrowRadius, color);
+    // Direction arrow, starting just outside the sun glyph.
+    const float coneLength = 0.28f;
+    const Vec3 shaftStart = vscale(forward, kSunRadius * 1.6f);
+    const Vec3 shaftEnd = vscale(forward, kArrowLength - coneLength);
+    AddCylinder(verts, indices, shaftStart, shaftEnd, kArrowRadius, color, handle);
+    AddCone(verts, indices, shaftEnd, vscale(forward, kArrowLength), kArrowRadius * 3.0f,
+            color, handle);
 
-    // 2. Four peripheral ray lines (no cone tip) offset in X/Y
-    const Vec3 offsets[4] = {
-        Vec3( kRayOffset, 0, 0),
-        Vec3(-kRayOffset, 0, 0),
-        Vec3(0,  kRayOffset, 0),
-        Vec3(0, -kRayOffset, 0),
-    };
-    for (const auto& off : offsets) {
-        AddLine(verts, indices, off, vadd(off, vscale(forward, kRayLength)),
-                kRayRadius, color);
+    // Dashed parallel rays around the arrow.
+    const Vec3 offsets[4] = { Vec3(kRayOffset, 0, 0), Vec3(-kRayOffset, 0, 0),
+                              Vec3(0, kRayOffset, 0), Vec3(0, -kRayOffset, 0) };
+    const float dash = 0.22f;
+    const float gap = 0.14f;
+    for (const Vec3& off : offsets) {
+        for (float d = kRayStart; d + dash <= kRayStart + kRayLength + 1e-4f; d += dash + gap) {
+            AddCylinder(verts, indices, vadd(off, vscale(forward, d)),
+                        vadd(off, vscale(forward, d + dash)), kRayRadius, color, handle, 6);
+        }
+    }
+    m_bodyIndexCount = static_cast<uint32_t>(indices.size());
+
+    // Sun glyph in the XY plane, drawn camera-facing: a ring and eight short rays.
+    AddAnnulus(verts, indices, kSunRadius * 0.78f, kSunRadius, color, handle, 48);
+    const float rayInner = kSunRadius * 1.3f;
+    const float rayOuter = kSunRadius * 1.85f;
+    const float halfWidth = kSunRadius * 0.09f;
+    for (int i = 0; i < 8; ++i) {
+        const float a = i * 2.0f * kPi / 8.0f;
+        const Vec3 dir(std::cos(a), std::sin(a), 0.0f);
+        const Vec3 side(-dir.y * halfWidth, dir.x * halfWidth, 0.0f);
+        const uint16_t base = Base(verts);
+        const Vec3 n(0, 0, 1);
+        verts.push_back({vsub(vscale(dir, rayInner), side), n, color, handle});
+        verts.push_back({vadd(vscale(dir, rayInner), side), n, color, handle});
+        verts.push_back({vadd(vscale(dir, rayOuter), side), n, color, handle});
+        verts.push_back({vsub(vscale(dir, rayOuter), side), n, color, handle});
+        indices.insert(indices.end(), {base, static_cast<uint16_t>(base + 1),
+                                       static_cast<uint16_t>(base + 2), base,
+                                       static_cast<uint16_t>(base + 2),
+                                       static_cast<uint16_t>(base + 3)});
     }
 
-    // 3. Origin circle (torus ring in the XY plane at origin)
-    AddCircle(verts, indices, Vec3(0, 0, 0), Vec3(0, 0, 1),
-              kCircleRadius, kCircleTube, 24, color);
-
-    // Upload
-    m_geo.indexCount = static_cast<uint32_t>(indices.size());
-
-    m_geo.vertexBuffer = new VulkanBuffer();
-    m_geo.vertexBuffer->Create(allocator,
-        verts.size() * sizeof(GizmoVertex),
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VMA_MEMORY_USAGE_CPU_TO_GPU,
-        verts.data());
-
-    m_geo.indexBuffer = new VulkanBuffer();
-    m_geo.indexBuffer->Create(allocator,
-        indices.size() * sizeof(uint16_t),
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        VMA_MEMORY_USAGE_CPU_TO_GPU,
-        indices.data());
-}
-
-// ── Geometry helpers ────────────────────────────────────────────────────────
-
-void VulkanLightGizmo::AddArrow(std::vector<GizmoVertex>& verts,
-                                std::vector<uint16_t>& indices,
-                                const Vec3& start, const Vec3& direction,
-                                float length, float radius,
-                                const Vec3& color) {
-    uint16_t base = static_cast<uint16_t>(verts.size());
-    Vec3 dir = vnorm(direction);
-    float coneLen  = length * 0.22f;
-    float shaftLen = length - coneLen;
-    Vec3  shaftEnd = vadd(start, vscale(dir, shaftLen));
-    Vec3  tip      = vadd(start, vscale(dir, length));
-
-    // Build perpendicular basis
-    Vec3 perp = (std::abs(dir.x) < 0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
-    Vec3 tangent   = vnorm(vcross(dir, perp));
-    Vec3 bitangent = vnorm(vcross(dir, tangent));
-
-    const int seg = 12;
-
-    // Shaft cylinder
-    for (int i = 0; i < seg; ++i) {
-        float a = i * 2.0f * PI / seg;
-        Vec3 off = vadd(vscale(tangent, std::cos(a) * radius),
-                        vscale(bitangent, std::sin(a) * radius));
-        verts.push_back({vadd(start, off),    dir, color});
-        verts.push_back({vadd(shaftEnd, off), dir, color});
-    }
-    for (int i = 0; i < seg; ++i) {
-        int n   = (i + 1) % seg;
-        uint16_t i0 = base + i * 2;
-        uint16_t i1 = base + i * 2 + 1;
-        uint16_t i2 = base + n * 2;
-        uint16_t i3 = base + n * 2 + 1;
-        indices.push_back(i0); indices.push_back(i1); indices.push_back(i2);
-        indices.push_back(i2); indices.push_back(i1); indices.push_back(i3);
-    }
-
-    // Cone tip
-    uint16_t coneBase = static_cast<uint16_t>(verts.size());
-    float coneR = radius * 2.5f;
-    for (int i = 0; i < seg; ++i) {
-        float a = i * 2.0f * PI / seg;
-        Vec3 off = vadd(vscale(tangent, std::cos(a) * coneR),
-                        vscale(bitangent, std::sin(a) * coneR));
-        verts.push_back({vadd(shaftEnd, off), dir, color});
-    }
-    verts.push_back({tip, dir, color});
-    uint16_t tipIdx = static_cast<uint16_t>(verts.size() - 1);
-    for (int i = 0; i < seg; ++i) {
-        int n = (i + 1) % seg;
-        indices.push_back(coneBase + i);
-        indices.push_back(tipIdx);
-        indices.push_back(coneBase + n);
-    }
-}
-
-void VulkanLightGizmo::AddLine(std::vector<GizmoVertex>& verts,
-                               std::vector<uint16_t>& indices,
-                               const Vec3& start, const Vec3& end,
-                               float radius, const Vec3& color) {
-    // Thin cylinder (no cone)
-    uint16_t base = static_cast<uint16_t>(verts.size());
-    Vec3 dir = vnorm(vsub(end, start));
-
-    Vec3 perp = (std::abs(dir.x) < 0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
-    Vec3 tangent   = vnorm(vcross(dir, perp));
-    Vec3 bitangent = vnorm(vcross(dir, tangent));
-
-    const int seg = 8;
-    for (int i = 0; i < seg; ++i) {
-        float a = i * 2.0f * PI / seg;
-        Vec3 off = vadd(vscale(tangent, std::cos(a) * radius),
-                        vscale(bitangent, std::sin(a) * radius));
-        verts.push_back({vadd(start, off), dir, color});
-        verts.push_back({vadd(end,   off), dir, color});
-    }
-    for (int i = 0; i < seg; ++i) {
-        int n = (i + 1) % seg;
-        uint16_t i0 = base + i * 2;
-        uint16_t i1 = base + i * 2 + 1;
-        uint16_t i2 = base + n * 2;
-        uint16_t i3 = base + n * 2 + 1;
-        indices.push_back(i0); indices.push_back(i1); indices.push_back(i2);
-        indices.push_back(i2); indices.push_back(i1); indices.push_back(i3);
-    }
-}
-
-void VulkanLightGizmo::AddCircle(std::vector<GizmoVertex>& verts,
-                                 std::vector<uint16_t>& indices,
-                                 const Vec3& center, const Vec3& axis,
-                                 float radius, float tubeRadius,
-                                 int segments, const Vec3& color) {
-    uint16_t base = static_cast<uint16_t>(verts.size());
-    Vec3 axisN = vnorm(axis);
-
-    // Build tangent frame on the plane perpendicular to axis
-    Vec3 perp = (std::abs(axisN.x) < 0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
-    Vec3 u = vnorm(vcross(axisN, perp));
-    Vec3 v = vnorm(vcross(axisN, u));
-
-    for (int i = 0; i <= segments; ++i) {
-        float a = i * 2.0f * PI / segments;
-        Vec3 ringPos = vadd(center,
-                            vadd(vscale(u, std::cos(a) * radius),
-                                 vscale(v, std::sin(a) * radius)));
-        Vec3 normal = vnorm(vsub(ringPos, center));
-
-        // Two verts per ring position (offset along ring's local normal)
-        Vec3 off1 = vscale(axisN,  tubeRadius);
-        Vec3 off2 = vscale(axisN, -tubeRadius);
-
-        verts.push_back({vadd(ringPos, off1), normal, color});
-        verts.push_back({vadd(ringPos, off2), normal, color});
-    }
-
-    for (int i = 0; i < segments; ++i) {
-        uint16_t i0 = base + i * 2;
-        uint16_t i1 = base + i * 2 + 1;
-        uint16_t i2 = base + (i + 1) * 2;
-        uint16_t i3 = base + (i + 1) * 2 + 1;
-        indices.push_back(i0); indices.push_back(i1); indices.push_back(i2);
-        indices.push_back(i2); indices.push_back(i1); indices.push_back(i3);
-    }
+    UploadGeometry(m_geo.vertexBuffer, m_geo.indexBuffer, m_geo.indexCount,
+                   allocator, verts, indices);
 }
