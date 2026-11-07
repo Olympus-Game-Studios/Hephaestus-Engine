@@ -3,7 +3,8 @@
 // Push constants for billboard position and size
 layout(push_constant) uniform PushConstants {
     vec3 position;  // Light position in world space
-    float size;     // Billboard size
+    float size;     // Half-extent as a fraction of the viewport half-height
+    vec4 tint;      // Glyph colour, used by billboard.frag
 } pc;
 
 // Output to fragment shader
@@ -40,11 +41,17 @@ void main() {
     // Calculate camera-facing billboard orientation
     vec3 cameraUp = vec3(ubo.view[0][1], ubo.view[1][1], ubo.view[2][1]);
     vec3 cameraRight = vec3(ubo.view[0][0], ubo.view[1][0], ubo.view[2][0]);
+
+    // Constant on-screen size: half-extent is a fraction of the viewport half-height.
+    vec3 forward = vec3(ubo.view[0][2], ubo.view[1][2], ubo.view[2][2]);
+    bool ortho = abs(ubo.proj[3][3] - 1.0) < 1e-3;
+    float depth = ortho ? 1.0 : max(dot(pc.position - ubo.viewPos, forward), 1e-3);
+    float halfExtent = pc.size * depth / abs(ubo.proj[1][1]);
     
     // Build the billboard quad in world space using push constant position
     vec3 worldPos = pc.position 
-        + cameraRight * corner.x * pc.size
-        + cameraUp * corner.y * pc.size;
+        + cameraRight * corner.x * halfExtent
+        + cameraUp * corner.y * halfExtent;
     
     gl_Position = ubo.proj * ubo.view * vec4(worldPos, 1.0);
 }

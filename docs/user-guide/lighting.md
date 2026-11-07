@@ -18,6 +18,8 @@ Add a light from **Create** (right click in the viewport) or add a **Light** com
 
 Every light has **Color**, **Intensity** and **Enabled**.
 
+In the viewport each light shows an icon for its type (a sun, a bulb or a spotlight) drawn in the light's colour, so you can tell lights apart at a glance. Icons stay the same size on screen however far away the light is; click one to select its light. **View > Overlays > Light Billboards** hides them.
+
 ## Shadows
 
 The **Shadows** group on a light controls how it casts them. **Cast Shadows** is on by default.
