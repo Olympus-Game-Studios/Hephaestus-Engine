@@ -572,7 +572,12 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
             mount.relativeRoot = relative;
         }
         if (!plugin.runtimeEntry.empty()) {
-            const auto module = plugin.pluginRoot / plugin.runtimeEntry;
+            // A source checkout builds plugin modules beside the player, not into the plugin's own folder.
+            auto runtimeRoot = runtime.executable.parent_path() / "Plugins" / plugin.pluginRoot.filename();
+            if (!std::filesystem::is_regular_file(runtimeRoot / plugin.runtimeEntry, ec)) {
+                runtimeRoot = plugin.pluginRoot;
+            }
+            const auto module = runtimeRoot / plugin.runtimeEntry;
             if (!std::filesystem::is_regular_file(module, ec)) {
                 Problem(result, ProblemSeverity::Error, "PACKAGE_PLUGIN_RUNTIME_MISSING",
                         "Plugin " + plugin.id + " runtime module was not found",
@@ -589,7 +594,7 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
                             "Could not copy plugin runtime module", copyError);
                     return fail();
                 }
-            } else if (!CopyTree(plugin.pluginRoot / folder, content / pluginRelative / folder,
+            } else if (!CopyTree(runtimeRoot / folder, content / pluginRelative / folder,
                                  previousContent / pluginRelative / folder,
                                  "Copying plugin runtime " + plugin.id, request, result)) {
                 return fail();

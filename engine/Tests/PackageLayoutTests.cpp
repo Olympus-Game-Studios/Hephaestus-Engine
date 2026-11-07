@@ -289,12 +289,15 @@ int main(int argc, char** argv) {
               R"({"version":1,"apiVersion":1,"id":"com.test.language","name":"Language","author":"Tests",)"
               R"("pluginVersion":"1.0.0","engineVersion":">=2026.9.0","type":"runtime",)"
               R"("runtimeEntry":"bin/ScriptLanguageTestPlugin.dll"})");
-        fs::create_directories(languagePlugin / "bin");
-        fs::copy_file(testModule, languagePlugin / "bin" / testModule.filename(),
+        // Built beside the player, as CMake does for first-party plugins, not in the plugin's folder.
+        const fs::path builtPlugin = runtime / "Plugins" / "com.test.language";
+        fs::create_directories(builtPlugin / "bin");
+        fs::copy_file(testModule, builtPlugin / "bin" / testModule.filename(),
                       fs::copy_options::overwrite_existing);
         Write(project / "scripts" / "mover.tscript", "ok");
         result = stager.stage(request, artifacts);
         ok &= Check(result.success && fs::exists(content / "mover.tscript.packaged") &&
+                        fs::exists(content / "Plugins" / "com.test.language" / "bin" / testModule.filename()) &&
                         HasStage(stages, "Preparing Test Language script mover.tscript"),
                     "a script language prepares its scripts while packaging");
         Write(project / "scripts" / "broken.tscript", "fail");
@@ -304,6 +307,7 @@ int main(int argc, char** argv) {
         fs::remove(project / "scripts" / "broken.tscript");
         fs::remove(project / "scripts" / "mover.tscript");
         fs::remove_all(languagePlugin);
+        fs::remove_all(runtime / "Plugins");
     }
 
 #ifdef _WIN32
