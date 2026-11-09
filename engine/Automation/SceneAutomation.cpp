@@ -5,6 +5,7 @@
 #include "ComponentMetadata.h"
 #include "Assets/AssetManager.h"
 #include "Assets/AssetPathPolicy.h"
+#include "Audio/AudioEngine.h"
 #include "Scene/Components.h"
 #include "Scene/PrefabComponentIO.h"
 #include "Scene/PrefabOverrideSystem.h"
@@ -176,6 +177,22 @@ void RegisterSceneAutomation(AutomationService& service)
     registerTool(Definition("project.get_info", "Return the active Hephaestus project information.",
         ObjectSchema(), [](ToolContext& context, const Json&) -> ToolOutcome {
             return ToolResult::Success(context.Backend().GetProjectInfo());
+        }));
+
+    registerTool(Definition("audio.get_status",
+        "Report the audio backend, active and maximum voices, cached sounds and bus volumes.",
+        ObjectSchema(), [](ToolContext& context, const Json&) -> ToolOutcome {
+            AudioEngine* audio = context.Backend().Audio();
+            if (!audio) return Failure(ErrorCode::ToolUnavailable, "Audio is unavailable for this host");
+            Json buses = Json::object();
+            for (const std::string& bus : AudioEngine::BusNames()) {
+                buses[bus] = audio->GetBusVolume(bus);
+            }
+            return ToolResult::Success({{"available", audio->IsBackendAvailable()},
+                                        {"activeVoices", audio->GetActiveVoiceCount()},
+                                        {"maxVoices", audio->GetMaxVoices()},
+                                        {"cachedSounds", audio->GetCachedSoundCount()},
+                                        {"buses", std::move(buses)}});
         }));
 
     registerTool(Definition("scene.get_current", "Return the active live scene.",

@@ -317,6 +317,8 @@ target_include_directories(HephaestusPluginCore PUBLIC engine extern)
 # ─────────────────────────────────────────────────────────────────────────────
 add_library(HephaestusRuntime STATIC
     engine/Audio/AudioEngine.cpp
+    engine/Audio/AudioMath.cpp
+    engine/Audio/MiniaudioImplementation.c
     engine/Assets/ModelImporter.cpp
     engine/Assets/FbxDocument.cpp
     engine/Assets/FbxStaticImporter.cpp
@@ -422,8 +424,10 @@ if(LUA_FOUND)
 else()
     target_compile_definitions(HephaestusRuntime PUBLIC LUA_AVAILABLE=0)
 endif()
-if(WIN32)
-    target_link_libraries(HephaestusRuntime PUBLIC winmm)
+if(APPLE)
+    target_link_libraries(HephaestusRuntime PUBLIC "-framework CoreFoundation" "-framework CoreAudio" "-framework AudioToolbox")
+elseif(UNIX)
+    target_link_libraries(HephaestusRuntime PUBLIC ${CMAKE_DL_LIBS} m pthread)
 endif()
 
 # Qt-free editor services and documents. Editor-only, but never Qt: Qt code
@@ -1424,6 +1428,20 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
         COMMAND SwapchainFormatTests
     )
 
+    add_executable(AudioEngineTests
+        engine/Tests/AudioEngineTests.cpp
+    )
+    target_link_libraries(AudioEngineTests PRIVATE HephaestusRuntime)
+    target_include_directories(AudioEngineTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME AudioEngine
+        COMMAND AudioEngineTests
+    )
+
     add_executable(ActiveCameraSyncTests
         engine/Tests/ActiveCameraSyncTests.cpp
         engine/Assets/AssetPathPolicy.cpp
@@ -1889,9 +1907,6 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
             target_link_libraries(CharacterLuaTests PRIVATE ${LUA_LIBRARIES} glfw HephaestusInputCore)
         endif()
         hephaestus_target_ufbx(CharacterLuaTests SKELETAL)
-        if(WIN32)
-            target_link_libraries(CharacterLuaTests PRIVATE winmm)
-        endif()
         add_test(
             NAME CharacterLua
             COMMAND CharacterLuaTests
@@ -1926,9 +1941,6 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
             target_link_libraries(PhysicsLuaTests PRIVATE ${LUA_LIBRARIES} glfw HephaestusInputCore Jolt Vulkan::Vulkan)
         endif()
         hephaestus_target_ufbx(PhysicsLuaTests SKELETAL)
-        if(WIN32)
-            target_link_libraries(PhysicsLuaTests PRIVATE winmm)
-        endif()
         add_test(NAME PhysicsLua COMMAND PhysicsLuaTests)
         if(DEFINED LUA_DLL_PATH AND EXISTS "${LUA_DLL_PATH}")
             get_filename_component(PHYSICS_LUA_DLL_NAME "${LUA_DLL_PATH}" NAME)

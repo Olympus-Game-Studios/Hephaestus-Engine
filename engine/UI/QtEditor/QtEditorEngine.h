@@ -163,6 +163,7 @@ public:
      * to the GPU and entity handles are set correctly.
      */
     void RebuildSceneMeshes();
+    AudioEngine* GetAudioEngine() const { return m_audioEngine.get(); }
 
     /**
      * @brief Focus the camera on the currently selected entity.

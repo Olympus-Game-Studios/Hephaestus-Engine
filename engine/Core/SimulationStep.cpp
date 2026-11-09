@@ -2,6 +2,7 @@
 
 #include "../Animation/CharacterPlayback.h"
 #include "../Audio/AudioEngine.h"
+#include "../Scene/ActiveCameraSync.h"
 #include "../Physics/JoltPhysicsSystem.h"
 #include "../Scene/Components.h"
 #include "../Scene/Scene.h"
@@ -90,6 +91,12 @@ bool RunSimulationStep(const SimulationStepContext& context, float dt)
 
 void UpdateSceneAudioSources(Scene& scene, AudioEngine& audioEngine)
 {
+    if (const auto view = TryReadActiveCameraView(scene)) {
+        const Mat4 frame = MakeCameraViewFrame(view->position, view->yawRadians, view->pitchRadians);
+        audioEngine.SetListener(view->position, Vec3(frame.m[0], frame.m[1], frame.m[2]),
+                                Vec3(frame.m[4], frame.m[5], frame.m[6]));
+    }
+
     auto audioView = scene.GetEntitiesWith<AudioSourceComponent>();
     for (auto entityHandle : audioView) {
         auto& audio = audioView.get<AudioSourceComponent>(entityHandle);
@@ -110,15 +117,31 @@ void UpdateSceneAudioSources(Scene& scene, AudioEngine& audioEngine)
                 audio.runtimeHandle = 0;
             } else {
                 audioEngine.SetVolume(audio.runtimeHandle, audio.volume);
+                if (audio.spatial) {
+                    const Mat4 world = scene.GetWorldTransform(Entity(entityHandle, &scene));
+                    audioEngine.SetPosition(audio.runtimeHandle, Vec3(world.m[12], world.m[13], world.m[14]));
+                }
             }
         }
 
         if (audio.runtimeHandle == 0 && audio.playOnStart && !audio.runtimeStarted) {
-            audio.runtimeHandle = audioEngine.Play(audio.clipPath, audio.loop, audio.volume);
+            AudioEngine::PlayParams params;
+            params.loop = audio.loop;
+            params.volume = audio.volume;
+            params.bus = audio.bus;
+            params.spatial = audio.spatial;
+            params.minDistance = audio.minDistance;
+            params.maxDistance = audio.maxDistance;
+            if (audio.spatial) {
+                const Mat4 world = scene.GetWorldTransform(Entity(entityHandle, &scene));
+                params.position = Vec3(world.m[12], world.m[13], world.m[14]);
+            }
+            audio.runtimeHandle = audioEngine.Play(audio.clipPath, params);
             audio.runtimeStarted = audio.runtimeHandle != 0;
             audio.runtimeLastClip = audio.clipPath;
         }
     }
+    audioEngine.Update();
 }
 
 } // namespace Hephaestus

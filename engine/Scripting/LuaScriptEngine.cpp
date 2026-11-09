@@ -5363,6 +5363,21 @@ void LuaScriptEngine::RegisterAudioBindings() {
     lua_pushcfunction(m_State, Lua_Audio_stopAll);
     lua_setfield(m_State, -2, "stopAll");
 
+    lua_pushcfunction(m_State, Lua_Audio_setPitch);
+    lua_setfield(m_State, -2, "setPitch");
+
+    lua_pushcfunction(m_State, Lua_Audio_setPosition);
+    lua_setfield(m_State, -2, "setPosition");
+
+    lua_pushcfunction(m_State, Lua_Audio_setBusVolume);
+    lua_setfield(m_State, -2, "setBusVolume");
+
+    lua_pushcfunction(m_State, Lua_Audio_getBusVolume);
+    lua_setfield(m_State, -2, "getBusVolume");
+
+    lua_pushcfunction(m_State, Lua_Audio_getVoiceCount);
+    lua_setfield(m_State, -2, "getVoiceCount");
+
     lua_setglobal(m_State, "Audio");
 #endif
 }
@@ -5388,16 +5403,50 @@ int LuaScriptEngine::Lua_Audio_play(lua_State* L) {
     }
 
     const char* path = luaL_checkstring(L, 1);
-    bool loop = false;
-    float volume = 1.0f;
-    if (lua_gettop(L) >= 2) {
-        loop = lua_toboolean(L, 2) != 0;
-    }
-    if (lua_gettop(L) >= 3) {
-        volume = static_cast<float>(luaL_checknumber(L, 3));
+    AudioEngine::PlayParams params;
+    if (lua_istable(L, 2)) {
+        auto number = [L](const char* key, float& out) {
+            lua_getfield(L, 2, key);
+            if (lua_isnumber(L, -1)) out = static_cast<float>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+        };
+        number("volume", params.volume);
+        number("pitch", params.pitch);
+        number("volumeJitter", params.volumeJitter);
+        number("pitchJitter", params.pitchJitter);
+        number("minDistance", params.minDistance);
+        number("maxDistance", params.maxDistance);
+        lua_getfield(L, 2, "loop");
+        params.loop = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "priority");
+        if (lua_isnumber(L, -1)) params.priority = static_cast<int>(lua_tointeger(L, -1));
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "bus");
+        if (lua_isstring(L, -1)) params.bus = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "position");
+        if (lua_istable(L, -1)) {
+            params.spatial = true;
+            lua_getfield(L, -1, "x");
+            params.position.x = static_cast<float>(lua_tonumber(L, -1));
+            lua_getfield(L, -2, "y");
+            params.position.y = static_cast<float>(lua_tonumber(L, -1));
+            lua_getfield(L, -3, "z");
+            params.position.z = static_cast<float>(lua_tonumber(L, -1));
+            lua_pop(L, 3);
+        }
+        lua_pop(L, 1);
+    } else {
+        if (lua_gettop(L) >= 2) {
+            params.loop = lua_toboolean(L, 2) != 0;
+        }
+        if (lua_gettop(L) >= 3) {
+            params.volume = static_cast<float>(luaL_checknumber(L, 3));
+        }
     }
 
-    AudioEngine::SoundHandle handle = engine->m_AudioEngine->Play(path, loop, volume);
+    AudioEngine::SoundHandle handle = engine->m_AudioEngine->Play(path, params);
     lua_pushinteger(L, static_cast<lua_Integer>(handle));
     return 1;
 #else
@@ -5485,6 +5534,69 @@ int LuaScriptEngine::Lua_Audio_isPlaying(lua_State* L) {
 
     uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
     lua_pushboolean(L, engine->m_AudioEngine->IsPlaying(handle));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Audio_setPitch(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const float pitch = static_cast<float>(luaL_checknumber(L, 2));
+    lua_pushboolean(L, engine && engine->m_AudioEngine && engine->m_AudioEngine->SetPitch(handle, pitch));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Audio_setPosition(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const uint32_t handle = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const Vec3 position(static_cast<float>(luaL_checknumber(L, 2)), static_cast<float>(luaL_checknumber(L, 3)),
+                        static_cast<float>(luaL_checknumber(L, 4)));
+    lua_pushboolean(L, engine && engine->m_AudioEngine && engine->m_AudioEngine->SetPosition(handle, position));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Audio_setBusVolume(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const char* bus = luaL_checkstring(L, 1);
+    const float volume = static_cast<float>(luaL_checknumber(L, 2));
+    lua_pushboolean(L, engine && engine->m_AudioEngine && engine->m_AudioEngine->SetBusVolume(bus, volume));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Audio_getBusVolume(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const char* bus = luaL_checkstring(L, 1);
+    lua_pushnumber(L, engine && engine->m_AudioEngine ? engine->m_AudioEngine->GetBusVolume(bus) : 1.0);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Audio_getVoiceCount(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushinteger(L, engine && engine->m_AudioEngine ? engine->m_AudioEngine->GetActiveVoiceCount() : 0);
     return 1;
 #else
     (void)L;

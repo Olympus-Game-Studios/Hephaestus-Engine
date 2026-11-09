@@ -652,6 +652,10 @@ void CaptureAudioSource(const AudioSourceComponent& audio, JsonValue& data) {
     data.objectValue["playOnStart"] = MakeBool(audio.playOnStart);
     data.objectValue["loop"] = MakeBool(audio.loop);
     data.objectValue["volume"] = MakeNumber(audio.volume);
+    data.objectValue["bus"] = MakeString(audio.bus);
+    data.objectValue["spatial"] = MakeBool(audio.spatial);
+    data.objectValue["minDistance"] = MakeNumber(audio.minDistance);
+    data.objectValue["maxDistance"] = MakeNumber(audio.maxDistance);
 }
 
 void ApplyAudioSource(AudioSourceComponent& audio, const JsonValue& data, bool enabled) {
@@ -676,6 +680,24 @@ void ApplyAudioSource(AudioSourceComponent& audio, const JsonValue& data, bool e
     if (const JsonValue* volumeValue = data.Find("volume")) {
         if (volumeValue->IsNumber()) {
             audio.volume = static_cast<float>(volumeValue->AsNumber());
+        }
+    }
+    if (const JsonValue* busValue = data.Find("bus")) {
+        if (busValue->IsString()) {
+            audio.bus = busValue->AsString();
+        }
+    }
+    if (const JsonValue* spatialValue = data.Find("spatial")) {
+        audio.spatial = ParseBoolLike(*spatialValue, audio.spatial);
+    }
+    if (const JsonValue* minValue = data.Find("minDistance")) {
+        if (minValue->IsNumber()) {
+            audio.minDistance = static_cast<float>(minValue->AsNumber());
+        }
+    }
+    if (const JsonValue* maxValue = data.Find("maxDistance")) {
+        if (maxValue->IsNumber()) {
+            audio.maxDistance = static_cast<float>(maxValue->AsNumber());
         }
     }
 }

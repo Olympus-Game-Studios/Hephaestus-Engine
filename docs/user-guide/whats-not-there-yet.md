@@ -31,9 +31,8 @@ Hephaestus is young, and I'd rather you know its gaps up front than discover the
 
 ## Audio
 
-- All sound is 2D, with no distance falloff or panning.
-- No mixer, buses or effects.
-- No sound at all on macOS.
+- No effects such as reverb or filters.
+- 3D sound has distance falloff and left/right panning only, with no Doppler or muffling behind you.
 
 ## Game UI
 

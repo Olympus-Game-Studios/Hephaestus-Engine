@@ -149,11 +149,15 @@ From `this:GetCharacter()`: `c:GetSocket(name)` (world space) and `c:GetSocketLo
 
 | Function | Does |
 | --- | --- |
-| `Audio.play(path, loop, volume)` | Play a `.wav` or `.mp3`. `loop` defaults to false, `volume` (0 to 1) to 1. Returns a handle, or `0` if it failed. |
+| `Audio.play(path, loop, volume)` | Play a `.wav`, `.mp3` or `.flac` in 2D. `loop` defaults to false, `volume` (0 to 1) to 1. Returns a handle, or `0` if it failed. |
+| `Audio.play(path, options)` | Play with a table of `volume`, `pitch`, `loop`, `bus` (`sfx`, `weapons`, `music`, `ui`), `priority`, `pitchJitter`, `volumeJitter` and, for 3D, `position = {x, y, z}`, `minDistance` and `maxDistance`. |
 | `Audio.stop(h)` / `Audio.pause(h)` / `Audio.resume(h)` | Control a sound. |
-| `Audio.setVolume(h, volume)` | Change its volume. |
+| `Audio.setVolume(h, volume)` / `Audio.setPitch(h, pitch)` | Change its volume or pitch (1 is normal speed). |
+| `Audio.setPosition(h, x, y, z)` | Move a sound, making it 3D. |
 | `Audio.isPlaying(h)` | Whether it's still playing. |
 | `Audio.stopAll()` | Silence everything. |
+| `Audio.setBusVolume(bus, volume)` / `Audio.getBusVolume(bus)` | A bus's volume; `master` is everything. |
+| `Audio.getVoiceCount()` | How many sounds are playing. |
 | `Audio.isAvailable()` | Whether sound works on this machine. |
 
 ## UI

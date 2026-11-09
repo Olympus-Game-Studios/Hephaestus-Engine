@@ -205,7 +205,8 @@ local function updateFootsteps(speedXZ, grounded, dt)
         if #footsteps > 0 then
             stepIndex = stepIndex % #footsteps + 1
             if Audio and Audio.isAvailable and Audio.isAvailable() then
-                Audio.play(footsteps[stepIndex], false, footstepVolume)
+                Audio.play(footsteps[stepIndex], { volume = footstepVolume, bus = "sfx", priority = 1,
+                                                   pitchJitter = 0.05, volumeJitter = 0.15 })
             end
         end
     end

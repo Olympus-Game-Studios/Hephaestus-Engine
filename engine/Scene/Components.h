@@ -517,6 +517,10 @@ struct AudioSourceComponent {
     bool playOnStart = true;
     bool loop = false;
     float volume = 1.0f;        // 0..1
+    std::string bus = "sfx";    // master, sfx, weapons, music or ui
+    bool spatial = false;       // heard from the entity's position by the active camera
+    float minDistance = 1.0f;   // metres at full volume
+    float maxDistance = 40.0f;  // metres where it fades out
 
     // Runtime-only state
     uint32_t runtimeHandle = 0;

@@ -16,6 +16,7 @@ Hephaestus Engine is licensed under [`LICENSE.md`](LICENSE.md). It includes the 
 | cpp-httplib | 0.47.0 | MIT | Editor (Game only when built with `HEPHAESTUS_RUNTIME_AUTOMATION`) |
 | ufbx | 0.23.0 | MIT or public domain | Editor, Game |
 | stb_image, stb_truetype | 2.30, 1.26 | MIT or public domain | Editor, Game |
+| miniaudio | 0.11.26 | MIT No Attribution (chosen from MIT-0 or public domain) | Editor, Game |
 | Inter | 4.001 | SIL OFL 1.1 | Editor |
 | JetBrains Mono | 2.211 | SIL OFL 1.1 | Editor |
 | Font Awesome Free (solid font) | 6.7.2 | SIL OFL 1.1 | Editor |
@@ -5188,6 +5189,29 @@ AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
 ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------------
+```
+
+## miniaudio
+
+miniaudio 0.11.26 (`extern/miniaudio/miniaudio.h`). https://github.com/mackron/miniaudio. Offered as public domain or MIT No Attribution; Hephaestus uses it under MIT No Attribution.
+
+```text
+Copyright 2025 David Reid
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ## Inter

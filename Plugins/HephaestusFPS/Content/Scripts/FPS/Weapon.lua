@@ -74,6 +74,8 @@ Expose.number("raiseSeconds", 0.45)
 Expose.number("lowerSeconds", 0.3)
 Expose.string("fireSound", "")
 Expose.number("fireVolume", 0.8)
+Expose.number("firePitchJitter", 0.03)
+Expose.number("fireVolumeJitter", 0.06)
 Expose.string("reloadSound", "")
 Expose.number("reloadSoundTime", 0.05)
 Expose.string("reloadPart2Sound", "")
@@ -105,7 +107,8 @@ local TUNING = {
     "cameraKickFrequency", "cameraKickDampingRatio", "swayAmount", "swayLag", "swayMaxDegrees", "swayFrequency",
     "swayDampingRatio", "adsSwayScale", "idleAmount", "idleBreathRate", "idleAdsScale", "bobAmount", "moveLag",
     "moveMaxOffset", "moveFrequency", "strafeRoll", "landKick", "footfallDip", "fireBufferSeconds",
-    "sprintToFireSeconds", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "emptySound", "reloadSound",
+    "sprintToFireSeconds", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "firePitchJitter",
+    "fireVolumeJitter", "emptySound", "reloadSound",
     "reloadPart2Sound", "boltSound",
 }
 
@@ -197,6 +200,7 @@ function Weapon.register(entity, options)
     Logic.fillWeapon(row)
     row.rng = Gunplay.newRng((row.recoilSeed or 1) * 7919 + 13)
     row.hitscan = setting(options, "hitscan", true) ~= false
+    row.fireLayers = setting(options, "fireLayers", nil)
     row.pattern = Gunplay.parsePattern(setting(options, "recoilPattern", ""))
     if #row.pattern == 0 then
         row.pattern = { { pitch = row.recoilPitch or 1, yaw = row.recoilYaw or 0 } }
@@ -260,9 +264,29 @@ function Weapon.giveAmmo(entity, amount)
     end
 end
 
-local function playOptional(path, volume)
+-- The player's own weapon is heard in 2D on the weapons bus; a shot outranks reloads and footsteps.
+local function playOptional(path, volume, options)
     if path and path ~= "" and Audio and Audio.isAvailable and Audio.isAvailable() then
-        Audio.play(path, false, volume or 1.0)
+        options = options or {}
+        Audio.play(path, { volume = volume or 1.0, bus = "weapons", priority = options.priority or 5,
+                           pitch = options.pitch or 1.0, pitchJitter = options.pitchJitter or 0.02,
+                           volumeJitter = options.volumeJitter or 0.04 })
+    end
+end
+
+-- fireLayers lists the sounds one shot plays together (for example a transient, the action and a tail).
+local function playShot(row)
+    local layers = row.fireLayers
+    if not layers or #layers == 0 then
+        layers = { { sound = row.fireSound, volume = row.fireVolume } }
+    end
+    for _, layer in ipairs(layers) do
+        playOptional(layer.sound, layer.volume or row.fireVolume, {
+            priority = 10,
+            pitch = layer.pitch,
+            pitchJitter = layer.pitchJitter or row.firePitchJitter,
+            volumeJitter = layer.volumeJitter or row.fireVolumeJitter,
+        })
     end
 end
 
@@ -361,7 +385,7 @@ local function fireShot(row, input, owner)
         })
     end
 
-    playOptional(row.fireSound, row.fireVolume)
+    playShot(row)
     if row.hitscan then
         applyHit(row, Hitscan.trace(input.ox, input.oy, input.oz, dx, dy, dz, row.range, owner), owner)
     end

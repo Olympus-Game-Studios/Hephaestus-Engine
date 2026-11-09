@@ -534,6 +534,11 @@ private:
     static int Lua_Audio_setVolume(lua_State* L);
     static int Lua_Audio_isPlaying(lua_State* L);
     static int Lua_Audio_stopAll(lua_State* L);
+    static int Lua_Audio_setPitch(lua_State* L);
+    static int Lua_Audio_setPosition(lua_State* L);
+    static int Lua_Audio_setBusVolume(lua_State* L);
+    static int Lua_Audio_getBusVolume(lua_State* L);
+    static int Lua_Audio_getVoiceCount(lua_State* L);
 
     static int Lua_UI_isAvailable(lua_State* L);
     static int Lua_UI_createSimpleMenu(lua_State* L);

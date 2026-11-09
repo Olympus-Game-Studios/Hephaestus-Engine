@@ -1,12 +1,14 @@
 ---
 title: Audio
-description: Audio Source components and playing sounds from Lua.
+description: Audio Source components, 3D sound, buses and playing sounds from Lua.
 order: 10
 ---
 
 # Audio
 
-Sound in Hephaestus is simple for now: you can play sound effects and music, loop them and set their volume. Supported formats are **WAV** and **MP3**.
+Hephaestus mixes as many sounds at once as you need: overlapping gunshots, footsteps and music all play together. Sounds can be 2D (the same in both ears, right for music, UI and the player's own weapon) or 3D (quieter with distance and panned to the side they come from, heard from the active camera). Supported formats are **WAV**, **MP3** and **FLAC**. Sound plays through WASAPI on Windows and Core Audio on macOS.
+
+Each file is loaded and decoded the first time it plays and kept in memory, so playing it again never reads the disk.
 
 ## Audio Source
 
@@ -15,8 +17,21 @@ Add an **Audio Source** (from **Create** in the viewport, or as a component) and
 - **Play On Start**: start playing as soon as the game does. Perfect for music and ambience.
 - **Loop**: keep playing forever.
 - **Volume**: from 0 to 1.
+- **Bus**: which volume group it belongs to (see below).
+- **3D**: hear it from the entity's position. It follows the entity if it moves.
+- **Min Distance**: inside this many metres it plays at full volume.
+- **Max Distance**: beyond this many metres it is silent. In between it gets quieter with distance.
 
 You can also drag a sound from the Content Browser straight into the viewport.
+
+## Buses
+
+Every sound plays on a bus, and each bus has its own volume: `sfx` (the default), `weapons`, `music` and `ui`, all under `master`. Turn a whole group down from a script, for example for a settings menu:
+
+```lua
+Audio.setBusVolume("music", 0.5)
+Audio.setBusVolume("master", 0.8)
+```
 
 ## Playing sounds from Lua
 
@@ -37,12 +52,24 @@ if music ~= 0 then             -- 0 means the sound couldn't be played
 end
 ```
 
+Pass a table instead of `loop` and `volume` for more control:
+
+```lua
+-- A 3D explosion on the sfx bus, a little different every time
+local p = Transform.getPosition()
+Audio.play("assets/audio/explosion.wav", {
+    position = { x = p.x, y = p.y, z = p.z },
+    minDistance = 3, maxDistance = 120,
+    volume = 0.9, pitchJitter = 0.05, volumeJitter = 0.1,
+    priority = 5,
+})
+```
+
+`pitchJitter` and `volumeJitter` vary each play by up to that fraction, so repeated sounds don't sound like a recording. Up to 48 sounds play at once. When that is full, a new sound replaces the quietest playing sound of the lowest `priority`, and is dropped if every playing sound has a higher priority than it.
+
 All the functions are in the [Lua API reference](lua-api.md#audio).
 
 ## Limitations
 
-- **Every sound is 2D.** Sounds don't get quieter with distance or pan left and right based on where they are. The Audio Source's position doesn't affect how it sounds yet.
-- There's no mixer, no buses and no effects.
-- **Sound only plays on Windows.** The macOS build is silent for now.
-
-A proper audio engine with 3D sound is on the list. Until then, you can fake distance a little by setting volume from a script based on how far the player is from the source.
+- No effects yet (reverb, echo, filters), so a room and an open field sound the same.
+- 3D sound is distance and left/right panning only: no Doppler, and sounds behind you are not muffled.

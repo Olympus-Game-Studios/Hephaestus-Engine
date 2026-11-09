@@ -1065,7 +1065,11 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"enabled\": " << (audio->enabled ? "true" : "false") << ",\n";
             oss << "          \"playOnStart\": " << (audio->playOnStart ? "true" : "false") << ",\n";
             oss << "          \"loop\": " << (audio->loop ? "true" : "false") << ",\n";
-            oss << "          \"volume\": " << FormatFloat(audio->volume) << "\n";
+            oss << "          \"volume\": " << FormatFloat(audio->volume) << ",\n";
+            oss << "          \"bus\": \"" << EscapeString(audio->bus) << "\",\n";
+            oss << "          \"spatial\": " << (audio->spatial ? "true" : "false") << ",\n";
+            oss << "          \"minDistance\": " << FormatFloat(audio->minDistance) << ",\n";
+            oss << "          \"maxDistance\": " << FormatFloat(audio->maxDistance) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -1902,6 +1906,24 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                     audio.volume = static_cast<float>(volumeValue->AsNumber());
                 }
             }
+            if (const JsonValue* busValue = audioObj->Find("bus")) {
+                if (busValue->IsString()) {
+                    audio.bus = busValue->AsString();
+                }
+            }
+            if (const JsonValue* spatialValue = audioObj->Find("spatial")) {
+                audio.spatial = ParseBoolLike(*spatialValue, audio.spatial);
+            }
+            if (const JsonValue* minValue = audioObj->Find("minDistance")) {
+                if (minValue->IsNumber()) {
+                    audio.minDistance = static_cast<float>(minValue->AsNumber());
+                }
+            }
+            if (const JsonValue* maxValue = audioObj->Find("maxDistance")) {
+                if (maxValue->IsNumber()) {
+                    audio.maxDistance = static_cast<float>(maxValue->AsNumber());
+                }
+            }
             audio.runtimeHandle = 0;
             audio.runtimeStarted = false;
             audio.runtimeLastClip.clear();
@@ -2626,7 +2648,11 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"enabled\": " << (audio->enabled ? "true" : "false") << ",\n";
             oss << "          \"playOnStart\": " << (audio->playOnStart ? "true" : "false") << ",\n";
             oss << "          \"loop\": " << (audio->loop ? "true" : "false") << ",\n";
-            oss << "          \"volume\": " << FormatFloat(audio->volume) << "\n";
+            oss << "          \"volume\": " << FormatFloat(audio->volume) << ",\n";
+            oss << "          \"bus\": \"" << EscapeString(audio->bus) << "\",\n";
+            oss << "          \"spatial\": " << (audio->spatial ? "true" : "false") << ",\n";
+            oss << "          \"minDistance\": " << FormatFloat(audio->minDistance) << ",\n";
+            oss << "          \"maxDistance\": " << FormatFloat(audio->maxDistance) << "\n";
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }

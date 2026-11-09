@@ -927,6 +927,11 @@ public:
         return &Hephaestus::AssetManager::GetInstance();
     }
 
+    AudioEngine* Audio() noexcept override
+    {
+        return m_owner->m_engine ? m_owner->m_engine->GetAudioEngine() : nullptr;
+    }
+
     Hephaestus::AssetReferenceIndex* AssetReferences() noexcept override
     {
         return &EditorAssetServices::Instance().ReferenceIndex();

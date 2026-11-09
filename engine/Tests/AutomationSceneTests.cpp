@@ -221,6 +221,10 @@ int main()
         fs::remove_all(root);
     }
 
+    auto audioStatus = Call(service, "audio.get_status");
+    ok &= Check(!audioStatus.Ok() && audioStatus.error->code == Automation::ErrorCode::ToolUnavailable,
+                "audio.get_status reports a host without audio as unavailable");
+
     auto prefabInfo = Call(service, "prefab.get_info", {{"entity", secondRef}});
     ok &= Check(prefabInfo.Ok() && prefabInfo.value["isPrefabNode"] == false &&
                     prefabInfo.value["isPrefabInstance"] == false,
