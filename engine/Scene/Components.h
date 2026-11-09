@@ -124,6 +124,9 @@ struct MeshRendererComponent {
     AABB localBounds; // Bounding box in local space
     bool visible = true;
     bool hideInGame = false;
+    /// In play, drawn in the active camera's view frame (+X forward, +Y up, +Z right relative to the camera
+    /// entity), in its own depth range so it never clips into the world, and casts no shadows.
+    bool viewModel = false;
     // Editor-only: when not visible, still draw a selection-style outline and allow viewport picking.
     bool showHiddenOutline = false;
     bool backfaceCulling = false;

@@ -844,6 +844,9 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "        \"MeshRenderer\": {\n";
             oss << "          \"visible\": " << (mesh->visible ? "true" : "false") << ",\n";
             oss << "          \"hideInGame\": " << (mesh->hideInGame ? "true" : "false") << ",\n";
+            if (mesh->viewModel) {
+                oss << "          \"viewModel\": true,\n";
+            }
             oss << "          \"showHiddenOutline\": " << (mesh->showHiddenOutline ? "true" : "false") << ",\n";
             oss << "          \"mesh\": ";
             if (mesh->HasValidMesh()) {
@@ -1304,6 +1307,9 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
             if (const JsonValue* hideInGameValue = meshObj->Find("hideInGame")) {
                 mesh.hideInGame = ParseBoolLike(*hideInGameValue, mesh.hideInGame);
+            }
+            if (const JsonValue* viewModelValue = meshObj->Find("viewModel")) {
+                mesh.viewModel = ParseBoolLike(*viewModelValue, mesh.viewModel);
             }
             if (const JsonValue* showHiddenOutlineValue = meshObj->Find("showHiddenOutline")) {
                 mesh.showHiddenOutline = ParseBoolLike(*showHiddenOutlineValue, mesh.showHiddenOutline);
@@ -2407,6 +2413,9 @@ std::string SceneSerializer::SerializeToString() const
             oss << "        \"MeshRenderer\": {\n";
             oss << "          \"visible\": " << (mesh->visible ? "true" : "false") << ",\n";
             oss << "          \"hideInGame\": " << (mesh->hideInGame ? "true" : "false") << ",\n";
+            if (mesh->viewModel) {
+                oss << "          \"viewModel\": true,\n";
+            }
             oss << "          \"showHiddenOutline\": " << (mesh->showHiddenOutline ? "true" : "false") << ",\n";
             oss << "          \"mesh\": ";
             if (mesh->HasValidMesh()) {

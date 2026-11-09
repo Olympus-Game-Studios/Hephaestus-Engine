@@ -86,6 +86,19 @@ bool TryMakeCameraView(Scene& scene, Entity camera, ActiveCameraView& out)
     return true;
 }
 
+Mat4 MakeCameraViewFrame(const Vec3& position, float yawRadians, float pitchRadians)
+{
+    const Vec3 forward = RenderForward(yawRadians, pitchRadians);
+    const Vec3 right(-std::sin(yawRadians), 0.0f, std::cos(yawRadians));
+    const Vec3 up = vcross(right, forward);
+    Mat4 frame = Mat4::Identity();
+    frame.m[0] = forward.x; frame.m[1] = forward.y; frame.m[2] = forward.z;
+    frame.m[4] = up.x;      frame.m[5] = up.y;      frame.m[6] = up.z;
+    frame.m[8] = right.x;   frame.m[9] = right.y;   frame.m[10] = right.z;
+    frame.m[12] = position.x; frame.m[13] = position.y; frame.m[14] = position.z;
+    return frame;
+}
+
 std::optional<ActiveCameraView> TryReadActiveCameraView(Scene& scene)
 {
     Entity camera = FindActiveCameraEntity(scene);

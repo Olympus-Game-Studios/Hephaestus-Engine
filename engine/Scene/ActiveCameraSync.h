@@ -45,6 +45,10 @@ struct ActiveCameraView {
 
 bool TryMakeCameraView(Scene& scene, Entity camera, ActiveCameraView& out);
 
+/// World matrix of the rendered view: columns are forward (+X), up (+Y) and right (+Z) at the view position.
+/// Identity for yaw 0 and pitch 0, so camera-relative offsets read as (forward, up, right).
+Mat4 MakeCameraViewFrame(const Vec3& position, float yawRadians, float pitchRadians);
+
 /// First CameraComponent with isActive, otherwise the first with isPrimary.
 std::optional<ActiveCameraView> TryReadActiveCameraView(Scene& scene);
 

@@ -63,6 +63,9 @@ void CaptureMeshRenderer(const MeshRendererComponent& mesh, JsonValue& data) {
     data = MakeObject();
     data.objectValue["visible"] = MakeBool(mesh.visible);
     data.objectValue["hideInGame"] = MakeBool(mesh.hideInGame);
+    if (mesh.viewModel) {
+        data.objectValue["viewModel"] = MakeBool(true);
+    }
     data.objectValue["showHiddenOutline"] = MakeBool(mesh.showHiddenOutline);
     if (!mesh.meshAssetPath.empty()) {
         data.objectValue["meshSource"] = MakeString(mesh.meshAssetPath);
@@ -90,6 +93,9 @@ void ApplyMeshRenderer(MeshRendererComponent& mesh, const JsonValue& data) {
     }
     if (const JsonValue* hideInGameValue = data.Find("hideInGame")) {
         mesh.hideInGame = ParseBoolLike(*hideInGameValue, mesh.hideInGame);
+    }
+    if (const JsonValue* viewModelValue = data.Find("viewModel")) {
+        mesh.viewModel = ParseBoolLike(*viewModelValue, mesh.viewModel);
     }
     if (const JsonValue* showHiddenOutlineValue = data.Find("showHiddenOutline")) {
         mesh.showHiddenOutline = ParseBoolLike(*showHiddenOutlineValue, mesh.showHiddenOutline);

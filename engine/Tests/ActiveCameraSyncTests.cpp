@@ -174,11 +174,38 @@ bool TestSetRotationRoundTrip()
     return ok;
 }
 
+bool TestViewFrameMatchesRenderView()
+{
+    bool ok = true;
+    const float samples[][2] = {{0.0f, 0.0f}, {0.7f, 0.3f}, {-2.1f, -0.9f}, {3.0f, 1.2f}};
+    for (const auto& sample : samples) {
+        const float yaw = sample[0];
+        const float pitch = sample[1];
+        const Vec3 eye(1.0f, 2.0f, 3.0f);
+        const Mat4 frame = Hephaestus::MakeCameraViewFrame(eye, yaw, pitch);
+        const Mat4 view = Mat4::LookAt(eye, vadd(eye, RenderForward(yaw, pitch)), Vec3(0.0f, 1.0f, 0.0f));
+        const Mat4 local = Mat4::Multiply(view, frame);
+        ok &= Check(NearVec(Mat4::TransformPoint(local, Vec3(0.0f, 0.0f, 0.0f)), Vec3(0.0f, 0.0f, 0.0f)),
+                    "view frame origin is the eye");
+        ok &= Check(NearVec(Mat4::TransformDirection(local, Vec3(1.0f, 0.0f, 0.0f)), Vec3(0.0f, 0.0f, 1.0f)),
+                    "view frame +X is view forward");
+        ok &= Check(NearVec(Mat4::TransformDirection(local, Vec3(0.0f, 1.0f, 0.0f)), Vec3(0.0f, 1.0f, 0.0f)),
+                    "view frame +Y is view up");
+        ok &= Check(NearVec(Mat4::TransformDirection(local, Vec3(0.0f, 0.0f, 1.0f)), Vec3(1.0f, 0.0f, 0.0f)),
+                    "view frame +Z is view right");
+    }
+    const Mat4 identity = Hephaestus::MakeCameraViewFrame(Vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f);
+    ok &= Check(NearVec(Mat4::TransformDirection(identity, Vec3(0.3f, 0.5f, 0.7f)), Vec3(0.3f, 0.5f, 0.7f)),
+                "view frame is identity at yaw 0 pitch 0");
+    return ok;
+}
+
 } // namespace
 
 int main()
 {
     bool ok = TestRootCamera();
+    ok &= TestViewFrameMatchesRenderView();
     ok &= TestParentedCamera();
     ok &= TestParentYawChildPitch();
     ok &= TestSetRotationRoundTrip();

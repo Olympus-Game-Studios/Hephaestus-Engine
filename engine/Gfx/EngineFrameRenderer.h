@@ -830,6 +830,7 @@ private:
     Mat4 m_frameViewMatrix = Mat4::Identity();        // camera of the frame being recorded
     Mat4 m_frameProjectionMatrix = Mat4::Identity();
     Vec3 m_frameCameraPos = Vec3(0, 0, 0);
+    Mat4 m_frameViewFrame = Mat4::Identity();         // forward/up/right world frame of the frame's view
 
     bool m_editorOverlays = false;
 };

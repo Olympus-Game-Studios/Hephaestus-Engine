@@ -11,6 +11,7 @@
 #include "../Assets/MeshAsset.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Components.h"
+#include "../Scene/ActiveCameraSync.h"
 #include "../UI/HephaestusUI/Rendering/VulkanHUIRenderer.h"
 
 #include <nlohmann/json.hpp>
@@ -22,6 +23,7 @@
 #include <array>
 #include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <cassert>
 
 namespace Hephaestus {
@@ -779,7 +781,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
             auto view = scene->GetRegistry().view<MeshRendererComponent>();
             for (entt::entity handle : view) {
                 auto& renderer = view.get<MeshRendererComponent>(handle);
-                if (!renderer.visible || renderer.hideInGame || !renderer.HasValidMesh() ||
+                if (!renderer.visible || renderer.hideInGame || renderer.viewModel || !renderer.HasValidMesh() ||
                     scene->GetRegistry().all_of<CharacterComponent>(handle)) {
                     continue;
                 }
@@ -2862,6 +2864,7 @@ void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamer
     m_frameViewMatrix = ubo.view;
     m_frameProjectionMatrix = ubo.proj;
     m_frameCameraPos = position;
+    m_frameViewFrame = Hephaestus::MakeCameraViewFrame(position, yawR, pitchR);
     // Wireframe still uses Lit/Unlit shading branch; polygon mode is selected per draw.
     ubo.shadingMode = (config.shadingMode == ViewShadingMode::Unlit) ? 1.0f : 0.0f;
     
@@ -3206,6 +3209,7 @@ void EngineFrameRenderer::drawShadowCasters(VkCommandBuffer cmd, Scene* scene, c
             if (!IsEditorEntityVisible(static_cast<uint32_t>(entity), config)) continue;
             if (!meshComp.HasValidMesh() || !meshComp.visible) continue;
             if (config.isPlaying && meshComp.hideInGame) continue;
+            if (meshComp.viewModel) continue;
 
             const CharacterComponent* character = registry.try_get<CharacterComponent>(entity);
             const std::vector<size_t> handles = MeshHandlesForDraw(meshComp);
@@ -3763,7 +3767,7 @@ const MaterialComponent* EngineFrameRenderer::resolveMaterialForSlot(Entity& ent
 // Static geometry the probes bake against and the probe sun map draws.
 static bool IsProbeStaticMesh(Scene& scene, entt::entity handle, const MeshRendererComponent& renderer)
 {
-    if (!renderer.visible || renderer.hideInGame || !renderer.HasValidMesh()) {
+    if (!renderer.visible || renderer.hideInGame || renderer.viewModel || !renderer.HasValidMesh()) {
         return false;
     }
     const auto& registry = scene.GetRegistry();
@@ -3938,9 +3942,26 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
     VkRect2D scissor{{0, 0}, m_swapchain->extent};
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
-    
+
+    // In play, view models own the nearest slice of the depth range so world geometry can never cover them.
+    constexpr float kViewModelDepthSplit = 0.05f;
+    std::optional<Mat4> viewModelRebase;
+    if (scene && config.isPlaying) {
+        if (const auto activeCamera = Hephaestus::TryReadActiveCameraView(*scene)) {
+            const Mat4 cameraWorld = scene->GetWorldTransform(Entity(activeCamera->entity, scene));
+            viewModelRebase = Mat4::Multiply(m_frameViewFrame, Mat4::Invert(cameraWorld));
+        }
+    }
+    VkViewport worldViewport = viewport;
+    VkViewport viewModelViewport = viewport;
+    if (viewModelRebase) {
+        worldViewport.minDepth = kViewModelDepthSplit;
+        viewModelViewport.maxDepth = kViewModelDepthSplit;
+    }
+    bool viewModelViewportBound = false;
+    vkCmdSetViewport(cmd, 0, 1, &worldViewport);
+
     // ── Skybox / Environment background ──────────────────────────────
     if (config.renderSkybox && m_skybox.initialized && scene) {
         EnvironmentComponent* envComp = findEnvironment(scene);
@@ -4288,6 +4309,14 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 }
 
                 Mat4 modelMatrix = CharacterAwareModelMatrix(scene, entity, renderer);
+                const bool drawAsViewModel = renderer.viewModel && viewModelRebase.has_value();
+                if (drawAsViewModel) {
+                    modelMatrix = Mat4::Multiply(*viewModelRebase, modelMatrix);
+                }
+                if (drawAsViewModel != viewModelViewportBound) {
+                    vkCmdSetViewport(cmd, 0, 1, drawAsViewModel ? &viewModelViewport : &worldViewport);
+                    viewModelViewportBound = drawAsViewModel;
+                }
                 vkCmdPushConstants(cmd, currentDrawLayout, VK_SHADER_STAGE_VERTEX_BIT,
                                   0, sizeof(Mat4), modelMatrix.m);
 
@@ -4349,6 +4378,9 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         }
     }
     
+    if (viewModelRebase) {
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+    }
     if (config.isEditorMode && !config.isPlaying && m_probeGI.Active()) {
         m_probeGI.RecordDebug(cmd, imageIndex, m_descriptorSets[imageIndex]);
     }
