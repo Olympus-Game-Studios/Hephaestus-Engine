@@ -6,6 +6,7 @@
 #include "Assets/AssetManager.h"
 #include "Assets/CharacterAsset.h"
 #include "Assets/CharacterImport.h"
+#include "Assets/SkeletalModelImporter.h"
 
 #include <filesystem>
 #include <fstream>
@@ -143,6 +144,35 @@ int main(int argc, char** argv)
                 "character.import rejects a missing source");
 
     ok &= Check(backend.NotifyCount() > 0, "character.import notifies the editor host");
+
+    Hephaestus::SkeletalImportResult fixture;
+    ok &= Check(Hephaestus::SkeletalModelImporter::Load(source, {}, fixture, error) && !fixture.clips.empty(),
+                "skinned FBX fixture has a clip: " + error);
+    if (!fixture.clips.empty()) {
+        const auto& first = fixture.clips.front();
+        const std::string take = first.sourceClip.empty() ? first.name : first.sourceClip;
+        auto clipImport = Call(service, "character.import_clips",
+                               {{"path", "assets/characters/ImportedHero.hpcharacter"},
+                                {"source", source.string()},
+                                {"clips", Hephaestus::Automation::Json::array({{{"sourceClip", take}, {"name", "Wave"}}})}});
+        ok &= Check(clipImport.Ok() && clipImport.value["added"].size() == 1 &&
+                        clipImport.value["added"][0] == "Wave",
+                    "character.import_clips adds the named clip");
+        auto afterClips = Call(service, "character.get_info",
+                               {{"path", "assets/characters/ImportedHero.hpcharacter"}});
+        bool saved = false;
+        if (afterClips.Ok()) {
+            for (const auto& clip : afterClips.value["data"]["clips"]) {
+                saved |= clip["id"] == "Wave";
+            }
+        }
+        ok &= Check(saved, "character.import_clips saves the clip into the .hpcharacter");
+        auto unknownTake = Call(service, "character.import_clips",
+                                {{"path", "assets/characters/ImportedHero.hpcharacter"},
+                                 {"source", source.string()},
+                                 {"clips", Hephaestus::Automation::Json::array({{{"sourceClip", "NoSuchTake"}}})}});
+        ok &= Check(!unknownTake.Ok(), "character.import_clips rejects an unknown take");
+    }
 
     service.Shutdown();
     assetManager.Clear();

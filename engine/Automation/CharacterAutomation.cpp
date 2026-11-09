@@ -295,6 +295,60 @@ void RegisterCharacterAutomation(AutomationService& service)
             }
             return ToolResult::Success(std::move(value));
         }, true));
+
+    RegisterOrThrow(service, Definition(
+        "character.import_clips",
+        "Import animation clips from a GLB/FBX into an existing .hpcharacter, as Import Animation does.",
+        ObjectSchema({{"path", {{"type", "string"}}},
+                      {"source", {{"type", "string"}}},
+                      {"folder", {{"type", "string"}}},
+                      {"clips", {{"type", "array"},
+                                 {"items", {{"type", "object"},
+                                            {"properties", {{"sourceClip", {{"type", "string"}}},
+                                                            {"name", {{"type", "string"}}}}}}}}}},
+                     Json::array({"path", "source", "clips"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            Hephaestus::AssetManager* assets = RequireAssets(context, failure);
+            if (!assets) return failure;
+            if (!arguments.contains("path") || !arguments["path"].is_string() ||
+                !arguments.contains("source") || !arguments["source"].is_string() ||
+                !arguments.contains("clips") || !arguments["clips"].is_array()) {
+                return Failure(ErrorCode::InvalidArguments, "path, source and clips are required");
+            }
+            std::string error;
+            const auto absolute = ResolveAssetPath(assets->GetProjectRoot(), assets->GetAssetRoot(),
+                                                   arguments["path"].get<std::string>(), error);
+            if (!absolute) return Failure(ErrorCode::InvalidArguments, error);
+            CharacterAsset asset;
+            if (!CharacterSerializer::Deserialize(asset, *absolute, error)) {
+                return Failure(ErrorCode::InvalidArguments,
+                               error.empty() ? "Failed to read character asset" : error);
+            }
+            std::filesystem::path sourcePath(arguments["source"].get<std::string>());
+            if (!sourcePath.is_absolute()) {
+                sourcePath = AssetPathPolicy::ResolvePortableKey(assets->GetProjectRoot(), sourcePath.generic_string());
+            }
+            std::vector<CharacterClipImportChoice> choices;
+            for (const Json& clip : arguments["clips"]) {
+                if (!clip.is_object() || !clip.contains("sourceClip") || !clip["sourceClip"].is_string()) {
+                    return Failure(ErrorCode::InvalidArguments, "Each clip needs a sourceClip string");
+                }
+                choices.push_back({clip["sourceClip"].get<std::string>(), clip.value("name", std::string())});
+            }
+            const std::string portable =
+                AssetPathPolicy::ToPortableKey(assets->GetProjectRoot(), absolute->generic_string());
+            std::vector<std::string> added;
+            if (!CharacterImporter::ImportAnimationClips(assets->GetProjectRoot(), asset, portable,
+                                                         sourcePath.lexically_normal(), choices,
+                                                         arguments.value("folder", std::string()), added, error) ||
+                !CharacterSerializer::Serialize(asset, *absolute, error)) {
+                return Failure(ErrorCode::InternalError, error.empty() ? "Clip import failed" : error);
+            }
+            assets->Refresh();
+            context.Backend().NotifyAssetChanged();
+            return ToolResult::Success(Json{{"character", portable}, {"added", added}});
+        }, true));
 }
 
 } // namespace Hephaestus::Automation
