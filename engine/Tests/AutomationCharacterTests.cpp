@@ -8,6 +8,7 @@
 #include "Assets/CharacterImport.h"
 #include "Assets/SkeletalModelImporter.h"
 #include "Assets/FbxDocument.h"
+#include "stb_image.h"
 
 #include <algorithm>
 
@@ -160,6 +161,38 @@ int main(int argc, char** argv)
     }
     ok &= Check(materialWritten,
                 "character.import writes the slot material with the extracted texture and assigns it");
+
+    // Same file and map; only the creator differs. Blender's ShininessExponent map is roughness,
+    // an FBX SDK (Mixamo) one is glossiness and must be inverted.
+    auto roughnessPixel = [&](const char* name, const fs::path& source, float& factor) -> int {
+        if (!Call(service, "character.import", {{"source", source.string()}, {"name", name}}).Ok()) return -1;
+        auto info = Call(service, "character.get_info",
+                         {{"path", std::string("assets/characters/") + name + ".hpcharacter"}});
+        if (!info.Ok()) return -1;
+        for (const auto& slot : info.value["data"]["mesh"]["parts"]) {
+            std::ifstream in(project / slot["material"].get<std::string>());
+            const auto material = Hephaestus::Automation::Json::parse(in, nullptr, false);
+            if (material.is_discarded() || !material.value("useRoughnessTexture", false)) return -1;
+            factor = material.value("roughness", 0.0f);
+            const std::string map = (project / material.value("roughnessTexturePath", std::string())).string();
+            int w = 0, h = 0, c = 0;
+            unsigned char* pixels = stbi_load(map.c_str(), &w, &h, &c, 1);
+            if (!pixels) return -1;
+            const int value = pixels[0];
+            stbi_image_free(pixels);
+            return value;
+        }
+        return -1;
+    };
+    float blenderFactor = 0.0f, sdkFactor = 0.0f;
+    const int blenderRoughness = roughnessPixel("BlenderRoughHero", textured, blenderFactor);
+    const int sdkRoughness = roughnessPixel(
+        "SdkGlossHero", fs::path(repoRoot) / "engine" / "Tests" / "Fixtures" / "Fbx" / "skinned_textured_fbxsdk.fbx",
+        sdkFactor);
+    ok &= Check(blenderRoughness >= 0 && sdkRoughness >= 0 && sdkRoughness == 255 - blenderRoughness &&
+                    blenderFactor == 1.0f && sdkFactor == 1.0f,
+                "an FBX SDK glossiness map becomes a 1 - gloss roughness map; a Blender roughness map is kept (" +
+                    std::to_string(blenderRoughness) + ", " + std::to_string(sdkRoughness) + ")");
 
     auto duplicate = Call(service, "character.import",
                           {{"source", source.string()}, {"name", "ImportedHero"}});

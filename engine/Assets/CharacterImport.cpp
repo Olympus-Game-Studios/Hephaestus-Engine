@@ -10,6 +10,10 @@
 #include "FbxDocument.h"
 
 #include <nlohmann/json.hpp>
+#include "stb_image.h"
+#define STB_IMAGE_WRITE_STATIC
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "../../extern/glfw/deps/stb_image_write.h"
 
 #include <algorithm>
 #include <cctype>
@@ -48,6 +52,27 @@ std::string WriteImportedTexture(const FbxTextureSource& texture, const std::fil
     return AssetPathPolicy::ToPortableKey(projectRoot, target.generic_string());
 }
 
+// Writes 1 - gloss as a one-channel roughness PNG and returns its portable path.
+std::string WriteRoughnessFromGlossiness(const FbxTextureSource& gloss, const std::filesystem::path& folder,
+                                         const std::string& stem, const std::filesystem::path& projectRoot) {
+    int width = 0, height = 0, channels = 0;
+    stbi_uc* pixels = gloss.embedded.empty()
+        ? stbi_load(gloss.file.string().c_str(), &width, &height, &channels, 1)
+        : stbi_load_from_memory(gloss.embedded.data(), static_cast<int>(gloss.embedded.size()), &width, &height,
+                                &channels, 1);
+    if (!pixels) {
+        return {};
+    }
+    const size_t count = static_cast<size_t>(width) * static_cast<size_t>(height);
+    for (size_t i = 0; i < count; ++i) {
+        pixels[i] = static_cast<stbi_uc>(255 - pixels[i]);
+    }
+    const std::filesystem::path target = folder / (stem + ".png");
+    const bool written = stbi_write_png(target.string().c_str(), width, height, 1, pixels, width) != 0;
+    stbi_image_free(pixels);
+    return written ? AssetPathPolicy::ToPortableKey(projectRoot, target.generic_string()) : std::string();
+}
+
 // Gives each empty submesh slot a material built from the FBX material of the same name.
 void ImportFbxSlotMaterials(const std::filesystem::path& projectRoot, const std::filesystem::path& sourceFbx,
                             const std::filesystem::path& ownedAbs, CharacterAsset& asset) {
@@ -72,15 +97,23 @@ void ImportFbxSlotMaterials(const std::filesystem::path& projectRoot, const std:
         const std::string albedo = WriteImportedTexture(found->baseColorTexture, folder, stem + "_BaseColor",
                                                         projectRoot);
         const std::string normal = WriteImportedTexture(found->normalTexture, folder, stem + "_Normal", projectRoot);
+        std::string roughnessMap = WriteImportedTexture(found->roughnessTexture, folder, stem + "_Roughness",
+                                                        projectRoot);
+        if (roughnessMap.empty() && found->glossinessTexture.Exists()) {
+            roughnessMap = WriteRoughnessFromGlossiness(found->glossinessTexture, folder, stem + "_Roughness",
+                                                        projectRoot);
+        }
         nlohmann::json material = {
             {"albedo", {found->baseColor.x, found->baseColor.y, found->baseColor.z}},
             {"metallic", found->metallic},
-            {"roughness", found->roughness},
+            {"roughness", roughnessMap.empty() ? found->roughness : 1.0f},
             {"ao", 1.0},
             {"useAlbedoTexture", !albedo.empty()},
             {"albedoTexturePath", albedo},
             {"useNormalTexture", !normal.empty()},
             {"normalTexturePath", normal},
+            {"useRoughnessTexture", !roughnessMap.empty()},
+            {"roughnessTexturePath", roughnessMap},
         };
         const std::filesystem::path materialAbs = folder / (stem + ".hematerial");
         std::ofstream out(materialAbs, std::ios::trunc);

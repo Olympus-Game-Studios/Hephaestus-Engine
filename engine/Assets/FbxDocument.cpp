@@ -285,6 +285,19 @@ bool ReadFbxMaterials(const std::filesystem::path& path,
         const ufbx_texture* normal = material->pbr.normal_map.texture ? material->pbr.normal_map.texture
                                                                        : material->fbx.normal_map.texture;
         info.normalTexture = ResolveFbxTexture(normal, path);
+        // A ShininessExponent map is glossiness for FBX SDK exporters (Mixamo, Maya, Max); Blender writes its
+        // roughness map there and reads it back as roughness.
+        const ufbx_texture* shininess = material->fbx.specular_exponent.texture;
+        const bool blender = scene->metadata.exporter == UFBX_EXPORTER_BLENDER_BINARY ||
+                             scene->metadata.exporter == UFBX_EXPORTER_BLENDER_ASCII;
+        const ufbx_texture* roughness = material->pbr.roughness.texture;
+        const ufbx_texture* gloss = material->pbr.glossiness.texture;
+        if (roughness && (material->features.roughness_as_glossiness.enabled || (roughness == shininess && !blender))) {
+            gloss = roughness;
+            roughness = nullptr;
+        }
+        info.roughnessTexture = ResolveFbxTexture(roughness, path);
+        info.glossinessTexture = ResolveFbxTexture(gloss, path);
         if (info.baseColorTexture.Exists()) {
             // The texture carries the colour; legacy diffuse factors would only darken it.
             info.baseColor = Vec3(1.0f, 1.0f, 1.0f);
