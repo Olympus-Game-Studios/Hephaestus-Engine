@@ -107,6 +107,11 @@ bool LoadMaterialAssetCompat(const std::filesystem::path& path,
     if (root.contains("opacity") && root["opacity"].is_number()) outMaterial.opacity = root["opacity"].get<float>();
     if (root.contains("opacityMask") && root["opacityMask"].is_number()) outMaterial.opacityMask = root["opacityMask"].get<float>();
     if (root.contains("refraction") && root["refraction"].is_number()) outMaterial.refraction = root["refraction"].get<float>();
+    if (root.contains("blendMode") && root["blendMode"].is_string()) {
+        const std::string mode = root["blendMode"].get<std::string>();
+        outMaterial.blendMode = mode == "additive" ? MaterialBlendMode::Additive
+            : mode == "alphaBlend" ? MaterialBlendMode::AlphaBlend : MaterialBlendMode::Opaque;
+    }
 
     if (root.contains("useAlbedoTexture") && root["useAlbedoTexture"].is_boolean()) outMaterial.useAlbedoTexture = root["useAlbedoTexture"].get<bool>();
     if (root.contains("albedoTexturePath") && root["albedoTexturePath"].is_string()) outMaterial.albedoTexturePath = root["albedoTexturePath"].get<std::string>();
@@ -317,6 +322,11 @@ bool SaveMaterialAssetCompat(const std::filesystem::path& path,
     root["opacity"] = material.opacity;
     root["opacityMask"] = material.opacityMask;
     root["refraction"] = material.refraction;
+    if (material.blendMode != MaterialBlendMode::Opaque) {
+        root["blendMode"] = material.blendMode == MaterialBlendMode::Additive ? "additive" : "alphaBlend";
+    } else {
+        root.erase("blendMode");
+    }
     if (root.contains("reflectionStrength") || material.reflectionStrength != 1.0f) {
         root["reflectionStrength"] = material.reflectionStrength;
     }

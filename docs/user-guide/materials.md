@@ -59,7 +59,7 @@ That means:
 
 - **Textures, constants, colours and maths on those work great.** Tinting a texture, mixing two colours, scaling roughness: all fine.
 - **Nodes that need to change per pixel or over time don't affect the rendered result yet.** That's TexCoord, Screen Position, Transform, Texture Tiling Offset, Noise, Gradient, Fresnel, UV Distortion, Time, Camera Vector, View Direction, Reflection Vector, World Position, Object Position, Distance To Camera and Static Switch Parameter. The library and the Add Node search label them **(no effect yet)**, and the Validation panel warns you when a graph uses one. You can still place and wire them, and they'll be ready when per pixel materials land, but today they won't animate or vary across a surface.
-- **Proper see through materials (glass, water) aren't supported.** Opacity Mask cuts clean holes; partial transparency isn't blended.
+- **Blend modes aren't in the Material Editor yet.** A material can be see-through or glowing by adding `"blendMode"` to its `.hematerial` file (the editor keeps it when you save): `"alphaBlend"` blends the surface by **Opacity** times its albedo texture's alpha, for decals and glass; `"additive"` adds the albedo (times the texture's alpha) plus **Emissive** to the image without lighting, for muzzle flashes, sparks and glows. Both are drawn after solid surfaces, furthest first, cast no shadows and only work on meshes that aren't skinned characters.
 - **Scripts can't change materials while the game runs.** There's no material API in Lua yet.
 
 Per pixel materials are on the way. Until then, if a material looks different in the graph than you expected, check whether it relies on one of the nodes above.

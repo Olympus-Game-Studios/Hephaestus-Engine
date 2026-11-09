@@ -616,6 +616,27 @@ check(Logic.reloadKind(w) == nil, "no reload without reserve ammo")
 w = weapon(30, 1, 10)
 check(Logic.reloadKind(w) == nil, "no reload with a full magazine and a chambered round")
 
+local Impacts = require("FPS.Impacts")
+-- Turn +Y by Euler degrees the way TransformComponent::GetLocalMatrix composes them (Rx * Ry * Rz).
+local function upAfter(r)
+    local a, b, c = math.rad(r.x), math.rad(r.y), math.rad(r.z)
+    local x, y, z = 0, 1, 0
+    x, y = math.cos(c) * x - math.sin(c) * y, math.sin(c) * x + math.cos(c) * y
+    x, z = math.cos(b) * x + math.sin(b) * z, -math.sin(b) * x + math.cos(b) * z
+    y, z = math.cos(a) * y - math.sin(a) * z, math.sin(a) * y + math.cos(a) * z
+    return x, y, z
+end
+local aligned = true
+for _, n in ipairs({ { 0, 1, 0 }, { 0, -1, 0 }, { 1, 0, 0 }, { -1, 0, 0 }, { 0, 0, 1 }, { 0, 0, -1 },
+                     { 0.3, 0.8, -0.52 }, { -0.7, -0.1, 0.7 } }) do
+    local length = math.sqrt(n[1] ^ 2 + n[2] ^ 2 + n[3] ^ 2)
+    local x, y, z = upAfter(Impacts.rotationForNormal(n[1], n[2], n[3]))
+    aligned = aligned and near(x, n[1] / length, 1e-6) and near(y, n[2] / length, 1e-6) and near(z, n[3] / length, 1e-6)
+end
+check(aligned, "decal rotation turns +Y onto the surface normal")
+check(Impacts.surfaceOffset(50) > Impacts.surfaceOffset(1) and Impacts.surfaceOffset(0) > 0,
+      "decals lift further off distant surfaces")
+
 if #failures > 0 then error(table.concat(failures, "\n")) end
 )lua";
     if (luaL_dostring(L, kGunplayChecks) != LUA_OK) {

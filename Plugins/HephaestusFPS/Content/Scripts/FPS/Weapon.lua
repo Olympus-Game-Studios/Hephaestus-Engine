@@ -69,6 +69,7 @@ Expose.number("strafeRoll", 2.0)
 Expose.number("landKick", 0.006)
 Expose.number("footfallDip", 0.004)
 Expose.number("fireBufferSeconds", 0.1)
+Expose.number("flashSeconds", 0.035)
 Expose.number("sprintToFireSeconds", 0.22)
 Expose.number("raiseSeconds", 0.45)
 Expose.number("lowerSeconds", 0.3)
@@ -92,6 +93,7 @@ local Logic = require("FPS.Logic")
 local Gunplay = require("FPS.Gunplay")
 local Hitscan = require("FPS.Hitscan")
 local Health = require("FPS.Health")
+local Impacts = require("FPS.Impacts")
 
 local Weapon = {}
 local SHOULDER_REACH = 0.4 -- metres from the grip back to the shoulders in the view frame
@@ -106,7 +108,7 @@ local TUNING = {
     "kickSide", "kickRoll", "kickFrequency", "kickDampingRatio", "adsKickScale", "cameraKickPitch", "cameraKickYaw",
     "cameraKickFrequency", "cameraKickDampingRatio", "swayAmount", "swayLag", "swayMaxDegrees", "swayFrequency",
     "swayDampingRatio", "adsSwayScale", "idleAmount", "idleBreathRate", "idleAdsScale", "bobAmount", "moveLag",
-    "moveMaxOffset", "moveFrequency", "strafeRoll", "landKick", "footfallDip", "fireBufferSeconds",
+    "moveMaxOffset", "moveFrequency", "strafeRoll", "landKick", "footfallDip", "fireBufferSeconds", "flashSeconds",
     "sprintToFireSeconds", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "firePitchJitter",
     "fireVolumeJitter", "emptySound", "reloadSound",
     "reloadPart2Sound", "boltSound",
@@ -296,6 +298,24 @@ local function setPartsVisible(visible)
     end
 end
 
+local function hideFlashes(row)
+    for _, flash in ipairs(row.flashes or {}) do
+        flash:Call("hideFlash")
+    end
+end
+
+-- One of the weapon's flash quads, picked from its seeded stream, with a random roll and size.
+local function showFlash(row)
+    local flashes = row.flashes or {}
+    if #flashes == 0 then
+        return
+    end
+    hideFlashes(row)
+    local index = math.min(#flashes, math.floor(Gunplay.rngNext(row.rng) * #flashes) + 1)
+    flashes[index]:Call("showFlash", row.flashSeconds or 0.035, Gunplay.rngNext(row.rng) * 2 * math.pi,
+                        0.85 + 0.3 * Gunplay.rngNext(row.rng))
+end
+
 local function startReload(row)
     return Logic.tryStartReload(row)
 end
@@ -314,6 +334,10 @@ local function applyHit(row, hit, owner)
         return
     end
     local zoneRow = Registry.hitZones[Registry.key(hit.entity)]
+    -- Targets swing and fall, so only static surfaces get bullet holes.
+    if not zoneRow and not Health.get(hit.entity) then
+        Impacts.spawn(hit, Gunplay.rngNext(row.rng))
+    end
     local zone = zoneRow and zoneRow.zone or "body"
     local target = zoneRow and zoneRow.owner or hit.entity
     local amount = Gunplay.shotDamage(row, hit.distance or 0, zone)
@@ -386,6 +410,7 @@ local function fireShot(row, input, owner)
     end
 
     playShot(row)
+    showFlash(row)
     if row.hitscan then
         applyHit(row, Hitscan.trace(input.ox, input.oy, input.oz, dx, dy, dz, row.range, owner), owner)
     end
@@ -557,6 +582,7 @@ function equip()
     local row = Weapon.get(this)
     if row then
         row.equipped = true
+        row.flashes = Scene.findAllWithPrefix(this:GetName() .. "_Flash_")
         row.raise = 0
         row.adsLinear = 0
         row.adsBlend = 0
@@ -570,6 +596,7 @@ function unequip()
     local row = Weapon.get(this)
     if row then
         row.equipped = false
+        hideFlashes(row)
         Logic.interruptReload(row)
         row.bufferedPress = false
         row.recoilPitchAccum = 0

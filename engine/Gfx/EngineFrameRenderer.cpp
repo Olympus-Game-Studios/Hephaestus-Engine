@@ -68,7 +68,8 @@ struct alignas(16) MaterialUBO {
     float opacity;
     float opacityMask;
     float refraction;
-    uint32_t paddingTail[2];
+    uint32_t blendMode;
+    uint32_t paddingTail;
 };
 
 constexpr VkDeviceSize kBoneUboSize = 128 * sizeof(Mat4);
@@ -3210,6 +3211,11 @@ void EngineFrameRenderer::drawShadowCasters(VkCommandBuffer cmd, Scene* scene, c
             if (!meshComp.HasValidMesh() || !meshComp.visible) continue;
             if (config.isPlaying && meshComp.hideInGame) continue;
             if (meshComp.viewModel) continue;
+            {
+                Entity owner(entity, scene);
+                const MaterialComponent* surface = resolveMaterialForSlot(owner, meshComp, 0);
+                if (surface && surface->blendMode != MaterialBlendMode::Opaque) continue;
+            }
 
             const CharacterComponent* character = registry.try_get<CharacterComponent>(entity);
             const std::vector<size_t> handles = MeshHandlesForDraw(meshComp);
@@ -3452,6 +3458,11 @@ const MaterialComponent* EngineFrameRenderer::resolveMaterialFromPath(const std:
         if (j.contains("opacity")) loadedMaterial.opacity = j["opacity"].get<float>();
         if (j.contains("opacityMask")) loadedMaterial.opacityMask = j["opacityMask"].get<float>();
         if (j.contains("refraction")) loadedMaterial.refraction = j["refraction"].get<float>();
+        if (j.contains("blendMode") && j["blendMode"].is_string()) {
+            const std::string mode = j["blendMode"].get<std::string>();
+            loadedMaterial.blendMode = mode == "additive" ? MaterialBlendMode::Additive
+                : mode == "alphaBlend" ? MaterialBlendMode::AlphaBlend : MaterialBlendMode::Opaque;
+        }
 
         // Texture paths and flags
         if (j.contains("useAlbedoTexture")) loadedMaterial.useAlbedoTexture = j["useAlbedoTexture"].get<bool>();
@@ -4057,7 +4068,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             defaultMat.aoTextureIndex = m_defaultMaterialTextureSlot;
             defaultMat.useWorldAlignedTexture = 0;
             defaultMat.worldTextureScale = 1.0f;
-            std::memset(defaultMat.paddingTail, 0, sizeof(defaultMat.paddingTail));
+            defaultMat.blendMode = 0u;
+            defaultMat.paddingTail = 0u;
             std::memcpy(matMappedBase, &defaultMat, sizeof(defaultMat));
             matSlotNext = 1;
         }
@@ -4136,7 +4148,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 matUBO.opacity = mat.opacity;
                 matUBO.opacityMask = mat.opacityMask;
                 matUBO.refraction = mat.refraction;
-                std::memset(matUBO.paddingTail, 0, sizeof(matUBO.paddingTail));
+                matUBO.blendMode = static_cast<uint32_t>(mat.blendMode);
+                matUBO.paddingTail = 0u;
             } else {
                 // Default white material
                 matUBO.albedo = Vec3(1.0f, 1.0f, 1.0f);
@@ -4167,7 +4180,8 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 matUBO.opacity = 1.0f;
                 matUBO.opacityMask = 1.0f;
                 matUBO.refraction = 0.0f;
-                std::memset(matUBO.paddingTail, 0, sizeof(matUBO.paddingTail));
+                matUBO.blendMode = 0u;
+                matUBO.paddingTail = 0u;
             }
         };
         
@@ -4179,6 +4193,20 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         VkDescriptorSet currentBoneSet = VK_NULL_HANDLE;
         
         // Lambda: upload material to dynamic UBO and issue draw call
+        struct TranslucentDraw {
+            const MeshGPU* mesh = nullptr;
+            const MaterialComponent* material = nullptr;
+            Mat4 model;
+            uint32_t indexOffset = 0;
+            uint32_t indexCount = 0;
+            bool viewModel = false;
+            float distance = 0.0f;
+            const char* name = nullptr;
+            int submesh = 0;
+            int slot = 0;
+        };
+        std::vector<TranslucentDraw> translucentDraws;
+
         auto drawWithMaterial = [&](const MaterialComponent* material,
                                     uint32_t indexOffset, uint32_t indexCount,
                                     const char* entityName, int submeshIdx, int submeshMatSlot) {
@@ -4329,16 +4357,36 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                     entityName = entity.GetComponent<TagComponent>().tag.c_str();
                 }
 
+                // Translucent submeshes of unskinned meshes are drawn after every opaque surface.
+                auto drawOrDefer = [&](const MaterialComponent* mat, uint32_t offset, uint32_t count, int si, int slot) {
+                    if (mat && mat->blendMode != MaterialBlendMode::Opaque && !skinned &&
+                        m_pipeline->GetTranslucentPipeline(1) != VK_NULL_HANDLE) {
+                        TranslucentDraw draw;
+                        draw.mesh = &mesh;
+                        draw.material = mat;
+                        draw.model = modelMatrix;
+                        draw.indexOffset = offset;
+                        draw.indexCount = count;
+                        draw.viewModel = drawAsViewModel;
+                        draw.distance = vlen(vsub(Vec3(modelMatrix.m[12], modelMatrix.m[13], modelMatrix.m[14]),
+                                                  m_frameCameraPos));
+                        draw.name = entityName;
+                        draw.submesh = si;
+                        draw.slot = slot;
+                        translucentDraws.push_back(draw);
+                        return;
+                    }
+                    drawWithMaterial(mat, offset, count, entityName, si, slot);
+                };
                 if (mesh.submeshes.empty()) {
-                    const MaterialComponent* mat = resolveMaterialForSlot(entity, renderer, 0);
-                    drawWithMaterial(mat, 0, mesh.indexCount, entityName, 0, 0);
+                    drawOrDefer(resolveMaterialForSlot(entity, renderer, 0), 0, mesh.indexCount, 0, 0);
                 } else {
                     for (size_t si = 0; si < mesh.submeshes.size(); ++si) {
                         const auto& submesh = mesh.submeshes[si];
                         if (submesh.indexCount == 0) continue;
-                        const MaterialComponent* mat = resolveMaterialForSlot(entity, renderer, submesh.materialSlot);
-                        drawWithMaterial(mat, submesh.indexOffset, submesh.indexCount,
-                                        entityName, static_cast<int>(si), submesh.materialSlot);
+                        drawOrDefer(resolveMaterialForSlot(entity, renderer, submesh.materialSlot),
+                                    submesh.indexOffset, submesh.indexCount, static_cast<int>(si),
+                                    submesh.materialSlot);
                     }
                 }
                 drewAny = true;
@@ -4348,6 +4396,45 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             }
         }
         
+        // World surfaces first, then view models (always nearer), each far to near.
+        std::stable_sort(translucentDraws.begin(), translucentDraws.end(),
+                         [](const TranslucentDraw& a, const TranslucentDraw& b) {
+                             if (a.viewModel != b.viewModel) return !a.viewModel;
+                             return a.distance > b.distance;
+                         });
+        for (const TranslucentDraw& draw : translucentDraws) {
+            const VkPipeline translucentPipeline =
+                m_pipeline->GetTranslucentPipeline(static_cast<uint32_t>(draw.material->blendMode));
+            if (translucentPipeline != currentPipeline) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, translucentPipeline);
+                currentPipeline = translucentPipeline;
+            }
+            currentDrawLayout = m_pipeline->layout;
+            currentBoneSet = VK_NULL_HANDLE;
+            if (currentDrawLayout != probeSetLayout) {
+                const VkDescriptorSet probeSet = m_probeGI.DrawSet(imageIndex);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, currentDrawLayout, 2, 1, &probeSet,
+                                        0, nullptr);
+                probeSetLayout = currentDrawLayout;
+            }
+            if (draw.mesh->vertexBuffer.buffer != currentVertexBuffer) {
+                VkBuffer vb = draw.mesh->vertexBuffer.buffer;
+                VkDeviceSize vbOffset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &vbOffset);
+                currentVertexBuffer = vb;
+            }
+            if (draw.mesh->indexBuffer.buffer != currentIndexBuffer) {
+                vkCmdBindIndexBuffer(cmd, draw.mesh->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+                currentIndexBuffer = draw.mesh->indexBuffer.buffer;
+            }
+            if (draw.viewModel != viewModelViewportBound) {
+                vkCmdSetViewport(cmd, 0, 1, draw.viewModel ? &viewModelViewport : &worldViewport);
+                viewModelViewportBound = draw.viewModel;
+            }
+            vkCmdPushConstants(cmd, currentDrawLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), draw.model.m);
+            drawWithMaterial(draw.material, draw.indexOffset, draw.indexCount, draw.name, draw.submesh, draw.slot);
+        }
+
         // Flush the written material UBO range and unmap
         if (matMappedBaseVoid) {
             VkDeviceSize writtenSize = static_cast<VkDeviceSize>(matSlotNext) * m_materialStride;

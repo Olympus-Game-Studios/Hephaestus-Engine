@@ -545,6 +545,13 @@ struct RelationshipComponent {
 // MATERIAL & LIGHTING COMPONENTS
 // ═══════════════════════════════════════════════════════════════
 
+/// How a material's surface combines with what is behind it.
+enum class MaterialBlendMode : uint32_t {
+    Opaque = 0,     ///< writes depth; opacity below opacityMask is cut out
+    AlphaBlend = 1, ///< lit, blended by opacity times the albedo texture's alpha, drawn after opaque surfaces
+    Additive = 2,   ///< unlit, (albedo + emissive) times opacity added to the image; for flashes and glows
+};
+
 /**
  * Material component - defines surface properties for rendering
  * Uses PBR (Physically Based Rendering) workflow with full texture support
@@ -562,6 +569,7 @@ struct MaterialComponent {
     float opacity;      // Surface opacity (1 = opaque)
     float opacityMask;  // Mask threshold/input for cutout workflows
     float refraction;   // Reserved for future translucent/refraction shaders
+    MaterialBlendMode blendMode = MaterialBlendMode::Opaque;
     
     // Albedo (diffuse) texture
     std::string albedoTexturePath;

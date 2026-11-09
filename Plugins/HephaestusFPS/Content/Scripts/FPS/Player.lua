@@ -4,6 +4,7 @@ local Gunplay = require("FPS.Gunplay")
 local Health = require("FPS.Health")
 local Interactable = require("FPS.Interactable")
 local Hud = require("FPS.Hud")
+local Impacts = require("FPS.Impacts")
 
 Expose.number("mouseSensitivityX", 0.002)
 Expose.number("mouseSensitivityY", 0.002)
@@ -33,6 +34,8 @@ Expose.number("cameraShakeScale", 1.0)
 Expose.string("footstepSounds", "")
 Expose.number("footstepStride", 2.1)
 Expose.number("footstepVolume", 0.5)
+Expose.string("impactDecalPrefabs", "")
+Expose.number("maxImpactDecals", 64)
 
 local Player = {}
 local yaw = 0
@@ -276,6 +279,7 @@ function onAwake()
     cameraKickPitch = { x = 0, v = 0 }
     cameraKickYaw = { x = 0, v = 0 }
     footsteps = parseList(footstepSounds)
+    Impacts.configure(parseList(impactDecalPrefabs), maxImpactDecals)
     commands = { fireHeld = false, firePressed = false, reload = false, interact = false }
     Health.attach(this, { maxHealth = maxHealth })
     Registry.setPlayer(this, {

@@ -15,6 +15,8 @@ struct VulkanPipeline {
     VkPipeline pipelineBackface{};
     VkPipeline pipelineWireframe{};
     VkPipeline pipelineWireframeBackface{};
+    VkPipeline pipelineAlphaBlend{};
+    VkPipeline pipelineAdditive{};
     VkPipeline outlinePipeline{};
     bool ownsDescriptorSetLayout = true;
 
@@ -27,6 +29,8 @@ struct VulkanPipeline {
     void Cleanup();
 
     VkPipeline GetPipeline(bool backfaceCullingEnabled, bool wireframe = false) const;
+    /// Depth-tested, non-depth-writing pipeline for a translucent blend mode (1 alpha, 2 additive).
+    VkPipeline GetTranslucentPipeline(uint32_t blendMode) const;
     bool HasWireframePipeline() const {
         return pipelineWireframe != VK_NULL_HANDLE;
     }

@@ -50,7 +50,7 @@ layout(std140, set = 0, binding = 1) uniform MaterialUBO {
     float opacity;            // offset 116
     float opacityMask;        // offset 120
     float refraction;         // offset 124 (reserved)
-    uint paddingTail1;        // offset 128
+    uint blendMode;           // offset 128: 0 opaque, 1 alpha blend, 2 additive
     uint paddingTail2;        // offset 132
 } material;
 
@@ -375,15 +375,26 @@ void main() {
     // ── Material property sampling ─────────────────────────────────
     // Albedo (diffuse) texture
     vec3 albedo = material.albedo * fragColor;
+    float textureAlpha = 1.0;
     if (material.useAlbedoTexture != 0u) {
         uint index = material.albedoTextureIndex % MAX_TEXTURE_SLOTS;
         vec4 texColor = texture(materialTextures[index], texCoord);
         albedo = texColor.rgb * material.albedo * fragColor;
+        textureAlpha = texColor.a;
     }
 
     float opacity = clamp(material.opacity, 0.0, 1.0);
-    if (opacity < clamp(material.opacityMask, 0.0, 1.0)) {
+    if (material.blendMode != 0u) {
+        opacity *= textureAlpha;
+        if (opacity <= 0.002) {
+            discard;
+        }
+    } else if (opacity < clamp(material.opacityMask, 0.0, 1.0)) {
         discard;
+    }
+    if (material.blendMode == 2u) {
+        outColor = vec4((albedo + material.emissive * material.emissiveStrength) * opacity, opacity);
+        return;
     }
 
     // Unlit viewport mode: albedo (+ emissive), skip lighting

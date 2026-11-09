@@ -274,6 +274,20 @@ void VulkanPipeline::Init(VkDevice dev, VkRenderPass rp, VkExtent2D ext, bool en
         pipelineWireframeBackface = buildPipeline(VK_CULL_MODE_FRONT_BIT, VK_POLYGON_MODE_LINE);
     }
 
+    depth.depthWriteEnable = VK_FALSE;
+    depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    colorAttach.blendEnable = VK_TRUE;
+    colorAttach.colorBlendOp = VK_BLEND_OP_ADD;
+    colorAttach.alphaBlendOp = VK_BLEND_OP_ADD;
+    colorAttach.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    colorAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorAttach.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    colorAttach.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    pipelineAlphaBlend = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_FILL);
+    colorAttach.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    pipelineAdditive = buildPipeline(VK_CULL_MODE_NONE, VK_POLYGON_MODE_FILL);
+
     vkDestroyShaderModule(device, vertShader, nullptr);
     vkDestroyShaderModule(device, fragShader, nullptr);
 }
@@ -403,6 +417,14 @@ void VulkanPipeline::Cleanup()
         vkDestroyPipeline(device, pipelineWireframeBackface, nullptr);
         pipelineWireframeBackface = VK_NULL_HANDLE;
     }
+    if (pipelineAlphaBlend) {
+        vkDestroyPipeline(device, pipelineAlphaBlend, nullptr);
+        pipelineAlphaBlend = VK_NULL_HANDLE;
+    }
+    if (pipelineAdditive) {
+        vkDestroyPipeline(device, pipelineAdditive, nullptr);
+        pipelineAdditive = VK_NULL_HANDLE;
+    }
     if (pipelineWireframe) {
         vkDestroyPipeline(device, pipelineWireframe, nullptr);
         pipelineWireframe = VK_NULL_HANDLE;
@@ -424,6 +446,11 @@ void VulkanPipeline::Cleanup()
     }
     descriptorSetLayout = VK_NULL_HANDLE;
     ownsDescriptorSetLayout = true;
+}
+
+VkPipeline VulkanPipeline::GetTranslucentPipeline(uint32_t blendMode) const
+{
+    return blendMode == 2 ? pipelineAdditive : pipelineAlphaBlend;
 }
 
 VkPipeline VulkanPipeline::GetPipeline(bool backfaceCullingEnabled, bool wireframe) const
