@@ -28,20 +28,114 @@ function Gunplay.lerp(a, b, t)
     return a + (b - a) * t
 end
 
--- Damped spring; substeps keep stiff springs stable when a frame is long.
-function Gunplay.springStep(state, target, stiffness, damping, dt)
-    local steps = math.max(1, math.ceil(dt * 240))
-    local h = dt / steps
-    for _ = 1, steps do
-        local accel = stiffness * (target - state.x) - damping * state.v
-        state.v = state.v + accel * h
-        state.x = state.x + state.v * h
+function Gunplay.newSpring()
+    return { x = 0, v = 0 }
+end
+
+-- Exact step of x'' = -omega^2 (x - target) - 2 zeta omega x' for a constant target, so the result
+-- does not depend on how dt is split. omega is the natural frequency in rad/s, zeta the damping ratio.
+function Gunplay.dampedSpring(state, target, omega, zeta, dt)
+    if dt <= 0 or omega <= 0 then
+        return state.x
     end
+    local y0, v0 = state.x - target, state.v
+    local y, v
+    if math.abs(zeta - 1) < 1e-4 then
+        local e = math.exp(-omega * dt)
+        local b = v0 + omega * y0
+        y = (y0 + b * dt) * e
+        v = (v0 - omega * b * dt) * e
+    elseif zeta < 1 then
+        local wd = omega * math.sqrt(1 - zeta * zeta)
+        local e = math.exp(-zeta * omega * dt)
+        local c, s = math.cos(wd * dt), math.sin(wd * dt)
+        y = e * (y0 * c + (v0 + zeta * omega * y0) / wd * s)
+        v = e * (v0 * c - (zeta * omega * v0 + omega * omega * y0) / wd * s)
+    else
+        local root = math.sqrt(zeta * zeta - 1)
+        local r1, r2 = -omega * (zeta - root), -omega * (zeta + root)
+        local a = (v0 - r2 * y0) / (r1 - r2)
+        local b = y0 - a
+        local e1, e2 = math.exp(r1 * dt), math.exp(r2 * dt)
+        y = a * e1 + b * e2
+        v = a * r1 * e1 + b * r2 * e2
+    end
+    state.x = y + target
+    state.v = v
     return state.x
 end
 
-function Gunplay.newSpring()
-    return { x = 0, v = 0 }
+-- Velocity to add to a resting spring so its largest displacement is peak.
+function Gunplay.impulseForPeak(peak, omega, zeta)
+    if omega <= 0 then
+        return 0
+    end
+    local factor
+    if math.abs(zeta - 1) < 1e-4 then
+        factor = 1 / (omega * math.exp(1))
+    elseif zeta < 1 then
+        local root = math.sqrt(1 - zeta * zeta)
+        local wd = omega * root
+        local t = math.atan(root, zeta) / wd
+        factor = math.exp(-zeta * omega * t) * math.sin(wd * t) / wd
+    else
+        local root = math.sqrt(zeta * zeta - 1)
+        local r1, r2 = -omega * (zeta - root), -omega * (zeta + root)
+        local t = math.log(r2 / r1) / (r1 - r2)
+        factor = (math.exp(r1 * t) - math.exp(r2 * t)) / (r1 - r2)
+    end
+    return peak / factor
+end
+
+-- Deterministic value in [0, 1) for integer seed, index and channel.
+function Gunplay.hash01(seed, index, channel)
+    local h = (math.tointeger(seed) or 0) * 0x9E3779B1 + (math.tointeger(index) or 0) * 0x85EBCA77
+        + (math.tointeger(channel) or 0) * 0xC2B2AE3D
+    h = h & 0xFFFFFFFF
+    h = h ~ (h >> 15)
+    h = (h * 0x2C1B3C6D) & 0xFFFFFFFF
+    h = h ~ (h >> 12)
+    h = (h * 0x297A2D39) & 0xFFFFFFFF
+    h = h ~ (h >> 15)
+    return h / 4294967296.0
+end
+
+-- A random function for one shot of a string: the same seed and index always give the same values.
+function Gunplay.seededRandom(seed, index)
+    local channel = 0
+    return function()
+        channel = channel + 1
+        return Gunplay.hash01(seed, index, channel)
+    end
+end
+
+function Gunplay.newRng(seed)
+    return { seed = math.tointeger(seed) or 1, count = 0 }
+end
+
+function Gunplay.rngNext(rng)
+    rng.count = rng.count + 1
+    return Gunplay.hash01(rng.seed, rng.count, 7)
+end
+
+local function valueNoise(seed, t)
+    local i = math.floor(t)
+    local f = t - i
+    local a = Gunplay.hash01(seed, math.tointeger(i), 11) * 2 - 1
+    local b = Gunplay.hash01(seed, math.tointeger(i) + 1, 11) * 2 - 1
+    return a + (b - a) * (f * f * (3 - 2 * f))
+end
+
+-- Smooth, continuous noise in [-1, 1] from three octaves; t is in cycles of the lowest octave.
+function Gunplay.smoothNoise(seed, t)
+    return 0.6 * valueNoise(seed, t) + 0.3 * valueNoise(seed + 1, t * 2.3) + 0.1 * valueNoise(seed + 2, t * 5.1)
+end
+
+-- ADS blend for each channel from the linear aim-in progress: the weapon moves on a smoothstep,
+-- the field of view and look sensitivity follow a sine ease so the zoom starts and settles softly.
+function Gunplay.adsCurves(linear)
+    local t = clamp(linear or 0, 0, 1)
+    return { weapon = t * t * (3 - 2 * t), fov = 0.5 - 0.5 * math.cos(math.pi * t) }
 end
 
 -- Cone half angle in degrees. info: adsBlend 0..1, moveFraction 0..1, airborne, bloom (degrees).
@@ -155,17 +249,6 @@ function Gunplay.fireBlock(current, sprinting, sprintToFireSeconds, dt)
         return math.max(current, sprintToFireSeconds or 0)
     end
     return math.max(0, current - dt)
-end
-
--- Sound cues of a reload that cross from elapsed-dt to elapsed. cues: { { time, sound, emptyOnly } }.
-function Gunplay.reloadCuesCrossed(cues, before, after, empty)
-    local crossed = {}
-    for _, cue in ipairs(cues) do
-        if (not cue.emptyOnly or empty) and cue.time > before and cue.time <= after then
-            crossed[#crossed + 1] = cue.sound
-        end
-    end
-    return crossed
 end
 
 return Gunplay

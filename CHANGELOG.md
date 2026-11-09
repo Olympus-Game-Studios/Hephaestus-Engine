@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-11-10: FPS plugin gunplay feel: weapons can read their tuning from a data file (`definition`); recoil and spread are seeded so a string always kicks the same way; weapon kick uses exact damped springs with kick given as peak movement, plus side kick and a separate camera kick that never moves the aim; the weapon trails how fast you turn, breathes and drifts at idle, trails movement, rolls into strafes and dips on landings and footsteps; ADS zoom and look speed follow their own curve; a trigger press just before sprint-to-fire ends is kept; reloads are timed magazine events with a chambered round (30+1 tactical reloads, ammo moves when the magazine goes in) and stop cleanly when you sprint or switch; `viewBobScale` and `cameraShakeScale` turn down motion without changing gameplay. See the FPS plugin documentation.
 - 2026-11-09: Automation tool `prefab.create` saves an entity and its children as a `.hpprefab` under the project's assets and replaces them with an instance, like Create Prefab From Selection.
 - 2026-11-09: FPS plugin `Weapon.lua` `sightPitch` and `sightYaw` tilt the weapon in ADS so iron sights whose line is not parallel to the barrel still line up on the screen centre. See the FPS plugin documentation.
 - 2026-11-09: Camera **View Model FOV** (`viewModelFov`): First-Person View Model meshes are drawn with their own field of view, so ADS zoom changes the world but not the size of the weapon. 0 keeps the camera's field of view.

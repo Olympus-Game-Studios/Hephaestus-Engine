@@ -39,6 +39,8 @@ int AutoShots(lua_State* L, double dt, double seconds, double rps)
     lua_setfield(L, -2, "roundsPerSecond");
     lua_pushnumber(L, 999);
     lua_setfield(L, -2, "magazine");
+    lua_pushnumber(L, 1);
+    lua_setfield(L, -2, "chamber");
     lua_pushnumber(L, 0);
     lua_setfield(L, -2, "now");
     lua_pushnumber(L, 0);
@@ -182,6 +184,8 @@ int main(int argc, char** argv)
     lua_setfield(L, -2, "roundsPerSecond");
     lua_pushnumber(L, 12);
     lua_setfield(L, -2, "magazine");
+    lua_pushnumber(L, 1);
+    lua_setfield(L, -2, "chamber");
     lua_pushvalue(L, -2);
     lua_pushvalue(L, -2);
     lua_pushnumber(L, 1.0);
@@ -214,6 +218,8 @@ int main(int argc, char** argv)
     lua_setfield(L, -2, "roundsPerSecond");
     lua_pushnumber(L, 999);
     lua_setfield(L, -2, "magazine");
+    lua_pushnumber(L, 1);
+    lua_setfield(L, -2, "chamber");
     const int hitchStateRef = luaL_ref(L, LUA_REGISTRYINDEX);
     lua_getglobal(L, "Logic");
     lua_getfield(L, -1, "tickFire");
@@ -241,7 +247,7 @@ int main(int argc, char** argv)
 
     lua_settop(L, 0);
     if (luaL_dostring(L, R"(
-        local s = { fireMode = "auto", roundsPerSecond = 10, magazine = 999 }
+        local s = { fireMode = "auto", roundsPerSecond = 10, magazine = 999, chamber = 1 }
         Logic.tickFire(s, 1 / 60, true, true)
         for _ = 1, 60 do Logic.tickFire(s, 1 / 60, false, false) end
         local repress = Logic.tickFire(s, 1 / 60, true, true)
@@ -292,7 +298,10 @@ int main(int argc, char** argv)
     lua_pop(L, 2);
     lua_rawgeti(L, LUA_REGISTRYINDEX, reloadRef);
     lua_getfield(L, -1, "magazine");
-    ok &= Check(lua_tointeger(L, -1) == 5, "reload moves min(space, reserve)");
+    ok &= Check(lua_tointeger(L, -1) == 4, "reload moves min(space, reserve) and chambers one of them");
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "chamber");
+    ok &= Check(lua_tointeger(L, -1) == 1, "empty reload chambers a round");
     lua_pop(L, 1);
     lua_getfield(L, -1, "reserve");
     ok &= Check(lua_tointeger(L, -1) == 0, "reserve empties");
@@ -456,18 +465,91 @@ check(near(delta, -0.01) and near(rest, 0.04), "recovery returns the aim at its 
 delta, rest = Gunplay.recoverRecoil(0.005, 0.1, 0.1)
 check(near(delta, -0.005) and near(rest, 0), "recovery stops at the original aim")
 
-local spring = Gunplay.newSpring()
-spring.v = 1
-local peak = 0
-for _ = 1, 120 do
-    Gunplay.springStep(spring, 0, 260, 22, 1 / 120)
-    peak = math.max(peak, spring.x)
+local omega, zeta = 16, 0.68
+local function peakOf(v0, w, z)
+    local spring = Gunplay.newSpring()
+    spring.v = v0
+    local peak = 0
+    for _ = 1, 2000 do
+        Gunplay.dampedSpring(spring, 0, w, z, 1 / 2000)
+        peak = math.max(peak, spring.x)
+    end
+    return peak, spring
 end
-check(peak > 0 and math.abs(spring.x) < 1e-3, "kick spring rises and settles back to rest")
+for _, z in ipairs({ 0.68, 1.0, 1.6 }) do
+    local peak, spring = peakOf(Gunplay.impulseForPeak(0.02, omega, z), omega, z)
+    check(near(peak, 0.02, 1e-5), "impulseForPeak gives the requested peak at damping " .. z)
+    check(math.abs(spring.x) < 0.02, "kick spring heads back to rest at damping " .. z)
+end
+local function springAt(stepDt, seconds)
+    local spring = Gunplay.newSpring()
+    spring.v = 1
+    local t = 0
+    while t < seconds - 1e-9 do
+        Gunplay.dampedSpring(spring, 0, omega, zeta, stepDt)
+        t = t + stepDt
+    end
+    return spring.x
+end
+local reference = springAt(1 / 240, 0.5)
+for _, fps in ipairs({ 30, 60, 144 }) do
+    check(near(springAt(1 / fps, 0.5), reference, 1e-9), "spring position does not depend on frame rate (" .. fps .. ")")
+end
 local long = Gunplay.newSpring()
 long.v = 1
-Gunplay.springStep(long, 0, 260, 22, 0.25)
-check(math.abs(long.x) < 1, "spring stays stable through a long frame")
+Gunplay.dampedSpring(long, 0, omega, zeta, 0.25)
+check(math.abs(long.x) < 0.1, "spring stays stable through a long frame")
+
+check(Gunplay.hash01(3, 7, 1) == Gunplay.hash01(3, 7, 1) and Gunplay.hash01(3, 7, 1) ~= Gunplay.hash01(4, 7, 1),
+      "hash is deterministic and depends on the seed")
+local inRange = true
+for i = 1, 500 do
+    local value = Gunplay.hash01(1, i, 2)
+    inRange = inRange and value >= 0 and value < 1
+end
+check(inRange, "hash stays in [0, 1)")
+local smooth, bounded = true, true
+for i = 0, 400 do
+    local t = i * 0.037
+    local a, b = Gunplay.smoothNoise(5, t), Gunplay.smoothNoise(5, t + 1e-4)
+    smooth = smooth and math.abs(a - b) < 1e-2
+    bounded = bounded and math.abs(a) <= 1
+end
+check(smooth and bounded, "idle noise is continuous and bounded")
+local curves = Gunplay.adsCurves(0.5)
+check(near(curves.weapon, 0.5) and near(curves.fov, 0.5) and near(Gunplay.adsCurves(1).fov, 1)
+      and Gunplay.adsCurves(0.2).fov < Gunplay.adsCurves(0.2).weapon, "ADS curves meet at the ends and middle")
+
+local Logic = require("FPS.Logic")
+-- Same seed and held fire give the same shots and recoil at any frame rate.
+local function burst(fps)
+    local state = { fireMode = "auto", roundsPerSecond = 12.5, magazine = 999, chamber = 1 }
+    local shots, pitchSum, yawSum, times = 0, 0, 0, {}
+    local steps = math.floor(fps * 1.0 + 0.5)
+    for _ = 1, steps do
+        local n = Logic.tickFire(state, 1 / fps, true, false)
+        for _ = 1, n do
+            shots = shots + 1
+            local p, y = Gunplay.recoilForShot(pattern, shots, 0.12, 0.12, Gunplay.seededRandom(42, shots))
+            pitchSum, yawSum = pitchSum + p, yawSum + y
+            times[#times + 1] = state.now
+        end
+    end
+    return shots, pitchSum, yawSum, times
+end
+local s30, p30, y30 = burst(30)
+for _, fps in ipairs({ 60, 144, 240 }) do
+    local s, p, y, times = burst(fps)
+    check(s == s30 and near(p, p30, 1e-9) and near(y, y30, 1e-9),
+          "shots and seeded recoil match 30 fps at " .. fps .. " fps")
+    local even = true
+    for i = 2, #times do
+        even = even and math.abs((times[i] - times[i - 1]) - 0.08) <= 1 / fps + 1e-9
+    end
+    check(even, "shot spacing stays within one frame of 80 ms at " .. fps .. " fps")
+end
+local r1, r2 = Gunplay.seededRandom(9, 3), Gunplay.seededRandom(9, 3)
+check(r1() == r2() and r1() == r2(), "seeded recoil repeats for the same seed and shot")
 
 for _, u in ipairs({ { 0.0, 0.0 }, { 0.999, 0.3 }, { 0.5, 0.75 } }) do
     local x, yy, z = Gunplay.spreadDirection(1, 0, 0, math.rad(3), u[1], u[2])
@@ -480,23 +562,59 @@ check(vy > math.cos(math.rad(2.0001)), "spread handles a vertical aim")
 check(near(Gunplay.fireBlock(0, true, 0.22, 0.016), 0.22), "sprinting holds the sprint-to-fire block")
 check(near(Gunplay.fireBlock(0.22, false, 0.22, 0.02), 0.2), "the block counts down after sprinting")
 
-local cues = { { time = 0.1, sound = "a" }, { time = 0.5, sound = "b" }, { time = 0.9, sound = "bolt", emptyOnly = true } }
-local crossed = Gunplay.reloadCuesCrossed(cues, 0.4, 0.95, false)
-check(#crossed == 1 and crossed[1] == "b", "tactical reload skips the empty-only bolt cue")
-crossed = Gunplay.reloadCuesCrossed(cues, 0.4, 0.95, true)
-check(#crossed == 2 and crossed[2] == "bolt", "empty reload plays the bolt cue")
-
-local Logic = require("FPS.Logic")
-local state = { fireMode = "auto", roundsPerSecond = 10, magazine = 30, fireBlockedRemaining = 0.2 }
+local state = { fireMode = "auto", roundsPerSecond = 10, magazine = 30, chamber = 1, fireBlockedRemaining = 0.2 }
 check(Logic.tickFire(state, 0.016, true, true) == 0, "a fire block stops shots")
 state.fireBlockedRemaining = 0
 check(Logic.tickFire(state, 0.016, true, false) == 1, "shots resume when the block ends")
 local reload = { magazine = 0, magazineSize = 30, reserve = 60, reloadSeconds = 2.0, reloadEmptySeconds = 2.6 }
 check(Logic.tryStartReload(reload) and near(reload.reloadRemaining, 2.6) and reload.reloadFromEmpty,
       "an empty magazine uses the empty reload time")
-local tactical = { magazine = 5, magazineSize = 30, reserve = 60, reloadSeconds = 2.0, reloadEmptySeconds = 2.6 }
+local tactical = { magazine = 5, chamber = 1, magazineSize = 30, reserve = 60, reloadSeconds = 2.0,
+                   reloadEmptySeconds = 2.6 }
 check(Logic.tryStartReload(tactical) and near(tactical.reloadRemaining, 2.0) and not tactical.reloadFromEmpty,
       "a partial magazine uses the tactical reload time")
+
+local function weapon(magazine, chamber, reserve)
+    return { magazine = magazine, chamber = chamber, magazineSize = 30, reserve = reserve,
+             tacticalReload = { seconds = 1.8, detach = 0.3, insert = 0.9 },
+             emptyReload = { seconds = 2.1, detach = 0.4, insert = 0.9, chamber = 1.4 } }
+end
+local fresh = { magazineSize = 30 }
+Logic.fillWeapon(fresh)
+check(fresh.chamber == 1 and fresh.magazine == 29 and Logic.loadedRounds(fresh) == 30, "a fresh weapon holds 29+1")
+local w = weapon(10, 1, 60)
+check(Logic.tryStartReload(w) and w.reload.kind == "tactical", "a chambered weapon does a tactical reload")
+local _, events = Logic.advanceReload(w, 0.5)
+check(#events == 1 and events[1] == "detach" and w.magazine == 10, "ammo does not move at detach")
+_, events = Logic.advanceReload(w, 0.5)
+check(events[1] == "insert" and w.magazine == 30 and w.reserve == 40 and Logic.loadedRounds(w) == 31,
+      "ammo moves at insert, old rounds return to the reserve, tactical gives 30+1")
+local done = Logic.advanceReload(w, 1.0)
+check(done and w.reload == nil and w.reloadRemaining == 0, "the reload ends at its total time")
+w = weapon(0, 0, 60)
+check(Logic.tryStartReload(w) and w.reload.kind == "empty", "an empty weapon does an empty reload")
+done, events = Logic.advanceReload(w, 3.0)
+check(done and #events == 3 and events[3] == "chamber" and w.chamber == 1 and w.magazine == 29 and w.reserve == 30,
+      "one long frame crosses every event in order")
+w = weapon(5, 1, 60)
+Logic.tryStartReload(w)
+Logic.advanceReload(w, 0.5)
+check(Logic.interruptReload(w) and w.magazine == 5 and w.chamber == 1 and w.reserve == 60,
+      "interrupting before insert keeps the old magazine")
+w = weapon(0, 0, 60)
+Logic.tryStartReload(w)
+Logic.advanceReload(w, 1.0)
+Logic.interruptReload(w)
+check(w.magazine == 30 and w.chamber == 0 and Logic.reloadKind(w) == "chamber",
+      "interrupting an empty reload after insert leaves the chamber to rack")
+check(Logic.tryStartReload(w) and w.reloadTotal < 1.0, "racking is shorter than a reload")
+Logic.advanceReload(w, 1.0)
+check(w.chamber == 1 and w.magazine == 29 and w.reload == nil, "racking chambers a round")
+w = weapon(0, 1, 0)
+check(Logic.spendShot(w) and w.chamber == 0 and not Logic.spendShot(w), "the last round leaves the chamber empty")
+check(Logic.reloadKind(w) == nil, "no reload without reserve ammo")
+w = weapon(30, 1, 10)
+check(Logic.reloadKind(w) == nil, "no reload with a full magazine and a chambered round")
 
 if #failures > 0 then error(table.concat(failures, "\n")) end
 )lua";

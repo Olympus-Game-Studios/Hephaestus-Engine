@@ -28,6 +28,8 @@ Expose.bool("showAmmo", true)
 Expose.bool("showPrompt", true)
 Expose.string("hudDocument", "plugin://com.hephaestus.fps/UI/FPSHud.hui")
 Expose.bool("presentationEnabled", true)
+Expose.number("viewBobScale", 1.0)
+Expose.number("cameraShakeScale", 1.0)
 Expose.string("footstepSounds", "")
 Expose.number("footstepStride", 2.1)
 Expose.number("footstepVolume", 0.5)
@@ -41,9 +43,16 @@ local eyeHeight = 1.62
 local lastDt = 1 / 60
 local commands = { fireHeld = false, firePressed = false, reload = false, interact = false }
 local discoverTries = 0
-local lastLookX = 0
-local lastLookY = 0
 local lookPitchDelta = 0
+local lookYawRate = 0
+local lookPitchRate = 0
+local cameraKickPitch = { x = 0, v = 0 }
+local cameraKickYaw = { x = 0, v = 0 }
+local cameraKickOmega, cameraKickZeta = 24, 0.6
+local wasGrounded = true
+local fallSpeed = 0
+local footfallThisFrame = false
+local stepCount = 0
 local lastKnownHealth = 0
 local sprinting = false
 local swap = nil
@@ -90,9 +99,9 @@ local function applyLook(dt)
     local mouse = Input.getMouseDelta()
     local mx = (mouse and mouse.x) or 0
     local my = (mouse and mouse.y) or 0
-    lastLookX = mx
-    lastLookY = my
     lookPitchDelta = 0
+    lookYawRate = 0
+    lookPitchRate = 0
     local row = activeWeaponRow()
     local player = Registry.player
     if player then
@@ -103,7 +112,7 @@ local function applyLook(dt)
         player.pendingYaw = 0
     end
     if lookEnabled and inputEnabled then
-        local adsScale = row and Gunplay.lerp(1, row.adsSensitivityScale or 1, row.adsBlend or 0) or 1
+        local adsScale = row and Gunplay.lerp(1, row.adsSensitivityScale or 1, row.adsFovBlend or 0) or 1
         local invertXScale = invertX and -1 or 1
         local invertYScale = invertY and -1 or 1
         local stickX = Input.getAxis("LookStickX") or 0
@@ -112,6 +121,10 @@ local function applyLook(dt)
         lookPitchDelta = -(my * mouseSensitivityY + stickY * stickSensitivityY * dt) * invertYScale * adsScale
         yaw = yaw + dYaw
         pitch = pitch + lookPitchDelta
+        if dt > 1e-4 then
+            lookYawRate = dYaw / dt
+            lookPitchRate = lookPitchDelta / dt
+        end
     end
     pitch = Logic.clampPitch(pitch, degToRad(pitchMinDegrees), degToRad(pitchMaxDegrees))
 end
@@ -178,18 +191,46 @@ local function parseList(text)
     return list
 end
 
+-- Counts strides even without footstep sounds, because the weapon bob and footfall dips follow them.
 local function updateFootsteps(speedXZ, grounded, dt)
-    if not grounded or speedXZ < 0.5 or #footsteps == 0 then
+    footfallThisFrame = false
+    if not grounded or speedXZ < 0.5 then
         return
     end
     stepDistance = stepDistance + speedXZ * dt
     if stepDistance >= footstepStride then
         stepDistance = stepDistance - footstepStride
-        stepIndex = stepIndex % #footsteps + 1
-        if Audio and Audio.isAvailable and Audio.isAvailable() then
-            Audio.play(footsteps[stepIndex], false, footstepVolume)
+        stepCount = stepCount + 1
+        footfallThisFrame = true
+        if #footsteps > 0 then
+            stepIndex = stepIndex % #footsteps + 1
+            if Audio and Audio.isAvailable and Audio.isAvailable() then
+                Audio.play(footsteps[stepIndex], false, footstepVolume)
+            end
         end
     end
+end
+
+-- Presentation-only camera kick: it moves the view, never where shots go.
+local function updateCameraKick(dt)
+    local player = Registry.player
+    local shake = presentationEnabled and Gunplay.clamp(cameraShakeScale, 0, 1) or 0
+    if player and player.cameraImpulses then
+        for _, impulse in ipairs(player.cameraImpulses) do
+            cameraKickOmega, cameraKickZeta = impulse.omega or cameraKickOmega, impulse.zeta or cameraKickZeta
+            cameraKickPitch.v = cameraKickPitch.v
+                + Gunplay.impulseForPeak(impulse.pitch or 0, cameraKickOmega, cameraKickZeta) * shake
+            cameraKickYaw.v = cameraKickYaw.v
+                + Gunplay.impulseForPeak(impulse.yaw or 0, cameraKickOmega, cameraKickZeta) * shake
+        end
+        player.cameraImpulses = nil
+    end
+    Gunplay.dampedSpring(cameraKickPitch, 0, cameraKickOmega, cameraKickZeta, dt)
+    Gunplay.dampedSpring(cameraKickYaw, 0, cameraKickOmega, cameraKickZeta, dt)
+end
+
+local function applyCameraRotation()
+    Camera.setRotation(pitch + cameraKickPitch.x, cameraKickYaw.x, 0)
 end
 
 -- Plain trigger volumes are skipped so a large sensor cannot hide the interactable inside it.
@@ -212,7 +253,7 @@ local function updateFieldOfView(row)
         cameraObject = cameraEntity and cameraEntity:GetCamera() or nil
     end
     if cameraObject then
-        local ads = row and row.adsBlend or 0
+        local ads = row and row.adsFovBlend or 0
         cameraObject:SetFov(Gunplay.lerp(fieldOfView, row and row.adsFov or fieldOfView, ads))
     end
 end
@@ -228,6 +269,11 @@ function onAwake()
     swap = nil
     cameraObject = nil
     stepDistance = 0
+    stepCount = 0
+    wasGrounded = true
+    fallSpeed = 0
+    cameraKickPitch = { x = 0, v = 0 }
+    cameraKickYaw = { x = 0, v = 0 }
     footsteps = parseList(footstepSounds)
     commands = { fireHeld = false, firePressed = false, reload = false, interact = false }
     Health.attach(this, { maxHealth = maxHealth })
@@ -252,7 +298,7 @@ function onUpdate(dt)
     lastDt = dt
     applyLook(dt)
     Character.setFacingYaw(yaw)
-    Camera.setRotation(pitch, 0, 0)
+    applyCameraRotation()
     Registry.player.yaw = yaw
     Registry.player.pitch = pitch
     local row = activeWeaponRow()
@@ -311,7 +357,6 @@ function onLateUpdate(dt)
         eyeHeight = math.max(target, eyeHeight - speed)
     end
     Camera.setPosition(0, eyeHeight, 0)
-    Camera.setRotation(pitch, 0, 0)
 
     local feet = Transform.getPosition()
     local origin, direction = Logic.aimRay(feet, eyeHeight, yaw, pitch)
@@ -320,11 +365,22 @@ function onLateUpdate(dt)
     local grounded = Character.isGrounded()
     local speedXZ = vel and math.sqrt((vel.x or 0) ^ 2 + (vel.z or 0) ^ 2) or 0
     local player = Registry.player
-    if presentationEnabled and player then
-        player.bob = (player.bob or 0) + dt * (grounded and speedXZ or 0) * 1.6
-        player.lastLookX = lastLookX
-    end
     updateFootsteps(speedXZ, grounded, dt)
+    local landingSpeed = 0
+    if not grounded then
+        fallSpeed = math.max(fallSpeed, -((vel and vel.y) or 0))
+    elseif not wasGrounded then
+        landingSpeed = fallSpeed
+        fallSpeed = 0
+        if player and landingSpeed > 2 then
+            player.cameraImpulses = player.cameraImpulses or {}
+            table.insert(player.cameraImpulses, { pitch = -math.min(math.rad(1.2), landingSpeed * math.rad(0.12)) })
+        end
+    end
+    wasGrounded = grounded
+    local basis = Logic.yawBasis(yaw)
+    local localForward = vel and ((vel.x or 0) * basis.forward.x + (vel.z or 0) * basis.forward.z) or 0
+    local localRight = vel and ((vel.x or 0) * basis.right.x + (vel.z or 0) * basis.right.z) or 0
 
     if not discoverWeapons() then
         return
@@ -365,10 +421,16 @@ function onLateUpdate(dt)
             sprinting = sprinting,
             moveFraction = Gunplay.clamp(speedXZ / math.max(fullSpreadMoveSpeed, 0.1), 0, 1),
             airborne = not grounded,
-            lookX = lastLookX,
-            lookY = lastLookY,
             lookPitchDelta = lookPitchDelta,
-            bobPhase = presentationEnabled and (player.bob or 0) or 0,
+            lookYawRate = lookYawRate,
+            lookPitchRate = lookPitchRate,
+            localForwardSpeed = localForward,
+            localRightSpeed = localRight,
+            landingSpeed = landingSpeed,
+            footfall = footfallThisFrame,
+            motionScale = presentationEnabled and Gunplay.clamp(viewBobScale, 0, 1) or 0,
+            -- Footfalls land on whole multiples of pi.
+            bobPhase = math.pi * (stepCount + stepDistance / math.max(footstepStride, 0.1)),
             lowering = swap ~= nil,
             lowerProgress = swap and row and
                 Gunplay.clamp(1 - swap.remaining / math.max(row.lowerSeconds or 0.01, 0.01), 0, 1) or 0,
@@ -385,6 +447,8 @@ function onLateUpdate(dt)
     commands.firePressed = false
     commands.reload = false
     updateFieldOfView(row)
+    updateCameraKick(lastDt)
+    applyCameraRotation()
 
     if player and player.hitEvent then
         Hud.showMarker(player.hitEvent)

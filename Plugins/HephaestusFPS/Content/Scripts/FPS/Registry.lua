@@ -74,7 +74,7 @@ function Registry.weaponSnapshot(entity)
     end
     return {
         displayName = row.displayName,
-        magazine = row.magazine,
+        magazine = (row.magazine or 0) + (row.chamber or 0),
         reserve = row.reserve,
         magazineSize = row.magazineSize,
         reloading = (row.reloadRemaining or 0) > 0,
