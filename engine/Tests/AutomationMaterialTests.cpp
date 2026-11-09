@@ -98,6 +98,16 @@ int main()
     ok &= Check(created.Ok() && created.value["properties"]["metallic"] == 0.0,
                 "material.create returns default PBR properties");
 
+    auto textured = Call(service, "material.create",
+                         {{"folder", "materials/nested"},
+                          {"name", "TexturedMat"},
+                          {"properties", {{"albedo", {1.0, 1.0, 1.0}},
+                                          {"useAlbedoTexture", true},
+                                          {"albedoTexturePath", "assets/textures/missing.png"}}}});
+    ok &= Check(textured.Ok() &&
+                    fs::exists(project / "assets" / "materials" / "nested" / "TexturedMat.hematerial"),
+                "material.create writes a textured material into a new folder");
+
     auto duplicate = Call(service, "material.create", {{"name", "AutomationMat"}});
     ok &= Check(!duplicate.Ok() &&
                     duplicate.error->code == Hephaestus::Automation::ErrorCode::InvalidArguments,

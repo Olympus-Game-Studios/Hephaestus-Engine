@@ -432,12 +432,15 @@ void BuildMinimalGraphFromLegacyPbr(const MaterialComponent& material, Graph& gr
     Node& output = graph.CreateNode(NodeType::MaterialOutput);
     output.posX = 450.0f;
     output.posY = 200.0f;
+    // CreateNode may reallocate the node list, so keep copies rather than a reference to the output node.
+    const std::vector<PinID> outputInputs = output.inputs;
+    const float outputY = output.posY;
 
     auto connectScalar = [&](float value, PinID outputPin) {
         Node& scalarNode = graph.CreateNode(NodeType::ConstantFloat);
         scalarNode.scalar = value;
         scalarNode.posX = 160.0f;
-        scalarNode.posY = output.posY;
+        scalarNode.posY = outputY;
         if (!scalarNode.outputs.empty()) {
             graph.CreateLink(scalarNode.outputs[0], outputPin);
         }
@@ -447,76 +450,76 @@ void BuildMinimalGraphFromLegacyPbr(const MaterialComponent& material, Graph& gr
         Node& colorNode = graph.CreateNode(NodeType::ConstantVec3);
         colorNode.color = Float3{color.x, color.y, color.z};
         colorNode.posX = 160.0f;
-        colorNode.posY = output.posY;
+        colorNode.posY = outputY;
         if (!colorNode.outputs.empty()) {
             graph.CreateLink(colorNode.outputs[0], outputPin);
         }
     };
 
-    if (!output.inputs.empty()) {
+    if (!outputInputs.empty()) {
         if (material.useAlbedoTexture && !material.albedoTexturePath.empty()) {
             Node& tex = graph.CreateNode(NodeType::AlbedoTextureSample);
             tex.resourcePath = material.albedoTexturePath;
             tex.posX = 140.0f;
             tex.posY = 80.0f;
             if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], output.inputs[0]);
+                graph.CreateLink(tex.outputs[0], outputInputs[0]);
             }
         } else {
-            connectColor(material.albedo, output.inputs[0]);
+            connectColor(material.albedo, outputInputs[0]);
         }
     }
-    if (output.inputs.size() > 1) {
+    if (outputInputs.size() > 1) {
         if (material.useMetallicTexture && !material.metallicTexturePath.empty()) {
             Node& tex = graph.CreateNode(NodeType::MetallicTextureSample);
             tex.resourcePath = material.metallicTexturePath;
             tex.posX = 140.0f;
             tex.posY = 140.0f;
             if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], output.inputs[1]);
+                graph.CreateLink(tex.outputs[0], outputInputs[1]);
             }
         } else {
-            connectScalar(material.metallic, output.inputs[1]);
+            connectScalar(material.metallic, outputInputs[1]);
         }
     }
-    if (output.inputs.size() > 2) connectScalar(material.roughness, output.inputs[2]);
-    if (output.inputs.size() > 3) connectColor(material.emissive, output.inputs[3]);
+    if (outputInputs.size() > 2) connectScalar(material.roughness, outputInputs[2]);
+    if (outputInputs.size() > 3) connectColor(material.emissive, outputInputs[3]);
 
-    if (output.inputs.size() > 4 && material.useNormalTexture && !material.normalTexturePath.empty()) {
+    if (outputInputs.size() > 4 && material.useNormalTexture && !material.normalTexturePath.empty()) {
         Node& tex = graph.CreateNode(NodeType::NormalTextureSample);
         tex.resourcePath = material.normalTexturePath;
         tex.posX = 140.0f;
         tex.posY = 260.0f;
         if (!tex.outputs.empty()) {
-            graph.CreateLink(tex.outputs[0], output.inputs[4]);
+            graph.CreateLink(tex.outputs[0], outputInputs[4]);
         }
     }
 
-    if (output.inputs.size() > 5) {
+    if (outputInputs.size() > 5) {
         if (material.useRoughnessTexture && !material.roughnessTexturePath.empty()) {
             Node& tex = graph.CreateNode(NodeType::RoughnessTextureSample);
             tex.resourcePath = material.roughnessTexturePath;
             tex.posX = 140.0f;
             tex.posY = 320.0f;
             if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], output.inputs[5]);
+                graph.CreateLink(tex.outputs[0], outputInputs[5]);
             }
         } else {
-            connectScalar(material.roughness, output.inputs[5]);
+            connectScalar(material.roughness, outputInputs[5]);
         }
     }
 
-    if (output.inputs.size() > 6) {
+    if (outputInputs.size() > 6) {
         if (material.useAoTexture && !material.aoTexturePath.empty()) {
             Node& tex = graph.CreateNode(NodeType::AoTextureSample);
             tex.resourcePath = material.aoTexturePath;
             tex.posX = 140.0f;
             tex.posY = 380.0f;
             if (!tex.outputs.empty()) {
-                graph.CreateLink(tex.outputs[0], output.inputs[6]);
+                graph.CreateLink(tex.outputs[0], outputInputs[6]);
             }
         } else {
-            connectScalar(material.ao, output.inputs[6]);
+            connectScalar(material.ao, outputInputs[6]);
         }
     }
 
