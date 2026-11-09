@@ -188,32 +188,32 @@
     { "id": 34, "name": "TriggerVisualBottom4", "components": { "Transform": { "position": [4.8,0.03,0], "scale": [0.06,0.06,2] }, "MeshRenderer": { "meshSource": "builtin://cube", "visible": true } } },
     { "id": 36, "name": "FPSHitscan_Part_Body", "parent": 8, "components": {
       "Transform": { "position": [0,0,0], "scale": [0.16,0.08,0.20] },
-      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false, "viewModel": true },
       "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {} }
     }},
     { "id": 37, "name": "FPSHitscan_Part_Barrel", "parent": 8, "components": {
       "Transform": { "position": [0.18,0.015,0], "scale": [0.28,0.045,0.055] },
-      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false, "viewModel": true },
       "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {} }
     }},
     { "id": 38, "name": "FPSHitscan_Part_Grip", "parent": 8, "components": {
       "Transform": { "position": [-0.04,-0.115,0.04], "scale": [0.07,0.16,0.08] },
-      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false, "viewModel": true },
       "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {} }
     }},
     { "id": 39, "name": "FPSHitscanAuto_Part_Body", "parent": 9, "components": {
       "Transform": { "position": [0,0,0], "scale": [0.2,0.1,0.24] },
-      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false, "viewModel": true },
       "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {} }
     }},
     { "id": 40, "name": "FPSHitscanAuto_Part_Barrel", "parent": 9, "components": {
       "Transform": { "position": [0.25,0,0], "scale": [0.35,0.05,0.05] },
-      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false, "viewModel": true },
       "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {} }
     }},
     { "id": 41, "name": "FPSHitscanAuto_Part_Grip", "parent": 9, "components": {
       "Transform": { "position": [0,-0.13,0.05], "scale": [0.08,0.18,0.08] },
-      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false },
+      "MeshRenderer": { "meshSource": "builtin://cube", "visible": false, "viewModel": true },
       "LuaScript": { "scriptPath": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {} }
     }}
   ]

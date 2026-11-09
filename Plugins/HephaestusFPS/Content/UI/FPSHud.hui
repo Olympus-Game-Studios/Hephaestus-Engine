@@ -45,6 +45,48 @@
       },
       {
         "type": "Text",
+        "id": "HitMarker",
+        "properties": {
+          "text": "X",
+          "textAlignment": "Center",
+          "anchor": "Center",
+          "size": [40, 40],
+          "visible": false,
+          "interactable": false,
+          "zOrder": 3
+        },
+        "style": {
+          "fontSize": 26,
+          "fontBold": true,
+          "textColor": [1.0, 1.0, 1.0, 1.0],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.85],
+          "textShadowOffset": [1, 1]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "KillMarker",
+        "properties": {
+          "text": "X",
+          "textAlignment": "Center",
+          "anchor": "Center",
+          "size": [40, 40],
+          "visible": false,
+          "interactable": false,
+          "zOrder": 3
+        },
+        "style": {
+          "fontSize": 30,
+          "fontBold": true,
+          "textColor": [0.95, 0.2, 0.16, 1.0],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.85],
+          "textShadowOffset": [1, 1]
+        }
+      },
+      {
+        "type": "Text",
         "id": "HealthText",
         "properties": {
           "text": "100 / 100",

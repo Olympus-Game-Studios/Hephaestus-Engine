@@ -413,6 +413,98 @@ int main(int argc, char** argv)
         lua_pop(L, 3);
     }
 
+    static const char* kGunplayChecks = R"lua(
+local Gunplay = require("FPS.Gunplay")
+local function near(a, b, eps) return math.abs(a - b) <= (eps or 1e-6) end
+local failures = {}
+local function check(cond, message) if not cond then failures[#failures + 1] = message end end
+
+local weapon = { hipSpread = 2, moveSpread = 2.5, airSpread = 4, maxSpread = 7, adsSpread = 0.1,
+                 adsBloomScale = 0.5, bloomPerShot = 0.6, maxBloom = 1.0, bloomDecay = 2,
+                 damage = 30, falloffStart = 25, falloffEnd = 50, falloffMinMultiplier = 0.6,
+                 headMultiplier = 1.5, limbMultiplier = 0.9 }
+check(near(Gunplay.spreadDegrees(weapon, { adsBlend = 0, moveFraction = 0, bloom = 0 }), 2), "standing hip spread")
+check(near(Gunplay.spreadDegrees(weapon, { adsBlend = 0, moveFraction = 1, bloom = 0 }), 4.5), "moving widens spread")
+check(near(Gunplay.spreadDegrees(weapon, { adsBlend = 0, moveFraction = 1, airborne = true, bloom = 1 }), 7),
+      "spread clamps at maxSpread")
+check(near(Gunplay.spreadDegrees(weapon, { adsBlend = 1, moveFraction = 1, bloom = 1 }), 0.6), "ADS spread is tight")
+local bloom = Gunplay.addBloom(Gunplay.addBloom(0, weapon), weapon)
+check(near(bloom, 1.0), "bloom grows per shot and caps")
+check(near(Gunplay.decayBloom(bloom, weapon, 0.25), 0.5), "bloom decays over time")
+
+check(near(Gunplay.shotDamage(weapon, 10, "body"), 30), "full damage inside falloff start")
+check(near(Gunplay.shotDamage(weapon, 37.5, "body"), 24), "falloff is linear between start and end")
+check(near(Gunplay.shotDamage(weapon, 80, "body"), 18), "falloff floors at the minimum")
+check(near(Gunplay.shotDamage(weapon, 10, "head"), 45), "head zone multiplies by 1.5")
+check(near(Gunplay.shotDamage(weapon, 10, "limb"), 27), "limb zone multiplies by 0.9")
+
+local pattern = Gunplay.parsePattern("0.5,0.1; 0.7,-0.2;0.9,0.3")
+check(#pattern == 3 and near(pattern[2].pitch, 0.7) and near(pattern[2].yaw, -0.2), "pattern parses pitch,yaw pairs")
+local function fixed() return 0.5 end
+local p, y = Gunplay.recoilForShot(pattern, 2, 0.2, 0.2, fixed)
+check(near(p, 0.7) and near(y, -0.2), "recoil follows the learnable pattern")
+p, y = Gunplay.recoilForShot(pattern, 9, 0.2, 0.2, fixed)
+check(near(p, 0.9) and near(y, 0.3), "the last pattern entry repeats")
+p = Gunplay.recoilForShot(pattern, 1, 0.2, 0, function() return 0.999999 end)
+check(p > 0.69 and p <= 0.7, "jitter stays inside its range")
+
+check(near(Gunplay.absorbCounterInput(0.05, -0.02), 0.03), "pulling down spends accumulated recoil")
+check(near(Gunplay.absorbCounterInput(0.05, -0.2), 0), "counter input never overshoots")
+check(near(Gunplay.absorbCounterInput(0.05, 0.02), 0.05), "looking up keeps accumulated recoil")
+local delta, rest = Gunplay.recoverRecoil(0.05, 0.1, 0.1)
+check(near(delta, -0.01) and near(rest, 0.04), "recovery returns the aim at its rate")
+delta, rest = Gunplay.recoverRecoil(0.005, 0.1, 0.1)
+check(near(delta, -0.005) and near(rest, 0), "recovery stops at the original aim")
+
+local spring = Gunplay.newSpring()
+spring.v = 1
+local peak = 0
+for _ = 1, 120 do
+    Gunplay.springStep(spring, 0, 260, 22, 1 / 120)
+    peak = math.max(peak, spring.x)
+end
+check(peak > 0 and math.abs(spring.x) < 1e-3, "kick spring rises and settles back to rest")
+local long = Gunplay.newSpring()
+long.v = 1
+Gunplay.springStep(long, 0, 260, 22, 0.25)
+check(math.abs(long.x) < 1, "spring stays stable through a long frame")
+
+for _, u in ipairs({ { 0.0, 0.0 }, { 0.999, 0.3 }, { 0.5, 0.75 } }) do
+    local x, yy, z = Gunplay.spreadDirection(1, 0, 0, math.rad(3), u[1], u[2])
+    local angle = math.deg(math.acos(math.max(-1, math.min(1, x))))
+    check(near(x * x + yy * yy + z * z, 1, 1e-9) and angle <= 3.0001, "spread stays inside the cone")
+end
+local vx, vy, vz = Gunplay.spreadDirection(0, 1, 0, math.rad(2), 0.8, 0.1)
+check(vy > math.cos(math.rad(2.0001)), "spread handles a vertical aim")
+
+check(near(Gunplay.fireBlock(0, true, 0.22, 0.016), 0.22), "sprinting holds the sprint-to-fire block")
+check(near(Gunplay.fireBlock(0.22, false, 0.22, 0.02), 0.2), "the block counts down after sprinting")
+
+local cues = { { time = 0.1, sound = "a" }, { time = 0.5, sound = "b" }, { time = 0.9, sound = "bolt", emptyOnly = true } }
+local crossed = Gunplay.reloadCuesCrossed(cues, 0.4, 0.95, false)
+check(#crossed == 1 and crossed[1] == "b", "tactical reload skips the empty-only bolt cue")
+crossed = Gunplay.reloadCuesCrossed(cues, 0.4, 0.95, true)
+check(#crossed == 2 and crossed[2] == "bolt", "empty reload plays the bolt cue")
+
+local Logic = require("FPS.Logic")
+local state = { fireMode = "auto", roundsPerSecond = 10, magazine = 30, fireBlockedRemaining = 0.2 }
+check(Logic.tickFire(state, 0.016, true, true) == 0, "a fire block stops shots")
+state.fireBlockedRemaining = 0
+check(Logic.tickFire(state, 0.016, true, false) == 1, "shots resume when the block ends")
+local reload = { magazine = 0, magazineSize = 30, reserve = 60, reloadSeconds = 2.0, reloadEmptySeconds = 2.6 }
+check(Logic.tryStartReload(reload) and near(reload.reloadRemaining, 2.6) and reload.reloadFromEmpty,
+      "an empty magazine uses the empty reload time")
+local tactical = { magazine = 5, magazineSize = 30, reserve = 60, reloadSeconds = 2.0, reloadEmptySeconds = 2.6 }
+check(Logic.tryStartReload(tactical) and near(tactical.reloadRemaining, 2.0) and not tactical.reloadFromEmpty,
+      "a partial magazine uses the tactical reload time")
+
+if #failures > 0 then error(table.concat(failures, "\n")) end
+)lua";
+    if (luaL_dostring(L, kGunplayChecks) != LUA_OK) {
+        std::cerr << "[FAIL] gunplay checks:\n" << lua_tostring(L, -1) << '\n';
+        ok = false;
+    }
+
     lua_close(L);
     if (!ok) {
         return 1;

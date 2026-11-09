@@ -1,5 +1,6 @@
 local Registry = require("FPS.Registry")
 local Logic = require("FPS.Logic")
+local Gunplay = require("FPS.Gunplay")
 local Health = require("FPS.Health")
 local Interactable = require("FPS.Interactable")
 local Hud = require("FPS.Hud")
@@ -16,6 +17,8 @@ Expose.number("standEyeHeight", 1.62)
 Expose.number("crouchEyeHeight", 0.95)
 Expose.number("eyeBlendMetersPerSecond", 8)
 Expose.number("sprintMultiplier", 1.6)
+Expose.number("fieldOfView", 80)
+Expose.number("fullSpreadMoveSpeed", 5.0)
 Expose.number("interactDistance", 2.5)
 Expose.number("maxHealth", 100)
 Expose.bool("hudEnabled", true)
@@ -25,6 +28,9 @@ Expose.bool("showAmmo", true)
 Expose.bool("showPrompt", true)
 Expose.string("hudDocument", "plugin://com.hephaestus.fps/UI/FPSHud.hui")
 Expose.bool("presentationEnabled", true)
+Expose.string("footstepSounds", "")
+Expose.number("footstepStride", 2.1)
+Expose.number("footstepVolume", 0.5)
 
 local Player = {}
 local yaw = 0
@@ -37,7 +43,14 @@ local commands = { fireHeld = false, firePressed = false, reload = false, intera
 local discoverTries = 0
 local lastLookX = 0
 local lastLookY = 0
+local lookPitchDelta = 0
 local lastKnownHealth = 0
+local sprinting = false
+local swap = nil
+local stepDistance = 0
+local stepIndex = 0
+local footsteps = {}
+local cameraObject = nil
 
 local function degToRad(value)
     return value * math.pi / 180
@@ -69,23 +82,37 @@ function Player.pitch()
     return pitch
 end
 
+local function activeWeaponRow()
+    return Registry.activeWeapon()
+end
+
 local function applyLook(dt)
     local mouse = Input.getMouseDelta()
     local mx = (mouse and mouse.x) or 0
     local my = (mouse and mouse.y) or 0
     lastLookX = mx
     lastLookY = my
-    if not lookEnabled or not inputEnabled then
-        return
+    lookPitchDelta = 0
+    local row = activeWeaponRow()
+    local player = Registry.player
+    if player then
+        -- Recoil and its recovery move the real aim, not only the gun model.
+        pitch = pitch + (player.pendingPitch or 0)
+        yaw = yaw + (player.pendingYaw or 0)
+        player.pendingPitch = 0
+        player.pendingYaw = 0
     end
-    local invertXScale = invertX and -1 or 1
-    local invertYScale = invertY and -1 or 1
-    yaw = yaw - mx * mouseSensitivityX * invertXScale
-    pitch = pitch - my * mouseSensitivityY * invertYScale
-    local stickX = Input.getAxis("LookStickX") or 0
-    local stickY = Input.getAxis("LookStickY") or 0
-    yaw = yaw - stickX * stickSensitivityX * invertXScale * dt
-    pitch = pitch - stickY * stickSensitivityY * invertYScale * dt
+    if lookEnabled and inputEnabled then
+        local adsScale = row and Gunplay.lerp(1, row.adsSensitivityScale or 1, row.adsBlend or 0) or 1
+        local invertXScale = invertX and -1 or 1
+        local invertYScale = invertY and -1 or 1
+        local stickX = Input.getAxis("LookStickX") or 0
+        local stickY = Input.getAxis("LookStickY") or 0
+        local dYaw = -(mx * mouseSensitivityX + stickX * stickSensitivityX * dt) * invertXScale * adsScale
+        lookPitchDelta = -(my * mouseSensitivityY + stickY * stickSensitivityY * dt) * invertYScale * adsScale
+        yaw = yaw + dYaw
+        pitch = pitch + lookPitchDelta
+    end
     pitch = Logic.clampPitch(pitch, degToRad(pitchMinDegrees), degToRad(pitchMaxDegrees))
 end
 
@@ -98,24 +125,95 @@ local function discoverWeapons()
 end
 
 local function activeWeaponEntity()
-    local row = Registry.activeWeapon()
+    local row = activeWeaponRow()
     return row and row.entity or nil
 end
 
-local function equipIndex(index)
-    local count = #Registry.weaponOrder
-    local selected = Logic.selectSlot(index, count)
-    if not selected then
-        return
-    end
+local function equipNow(index)
     local previous = activeWeaponEntity()
     if previous then
         previous:Call("unequip")
     end
-    local key = Registry.weaponOrder[selected]
+    local key = Registry.weaponOrder[index]
     local row = Registry.weapons[key]
     if row and row.entity then
         row.entity:Call("equip")
+    end
+end
+
+-- The current weapon lowers for its lowerSeconds before the next one is raised.
+local function requestSlot(index)
+    local selected = Logic.selectSlot(index, #Registry.weaponOrder)
+    if not selected then
+        return
+    end
+    local active = activeWeaponRow()
+    if active and Registry.weaponOrder[selected] == active.key then
+        return
+    end
+    if not active then
+        equipNow(selected)
+        return
+    end
+    swap = { index = selected, remaining = active.lowerSeconds or 0 }
+end
+
+local function activeSlot()
+    local active = activeWeaponRow()
+    if active then
+        for i, key in ipairs(Registry.weaponOrder) do
+            if key == active.key then
+                return i
+            end
+        end
+    end
+    return 1
+end
+
+local function parseList(text)
+    local list = {}
+    for item in string.gmatch(text or "", "[^;]+") do
+        list[#list + 1] = item
+    end
+    return list
+end
+
+local function updateFootsteps(speedXZ, grounded, dt)
+    if not grounded or speedXZ < 0.5 or #footsteps == 0 then
+        return
+    end
+    stepDistance = stepDistance + speedXZ * dt
+    if stepDistance >= footstepStride then
+        stepDistance = stepDistance - footstepStride
+        stepIndex = stepIndex % #footsteps + 1
+        if Audio and Audio.isAvailable and Audio.isAvailable() then
+            Audio.play(footsteps[stepIndex], false, footstepVolume)
+        end
+    end
+end
+
+-- Plain trigger volumes are skipped so a large sensor cannot hide the interactable inside it.
+local function interactionHit(origin, direction)
+    local ignored = { this }
+    for _ = 1, 4 do
+        local hit = Physics.raycast(origin.x, origin.y, origin.z, direction.x, direction.y, direction.z,
+                                    interactDistance, "Character", false, ignored)
+        if not hit or not hit.sensor or not hit.entity or Registry.interactables[Registry.key(hit.entity)] then
+            return hit
+        end
+        ignored[#ignored + 1] = hit.entity
+    end
+    return nil
+end
+
+local function updateFieldOfView(row)
+    if not cameraObject then
+        local cameraEntity = Scene.GetActiveCamera()
+        cameraObject = cameraEntity and cameraEntity:GetCamera() or nil
+    end
+    if cameraObject then
+        local ads = row and row.adsBlend or 0
+        cameraObject:SetFov(Gunplay.lerp(fieldOfView, row and row.adsFov or fieldOfView, ads))
     end
 end
 
@@ -126,6 +224,11 @@ function onAwake()
     pitch = 0
     inputEnabled = true
     discoverTries = 0
+    sprinting = false
+    swap = nil
+    cameraObject = nil
+    stepDistance = 0
+    footsteps = parseList(footstepSounds)
     commands = { fireHeld = false, firePressed = false, reload = false, interact = false }
     Health.attach(this, { maxHealth = maxHealth })
     Registry.setPlayer(this, {
@@ -133,6 +236,10 @@ function onAwake()
         pitch = 0,
         lookEnabled = true,
         inputEnabled = true,
+        pendingPitch = 0,
+        pendingYaw = 0,
+        bob = 0,
+        input = {},
     })
     eyeHeight = standEyeHeight
     lastKnownHealth = Health.getHealth(this)
@@ -148,27 +255,27 @@ function onUpdate(dt)
     Camera.setRotation(pitch, 0, 0)
     Registry.player.yaw = yaw
     Registry.player.pitch = pitch
-    local wishX, wishZ = 0, 0
+    local row = activeWeaponRow()
     if lookEnabled and inputEnabled then
         local basis = Logic.yawBasis(yaw)
         local forward = Input.getAxis("MoveForward") or 0
         local right = Input.getAxis("MoveRight") or 0
-        wishX = basis.forward.x * forward + basis.right.x * right
-        wishZ = basis.forward.z * forward + basis.right.z * right
-        Character.move(wishX, wishZ)
+        Character.move(basis.forward.x * forward + basis.right.x * right,
+                       basis.forward.z * forward + basis.right.z * right)
         if Input.isActionPressed("Jump") then
             Character.jump()
         end
         local crouchHeld = Input.isActionDown("Crouch")
         Character.setCrouched(crouchHeld)
         local crouched = crouchHeld or Character.isCrouched() or Character.isStandBlocked()
-        if Logic.sprintAllowed(forward, crouched) and Input.isActionDown("Sprint") then
-            Character.setSpeedMultiplier(sprintMultiplier)
-        else
-            Character.setSpeedMultiplier(1)
-        end
         commands.fireHeld = Input.isActionDown("Fire")
         commands.firePressed = Input.isActionPressed("Fire")
+        commands.aimHeld = Input.isActionDown("Aim")
+        -- Firing or aiming ends a sprint; the weapon then waits its sprint-to-fire time.
+        sprinting = Logic.sprintAllowed(forward, crouched) and Input.isActionDown("Sprint")
+            and not commands.fireHeld and not commands.aimHeld
+        local adsMove = row and Gunplay.lerp(1, row.adsMoveMultiplier or 1, row.adsBlend or 0) or 1
+        Character.setSpeedMultiplier(sprinting and sprintMultiplier or adsMove)
         commands.reload = Input.isActionPressed("Reload")
         commands.interact = Input.isActionPressed("Interact")
         if Input.isActionPressed("NextWeapon") then
@@ -185,8 +292,10 @@ function onUpdate(dt)
     else
         Character.move(0, 0)
         Character.setSpeedMultiplier(1)
+        sprinting = false
         commands.fireHeld = false
         commands.firePressed = false
+        commands.aimHeld = false
         commands.reload = false
         commands.interact = false
     end
@@ -207,77 +316,80 @@ function onLateUpdate(dt)
     local feet = Transform.getPosition()
     local origin, direction = Logic.aimRay(feet, eyeHeight, yaw, pitch)
 
-    if presentationEnabled then
-        local vel = Character.getVelocity()
-        local speedXZ = 0
-        if vel and Character.isGrounded() then
-            speedXZ = math.sqrt((vel.x or 0) ^ 2 + (vel.z or 0) ^ 2)
-        end
-        local bob = math.sin((Registry.player and Registry.player.bob or 0) + dt * 8) * math.min(speedXZ, 5) * 0.002
-        if Registry.player then
-            Registry.player.bob = (Registry.player.bob or 0) + dt * speedXZ
-        end
-        -- Viewmodel offsets live on the weapon entity inside Weapon.tick / recoil.
-        Registry.player.bobOffset = bob
-        Registry.player.lastLookX = lastLookX
+    local vel = Character.getVelocity()
+    local grounded = Character.isGrounded()
+    local speedXZ = vel and math.sqrt((vel.x or 0) ^ 2 + (vel.z or 0) ^ 2) or 0
+    local player = Registry.player
+    if presentationEnabled and player then
+        player.bob = (player.bob or 0) + dt * (grounded and speedXZ or 0) * 1.6
+        player.lastLookX = lastLookX
     end
+    updateFootsteps(speedXZ, grounded, dt)
 
     if not discoverWeapons() then
         return
     end
-    if not Registry.activeWeapon() and #Registry.weaponOrder > 0 then
-        equipIndex(1)
+    if not activeWeaponRow() and not swap and #Registry.weaponOrder > 0 then
+        equipNow(1)
     end
     if commands.next then
-        local current = 1
-        local active = Registry.activeWeapon()
-        if active then
-            for i, key in ipairs(Registry.weaponOrder) do
-                if key == active.key then
-                    current = i
-                    break
-                end
-            end
-        end
-        equipIndex(Logic.wrapSlot(current, #Registry.weaponOrder, 1))
+        requestSlot(Logic.wrapSlot(activeSlot(), #Registry.weaponOrder, 1))
         commands.next = false
     end
     if commands.prev then
-        local current = 1
-        local active = Registry.activeWeapon()
-        if active then
-            for i, key in ipairs(Registry.weaponOrder) do
-                if key == active.key then
-                    current = i
-                    break
-                end
-            end
-        end
-        equipIndex(Logic.wrapSlot(current, #Registry.weaponOrder, -1))
+        requestSlot(Logic.wrapSlot(activeSlot(), #Registry.weaponOrder, -1))
         commands.prev = false
     end
     if commands.slot then
-        equipIndex(commands.slot)
+        requestSlot(commands.slot)
         commands.slot = nil
     end
+    if swap then
+        swap.remaining = swap.remaining - dt
+        if swap.remaining <= 0 then
+            equipNow(swap.index)
+            swap = nil
+        end
+    end
 
-    local hit = Physics.raycast(origin.x, origin.y, origin.z, direction.x, direction.y, direction.z,
-                                interactDistance, "Character", false)
-    local targetRow = Interactable.query(hit, interactDistance)
+    local targetRow = Interactable.query(interactionHit(origin, direction), interactDistance)
     if commands.interact and targetRow and targetRow.entity then
         targetRow.entity:Call("onInteract", this)
         commands.interact = false
     end
 
+    local row = activeWeaponRow()
+    if player then
+        player.input = {
+            aimHeld = commands.aimHeld and swap == nil,
+            sprinting = sprinting,
+            moveFraction = Gunplay.clamp(speedXZ / math.max(fullSpreadMoveSpeed, 0.1), 0, 1),
+            airborne = not grounded,
+            lookX = lastLookX,
+            lookY = lastLookY,
+            lookPitchDelta = lookPitchDelta,
+            bobPhase = presentationEnabled and (player.bob or 0) or 0,
+            lowering = swap ~= nil,
+            lowerProgress = swap and row and
+                Gunplay.clamp(1 - swap.remaining / math.max(row.lowerSeconds or 0.01, 0.01), 0, 1) or 0,
+        }
+    end
     local weaponEntity = activeWeaponEntity()
     if weaponEntity then
-        weaponEntity:Call("tick", lastDt, commands.fireHeld and 1 or 0, commands.firePressed and 1 or 0,
+        local blocked = swap ~= nil
+        weaponEntity:Call("tick", lastDt, (commands.fireHeld and not blocked) and 1 or 0,
+                          (commands.firePressed and not blocked) and 1 or 0,
                           commands.reload and 1 or 0, origin.x, origin.y, origin.z,
                           direction.x, direction.y, direction.z, this)
     end
     commands.firePressed = false
     commands.reload = false
+    updateFieldOfView(row)
 
+    if player and player.hitEvent then
+        Hud.showMarker(player.hitEvent)
+        player.hitEvent = nil
+    end
     Hud.refresh({
         enabled = hudEnabled,
         showCrosshair = showCrosshair,
@@ -288,6 +400,7 @@ function onLateUpdate(dt)
         maxHealth = Health.getMaxHealth(this),
         weapon = Registry.weaponSnapshot(weaponEntity),
         prompt = Interactable.prompt(),
+        adsBlend = row and row.adsBlend or 0,
         dt = lastDt,
     })
 end

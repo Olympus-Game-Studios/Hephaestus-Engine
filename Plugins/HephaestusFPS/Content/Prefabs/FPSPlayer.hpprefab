@@ -117,7 +117,7 @@
       "id": "weaponBody", "name": "FPSHitscan_Part_Body", "parentId": "weapon",
       "transform": { "position": [0,0,0], "rotation": [0,0,0], "scale": [0.16,0.08,0.20] },
       "components": [
-        { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false } },
+        { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "viewModel": true, "meshSource": "builtin://cube", "meshImported": false } },
         { "type": "LuaScript", "enabled": true, "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {}, "authoredVariables": [] } }
       ], "exposed": []
     },
@@ -125,7 +125,7 @@
       "id": "weaponBarrel", "name": "FPSHitscan_Part_Barrel", "parentId": "weapon",
       "transform": { "position": [0.18,0.015,0], "rotation": [0,0,0], "scale": [0.28,0.045,0.055] },
       "components": [
-        { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false } },
+        { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "viewModel": true, "meshSource": "builtin://cube", "meshImported": false } },
         { "type": "LuaScript", "enabled": true, "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {}, "authoredVariables": [] } }
       ], "exposed": []
     },
@@ -133,7 +133,7 @@
       "id": "weaponGrip", "name": "FPSHitscan_Part_Grip", "parentId": "weapon",
       "transform": { "position": [-0.04,-0.115,0.04], "rotation": [0,0,0], "scale": [0.07,0.16,0.08] },
       "components": [
-        { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "meshSource": "builtin://cube", "meshImported": false } },
+        { "type": "MeshRenderer", "enabled": true, "data": { "visible": false, "hideInGame": false, "viewModel": true, "meshSource": "builtin://cube", "meshImported": false } },
         { "type": "LuaScript", "enabled": true, "data": { "path": "plugin://com.hephaestus.fps/Scripts/FPS/WeaponPart.lua", "enabled": true, "variables": {}, "authoredVariables": [] } }
       ], "exposed": []
     }

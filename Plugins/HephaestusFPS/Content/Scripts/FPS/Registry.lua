@@ -5,6 +5,7 @@ local Registry = {
     weaponOrder = {},
     health = {},
     interactables = {},
+    hitZones = {},
     currentTarget = nil,
     activeWeaponId = nil,
 }
@@ -20,8 +21,8 @@ local function entityKey(entity)
     if kind == "table" and entity.key then
         return tostring(entity.key)
     end
-    if kind == "userdata" and entity.GetName then
-        return entity:GetName()
+    if kind == "userdata" and entity.GetId then
+        return entity:GetId()
     end
     return tostring(entity)
 end
@@ -35,6 +36,7 @@ function Registry.ensureSession()
     Registry.weaponOrder = {}
     Registry.health = {}
     Registry.interactables = {}
+    Registry.hitZones = {}
     Registry.currentTarget = nil
     Registry.activeWeaponId = nil
     Registry.sessionOpen = true

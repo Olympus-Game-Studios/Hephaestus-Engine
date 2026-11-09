@@ -45,6 +45,7 @@ function Logic.tickFire(state, dt, held, pressed)
     local isHeld = held == true or held == 1
     local isPressed = pressed == true or pressed == 1
     if (state.reloadRemaining or 0) > 0 or (state.magazine or 0) <= 0
+        or (state.fireBlockedRemaining or 0) > 0
         or (state.fireMode == "auto" and not isHeld) then
         state.nextFire = math.max(state.nextFire, state.now)
         return 0
@@ -80,7 +81,13 @@ function Logic.tryStartReload(state)
     if (state.reserve or 0) <= 0 then
         return false
     end
-    state.reloadRemaining = state.reloadSeconds or 0
+    local seconds = state.reloadSeconds or 0
+    if (state.magazine or 0) <= 0 and state.reloadEmptySeconds then
+        seconds = state.reloadEmptySeconds
+    end
+    state.reloadRemaining = seconds
+    state.reloadTotal = seconds
+    state.reloadFromEmpty = (state.magazine or 0) <= 0
     return true
 end
 

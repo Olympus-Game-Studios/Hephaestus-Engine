@@ -3,6 +3,8 @@ local Hud = {
     widgets = {},
     loggedError = false,
     damageFlashRemaining = 0,
+    markerRemaining = 0,
+    markerKind = nil,
     suppressed = false,
 }
 
@@ -30,6 +32,8 @@ function Hud.mount(path, enabled)
     Hud.widgets.WeaponName = UI.getWidget(handle, "WeaponName")
     Hud.widgets.Prompt = UI.getWidget(handle, "Prompt")
     Hud.widgets.DamageFlash = UI.getWidget(handle, "DamageFlash")
+    Hud.widgets.HitMarker = UI.getWidget(handle, "HitMarker")
+    Hud.widgets.KillMarker = UI.getWidget(handle, "KillMarker")
 end
 
 function Hud.unmount()
@@ -44,6 +48,12 @@ end
 
 function Hud.flashDamage()
     Hud.damageFlashRemaining = 0.3
+end
+
+-- kind is "hit", "head" or "kill"; a kill marker lasts longer than a hit.
+function Hud.showMarker(kind)
+    Hud.markerKind = kind
+    Hud.markerRemaining = kind == "kill" and 0.45 or 0.18
 end
 
 function Hud.setSuppressed(suppressed)
@@ -61,11 +71,20 @@ function Hud.refresh(info)
             UI.setVisible(widget, on and true or false)
         end
     end
-    vis(Hud.widgets.Crosshair, enabled and info.showCrosshair)
+    vis(Hud.widgets.Crosshair, enabled and info.showCrosshair and (info.adsBlend or 0) < 0.5)
     vis(Hud.widgets.HealthText, enabled and info.showHealth)
     vis(Hud.widgets.AmmoText, enabled and info.showAmmo)
     vis(Hud.widgets.WeaponName, enabled and info.showAmmo)
     vis(Hud.widgets.Prompt, enabled and info.showPrompt and info.prompt ~= nil)
+
+    Hud.markerRemaining = math.max(0, Hud.markerRemaining - (info.dt or 0))
+    local marking = enabled and Hud.markerRemaining > 0
+    vis(Hud.widgets.HitMarker, marking and Hud.markerKind ~= "kill")
+    vis(Hud.widgets.KillMarker, marking and Hud.markerKind == "kill")
+    if marking and Hud.widgets.HitMarker and Hud.markerKind ~= "kill" then
+        UI.setTextColor(Hud.widgets.HitMarker, 1.0, Hud.markerKind == "head" and 0.8 or 1.0,
+                        Hud.markerKind == "head" and 0.2 or 1.0, 1.0)
+    end
 
     Hud.damageFlashRemaining = math.max(0, Hud.damageFlashRemaining - (info.dt or 0))
     if Hud.widgets.DamageFlash then
