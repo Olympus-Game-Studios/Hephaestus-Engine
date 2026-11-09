@@ -116,12 +116,14 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-vec3 sampleEnvironmentReflection(vec3 direction) {
+// Rougher surfaces read a blurrier (smaller) mip of the environment.
+vec3 sampleEnvironmentReflection(vec3 direction, float roughness) {
     vec3 dir = normalize(direction);
     vec2 uv;
     uv.x = atan(dir.z, dir.x) / (2.0 * PI) + 0.5;
     uv.y = asin(clamp(dir.y, -1.0, 1.0)) / PI + 0.5;
-    return texture(environmentMap, uv).rgb;
+    float lod = clamp(roughness, 0.0, 1.0) * float(textureQueryLevels(environmentMap) - 1);
+    return textureLod(environmentMap, uv, lod).rgb;
 }
 
 // Point/spot shadow from one perspective tile, compared in linear depth so the bias is in metres.
@@ -574,7 +576,7 @@ void main() {
     // Basic IBL foundation: reflect the active HDRI only. Nearby objects are not reflected yet.
     if (lighting.environmentReflectionParams.y > 0.5 && material.reflectionStrength > 0.0) {
         vec3 R = reflect(-V, N);
-        vec3 envReflection = sampleEnvironmentReflection(R);
+        vec3 envReflection = sampleEnvironmentReflection(R, roughness);
         float roughnessFactor = 1.0 - clamp(roughness, 0.0, 1.0);
         roughnessFactor *= roughnessFactor;
         vec3 reflectionFresnel = fresnelSchlick(max(dot(N, V), 0.0), F0);

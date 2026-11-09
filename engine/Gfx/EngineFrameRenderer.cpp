@@ -5009,7 +5009,7 @@ bool EngineFrameRenderer::Skybox::LoadHDRI(const std::string& path, VmaAllocator
 
     // Load new HDRI
     std::vector<float> pixels;
-    if (!environmentTexture.LoadHDRFromFile(allocator, device, physDevice, cmdPool, queue, path, &pixels)) {
+    if (!environmentTexture.LoadHDRFromFile(allocator, device, physDevice, cmdPool, queue, path, &pixels, true)) {
         // Fallback to 1x1 white
         environmentTexture.CreateSolidColor(allocator, device, physDevice, cmdPool, queue, 0xFFFFFFFF);
         irradianceSH = {};

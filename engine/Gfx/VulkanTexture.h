@@ -38,7 +38,8 @@ public:
         VkCommandPool commandPool,
         VkQueue graphicsQueue,
         const std::string& filepath,
-        std::vector<float>* outPixels = nullptr);
+        std::vector<float>* outPixels = nullptr,
+        bool generateMipmaps = false);
 
     // Create 1x1 solid color texture
     bool CreateSolidColor(

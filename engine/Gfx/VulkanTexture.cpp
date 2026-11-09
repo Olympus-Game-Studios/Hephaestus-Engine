@@ -153,7 +153,8 @@ bool VulkanTexture::LoadHDRFromFile(
     VkCommandPool commandPool,
     VkQueue graphicsQueue,
     const std::string& filepath,
-    std::vector<float>* outPixels)
+    std::vector<float>* outPixels,
+    bool generateMipmaps)
 {
     // Load HDR image using stbi_loadf (returns float data)
     int texWidth, texHeight, texChannels;
@@ -167,9 +168,52 @@ bool VulkanTexture::LoadHDRFromFile(
 
     width = static_cast<uint32_t>(texWidth);
     height = static_cast<uint32_t>(texHeight);
-    mipLevels = 1; // No mipmaps for HDR environment maps typically
+    // Float blits are not guaranteed to filter, so the mip chain is a CPU box filter.
+    std::vector<float> levels(pixels, pixels + static_cast<size_t>(width) * height * 4);
+    std::vector<VkBufferImageCopy> regions;
+    {
+        uint32_t levelWidth = width, levelHeight = height;
+        size_t levelOffset = 0;
+        mipLevels = generateMipmaps
+            ? static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1
+            : 1;
+        for (uint32_t level = 0; level < mipLevels; ++level) {
+            VkBufferImageCopy region{};
+            region.bufferOffset = static_cast<VkDeviceSize>(levelOffset * sizeof(float));
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.mipLevel = level;
+            region.imageSubresource.layerCount = 1;
+            region.imageExtent = {levelWidth, levelHeight, 1};
+            regions.push_back(region);
+            if (level + 1 == mipLevels) {
+                break;
+            }
+            const uint32_t nextWidth = std::max(1u, levelWidth / 2);
+            const uint32_t nextHeight = std::max(1u, levelHeight / 2);
+            const size_t nextOffset = levels.size();
+            levels.resize(nextOffset + static_cast<size_t>(nextWidth) * nextHeight * 4);
+            for (uint32_t y = 0; y < nextHeight; ++y) {
+                for (uint32_t x = 0; x < nextWidth; ++x) {
+                    for (uint32_t c = 0; c < 4; ++c) {
+                        float sum = 0.0f;
+                        for (uint32_t dy = 0; dy < 2; ++dy) {
+                            for (uint32_t dx = 0; dx < 2; ++dx) {
+                                const uint32_t sx = std::min(levelWidth - 1, x * 2 + dx);
+                                const uint32_t sy = std::min(levelHeight - 1, y * 2 + dy);
+                                sum += levels[levelOffset + (static_cast<size_t>(sy) * levelWidth + sx) * 4 + c];
+                            }
+                        }
+                        levels[nextOffset + (static_cast<size_t>(y) * nextWidth + x) * 4 + c] = sum * 0.25f;
+                    }
+                }
+            }
+            levelOffset = nextOffset;
+            levelWidth = nextWidth;
+            levelHeight = nextHeight;
+        }
+    }
 
-    VkDeviceSize imageSize = width * height * 4 * sizeof(float); // RGBA float
+    VkDeviceSize imageSize = levels.size() * sizeof(float);
 
     // Create staging buffer
     VulkanBuffer stagingBuffer;
@@ -183,7 +227,7 @@ bool VulkanTexture::LoadHDRFromFile(
     // Copy pixel data to staging buffer
     void* data;
     vmaMapMemory(allocator, stagingBuffer.allocation, &data);
-    memcpy(data, pixels, static_cast<size_t>(imageSize));
+    memcpy(data, levels.data(), static_cast<size_t>(imageSize));
     vmaUnmapMemory(allocator, stagingBuffer.allocation);
 
     if (outPixels) {
@@ -220,8 +264,12 @@ bool VulkanTexture::LoadHDRFromFile(
     TransitionImageLayout(device, commandPool, graphicsQueue, 
         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-    // Copy buffer to image
-    CopyBufferToImage(device, commandPool, graphicsQueue, stagingBuffer.buffer, width, height);
+    {
+        VkCommandBuffer commandBuffer = BeginSingleTimeCommands(device, commandPool);
+        vkCmdCopyBufferToImage(commandBuffer, stagingBuffer.buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               static_cast<uint32_t>(regions.size()), regions.data());
+        EndSingleTimeCommands(device, commandPool, graphicsQueue, commandBuffer);
+    }
 
     stagingBuffer.Destroy(allocator);
 
