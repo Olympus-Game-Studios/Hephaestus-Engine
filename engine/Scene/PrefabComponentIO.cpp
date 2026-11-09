@@ -1,6 +1,7 @@
 #include "PrefabComponentIO.h"
 
 #include "Scene.h"
+#include "../Assets/AssetPathPolicy.h"
 #include "../Scripting/LuaScriptComponent.h"
 #include "../Scripting/ScriptComponent.h"
 
@@ -68,7 +69,8 @@ void CaptureMeshRenderer(const MeshRendererComponent& mesh, JsonValue& data) {
     }
     data.objectValue["showHiddenOutline"] = MakeBool(mesh.showHiddenOutline);
     if (!mesh.meshAssetPath.empty()) {
-        data.objectValue["meshSource"] = MakeString(mesh.meshAssetPath);
+        data.objectValue["meshSource"] =
+            MakeString(Hephaestus::AssetPathPolicy::ToPortableKey(std::filesystem::path{}, mesh.meshAssetPath));
     }
     data.objectValue["meshImported"] = MakeBool(mesh.meshImported);
     data.objectValue["backfaceCulling"] = MakeBool(mesh.backfaceCulling);

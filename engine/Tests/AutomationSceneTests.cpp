@@ -2,7 +2,10 @@
 #include "Automation/SceneAutomation.h"
 #include "Automation/ScenePathPolicy.h"
 #include "Automation/EntityRef.h"
+#include "Assets/AssetManager.h"
 #include "Core/EditorContext.h"
+#include "Scene/Components.h"
+#include "Scene/PrefabOverrideSystem.h"
 #include "Scene/Scene.h"
 #include "Scene/SceneSerializer.h"
 
@@ -33,8 +36,10 @@ public:
     std::string newSceneName;
     std::string openedScene;
     Hephaestus::PlayState state = Hephaestus::PlayState::Editor;
+    Hephaestus::AssetManager* assets = nullptr;
 
     Automation::HostMask Host() const noexcept override { return Automation::HostMask::Editor; }
+    Hephaestus::AssetManager* Assets() noexcept override { return assets; }
     Automation::SceneAccess ActiveScene() noexcept override { return {&scene}; }
     Hephaestus::PlayState GetPlayState() const noexcept override
     {
@@ -229,6 +234,63 @@ int main()
                     prefabOverrides.error->code == Automation::ErrorCode::ToolUnavailable,
                 "prefab.list_overrides rejects non-prefab entities");
 
+    {
+        namespace fs = std::filesystem;
+        const fs::path projectRoot = fs::temp_directory_path() / "hephaestus-prefab-create-test";
+        fs::remove_all(projectRoot);
+        fs::create_directories(projectRoot / "assets");
+        auto& assetManager = Hephaestus::AssetManager::GetInstance();
+        assetManager.SetProjectRoot(projectRoot.string());
+        assetManager.SetAssetRoot((projectRoot / "assets").string());
+
+        auto unavailable = Call(service, "prefab.create", {{"entity", secondRef}, {"path", "prefabs/X.hpprefab"}});
+        ok &= Check(!unavailable.Ok() && unavailable.error->code == Automation::ErrorCode::ToolUnavailable,
+                    "prefab.create needs a project asset root");
+        backend.assets = &assetManager;
+
+        auto root = Call(service, "entity.create", {{"name", "PlayerRoot"}});
+        auto child = Call(service, "entity.create", {{"name", "PlayerCamera"}});
+        const std::string rootRef = root.value["entity"].get<std::string>();
+        Entity rootEntity, childEntity;
+        for (auto handle : backend.scene.GetEntitiesWith<TagComponent>()) {
+            Entity entity(handle, &backend.scene);
+            if (entity.GetComponent<TagComponent>().tag == "PlayerRoot") rootEntity = entity;
+            if (entity.GetComponent<TagComponent>().tag == "PlayerCamera") childEntity = entity;
+        }
+        backend.scene.SetParent(childEntity, rootEntity);
+        rootEntity.GetComponent<TransformComponent>().position = {4.0f, 0.0f, 2.0f};
+
+        ok &= Check(!Call(service, "prefab.create", {{"entity", rootRef}, {"path", "prefabs/Player.txt"}}).Ok(),
+                    "prefab.create requires the .hpprefab extension");
+        ok &= Check(!Call(service, "prefab.create", {{"entity", rootRef}, {"path", "../Player.hpprefab"}}).Ok(),
+                    "prefab.create rejects paths outside the asset root");
+
+        const int structuralBefore = backend.structural;
+        auto created = Call(service, "prefab.create", {{"entity", rootRef}, {"path", "assets/prefabs/Player.hpprefab"}});
+        ok &= Check(created.Ok() && created.value["path"] == "assets/prefabs/Player.hpprefab" &&
+                        fs::exists(projectRoot / "assets/prefabs/Player.hpprefab") &&
+                        backend.structural == structuralBefore + 1,
+                    "prefab.create writes the prefab as a structural edit");
+
+        Entity instanceRoot;
+        for (auto handle : backend.scene.GetEntitiesWith<PrefabInstanceComponent>()) {
+            instanceRoot = Entity(handle, &backend.scene);
+        }
+        const auto* instance = instanceRoot ? PrefabOverrideSystem::TryGetInstance(backend.scene, instanceRoot) : nullptr;
+        ok &= Check(instance && !instance->missingPrefab &&
+                        PrefabOverrideSystem::ListOverrides(*instance).empty() &&
+                        instanceRoot.GetComponent<TransformComponent>().position.x == 4.0f,
+                    "prefab.create replaces the entities with an override-free instance at the same place");
+        const std::string otherRef = Call(service, "entity.create", {{"name", "Other"}}).value["entity"].get<std::string>();
+        auto overwrite = Call(service, "prefab.create", {{"entity", otherRef}, {"path", "assets/prefabs/Player.hpprefab"}});
+        ok &= Check(!overwrite.Ok() && overwrite.error->code == Automation::ErrorCode::InvalidArguments,
+                    "prefab.create does not overwrite an existing prefab");
+
+        backend.assets = nullptr;
+        assetManager.Clear();
+        fs::remove_all(projectRoot);
+    }
+
     auto destroyed = Call(service, "entity.destroy", {{"entity", firstRef}});
     ok &= Check(destroyed.Ok(), "Entity destruction uses Scene");
     auto stale = Call(service, "entity.get", {{"entity", firstRef}});
@@ -247,8 +309,8 @@ int main()
     ok &= Check(backend.prepared == backend.completed,
                 "Every successful mutation completes the host mutation hook");
     ok &= Check(backend.aborted == 0, "No successful test mutation is aborted");
-    ok &= Check(backend.structural == 5,
-                "Create, add/remove component refresh policy, and destroy are tracked");
+    ok &= Check(backend.structural == 9,
+                "Create, add/remove component refresh policy, destroy and prefab.create are tracked");
 
     service.Shutdown();
     if (ok) {

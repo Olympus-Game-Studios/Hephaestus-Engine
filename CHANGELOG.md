@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-11-09: Automation tool `prefab.create` saves an entity and its children as a `.hpprefab` under the project's assets and replaces them with an instance, like Create Prefab From Selection.
 - 2026-11-09: FPS plugin `Weapon.lua` `sightPitch` and `sightYaw` tilt the weapon in ADS so iron sights whose line is not parallel to the barrel still line up on the screen centre. See the FPS plugin documentation.
 - 2026-11-09: Camera **View Model FOV** (`viewModelFov`): First-Person View Model meshes are drawn with their own field of view, so ADS zoom changes the world but not the size of the weapon. 0 keeps the camera's field of view.
 - 2026-11-09: Importing a character from FBX brings its materials: each material slot gets a material with the FBX base colour, roughness and metalness, and its base colour and normal textures are extracted into the character's folder, so Mixamo characters no longer import white.
@@ -157,6 +158,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-11-09: Prefabs made from selection store their mesh paths as project keys (`assets/...`), and scenes store prefab instance paths the same way. Both were absolute paths before, so a prefab or a scene using one broke when the project moved to another folder or machine, or into a packaged game.
 - 2026-11-09: Mixamo and other FBX SDK characters import their glossiness maps as roughness (1 - gloss), so cloth is matte instead of wet-looking. Rough surfaces reflect a blurred sky instead of a sharp mirror image.
 - 2026-11-09: FBX meshes and characters show their textures the right way up; the importers kept FBX's upward V, so textures were flipped and UV seams streaked.
 - 2026-11-09: Normal, roughness, metallic and AO maps are read as data instead of colour, so normal-mapped materials no longer look streaky and metallic, and material textures have mipmaps so they don't shimmer at a distance.

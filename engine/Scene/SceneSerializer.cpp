@@ -372,7 +372,9 @@ PropertyValue ParsePropertyValue(const JsonValue& value)
 void WritePrefabInstance(std::ostream& stream, const PrefabInstanceComponent& instance)
 {
     stream << "    {\n";
-    stream << "      \"prefabPath\": \"" << EscapeString(instance.prefabPath) << "\",\n";
+    stream << "      \"prefabPath\": \""
+           << EscapeString(Hephaestus::AssetPathPolicy::ToPortableKey(std::filesystem::path{}, instance.prefabPath))
+           << "\",\n";
     stream << "      \"prefabGuid\": \"" << EscapeString(instance.prefabGuid) << "\",\n";
     stream << "      \"instanceId\": \"" << EscapeString(instance.instanceId) << "\",\n";
     stream << "      \"rootNodeId\": \"" << EscapeString(instance.rootNodeId) << "\",\n";

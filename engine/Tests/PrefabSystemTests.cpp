@@ -573,6 +573,53 @@ bool TestCreateFromSelectionAndUnpack(const fs::path& outDir) {
     return ok;
 }
 
+bool TestCreatedPrefabPathsArePortable(const fs::path& outDir) {
+    const fs::path project = outDir / "PortableProject";
+    fs::create_directories(project / "assets" / "prefabs");
+    PrefabOverrideSystem::SetProjectRoot(project);
+
+    Scene scene("Portable");
+    Entity root = scene.CreateEntity("Gun");
+    Entity body = scene.CreateEntity("Body");
+    scene.SetParent(body, root);
+    const std::string absoluteMesh = (project / "assets" / "models" / "Gun.fbx").generic_string();
+    body.AddComponent<MeshRendererComponent>().meshAssetPath = absoluteMesh;
+
+    const fs::path prefabPath = project / "assets" / "prefabs" / "Gun.hpprefab";
+    Entity instance;
+    std::string error;
+    bool ok = Check(PrefabOverrideSystem::CreateFromSelection(scene, root, prefabPath, &instance, error),
+                    "create prefab inside a project: " + error);
+    auto readText = [](const fs::path& path) {
+        std::ifstream in(path);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    const std::string prefabText = readText(prefabPath);
+    ok &= Check(prefabText.find("\"assets/models/Gun.fbx\"") != std::string::npos &&
+                    prefabText.find(project.generic_string()) == std::string::npos,
+                "prefab stores mesh sources as project keys, not absolute paths");
+    const auto* data = instance ? PrefabOverrideSystem::TryGetInstance(scene, instance) : nullptr;
+    ok &= Check(data && PrefabOverrideSystem::ListOverrides(*data).empty(),
+                "absolute live mesh path is not an override of its portable prefab key");
+
+    const fs::path scenePath = project / "assets" / "Portable.hpscene";
+    ok &= Check(SceneSerializer(scene).Serialize(scenePath, error), "save scene: " + error);
+    const std::string sceneText = readText(scenePath);
+    ok &= Check(sceneText.find("\"prefabPath\": \"assets/prefabs/Gun.hpprefab\"") != std::string::npos &&
+                    sceneText.find(project.generic_string()) == std::string::npos,
+                "scene stores the prefab instance path as a project key");
+
+    PrefabOverrideSystem::InvalidateAssetCache();
+    Scene loaded("Loaded");
+    ok &= Check(SceneSerializer::Deserialize(loaded, scenePath, error), "load scene: " + error);
+    Entity loadedRoot = FindByTag(loaded, "Gun");
+    const auto* loadedData = loadedRoot ? PrefabOverrideSystem::TryGetInstance(loaded, loadedRoot) : nullptr;
+    ok &= Check(loadedData && !loadedData->missingPrefab, "portable prefab path resolves from the project root");
+
+    PrefabOverrideSystem::SetProjectRoot({});
+    return ok;
+}
+
 bool TestMissingPrefab(const fs::path& outDir) {
     Scene scratch("Scratch");
     Entity root, shade;
@@ -973,6 +1020,7 @@ int main(int argc, char** argv) {
     run("LuaScriptApplyAndRevert", TestLuaScriptApplyAndRevert, outDir);
     run("LuaAuthoredSceneRoundtrip", TestLuaAuthoredSceneRoundtrip, outDir);
     run("CreateFromSelectionAndUnpack", TestCreateFromSelectionAndUnpack, outDir);
+    run("CreatedPrefabPathsArePortable", TestCreatedPrefabPathsArePortable, outDir);
     run("MissingPrefab", TestMissingPrefab, outDir);
     run("LegacyBlueprint", TestLegacyBlueprint, repoRoot);
     run("InstantiatePoseAndVars", TestInstantiatePoseAndVars, outDir);

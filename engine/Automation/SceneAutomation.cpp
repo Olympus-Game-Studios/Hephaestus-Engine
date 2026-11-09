@@ -1,13 +1,17 @@
 #include "SceneAutomation.h"
 
 #include "AutomationService.h"
+#include "AutomationToolSupport.h"
 #include "ComponentMetadata.h"
+#include "Assets/AssetManager.h"
+#include "Assets/AssetPathPolicy.h"
 #include "Scene/Components.h"
 #include "Scene/PrefabComponentIO.h"
 #include "Scene/PrefabOverrideSystem.h"
 #include "Scene/Scene.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -600,6 +604,52 @@ void RegisterSceneAutomation(AutomationService& service)
             }
             context.Backend().CompleteEditorMutation(true);
             return ToolResult::Success({{"reverted", true}});
+        }, true));
+
+    registerTool(Definition("prefab.create",
+        "Save an entity and its children as a prefab asset and replace them with an instance of it.",
+        ObjectSchema({{"entity", {{"type", "string"}}}, {"path", {{"type", "string"}}}},
+                     Json::array({"entity", "path"})),
+        [](ToolContext& context, const Json& arguments) -> ToolOutcome {
+            ToolResult failure;
+            const auto resolved = Resolve(context, arguments, failure);
+            if (!resolved) return failure;
+            Hephaestus::AssetManager* assets = context.Backend().Assets();
+            if (!assets || !assets->HasValidAssetRoot()) {
+                return Failure(ErrorCode::ToolUnavailable, "Asset management is unavailable for this host");
+            }
+            if (!arguments["path"].is_string()) {
+                return Failure(ErrorCode::InvalidArguments, "A prefab path is required");
+            }
+            const std::string requested = arguments["path"].get<std::string>();
+            std::string error;
+            const auto absolute = Content::ResolveAssetPath(assets->GetProjectRoot(), assets->GetAssetRoot(), requested, error);
+            if (!absolute) return Failure(ErrorCode::InvalidArguments, error);
+            if (absolute->extension() != ".hpprefab") {
+                return Failure(ErrorCode::InvalidArguments, "Prefab path must end in .hpprefab: " + requested);
+            }
+            std::error_code ec;
+            if (std::filesystem::exists(*absolute, ec)) {
+                return Failure(ErrorCode::InvalidArguments, "Prefab already exists: " + requested);
+            }
+            std::filesystem::create_directories(absolute->parent_path(), ec);
+            if (ec) {
+                return Failure(ErrorCode::InternalError, "Could not create folder for " + requested);
+            }
+            ToolResult mutationFailure;
+            if (!BeginMutation(context, "Create Prefab", mutationFailure)) return mutationFailure;
+            Entity instance;
+            if (!PrefabOverrideSystem::CreateFromSelection(*resolved->scene, Entity(resolved->handle, resolved->scene),
+                                                           *absolute, &instance, error)) {
+                context.Backend().AbortEditorMutation();
+                return Failure(ErrorCode::InternalError, error.empty() ? "Prefab creation failed" : error);
+            }
+            context.Backend().CompleteEditorMutation(true);
+            assets->Refresh();
+            context.Backend().NotifyAssetChanged();
+            return ToolResult::Success({{"created", true},
+                                        {"path", AssetPathPolicy::ToPortableKey(assets->GetProjectRoot(),
+                                                                                absolute->generic_string())}});
         }, true));
 
     registerTool(Definition("prefab.unpack", "Unpack a prefab instance into plain entities.",
