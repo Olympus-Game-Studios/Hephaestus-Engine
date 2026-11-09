@@ -544,7 +544,7 @@ private:
 
     // Material system helpers
     const MaterialComponent* resolveMaterialFromPath(const std::string& materialPath);
-    uint32_t ensureMaterialTextureSlot(const std::string& rawPath);
+    uint32_t ensureMaterialTextureSlot(const std::string& rawPath, bool linear = false);
     void updateEnvironmentReflectionDescriptor(uint32_t imageIndex);
     EnvironmentComponent* findEnvironment(Scene* scene);
     const MaterialComponent* resolveMaterialForSlot(Entity& entity, const MeshRendererComponent& renderer, int slot);

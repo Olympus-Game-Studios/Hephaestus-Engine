@@ -3480,13 +3480,13 @@ const MaterialComponent* EngineFrameRenderer::resolveMaterialFromPath(const std:
     return &insertResult.first->second.material;
 }
 
-uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPath)
+uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPath, bool linear)
 {
     if (rawPath.empty()) return m_defaultMaterialTextureSlot;
 
     namespace fs = std::filesystem;
     fs::path normalizedInput = fs::path(rawPath).lexically_normal();
-    std::string key = normalizedInput.generic_string();
+    std::string key = normalizedInput.generic_string() + (linear ? "|linear" : "");
 
     // Check if already loaded
     auto existingIt = m_materialTextureLookup.find(key);
@@ -3538,7 +3538,7 @@ uint32_t EngineFrameRenderer::ensureMaterialTextureSlot(const std::string& rawPa
     try {
         if (!newSlot.texture.LoadFromFile(m_device->allocator, m_device->device,
                                            m_device->physicalDevice, m_device->commandPool,
-                                           m_device->graphicsQueue, resolvedPath.string())) {
+                                           m_device->graphicsQueue, resolvedPath.string(), true, !linear)) {
             std::cerr << "[EngineFrameRenderer] Failed to load texture: " << resolvedPath << "\n";
             return m_defaultMaterialTextureSlot;
         }
@@ -4087,7 +4087,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 // Normal texture
                 uint32_t normalSlot = m_defaultMaterialTextureSlot;
                 if (mat.useNormalTexture && !mat.normalTexturePath.empty()) {
-                    normalSlot = ensureMaterialTextureSlot(mat.normalTexturePath);
+                    normalSlot = ensureMaterialTextureSlot(mat.normalTexturePath, true);
                     matUBO.useNormalTexture = (normalSlot != m_defaultMaterialTextureSlot) ? 1u : 0u;
                 } else {
                     matUBO.useNormalTexture = 0u;
@@ -4097,7 +4097,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 // Roughness texture
                 uint32_t roughnessSlot = m_defaultMaterialTextureSlot;
                 if (mat.useRoughnessTexture && !mat.roughnessTexturePath.empty()) {
-                    roughnessSlot = ensureMaterialTextureSlot(mat.roughnessTexturePath);
+                    roughnessSlot = ensureMaterialTextureSlot(mat.roughnessTexturePath, true);
                     matUBO.useRoughnessTexture = (roughnessSlot != m_defaultMaterialTextureSlot) ? 1u : 0u;
                 } else {
                     matUBO.useRoughnessTexture = 0u;
@@ -4107,7 +4107,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 // Metallic texture
                 uint32_t metallicSlot = m_defaultMaterialTextureSlot;
                 if (mat.useMetallicTexture && !mat.metallicTexturePath.empty()) {
-                    metallicSlot = ensureMaterialTextureSlot(mat.metallicTexturePath);
+                    metallicSlot = ensureMaterialTextureSlot(mat.metallicTexturePath, true);
                     matUBO.useMetallicTexture = (metallicSlot != m_defaultMaterialTextureSlot) ? 1u : 0u;
                 } else {
                     matUBO.useMetallicTexture = 0u;
@@ -4117,7 +4117,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 // AO texture
                 uint32_t aoSlot = m_defaultMaterialTextureSlot;
                 if (mat.useAoTexture && !mat.aoTexturePath.empty()) {
-                    aoSlot = ensureMaterialTextureSlot(mat.aoTexturePath);
+                    aoSlot = ensureMaterialTextureSlot(mat.aoTexturePath, true);
                     matUBO.useAoTexture = (aoSlot != m_defaultMaterialTextureSlot) ? 1u : 0u;
                 } else {
                     matUBO.useAoTexture = 0u;

@@ -51,8 +51,10 @@ bool VulkanTexture::LoadFromFile(
     VkCommandPool commandPool,
     VkQueue graphicsQueue,
     const std::string& filepath,
-    bool generateMipmaps)
+    bool generateMipmaps,
+    bool srgb)
 {
+    const VkFormat format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
     // Load image using stb_image
     int texWidth, texHeight, texChannels;
     stbi_uc* pixels = stbi_load(filepath.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
@@ -99,7 +101,7 @@ bool VulkanTexture::LoadFromFile(
     imageInfo.extent.depth = 1;
     imageInfo.mipLevels = mipLevels;
     imageInfo.arrayLayers = 1;
-    imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    imageInfo.format = format;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -129,14 +131,14 @@ bool VulkanTexture::LoadFromFile(
     // Generate mipmaps or transition to shader read
     if (generateMipmaps) {
         GenerateMipmaps(device, physicalDevice, commandPool, graphicsQueue, 
-            VK_FORMAT_R8G8B8A8_SRGB, width, height);
+            format, width, height);
     } else {
         TransitionImageLayout(device, commandPool, graphicsQueue,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
     // Create image view
-    CreateImageView(device, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+    CreateImageView(device, format, VK_IMAGE_ASPECT_COLOR_BIT);
 
     // Create sampler
     CreateSampler(device, physicalDevice);

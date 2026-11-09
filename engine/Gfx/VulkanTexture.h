@@ -27,7 +27,8 @@ public:
         VkCommandPool commandPool,
         VkQueue graphicsQueue,
         const std::string& filepath,
-        bool generateMipmaps = false);
+        bool generateMipmaps = false,
+        bool srgb = true); ///< false for data textures (normal, roughness, metallic, AO)
 
     // Create HDR texture from file (HDRI, EXR)
     bool LoadHDRFromFile(
