@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-11-09: FPS plugin `Weapon.lua` `sightPitch` and `sightYaw` tilt the weapon in ADS so iron sights whose line is not parallel to the barrel still line up on the screen centre. See the FPS plugin documentation.
 - 2026-11-09: Camera **View Model FOV** (`viewModelFov`): First-Person View Model meshes are drawn with their own field of view, so ADS zoom changes the world but not the size of the weapon. 0 keeps the camera's field of view.
 - 2026-11-09: Importing a character from FBX brings its materials: each material slot gets a material with the FBX base colour, roughness and metalness, and its base colour and normal textures are extracted into the character's folder, so Mixamo characters no longer import white.
 - 2026-11-09: FPS plugin gunplay: ADS that zooms the camera and blends the weapon to its sight, recoil that moves the real aim along a learnable per-weapon pattern with recovery, spring-driven visual kick, sway, walk bob and sprint lowering, a hip spread cone that grows with movement and fire, damage falloff with range, head and limb hit zones (`HitZone.lua`), hit and kill markers, tactical and empty reloads with timed sound cues, sprint-to-fire delay and weapon raise and lower times. Every value is a `Weapon.lua` variable. See the FPS plugin documentation.

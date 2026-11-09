@@ -21,6 +21,8 @@ Expose.number("adsSensitivityScale", 0.8)
 Expose.number("adsForward", 0.22)
 Expose.number("sightUp", 0.06)
 Expose.number("sightRight", 0.0)
+Expose.number("sightPitch", 0.0)
+Expose.number("sightYaw", 0.0)
 Expose.number("hipSpread", 2.0)
 Expose.number("moveSpread", 2.5)
 Expose.number("airSpread", 4.0)
@@ -72,7 +74,7 @@ local TUNING = {
     "displayName", "slot", "fireMode", "roundsPerSecond", "damage", "range", "falloffStart", "falloffEnd",
     "falloffMinMultiplier", "headMultiplier", "limbMultiplier", "magazineSize", "reloadSeconds",
     "reloadEmptySeconds", "adsSeconds", "adsFov", "adsMoveMultiplier", "adsSensitivityScale", "adsForward",
-    "sightUp", "sightRight", "hipSpread", "moveSpread", "airSpread", "maxSpread", "adsSpread", "adsBloomScale",
+    "sightUp", "sightRight", "sightPitch", "sightYaw", "hipSpread", "moveSpread", "airSpread", "maxSpread", "adsSpread", "adsBloomScale",
     "bloomPerShot", "maxBloom", "bloomDecay", "recoilPitch", "recoilYaw", "recoilJitter", "adsRecoilScale",
     "recoilRecoveryDelay", "recoilRecoveryDegreesPerSecond", "kickBack", "kickRise", "kickRoll",
     "kickStiffness", "kickDamping", "swayAmount", "bobAmount", "sprintToFireSeconds", "raiseSeconds",
@@ -342,13 +344,18 @@ local function updatePose(row, input, dt)
     local tiltPitch = -rad(15) * reloadDip - rad(40) * lowered
     local reach = SHOULDER_REACH * math.sin(tiltPitch)
     local hipX, hipY, hipZ = row.rest.x, row.rest.y, row.rest.z
-    local adsX, adsY, adsZ = row.adsForward or hipX, -(row.sightUp or 0), -(row.sightRight or 0)
+    local adsPitch, adsYaw = rad(row.sightPitch), rad(row.sightYaw)
+    local sightUp, sightRight = row.sightUp or 0, row.sightRight or 0
+    local sightX = -math.sin(adsPitch) * sightUp
+    local adsX = (row.adsForward or hipX) - (math.cos(adsYaw) * sightX + math.sin(adsYaw) * sightRight)
+    local adsY = -math.cos(adsPitch) * sightUp
+    local adsZ = -(-math.sin(adsYaw) * sightX + math.cos(adsYaw) * sightRight)
     local x = Gunplay.lerp(hipX, adsX, ads) + back - 0.04 * sprint + SHOULDER_REACH * (math.cos(tiltPitch) - 1)
     local y = Gunplay.lerp(hipY, adsY, ads) - bobUp - 0.06 * sprint + reach * math.cos(tiltRoll)
     local z = Gunplay.lerp(hipZ, adsZ, ads) + bobRight - 0.05 * sprint + reach * math.sin(tiltRoll)
     local rotRoll = Gunplay.lerp(row.restRot.x, 0, ads) + roll + rad(25) * sprint + tiltRoll
-    local rotYaw = Gunplay.lerp(row.restRot.y, 0, ads) + swayYaw + rad(30) * sprint
-    local rotPitch = Gunplay.lerp(row.restRot.z, 0, ads) + rise - swayPitch - rad(12) * sprint + tiltPitch
+    local rotYaw = Gunplay.lerp(row.restRot.y, adsYaw, ads) + swayYaw + rad(30) * sprint
+    local rotPitch = Gunplay.lerp(row.restRot.z, adsPitch, ads) + rise - swayPitch - rad(12) * sprint + tiltPitch
     Transform.setPosition(x, y, z)
     Transform.setRotation(rotRoll, rotYaw, rotPitch)
 end
