@@ -154,7 +154,7 @@ bool AppendMeshInstance(ufbx_node* node,
                     if (mesh->vertex_uv.exists) {
                         const ufbx_vec2 uv = ufbx_get_vertex_vec2(&mesh->vertex_uv, index);
                         vert.texCoord[0] = static_cast<float>(uv.x);
-                        vert.texCoord[1] = static_cast<float>(uv.y);
+                        vert.texCoord[1] = 1.0f - static_cast<float>(uv.y); // FBX V points up, image rows start at the top
                     }
 
                     ExpandBounds(minB, maxB, worldPos);
