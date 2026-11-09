@@ -112,7 +112,7 @@ PhysicsBinding MakeScriptPhysicsBinding(ScriptPhysicsAccessor access)
         return true;
     };
 
-    binding.raycast = [access](uint32_t entityId, const Vec3& origin, const Vec3& direction,
+    binding.raycast = [access](const std::vector<uint32_t>& ignoreEntityIds, const Vec3& origin, const Vec3& direction,
                                float maxDistance, PhysicsRaycastHit& outHit, const char* layerName,
                                std::string& outError, bool ignoreSensors) -> bool {
         const ScriptPhysicsAccess a = access();
@@ -127,11 +127,17 @@ PhysicsBinding MakeScriptPhysicsBinding(ScriptPhysicsAccessor access)
             }
             layer = &resolved;
         }
+        std::vector<entt::entity> ignored;
+        ignored.reserve(ignoreEntityIds.size());
+        for (uint32_t id : ignoreEntityIds) {
+            ignored.push_back(static_cast<entt::entity>(id));
+        }
         Physics::RaycastHit hit{};
-        if (!a.physicsSystem->Raycast(static_cast<entt::entity>(entityId), origin, direction, maxDistance,
-                                      hit, layer, ignoreSensors)) {
+        if (!a.physicsSystem->Raycast(entt::null, origin, direction, maxDistance,
+                                      hit, layer, ignoreSensors, &ignored)) {
             return false;
         }
+        outHit.sensor = hit.sensor;
         outHit.hit = hit.hit;
         outHit.distance = hit.distance;
         outHit.point = hit.point;

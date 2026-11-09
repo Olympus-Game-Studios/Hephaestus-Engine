@@ -26,6 +26,7 @@ struct RaycastHit {
     Vec3 point{0.0f, 0.0f, 0.0f};
     Vec3 normal{0.0f, 1.0f, 0.0f};
     entt::entity entity = entt::null;
+    bool sensor = false;
 };
 
 // A snapshot is published only after the body is added and every field below
@@ -116,7 +117,8 @@ public:
     // World raycast; optionally ignores a single entity's body. Fills outHit.
     bool Raycast(entt::entity ignoreEntity, const Vec3& origin, const Vec3& direction,
                  float maxDistance, RaycastHit& outHit, const std::uint16_t* gameplayLayer = nullptr,
-                 bool ignoreSensors = false) const;
+                 bool ignoreSensors = false,
+                 const std::vector<entt::entity>* extraIgnoredEntities = nullptr) const;
 
     BodyObservationStatus ObserveBody(entt::entity entity, BodyObservation& out) const;
     void ObserveBodies(std::vector<BodyObservation>& out) const;

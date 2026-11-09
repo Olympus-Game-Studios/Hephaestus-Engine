@@ -69,6 +69,7 @@ struct PhysicsRaycastHit {
     Vec3 point{0.0f, 0.0f, 0.0f};
     Vec3 normal{0.0f, 1.0f, 0.0f};
     uint32_t entityId = std::numeric_limits<uint32_t>::max(); // max = no entity mapping
+    bool sensor = false;
 };
 
 enum class LuaScriptSlot : uint8_t {
@@ -114,7 +115,7 @@ struct PhysicsBinding {
     std::function<bool(uint32_t entityId, const Vec3& velocity, bool activate)> setLinearVelocity;
     std::function<bool(uint32_t entityId, const Vec3& velocity, bool activate)> setAngularVelocity;
     std::function<bool(uint32_t entityId, const Vec3& rotationEuler, bool activate)> setRotation;
-    std::function<bool(uint32_t entityId, const Vec3& origin, const Vec3& direction, float maxDistance, PhysicsRaycastHit& outHit, const char* layerName, std::string& outError, bool ignoreSensors)> raycast;
+    std::function<bool(const std::vector<uint32_t>& ignoreEntityIds, const Vec3& origin, const Vec3& direction, float maxDistance, PhysicsRaycastHit& outHit, const char* layerName, std::string& outError, bool ignoreSensors)> raycast;
     std::function<bool(uint32_t entityId)> isGrounded;
     std::function<bool(uint32_t entityId, float wishX, float wishZ, float speed)> move;
     std::function<bool(uint32_t entityId, float impulse)> jump;
@@ -641,6 +642,7 @@ private:
     static int Lua_This_GetName(lua_State* L);
     static int Lua_This_SetName(lua_State* L);
     static int Lua_This_IsValid(lua_State* L);
+    static int Lua_This_GetId(lua_State* L);
     static int Lua_This_GetCamera(lua_State* L);
     
     // Transform object methods (returned by this:GetTransform())

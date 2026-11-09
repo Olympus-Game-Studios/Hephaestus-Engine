@@ -1592,19 +1592,35 @@ int LuaScriptEngine::Lua_Physics_raycast(lua_State* L) {
     if (lua_gettop(L) >= 9 && !lua_isnoneornil(L, 9)) {
         ignoreSensors = lua_toboolean(L, 9) != 0;
     }
-    uint32_t ignoreEntityId = engine->m_CurrentEntityId;
+    std::vector<uint32_t> ignoreEntityIds;
     if (lua_gettop(L) >= 10 && !lua_isnoneornil(L, 10)) {
-        LuaEntityReference* explicitId = static_cast<LuaEntityReference*>(luaL_testudata(L, 10, "HephaestusEntity"));
-        if (!explicitId) {
-            return luaL_error(L, "Physics.raycast expected an entity userdata as argument 10");
+        if (lua_istable(L, 10)) {
+            const lua_Integer count = luaL_len(L, 10);
+            for (lua_Integer i = 1; i <= count; ++i) {
+                lua_rawgeti(L, 10, i);
+                LuaEntityReference* listed = static_cast<LuaEntityReference*>(luaL_testudata(L, -1, "HephaestusEntity"));
+                if (!listed) {
+                    return luaL_error(L, "Physics.raycast argument 10 must hold only entities (item %d)",
+                                      static_cast<int>(i));
+                }
+                ignoreEntityIds.push_back(*listed);
+                lua_pop(L, 1);
+            }
+        } else {
+            LuaEntityReference* explicitId = static_cast<LuaEntityReference*>(luaL_testudata(L, 10, "HephaestusEntity"));
+            if (!explicitId) {
+                return luaL_error(L, "Physics.raycast expected an entity or a list of entities as argument 10");
+            }
+            ignoreEntityIds.push_back(*explicitId);
         }
-        ignoreEntityId = *explicitId;
+    } else {
+        ignoreEntityIds.push_back(engine->m_CurrentEntityId);
     }
 
     PhysicsRaycastHit hit{};
     std::string error;
     bool ok = engine->m_PhysicsBinding.raycast(
-        ignoreEntityId,
+        ignoreEntityIds,
         Vec3(ox, oy, oz),
         Vec3(dx, dy, dz),
         maxDistance,
@@ -1627,6 +1643,8 @@ int LuaScriptEngine::Lua_Physics_raycast(lua_State* L) {
     lua_setfield(L, -2, "hit");
     lua_pushnumber(L, hit.distance);
     lua_setfield(L, -2, "distance");
+    lua_pushboolean(L, hit.sensor);
+    lua_setfield(L, -2, "sensor");
 
     lua_newtable(L);
     lua_pushnumber(L, hit.point.x);
@@ -3351,7 +3369,10 @@ void LuaScriptEngine::RegisterThisBindings() {
     
     lua_pushcfunction(m_State, Lua_This_IsValid);
     lua_setfield(m_State, -2, "IsValid");
-    
+
+    lua_pushcfunction(m_State, Lua_This_GetId);
+    lua_setfield(m_State, -2, "GetId");
+
     lua_pushcfunction(m_State, Lua_This_GetCamera);
     lua_setfield(m_State, -2, "GetCamera");
 
@@ -3870,6 +3891,22 @@ int LuaScriptEngine::Lua_This_IsValid(lua_State* L) {
     LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
     bool valid = engine && selfId && static_cast<bool>(engine->MakeEntity(*selfId));
     lua_pushboolean(L, valid);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_This_GetId(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    if (!engine || !selfId || !engine->MakeEntity(*selfId)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushinteger(L, static_cast<lua_Integer>(static_cast<std::uint32_t>(*selfId)));
     return 1;
 #else
     (void)L;
