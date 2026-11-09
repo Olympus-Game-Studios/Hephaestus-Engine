@@ -155,6 +155,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-11-09: FBX meshes and characters show their textures the right way up; the importers kept FBX's upward V, so textures were flipped and UV seams streaked.
+- 2026-11-09: Normal, roughness, metallic and AO maps are read as data instead of colour, so normal-mapped materials no longer look streaky and metallic, and material textures have mipmaps so they don't shimmer at a distance.
 - 2026-11-09: Creating a material from automation with a texture path no longer crashes the editor.
 - 2026-11-09: Box colliders thinner than 10 cm keep their authored size; before, they failed to build and fell back to another shape.
 - 2026-11-09: Sounds played with `Audio.play` close when they finish, so rapid gunfire no longer runs out of audio devices.
