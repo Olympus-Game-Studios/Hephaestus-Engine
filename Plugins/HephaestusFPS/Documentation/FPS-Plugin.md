@@ -26,7 +26,9 @@ Use the seed layers. Character must collide with World and Character. Hitscan us
 
 ## Viewmodel
 
-Put each weapon (an entity with `Weapon.lua`) under the player's camera. Its arms and gun meshes are children named `<Weapon>_Part_<anything>` with `WeaponPart.lua` and **First-Person View Model** ticked on their Mesh Renderer. The weapon's own position is its hip pose in the camera's frame: X forward, Y up, Z right. Everything else is procedural: ADS moves the weapon so the point `(sightUp, sightRight)` above its origin sits on the screen centre `adsForward` metres ahead, and kick, sway, walk bob, sprint lowering, reload dip and weapon raise are layered on top.
+Put each weapon (an entity with `Weapon.lua`) under the player's camera. Its arms and gun meshes are children named `<Weapon>_Part_<anything>` with `WeaponPart.lua` and **First-Person View Model** ticked on their Mesh Renderer. The weapon's own position is its hip pose in the camera's frame: X forward, Y up, Z right. Everything else is procedural: ADS moves the weapon so the point `(sightUp, sightRight)` above its origin sits on the screen centre `adsForward` metres ahead, and kick, sway, walk bob, sprint lowering, reload dip and weapon raise are layered on top. Reload and raise tilt the weapon about the shoulders, 0.4 m behind its origin, so full-length arms stay out of the camera. Set `adsForward` so the eye sits a few centimetres behind the rear sight, not inside it.
+
+Set the camera's **View Model FOV** (`viewModelFov` in the scene) to draw the arms and weapon with their own field of view. The world then zooms for ADS while the gun stays the same size on screen, and a value below the world field of view makes it look less stretched. 0 uses the camera's field of view. Keep the camera's **Near** small (0.02) so the weapon is not cut when it comes up to the eye.
 
 ## Gunplay
 

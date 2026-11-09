@@ -92,7 +92,7 @@
           "text": "100 / 100",
           "anchor": "BottomLeft",
           "size": [240, 36],
-          "margin": [28, 0, 0, 28],
+          "margin": [56, 0, 0, 44],
           "zOrder": 2
         },
         "style": {
@@ -112,7 +112,7 @@
           "anchor": "BottomRight",
           "size": [210, 36],
           "textAlignment": "Right",
-          "margin": [0, 0, 28, 28],
+          "margin": [0, 0, 56, 44],
           "zOrder": 2
         },
         "style": {
@@ -132,7 +132,7 @@
           "anchor": "BottomRight",
           "size": [210, 24],
           "textAlignment": "Right",
-          "margin": [0, 0, 28, 70],
+          "margin": [0, 0, 56, 86],
           "zOrder": 2
         },
         "style": {

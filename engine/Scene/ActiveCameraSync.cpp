@@ -83,6 +83,7 @@ bool TryMakeCameraView(Scene& scene, Entity camera, ActiveCameraView& out)
     out.fovDegrees = cameraComponent.fov;
     out.nearPlane = cameraComponent.nearPlane;
     out.farPlane = cameraComponent.farPlane;
+    out.viewModelFovDegrees = cameraComponent.viewModelFov;
     return true;
 }
 
@@ -97,6 +98,18 @@ Mat4 MakeCameraViewFrame(const Vec3& position, float yawRadians, float pitchRadi
     frame.m[8] = right.x;   frame.m[9] = right.y;   frame.m[10] = right.z;
     frame.m[12] = position.x; frame.m[13] = position.y; frame.m[14] = position.z;
     return frame;
+}
+
+Mat4 MakeViewModelFovAdjust(const Mat4& view, float worldFovDegrees, float viewModelFovDegrees)
+{
+    if (viewModelFovDegrees <= 0.0f || worldFovDegrees <= 0.0f || viewModelFovDegrees == worldFovDegrees) {
+        return Mat4::Identity();
+    }
+    // Projected x and y are the focal length times view-space x and y, so scaling them by the focal ratio
+    // is the same as projecting with the view model's field of view.
+    constexpr float kDegToRad = 3.1415926535f / 180.0f;
+    const float k = std::tan(worldFovDegrees * 0.5f * kDegToRad) / std::tan(viewModelFovDegrees * 0.5f * kDegToRad);
+    return Mat4::Multiply(Mat4::Invert(view), Mat4::Multiply(Mat4::Scale(Vec3(k, k, 1.0f)), view));
 }
 
 std::optional<ActiveCameraView> TryReadActiveCameraView(Scene& scene)

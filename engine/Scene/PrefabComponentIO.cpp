@@ -527,6 +527,9 @@ void CaptureCamera(const CameraComponent& camera, JsonValue& data) {
     data.objectValue["fov"] = MakeNumber(camera.fov);
     data.objectValue["nearPlane"] = MakeNumber(camera.nearPlane);
     data.objectValue["farPlane"] = MakeNumber(camera.farPlane);
+    if (camera.viewModelFov > 0.0f) {
+        data.objectValue["viewModelFov"] = MakeNumber(camera.viewModelFov);
+    }
     data.objectValue["projection"] = MakeString(CameraProjectionToString(camera.projection));
     data.objectValue["isActive"] = MakeBool(camera.isActive);
     data.objectValue["isPrimary"] = MakeBool(camera.isPrimary || camera.isActive);
@@ -550,6 +553,11 @@ void ApplyCamera(CameraComponent& camera, const JsonValue& data) {
     if (const JsonValue* farValue = data.Find("farPlane")) {
         if (farValue->IsNumber()) {
             camera.farPlane = static_cast<float>(farValue->AsNumber());
+        }
+    }
+    if (const JsonValue* viewModelFovValue = data.Find("viewModelFov")) {
+        if (viewModelFovValue->IsNumber()) {
+            camera.viewModelFov = static_cast<float>(viewModelFovValue->AsNumber());
         }
     }
     if (const JsonValue* projectionValue = data.Find("projection")) {

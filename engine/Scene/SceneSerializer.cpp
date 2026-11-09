@@ -1001,6 +1001,9 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"fov\": " << FormatFloat(camera->fov) << ",\n";
             oss << "          \"near\": " << FormatFloat(camera->nearPlane) << ",\n";
             oss << "          \"far\": " << FormatFloat(camera->farPlane) << ",\n";
+            if (camera->viewModelFov > 0.0f) {
+                oss << "          \"viewModelFov\": " << FormatFloat(camera->viewModelFov) << ",\n";
+            }
             oss << "          \"projection\": \"" << (camera->projection == CameraProjection::Orthographic ? "Orthographic" : "Perspective") << "\",\n";
             oss << "          \"isActive\": " << (camera->isActive ? "true" : "false") << ",\n";
             oss << "          \"isPrimary\": " << (camera->isPrimary || camera->isActive ? "true" : "false") << ",\n";
@@ -1757,6 +1760,11 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             if (const JsonValue* farValue = cameraObj->Find("far")) {
                 if (farValue->IsNumber()) {
                     camera.farPlane = static_cast<float>(farValue->AsNumber());
+                }
+            }
+            if (const JsonValue* viewModelFovValue = cameraObj->Find("viewModelFov")) {
+                if (viewModelFovValue->IsNumber()) {
+                    camera.viewModelFov = static_cast<float>(viewModelFovValue->AsNumber());
                 }
             }
             if (const JsonValue* projectionValue = cameraObj->Find("projection")) {
@@ -2570,6 +2578,9 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"fov\": " << FormatFloat(camera->fov) << ",\n";
             oss << "          \"near\": " << FormatFloat(camera->nearPlane) << ",\n";
             oss << "          \"far\": " << FormatFloat(camera->farPlane) << ",\n";
+            if (camera->viewModelFov > 0.0f) {
+                oss << "          \"viewModelFov\": " << FormatFloat(camera->viewModelFov) << ",\n";
+            }
             oss << "          \"projection\": \"" << (camera->projection == CameraProjection::Orthographic ? "Orthographic" : "Perspective") << "\",\n";
             oss << "          \"isActive\": " << (camera->isActive ? "true" : "false") << ",\n";
             oss << "          \"isPrimary\": " << (camera->isPrimary || camera->isActive ? "true" : "false") << ",\n";

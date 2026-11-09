@@ -41,6 +41,7 @@ struct ActiveCameraView {
     float fovDegrees = 60.0f;
     float nearPlane = 0.1f;
     float farPlane = 1000.0f;
+    float viewModelFovDegrees = 0.0f; ///< 0 when view models use fovDegrees
 };
 
 bool TryMakeCameraView(Scene& scene, Entity camera, ActiveCameraView& out);
@@ -48,6 +49,10 @@ bool TryMakeCameraView(Scene& scene, Entity camera, ActiveCameraView& out);
 /// World matrix of the rendered view: columns are forward (+X), up (+Y) and right (+Z) at the view position.
 /// Identity for yaw 0 and pitch 0, so camera-relative offsets read as (forward, up, right).
 Mat4 MakeCameraViewFrame(const Vec3& position, float yawRadians, float pitchRadians);
+
+/// World-space transform that makes geometry drawn with a perspective projection at worldFovDegrees appear as
+/// if projected at viewModelFovDegrees (both vertical). Identity when viewModelFovDegrees is 0 or equal.
+Mat4 MakeViewModelFovAdjust(const Mat4& view, float worldFovDegrees, float viewModelFovDegrees);
 
 /// First CameraComponent with isActive, otherwise the first with isPrimary.
 std::optional<ActiveCameraView> TryReadActiveCameraView(Scene& scene);

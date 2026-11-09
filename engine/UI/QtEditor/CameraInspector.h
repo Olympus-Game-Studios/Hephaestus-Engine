@@ -39,6 +39,7 @@ private:
     // Widgets
     QComboBox*      m_projCombo      = nullptr;
     QDoubleSpinBox* m_fovSpin        = nullptr;
+    QDoubleSpinBox* m_viewModelFovSpin = nullptr;
     QDoubleSpinBox* m_nearSpin       = nullptr;
     QDoubleSpinBox* m_farSpin        = nullptr;
     QCheckBox*      m_activeCheck    = nullptr;

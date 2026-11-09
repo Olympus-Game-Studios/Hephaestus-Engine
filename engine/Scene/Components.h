@@ -489,6 +489,7 @@ struct CameraComponent {
     float fov = 60.0f;           // Field of view in degrees (perspective only)
     float nearPlane = 0.1f;
     float farPlane = 1000.0f;    // Increased default for larger scenes
+    float viewModelFov = 0.0f;   // Field of view for view model meshes; 0 uses fov
     CameraProjection projection = CameraProjection::Perspective;
     bool isActive = false;       // If true, this camera is the active runtime camera
     bool isPrimary = false;      // Legacy/compat: maps to isActive

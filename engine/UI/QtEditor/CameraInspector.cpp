@@ -56,6 +56,12 @@ void CameraInspector::buildUI()
     m_fovSpin->setSuffix("°");
     form->addRow(tr("FOV:"), m_fovSpin);
 
+    m_viewModelFovSpin = new QDoubleSpinBox();
+    ConfigureMixedSpin(m_viewModelFovSpin, 0.0, 179.0, 1.0, 1);
+    m_viewModelFovSpin->setSuffix("°");
+    m_viewModelFovSpin->setToolTip(tr("Field of view for first-person view model meshes. 0 uses FOV."));
+    form->addRow(tr("View Model FOV:"), m_viewModelFovSpin);
+
     m_nearSpin = new QDoubleSpinBox();
     ConfigureMixedSpin(m_nearSpin, 0.001, 10000.0, 0.1, 3);
     form->addRow(tr("Near Plane:"), m_nearSpin);
@@ -92,6 +98,8 @@ void CameraInspector::connectSignals()
     });
     connect(m_fovSpin,   QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
     connect(m_fovSpin,   &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
+    connect(m_viewModelFovSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
+    connect(m_viewModelFovSpin, &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
     connect(m_nearSpin,  QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
     connect(m_nearSpin,  &QDoubleSpinBox::editingFinished, this, [this]() { EndEdit(); });
     connect(m_farSpin,   QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { applyToComponent(); });
@@ -128,12 +136,13 @@ void CameraInspector::connectSignals()
 void CameraInspector::Refresh()
 {
     EndEdit();
-    MixedScalar fov, nearPlane, farPlane;
+    MixedScalar fov, viewModelFov, nearPlane, farPlane;
     MixedBool active, showMesh;
     int firstProj = -1;
     bool mixedProj = false;
     VisitTargets<CameraComponent>([&](const CameraComponent& cam, entt::entity) {
         AccumulateScalar(fov, cam.fov);
+        AccumulateScalar(viewModelFov, cam.viewModelFov);
         AccumulateScalar(nearPlane, cam.nearPlane);
         AccumulateScalar(farPlane, cam.farPlane);
         AccumulateBool(active, cam.isActive);
@@ -148,6 +157,7 @@ void CameraInspector::Refresh()
     blockAllSignals(true);
     SetComboFromMixed(m_projCombo, mixedProj, firstProj);
     SetSpinFromMixed(m_fovSpin, fov);
+    SetSpinFromMixed(m_viewModelFovSpin, viewModelFov);
     SetSpinFromMixed(m_nearSpin, nearPlane);
     SetSpinFromMixed(m_farSpin, farPlane);
     SetCheckFromMixed(m_activeCheck, active);
@@ -170,7 +180,12 @@ void CameraInspector::applyToComponent()
             cam.projection = static_cast<CameraProjection>(proj);
         });
     }
-    double fov = 0.0, nearV = 0.0, farV = 0.0;
+    double fov = 0.0, viewModelFov = 0.0, nearV = 0.0, farV = 0.0;
+    if (TryReadSpin(m_viewModelFovSpin, viewModelFov)) {
+        ForEachTarget<CameraComponent>([&](CameraComponent& cam, entt::entity) {
+            cam.viewModelFov = static_cast<float>(viewModelFov);
+        });
+    }
     if (TryReadSpin(m_fovSpin, fov)) {
         ForEachTarget<CameraComponent>([&](CameraComponent& cam, entt::entity) {
             cam.fov = static_cast<float>(fov);
@@ -207,6 +222,7 @@ void CameraInspector::blockAllSignals(bool block)
 {
     m_projCombo->blockSignals(block);
     m_fovSpin->blockSignals(block);
+    m_viewModelFovSpin->blockSignals(block);
     m_nearSpin->blockSignals(block);
     m_farSpin->blockSignals(block);
     m_activeCheck->blockSignals(block);

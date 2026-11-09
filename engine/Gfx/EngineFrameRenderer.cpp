@@ -3951,6 +3951,10 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
         if (const auto activeCamera = Hephaestus::TryReadActiveCameraView(*scene)) {
             const Mat4 cameraWorld = scene->GetWorldTransform(Entity(activeCamera->entity, scene));
             viewModelRebase = Mat4::Multiply(m_frameViewFrame, Mat4::Invert(cameraWorld));
+            viewModelRebase = Mat4::Multiply(
+                Hephaestus::MakeViewModelFovAdjust(m_frameViewMatrix, activeCamera->fovDegrees,
+                                                   activeCamera->viewModelFovDegrees),
+                *viewModelRebase);
         }
     }
     VkViewport worldViewport = viewport;

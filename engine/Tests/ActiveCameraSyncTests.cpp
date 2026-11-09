@@ -200,10 +200,38 @@ bool TestViewFrameMatchesRenderView()
     return ok;
 }
 
+bool TestViewModelFovAdjust()
+{
+    const Vec3 eye(2.0f, 1.0f, -3.0f);
+    const Mat4 view = Mat4::LookAt(eye, vadd(eye, RenderForward(0.6f, -0.2f)), Vec3(0.0f, 1.0f, 0.0f));
+    const float aspect = 2.4f;
+    const Mat4 worldProj = Mat4::Perspective(65.0f * 3.1415926535f / 180.0f, aspect, 0.02f, 1000.0f);
+    const Mat4 viewModelProj = Mat4::Perspective(55.0f * 3.1415926535f / 180.0f, aspect, 0.02f, 1000.0f);
+    const Mat4 adjust = Hephaestus::MakeViewModelFovAdjust(view, 65.0f, 55.0f);
+    bool ok = true;
+    for (const Vec3& offset : {Vec3(0.4f, -0.2f, 0.1f), Vec3(0.3f, 0.05f, -0.15f), Vec3(1.0f, 0.3f, 0.4f)}) {
+        const Vec3 p = vadd(eye, Mat4::TransformDirection(Mat4::Invert(view), offset));
+        const Vec4 viaAdjust = Mat4::TransformVec4(Mat4::Multiply(worldProj, Mat4::Multiply(view, adjust)),
+                                                   Vec4(p.x, p.y, p.z, 1.0f));
+        const Vec4 direct = Mat4::TransformVec4(Mat4::Multiply(viewModelProj, view), Vec4(p.x, p.y, p.z, 1.0f));
+        ok &= Check(Near(viaAdjust.x / viaAdjust.w, direct.x / direct.w) &&
+                        Near(viaAdjust.y / viaAdjust.w, direct.y / direct.w) &&
+                        Near(viaAdjust.z / viaAdjust.w, direct.z / direct.w),
+                    "view model FOV adjust projects like a camera at the view model FOV");
+    }
+    const Mat4 none = Hephaestus::MakeViewModelFovAdjust(view, 65.0f, 0.0f);
+    ok &= Check(NearVec(Mat4::TransformPoint(none, Vec3(1.0f, 2.0f, 3.0f)), Vec3(1.0f, 2.0f, 3.0f)),
+                "a view model FOV of 0 leaves view models alone");
+    return ok;
+}
+
 } // namespace
 
 int main()
 {
+    if (!TestViewModelFovAdjust()) {
+        return 1;
+    }
     bool ok = TestRootCamera();
     ok &= TestViewFrameMatchesRenderView();
     ok &= TestParentedCamera();

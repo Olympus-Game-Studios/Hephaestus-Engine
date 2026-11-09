@@ -66,6 +66,7 @@ local Hitscan = require("FPS.Hitscan")
 local Health = require("FPS.Health")
 
 local Weapon = {}
+local SHOULDER_REACH = 0.4 -- metres from the grip back to the shoulders in the view frame
 
 local TUNING = {
     "displayName", "slot", "fireMode", "roundsPerSecond", "damage", "range", "falloffStart", "falloffEnd",
@@ -337,15 +338,17 @@ local function updatePose(row, input, dt)
     local sprint = Gunplay.smoothstep(row.sprintBlend)
     local lowered = 1 - Gunplay.smoothstep(row.raise)
 
+    local tiltRoll = -rad(30) * reloadDip
+    local tiltPitch = -rad(15) * reloadDip - rad(40) * lowered
+    local reach = SHOULDER_REACH * math.sin(tiltPitch)
     local hipX, hipY, hipZ = row.rest.x, row.rest.y, row.rest.z
     local adsX, adsY, adsZ = row.adsForward or hipX, -(row.sightUp or 0), -(row.sightRight or 0)
-    local x = Gunplay.lerp(hipX, adsX, ads) + back - 0.04 * sprint
-    local y = Gunplay.lerp(hipY, adsY, ads) - bobUp - 0.06 * sprint - 0.10 * reloadDip - 0.25 * lowered
-    local z = Gunplay.lerp(hipZ, adsZ, ads) + bobRight - 0.05 * sprint
-    local rotRoll = Gunplay.lerp(row.restRot.x, 0, ads) + roll + rad(25) * sprint + rad(35) * reloadDip
+    local x = Gunplay.lerp(hipX, adsX, ads) + back - 0.04 * sprint + SHOULDER_REACH * (math.cos(tiltPitch) - 1)
+    local y = Gunplay.lerp(hipY, adsY, ads) - bobUp - 0.06 * sprint + reach * math.cos(tiltRoll)
+    local z = Gunplay.lerp(hipZ, adsZ, ads) + bobRight - 0.05 * sprint + reach * math.sin(tiltRoll)
+    local rotRoll = Gunplay.lerp(row.restRot.x, 0, ads) + roll + rad(25) * sprint + tiltRoll
     local rotYaw = Gunplay.lerp(row.restRot.y, 0, ads) + swayYaw + rad(30) * sprint
-    local rotPitch = Gunplay.lerp(row.restRot.z, 0, ads) + rise - swayPitch - rad(12) * sprint
-        - rad(20) * reloadDip - rad(40) * lowered
+    local rotPitch = Gunplay.lerp(row.restRot.z, 0, ads) + rise - swayPitch - rad(12) * sprint + tiltPitch
     Transform.setPosition(x, y, z)
     Transform.setRotation(rotRoll, rotYaw, rotPitch)
 end

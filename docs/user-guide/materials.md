@@ -16,7 +16,7 @@ Every Mesh Renderer has one or more **material slots**, one per part of the mesh
 - **Open** jumps straight into the Material Editor for that material.
 - **Clear** empties the slot, and the mesh falls back to a plain default material.
 
-The Mesh Renderer card also has **Visible**, **Hide In Game** (handy for helper meshes you only want in the editor), **First-Person View Model** and **Backface Culling**. A view model mesh is drawn in play attached to the active camera, so its position under the camera reads as forward (X), up (Y) and right (Z). It is drawn in front of everything else, so a weapon never pokes into a wall, and it casts no shadows. Put it on the arms and weapon meshes under the player's camera.
+The Mesh Renderer card also has **Visible**, **Hide In Game** (handy for helper meshes you only want in the editor), **First-Person View Model** and **Backface Culling**. A view model mesh is drawn in play attached to the active camera, so its position under the camera reads as forward (X), up (Y) and right (Z). It is drawn in front of everything else, so a weapon never pokes into a wall, and it casts no shadows. Put it on the arms and weapon meshes under the player's camera. The camera's **View Model FOV** draws view model meshes with their own field of view, so zooming the camera does not resize the weapon; leave it at 0 to use the camera's field of view.
 
 ## The Material Editor
 
