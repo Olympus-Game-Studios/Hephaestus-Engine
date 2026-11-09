@@ -10,6 +10,7 @@
 #include "Scripting/LuaScriptEngine.h"
 #include "Scripting/ScriptPhysicsBindings.h"
 
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -179,6 +180,15 @@ end
                       "entity GetId is a stable integer shared by every reference to one entity");
         pass &= Check(lua.ExecuteString("assert(_G.seekPastSensor == true)"),
                       "raycast ignore list skips the listed sensor and reaches the solid behind it");
+
+        Entity plate = AddBox(scene, "ThinPlate", Vec3(70.0f, 1.0f, 0.0f), true, false);
+        plate.GetComponent<TransformComponent>().scale = Vec3(0.03f, 1.0f, 1.0f);
+        physics.Update(scene, Physics::kPhysicsFixedDt);
+        Physics::RaycastHit plateHit{};
+        pass &= Check(physics.Raycast(entt::null, Vec3(68.0f, 1.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f), 5.0f, plateHit) &&
+                          plateHit.hit && plateHit.entity == static_cast<entt::entity>(plate) &&
+                          std::abs(plateHit.distance - 1.985f) < 0.01f,
+                      "a box thinner than the default convex radius keeps its real size");
 
         physicsAvailable = false;
         lua.Update(scene, Physics::kPhysicsFixedDt);

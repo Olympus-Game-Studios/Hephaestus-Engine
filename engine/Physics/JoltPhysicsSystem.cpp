@@ -755,6 +755,14 @@ void JoltPhysicsSystem::RestoreSimulationPoses(Scene& scene)
 
 namespace {
 
+// Jolt rejects a convex radius larger than the smallest half extent, which thin plates and rails have.
+JPH::BoxShapeSettings MakeBoxSettings(const Vec3& half)
+{
+    const float smallest = std::min(half.x, std::min(half.y, half.z));
+    return JPH::BoxShapeSettings(JPH::Vec3(half.x, half.y, half.z),
+                                 std::min(JPH::cDefaultConvexRadius, smallest));
+}
+
 struct MeshCacheEntry {
     MeshData mesh;
     std::filesystem::file_time_type lastWrite{};
@@ -877,7 +885,7 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
             std::max(std::abs(scale.z) * half.z, 0.001f)
         );
 
-        JPH::BoxShapeSettings boxSettings(JPH::Vec3(halfScaled.x, halfScaled.y, halfScaled.z));
+        JPH::BoxShapeSettings boxSettings = MakeBoxSettings(halfScaled);
         auto boxResult = boxSettings.Create();
         if (boxResult.HasError()) {
             std::cerr << "Failed to create mesh-bounds box collision shape: " << boxResult.GetError().c_str() << "\n";
@@ -983,7 +991,7 @@ JPH::BodyID JoltPhysicsSystem::CreateRigidBody(
                     std::max(shapeComp.extents.y * absScale.y, 0.001f),
                     std::max(shapeComp.extents.z * absScale.z, 0.001f)
                 );
-                JPH::BoxShapeSettings settings(JPH::Vec3(half.x, half.y, half.z));
+                JPH::BoxShapeSettings settings = MakeBoxSettings(half);
                 auto result = settings.Create();
                 if (!result.HasError()) {
                     return applyOffset(result.Get());
