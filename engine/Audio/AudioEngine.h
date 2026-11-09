@@ -46,6 +46,8 @@ private:
         float volume = 1.0f;
     };
 
+    /// One-shot sounds keep an open MCI device until closed; release the ones that ended.
+    void CloseFinishedSounds();
     std::filesystem::path ResolveAudioPath(const std::string& inputPath) const;
     std::string BuildAlias(SoundHandle handle) const;
     static int ClampMciVolume(float volume);

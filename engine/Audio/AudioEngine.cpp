@@ -78,6 +78,7 @@ AudioEngine::SoundHandle AudioEngine::Play(const std::string& path, bool loop, f
     if (!m_Initialized) {
         return InvalidHandle;
     }
+    CloseFinishedSounds();
 
     std::filesystem::path resolved = ResolveAudioPath(path);
     if (resolved.empty() || !std::filesystem::exists(resolved) || !IsSupportedAudioExtension(resolved)) {
@@ -119,6 +120,18 @@ AudioEngine::SoundHandle AudioEngine::Play(const std::string& path, bool loop, f
 
     m_Instances.emplace(instance.handle, std::move(instance));
     return m_NextHandle - 1;
+}
+
+void AudioEngine::CloseFinishedSounds() {
+    std::vector<SoundHandle> finished;
+    for (const auto& [handle, instance] : m_Instances) {
+        if (!instance.looping && !instance.paused && !IsPlaying(handle)) {
+            finished.push_back(handle);
+        }
+    }
+    for (SoundHandle handle : finished) {
+        Stop(handle);
+    }
 }
 
 bool AudioEngine::Stop(SoundHandle handle) {
