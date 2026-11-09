@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-11-09: FPS plugin gunplay: ADS that zooms the camera and blends the weapon to its sight, recoil that moves the real aim along a learnable per-weapon pattern with recovery, spring-driven visual kick, sway, walk bob and sprint lowering, a hip spread cone that grows with movement and fire, damage falloff with range, head and limb hit zones (`HitZone.lua`), hit and kill markers, tactical and empty reloads with timed sound cues, sprint-to-fire delay and weapon raise and lower times. Every value is a `Weapon.lua` variable. See the FPS plugin documentation.
+- 2026-11-09: Mesh Renderer **First-Person View Model**: in play the mesh is drawn attached to the active camera, in front of all world geometry, and casts no shadows, so weapons never clip into walls.
+- 2026-11-09: Lua `entity:GetId()` returns a stable integer id. `Physics.raycast` hits report `sensor`, and its tenth argument can be a list of entities to ignore.
+- 2026-11-09: Automation tool `character.import_clips` imports animation clips from a GLB or FBX into an existing character.
 - 2026-11-06: New projects open to a lit scene instead of a black one: `default.hpscene` has an Environment using the starter HDRI (a solid sky colour if the HDRI couldn't be copied), a directional sun, a static floor plane with a box collider and an active camera. The project's Default Skybox is set to the starter HDRI.
 - 2026-11-06: The editor reimports meshes, textures and sounds when their source files change on disk, and the Content Browser refreshes when files in the asset root or the open folder are added, removed or edited. Restore Deleted Asset on the Content Browser's empty-area menu lists the project trash and puts the chosen asset back where it was.
 - 2026-11-06: Gamepads work in Editor Play on Windows, through the same GLFW polling the packaged game uses. macOS Editor Play stays keyboard and mouse only, because GLFW's macOS setup takes over the application delegate Qt relies on.
@@ -150,6 +154,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-11-09: Creating a material from automation with a texture path no longer crashes the editor.
+- 2026-11-09: Box colliders thinner than 10 cm keep their authored size; before, they failed to build and fell back to another shape.
+- 2026-11-09: Sounds played with `Audio.play` close when they finish, so rapid gunfire no longer runs out of audio devices.
+- 2026-11-09: The FPS interaction ray no longer stops on trigger volumes that are not interactables.
 - 2026-11-06: A physics error in a packaged game now shows a Physics Error message with the exception text and closes the game, instead of ending the process without a word. In Editor Play the error goes to the Console (category "Physics") rather than only stderr, and physics stays off for the rest of that Play session as before.
 - 2026-11-06: Importing a Mixamo FBX (as an animation or as the character itself) no longer brings in Mixamo's empty "Take 001" take, only the `mixamo.com` motion. In the Import Animation dialog, a file with a single take, or a take with a generic name, is named after the file (for example `YBot-Walking`) instead of the name inside it.
 - 2026-11-06: Character animations imported from separate files no longer stop working. In the Character Editor preview, every Mixamo animation after the first played as the first one (or not at all), because all Mixamo takes are named `mixamo.com`; the preview now binds each clip by its own ID and source file, the same way the game does, and picks up renames, duplicates and deletes straight away. Reimporting the character mesh no longer removes animations imported from other files.

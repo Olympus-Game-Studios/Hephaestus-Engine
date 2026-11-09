@@ -23,6 +23,7 @@ Vectors come back as tables with `x`, `y` and `z`. Rotations on transforms are i
 | --- | --- |
 | `e:GetName()` / `e:SetName(name)` | Read or change the entity's name. |
 | `e:IsValid()` | False once the entity has been destroyed. Check this before using an entity you've held onto. |
+| `e:GetId()` | The entity's integer id, or `nil` once it is destroyed. Every reference to the same entity returns the same id, so use it as a table key instead of the name. |
 | `e:GetTransform()` | Its transform (see below). |
 | `e:GetCamera()` | Its camera, or `nil`. |
 | `e:GetAnimator()` / `e:GetCharacter()` | Animation control for characters, or `nil`. |
@@ -103,7 +104,7 @@ If the script's entity has a Camera component, these move that entity instead.
 
 | Function | Does |
 | --- | --- |
-| `Physics.raycast(ox, oy, oz, dx, dy, dz, maxDistance[, layer])` | Cast a ray. Returns `nil`, or a hit with `point`, `normal`, `distance` and `entity`. Ignores the calling entity. `layer` is a layer name from your collision matrix. |
+| `Physics.raycast(ox, oy, oz, dx, dy, dz, maxDistance[, layer[, ignoreSensors[, ignore]]])` | Cast a ray. Returns `nil`, or a hit with `point`, `normal`, `distance`, `entity` and `sensor` (true when the hit is a trigger). Ignores the calling entity. `layer` is a layer name from your collision matrix. `ignoreSensors` skips every trigger. `ignore` is an entity or a list of entities to skip instead of the calling entity, so a query can step past a trigger it has already met. |
 | `Physics.isAvailable()` / `Physics.hasBody()` | Whether physics is running and this entity has a body. |
 | `Physics.getLinearVelocity()` / `Physics.setLinearVelocity(x, y, z)` | Body velocity. |
 | `Physics.setAngularVelocity(x, y, z)` | Spin the body. |
