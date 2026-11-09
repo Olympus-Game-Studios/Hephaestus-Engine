@@ -211,6 +211,89 @@ std::string FbxDocument::DetectImageExtension(const ufbx_blob& content,
     return {};
 }
 
+namespace {
+
+FbxTextureSource ResolveFbxTexture(const ufbx_texture* texture, const std::filesystem::path& fbxPath)
+{
+    FbxTextureSource source;
+    if (!texture) {
+        return source;
+    }
+    const std::string relative = FbxDocument::ToString(texture->relative_filename);
+    const std::string named = relative.empty() ? FbxDocument::ToString(texture->filename) : relative;
+    if (texture->content.size > 0) {
+        source.extension = FbxDocument::DetectImageExtension(texture->content, named);
+        if (!source.extension.empty()) {
+            const auto* bytes = static_cast<const uint8_t*>(texture->content.data);
+            source.embedded.assign(bytes, bytes + texture->content.size);
+            return source;
+        }
+    }
+    std::vector<std::filesystem::path> candidates;
+    const std::string absolute = FbxDocument::ToString(texture->absolute_filename);
+    if (!absolute.empty()) {
+        candidates.emplace_back(absolute);
+    }
+    if (!named.empty()) {
+        const std::filesystem::path fileName = std::filesystem::path(named).filename();
+        candidates.push_back(fbxPath.parent_path() / named);
+        candidates.push_back(fbxPath.parent_path() / fileName);
+        candidates.push_back(fbxPath.parent_path() / (fbxPath.stem().string() + ".fbm") / fileName);
+    }
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(candidate, ec)) {
+            source.file = candidate;
+            break;
+        }
+    }
+    return source;
+}
+
+} // namespace
+
+bool ReadFbxMaterials(const std::filesystem::path& path,
+                      std::vector<FbxMaterialInfo>& outMaterials,
+                      std::string& outError)
+{
+    outMaterials.clear();
+    FbxDocument document;
+    if (!document.Load(path, FbxLoadSettings{}, outError)) {
+        return false;
+    }
+    const ufbx_scene* scene = document.Scene();
+    for (size_t i = 0; i < scene->materials.count; ++i) {
+        const ufbx_material* material = scene->materials.data[i];
+        if (!material) {
+            continue;
+        }
+        FbxMaterialInfo info;
+        info.name = FbxDocument::ToString(material->name);
+        const ufbx_material_map& base = material->pbr.base_color;
+        if (base.has_value) {
+            info.baseColor = Vec3(static_cast<float>(base.value_vec4.x), static_cast<float>(base.value_vec4.y),
+                                  static_cast<float>(base.value_vec4.z));
+        }
+        if (material->pbr.roughness.has_value) {
+            info.roughness = std::clamp(static_cast<float>(material->pbr.roughness.value_real), 0.05f, 1.0f);
+        }
+        if (material->pbr.metalness.has_value) {
+            info.metallic = std::clamp(static_cast<float>(material->pbr.metalness.value_real), 0.0f, 1.0f);
+        }
+        info.baseColorTexture = ResolveFbxTexture(
+            base.texture ? base.texture : material->fbx.diffuse_color.texture, path);
+        const ufbx_texture* normal = material->pbr.normal_map.texture ? material->pbr.normal_map.texture
+                                                                       : material->fbx.normal_map.texture;
+        info.normalTexture = ResolveFbxTexture(normal, path);
+        if (info.baseColorTexture.Exists()) {
+            // The texture carries the colour; legacy diffuse factors would only darken it.
+            info.baseColor = Vec3(1.0f, 1.0f, 1.0f);
+        }
+        outMaterials.push_back(std::move(info));
+    }
+    return true;
+}
+
 bool FbxFileContainsSkin(const std::filesystem::path& path, bool& outHasSkin, std::string& outError) {
     outHasSkin = false;
     FbxDocument document;

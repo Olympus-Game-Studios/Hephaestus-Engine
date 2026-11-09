@@ -7,6 +7,9 @@
 #include "Assets/CharacterAsset.h"
 #include "Assets/CharacterImport.h"
 #include "Assets/SkeletalModelImporter.h"
+#include "Assets/FbxDocument.h"
+
+#include <algorithm>
 
 #include <filesystem>
 #include <fstream>
@@ -131,6 +134,32 @@ int main(int argc, char** argv)
                 "character.get_info derives skeleton info from the owned source");
     ok &= Check(importedInfo.Ok() && importedInfo.value["data"]["mesh"]["source"].is_string(),
                 "character.get_info reports the owned mesh source");
+
+    const fs::path textured = fs::path(repoRoot) / "engine" / "Tests" / "Fixtures" / "Fbx" /
+                              "skinned_textured.fbx";
+    std::vector<Hephaestus::FbxMaterialInfo> fbxMaterials;
+    ok &= Check(Hephaestus::ReadFbxMaterials(textured, fbxMaterials, error) && fbxMaterials.size() == 1 &&
+                    fbxMaterials[0].name == "FixtureSkin" &&
+                    fbxMaterials[0].baseColorTexture.extension == ".png" &&
+                    !fbxMaterials[0].baseColorTexture.embedded.empty(),
+                "ReadFbxMaterials finds the material and its embedded base colour texture: " + error);
+    auto texturedImport = Call(service, "character.import",
+                               {{"source", textured.string()}, {"name", "TexturedHero"}});
+    auto texturedInfo = Call(service, "character.get_info",
+                             {{"path", "assets/characters/TexturedHero.hpcharacter"}});
+    bool materialWritten = false;
+    if (texturedImport.Ok() && texturedInfo.Ok()) {
+        for (const auto& slot : texturedInfo.value["data"]["mesh"]["parts"]) {
+            if (slot["name"] != "FixtureSkin") continue;
+            const fs::path materialPath = project / slot["material"].get<std::string>();
+            std::ifstream in(materialPath);
+            const auto material = Hephaestus::Automation::Json::parse(in, nullptr, false);
+            materialWritten = !material.is_discarded() && material.value("useAlbedoTexture", false) &&
+                              fs::exists(project / material.value("albedoTexturePath", std::string()));
+        }
+    }
+    ok &= Check(materialWritten,
+                "character.import writes the slot material with the extracted texture and assigns it");
 
     auto duplicate = Call(service, "character.import",
                           {{"source", source.string()}, {"name", "ImportedHero"}});

@@ -7,6 +7,9 @@
 
 #include "AssetPathPolicy.h"
 #include "CharacterRuntime.h"
+#include "FbxDocument.h"
+
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -16,6 +19,77 @@
 
 namespace Hephaestus {
 namespace {
+
+std::string SanitizeCharacterName(std::string name);
+
+// Writes a texture beside the material and returns its portable path, or empty when there is none.
+std::string WriteImportedTexture(const FbxTextureSource& texture, const std::filesystem::path& folder,
+                                 const std::string& stem, const std::filesystem::path& projectRoot) {
+    if (!texture.Exists()) {
+        return {};
+    }
+    std::error_code ec;
+    std::filesystem::path target;
+    if (!texture.embedded.empty()) {
+        target = folder / (stem + texture.extension);
+        std::ofstream out(target, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(texture.embedded.data()),
+                  static_cast<std::streamsize>(texture.embedded.size()));
+        if (!out) {
+            return {};
+        }
+    } else {
+        target = folder / (stem + texture.file.extension().string());
+        std::filesystem::copy_file(texture.file, target, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            return {};
+        }
+    }
+    return AssetPathPolicy::ToPortableKey(projectRoot, target.generic_string());
+}
+
+// Gives each empty submesh slot a material built from the FBX material of the same name.
+void ImportFbxSlotMaterials(const std::filesystem::path& projectRoot, const std::filesystem::path& sourceFbx,
+                            const std::filesystem::path& ownedAbs, CharacterAsset& asset) {
+    std::vector<FbxMaterialInfo> materials;
+    std::string error;
+    if (!ReadFbxMaterials(sourceFbx, materials, error)) {
+        return;
+    }
+    const std::filesystem::path folder = ownedAbs / "materials";
+    for (CharacterSubmeshSlot& slot : asset.mesh.submeshes) {
+        if (!slot.material.empty()) {
+            continue;
+        }
+        const auto found = std::find_if(materials.begin(), materials.end(),
+                                        [&](const FbxMaterialInfo& m) { return m.name == slot.name; });
+        if (found == materials.end()) {
+            continue;
+        }
+        std::error_code ec;
+        std::filesystem::create_directories(folder, ec);
+        const std::string stem = SanitizeCharacterName(slot.name);
+        const std::string albedo = WriteImportedTexture(found->baseColorTexture, folder, stem + "_BaseColor",
+                                                        projectRoot);
+        const std::string normal = WriteImportedTexture(found->normalTexture, folder, stem + "_Normal", projectRoot);
+        nlohmann::json material = {
+            {"albedo", {found->baseColor.x, found->baseColor.y, found->baseColor.z}},
+            {"metallic", found->metallic},
+            {"roughness", found->roughness},
+            {"ao", 1.0},
+            {"useAlbedoTexture", !albedo.empty()},
+            {"albedoTexturePath", albedo},
+            {"useNormalTexture", !normal.empty()},
+            {"normalTexturePath", normal},
+        };
+        const std::filesystem::path materialAbs = folder / (stem + ".hematerial");
+        std::ofstream out(materialAbs, std::ios::trunc);
+        out << material.dump(2) << '\n';
+        if (out) {
+            slot.material = AssetPathPolicy::ToPortableKey(projectRoot, materialAbs.generic_string());
+        }
+    }
+}
 
 std::string ToLowerCopy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
@@ -521,6 +595,9 @@ bool CharacterImporter::Import(const CharacterImportRequest& request,
     CharacterAsset asset = BuildAssetFromImport(name, meshPortable, inspect.imported,
                                                 request.createController, controllerPortable);
     ApplyPersistedImportSettings(asset, request.settings, inspect.imported);
+    if (IsFbxPath(request.sourceGlb)) {
+        ImportFbxSlotMaterials(request.projectRoot, request.sourceGlb, ownedAbs, asset);
+    }
     if (!CharacterSerializer::Serialize(asset, characterAbs, outError)) {
         std::filesystem::remove(characterAbs, ec);
         std::filesystem::remove_all(ownedAbs, ec);
