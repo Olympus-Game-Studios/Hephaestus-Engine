@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <system_error>
 #include <unordered_map>
@@ -52,9 +53,11 @@ std::string WriteImportedTexture(const FbxTextureSource& texture, const std::fil
     return AssetPathPolicy::ToPortableKey(projectRoot, target.generic_string());
 }
 
-// Writes 1 - gloss as a one-channel roughness PNG and returns its portable path.
-std::string WriteRoughnessFromGlossiness(const FbxTextureSource& gloss, const std::filesystem::path& folder,
-                                         const std::string& stem, const std::filesystem::path& projectRoot) {
+// The glossiness map scales the Phong shininess exponent; each texel converts with the same formula ufbx and
+// Blender use for the exponent itself (roughness = 1 - sqrt(exponent) / 10). Returns the PNG's portable path.
+std::string WriteRoughnessFromGlossiness(const FbxTextureSource& gloss, float shininessExponent,
+                                         const std::filesystem::path& folder, const std::string& stem,
+                                         const std::filesystem::path& projectRoot) {
     int width = 0, height = 0, channels = 0;
     stbi_uc* pixels = gloss.embedded.empty()
         ? stbi_load(gloss.file.string().c_str(), &width, &height, &channels, 1)
@@ -65,7 +68,9 @@ std::string WriteRoughnessFromGlossiness(const FbxTextureSource& gloss, const st
     }
     const size_t count = static_cast<size_t>(width) * static_cast<size_t>(height);
     for (size_t i = 0; i < count; ++i) {
-        pixels[i] = static_cast<stbi_uc>(255 - pixels[i]);
+        const float exponent = std::max(0.0f, shininessExponent) * (static_cast<float>(pixels[i]) / 255.0f);
+        const float roughness = std::clamp(1.0f - std::sqrt(exponent) / 10.0f, 0.0f, 1.0f);
+        pixels[i] = static_cast<stbi_uc>(std::lround(roughness * 255.0f));
     }
     const std::filesystem::path target = folder / (stem + ".png");
     const bool written = stbi_write_png(target.string().c_str(), width, height, 1, pixels, width) != 0;
@@ -100,8 +105,8 @@ void ImportFbxSlotMaterials(const std::filesystem::path& projectRoot, const std:
         std::string roughnessMap = WriteImportedTexture(found->roughnessTexture, folder, stem + "_Roughness",
                                                         projectRoot);
         if (roughnessMap.empty() && found->glossinessTexture.Exists()) {
-            roughnessMap = WriteRoughnessFromGlossiness(found->glossinessTexture, folder, stem + "_Roughness",
-                                                        projectRoot);
+            roughnessMap = WriteRoughnessFromGlossiness(found->glossinessTexture, found->shininessExponent, folder,
+                                                        stem + "_Roughness", projectRoot);
         }
         nlohmann::json material = {
             {"albedo", {found->baseColor.x, found->baseColor.y, found->baseColor.z}},

@@ -77,7 +77,8 @@ struct FbxMaterialInfo {
     FbxTextureSource baseColorTexture;
     FbxTextureSource normalTexture;
     FbxTextureSource roughnessTexture;   ///< roughness map, used as is
-    FbxTextureSource glossinessTexture;  ///< glossiness map (Mixamo, Phong exporters): roughness = 1 - gloss
+    FbxTextureSource glossinessTexture;  ///< glossiness map (Mixamo, Phong exporters), scales shininessExponent
+    float shininessExponent = 20.0f;      ///< FBX ShininessExponent the glossiness map scales
 };
 
 /// Materials of an FBX with their base colour and normal textures (embedded or beside the file).

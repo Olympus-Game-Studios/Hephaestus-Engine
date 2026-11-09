@@ -296,6 +296,9 @@ bool ReadFbxMaterials(const std::filesystem::path& path,
             gloss = roughness;
             roughness = nullptr;
         }
+        if (material->fbx.specular_exponent.has_value) {
+            info.shininessExponent = static_cast<float>(material->fbx.specular_exponent.value_real);
+        }
         info.roughnessTexture = ResolveFbxTexture(roughness, path);
         info.glossinessTexture = ResolveFbxTexture(gloss, path);
         if (info.baseColorTexture.Exists()) {

@@ -11,6 +11,7 @@
 #include "stb_image.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include <filesystem>
 #include <fstream>
@@ -163,7 +164,7 @@ int main(int argc, char** argv)
                 "character.import writes the slot material with the extracted texture and assigns it");
 
     // Same file and map; only the creator differs. Blender's ShininessExponent map is roughness,
-    // an FBX SDK (Mixamo) one is glossiness and must be inverted.
+    // an FBX SDK (Mixamo) one is glossiness scaling the material's exponent (25 in the fixture).
     auto roughnessPixel = [&](const char* name, const fs::path& source, float& factor) -> int {
         if (!Call(service, "character.import", {{"source", source.string()}, {"name", name}}).Ok()) return -1;
         auto info = Call(service, "character.get_info",
@@ -189,10 +190,12 @@ int main(int argc, char** argv)
     const int sdkRoughness = roughnessPixel(
         "SdkGlossHero", fs::path(repoRoot) / "engine" / "Tests" / "Fixtures" / "Fbx" / "skinned_textured_fbxsdk.fbx",
         sdkFactor);
-    ok &= Check(blenderRoughness >= 0 && sdkRoughness >= 0 && sdkRoughness == 255 - blenderRoughness &&
+    const float gloss = static_cast<float>(blenderRoughness) / 255.0f;
+    const int expectedSdk = static_cast<int>(std::lround((1.0f - std::sqrt(25.0f * gloss) / 10.0f) * 255.0f));
+    ok &= Check(blenderRoughness >= 0 && std::abs(sdkRoughness - expectedSdk) <= 1 &&
                     blenderFactor == 1.0f && sdkFactor == 1.0f,
-                "an FBX SDK glossiness map becomes a 1 - gloss roughness map; a Blender roughness map is kept (" +
-                    std::to_string(blenderRoughness) + ", " + std::to_string(sdkRoughness) + ")");
+                "an FBX SDK glossiness map converts through the shininess exponent; a Blender roughness map is "
+                "kept (" + std::to_string(blenderRoughness) + ", " + std::to_string(sdkRoughness) + ")");
 
     auto duplicate = Call(service, "character.import",
                           {{"source", source.string()}, {"name", "ImportedHero"}});
