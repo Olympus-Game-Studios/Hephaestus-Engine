@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-11-09: Importing a character from FBX brings its materials: each material slot gets a material with the FBX base colour, roughness and metalness, and its base colour and normal textures are extracted into the character's folder, so Mixamo characters no longer import white.
 - 2026-11-09: FPS plugin gunplay: ADS that zooms the camera and blends the weapon to its sight, recoil that moves the real aim along a learnable per-weapon pattern with recovery, spring-driven visual kick, sway, walk bob and sprint lowering, a hip spread cone that grows with movement and fire, damage falloff with range, head and limb hit zones (`HitZone.lua`), hit and kill markers, tactical and empty reloads with timed sound cues, sprint-to-fire delay and weapon raise and lower times. Every value is a `Weapon.lua` variable. See the FPS plugin documentation.
 - 2026-11-09: Mesh Renderer **First-Person View Model**: in play the mesh is drawn attached to the active camera, in front of all world geometry, and casts no shadows, so weapons never clip into walls.
 - 2026-11-09: Lua `entity:GetId()` returns a stable integer id. `Physics.raycast` hits report `sensor`, and its tenth argument can be a list of entities to ignore.
