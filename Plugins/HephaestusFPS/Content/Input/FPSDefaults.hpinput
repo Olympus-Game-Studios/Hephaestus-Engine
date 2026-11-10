@@ -87,6 +87,61 @@
         { "type": "keyboard", "control": "T" },
         { "type": "gamepad_button", "control": "DPAD_DOWN" }
       ]
+    },
+    {
+      "name": "Pause",
+      "bindings": [
+        { "type": "keyboard", "control": "ESCAPE" },
+        { "type": "gamepad_button", "control": "START" }
+      ]
+    },
+    {
+      "name": "MenuUp",
+      "bindings": [
+        { "type": "keyboard", "control": "UP" },
+        { "type": "keyboard", "control": "W" },
+        { "type": "gamepad_button", "control": "DPAD_UP" }
+      ]
+    },
+    {
+      "name": "MenuDown",
+      "bindings": [
+        { "type": "keyboard", "control": "DOWN" },
+        { "type": "keyboard", "control": "S" },
+        { "type": "gamepad_button", "control": "DPAD_DOWN" }
+      ]
+    },
+    {
+      "name": "MenuLeft",
+      "bindings": [
+        { "type": "keyboard", "control": "LEFT" },
+        { "type": "keyboard", "control": "A" },
+        { "type": "gamepad_button", "control": "DPAD_LEFT" }
+      ]
+    },
+    {
+      "name": "MenuRight",
+      "bindings": [
+        { "type": "keyboard", "control": "RIGHT" },
+        { "type": "keyboard", "control": "D" },
+        { "type": "gamepad_button", "control": "DPAD_RIGHT" }
+      ]
+    },
+    {
+      "name": "MenuSelect",
+      "bindings": [
+        { "type": "keyboard", "control": "ENTER" },
+        { "type": "keyboard", "control": "SPACE" },
+        { "type": "gamepad_button", "control": "SOUTH" }
+      ]
+    },
+    {
+      "name": "MenuBack",
+      "bindings": [
+        { "type": "keyboard", "control": "ESCAPE" },
+        { "type": "keyboard", "control": "BACKSPACE" },
+        { "type": "gamepad_button", "control": "EAST" }
+      ]
     }
   ],
   "axes": [

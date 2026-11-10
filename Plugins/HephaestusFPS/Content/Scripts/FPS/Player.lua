@@ -5,6 +5,8 @@ local Health = require("FPS.Health")
 local Interactable = require("FPS.Interactable")
 local Hud = require("FPS.Hud")
 local GrenadeWarning = require("FPS.GrenadeWarning")
+local Settings = require("FPS.Settings")
+local PauseMenu = require("FPS.PauseMenu")
 local Impacts = require("FPS.Impacts")
 local ThrowPreview = require("FPS.ThrowPreview")
 local Mantle = require("FPS.Mantle")
@@ -63,6 +65,8 @@ Expose.bool("showHealth", true)
 Expose.bool("showAmmo", true)
 Expose.bool("showPrompt", true)
 Expose.string("hudDocument", "plugin://com.hephaestus.fps/UI/FPSHud.hui")
+Expose.bool("pauseMenuEnabled", true)
+Expose.string("mainMenuScene", "")
 Expose.bool("restartEnabled", true)
 Expose.number("restartDelaySeconds", 1.5)
 Expose.string("restartPrompt", "Press Space to restart")
@@ -205,8 +209,10 @@ local function applyLook(dt)
         local invertYScale = invertY and -1 or 1
         local stickX = Input.getAxis("LookStickX") or 0
         local stickY = Input.getAxis("LookStickY") or 0
-        local dYaw = -(mx * mouseSensitivityX + stickX * stickSensitivityX * dt) * invertXScale * adsScale
+        local sensitivity = Settings.values.sensitivity
+        local dYaw = -(mx * mouseSensitivityX + stickX * stickSensitivityX * dt) * invertXScale * adsScale * sensitivity
         lookPitchDelta = -(my * mouseSensitivityY + stickY * stickSensitivityY * dt) * invertYScale * adsScale
+            * sensitivity
         yaw = yaw + dYaw
         pitch = pitch + lookPitchDelta
         if dt > 1e-4 then
@@ -303,7 +309,7 @@ end
 -- Presentation-only camera kick: it moves the view, never where shots go.
 local function updateCameraKick(dt)
     local player = Registry.player
-    local shake = presentationEnabled and Gunplay.clamp(cameraShakeScale, 0, 1) or 0
+    local shake = presentationEnabled and Gunplay.clamp(cameraShakeScale * Settings.values.cameraShake, 0, 1) or 0
     if player and player.cameraImpulses then
         for _, impulse in ipairs(player.cameraImpulses) do
             cameraKickOmega, cameraKickZeta = impulse.omega or cameraKickOmega, impulse.zeta or cameraKickZeta
@@ -319,7 +325,7 @@ local function updateCameraKick(dt)
 end
 
 local function applyCameraRotation()
-    local motion = presentationEnabled and Gunplay.clamp(viewBobScale, 0, 1) or 0
+    local motion = presentationEnabled and Gunplay.clamp(viewBobScale * Settings.values.viewBob, 0, 1) or 0
     local leanRoll = math.rad(leanRollDegrees) * leanOffset / math.max(leanDistance, 1e-3)
     Camera.setRotation(pitch + cameraKickPitch.x, cameraKickYaw.x,
                        -math.rad(slideRollDegrees) * slideBlend * motion - leanRoll)
@@ -437,7 +443,7 @@ local function updateFieldOfView(row)
     end
     if cameraObject then
         local ads = row and row.adsFovBlend or 0
-        local base = fieldOfView + slideFovBoost * slideBlend + tacticalSprintFovBoost * tacticalBlend
+        local base = Settings.fieldOfView() + slideFovBoost * slideBlend + tacticalSprintFovBoost * tacticalBlend
         cameraObject:SetFov(Gunplay.lerp(base, row and row.adsFov or base, ads))
     end
 end
@@ -491,6 +497,9 @@ function onAwake()
     })
     eyeHeight = standEyeHeight
     endedFor = nil
+    Settings.gameFieldOfView = fieldOfView
+    Settings.load()
+    PauseMenu.reset()
     lastKnownHealth = Health.getHealth(this)
     Camera.setActive(true)
     Player.setLookEnabled(true)
@@ -521,6 +530,7 @@ end
 function onUpdate(dt)
     lastDt = dt
     updateGameEnd(dt)
+    PauseMenu.update({ enabled = pauseMenuEnabled and not Registry.gameOver, mainMenuScene = mainMenuScene })
     -- Paused (Time.setScale(0)): no look, movement or firing; mouse movement does not depend on dt.
     if Time.getScale() == 0 then
         Character.move(0, 0)
@@ -799,7 +809,7 @@ function onLateUpdate(dt)
             localRightSpeed = localRight,
             landingSpeed = landingSpeed,
             footfall = footfallThisFrame,
-            motionScale = presentationEnabled and Gunplay.clamp(viewBobScale, 0, 1) or 0,
+            motionScale = presentationEnabled and Gunplay.clamp(viewBobScale * Settings.values.viewBob, 0, 1) or 0,
             -- Footfalls land on whole multiples of pi.
             bobPhase = math.pi * (stepCount + stepDistance / math.max(footstepStride, 0.1)),
             lowering = swap ~= nil or throw ~= nil or mantle ~= nil,

@@ -16,7 +16,7 @@ Install is additive. Existing names such as Jump are not rewritten. Disable does
 
 `LookStickX` / `LookStickY` are the gamepad look axes. Mouse look uses `Input.getMouseDelta`, not `LookX`.
 
-`ThrowFrag` (G, D-pad up) and `ThrowSmoke` (T, D-pad down) throw grenades. `Prone` (X, right stick press) lies down. `LeanLeft` (C) and `LeanRight` (V) lean while held.
+`ThrowFrag` (G, D-pad up) and `ThrowSmoke` (T, D-pad down) throw grenades. `Prone` (X, right stick press) lies down. `LeanLeft` (C) and `LeanRight` (V) lean while held. `Pause` and the `Menu...` actions drive the menus (see Menus and settings).
 
 ## Crouch camera
 
@@ -133,6 +133,38 @@ The enemy is a state machine (`FPS.AI.Brain`). Each state in `Enemy.lua`'s `stat
 `WaveDirector.lua` turns a level into a wave survival game. Put it on any entity and set `enemyPrefab`, `spawnPoints` (`"x,z;x,z"`) and `waves`, a list of enemy counts with an optional difficulty level each (`"3:recruit;5:regular;7:hardened"`; no level means the global one). After `startDelaySeconds` the first wave begins: its enemies appear one every `spawnIntervalSeconds` at a spawn point at least `minSpawnDistance` metres from the player (the farthest one if none is that far) and come looking for the player (`huntOnSpawn` on the enemy). When they are all dead a "Wave cleared" message shows for `breakSeconds` before the next wave, and clearing the last wave wins. The top of the screen shows the wave and how many enemies are left.
 
 When the player dies the screen darkens with "You died", and when the last wave is cleared it shows "All waves cleared". After `restartDelaySeconds` the player's `restartPrompt` appears, and pressing Jump restarts the level (`Scene.reload`). Turn this off with `restartEnabled`. Other scripts can show the same large message with `Hud.showBanner(title, subtitle, seconds)`.
+
+## Menus and settings
+
+Escape (gamepad Start) pauses the game: everything freezes and a menu offers Resume, Settings, Restart, Quit to menu and Quit game. Quit to menu shows only when the player's `mainMenuScene` is set to a scene path, and `pauseMenuEnabled` turns the menu off. Menus move with the arrow keys or WASD, choose with Enter or Space, go back with Escape or Backspace, and also work with the mouse and the gamepad D-pad. These keys are the `Pause` and `Menu...` actions that Install FPS Input Defaults adds.
+
+Settings holds look sensitivity, field of view (the player's `fieldOfView` until changed), view bob, camera shake, master, effects, weapons and music volume, and difficulty. Changes apply at once and are saved when you leave the page, in the player's data folder (`Storage`), so they are the same in every level and next time.
+
+To make a main menu, put a script on the menu scene's camera that builds one with `FPS.Menu`:
+
+```lua
+local Menu = require("FPS.Menu")
+local Settings = require("FPS.Settings")
+local menu
+
+function onAwake()
+    Settings.load()
+    UI.setCursorMode(CursorMode.UI)
+    Camera.setActive(true)
+    menu = Menu.new("MainMenu", { hints = "ENTER  SELECT        ESC  BACK" })
+    Menu.setPage(menu, { items = {
+        { label = "PLAY", action = function() Scene.load("assets/scenes/Level.hpscene") end },
+        { label = "SETTINGS", action = function() Menu.push(menu, Settings.page()) end },
+        { label = "QUIT", action = function() Settings.save(); Application.quit() end },
+    } })
+end
+
+function onUpdate(dt)
+    Menu.update(menu)
+end
+```
+
+A page item is a button (`label`, `action`), a slider (`kind = "slider"`, `min`, `max`, `step`, `get`, `set`, optional `format`) or a choice (`kind = "choice"`, `options = { { value, text }, ... }`, `get`, `set`). `Menu.push` opens a page on top, and Escape returns to the one before. `Menu.theme` holds the colours and font.
 
 ## Scripts
 

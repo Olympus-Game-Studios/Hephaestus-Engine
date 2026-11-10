@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- 2026-11-10: FPS plugin menus: Escape (gamepad Start) pauses the game with Resume, Settings, Restart, Quit to menu and Quit game. Settings has look sensitivity, field of view, view bob, camera shake, volume for each sound group and difficulty, and is saved for next time. `FPS.Menu` builds the same style of menu from a script, for a main menu or anything else, and works with the keyboard, the mouse and a gamepad. FPS-Shooter has a main menu scene that starts the Survival level.
 
 - 2026-11-10: Lua `Scene.load(path)` switches to another scene at the next safe point, in Editor Play and packaged games; stopping Play returns to the edited scene. `Time.setScale` slows, speeds up or freezes gameplay (scripts, physics, animation and particles; not sound or UI), with `Time.getScale` and `Time.unscaledDeltaTime`. `Storage.save(name, table)` and `Storage.load(name)` keep data such as settings in the player's own data folder.
 - 2026-11-10: FPS plugin waves and restarts: `WaveDirector.lua` spawns waves of enemies that hunt the player, with a per-wave difficulty, wave and "cleared" messages and a win when the last wave is cleared. Dying or winning shows a message and offers a restart (`Scene.reload`). FPS-Shooter has a Survival level that uses it.
