@@ -5,6 +5,7 @@ local Health = require("FPS.Health")
 local Interactable = require("FPS.Interactable")
 local Hud = require("FPS.Hud")
 local Impacts = require("FPS.Impacts")
+local ThrowPreview = require("FPS.ThrowPreview")
 
 Expose.number("mouseSensitivityX", 0.002)
 Expose.number("mouseSensitivityY", 0.002)
@@ -49,6 +50,13 @@ Expose.number("throwReleaseFraction", 0.4)
 Expose.string("grenadeArmSound", "")
 Expose.string("grenadeThrowSound", "")
 Expose.number("grenadeSoundVolume", 1.0)
+Expose.bool("throwPreviewEnabled", true)
+Expose.string("throwPreviewDotPrefab", "")
+Expose.string("throwPreviewMarkerPrefab", "")
+Expose.number("throwPreviewDots", 24)
+Expose.number("throwPreviewStartDistance", 1.5)
+Expose.number("throwPreviewSeconds", 3)
+Expose.number("throwPreviewDamping", 0.1)
 
 local Player = {}
 local yaw = 0
@@ -272,9 +280,9 @@ local function playThrowSound(path)
     end
 end
 
--- Released from beside the eye along the aim, lifted a little, carrying the player's own velocity.
-local function releaseGrenade(kind, origin, direction)
-    local path = kind == "smoke" and smokeGrenadePrefab or fragGrenadePrefab
+-- Where a throw leaves the hand and how fast: beside the eye along the aim, lifted a little, plus the player's
+-- own velocity.
+local function throwLaunch(origin, direction)
     local fx, fy, fz = direction.x, direction.y + throwLift, direction.z
     local length = math.sqrt(fx * fx + fy * fy + fz * fz)
     fx, fy, fz = fx / length, fy / length, fz / length
@@ -284,22 +292,35 @@ local function releaseGrenade(kind, origin, direction)
         rx, rz = rx / side * 0.2, rz / side * 0.2
     end
     local vel = Character.getVelocity() or {}
-    Scene.instantiate(path, {
-        position = { x = origin.x + direction.x * 0.5 + rx, y = origin.y + direction.y * 0.5 - 0.15,
-                     z = origin.z + direction.z * 0.5 + rz },
-        vars = { vx = fx * throwSpeed + (vel.x or 0), vy = fy * throwSpeed + (vel.y or 0),
-                 vz = fz * throwSpeed + (vel.z or 0), thrownByPlayer = true },
+    local position = { x = origin.x + direction.x * 0.5 + rx, y = origin.y + direction.y * 0.5 - 0.15,
+                       z = origin.z + direction.z * 0.5 + rz }
+    local velocity = { x = fx * throwSpeed + (vel.x or 0), y = fy * throwSpeed + (vel.y or 0),
+                       z = fz * throwSpeed + (vel.z or 0) }
+    return position, velocity
+end
+
+local function releaseGrenade(kind, origin, direction)
+    local position, velocity = throwLaunch(origin, direction)
+    Scene.instantiate(kind == "smoke" and smokeGrenadePrefab or fragGrenadePrefab, {
+        position = position,
+        vars = { vx = velocity.x, vy = velocity.y, vz = velocity.z, thrownByPlayer = true },
     })
 end
 
--- A throw dips the weapon out and back while blocking fire, cutting any reload.
+-- Pressing a throw key arms a grenade and lowers the weapon over the wind-up. While the key is held the
+-- preview shows where the throw will land; letting go throws it and raises the weapon again. Fire and ADS
+-- are blocked throughout and a reload is cut. The grenade is only spent when it leaves the hand.
 local function updateThrow(dt, origin, direction, row)
+    if commands.cancelThrow and throw and not throw.recover then
+        ThrowPreview.hide()
+        throw = nil
+    end
+    commands.cancelThrow = false
     if not throw and commands.throwKind and not swap then
         local kind = commands.throwKind
         local path = kind == "smoke" and smokeGrenadePrefab or fragGrenadePrefab
         if path ~= "" and grenades[kind] > 0 then
-            grenades[kind] = grenades[kind] - 1
-            throw = { kind = kind, elapsed = 0, released = false }
+            throw = { kind = kind, windup = 0, recover = nil }
             playThrowSound(grenadeArmSound)
             if row then
                 Logic.interruptReload(row)
@@ -310,16 +331,36 @@ local function updateThrow(dt, origin, direction, row)
     if not throw then
         return
     end
-    throw.elapsed = throw.elapsed + dt
-    local duration = math.max(throwSeconds, 0.05)
-    if not throw.released and throw.elapsed >= duration * throwReleaseFraction then
+    if throw.recover then
+        throw.recover = throw.recover + dt / math.max(throwSeconds * (1 - throwReleaseFraction), 0.01)
+        if throw.recover >= 1 then
+            throw = nil
+        end
+        return
+    end
+    throw.windup = math.min(1, throw.windup + dt / math.max(throwSeconds * throwReleaseFraction, 0.01))
+    if throw.windup >= 1 and not commands[throw.kind .. "Held"] then
+        grenades[throw.kind] = grenades[throw.kind] - 1
         releaseGrenade(throw.kind, origin, direction)
         playThrowSound(grenadeThrowSound)
-        throw.released = true
+        ThrowPreview.hide()
+        throw.recover = 0
+    elseif throwPreviewEnabled then
+        local position, velocity = throwLaunch(origin, direction)
+        local points, hit = ThrowPreview.predict(position, velocity,
+                                                 { damping = throwPreviewDamping, maxSeconds = throwPreviewSeconds })
+        ThrowPreview.show(points, hit, { dotPrefab = throwPreviewDotPrefab, markerPrefab = throwPreviewMarkerPrefab,
+                                         dotCount = throwPreviewDots, startDistance = throwPreviewStartDistance })
     end
-    if throw.elapsed >= duration then
-        throw = nil
+end
+
+-- How far the weapon is lowered for a throw, 0 to 1, eased at both ends.
+local function throwLowered()
+    if not throw then
+        return 0
     end
+    local t = throw.recover and 1 - math.min(throw.recover, 1) or throw.windup
+    return t * t * (3 - 2 * t)
 end
 
 local function updateFieldOfView(row)
@@ -345,6 +386,7 @@ function onAwake()
     cameraObject = nil
     grenades = { frag = math.max(0, math.floor(fragGrenades)), smoke = math.max(0, math.floor(smokeGrenades)) }
     throw = nil
+    ThrowPreview.reset()
     stepDistance = 0
     stepCount = 0
     wasGrounded = true
@@ -414,6 +456,8 @@ function onUpdate(dt)
                 commands.slot = slot
             end
         end
+        commands.fragHeld = Input.isActionDown("ThrowFrag")
+        commands.smokeHeld = Input.isActionDown("ThrowSmoke")
         if Input.isActionPressed("ThrowFrag") then
             commands.throwKind = "frag"
         elseif Input.isActionPressed("ThrowSmoke") then
@@ -428,6 +472,7 @@ function onUpdate(dt)
         commands.aimHeld = false
         commands.reload = false
         commands.interact = false
+        commands.cancelThrow = true
     end
 end
 
@@ -500,7 +545,6 @@ function onLateUpdate(dt)
 
     local row = activeWeaponRow()
     updateThrow(lastDt, origin, direction, row)
-    local throwDip = throw and math.sin(math.pi * math.min(throw.elapsed / math.max(throwSeconds, 0.05), 1)) or 0
     if player then
         player.input = {
             aimHeld = commands.aimHeld and swap == nil and throw == nil,
@@ -519,7 +563,7 @@ function onLateUpdate(dt)
             bobPhase = math.pi * (stepCount + stepDistance / math.max(footstepStride, 0.1)),
             lowering = swap ~= nil or throw ~= nil,
             lowerProgress = swap and row and
-                Gunplay.clamp(1 - swap.remaining / math.max(row.lowerSeconds or 0.01, 0.01), 0, 1) or throwDip,
+                Gunplay.clamp(1 - swap.remaining / math.max(row.lowerSeconds or 0.01, 0.01), 0, 1) or throwLowered(),
         }
     end
     local weaponEntity = activeWeaponEntity()

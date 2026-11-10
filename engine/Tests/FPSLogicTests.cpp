@@ -678,6 +678,27 @@ check(hudOk and texts.health == "32 / 100", "fractional health from blast damage
 check(texts.grenades == "Frag 1   Smoke 2", "the HUD shows grenade counts")
 Hud.handle, Hud.widgets, UI = nil, {}, nil
 
+local ThrowPreview = require("FPS.ThrowPreview")
+local groundY = 0
+Physics = { raycast = function(x, y, z, dx, dy, dz, distance)
+    local ey = y + dy * distance
+    if y >= groundY and ey < groundY and dy < 0 then
+        local t = (y - groundY) / -dy
+        return { point = { x = x + dx * t, y = groundY, z = z + dz * t }, normal = { x = 0, y = 1, z = 0 }, distance = t }
+    end
+    return nil
+end }
+local points, landing = ThrowPreview.predict({ x = 0, y = 1.5, z = 0 }, { x = 10, y = 0, z = 0 }, { maxSeconds = 3 })
+check(landing ~= nil and near(landing.point.x, 10 * math.sqrt(2 * 1.5 / 9.81), 0.15) and landing.point.y == 0,
+      "a level throw lands where gravity says")
+check(points[#points].x == landing.point.x and #points > 10, "the preview path ends at the landing point")
+local _, damped = ThrowPreview.predict({ x = 0, y = 1.5, z = 0 }, { x = 10, y = 0, z = 0 }, { damping = 0.5 })
+check(damped.point.x < landing.point.x - 0.3, "damping shortens the predicted throw")
+groundY = -1000
+local skyward, none = ThrowPreview.predict({ x = 0, y = 0, z = 0 }, { x = 0, y = 5, z = 0 }, { maxSeconds = 0.5 })
+check(none == nil and #skyward == 31, "a throw that reaches nothing stops after maxSeconds")
+Physics = nil
+
 if #failures > 0 then error(table.concat(failures, "\n")) end
 )lua";
     if (luaL_dostring(L, kGunplayChecks) != LUA_OK) {
