@@ -2918,6 +2918,7 @@ void QtEditorEngine::StartPlayMode()
     }
     if (!runtimeUI.context) {
         runtimeUI.context = std::make_unique<::Hephaestus::HephaestusUI::UIContext>();
+        runtimeUI.context->SetReferenceHeight(::Hephaestus::HephaestusUI::kGameUIReferenceHeight);
     }
     if (!runtimeUI.renderer) {
         runtimeUI.renderer = std::make_unique<::Hephaestus::HephaestusUI::UIRenderer>();

@@ -30,6 +30,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace HUI = Hephaestus::HephaestusUI;
@@ -233,6 +234,64 @@ bool TestHitTesting() {
     screen->Update(context, context.ConsumeMouseEvents());
     if (!Check(!clicked, "button does not fire for out-of-bounds click")) local = false;
 
+    return local;
+}
+
+// Game UI laid out for 1080p fills a 1440p viewport the same way: draw commands come out in viewport pixels and
+// mouse input in viewport pixels reaches the right widget.
+bool TestResolutionScale() {
+    bool local = true;
+    HUI::UIContext plain;
+    plain.SetViewportSize({1280, 720});
+    if (!Check(Near(plain.GetScale(), 1.0f) && Near(plain.GetLayoutSize().y, 720),
+               "without a reference height the UI is laid out in viewport pixels")) local = false;
+
+    HUI::UIContext context;
+    context.SetReferenceHeight(HUI::kGameUIReferenceHeight);
+    context.SetViewportSize({2560, 1440});
+    if (!Check(Near(context.GetScale(), 4.0f / 3.0f) && Near(context.GetLayoutSize().x, 1920) &&
+               Near(context.GetLayoutSize().y, 1080), "a 1440p viewport is 1080 layout units tall")) local = false;
+
+    HUI::UISystem system;
+    auto screen = MakeScreen(1, 1);
+    auto button = std::make_unique<HUI::UIButton>("Corner");
+    button->SetPosition({1800, 1000});
+    button->SetSize({100, 50});
+    HUI::UIStyle style;
+    style.fontSize = 30.0f;
+    button->SetNormalStyle(style);
+    button->SetHoveredStyle(style);
+    button->SetPressedStyle(style);
+    bool clicked = false;
+    button->SetOnClicked([&]() { clicked = true; });
+    screen->GetRootCanvas()->AddChild(std::move(button));
+    system.AddScreen(screen);
+    system.Update(context); // lays the screen out, as the frame before a click does
+
+    const HUI::UIVec2 inside{1850.0f * 4.0f / 3.0f, 1025.0f * 4.0f / 3.0f};
+    context.QueueMouseMove(inside);
+    context.QueueMousePress(inside, 0);
+    context.QueueMouseRelease(inside, 0);
+    system.Update(context);
+    if (!Check(clicked, "a click in viewport pixels reaches the widget laid out in layout units")) local = false;
+
+    HUI::UIRenderer renderer;
+    system.Render(renderer);
+    const HUI::UIDrawRectCommand* rect = nullptr;
+    const HUI::UIDrawTextCommand* text = nullptr;
+    for (const HUI::UIDrawCommand& command : renderer.GetDrawCommands()) {
+        if (!rect) rect = std::get_if<HUI::UIDrawRectCommand>(&command);
+        if (!text) text = std::get_if<HUI::UIDrawTextCommand>(&command);
+    }
+    if (!Check(rect && Near(rect->rect.x, 2400) && Near(rect->rect.y, 1333.33f) && Near(rect->rect.width, 133.33f) &&
+               Near(rect->rect.height, 66.67f), "rectangles are drawn in viewport pixels")) local = false;
+    if (!Check(text && Near(text->fontSize, 40.0f), "text is drawn at the scaled size")) local = false;
+
+    context.SetUserScale(1.25f);
+    if (!Check(Near(context.GetScale(), 5.0f / 3.0f) && Near(context.GetLayoutSize().y, 864),
+               "the player's UI size multiplies the resolution scale")) local = false;
+    context.SetUserScale(9.0f);
+    if (!Check(Near(context.GetUserScale(), 2.0f), "the player's UI size is kept within range")) local = false;
     return local;
 }
 
@@ -678,6 +737,7 @@ int main(int argc, char* argv[]) {
     TestDrawCommandGeneration();
     TestLayoutAnchors();
     TestHitTesting();
+    TestResolutionScale();
     TestVisibility();
     TestOrdering();
     TestHuiAssetCompatibility(repoRoot);

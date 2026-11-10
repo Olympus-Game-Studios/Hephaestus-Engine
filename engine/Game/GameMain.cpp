@@ -719,6 +719,7 @@ int main(int argc, char* argv[]) {
     // ── Runtime UI ────────────────────────────────
     HUI::UISystem uiSystem;
     HUI::UIContext uiContext;
+    uiContext.SetReferenceHeight(HUI::kGameUIReferenceHeight);
     HUI::UIRenderer uiRenderer;
     uiContext.SetViewportSize({static_cast<float>(swap.extent.width), static_cast<float>(swap.extent.height)});
     bool sceneReloadFailed = false;

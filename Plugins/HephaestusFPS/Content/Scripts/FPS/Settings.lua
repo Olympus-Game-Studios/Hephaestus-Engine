@@ -1,6 +1,6 @@
--- Player settings: look sensitivity, field of view, comfort options, sound volumes and difficulty. Loaded from and
+-- Player settings: look sensitivity, field of view, comfort options, UI size, sound volumes and difficulty. Loaded from and
 -- saved to Storage ("settings"); the player script reads Settings.values every frame, and Settings.apply pushes
--- the rest (bus volumes, difficulty) to the engine.
+-- the rest (bus volumes, UI size, difficulty) to the engine.
 local Difficulty = require("FPS.AI.Difficulty")
 local Menu = require("FPS.Menu")
 
@@ -11,6 +11,7 @@ Settings.defaults = {
     fieldOfView = 0,    -- 0 keeps the game's own field of view (Settings.gameFieldOfView)
     viewBob = 1.0,      -- 0..1, multiplies the player's viewBobScale
     cameraShake = 1.0,  -- 0..1, multiplies the player's cameraShakeScale
+    uiScale = 1.0,      -- game UI size on top of its scaling with resolution
     masterVolume = 1.0,
     sfxVolume = 1.0,
     weaponsVolume = 1.0,
@@ -64,6 +65,9 @@ function Settings.apply()
             Audio.setBusVolume(bus, Settings.values[key])
         end
     end
+    if UI and UI.setScale then
+        UI.setScale(Settings.values.uiScale)
+    end
     Difficulty.setLevel(Settings.values.difficulty)
     Menu.reducedMotion = Settings.values.reducedMotion
 end
@@ -99,6 +103,7 @@ function Settings.page()
               format = function(v) return string.format("%d", v) end },
             slider("VIEW BOB", "viewBob", 0, 1, 0.1),
             slider("CAMERA SHAKE", "cameraShake", 0, 1, 0.1),
+            slider("UI SIZE", "uiScale", 0.75, 1.5, 0.05),
             slider("MASTER VOLUME", "masterVolume", 0, 1, 0.05),
             slider("EFFECTS VOLUME", "sfxVolume", 0, 1, 0.05),
             slider("WEAPONS VOLUME", "weaponsVolume", 0, 1, 0.05),

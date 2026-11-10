@@ -91,12 +91,12 @@
         "properties": {
           "text": "100 / 100",
           "anchor": "BottomLeft",
-          "size": [240, 36],
-          "margin": [56, 0, 0, 44],
+          "size": [300, 44],
+          "margin": [64, 0, 0, 48],
           "zOrder": 2
         },
         "style": {
-          "fontSize": 18,
+          "fontSize": 30,
           "fontBold": true,
           "textColor": [0.95, 0.38, 0.34, 1.0],
           "textShadow": true,
@@ -110,13 +110,13 @@
         "properties": {
           "text": "12 / 48",
           "anchor": "BottomRight",
-          "size": [210, 36],
+          "size": [260, 48],
           "textAlignment": "Right",
-          "margin": [0, 0, 56, 44],
+          "margin": [0, 0, 64, 48],
           "zOrder": 2
         },
         "style": {
-          "fontSize": 18,
+          "fontSize": 36,
           "fontBold": true,
           "textColor": [1.0, 1.0, 1.0, 1.0],
           "textShadow": true,
@@ -130,14 +130,14 @@
         "properties": {
           "text": "Frag 2   Smoke 2",
           "anchor": "BottomRight",
-          "size": [260, 28],
+          "size": [320, 28],
           "textAlignment": "Right",
-          "margin": [0, 0, 56, 122],
+          "margin": [0, 0, 64, 134],
           "visible": false,
           "zOrder": 2
         },
         "style": {
-          "fontSize": 14,
+          "fontSize": 18,
           "fontBold": true,
           "textColor": [1.0, 1.0, 1.0, 0.85],
           "textShadow": true,
@@ -151,13 +151,13 @@
         "properties": {
           "text": "Pistol",
           "anchor": "BottomRight",
-          "size": [210, 24],
+          "size": [260, 30],
           "textAlignment": "Right",
-          "margin": [0, 0, 56, 86],
+          "margin": [0, 0, 64, 100],
           "zOrder": 2
         },
         "style": {
-          "fontSize": 14,
+          "fontSize": 20,
           "textColor": [0.88, 0.88, 0.88, 1.0],
           "textShadow": true,
           "textShadowColor": [0.0, 0.0, 0.0, 0.85],
@@ -170,13 +170,13 @@
         "properties": {
           "text": "",
           "anchor": "BottomCenter",
-          "size": [560, 32],
+          "size": [720, 40],
           "textAlignment": "Center",
-          "margin": [0, 0, 0, 96],
+          "margin": [0, 0, 0, 120],
           "zOrder": 2
         },
         "style": {
-          "fontSize": 16,
+          "fontSize": 22,
           "fontBold": true,
           "textColor": [1.0, 0.92, 0.4, 1.0],
           "textShadow": true,
@@ -361,14 +361,14 @@
           "textAlignment": "Center",
           "hAlignment": "Center",
           "vAlignment": "Center",
-          "position": [0, -170],
-          "size": [1000, 64],
+          "position": [0, -180],
+          "size": [1200, 76],
           "visible": false,
           "interactable": false,
           "zOrder": 5
         },
         "style": {
-          "fontSize": 44,
+          "fontSize": 56,
           "fontBold": true,
           "textColor": [1.0, 1.0, 1.0, 1.0],
           "textShadow": true,
@@ -384,14 +384,14 @@
           "textAlignment": "Center",
           "hAlignment": "Center",
           "vAlignment": "Center",
-          "position": [0, -116],
-          "size": [1000, 36],
+          "position": [0, -112],
+          "size": [1200, 40],
           "visible": false,
           "interactable": false,
           "zOrder": 5
         },
         "style": {
-          "fontSize": 20,
+          "fontSize": 26,
           "fontBold": false,
           "textColor": [0.92, 0.92, 0.92, 1.0],
           "textShadow": true,
@@ -406,14 +406,14 @@
           "text": "",
           "textAlignment": "Center",
           "anchor": "TopCenter",
-          "position": [0, 18],
-          "size": [500, 30],
+          "position": [0, 24],
+          "size": [700, 40],
           "visible": false,
           "interactable": false,
           "zOrder": 3
         },
         "style": {
-          "fontSize": 18,
+          "fontSize": 28,
           "fontBold": true,
           "textColor": [1.0, 1.0, 1.0, 0.95],
           "textShadow": true,

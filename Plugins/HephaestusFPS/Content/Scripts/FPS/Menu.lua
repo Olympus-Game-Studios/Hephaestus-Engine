@@ -20,8 +20,8 @@ Menu.theme = {
     tile = { r = 0.04, g = 0.035, b = 0.03, a = 0.72 },
     track = { r = 1.0, g = 1.0, b = 1.0, a = 0.18 },
     font = "Roboto",
-    labelSize = 22,
-    titleSize = 30,
+    labelSize = 26,
+    titleSize = 34,
     labelPaddingLeft = 18,  -- inside the highlight, before the label's first drawn pixel
     labelPaddingRight = 18, -- after its last
 }
@@ -117,7 +117,7 @@ local function activate(menu, index)
 end
 
 -- options: x (where the labels' and title's text starts; highlights reach out to the left of it by their padding),
--- y (top of the list), width, rowHeight, labelSize (padding scales with it), backdrop (a dark layer over the whole
+-- y (top of the list), width, rowHeight, labelSize (padding and the value column scale with it), backdrop (a dark layer over the whole
 -- screen), hints, tiles (each button item sits on its own tile sized to its label).
 function Menu.new(name, options)
     options = options or {}
@@ -126,7 +126,7 @@ function Menu.new(name, options)
         x = options.x or 96,
         y = options.y or 300,
         width = options.width or 560,
-        rowHeight = options.rowHeight or 50,
+        rowHeight = options.rowHeight or 56,
         pages = {},
         selected = 1,
         rows = {},
@@ -138,6 +138,8 @@ function Menu.new(name, options)
     menu.padLeft = math.floor(Menu.theme.labelPaddingLeft * scale + 0.5)
     menu.padRight = math.floor(Menu.theme.labelPaddingRight * scale + 0.5)
     menu.barX = menu.x - menu.padLeft
+    local valueSize = math.floor(20 * scale + 0.5)
+    local arrowSize = math.floor(22 * scale + 0.5)
     local root = UI.getRoot(menu.screen)
     menu.root = root
     if options.backdrop then
@@ -157,12 +159,12 @@ function Menu.new(name, options)
         local y = menu.y + (i - 1) * menu.rowHeight
         local row = menu.rows[i]
         row.label = text(menu, root, "", menu.x, y, menu.width, menu.rowHeight - 8, menu.labelSize, true)
-        row.value = text(menu, root, "", menu.x + menu.width - 250, y, 196, menu.rowHeight - 8, 20, false, nil, "Right")
+        row.value = text(menu, root, "", menu.x + menu.width - 250, y, 196, menu.rowHeight - 8, valueSize, false, nil, "Right")
         row.trackBack = panel(root, menu.x + menu.width - 250, y + menu.rowHeight - 18, 196, 3, Menu.theme.track)
         row.trackFill = panel(root, menu.x + menu.width - 250, y + menu.rowHeight - 18, 0, 3, Menu.theme.accent)
         row.button = button(root, "", menu.barX, y, menu.width, menu.rowHeight - 8, 22)
-        row.less = button(root, "<", menu.x + menu.width - 290, y, 36, menu.rowHeight - 8, 22, Menu.theme.ink)
-        row.more = button(root, ">", menu.x + menu.width - 50, y, 36, menu.rowHeight - 8, 22, Menu.theme.ink)
+        row.less = button(root, "<", menu.x + menu.width - 290, y, 36, menu.rowHeight - 8, arrowSize, Menu.theme.ink)
+        row.more = button(root, ">", menu.x + menu.width - 50, y, 36, menu.rowHeight - 8, arrowSize, Menu.theme.ink)
         UI.setOnHover(row.button, function(hovered)
             if hovered and menu.visible then
                 menu.selected = i

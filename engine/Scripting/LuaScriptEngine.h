@@ -608,6 +608,8 @@ private:
     static int Lua_UI_setScreenVisible(lua_State* L);
     static int Lua_UI_setScreenActive(lua_State* L);
     static int Lua_UI_setViewportSize(lua_State* L);
+    static int Lua_UI_setScale(lua_State* L);
+    static int Lua_UI_getScale(lua_State* L);
     static int Lua_UI_getDrawCommandCount(lua_State* L);
     static int Lua_UI_setPosition(lua_State* L);
     static int Lua_UI_setSize(lua_State* L);

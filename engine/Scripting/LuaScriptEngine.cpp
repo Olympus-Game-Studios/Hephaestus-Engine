@@ -6206,6 +6206,12 @@ void LuaScriptEngine::RegisterUIBindings() {
     lua_pushcfunction(m_State, Lua_UI_setViewportSize);
     lua_setfield(m_State, -2, "setViewportSize");
 
+    lua_pushcfunction(m_State, Lua_UI_setScale);
+    lua_setfield(m_State, -2, "setScale");
+
+    lua_pushcfunction(m_State, Lua_UI_getScale);
+    lua_setfield(m_State, -2, "getScale");
+
     lua_pushcfunction(m_State, Lua_UI_getDrawCommandCount);
     lua_setfield(m_State, -2, "getDrawCommandCount");
 
@@ -6409,7 +6415,7 @@ int LuaScriptEngine::Lua_UI_createSimpleMenu(lua_State* L) {
     if (!screen) {
         screen = Hephaestus::HephaestusUI::CreateSimpleMenuScreen();
         if (engine->m_UIContext) {
-            screen->SetViewportSize(engine->m_UIContext->GetViewportSize());
+            screen->SetViewportSize(engine->m_UIContext->GetLayoutSize());
         }
         engine->m_UISystem->AddScreen(screen);
     }
@@ -6437,7 +6443,7 @@ int LuaScriptEngine::Lua_UI_createScreen(lua_State* L) {
     if (!screen) {
         screen = std::make_shared<Hephaestus::HephaestusUI::UIScreen>(screenName);
         if (engine->m_UIContext) {
-            screen->SetViewportSize(engine->m_UIContext->GetViewportSize());
+            screen->SetViewportSize(engine->m_UIContext->GetLayoutSize());
         }
         engine->m_UISystem->AddScreen(screen);
     }
@@ -6712,6 +6718,33 @@ int LuaScriptEngine::Lua_UI_setScreenActive(lua_State* L) {
 #endif
 }
 
+int LuaScriptEngine::Lua_UI_setScale(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->m_UIContext) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    engine->m_UIContext->SetUserScale(static_cast<float>(luaL_checknumber(L, 1)));
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_getScale(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushnumber(L, engine && engine->m_UIContext ? engine->m_UIContext->GetUserScale() : 1.0);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
 int LuaScriptEngine::Lua_UI_setViewportSize(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
@@ -6727,7 +6760,7 @@ int LuaScriptEngine::Lua_UI_setViewportSize(lua_State* L) {
     engine->m_UIContext->SetViewportSize(size);
     for (const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>& screen : engine->m_UISystem->GetScreens()) {
         if (screen) {
-            screen->SetViewportSize(size);
+            screen->SetViewportSize(engine->m_UIContext->GetLayoutSize());
         }
     }
 
