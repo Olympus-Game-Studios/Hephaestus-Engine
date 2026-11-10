@@ -164,7 +164,7 @@ function onUpdate(dt)
 end
 ```
 
-A page item is a button (`label`, `action`), a slider (`kind = "slider"`, `min`, `max`, `step`, `get`, `set`, optional `format`) or a choice (`kind = "choice"`, `options = { { value, text }, ... }`, `get`, `set`). `Menu.push` opens a page on top, and Escape returns to the one before. `Menu.theme` holds the colours and font.
+A page item is a button (`label`, `action`), a slider (`kind = "slider"`, `min`, `max`, `step`, `get`, `set`, optional `format`) or a choice (`kind = "choice"`, `options = { { value, text }, ... }`, `get`, `set`). `Menu.push` opens a page on top, and Escape returns to the one before. `Menu.theme` holds the colours and font. Pass `tiles = true` to `Menu.new` to put each button on its own dark tile sized to its label instead of a full-width bar.
 
 ## Scripts
 

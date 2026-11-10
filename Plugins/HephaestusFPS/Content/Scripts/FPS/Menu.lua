@@ -17,6 +17,7 @@ Menu.theme = {
     ink = { r = 0.06, g = 0.05, b = 0.04, a = 1.0 },
     clear = { r = 0, g = 0, b = 0, a = 0 },
     bar = { r = 0.0, g = 0.0, b = 0.0, a = 0.6 },
+    tile = { r = 0.04, g = 0.035, b = 0.03, a = 0.72 },
     track = { r = 1.0, g = 1.0, b = 1.0, a = 0.18 },
     font = "Roboto",
 }
@@ -106,7 +107,8 @@ local function activate(menu, index)
     end
 end
 
--- options: x, y (top of the list), width, rowHeight, backdrop (a dark layer over the whole screen), hints.
+-- options: x, y (top of the list), width, rowHeight, backdrop (a dark layer over the whole screen), hints, tiles
+-- (each button item sits on its own tile sized to its label instead of a full-width bar).
 function Menu.new(name, options)
     options = options or {}
     local menu = {
@@ -119,6 +121,7 @@ function Menu.new(name, options)
         selected = 1,
         rows = {},
         visible = true,
+        tiles = options.tiles or false,
     }
     local root = UI.getRoot(menu.screen)
     menu.root = root
@@ -132,6 +135,7 @@ function Menu.new(name, options)
     for i = 1, MAX_ROWS do
         local y = menu.y + (i - 1) * menu.rowHeight
         local row = {}
+        row.tile = panel(root, menu.x, y, menu.width, menu.rowHeight - 8, Menu.theme.tile)
         row.bar = panel(root, menu.x, y, menu.width, menu.rowHeight - 8, Menu.theme.accent)
         row.label = text(menu, root, "", menu.x + 18, y, menu.width - 36, menu.rowHeight - 8, 22, true)
         row.value = text(menu, root, "", menu.x + menu.width - 250, y, 196, menu.rowHeight - 8, 20, false, nil, "Right")
@@ -238,6 +242,8 @@ function Menu.refresh(menu)
         local hasValue = item ~= nil and (item.kind == "slider" or item.kind == "choice")
         UI.setVisible(row.button, item ~= nil)
         UI.setVisible(row.label, item ~= nil)
+        local tiled = menu.tiles and item ~= nil and not hasValue
+        UI.setVisible(row.tile, tiled and not selected)
         UI.setVisible(row.bar, selected)
         UI.setVisible(row.value, hasValue)
         UI.setVisible(row.trackBack, item ~= nil and item.kind == "slider")
@@ -246,6 +252,12 @@ function Menu.refresh(menu)
         UI.setVisible(row.more, hasValue and selected)
         if item then
             UI.setText(row.label, item.label)
+            local barWidth = menu.width
+            if tiled then
+                barWidth = math.min(menu.width, 40 + #item.label * 17)
+            end
+            UI.setSize(row.tile, barWidth, menu.rowHeight - 8)
+            UI.setSize(row.bar, barWidth, menu.rowHeight - 8)
             local color = selected and theme.ink or theme.text
             UI.setTextColor(row.label, color.r, color.g, color.b, color.a)
             UI.setTextColor(row.value, color.r, color.g, color.b, color.a)
