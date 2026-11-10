@@ -179,17 +179,6 @@ BuildResult BuildService::execute(const BuildRequest& originalRequest) const {
                  "Rebuild HephaestusGame before packaging a different project."});
         }
     }
-    if (request.enableRuntimeAutomation && m_runtimeBuilder) {
-        log("Restoring the shared game runtime after automation-specific packaging");
-        const CancellationCallback neverCancel = []() { return false; };
-        if (!m_runtimeBuilder->build(request.engineRoot, request.configuration, {},
-                                     log, neverCancel, false)) {
-            result.problems.push_back(
-                {ProblemSeverity::Warning, "BUILD_RUNTIME_AUTOMATION_RESTORE_FAILED",
-                 "The package was created, but the shared runtime could not be restored",
-                 "Rebuild HephaestusGame before packaging a different project."});
-        }
-    }
     if (!staged.success) {
         log(staged.cancelled ? "Packaging cancelled" : "Packaging failed");
         return result;

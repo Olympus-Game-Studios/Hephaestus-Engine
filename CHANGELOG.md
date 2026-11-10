@@ -164,6 +164,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-11-10: Development packages with runtime automation build their game runtime in a separate `build-automation` folder instead of switching `HEPHAESTUS_RUNTIME_AUTOMATION` on in the shared `build` folder. A cancelled or failed automation package could leave the option on for later builds, and every automation package rebuilt the shared runtime afterwards to switch it off again; both are gone.
 - 2026-11-10: Prefabs spawned from Lua with `Scene.instantiate` were invisible when no entity already in the scene used the same mesh file. The editor and packaged games now load the mesh when the prefab is spawned.
 - 2026-11-10: The FPS HUD stopped updating when health was not a whole number, as after blast damage; it now shows health rounded up.
 - 2026-11-09: Prefabs made from selection store their mesh paths as project keys (`assets/...`), and scenes store prefab instance paths the same way. Both were absolute paths before, so a prefab or a scene using one broke when the project moved to another folder or machine, or into a packaged game.
