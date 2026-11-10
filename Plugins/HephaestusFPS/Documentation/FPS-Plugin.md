@@ -124,6 +124,7 @@ Everything about how well enemies fight comes from `FPS.AI.Difficulty`. It has f
 | `flankChance`, `flankDistance` | Chance to go round your cover each time it considers it, and how far from you it goes. |
 | `grenadeChance`, `grenadeCount`, `grenadeCooldownSeconds` | Chance to throw a frag each time it considers it, how many it carries, and the time between throws. |
 | `grenadeMinDistance`, `grenadeMaxDistance`, `grenadeErrorMetres`, `grenadeDamageScale` | The range it throws at, how far from you a throw may land, and its damage multiplier. |
+| `smokeFireChance`, `smokeFireSpreadDegrees` | The chance it keeps firing into smoke that hides you, at your last known spot, and the extra spread it fires with. |
 
 A settings menu can change all enemies at once: `Difficulty.setLevel("hardened")` picks a preset, `Difficulty.setOverride("damageScale", 0.5)` changes one value on top of any preset (`nil` removes it), and `Difficulty.clearOverrides()` removes them all. Enemies read their settings when they spawn. One enemy can use its own level with its `difficulty` variable, and its own values with `skillOverrides` (`"aggression=0.9;grenadeAwareness=false"`), which win over everything else.
 
