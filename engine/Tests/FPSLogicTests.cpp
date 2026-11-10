@@ -1077,6 +1077,16 @@ check(#shown == 2 and near(shown[1].angle, 0, 0.01) and near(shown[2].angle, -ma
 check(near(shown[1].alpha, 1 - 0.2 / 1.5, 0.001) and near(shown[2].alpha, 0.2, 0.001), "older hits are fainter")
 check(#DamageDirection.compute({ x = 0, y = 0, z = 0 }, 0, hits, 5, 1.5, 4) == 0, "hits fade out completely")
 
+local Difficulty = require("FPS.AI.Difficulty")
+check(Difficulty.resolve("recruit").smokeFireChance == 0, "recruits never fire blind into smoke")
+local previous = 0
+for _, name in ipairs(Difficulty.levels()) do
+    local skill = Difficulty.resolve(name)
+    check(skill.smokeFireChance >= previous and skill.smokeFireSpreadDegrees > 0,
+          name .. " fires into smoke at least as often as the level below, with extra spread")
+    previous = skill.smokeFireChance
+end
+
 if #failures > 0 then error(table.concat(failures, "\n")) end
 )lua";
     if (luaL_dostring(L, kCombatChecks) != LUA_OK) {

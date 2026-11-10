@@ -12,6 +12,7 @@ local Mover = require("FPS.AI.Mover")
 local Cover = require("FPS.AI.Cover")
 local Brain = require("FPS.AI.Brain")
 local Tactics = require("FPS.AI.Tactics")
+local Smoke = require("FPS.AI.Smoke")
 local Tracers = require("FPS.Tracers")
 
 Expose.number("maxHealth", 100)
@@ -64,6 +65,7 @@ local yaw = 0
 local ignore = {}
 local awareness = 0
 local lastKnown = nil
+local smokeFire = nil -- once smoke hides the player: whether this enemy keeps firing into it (rolled once)
 local visible = false
 local visibleTime = 0
 local lostTime = 0
@@ -173,22 +175,23 @@ local function aimError(row)
     return errorDegrees + skill.movingTargetErrorDegrees * (row.speed or 0)
 end
 
-local function fireShot(row)
+-- aimPoint (optional) shoots there instead of at the player, with extraSpread degrees more error: blind fire.
+local function fireShot(row, aimPoint, extraSpread)
     local feet = playerFeet(row)
-    if not feet then
+    if not feet and not aimPoint then
         return
     end
     local e = eye()
     local fx, fz = facing()
     local muzzle = { x = e.x + fx * 0.5 - fz * 0.15, y = e.y - 0.15, z = e.z + fz * 0.5 + fx * 0.15 }
-    local target = { x = feet.x, y = feet.y + (row.eyeHeight or 1.6) * 0.75, z = feet.z }
+    local target = aimPoint or { x = feet.x, y = feet.y + (row.eyeHeight or 1.6) * 0.75, z = feet.z }
     local dx, dy, dz = target.x - muzzle.x, target.y - muzzle.y, target.z - muzzle.z
     local length = math.sqrt(dx * dx + dy * dy + dz * dz)
     if length < 1e-3 then
         return
     end
-    dx, dy, dz = Gunplay.spreadDirection(dx / length, dy / length, dz / length, math.rad(aimError(row)), random(),
-                                         random())
+    dx, dy, dz = Gunplay.spreadDirection(dx / length, dy / length, dz / length,
+                                         math.rad(aimError(row) + (extraSpread or 0)), random(), random())
     local hit = Physics.raycast(muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, range, "Character", true, ignore)
     -- What the player sees: a flash at the rifle's real muzzle and a tracer from there to where the shot ends.
     local barrel = Registry.muzzles[selfKey] or muzzle
@@ -220,8 +223,9 @@ local function fireShot(row)
     Registry.reportNoise(muzzle.x, muzzle.y, muzzle.z, 40, "enemy")
 end
 
--- Bursts at the player while canShoot, after the reaction delay; reloads when the magazine is empty.
-local function updateFiring(dt, canShoot, row)
+-- Bursts at the player while canShoot, after the reaction delay; reloads when the magazine is empty. aimPoint and
+-- extraSpread pass through to fireShot for blind fire.
+local function updateFiring(dt, canShoot, row, aimPoint, extraSpread)
     if fire.reloading > 0 then
         fire.reloading = fire.reloading - dt
         if fire.reloading <= 0 then
@@ -251,7 +255,7 @@ local function updateFiring(dt, canShoot, row)
     end
     fire.shotTimer = fire.shotTimer - dt
     while fire.shotTimer <= 0 and fire.burstLeft > 0 and fire.magazine > 0 do
-        fireShot(row)
+        fireShot(row, aimPoint, extraSpread)
         fire.burstLeft = fire.burstLeft - 1
         fire.magazine = fire.magazine - 1
         fire.shotTimer = fire.shotTimer + 1 / math.max(skill.roundsPerSecond, 0.1)
@@ -553,7 +557,24 @@ states.combat = {
             awareness = 0.5
             return "investigate", lastKnown, false
         end
-        updateFiring(dt, visible, row)
+        -- Smoke between this enemy and where it last saw the player: some keep firing into it at that spot.
+        local suppress = nil
+        if visible then
+            smokeFire = nil
+        elseif lastKnown then
+            local spot = { x = lastKnown.x, y = lastKnown.y + (row.eyeHeight or 1.6) * 0.75, z = lastKnown.z }
+            if Smoke.blocks(eye(), spot, Registry.smokeClouds) then
+                if smokeFire == nil then
+                    smokeFire = random() < (skill.smokeFireChance or 0)
+                    if debugAI then
+                        engine_log(string.format("[FPS.Enemy] %s lost sight in smoke, %s", this:GetName(),
+                                                 smokeFire and "firing into it" or "holding fire"))
+                    end
+                end
+                suppress = smokeFire and spot or nil
+            end
+        end
+        updateFiring(dt, visible or suppress ~= nil, row, suppress, suppress and skill.smokeFireSpreadDegrees or 0)
         return nil
     end,
 }

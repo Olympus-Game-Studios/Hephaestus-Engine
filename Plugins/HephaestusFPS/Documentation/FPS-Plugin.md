@@ -75,7 +75,7 @@ A grenade prefab is a mesh with a dynamic Rigid Body, a collision shape and `Gre
 
 - `kind` is `frag` or `smoke`, and `fuseSeconds` starts counting when it is thrown.
 - A frag spawns `effectPrefab` and plays `sound` (3D, heard out to `soundMaxDistance`), then damages everything with health within `radius`: full `damage` inside `innerRadius`, falling to none at `radius`. Cover between the blast and a target blocks it, and that includes the player. The player's camera shakes by up to `shakeDegrees` within `shakeRadius`.
-- A smoke grenade spawns `effectPrefab` (the cloud) and plays `sound`, and removes itself after `smokeSeconds`. Enemies cannot see through the cloud: it blocks their sight once it has swelled (over 3 seconds, to 4 m across its thick middle) until it thins out in its last 4 seconds, and an enemy standing in it cannot see out. Enemies that lose sight of the player this way search where they last saw them.
+- A smoke grenade spawns `effectPrefab` (the cloud) and plays `sound`, and removes itself after `smokeSeconds`. Enemies cannot see through the cloud: it blocks their sight once it has swelled (over 3 seconds, to 4 m across its thick middle) until it thins out in its last 4 seconds, and an enemy standing in it cannot see out. Enemies that lose sight of the player this way search where they last saw them; until they do, some keep firing short bursts into the smoke at that spot with extra spread (`smokeFireChance` and `smokeFireSpreadDegrees` in the difficulty levels: never for recruits, most often for veterans).
 
 Use a box collision shape: a sphere or capsule never stops rolling, because the physics has no rolling resistance.
 
