@@ -52,6 +52,12 @@ function Logic.directionSpeedScale(forwardAxis, rightAxis, strafeScale, backScal
     return strafeScale + (towards - strafeScale) * along * along
 end
 
+-- Speed scale through a slide: from startScale, easing down to endScale by the end of duration.
+function Logic.slideSpeedScale(elapsed, duration, startScale, endScale)
+    local t = duration > 0 and math.min(1, math.max(0, elapsed / duration)) or 1
+    return startScale + (endScale - startScale) * t * t * (3 - 2 * t)
+end
+
 -- Speed scale after a hard landing: starts at slowScale and eases back to 1 over seconds.
 function Logic.landingSpeedScale(elapsed, seconds, slowScale)
     if not elapsed or seconds <= 0 or elapsed >= seconds then

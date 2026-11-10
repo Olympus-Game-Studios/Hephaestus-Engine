@@ -25,6 +25,13 @@ Expose.number("crouchSpeedScale", 0.6)
 Expose.number("landingSlowScale", 0.6)
 Expose.number("landingSlowSeconds", 0.3)
 Expose.number("landingSlowMinSpeed", 4)
+Expose.bool("slideEnabled", true)
+Expose.number("slideBoost", 1.15)
+Expose.number("slideSeconds", 0.8)
+Expose.number("slideCooldown", 0.6)
+Expose.number("slideSteer", 1.5)
+Expose.number("slideFovBoost", 6)
+Expose.number("slideRollDegrees", 4)
 Expose.number("fieldOfView", 80)
 Expose.number("fullSpreadMoveSpeed", 5.0)
 Expose.number("interactDistance", 2.5)
@@ -84,6 +91,9 @@ local cameraKickYaw = { x = 0, v = 0 }
 local cameraKickOmega, cameraKickZeta = 24, 0.6
 local wasGrounded = true
 local sinceHardLanding = nil
+local slide = nil
+local slideCooldownRemaining = 0
+local slideBlend = 0
 local fallSpeed = 0
 local footfallThisFrame = false
 local stepCount = 0
@@ -267,7 +277,8 @@ local function updateCameraKick(dt)
 end
 
 local function applyCameraRotation()
-    Camera.setRotation(pitch + cameraKickPitch.x, cameraKickYaw.x, 0)
+    local motion = presentationEnabled and Gunplay.clamp(viewBobScale, 0, 1) or 0
+    Camera.setRotation(pitch + cameraKickPitch.x, cameraKickYaw.x, -math.rad(slideRollDegrees) * slideBlend * motion)
 end
 
 -- Plain trigger volumes are skipped so a large sensor cannot hide the interactable inside it.
@@ -382,7 +393,8 @@ local function updateFieldOfView(row)
     end
     if cameraObject then
         local ads = row and row.adsFovBlend or 0
-        cameraObject:SetFov(Gunplay.lerp(fieldOfView, row and row.adsFov or fieldOfView, ads))
+        local base = fieldOfView + slideFovBoost * slideBlend
+        cameraObject:SetFov(Gunplay.lerp(base, row and row.adsFov or base, ads))
     end
 end
 
@@ -404,6 +416,9 @@ function onAwake()
     wasGrounded = true
     fallSpeed = 0
     sinceHardLanding = nil
+    slide = nil
+    slideCooldownRemaining = 0
+    slideBlend = 0
     cameraKickPitch = { x = 0, v = 0 }
     cameraKickYaw = { x = 0, v = 0 }
     footsteps = parseList(footstepSounds)
@@ -440,29 +455,68 @@ function onUpdate(dt)
         local basis = Logic.yawBasis(yaw)
         local forward = Input.getAxis("MoveForward") or 0
         local right = Input.getAxis("MoveRight") or 0
-        Character.move(basis.forward.x * forward + basis.right.x * right,
-                       basis.forward.z * forward + basis.right.z * right)
-        if Input.isActionPressed("Jump") then
-            Character.jump()
-        end
+        local wishX = basis.forward.x * forward + basis.right.x * right
+        local wishZ = basis.forward.z * forward + basis.right.z * right
         local crouchHeld = Input.isActionDown("Crouch")
-        Character.setCrouched(crouchHeld)
-        local crouched = crouchHeld or Character.isCrouched() or Character.isStandBlocked()
+        local jumpPressed = Input.isActionPressed("Jump")
         commands.fireHeld = Input.isActionDown("Fire")
         commands.firePressed = Input.isActionPressed("Fire")
         commands.aimHeld = Input.isActionDown("Aim")
-        -- Firing or aiming ends a sprint; the weapon then waits its sprint-to-fire time.
-        sprinting = Logic.sprintAllowed(forward, crouched) and Input.isActionDown("Sprint")
-            and not commands.fireHeld and not commands.aimHeld
-        local adsMove = row and Gunplay.lerp(1, row.adsMoveMultiplier or 1, row.adsBlend or 0) or 1
-        local scale = sprinting and sprintMultiplier
-            or adsMove * Logic.directionSpeedScale(forward, right, strafeSpeedScale, backpedalSpeedScale)
-                * (crouched and crouchSpeedScale or 1)
-        if sinceHardLanding then
-            sinceHardLanding = sinceHardLanding + dt
-            scale = scale * Logic.landingSpeedScale(sinceHardLanding, landingSlowSeconds, landingSlowScale)
+        slideCooldownRemaining = math.max(0, slideCooldownRemaining - dt)
+        -- Pressing crouch while sprinting on the ground drops into a slide along the way the player is moving.
+        if not slide and slideEnabled and sprinting and Input.isActionPressed("Crouch") and Character.isGrounded()
+            and slideCooldownRemaining <= 0 then
+            local vel = Character.getVelocity() or {}
+            local vx, vz = vel.x or 0, vel.z or 0
+            local length = math.sqrt(vx * vx + vz * vz)
+            if length < 0.5 then
+                vx, vz, length = basis.forward.x, basis.forward.z, 1
+            end
+            slide = { elapsed = 0, dirX = vx / length, dirZ = vz / length, startScale = sprintMultiplier * slideBoost }
         end
-        Character.setSpeedMultiplier(scale)
+        if slide then
+            slide.elapsed = slide.elapsed + dt
+            -- The slide keeps its heading; move input only turns it slowly.
+            local steer = math.min(1, slideSteer * dt)
+            local dx, dz = slide.dirX + wishX * steer, slide.dirZ + wishZ * steer
+            local length = math.sqrt(dx * dx + dz * dz)
+            if length > 1e-4 then
+                slide.dirX, slide.dirZ = dx / length, dz / length
+            end
+            Character.move(slide.dirX, slide.dirZ)
+            Character.setCrouched(true)
+            Character.setSpeedMultiplier(Logic.slideSpeedScale(slide.elapsed, slideSeconds, slide.startScale,
+                                                               crouchSpeedScale))
+            sprinting = false
+            if jumpPressed or slide.elapsed >= slideSeconds or not Character.isGrounded() then
+                slide = nil
+                slideCooldownRemaining = slideCooldown
+                if jumpPressed then
+                    Character.setCrouched(false)
+                    Character.jump()
+                end
+            end
+        else
+            Character.move(wishX, wishZ)
+            if jumpPressed then
+                Character.jump()
+            end
+            Character.setCrouched(crouchHeld)
+            local crouched = crouchHeld or Character.isCrouched() or Character.isStandBlocked()
+            -- Firing or aiming ends a sprint; the weapon then waits its sprint-to-fire time.
+            sprinting = Logic.sprintAllowed(forward, crouched) and Input.isActionDown("Sprint")
+                and not commands.fireHeld and not commands.aimHeld
+            local adsMove = row and Gunplay.lerp(1, row.adsMoveMultiplier or 1, row.adsBlend or 0) or 1
+            local scale = sprinting and sprintMultiplier
+                or adsMove * Logic.directionSpeedScale(forward, right, strafeSpeedScale, backpedalSpeedScale)
+                    * (crouched and crouchSpeedScale or 1)
+            if sinceHardLanding then
+                sinceHardLanding = sinceHardLanding + dt
+                scale = scale * Logic.landingSpeedScale(sinceHardLanding, landingSlowSeconds, landingSlowScale)
+            end
+            Character.setSpeedMultiplier(scale)
+        end
+        slideBlend = Gunplay.approach(slideBlend, slide and 1 or 0, dt / 0.12)
         commands.reload = Input.isActionPressed("Reload")
         commands.interact = Input.isActionPressed("Interact")
         if Input.isActionPressed("NextWeapon") then
@@ -487,6 +541,7 @@ function onUpdate(dt)
         Character.move(0, 0)
         Character.setSpeedMultiplier(1)
         sprinting = false
+        slide = nil
         commands.fireHeld = false
         commands.firePressed = false
         commands.aimHeld = false
@@ -514,7 +569,7 @@ function onLateUpdate(dt)
     local grounded = Character.isGrounded()
     local speedXZ = vel and math.sqrt((vel.x or 0) ^ 2 + (vel.z or 0) ^ 2) or 0
     local player = Registry.player
-    updateFootsteps(speedXZ, grounded, dt)
+    updateFootsteps(speedXZ, grounded and not slide, dt)
     local landingSpeed = 0
     if not grounded then
         fallSpeed = math.max(fallSpeed, -((vel and vel.y) or 0))

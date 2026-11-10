@@ -721,6 +721,9 @@ check(diagonal > 0.85 and diagonal < 1, "a forward diagonal falls between strafe
 check(near(L.landingSpeedScale(0, 0.3, 0.6), 0.6) and L.landingSpeedScale(0.3, 0.3, 0.6) == 1
       and L.landingSpeedScale(0.15, 0.3, 0.6) > 0.6 and L.landingSpeedScale(0.15, 0.3, 0.6) < 1,
       "a hard landing slows the player and eases back to full speed")
+check(near(L.slideSpeedScale(0, 0.8, 1.84, 0.6), 1.84) and near(L.slideSpeedScale(0.8, 0.8, 1.84, 0.6), 0.6)
+      and near(L.slideSpeedScale(2, 0.8, 1.84, 0.6), 0.6) and L.slideSpeedScale(0.1, 0.8, 1.84, 0.6) > 1.75,
+      "a slide starts fast, keeps most of its speed early and ends at crouch speed")
 Physics = nil
 
 if #failures > 0 then error(table.concat(failures, "\n")) end
