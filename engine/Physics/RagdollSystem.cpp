@@ -3,6 +3,7 @@
 #include "CharacterControllerSystem.h"
 #include "JoltPhysicsEngine.h"
 #include "JoltPhysicsSystem.h"
+#include "../Assets/CharacterRuntime.h"
 #include "../Scene/CharacterComponent.h"
 #include "../Scene/CharacterControllerComponent.h"
 #include "../Scene/Components.h"
@@ -11,6 +12,7 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Collision/GroupFilterTable.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 
@@ -108,6 +110,165 @@ float DistanceToSegment(const Vec3& p, const Vec3& a, const Vec3& b) {
         t = std::clamp((ap.x * ab.x + ap.y * ab.y + ap.z * ab.z) / lengthSq, 0.0f, 1.0f);
     }
     return Length(Sub(p, Vec3(a.x + ab.x * t, a.y + ab.y * t, a.z + ab.z * t)));
+}
+
+Vec3 Midpoint(const Vec3& a, const Vec3& b) {
+    return Vec3((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f);
+}
+
+float Dot(const Vec3& a, const Vec3& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+Vec3 Scaled(const Vec3& v, float s) {
+    return Vec3(v.x * s, v.y * s, v.z * s);
+}
+
+Vec3 Add(const Vec3& a, const Vec3& b) {
+    return Vec3(a.x + b.x, a.y + b.y, a.z + b.z);
+}
+
+Vec3 Normalized(const Vec3& v, const Vec3& fallback) {
+    const float length = Length(v);
+    return length > 1e-6f ? Scaled(v, 1.0f / length) : fallback;
+}
+
+Vec3 Cross(const Vec3& a, const Vec3& b) {
+    return Vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+}
+
+float Percentile(std::vector<float>& values, float q) {
+    const size_t index = std::min(values.size() - 1, static_cast<size_t>(q * static_cast<float>(values.size() - 1)));
+    std::nth_element(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(index), values.end());
+    return values[index];
+}
+
+struct PartShape {
+    Vec3 center{0.0f, 0.0f, 0.0f};
+    JPH::Quat rotation = JPH::Quat::sIdentity();
+    JPH::Ref<JPH::Shape> shape;
+};
+
+constexpr size_t kMinFitPoints = 30;
+constexpr size_t kMaxSampledVertices = 40000;
+
+// The character's skinned vertices in its current pose, in world space, sorted by the part of their main bone.
+void CollectPartPoints(const CharacterComponent& character, const Mat4& entityWorld,
+                       const std::vector<int>& partOfBone, std::vector<std::vector<Vec3>>& outPoints) {
+    const std::vector<Mat4>& palette = character.bonePalette;
+    Hephaestus::CharacterRuntime::VisitSkinnedMeshes(
+        character.characterPath, [&](const std::vector<Hephaestus::SkinnedMeshPart>& meshes) {
+            size_t total = 0;
+            for (const auto& mesh : meshes) {
+                total += mesh.vertices.size();
+            }
+            const size_t stride = std::max<size_t>(1, total / kMaxSampledVertices);
+            size_t index = 0;
+            for (const auto& mesh : meshes) {
+                for (const auto& vertex : mesh.vertices) {
+                    if (index++ % stride != 0) {
+                        continue;
+                    }
+                    int main = -1;
+                    float best = 0.0f;
+                    Vec3 posed(0.0f, 0.0f, 0.0f);
+                    const Vec3 rest(vertex.pos[0], vertex.pos[1], vertex.pos[2]);
+                    for (int k = 0; k < Hephaestus::kMaxBoneInfluences; ++k) {
+                        const int joint = vertex.joints[k];
+                        const float weight = vertex.weights[k];
+                        if (weight <= 0.0f || joint >= static_cast<int>(partOfBone.size())
+                            || joint >= static_cast<int>(palette.size())) {
+                            continue;
+                        }
+                        posed = Add(posed, Scaled(Mat4::TransformPoint(palette[static_cast<size_t>(joint)], rest), weight));
+                        if (weight > best) {
+                            best = weight;
+                            main = joint;
+                        }
+                    }
+                    if (main >= 0) {
+                        outPoints[static_cast<size_t>(partOfBone[static_cast<size_t>(main)])].push_back(
+                            Mat4::TransformPoint(entityWorld, posed));
+                    }
+                }
+            }
+        });
+}
+
+PartShape TemplateCapsule(const Vec3& a, const Vec3& b, float radius) {
+    const Vec3 axis = Sub(b, a);
+    PartShape out;
+    out.center = Midpoint(a, b);
+    out.rotation = JPH::Quat::sFromTo(JPH::Vec3::sAxisY(), ToJolt(Normalized(axis, Vec3(0.0f, 1.0f, 0.0f))));
+    out.shape = new JPH::CapsuleShape(std::max(0.5f * Length(axis) - radius, 0.01f), radius);
+    return out;
+}
+
+// A capsule along a -> b around the part's vertices: centred on them, as long as they reach along the axis, with
+// the radius most of them sit at (gear and straps stick out further).
+bool FitCapsule(const std::vector<Vec3>& points, const Vec3& a, const Vec3& b, PartShape& out) {
+    if (points.size() < kMinFitPoints) {
+        return false;
+    }
+    const Vec3 u = Normalized(Sub(b, a), Vec3(0.0f, 1.0f, 0.0f));
+    std::vector<float> along;
+    along.reserve(points.size());
+    Vec3 meanPerp(0.0f, 0.0f, 0.0f);
+    for (const Vec3& point : points) {
+        const Vec3 rel = Sub(point, a);
+        const float t = Dot(rel, u);
+        along.push_back(t);
+        meanPerp = Add(meanPerp, Sub(rel, Scaled(u, t)));
+    }
+    meanPerp = Scaled(meanPerp, 1.0f / static_cast<float>(points.size()));
+    std::vector<float> radial;
+    radial.reserve(points.size());
+    for (size_t i = 0; i < points.size(); ++i) {
+        const Vec3 rel = Sub(points[i], a);
+        radial.push_back(Length(Sub(Sub(rel, Scaled(u, along[i])), meanPerp)));
+    }
+    const float radius = std::clamp(Percentile(radial, 0.6f), 0.025f, 0.25f);
+    const float low = Percentile(along, 0.02f);
+    const float high = Percentile(along, 0.98f);
+    out.center = Add(Add(a, Scaled(u, 0.5f * (low + high))), meanPerp);
+    out.rotation = JPH::Quat::sFromTo(JPH::Vec3::sAxisY(), ToJolt(u));
+    out.shape = new JPH::CapsuleShape(std::max(0.5f * (high - low) - radius, 0.01f), radius);
+    return true;
+}
+
+// A box around the part's vertices. `axis` is the box's X (acrossFirst) or Y; `second` is the other of the two.
+bool FitBox(const std::vector<Vec3>& points, const Vec3& origin, const Vec3& axis, const Vec3& second,
+            bool acrossFirst, PartShape& out) {
+    if (points.size() < kMinFitPoints) {
+        return false;
+    }
+    const Vec3 first = Normalized(axis, Vec3(1.0f, 0.0f, 0.0f));
+    const Vec3 other = Normalized(Sub(second, Scaled(first, Dot(second, first))), Vec3(0.0f, 0.0f, 1.0f));
+    const Vec3 x = acrossFirst ? first : other;
+    const Vec3 y = acrossFirst ? other : first;
+    const Vec3 z = Cross(x, y);
+    const Vec3 axes[3] = {x, y, z};
+    Vec3 center = origin;
+    float half[3];
+    for (int i = 0; i < 3; ++i) {
+        std::vector<float> coords;
+        coords.reserve(points.size());
+        for (const Vec3& point : points) {
+            coords.push_back(Dot(Sub(point, origin), axes[i]));
+        }
+        const float low = Percentile(coords, 0.03f);
+        const float high = Percentile(coords, 0.97f);
+        center = Add(center, Scaled(axes[i], 0.5f * (low + high)));
+        half[i] = std::max(0.5f * (high - low), 0.06f);
+    }
+    JPH::Mat44 basis = JPH::Mat44::sIdentity();
+    basis.SetColumn3(0, ToJolt(x));
+    basis.SetColumn3(1, ToJolt(y));
+    basis.SetColumn3(2, ToJolt(z));
+    out.center = center;
+    out.rotation = basis.GetQuaternion().Normalized();
+    out.shape = new JPH::BoxShape(JPH::Vec3(half[0], half[1], half[2]));
+    return true;
 }
 
 bool IsDescendant(entt::registry& registry, entt::entity entity, entt::entity ancestor) {
@@ -273,16 +434,46 @@ bool RagdollSystem::Start(Scene& scene, entt::entity entity, const RagdollStart&
         }
         segmentStart[p] = a;
         segmentEnd[p] = b;
-        const Vec3 axis = Sub(b, a);
-        const float length = Length(axis);
-        const float radius = kParts[p].radius;
-        const float halfHeight = std::max(0.5f * length - radius, 0.01f);
-        const JPH::Vec3 dir = length > 1e-4f ? ToJolt(axis) / length : JPH::Vec3::sAxisY();
-        const JPH::Quat rotation = JPH::Quat::sFromTo(JPH::Vec3::sAxisY(), dir);
-        const JPH::RVec3 center((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f);
+    }
 
-        JPH::BodyCreationSettings settings(new JPH::CapsuleShape(halfHeight, radius), center, rotation,
-                                           JPH::EMotionType::Dynamic, layer);
+    // Each bone belongs to the part that drives it or its nearest driven ancestor.
+    std::vector<int> partOfBone(static_cast<size_t>(skeleton.BoneCount()), 0);
+    for (int p = 0; p < kPartCount; ++p) {
+        partOfBone[static_cast<size_t>(p == 0 ? pelvisBone : from[p])] = -2 - p;
+    }
+    for (int b = 0; b < skeleton.BoneCount(); ++b) {
+        int& part = partOfBone[static_cast<size_t>(b)];
+        if (part <= -2) {
+            part = -2 - part;
+        } else {
+            const int parent = skeleton.bones[static_cast<size_t>(b)].parentEval;
+            part = parent >= 0 ? partOfBone[static_cast<size_t>(parent)] : 0;
+        }
+    }
+    std::vector<std::vector<Vec3>> points(kPartCount);
+    CollectPartPoints(character, entityWorld, partOfBone, points);
+
+    const Vec3 up = Sub(Origin(boneWorld(from[1])), Origin(boneWorld(pelvisBone)));
+    const Vec3 across = Sub(segmentStart[5], segmentStart[3]);
+    for (int p = 0; p < kPartCount; ++p) {
+        const Vec3 a = segmentStart[p];
+        const Vec3 b = segmentEnd[p];
+        PartShape fitted;
+        bool haveFit = false;
+        if (p <= 1) {
+            // Pelvis: X across the hips, Y up the spine. Chest: Y up the spine, X across the shoulders.
+            haveFit = p == 0 ? FitBox(points[p], Midpoint(a, b), Sub(b, a), up, true, fitted)
+                             : FitBox(points[p], Midpoint(a, b), Sub(b, a), across, false, fitted);
+        } else {
+            haveFit = FitCapsule(points[p], a, b, fitted);
+        }
+        if (!haveFit) {
+            fitted = TemplateCapsule(a, b, kParts[p].radius);
+        }
+        const JPH::RVec3 center(fitted.center.x, fitted.center.y, fitted.center.z);
+        const JPH::Quat rotation = fitted.rotation;
+
+        JPH::BodyCreationSettings settings(fitted.shape, center, rotation, JPH::EMotionType::Dynamic, layer);
         settings.mCollisionGroup = JPH::CollisionGroup(ragdoll->filter, group,
                                                        static_cast<JPH::CollisionGroup::SubGroupID>(p));
         settings.mLinearDamping = 0.1f;
