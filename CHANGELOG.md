@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- 2026-11-10: Bloom on the Environment (intensity, threshold and radius): bright areas glow into their surroundings, in the editor and in packaged games. Scenes without bloom render exactly as before.
 - 2026-11-10: Post processing on the Environment: exposure, contrast, saturation, a colour filter, vignette, film grain and scanlines, applied to the whole picture in the editor and in packaged games (game UI is drawn on top, untouched). Set them in the Environment inspector; scenes saved before keep their look.
 - 2026-11-10: FPS plugin menus: Escape (gamepad Start) pauses the game with Resume, Settings, Restart, Quit to menu and Quit game. Settings has look sensitivity, field of view, view bob, camera shake, volume for each sound group and difficulty, and is saved for next time. `FPS.Menu` builds the same style of menu from a script, for a main menu or anything else, and works with the keyboard, the mouse and a gamepad. FPS-Shooter has a main menu scene that starts the Survival level.
 

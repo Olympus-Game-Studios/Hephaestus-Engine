@@ -592,7 +592,10 @@ std::string WritePostProcessJson(const EnvironmentComponent::PostProcess& post)
     oss << "            \"colorFilter\": " << FormatVec3(post.colorFilter) << ",\n";
     oss << "            \"vignette\": " << FormatFloat(post.vignette) << ",\n";
     oss << "            \"grain\": " << FormatFloat(post.grain) << ",\n";
-    oss << "            \"scanlines\": " << FormatFloat(post.scanlines) << "\n";
+    oss << "            \"scanlines\": " << FormatFloat(post.scanlines) << ",\n";
+    oss << "            \"bloomIntensity\": " << FormatFloat(post.bloomIntensity) << ",\n";
+    oss << "            \"bloomThreshold\": " << FormatFloat(post.bloomThreshold) << ",\n";
+    oss << "            \"bloomRadius\": " << FormatFloat(post.bloomRadius) << "\n";
     oss << "          }\n";
     return oss.str();
 }
@@ -2134,6 +2137,9 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
                 number("vignette", env.post.vignette);
                 number("grain", env.post.grain);
                 number("scanlines", env.post.scanlines);
+                number("bloomIntensity", env.post.bloomIntensity);
+                number("bloomThreshold", env.post.bloomThreshold);
+                number("bloomRadius", env.post.bloomRadius);
                 if (const JsonValue* v = post->Find("colorFilter")) {
                     ParseVec3(*v, env.post.colorFilter);
                 }

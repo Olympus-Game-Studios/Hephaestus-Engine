@@ -85,7 +85,7 @@ private:
     QDoubleSpinBox* m_renderDistSpin = nullptr;
 
     // Post processing
-    QDoubleSpinBox* m_postSpins[6] = {};
+    QDoubleSpinBox* m_postSpins[9] = {};
     QPushButton*    m_postFilterBtn = nullptr;
     QColor          m_postFilter;
 };

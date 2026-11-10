@@ -37,7 +37,7 @@ int main() {
         pass &= Check(Near(post.exposure, 0.0f) && Near(post.contrast, 1.0f) && Near(post.saturation, 1.0f) &&
                           Near(post.colorFilter.x, 1.0f) && Near(post.colorFilter.y, 1.0f) &&
                           Near(post.colorFilter.z, 1.0f) && Near(post.vignette, 0.0f) && Near(post.grain, 0.0f) &&
-                          Near(post.scanlines, 0.0f),
+                          Near(post.scanlines, 0.0f) && Near(post.bloomIntensity, 0.0f),
                       "a new environment has no post processing");
     }
 
@@ -52,6 +52,9 @@ int main() {
         env.post.vignette = 0.7f;
         env.post.grain = 0.25f;
         env.post.scanlines = 0.1f;
+        env.post.bloomIntensity = 1.5f;
+        env.post.bloomThreshold = 2.0f;
+        env.post.bloomRadius = 0.4f;
 
         const std::string saved = SceneSerializer(scene).SerializeToString();
         Scene loaded("Loaded");
@@ -62,7 +65,9 @@ int main() {
             const auto& post = copy->post;
             pass &= Check(Near(post.exposure, -0.5f) && Near(post.contrast, 1.3f) && Near(post.saturation, 0.8f) &&
                               Near(post.colorFilter.y, 0.8f) && Near(post.colorFilter.z, 0.6f) &&
-                              Near(post.vignette, 0.7f) && Near(post.grain, 0.25f) && Near(post.scanlines, 0.1f),
+                              Near(post.vignette, 0.7f) && Near(post.grain, 0.25f) && Near(post.scanlines, 0.1f) &&
+                              Near(post.bloomIntensity, 1.5f) && Near(post.bloomThreshold, 2.0f) &&
+                              Near(post.bloomRadius, 0.4f),
                           "the round trip keeps every post-processing value");
         }
     }

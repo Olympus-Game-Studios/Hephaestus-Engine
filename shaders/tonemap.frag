@@ -1,6 +1,7 @@
 #version 450
 
 layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput sceneColor;
+layout(set = 0, binding = 1) uniform sampler2D bloom;
 
 layout(push_constant) uniform ToneMapPush {
     uint outputIsSrgb; // 1 when the swapchain format applies the sRGB encode in hardware
@@ -13,6 +14,7 @@ layout(push_constant) uniform ToneMapPush {
     float grain;
     float scanlines;
     float time;
+    float bloomIntensity;
 } pc;
 
 layout(location = 0) out vec4 outColor;
@@ -26,8 +28,12 @@ float hash(vec2 p) {
 }
 
 void main() {
-    vec4 hdr = subpassLoad(sceneColor);
-    vec3 color = max(hdr.rgb, vec3(0.0)) * exp2(pc.exposure) * pc.colorFilter.rgb;
+    vec2 uv = gl_FragCoord.xy / max(pc.viewportSize, vec2(1.0));
+    vec3 color = max(subpassLoad(sceneColor).rgb, vec3(0.0));
+    if (pc.bloomIntensity > 0.0) {
+        color += texture(bloom, uv).rgb * pc.bloomIntensity;
+    }
+    color *= exp2(pc.exposure) * pc.colorFilter.rgb;
     color = color / (color + vec3(1.0));
     color = pow(color, vec3(1.0 / 2.2));
 
@@ -35,7 +41,6 @@ void main() {
     color = mix(vec3(luma), color, pc.saturation);
     color = clamp((color - 0.5) * pc.contrast + 0.5, 0.0, 1.0);
 
-    vec2 uv = gl_FragCoord.xy / max(pc.viewportSize, vec2(1.0));
     vec2 centred = (uv - 0.5) * vec2(pc.viewportSize.x / max(pc.viewportSize.y, 1.0), 1.0);
     color *= 1.0 - pc.vignette * smoothstep(0.35, 1.05, length(centred));
     color *= 1.0 - pc.scanlines * step(mod(floor(gl_FragCoord.y), 3.0), 0.5);

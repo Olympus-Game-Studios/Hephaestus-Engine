@@ -139,8 +139,19 @@ struct ToneMapPush {
     float grain;
     float scanlines;
     float time;
+    float bloomIntensity;
 };
-static_assert(sizeof(ToneMapPush) == 56, "ToneMapPush must match tonemap.frag");
+static_assert(sizeof(ToneMapPush) == 60, "ToneMapPush must match tonemap.frag");
+
+struct BloomPush {
+    float sourceTexel[2];
+    float threshold;
+    float knee;
+    float radius;
+    uint32_t mode;
+};
+static_assert(sizeof(BloomPush) == 24, "BloomPush must match bloom.comp");
+constexpr uint32_t kBloomMaxMips = 6;
 
 // Inverse of tonemap.frag, so the display-referred clear color shows unchanged after tone mapping.
 static float DisplayToSceneLinear(float display) {
@@ -3952,7 +3963,9 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = m_swapchain->renderPass;
+    m_toneMap.bloomThisFrame = bloomEnabled(scene);
+    renderPassInfo.renderPass =
+        m_toneMap.bloomThisFrame ? m_swapchain->sceneOnlyRenderPass : m_swapchain->renderPass;
     renderPassInfo.framebuffer = m_swapchain->framebuffers[imageIndex];
     renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = m_swapchain->extent;
@@ -4545,7 +4558,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     if (config.isEditorMode && !config.isPlaying && m_probeGI.Active()) {
         m_probeGI.RecordDebug(cmd, imageIndex, m_descriptorSets[imageIndex]);
     }
-    recordToneMap(cmd, scene);
+    recordToneMap(cmd, scene, imageIndex);
 
     // Render editor grid (after opaque meshes, before transparent) — not in play/pause or shipped game
     if (config.isEditorMode && config.renderGrid && !config.isPlaying) {
@@ -5874,23 +5887,33 @@ bool EngineFrameRenderer::createToneMapResources()
 {
     VkDevice device = m_device->device;
 
-    VkDescriptorSetLayoutBinding binding{};
-    binding.binding = 0;
-    binding.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
-    binding.descriptorCount = 1;
-    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    VkDescriptorSetLayoutCreateInfo layoutCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layoutCI.bindingCount = 1;
-    layoutCI.pBindings = &binding;
-    if (vkCreateDescriptorSetLayout(device, &layoutCI, nullptr, &m_toneMap.setLayout) != VK_SUCCESS) {
+    if (!createBloomResources()) {
         return false;
     }
 
-    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1};
+    VkDescriptorSetLayoutBinding bindings[2]{};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo layoutCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    layoutCI.bindingCount = 2;
+    layoutCI.pBindings = bindings;
+    if (vkCreateDescriptorSetLayout(device, &layoutCI, nullptr, &m_toneMap.setLayout) != VK_SUCCESS) {
+        cleanupToneMapResources();
+        return false;
+    }
+
+    VkDescriptorPoolSize poolSizes[2] = {{VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1},
+                                         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}};
     VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolCI.maxSets = 1;
-    poolCI.poolSizeCount = 1;
-    poolCI.pPoolSizes = &poolSize;
+    poolCI.poolSizeCount = 2;
+    poolCI.pPoolSizes = poolSizes;
     if (vkCreateDescriptorPool(device, &poolCI, nullptr, &m_toneMap.descriptorPool) != VK_SUCCESS) {
         cleanupToneMapResources();
         return false;
@@ -5914,7 +5937,13 @@ bool EngineFrameRenderer::createToneMapResources()
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
     write.pImageInfo = &hdrInfo;
-    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    VkDescriptorImageInfo bloomInfo{m_bloom.sampler, m_bloom.mipViews[0], VK_IMAGE_LAYOUT_GENERAL};
+    VkWriteDescriptorSet bloomWrite = write;
+    bloomWrite.dstBinding = 1;
+    bloomWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bloomWrite.pImageInfo = &bloomInfo;
+    const VkWriteDescriptorSet writes[2] = {write, bloomWrite};
+    vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
 
     VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ToneMapPush)};
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -6016,16 +6045,262 @@ void EngineFrameRenderer::cleanupToneMapResources()
         vkDestroyDescriptorSetLayout(device, m_toneMap.setLayout, nullptr);
         m_toneMap.setLayout = VK_NULL_HANDLE;
     }
+    cleanupBloomResources();
 }
 
-void EngineFrameRenderer::recordToneMap(VkCommandBuffer cmd, Scene* scene)
+bool EngineFrameRenderer::createBloomResources()
 {
+    VkDevice device = m_device->device;
+    m_bloom.mipSizes.clear();
+    VkExtent2D size{std::max(1u, m_swapchain->extent.width / 2), std::max(1u, m_swapchain->extent.height / 2)};
+    while (m_bloom.mipSizes.size() < kBloomMaxMips && (m_bloom.mipSizes.empty() || (size.width >= 4 && size.height >= 4))) {
+        m_bloom.mipSizes.push_back(size);
+        size = {std::max(1u, size.width / 2), std::max(1u, size.height / 2)};
+    }
+    const uint32_t mips = static_cast<uint32_t>(m_bloom.mipSizes.size());
+
+    VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image.imageType = VK_IMAGE_TYPE_2D;
+    image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    image.extent = {m_bloom.mipSizes[0].width, m_bloom.mipSizes[0].height, 1};
+    image.mipLevels = mips;
+    image.arrayLayers = 1;
+    image.samples = VK_SAMPLE_COUNT_1_BIT;
+    image.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    VmaAllocationCreateInfo alloc{};
+    alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    if (vmaCreateImage(m_device->allocator, &image, &alloc, &m_bloom.image, &m_bloom.allocation, nullptr) != VK_SUCCESS) {
+        return false;
+    }
+    m_bloom.layoutReady = false;
+    for (uint32_t mip = 0; mip < mips; ++mip) {
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = m_bloom.image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, 0, 1};
+        VkImageView handle = VK_NULL_HANDLE;
+        if (vkCreateImageView(device, &view, nullptr, &handle) != VK_SUCCESS) {
+            cleanupBloomResources();
+            return false;
+        }
+        m_bloom.mipViews.push_back(handle);
+    }
+
+    VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sampler.magFilter = VK_FILTER_LINEAR;
+    sampler.minFilter = VK_FILTER_LINEAR;
+    sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    if (vkCreateSampler(device, &sampler, nullptr, &m_bloom.sampler) != VK_SUCCESS) {
+        cleanupBloomResources();
+        return false;
+    }
+
+    VkDescriptorSetLayoutBinding bindings[2]{};
+    bindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    VkDescriptorSetLayoutCreateInfo layoutCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    layoutCI.bindingCount = 2;
+    layoutCI.pBindings = bindings;
+    if (vkCreateDescriptorSetLayout(device, &layoutCI, nullptr, &m_bloom.setLayout) != VK_SUCCESS) {
+        cleanupBloomResources();
+        return false;
+    }
+
+    const uint32_t steps = 2 * mips - 1;
+    VkDescriptorPoolSize poolSizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, steps},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, steps}};
+    VkDescriptorPoolCreateInfo poolCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    poolCI.maxSets = steps;
+    poolCI.poolSizeCount = 2;
+    poolCI.pPoolSizes = poolSizes;
+    if (vkCreateDescriptorPool(device, &poolCI, nullptr, &m_bloom.descriptorPool) != VK_SUCCESS) {
+        cleanupBloomResources();
+        return false;
+    }
+    std::vector<VkDescriptorSetLayout> layouts(steps, m_bloom.setLayout);
+    m_bloom.sets.resize(steps);
+    VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    allocInfo.descriptorPool = m_bloom.descriptorPool;
+    allocInfo.descriptorSetCount = steps;
+    allocInfo.pSetLayouts = layouts.data();
+    if (vkAllocateDescriptorSets(device, &allocInfo, m_bloom.sets.data()) != VK_SUCCESS) {
+        cleanupBloomResources();
+        return false;
+    }
+    // Step 0 reads the HDR scene into mip 0; steps 1..mips-1 halve; the rest add each mip back into the one above.
+    auto writeStep = [&](uint32_t step, VkImageView source, VkImageLayout sourceLayout, uint32_t targetMip) {
+        VkDescriptorImageInfo sourceInfo{m_bloom.sampler, source, sourceLayout};
+        VkDescriptorImageInfo targetInfo{VK_NULL_HANDLE, m_bloom.mipViews[targetMip], VK_IMAGE_LAYOUT_GENERAL};
+        VkWriteDescriptorSet writes[2]{};
+        writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_bloom.sets[step], 0, 0, 1,
+                     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &sourceInfo, nullptr, nullptr};
+        writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_bloom.sets[step], 1, 0, 1,
+                     VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &targetInfo, nullptr, nullptr};
+        vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+    };
+    writeStep(0, m_swapchain->hdrImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0);
+    for (uint32_t mip = 1; mip < mips; ++mip) {
+        writeStep(mip, m_bloom.mipViews[mip - 1], VK_IMAGE_LAYOUT_GENERAL, mip);
+    }
+    for (uint32_t i = 0; i + 1 < mips; ++i) {
+        const uint32_t target = mips - 2 - i;
+        writeStep(mips + i, m_bloom.mipViews[target + 1], VK_IMAGE_LAYOUT_GENERAL, target);
+    }
+
+    VkPushConstantRange pcr{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(BloomPush)};
+    VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &m_bloom.setLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &pcr;
+    if (vkCreatePipelineLayout(device, &plci, nullptr, &m_bloom.pipelineLayout) != VK_SUCCESS) {
+        cleanupBloomResources();
+        return false;
+    }
+    VkShaderModule module = LoadSpvModule(device, "bloom.comp.spv");
+    if (!module) {
+        std::cerr << "[EngineFrameRenderer] Missing bloom.comp.spv\n";
+        cleanupBloomResources();
+        return false;
+    }
+    VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT,
+                  module, "main", nullptr};
+    info.layout = m_bloom.pipelineLayout;
+    const VkResult result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &m_bloom.pipeline);
+    vkDestroyShaderModule(device, module, nullptr);
+    if (result != VK_SUCCESS) {
+        cleanupBloomResources();
+        return false;
+    }
+    return true;
+}
+
+void EngineFrameRenderer::cleanupBloomResources()
+{
+    VkDevice device = m_device->device;
+    if (m_bloom.pipeline) {
+        vkDestroyPipeline(device, m_bloom.pipeline, nullptr);
+        m_bloom.pipeline = VK_NULL_HANDLE;
+    }
+    if (m_bloom.pipelineLayout) {
+        vkDestroyPipelineLayout(device, m_bloom.pipelineLayout, nullptr);
+        m_bloom.pipelineLayout = VK_NULL_HANDLE;
+    }
+    if (m_bloom.descriptorPool) {
+        vkDestroyDescriptorPool(device, m_bloom.descriptorPool, nullptr);
+        m_bloom.descriptorPool = VK_NULL_HANDLE;
+    }
+    m_bloom.sets.clear();
+    if (m_bloom.setLayout) {
+        vkDestroyDescriptorSetLayout(device, m_bloom.setLayout, nullptr);
+        m_bloom.setLayout = VK_NULL_HANDLE;
+    }
+    if (m_bloom.sampler) {
+        vkDestroySampler(device, m_bloom.sampler, nullptr);
+        m_bloom.sampler = VK_NULL_HANDLE;
+    }
+    for (VkImageView view : m_bloom.mipViews) {
+        vkDestroyImageView(device, view, nullptr);
+    }
+    m_bloom.mipViews.clear();
+    m_bloom.mipSizes.clear();
+    if (m_bloom.image) {
+        vmaDestroyImage(m_device->allocator, m_bloom.image, m_bloom.allocation);
+        m_bloom.image = VK_NULL_HANDLE;
+        m_bloom.allocation = VK_NULL_HANDLE;
+    }
+    m_bloom.layoutReady = false;
+}
+
+bool EngineFrameRenderer::bloomEnabled(Scene* scene)
+{
+    if (!m_bloom.pipeline || !m_swapchain->sceneOnlyRenderPass || !scene) {
+        return false;
+    }
+    const EnvironmentComponent* env = findEnvironment(scene);
+    return env && env->post.bloomIntensity > 0.0f;
+}
+
+void EngineFrameRenderer::recordBloom(VkCommandBuffer cmd, const EnvironmentComponent::PostProcess& post)
+{
+    const uint32_t mips = static_cast<uint32_t>(m_bloom.mipSizes.size());
+    const VkImageSubresourceRange allMips{VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, 1};
+
+    // The scene's HDR writes, and the previous frame's tone-map reads of the bloom image, finish first.
+    VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    toGeneral.srcAccessMask = 0;
+    toGeneral.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    toGeneral.oldLayout = m_bloom.layoutReady ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
+    toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    toGeneral.srcQueueFamilyIndex = toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toGeneral.image = m_bloom.image;
+    toGeneral.subresourceRange = allMips;
+    VkMemoryBarrier sceneWritten{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    sceneWritten.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    sceneWritten.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &sceneWritten, 0, nullptr, 1, &toGeneral);
+    m_bloom.layoutReady = true;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_bloom.pipeline);
+    const float threshold = std::max(post.bloomThreshold, 0.0f);
+    auto dispatch = [&](uint32_t step, VkExtent2D source, uint32_t targetMip, uint32_t mode) {
+        BloomPush push{};
+        push.sourceTexel[0] = 1.0f / static_cast<float>(source.width);
+        push.sourceTexel[1] = 1.0f / static_cast<float>(source.height);
+        push.threshold = threshold;
+        push.knee = std::max(threshold * 0.5f, 1.0e-3f);
+        push.radius = post.bloomRadius;
+        push.mode = mode;
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_bloom.pipelineLayout, 0, 1,
+                                &m_bloom.sets[step], 0, nullptr);
+        vkCmdPushConstants(cmd, m_bloom.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+        const VkExtent2D target = m_bloom.mipSizes[targetMip];
+        vkCmdDispatch(cmd, (target.width + 7) / 8, (target.height + 7) / 8, 1);
+        VkMemoryBarrier written{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        written.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        written.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
+                             &written, 0, nullptr, 0, nullptr);
+    };
+    dispatch(0, m_swapchain->extent, 0, 0);
+    for (uint32_t mip = 1; mip < mips; ++mip) {
+        dispatch(mip, m_bloom.mipSizes[mip - 1], mip, 1);
+    }
+    for (uint32_t i = 0; i + 1 < mips; ++i) {
+        const uint32_t target = mips - 2 - i;
+        dispatch(mips + i, m_bloom.mipSizes[target + 1], target, 2);
+    }
+}
+
+void EngineFrameRenderer::recordToneMap(VkCommandBuffer cmd, Scene* scene, uint32_t imageIndex)
+{
+    const EnvironmentComponent* env = scene ? findEnvironment(scene) : nullptr;
+    const EnvironmentComponent::PostProcess post = env ? env->post : EnvironmentComponent::PostProcess{};
     vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
+    if (m_toneMap.bloomThisFrame) {
+        vkCmdEndRenderPass(cmd);
+        recordBloom(cmd, post);
+        VkClearValue clearValues[3]{};
+        VkRenderPassBeginInfo resume{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        resume.renderPass = m_swapchain->resumeRenderPass;
+        resume.framebuffer = m_swapchain->framebuffers[imageIndex];
+        resume.renderArea.extent = m_swapchain->extent;
+        resume.clearValueCount = 3;
+        resume.pClearValues = clearValues;
+        vkCmdBeginRenderPass(cmd, &resume, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
+    }
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_toneMap.pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_toneMap.pipelineLayout,
                             0, 1, &m_toneMap.descriptorSet, 0, nullptr);
-    const EnvironmentComponent* env = scene ? findEnvironment(scene) : nullptr;
-    const EnvironmentComponent::PostProcess post = env ? env->post : EnvironmentComponent::PostProcess{};
     ToneMapPush push{};
     push.outputIsSrgb = IsSrgbFormat(m_swapchain->format) ? 1u : 0u;
     push.exposure = post.exposure;
@@ -6040,6 +6315,7 @@ void EngineFrameRenderer::recordToneMap(VkCommandBuffer cmd, Scene* scene)
     push.grain = post.grain;
     push.scanlines = post.scanlines;
     push.time = static_cast<float>(m_toneMap.frame++ % 997u) / 997.0f;
+    push.bloomIntensity = m_toneMap.bloomThisFrame ? post.bloomIntensity : 0.0f;
     vkCmdPushConstants(cmd, m_toneMap.pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(push), &push);
     vkCmdDraw(cmd, 3, 1, 0, 0);

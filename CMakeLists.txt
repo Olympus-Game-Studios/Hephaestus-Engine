@@ -1075,6 +1075,7 @@ if (GLSLC_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/hui.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tonemap.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/tonemap.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/bloom.comp
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_update.comp
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_trace.comp
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/probe_debug.vert

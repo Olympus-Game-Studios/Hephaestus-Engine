@@ -410,7 +410,11 @@ private:
     bool createDebugOverlayResources();
     bool createToneMapResources();
     void cleanupToneMapResources();
-    void recordToneMap(VkCommandBuffer cmd, Scene* scene);
+    void recordToneMap(VkCommandBuffer cmd, Scene* scene, uint32_t imageIndex);
+    bool createBloomResources();
+    void cleanupBloomResources();
+    bool bloomEnabled(Scene* scene);
+    void recordBloom(VkCommandBuffer cmd, const EnvironmentComponent::PostProcess& post);
     bool createOutlineResources();
     void cleanupOutlineResources();
     
@@ -733,8 +737,24 @@ private:
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
         uint32_t frame = 0;
+        bool bloomThisFrame = false;
     };
     ToneMap m_toneMap;
+
+    struct Bloom {
+        VkImage image = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        std::vector<VkImageView> mipViews;
+        std::vector<VkExtent2D> mipSizes;
+        VkSampler sampler = VK_NULL_HANDLE;
+        VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
+        VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+        std::vector<VkDescriptorSet> sets;  // bright pass, downsamples, then upsamples
+        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        bool layoutReady = false;
+    };
+    Bloom m_bloom;
 
     // Entity ID picker for viewport selection
     struct IdPicker {

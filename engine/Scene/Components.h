@@ -806,6 +806,9 @@ struct EnvironmentComponent {
         float vignette = 0.0f;   // 0..1
         float grain = 0.0f;      // 0..1
         float scanlines = 0.0f;  // 0..1
+        float bloomIntensity = 0.0f;
+        float bloomThreshold = 1.0f;  // scene brightness where glow starts
+        float bloomRadius = 0.65f;    // 0..1, how far the glow spreads
     } post;
 
     EnvironmentComponent()

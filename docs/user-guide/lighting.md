@@ -58,6 +58,7 @@ The Environment's **Post Processing** settings change the look of the whole pict
 - **Vignette** darkens the edges of the screen.
 - **Film Grain** adds fine moving noise.
 - **Scanlines** darken every third row of pixels for a monitor or broadcast feel.
+- **Bloom** makes bright areas glow into their surroundings, like light blooming in a camera lens. **Bloom Threshold** is how bright something must be before it glows (lower it to make more of the picture glow), and **Bloom Radius** is how far the glow spreads. Bloom is off at 0.
 
 Your game's menus and HUD are drawn on top afterwards, so they stay clean.
 
