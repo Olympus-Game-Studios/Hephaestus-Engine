@@ -1048,6 +1048,10 @@ void LuaScriptEngine::SetCharacterBinding(CharacterBinding binding) {
     m_CharacterBinding = std::move(binding);
 }
 
+void LuaScriptEngine::SetSpawnedMeshLoader(SpawnedMeshLoader loader) {
+    m_SpawnedMeshLoader = std::move(loader);
+}
+
 void LuaScriptEngine::SetInputSystem(Hephaestus::InputSystem* inputSystem) {
     m_InputSystem = inputSystem;
     m_MissingInputNames.clear();
@@ -1267,7 +1271,6 @@ int LuaScriptEngine::Lua_Particles_play(lua_State* L) {
     }
     auto& emitter = registry.get<ParticleEmitterComponent>(handle);
     const Mat4 world = engine->m_Scene->GetWorldTransform(Entity(handle, engine->m_Scene));
-    (void)world;
     Hephaestus::Particles::Play(emitter, world);
     lua_pushboolean(L, true);
     return 1;
@@ -1291,8 +1294,6 @@ int LuaScriptEngine::Lua_Particles_stop(lua_State* L) {
         return 1;
     }
     auto& emitter = registry.get<ParticleEmitterComponent>(handle);
-    const Mat4 world = engine->m_Scene->GetWorldTransform(Entity(handle, engine->m_Scene));
-    (void)world;
     Hephaestus::Particles::Stop(emitter);
     lua_pushboolean(L, true);
     return 1;
@@ -1317,7 +1318,6 @@ int LuaScriptEngine::Lua_Particles_burst(lua_State* L) {
     }
     auto& emitter = registry.get<ParticleEmitterComponent>(handle);
     const Mat4 world = engine->m_Scene->GetWorldTransform(Entity(handle, engine->m_Scene));
-    (void)world;
     Hephaestus::Particles::Burst(emitter, world, static_cast<int>(luaL_optinteger(L, 1, emitter.burst > 0 ? emitter.burst : 1)));
     lua_pushboolean(L, true);
     return 1;
@@ -1341,8 +1341,6 @@ int LuaScriptEngine::Lua_Particles_isPlaying(lua_State* L) {
         return 1;
     }
     auto& emitter = registry.get<ParticleEmitterComponent>(handle);
-    const Mat4 world = engine->m_Scene->GetWorldTransform(Entity(handle, engine->m_Scene));
-    (void)world;
     lua_pushboolean(L, emitter.playing);
     return 1;
 #else
@@ -1365,8 +1363,6 @@ int LuaScriptEngine::Lua_Particles_count(lua_State* L) {
         return 1;
     }
     auto& emitter = registry.get<ParticleEmitterComponent>(handle);
-    const Mat4 world = engine->m_Scene->GetWorldTransform(Entity(handle, engine->m_Scene));
-    (void)world;
     lua_pushinteger(L, static_cast<lua_Integer>(emitter.particles.size()));
     return 1;
 #else
@@ -3541,6 +3537,9 @@ void LuaScriptEngine::RegisterThisBindings() {
     
     lua_pushcfunction(m_State, Lua_TransformObj_GetPosition);
     lua_setfield(m_State, -2, "GetPosition");
+
+    lua_pushcfunction(m_State, Lua_TransformObj_GetWorldPosition);
+    lua_setfield(m_State, -2, "GetWorldPosition");
     
     lua_pushcfunction(m_State, Lua_TransformObj_SetPosition);
     lua_setfield(m_State, -2, "SetPosition");
@@ -3852,7 +3851,7 @@ Entity LuaScriptEngine::ExecuteSpawn(const PendingSpawn& spawn) {
 
     // Prefab instantiation creates CPU-side MeshRenderer components after the
     // host's scene mesh upload pass. Reuse an already-uploaded handle for the
-    // same asset so common runtime-spawned prefabs become visible immediately.
+    // same asset, or have the host load a mesh no entity has used yet.
     auto spawnedRenderers = m_Scene->GetEntitiesWith<MeshRendererComponent>();
     for (entt::entity spawnedHandle : spawnedRenderers) {
         Entity spawnedEntity(spawnedHandle, m_Scene);
@@ -3880,6 +3879,9 @@ Entity LuaScriptEngine::ExecuteSpawn(const PendingSpawn& spawn) {
                 spawnedRenderer.materialIndices = candidate.materialIndices;
                 break;
             }
+        }
+        if (!spawnedRenderer.HasValidMesh() && m_SpawnedMeshLoader) {
+            m_SpawnedMeshLoader(spawnedRenderer);
         }
     }
 
@@ -4608,6 +4610,25 @@ int LuaScriptEngine::Lua_TransformObj_GetPosition(lua_State* L) {
     lua_setfield(L, -2, "y");
     lua_pushnumber(L, transform->position.z);
     lua_setfield(L, -2, "z");
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_TransformObj_GetWorldPosition(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    LuaEntityReference* pEntityId = static_cast<LuaEntityReference*>(luaL_checkudata(L, 1, "HephaestusTransform"));
+    Entity entity = engine ? engine->MakeEntity(*pEntityId) : Entity{};
+    if (!entity || !engine->GetTransform(*pEntityId)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    TransformComponent world;
+    world.SetFromMatrix(engine->m_Scene->GetWorldTransform(entity));
+    PushVec3Table(L, world.position);
     return 1;
 #else
     (void)L;

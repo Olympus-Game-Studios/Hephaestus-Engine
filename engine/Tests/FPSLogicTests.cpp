@@ -637,6 +637,47 @@ check(aligned, "decal rotation turns +Y onto the surface normal")
 check(Impacts.surfaceOffset(50) > Impacts.surfaceOffset(1) and Impacts.surfaceOffset(0) > 0,
       "decals lift further off distant surfaces")
 
+local Explosives = require("FPS.Explosives")
+local FPSRegistry = require("FPS.Registry")
+local Health = require("FPS.Health")
+check(Explosives.falloff(1, 2, 7) == 1 and Explosives.falloff(7, 2, 7) == 0 and near(Explosives.falloff(4.5, 2, 7), 0.5),
+      "blast falloff is full inside the inner radius and linear to the edge")
+FPSRegistry.sessionOpen = false
+FPSRegistry.ensureSession()
+-- Targets are tested half a metre above their origin, so these sit level with the blast.
+local function fakeEntity(key, x, z)
+    return { key = key, calls = {},
+             GetTransform = function() return { GetWorldPosition = function() return { x = x, y = -0.5, z = z } end } end,
+             Call = function(self, name) self.calls[#self.calls + 1] = name end }
+end
+local near1, far1, behind, outside = fakeEntity("near", 1, 0), fakeEntity("far", 4.5, 0), fakeEntity("behind", 0, 3),
+                                     fakeEntity("outside", 9, 0)
+for _, e in ipairs({ near1, far1, behind, outside }) do Health.attach(e, { maxHealth = 100 }) end
+FPSRegistry.player = { key = "player" }
+Physics = { raycast = function(x, y, z, dx, dy, dz, distance)
+    if dz > 0.5 then return { entity = "wall", distance = 1 } end
+    return nil
+end }
+local damaged = Explosives.applyBlast(0, 0, 0, { damage = 100, radius = 7, innerRadius = 2, byPlayer = true })
+check(damaged == 2, "blast damages exposed targets in range only")
+check(Health.getHealth(near1) == 0 and Health.isDead(near1), "a target inside the inner radius takes full damage")
+check(near(Health.getHealth(far1), 50, 1e-4), "a target halfway through the falloff takes half damage")
+check(Health.getHealth(behind) == 100 and Health.getHealth(outside) == 100, "cover and range protect targets")
+check(FPSRegistry.player.hitEvent == "kill", "a kill by the player's blast shows the kill marker")
+Physics = nil
+
+local Hud = require("FPS.Hud")
+local texts = {}
+UI = { setVisible = function() end, setOpacity = function() end, setTextColor = function() end,
+       setText = function(widget, text) texts[widget] = text end }
+Hud.handle = 1
+Hud.widgets = { HealthText = "health", GrenadeText = "grenades" }
+local hudOk = pcall(Hud.refresh, { enabled = true, showHealth = true, showAmmo = true, health = 31.4, maxHealth = 100,
+                                   grenades = { frag = 1, smoke = 2 }, dt = 0 })
+check(hudOk and texts.health == "32 / 100", "fractional health from blast damage shows rounded up")
+check(texts.grenades == "Frag 1   Smoke 2", "the HUD shows grenade counts")
+Hud.handle, Hud.widgets, UI = nil, {}, nil
+
 if #failures > 0 then error(table.concat(failures, "\n")) end
 )lua";
     if (luaL_dostring(L, kGunplayChecks) != LUA_OK) {

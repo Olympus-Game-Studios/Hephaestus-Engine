@@ -58,6 +58,20 @@
     {
       "name": "Weapon4",
       "bindings": [ { "type": "keyboard", "control": "4" } ]
+    },
+    {
+      "name": "ThrowFrag",
+      "bindings": [
+        { "type": "keyboard", "control": "G" },
+        { "type": "gamepad_button", "control": "DPAD_UP" }
+      ]
+    },
+    {
+      "name": "ThrowSmoke",
+      "bindings": [
+        { "type": "keyboard", "control": "T" },
+        { "type": "gamepad_button", "control": "DPAD_DOWN" }
+      ]
     }
   ],
   "axes": [

@@ -51,6 +51,7 @@ class PluginScriptHost;
 class ScriptEngine;
 class AudioEngine;
 struct GLFWwindow;
+struct MeshRendererComponent;
 
 namespace Physics {
 class JoltPhysicsEngine;
@@ -319,6 +320,9 @@ public:
     size_t uploadMeshToGPU(const std::string& name, const MeshData& data,
                            const std::filesystem::path& sourcePath, bool imported);
 
+    /// Finds, loads and uploads a renderer's mesh (or reuses a loaded one) and sets its handle.
+    void loadRendererMesh(MeshRendererComponent& renderer);
+
 signals:
     void sceneHierarchyChanged();
     void deleteSelectionRequested();
@@ -386,6 +390,8 @@ private:
     // Project root directory for mesh path resolution (set by EditorMainWindow)
     std::string m_projectRoot;
     std::string m_assetRoot;
+    // Resolves mesh asset keys to files; set by RebuildSceneMeshes for the loaded scene's project.
+    std::function<std::filesystem::path(const std::string&)> m_meshFileResolver;
 
     // Runtime input tracking (for Lua scripts in Qt path)
     // Indexed by GLFW key codes; true = pressed.

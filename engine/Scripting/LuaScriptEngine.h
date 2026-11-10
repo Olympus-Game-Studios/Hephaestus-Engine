@@ -37,6 +37,7 @@ struct LuaScriptComponent;
 struct TransformComponent;
 struct TagComponent;
 struct CharacterComponent;
+struct MeshRendererComponent;
 class AudioEngine;
 
 namespace Hephaestus::HephaestusUI {
@@ -270,6 +271,10 @@ public:
     void SetPhysicsBinding(PhysicsBinding binding);
     void SetCharacterBinding(CharacterBinding binding);
 
+    /// Loads and uploads the mesh of a renderer spawned by Scene.instantiate when no entity has it loaded yet.
+    using SpawnedMeshLoader = std::function<void(MeshRendererComponent&)>;
+    void SetSpawnedMeshLoader(SpawnedMeshLoader loader);
+
     /// Provide the shared input system populated by the current host.
     void SetInputSystem(Hephaestus::InputSystem* inputSystem);
     Hephaestus::InputSystem* GetInputSystem() const { return m_InputSystem; }
@@ -304,6 +309,7 @@ private:
     CameraBinding m_CameraBinding{};
     PhysicsBinding m_PhysicsBinding{};
     CharacterBinding m_CharacterBinding{};
+    SpawnedMeshLoader m_SpawnedMeshLoader;
     Hephaestus::InputSystem* m_InputSystem = nullptr;
     std::unordered_set<std::string> m_MissingInputNames;
     QuitRequestCallback m_QuitRequestCallback;
@@ -658,6 +664,7 @@ private:
     
     // Transform object methods (returned by this:GetTransform())
     static int Lua_TransformObj_GetPosition(lua_State* L);
+    static int Lua_TransformObj_GetWorldPosition(lua_State* L);
     static int Lua_TransformObj_SetPosition(lua_State* L);
     static int Lua_TransformObj_GetRotation(lua_State* L);
     static int Lua_TransformObj_SetRotation(lua_State* L);

@@ -30,6 +30,7 @@ function Hud.mount(path, enabled)
     Hud.widgets.HealthText = UI.getWidget(handle, "HealthText")
     Hud.widgets.AmmoText = UI.getWidget(handle, "AmmoText")
     Hud.widgets.WeaponName = UI.getWidget(handle, "WeaponName")
+    Hud.widgets.GrenadeText = UI.getWidget(handle, "GrenadeText")
     Hud.widgets.Prompt = UI.getWidget(handle, "Prompt")
     Hud.widgets.DamageFlash = UI.getWidget(handle, "DamageFlash")
     Hud.widgets.HitMarker = UI.getWidget(handle, "HitMarker")
@@ -96,7 +97,9 @@ function Hud.refresh(info)
     end
 
     if Hud.widgets.HealthText and enabled and info.showHealth then
-        UI.setText(Hud.widgets.HealthText, string.format("%d / %d", info.health or 0, info.maxHealth or 0))
+        -- Damage can be fractional; rounding up never shows 0 while alive.
+        UI.setText(Hud.widgets.HealthText, string.format("%d / %d", math.ceil(info.health or 0),
+                                                         math.ceil(info.maxHealth or 0)))
     end
     local weapon = info.weapon
     if Hud.widgets.AmmoText then
@@ -111,6 +114,14 @@ function Hud.refresh(info)
             UI.setText(Hud.widgets.WeaponName, weapon.displayName or "")
         else
             vis(Hud.widgets.WeaponName, false)
+        end
+    end
+    if Hud.widgets.GrenadeText then
+        local grenades = info.grenades
+        vis(Hud.widgets.GrenadeText, enabled and info.showAmmo and grenades ~= nil)
+        if grenades and enabled and info.showAmmo then
+            UI.setText(Hud.widgets.GrenadeText, string.format("Frag %d   Smoke %d", grenades.frag or 0,
+                                                              grenades.smoke or 0))
         end
     end
     if Hud.widgets.Prompt then

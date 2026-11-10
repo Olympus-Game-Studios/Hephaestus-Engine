@@ -2359,6 +2359,126 @@ std::string QtEditorEngine::normalizeAssetPath(const std::string& assetPath) con
     return normalized;
 }
 
+namespace {
+void syncMaterialSlots(MeshRendererComponent& renderer, int subCount)
+{
+    const int requiredSlots = std::max(subCount, 1);
+    if (static_cast<int>(renderer.appliedMaterialPaths.size()) < requiredSlots) {
+        renderer.appliedMaterialPaths.resize(static_cast<size_t>(requiredSlots), "");
+    }
+    if (static_cast<int>(renderer.materialIndices.size()) < requiredSlots) {
+        renderer.materialIndices.resize(static_cast<size_t>(requiredSlots), -1);
+    }
+}
+} // namespace
+
+void QtEditorEngine::loadRendererMesh(MeshRendererComponent& renderer)
+{
+    namespace fs = std::filesystem;
+    if (renderer.meshAssetPath.empty()) {
+        return;
+    }
+
+    // If the entity already has a valid handle that still lives in the
+    // library, keep it.  This covers meshes loaded from a path that
+    // differs from the stored meshAssetPath (e.g. engine default meshes
+    // loaded from the build output while the asset path is stored as a
+    // relative string).
+    if (renderer.meshHandle != MeshRendererComponent::InvalidMesh) {
+        MeshGPU* existing = m_frameRenderer->GetMesh(renderer.meshHandle);
+        if (existing) {
+            int subCount = existing->submeshes.empty()
+                ? 1 : static_cast<int>(existing->submeshes.size());
+            syncMaterialSlots(renderer, subCount);
+            std::cout << "[QtEditorEngine]   -> Keeping existing handle "
+                      << renderer.meshHandle << "\n";
+            return;
+        }
+    }
+
+    std::string lookupKey = normalizeAssetPath(renderer.meshAssetPath);
+    if (!lookupKey.empty() && lookupKey != renderer.meshAssetPath &&
+        lookupKey.rfind("builtin://", 0) != 0) {
+        renderer.meshAssetPath = lookupKey;
+    }
+
+    // Check if mesh already in library
+    size_t existingHandle = m_frameRenderer->GetMeshHandle(lookupKey);
+    if (existingHandle != SIZE_MAX) {
+        MeshGPU* mesh = m_frameRenderer->GetMesh(existingHandle);
+        if (mesh) {
+            int subCount = mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size());
+            renderer.SetMesh(existingHandle, mesh->bounds, mesh->sourceKey, mesh->imported, subCount);
+            syncMaterialSlots(renderer, subCount);
+            std::cout << "[QtEditorEngine]   -> Found in library: handle " << existingHandle << "\n";
+            return;
+        }
+    }
+
+    // Handle builtin meshes
+    if (renderer.meshAssetPath.rfind("builtin://", 0) == 0) {
+        size_t handle = m_frameRenderer->GetMeshHandle(renderer.meshAssetPath);
+        if (handle != SIZE_MAX) {
+            MeshGPU* mesh = m_frameRenderer->GetMesh(handle);
+            if (mesh) {
+                int subCount = mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size());
+                renderer.SetMesh(handle, mesh->bounds, mesh->sourceKey, mesh->imported, subCount);
+                syncMaterialSlots(renderer, subCount);
+                std::cout << "[QtEditorEngine]   -> Builtin mesh: handle " << handle << "\n";
+            }
+        } else {
+            std::cerr << "[QtEditorEngine]   -> Unknown builtin: " << renderer.meshAssetPath << "\n";
+            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+        }
+        return;
+    }
+
+    // Try to load mesh from file using the robust resolver
+    fs::path meshPath = m_meshFileResolver ? m_meshFileResolver(renderer.meshAssetPath) : fs::path{};
+
+    // Normalize
+    if (!meshPath.empty() && fs::exists(meshPath)) {
+        meshPath = fs::weakly_canonical(meshPath);
+    }
+
+    std::cout << "[QtEditorEngine]   -> Resolved path: " << meshPath << "\n";
+
+    if (meshPath.empty() || !fs::exists(meshPath)) {
+        std::cerr << "[QtEditorEngine]   -> File not found for '"
+                  << renderer.meshAssetPath << "' (tried project root, asset root, "
+                  << ".engine/meshes, and filename search)\n";
+        renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+        return;
+    }
+
+    // Load mesh
+    MeshData meshData;
+    std::string loadError;
+    if (!ModelImporter::LoadModel(meshPath, meshData, loadError)) {
+        std::cerr << "[QtEditorEngine]   -> Load failed: " << loadError << "\n";
+        renderer.meshHandle = MeshRendererComponent::InvalidMesh;
+        return;
+    }
+
+    // Upload to GPU
+    std::string meshName = meshPath.stem().string();
+    size_t handle = uploadMeshToGPU(meshName, meshData, meshPath, true);
+
+    if (handle != MeshRendererComponent::InvalidMesh) {
+        MeshGPU* mesh = m_frameRenderer->GetMesh(handle);
+        int subCount = mesh ? (mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size())) : 1;
+        renderer.SetMesh(handle, meshData.bounds, lookupKey, true, subCount);
+        syncMaterialSlots(renderer, subCount);
+
+        // Register the relative asset path as an alias so that future
+        // lookups (e.g. after the next play-mode cycle) find this mesh
+        // without hitting disk again.
+        m_frameRenderer->AddMeshAlias(lookupKey, handle);
+
+        std::cout << "[QtEditorEngine]   -> Uploaded: handle " << handle << "\n";
+    }
+}
+
 void QtEditorEngine::RebuildSceneMeshes()
 {
     if (!m_frameRenderer || !m_device || !m_editorContext.HasActiveScene()) {
@@ -2423,7 +2543,7 @@ void QtEditorEngine::RebuildSceneMeshes()
     // Helper: resolve a mesh asset path (relative key) to an absolute
     // path on disk, trying multiple fallback locations.
     // -----------------------------------------------------------------
-    auto resolveAssetPathToFile = [&](const std::string& assetPath) -> fs::path {
+    m_meshFileResolver = [this, projectRoot, assetRoot](const std::string& assetPath) -> fs::path {
         if (assetPath.empty()) return {};
         if (assetPath.rfind("builtin://", 0) == 0) return fs::path(assetPath);
 
@@ -2515,16 +2635,6 @@ void QtEditorEngine::RebuildSceneMeshes()
         return {};
     };
 
-    auto syncMaterialSlots = [](MeshRendererComponent& renderer, int subCount) {
-        const int requiredSlots = std::max(subCount, 1);
-        if (static_cast<int>(renderer.appliedMaterialPaths.size()) < requiredSlots) {
-            renderer.appliedMaterialPaths.resize(static_cast<size_t>(requiredSlots), "");
-        }
-        if (static_cast<int>(renderer.materialIndices.size()) < requiredSlots) {
-            renderer.materialIndices.resize(static_cast<size_t>(requiredSlots), -1);
-        }
-    };
-
     // Iterate all entities with MeshRendererComponent
     auto renderView = scene->GetEntitiesWith<MeshRendererComponent>();
     
@@ -2548,108 +2658,7 @@ void QtEditorEngine::RebuildSceneMeshes()
         std::cout << "[QtEditorEngine] Entity '" << entityName 
                   << "' meshAssetPath='" << renderer.meshAssetPath << "'\n";
 
-        if (renderer.meshAssetPath.empty()) {
-            continue;
-        }
-
-        // If the entity already has a valid handle that still lives in the
-        // library, keep it.  This covers meshes loaded from a path that
-        // differs from the stored meshAssetPath (e.g. engine default meshes
-        // loaded from the build output while the asset path is stored as a
-        // relative string).
-        if (renderer.meshHandle != MeshRendererComponent::InvalidMesh) {
-            MeshGPU* existing = m_frameRenderer->GetMesh(renderer.meshHandle);
-            if (existing) {
-                int subCount = existing->submeshes.empty()
-                    ? 1 : static_cast<int>(existing->submeshes.size());
-                syncMaterialSlots(renderer, subCount);
-                std::cout << "[QtEditorEngine]   -> Keeping existing handle "
-                          << renderer.meshHandle << "\n";
-                continue;
-            }
-        }
-
-        std::string lookupKey = normalizeAssetPath(renderer.meshAssetPath);
-        if (!lookupKey.empty() && lookupKey != renderer.meshAssetPath &&
-            lookupKey.rfind("builtin://", 0) != 0) {
-            renderer.meshAssetPath = lookupKey;
-        }
-
-        // Check if mesh already in library
-        size_t existingHandle = m_frameRenderer->GetMeshHandle(lookupKey);
-        if (existingHandle != SIZE_MAX) {
-            MeshGPU* mesh = m_frameRenderer->GetMesh(existingHandle);
-            if (mesh) {
-                int subCount = mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size());
-                renderer.SetMesh(existingHandle, mesh->bounds, mesh->sourceKey, mesh->imported, subCount);
-                syncMaterialSlots(renderer, subCount);
-                std::cout << "[QtEditorEngine]   -> Found in library: handle " << existingHandle << "\n";
-                continue;
-            }
-        }
-
-        // Handle builtin meshes
-        if (renderer.meshAssetPath.rfind("builtin://", 0) == 0) {
-            size_t handle = m_frameRenderer->GetMeshHandle(renderer.meshAssetPath);
-            if (handle != SIZE_MAX) {
-                MeshGPU* mesh = m_frameRenderer->GetMesh(handle);
-                if (mesh) {
-                    int subCount = mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size());
-                    renderer.SetMesh(handle, mesh->bounds, mesh->sourceKey, mesh->imported, subCount);
-                    syncMaterialSlots(renderer, subCount);
-                    std::cout << "[QtEditorEngine]   -> Builtin mesh: handle " << handle << "\n";
-                }
-            } else {
-                std::cerr << "[QtEditorEngine]   -> Unknown builtin: " << renderer.meshAssetPath << "\n";
-                renderer.meshHandle = MeshRendererComponent::InvalidMesh;
-            }
-            continue;
-        }
-
-        // Try to load mesh from file using the robust resolver
-        fs::path meshPath = resolveAssetPathToFile(renderer.meshAssetPath);
-
-        // Normalize
-        if (!meshPath.empty() && fs::exists(meshPath)) {
-            meshPath = fs::weakly_canonical(meshPath);
-        }
-
-        std::cout << "[QtEditorEngine]   -> Resolved path: " << meshPath << "\n";
-
-        if (meshPath.empty() || !fs::exists(meshPath)) {
-            std::cerr << "[QtEditorEngine]   -> File not found for '"
-                      << renderer.meshAssetPath << "' (tried project root, asset root, "
-                      << ".engine/meshes, and filename search)\n";
-            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
-            continue;
-        }
-
-        // Load mesh
-        MeshData meshData;
-        std::string loadError;
-        if (!ModelImporter::LoadModel(meshPath, meshData, loadError)) {
-            std::cerr << "[QtEditorEngine]   -> Load failed: " << loadError << "\n";
-            renderer.meshHandle = MeshRendererComponent::InvalidMesh;
-            continue;
-        }
-
-        // Upload to GPU
-        std::string meshName = meshPath.stem().string();
-        size_t handle = uploadMeshToGPU(meshName, meshData, meshPath, true);
-        
-        if (handle != MeshRendererComponent::InvalidMesh) {
-            MeshGPU* mesh = m_frameRenderer->GetMesh(handle);
-            int subCount = mesh ? (mesh->submeshes.empty() ? 1 : static_cast<int>(mesh->submeshes.size())) : 1;
-            renderer.SetMesh(handle, meshData.bounds, lookupKey, true, subCount);
-            syncMaterialSlots(renderer, subCount);
-
-            // Register the relative asset path as an alias so that future
-            // lookups (e.g. after the next play-mode cycle) find this mesh
-            // without hitting disk again.
-            m_frameRenderer->AddMeshAlias(lookupKey, handle);
-
-            std::cout << "[QtEditorEngine]   -> Uploaded: handle " << handle << "\n";
-        }
+        loadRendererMesh(renderer);
     }
 
     std::cout << "[QtEditorEngine] Mesh rebuild complete. Library size: " 
@@ -2954,6 +2963,7 @@ void QtEditorEngine::StartPlayMode()
     };
     m_luaScriptEngine->SetPhysicsBinding(MakeScriptPhysicsBinding(physicsAccess));
     m_luaScriptEngine->SetCharacterBinding(MakeScriptCharacterBinding(physicsAccess));
+    m_luaScriptEngine->SetSpawnedMeshLoader([this](MeshRendererComponent& renderer) { loadRendererMesh(renderer); });
 
     // ── Initialize C++ script engine ───────────────────────────────────────
     if (!m_cppScriptEngine) {

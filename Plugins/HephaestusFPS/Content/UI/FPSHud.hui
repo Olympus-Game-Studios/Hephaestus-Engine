@@ -126,6 +126,27 @@
       },
       {
         "type": "Text",
+        "id": "GrenadeText",
+        "properties": {
+          "text": "Frag 2   Smoke 2",
+          "anchor": "BottomRight",
+          "size": [260, 28],
+          "textAlignment": "Right",
+          "margin": [0, 0, 56, 122],
+          "visible": false,
+          "zOrder": 2
+        },
+        "style": {
+          "fontSize": 14,
+          "fontBold": true,
+          "textColor": [1.0, 1.0, 1.0, 0.85],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.85],
+          "textShadowOffset": [1, 1]
+        }
+      },
+      {
+        "type": "Text",
         "id": "WeaponName",
         "properties": {
           "text": "Pistol",

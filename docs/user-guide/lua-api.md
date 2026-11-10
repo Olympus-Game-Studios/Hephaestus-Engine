@@ -37,6 +37,7 @@ The `Entity` table has `Entity.isValid()`, `Entity.getName()` and `Entity.setNam
 | Method | Does |
 | --- | --- |
 | `t:GetPosition()` / `t:SetPosition(x, y, z)` | Position. `SetPosition` also takes a `{x, y, z}` table. |
+| `t:GetWorldPosition()` | Position in the world, including every parent's transform. |
 | `t:GetRotation()` / `t:SetRotation(x, y, z)` | Rotation in degrees. |
 | `t:GetScale()` / `t:SetScale(x, y, z)` | Scale. |
 | `t:Translate(dx, dy, dz)` | Move by an amount. |

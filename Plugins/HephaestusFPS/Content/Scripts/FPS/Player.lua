@@ -38,6 +38,14 @@ Expose.string("impactDecalPrefabs", "")
 Expose.number("maxImpactDecals", 64)
 Expose.string("impactDustPrefab", "")
 Expose.string("impactSparksPrefab", "")
+Expose.string("fragGrenadePrefab", "")
+Expose.string("smokeGrenadePrefab", "")
+Expose.number("fragGrenades", 2)
+Expose.number("smokeGrenades", 2)
+Expose.number("throwSpeed", 15)
+Expose.number("throwLift", 0.2)
+Expose.number("throwSeconds", 0.6)
+Expose.number("throwReleaseFraction", 0.4)
 
 local Player = {}
 local yaw = 0
@@ -65,6 +73,8 @@ local stepDistance = 0
 local stepIndex = 0
 local footsteps = {}
 local cameraObject = nil
+local grenades = { frag = 0, smoke = 0 }
+local throw = nil
 
 local function degToRad(value)
     return value * math.pi / 180
@@ -253,6 +263,54 @@ local function interactionHit(origin, direction)
     return nil
 end
 
+-- Released from beside the eye along the aim, lifted a little, carrying the player's own velocity.
+local function releaseGrenade(kind, origin, direction)
+    local path = kind == "smoke" and smokeGrenadePrefab or fragGrenadePrefab
+    local fx, fy, fz = direction.x, direction.y + throwLift, direction.z
+    local length = math.sqrt(fx * fx + fy * fy + fz * fz)
+    fx, fy, fz = fx / length, fy / length, fz / length
+    local rx, rz = -direction.z, direction.x
+    local side = math.sqrt(rx * rx + rz * rz)
+    if side > 1e-4 then
+        rx, rz = rx / side * 0.2, rz / side * 0.2
+    end
+    local vel = Character.getVelocity() or {}
+    Scene.instantiate(path, {
+        position = { x = origin.x + direction.x * 0.5 + rx, y = origin.y + direction.y * 0.5 - 0.15,
+                     z = origin.z + direction.z * 0.5 + rz },
+        vars = { vx = fx * throwSpeed + (vel.x or 0), vy = fy * throwSpeed + (vel.y or 0),
+                 vz = fz * throwSpeed + (vel.z or 0), thrownByPlayer = true },
+    })
+end
+
+-- A throw dips the weapon out and back while blocking fire, cutting any reload.
+local function updateThrow(dt, origin, direction, row)
+    if not throw and commands.throwKind and not swap then
+        local kind = commands.throwKind
+        local path = kind == "smoke" and smokeGrenadePrefab or fragGrenadePrefab
+        if path ~= "" and grenades[kind] > 0 then
+            grenades[kind] = grenades[kind] - 1
+            throw = { kind = kind, elapsed = 0, released = false }
+            if row then
+                Logic.interruptReload(row)
+            end
+        end
+    end
+    commands.throwKind = nil
+    if not throw then
+        return
+    end
+    throw.elapsed = throw.elapsed + dt
+    local duration = math.max(throwSeconds, 0.05)
+    if not throw.released and throw.elapsed >= duration * throwReleaseFraction then
+        releaseGrenade(throw.kind, origin, direction)
+        throw.released = true
+    end
+    if throw.elapsed >= duration then
+        throw = nil
+    end
+end
+
 local function updateFieldOfView(row)
     if not cameraObject then
         local cameraEntity = Scene.GetActiveCamera()
@@ -274,6 +332,8 @@ function onAwake()
     sprinting = false
     swap = nil
     cameraObject = nil
+    grenades = { frag = math.max(0, math.floor(fragGrenades)), smoke = math.max(0, math.floor(smokeGrenades)) }
+    throw = nil
     stepDistance = 0
     stepCount = 0
     wasGrounded = true
@@ -342,6 +402,11 @@ function onUpdate(dt)
             if Input.isActionPressed("Weapon" .. tostring(slot)) then
                 commands.slot = slot
             end
+        end
+        if Input.isActionPressed("ThrowFrag") then
+            commands.throwKind = "frag"
+        elseif Input.isActionPressed("ThrowSmoke") then
+            commands.throwKind = "smoke"
         end
     else
         Character.move(0, 0)
@@ -423,9 +488,11 @@ function onLateUpdate(dt)
     end
 
     local row = activeWeaponRow()
+    updateThrow(lastDt, origin, direction, row)
+    local throwDip = throw and math.sin(math.pi * math.min(throw.elapsed / math.max(throwSeconds, 0.05), 1)) or 0
     if player then
         player.input = {
-            aimHeld = commands.aimHeld and swap == nil,
+            aimHeld = commands.aimHeld and swap == nil and throw == nil,
             sprinting = sprinting,
             moveFraction = Gunplay.clamp(speedXZ / math.max(fullSpreadMoveSpeed, 0.1), 0, 1),
             airborne = not grounded,
@@ -439,14 +506,14 @@ function onLateUpdate(dt)
             motionScale = presentationEnabled and Gunplay.clamp(viewBobScale, 0, 1) or 0,
             -- Footfalls land on whole multiples of pi.
             bobPhase = math.pi * (stepCount + stepDistance / math.max(footstepStride, 0.1)),
-            lowering = swap ~= nil,
+            lowering = swap ~= nil or throw ~= nil,
             lowerProgress = swap and row and
-                Gunplay.clamp(1 - swap.remaining / math.max(row.lowerSeconds or 0.01, 0.01), 0, 1) or 0,
+                Gunplay.clamp(1 - swap.remaining / math.max(row.lowerSeconds or 0.01, 0.01), 0, 1) or throwDip,
         }
     end
     local weaponEntity = activeWeaponEntity()
     if weaponEntity then
-        local blocked = swap ~= nil
+        local blocked = swap ~= nil or throw ~= nil
         weaponEntity:Call("tick", lastDt, (commands.fireHeld and not blocked) and 1 or 0,
                           (commands.firePressed and not blocked) and 1 or 0,
                           commands.reload and 1 or 0, origin.x, origin.y, origin.z,
@@ -473,6 +540,7 @@ function onLateUpdate(dt)
         weapon = Registry.weaponSnapshot(weaponEntity),
         prompt = Interactable.prompt(),
         adsBlend = row and row.adsBlend or 0,
+        grenades = (fragGrenadePrefab ~= "" or smokeGrenadePrefab ~= "") and grenades or nil,
         dt = lastDt,
     })
 end

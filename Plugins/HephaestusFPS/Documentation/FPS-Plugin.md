@@ -16,6 +16,8 @@ Install is additive. Existing names such as Jump are not rewritten. Disable does
 
 `LookStickX` / `LookStickY` are the gamepad look axes. Mouse look uses `Input.getMouseDelta`, not `LookX`.
 
+`ThrowFrag` (G, D-pad up) and `ThrowSmoke` (T, D-pad down) throw grenades.
+
 ## Crouch camera
 
 Keep `crouchEyeHeight` below `crouchedHeight` on the character controller so the camera stays inside the crouched capsule.
@@ -55,6 +57,18 @@ Every weapon is tuned in data, so a rifle and a pistol differ only in their numb
 - **Impact and muzzle effects**: the player's `impactDustPrefab` plays where a shot hits an ordinary surface and `impactSparksPrefab` where it hits a target with health; each is spawned with its +Y along the surface normal. A weapon's `muzzleSmokePrefab` plays just past the muzzle on every shot, pointing along the aim. Use particle prefabs with **Destroy When Done** so they remove themselves.
 - **Timing**: firing waits `sprintToFireSeconds` after a sprint ends and `raiseSeconds` after a weapon is raised. A trigger press within `fireBufferSeconds` of the end of that wait fires as soon as it ends. Switching lowers the current weapon over its `lowerSeconds` first. Weapons are ordered by `slot`.
 - **Comfort**: the player's `viewBobScale` (0 to 1) scales the weapon's bob, idle and movement motion, and `cameraShakeScale` (0 to 1) scales the camera kick. Neither changes recoil, spread or anything else that affects where shots go. `presentationEnabled` off sets both to 0.
+
+## Grenades
+
+Set the player's `fragGrenadePrefab` and `smokeGrenadePrefab` to grenade prefabs; while both are empty, grenades are off and the HUD hides their count. The player starts with `fragGrenades` and `smokeGrenades` of each. A throw dips the weapon out and back over `throwSeconds`, blocks firing and aiming, and cuts a reload. The grenade leaves at `throwReleaseFraction` of the throw, from beside the eye, along the aim lifted by `throwLift`, at `throwSpeed` metres a second plus the player's own velocity.
+
+A grenade prefab is a mesh with a dynamic Rigid Body, a collision shape and `Grenade.lua`:
+
+- `kind` is `frag` or `smoke`, and `fuseSeconds` starts counting when it is thrown.
+- A frag spawns `effectPrefab` and plays `sound` (3D, heard out to `soundMaxDistance`), then damages everything with health within `radius`: full `damage` inside `innerRadius`, falling to none at `radius`. Cover between the blast and a target blocks it, and that includes the player. The player's camera shakes by up to `shakeDegrees` within `shakeRadius`.
+- A smoke grenade spawns `effectPrefab` (the cloud) and plays `sound`, and removes itself after `smokeSeconds`.
+
+Use a box collision shape: a sphere or capsule never stops rolling, because the physics has no rolling resistance.
 
 ## Scripts
 
