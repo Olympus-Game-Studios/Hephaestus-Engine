@@ -341,6 +341,24 @@ float sampleDirectionalShadow(vec4 lightSpacePos, vec3 normal, vec3 lightDir) {
 // MAIN LIGHTING CALCULATION
 // ═══════════════════════════════════════════════════════════════
 
+// Applies a tangent-space normal map. Meshes carry no tangents, so the frame comes from screen-space derivatives.
+vec3 perturbNormal(vec3 n, vec3 worldPos, vec2 uv, vec3 tangentNormal) {
+    vec3 dp1 = dFdx(worldPos);
+    vec3 dp2 = dFdy(worldPos);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+    vec3 dp2perp = cross(dp2, n);
+    vec3 dp1perp = cross(n, dp1);
+    vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+    float scale = max(dot(t, t), dot(b, b));
+    if (scale < 1e-20) {
+        return n;
+    }
+    mat3 tbn = mat3(t * inversesqrt(scale), b * inversesqrt(scale), n);
+    return normalize(tbn * tangentNormal);
+}
+
 // Calculate world-aligned UV coordinates using triplanar projection
 vec2 getWorldAlignedUV(vec3 worldPos, vec3 normal, float scale) {
     // Use triplanar mapping - blend between XY, XZ, and YZ planes based on normal
@@ -404,19 +422,11 @@ void main() {
         return;
     }
     
-    // Normal map (world space - for now, not using tangent space)
-    // A better implementation would transform from tangent space
-    vec3 normalMapped = N;
     if (material.useNormalTexture != 0u) {
         uint index = material.normalTextureIndex % MAX_TEXTURE_SLOTS;
-        vec3 normalTex = texture(materialTextures[index], texCoord).rgb;
-        // Unpack normal from [0,1] to [-1,1]
-        normalMapped = normalize(normalTex * 2.0 - 1.0);
-        // For a world-space approximation, blend with original normal
-        // This is a simplified approach; full implementation would need tangent space
-        normalMapped = normalize(mix(N, normalMapped, 0.7));
+        vec3 tangentNormal = texture(materialTextures[index], texCoord).rgb * 2.0 - 1.0;
+        N = perturbNormal(N, fragWorldPos, texCoord, tangentNormal);
     }
-    N = normalMapped;
     
     // Roughness texture
     float roughness = material.roughness;
