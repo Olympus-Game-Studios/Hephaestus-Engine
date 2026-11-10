@@ -46,6 +46,9 @@ Expose.number("throwSpeed", 15)
 Expose.number("throwLift", 0.2)
 Expose.number("throwSeconds", 0.6)
 Expose.number("throwReleaseFraction", 0.4)
+Expose.string("grenadeArmSound", "")
+Expose.string("grenadeThrowSound", "")
+Expose.number("grenadeSoundVolume", 1.0)
 
 local Player = {}
 local yaw = 0
@@ -263,6 +266,12 @@ local function interactionHit(origin, direction)
     return nil
 end
 
+local function playThrowSound(path)
+    if path ~= "" and Audio and Audio.isAvailable and Audio.isAvailable() then
+        Audio.play(path, { volume = grenadeSoundVolume, bus = "sfx", priority = 2, pitchJitter = 0.03 })
+    end
+end
+
 -- Released from beside the eye along the aim, lifted a little, carrying the player's own velocity.
 local function releaseGrenade(kind, origin, direction)
     local path = kind == "smoke" and smokeGrenadePrefab or fragGrenadePrefab
@@ -291,6 +300,7 @@ local function updateThrow(dt, origin, direction, row)
         if path ~= "" and grenades[kind] > 0 then
             grenades[kind] = grenades[kind] - 1
             throw = { kind = kind, elapsed = 0, released = false }
+            playThrowSound(grenadeArmSound)
             if row then
                 Logic.interruptReload(row)
             end
@@ -304,6 +314,7 @@ local function updateThrow(dt, origin, direction, row)
     local duration = math.max(throwSeconds, 0.05)
     if not throw.released and throw.elapsed >= duration * throwReleaseFraction then
         releaseGrenade(throw.kind, origin, direction)
+        playThrowSound(grenadeThrowSound)
         throw.released = true
     end
     if throw.elapsed >= duration then

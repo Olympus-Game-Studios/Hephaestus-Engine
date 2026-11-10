@@ -60,7 +60,7 @@ Every weapon is tuned in data, so a rifle and a pistol differ only in their numb
 
 ## Grenades
 
-Set the player's `fragGrenadePrefab` and `smokeGrenadePrefab` to grenade prefabs; while both are empty, grenades are off and the HUD hides their count. The player starts with `fragGrenades` and `smokeGrenades` of each. A throw dips the weapon out and back over `throwSeconds`, blocks firing and aiming, and cuts a reload. The grenade leaves at `throwReleaseFraction` of the throw, from beside the eye, along the aim lifted by `throwLift`, at `throwSpeed` metres a second plus the player's own velocity.
+Set the player's `fragGrenadePrefab` and `smokeGrenadePrefab` to grenade prefabs; while both are empty, grenades are off and the HUD hides their count. The player starts with `fragGrenades` and `smokeGrenades` of each. A throw dips the weapon out and back over `throwSeconds`, blocks firing and aiming, and cuts a reload. The grenade leaves at `throwReleaseFraction` of the throw, from beside the eye, along the aim lifted by `throwLift`, at `throwSpeed` metres a second plus the player's own velocity. `grenadeArmSound` plays when a throw starts and `grenadeThrowSound` when the grenade leaves, both at `grenadeSoundVolume`.
 
 A grenade prefab is a mesh with a dynamic Rigid Body, a collision shape and `Grenade.lua`:
 
