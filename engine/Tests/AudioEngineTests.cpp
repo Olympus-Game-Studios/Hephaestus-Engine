@@ -83,6 +83,15 @@ bool TestMath()
     const Spatial close = Spatialize(listener, forward, up, Vec3(0.0f, 0.0f, 0.25f), 1.0f, 40.0f);
     ok &= Check(close.pan > 0.0f && close.pan < 0.5f, "a source at the head is not hard-panned");
 
+    ok &= Check(DistanceCutoff(2.0f, 5.0f) == kMaxCutoffHz && DistanceCutoff(5.0f, 5.0f) == kMaxCutoffHz,
+                "no distance filtering inside the minimum distance");
+    ok &= Check(DistanceCutoff(30.0f, 5.0f) < 7000.0f && DistanceCutoff(60.0f, 5.0f) < DistanceCutoff(30.0f, 5.0f),
+                "far sources lose their high frequencies, more the further they are");
+    ok &= Check(DistanceCutoff(1.0e6f, 5.0f) == kMinCutoffHz, "the cutoff never falls below its floor");
+    ok &= Check(Spatialize(listener, forward, up, Vec3(30.0f, 0.0f, 0.0f), 5.0f, 150.0f).cutoffHz ==
+                    DistanceCutoff(30.0f, 5.0f),
+                "spatialized sources carry their distance cutoff");
+
     std::vector<VoiceCandidate> voices{{0, 0.8f, 1}, {0, 0.2f, 2}, {5, 0.1f, 3}};
     ok &= Check(ChooseVoiceToSteal(voices, 0) == 1, "the quietest voice of the lowest priority is taken");
     voices[1].audibility = 0.8f;

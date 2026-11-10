@@ -23,6 +23,15 @@ float DistanceGain(float distance, float minDistance, float maxDistance)
     return inverse * (maxDistance - distance) / (maxDistance - fadeStart);
 }
 
+float DistanceCutoff(float distance, float minDistance)
+{
+    minDistance = std::max(minDistance, 1.0e-3f);
+    if (distance <= minDistance) {
+        return kMaxCutoffHz;
+    }
+    return std::max(kMinCutoffHz, kMaxCutoffHz * std::pow(minDistance / distance, 0.75f));
+}
+
 Spatial Spatialize(const Vec3& listenerPosition, const Vec3& forward, const Vec3& up, const Vec3& sourcePosition,
                    float minDistance, float maxDistance)
 {
@@ -30,6 +39,7 @@ Spatial Spatialize(const Vec3& listenerPosition, const Vec3& forward, const Vec3
     const Vec3 offset = vsub(sourcePosition, listenerPosition);
     const float distance = vlen(offset);
     result.gain = DistanceGain(distance, minDistance, maxDistance);
+    result.cutoffHz = DistanceCutoff(distance, minDistance);
     const Vec3 right = vnorm(vcross(forward, up));
     if (distance > 1.0e-4f && vlen(right) > 0.0f) {
         const float side = vdot(vscale(offset, 1.0f / distance), right);

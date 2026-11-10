@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <iostream>
 #include <random>
 #include <unordered_map>
@@ -40,6 +41,9 @@ ma_result InitSoundFromFile(ma_engine* engine, const std::filesystem::path& path
 struct AudioEngine::Impl {
     struct Voice {
         ma_sound sound{};
+        ma_lpf_node filter{}; ///< between sound and bus once the voice is spatial
+        bool filtered = false;
+        float cutoffHz = 0.0f;
         PlayParams params;
         float baseVolume = 1.0f;
         float gain = 1.0f;
@@ -88,16 +92,45 @@ struct AudioEngine::Impl {
                                                                     voice.params.maxDistance);
             voice.gain = spatial.gain;
             pan = spatial.pan;
+            ApplyCutoff(voice, spatial.cutoffHz);
         }
         ma_sound_set_volume(&voice.sound, voice.baseVolume * voice.gain);
         ma_sound_set_pan(&voice.sound, pan);
+    }
+
+    /// Puts a low-pass filter between a spatial voice and its bus the first time, then moves its cutoff.
+    void ApplyCutoff(Voice& voice, float cutoffHz)
+    {
+        const ma_uint32 sampleRate = ma_engine_get_sample_rate(&engine);
+        const ma_uint32 channels = ma_node_get_output_channels(&voice.sound, 0);
+        cutoffHz = std::min(cutoffHz, 0.45f * static_cast<float>(sampleRate));
+        if (!voice.filtered) {
+            const ma_lpf_node_config config = ma_lpf_node_config_init(channels, sampleRate, cutoffHz, 2);
+            if (ma_lpf_node_init(ma_engine_get_node_graph(&engine), &config, nullptr, &voice.filter) != MA_SUCCESS) {
+                return;
+            }
+            ma_node_attach_output_bus(&voice.filter, 0, Bus(voice.params.bus), 0);
+            ma_node_attach_output_bus(&voice.sound, 0, &voice.filter, 0);
+            voice.filtered = true;
+            voice.cutoffHz = cutoffHz;
+            return;
+        }
+        if (std::abs(cutoffHz - voice.cutoffHz) < 0.05f * voice.cutoffHz) return;
+        const ma_lpf_config config = ma_lpf_config_init(ma_format_f32, channels, sampleRate, cutoffHz, 2);
+        if (ma_lpf_node_reinit(&config, &voice.filter) == MA_SUCCESS) voice.cutoffHz = cutoffHz;
+    }
+
+    static void Uninit(Voice& voice)
+    {
+        ma_sound_uninit(&voice.sound);
+        if (voice.filtered) ma_lpf_node_uninit(&voice.filter, nullptr);
     }
 
     void Release(SoundHandle handle)
     {
         const auto it = voices.find(handle);
         if (it == voices.end()) return;
-        ma_sound_uninit(&it->second->sound);
+        Uninit(*it->second);
         voices.erase(it);
     }
 
@@ -217,7 +250,7 @@ void AudioEngine::Shutdown()
     if (m_Impl->engineInitialized) {
         for (auto& [handle, voice] : m_Impl->voices) {
             (void)handle;
-            ma_sound_uninit(&voice->sound);
+            Impl::Uninit(*voice);
         }
         m_Impl->voices.clear();
         for (auto& [path, sound] : m_Impl->cache) {
@@ -297,7 +330,7 @@ AudioEngine::SoundHandle AudioEngine::Play(const std::string& path, const PlayPa
     impl.ApplyVoiceVolume(*voice);
     voice->startOrder = impl.nextStartOrder++;
     if (ma_sound_start(&voice->sound) != MA_SUCCESS) {
-        ma_sound_uninit(&voice->sound);
+        Impl::Uninit(*voice);
         return InvalidHandle;
     }
     const SoundHandle handle = impl.nextHandle++;
@@ -374,7 +407,7 @@ void AudioEngine::StopAll()
     if (!m_Impl) return;
     for (auto& [handle, voice] : m_Impl->voices) {
         (void)handle;
-        ma_sound_uninit(&voice->sound);
+        Impl::Uninit(*voice);
     }
     m_Impl->voices.clear();
 }

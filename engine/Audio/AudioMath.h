@@ -10,12 +10,19 @@ namespace Hephaestus::AudioMath {
 /// Gain of a source at distance: 1 inside minDistance, inverse-distance beyond it, fading to 0 at maxDistance.
 float DistanceGain(float distance, float minDistance, float maxDistance);
 
+/// Low-pass cutoff in Hz that stands in for air absorbing high frequencies: kMaxCutoffHz inside minDistance,
+/// falling with distance beyond it, never below kMinCutoffHz.
+float DistanceCutoff(float distance, float minDistance);
+constexpr float kMaxCutoffHz = 20000.0f;
+constexpr float kMinCutoffHz = 1200.0f;
+
 struct Spatial {
     float gain = 1.0f;
     float pan = 0.0f; ///< -1 left, +1 right
+    float cutoffHz = kMaxCutoffHz;
 };
 
-/// Gain and stereo pan of a source for a listener at listenerPosition looking along forward with up.
+/// Gain, stereo pan and distance cutoff of a source for a listener at listenerPosition looking along forward with up.
 Spatial Spatialize(const Vec3& listenerPosition, const Vec3& forward, const Vec3& up, const Vec3& sourcePosition,
                    float minDistance, float maxDistance);
 

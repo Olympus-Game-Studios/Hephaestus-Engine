@@ -6,7 +6,7 @@ order: 10
 
 # Audio
 
-Hephaestus mixes as many sounds at once as you need: overlapping gunshots, footsteps and music all play together. Sounds can be 2D (the same in both ears, right for music, UI and the player's own weapon) or 3D (quieter with distance and panned to the side they come from, heard from the active camera). Supported formats are **WAV**, **MP3** and **FLAC**. Sound plays through WASAPI on Windows and Core Audio on macOS.
+Hephaestus mixes as many sounds at once as you need: overlapping gunshots, footsteps and music all play together. Sounds can be 2D (the same in both ears, right for music, UI and the player's own weapon) or 3D (quieter and duller with distance, as air soaks up the high frequencies, and panned to the side they come from, heard from the active camera). Supported formats are **WAV**, **MP3** and **FLAC**. Sound plays through WASAPI on Windows and Core Audio on macOS.
 
 Each file is loaded and decoded the first time it plays and kept in memory, so playing it again never reads the disk.
 
@@ -20,7 +20,7 @@ Add an **Audio Source** (from **Create** in the viewport, or as a component) and
 - **Bus**: which volume group it belongs to (see below).
 - **3D**: hear it from the entity's position. It follows the entity if it moves.
 - **Min Distance**: inside this many metres it plays at full volume.
-- **Max Distance**: beyond this many metres it is silent. In between it gets quieter with distance.
+- **Max Distance**: beyond this many metres it is silent. In between it gets quieter with distance, and loses more of its high frequencies the further it is past Min Distance, so a far gunshot sounds far off rather than just quiet.
 
 You can also drag a sound from the Content Browser straight into the viewport.
 
@@ -71,5 +71,5 @@ All the functions are in the [Lua API reference](lua-api.md#audio).
 
 ## Limitations
 
-- No effects yet (reverb, echo, filters), so a room and an open field sound the same.
+- No effects yet (reverb, echo), so a room and an open field sound the same. The only filter is the distance one on 3D sounds.
 - 3D sound is distance and left/right panning only: no Doppler, and sounds behind you are not muffled.
