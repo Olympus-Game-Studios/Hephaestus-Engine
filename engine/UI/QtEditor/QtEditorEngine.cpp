@@ -1953,6 +1953,39 @@ static void AppendProbeVolumeDebugDraw(Scene& scene, std::vector<EditorDebugLine
     }
 }
 
+// A short, faint frustum in front of each camera that shows its editor mesh, at a 16:9 aspect.
+static void AppendCameraFrustumDebugDraw(Scene& scene, std::vector<EditorDebugLine>& lines)
+{
+    constexpr float kDepth = 1.2f;
+    constexpr float kAspect = 16.0f / 9.0f;
+    const Vec3 color(0.45f, 0.5f, 0.6f);
+    auto view = scene.GetRegistry().view<TransformComponent, CameraComponent>();
+    for (entt::entity handle : view) {
+        const CameraComponent& camera = view.get<CameraComponent>(handle);
+        Hephaestus::ActiveCameraView cameraView;
+        if (!camera.showEditorMesh || !Hephaestus::TryMakeCameraView(scene, Entity(handle, &scene), cameraView)) {
+            continue;
+        }
+        const Mat4 frame = Hephaestus::MakeCameraViewFrame(cameraView.position, cameraView.yawRadians,
+                                                           cameraView.pitchRadians, cameraView.rollRadians);
+        const Vec3 forward(frame.m[0], frame.m[1], frame.m[2]);
+        const Vec3 up(frame.m[4], frame.m[5], frame.m[6]);
+        const Vec3 right(frame.m[8], frame.m[9], frame.m[10]);
+        const float halfHeight = std::tan(camera.fov * 0.5f * 3.14159265f / 180.0f) * kDepth;
+        const float halfWidth = halfHeight * kAspect;
+        const Vec3 center = vadd(cameraView.position, vscale(forward, kDepth));
+        Vec3 corners[4];
+        for (int i = 0; i < 4; ++i) {
+            corners[i] = vadd(center, vadd(vscale(right, (i == 1 || i == 2) ? halfWidth : -halfWidth),
+                                           vscale(up, i >= 2 ? halfHeight : -halfHeight)));
+        }
+        for (int i = 0; i < 4; ++i) {
+            lines.push_back({cameraView.position, corners[i], color});
+            lines.push_back({corners[i], corners[(i + 1) % 4], color});
+        }
+    }
+}
+
 static void AppendMeshColliderBoundsDebugDraw(Scene& scene, std::vector<EditorDebugLine>& lines)
 {
     auto view = scene.GetRegistry().view<MeshColliderComponent, MeshRendererComponent>();
@@ -2054,6 +2087,7 @@ void QtEditorEngine::renderFrame()
     m_renderConfig.debugPoints = m_debugPoints;
     AppendProbeVolumeDebugDraw(*scene, m_renderConfig.debugLines, m_renderConfig.debugPoints);
     AppendMeshColliderBoundsDebugDraw(*scene, m_renderConfig.debugLines);
+    AppendCameraFrustumDebugDraw(*scene, m_renderConfig.debugLines);
     // Set snap value based on current gizmo mode
     switch (m_editorContext.GetGizmoMode()) {
         case Hephaestus::GizmoMode::Translate:
@@ -2227,6 +2261,33 @@ void QtEditorEngine::createBuiltinMeshes()
     Hephaestus::AddBuiltinMeshes(*m_frameRenderer);
     m_builtinMeshesCreated = true;
     std::cout << "[QtEditorEngine] Builtin meshes created\n";
+}
+
+// The renderer draws this mesh at every camera in the editor (EngineFrameRenderer EditorCameraMeshes).
+void QtEditorEngine::loadEditorCameraMesh(const std::filesystem::path& projectRoot)
+{
+    constexpr const char* kKey = ".engine/meshes/Camera.glb";
+    if (!m_frameRenderer || m_frameRenderer->GetMeshHandle(kKey) != SIZE_MAX) {
+        return;
+    }
+    namespace fs = std::filesystem;
+    const fs::path exeDir = fs::path(Hephaestus::Tools::PathUtils::ExecutableDir().toStdWString());
+    for (const fs::path& path : {projectRoot / kKey, exeDir / kKey, exeDir / "assets" / "meshes" / "Camera.glb"}) {
+        std::error_code ec;
+        if (projectRoot.empty() && path.is_relative()) continue;
+        if (!fs::exists(path, ec)) continue;
+        MeshData data;
+        std::string error;
+        if (!ModelImporter::LoadModel(path, data, error)) {
+            std::cerr << "[QtEditorEngine] Could not load the editor camera mesh " << path << ": " << error << "\n";
+            continue;
+        }
+        const size_t handle = uploadMeshToGPU("Camera", data, path, true);
+        if (handle != MeshRendererComponent::InvalidMesh) {
+            m_frameRenderer->AddMeshAlias(kKey, handle);
+        }
+        return;
+    }
 }
 
 size_t QtEditorEngine::uploadMeshToGPU(const std::string& name, const MeshData& data,
@@ -2537,6 +2598,7 @@ void QtEditorEngine::RebuildSceneMeshes()
         m_frameRenderer->SetProjectRoot(projectRoot.string());
     }
 
+    loadEditorCameraMesh(projectRoot);
     Hephaestus::CharacterRuntime::BindScene(*scene, projectRoot, m_frameRenderer.get());
 
     // -----------------------------------------------------------------
@@ -3203,6 +3265,7 @@ bool QtEditorEngine::reloadRuntimeScene(const std::string& scenePath, std::strin
     if (projectRoot.empty()) {
         projectRoot = fs::path(sourcePath).parent_path();
     }
+    loadEditorCameraMesh(projectRoot);
     Hephaestus::CharacterRuntime::BindScene(*scene, projectRoot, m_frameRenderer.get());
     m_editorContext.RequestRebuildSceneVisuals();
     if (physicsActive() && m_joltPhysicsSystem && m_playPhysicsEnabled) {

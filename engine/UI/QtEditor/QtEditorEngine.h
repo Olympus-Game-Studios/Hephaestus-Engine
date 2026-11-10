@@ -368,6 +368,7 @@ private:
     void createTestMesh();
     void cleanupVulkanResources();
     void createBuiltinMeshes();
+    void loadEditorCameraMesh(const std::filesystem::path& projectRoot);
     std::string normalizeAssetPath(const std::string& assetPath) const;
     
     // Input helper methods

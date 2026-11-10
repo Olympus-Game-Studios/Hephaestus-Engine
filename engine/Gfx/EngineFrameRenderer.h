@@ -26,6 +26,8 @@
 
 #include "VulkanBuffer.h"
 #include "VulkanTexture.h"
+#include "../Scene/EditorIcons.h"
+#include <array>
 #include "VulkanGizmo.h"
 #include "VulkanLightGizmo.h"
 #include "SkyIrradiance.h"
@@ -618,12 +620,9 @@ private:
     };
     BillboardPipeline m_billboardPipeline;
     VkDescriptorPool m_billboardDescriptorPool = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> m_billboardDescriptorSets_Point;
-    std::vector<VkDescriptorSet> m_billboardDescriptorSets_Spot;
-    std::vector<VkDescriptorSet> m_billboardDescriptorSets_Directional;
-    VulkanTexture m_pointLightTexture;
-    VulkanTexture m_spotLightTexture;
-    VulkanTexture m_directionalLightTexture;
+    // Per Hephaestus::EditorIcon; an icon whose image is missing has no sets and is not drawn.
+    std::array<VulkanTexture, static_cast<size_t>(Hephaestus::EditorIcon::Count)> m_editorIconTextures;
+    std::array<std::vector<VkDescriptorSet>, static_cast<size_t>(Hephaestus::EditorIcon::Count)> m_editorIconSets;
 
     // Billboard ID picking pipeline (renders billboards into the entity-ID buffer)
     struct BillboardIdPipeline {

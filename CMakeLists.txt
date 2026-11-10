@@ -367,6 +367,7 @@ add_library(HephaestusRuntime STATIC
     engine/Physics/CharacterControllerMath.cpp
     engine/Physics/CharacterControllerSystem.cpp
     engine/Scene/ActiveCameraSync.cpp
+    engine/Scene/EditorIcons.cpp
     engine/Scene/Scene.cpp
     engine/Scene/SceneAuthoring.cpp
     engine/Scene/Entity.cpp
@@ -1767,6 +1768,13 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     target_link_libraries(PostProcessSettingsTests PRIVATE HephaestusRuntime)
     target_include_directories(PostProcessSettingsTests PRIVATE engine extern extern/entt/single_include)
     add_test(NAME PostProcessSettings COMMAND PostProcessSettingsTests)
+
+    add_executable(EditorIconsTests
+        engine/Tests/EditorIconsTests.cpp
+    )
+    target_link_libraries(EditorIconsTests PRIVATE HephaestusRuntime)
+    target_include_directories(EditorIconsTests PRIVATE engine extern extern/entt/single_include)
+    add_test(NAME EditorIcons COMMAND EditorIconsTests)
 
     add_executable(ProbeBakeTests
         engine/Tests/ProbeBakeTests.cpp

@@ -12,6 +12,7 @@
 #include "../Scene/Scene.h"
 #include "../Scene/Components.h"
 #include "../Scene/ActiveCameraSync.h"
+#include "../Scene/EditorIcons.h"
 #include "../UI/HephaestusUI/Rendering/VulkanHUIRenderer.h"
 
 #include <nlohmann/json.hpp>
@@ -236,6 +237,38 @@ static bool IsEditorEntityVisible(uint32_t entityId,
     }
     return config.editorIsolatedEntities.empty() ||
            ContainsEntityId(config.editorIsolatedEntities, entityId);
+}
+
+constexpr const char* kEditorCameraMeshKey = ".engine/meshes/Camera.glb";
+constexpr float kEditorCameraMeshScale = 0.3f; // Camera.glb is about a metre long
+
+// Cameras that show the built-in camera mesh in the editor, posed by their view (the mesh's lens is +X). Cameras
+// made before this carry the mesh as their own hidden-in-game MeshRenderer and are left to draw it themselves.
+static std::vector<std::pair<entt::entity, Mat4>> EditorCameraMeshes(Scene& scene, const FrameRenderConfig& config)
+{
+    std::vector<std::pair<entt::entity, Mat4>> out;
+    if (!config.isEditorMode || config.isPlaying || !config.renderBillboards) {
+        return out;
+    }
+    auto view = scene.GetRegistry().view<TransformComponent, CameraComponent>();
+    for (auto handle : view) {
+        if (!view.get<CameraComponent>(handle).showEditorMesh ||
+            !IsEditorEntityVisible(static_cast<uint32_t>(handle), config)) {
+            continue;
+        }
+        if (const auto* own = scene.GetRegistry().try_get<MeshRendererComponent>(handle);
+            own && own->meshAssetPath == kEditorCameraMeshKey) {
+            continue;
+        }
+        Hephaestus::ActiveCameraView cameraView;
+        if (Hephaestus::TryMakeCameraView(scene, Entity(handle, &scene), cameraView)) {
+            const Mat4 frame = Hephaestus::MakeCameraViewFrame(cameraView.position, cameraView.yawRadians,
+                                                               cameraView.pitchRadians, cameraView.rollRadians);
+            out.emplace_back(handle, Mat4::Multiply(frame, Mat4::Scale(Vec3(kEditorCameraMeshScale, kEditorCameraMeshScale,
+                                                                            kEditorCameraMeshScale))));
+        }
+    }
+    return out;
 }
 
 static bool MeshIncludedInIdPick(const MeshRendererComponent& renderer,
@@ -2597,23 +2630,16 @@ bool EngineFrameRenderer::createBillboardResources()
         return false;
     };
 
-    // Load each icon; fall back to PointLight.png if specific icon is missing.
-    if (!loadTex(m_pointLightTexture, "PointLight.png")) {
-        std::cerr << "[Billboard] Failed to load PointLight.png — using dummy\n";
-        m_pointLightTexture.CreateSolidColor(m_device->allocator, device,
-            m_device->physicalDevice, m_device->commandPool, m_device->graphicsQueue, 0xFFFFFF00);
-    }
-    if (!loadTex(m_directionalLightTexture, "DirectionalLight.png")) {
-        // Fall back to point-light icon if directional icon doesn't exist
-        if (!loadTex(m_directionalLightTexture, "PointLight.png")) {
-            m_directionalLightTexture.CreateSolidColor(m_device->allocator, device,
-                m_device->physicalDevice, m_device->commandPool, m_device->graphicsQueue, 0xFFFFFF00);
-        }
-    }
-    if (!loadTex(m_spotLightTexture, "SpotLight.png")) {
-        if (!loadTex(m_spotLightTexture, "PointLight.png")) {
-            m_spotLightTexture.CreateSolidColor(m_device->allocator, device,
-                m_device->physicalDevice, m_device->commandPool, m_device->graphicsQueue, 0xFFFFFF00);
+    constexpr size_t kIconCount = static_cast<size_t>(Hephaestus::EditorIcon::Count);
+    std::array<bool, kIconCount> iconLoaded{};
+    size_t loadedIcons = 0;
+    for (size_t i = 0; i < kIconCount; ++i) {
+        const char* file = Hephaestus::EditorIconFileName(static_cast<Hephaestus::EditorIcon>(i));
+        iconLoaded[i] = loadTex(m_editorIconTextures[i], file);
+        if (iconLoaded[i]) {
+            ++loadedIcons;
+        } else {
+            std::cerr << "[Billboard] No icon image " << file << "; that icon is not drawn\n";
         }
     }
 
@@ -2639,8 +2665,8 @@ bool EngineFrameRenderer::createBillboardResources()
         return false;
     }
 
-    // ── 3. Descriptor pool (3 light types × imageCount sets)
-    uint32_t totalSets = static_cast<uint32_t>(imageCount) * 3;
+    // ── 3. Descriptor pool (one set per loaded icon per frame)
+    const uint32_t totalSets = static_cast<uint32_t>(imageCount * std::max<size_t>(loadedIcons, 1));
     VkDescriptorPoolSize poolSizes[2] = {};
     poolSizes[0] = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, totalSets };
     poolSizes[1] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, totalSets };
@@ -2701,11 +2727,11 @@ bool EngineFrameRenderer::createBillboardResources()
         return true;
     };
 
-    if (!allocAndWrite(m_billboardDescriptorSets_Point, m_pointLightTexture) ||
-        !allocAndWrite(m_billboardDescriptorSets_Directional, m_directionalLightTexture) ||
-        !allocAndWrite(m_billboardDescriptorSets_Spot, m_spotLightTexture)) {
-        std::cerr << "[Billboard] Failed to allocate/write descriptor sets\n";
-        return false;
+    for (size_t i = 0; i < kIconCount; ++i) {
+        if (iconLoaded[i] && !allocAndWrite(m_editorIconSets[i], m_editorIconTextures[i])) {
+            std::cerr << "[Billboard] Failed to allocate/write descriptor sets\n";
+            return false;
+        }
     }
 
     // ── 5. Create the billboard graphics pipeline (reuse VulkanPipeline helper)
@@ -4426,6 +4452,43 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             }
         }
         
+        const size_t cameraMeshHandle = GetMeshHandle(kEditorCameraMeshKey);
+        if (cameraMeshHandle < m_meshLibrary.size() && m_meshLibrary[cameraMeshHandle].indexCount > 0) {
+            MeshGPU& mesh = m_meshLibrary[cameraMeshHandle];
+            static const MaterialComponent cameraMaterial(Vec3(0.6f, 0.6f, 0.7f));
+            for (const auto& [handle, model] : EditorCameraMeshes(*scene, config)) {
+                VkPipeline pipeline = m_pipeline->GetPipeline(false, config.shadingMode == ViewShadingMode::Wireframe);
+                if (pipeline == VK_NULL_HANDLE) break;
+                if (pipeline != currentPipeline) {
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                    currentPipeline = pipeline;
+                }
+                currentDrawLayout = m_pipeline->layout;
+                currentBoneSet = VK_NULL_HANDLE;
+                if (currentDrawLayout != probeSetLayout) {
+                    const VkDescriptorSet probeSet = m_probeGI.DrawSet(imageIndex);
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, currentDrawLayout, 2, 1, &probeSet,
+                                            0, nullptr);
+                    probeSetLayout = currentDrawLayout;
+                }
+                if (viewModelViewportBound) {
+                    vkCmdSetViewport(cmd, 0, 1, &worldViewport);
+                    viewModelViewportBound = false;
+                }
+                if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
+                    VkDeviceSize vbOffset = 0;
+                    vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, &vbOffset);
+                    currentVertexBuffer = mesh.vertexBuffer.buffer;
+                }
+                if (mesh.indexBuffer.buffer != currentIndexBuffer) {
+                    vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+                    currentIndexBuffer = mesh.indexBuffer.buffer;
+                }
+                vkCmdPushConstants(cmd, currentDrawLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), model.m);
+                drawWithMaterial(&cameraMaterial, 0, mesh.indexCount, "camera", 0, 0);
+            }
+        }
+
         // Particles: camera-facing quads of the built-in plane, coloured and faded over each particle's life.
         std::deque<MaterialComponent> particleMaterials;
         const size_t planeHandle = GetMeshHandle("builtin://plane");
@@ -4608,21 +4671,15 @@ void EngineFrameRenderer::recordBillboards(VkCommandBuffer cmd, uint32_t imageIn
 
     auto& registry = scene->GetRegistry();
 
-    auto iconView = registry.view<TransformComponent, LightComponent>();
+    auto iconView = registry.view<TransformComponent>();
     bool anyDrawn = false;
 
     for (auto entityHandle : iconView) {
-        const auto& light = registry.get<LightComponent>(entityHandle);
-
-        VkDescriptorSet* dsPtr = nullptr;
-        switch (light.type) {
-            case LightType::Directional:
-                dsPtr = &m_billboardDescriptorSets_Directional[imageIndex]; break;
-            case LightType::Spot:
-                dsPtr = &m_billboardDescriptorSets_Spot[imageIndex]; break;
-            default:
-                dsPtr = &m_billboardDescriptorSets_Point[imageIndex]; break;
-        }
+        const std::optional<Hephaestus::EditorIcon> icon = Hephaestus::EditorIconFor(registry, entityHandle);
+        if (!icon) continue;
+        auto& iconSets = m_editorIconSets[static_cast<size_t>(*icon)];
+        if (iconSets.size() <= imageIndex) continue;
+        VkDescriptorSet* dsPtr = &iconSets[imageIndex];
 
         if (!anyDrawn) {
             // Bind the billboard pipeline once
@@ -4654,9 +4711,10 @@ void EngineFrameRenderer::recordBillboards(VkCommandBuffer cmd, uint32_t imageIn
         pc.z    = worldMat.m[14];
         pc.size = kLightIconHalfExtent;
 
-        // Hue of the light at full brightness, lifted towards white so dim colours stay legible.
-        const float peak = std::max({light.color.x, light.color.y, light.color.z});
-        const Vec3 hue = peak > 1e-4f ? vscale(light.color, 1.0f / peak) : Vec3(1.0f, 1.0f, 1.0f);
+        // A light's icon takes its hue at full brightness, lifted towards white so dim colours stay legible.
+        const LightComponent* light = registry.try_get<LightComponent>(entityHandle);
+        const float peak = light ? std::max({light->color.x, light->color.y, light->color.z}) : 0.0f;
+        const Vec3 hue = peak > 1e-4f ? vscale(light->color, 1.0f / peak) : Vec3(1.0f, 1.0f, 1.0f);
         pc.r = 0.3f + 0.7f * hue.x;
         pc.g = 0.3f + 0.7f * hue.y;
         pc.b = 0.3f + 0.7f * hue.z;
@@ -4997,12 +5055,12 @@ void EngineFrameRenderer::cleanupBillboardResources()
         vkDestroyDescriptorPool(m_device->device, m_billboardDescriptorPool, nullptr);
         m_billboardDescriptorPool = VK_NULL_HANDLE;
     }
-    m_billboardDescriptorSets_Point.clear();
-    m_billboardDescriptorSets_Spot.clear();
-    m_billboardDescriptorSets_Directional.clear();
-    m_pointLightTexture.Destroy(m_device->allocator, m_device->device);
-    m_spotLightTexture.Destroy(m_device->allocator, m_device->device);
-    m_directionalLightTexture.Destroy(m_device->allocator, m_device->device);
+    for (auto& sets : m_editorIconSets) {
+        sets.clear();
+    }
+    for (auto& texture : m_editorIconTextures) {
+        texture.Destroy(m_device->allocator, m_device->device);
+    }
     m_billboardPipeline.initialized = false;
 }
 
@@ -7353,6 +7411,37 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
         }
     }
 
+    const size_t cameraMeshHandle = GetMeshHandle(kEditorCameraMeshKey);
+    if (cameraMeshHandle < m_meshLibrary.size() && m_meshLibrary[cameraMeshHandle].indexCount > 0 &&
+        m_idPicker.pipeline != VK_NULL_HANDLE) {
+        MeshGPU& mesh = m_meshLibrary[cameraMeshHandle];
+        for (const auto& [handle, model] : EditorCameraMeshes(*scene, config)) {
+            if (ContainsEntityId(config.editorLockedEntities, static_cast<uint32_t>(handle))) continue;
+            if (currentPipeline != m_idPicker.pipeline) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_idPicker.pipeline);
+                currentPipeline = m_idPicker.pipeline;
+                uint32_t dynOff = 0;
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_idPicker.pipelineLayout,
+                                        0, 1, &m_descriptorSets[imageIndex], 1, &dynOff);
+            }
+            if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
+                VkDeviceSize vbOffset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer.buffer, &vbOffset);
+                currentVertexBuffer = mesh.vertexBuffer.buffer;
+            }
+            if (mesh.indexBuffer.buffer != currentIndexBuffer) {
+                vkCmdBindIndexBuffer(cmd, mesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+                currentIndexBuffer = mesh.indexBuffer.buffer;
+            }
+            IdPicker::IdPushConstants pc;
+            pc.model = model;
+            pc.entityId = static_cast<uint32_t>(handle);
+            vkCmdPushConstants(cmd, m_idPicker.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(IdPicker::IdPushConstants), &pc);
+            vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+        }
+    }
+
     // ── Billboard ID pass: render editor icon billboards into the ID buffer ──
     if (m_billboardIdPipeline.initialized && config.isEditorMode &&
         config.renderBillboards && !config.isPlaying) {
@@ -7364,8 +7453,10 @@ void EngineFrameRenderer::recordIdPass(VkCommandBuffer cmd, uint32_t imageIndex,
                                 &m_descriptorSets[imageIndex], 1, &dynOff);
 
         auto& reg = scene->GetRegistry();
-        auto iconView = reg.view<TransformComponent, LightComponent>();
+        auto iconView = reg.view<TransformComponent>();
         for (auto ent : iconView) {
+            const std::optional<Hephaestus::EditorIcon> icon = Hephaestus::EditorIconFor(reg, ent);
+            if (!icon || m_editorIconSets[static_cast<size_t>(*icon)].empty()) continue;
             const uint32_t entityId = static_cast<uint32_t>(ent);
             if (!IsEditorEntityVisible(entityId, config) ||
                 ContainsEntityId(config.editorLockedEntities, entityId)) continue;

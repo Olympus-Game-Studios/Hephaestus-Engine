@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- 2026-11-11: Editor viewport icons for audio sources, the Environment, probe volumes and script-only objects, beside the light icons, and every camera now shows the built-in camera model aimed where it looks, with a faint view outline. All are editor-only and clickable. The FPS plugin's menus only react to the mouse over an item itself, not anywhere along its row.
 - 2026-11-10: Lua `Animator:SetTime(seconds)` jumps the current animation to a time, so characters playing the same loop can be started out of step.
 - 2026-11-10: Bloom on the Environment (intensity, threshold and radius): bright areas glow into their surroundings, in the editor and in packaged games. Scenes without bloom render exactly as before.
 - 2026-11-10: Post processing on the Environment: exposure, contrast, saturation, a colour filter, vignette, film grain and scanlines, applied to the whole picture in the editor and in packaged games (game UI is drawn on top, untouched). Set them in the Environment inspector; scenes saved before keep their look.

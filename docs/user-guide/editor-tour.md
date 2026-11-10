@@ -62,6 +62,8 @@ Each mode remembers its own panel layout, so rearranging Artist mode doesn't mes
 
 The viewport toolbar has the shading mode (**Lit**, **Unlit** or **Wireframe**) and the view (**Perspective**, or orthographic **Front**, **Back**, **Left**, **Right**, **Top** and **Bottom**). **View > Overlays** toggles the grid, gizmo, selection outline, sky, light icons, shadows and a statistics overlay.
 
+Things you can't otherwise see get an icon in the viewport so you can find and click them: lights, audio sources, the Environment, probe volumes, and objects that only run a script (such as a wave director). Each camera shows a small camera model pointing the way it looks, with a faint outline of its view, so you can aim it. Icons and camera models only appear in the editor, never in Play or in your game, and **View > Overlays > Light Billboards** hides them all. A camera's **Show Editor Mesh** setting hides just its model.
+
 ## Shortcuts worth learning first
 
 | Shortcut | Does |

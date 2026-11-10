@@ -8415,52 +8415,6 @@ void EditorMainWindow::handleViewportSpawnDrop(const QByteArray& spawnPayload, c
         camComp.showEditorMesh = true;
         created.AddComponent<CameraComponent>(camComp);
 
-        // Editor-only visual representation via Camera.glb mesh
-        if (frameRenderer) {
-            namespace fs = std::filesystem;
-            // Resolve camera mesh from the project's .engine folder first
-            fs::path camMeshPath;
-            if (m_projectContext && m_projectContext->HasProject()) {
-                camMeshPath = fs::path(m_projectContext->GetProjectRootDir()) / ".engine" / "meshes" / "Camera.glb";
-            }
-            if (camMeshPath.empty() || !fs::exists(camMeshPath)) {
-                fs::path exeDir = fs::path(Hephaestus::Tools::PathUtils::ExecutableDir().toStdWString());
-                camMeshPath = exeDir / "assets" / "meshes" / "Camera.glb";
-            }
-            std::string camAssetPath = ".engine/meshes/Camera.glb";
-            if (fs::exists(camMeshPath)) {
-                std::string normalizedKey = camMeshPath.lexically_normal().generic_string();
-                size_t meshHandle = frameRenderer->GetMeshHandle(normalizedKey);
-                if (meshHandle == SIZE_MAX) {
-                    meshHandle = frameRenderer->GetMeshHandle(camAssetPath);
-                }
-                if (meshHandle == SIZE_MAX) {
-                    MeshData meshData;
-                    std::string loadError;
-                    if (ModelImporter::LoadModel(camMeshPath, meshData, loadError) &&
-                        !meshData.vertices.empty() && !meshData.indices.empty()) {
-                        meshHandle = m_engine->uploadMeshToGPU("Camera", meshData, camMeshPath, true);
-                        if (meshHandle != MeshRendererComponent::InvalidMesh) {
-                            frameRenderer->AddMeshAlias(camAssetPath, meshHandle);
-                        }
-                    }
-                }
-                if (meshHandle != MeshRendererComponent::InvalidMesh) {
-                    MeshGPU* meshGPU = frameRenderer->GetMesh(meshHandle);
-                    int subCount = (meshGPU && !meshGPU->submeshes.empty())
-                        ? static_cast<int>(meshGPU->submeshes.size()) : 1;
-                    AABB bounds = meshGPU ? meshGPU->bounds : AABB{};
-
-                    auto& renderer = created.AddComponent<MeshRendererComponent>();
-                    renderer.SetMesh(meshHandle, bounds, camAssetPath, true, subCount);
-                    renderer.materialIndices.assign(static_cast<size_t>(subCount), -1);
-                    renderer.appliedMaterialPaths.resize(static_cast<size_t>(subCount));
-                    renderer.hideInGame = true; // Editor-only visual
-                    created.AddComponent<MaterialComponent>(Vec3(0.6f, 0.6f, 0.7f));
-                }
-            }
-        }
-
         auto& tc = created.GetComponent<TransformComponent>();
         tc.position = spawnPos;
         tc.rotation = Vec3(0.0f, 0.0f, 0.0f);
