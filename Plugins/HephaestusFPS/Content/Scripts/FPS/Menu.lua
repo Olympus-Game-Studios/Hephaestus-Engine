@@ -253,7 +253,7 @@ function Menu.refresh(menu)
         if item then
             UI.setText(row.label, item.label)
             local barWidth = menu.width
-            if tiled then
+            if not hasValue then
                 barWidth = math.min(menu.width, 40 + #item.label * 17)
             end
             UI.setSize(row.tile, barWidth, menu.rowHeight - 8)
