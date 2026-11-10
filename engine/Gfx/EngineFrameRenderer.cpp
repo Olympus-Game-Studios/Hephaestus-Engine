@@ -128,6 +128,20 @@ static VkShaderModule LoadSpvModule(VkDevice device, const std::string& name) {
     return VK_NULL_HANDLE;
 }
 
+struct ToneMapPush {
+    uint32_t outputIsSrgb;
+    float exposure;
+    float contrast;
+    float saturation;
+    float colorFilter[4];
+    float viewportSize[2];
+    float vignette;
+    float grain;
+    float scanlines;
+    float time;
+};
+static_assert(sizeof(ToneMapPush) == 56, "ToneMapPush must match tonemap.frag");
+
 // Inverse of tonemap.frag, so the display-referred clear color shows unchanged after tone mapping.
 static float DisplayToSceneLinear(float display) {
     const float toned = std::min(std::pow(std::clamp(display, 0.0f, 1.0f), 2.2f), 0.999f);
@@ -4531,7 +4545,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     if (config.isEditorMode && !config.isPlaying && m_probeGI.Active()) {
         m_probeGI.RecordDebug(cmd, imageIndex, m_descriptorSets[imageIndex]);
     }
-    recordToneMap(cmd);
+    recordToneMap(cmd, scene);
 
     // Render editor grid (after opaque meshes, before transparent) — not in play/pause or shipped game
     if (config.isEditorMode && config.renderGrid && !config.isPlaying) {
@@ -5902,7 +5916,7 @@ bool EngineFrameRenderer::createToneMapResources()
     write.pImageInfo = &hdrInfo;
     vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
 
-    VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(uint32_t)};
+    VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ToneMapPush)};
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     plci.setLayoutCount = 1;
     plci.pSetLayouts = &m_toneMap.setLayout;
@@ -6004,15 +6018,30 @@ void EngineFrameRenderer::cleanupToneMapResources()
     }
 }
 
-void EngineFrameRenderer::recordToneMap(VkCommandBuffer cmd)
+void EngineFrameRenderer::recordToneMap(VkCommandBuffer cmd, Scene* scene)
 {
     vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_toneMap.pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_toneMap.pipelineLayout,
                             0, 1, &m_toneMap.descriptorSet, 0, nullptr);
-    const uint32_t outputIsSrgb = IsSrgbFormat(m_swapchain->format) ? 1u : 0u;
+    const EnvironmentComponent* env = scene ? findEnvironment(scene) : nullptr;
+    const EnvironmentComponent::PostProcess post = env ? env->post : EnvironmentComponent::PostProcess{};
+    ToneMapPush push{};
+    push.outputIsSrgb = IsSrgbFormat(m_swapchain->format) ? 1u : 0u;
+    push.exposure = post.exposure;
+    push.contrast = post.contrast;
+    push.saturation = post.saturation;
+    push.colorFilter[0] = post.colorFilter.x;
+    push.colorFilter[1] = post.colorFilter.y;
+    push.colorFilter[2] = post.colorFilter.z;
+    push.viewportSize[0] = static_cast<float>(m_swapchain->extent.width);
+    push.viewportSize[1] = static_cast<float>(m_swapchain->extent.height);
+    push.vignette = post.vignette;
+    push.grain = post.grain;
+    push.scanlines = post.scanlines;
+    push.time = static_cast<float>(m_toneMap.frame++ % 997u) / 997.0f;
     vkCmdPushConstants(cmd, m_toneMap.pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
-                       0, sizeof(outputIsSrgb), &outputIsSrgb);
+                       0, sizeof(push), &push);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 

@@ -1760,6 +1760,13 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     target_include_directories(LightShadowSettingsTests PRIVATE engine extern extern/entt/single_include)
     add_test(NAME LightShadowSettings COMMAND LightShadowSettingsTests)
 
+    add_executable(PostProcessSettingsTests
+        engine/Tests/PostProcessSettingsTests.cpp
+    )
+    target_link_libraries(PostProcessSettingsTests PRIVATE HephaestusRuntime)
+    target_include_directories(PostProcessSettingsTests PRIVATE engine extern extern/entt/single_include)
+    add_test(NAME PostProcessSettings COMMAND PostProcessSettingsTests)
+
     add_executable(ProbeBakeTests
         engine/Tests/ProbeBakeTests.cpp
     )

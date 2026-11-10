@@ -410,7 +410,7 @@ private:
     bool createDebugOverlayResources();
     bool createToneMapResources();
     void cleanupToneMapResources();
-    void recordToneMap(VkCommandBuffer cmd);
+    void recordToneMap(VkCommandBuffer cmd, Scene* scene);
     bool createOutlineResources();
     void cleanupOutlineResources();
     
@@ -732,6 +732,7 @@ private:
         VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
+        uint32_t frame = 0;
     };
     ToneMap m_toneMap;
 

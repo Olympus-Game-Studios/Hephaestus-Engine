@@ -51,6 +51,7 @@ private:
 
     // Pickers / reset
     void pickSolidColor();
+    void pickPostFilter();
     void browseHDRI();
     void reloadHDRI();
     void resetIntensity();
@@ -82,6 +83,11 @@ private:
     QCheckBox*      m_infiniteRenderDistCheck = nullptr;
     QWidget*        m_renderDistGroup = nullptr;
     QDoubleSpinBox* m_renderDistSpin = nullptr;
+
+    // Post processing
+    QDoubleSpinBox* m_postSpins[6] = {};
+    QPushButton*    m_postFilterBtn = nullptr;
+    QColor          m_postFilter;
 };
 
 } // namespace QtEditor

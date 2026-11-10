@@ -797,6 +797,17 @@ struct EnvironmentComponent {
     float renderDistance = 500.0f;       // Distance in world units; objects beyond this are not rendered
     bool infiniteRenderDistance = false; // If true, ignores renderDistance and renders all objects
 
+    // Applied to the whole frame when it is tone mapped. The defaults change nothing.
+    struct PostProcess {
+        float exposure = 0.0f;   // stops
+        float contrast = 1.0f;
+        float saturation = 1.0f;
+        Vec3 colorFilter{1.0f, 1.0f, 1.0f};
+        float vignette = 0.0f;   // 0..1
+        float grain = 0.0f;      // 0..1
+        float scanlines = 0.0f;  // 0..1
+    } post;
+
     EnvironmentComponent()
         : type(BackgroundType::SolidColor)
         , solidColor(0.1f, 0.2f, 0.3f)

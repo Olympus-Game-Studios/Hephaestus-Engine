@@ -581,6 +581,22 @@ static std::string NormalizeAssetPathForSave(const std::string& rawPath)
     return std::filesystem::path(rawPath).filename().generic_string();
 }
 
+std::string WritePostProcessJson(const EnvironmentComponent::PostProcess& post)
+{
+    std::ostringstream oss;
+    oss.imbue(std::locale::classic());
+    oss << "          \"postProcess\": {\n";
+    oss << "            \"exposure\": " << FormatFloat(post.exposure) << ",\n";
+    oss << "            \"contrast\": " << FormatFloat(post.contrast) << ",\n";
+    oss << "            \"saturation\": " << FormatFloat(post.saturation) << ",\n";
+    oss << "            \"colorFilter\": " << FormatVec3(post.colorFilter) << ",\n";
+    oss << "            \"vignette\": " << FormatFloat(post.vignette) << ",\n";
+    oss << "            \"grain\": " << FormatFloat(post.grain) << ",\n";
+    oss << "            \"scanlines\": " << FormatFloat(post.scanlines) << "\n";
+    oss << "          }\n";
+    return oss.str();
+}
+
 std::string WriteParticleEmitterJson(const ParticleEmitterComponent& emitter)
 {
     std::ostringstream oss;
@@ -1162,7 +1178,8 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             oss << "          \"reflectionIntensity\": " << FormatFloat(environment->reflectionIntensity) << ",\n";
             oss << "          \"enableRenderDistance\": " << (environment->enableRenderDistance ? "true" : "false") << ",\n";
             oss << "          \"renderDistance\": " << FormatFloat(environment->renderDistance) << ",\n";
-            oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << "\n";
+            oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << ",\n";
+            oss << WritePostProcessJson(environment->post);
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
@@ -2105,6 +2122,22 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             if (const JsonValue* v = envObj->Find("infiniteRenderDistance")) {
                 env.infiniteRenderDistance = ParseBoolLike(*v, true);
             }
+            if (const JsonValue* post = envObj->Find("postProcess"); post && post->IsObject()) {
+                auto number = [post](const char* key, float& out) {
+                    if (const JsonValue* v = post->Find(key); v && v->IsNumber()) {
+                        out = static_cast<float>(v->AsNumber());
+                    }
+                };
+                number("exposure", env.post.exposure);
+                number("contrast", env.post.contrast);
+                number("saturation", env.post.saturation);
+                number("vignette", env.post.vignette);
+                number("grain", env.post.grain);
+                number("scanlines", env.post.scanlines);
+                if (const JsonValue* v = post->Find("colorFilter")) {
+                    ParseVec3(*v, env.post.colorFilter);
+                }
+            }
 
             // --- Parse new fields (backwards-compatible: defaults preserved if absent) ---
             if (const JsonValue* v = envObj->Find("rotationYaw")) {
@@ -2758,7 +2791,8 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"reflectionIntensity\": " << FormatFloat(environment->reflectionIntensity) << ",\n";
             oss << "          \"enableRenderDistance\": " << (environment->enableRenderDistance ? "true" : "false") << ",\n";
             oss << "          \"renderDistance\": " << FormatFloat(environment->renderDistance) << ",\n";
-            oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << "\n";
+            oss << "          \"infiniteRenderDistance\": " << (environment->infiniteRenderDistance ? "true" : "false") << ",\n";
+            oss << WritePostProcessJson(environment->post);
             oss << "        }";
             componentBlocks.push_back(oss.str());
         }
