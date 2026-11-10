@@ -61,6 +61,30 @@ void EditorContext::NewScene(const std::string& name)
     }
 }
 
+bool EditorContext::RestoreSceneSnapshot(const std::string& sourcePath, const std::string& content,
+                                         bool& outOpenedSource, std::string& outError)
+{
+    outOpenedSource = false;
+    outError.clear();
+    std::error_code ec;
+    if (!sourcePath.empty() && std::filesystem::is_regular_file(sourcePath, ec)) {
+        if (!LoadScene(sourcePath)) {
+            outError = "Could not open " + sourcePath;
+            return false;
+        }
+        outOpenedSource = true;
+    } else {
+        NewScene("Recovered Scene");
+    }
+    Scene* scene = GetActiveScene();
+    if (!scene || !SceneSerializer::DeserializeFromString(*scene, content)) {
+        outError = "The recovery snapshot could not be read";
+        return false;
+    }
+    MarkDirty();
+    return true;
+}
+
 bool EditorContext::LoadScene(const std::string& filepath)
 {
     // Check file exists

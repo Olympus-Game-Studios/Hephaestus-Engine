@@ -174,6 +174,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-11-10: Recover Unsaved Work reopens the scene a snapshot was taken from (or a new unsaved scene if that file is gone) instead of loading it into whatever scene is open, which could then overwrite the wrong scene file on save.
 - 2026-11-10: Characters no longer collide with ragdolls, so walking over a body does not throw the player into the air. Bullets and other raycasts still hit ragdolls.
 - 2026-11-10: Image widgets in a game UI are drawn with their image, tint and scale mode in Editor Play. They were drawn as solid tinted rectangles there; packaged games already drew them.
 - 2026-11-10: Normal maps are applied in tangent space. They were read as world-space normals and blended in, which tilted every normal-mapped surface towards world +Z and could make a dark material look almost white (the FPS-Shooter enemy character's armour).

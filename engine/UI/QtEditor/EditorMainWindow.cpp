@@ -6368,8 +6368,8 @@ void EditorMainWindow::promptPendingRecovery()
     box.setIcon(QMessageBox::Warning);
     box.setWindowTitle(tr("Recover Unsaved Work"));
     box.setText(tr("The previous editor session ended unexpectedly. "
-                   "Restore a recovery snapshot into the active scene "
-                   "(does not overwrite the scene file on disk)?"));
+                   "Reopen the newest snapshot's scene with the recovered changes "
+                   "(nothing is written to disk until you save)?"));
     box.setInformativeText(lines.join(QLatin1Char('\n')));
     auto* restoreBtn = box.addButton(tr("Restore"), QMessageBox::AcceptRole);
     auto* discardBtn = box.addButton(tr("Discard"), QMessageBox::DestructiveRole);
@@ -6406,28 +6406,27 @@ void EditorMainWindow::promptPendingRecovery()
     if (!ctx) {
         return;
     }
-    if (!ctx->HasActiveScene()) {
-        ctx->NewScene("Recovered Scene");
-    }
-    Scene* scene = ctx->GetActiveScene();
-    if (!scene) {
-        return;
-    }
-
-    if (!SceneSerializer::DeserializeFromString(*scene, *content)) {
+    bool openedSource = false;
+    std::string restoreError;
+    if (!ctx->RestoreSceneSnapshot(chosen.sourcePath, *content, openedSource, restoreError)) {
         if (m_notifications) {
-            m_notifications->ShowError(tr("Failed to restore recovery snapshot"));
+            m_notifications->ShowError(tr("Failed to restore recovery snapshot: %1")
+                                           .arg(QString::fromStdString(restoreError)));
         }
         return;
     }
 
-    ctx->MarkDirty();
     m_engine->RebuildSceneMeshes();
     m_recoveryStore.DiscardAll();
     updateWindowTitle();
     rebuildOutliner();
     if (m_notifications) {
-        m_notifications->ShowInfo(tr("Recovery snapshot restored (unsaved)"));
+        if (openedSource) {
+            m_notifications->ShowInfo(tr("Recovery snapshot restored into %1 (unsaved)")
+                                          .arg(QString::fromStdString(chosen.sourcePath)));
+        } else {
+            m_notifications->ShowWarning(tr("The snapshot's scene file is missing; restored into a new unsaved scene"));
+        }
     }
 }
 
