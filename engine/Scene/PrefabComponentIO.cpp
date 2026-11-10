@@ -814,6 +814,8 @@ void CaptureCharacterController(const CharacterControllerComponent& component, J
     data.objectValue["airAcceleration"] = MakeNumber(component.airAcceleration);
     data.objectValue["airControl"] = MakeNumber(component.airControl);
     data.objectValue["jumpSpeed"] = MakeNumber(component.jumpSpeed);
+    data.objectValue["coyoteTime"] = MakeNumber(component.coyoteTime);
+    data.objectValue["jumpBufferTime"] = MakeNumber(component.jumpBufferTime);
     data.objectValue["gravityScale"] = MakeNumber(component.gravityScale);
     data.objectValue["maxFallSpeed"] = MakeNumber(component.maxFallSpeed);
     data.objectValue["collisionLayer"] = MakeNumber(component.collisionLayer);
@@ -847,6 +849,8 @@ void ApplyCharacterController(CharacterControllerComponent& component, const Jso
     readFloat("airAcceleration", component.airAcceleration);
     readFloat("airControl", component.airControl);
     readFloat("jumpSpeed", component.jumpSpeed);
+    readFloat("coyoteTime", component.coyoteTime);
+    readFloat("jumpBufferTime", component.jumpBufferTime);
     readFloat("gravityScale", component.gravityScale);
     readFloat("maxFallSpeed", component.maxFallSpeed);
     readFloat("mass", component.mass);

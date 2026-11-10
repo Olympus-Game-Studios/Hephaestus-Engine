@@ -181,6 +181,8 @@ std::string WriteCharacterControllerJson(const CharacterControllerComponent& com
     oss << "          \"airAcceleration\": " << FormatFloat(component.airAcceleration) << ",\n";
     oss << "          \"airControl\": " << FormatFloat(component.airControl) << ",\n";
     oss << "          \"jumpSpeed\": " << FormatFloat(component.jumpSpeed) << ",\n";
+    oss << "          \"coyoteTime\": " << FormatFloat(component.coyoteTime) << ",\n";
+    oss << "          \"jumpBufferTime\": " << FormatFloat(component.jumpBufferTime) << ",\n";
     oss << "          \"gravityScale\": " << FormatFloat(component.gravityScale) << ",\n";
     oss << "          \"maxFallSpeed\": " << FormatFloat(component.maxFallSpeed) << ",\n";
     oss << "          \"collisionLayer\": " << component.collisionLayer << ",\n";
@@ -218,6 +220,8 @@ bool ApplyCharacterControllerJson(CharacterControllerComponent& component, const
     readFloat("airAcceleration", component.airAcceleration);
     readFloat("airControl", component.airControl);
     readFloat("jumpSpeed", component.jumpSpeed);
+    readFloat("coyoteTime", component.coyoteTime);
+    readFloat("jumpBufferTime", component.jumpBufferTime);
     readFloat("gravityScale", component.gravityScale);
     readFloat("maxFallSpeed", component.maxFallSpeed);
     readFloat("mass", component.mass);

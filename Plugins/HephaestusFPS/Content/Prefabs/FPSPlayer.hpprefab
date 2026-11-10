@@ -23,7 +23,9 @@
             "height": 1.8,
             "radius": 0.3,
             "crouchedHeight": 1.1,
-            "walkSpeed": 5.0
+            "walkSpeed": 5.0,
+            "coyoteTime": 0.12,
+            "jumpBufferTime": 0.12
           }
         },
         {

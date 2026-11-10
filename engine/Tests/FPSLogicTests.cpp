@@ -712,6 +712,15 @@ check(#capped == 2, "the prediction stops after the allowed number of bounces")
 groundY = -1000
 local skyward, none = ThrowPreview.predict({ x = 0, y = 0, z = 0 }, { x = 0, y = 5, z = 0 }, { maxSeconds = 0.5 })
 check(#none == 0 and #skyward == 31, "a throw that reaches nothing stops after maxSeconds")
+local L = require("FPS.Logic")
+check(L.directionSpeedScale(1, 0, 0.85, 0.7) == 1 and near(L.directionSpeedScale(0, 1, 0.85, 0.7), 0.85)
+      and near(L.directionSpeedScale(-1, 0, 0.85, 0.7), 0.7) and L.directionSpeedScale(0, 0, 0.85, 0.7) == 1,
+      "moving forward is full speed, strafing and backpedalling are slower")
+local diagonal = L.directionSpeedScale(1, 1, 0.85, 0.7)
+check(diagonal > 0.85 and diagonal < 1, "a forward diagonal falls between strafe and forward speed")
+check(near(L.landingSpeedScale(0, 0.3, 0.6), 0.6) and L.landingSpeedScale(0.3, 0.3, 0.6) == 1
+      and L.landingSpeedScale(0.15, 0.3, 0.6) > 0.6 and L.landingSpeedScale(0.15, 0.3, 0.6) < 1,
+      "a hard landing slows the player and eases back to full speed")
 Physics = nil
 
 if #failures > 0 then error(table.concat(failures, "\n")) end

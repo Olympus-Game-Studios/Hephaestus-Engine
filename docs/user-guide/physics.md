@@ -52,6 +52,7 @@ For players and NPCs that walk around, don't use a dynamic rigid body; use a **C
 
 - Walking with **Acceleration**, **Deceleration**, **Air Acceleration** and **Air Control**
 - **Jump Speed**, **Gravity Scale** and **Max Fall Speed**
+- **Coyote Time**: a jump still works for this many seconds after walking off a ledge, and **Jump Buffer**: a jump pressed this many seconds before landing happens on landing. Both make jumping feel responsive; at 0 they are off.
 - Slopes up to **Max Slope Angle** and stairs up to **Step Height**
 - Sticking to the ground on the way down slopes (**Ground Snap Distance**)
 - Standing on and riding moving platforms

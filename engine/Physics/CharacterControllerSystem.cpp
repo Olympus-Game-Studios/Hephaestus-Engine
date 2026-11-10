@@ -49,6 +49,8 @@ ControllerAuthoredValues AuthoredFrom(const CharacterControllerComponent& compon
     values.airAcceleration = component.airAcceleration;
     values.airControl = component.airControl;
     values.jumpSpeed = component.jumpSpeed;
+    values.coyoteTime = component.coyoteTime;
+    values.jumpBufferTime = component.jumpBufferTime;
     values.gravityScale = component.gravityScale;
     values.maxFallSpeed = component.maxFallSpeed;
     values.mass = component.mass;
@@ -64,7 +66,8 @@ bool SameAuthored(const ControllerAuthoredValues& a, const ControllerAuthoredVal
         && near(a.groundSnapDistance, b.groundSnapDistance) && near(a.walkSpeed, b.walkSpeed)
         && near(a.acceleration, b.acceleration) && near(a.deceleration, b.deceleration)
         && near(a.airAcceleration, b.airAcceleration) && near(a.airControl, b.airControl)
-        && near(a.jumpSpeed, b.jumpSpeed) && near(a.gravityScale, b.gravityScale)
+        && near(a.jumpSpeed, b.jumpSpeed) && near(a.coyoteTime, b.coyoteTime)
+        && near(a.jumpBufferTime, b.jumpBufferTime) && near(a.gravityScale, b.gravityScale)
         && near(a.maxFallSpeed, b.maxFallSpeed) && near(a.mass, b.mass)
         && near(a.pushStrength, b.pushStrength);
 }
@@ -129,6 +132,7 @@ struct CharacterControllerSystem::Runtime {
     PlanarWish wish{};
     bool jumpRequested = false;
     std::optional<float> jumpSpeedOverride;
+    JumpGate jumpGate{};
     std::optional<float> legacySpeed;
     float speedMultiplier = 1.0f;
     bool crouchRequested = false;
@@ -587,7 +591,10 @@ void CharacterControllerSystem::FixedStep(Scene& scene, float fixedDt)
         step.gravityScale = runtime->applied.gravityScale;
         step.fixedDt = fixedDt;
         step.maxFallSpeed = runtime->applied.maxFallSpeed;
-        step.jump = jumpRequested;
+        const JumpDecision jump = StepJumpGate(runtime->jumpGate, jumpRequested, ground, runtime->applied.coyoteTime,
+                                               runtime->applied.jumpBufferTime, fixedDt);
+        step.jump = jump.jump;
+        step.coyoteJump = jump.coyote;
         step.jumpSpeed = jumpSpeed;
         step.instantPlanarSpeed = runtime->legacySpeed.has_value();
         const VelocityStepResult integrated = IntegrateCharacterVelocity(step);

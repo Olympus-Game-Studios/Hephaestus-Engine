@@ -29,6 +29,8 @@ struct ControllerAuthoredValues {
     float airAcceleration = 12.0f;
     float airControl = 0.35f;
     float jumpSpeed = 5.5f;
+    float coyoteTime = 0.0f;
+    float jumpBufferTime = 0.0f;
     float gravityScale = 1.0f;
     float maxFallSpeed = 40.0f;
     float mass = 80.0f;
@@ -55,9 +57,29 @@ struct VelocityStepInput {
     float fixedDt = 1.0f / 60.0f;
     float maxFallSpeed = 40.0f;
     bool jump = false;
+    // The jump comes from JumpGate's coyote window, so it is allowed while not on ground.
+    bool coyoteJump = false;
     float jumpSpeed = 5.5f;
     bool instantPlanarSpeed = false;
 };
+
+// Per-character jump timing carried between steps.
+struct JumpGate {
+    float sinceGrounded = 0.0f;
+    float bufferRemaining = 0.0f;
+    bool jumpedSinceGrounded = false;
+};
+
+struct JumpDecision {
+    bool jump = false;
+    bool coyote = false;
+};
+
+// Decides whether this step jumps. A request waits up to bufferTime for the character to be able to jump; a
+// character that walked off ground (without jumping) can still jump for coyoteTime. With both times at 0 a
+// request only counts on the step it is made and only on ground.
+JumpDecision StepJumpGate(JumpGate& gate, bool requested, CharacterGroundState ground, float coyoteTime,
+                          float bufferTime, float dt);
 
 struct VelocityStepResult {
     Vec3 velocity{};

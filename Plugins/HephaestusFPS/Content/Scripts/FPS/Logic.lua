@@ -39,6 +39,28 @@ function Logic.sprintAllowed(forwardAxis, crouched)
     return (forwardAxis or 0) > 0.5 and not crouched
 end
 
+-- Speed scale for the direction of the move input: 1 straight ahead, strafeScale sideways and backScale straight
+-- back, blended by the angle so diagonals fall in between.
+function Logic.directionSpeedScale(forwardAxis, rightAxis, strafeScale, backScale)
+    local f, r = forwardAxis or 0, rightAxis or 0
+    local length = math.sqrt(f * f + r * r)
+    if length < 1e-4 then
+        return 1
+    end
+    local along = f / length
+    local towards = along >= 0 and 1 or backScale
+    return strafeScale + (towards - strafeScale) * along * along
+end
+
+-- Speed scale after a hard landing: starts at slowScale and eases back to 1 over seconds.
+function Logic.landingSpeedScale(elapsed, seconds, slowScale)
+    if not elapsed or seconds <= 0 or elapsed >= seconds then
+        return 1
+    end
+    local t = math.max(0, elapsed) / seconds
+    return slowScale + (1 - slowScale) * t * t * (3 - 2 * t)
+end
+
 -- Rounds the weapon holds: the magazine plus a chambered round.
 function Logic.loadedRounds(state)
     return (state.magazine or 0) + (state.chamber or 0)

@@ -19,6 +19,12 @@ Expose.number("standEyeHeight", 1.62)
 Expose.number("crouchEyeHeight", 0.95)
 Expose.number("eyeBlendMetersPerSecond", 8)
 Expose.number("sprintMultiplier", 1.6)
+Expose.number("strafeSpeedScale", 0.85)
+Expose.number("backpedalSpeedScale", 0.7)
+Expose.number("crouchSpeedScale", 0.6)
+Expose.number("landingSlowScale", 0.6)
+Expose.number("landingSlowSeconds", 0.3)
+Expose.number("landingSlowMinSpeed", 4)
 Expose.number("fieldOfView", 80)
 Expose.number("fullSpreadMoveSpeed", 5.0)
 Expose.number("interactDistance", 2.5)
@@ -77,6 +83,7 @@ local cameraKickPitch = { x = 0, v = 0 }
 local cameraKickYaw = { x = 0, v = 0 }
 local cameraKickOmega, cameraKickZeta = 24, 0.6
 local wasGrounded = true
+local sinceHardLanding = nil
 local fallSpeed = 0
 local footfallThisFrame = false
 local stepCount = 0
@@ -396,6 +403,7 @@ function onAwake()
     stepCount = 0
     wasGrounded = true
     fallSpeed = 0
+    sinceHardLanding = nil
     cameraKickPitch = { x = 0, v = 0 }
     cameraKickYaw = { x = 0, v = 0 }
     footsteps = parseList(footstepSounds)
@@ -447,7 +455,14 @@ function onUpdate(dt)
         sprinting = Logic.sprintAllowed(forward, crouched) and Input.isActionDown("Sprint")
             and not commands.fireHeld and not commands.aimHeld
         local adsMove = row and Gunplay.lerp(1, row.adsMoveMultiplier or 1, row.adsBlend or 0) or 1
-        Character.setSpeedMultiplier(sprinting and sprintMultiplier or adsMove)
+        local scale = sprinting and sprintMultiplier
+            or adsMove * Logic.directionSpeedScale(forward, right, strafeSpeedScale, backpedalSpeedScale)
+                * (crouched and crouchSpeedScale or 1)
+        if sinceHardLanding then
+            sinceHardLanding = sinceHardLanding + dt
+            scale = scale * Logic.landingSpeedScale(sinceHardLanding, landingSlowSeconds, landingSlowScale)
+        end
+        Character.setSpeedMultiplier(scale)
         commands.reload = Input.isActionPressed("Reload")
         commands.interact = Input.isActionPressed("Interact")
         if Input.isActionPressed("NextWeapon") then
@@ -505,6 +520,9 @@ function onLateUpdate(dt)
         fallSpeed = math.max(fallSpeed, -((vel and vel.y) or 0))
     elseif not wasGrounded then
         landingSpeed = fallSpeed
+        if landingSpeed >= landingSlowMinSpeed then
+            sinceHardLanding = 0
+        end
         fallSpeed = 0
         if player and landingSpeed > 2 then
             player.cameraImpulses = player.cameraImpulses or {}

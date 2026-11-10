@@ -8,6 +8,7 @@ namespace {
 
 constexpr float kWishEpsilon = 1.0e-8f;
 constexpr float kJumpAwayTolerance = 0.1f;
+constexpr float kGateEpsilon = 1.0e-5f;
 
 bool Finite(float value)
 {
@@ -104,6 +105,8 @@ ControllerAuthoredValues ClampControllerAuthored(const ControllerAuthoredValues&
     float airControl = Finite(in.airControl) ? in.airControl : 0.35f;
     out.airControl = std::clamp(airControl, 0.0f, 1.0f);
     out.jumpSpeed = ClampNonNegative(in.jumpSpeed, 5.5f);
+    out.coyoteTime = ClampNonNegative(in.coyoteTime, 0.0f);
+    out.jumpBufferTime = ClampNonNegative(in.jumpBufferTime, 0.0f);
     out.gravityScale = Finite(in.gravityScale) ? in.gravityScale : 1.0f;
     out.maxFallSpeed = ClampNonNegative(in.maxFallSpeed, 40.0f);
     out.mass = std::max(0.01f, ClampNonNegative(in.mass, 80.0f));
@@ -121,6 +124,8 @@ ControllerAuthoredValues ClampControllerAuthored(const ControllerAuthoredValues&
         || out.airAcceleration != in.airAcceleration
         || out.airControl != in.airControl
         || out.jumpSpeed != in.jumpSpeed
+        || out.coyoteTime != in.coyoteTime
+        || out.jumpBufferTime != in.jumpBufferTime
         || out.gravityScale != in.gravityScale
         || out.maxFallSpeed != in.maxFallSpeed
         || out.mass != in.mass
@@ -183,6 +188,10 @@ VelocityStepResult IntegrateCharacterVelocity(const VelocityStepInput& input)
     }
 
     Vec3 relative = planarRelative(Planar(input.velocity));
+    if (input.jump && input.coyoteJump) {
+        result.velocity.y = input.jumpSpeed;
+        result.jumped = true;
+    }
     if (input.instantPlanarSpeed) {
         result.velocity.x = desired.x;
         result.velocity.z = desired.z;
@@ -195,6 +204,36 @@ VelocityStepResult IntegrateCharacterVelocity(const VelocityStepInput& input)
     result.velocity.z += gravityStep.z;
     ClampDownward(result.velocity, input.maxFallSpeed);
     return result;
+}
+
+JumpDecision StepJumpGate(JumpGate& gate, bool requested, CharacterGroundState ground, float coyoteTime,
+                          float bufferTime, float dt)
+{
+    JumpDecision decision;
+    const bool grounded = ground == CharacterGroundState::OnGround;
+    if (grounded) {
+        gate.sinceGrounded = 0.0f;
+        gate.jumpedSinceGrounded = false;
+    } else {
+        gate.sinceGrounded += std::max(0.0f, dt);
+    }
+    if (requested) {
+        gate.bufferRemaining = std::max(gate.bufferRemaining, std::max(0.0f, bufferTime) + kGateEpsilon);
+    }
+    if (gate.bufferRemaining <= 0.0f) {
+        return decision;
+    }
+    const bool coyote = !grounded && !gate.jumpedSinceGrounded && gate.sinceGrounded <= coyoteTime + kGateEpsilon &&
+                        coyoteTime > 0.0f;
+    if (grounded || coyote) {
+        decision.jump = true;
+        decision.coyote = coyote;
+        gate.bufferRemaining = 0.0f;
+        gate.jumpedSinceGrounded = true;
+        return decision;
+    }
+    gate.bufferRemaining = std::max(0.0f, gate.bufferRemaining - std::max(0.0f, dt));
+    return decision;
 }
 
 const char* CharacterGroundStateName(CharacterGroundState state)

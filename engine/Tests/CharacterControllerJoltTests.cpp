@@ -810,6 +810,61 @@ int main()
               "ignoreSensors true skips the trigger");
     }
 
+    for (const float coyote : {0.0f, 0.12f}) {
+        Session session("CoyoteTime");
+        AddFloor(session);
+        AddStatic(session, "Ledge", Vec3(-1.0f, 0.5f, 0.0f), Vec3(1.0f, 0.5f, 2.0f));
+        Entity character = AddCharacter(session, Vec3(-1.5f, 1.05f, 0.0f));
+        character.GetComponent<CharacterControllerComponent>().coyoteTime = coyote;
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(30);
+        session.controllers.SetMoveInput(id, 1.0f, 0.0f);
+        int steps = 0;
+        while (StateOf(session, id).grounded && steps < 120) {
+            session.Step(1);
+            ++steps;
+        }
+        session.Step(3);
+        session.controllers.Jump(id);
+        session.Step(1);
+        const float vy = StateOf(session, id).verticalSpeed;
+        if (coyote > 0.0f) {
+            Check(vy > 4.5f, "A jump just after walking off a ledge works with coyote time (vy=" + std::to_string(vy) + ")");
+        } else {
+            Check(vy < 0.0f, "Without coyote time a jump after walking off a ledge is ignored (vy=" +
+                                 std::to_string(vy) + ")");
+        }
+    }
+
+    for (const float buffer : {0.0f, 0.12f}) {
+        Session session("JumpBuffer");
+        AddFloor(session);
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, 0.0f));
+        character.GetComponent<CharacterControllerComponent>().jumpBufferTime = buffer;
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(30);
+        session.controllers.Jump(id);
+        session.Step(1);
+        int steps = 0;
+        while (!(StateOf(session, id).verticalSpeed < 0.0f &&
+                 character.GetComponent<TransformComponent>().position.y < 0.15f) && steps < 120) {
+            session.Step(1);
+            ++steps;
+        }
+        session.controllers.Jump(id);
+        float highest = 0.0f;
+        for (int i = 0; i < 20; ++i) {
+            session.Step(1);
+            highest = std::max(highest, StateOf(session, id).verticalSpeed);
+        }
+        if (buffer > 0.0f) {
+            Check(highest > 4.5f, "A jump pressed just before landing happens on landing (vy=" + std::to_string(highest) + ")");
+        } else {
+            Check(highest < 1.0f, "Without a jump buffer a jump pressed in the air is dropped (vy=" +
+                                      std::to_string(highest) + ")");
+        }
+    }
+
     if (!g_Pass) {
         return 1;
     }
