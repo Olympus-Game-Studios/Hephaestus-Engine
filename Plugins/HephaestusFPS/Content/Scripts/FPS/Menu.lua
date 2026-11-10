@@ -25,7 +25,6 @@ Menu.theme = {
 local MAX_ROWS = 12
 local HOVER_PAD = 12
 local EASE_SECONDS = 0.035 -- time constant: the highlight is ~95% of the way there after about 0.1 s
-local NUDGE = 6           -- the selected label moves this many pixels right
 
 -- True makes selection changes instant (Settings sets it from Reduce Motion).
 Menu.reducedMotion = false
@@ -265,12 +264,23 @@ function Menu.refresh(menu)
         UI.setVisible(row.more, hasValue and selected)
         if item then
             UI.setText(row.label, item.label)
+            local rowY = menu.y + (i - 1) * menu.rowHeight
             local barWidth = menu.width
             if not hasValue then
                 barWidth = math.min(menu.width, 40 + #item.label * 17)
             end
             UI.setSize(row.tile, barWidth, menu.rowHeight - 8)
             row.barWidth = barWidth
+            -- A button's label fills its bar and is centred in it; a slider or choice keeps its label on the left.
+            if hasValue then
+                UI.setPosition(row.label, menu.x + 18, rowY)
+                UI.setSize(row.label, menu.width - 36, menu.rowHeight - 8)
+                UI.setTextAlignment(row.label, "left")
+            else
+                UI.setPosition(row.label, menu.x, rowY)
+                UI.setSize(row.label, barWidth, menu.rowHeight - 8)
+                UI.setTextAlignment(row.label, "center")
+            end
             -- Hover and click only over the item itself (its bar, or the whole row for sliders and choices).
             UI.setSize(row.button, barWidth + HOVER_PAD, menu.rowHeight - 8)
             if item.kind == "slider" then
@@ -303,7 +313,7 @@ local function mixColor(a, b, t)
     return mix(a.r, b.r, t), mix(a.g, b.g, t), mix(a.b, b.b, t), mix(a.a, b.a, t)
 end
 
--- Eases the highlight, label colours and the selected label's nudge towards the selection; dt nil jumps there.
+-- Eases the highlight and label colours towards the selection; dt nil jumps there.
 function Menu.animate(menu, dt)
     local k = (dt == nil or Menu.reducedMotion) and 1 or (1 - math.exp(-dt / EASE_SECONDS))
     if menu.targetY then
@@ -319,7 +329,6 @@ function Menu.animate(menu, dt)
         UI.setTextColor(row.label, mixColor(theme.text, theme.ink, a))
         UI.setTextColor(row.value, mixColor(theme.text, theme.ink, a))
         UI.setBackgroundColor(row.trackFill, mixColor(theme.accent, theme.ink, a))
-        UI.setPosition(row.label, menu.x + 18 + NUDGE * a, menu.y + (i - 1) * menu.rowHeight)
     end
 end
 

@@ -5,6 +5,7 @@
 #include "../../Assets/AssetManager.h"
 #include "../HephaestusUI/Rendering/HUIGeometryBuilder.h"
 
+#include <QFontMetricsF>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QMouseEvent>
@@ -190,8 +191,14 @@ void RuntimeUIOverlayWidget::paintEvent(QPaintEvent* event)
             font.setItalic(drawText.italic);
             painter.setFont(font);
 
-            const QRectF rect = toQRectF(drawText.rect);
+            QRectF rect = toQRectF(drawText.rect);
             const int alignFlags = toQtAlign(drawText.alignment, drawText.wordWrap);
+            if (!drawText.wordWrap) {
+                // Qt centres the whole line box; centre the capitals instead, as the game renderer does.
+                const QFontMetricsF metrics(font);
+                const qreal lineCentre = (metrics.ascent() - metrics.descent()) * 0.5;
+                rect.translate(0.0, lineCentre - metrics.capHeight() * 0.5);
+            }
 
             if (drawText.shadow) {
                 QColor shadowColor = toQColor(drawText.shadowColor);

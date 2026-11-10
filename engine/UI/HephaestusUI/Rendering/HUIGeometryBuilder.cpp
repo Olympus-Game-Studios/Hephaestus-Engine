@@ -340,8 +340,13 @@ void HUIGeometryBuilder::EmitText(const UIDrawTextCommand& command, IFontAtlasPr
     }
 
     const float totalHeight = layout.lineHeight * static_cast<float>(layout.lines.size());
-    const float startBaselineY =
-        command.rect.y + (command.rect.height - totalHeight) * 0.5f + layout.ascent;
+    float startBaselineY = command.rect.y + (command.rect.height - totalHeight) * 0.5f + layout.ascent;
+    // A single line is centred on its capitals (the top of H to the baseline), not on the line box.
+    if (layout.lines.size() == 1) {
+        if (const UIGlyphInfo* capital = atlas->GetGlyph('H'); capital && capital->valid && capital->yOff < 0.0f) {
+            startBaselineY = command.rect.y + (command.rect.height - capital->yOff) * 0.5f;
+        }
+    }
 
     const auto emitGlyph = [&](const UILaidOutGlyph& glyph, float startX, float baselineY,
                                const UIColor& color) {

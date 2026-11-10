@@ -1,4 +1,4 @@
--- The in-game menu: the Pause action (Escape, gamepad Start) opens Resume, Settings, Restart (when allowed), Quit to
+-- The in-game menu: the Pause action (Escape, F1, gamepad Start) opens Resume, Settings, Restart (when allowed), Quit to
 -- menu (when a menu scene is set) and Quit game. The game keeps running (ready for multiplayer) unless freezeTime
 -- is set; the player script ignores its own input while the menu is open. It calls PauseMenu.update every frame.
 local Menu = require("FPS.Menu")
@@ -47,7 +47,7 @@ end
 local function openMenu(options)
     if not PauseMenu.menu then
         PauseMenu.menu = Menu.new("PauseMenu", { backdrop = 0.6, y = 260,
-                                                 hints = "ENTER  SELECT        A / D  ADJUST        ESC  BACK" })
+                                                 hints = "ENTER  SELECT        A / D  ADJUST        ESC  BACK        F1  CLOSE" })
     end
     Menu.setPage(PauseMenu.menu, mainPage(options))
     Menu.setVisible(PauseMenu.menu, true)
@@ -67,6 +67,9 @@ function PauseMenu.update(options)
     end
     if PauseMenu.open then
         if Menu.update(PauseMenu.menu) == "back" then
+            close()
+        elseif Input.isActionPressed("Pause") and not Input.isActionPressed("MenuBack") then
+            -- F1 (or Start) closes from any page; Escape also means Back, which steps out one page at a time.
             close()
         end
     elseif Input.isActionPressed("Pause") and options.enabled ~= false then

@@ -92,6 +92,7 @@
       "name": "Pause",
       "bindings": [
         { "type": "keyboard", "control": "ESCAPE" },
+        { "type": "keyboard", "control": "F1" },
         { "type": "gamepad_button", "control": "START" }
       ]
     },
