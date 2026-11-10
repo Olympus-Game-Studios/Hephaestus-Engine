@@ -63,7 +63,7 @@ local WARNING_COLORS = {
 
 -- Grenade warnings from GrenadeWarning.compute: an icon on a ring round the crosshair towards each grenade, with an
 -- arrow just outside it pointing the same way. style: icon, arrowPattern (a format with the frame number),
--- arrowSteps, radius and iconSize (pixels; the arrow is 0.6 of the icon), time (for the lethal pulse).
+-- arrowSteps, radius and iconSize (pixels; the arrow is 0.75 of the icon), time (for the lethal pulse).
 function Hud.showGrenadeWarnings(list, style)
     if not Hud.handle then
         return
@@ -78,7 +78,7 @@ function Hud.showGrenadeWarnings(list, style)
         if warning and slot.icon and slot.arrow then
             local s, c = math.sin(warning.angle), math.cos(warning.angle)
             UI.setPosition(slot.icon, s * style.radius, -c * style.radius)
-            local arrowSize = style.iconSize * 0.6
+            local arrowSize = style.iconSize * 0.75
             if slot.iconSize ~= style.iconSize then
                 UI.setSize(slot.icon, style.iconSize, style.iconSize)
                 UI.setSize(slot.arrow, arrowSize, arrowSize)
