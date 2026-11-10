@@ -24,6 +24,11 @@ Menu.theme = {
 
 local MAX_ROWS = 12
 local HOVER_PAD = 12
+local EASE_SECONDS = 0.035 -- time constant: the highlight is ~95% of the way there after about 0.1 s
+local NUDGE = 6           -- the selected label moves this many pixels right
+
+-- True makes selection changes instant (Settings sets it from Reduce Motion).
+Menu.reducedMotion = false
 
 local function style(textColor, background, size, bold, align)
     return { textColor = textColor, backgroundColor = background, fontSize = size, fontBold = bold,
@@ -134,10 +139,14 @@ function Menu.new(name, options)
     menu.title = text(menu, root, "", menu.x, menu.y - 74, menu.width, 48, 30, true)
     menu.titleRule = panel(root, menu.x, menu.y - 20, 64, 3, Menu.theme.accent)
     for i = 1, MAX_ROWS do
+        menu.rows[i] = { tile = panel(root, menu.x, menu.y + (i - 1) * menu.rowHeight, menu.width,
+                                      menu.rowHeight - 8, Menu.theme.tile), amount = 0, target = 0 }
+    end
+    menu.highlight = panel(root, menu.x, menu.y, 0, menu.rowHeight - 8, Menu.theme.accent)
+    menu.highlightY, menu.highlightWidth = menu.y, 0
+    for i = 1, MAX_ROWS do
         local y = menu.y + (i - 1) * menu.rowHeight
-        local row = {}
-        row.tile = panel(root, menu.x, y, menu.width, menu.rowHeight - 8, Menu.theme.tile)
-        row.bar = panel(root, menu.x, y, menu.width, menu.rowHeight - 8, Menu.theme.accent)
+        local row = menu.rows[i]
         row.label = text(menu, root, "", menu.x + 18, y, menu.width - 36, menu.rowHeight - 8, 22, true)
         row.value = text(menu, root, "", menu.x + menu.width - 250, y, 196, menu.rowHeight - 8, 20, false, nil, "Right")
         row.trackBack = panel(root, menu.x + menu.width - 250, y + menu.rowHeight - 18, 196, 3, Menu.theme.track)
@@ -169,7 +178,6 @@ function Menu.new(name, options)
                 adjust(menu, i, 1)
             end
         end)
-        menu.rows[i] = row
     end
     menu.hintBar = UI.createPanel(root)
     UI.setAlignment(menu.hintBar, "Stretch", "Bottom")
@@ -196,12 +204,14 @@ end
 function Menu.setPage(menu, page)
     menu.pages = { page }
     menu.selected = 1
+    menu.snap = true
     Menu.refresh(menu)
 end
 
 function Menu.push(menu, page)
     menu.pages[#menu.pages + 1] = page
     menu.selected = 1
+    menu.snap = true
     Menu.refresh(menu)
 end
 
@@ -214,6 +224,7 @@ function Menu.back(menu)
     if #menu.pages > 1 then
         table.remove(menu.pages)
         menu.selected = 1
+        menu.snap = true
         Menu.refresh(menu)
         return true
     end
@@ -224,6 +235,7 @@ function Menu.setVisible(menu, visible)
     menu.visible = visible
     UI.setScreenVisible(menu.screen, visible)
     if visible then
+        menu.snap = true
         Menu.refresh(menu)
     end
 end
@@ -245,7 +257,7 @@ function Menu.refresh(menu)
         UI.setVisible(row.label, item ~= nil)
         local tiled = menu.tiles and item ~= nil and not hasValue
         UI.setVisible(row.tile, tiled and not selected)
-        UI.setVisible(row.bar, selected)
+        row.target = selected and 1 or 0
         UI.setVisible(row.value, hasValue)
         UI.setVisible(row.trackBack, item ~= nil and item.kind == "slider")
         UI.setVisible(row.trackFill, item ~= nil and item.kind == "slider")
@@ -258,23 +270,56 @@ function Menu.refresh(menu)
                 barWidth = math.min(menu.width, 40 + #item.label * 17)
             end
             UI.setSize(row.tile, barWidth, menu.rowHeight - 8)
-            UI.setSize(row.bar, barWidth, menu.rowHeight - 8)
+            row.barWidth = barWidth
             -- Hover and click only over the item itself (its bar, or the whole row for sliders and choices).
             UI.setSize(row.button, barWidth + HOVER_PAD, menu.rowHeight - 8)
-            local color = selected and theme.ink or theme.text
-            UI.setTextColor(row.label, color.r, color.g, color.b, color.a)
-            UI.setTextColor(row.value, color.r, color.g, color.b, color.a)
             if item.kind == "slider" then
                 local value = item.get()
                 UI.setText(row.value, item.format and item.format(value) or string.format("%.2f", value))
                 local t = (value - item.min) / math.max(item.max - item.min, 1e-6)
                 UI.setSize(row.trackFill, 196 * clamp(t, 0, 1), 3)
-                local fill = selected and theme.ink or theme.accent
-                UI.setBackgroundColor(row.trackFill, fill.r, fill.g, fill.b, fill.a)
             elseif item.kind == "choice" then
                 UI.setText(row.value, item.options[choiceIndex(item)][2])
             end
         end
+    end
+    local item = page.items[menu.selected]
+    UI.setVisible(menu.highlight, item ~= nil)
+    if item then
+        menu.targetY = menu.y + (menu.selected - 1) * menu.rowHeight
+        menu.targetWidth = menu.rows[menu.selected].barWidth or menu.width
+    end
+    if menu.snap or Menu.reducedMotion then
+        menu.snap = false
+        Menu.animate(menu, nil)
+    end
+end
+
+local function mix(a, b, t)
+    return a + (b - a) * t
+end
+
+local function mixColor(a, b, t)
+    return mix(a.r, b.r, t), mix(a.g, b.g, t), mix(a.b, b.b, t), mix(a.a, b.a, t)
+end
+
+-- Eases the highlight, label colours and the selected label's nudge towards the selection; dt nil jumps there.
+function Menu.animate(menu, dt)
+    local k = (dt == nil or Menu.reducedMotion) and 1 or (1 - math.exp(-dt / EASE_SECONDS))
+    if menu.targetY then
+        menu.highlightY = mix(menu.highlightY, menu.targetY, k)
+        menu.highlightWidth = mix(menu.highlightWidth, menu.targetWidth, k)
+        UI.setPosition(menu.highlight, menu.x, menu.highlightY)
+        UI.setSize(menu.highlight, menu.highlightWidth, menu.rowHeight - 8)
+    end
+    local theme = Menu.theme
+    for i, row in ipairs(menu.rows) do
+        row.amount = mix(row.amount, row.target, k)
+        local a = row.amount
+        UI.setTextColor(row.label, mixColor(theme.text, theme.ink, a))
+        UI.setTextColor(row.value, mixColor(theme.text, theme.ink, a))
+        UI.setBackgroundColor(row.trackFill, mixColor(theme.accent, theme.ink, a))
+        UI.setPosition(row.label, menu.x + 18 + NUDGE * a, menu.y + (i - 1) * menu.rowHeight)
     end
 end
 
@@ -284,6 +329,7 @@ function Menu.update(menu)
     if not menu.visible then
         return nil
     end
+    Menu.animate(menu, Time.unscaledDeltaTime())
     local page = currentPage(menu)
     if not page then
         return nil

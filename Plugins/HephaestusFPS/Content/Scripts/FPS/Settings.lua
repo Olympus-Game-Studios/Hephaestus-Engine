@@ -2,6 +2,7 @@
 -- saved to Storage ("settings"); the player script reads Settings.values every frame, and Settings.apply pushes
 -- the rest (bus volumes, difficulty) to the engine.
 local Difficulty = require("FPS.AI.Difficulty")
+local Menu = require("FPS.Menu")
 
 local Settings = {}
 
@@ -15,6 +16,7 @@ Settings.defaults = {
     weaponsVolume = 1.0,
     musicVolume = 1.0,
     difficulty = "regular",
+    reducedMotion = false,
 }
 
 Settings.values = {}
@@ -63,6 +65,7 @@ function Settings.apply()
         end
     end
     Difficulty.setLevel(Settings.values.difficulty)
+    Menu.reducedMotion = Settings.values.reducedMotion
 end
 
 function Settings.set(key, value)
@@ -103,6 +106,9 @@ function Settings.page()
             { label = "DIFFICULTY", kind = "choice", options = levels,
               get = function() return Settings.values.difficulty end,
               set = function(v) Settings.set("difficulty", v) end },
+            { label = "REDUCE MOTION", kind = "choice", options = { { false, "OFF" }, { true, "ON" } },
+              get = function() return Settings.values.reducedMotion end,
+              set = function(v) Settings.set("reducedMotion", v) end },
         },
         onBack = Settings.save,
     }
