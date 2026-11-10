@@ -56,6 +56,7 @@ The `Transform` table has the same as functions for the script's own entity: `ge
 | `Scene.FindFirstCamera()` / `Scene.FindCameras()` | Find camera entities. |
 | `Scene.GetActiveCamera()` / `Scene.SetActiveCamera(entity)` | Which camera the player sees through. |
 | `Scene.reload()` | Restart the current scene from its saved file (at a safe point after this frame). |
+| `Scene.load(path)` | Switch to another saved scene, such as `"assets/scenes/Level1.hpscene"`, at the same safe point. In the editor, stopping Play goes back to the scene you were editing. |
 
 ## Mesh
 
@@ -77,9 +78,20 @@ For the script's own Particle Emitter.
 
 | Function | Does |
 | --- | --- |
-| `Time.deltaTime()` | Seconds since the last frame. Same as the `dt` passed to `onUpdate`. |
+| `Time.deltaTime()` | Seconds since the last frame, times the time scale. Same as the `dt` passed to `onUpdate`. |
+| `Time.setScale(scale)` / `Time.getScale()` | Slow down, speed up (up to 10) or freeze (0) gameplay. Scripts, physics, animation and particles all follow it; sound and the UI don't. A pause menu sets 0. It goes back to 1 when Play starts or the scene changes. |
+| `Time.unscaledDeltaTime()` | Real seconds since the last frame, for anything that should keep moving while the game is paused, such as menus. |
 | `Application.quit()` | Close the game. In the editor, it stops Play. |
 | `print(...)` / `engine_log(text)` | Write to the Console and log. |
+
+## Storage
+
+Keep data such as settings between sessions. Each name is one file of the player's own data: on Windows in `%LOCALAPPDATA%\<project name>\Saves`, on macOS in `~/Library/Application Support/<project name>/Saves`, and on Linux in `~/.local/share/<project name>/Saves`. In Editor Play it is kept in the project's `.hephaestus/editor/saves` folder instead, so testing never touches a player's files.
+
+| Function | Does |
+| --- | --- |
+| `Storage.save(name, table)` | Save a table of numbers, strings, booleans and tables (string keys, or a list). Names may use letters, digits, `_` and `-`. Returns `true`, or `false` and the reason. |
+| `Storage.load(name)` | The saved table, or `nil` if there is none. |
 
 ## Input
 

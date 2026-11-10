@@ -40,10 +40,17 @@ bool ReloadAtSafePoint(const SimulationStepContext& context)
 
 } // namespace
 
-bool RunSimulationStep(const SimulationStepContext& context, float dt)
+bool RunSimulationStep(const SimulationStepContext& context, float realDt)
 {
     Scene& scene = *context.scene;
     Physics::JoltPhysicsSystem* physics = context.physics;
+    // Gameplay runs at the script-set time scale (Time.setScale); it is read again after the scripts so a pause
+    // takes effect this frame. Audio and UI keep real time.
+    auto scaled = [&]() { return context.lua ? realDt * context.lua->GetTimeScale() : realDt; };
+    if (context.lua) {
+        context.lua->SetUnscaledDeltaTime(realDt);
+    }
+    float dt = scaled();
 
     if (context.audio) {
         UpdateSceneAudioSources(scene, *context.audio);
@@ -62,6 +69,7 @@ bool RunSimulationStep(const SimulationStepContext& context, float dt)
         if (ReloadAtSafePoint(context)) return false;
     }
 
+    dt = scaled();
     // Fixed-step physics follows scripts so onUpdate can write this frame's motion.
     RunPhysics(context, physics, [&](Physics::JoltPhysicsSystem& p) {
         p.Update(scene, dt);

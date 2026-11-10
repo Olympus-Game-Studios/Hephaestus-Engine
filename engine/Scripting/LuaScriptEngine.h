@@ -289,8 +289,18 @@ public:
     using QuitRequestCallback = std::function<void()>;
     void SetQuitRequestCallback(QuitRequestCallback cb) { m_QuitRequestCallback = std::move(cb); }
 
-    using SceneReloadCallback = std::function<bool()>;
+    // Requests a scene change at the next safe point: the given scene (a project path), or the current one when
+    // the path is empty. Returns false when the host refuses.
+    using SceneReloadCallback = std::function<bool(const std::string& scenePath)>;
     void SetSceneReloadCallback(SceneReloadCallback cb) { m_SceneReloadCallback = std::move(cb); }
+
+    // Gameplay time multiplier set by Time.setScale; the host scales each frame's dt by it. Reset to 1 when a
+    // simulation starts, stops or changes scene.
+    float GetTimeScale() const { return m_TimeScale; }
+    // The frame's real dt, for Time.unscaledDeltaTime.
+    void SetUnscaledDeltaTime(float dt) { m_UnscaledDeltaTime = dt; }
+    // Folder Storage.save and Storage.load use; empty disables them.
+    void SetStorageRoot(const std::filesystem::path& root) { m_StorageRoot = root; }
 
     /**
      * Provide audio backend for Lua Audio.* bindings.
@@ -383,6 +393,9 @@ private:
 
     uint32_t m_CurrentEntityId = std::numeric_limits<uint32_t>::max();
     float m_CurrentDeltaTime = 0.0f;
+    float m_TimeScale = 1.0f;
+    float m_UnscaledDeltaTime = 0.0f;
+    std::filesystem::path m_StorageRoot;
 
     static LuaScriptEngine* s_Instance;
     static LuaScriptEngine* GetInstance();
@@ -521,6 +534,11 @@ private:
     static int Lua_Input_setCursorMode(lua_State* L);
 
     static int Lua_Time_deltaTime(lua_State* L);
+    static int Lua_Time_unscaledDeltaTime(lua_State* L);
+    static int Lua_Time_setScale(lua_State* L);
+    static int Lua_Time_getScale(lua_State* L);
+    static int Lua_Storage_save(lua_State* L);
+    static int Lua_Storage_load(lua_State* L);
 
     static int Lua_Application_quit(lua_State* L);
 
@@ -716,6 +734,7 @@ private:
     static int Lua_Scene_Destroy(lua_State* L);
     static int Lua_Scene_FindAllWithPrefix(lua_State* L);
     static int Lua_Scene_Reload(lua_State* L);
+    static int Lua_Scene_Load(lua_State* L);
 
     static int Lua_This_Call(lua_State* L);
     static int Lua_This_CallController(lua_State* L);

@@ -30,4 +30,20 @@ std::filesystem::path LocalAppDataFor(const std::filesystem::path& appName)
 #endif
 }
 
+std::filesystem::path UserDataFor(const std::filesystem::path& appName)
+{
+#ifdef _WIN32
+    return LocalAppDataFor(appName);
+#elif defined(__APPLE__)
+    const char* home = std::getenv("HOME");
+    return home ? std::filesystem::path(home) / "Library" / "Application Support" / appName : std::filesystem::path{};
+#else
+    if (const char* data = std::getenv("XDG_DATA_HOME"); data && *data) {
+        return std::filesystem::path(data) / appName;
+    }
+    const char* home = std::getenv("HOME");
+    return home ? std::filesystem::path(home) / ".local" / "share" / appName : std::filesystem::path{};
+#endif
+}
+
 } // namespace Hephaestus

@@ -39,6 +39,7 @@
 #include "../Input/InputSystem.h"
 #include <iostream>
 #include <fstream>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <algorithm>
 #include <unordered_set>
@@ -936,6 +937,7 @@ void LuaScriptEngine::DispatchContactEvents(Scene& scene, const std::vector<Phys
 void LuaScriptEngine::OnSimulationStarted() {
     m_NavMesh.reset();
     m_NavBuildAttempted = false;
+    m_TimeScale = 1.0f;
 #if LUA_AVAILABLE
     m_SceneReloadRequested = false;
     for (auto& [_, instance] : m_ScriptInstances) {
@@ -950,6 +952,7 @@ void LuaScriptEngine::OnSimulationStarted() {
 void LuaScriptEngine::OnSimulationStopped() {
     m_NavMesh.reset();
     m_NavBuildAttempted = false;
+    m_TimeScale = 1.0f;
 #if LUA_AVAILABLE
     m_SceneReloadRequested = false;
     if (!m_State) {
@@ -1430,7 +1433,20 @@ void LuaScriptEngine::RegisterUtilityBindings() {
     lua_newtable(m_State);
     lua_pushcfunction(m_State, Lua_Time_deltaTime);
     lua_setfield(m_State, -2, "deltaTime");
+    lua_pushcfunction(m_State, Lua_Time_unscaledDeltaTime);
+    lua_setfield(m_State, -2, "unscaledDeltaTime");
+    lua_pushcfunction(m_State, Lua_Time_setScale);
+    lua_setfield(m_State, -2, "setScale");
+    lua_pushcfunction(m_State, Lua_Time_getScale);
+    lua_setfield(m_State, -2, "getScale");
     lua_setglobal(m_State, "Time");
+
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Storage_save);
+    lua_setfield(m_State, -2, "save");
+    lua_pushcfunction(m_State, Lua_Storage_load);
+    lua_setfield(m_State, -2, "load");
+    lua_setglobal(m_State, "Storage");
 #endif
 }
 
@@ -3426,6 +3442,235 @@ int LuaScriptEngine::Lua_Input_setCursorMode(lua_State* L) {
 
     engine->m_CurrentCursorMode = newMode;
     return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Time_unscaledDeltaTime(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushnumber(L, engine ? static_cast<double>(engine->m_UnscaledDeltaTime) : 0.0);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Time_setScale(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const double scale = luaL_checknumber(L, 1);
+    if (engine && std::isfinite(scale)) {
+        engine->m_TimeScale = static_cast<float>(std::clamp(scale, 0.0, 10.0));
+    }
+    return 0;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Time_getScale(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushnumber(L, engine ? static_cast<double>(engine->m_TimeScale) : 1.0);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+#if LUA_AVAILABLE
+namespace {
+
+// Storage names become file names, so only plain names are accepted.
+bool IsValidStorageName(const std::string& name) {
+    if (name.empty() || name.size() > 64) {
+        return false;
+    }
+    return std::all_of(name.begin(), name.end(), [](unsigned char c) {
+        return std::isalnum(c) || c == '_' || c == '-';
+    });
+}
+
+bool LuaToJson(lua_State* L, int index, int depth, nlohmann::json& out, std::string& outError) {
+    index = lua_absindex(L, index);
+    switch (lua_type(L, index)) {
+    case LUA_TBOOLEAN:
+        out = lua_toboolean(L, index) != 0;
+        return true;
+    case LUA_TNUMBER:
+        if (lua_isinteger(L, index)) {
+            out = static_cast<std::int64_t>(lua_tointeger(L, index));
+        } else {
+            const double value = lua_tonumber(L, index);
+            if (!std::isfinite(value)) {
+                outError = "numbers must be finite";
+                return false;
+            }
+            out = value;
+        }
+        return true;
+    case LUA_TSTRING: {
+        std::size_t length = 0;
+        const char* text = lua_tolstring(L, index, &length);
+        out = std::string(text, length);
+        return true;
+    }
+    case LUA_TTABLE: {
+        if (depth > 32) {
+            outError = "tables are nested too deeply";
+            return false;
+        }
+        const lua_Integer length = static_cast<lua_Integer>(lua_rawlen(L, index));
+        bool isArray = length > 0;
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0) {
+            const bool arrayKey = lua_isinteger(L, -2) && lua_tointeger(L, -2) >= 1 && lua_tointeger(L, -2) <= length;
+            if (!arrayKey) {
+                isArray = false;
+            }
+            lua_pop(L, 1);
+        }
+        if (isArray) {
+            out = nlohmann::json::array();
+            for (lua_Integer i = 1; i <= length; ++i) {
+                lua_rawgeti(L, index, i);
+                nlohmann::json element;
+                const bool ok = LuaToJson(L, -1, depth + 1, element, outError);
+                lua_pop(L, 1);
+                if (!ok) {
+                    return false;
+                }
+                out.push_back(std::move(element));
+            }
+            return true;
+        }
+        out = nlohmann::json::object();
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0) {
+            if (lua_type(L, -2) != LUA_TSTRING) {
+                lua_pop(L, 2);
+                outError = "table keys must be strings, or 1..n for a list";
+                return false;
+            }
+            const std::string key = lua_tostring(L, -2);
+            nlohmann::json element;
+            if (!LuaToJson(L, -1, depth + 1, element, outError)) {
+                lua_pop(L, 2);
+                return false;
+            }
+            out[key] = std::move(element);
+            lua_pop(L, 1);
+        }
+        return true;
+    }
+    default:
+        outError = std::string("cannot save a ") + luaL_typename(L, index);
+        return false;
+    }
+}
+
+void PushJson(lua_State* L, const nlohmann::json& value) {
+    if (value.is_boolean()) {
+        lua_pushboolean(L, value.get<bool>() ? 1 : 0);
+    } else if (value.is_number_integer()) {
+        lua_pushinteger(L, static_cast<lua_Integer>(value.get<std::int64_t>()));
+    } else if (value.is_number()) {
+        lua_pushnumber(L, value.get<double>());
+    } else if (value.is_string()) {
+        const std::string& text = value.get_ref<const std::string&>();
+        lua_pushlstring(L, text.data(), text.size());
+    } else if (value.is_array()) {
+        lua_createtable(L, static_cast<int>(value.size()), 0);
+        lua_Integer i = 1;
+        for (const auto& element : value) {
+            PushJson(L, element);
+            lua_rawseti(L, -2, i++);
+        }
+    } else if (value.is_object()) {
+        lua_createtable(L, 0, static_cast<int>(value.size()));
+        for (const auto& [key, element] : value.items()) {
+            PushJson(L, element);
+            lua_setfield(L, -2, key.c_str());
+        }
+    } else {
+        lua_pushnil(L);
+    }
+}
+
+} // namespace
+#endif
+
+int LuaScriptEngine::Lua_Storage_save(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const std::string name = luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    std::string error;
+    nlohmann::json data;
+    if (!engine || engine->m_StorageRoot.empty()) {
+        error = "storage is not available here";
+    } else if (!IsValidStorageName(name)) {
+        error = "names may only use letters, digits, '_' and '-'";
+    } else if (LuaToJson(L, 2, 0, data, error)) {
+        std::error_code ec;
+        std::filesystem::create_directories(engine->m_StorageRoot, ec);
+        const auto target = engine->m_StorageRoot / (name + ".json");
+        const auto temp = engine->m_StorageRoot / (name + ".json.tmp");
+        {
+            std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+            out << data.dump(2);
+            if (!out.good()) {
+                error = "could not write " + temp.string();
+            }
+        }
+        if (error.empty()) {
+            std::filesystem::rename(temp, target, ec);
+            if (ec) {
+                error = "could not replace " + target.string() + ": " + ec.message();
+            }
+        }
+    }
+    if (!error.empty()) {
+        engine->LogBindingError(nullptr, "Storage.save('" + name + "') failed: " + error);
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, error.c_str());
+        return 2;
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Storage_load(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const std::string name = luaL_checkstring(L, 1);
+    if (!engine || engine->m_StorageRoot.empty() || !IsValidStorageName(name)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    std::ifstream in(engine->m_StorageRoot / (name + ".json"), std::ios::binary);
+    if (!in.is_open()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const nlohmann::json data = nlohmann::json::parse(in, nullptr, false);
+    if (data.is_discarded()) {
+        engine->LogBindingError(nullptr, "Storage.load('" + name + "'): the saved file is not valid JSON");
+        lua_pushnil(L);
+        return 1;
+    }
+    PushJson(L, data);
+    return 1;
 #else
     (void)L;
     return 0;
@@ -5443,6 +5688,8 @@ void LuaScriptEngine::RegisterSceneBindings() {
 
     lua_pushcfunction(m_State, Lua_Scene_Reload);
     lua_setfield(m_State, -2, "reload");
+    lua_pushcfunction(m_State, Lua_Scene_Load);
+    lua_setfield(m_State, -2, "load");
     
     lua_setglobal(m_State, "Scene");
     
@@ -8255,7 +8502,7 @@ int LuaScriptEngine::Lua_Scene_Reload(lua_State* L) {
 
     bool requested = false;
     try {
-        requested = engine->m_SceneReloadCallback();
+        requested = engine->m_SceneReloadCallback(std::string());
         if (requested) {
             engine->m_SceneReloadRequested = true;
         } else {
@@ -8266,6 +8513,36 @@ int LuaScriptEngine::Lua_Scene_Reload(lua_State* L) {
         engine->LogBindingError(nullptr, std::string("Scene.reload failed: ") + exception.what());
     } catch (...) {
         engine->LogBindingError(nullptr, "Scene.reload failed");
+    }
+    lua_pushboolean(L, requested);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Scene_Load(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    const std::string path = luaL_checkstring(L, 1);
+    if (!engine || !engine->m_SceneReloadCallback || path.empty()) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    bool requested = false;
+    try {
+        requested = engine->m_SceneReloadCallback(path);
+        if (requested) {
+            engine->m_SceneReloadRequested = true;
+        } else {
+            engine->LogBindingError(nullptr, "Scene.load('" + path + "') rejected: a scene change is already pending "
+                                             "or scenes cannot be changed here");
+        }
+    } catch (const std::exception& exception) {
+        engine->LogBindingError(nullptr, std::string("Scene.load failed: ") + exception.what());
+    } catch (...) {
+        engine->LogBindingError(nullptr, "Scene.load failed");
     }
     lua_pushboolean(L, requested);
     return 1;

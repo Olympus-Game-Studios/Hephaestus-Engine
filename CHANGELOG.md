@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-11-10: Lua `Scene.load(path)` switches to another scene at the next safe point, in Editor Play and packaged games; stopping Play returns to the edited scene. `Time.setScale` slows, speeds up or freezes gameplay (scripts, physics, animation and particles; not sound or UI), with `Time.getScale` and `Time.unscaledDeltaTime`. `Storage.save(name, table)` and `Storage.load(name)` keep data such as settings in the player's own data folder.
 - 2026-11-10: FPS plugin waves and restarts: `WaveDirector.lua` spawns waves of enemies that hunt the player, with a per-wave difficulty, wave and "cleared" messages and a win when the last wave is cleared. Dying or winning shows a message and offers a restart (`Scene.reload`). FPS-Shooter has a Survival level that uses it.
 - 2026-11-10: FPS plugin enemy bodies stay in the level until more than `maxCorpses` (8) lie there, then the oldest is removed with its dropped weapon; they no longer disappear after a set time unless `corpseSeconds` is set.
 - 2026-11-10: FPS plugin grenade warning: a HUD icon circles the crosshair towards each live frag near the player, with an arrow pointing at it, white when it is near, orange when its blast would hurt and red when it would kill (`grenadeWarningIcon`, `grenadeWarningArrowPattern` and related player settings).

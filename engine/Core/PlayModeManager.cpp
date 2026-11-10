@@ -86,9 +86,11 @@ bool PlayModeManager::StartPlayMode() {
     Log("Play Mode started");
     m_sceneReloadRequested = false;
     m_processingSceneReload = false;
+    m_pendingScenePath.clear();
 
     // ── 1. Snapshot scene ──────────────────────────────────────────────────
     {
+        m_editSceneSourcePath = m_scene->GetSourceAssetPath();
         SceneSerializer serializer(*m_scene);
         m_sceneSnapshot = serializer.SerializeToString();
         if (m_sceneSnapshot.empty()) {
@@ -143,6 +145,7 @@ void PlayModeManager::StopPlayMode() {
     Log("Play Mode stopped");
     m_sceneReloadRequested = false;
     m_processingSceneReload = false;
+    m_pendingScenePath.clear();
 
     // ── 1. Tear down scripts ───────────────────────────────────────────────
     if (m_luaEngine) {
@@ -165,6 +168,7 @@ void PlayModeManager::StopPlayMode() {
         if (!ok) {
             Log("Error: Failed to restore scene from snapshot!");
         }
+        m_scene->SetSourceAssetPath(m_editSceneSourcePath);
         m_sceneSnapshot.clear();
     }
 
@@ -185,7 +189,7 @@ void PlayModeManager::RequestStop() {
     m_stopRequested = true;
 }
 
-bool PlayModeManager::RequestSceneReload()
+bool PlayModeManager::RequestSceneReload(const std::string& scenePath)
 {
     if (m_processingSceneReload) {
         return false;
@@ -194,7 +198,7 @@ bool PlayModeManager::RequestSceneReload()
         Log("Scene.reload rejected: Play Mode is not active");
         return false;
     }
-    if (!m_scene || !m_scene->IsReloadable()) {
+    if (!m_scene || (scenePath.empty() && !m_scene->IsReloadable())) {
         Log("Scene.reload rejected: current scene has no authored source asset");
         return false;
     }
@@ -206,7 +210,8 @@ bool PlayModeManager::RequestSceneReload()
         return false;
     }
     m_sceneReloadRequested = true;
-    Log("Scene.reload requested");
+    m_pendingScenePath = scenePath;
+    Log(scenePath.empty() ? "Scene.reload requested" : "Scene.load requested: " + scenePath);
     return true;
 }
 
@@ -217,11 +222,13 @@ bool PlayModeManager::ProcessSceneReload()
     }
     m_sceneReloadRequested = false;
     m_processingSceneReload = true;
+    const std::string scenePath = std::move(m_pendingScenePath);
+    m_pendingScenePath.clear();
 
     std::string error;
     bool success = false;
     try {
-        success = m_sceneReloadCallback && m_sceneReloadCallback(error);
+        success = m_sceneReloadCallback && m_sceneReloadCallback(scenePath, error);
     } catch (const std::exception& exception) {
         error = exception.what();
     } catch (...) {

@@ -378,7 +378,7 @@ private:
     void syncViewportCursorCapture();
     void runSimulationFrame(float dt);
     void simulateGameplayFrame(float dt);
-    bool reloadRuntimeScene(std::string& outError);
+    bool reloadRuntimeScene(const std::string& scenePath, std::string& outError);
     void captureGizmoMultiDragWorldStarts(Scene* scene);
     void clearGizmoMultiDragWorldStarts();
     void selectEntitiesInViewportRect(float x0, float y0, float x1, float y1,

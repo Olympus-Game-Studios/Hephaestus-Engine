@@ -2889,6 +2889,9 @@ void QtEditorEngine::StartPlayMode()
         m_luaScriptEngine->SetFrameRenderer(m_frameRenderer.get());
         m_luaScriptEngine->SetAudioEngine(m_audioEngine.get());
     }
+    // Editor Play keeps Storage data inside the project (ignored by source control), apart from players' saves.
+    m_luaScriptEngine->SetStorageRoot(projectRootPath.empty() ? std::filesystem::path{}
+                                                              : projectRootPath / ".hephaestus" / "editor" / "saves");
     m_luaScriptEngine->SetInputSystem(&m_gameplayInput);
     if (!m_pluginScriptHost) {
         m_pluginScriptHost = std::make_unique<PluginScriptHost>();
@@ -2974,16 +2977,16 @@ void QtEditorEngine::StartPlayMode()
     // Wire up engines to the play mode manager
     m_playModeManager.SetScene(scene);
     m_playModeManager.SetLuaScriptEngine(m_luaScriptEngine.get());
-    m_luaScriptEngine->SetSceneReloadCallback([this]() {
-        return m_playModeManager.RequestSceneReload();
+    m_luaScriptEngine->SetSceneReloadCallback([this](const std::string& scenePath) {
+        return m_playModeManager.RequestSceneReload(scenePath);
     });
     m_luaScriptEngine->SetQuitRequestCallback([this]() {
         m_playModeManager.RequestStop();
     });
     m_playModeManager.SetCppScriptEngine(m_cppScriptEngine.get());
     m_playModeManager.SetPluginScriptHost(m_pluginScriptHost.get());
-    m_playModeManager.SetSceneReloadCallback([this](std::string& error) {
-        return reloadRuntimeScene(error);
+    m_playModeManager.SetSceneReloadCallback([this](const std::string& scenePath, std::string& error) {
+        return reloadRuntimeScene(scenePath, error);
     });
     m_playModeManager.SetLogCallback([](const std::string& msg) {
         std::cout << msg << std::endl;
@@ -3119,15 +3122,22 @@ void QtEditorEngine::SetRealtime(bool realtime)
     m_lastFrameTime = m_frameTimer.elapsed() / 1000.0f;
 }
 
-bool QtEditorEngine::reloadRuntimeScene(std::string& outError)
+bool QtEditorEngine::reloadRuntimeScene(const std::string& scenePath, std::string& outError)
 {
     Scene* scene = m_editorContext.GetActiveScene();
-    if (!scene || !scene->IsReloadable()) {
+    if (!scene || (scenePath.empty() && !scene->IsReloadable())) {
         outError = "current scene has no authored source asset";
         return false;
     }
 
-    const std::string sourcePath = scene->GetSourceAssetPath();
+    // Scene.load names a project path; Scene.reload rebuilds the scene from its own file.
+    std::string sourcePath = scene->GetSourceAssetPath();
+    if (!scenePath.empty()) {
+        const std::filesystem::path requested = std::filesystem::u8path(scenePath);
+        sourcePath = (requested.is_absolute() || m_projectRoot.empty()
+                          ? requested
+                          : std::filesystem::path(m_projectRoot) / requested).generic_string();
+    }
 
     // Validate into a temporary scene before teardown. A missing or malformed
     // source therefore leaves the active play scene intact.

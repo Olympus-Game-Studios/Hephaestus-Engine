@@ -88,6 +88,7 @@
 
 // Scripting
 #include "../Audio/AudioEngine.h"
+#include "../Core/AppPaths.h"
 #include "../Core/SimulationStep.h"
 #if HEPHAESTUS_GAME_SCRIPTING
 #include "../Scripting/LuaScriptEngine.h"
@@ -741,22 +742,30 @@ int main(int argc, char* argv[]) {
         }
     }
     bool sceneReloadRequested = false;
+    std::string pendingScenePath;
     try {
         luaEngine.Initialize(&scene, window);
         // Set project root so script search paths resolve correctly on any device
         luaEngine.SetProjectRoot(!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot);
+        {
+            const fs::path userData =
+                Hephaestus::UserDataFor(g_Config.projectName.empty() ? std::string("HephaestusGame") : g_Config.projectName);
+            luaEngine.SetStorageRoot(userData.empty() ? fs::path{} : userData / "Saves");
+        }
         luaEngine.SetFrameRenderer(&frameRenderer);
         luaEngine.SetInputSystem(&inputSystem);
         luaEngine.SetAudioEngine(&audioEngine);
         luaEngine.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);
         luaEngine.SetPluginScriptHost(&pluginScripts);
-        luaEngine.SetSceneReloadCallback([&scene, &sceneReloadRequested, &sceneReloadProcessing]() {
-            if (!scene.IsReloadable() || sceneReloadRequested || sceneReloadProcessing) {
-                return false;
-            }
-            sceneReloadRequested = true;
-            return true;
-        });
+        luaEngine.SetSceneReloadCallback(
+            [&scene, &sceneReloadRequested, &sceneReloadProcessing, &pendingScenePath](const std::string& scenePath) {
+                if ((scenePath.empty() && !scene.IsReloadable()) || sceneReloadRequested || sceneReloadProcessing) {
+                    return false;
+                }
+                pendingScenePath = scenePath;
+                sceneReloadRequested = true;
+                return true;
+            });
         HP_LOG(Info, "Lua scripting engine initialized");
     } catch (const std::exception& e) {
         HP_LOG(Error, std::string("Failed to initialize Lua: ") + e.what());
@@ -1110,40 +1119,44 @@ int main(int argc, char* argv[]) {
         loadRendererMesh(renderer, "Spawned prefab");
     });
 
-    try {
-        auto meshView = scene.GetEntitiesWith<MeshRendererComponent>();
-        int meshEntityCount = 0;
-        int loadedCount = 0;
-        
-        for (auto entityHandle : meshView) {
-            meshEntityCount++;
+    auto loadSceneMeshes = [&]() {
+        try {
+            auto meshView = scene.GetEntitiesWith<MeshRendererComponent>();
+            int meshEntityCount = 0;
+            int loadedCount = 0;
             
-            try {
-                Entity entity(entityHandle, &scene);
+            for (auto entityHandle : meshView) {
+                meshEntityCount++;
                 
-                // Get entity name for better logging
-                std::string entityName = "Entity_" + std::to_string(meshEntityCount);
-                if (entity.HasComponent<TagComponent>()) {
-                    entityName = entity.GetComponent<TagComponent>().tag;
+                try {
+                    Entity entity(entityHandle, &scene);
+                    
+                    // Get entity name for better logging
+                    std::string entityName = "Entity_" + std::to_string(meshEntityCount);
+                    if (entity.HasComponent<TagComponent>()) {
+                        entityName = entity.GetComponent<TagComponent>().tag;
+                    }
+                    
+                    auto& renderer = entity.GetComponent<MeshRendererComponent>();
+                    if (loadRendererMesh(renderer, entityName)) {
+                        loadedCount++;
+                    }
+                } catch (const std::exception& e) {
+                    HP_LOG(Error, "  Exception processing entity " + std::to_string(meshEntityCount) + ": " + std::string(e.what()));
+                } catch (...) {
+                    HP_LOG(Error, "  Unknown exception processing entity " + std::to_string(meshEntityCount));
                 }
-                
-                auto& renderer = entity.GetComponent<MeshRendererComponent>();
-                if (loadRendererMesh(renderer, entityName)) {
-                    loadedCount++;
-                }
-            } catch (const std::exception& e) {
-                HP_LOG(Error, "  Exception processing entity " + std::to_string(meshEntityCount) + ": " + std::string(e.what()));
-            } catch (...) {
-                HP_LOG(Error, "  Unknown exception processing entity " + std::to_string(meshEntityCount));
             }
+            
+            HP_LOG(Info, "Mesh loading complete. Processed " + std::to_string(meshEntityCount) + " entities, loaded " + std::to_string(loadedCount) + " meshes");
+        } catch (const std::exception& e) {
+            HP_LOG(Error, "Exception during mesh loading: " + std::string(e.what()));
+        } catch (...) {
+            HP_LOG(Error, "Unknown exception during mesh loading");
         }
         
-        HP_LOG(Info, "Mesh loading complete. Processed " + std::to_string(meshEntityCount) + " entities, loaded " + std::to_string(loadedCount) + " meshes");
-    } catch (const std::exception& e) {
-        HP_LOG(Error, "Exception during mesh loading: " + std::string(e.what()));
-    } catch (...) {
-        HP_LOG(Error, "Unknown exception during mesh loading");
-    }
+    };
+    loadSceneMeshes();
     
     HP_LOG(Info, "Loaded " + std::to_string(frameRenderer.GetMeshCount()) + " unique meshes to GPU");
     
@@ -1267,13 +1280,21 @@ int main(int argc, char* argv[]) {
         if (!sceneReloadRequested) return false;
         sceneReloadRequested = false;
         sceneReloadProcessing = true;
-        const fs::path sourcePath = fs::u8path(scene.GetSourceAssetPath());
+        // Scene.load names a project path; Scene.reload rebuilds the current scene from its file.
+        fs::path sourcePath = fs::u8path(scene.GetSourceAssetPath());
+        if (!pendingScenePath.empty()) {
+            sourcePath = fs::u8path(pendingScenePath);
+            if (sourcePath.is_relative()) {
+                sourcePath = (!g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot) / sourcePath;
+            }
+            pendingScenePath.clear();
+        }
         Scene staged;
         std::string reloadError;
-        if (!scene.IsReloadable() || !SceneSerializer::Deserialize(staged, sourcePath, reloadError)) {
+        if (sourcePath.empty() || !SceneSerializer::Deserialize(staged, sourcePath, reloadError)) {
             if (reloadError.empty()) reloadError = "current scene has no authored source asset";
             sceneReloadFailed = true;
-            HP_LOG(Error, "Cannot reload scene from '" + scene.GetSourceAssetPath() + "': " + reloadError);
+            HP_LOG(Error, "Cannot load scene from '" + sourcePath.string() + "': " + reloadError);
             Bootstrap::ShowFatalError("Scene Restart Error",
                 "Cannot reload the current authored scene:\n" + reloadError);
             sceneReloadProcessing = false;
@@ -1303,6 +1324,7 @@ int main(int argc, char* argv[]) {
             return true;
         }
 
+        loadSceneMeshes();
         const fs::path characterRoot = !g_ProjectRoot.empty() ? g_ProjectRoot : g_RuntimeRoot;
         Hephaestus::CharacterRuntime::BindScene(scene, characterRoot, &frameRenderer);
         luaEngine.OnSimulationStarted();

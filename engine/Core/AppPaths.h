@@ -46,6 +46,11 @@ inline std::filesystem::path ResourceRootFor(const std::filesystem::path& execut
 // stays read-only; empty on other platforms or when Windows can't provide the folder.
 std::filesystem::path LocalAppDataFor(const std::filesystem::path& appName);
 
+// Where a game keeps per-user data such as settings and saves: LocalAppDataFor on Windows,
+// ~/Library/Application Support/<appName> on macOS, $XDG_DATA_HOME (or ~/.local/share)/<appName> elsewhere.
+// Empty when none can be found.
+std::filesystem::path UserDataFor(const std::filesystem::path& appName);
+
 // Where logs go when LocalAppDataFor is empty: beside the resources, except a shipped .app
 // (which must not modify itself) logs to ~/Library/Logs/<app name>.
 inline std::filesystem::path LogRootFor(const std::filesystem::path& executableDirectory)

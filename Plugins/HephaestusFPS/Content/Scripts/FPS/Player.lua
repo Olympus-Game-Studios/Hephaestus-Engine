@@ -521,6 +521,11 @@ end
 function onUpdate(dt)
     lastDt = dt
     updateGameEnd(dt)
+    -- Paused (Time.setScale(0)): no look, movement or firing; mouse movement does not depend on dt.
+    if Time.getScale() == 0 then
+        Character.move(0, 0)
+        return
+    end
     applyLook(dt)
     Character.setFacingYaw(yaw)
     applyCameraRotation()

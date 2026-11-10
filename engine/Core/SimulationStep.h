@@ -28,9 +28,10 @@ struct SimulationStepContext {
     std::function<void(const std::exception&)> onPhysicsError;
 };
 
-// Runs one gameplay frame in the order shared by Editor Play and the packaged game.
+// Runs one gameplay frame in the order shared by Editor Play and the packaged game. realDt is the frame's real time;
+// gameplay systems get it multiplied by the Lua time scale (Time.setScale).
 // Returns false when a scene reload ended the frame early.
-bool RunSimulationStep(const SimulationStepContext& context, float dt);
+bool RunSimulationStep(const SimulationStepContext& context, float realDt);
 
 void UpdateSceneAudioSources(Scene& scene, AudioEngine& audioEngine);
 

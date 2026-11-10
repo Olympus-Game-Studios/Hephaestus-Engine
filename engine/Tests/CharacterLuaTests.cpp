@@ -316,8 +316,10 @@ end
     Hephaestus::HephaestusUI::UIRenderer uiRenderer;
     engine.SetUIBindings(&uiSystem, &uiContext, &uiRenderer);
     int acceptedRequests = 0;
-    engine.SetSceneReloadCallback([&acceptedRequests]() {
+    std::string requestedScene = "unset";
+    engine.SetSceneReloadCallback([&acceptedRequests, &requestedScene](const std::string& scenePath) {
         ++acceptedRequests;
+        requestedScene = scenePath;
         return true;
     });
     engine.OnSimulationStarted();
@@ -329,8 +331,40 @@ end
     engine.Update(scene, 1.0f / 60.0f);
     ok &= Check(acceptedRequests == 1 && engine.ExecuteString("assert(_G.reloadAccepted == true)"),
                 "Scene.reload accepts a gameplay-originated deferred request");
+    ok &= Check(requestedScene.empty(), "Scene.reload asks for the current scene");
+    ok &= Check(engine.ExecuteString("assert(Scene.load('assets/scenes/Other.hpscene') == true)") &&
+                    requestedScene == "assets/scenes/Other.hpscene" && acceptedRequests == 2,
+                "Scene.load asks the host for the named scene");
+
+    ok &= Check(engine.ExecuteString("Time.setScale(0.25); assert(Time.getScale() == 0.25)") &&
+                    engine.GetTimeScale() == 0.25f,
+                "Time.setScale sets the gameplay time scale");
+    ok &= Check(engine.ExecuteString("Time.setScale(-3); assert(Time.getScale() == 0)") &&
+                    engine.ExecuteString("Time.setScale(99); assert(Time.getScale() == 10)"),
+                "the time scale is clamped to 0..10");
+
+    {
+        const std::filesystem::path storage = std::filesystem::temp_directory_path() / "hephaestus_lua_storage_tests";
+        std::error_code ec;
+        std::filesystem::remove_all(storage, ec);
+        engine.SetStorageRoot(storage);
+        ok &= Check(engine.ExecuteString(R"lua(
+assert(Storage.load("settings") == nil)
+assert(Storage.save("settings", { sensitivity = 0.5, volumes = { master = 1, sfx = 0.25 }, name = "Andrew",
+                                  bindings = { "W", "A" }, fullscreen = true }))
+local s = Storage.load("settings")
+assert(s.sensitivity == 0.5 and s.volumes.sfx == 0.25 and s.name == "Andrew" and s.bindings[2] == "A"
+       and s.fullscreen == true)
+local ok, err = Storage.save("../escape", { x = 1 })
+assert(ok == false and err ~= nil)
+assert(Storage.save("bad", { f = print }) == false)
+)lua") && std::filesystem::exists(storage / "settings.json") && !std::filesystem::exists(storage.parent_path() / "escape.json"),
+                    "Storage saves and loads tables per name and refuses unsafe names and values");
+        std::filesystem::remove_all(storage, ec);
+    }
 
     engine.OnSimulationStopped();
+    ok &= Check(engine.GetTimeScale() == 1.0f, "stopping the simulation resets the time scale");
     ok &= Check(engine.ExecuteString("assert(_G.reloadDestroyCount == 1)"),
                 "old entity script onDestroy runs before scene teardown");
     uiSystem.ClearScreens();
