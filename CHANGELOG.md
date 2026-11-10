@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-11-10: FPS plugin shell casings: weapons eject a `casingPrefab` on every shot that tumbles, bounces and settles, cleaned up after a few seconds and capped per weapon.
 - 2026-11-10: FPS plugin bullet travel: weapons with a `muzzleVelocity` fire bullets with flight time and drop, checked along their path each frame, so close shots still land at once.
 - 2026-11-10: FPS plugin lean: hold `LeanLeft` (C) or `LeanRight` (V) to move the view and aim sideways with a camera roll, stopping short of walls.
 - 2026-11-10: Character Controller **Prone Height** and Lua `Character.setProne` / `Character.isProne`: a third, shortest stance whose capsule only gets up when the taller one fits. The FPS plugin's `Prone` action (X, right stick press) lies down, crawling slowly with a low view, less spread and less recoil.

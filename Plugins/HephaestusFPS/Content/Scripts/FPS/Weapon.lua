@@ -74,6 +74,9 @@ Expose.number("footfallDip", 0.004)
 Expose.number("fireBufferSeconds", 0.1)
 Expose.number("flashSeconds", 0.035)
 Expose.string("muzzleSmokePrefab", "")
+Expose.string("casingPrefab", "")
+Expose.number("maxCasings", 20)
+Expose.number("casingEjectSpeed", 2.5)
 Expose.number("sprintToFireSeconds", 0.22)
 Expose.number("tacticalSprintToFireSeconds", 0.38)
 Expose.number("proneSpreadScale", 0.6)
@@ -118,7 +121,7 @@ local TUNING = {
     "cameraKickFrequency", "cameraKickDampingRatio", "swayAmount", "swayLag", "swayMaxDegrees", "swayFrequency",
     "swayDampingRatio", "adsSwayScale", "idleAmount", "idleBreathRate", "idleAdsScale", "bobAmount", "moveLag",
     "moveMaxOffset", "moveFrequency", "strafeRoll", "landKick", "footfallDip", "fireBufferSeconds", "flashSeconds",
-    "muzzleSmokePrefab",
+    "muzzleSmokePrefab", "casingPrefab", "maxCasings", "casingEjectSpeed",
     "sprintToFireSeconds", "tacticalSprintToFireSeconds", "proneSpreadScale", "proneRecoilScale", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "firePitchJitter",
     "fireVolumeJitter", "emptySound", "reloadSound",
     "reloadPart2Sound", "boltSound",
@@ -188,6 +191,7 @@ function Weapon.register(entity, options)
         shotIndex = 0,
         lastFireTime = -100,
         bullets = {},
+        casings = {},
         frameDt = 1 / 60,
         recoilPitchAccum = 0,
         recoilYawAccum = 0,
@@ -334,6 +338,44 @@ local function spawnMuzzleSmoke(row, input)
                         fx, fy, fz)
 end
 
+-- Ejects a casing to the right of the view from beside the action, moving with the player; the oldest casing
+-- goes once there are more than maxCasings.
+local function spawnCasing(row, input)
+    if not row.casingPrefab or row.casingPrefab == "" or not input.dx then
+        return
+    end
+    local fx, fy, fz = input.dx, input.dy, input.dz
+    local rx, rz = -fz, fx
+    local length = math.sqrt(rx * rx + rz * rz)
+    if length < 1e-4 then
+        return
+    end
+    rx, rz = rx / length, rz / length
+    local ux, uy, uz = -rz * fy, rz * fx - rx * fz, rx * fy
+    local ads = row.adsBlend or 0
+    local side, drop = Gunplay.lerp(0.12, 0.05, ads), Gunplay.lerp(0.1, 0.06, ads)
+    local speed = row.casingEjectSpeed or 2.5
+    local jitter = 0.85 + 0.3 * Gunplay.rngNext(row.rng)
+    local casing = Scene.instantiate(row.casingPrefab, {
+        position = { x = input.ox + fx * 0.3 + rx * side - ux * drop, y = input.oy + fy * 0.3 - uy * drop,
+                     z = input.oz + fz * 0.3 + rz * side - uz * drop },
+        rotation = { x = 0, y = 0, z = 90 },
+        vars = { vx = (rx * speed + ux * speed * 0.6 - fx * 0.5) * jitter + (input.vx or 0),
+                 vy = (uy * speed * 0.6 - fy * 0.5) * jitter + (input.vy or 0),
+                 vz = (rz * speed + uz * speed * 0.6 - fz * 0.5) * jitter + (input.vz or 0) },
+    })
+    if not casing then
+        return
+    end
+    row.casings[#row.casings + 1] = casing
+    while #row.casings > math.max(0, row.maxCasings or 20) do
+        local oldest = table.remove(row.casings, 1)
+        if oldest:IsValid() then
+            Scene.destroy(oldest)
+        end
+    end
+end
+
 local function hideFlashes(row)
     for _, flash in ipairs(row.flashes or {}) do
         flash:Call("hideFlash")
@@ -462,6 +504,7 @@ local function fireShot(row, input, owner)
     playShot(row)
     showFlash(row)
     spawnMuzzleSmoke(row, input)
+    spawnCasing(row, input)
     if row.hitscan and (row.muzzleVelocity or 0) > 0 then
         -- A bullet: its first stretch is checked this frame, so close shots still land at once.
         local bullet = Ballistics.new(input.ox, input.oy, input.oz, dx, dy, dz, row.muzzleVelocity)
