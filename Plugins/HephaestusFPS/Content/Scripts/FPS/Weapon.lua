@@ -4,6 +4,9 @@ Expose.string("fireMode", "semi")
 Expose.number("roundsPerSecond", 5)
 Expose.number("damage", 20)
 Expose.number("range", 100)
+Expose.number("muzzleVelocity", 0)
+Expose.number("bulletGravityScale", 1)
+Expose.number("bulletMaxSeconds", 2)
 Expose.number("falloffStart", 25)
 Expose.number("falloffEnd", 60)
 Expose.number("falloffMinMultiplier", 0.7)
@@ -96,6 +99,7 @@ local Registry = require("FPS.Registry")
 local Logic = require("FPS.Logic")
 local Gunplay = require("FPS.Gunplay")
 local Hitscan = require("FPS.Hitscan")
+local Ballistics = require("FPS.Ballistics")
 local Health = require("FPS.Health")
 local Impacts = require("FPS.Impacts")
 
@@ -103,7 +107,8 @@ local Weapon = {}
 local SHOULDER_REACH = 0.4 -- metres from the grip back to the shoulders in the view frame
 
 local TUNING = {
-    "displayName", "slot", "fireMode", "roundsPerSecond", "damage", "range", "falloffStart", "falloffEnd",
+    "displayName", "slot", "fireMode", "roundsPerSecond", "damage", "range", "muzzleVelocity", "bulletGravityScale",
+    "bulletMaxSeconds", "falloffStart", "falloffEnd",
     "falloffMinMultiplier", "headMultiplier", "limbMultiplier", "magazineSize", "reloadSeconds",
     "reloadEmptySeconds", "adsSeconds", "adsFov", "adsMoveMultiplier", "adsSensitivityScale", "adsForward",
     "sightUp", "sightRight", "sightPitch", "sightYaw", "hipSpread", "moveSpread", "airSpread", "maxSpread", "adsSpread", "adsBloomScale",
@@ -182,6 +187,8 @@ function Weapon.register(entity, options)
         bloom = 0,
         shotIndex = 0,
         lastFireTime = -100,
+        bullets = {},
+        frameDt = 1 / 60,
         recoilPitchAccum = 0,
         recoilYawAccum = 0,
         kickBackSpring = Gunplay.newSpring(),
@@ -388,6 +395,17 @@ local function applyHit(row, hit, owner)
     end
 end
 
+-- Moves bullets in flight, applying the hits of those that land; Ballistics.update drops finished bullets from list.
+local function stepBullets(row, list, dt)
+    Ballistics.update(list, dt, 9.81 * (row.bulletGravityScale or 1), row.range or 100, row.bulletMaxSeconds or 2,
+        function(x, y, z, dx, dy, dz, distance, bullet)
+            return Hitscan.trace(x, y, z, dx, dy, dz, distance, bullet.owner)
+        end,
+        function(bullet, hit)
+            applyHit(row, hit, bullet.owner)
+        end)
+end
+
 local function fireShot(row, input, owner)
     local spread = rad(Gunplay.spreadDegrees(row, {
         adsBlend = row.adsBlend,
@@ -444,7 +462,16 @@ local function fireShot(row, input, owner)
     playShot(row)
     showFlash(row)
     spawnMuzzleSmoke(row, input)
-    if row.hitscan then
+    if row.hitscan and (row.muzzleVelocity or 0) > 0 then
+        -- A bullet: its first stretch is checked this frame, so close shots still land at once.
+        local bullet = Ballistics.new(input.ox, input.oy, input.oz, dx, dy, dz, row.muzzleVelocity)
+        bullet.owner = owner
+        local first = { bullet }
+        stepBullets(row, first, row.frameDt)
+        if first[1] then
+            row.bullets[#row.bullets + 1] = bullet
+        end
+    elseif row.hitscan then
         applyHit(row, Hitscan.trace(input.ox, input.oy, input.oz, dx, dy, dz, row.range, owner), owner)
     end
     this:Call("onFire")
@@ -562,6 +589,7 @@ function tick(dt, held, pressed, reload, ox, oy, oz, dx, dy, dz, owner)
     if not row or not row.equipped then
         return
     end
+    row.frameDt = dt
     local input = (Registry.player and Registry.player.input) or {}
     input.ox, input.oy, input.oz, input.dx, input.dy, input.dz = ox, oy, oz, dx, dy, dz
     local isPressed = pressed == true or pressed == 1
@@ -651,6 +679,14 @@ end
 function onAwake()
     Weapon.register(this, {})
     setPartsVisible(false)
+end
+
+-- Bullets keep flying after the weapon is put away, so every weapon steps its own each frame.
+function onUpdate(dt)
+    local row = Weapon.get(this)
+    if row and #row.bullets > 0 then
+        stepBullets(row, row.bullets, dt)
+    end
 end
 
 function onDestroy()

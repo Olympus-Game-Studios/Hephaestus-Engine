@@ -735,6 +735,31 @@ check(L.leanOffset(0, 0.35) == 0 and near(L.leanOffset(1, 0.35), 0.35) and near(
 check(near(L.leanOffset(1, 0.35, function() return 0.4 end), 0.2)
       and L.leanOffset(-1, 0.35, function() return 0.1 end) == 0,
       "a wall beside the head limits the lean")
+local Ballistics = require("FPS.Ballistics")
+-- A wall facing the shooter at x = 100.
+local function wall(x, y, z, dx, dy, dz, distance)
+    if dx > 0 and x < 100 and x + dx * distance >= 100 then
+        local t = (100 - x) / dx
+        return { distance = t, point = { x = 100, y = y + dy * t, z = z + dz * t }, normal = { x = -1, y = 0, z = 0 } }
+    end
+    return nil
+end
+local bullet = Ballistics.new(0, 0, 0, 1, 0, 0, 500)
+local landed, frames = nil, 0
+while not landed and frames < 60 do
+    landed = Ballistics.step(bullet, 1 / 60, 9.81, wall)
+    frames = frames + 1
+end
+check(landed and frames >= 12 and frames <= 13 and near(landed.distance, 100, 0.05),
+      "a 500 m/s bullet takes about 0.2 s to reach a wall 100 m away and reports the whole distance")
+check(landed.point.y < -0.15 and landed.point.y > -0.25, "the bullet drops about 0.2 m over 100 m at 500 m/s")
+local near1 = Ballistics.new(95, 0, 0, 1, 0, 0, 500)
+check(Ballistics.step(near1, 1 / 60, 9.81, wall) ~= nil, "a target within the first frame's travel is hit at once")
+local flying, hits = { Ballistics.new(0, 0, 0, 1, 0, 0, 500), Ballistics.new(0, 0, 0, 0, 0, 1, 500) }, 0
+for _ = 1, 30 do
+    Ballistics.update(flying, 1 / 60, 9.81, 120, 2, wall, function() hits = hits + 1 end)
+end
+check(hits == 1 and #flying == 0, "bullets that hit or fly past the range are removed")
 
 local Mantle = require("FPS.Mantle")
 -- Ground at y = 0 plus axis-aligned boxes; returns the nearest hit like Physics.raycast.
