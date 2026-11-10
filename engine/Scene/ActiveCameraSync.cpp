@@ -18,6 +18,23 @@ Vec3 RenderForward(float yawRadians, float pitchRadians)
         std::sin(yawRadians) * cosPitch);
 }
 
+float WrapPi(float radians)
+{
+    constexpr float kPi = 3.14159265358979f;
+    return radians - 2.0f * kPi * std::floor((radians + kPi) / (2.0f * kPi));
+}
+
+// The same rotation matrix is (x, y, z) or (x + pi, pi - y, z + pi); the gizmo can store either, and the camera
+// angles are only meaningful in the form whose pitch is within +-90 degrees.
+Vec3 CameraEuler(const Vec3& rotation)
+{
+    constexpr float kPi = 3.14159265358979f;
+    if (std::fabs(WrapPi(rotation.x)) <= kPi * 0.5f) {
+        return rotation;
+    }
+    return Vec3(WrapPi(rotation.x + kPi), WrapPi(kPi - rotation.y), WrapPi(rotation.z + kPi));
+}
+
 Vec3 RotateDirection(const Mat4& world, const Vec3& direction)
 {
     const Vec4 rotated = Mat4::TransformVec4(
@@ -65,7 +82,8 @@ bool TryMakeCameraView(Scene& scene, Entity camera, ActiveCameraView& out)
     const TransformComponent& local = camera.GetComponent<TransformComponent>();
     const Mat4 world = scene.GetWorldTransform(camera);
 
-    Vec3 forward = RenderForward(local.rotation.y, local.rotation.x);
+    const Vec3 euler = CameraEuler(local.rotation);
+    Vec3 forward = RenderForward(euler.y, euler.x);
     if (local.parent != entt::null) {
         Entity parent{local.parent, &scene};
         if (parent && parent.HasComponent<TransformComponent>()) {
@@ -79,7 +97,7 @@ bool TryMakeCameraView(Scene& scene, Entity camera, ActiveCameraView& out)
     out.entity = static_cast<entt::entity>(camera);
     out.position = Vec3(world.m[12], world.m[13], world.m[14]);
     AssignAnglesFromForward(forward, out);
-    out.rollRadians = local.rotation.z;
+    out.rollRadians = euler.z;
     out.fovDegrees = cameraComponent.fov;
     out.nearPlane = cameraComponent.nearPlane;
     out.farPlane = cameraComponent.farPlane;

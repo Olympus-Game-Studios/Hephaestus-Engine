@@ -75,6 +75,24 @@ bool TestRootCamera()
     return ok;
 }
 
+bool TestFlippedEulerCamera()
+{
+    // A gizmo rotation can store the same orientation with pitch past 90 degrees and roll at 180.
+    constexpr float kPi = 3.14159265358979f;
+    Scene scene;
+    Entity camera = AddCamera(scene, "FlippedCamera", true);
+    camera.GetComponent<TransformComponent>().rotation = Vec3(0.35f + kPi, kPi + 0.8f, 0.1f - kPi);
+    const std::optional<Hephaestus::ActiveCameraView> view = Hephaestus::TryReadActiveCameraView(scene);
+    bool ok = Check(view.has_value(), "flipped camera view");
+    if (!view) {
+        return false;
+    }
+    ok &= Check(Near(view->pitchRadians, 0.35f), "flipped camera pitch is the upright one");
+    ok &= Check(Near(view->yawRadians, -0.8f), "flipped camera yaw");
+    ok &= Check(Near(view->rollRadians, 0.1f), "flipped camera is not upside down");
+    return ok;
+}
+
 bool TestParentedCamera()
 {
     Scene scene;
@@ -248,6 +266,7 @@ int main()
     }
     bool ok = TestRootCamera();
     ok &= TestViewFrameMatchesRenderView();
+    ok &= TestFlippedEulerCamera();
     ok &= TestParentedCamera();
     ok &= TestParentYawChildPitch();
     ok &= TestSetRotationRoundTrip();

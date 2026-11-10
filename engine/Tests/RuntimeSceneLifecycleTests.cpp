@@ -1,6 +1,8 @@
 #include "Animation/CharacterPlayback.h"
 #include "Automation/EntityRef.h"
+#include "Core/EditorCameraController.h"
 #include "Core/PlayModeManager.h"
+#include "Gfx/EngineFrameRenderer.h"
 #include "Scene/ActiveCameraSync.h"
 #include "Scene/Components.h"
 #include "Scene/Entity.h"
@@ -172,6 +174,13 @@ int main()
                     missingPlay.IsPaused() && EntityCount(missingSource) == 2,
                 "missing source fails before teardown and freezes gameplay safely");
     missingPlay.StopPlayMode();
+
+    // A script camera's roll must not stay on the editor view once the fly camera takes over again.
+    Hephaestus::RenderCamera rendered;
+    rendered.rollDeg = 180.0f;
+    Hephaestus::EditorCameraController flyCamera;
+    flyCamera.BuildRenderCamera(rendered);
+    ok &= Check(rendered.rollDeg == 0.0f, "the editor camera clears roll left by a script camera");
 
     fs::remove_all(root, ec);
     if (ok) {
