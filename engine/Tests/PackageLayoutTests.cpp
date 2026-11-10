@@ -63,6 +63,7 @@ int main() {
     Write(project / "assets" / "prefabs" / "Ship.hpprefab", "{}");
     Write(project / "assets" / "characters" / "Cultist.hpcharacter", "{}");
     Write(project / "assets" / "characters" / ".source" / "Cultist" / "mesh.glb", "mesh");
+    Write(project / "assets" / "characters" / ".source" / "Cultist" / "Cultist.blend", "blender scene");
     Write(project / "assets" / "characters" / ".source" / "Cultist" / "CultistCharacter.lua",
           "function onUpdate(dt) end");
     Write(project / "assets" / "ui" / "Hud.hui", "{}");
@@ -139,6 +140,8 @@ int main() {
                 "prefabs are packaged");
     ok &= Check(fs::exists(content / "assets" / "characters" / "Cultist.hpcharacter"),
                 "character assets are packaged");
+    ok &= Check(!fs::exists(content / "assets" / "characters" / ".source" / "Cultist" / "Cultist.blend"),
+                "Blender scenes are not packaged");
     ok &= Check(fs::exists(content / "assets" / "characters" / ".source" / "Cultist" / "mesh.glb"),
                 "owned character sources are packaged");
     ok &= Check(fs::exists(content / "assets" / "characters" / ".source" / "Cultist" /

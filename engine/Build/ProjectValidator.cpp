@@ -301,8 +301,7 @@ std::vector<EditorProblem> ProjectValidator::validate(
              !ec && it != end; it.increment(ec)) {
             if (!it->is_regular_file(ec)) continue;
             const std::string extension = Lower(it->path().extension().string());
-            if (extension == ".blend" || extension == ".psd" ||
-                extension == ".ma" || extension == ".mb") {
+            if (extension == ".psd") {
                 Add(problems, ProblemSeverity::Info, "SOURCE_ASSET_PACKAGED",
                     "Source art under assets/ will be included in the package",
                     "Move authoring-only files outside assets/ to reduce package size.",

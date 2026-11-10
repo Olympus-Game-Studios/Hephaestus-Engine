@@ -183,6 +183,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- 2026-11-11: Three Vulkan synchronisation errors that Development packages reported on every run: the sun's shadow map was read before anything was drawn to it (in frames that skip the shadow pass, such as loading frames), a frame could signal a semaphore that presentation of an earlier frame still held, and material texture changes could rewrite a descriptor set the GPU was still using.
+- 2026-11-11: Packages no longer include Blender (`.blend`, `.blend1`) or Maya (`.ma`, `.mb`) scene files from `assets/`; the runtime cannot load them.
 - 2026-11-11: Packaged games drew bold or regular UI text in italics when the project had no font of its own: the Windows font fallback took the first style it found instead of the requested one, and the engine's bundled fonts were not packaged. Packages now include them (`.engine/fonts`) and the fallback picks the matching style.
 - 2026-11-11: Scenes without bloom no longer sample the bloom image before its first use (a Vulkan validation error in Development packages).
 - 2026-11-10: A scene camera rotated with the gizmo past straight up or down showed the wrong view, upside down, in Play; it now uses the upright form of the same rotation. The editor view is no longer left upside down after Play when the game camera was rolled.
