@@ -26,6 +26,11 @@ Expose.number("crouchSpeedScale", 0.6)
 Expose.number("landingSlowScale", 0.6)
 Expose.number("landingSlowSeconds", 0.3)
 Expose.number("landingSlowMinSpeed", 4)
+Expose.bool("tacticalSprintEnabled", true)
+Expose.number("tacticalSprintMultiplier", 1.9)
+Expose.number("tacticalSprintSeconds", 2.5)
+Expose.number("tacticalSprintRechargeSeconds", 4)
+Expose.number("tacticalSprintFovBoost", 4)
 Expose.bool("slideEnabled", true)
 Expose.number("slideBoost", 1.15)
 Expose.number("slideSeconds", 0.8)
@@ -101,6 +106,10 @@ local sinceHardLanding = nil
 local slide = nil
 local slideCooldownRemaining = 0
 local slideBlend = 0
+local tactical = false
+local tacticalCharge = 0
+local tacticalBlend = 0
+local sinceSprintEnded = math.huge
 local mantle = nil
 local fallSpeed = 0
 local footfallThisFrame = false
@@ -401,7 +410,7 @@ local function updateFieldOfView(row)
     end
     if cameraObject then
         local ads = row and row.adsFovBlend or 0
-        local base = fieldOfView + slideFovBoost * slideBlend
+        local base = fieldOfView + slideFovBoost * slideBlend + tacticalSprintFovBoost * tacticalBlend
         cameraObject:SetFov(Gunplay.lerp(base, row and row.adsFov or base, ads))
     end
 end
@@ -427,6 +436,10 @@ function onAwake()
     slide = nil
     slideCooldownRemaining = 0
     slideBlend = 0
+    tactical = false
+    tacticalCharge = tacticalSprintSeconds
+    tacticalBlend = 0
+    sinceSprintEnded = math.huge
     mantle = nil
     cameraKickPitch = { x = 0, v = 0 }
     cameraKickYaw = { x = 0, v = 0 }
@@ -481,7 +494,8 @@ function onUpdate(dt)
             if length < 0.5 then
                 vx, vz, length = basis.forward.x, basis.forward.z, 1
             end
-            slide = { elapsed = 0, dirX = vx / length, dirZ = vz / length, startScale = sprintMultiplier * slideBoost }
+            local runScale = tactical and tacticalSprintMultiplier or sprintMultiplier
+            slide = { elapsed = 0, dirX = vx / length, dirZ = vz / length, startScale = runScale * slideBoost }
         end
         -- Jumping (or holding jump in the air) towards a ledge climbs onto it or vaults over it instead.
         if not mantle and mantleEnabled and forward > 0.3
@@ -535,10 +549,23 @@ function onUpdate(dt)
             Character.setCrouched(crouchHeld)
             local crouched = crouchHeld or Character.isCrouched() or Character.isStandBlocked()
             -- Firing or aiming ends a sprint; the weapon then waits its sprint-to-fire time.
+            local wasSprinting = sprinting
             sprinting = Logic.sprintAllowed(forward, crouched) and Input.isActionDown("Sprint")
                 and not commands.fireHeld and not commands.aimHeld
+            -- Double-tapping Sprint while running starts a tactical sprint, which lasts while its charge does.
+            if wasSprinting and not sprinting then
+                sinceSprintEnded = 0
+            elseif not sprinting then
+                sinceSprintEnded = sinceSprintEnded + dt
+            end
+            if sprinting and Input.isActionPressed("Sprint") and (wasSprinting or sinceSprintEnded <= 0.3)
+                and tacticalSprintEnabled and tacticalCharge >= tacticalSprintSeconds * 0.25 then
+                tactical = true
+            end
+            tactical, tacticalCharge = Logic.stepTacticalSprint(tactical and sprinting, tacticalCharge,
+                                                                tacticalSprintSeconds, tacticalSprintRechargeSeconds, dt)
             local adsMove = row and Gunplay.lerp(1, row.adsMoveMultiplier or 1, row.adsBlend or 0) or 1
-            local scale = sprinting and sprintMultiplier
+            local scale = sprinting and (tactical and tacticalSprintMultiplier or sprintMultiplier)
                 or adsMove * Logic.directionSpeedScale(forward, right, strafeSpeedScale, backpedalSpeedScale)
                     * (crouched and crouchSpeedScale or 1)
             if sinceHardLanding then
@@ -547,7 +574,11 @@ function onUpdate(dt)
             end
             Character.setSpeedMultiplier(scale)
         end
+        if slide or mantle then
+            tactical = false
+        end
         slideBlend = Gunplay.approach(slideBlend, slide and 1 or 0, dt / 0.12)
+        tacticalBlend = Gunplay.approach(tacticalBlend, tactical and 1 or 0, dt / 0.25)
         commands.reload = Input.isActionPressed("Reload")
         commands.interact = Input.isActionPressed("Interact")
         if Input.isActionPressed("NextWeapon") then
@@ -574,6 +605,7 @@ function onUpdate(dt)
         sprinting = false
         slide = nil
         mantle = nil
+        tactical = false
         commands.fireHeld = false
         commands.firePressed = false
         commands.aimHeld = false
@@ -659,6 +691,7 @@ function onLateUpdate(dt)
         player.input = {
             aimHeld = commands.aimHeld and swap == nil and throw == nil and mantle == nil,
             sprinting = sprinting,
+            tacticalSprint = tactical,
             moveFraction = Gunplay.clamp(speedXZ / math.max(fullSpreadMoveSpeed, 0.1), 0, 1),
             airborne = not grounded,
             lookPitchDelta = lookPitchDelta,

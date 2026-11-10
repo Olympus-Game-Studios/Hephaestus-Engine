@@ -724,6 +724,12 @@ check(near(L.landingSpeedScale(0, 0.3, 0.6), 0.6) and L.landingSpeedScale(0.3, 0
 check(near(L.slideSpeedScale(0, 0.8, 1.84, 0.6), 1.84) and near(L.slideSpeedScale(0.8, 0.8, 1.84, 0.6), 0.6)
       and near(L.slideSpeedScale(2, 0.8, 1.84, 0.6), 0.6) and L.slideSpeedScale(0.1, 0.8, 1.84, 0.6) > 1.75,
       "a slide starts fast, keeps most of its speed early and ends at crouch speed")
+local active, charge = L.stepTacticalSprint(true, 2.5, 2.5, 4, 1.0)
+check(active and near(charge, 1.5), "a tactical sprint spends its charge")
+active, charge = L.stepTacticalSprint(true, 0.5, 2.5, 4, 1.0)
+check(not active and charge == 0, "a tactical sprint ends when its charge runs out")
+active, charge = L.stepTacticalSprint(false, 0, 2.5, 4, 2.0)
+check(not active and near(charge, 1.25), "the charge refills from empty to full over the recharge time")
 
 local Mantle = require("FPS.Mantle")
 -- Ground at y = 0 plus axis-aligned boxes; returns the nearest hit like Physics.raycast.

@@ -52,6 +52,16 @@ function Logic.directionSpeedScale(forwardAxis, rightAxis, strafeScale, backScal
     return strafeScale + (towards - strafeScale) * along * along
 end
 
+-- Spends a tactical sprint's charge while it is active and refills it otherwise (empty to full in
+-- rechargeSeconds). Returns whether it is still active and the charge left, in seconds of tactical sprint.
+function Logic.stepTacticalSprint(active, charge, maxSeconds, rechargeSeconds, dt)
+    if active then
+        charge = math.max(0, charge - dt)
+        return charge > 0, charge
+    end
+    return false, math.min(maxSeconds, charge + dt * maxSeconds / math.max(rechargeSeconds, 1e-3))
+end
+
 -- Speed scale through a slide: from startScale, easing down to endScale by the end of duration.
 function Logic.slideSpeedScale(elapsed, duration, startScale, endScale)
     local t = duration > 0 and math.min(1, math.max(0, elapsed / duration)) or 1

@@ -72,6 +72,7 @@ Expose.number("fireBufferSeconds", 0.1)
 Expose.number("flashSeconds", 0.035)
 Expose.string("muzzleSmokePrefab", "")
 Expose.number("sprintToFireSeconds", 0.22)
+Expose.number("tacticalSprintToFireSeconds", 0.38)
 Expose.number("raiseSeconds", 0.45)
 Expose.number("lowerSeconds", 0.3)
 Expose.string("fireSound", "")
@@ -111,7 +112,7 @@ local TUNING = {
     "swayDampingRatio", "adsSwayScale", "idleAmount", "idleBreathRate", "idleAdsScale", "bobAmount", "moveLag",
     "moveMaxOffset", "moveFrequency", "strafeRoll", "landKick", "footfallDip", "fireBufferSeconds", "flashSeconds",
     "muzzleSmokePrefab",
-    "sprintToFireSeconds", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "firePitchJitter",
+    "sprintToFireSeconds", "tacticalSprintToFireSeconds", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "firePitchJitter",
     "fireVolumeJitter", "emptySound", "reloadSound",
     "reloadPart2Sound", "boltSound",
 }
@@ -174,6 +175,7 @@ function Weapon.register(entity, options)
         adsLinear = 0,
         adsBlend = 0,
         sprintBlend = 0,
+        tacticalBlend = 0,
         raise = 0,
         bloom = 0,
         shotIndex = 0,
@@ -523,6 +525,8 @@ local function updatePose(row, input, dt)
         reloadDip = math.sin(math.pi * Gunplay.clamp(row.reloadElapsed / row.reloadTotal, 0, 1))
     end
     local sprint = Gunplay.smoothstep(row.sprintBlend)
+    -- Tactical sprint carries the weapon barrel-up across the chest.
+    local tactical = Gunplay.smoothstep(row.tacticalBlend or 0)
     local lowered = 1 - Gunplay.smoothstep(row.raise)
 
     local tiltRoll = -rad(30) * reloadDip
@@ -536,12 +540,15 @@ local function updatePose(row, input, dt)
     local adsY = -math.cos(adsPitch) * sightUp
     local adsZ = -(-math.sin(adsYaw) * sightX + math.cos(adsYaw) * sightRight)
     local x = Gunplay.lerp(hipX, adsX, ads) + back + moveX - 0.04 * sprint + SHOULDER_REACH * (math.cos(tiltPitch) - 1)
+        + 0.02 * tactical
     local y = Gunplay.lerp(hipY, adsY, ads) + up + moveY + idleY - bobUp - 0.06 * sprint + reach * math.cos(tiltRoll)
+        + 0.06 * tactical
     local z = Gunplay.lerp(hipZ, adsZ, ads) + moveZ + bobRight - 0.05 * sprint + reach * math.sin(tiltRoll)
     local rotRoll = Gunplay.lerp(row.restRot.x, 0, ads) + roll + strafeRoll + rad(25) * sprint + tiltRoll
     local rotYaw = Gunplay.lerp(row.restRot.y, adsYaw, ads) + side + swayYaw + idleYaw + rad(30) * sprint
+        - rad(20) * tactical
     local rotPitch = Gunplay.lerp(row.restRot.z, adsPitch, ads) + rise + swayPitch + idlePitch - rad(12) * sprint
-        + tiltPitch
+        + tiltPitch + rad(40) * tactical
     Transform.setPosition(x, y, z)
     Transform.setRotation(rotRoll, rotYaw, rotPitch)
 end
@@ -567,8 +574,10 @@ function tick(dt, held, pressed, reload, ox, oy, oz, dx, dy, dz, owner)
         row.raise = math.min(1, row.raise + dt / math.max(row.raiseSeconds or 0.01, 0.01))
     end
     row.sprintBlend = Gunplay.approach(row.sprintBlend, input.sprinting and 1 or 0, dt / 0.18)
+    row.tacticalBlend = Gunplay.approach(row.tacticalBlend or 0, input.tacticalSprint and 1 or 0, dt / 0.2)
     row.fireBlockedRemaining = Gunplay.fireBlock(row.fireBlockedRemaining, input.sprinting,
-                                                 row.sprintToFireSeconds, dt)
+        input.tacticalSprint and (row.tacticalSprintToFireSeconds or row.sprintToFireSeconds)
+            or row.sprintToFireSeconds, dt)
     local wantAds = input.aimHeld and not input.sprinting and (row.reloadRemaining or 0) <= 0 and row.raise >= 1
     row.adsLinear = Gunplay.approach(row.adsLinear, wantAds and 1 or 0, dt / math.max(row.adsSeconds or 0.22, 0.01))
     local curves = Gunplay.adsCurves(row.adsLinear)
