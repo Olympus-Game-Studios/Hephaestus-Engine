@@ -4801,6 +4801,17 @@ void EngineFrameRenderer::recordOutlines(VkCommandBuffer cmd, uint32_t imageInde
         if (!hiddenOutline && !selectedVisible) continue;
         drawOutline(ent, meshComp, hiddenOutline);
     }
+
+    const size_t cameraMeshHandle = GetMeshHandle(kEditorCameraMeshKey);
+    if (cameraMeshHandle < m_meshLibrary.size() && m_meshLibrary[cameraMeshHandle].indexCount > 0) {
+        const MeshGPU& mesh = m_meshLibrary[cameraMeshHandle];
+        for (const auto& [handle, model] : EditorCameraMeshes(*scene, config)) {
+            if (isSelected(handle)) {
+                m_outlineRenderer.Draw(cmd, m_descriptorSets[imageIndex], mesh.vertexBuffer.buffer,
+                                       mesh.indexBuffer.buffer, mesh.indexCount, model, false);
+            }
+        }
+    }
 }
 
 // ============================================================================

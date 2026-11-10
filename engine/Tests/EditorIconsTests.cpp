@@ -63,10 +63,22 @@ int main()
     hitZone.AddComponent<LuaScriptComponent>();
     ok &= Check(!IconOf(scene, hitZone), "a scripted physics body gets no icon");
 
+    Entity trigger = scene.CreateEntity("Trigger");
+    trigger.AddComponent<PhysicsShapeComponent>();
+    trigger.AddComponent<RigidBodyComponent>().isTrigger = true;
+    ok &= Check(IconOf(scene, trigger) == EditorIcon::Trigger, "an invisible trigger volume has an icon");
+
     Entity enemy = scene.CreateEntity("Enemy");
     enemy.AddComponent<CharacterComponent>();
     enemy.AddComponent<LuaScriptComponent>();
     ok &= Check(!IconOf(scene, enemy), "a character is already visible");
+
+    Entity target = scene.CreateEntity("SteelTarget");
+    target.AddComponent<LuaScriptComponent>();
+    Entity plate = scene.CreateEntity("Plate");
+    plate.AddComponent<MeshRendererComponent>();
+    scene.SetParent(plate, target);
+    ok &= Check(!IconOf(scene, target), "a script object with visible children gets no pin");
 
     Entity group = scene.CreateEntity("Group");
     ok &= Check(!IconOf(scene, group), "an empty entity gets no icon");

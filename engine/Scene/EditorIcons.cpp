@@ -6,6 +6,30 @@
 
 namespace Hephaestus {
 
+namespace {
+
+bool IsVisibleThing(const entt::registry& registry, entt::entity entity)
+{
+    return registry.any_of<MeshRendererComponent, CharacterComponent, PhysicsShapeComponent, RigidBodyComponent>(entity);
+}
+
+// A scripted parent of visible children (a target made of meshes, say) is already found through them.
+bool HasVisibleDescendant(const entt::registry& registry, entt::entity entity)
+{
+    const auto* transform = registry.try_get<TransformComponent>(entity);
+    if (!transform) {
+        return false;
+    }
+    for (entt::entity child : transform->children) {
+        if (registry.valid(child) && (IsVisibleThing(registry, child) || HasVisibleDescendant(registry, child))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 const char* EditorIconFileName(EditorIcon icon)
 {
     switch (icon) {
@@ -17,6 +41,7 @@ const char* EditorIconFileName(EditorIcon icon)
         case EditorIcon::Environment: return "Environment.png";
         case EditorIcon::ProbeVolume: return "ProbeVolume.png";
         case EditorIcon::Script: return "Script.png";
+        case EditorIcon::Trigger: return "Trigger.png";
         case EditorIcon::Count: break;
     }
     return "";
@@ -38,10 +63,16 @@ std::optional<EditorIcon> EditorIconFor(const entt::registry& registry, entt::en
     if (registry.all_of<AudioSourceComponent>(entity)) return EditorIcon::AudioSource;
     if (registry.all_of<EnvironmentComponent>(entity)) return EditorIcon::Environment;
     if (registry.all_of<ProbeVolumeComponent>(entity)) return EditorIcon::ProbeVolume;
-    if (registry.any_of<MeshRendererComponent, CharacterComponent, PhysicsShapeComponent, RigidBodyComponent>(entity)) {
+    if (const auto* body = registry.try_get<RigidBodyComponent>(entity);
+        body && body->isTrigger && !registry.any_of<MeshRendererComponent, CharacterComponent>(entity)) {
+        return EditorIcon::Trigger;
+    }
+    if (IsVisibleThing(registry, entity)) {
         return std::nullopt;
     }
-    if (registry.all_of<LuaScriptComponent>(entity)) return EditorIcon::Script;
+    if (registry.all_of<LuaScriptComponent>(entity) && !HasVisibleDescendant(registry, entity)) {
+        return EditorIcon::Script;
+    }
     return std::nullopt;
 }
 

@@ -17,6 +17,7 @@ enum class EditorIcon : std::size_t {
     Environment,
     ProbeVolume,
     Script,
+    Trigger,
     Count
 };
 
@@ -24,7 +25,7 @@ enum class EditorIcon : std::size_t {
 const char* EditorIconFileName(EditorIcon icon);
 
 // The icon for an entity, or nothing. Cameras show their mesh instead, and entities with a mesh, a character or a
-// physics body are already visible or belong to something that is.
+// physics body are already visible or belong to something that is, and so are script objects with visible children.
 std::optional<EditorIcon> EditorIconFor(const entt::registry& registry, entt::entity entity);
 
 } // namespace Hephaestus
