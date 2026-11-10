@@ -66,6 +66,8 @@ Expose.bool("showAmmo", true)
 Expose.bool("showPrompt", true)
 Expose.string("hudDocument", "plugin://com.hephaestus.fps/UI/FPSHud.hui")
 Expose.bool("pauseMenuEnabled", true)
+Expose.bool("pauseMenuRestart", true)
+Expose.bool("pauseFreezesTime", false)
 Expose.string("mainMenuScene", "")
 Expose.bool("restartEnabled", true)
 Expose.number("restartDelaySeconds", 1.5)
@@ -530,13 +532,17 @@ end
 function onUpdate(dt)
     lastDt = dt
     updateGameEnd(dt)
-    PauseMenu.update({ enabled = pauseMenuEnabled and not Registry.gameOver, mainMenuScene = mainMenuScene })
-    -- Paused (Time.setScale(0)): no look, movement or firing; mouse movement does not depend on dt.
+    PauseMenu.update({ enabled = pauseMenuEnabled and not Registry.gameOver, mainMenuScene = mainMenuScene,
+                       allowRestart = pauseMenuRestart, freezeTime = pauseFreezesTime })
+    -- With the game frozen: no look, movement or firing (mouse look does not depend on dt).
     if Time.getScale() == 0 then
         Character.move(0, 0)
         return
     end
-    applyLook(dt)
+    -- The menu takes the mouse and keys; the game goes on, so this player just stands still meanwhile.
+    if not PauseMenu.open then
+        applyLook(dt)
+    end
     Character.setFacingYaw(yaw)
     applyCameraRotation()
     Registry.player.yaw = yaw
@@ -547,7 +553,7 @@ function onUpdate(dt)
     Registry.player.stance = Character.isProne() and "prone" or (Character.isCrouched() and "crouched" or "standing")
     Registry.player.eyeHeight = eyeHeight
     local row = activeWeaponRow()
-    if lookEnabled and inputEnabled then
+    if lookEnabled and inputEnabled and not PauseMenu.open then
         local basis = Logic.yawBasis(yaw)
         local forward = Input.getAxis("MoveForward") or 0
         local right = Input.getAxis("MoveRight") or 0
@@ -566,8 +572,8 @@ function onUpdate(dt)
         if prone then
             jumpPressed = false
         end
-        commands.fireHeld = Input.isActionDown("Fire")
-        commands.firePressed = Input.isActionPressed("Fire")
+        commands.fireHeld = Input.isActionDown("Fire") and not PauseMenu.suppressFire
+        commands.firePressed = Input.isActionPressed("Fire") and not PauseMenu.suppressFire
         commands.aimHeld = Input.isActionDown("Aim")
         slideCooldownRemaining = math.max(0, slideCooldownRemaining - dt)
         -- Pressing crouch while sprinting on the ground drops into a slide along the way the player is moving.
