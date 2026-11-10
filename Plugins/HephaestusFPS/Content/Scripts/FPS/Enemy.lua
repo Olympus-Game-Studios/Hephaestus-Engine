@@ -205,13 +205,16 @@ local function fireShot(row, aimPoint, extraSpread)
                       tz / tracerLength, { speed = tracerSpeed, maxDistance = tracerLength })
     end
     local hitPlayer = hit and hit.entity and isPlayer(hit.entity)
-    row.entity:Call("onIncomingShot", muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, reach, hitPlayer and true or false)
+    local hitSurface = hit and hit.entity and not hitPlayer and not Health.get(hit.entity)
+        and not Registry.hitZones[Registry.key(hit.entity)]
+    row.entity:Call("onIncomingShot", muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, reach, hitPlayer and true or false,
+                    hitSurface and true or false)
     if hitPlayer then
         local amount = damage * skill.damageScale
         Registry.notePlayerHit(barrel.x, barrel.y, barrel.z, Registry.clock or 0)
         Health.applyDamage(row.entity, amount, this)
         row.entity:Call("onHealthChanged", Health.getHealth(row.entity), Health.getMaxHealth(row.entity))
-    elseif hit and hit.entity and not Health.get(hit.entity) and not Registry.hitZones[Registry.key(hit.entity)] then
+    elseif hitSurface then
         Impacts.surfaceEffect(hit, false)
     end
     if debugAI then

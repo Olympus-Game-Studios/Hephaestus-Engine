@@ -98,6 +98,10 @@ Expose.string("nearMissSounds", "") -- played at random where an enemy bullet pa
 Expose.number("nearMissVolume", 0.8)
 Expose.number("nearMissRadius", 2.5) -- how close to the head a miss is heard, in metres
 Expose.number("nearMissInterval", 0.2) -- the least time between two near-miss sounds, in seconds
+Expose.string("envImpactSounds", "") -- played at random where an enemy bullet hits the level near the player
+Expose.number("envImpactVolume", 0.8)
+Expose.number("envImpactRadius", 5) -- how close to the head an impact is heard, in metres
+Expose.number("envImpactInterval", 0.12) -- the least time between two impact sounds, in seconds
 Expose.string("impactDecalPrefabs", "")
 Expose.number("maxImpactDecals", 64)
 Expose.string("impactDustPrefab", "")
@@ -164,7 +168,7 @@ local swap = nil
 local stepDistance = 0
 local stepIndex = 0
 local footsteps = {}
-local bulletSounds = { hits = {}, misses = {}, lastHit = nil, lastMiss = nil, missAt = -math.huge }
+local bulletSounds = { hits = {}, misses = {}, impacts = {}, last = {}, missAt = -math.huge, impactAt = -math.huge }
 local cameraObject = nil
 local grenades = { frag = 0, smoke = 0 }
 local throw = nil
@@ -498,8 +502,8 @@ function onAwake()
     cameraKickPitch = { x = 0, v = 0 }
     cameraKickYaw = { x = 0, v = 0 }
     footsteps = parseList(footstepSounds)
-    bulletSounds = { hits = parseList(bulletHitSounds), misses = parseList(nearMissSounds), lastHit = nil,
-                     lastMiss = nil, missAt = -math.huge }
+    bulletSounds = { hits = parseList(bulletHitSounds), misses = parseList(nearMissSounds),
+                     impacts = parseList(envImpactSounds), last = {}, missAt = -math.huge, impactAt = -math.huge }
     Impacts.configure(parseList(impactDecalPrefabs), maxImpactDecals,
                       { dust = impactDustPrefab, sparks = impactSparksPrefab })
     commands = { fireHeld = false, firePressed = false, reload = false, interact = false }
@@ -904,37 +908,51 @@ function onHealthChanged(current, maximum)
     lastKnownHealth = current
 end
 
--- Called by enemies for every shot at the player: a hit plays a hit sound; a miss that passes close to the head
--- plays a ricochet where it passed, at most once per nearMissInterval.
-function onIncomingShot(ox, oy, oz, dx, dy, dz, length, hit)
+-- Called by enemies for every shot at the player. A hit plays a hit sound. A miss that strikes the level near the
+-- head plays an impact where it struck; otherwise one that passes close plays a ricochet where it passed, so one
+-- bullet never makes both. Each kind plays at most once per its interval.
+local function playRandom(kind, list, options)
+    local index = BulletSounds.pick(#list, bulletSounds.last[kind], math.random())
+    if index then
+        bulletSounds.last[kind] = index
+        Audio.play(list[index], options)
+    end
+end
+
+function onIncomingShot(ox, oy, oz, dx, dy, dz, length, hit, hitSurface)
     if not (Audio and Audio.isAvailable and Audio.isAvailable()) then
         return
     end
     if hit then
-        local index = BulletSounds.pick(#bulletSounds.hits, bulletSounds.lastHit, math.random())
-        if index then
-            bulletSounds.lastHit = index
-            Audio.play(bulletSounds.hits[index], { volume = bulletHitVolume, bus = "sfx", priority = 4,
-                                                    pitchJitter = 0.04, volumeJitter = 0.08 })
-        end
+        playRandom("hit", bulletSounds.hits, { volume = bulletHitVolume, bus = "sfx", priority = 4, pitchJitter = 0.04,
+                                               volumeJitter = 0.08 })
         return
     end
     local clock = Registry.clock or 0
-    if #bulletSounds.misses == 0 or clock - bulletSounds.missAt < nearMissInterval then
-        return
-    end
     local feet = Transform.getPosition()
     local head = { x = feet.x, y = feet.y + eyeHeight, z = feet.z }
-    local at = BulletSounds.nearMiss({ x = ox, y = oy, z = oz }, dx, dy, dz, length, head, nearMissRadius)
-    if not at then
-        return
+    if hitSurface and #bulletSounds.impacts > 0 then
+        local at = { x = ox + dx * length, y = oy + dy * length, z = oz + dz * length }
+        local ax, ay, az = at.x - head.x, at.y - head.y, at.z - head.z
+        if ax * ax + ay * ay + az * az <= envImpactRadius * envImpactRadius then
+            if clock - bulletSounds.impactAt >= envImpactInterval then
+                bulletSounds.impactAt = clock
+                playRandom("impact", bulletSounds.impacts, { volume = envImpactVolume, bus = "sfx", priority = 3,
+                                                             pitchJitter = 0.06, volumeJitter = 0.1, position = at,
+                                                             minDistance = 1, maxDistance = 30 })
+            end
+            return
+        end
     end
-    local index = BulletSounds.pick(#bulletSounds.misses, bulletSounds.lastMiss, math.random())
-    bulletSounds.lastMiss = index
-    bulletSounds.missAt = clock
-    Audio.play(bulletSounds.misses[index], { volume = nearMissVolume, bus = "sfx", priority = 3, pitchJitter = 0.06,
-                                              volumeJitter = 0.1, position = at, minDistance = 1,
-                                              maxDistance = 25 })
+    if #bulletSounds.misses > 0 and clock - bulletSounds.missAt >= nearMissInterval then
+        local at = BulletSounds.nearMiss({ x = ox, y = oy, z = oz }, dx, dy, dz, length, head, nearMissRadius)
+        if at then
+            bulletSounds.missAt = clock
+            playRandom("miss", bulletSounds.misses, { volume = nearMissVolume, bus = "sfx", priority = 3,
+                                                      pitchJitter = 0.06, volumeJitter = 0.1, position = at,
+                                                      minDistance = 1, maxDistance = 25 })
+        end
+    end
 end
 
 function setHudSuppressed(suppressed)
