@@ -4,10 +4,12 @@
 
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/BodyID.h>
+#include <Jolt/Physics/Collision/CollisionGroup.h>
 
 #include <entt/entt.hpp>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 class Scene;
@@ -16,6 +18,9 @@ namespace Physics {
 
 class JoltPhysicsEngine;
 class JoltPhysicsSystem;
+
+// Collision group of every character controller's inner body; ragdoll parts never collide with it.
+inline constexpr JPH::CollisionGroup::GroupID kCharacterProxyGroup = JPH::CollisionGroup::cInvalidGroup - 1;
 
 struct RagdollStart {
     Vec3 impulse{0.0f, 0.0f, 0.0f};
@@ -38,6 +43,8 @@ public:
     bool IsActive(entt::entity entity) const;
     int ActiveCount() const;
     std::vector<JPH::BodyID> PartBodies(entt::entity entity) const;
+    // Whether a body is part of any ragdoll; character controllers move through them.
+    bool IsPart(const JPH::BodyID& bodyId) const;
 
     void AfterStep(Scene& scene);
     void Clear();
@@ -48,6 +55,7 @@ private:
     JoltPhysicsSystem& m_Physics;
     std::vector<std::unique_ptr<Ragdoll>> m_Ragdolls;
     std::uint32_t m_NextGroup = 1;
+    std::unordered_set<std::uint32_t> m_PartBodies;
 
     void Destroy(Ragdoll& ragdoll);
 };

@@ -94,6 +94,9 @@ public:
 
     bool ShouldCollide(const JPH::BodyID& bodyId) const override
     {
+        if (m_physics.Ragdolls().IsPart(bodyId)) {
+            return false;
+        }
         if (!m_scene) {
             return true;
         }

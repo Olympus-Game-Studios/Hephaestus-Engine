@@ -79,6 +79,7 @@ public:
     void RegisterExternalBody(entt::entity entity, JPH::BodyID bodyId);
     void UnregisterExternalBody(JPH::BodyID bodyId);
     RagdollSystem& Ragdolls() { return *m_Ragdolls; }
+    const RagdollSystem& Ragdolls() const { return *m_Ragdolls; }
 
     // When true, a character proxy contact does not let the solver push a dynamic body.
     // CharacterVirtual::HandleContact remains the push. Sensors are unchanged.

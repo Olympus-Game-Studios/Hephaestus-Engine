@@ -397,6 +397,7 @@ void JoltPhysicsSystem::RegisterCharacterProxy(entt::entity entity, JPH::BodyID 
     const std::uint32_t key = BodyKey(bodyId);
     m_CharacterProxies.insert(key);
     m_BodyToEntityMap[key] = entity;
+    m_PhysicsEngine.GetBodyInterface().SetCollisionGroup(bodyId, JPH::CollisionGroup(nullptr, kCharacterProxyGroup, 0));
 }
 
 void JoltPhysicsSystem::UnregisterCharacterProxy(JPH::BodyID bodyId)

@@ -142,7 +142,7 @@ For entities with a [Character Controller](physics.md#character-controller).
 | `Character.setSpeedMultiplier(m)` / `Character.getSpeedMultiplier()` | Scale walk speed, for sprinting or slowing effects. |
 | `Character.teleport(x, y, z)` | Move instantly. |
 | `Character.setFacingYaw(radians)` | Turn to face a direction. |
-| `Character.ragdoll([ix, iy, iz[, px, py, pz]])` | Go limp: the character becomes a ragdoll and falls under physics, optionally pushed by an impulse (newton seconds) at a world point. Needs a humanoid skeleton with Mixamo bone names. The Character Controller and the colliders of the entity's children are removed, the animation stops, and hits on the ragdoll report the entity. Returns whether it worked. |
+| `Character.ragdoll([ix, iy, iz[, px, py, pz]])` | Go limp: the character becomes a ragdoll and falls under physics, optionally pushed by an impulse (newton seconds) at a world point. Needs a humanoid skeleton with Mixamo bone names. The Character Controller and the colliders of the entity's children are removed, the animation stops, and hits on the ragdoll report the entity. Characters walk through ragdolls; raycasts still hit them. Returns whether it worked. |
 | `Character.isRagdoll()` | True once the character is a ragdoll. |
 
 ## Navigation

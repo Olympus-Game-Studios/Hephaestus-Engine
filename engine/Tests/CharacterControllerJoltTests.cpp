@@ -918,6 +918,33 @@ int main()
         Physics::RaycastHit hit;
         session.system.Raycast(entt::null, Vec3(hips.x, 3.0f, hips.z), Vec3(0.0f, -1.0f, 0.0f), 5.0f, hit);
         Check(hit.hit && hit.entity == id, "A ray that hits a ragdoll part reports the character");
+
+        // Another character walks straight across the body.
+        std::vector<JPH::RVec3> before;
+        for (JPH::BodyID part : ragdolls.PartBodies(id)) {
+            before.push_back(bodies.GetCenterOfMassPosition(part));
+        }
+        Entity walker = AddCharacter(session, Vec3(hips.x - 2.5f, 0.05f, hips.z), "Walker");
+        const entt::entity walkerId = static_cast<entt::entity>(walker);
+        session.Step(10);
+        session.controllers.SetMoveInput(walkerId, 1.0f, 0.0f);
+        float highest = 0.0f;
+        for (int i = 0; i < 90; ++i) {
+            session.Step(1);
+            highest = std::max(highest, walker.GetComponent<TransformComponent>().position.y);
+        }
+        const float walkedTo = walker.GetComponent<TransformComponent>().position.x;
+        float moved = 0.0f;
+        const auto parts = ragdolls.PartBodies(id);
+        for (size_t i = 0; i < parts.size(); ++i) {
+            moved = std::max(moved, static_cast<float>((bodies.GetCenterOfMassPosition(parts[i]) - before[i]).Length()));
+        }
+        Check(highest < 0.1f && walkedTo > hips.x + 2.0f && moved < 0.05f,
+              "A character walks through a ragdoll without being lifted or pushing it (highest y=" +
+                  std::to_string(highest) + ", reached x=" + std::to_string(walkedTo) + ", part moved " +
+                  std::to_string(moved) + " m)");
+        session.system.Raycast(entt::null, Vec3(hips.x, 3.0f, hips.z), Vec3(0.0f, -1.0f, 0.0f), 5.0f, hit);
+        Check(hit.hit && hit.entity == id, "Rays still hit the ragdoll after a character walks through it");
         session.scene.DestroyEntity(character);
         session.Step(1);
         Check(ragdolls.ActiveCount() == 0, "Destroying the character removes its ragdoll");

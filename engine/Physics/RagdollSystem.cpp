@@ -11,7 +11,7 @@
 
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
-#include <Jolt/Physics/Collision/GroupFilterTable.h>
+#include <Jolt/Physics/Collision/GroupFilter.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
@@ -271,6 +271,30 @@ bool FitBox(const std::vector<Vec3>& points, const Vec3& origin, const Vec3& axi
     return true;
 }
 
+// Parts of one ragdoll skip the collisions listed (neighbouring parts), and no part touches a character
+// controller's inner body.
+class RagdollGroupFilter final : public JPH::GroupFilter {
+public:
+    void DisableCollision(JPH::CollisionGroup::SubGroupID a, JPH::CollisionGroup::SubGroupID b) {
+        m_Disabled.push_back({std::min(a, b), std::max(a, b)});
+    }
+
+    bool CanCollide(const JPH::CollisionGroup& a, const JPH::CollisionGroup& b) const override {
+        if (a.GetGroupID() == kCharacterProxyGroup || b.GetGroupID() == kCharacterProxyGroup) {
+            return false;
+        }
+        if (a.GetGroupID() != b.GetGroupID()) {
+            return true;
+        }
+        const auto pair = std::make_pair(std::min(a.GetSubGroupID(), b.GetSubGroupID()),
+                                         std::max(a.GetSubGroupID(), b.GetSubGroupID()));
+        return std::find(m_Disabled.begin(), m_Disabled.end(), pair) == m_Disabled.end();
+    }
+
+private:
+    std::vector<std::pair<JPH::CollisionGroup::SubGroupID, JPH::CollisionGroup::SubGroupID>> m_Disabled;
+};
+
 bool IsDescendant(entt::registry& registry, entt::entity entity, entt::entity ancestor) {
     entt::entity current = entity;
     for (int depth = 0; depth < 64 && current != entt::null && registry.valid(current); ++depth) {
@@ -297,7 +321,7 @@ struct RagdollSystem::Ragdoll {
     std::vector<Mat4> local;                // bone local matrices at the start, kept for undriven bones
     std::vector<Mat4> startModel;           // bone model-space matrices at the start
     std::vector<JPH::Ref<JPH::Constraint>> constraints;
-    JPH::Ref<JPH::GroupFilterTable> filter;
+    JPH::Ref<RagdollGroupFilter> filter;
 };
 
 RagdollSystem::RagdollSystem(JoltPhysicsEngine& engine, JoltPhysicsSystem& physics)
@@ -314,6 +338,10 @@ bool RagdollSystem::IsActive(entt::entity entity) const {
 
 int RagdollSystem::ActiveCount() const {
     return static_cast<int>(m_Ragdolls.size());
+}
+
+bool RagdollSystem::IsPart(const JPH::BodyID& bodyId) const {
+    return m_PartBodies.contains(bodyId.GetIndexAndSequenceNumber());
 }
 
 std::vector<JPH::BodyID> RagdollSystem::PartBodies(entt::entity entity) const {
@@ -398,7 +426,7 @@ bool RagdollSystem::Start(Scene& scene, entt::entity entity, const RagdollStart&
     ragdoll->local = character.localMatrices;
     ragdoll->startModel = character.worldPose;
     ragdoll->boneToPart.assign(static_cast<size_t>(skeleton.BoneCount()), -1);
-    ragdoll->filter = new JPH::GroupFilterTable(kPartCount);
+    ragdoll->filter = new RagdollGroupFilter();
     for (int p = 0; p < kPartCount; ++p) {
         if (kParts[p].parent >= 0) {
             ragdoll->filter->DisableCollision(static_cast<JPH::CollisionGroup::SubGroupID>(p),
@@ -484,6 +512,8 @@ bool RagdollSystem::Start(Scene& scene, entt::entity entity, const RagdollStart&
         const JPH::BodyID id = bodies.CreateAndAddBody(settings, JPH::EActivation::Activate);
         if (id.IsInvalid()) {
             for (JPH::BodyID created : ragdoll->bodies) {
+                m_Physics.UnregisterExternalBody(created);
+                m_PartBodies.erase(created.GetIndexAndSequenceNumber());
                 bodies.RemoveBody(created);
                 bodies.DestroyBody(created);
             }
@@ -491,6 +521,7 @@ bool RagdollSystem::Start(Scene& scene, entt::entity entity, const RagdollStart&
             return false;
         }
         ragdoll->bodies.push_back(id);
+        m_PartBodies.insert(id.GetIndexAndSequenceNumber());
         m_Physics.RegisterExternalBody(entity, id);
 
         const int driven = p == 0 ? pelvisBone : from[p];
@@ -595,6 +626,7 @@ void RagdollSystem::Destroy(Ragdoll& ragdoll) {
             bodies.RemoveBody(id);
         }
         bodies.DestroyBody(id);
+        m_PartBodies.erase(id.GetIndexAndSequenceNumber());
     }
     ragdoll.bodies.clear();
 }
