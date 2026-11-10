@@ -20,6 +20,7 @@ struct ControllerAuthoredValues {
     float height = 1.8f;
     float radius = 0.3f;
     float crouchedHeight = 1.1f;
+    float proneHeight = 0.7f;
     float maxSlopeAngleDegrees = 45.0f;
     float stepHeight = 0.30f;
     float groundSnapDistance = 0.40f;

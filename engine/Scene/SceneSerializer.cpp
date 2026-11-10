@@ -172,6 +172,7 @@ std::string WriteCharacterControllerJson(const CharacterControllerComponent& com
     oss << "          \"height\": " << FormatFloat(component.height) << ",\n";
     oss << "          \"radius\": " << FormatFloat(component.radius) << ",\n";
     oss << "          \"crouchedHeight\": " << FormatFloat(component.crouchedHeight) << ",\n";
+    oss << "          \"proneHeight\": " << FormatFloat(component.proneHeight) << ",\n";
     oss << "          \"maxSlopeAngleDegrees\": " << FormatFloat(component.maxSlopeAngleDegrees) << ",\n";
     oss << "          \"stepHeight\": " << FormatFloat(component.stepHeight) << ",\n";
     oss << "          \"groundSnapDistance\": " << FormatFloat(component.groundSnapDistance) << ",\n";
@@ -211,6 +212,7 @@ bool ApplyCharacterControllerJson(CharacterControllerComponent& component, const
     readFloat("height", component.height);
     readFloat("radius", component.radius);
     readFloat("crouchedHeight", component.crouchedHeight);
+    readFloat("proneHeight", component.proneHeight);
     readFloat("maxSlopeAngleDegrees", component.maxSlopeAngleDegrees);
     readFloat("stepHeight", component.stepHeight);
     readFloat("groundSnapDistance", component.groundSnapDistance);

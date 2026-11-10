@@ -810,6 +810,33 @@ int main()
               "ignoreSensors true skips the trigger");
     }
 
+    {
+        Session session("Prone");
+        AddFloor(session);
+        // An overhang 1.0 m up: room to lie under, not to crouch or stand.
+        AddStatic(session, "Overhang", Vec3(3.0f, 1.25f, 0.0f), Vec3(1.5f, 0.25f, 2.0f));
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, 0.0f));
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(20);
+        session.controllers.SetProne(id, true);
+        session.Step(2);
+        Check(StateOf(session, id).prone && !StateOf(session, id).crouched, "SetProne lies the character down");
+        session.controllers.SetMoveInput(id, 1.0f, 0.0f);
+        session.Step(42);
+        session.controllers.SetMoveInput(id, 0.0f, 0.0f);
+        session.Step(10);
+        const float x = character.GetComponent<TransformComponent>().position.x;
+        Check(x > 2.0f && x < 4.0f, "A prone character fits under a 1 m overhang (x=" + std::to_string(x) + ")");
+        session.controllers.SetProne(id, false);
+        session.Step(2);
+        const auto underneath = StateOf(session, id);
+        Check(underneath.prone && underneath.standBlocked, "Getting up under the overhang is blocked");
+        session.controllers.SetMoveInput(id, -1.0f, 0.0f);
+        session.Step(120);
+        const auto clear = StateOf(session, id);
+        Check(!clear.prone && !clear.crouched && !clear.standBlocked, "Out from under it, the character stands up");
+    }
+
     for (const float coyote : {0.0f, 0.12f}) {
         Session session("CoyoteTime");
         AddFloor(session);

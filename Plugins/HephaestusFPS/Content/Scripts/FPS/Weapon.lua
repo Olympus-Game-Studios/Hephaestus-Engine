@@ -73,6 +73,8 @@ Expose.number("flashSeconds", 0.035)
 Expose.string("muzzleSmokePrefab", "")
 Expose.number("sprintToFireSeconds", 0.22)
 Expose.number("tacticalSprintToFireSeconds", 0.38)
+Expose.number("proneSpreadScale", 0.6)
+Expose.number("proneRecoilScale", 0.7)
 Expose.number("raiseSeconds", 0.45)
 Expose.number("lowerSeconds", 0.3)
 Expose.string("fireSound", "")
@@ -112,7 +114,7 @@ local TUNING = {
     "swayDampingRatio", "adsSwayScale", "idleAmount", "idleBreathRate", "idleAdsScale", "bobAmount", "moveLag",
     "moveMaxOffset", "moveFrequency", "strafeRoll", "landKick", "footfallDip", "fireBufferSeconds", "flashSeconds",
     "muzzleSmokePrefab",
-    "sprintToFireSeconds", "tacticalSprintToFireSeconds", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "firePitchJitter",
+    "sprintToFireSeconds", "tacticalSprintToFireSeconds", "proneSpreadScale", "proneRecoilScale", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "firePitchJitter",
     "fireVolumeJitter", "emptySound", "reloadSound",
     "reloadPart2Sound", "boltSound",
 }
@@ -392,7 +394,7 @@ local function fireShot(row, input, owner)
         moveFraction = input.moveFraction,
         airborne = input.airborne,
         bloom = row.bloom,
-    }))
+    })) * (input.prone and (row.proneSpreadScale or 1) or 1)
     local dx, dy, dz = Gunplay.spreadDirection(input.dx, input.dy, input.dz, spread,
                                                Gunplay.rngNext(row.rng), Gunplay.rngNext(row.rng))
     row.bloom = Gunplay.addBloom(row.bloom, row)
@@ -403,6 +405,7 @@ local function fireShot(row, input, owner)
     row.shotIndex = row.shotIndex + 1
     row.lastFireTime = row.now
     local recoilScale = Gunplay.lerp(1, row.adsRecoilScale or 1, row.adsBlend)
+        * (input.prone and (row.proneRecoilScale or 1) or 1)
     -- The same seed and shot number always give the same recoil, so a string can be learned.
     local random = Gunplay.seededRandom(row.recoilSeed or 1, row.shotIndex)
     local pitchDeg, yawDeg = Gunplay.recoilForShot(row.pattern, row.shotIndex, row.recoilJitter, row.recoilJitter,

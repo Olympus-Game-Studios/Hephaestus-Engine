@@ -60,6 +60,13 @@
       "bindings": [ { "type": "keyboard", "control": "4" } ]
     },
     {
+      "name": "Prone",
+      "bindings": [
+        { "type": "keyboard", "control": "X" },
+        { "type": "gamepad_button", "control": "RIGHT_STICK" }
+      ]
+    },
+    {
       "name": "ThrowFrag",
       "bindings": [
         { "type": "keyboard", "control": "G" },

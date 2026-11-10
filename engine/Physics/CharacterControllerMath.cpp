@@ -91,6 +91,8 @@ ControllerAuthoredValues ClampControllerAuthored(const ControllerAuthoredValues&
         }
     }
     out.crouchedHeight = crouched;
+    float prone = std::max(ClampNonNegative(in.proneHeight, 0.7f), minCrouch);
+    out.proneHeight = std::min(prone, crouched);
 
     out.stepHeight = std::clamp(ClampNonNegative(in.stepHeight, 0.30f), 0.0f, 0.5f * out.height);
     out.groundSnapDistance = std::max(ClampNonNegative(in.groundSnapDistance, 0.40f), out.stepHeight);
@@ -115,6 +117,7 @@ ControllerAuthoredValues ClampControllerAuthored(const ControllerAuthoredValues&
     outClamped = out.radius != in.radius
         || out.height != in.height
         || out.crouchedHeight != in.crouchedHeight
+        || out.proneHeight != in.proneHeight
         || out.maxSlopeAngleDegrees != in.maxSlopeAngleDegrees
         || out.stepHeight != in.stepHeight
         || out.groundSnapDistance != in.groundSnapDistance

@@ -805,6 +805,7 @@ void CaptureCharacterController(const CharacterControllerComponent& component, J
     data.objectValue["height"] = MakeNumber(component.height);
     data.objectValue["radius"] = MakeNumber(component.radius);
     data.objectValue["crouchedHeight"] = MakeNumber(component.crouchedHeight);
+    data.objectValue["proneHeight"] = MakeNumber(component.proneHeight);
     data.objectValue["maxSlopeAngleDegrees"] = MakeNumber(component.maxSlopeAngleDegrees);
     data.objectValue["stepHeight"] = MakeNumber(component.stepHeight);
     data.objectValue["groundSnapDistance"] = MakeNumber(component.groundSnapDistance);
@@ -840,6 +841,7 @@ void ApplyCharacterController(CharacterControllerComponent& component, const Jso
     readFloat("height", component.height);
     readFloat("radius", component.radius);
     readFloat("crouchedHeight", component.crouchedHeight);
+    readFloat("proneHeight", component.proneHeight);
     readFloat("maxSlopeAngleDegrees", component.maxSlopeAngleDegrees);
     readFloat("stepHeight", component.stepHeight);
     readFloat("groundSnapDistance", component.groundSnapDistance);

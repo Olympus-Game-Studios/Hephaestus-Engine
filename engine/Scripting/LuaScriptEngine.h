@@ -97,6 +97,8 @@ struct CharacterBinding {
     std::function<bool(uint32_t entityId, float worldX, float worldZ)> move;
     std::function<bool(uint32_t entityId)> jump;
     std::function<bool(uint32_t entityId, bool crouched)> setCrouched;
+    std::function<bool(uint32_t entityId, bool prone)> setProne;
+    std::function<bool(uint32_t entityId)> isProne;
     std::function<bool(uint32_t entityId)> isGrounded;
     std::function<bool(uint32_t entityId, float multiplier)> setSpeedMultiplier;
     std::function<bool(uint32_t entityId, float& outMultiplier)> getSpeedMultiplier;
@@ -531,6 +533,8 @@ private:
     static int Lua_Character_getSpeedMultiplier(lua_State* L);
     static int Lua_Character_isCrouched(lua_State* L);
     static int Lua_Character_isStandBlocked(lua_State* L);
+    static int Lua_Character_setProne(lua_State* L);
+    static int Lua_Character_isProne(lua_State* L);
     static int Lua_Character_getVelocity(lua_State* L);
     static int Lua_Character_getGroundNormal(lua_State* L);
     static int Lua_Character_getGroundVelocity(lua_State* L);

@@ -36,6 +36,7 @@ struct CharacterControllerState {
     Vec3 groundVelocity{};
     entt::entity supportingEntity = entt::null;
     bool crouched = false;
+    bool prone = false;
     bool standBlocked = false;
     bool onSteepSlope = false;
 };
@@ -60,6 +61,8 @@ public:
     void JumpWithSpeed(entt::entity entity, float speed);
     bool SetLegacyMove(entt::entity entity, float worldX, float worldZ, float speed);
     void SetCrouched(entt::entity entity, bool crouched);
+    // Prone takes priority over crouch; getting up waits until the taller capsule fits.
+    void SetProne(entt::entity entity, bool prone);
     void SetFacingYaw(entt::entity entity, float radians);
     void Teleport(entt::entity entity, const Vec3& worldFeetPosition);
     bool GetState(entt::entity entity, CharacterControllerState& out) const;

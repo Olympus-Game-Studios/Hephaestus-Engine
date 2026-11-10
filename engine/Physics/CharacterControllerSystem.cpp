@@ -40,6 +40,7 @@ ControllerAuthoredValues AuthoredFrom(const CharacterControllerComponent& compon
     values.height = component.height;
     values.radius = component.radius;
     values.crouchedHeight = component.crouchedHeight;
+    values.proneHeight = component.proneHeight;
     values.maxSlopeAngleDegrees = component.maxSlopeAngleDegrees;
     values.stepHeight = component.stepHeight;
     values.groundSnapDistance = component.groundSnapDistance;
@@ -62,6 +63,7 @@ bool SameAuthored(const ControllerAuthoredValues& a, const ControllerAuthoredVal
 {
     auto near = [](float lhs, float rhs) { return std::abs(lhs - rhs) <= 1.0e-4f; };
     return near(a.height, b.height) && near(a.radius, b.radius) && near(a.crouchedHeight, b.crouchedHeight)
+        && near(a.proneHeight, b.proneHeight)
         && near(a.maxSlopeAngleDegrees, b.maxSlopeAngleDegrees) && near(a.stepHeight, b.stepHeight)
         && near(a.groundSnapDistance, b.groundSnapDistance) && near(a.walkSpeed, b.walkSpeed)
         && near(a.acceleration, b.acceleration) && near(a.deceleration, b.deceleration)
@@ -124,8 +126,10 @@ public:
 struct CharacterControllerSystem::Runtime {
     JPH::RefConst<JPH::Shape> standShape;
     JPH::RefConst<JPH::Shape> crouchShape;
+    JPH::RefConst<JPH::Shape> proneShape;
     JPH::RefConst<JPH::Shape> innerStand;
     JPH::RefConst<JPH::Shape> innerCrouch;
+    JPH::RefConst<JPH::Shape> innerProne;
     std::unique_ptr<CharacterVirtualAccess> character;
     ControllerAuthoredValues applied;
     std::uint16_t layer = kLayerCharacter;
@@ -137,6 +141,8 @@ struct CharacterControllerSystem::Runtime {
     float speedMultiplier = 1.0f;
     bool crouchRequested = false;
     bool crouched = false;
+    bool proneRequested = false;
+    bool prone = false;
     bool standBlocked = false;
     bool loggedClamp = false;
     bool loggedMaxHits = false;
@@ -302,6 +308,18 @@ void CharacterControllerSystem::SetCrouched(entt::entity entity, bool crouched)
     }
 }
 
+void CharacterControllerSystem::SetProne(entt::entity entity, bool prone)
+{
+    Runtime* runtime = Find(entity);
+    if (!runtime) {
+        return;
+    }
+    runtime->proneRequested = prone;
+    if (prone) {
+        runtime->standBlocked = false;
+    }
+}
+
 void CharacterControllerSystem::SetFacingYaw(entt::entity entity, float radians)
 {
     if (!m_Scene || !std::isfinite(radians) || !HasRuntime(entity)) {
@@ -357,6 +375,7 @@ bool CharacterControllerSystem::GetState(entt::entity entity, CharacterControlle
     out.groundVelocity = FromJolt(character.GetGroundVelocity());
     out.supportingEntity = m_Physics.GetEntityForBody(character.GetGroundBodyID());
     out.crouched = runtime->crouched;
+    out.prone = runtime->prone;
     out.standBlocked = runtime->standBlocked;
     out.onSteepSlope = out.groundState == CharacterGroundState::OnSteepGround;
     return true;
@@ -430,6 +449,8 @@ void CharacterControllerSystem::SyncLifecycle(Scene& scene)
             runtime.crouchShape = MakeCapsule(applied.crouchedHeight, applied.radius, 1.0f);
             runtime.innerStand = MakeCapsule(applied.height, applied.radius, kInnerShapeFraction);
             runtime.innerCrouch = MakeCapsule(applied.crouchedHeight, applied.radius, kInnerShapeFraction);
+            runtime.proneShape = MakeCapsule(applied.proneHeight, applied.radius, 1.0f);
+            runtime.innerProne = MakeCapsule(applied.proneHeight, applied.radius, kInnerShapeFraction);
 
             JPH::CharacterVirtualSettings settings;
             settings.mMass = applied.mass;
@@ -542,27 +563,36 @@ void CharacterControllerSystem::FixedStep(Scene& scene, float fixedDt)
             runtime->crouchShape = MakeCapsule(applied.crouchedHeight, applied.radius, 1.0f);
             runtime->innerStand = MakeCapsule(applied.height, applied.radius, kInnerShapeFraction);
             runtime->innerCrouch = MakeCapsule(applied.crouchedHeight, applied.radius, kInnerShapeFraction);
+            runtime->proneShape = MakeCapsule(applied.proneHeight, applied.radius, 1.0f);
+            runtime->innerProne = MakeCapsule(applied.proneHeight, applied.radius, kInnerShapeFraction);
             runtime->applied = applied;
             character.SetMass(applied.mass);
             character.SetMaxStrength(applied.pushStrength);
             character.SetMaxSlopeAngle(JPH::DegreesToRadians(applied.maxSlopeAngleDegrees));
             runtime->character->SetSupportingPlane(JPH::Plane(JPH::Vec3::sAxisY(), -applied.radius));
-            const JPH::Shape* next = runtime->crouched ? runtime->crouchShape.GetPtr() : runtime->standShape.GetPtr();
-            const JPH::Shape* inner = runtime->crouched ? runtime->innerCrouch.GetPtr() : runtime->innerStand.GetPtr();
+            const JPH::Shape* next = runtime->prone ? runtime->proneShape.GetPtr()
+                : runtime->crouched ? runtime->crouchShape.GetPtr() : runtime->standShape.GetPtr();
+            const JPH::Shape* inner = runtime->prone ? runtime->innerProne.GetPtr()
+                : runtime->crouched ? runtime->innerCrouch.GetPtr() : runtime->innerStand.GetPtr();
             if (character.SetShape(next, penetration, broad, objects, bodies, shapes, allocator)) {
                 character.SetInnerBodyShape(inner);
             }
         }
 
-        const bool wantCrouch = runtime->crouchRequested;
-        if (wantCrouch != runtime->crouched) {
-            const JPH::Shape* next = wantCrouch ? runtime->crouchShape.GetPtr() : runtime->standShape.GetPtr();
-            const JPH::Shape* inner = wantCrouch ? runtime->innerCrouch.GetPtr() : runtime->innerStand.GetPtr();
+        // Stances from tallest to shortest: 0 standing, 1 crouched, 2 prone.
+        const int current = runtime->prone ? 2 : (runtime->crouched ? 1 : 0);
+        const int wanted = runtime->proneRequested ? 2 : (runtime->crouchRequested ? 1 : 0);
+        if (wanted != current) {
+            const JPH::Shape* next = wanted == 2 ? runtime->proneShape.GetPtr()
+                : wanted == 1 ? runtime->crouchShape.GetPtr() : runtime->standShape.GetPtr();
+            const JPH::Shape* inner = wanted == 2 ? runtime->innerProne.GetPtr()
+                : wanted == 1 ? runtime->innerCrouch.GetPtr() : runtime->innerStand.GetPtr();
             if (character.SetShape(next, penetration, broad, objects, bodies, shapes, allocator)) {
                 character.SetInnerBodyShape(inner);
-                runtime->crouched = wantCrouch;
+                runtime->crouched = wanted == 1;
+                runtime->prone = wanted == 2;
                 runtime->standBlocked = false;
-            } else if (!wantCrouch) {
+            } else if (wanted < current) {
                 runtime->standBlocked = true;
             }
         }

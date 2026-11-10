@@ -160,6 +160,7 @@ int main()
         controller.walkSpeed = 6.5f;
         controller.jumpSpeed = 4.25f;
         controller.coyoteTime = 0.12f;
+        controller.proneHeight = 0.65f;
         controller.jumpBufferTime = 0.1f;
         controller.crouchedHeight = 1.05f;
         controller.collisionLayer = 2;
@@ -174,7 +175,7 @@ int main()
         for (auto handle : view) {
             const auto& copy = loaded.GetRegistry().get<CharacterControllerComponent>(handle);
             found = Near(copy.walkSpeed, 6.5f) && Near(copy.jumpSpeed, 4.25f) && Near(copy.crouchedHeight, 1.05f)
-                && Near(copy.coyoteTime, 0.12f) && Near(copy.jumpBufferTime, 0.1f);
+                && Near(copy.coyoteTime, 0.12f) && Near(copy.jumpBufferTime, 0.1f) && Near(copy.proneHeight, 0.65f);
         }
         pass &= Check(found, "Scene round trip keeps authored controller values");
     }
@@ -211,6 +212,21 @@ int main()
         const auto& defaults = fresh.GetComponent<CharacterControllerComponent>();
         pass &= Check(Near(defaults.walkSpeed, 5.0f) && Near(defaults.height, 1.8f),
                       "Missing prefab fields leave component defaults");
+    }
+
+    {
+        Physics::ControllerAuthoredValues tall;
+        tall.crouchedHeight = 1.1f;
+        tall.proneHeight = 1.5f;
+        bool clamped = false;
+        const Physics::ControllerAuthoredValues fixedTall = Physics::ClampControllerAuthored(tall, clamped);
+        pass &= Check(clamped && fixedTall.proneHeight <= fixedTall.crouchedHeight,
+                      "Prone height is clamped to the crouched height");
+        Physics::ControllerAuthoredValues tiny;
+        tiny.proneHeight = 0.1f;
+        const Physics::ControllerAuthoredValues fixedTiny = Physics::ClampControllerAuthored(tiny, clamped);
+        pass &= Check(clamped && fixedTiny.proneHeight >= 2.0f * fixedTiny.radius,
+                      "Prone height is at least the capsule's two end caps");
     }
 
     {

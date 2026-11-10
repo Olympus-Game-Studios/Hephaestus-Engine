@@ -1556,6 +1556,12 @@ void LuaScriptEngine::RegisterCharacterBindings() {
     lua_setfield(m_State, -2, "isCrouched");
     lua_pushcfunction(m_State, Lua_Character_isStandBlocked);
     lua_setfield(m_State, -2, "isStandBlocked");
+
+    lua_pushcfunction(m_State, Lua_Character_setProne);
+    lua_setfield(m_State, -2, "setProne");
+
+    lua_pushcfunction(m_State, Lua_Character_isProne);
+    lua_setfield(m_State, -2, "isProne");
     lua_pushcfunction(m_State, Lua_Character_getVelocity);
     lua_setfield(m_State, -2, "getVelocity");
     lua_pushcfunction(m_State, Lua_Character_getGroundNormal);
@@ -1988,6 +1994,37 @@ int LuaScriptEngine::Lua_Character_isStandBlocked(lua_State* L) {
         return 1;
     }
     lua_pushboolean(L, engine->m_CharacterBinding.isStandBlocked(engine->m_CurrentEntityId));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_setProne(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.setProne) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const bool prone = lua_toboolean(L, 1) != 0;
+    lua_pushboolean(L, engine->m_CharacterBinding.setProne(engine->m_CurrentEntityId, prone));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_isProne(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.isProne) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_pushboolean(L, engine->m_CharacterBinding.isProne(engine->m_CurrentEntityId));
     return 1;
 #else
     (void)L;

@@ -18,6 +18,10 @@ Expose.number("pitchMinDegrees", -89)
 Expose.number("pitchMaxDegrees", 89)
 Expose.number("standEyeHeight", 1.62)
 Expose.number("crouchEyeHeight", 0.95)
+Expose.bool("proneEnabled", true)
+Expose.number("proneEyeHeight", 0.35)
+Expose.number("proneEyeBlendMetersPerSecond", 2.5)
+Expose.number("proneSpeedScale", 0.25)
 Expose.number("eyeBlendMetersPerSecond", 8)
 Expose.number("sprintMultiplier", 1.6)
 Expose.number("strafeSpeedScale", 0.85)
@@ -111,6 +115,7 @@ local tacticalCharge = 0
 local tacticalBlend = 0
 local sinceSprintEnded = math.huge
 local mantle = nil
+local proneWanted = false
 local fallSpeed = 0
 local footfallThisFrame = false
 local stepCount = 0
@@ -436,6 +441,7 @@ function onAwake()
     slide = nil
     slideCooldownRemaining = 0
     slideBlend = 0
+    proneWanted = false
     tactical = false
     tacticalCharge = tacticalSprintSeconds
     tacticalBlend = 0
@@ -481,6 +487,17 @@ function onUpdate(dt)
         local wishZ = basis.forward.z * forward + basis.right.z * right
         local crouchHeld = Input.isActionDown("Crouch")
         local jumpPressed = Input.isActionPressed("Jump")
+        -- Prone toggles; Crouch, Jump or Sprint get up from it (Jump stands without jumping).
+        if proneEnabled and Input.isActionPressed("Prone") then
+            proneWanted = not proneWanted
+        elseif proneWanted and (Input.isActionPressed("Crouch") or jumpPressed or Input.isActionPressed("Sprint")) then
+            proneWanted = false
+        end
+        Character.setProne(proneEnabled and proneWanted)
+        local prone = Character.isProne()
+        if prone then
+            jumpPressed = false
+        end
         commands.fireHeld = Input.isActionDown("Fire")
         commands.firePressed = Input.isActionPressed("Fire")
         commands.aimHeld = Input.isActionDown("Aim")
@@ -498,7 +515,7 @@ function onUpdate(dt)
             slide = { elapsed = 0, dirX = vx / length, dirZ = vz / length, startScale = runScale * slideBoost }
         end
         -- Jumping (or holding jump in the air) towards a ledge climbs onto it or vaults over it instead.
-        if not mantle and mantleEnabled and forward > 0.3
+        if not mantle and mantleEnabled and forward > 0.3 and not prone
             and (jumpPressed or (not Character.isGrounded() and Input.isActionDown("Jump"))) then
             local plan = Mantle.find(Transform.getPosition(), basis.forward.x, basis.forward.z, {
                 reach = mantleReach, maxHeight = mantleMaxHeight, vaultMaxHeight = vaultMaxHeight,
@@ -550,7 +567,7 @@ function onUpdate(dt)
             local crouched = crouchHeld or Character.isCrouched() or Character.isStandBlocked()
             -- Firing or aiming ends a sprint; the weapon then waits its sprint-to-fire time.
             local wasSprinting = sprinting
-            sprinting = Logic.sprintAllowed(forward, crouched) and Input.isActionDown("Sprint")
+            sprinting = Logic.sprintAllowed(forward, crouched or prone) and Input.isActionDown("Sprint")
                 and not commands.fireHeld and not commands.aimHeld
             -- Double-tapping Sprint while running starts a tactical sprint, which lasts while its charge does.
             if wasSprinting and not sprinting then
@@ -567,7 +584,7 @@ function onUpdate(dt)
             local adsMove = row and Gunplay.lerp(1, row.adsMoveMultiplier or 1, row.adsBlend or 0) or 1
             local scale = sprinting and (tactical and tacticalSprintMultiplier or sprintMultiplier)
                 or adsMove * Logic.directionSpeedScale(forward, right, strafeSpeedScale, backpedalSpeedScale)
-                    * (crouched and crouchSpeedScale or 1)
+                    * (prone and proneSpeedScale or (crouched and crouchSpeedScale or 1))
             if sinceHardLanding then
                 sinceHardLanding = sinceHardLanding + dt
                 scale = scale * Logic.landingSpeedScale(sinceHardLanding, landingSlowSeconds, landingSlowScale)
@@ -616,9 +633,12 @@ function onUpdate(dt)
 end
 
 function onLateUpdate(dt)
+    local prone = Character.isProne()
     local crouched = Character.isCrouched() or Character.isStandBlocked()
-    local target = crouched and crouchEyeHeight or standEyeHeight
-    local speed = eyeBlendMetersPerSecond * dt
+    local target = prone and proneEyeHeight or (crouched and crouchEyeHeight or standEyeHeight)
+    -- Going down to or up from prone is slower than crouching.
+    local lying = prone or eyeHeight < crouchEyeHeight - 0.01
+    local speed = (lying and proneEyeBlendMetersPerSecond or eyeBlendMetersPerSecond) * dt
     if eyeHeight < target then
         eyeHeight = math.min(target, eyeHeight + speed)
     elseif eyeHeight > target then
@@ -692,6 +712,7 @@ function onLateUpdate(dt)
             aimHeld = commands.aimHeld and swap == nil and throw == nil and mantle == nil,
             sprinting = sprinting,
             tacticalSprint = tactical,
+            prone = Character.isProne(),
             moveFraction = Gunplay.clamp(speedXZ / math.max(fullSpreadMoveSpeed, 0.1), 0, 1),
             airborne = not grounded,
             lookPitchDelta = lookPitchDelta,

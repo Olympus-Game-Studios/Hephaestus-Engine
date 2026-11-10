@@ -34,6 +34,7 @@ private:
     QDoubleSpinBox* m_height = nullptr;
     QDoubleSpinBox* m_radius = nullptr;
     QDoubleSpinBox* m_crouchedHeight = nullptr;
+    QDoubleSpinBox* m_proneHeight = nullptr;
     QDoubleSpinBox* m_walkSpeed = nullptr;
     QDoubleSpinBox* m_acceleration = nullptr;
     QDoubleSpinBox* m_deceleration = nullptr;

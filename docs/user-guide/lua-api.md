@@ -134,6 +134,7 @@ For entities with a [Character Controller](physics.md#character-controller).
 | `Character.jump()` | Jump on the next physics step, if standing on something. |
 | `Character.setCrouched(on)` / `Character.isCrouched()` | Crouch. |
 | `Character.isStandBlocked()` | True if there's no room to stand up. |
+| `Character.setProne(on)` / `Character.isProne()` | Lie down, using the controller's **Prone Height**; prone wins over crouch. Getting up waits until there's room. |
 | `Character.isGrounded()` / `Character.getGroundState()` | Whether and how it's standing on something. |
 | `Character.getVelocity()` | Current velocity. |
 | `Character.getGroundNormal()` / `Character.getGroundVelocity()` | The slope underfoot and how fast the ground is moving (moving platforms). |

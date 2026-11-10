@@ -234,6 +234,15 @@ CharacterBinding MakeScriptCharacterBinding(ScriptPhysicsAccessor access)
         Physics::CharacterControllerState state;
         return GetCharacterState(access(), entityId, state) && state.crouched;
     };
+    binding.setProne = [access](uint32_t entityId, bool prone) {
+        return WithCharacterRuntime(access, entityId, [&](CharacterControllerSystem& c, entt::entity e) {
+            c.SetProne(e, prone);
+        });
+    };
+    binding.isProne = [access](uint32_t entityId) {
+        Physics::CharacterControllerState state;
+        return GetCharacterState(access(), entityId, state) && state.prone;
+    };
     binding.isStandBlocked = [access](uint32_t entityId) {
         Physics::CharacterControllerState state;
         return GetCharacterState(access(), entityId, state) && state.standBlocked;

@@ -86,6 +86,7 @@ void CharacterControllerInspector::buildUI()
     m_height = addSpin(shape, tr("Height"), 0.05, 10.0, 0.05);
     m_radius = addSpin(shape, tr("Radius"), 0.05, 2.0, 0.01);
     m_crouchedHeight = addSpin(shape, tr("Crouched Height"), 0.05, 10.0, 0.05);
+    m_proneHeight = addSpin(shape, tr("Prone Height"), 0.05, 10.0, 0.05);
 
     QFormLayout* movement = addGroup(tr("Movement"));
     m_walkSpeed = addSpin(movement, tr("Walk Speed"), 0.0, 40.0, 0.1);
@@ -147,7 +148,7 @@ void CharacterControllerInspector::connectSignals()
     };
     connect(m_enabled, &QCheckBox::toggled, this, edited);
     const QDoubleSpinBox* spins[] = {
-        m_height, m_radius, m_crouchedHeight, m_walkSpeed, m_acceleration, m_deceleration,
+        m_height, m_radius, m_crouchedHeight, m_proneHeight, m_walkSpeed, m_acceleration, m_deceleration,
         m_airAcceleration, m_airControl, m_jumpSpeed, m_coyoteTime, m_jumpBufferTime, m_gravityScale, m_maxFallSpeed,
         m_groundSnap, m_maxSlope, m_stepHeight, m_mass, m_pushStrength
     };
@@ -175,6 +176,7 @@ void CharacterControllerInspector::applyToComponent()
         if (TryReadSpin(m_height, value)) component.height = static_cast<float>(value);
         if (TryReadSpin(m_radius, value)) component.radius = static_cast<float>(value);
         if (TryReadSpin(m_crouchedHeight, value)) component.crouchedHeight = static_cast<float>(value);
+        if (TryReadSpin(m_proneHeight, value)) component.proneHeight = static_cast<float>(value);
         if (TryReadSpin(m_walkSpeed, value)) component.walkSpeed = static_cast<float>(value);
         if (TryReadSpin(m_acceleration, value)) component.acceleration = static_cast<float>(value);
         if (TryReadSpin(m_deceleration, value)) component.deceleration = static_cast<float>(value);
@@ -241,7 +243,7 @@ void CharacterControllerInspector::Refresh()
 {
     EndEdit();
     MixedBool enabled;
-    MixedScalar height, radius, crouchedHeight, walkSpeed, acceleration, deceleration;
+    MixedScalar height, radius, crouchedHeight, proneHeight, walkSpeed, acceleration, deceleration;
     MixedScalar airAcceleration, airControl, jumpSpeed, coyoteTime, jumpBufferTime, gravityScale, maxFallSpeed;
     MixedScalar groundSnap, maxSlope, stepHeight, mass, pushStrength, layer;
     VisitTargets<CharacterControllerComponent>([&](const CharacterControllerComponent& component, entt::entity) {
@@ -249,6 +251,7 @@ void CharacterControllerInspector::Refresh()
         AccumulateScalar(height, component.height);
         AccumulateScalar(radius, component.radius);
         AccumulateScalar(crouchedHeight, component.crouchedHeight);
+        AccumulateScalar(proneHeight, component.proneHeight);
         AccumulateScalar(walkSpeed, component.walkSpeed);
         AccumulateScalar(acceleration, component.acceleration);
         AccumulateScalar(deceleration, component.deceleration);
@@ -297,6 +300,7 @@ void CharacterControllerInspector::Refresh()
     SetSpinFromMixed(m_height, height);
     SetSpinFromMixed(m_radius, radius);
     SetSpinFromMixed(m_crouchedHeight, crouchedHeight);
+    SetSpinFromMixed(m_proneHeight, proneHeight);
     SetSpinFromMixed(m_walkSpeed, walkSpeed);
     SetSpinFromMixed(m_acceleration, acceleration);
     SetSpinFromMixed(m_deceleration, deceleration);
