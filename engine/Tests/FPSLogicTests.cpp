@@ -986,6 +986,23 @@ for i = 1, 20 do Registry.addCorpse("b" .. i, i, 0) end
 check(#Registry.corpses == 20, "a limit of 0 keeps every body")
 Registry.corpses = {}
 
+local Waves = require("FPS.Waves")
+local plan = Waves.parse("3; 5:hardened ;0;x;7:veteran")
+check(#plan == 3 and plan[1].count == 3 and plan[1].difficulty == "" and plan[2].count == 5
+      and plan[2].difficulty == "hardened" and plan[3].difficulty == "veteran",
+      "a wave plan reads counts with optional difficulty levels and skips empty or invalid waves")
+local spawnPoints = Waves.parsePoints("10,0; -20.5,4;30,-30")
+check(#spawnPoints == 3 and spawnPoints[2].x == -20.5 and spawnPoints[2].z == 4, "spawn points read as x,z pairs")
+local seq = { 0.0, 0.99 }
+local n = 0
+local function nextRandom() n = n + 1; return seq[n] end
+local a = Waves.pickSpawn(spawnPoints, { x = 9, y = 0, z = 0 }, 15, nextRandom)
+local b = Waves.pickSpawn(spawnPoints, { x = 9, y = 0, z = 0 }, 15, nextRandom)
+check(a ~= spawnPoints[1] and b ~= spawnPoints[1] and a ~= b, "spawns avoid points near the player and vary")
+check(Waves.pickSpawn(spawnPoints, { x = 0, y = 0, z = 0 }, 1000, nextRandom) == spawnPoints[3],
+      "with no point far enough, the farthest is used")
+check(Waves.pickSpawn({}, nil, 15, nextRandom) == nil, "no spawn points means no spawn")
+
 local Brain = require("FPS.AI.Brain")
 local log = {}
 local states = {

@@ -287,6 +287,87 @@
           "interactable": false,
           "zOrder": 4
         }
+      },
+      {
+        "type": "Panel",
+        "id": "DeathFade",
+        "properties": {
+          "anchor": "Stretch",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 1
+        },
+        "style": {
+          "backgroundColor": [0.0, 0.0, 0.0, 0.55]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "Banner",
+        "properties": {
+          "text": "",
+          "textAlignment": "Center",
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "position": [0, -170],
+          "size": [1000, 64],
+          "visible": false,
+          "interactable": false,
+          "zOrder": 5
+        },
+        "style": {
+          "fontSize": 44,
+          "fontBold": true,
+          "textColor": [1.0, 1.0, 1.0, 1.0],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.9],
+          "textShadowOffset": [2, 2]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "BannerSub",
+        "properties": {
+          "text": "",
+          "textAlignment": "Center",
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "position": [0, -116],
+          "size": [1000, 36],
+          "visible": false,
+          "interactable": false,
+          "zOrder": 5
+        },
+        "style": {
+          "fontSize": 20,
+          "fontBold": false,
+          "textColor": [0.92, 0.92, 0.92, 1.0],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.9],
+          "textShadowOffset": [2, 2]
+        }
+      },
+      {
+        "type": "Text",
+        "id": "WaveText",
+        "properties": {
+          "text": "",
+          "textAlignment": "Center",
+          "anchor": "TopCenter",
+          "position": [0, 18],
+          "size": [500, 30],
+          "visible": false,
+          "interactable": false,
+          "zOrder": 3
+        },
+        "style": {
+          "fontSize": 18,
+          "fontBold": true,
+          "textColor": [1.0, 1.0, 1.0, 0.95],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.9],
+          "textShadowOffset": [2, 2]
+        }
       }
     ]
   }

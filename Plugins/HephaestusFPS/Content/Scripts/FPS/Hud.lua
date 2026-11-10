@@ -35,6 +35,13 @@ function Hud.mount(path, enabled)
     Hud.widgets.DamageFlash = UI.getWidget(handle, "DamageFlash")
     Hud.widgets.HitMarker = UI.getWidget(handle, "HitMarker")
     Hud.widgets.KillMarker = UI.getWidget(handle, "KillMarker")
+    Hud.widgets.Banner = UI.getWidget(handle, "Banner")
+    Hud.widgets.BannerSub = UI.getWidget(handle, "BannerSub")
+    Hud.widgets.WaveText = UI.getWidget(handle, "WaveText")
+    Hud.widgets.DeathFade = UI.getWidget(handle, "DeathFade")
+    Hud.banner = nil
+    Hud.waveText = nil
+    Hud.deathFade = false
     Hud.warnings = {}
     for i = 1, Hud.MAX_GRENADE_WARNINGS do
         Hud.warnings[i] = { icon = UI.getWidget(handle, "GrenadeWarning" .. i),
@@ -105,6 +112,59 @@ function Hud.showGrenadeWarnings(list, style)
     end
 end
 
+-- A large message in the upper middle of the screen with an optional line under it, for `seconds` (nil: until
+-- replaced or cleared). Shown even while the rest of the HUD is suppressed, so it works on the death screen.
+function Hud.showBanner(title, subtitle, seconds)
+    Hud.banner = { title = title or "", subtitle = subtitle or "", remaining = seconds }
+end
+
+function Hud.clearBanner()
+    Hud.banner = nil
+end
+
+-- Wave progress at the top of the screen; nil hides it.
+function Hud.setWaveText(text)
+    Hud.waveText = text
+end
+
+-- Darkens the screen behind the banner, for the death screen.
+function Hud.setDeathFade(on)
+    Hud.deathFade = on == true
+end
+
+local function refreshMessages(dt)
+    local banner = Hud.banner
+    if banner and banner.remaining then
+        banner.remaining = banner.remaining - dt
+        if banner.remaining <= 0 then
+            Hud.banner = nil
+            banner = nil
+        end
+    end
+    local w = Hud.widgets
+    if w.Banner then
+        UI.setVisible(w.Banner, banner ~= nil)
+        if banner then
+            UI.setText(w.Banner, banner.title)
+        end
+    end
+    if w.BannerSub then
+        UI.setVisible(w.BannerSub, banner ~= nil and banner.subtitle ~= "")
+        if banner then
+            UI.setText(w.BannerSub, banner.subtitle)
+        end
+    end
+    if w.WaveText then
+        UI.setVisible(w.WaveText, Hud.waveText ~= nil and not Hud.suppressed)
+        if Hud.waveText then
+            UI.setText(w.WaveText, Hud.waveText)
+        end
+    end
+    if w.DeathFade then
+        UI.setVisible(w.DeathFade, Hud.deathFade)
+    end
+end
+
 function Hud.flashDamage()
     Hud.damageFlashRemaining = 0.3
 end
@@ -124,6 +184,7 @@ function Hud.refresh(info)
         return
     end
     info = info or {}
+    refreshMessages(info.dt or 0)
     local enabled = info.enabled and not Hud.suppressed
     local function vis(widget, on)
         if widget then

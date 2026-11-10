@@ -128,6 +128,12 @@ A settings menu can change all enemies at once: `Difficulty.setLevel("hardened")
 
 The enemy is a state machine (`FPS.AI.Brain`). Each state in `Enemy.lua`'s `states` table has `enter`, `update` and `exit` functions, and `update` returns the name of the next state, so a new behaviour is a new state. The parts it uses are separate modules you can use for other kinds of enemy: `FPS.AI.Tactics` (flank spots and grenade throws), `FPS.AI.Perception` (sight and hearing), `FPS.AI.Mover` (following navmesh paths), `FPS.AI.Cover` (finding cover) and the noise and danger lists in `FPS.Registry` (`reportNoise`, `setDanger`, `clearDanger`).
 
+## Waves and restarting
+
+`WaveDirector.lua` turns a level into a wave survival game. Put it on any entity and set `enemyPrefab`, `spawnPoints` (`"x,z;x,z"`) and `waves`, a list of enemy counts with an optional difficulty level each (`"3:recruit;5:regular;7:hardened"`; no level means the global one). After `startDelaySeconds` the first wave begins: its enemies appear one every `spawnIntervalSeconds` at a spawn point at least `minSpawnDistance` metres from the player (the farthest one if none is that far) and come looking for the player (`huntOnSpawn` on the enemy). When they are all dead a "Wave cleared" message shows for `breakSeconds` before the next wave, and clearing the last wave wins. The top of the screen shows the wave and how many enemies are left.
+
+When the player dies the screen darkens with "You died", and when the last wave is cleared it shows "All waves cleared". After `restartDelaySeconds` the player's `restartPrompt` appears, and pressing Jump restarts the level (`Scene.reload`). Turn this off with `restartEnabled`. Other scripts can show the same large message with `Hud.showBanner(title, subtitle, seconds)`.
+
 ## Scripts
 
 Lua modules live under `Content/Scripts/FPS/` and load with `require("FPS.Logic")` after `package.path` includes the plugin `Scripts` directory. Project `assets/scripts` is searched first.

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-11-10: FPS plugin waves and restarts: `WaveDirector.lua` spawns waves of enemies that hunt the player, with a per-wave difficulty, wave and "cleared" messages and a win when the last wave is cleared. Dying or winning shows a message and offers a restart (`Scene.reload`). FPS-Shooter has a Survival level that uses it.
 - 2026-11-10: FPS plugin enemy bodies stay in the level until more than `maxCorpses` (8) lie there, then the oldest is removed with its dropped weapon; they no longer disappear after a set time unless `corpseSeconds` is set.
 - 2026-11-10: FPS plugin grenade warning: a HUD icon circles the crosshair towards each live frag near the player, with an arrow pointing at it, white when it is near, orange when its blast would hurt and red when it would kill (`grenadeWarningIcon`, `grenadeWarningArrowPattern` and related player settings).
 - 2026-11-10: Ragdolls: Lua `Character.ragdoll(impulse, point)` turns a humanoid Character (Mixamo bone names) into 11 jointed capsules that fall under physics and drive its bones, replacing its Character Controller and the colliders of its children; hits on the ragdoll report the character. `Character.isRagdoll()` says whether it has. FPS plugin enemies ragdoll on death, pushed away from the shot or the blast, and drop their rifle (`HeldWeapon.lua` `dropPrefab`).

@@ -43,6 +43,7 @@ Expose.number("grenadeDamage", 150)
 Expose.number("throwAngleDegrees", 40)
 Expose.number("grenadeDamping", 0.1)
 Expose.number("tacticsIntervalSeconds", 1.5)
+Expose.bool("huntOnSpawn", false)
 Expose.number("ragdollImpulse", 45)
 Expose.number("ragdollBlastImpulse", 220)
 Expose.bool("debugAI", false)
@@ -789,7 +790,16 @@ function onUpdate(dt)
                 children[#children + 1] = entity
             end
         end
-        brain = Brain.new(this, states, "patrol")
+        local row = huntOnSpawn and player()
+        local feet = row and playerFeet(row)
+        if feet then
+            -- Sent in to find the player: start out searching where they are.
+            lastKnown = { x = feet.x, y = feet.y, z = feet.z }
+            awareness = math.max(awareness, 0.6)
+            brain = Brain.new(this, states, "investigate", lastKnown, true)
+        else
+            brain = Brain.new(this, states, "patrol")
+        end
     end
     perceptionTimer = perceptionTimer - dt
     grenadeCooldown = grenadeCooldown - dt

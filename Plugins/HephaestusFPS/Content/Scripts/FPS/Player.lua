@@ -63,6 +63,9 @@ Expose.bool("showHealth", true)
 Expose.bool("showAmmo", true)
 Expose.bool("showPrompt", true)
 Expose.string("hudDocument", "plugin://com.hephaestus.fps/UI/FPSHud.hui")
+Expose.bool("restartEnabled", true)
+Expose.number("restartDelaySeconds", 1.5)
+Expose.string("restartPrompt", "Press Space to restart")
 Expose.bool("grenadeWarningEnabled", true)
 Expose.string("grenadeWarningIcon", "")
 Expose.string("grenadeWarningArrowPattern", "")
@@ -105,6 +108,7 @@ Expose.number("throwPreviewFriction", 0.55)
 local Player = {}
 local yaw = 0
 local warningClock = 0
+local endedFor = nil
 local pitch = 0
 local lookEnabled = true
 local inputEnabled = true
@@ -486,14 +490,37 @@ function onAwake()
         input = {},
     })
     eyeHeight = standEyeHeight
+    endedFor = nil
     lastKnownHealth = Health.getHealth(this)
     Camera.setActive(true)
     Player.setLookEnabled(true)
     Hud.mount(hudDocument, hudEnabled)
 end
 
+-- After death or a won game: wait restartDelaySeconds, then offer a restart on Jump (Scene.reload).
+local function updateGameEnd(dt)
+    if not endedFor and Registry.gameOver then
+        endedFor = 0
+    end
+    if not endedFor or not restartEnabled then
+        return
+    end
+    endedFor = endedFor + dt
+    if endedFor >= restartDelaySeconds then
+        local title = Hud.banner and Hud.banner.title or ""
+        if not Hud.banner or Hud.banner.subtitle ~= restartPrompt then
+            Hud.showBanner(title, restartPrompt, nil)
+        end
+        if Input.isActionPressed("Jump") then
+            endedFor = nil
+            Scene.reload()
+        end
+    end
+end
+
 function onUpdate(dt)
     lastDt = dt
+    updateGameEnd(dt)
     applyLook(dt)
     Character.setFacingYaw(yaw)
     applyCameraRotation()
@@ -839,6 +866,9 @@ end
 function onDeath()
     Player.setInputEnabled(false)
     Hud.setSuppressed(true)
+    Registry.gameOver = Registry.gameOver or "dead"
+    Hud.setDeathFade(true)
+    Hud.showBanner("You died", "", nil)
 end
 
 function onDestroy()
