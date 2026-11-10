@@ -60,6 +60,14 @@
       "bindings": [ { "type": "keyboard", "control": "4" } ]
     },
     {
+      "name": "LeanLeft",
+      "bindings": [ { "type": "keyboard", "control": "C" } ]
+    },
+    {
+      "name": "LeanRight",
+      "bindings": [ { "type": "keyboard", "control": "V" } ]
+    },
+    {
       "name": "Prone",
       "bindings": [
         { "type": "keyboard", "control": "X" },

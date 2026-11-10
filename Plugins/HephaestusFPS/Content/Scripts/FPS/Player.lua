@@ -18,6 +18,10 @@ Expose.number("pitchMinDegrees", -89)
 Expose.number("pitchMaxDegrees", 89)
 Expose.number("standEyeHeight", 1.62)
 Expose.number("crouchEyeHeight", 0.95)
+Expose.bool("leanEnabled", true)
+Expose.number("leanDistance", 0.35)
+Expose.number("leanRollDegrees", 10)
+Expose.number("leanSeconds", 0.15)
 Expose.bool("proneEnabled", true)
 Expose.number("proneEyeHeight", 0.35)
 Expose.number("proneEyeBlendMetersPerSecond", 2.5)
@@ -116,6 +120,9 @@ local tacticalBlend = 0
 local sinceSprintEnded = math.huge
 local mantle = nil
 local proneWanted = false
+local leanTarget = 0
+local lean = 0
+local leanOffset = 0
 local fallSpeed = 0
 local footfallThisFrame = false
 local stepCount = 0
@@ -300,7 +307,9 @@ end
 
 local function applyCameraRotation()
     local motion = presentationEnabled and Gunplay.clamp(viewBobScale, 0, 1) or 0
-    Camera.setRotation(pitch + cameraKickPitch.x, cameraKickYaw.x, -math.rad(slideRollDegrees) * slideBlend * motion)
+    local leanRoll = math.rad(leanRollDegrees) * leanOffset / math.max(leanDistance, 1e-3)
+    Camera.setRotation(pitch + cameraKickPitch.x, cameraKickYaw.x,
+                       -math.rad(slideRollDegrees) * slideBlend * motion - leanRoll)
 end
 
 -- Plain trigger volumes are skipped so a large sensor cannot hide the interactable inside it.
@@ -442,6 +451,9 @@ function onAwake()
     slideCooldownRemaining = 0
     slideBlend = 0
     proneWanted = false
+    leanTarget = 0
+    lean = 0
+    leanOffset = 0
     tactical = false
     tacticalCharge = tacticalSprintSeconds
     tacticalBlend = 0
@@ -594,6 +606,11 @@ function onUpdate(dt)
         if slide or mantle then
             tactical = false
         end
+        -- Leaning holds while its key is down, except while running, sliding or climbing.
+        leanTarget = 0
+        if leanEnabled and not sprinting and not slide and not mantle then
+            leanTarget = (Input.isActionDown("LeanRight") and 1 or 0) - (Input.isActionDown("LeanLeft") and 1 or 0)
+        end
         slideBlend = Gunplay.approach(slideBlend, slide and 1 or 0, dt / 0.12)
         tacticalBlend = Gunplay.approach(tacticalBlend, tactical and 1 or 0, dt / 0.25)
         commands.reload = Input.isActionPressed("Reload")
@@ -623,6 +640,7 @@ function onUpdate(dt)
         slide = nil
         mantle = nil
         tactical = false
+        leanTarget = 0
         commands.fireHeld = false
         commands.firePressed = false
         commands.aimHeld = false
@@ -644,10 +662,20 @@ function onLateUpdate(dt)
     elseif eyeHeight > target then
         eyeHeight = math.max(target, eyeHeight - speed)
     end
-    Camera.setPosition(0, eyeHeight, 0)
-
     local feet = Transform.getPosition()
+    lean = Gunplay.approach(lean, leanTarget, dt / math.max(leanSeconds, 0.01))
+    leanOffset = Logic.leanOffset(lean, leanDistance, function(side, distance)
+        local right = Logic.yawBasis(yaw).right
+        local hit = Physics.raycast(feet.x, feet.y + eyeHeight, feet.z, right.x * side, 0, right.z * side,
+                                    distance, nil, true)
+        return hit and hit.distance or nil
+    end)
+    -- The player turns with yaw, so the camera's local +z is the player's right.
+    Camera.setPosition(0, eyeHeight, leanOffset)
+
     local origin, direction = Logic.aimRay(feet, eyeHeight, yaw, pitch)
+    local leanRight = Logic.yawBasis(yaw).right
+    origin.x, origin.z = origin.x + leanRight.x * leanOffset, origin.z + leanRight.z * leanOffset
 
     local vel = Character.getVelocity()
     local grounded = Character.isGrounded()

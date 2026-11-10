@@ -730,6 +730,11 @@ active, charge = L.stepTacticalSprint(true, 0.5, 2.5, 4, 1.0)
 check(not active and charge == 0, "a tactical sprint ends when its charge runs out")
 active, charge = L.stepTacticalSprint(false, 0, 2.5, 4, 2.0)
 check(not active and near(charge, 1.25), "the charge refills from empty to full over the recharge time")
+check(L.leanOffset(0, 0.35) == 0 and near(L.leanOffset(1, 0.35), 0.35) and near(L.leanOffset(-0.5, 0.35), -0.175),
+      "a lean moves the head sideways by its fraction of the lean distance")
+check(near(L.leanOffset(1, 0.35, function() return 0.4 end), 0.2)
+      and L.leanOffset(-1, 0.35, function() return 0.1 end) == 0,
+      "a wall beside the head limits the lean")
 
 local Mantle = require("FPS.Mantle")
 -- Ground at y = 0 plus axis-aligned boxes; returns the nearest hit like Physics.raycast.

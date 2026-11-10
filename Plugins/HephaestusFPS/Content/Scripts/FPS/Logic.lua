@@ -62,6 +62,21 @@ function Logic.stepTacticalSprint(active, charge, maxSeconds, rechargeSeconds, d
     return false, math.min(maxSeconds, charge + dt * maxSeconds / math.max(rechargeSeconds, 1e-3))
 end
 
+-- Sideways head offset for a lean of -1 (left) to 1 (right). wallDistance(side, distance) returns how far a wall is
+-- on that side within distance, or nil; the head stops 0.2 m short of it.
+function Logic.leanOffset(lean, distance, wallDistance)
+    if math.abs(lean) < 1e-4 then
+        return 0
+    end
+    local side = lean > 0 and 1 or -1
+    local reach = distance
+    local wall = wallDistance and wallDistance(side, distance + 0.2)
+    if wall then
+        reach = math.max(0, math.min(distance, wall - 0.2))
+    end
+    return side * math.min(math.abs(lean) * distance, reach)
+end
+
 -- Speed scale through a slide: from startScale, easing down to endScale by the end of duration.
 function Logic.slideSpeedScale(elapsed, duration, startScale, endScale)
     local t = duration > 0 and math.min(1, math.max(0, elapsed / duration)) or 1
