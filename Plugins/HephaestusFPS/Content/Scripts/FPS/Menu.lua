@@ -20,6 +20,9 @@ Menu.theme = {
     tile = { r = 0.04, g = 0.035, b = 0.03, a = 0.72 },
     track = { r = 1.0, g = 1.0, b = 1.0, a = 0.18 },
     font = "Roboto",
+    labelSize = 22,
+    labelPaddingLeft = 20,  -- inside the highlight, before the label
+    labelPaddingRight = 16, -- after it
 }
 
 local MAX_ROWS = 12
@@ -146,7 +149,8 @@ function Menu.new(name, options)
     for i = 1, MAX_ROWS do
         local y = menu.y + (i - 1) * menu.rowHeight
         local row = menu.rows[i]
-        row.label = text(menu, root, "", menu.x + 18, y, menu.width - 36, menu.rowHeight - 8, 22, true)
+        row.label = text(menu, root, "", menu.x + Menu.theme.labelPaddingLeft, y, menu.width - 36, menu.rowHeight - 8,
+                         Menu.theme.labelSize, true)
         row.value = text(menu, root, "", menu.x + menu.width - 250, y, 196, menu.rowHeight - 8, 20, false, nil, "Right")
         row.trackBack = panel(root, menu.x + menu.width - 250, y + menu.rowHeight - 18, 196, 3, Menu.theme.track)
         row.trackFill = panel(root, menu.x + menu.width - 250, y + menu.rowHeight - 18, 0, 3, Menu.theme.accent)
@@ -267,20 +271,18 @@ function Menu.refresh(menu)
             local rowY = menu.y + (i - 1) * menu.rowHeight
             local barWidth = menu.width
             if not hasValue then
-                barWidth = math.min(menu.width, 40 + #item.label * 17)
+                local textWidth = UI.measureText and UI.measureText(item.label, theme.labelSize, true, theme.font) or 0
+                if textWidth <= 0 then
+                    textWidth = #item.label * theme.labelSize * 0.62
+                end
+                barWidth = math.min(menu.width, theme.labelPaddingLeft + textWidth + theme.labelPaddingRight)
             end
             UI.setSize(row.tile, barWidth, menu.rowHeight - 8)
             row.barWidth = barWidth
-            -- A button's label fills its bar and is centred in it; a slider or choice keeps its label on the left.
-            if hasValue then
-                UI.setPosition(row.label, menu.x + 18, rowY)
-                UI.setSize(row.label, menu.width - 36, menu.rowHeight - 8)
-                UI.setTextAlignment(row.label, "left")
-            else
-                UI.setPosition(row.label, menu.x, rowY)
-                UI.setSize(row.label, barWidth, menu.rowHeight - 8)
-                UI.setTextAlignment(row.label, "center")
-            end
+            -- Every label starts at the same inset; a button's bar wraps its measured text with the theme padding.
+            UI.setPosition(row.label, menu.x + theme.labelPaddingLeft, rowY)
+            UI.setSize(row.label, (hasValue and menu.width or barWidth) - theme.labelPaddingLeft, menu.rowHeight - 8)
+            UI.setTextAlignment(row.label, "left")
             -- Hover and click only over the item itself (its bar, or the whole row for sliders and choices).
             UI.setSize(row.button, barWidth + HOVER_PAD, menu.rowHeight - 8)
             if item.kind == "slider" then

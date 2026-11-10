@@ -5,11 +5,14 @@
 #include "../../Assets/AssetManager.h"
 #include "../HephaestusUI/Rendering/HUIGeometryBuilder.h"
 
+#include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QMouseEvent>
 #include <algorithm>
+#include <cmath>
+#include <unordered_map>
 
 namespace Hephaestus {
 namespace QtEditor {
@@ -24,6 +27,24 @@ float clamp01(float value)
 QColor toQColor(const Hephaestus::HephaestusUI::UIColor& color)
 {
     return QColor::fromRgbF(clamp01(color.r), clamp01(color.g), clamp01(color.b), clamp01(color.a));
+}
+
+// The Qt family for the font file the game renderer would use, registered with Qt on first use.
+QString GameFontFamily(const std::string& family, bool bold, bool italic)
+{
+    static std::unordered_map<std::string, QString> registered;
+    const std::string file = Hephaestus::HephaestusUI::UIFontAtlas::ResolveFontFile(
+        family, bold, italic, Hephaestus::HephaestusUI::HUIFontSearchPaths(AssetManager::GetInstance().GetProjectRoot()));
+    if (file.empty()) {
+        return QString::fromStdString(family);
+    }
+    auto it = registered.find(file);
+    if (it == registered.end()) {
+        const int id = QFontDatabase::addApplicationFont(QString::fromStdString(file));
+        const QStringList families = id >= 0 ? QFontDatabase::applicationFontFamilies(id) : QStringList{};
+        it = registered.emplace(file, families.isEmpty() ? QString::fromStdString(family) : families.front()).first;
+    }
+    return it->second;
 }
 
 QRectF toQRectF(const Hephaestus::HephaestusUI::UIRect& rect)
@@ -183,10 +204,15 @@ void RuntimeUIOverlayWidget::paintEvent(QPaintEvent* event)
         if (std::holds_alternative<Hephaestus::HephaestusUI::UIDrawTextCommand>(command)) {
             const auto& drawText = std::get<Hephaestus::HephaestusUI::UIDrawTextCommand>(command);
             QFont font = painter.font();
-            if (!drawText.fontFamily.empty()) {
-                font.setFamily(QString::fromStdString(drawText.fontFamily));
-            }
-            font.setPointSizeF(std::max(1.0f, drawText.fontSize));
+            font.setFamily(GameFontFamily(drawText.fontFamily.empty() ? "Default" : drawText.fontFamily,
+                                          drawText.bold, drawText.italic));
+            // The game renderer sizes fonts so ascender to descender spans fontSize pixels (stb_truetype's
+            // pixel height); Qt sizes the em, so scale by the font's own ascent + descent per em.
+            font.setPixelSize(100);
+            const QFontMetricsF reference(font, painter.device());
+            const qreal emPixels = std::max(1.0f, drawText.fontSize) * 100.0 /
+                                   std::max<qreal>(1.0, reference.ascent() + reference.descent());
+            font.setPointSizeF(emPixels * 72.0 / std::max(1, painter.device()->logicalDpiY()));
             font.setBold(drawText.bold);
             font.setItalic(drawText.italic);
             painter.setFont(font);

@@ -101,45 +101,6 @@ std::string PathToUtf8(const std::filesystem::path& path)
     return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
 }
 
-std::filesystem::path QueryExecutableDirectory()
-{
-#ifdef _WIN32
-    std::wstring buffer(MAX_PATH, L'\0');
-    while (true) {
-        DWORD result = GetModuleFileNameW(nullptr, buffer.data(),
-                                          static_cast<DWORD>(buffer.size()));
-        if (result == 0) {
-            return {};
-        }
-        if (result < buffer.size() - 1) {
-            buffer.resize(result);
-            return std::filesystem::path(buffer).parent_path();
-        }
-        buffer.resize(buffer.size() * 2);
-        if (buffer.size() > 32768) {
-            return {};
-        }
-    }
-#elif defined(__APPLE__)
-    char buffer[4096];
-    uint32_t size = sizeof(buffer);
-    if (_NSGetExecutablePath(buffer, &size) == 0) {
-        std::error_code ec;
-        auto exePath = std::filesystem::canonical(buffer, ec);
-        if (!ec) {
-            return exePath.parent_path();
-        }
-    }
-    return {};
-#else
-    std::error_code ec;
-    auto exePath = std::filesystem::read_symlink("/proc/self/exe", ec);
-    if (!ec) {
-        return exePath.parent_path();
-    }
-    return {};
-#endif
-}
 
 bool FileExists(const std::filesystem::path& path)
 {
@@ -291,7 +252,7 @@ bool EngineLog::Initialize(const char* applicationName, int argc, char** argv)
             g_ApplicationName = applicationName;
         }
 
-        std::filesystem::path exeDir = QueryExecutableDirectory();
+        std::filesystem::path exeDir = ExecutableDirectory();
         if (exeDir.empty()) {
             std::error_code ec;
             exeDir = std::filesystem::current_path(ec);
@@ -519,7 +480,7 @@ void EngineLog::LogEnvironment(int argc, char** argv)
 
     Info(std::string("Hardware threads: ") + std::to_string(std::max(1u, std::thread::hardware_concurrency())));
 
-    const std::filesystem::path exeDir = QueryExecutableDirectory();
+    const std::filesystem::path exeDir = ExecutableDirectory();
     Info(std::string("Executable directory: ") + PathToUtf8(exeDir));
 
     std::error_code cwdEc;

@@ -42,6 +42,9 @@ inline std::filesystem::path ResourceRootFor(const std::filesystem::path& execut
     return contents.parent_path().parent_path();
 }
 
+// The folder holding the running executable; empty if the platform can't say.
+std::filesystem::path ExecutableDirectory();
+
 // %LOCALAPPDATA%\<appName> on Windows, where logs and crash dumps go so the install folder
 // stays read-only; empty on other platforms or when Windows can't provide the folder.
 std::filesystem::path LocalAppDataFor(const std::filesystem::path& appName);

@@ -649,6 +649,24 @@ bool TestFontAtlas(const std::string& repoRoot) {
     return local;
 }
 
+bool TestMeasureText(const std::string& repoRoot) {
+    bool local = true;
+    HUI::UIFontKey key;
+    key.family = "Roboto";
+    key.size = 22.0f;
+    key.bold = true;
+    const float short_ = HUI::MeasureHUIText(repoRoot, "QUIT", key);
+    const float long_ = HUI::MeasureHUIText(repoRoot, "QUIT TO MENU", key);
+    if (!Check(short_ > 0.0f, "MeasureHUIText measures with a bundled font")) local = false;
+    if (!Check(long_ > short_ * 2.0f, "longer text measures wider")) local = false;
+    // The width is the game's own layout: the same atlas the renderer draws with.
+    HUI::UIFontAtlas atlas;
+    atlas.LoadFromFile(HUI::UIFontAtlas::ResolveFontFile("Roboto", true, false, HUI::HUIFontSearchPaths(repoRoot)), 22.0f);
+    const HUI::UITextLayoutResult layout = atlas.LayoutText("QUIT", 0.0f, false);
+    if (!Check(!layout.lines.empty() && Near(layout.lines[0].width, short_, 0.01f), "measure matches the renderer's layout")) local = false;
+    return local;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -664,6 +682,7 @@ int main(int argc, char* argv[]) {
     TestFixtureAnchors(repoRoot);
     TestGeometryConversion(repoRoot);
     TestFontAtlas(repoRoot);
+    TestMeasureText(repoRoot);
 
     if (g_Ok) {
         std::printf("HUIRendererTests: ALL PASSED\n");

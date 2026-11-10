@@ -217,6 +217,7 @@ Changing widgets (each takes the widget first):
 - **Visibility and order:** `setVisible`, `setOpacity`, `setZOrder`, `setEnabled`, `setFocused`
 - **Placement:** `setPosition`, `setSize`, `setMinSize`, `setMaxSize`, `setAnchor`, `setAlignment`, `setPadding`, `setMargin`, `setSpacing`, `setChildAlignment`, `setGridColumns`, `setGridSpacing`
 - **Look:** `setBackgroundColor`, `setBorderColor`, `setBorderWidth`, `setCornerRadius`, `setTextColor`, `setFontSize`, `setFontBold`, `setFontItalic`, `setTextAlignment`, `setTextShadow`, `setWordWrap`, `setStyle`, `setButtonStyle`, `registerThemeStyle`, `applyThemeStyle`
+- **Measure:** `UI.measureText(text, size, bold, family)` returns the width in pixels the text will take on one line, for sizing panels around labels.
 - **Events:** `setOnClick(widget, function)`, `setOnHover(widget, function(isHovered))`
 
 Building UI in code: `UI.createScreen`, `UI.getRoot`, `UI.createPanel`, `UI.createText`, `UI.createButton`, `UI.createImage`, `UI.createVerticalBox`, `UI.createHorizontalBox`, `UI.createGrid`, `UI.setScreenVisible`, `UI.setScreenActive`, `UI.clearScreens` and `UI.getScreenCount`. `UI.loadHUI(path)` loads a layout without the bookkeeping `display.ui` does.

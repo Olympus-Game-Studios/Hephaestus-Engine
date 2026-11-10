@@ -6,9 +6,54 @@
 #endif
 #include <windows.h>
 #include <shlobj.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
 #endif
 
+#include <cstdint>
+#include <string>
+
 namespace Hephaestus {
+
+std::filesystem::path ExecutableDirectory()
+{
+#ifdef _WIN32
+    std::wstring buffer(MAX_PATH, L'\0');
+    while (true) {
+        DWORD result = GetModuleFileNameW(nullptr, buffer.data(),
+                                          static_cast<DWORD>(buffer.size()));
+        if (result == 0) {
+            return {};
+        }
+        if (result < buffer.size() - 1) {
+            buffer.resize(result);
+            return std::filesystem::path(buffer).parent_path();
+        }
+        buffer.resize(buffer.size() * 2);
+        if (buffer.size() > 32768) {
+            return {};
+        }
+    }
+#elif defined(__APPLE__)
+    char buffer[4096];
+    uint32_t size = sizeof(buffer);
+    if (_NSGetExecutablePath(buffer, &size) == 0) {
+        std::error_code ec;
+        auto exePath = std::filesystem::canonical(buffer, ec);
+        if (!ec) {
+            return exePath.parent_path();
+        }
+    }
+    return {};
+#else
+    std::error_code ec;
+    auto exePath = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (!ec) {
+        return exePath.parent_path();
+    }
+    return {};
+#endif
+}
 
 std::filesystem::path LocalAppDataFor(const std::filesystem::path& appName)
 {

@@ -7,6 +7,7 @@
 #include "../Scene/ParticleSimulation.h"
 #include "../Navigation/NavMesh.h"
 #include "../UI/HephaestusUI/UIContext.h"
+#include "../UI/HephaestusUI/Rendering/HUIGeometryBuilder.h"
 #include "../UI/HephaestusUI/UICanvas.h"
 #include "../UI/HephaestusUI/UIElement.h"
 #include "../UI/HephaestusUI/UIGridLayout.h"
@@ -6298,6 +6299,8 @@ void LuaScriptEngine::RegisterUIBindings() {
     lua_pushcfunction(m_State, Lua_UI_setFontItalic);
     lua_setfield(m_State, -2, "setFontItalic");
 
+    lua_pushcfunction(m_State, Lua_UI_measureText);
+    lua_setfield(m_State, -2, "measureText");
     lua_pushcfunction(m_State, Lua_UI_setTextAlignment);
     lua_setfield(m_State, -2, "setTextAlignment");
 
@@ -7753,6 +7756,25 @@ int LuaScriptEngine::Lua_UI_setFontItalic(lua_State* L) {
     return 1;
 #else
     (void)L; return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_UI_measureText(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Hephaestus::HephaestusUI::UIFontKey key;
+    const char* text = luaL_checkstring(L, 1);
+    key.size = static_cast<float>(luaL_checknumber(L, 2));
+    key.bold = lua_toboolean(L, 3) != 0;
+    if (lua_isstring(L, 4)) {
+        key.family = lua_tostring(L, 4);
+    }
+    const std::string root = engine ? engine->m_ProjectRoot.generic_string() : std::string();
+    lua_pushnumber(L, Hephaestus::HephaestusUI::MeasureHUIText(root, text, key));
+    return 1;
+#else
+    (void)L;
+    return 0;
 #endif
 }
 

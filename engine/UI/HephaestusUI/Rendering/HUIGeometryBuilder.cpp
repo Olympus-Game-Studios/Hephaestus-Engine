@@ -1,9 +1,13 @@
 #include "HUIGeometryBuilder.h"
 
+#include "../../../Core/AppPaths.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <memory>
+#include <unordered_map>
 #include <utility>
 
 namespace Hephaestus::HephaestusUI {
@@ -269,6 +273,41 @@ UIImagePlacement PlaceImage(const UIRect& rect, float texW, float texH, UIImageS
             break;
     }
     return out;
+}
+
+std::vector<std::string> HUIFontSearchPaths(const std::string& projectRoot) {
+    std::vector<std::string> paths;
+    if (!projectRoot.empty()) {
+        paths = {projectRoot, projectRoot + "/assets", projectRoot + "/assets/fonts"};
+    }
+    const std::filesystem::path exeDir = ExecutableDirectory();
+    if (!exeDir.empty()) {
+        paths.push_back((ResourceRootFor(exeDir) / "assets").string());
+    }
+    return paths;
+}
+
+float MeasureHUIText(const std::string& projectRoot, const std::string& text, const UIFontKey& key) {
+    // Layout only (no GPU); one atlas per font, kept for the life of the process.
+    static std::unordered_map<UIFontKey, std::unique_ptr<UIFontAtlas>, UIFontKeyHash> atlases;
+    auto& atlas = atlases[key];
+    if (!atlas) {
+        atlas = std::make_unique<UIFontAtlas>();
+        const std::string file =
+            UIFontAtlas::ResolveFontFile(key.family, key.bold, key.italic, HUIFontSearchPaths(projectRoot));
+        if (file.empty() || !atlas->LoadFromFile(file, key.size)) {
+            return 0.0f;
+        }
+    }
+    if (!atlas->IsLoaded()) {
+        return 0.0f;
+    }
+    const UITextLayoutResult layout = atlas->LayoutText(text, 0.0f, false);
+    float width = 0.0f;
+    for (const UITextLineLayout& line : layout.lines) {
+        width = std::max(width, line.width);
+    }
+    return width;
 }
 
 std::string ResolveHUIImagePath(const std::string& projectRoot, const std::string& imageId) {

@@ -253,7 +253,7 @@ void VulkanHUIRenderer::SetViewportSize(const UIVec2& viewportSize) {
 
 void VulkanHUIRenderer::SetProjectRoot(const std::string& projectRoot) {
     m_ProjectRoot = projectRoot;
-    m_FontSearchPaths = {projectRoot, projectRoot + "/assets", projectRoot + "/assets/fonts"};
+    m_FontSearchPaths = HUIFontSearchPaths(projectRoot);
 }
 
 void VulkanHUIRenderer::SetDrawCommands(const std::vector<UIDrawCommand>& commands) {

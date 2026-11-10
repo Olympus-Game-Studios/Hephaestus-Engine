@@ -640,6 +640,7 @@ private:
     static int Lua_UI_setFontBold(lua_State* L);
     static int Lua_UI_setFontItalic(lua_State* L);
     static int Lua_UI_setTextAlignment(lua_State* L);
+    static int Lua_UI_measureText(lua_State* L);
     static int Lua_UI_setTextShadow(lua_State* L);
     static int Lua_UI_setWordWrap(lua_State* L);
     static int Lua_UI_setStyle(lua_State* L);
