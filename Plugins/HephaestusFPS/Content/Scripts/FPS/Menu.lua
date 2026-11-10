@@ -23,6 +23,7 @@ Menu.theme = {
 }
 
 local MAX_ROWS = 12
+local HOVER_PAD = 12
 
 local function style(textColor, background, size, bold, align)
     return { textColor = textColor, backgroundColor = background, fontSize = size, fontBold = bold,
@@ -258,6 +259,8 @@ function Menu.refresh(menu)
             end
             UI.setSize(row.tile, barWidth, menu.rowHeight - 8)
             UI.setSize(row.bar, barWidth, menu.rowHeight - 8)
+            -- Hover and click only over the item itself (its bar, or the whole row for sliders and choices).
+            UI.setSize(row.button, barWidth + HOVER_PAD, menu.rowHeight - 8)
             local color = selected and theme.ink or theme.text
             UI.setTextColor(row.label, color.r, color.g, color.b, color.a)
             UI.setTextColor(row.value, color.r, color.g, color.b, color.a)

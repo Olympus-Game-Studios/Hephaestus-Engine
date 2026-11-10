@@ -136,7 +136,7 @@ When the player dies the screen darkens with "You died", and when the last wave 
 
 ## Menus and settings
 
-Escape (gamepad Start) pauses the game: everything freezes and a menu offers Resume, Settings, Restart, Quit to menu and Quit game. Quit to menu shows only when the player's `mainMenuScene` is set to a scene path, and `pauseMenuEnabled` turns the menu off. Menus move with the arrow keys or WASD, choose with Enter or Space, go back with Escape or Backspace, and also work with the mouse and the gamepad D-pad. These keys are the `Pause` and `Menu...` actions that Install FPS Input Defaults adds.
+Escape (gamepad Start) pauses the game: everything freezes and a menu offers Resume, Settings, Restart, Quit to menu and Quit game. Quit to menu shows only when the player's `mainMenuScene` is set to a scene path, and `pauseMenuEnabled` turns the menu off. Menus move with the arrow keys or WASD, choose with Enter or Space, go back with Escape or Backspace, and also work with the mouse (an item reacts only when the pointer is over it) and the gamepad D-pad. These keys are the `Pause` and `Menu...` actions that Install FPS Input Defaults adds.
 
 Settings holds look sensitivity, field of view (the player's `fieldOfView` until changed), view bob, camera shake, master, effects, weapons and music volume, and difficulty. Changes apply at once and are saved when you leave the page, in the player's data folder (`Storage`), so they are the same in every level and next time.
 
