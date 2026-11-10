@@ -813,7 +813,6 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
         std::cerr << "[EngineFrameRenderer] Failed to acquire swapchain image\n";
         return false;
     }
-    flushPendingTextureDescriptorUpdates(imageIndex);
 
     // Per-image synchronization: if this swapchain image is already in flight,
     // wait for the fence that owns it before reusing its command buffer/resources.
@@ -823,6 +822,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     if (imageIndex < m_imagesInFlight.size()) {
         m_imagesInFlight[imageIndex] = m_inFlightFences[m_currentFrame];
     }
+    flushPendingTextureDescriptorUpdates(imageIndex);
     
     vkResetFences(m_device->device, 1, &m_inFlightFences[m_currentFrame]);
     
@@ -996,7 +996,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmd;
     submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &m_renderFinishedSemaphores[m_currentFrame];
+    submitInfo.pSignalSemaphores = &m_renderFinishedSemaphores[imageIndex];
     
     VkResult submitResult = vkQueueSubmit(m_device->graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]);
     if (submitResult != VK_SUCCESS) {
@@ -1024,7 +1024,7 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &m_renderFinishedSemaphores[m_currentFrame];
+    presentInfo.pWaitSemaphores = &m_renderFinishedSemaphores[imageIndex];
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &m_swapchain->swapchain;
     presentInfo.pImageIndices = &imageIndex;
@@ -2023,14 +2023,19 @@ bool EngineFrameRenderer::createSyncObjects()
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
     
     m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    m_renderFinishedSemaphores.resize(m_swapchain->images.size());
     m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
     m_imagesInFlight.resize(m_swapchain->images.size(), VK_NULL_HANDLE);
     
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
         if (vkCreateSemaphore(m_device->device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) != VK_SUCCESS ||
-            vkCreateSemaphore(m_device->device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS ||
             vkCreateFence(m_device->device, &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS) {
+            return false;
+        }
+    }
+    // Presentation holds a signal semaphore until its image is acquired again, so these are per swapchain image.
+    for (VkSemaphore& semaphore : m_renderFinishedSemaphores) {
+        if (vkCreateSemaphore(m_device->device, &semaphoreInfo, nullptr, &semaphore) != VK_SUCCESS) {
             return false;
         }
     }
@@ -2420,6 +2425,8 @@ bool EngineFrameRenderer::createShadowResources()
         std::cerr << "[ShadowMap] Failed to create framebuffer\n";
         return false;
     }
+    // Frames that skip the shadow pass (no scene, shadows off, ray-traced sun) still bind the map.
+    transitionShadowMapForSampling(m_directionalShadow.image);
     
     // Create pipeline layout with push constants
     struct ShadowPushConstants {
@@ -3366,6 +3373,12 @@ bool EngineFrameRenderer::createLocalShadowResources()
         return false;
     }
     // Frames without shadowed point/spot lights never render the atlas but still bind it.
+    transitionShadowMapForSampling(m_localShadow.image);
+    return true;
+}
+
+void EngineFrameRenderer::transitionShadowMapForSampling(VkImage image)
+{
     VkCommandBufferAllocateInfo cmdAlloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     cmdAlloc.commandPool = m_device->commandPool;
     cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -3380,7 +3393,7 @@ bool EngineFrameRenderer::createLocalShadowResources()
     barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = m_localShadow.image;
+    barrier.image = image;
     barrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
                          0, nullptr, 1, &barrier);
@@ -3391,7 +3404,6 @@ bool EngineFrameRenderer::createLocalShadowResources()
     vkQueueSubmit(m_device->graphicsQueue, 1, &submit, VK_NULL_HANDLE);
     vkQueueWaitIdle(m_device->graphicsQueue);
     vkFreeCommandBuffers(m_device->device, m_device->commandPool, 1, &cmd);
-    return true;
 }
 
 void EngineFrameRenderer::recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config)

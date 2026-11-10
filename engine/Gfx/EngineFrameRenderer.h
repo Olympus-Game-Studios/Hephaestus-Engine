@@ -599,6 +599,7 @@ private:
     bool m_traceShadows = false;    // some light asked for ray-traced shadows this frame (set by updateLightingUBO)
     bool m_sunRayTraced = false;    // the sun's shadow is ray traced, so the cascade pass is skipped
     bool createLocalShadowResources();
+    void transitionShadowMapForSampling(VkImage image);
     void recordLocalShadowPass(VkCommandBuffer cmd, Scene* scene, const FrameRenderConfig& config);
     // The ray-query build of triangle.frag reads the scene acceleration structure in ProbeGI's set.
     const char* surfaceFragmentShader() const {
