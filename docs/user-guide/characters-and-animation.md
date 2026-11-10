@@ -68,7 +68,7 @@ function onAnimationFinished(clipId)
 end
 ```
 
-The animator also has `Pause`, `Resume`, `Stop`, `SetSpeed`, `IsPlaying`, `GetCurrentAnimation`, `GetTime` and `GetDuration`, and characters have `GetSocket` and `GetSocketLocal` for attaching things to sockets. See the [Lua API reference](lua-api.md#characters-and-animation).
+The animator also has `Pause`, `Resume`, `Stop`, `SetSpeed`, `IsPlaying`, `GetCurrentAnimation`, `GetTime`, `SetTime` and `GetDuration`, and characters have `GetSocket` and `GetSocketLocal` for attaching things to sockets. See the [Lua API reference](lua-api.md#characters-and-animation).
 
 For movement, pair the character with a [Character Controller](physics.md#character-controller) component.
 

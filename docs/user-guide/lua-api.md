@@ -181,6 +181,7 @@ From `this:GetAnimator()` on an entity with a Character component. Clips are ref
 | `a:SetSpeed(multiplier)` | Playback speed. Must be above 0; use `Pause` to freeze. |
 | `a:IsPlaying([clip])` | Whether anything (or a given clip) is playing. |
 | `a:GetCurrentAnimation()` / `a:GetTime()` / `a:GetDuration([clip])` | Where playback is. |
+| `a:SetTime(seconds)` | Jumps the current animation to that time, for example to start characters at different points of the same loop. |
 
 From `this:GetCharacter()`: `c:GetSocket(name)` (world space) and `c:GetSocketLocal(name)` (character space), each returning `position` and `rotation`, or `nil`.
 

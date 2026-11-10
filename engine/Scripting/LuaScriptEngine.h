@@ -751,6 +751,7 @@ private:
     static int Lua_Animator_IsPlaying(lua_State* L);
     static int Lua_Animator_GetCurrentAnimation(lua_State* L);
     static int Lua_Animator_GetTime(lua_State* L);
+    static int Lua_Animator_SetTime(lua_State* L);
     static int Lua_Animator_GetDuration(lua_State* L);
 
     static int Lua_Character_GetSocket(lua_State* L);

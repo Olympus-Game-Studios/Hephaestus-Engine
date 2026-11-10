@@ -3926,6 +3926,8 @@ void LuaScriptEngine::RegisterThisBindings() {
     lua_setfield(m_State, -2, "GetCurrentAnimation");
     lua_pushcfunction(m_State, Lua_Animator_GetTime);
     lua_setfield(m_State, -2, "GetTime");
+    lua_pushcfunction(m_State, Lua_Animator_SetTime);
+    lua_setfield(m_State, -2, "SetTime");
     lua_pushcfunction(m_State, Lua_Animator_GetDuration);
     lua_setfield(m_State, -2, "GetDuration");
     lua_pushvalue(m_State, -1);
@@ -4827,6 +4829,21 @@ int LuaScriptEngine::Lua_Animator_GetTime(lua_State* L) {
     CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
     lua_pushnumber(L, character ? character->player.time : 0.0);
     return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Animator_SetTime(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    CharacterComponent* character = engine ? engine->CharacterFromLuaSelf(L, "HephaestusAnimator") : nullptr;
+    const float seconds = static_cast<float>(luaL_checknumber(L, 2));
+    if (character && !character->player.currentClip.empty()) {
+        character->player.time = (std::max)(0.0f, seconds);
+    }
+    return 0;
 #else
     (void)L;
     return 0;

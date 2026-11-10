@@ -102,6 +102,40 @@ bool WriteFile(const fs::path& path, const std::string& contents) {
     return static_cast<bool>(out);
 }
 
+bool TestAnimatorSetTime(const fs::path& root) {
+    bool ok = true;
+    ok &= Check(WriteFile(root / "assets" / "scripts" / "SetTime.lua", R"(
+function onUpdate(dt)
+    local animator = this:GetAnimator()
+    if animator:GetCurrentAnimation() == "Idle" and not _G.timeSet then
+        animator:SetTime(1.3)
+        _G.timeSet = true
+    end
+end
+)"), "write SetTime script");
+    Scene scene("SetTime");
+    Entity entity = scene.CreateEntity("Soldier");
+    auto& character = entity.AddComponent<CharacterComponent>();
+    Skeleton skeleton;
+    std::string error;
+    ok &= Check(MakeTwoBoneSkeleton(skeleton, error), "skeleton");
+    ok &= Check(CharacterAnimationSystem::BindRuntime(character, skeleton, {MakeClip(skeleton, "Idle", true, 1.0f)},
+                                                      error),
+                "bind runtime");
+    ok &= Check(CharacterAnimationSystem::Play(character, "Idle", error), "play Idle");
+    CharacterAnimationSystem::Tick(scene, 0.0f);
+    entity.AddComponent<LuaScriptComponent>().scriptPath = "assets/scripts/SetTime.lua";
+    LuaScriptEngine engine;
+    engine.Initialize(&scene, nullptr);
+    engine.SetProjectRoot(root);
+    engine.OnSimulationStarted();
+    engine.Update(scene, 0.016f);
+    ok &= Check(std::fabs(character.player.time - 1.3f) < 1.0e-4f, "SetTime moves playback");
+    CharacterAnimationSystem::Tick(scene, 0.0f);
+    ok &= Check(std::fabs(character.player.time - 0.3f) < 1.0e-4f, "a looping clip wraps a time past its end");
+    return ok;
+}
+
 bool TestSlotsAndAnimator(const fs::path& root) {
     bool ok = true;
     const fs::path aiPath = root / "assets" / "scripts" / "EnemyAI.lua";
@@ -416,6 +450,7 @@ int main() {
     fs::remove_all(root);
     fs::create_directories(root / "assets" / "scripts");
     ok &= TestSlotsAndAnimator(root);
+    ok &= TestAnimatorSetTime(root);
     ok &= TestControllerDisabled(root);
     ok &= TestBrokenControllerIsolation(root);
     ok &= TestSceneReloadRequestLifecycle();
