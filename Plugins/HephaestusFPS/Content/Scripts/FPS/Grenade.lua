@@ -87,9 +87,15 @@ function onUpdate(dt)
                                    (math.random() * 2 - 1) * spin)
         launched = true
     end
+    -- The AI reacts to a frag once it is down (slow), not in flight, so it does not flee from the thrower's hand.
     if kind == "frag" and fuse < math.huge then
-        local p = Transform.getPosition()
-        Registry.setDanger(this, p.x, p.y, p.z, radius)
+        local v = Physics.getLinearVelocity()
+        if v and v.x * v.x + v.y * v.y + v.z * v.z < 16 then
+            local p = Transform.getPosition()
+            Registry.setDanger(this, p.x, p.y, p.z, radius)
+        else
+            Registry.clearDanger(this)
+        end
     end
     if linger then
         linger = linger - dt

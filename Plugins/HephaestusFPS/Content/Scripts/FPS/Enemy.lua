@@ -11,6 +11,7 @@ local Perception = require("FPS.AI.Perception")
 local Mover = require("FPS.AI.Mover")
 local Cover = require("FPS.AI.Cover")
 local Brain = require("FPS.AI.Brain")
+local Tactics = require("FPS.AI.Tactics")
 
 Expose.number("maxHealth", 100)
 Expose.string("difficulty", "")
@@ -36,6 +37,11 @@ Expose.number("perceptionInterval", 0.1)
 Expose.string("idleClip", "RifleIdle")
 Expose.string("walkClip", "RifleWalk")
 Expose.string("runClip", "RifleRun")
+Expose.string("fragGrenadePrefab", "")
+Expose.number("grenadeDamage", 150)
+Expose.number("throwAngleDegrees", 40)
+Expose.number("grenadeDamping", 0.1)
+Expose.number("tacticsIntervalSeconds", 1.5)
 Expose.bool("debugAI", false)
 
 local Enemy = {}
@@ -66,6 +72,9 @@ local dead = false
 local corpseTimer = 0
 local rng = 1
 local selfKey = nil
+local grenadesLeft = 0
+local grenadeCooldown = 0
+local tacticsTimer = 0
 
 local function random()
     rng = (rng * 1103515245 + 12345) % 2147483648
@@ -305,6 +314,75 @@ local function perceive(interval)
     end
 end
 
+-- Tactics ----------------------------------------------------------------------------------------------------
+local function log(text)
+    if debugAI then
+        engine_log("[FPS.Enemy] " .. this:GetName() .. " " .. text)
+    end
+end
+
+-- Throws a frag at the player's last known position, give or take the skill's error. False when it can't.
+local function throwGrenade()
+    if fragGrenadePrefab == "" or not lastKnown then
+        return false
+    end
+    local p = position()
+    local distance = math.sqrt((lastKnown.x - p.x) ^ 2 + (lastKnown.z - p.z) ^ 2)
+    if distance < skill.grenadeMinDistance or distance > skill.grenadeMaxDistance then
+        return false
+    end
+    local a, r = random() * 2 * math.pi, math.sqrt(random()) * skill.grenadeErrorMetres
+    local target = { x = lastKnown.x + math.cos(a) * r, y = lastKnown.y, z = lastKnown.z + math.sin(a) * r }
+    local fx, fz = facing()
+    local from = { x = p.x + fx * 0.5, y = p.y + eyeHeight, z = p.z + fz * 0.5 }
+    local vx, vy, vz = Tactics.throwVelocity(from, target, throwAngleDegrees, 9.81, grenadeDamping)
+    if not vx then
+        return false
+    end
+    Scene.instantiate(fragGrenadePrefab, {
+        position = from,
+        vars = { vx = vx, vy = vy, vz = vz, damage = grenadeDamage * skill.grenadeDamageScale },
+    })
+    grenadesLeft = grenadesLeft - 1
+    grenadeCooldown = skill.grenadeCooldownSeconds
+    log(string.format("threw a grenade at %.1f, %.1f", target.x, target.z))
+    return true
+end
+
+-- A spot beside the player's cover with a clear view of them, or nil.
+local function findFlank(row)
+    local p = position()
+    local side = random() < 0.5 and 1 or -1
+    local angles = { 70 * side, -70 * side, 100 * side, -100 * side }
+    local chest = { x = lastKnown.x, y = lastKnown.y + (row.eyeHeight or 1.6) * 0.75, z = lastKnown.z }
+    for _, c in ipairs(Tactics.flankCandidates(p, lastKnown, skill.flankDistance, angles)) do
+        local q = Nav.closestPoint(c)
+        if q and not blocked({ x = q.x, y = q.y + eyeHeight, z = q.z }, chest) then
+            return q
+        end
+    end
+    return nil
+end
+
+-- While the player hides: now and then throw a grenade at them or go round their cover. Returns a state change.
+local function tactics(dt, row)
+    tacticsTimer = tacticsTimer - dt
+    if tacticsTimer > 0 or visible or not lastKnown or lostTime < 1 then
+        return nil
+    end
+    tacticsTimer = tacticsIntervalSeconds
+    if grenadesLeft > 0 and grenadeCooldown <= 0 and random() < skill.grenadeChance and throwGrenade() then
+        return nil
+    end
+    if Registry.flanker == nil and random() < skill.flankChance then
+        local spot = findFlank(row)
+        if spot then
+            return "flank", spot
+        end
+    end
+    return nil
+end
+
 -- States -------------------------------------------------------------------------------------------------------
 local function nextPatrolPoint()
     if #patrolList > 0 then
@@ -404,8 +482,8 @@ states.investigate = {
 }
 
 states.combat = {
-    enter = function(_, brain)
-        brain.coverTried = false
+    enter = function(_, brain, skipCover)
+        brain.coverTried = skipCover == true
         stopMoving()
     end,
     update = function(_, brain, dt)
@@ -438,7 +516,14 @@ states.combat = {
             else
                 stopMoving()
             end
-        elseif lostTime > skill.lostTargetSeconds then
+        else
+            local next, spot = tactics(dt, row)
+            if next then
+                return next, spot
+            end
+        end
+        -- A second to turn and look before deciding the player is gone (a flanker arrives facing its path).
+        if not visible and lostTime > skill.lostTargetSeconds and brain.time > 1 then
             if random() < skill.aggression then
                 return "investigate", lastKnown, true
             end
@@ -482,6 +567,10 @@ states.cover = {
                 brain.coverTried = false
                 return "combat"
             end
+            local next, spot = tactics(dt, row)
+            if next then
+                return next, spot
+            end
             if brain.phaseTime > skill.hideSeconds and fire.reloading <= 0 then
                 if brain.spot.peek then
                     moveTo(brain.spot.peek, false)
@@ -507,6 +596,38 @@ states.cover = {
             end
         end
         return nil
+    end,
+}
+
+states.flank = {
+    enter = function(_, brain, spot)
+        Registry.flanker = selfKey
+        brain.spot = spot
+        moveTo(spot, true)
+    end,
+    update = function(_, brain, dt)
+        if danger then
+            return "evade"
+        end
+        local row = player()
+        if not row then
+            return "patrol"
+        end
+        faceTarget = nil
+        if visible and awareness >= 1 then
+            stopMoving()
+            return "combat", true
+        end
+        if mover.arrived or brain.time > 15 then
+            return "combat", true
+        end
+        updateFiring(dt, false, row)
+        return nil
+    end,
+    exit = function()
+        if Registry.flanker == selfKey then
+            Registry.flanker = nil
+        end
     end,
 }
 
@@ -581,6 +702,9 @@ function onAwake()
     yaw = Transform.getRotation().y - math.rad(modelYawOffsetDegrees)
     mover = Mover.new()
     fire = { magazine = magazineSize, reloading = 0, reaction = 0, burstLeft = 0, shotTimer = 0, pause = 0 }
+    grenadesLeft = skill.grenadeCount
+    grenadeCooldown = skill.grenadeCooldownSeconds * 0.5
+    tacticsTimer = 0
     awareness, visible, visibleTime, lostTime = 0, false, 0, 0
     lastKnown, heardNoise, danger, dead, corpseTimer = nil, nil, nil, false, 0
     lastHeardId = Registry.noiseCount or 0
@@ -604,6 +728,7 @@ function onUpdate(dt)
         brain = Brain.new(this, states, "patrol")
     end
     perceptionTimer = perceptionTimer - dt
+    grenadeCooldown = grenadeCooldown - dt
     if perceptionTimer <= 0 then
         perceive(perceptionInterval - perceptionTimer)
         perceptionTimer = perceptionInterval
@@ -697,6 +822,9 @@ function onDeath()
 end
 
 function onDestroy()
+    if Registry.flanker == selfKey then
+        Registry.flanker = nil
+    end
     if debugAI then
         engine_log("[FPS.Enemy] " .. tostring(selfKey) .. " removed")
     end

@@ -89,10 +89,13 @@ What an enemy does:
 - **Fight**: after its reaction time it fires bursts at you. Its aim starts loose and settles while it keeps you in sight, and is worse against a moving target. It reloads after `magazineSize` shots.
 - **Cover**: looks for a spot on the navmesh within `coverSearchRadius` that hides it from you, preferring one with a peek spot a step to the side. It hides, steps out to shoot, steps back, and reloads while hidden. If you can see it at its cover, it finds another.
 - **Search**: when it has lost sight of you for a while it either pushes to where it last saw you or goes there carefully, then looks around and goes back to patrolling.
-- **Grenades**: it runs from a live frag. **Squad**: it tells allies near it where you are.
+- **Pressure**: every `tacticsIntervalSeconds` while you stay hidden it may throw a frag at where it last saw you (`fragGrenadePrefab`, thrown at `throwAngleDegrees`, doing `grenadeDamage` times the difficulty's scale) or go round your cover to a spot that can see you. Only one enemy flanks at a time.
+- **Grenades**: it runs from a frag that has landed near it. **Squad**: it tells allies near it where you are.
 - **Death**: it stops, falls over and is removed after `corpseSeconds`. Its hit zones stay with the body, so bullets stop on it.
 
-The model turns to face where it is walking or aiming. Set `modelYawOffsetDegrees` to how far the model must turn to face +X (90 for a Mixamo character, which faces +Z). `idleClip`, `walkClip` and `runClip` are cross-faded by speed. Shots come from `eyeHeight`, do `damage` up to `range` metres, and play `fireSound` in 3D. Turn on `debugAI` to log every state change, shot, hit and death.
+The model turns to face where it is walking or aiming. Set `modelYawOffsetDegrees` to how far the model must turn to face +X (90 for a Mixamo character, which faces +Z). `idleClip`, `walkClip` and `runClip` are cross-faded by speed. Shots come from `eyeHeight`, do `damage` up to `range` metres, and play `fireSound` in 3D. Turn on `debugAI` to log every state change, shot, hit, grenade and death.
+
+To give an enemy a visible weapon, add a child with the weapon's Mesh Renderer (barrel along +X) and `HeldWeapon.lua`. Each frame it puts the grip at the character's `gripSocket` (default `RightHand`) and points the barrel at `supportSocket` (default `LeftHand`), moved `gripForward` metres along the barrel and `gripUp` above it. The character needs both sockets on its hand bones.
 
 ### Difficulty
 
@@ -111,12 +114,15 @@ Everything about how well enemies fight comes from `FPS.AI.Difficulty`. It has f
 | `coverChance`, `peekSeconds`, `hideSeconds` | How often it takes cover and how long it peeks and hides. |
 | `lostTargetSeconds`, `aggression` | How long before it searches, and the chance it pushes instead of being careful. |
 | `grenadeAwareness`, `squadAlerts`, `allyAlertRadius` | Whether it runs from frags, whether it warns allies, and how far. |
+| `flankChance`, `flankDistance` | Chance to go round your cover each time it considers it, and how far from you it goes. |
+| `grenadeChance`, `grenadeCount`, `grenadeCooldownSeconds` | Chance to throw a frag each time it considers it, how many it carries, and the time between throws. |
+| `grenadeMinDistance`, `grenadeMaxDistance`, `grenadeErrorMetres`, `grenadeDamageScale` | The range it throws at, how far from you a throw may land, and its damage multiplier. |
 
 A settings menu can change all enemies at once: `Difficulty.setLevel("hardened")` picks a preset, `Difficulty.setOverride("damageScale", 0.5)` changes one value on top of any preset (`nil` removes it), and `Difficulty.clearOverrides()` removes them all. Enemies read their settings when they spawn. One enemy can use its own level with its `difficulty` variable, and its own values with `skillOverrides` (`"aggression=0.9;grenadeAwareness=false"`), which win over everything else.
 
 ### Adding behaviour
 
-The enemy is a state machine (`FPS.AI.Brain`). Each state in `Enemy.lua`'s `states` table has `enter`, `update` and `exit` functions, and `update` returns the name of the next state, so a new behaviour is a new state. The parts it uses are separate modules you can use for other kinds of enemy: `FPS.AI.Perception` (sight and hearing), `FPS.AI.Mover` (following navmesh paths), `FPS.AI.Cover` (finding cover) and the noise and danger lists in `FPS.Registry` (`reportNoise`, `setDanger`, `clearDanger`).
+The enemy is a state machine (`FPS.AI.Brain`). Each state in `Enemy.lua`'s `states` table has `enter`, `update` and `exit` functions, and `update` returns the name of the next state, so a new behaviour is a new state. The parts it uses are separate modules you can use for other kinds of enemy: `FPS.AI.Tactics` (flank spots and grenade throws), `FPS.AI.Perception` (sight and hearing), `FPS.AI.Mover` (following navmesh paths), `FPS.AI.Cover` (finding cover) and the noise and danger lists in `FPS.Registry` (`reportNoise`, `setDanger`, `clearDanger`).
 
 ## Scripts
 

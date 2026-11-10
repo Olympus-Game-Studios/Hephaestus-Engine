@@ -30,6 +30,15 @@ local PRESETS = {
         grenadeAwareness = false,       -- moves away from live grenades
         squadAlerts = false,            -- tells nearby allies where the player is
         allyAlertRadius = 15,
+        flankChance = 0.0,              -- chance, every few seconds the player stays hidden, to go round their cover
+        flankDistance = 10,             -- how far from the player a flanking enemy goes
+        grenadeChance = 0.1,            -- chance, every few seconds the player stays hidden, to throw a frag
+        grenadeCount = 1,               -- frags each enemy carries
+        grenadeCooldownSeconds = 12,
+        grenadeMinDistance = 9,         -- never throws closer than this, so it stays clear of its own blast
+        grenadeMaxDistance = 25,
+        grenadeErrorMetres = 4,         -- how far from the player's last known position a throw may land
+        grenadeDamageScale = 0.5,       -- multiplies the grenade prefab's damage
     },
     regular = {
         reactionSeconds = 0.6, aimErrorDegrees = 6, aimErrorMinDegrees = 1.5, aimSettleSeconds = 2,
@@ -37,6 +46,8 @@ local PRESETS = {
         damageScale = 0.8, sightRange = 50, fovDegrees = 120, awarenessPerSecond = 1.6, awarenessDecayPerSecond = 0.25,
         hearingScale = 1.0, coverChance = 0.7, peekSeconds = 2.0, hideSeconds = 1.6, lostTargetSeconds = 5,
         aggression = 0.4, grenadeAwareness = true, squadAlerts = true, allyAlertRadius = 20,
+        flankChance = 0.3, grenadeChance = 0.25, grenadeCount = 1, grenadeCooldownSeconds = 10, grenadeErrorMetres = 2.5,
+        grenadeDamageScale = 0.7,
     },
     hardened = {
         reactionSeconds = 0.4, aimErrorDegrees = 4, aimErrorMinDegrees = 0.8, aimSettleSeconds = 1.5,
@@ -44,6 +55,8 @@ local PRESETS = {
         damageScale = 1.0, sightRange = 65, fovDegrees = 130, awarenessPerSecond = 2.4, awarenessDecayPerSecond = 0.2,
         hearingScale = 1.2, coverChance = 0.9, peekSeconds = 2.4, hideSeconds = 1.2, lostTargetSeconds = 4,
         aggression = 0.6, grenadeAwareness = true, squadAlerts = true, allyAlertRadius = 25,
+        flankChance = 0.5, grenadeChance = 0.35, grenadeCount = 2, grenadeCooldownSeconds = 8, grenadeErrorMetres = 1.5,
+        grenadeDamageScale = 0.85,
     },
     veteran = {
         reactionSeconds = 0.25, aimErrorDegrees = 2.5, aimErrorMinDegrees = 0.4, aimSettleSeconds = 1.0,
@@ -51,6 +64,8 @@ local PRESETS = {
         damageScale = 1.25, sightRange = 80, fovDegrees = 140, awarenessPerSecond = 3.5,
         awarenessDecayPerSecond = 0.15, hearingScale = 1.5, coverChance = 1.0, peekSeconds = 2.8, hideSeconds = 0.9,
         lostTargetSeconds = 3, aggression = 0.8, grenadeAwareness = true, squadAlerts = true, allyAlertRadius = 30,
+        flankChance = 0.7, grenadeChance = 0.45, grenadeCount = 2, grenadeCooldownSeconds = 6, grenadeErrorMetres = 1.0,
+        grenadeDamageScale = 1.0,
     },
 }
 

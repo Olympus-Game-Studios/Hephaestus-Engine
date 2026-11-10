@@ -922,6 +922,31 @@ check(not Mover.setGoal(mover, { x = 0, y = 0, z = 0 }, { x = 99, y = 0, z = 0 }
       "an unreachable goal leaves the walker standing")
 Nav = nil
 
+local Tactics = require("FPS.AI.Tactics")
+local spots = Tactics.flankCandidates({ x = 20, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, 10, { 90, -90, 0 })
+check(near(spots[1].x, 0, 1e-6) and near(spots[1].z, 10, 1e-6) and near(spots[2].z, -10, 1e-6)
+      and near(spots[3].x, 10, 1e-6), "flank spots sit beside the threat, square to the enemy's line")
+-- Fly a throw the way the grenade body does (gravity, then damping, then move) until it comes back down.
+local function land(from, to, damping)
+    local vx, vy, vz = Tactics.throwVelocity(from, to, 40, 9.81, damping)
+    local x, y, z, dt = from.x, from.y, from.z, 1 / 60
+    for _ = 1, 600 do
+        vy = vy - 9.81 * dt
+        local keep = 1 - damping * dt
+        vx, vy, vz = vx * keep, vy * keep, vz * keep
+        x, y, z = x + vx * dt, y + vy * dt, z + vz * dt
+        if vy < 0 and y <= to.y then
+            return x, z
+        end
+    end
+end
+local lx, lz = land({ x = 0, y = 1.6, z = 0 }, { x = 15, y = 0, z = 8 }, 0.1)
+check(lx and math.sqrt((lx - 15) ^ 2 + (lz - 8) ^ 2) < 0.6, "a damped throw lands within 0.6 m of its target")
+lx, lz = land({ x = 0, y = 1.6, z = 0 }, { x = 24, y = 0, z = 0 }, 0)
+check(lx and near(lx, 24, 0.3), "an undamped throw lands on its target")
+check(Tactics.throwVelocity({ x = 0, y = 0, z = 0 }, { x = 5, y = 20, z = 0 }, 40, 9.81, 0) == nil,
+      "a target too high for the angle cannot be reached")
+
 local Brain = require("FPS.AI.Brain")
 local log = {}
 local states = {

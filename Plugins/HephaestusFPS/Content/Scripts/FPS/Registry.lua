@@ -10,6 +10,7 @@ local Registry = {
     noiseCount = 0,
     dangers = {},
     enemies = {},
+    flanker = nil,
     currentTarget = nil,
     activeWeaponId = nil,
 }
@@ -43,6 +44,7 @@ function Registry.ensureSession()
     Registry.noiseCount = 0
     Registry.dangers = {}
     Registry.enemies = {}
+    Registry.flanker = nil
     Registry.interactables = {}
     Registry.hitZones = {}
     Registry.currentTarget = nil
