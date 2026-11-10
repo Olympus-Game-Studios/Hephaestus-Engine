@@ -68,7 +68,8 @@ Expose.string("grenadeWarningIcon", "")
 Expose.string("grenadeWarningArrowPattern", "")
 Expose.integer("grenadeWarningArrowSteps", 24)
 Expose.number("grenadeWarningRange", 10)
-Expose.number("grenadeWarningRadius", 120)
+Expose.number("grenadeWarningRadius", 160)
+Expose.number("grenadeWarningIconSize", 66)
 Expose.bool("presentationEnabled", true)
 Expose.number("viewBobScale", 1.0)
 Expose.number("cameraShakeScale", 1.0)
@@ -820,7 +821,8 @@ function onLateUpdate(dt)
     end
     Hud.showGrenadeWarnings(warnings, { icon = grenadeWarningIcon, arrowPattern = grenadeWarningArrowPattern,
                                         arrowSteps = math.max(1, grenadeWarningArrowSteps),
-                                        radius = grenadeWarningRadius, time = warningClock })
+                                        radius = grenadeWarningRadius, iconSize = grenadeWarningIconSize,
+                                        time = warningClock })
 end
 
 function onHealthChanged(current, maximum)
