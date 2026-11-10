@@ -4416,6 +4416,8 @@ void EditorMainWindow::setupLuaDebugger()
         QEventLoop loop;
         LuaDebugger::Instance().onResumeRequested = [&loop]() { loop.quit(); };
         for (QShortcut* shortcut : m_debuggerShortcuts) shortcut->setEnabled(true);
+        // The engine tick that hands the keyboard to the game does not run while Lua is paused.
+        if (m_viewportWindow) m_viewportWindow->SetGameOwnsKeyboard(false);
         showProgrammerPanel(m_debuggerDock);
         m_codeEditorDock->show();
         m_debuggerPanel->ShowPause(state);
@@ -5792,6 +5794,11 @@ void EditorMainWindow::onOpenLevel()
 void EditorMainWindow::onSaveLevel()
 {
     if (!m_engine) return;
+    // Play runs on the edited scene, so saving now would write the game's state into the level.
+    if (m_engine->IsPlaying() || m_engine->IsPaused()) {
+        statusBar()->showMessage(tr("Stop Play to save the level"), 3000);
+        return;
+    }
     auto* ctx = m_engine->GetEditorContext();
     if (!ctx || !ctx->HasActiveScene()) return;
     
@@ -5812,6 +5819,10 @@ void EditorMainWindow::onSaveLevel()
 void EditorMainWindow::onSaveLevelAs()
 {
     if (!m_engine) return;
+    if (m_engine->IsPlaying() || m_engine->IsPaused()) {
+        statusBar()->showMessage(tr("Stop Play to save the level"), 3000);
+        return;
+    }
     auto* ctx = m_engine->GetEditorContext();
     if (!ctx || !ctx->HasActiveScene()) return;
     

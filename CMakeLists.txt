@@ -2355,6 +2355,7 @@ if(HEPHAESTUS_BUILD_QT_TESTS AND HEPHAESTUS_USE_QT AND Qt6_FOUND)
             engine/UI/QtEditor/CodeEditorPanel.cpp
             engine/UI/QtEditor/ProjectSearchPanel.cpp
             engine/UI/QtEditor/EditorTheme.cpp
+            engine/UI/QtEditor/QtViewportWindow.cpp
             engine/UI/QtEditor/Resources/EditorResources.qrc
         )
         set_target_properties(EditorQtSmokeTests PROPERTIES AUTOMOC ON AUTORCC ON)
@@ -2362,6 +2363,9 @@ if(HEPHAESTUS_BUILD_QT_TESTS AND HEPHAESTUS_USE_QT AND Qt6_FOUND)
         target_link_libraries(EditorQtSmokeTests PRIVATE Qt6::Test Qt6::Widgets Qt6::Svg HephaestusEditorCore)
         target_include_directories(EditorQtSmokeTests PRIVATE engine)
         add_test(NAME EditorQtSmoke COMMAND EditorQtSmokeTests)
+        # Qt's own bin folder first so Qt finds its plugins; offscreen so no window or error dialog can appear.
+        set_tests_properties(EditorQtSmoke PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/$<CONFIG>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen")
     else()
         message(STATUS "HEPHAESTUS_BUILD_QT_TESTS=ON but Qt6 Test not found; skipping")
     endif()

@@ -1843,6 +1843,9 @@ void QtEditorEngine::onTick()
     const bool isPlaying = m_playModeManager.IsPlaying();
     const bool isPaused  = m_playModeManager.IsPaused();
     const bool isPlayOrPause = !m_playModeManager.IsEditor();
+    if (m_viewport) {
+        m_viewport->SetGameOwnsKeyboard(isPlaying);
+    }
 
     if (isPlaying && m_playModeManager.ShouldAdvanceRealtime()) {
         populateGameplayInput();
