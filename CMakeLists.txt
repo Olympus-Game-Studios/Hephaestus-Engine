@@ -10,7 +10,7 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 set(HEPHAESTUS_VERSION_MAJOR 2026) # Major = Year of release
 set(HEPHAESTUS_VERSION_MINOR 11) # Minor = Month of release
-set(HEPHAESTUS_VERSION_PATCH 3) # Patch = Day of release, unpadded (the C++ macro must be a decimal literal)
+set(HEPHAESTUS_VERSION_PATCH 10) # Patch = Day of release, unpadded (the C++ macro must be a decimal literal)
 set(HEPHAESTUS_VERSION "${HEPHAESTUS_VERSION_MAJOR}.${HEPHAESTUS_VERSION_MINOR}.${HEPHAESTUS_VERSION_PATCH}")
 
 # Major versions of the engine are meant to be released by year
@@ -54,6 +54,14 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/ufbx/ufbx.h")
         "ufbx is missing at extern/ufbx (required for FBX import). "
         "Run: git submodule update --init --recursive")
 endif()
+file(GLOB HEPHAESTUS_RECAST_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/extern/recastnavigation/Recast/Source/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/extern/recastnavigation/Detour/Source/*.cpp")
+add_library(RecastDetour STATIC ${HEPHAESTUS_RECAST_SOURCES})
+target_include_directories(RecastDetour PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/extern/recastnavigation/Recast/Include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/extern/recastnavigation/Detour/Include")
+
 add_library(ufbx STATIC extern/ufbx/ufbx.c)
 set_target_properties(ufbx PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
 target_include_directories(ufbx PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/extern/ufbx")
@@ -366,6 +374,7 @@ add_library(HephaestusRuntime STATIC
     engine/Scene/PrefabInstantiator.cpp
     engine/Scene/PrefabComponentIO.cpp
     engine/Scene/ParticleSimulation.cpp
+    engine/Navigation/NavMesh.cpp
     engine/Scene/PrefabOverrideSystem.cpp
     engine/Scene/SceneSerializer.cpp
     engine/Scripting/ScriptBase.cpp
@@ -412,7 +421,7 @@ target_include_directories(HephaestusRuntime PUBLIC
     "${CMAKE_BINARY_DIR}/generated"
 )
 target_link_libraries(HephaestusRuntime PUBLIC
-    HephaestusInputCore HephaestusPluginCore Vulkan::Vulkan glfw Jolt ufbx
+    HephaestusInputCore HephaestusPluginCore Vulkan::Vulkan glfw Jolt ufbx RecastDetour
 )
 if(LUA_FOUND)
     if(TARGET Lua::Lua)
@@ -1429,6 +1438,20 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME SwapchainFormat
         COMMAND SwapchainFormatTests
+    )
+
+    add_executable(NavMeshTests
+        engine/Tests/NavMeshTests.cpp
+    )
+    target_link_libraries(NavMeshTests PRIVATE HephaestusRuntime)
+    target_include_directories(NavMeshTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME NavMesh
+        COMMAND NavMeshTests
     )
 
     add_executable(ParticleSimulationTests

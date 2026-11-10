@@ -826,6 +826,123 @@ if #failures > 0 then error(table.concat(failures, "\n")) end
         ok = false;
     }
 
+    static const char* kAIChecks = R"lua(
+local failures = {}
+local function check(condition, label) if not condition then failures[#failures + 1] = label end end
+local function near(a, b, eps) return math.abs(a - b) <= (eps or 1e-6) end
+local Difficulty = require("FPS.AI.Difficulty")
+check(Difficulty.level() == "regular" and #Difficulty.levels() == 4, "enemies default to the regular level")
+local recruit, veteran = Difficulty.resolve("recruit"), Difficulty.resolve("veteran")
+check(recruit.reactionSeconds > veteran.reactionSeconds and recruit.aimErrorDegrees > veteran.aimErrorDegrees
+      and recruit.damageScale < veteran.damageScale, "harder levels react faster, aim better and hit harder")
+check(recruit.grenadeAwareness == false and veteran.grenadeAwareness == true, "switches resolve per level")
+check(Difficulty.setLevel("hardened") and Difficulty.resolve("").reactionSeconds == 0.4
+      and not Difficulty.setLevel("impossible") and Difficulty.level() == "hardened",
+      "the global level applies to enemies without their own level and unknown names are refused")
+Difficulty.setOverride("damageScale", 0.1)
+check(Difficulty.resolve("veteran").damageScale == 0.1, "a global override beats the preset")
+check(Difficulty.resolve("veteran", { damageScale = 2 }).damageScale == 2, "an enemy's own override beats both")
+Difficulty.clearOverrides()
+Difficulty.setLevel("regular")
+check(Difficulty.resolve("veteran").damageScale == 1.25, "clearing overrides restores the preset")
+
+local Perception = require("FPS.AI.Perception")
+check(Perception.inView(1, 0, 10, 1, 120, 10) and not Perception.inView(1, 0, -10, 0, 120, 10)
+      and Perception.inView(1, 0, -2, 0, 120, 2), "the view cone sees ahead, not behind, except up close")
+local regular = Difficulty.resolve("regular")
+check(Perception.awarenessRate(5, regular, "standing", false) > Perception.awarenessRate(40, regular, "standing", false)
+      and Perception.awarenessRate(10, regular, "prone", false) < Perception.awarenessRate(10, regular, "crouched", false)
+      and Perception.awarenessRate(10, regular, "standing", true) > Perception.awarenessRate(10, regular, "standing", false),
+      "a near, standing or moving player is noticed faster")
+local noises = { { id = 1, x = 0, y = 0, z = 0, radius = 10 }, { id = 2, x = 100, y = 0, z = 0, radius = 10 } }
+local heard, newest = Perception.hear(noises, 0, 5, 0, 0, 1)
+check(heard and heard.id == 1 and newest == 2, "a listener hears noises in range and marks all of them as seen")
+check(Perception.hear(noises, newest, 5, 0, 0, 1) == nil, "a noise is heard only once")
+check(Perception.hear(noises, 0, 15, 0, 0, 1) == nil and Perception.hear(noises, 0, 15, 0, 0, 2) ~= nil,
+      "hearing scale changes how far noises carry")
+-- A wall at x = 5 between z = -2 and 2, up to y = 2.
+Physics = { raycast = function(x, y, z, dx, dy, dz, distance)
+    if dx > 0 and x < 5 then
+        local t = (5 - x) / dx
+        local hy, hz = y + dy * t, z + dz * t
+        if t <= distance and hy <= 2 and math.abs(hz) <= 2 then
+            return { distance = t, entity = "wall" }
+        end
+    end
+    return nil
+end }
+local never = function() return false end
+check(not Perception.canSee({ x = 0, y = 1.6, z = 0 }, 1, 0, { x = 10, y = 1.6, z = 0 }, { x = 10, y = 1.2, z = 0 },
+                            regular, {}, never), "a wall hides the player")
+check(Perception.canSee({ x = 0, y = 1.6, z = 0 }, 1, 0, { x = 10, y = 1.6, z = 6 }, { x = 10, y = 1.2, z = 6 },
+                        regular, {}, never), "a player beside the wall is seen")
+check(not Perception.canSee({ x = 0, y = 1.6, z = 0 }, -1, 0, { x = 10, y = 1.6, z = 6 }, { x = 10, y = 1.2, z = 6 },
+                            regular, {}, never), "a player behind the enemy is not seen")
+
+local Cover = require("FPS.AI.Cover")
+local blocked = function(from, to)
+    local hit = Physics.raycast(from.x, from.y, from.z, to.x - from.x, to.y - from.y, to.z - from.z, 1)
+    return hit ~= nil
+end
+local candidates = { { x = 4, y = 0, z = 0 }, { x = 4, y = 0, z = 8 } }
+local pick = 0
+local spot = Cover.find({ x = 0, y = 0, z = 0 }, { x = 20, y = 1.6, z = 0 }, { radius = 10, samples = 2, peekStep = 2.5 },
+                        function() pick = pick + 1; return candidates[pick] end, function(p) return p end, blocked)
+check(spot and spot.point.z == 0 and spot.peek and math.abs(spot.peek.z) > 2,
+      "cover is behind the wall from the threat and its peek spot steps out past the edge")
+pick = 0
+candidates = { { x = 4, y = 0, z = 8 } }
+check(Cover.find({ x = 0, y = 0, z = 0 }, { x = 20, y = 1.6, z = 0 }, { samples = 1 },
+                 function() pick = pick + 1; return candidates[pick] end, function(p) return p end, blocked) == nil,
+      "open ground is not cover")
+Physics = nil
+
+local Mover = require("FPS.AI.Mover")
+Nav = { findPath = function(from, to)
+    return { { x = from.x, y = 0, z = from.z }, { x = 5, y = 0, z = 0 }, { x = 5, y = 0, z = 5 } }
+end }
+local mover = Mover.new()
+check(Mover.setGoal(mover, { x = 0, y = 0, z = 0 }, { x = 5, y = 0, z = 5 }), "a reachable goal gets a path")
+local wx, wz, arrived = Mover.update(mover, { x = 0, y = 0, z = 0 }, 0.1, 0.5)
+check(near(wx, 1) and near(wz, 0) and not arrived, "the walker heads for the first corner")
+wx, wz = Mover.update(mover, { x = 4.9, y = 0, z = 0 }, 0.1, 0.5)
+check(near(wx, 0, 0.05) and near(wz, 1, 0.05), "a reached corner moves on to the next")
+check(select(3, Mover.update(mover, { x = 5, y = 0, z = 4.8 }, 0.1, 0.5)) and mover.arrived, "the goal is reached")
+local plans = 0
+Nav.findPath = function(from, to) plans = plans + 1; return { from, to } end
+Mover.follow(mover, { x = 0, y = 0, z = 0 }, { x = 10, y = 0, z = 0 }, 1)
+Mover.follow(mover, { x = 0, y = 0, z = 0 }, { x = 10.5, y = 0, z = 0 }, 1)
+check(plans == 1, "following a goal that barely moved does not plan again")
+for _ = 1, 12 do
+    Mover.update(mover, { x = 0, y = 0, z = 0 }, 0.1, 0.5)
+end
+check(plans == 2, "a stuck walker plans again")
+Nav.findPath = function() return nil end
+check(not Mover.setGoal(mover, { x = 0, y = 0, z = 0 }, { x = 99, y = 0, z = 0 }) and mover.arrived,
+      "an unreachable goal leaves the walker standing")
+Nav = nil
+
+local Brain = require("FPS.AI.Brain")
+local log = {}
+local states = {
+    idle = { enter = function() log[#log + 1] = "enter idle" end, exit = function() log[#log + 1] = "exit idle" end,
+             update = function(_, b) if b.time >= 1 then return "alert", 7 end end },
+    alert = { enter = function(_, b, value) b.value = value end },
+}
+local brain = Brain.new("owner", states, "idle")
+Brain.update(brain, 0.5)
+check(brain.current == "idle", "a state holds until it returns another")
+Brain.update(brain, 0.6)
+check(brain.current == "alert" and brain.value == 7 and brain.previous == "idle" and brain.time == 0
+      and log[2] == "exit idle", "a returned state is entered with its arguments after the old one exits")
+
+if #failures > 0 then error(table.concat(failures, "\n")) end
+)lua";
+    if (luaL_dostring(L, kAIChecks) != LUA_OK) {
+        std::cerr << "[FAIL] AI checks:\n" << lua_tostring(L, -1) << '\n';
+        ok = false;
+    }
+
     lua_close(L);
     if (!ok) {
         return 1;

@@ -811,6 +811,28 @@ int main()
     }
 
     {
+        Session session("OwnHitBoxes");
+        AddFloor(session);
+        Entity character = AddCharacter(session, Vec3(0.0f, 0.05f, 0.0f));
+        // A kinematic hit box parented inside the character's own capsule, as an enemy's hit zones are.
+        Entity chest = session.scene.CreateEntity("Chest");
+        auto& body = chest.AddComponent<RigidBodyComponent>();
+        body.SetMotion(RigidBodyMotion::Kinematic);
+        body.mass = 1.0f;
+        body.useGravity = false;
+        chest.AddComponent<PhysicsShapeComponent>(PhysicsShapeComponent::CreateBox(Vec3(0.2f, 0.3f, 0.2f)));
+        session.scene.SetParent(chest, character);
+        chest.GetComponent<TransformComponent>().position = Vec3(0.0f, 1.2f, 0.0f);
+        const entt::entity id = static_cast<entt::entity>(character);
+        session.Step(20);
+        session.controllers.SetMoveInput(id, 1.0f, 0.0f);
+        session.Step(60);
+        const float x = character.GetComponent<TransformComponent>().position.x;
+        Check(x > 3.0f && std::fabs(character.GetComponent<TransformComponent>().position.y) < 0.2f,
+              "A character is not pushed or blocked by bodies parented under it (x=" + std::to_string(x) + ")");
+    }
+
+    {
         Session session("Prone");
         AddFloor(session);
         // An overhang 1.0 m up: room to lie under, not to crouch or stand.

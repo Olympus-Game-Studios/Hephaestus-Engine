@@ -78,6 +78,46 @@ A grenade prefab is a mesh with a dynamic Rigid Body, a collision shape and `Gre
 
 Use a box collision shape: a sphere or capsule never stops rolling, because the physics has no rolling resistance.
 
+## Enemies
+
+An enemy is an entity with a Character Controller, a Character (its model and animations) and `Enemy.lua`, with hit zone children: boxes with a **kinematic** Rigid Body and `HitZone.lua` whose `owner` is left empty, so the zone belongs to its parent. Kinematic zones follow the enemy as it moves and are not part of the navmesh. Enemies walk on the [navmesh](../../../docs/user-guide/lua-api.md#navigation), so the level's walls and cover need static box colliders.
+
+What an enemy does:
+
+- **Patrol**: walks between `patrolPoints` (`"x,z;x,z"`) or to random points within `patrolRadius` of where it started, waiting `patrolWaitSeconds` at each.
+- **Notice**: sees the player inside its view cone and sight range when nothing is in the way, getting aware faster the closer, more upright and faster moving the player is. Within 3 m it notices you from any side. It hears gunshots and explosions (the player's weapons report a noise with `noiseRadius`) and goes to look.
+- **Fight**: after its reaction time it fires bursts at you. Its aim starts loose and settles while it keeps you in sight, and is worse against a moving target. It reloads after `magazineSize` shots.
+- **Cover**: looks for a spot on the navmesh within `coverSearchRadius` that hides it from you, preferring one with a peek spot a step to the side. It hides, steps out to shoot, steps back, and reloads while hidden. If you can see it at its cover, it finds another.
+- **Search**: when it has lost sight of you for a while it either pushes to where it last saw you or goes there carefully, then looks around and goes back to patrolling.
+- **Grenades**: it runs from a live frag. **Squad**: it tells allies near it where you are.
+- **Death**: it stops, falls over and is removed after `corpseSeconds`. Its hit zones stay with the body, so bullets stop on it.
+
+The model turns to face where it is walking or aiming. Set `modelYawOffsetDegrees` to how far the model must turn to face +X (90 for a Mixamo character, which faces +Z). `idleClip`, `walkClip` and `runClip` are cross-faded by speed. Shots come from `eyeHeight`, do `damage` up to `range` metres, and play `fireSound` in 3D. Turn on `debugAI` to log every state change, shot, hit and death.
+
+### Difficulty
+
+Everything about how well enemies fight comes from `FPS.AI.Difficulty`. It has four presets, `recruit`, `regular` (the default), `hardened` and `veteran`, each with these values:
+
+| Value | Means |
+| --- | --- |
+| `reactionSeconds` | Delay between noticing you and the first shot. |
+| `aimErrorDegrees`, `aimErrorMinDegrees`, `aimSettleSeconds` | Aim error when you are first seen, after it settles, and how long settling takes. |
+| `movingTargetErrorDegrees` | Extra error for each metre a second you are moving. |
+| `burstMin`, `burstMax`, `roundsPerSecond`, `burstPauseSeconds` | Burst length, fire rate and the pause between bursts. |
+| `damageScale` | Multiplies the enemy's `damage`. |
+| `sightRange`, `fovDegrees` | How far and how wide it sees. |
+| `awarenessPerSecond`, `awarenessDecayPerSecond` | How fast it notices you, and forgets a glimpse. |
+| `hearingScale` | Multiplies how far noises carry to it. |
+| `coverChance`, `peekSeconds`, `hideSeconds` | How often it takes cover and how long it peeks and hides. |
+| `lostTargetSeconds`, `aggression` | How long before it searches, and the chance it pushes instead of being careful. |
+| `grenadeAwareness`, `squadAlerts`, `allyAlertRadius` | Whether it runs from frags, whether it warns allies, and how far. |
+
+A settings menu can change all enemies at once: `Difficulty.setLevel("hardened")` picks a preset, `Difficulty.setOverride("damageScale", 0.5)` changes one value on top of any preset (`nil` removes it), and `Difficulty.clearOverrides()` removes them all. Enemies read their settings when they spawn. One enemy can use its own level with its `difficulty` variable, and its own values with `skillOverrides` (`"aggression=0.9;grenadeAwareness=false"`), which win over everything else.
+
+### Adding behaviour
+
+The enemy is a state machine (`FPS.AI.Brain`). Each state in `Enemy.lua`'s `states` table has `enter`, `update` and `exit` functions, and `update` returns the name of the next state, so a new behaviour is a new state. The parts it uses are separate modules you can use for other kinds of enemy: `FPS.AI.Perception` (sight and hearing), `FPS.AI.Mover` (following navmesh paths), `FPS.AI.Cover` (finding cover) and the noise and danger lists in `FPS.Registry` (`reportNoise`, `setDanger`, `clearDanger`).
+
 ## Scripts
 
 Lua modules live under `Content/Scripts/FPS/` and load with `require("FPS.Logic")` after `package.path` includes the plugin `Scripts` directory. Project `assets/scripts` is searched first.

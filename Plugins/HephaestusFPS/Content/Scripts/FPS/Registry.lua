@@ -6,6 +6,10 @@ local Registry = {
     health = {},
     interactables = {},
     hitZones = {},
+    noises = {},
+    noiseCount = 0,
+    dangers = {},
+    enemies = {},
     currentTarget = nil,
     activeWeaponId = nil,
 }
@@ -35,6 +39,10 @@ function Registry.ensureSession()
     Registry.weapons = {}
     Registry.weaponOrder = {}
     Registry.health = {}
+    Registry.noises = {}
+    Registry.noiseCount = 0
+    Registry.dangers = {}
+    Registry.enemies = {}
     Registry.interactables = {}
     Registry.hitZones = {}
     Registry.currentTarget = nil
@@ -59,6 +67,32 @@ function Registry.clearPlayer()
     Registry.player = nil
     Registry.currentTarget = nil
     Registry.sessionOpen = false
+end
+
+-- Sounds the AI can hear: each noise gets a rising id so a listener only reacts to new ones. radius is how far
+-- away it is heard, before each listener's own hearing scale. source is "player", "enemy" or "explosion".
+function Registry.reportNoise(x, y, z, radius, source)
+    Registry.noiseCount = Registry.noiseCount + 1
+    table.insert(Registry.noises, { id = Registry.noiseCount, x = x, y = y, z = z, radius = radius or 20,
+                                    source = source or "player" })
+    while #Registry.noises > 32 do
+        table.remove(Registry.noises, 1)
+    end
+end
+
+-- Live threats the AI should move away from, such as a frag about to go off, keyed by entity.
+function Registry.setDanger(entity, x, y, z, radius)
+    local key = entityKey(entity)
+    if key then
+        Registry.dangers[key] = { x = x, y = y, z = z, radius = radius }
+    end
+end
+
+function Registry.clearDanger(entity)
+    local key = entityKey(entity)
+    if key then
+        Registry.dangers[key] = nil
+    end
 end
 
 function Registry.activeWeapon()

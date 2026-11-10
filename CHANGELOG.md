@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-11-10: Navigation: a navmesh built with Recast & Detour from a scene's static box colliders the first time a script needs it in Play, and the Lua `Nav` table (`isReady`, `rebuild`, `findPath`, `closestPoint`, `randomPoint`). Lua `e:GetParent()` returns an entity's parent. A Character Controller no longer collides with bodies parented under its own entity, such as an enemy's hit zones.
+- 2026-11-10: FPS plugin enemies: `Enemy.lua` patrols, notices the player by sight and sound, fights in bursts with aim that settles over time, takes cover and peeks out, searches where it last saw the player, runs from live frags, warns nearby allies and dies into a corpse. How well enemies fight comes from difficulty presets (`recruit`, `regular`, `hardened`, `veteran`) that a settings menu can switch or override per value, and each enemy can use its own level or values. Behaviour is built from reusable modules (`FPS.AI.Brain`, `Perception`, `Mover`, `Cover`, `Difficulty`). A hit zone with no `owner` belongs to its parent. See the FPS plugin documentation.
 - 2026-11-10: FPS plugin shell casings: weapons eject a `casingPrefab` on every shot that tumbles, bounces and settles, cleaned up after a few seconds and capped per weapon.
 - 2026-11-10: FPS plugin bullet travel: weapons with a `muzzleVelocity` fire bullets with flight time and drop, checked along their path each frame, so close shots still land at once.
 - 2026-11-10: FPS plugin lean: hold `LeanLeft` (C) or `LeanRight` (V) to move the view and aim sideways with a camera roll, stopping short of walls.

@@ -17,6 +17,7 @@ Hephaestus Engine is licensed under [`LICENSE.md`](LICENSE.md). It includes the 
 | ufbx | 0.23.0 | MIT or public domain | Editor, Game |
 | stb_image, stb_truetype | 2.30, 1.26 | MIT or public domain | Editor, Game |
 | miniaudio | 0.11.26 | MIT No Attribution (chosen from MIT-0 or public domain) | Editor, Game |
+| Recast & Detour | 1.6.0 | zlib | Editor, Game |
 | Inter | 4.001 | SIL OFL 1.1 | Editor |
 | JetBrains Mono | 2.211 | SIL OFL 1.1 | Editor |
 | Font Awesome Free (solid font) | 6.7.2 | SIL OFL 1.1 | Editor |
@@ -5212,6 +5213,30 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+## Recast & Detour
+
+Recast & Detour 1.6.0 (`extern/recastnavigation/Recast`, `extern/recastnavigation/Detour`). https://github.com/recastnavigation/recastnavigation
+
+```text
+Copyright (c) 2009 Mikko Mononen memon@inside.org
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+claim that you wrote the original software. If you use this software
+in a product, an acknowledgment in the product documentation would be
+appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
 ```
 
 ## Inter

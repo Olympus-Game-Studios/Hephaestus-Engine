@@ -22,6 +22,7 @@ Vectors come back as tables with `x`, `y` and `z`. Rotations on transforms are i
 | Method | Does |
 | --- | --- |
 | `e:GetName()` / `e:SetName(name)` | Read or change the entity's name. |
+| `e:GetParent()` | The entity's parent, or `nil` at the top of the hierarchy. |
 | `e:IsValid()` | False once the entity has been destroyed. Check this before using an entity you've held onto. |
 | `e:GetId()` | The entity's integer id, or `nil` once it is destroyed. Every reference to the same entity returns the same id, so use it as a table key instead of the name. |
 | `e:GetTransform()` | Its transform (see below). |
@@ -141,6 +142,18 @@ For entities with a [Character Controller](physics.md#character-controller).
 | `Character.setSpeedMultiplier(m)` / `Character.getSpeedMultiplier()` | Scale walk speed, for sprinting or slowing effects. |
 | `Character.teleport(x, y, z)` | Move instantly. |
 | `Character.setFacingYaw(radians)` | Turn to face a direction. |
+
+## Navigation
+
+A navmesh lets AI find paths round obstacles. It is built the first time a script asks for it in each Play session, from every static, solid Rigid Body with a **Box** collision shape (other shapes are skipped). It fits a character 1.8 m tall with a 0.35 m radius that can step 0.4 m and walk up 45 degree slopes. Points are tables with `x`, `y` and `z`.
+
+| Function | Does |
+| --- | --- |
+| `Nav.isReady()` | True once the navmesh is built; builds it if it hasn't been tried yet. The log says how many polygons it has, or why it could not be built. |
+| `Nav.rebuild()` | Build it again, after moving or adding static boxes. Returns whether it worked. |
+| `Nav.findPath(from, to)` | A list of points from `from` to `to` along the navmesh, corners only, or `nil`. When `to` can't be reached the path ends at the nearest reachable point. |
+| `Nav.closestPoint(point[, extents])` | The nearest point on the navmesh, searching `extents` (default 2, 4, 2 metres) around `point`, or `nil`. |
+| `Nav.randomPoint(center, radius)` | A random reachable point within `radius` metres of `center`, or `nil`. |
 
 ## Characters and animation
 

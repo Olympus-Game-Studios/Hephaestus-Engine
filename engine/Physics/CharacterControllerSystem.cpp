@@ -86,6 +86,43 @@ JPH::RefConst<JPH::Shape> MakeCapsule(float totalHeight, float radius, float fra
     return settings.Create().Get();
 }
 
+// Skips bodies on the character itself or parented under it (hit boxes, carried props), so they never block it.
+class OwnBodiesFilter final : public JPH::BodyFilter {
+public:
+    OwnBodiesFilter(const JoltPhysicsSystem& physics, const Scene* scene, entt::entity owner)
+        : m_physics(physics), m_scene(scene), m_owner(owner) {}
+
+    bool ShouldCollide(const JPH::BodyID& bodyId) const override
+    {
+        if (!m_scene) {
+            return true;
+        }
+        const auto& registry = m_scene->GetRegistry();
+        entt::entity entity = m_physics.GetEntityForBody(bodyId);
+        for (int depth = 0; entity != entt::null && depth < 64; ++depth) {
+            if (entity == m_owner) {
+                return false;
+            }
+            if (!registry.valid(entity)) {
+                break;
+            }
+            const auto* transform = registry.try_get<TransformComponent>(entity);
+            entity = transform ? transform->parent : entt::null;
+        }
+        return true;
+    }
+
+    bool ShouldCollideLocked(const JPH::Body& body) const override
+    {
+        return ShouldCollide(body.GetID());
+    }
+
+private:
+    const JoltPhysicsSystem& m_physics;
+    const Scene* m_scene;
+    entt::entity m_owner;
+};
+
 CharacterGroundState MapGround(JPH::CharacterBase::EGroundState state)
 {
     switch (state) {
@@ -347,7 +384,7 @@ void CharacterControllerSystem::Teleport(entt::entity entity, const Vec3& worldF
         const JPH::ObjectLayer layer = m_Engine.ObjectLayerFor(runtime->layer, false);
         const auto broad = physics->GetDefaultBroadPhaseLayerFilter(layer);
         const auto objects = physics->GetDefaultLayerFilter(layer);
-        JPH::BodyFilter bodies;
+        const OwnBodiesFilter bodies(m_Physics, m_Scene, entity);
         JPH::ShapeFilter shapes;
         runtime->character->RefreshContacts(broad, objects, bodies, shapes, *allocator);
     }
@@ -481,7 +518,7 @@ void CharacterControllerSystem::SyncLifecycle(Scene& scene)
                 const JPH::ObjectLayer objectLayer = m_Engine.ObjectLayerFor(layer, false);
                 const auto broad = physics->GetDefaultBroadPhaseLayerFilter(objectLayer);
                 const auto objects = physics->GetDefaultLayerFilter(objectLayer);
-                JPH::BodyFilter bodies;
+                const OwnBodiesFilter bodies(m_Physics, &scene, entity);
                 JPH::ShapeFilter shapes;
                 runtime.character->RefreshContacts(broad, objects, bodies, shapes, *allocator);
             }
@@ -555,7 +592,7 @@ void CharacterControllerSystem::FixedStep(Scene& scene, float fixedDt)
         const JPH::ObjectLayer objectLayer = m_Engine.ObjectLayerFor(runtime->layer, false);
         const auto broad = physics->GetDefaultBroadPhaseLayerFilter(objectLayer);
         const auto objects = physics->GetDefaultLayerFilter(objectLayer);
-        JPH::BodyFilter bodies;
+        const OwnBodiesFilter bodies(m_Physics, &scene, entity);
         JPH::ShapeFilter shapes;
 
         if (shapeChanged) {

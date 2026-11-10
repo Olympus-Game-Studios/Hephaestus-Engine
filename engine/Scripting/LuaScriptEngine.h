@@ -32,6 +32,9 @@ namespace Hephaestus {
 class InputSystem;
 class EngineFrameRenderer;
 }
+namespace Hephaestus::Navigation {
+class NavMesh;
+}
 struct GLFWwindow;
 struct LuaScriptComponent;
 struct TransformComponent;
@@ -305,6 +308,9 @@ private:
     lua_State* m_State = nullptr;
     PluginScriptHost* m_PluginScripts = nullptr;
     Scene* m_Scene = nullptr;
+    std::unique_ptr<Hephaestus::Navigation::NavMesh> m_NavMesh;
+    bool m_NavBuildAttempted = false;
+    std::uint32_t m_NavRandomState = 0x2545F491u;
     GLFWwindow* m_Window = nullptr;
     std::filesystem::path m_ProjectRoot;
     Hephaestus::EngineFrameRenderer* m_FrameRenderer = nullptr;
@@ -395,6 +401,10 @@ private:
     void RegisterTransformBindings();
     void RegisterMeshBindings();
     void RegisterParticleBindings();
+    void RegisterNavBindings();
+    // Builds the navmesh from the current scene on first use after Play starts or Nav.rebuild().
+    Hephaestus::Navigation::NavMesh* EnsureNavMesh();
+    bool ReadNavPoint(lua_State* L, int index, Vec3& out);
 
     /**
      * Register Input bindings
@@ -482,6 +492,11 @@ private:
     static int Lua_Mesh_setVisible(lua_State* L);
     static int Lua_Mesh_isVisible(lua_State* L);
     static int Lua_Particles_play(lua_State* L);
+    static int Lua_Nav_isReady(lua_State* L);
+    static int Lua_Nav_rebuild(lua_State* L);
+    static int Lua_Nav_findPath(lua_State* L);
+    static int Lua_Nav_closestPoint(lua_State* L);
+    static int Lua_Nav_randomPoint(lua_State* L);
     static int Lua_Particles_stop(lua_State* L);
     static int Lua_Particles_burst(lua_State* L);
     static int Lua_Particles_isPlaying(lua_State* L);
@@ -663,6 +678,7 @@ private:
     static int Lua_This_GetName(lua_State* L);
     static int Lua_This_SetName(lua_State* L);
     static int Lua_This_IsValid(lua_State* L);
+    static int Lua_This_GetParent(lua_State* L);
     static int Lua_This_GetId(lua_State* L);
     static int Lua_This_GetCamera(lua_State* L);
     

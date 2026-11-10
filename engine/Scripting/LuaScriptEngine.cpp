@@ -5,6 +5,7 @@
 #include "LuaDebugger.h"
 #include "../Audio/AudioEngine.h"
 #include "../Scene/ParticleSimulation.h"
+#include "../Navigation/NavMesh.h"
 #include "../UI/HephaestusUI/UIContext.h"
 #include "../UI/HephaestusUI/UICanvas.h"
 #include "../UI/HephaestusUI/UIElement.h"
@@ -933,6 +934,8 @@ void LuaScriptEngine::DispatchContactEvents(Scene& scene, const std::vector<Phys
 }
 
 void LuaScriptEngine::OnSimulationStarted() {
+    m_NavMesh.reset();
+    m_NavBuildAttempted = false;
 #if LUA_AVAILABLE
     m_SceneReloadRequested = false;
     for (auto& [_, instance] : m_ScriptInstances) {
@@ -945,6 +948,8 @@ void LuaScriptEngine::OnSimulationStarted() {
 }
 
 void LuaScriptEngine::OnSimulationStopped() {
+    m_NavMesh.reset();
+    m_NavBuildAttempted = false;
 #if LUA_AVAILABLE
     m_SceneReloadRequested = false;
     if (!m_State) {
@@ -1164,6 +1169,7 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterTransformBindings();
     RegisterMeshBindings();
     RegisterParticleBindings();
+    RegisterNavBindings();
     RegisterInputBindings();
     RegisterUtilityBindings();
     RegisterExposeBindings();
@@ -3545,6 +3551,9 @@ void LuaScriptEngine::RegisterThisBindings() {
     lua_pushcfunction(m_State, Lua_This_IsValid);
     lua_setfield(m_State, -2, "IsValid");
 
+    lua_pushcfunction(m_State, Lua_This_GetParent);
+    lua_setfield(m_State, -2, "GetParent");
+
     lua_pushcfunction(m_State, Lua_This_GetId);
     lua_setfield(m_State, -2, "GetId");
 
@@ -4072,6 +4081,24 @@ int LuaScriptEngine::Lua_This_IsValid(lua_State* L) {
     LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
     bool valid = engine && selfId && static_cast<bool>(engine->MakeEntity(*selfId));
     lua_pushboolean(L, valid);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_This_GetParent(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    LuaEntityReference* selfId = static_cast<LuaEntityReference*>(luaL_testudata(L, 1, "HephaestusEntity"));
+    Entity self = engine && selfId ? engine->MakeEntity(*selfId) : Entity{};
+    const TransformComponent* transform = self ? engine->GetTransform(*selfId) : nullptr;
+    if (!transform || transform->parent == entt::null || !engine->MakeEntity(static_cast<uint32_t>(transform->parent))) {
+        lua_pushnil(L);
+        return 1;
+    }
+    engine->PushEntityUserdata(L, static_cast<uint32_t>(transform->parent));
     return 1;
 #else
     (void)L;
@@ -8193,6 +8220,159 @@ int LuaScriptEngine::Lua_Scene_Reload(lua_State* L) {
         engine->LogBindingError(nullptr, "Scene.reload failed");
     }
     lua_pushboolean(L, requested);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+Hephaestus::Navigation::NavMesh* LuaScriptEngine::EnsureNavMesh() {
+    if (!m_NavBuildAttempted && m_Scene) {
+        m_NavBuildAttempted = true;
+        int skipped = 0;
+        const auto geometry = Hephaestus::Navigation::CollectSceneGeometry(*m_Scene, &skipped);
+        auto mesh = std::make_unique<Hephaestus::Navigation::NavMesh>();
+        std::string error;
+        if (mesh->Build(geometry, Hephaestus::Navigation::NavBuildSettings{}, error)) {
+            Hephaestus::EngineLog::Write(
+                Hephaestus::EngineLogLevel::Info,
+                "Navmesh built: " + std::to_string(mesh->PolygonCount()) + " polygons from " +
+                    std::to_string(geometry.triangles.size() / 3) + " triangles" +
+                    (skipped ? ", " + std::to_string(skipped) + " non-box static shapes left out" : ""),
+                "Navigation");
+            m_NavMesh = std::move(mesh);
+        } else {
+            Hephaestus::EngineLog::Write(Hephaestus::EngineLogLevel::Warning, "Navmesh not built: " + error,
+                                         "Navigation");
+        }
+    }
+    return m_NavMesh.get();
+}
+
+void LuaScriptEngine::RegisterNavBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Nav_isReady);
+    lua_setfield(m_State, -2, "isReady");
+    lua_pushcfunction(m_State, Lua_Nav_rebuild);
+    lua_setfield(m_State, -2, "rebuild");
+    lua_pushcfunction(m_State, Lua_Nav_findPath);
+    lua_setfield(m_State, -2, "findPath");
+    lua_pushcfunction(m_State, Lua_Nav_closestPoint);
+    lua_setfield(m_State, -2, "closestPoint");
+    lua_pushcfunction(m_State, Lua_Nav_randomPoint);
+    lua_setfield(m_State, -2, "randomPoint");
+    lua_setglobal(m_State, "Nav");
+#endif
+}
+
+bool LuaScriptEngine::ReadNavPoint(lua_State* L, int index, Vec3& out) {
+#if LUA_AVAILABLE
+    if (!lua_istable(L, index)) {
+        return false;
+    }
+    const PropertyValue value = ParsePropertyValueFromLua(L, index);
+    if (!value.IsVec3()) {
+        return false;
+    }
+    out = *value.AsVec3();
+    return true;
+#else
+    (void)L;
+    (void)index;
+    (void)out;
+    return false;
+#endif
+}
+
+int LuaScriptEngine::Lua_Nav_isReady(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushboolean(L, engine && engine->EnsureNavMesh() != nullptr);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Nav_rebuild(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    engine->m_NavMesh.reset();
+    engine->m_NavBuildAttempted = false;
+    lua_pushboolean(L, engine->EnsureNavMesh() != nullptr);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Nav_findPath(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Vec3 from;
+    Vec3 to;
+    auto* mesh = engine ? engine->EnsureNavMesh() : nullptr;
+    std::vector<Vec3> corners;
+    if (!mesh || !engine->ReadNavPoint(L, 1, from) || !engine->ReadNavPoint(L, 2, to) ||
+        !mesh->FindPath(from, to, corners)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, static_cast<int>(corners.size()), 0);
+    for (size_t i = 0; i < corners.size(); ++i) {
+        PushVec3Table(L, corners[i]);
+        lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    }
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Nav_closestPoint(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Vec3 point;
+    Vec3 out;
+    Vec3 extents(2.0f, 4.0f, 2.0f);
+    auto* mesh = engine ? engine->EnsureNavMesh() : nullptr;
+    if (mesh && lua_gettop(L) >= 2) {
+        engine->ReadNavPoint(L, 2, extents);
+    }
+    if (!mesh || !engine->ReadNavPoint(L, 1, point) || !mesh->ClosestPoint(point, out, extents)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    PushVec3Table(L, out);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Nav_randomPoint(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    Vec3 center;
+    Vec3 out;
+    auto* mesh = engine ? engine->EnsureNavMesh() : nullptr;
+    const float radius = static_cast<float>(luaL_optnumber(L, 2, 5.0));
+    if (!mesh || !engine->ReadNavPoint(L, 1, center) ||
+        !mesh->RandomPointAround(center, radius, engine->m_NavRandomState, out)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    PushVec3Table(L, out);
     return 1;
 #else
     (void)L;

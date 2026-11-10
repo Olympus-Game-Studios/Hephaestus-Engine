@@ -76,6 +76,7 @@ Expose.number("flashSeconds", 0.035)
 Expose.string("muzzleSmokePrefab", "")
 Expose.string("casingPrefab", "")
 Expose.number("maxCasings", 20)
+Expose.number("noiseRadius", 60)
 Expose.number("casingEjectSpeed", 2.5)
 Expose.number("sprintToFireSeconds", 0.22)
 Expose.number("tacticalSprintToFireSeconds", 0.38)
@@ -121,7 +122,7 @@ local TUNING = {
     "cameraKickFrequency", "cameraKickDampingRatio", "swayAmount", "swayLag", "swayMaxDegrees", "swayFrequency",
     "swayDampingRatio", "adsSwayScale", "idleAmount", "idleBreathRate", "idleAdsScale", "bobAmount", "moveLag",
     "moveMaxOffset", "moveFrequency", "strafeRoll", "landKick", "footfallDip", "fireBufferSeconds", "flashSeconds",
-    "muzzleSmokePrefab", "casingPrefab", "maxCasings", "casingEjectSpeed",
+    "muzzleSmokePrefab", "casingPrefab", "maxCasings", "casingEjectSpeed", "noiseRadius",
     "sprintToFireSeconds", "tacticalSprintToFireSeconds", "proneSpreadScale", "proneRecoilScale", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "firePitchJitter",
     "fireVolumeJitter", "emptySound", "reloadSound",
     "reloadPart2Sound", "boltSound",
@@ -502,6 +503,9 @@ local function fireShot(row, input, owner)
     end
 
     playShot(row)
+    if owner and Registry.player and Registry.key(owner) == Registry.player.key then
+        Registry.reportNoise(input.ox, input.oy, input.oz, row.noiseRadius or 60, "player")
+    end
     showFlash(row)
     spawnMuzzleSmoke(row, input)
     spawnCasing(row, input)

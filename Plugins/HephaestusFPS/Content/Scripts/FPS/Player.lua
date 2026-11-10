@@ -490,6 +490,11 @@ function onUpdate(dt)
     applyCameraRotation()
     Registry.player.yaw = yaw
     Registry.player.pitch = pitch
+    -- What enemies read to judge how visible the player is.
+    local velocity = Character.getVelocity()
+    Registry.player.speed = velocity and math.sqrt((velocity.x or 0) ^ 2 + (velocity.z or 0) ^ 2) or 0
+    Registry.player.stance = Character.isProne() and "prone" or (Character.isCrouched() and "crouched" or "standing")
+    Registry.player.eyeHeight = eyeHeight
     local row = activeWeaponRow()
     if lookEnabled and inputEnabled then
         local basis = Logic.yawBasis(yaw)

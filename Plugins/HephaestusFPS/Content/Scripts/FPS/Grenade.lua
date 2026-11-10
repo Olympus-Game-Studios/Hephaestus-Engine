@@ -60,6 +60,8 @@ local function detonate()
         linger = smokeSeconds
         return
     end
+    Registry.clearDanger(this)
+    Registry.reportNoise(p.x, p.y, p.z, radius * 8, "explosion")
     -- Lifted off the ground so the floor under the grenade does not block the blast.
     Explosives.applyBlast(p.x, p.y + 0.2, p.z, {
         damage = damage,
@@ -84,6 +86,10 @@ function onUpdate(dt)
         Physics.setAngularVelocity((math.random() * 2 - 1) * spin, (math.random() * 2 - 1) * spin,
                                    (math.random() * 2 - 1) * spin)
         launched = true
+    end
+    if kind == "frag" and fuse < math.huge then
+        local p = Transform.getPosition()
+        Registry.setDanger(this, p.x, p.y, p.z, radius)
     end
     if linger then
         linger = linger - dt
