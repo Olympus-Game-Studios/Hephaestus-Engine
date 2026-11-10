@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <utility>
 
 namespace Hephaestus::HephaestusUI {
@@ -224,12 +225,21 @@ void HUIGeometryBuilder::EmitRect(const UIRect& rect, const UIColor& fill, float
 void HUIGeometryBuilder::EmitImageQuad(const UIRect& rect, const UITextureInfo& tex,
                                        UIImageScaleMode scaleMode, UIColor tint,
                                        float opacity, float cornerRadius, int zOrder) {
-    float srcX = 0.0f, srcY = 0.0f, srcW = static_cast<float>(tex.width), srcH = static_cast<float>(tex.height);
-    UIRect dst = rect;
-
     const float texW = static_cast<float>(tex.width);
     const float texH = static_cast<float>(tex.height);
     if (texW <= 0.0f || texH <= 0.0f) return;
+
+    const UIImagePlacement placement = PlaceImage(rect, texW, texH, scaleMode);
+    const UIRect& src = placement.source;
+    EmitQuad(placement.destination, src.x / texW, src.y / texH, (src.x + src.width) / texW,
+             (src.y + src.height) / texH, tint, opacity, cornerRadius, tex.slot, zOrder);
+}
+
+UIImagePlacement PlaceImage(const UIRect& rect, float texW, float texH, UIImageScaleMode scaleMode) {
+    UIImagePlacement out;
+    out.destination = rect;
+    out.source = {0.0f, 0.0f, texW, texH};
+    if (texW <= 0.0f || texH <= 0.0f) return out;
 
     switch (scaleMode) {
         case UIImageScaleMode::Stretch:
@@ -238,39 +248,56 @@ void HUIGeometryBuilder::EmitImageQuad(const UIRect& rect, const UITextureInfo& 
             const float scale = std::min(rect.width / texW, rect.height / texH);
             const float outW = texW * scale;
             const float outH = texH * scale;
-            dst.width = outW;
-            dst.height = outH;
-            dst.x = rect.x + (rect.width - outW) * 0.5f;
-            dst.y = rect.y + (rect.height - outH) * 0.5f;
+            out.destination = {rect.x + (rect.width - outW) * 0.5f, rect.y + (rect.height - outH) * 0.5f, outW, outH};
             break;
         }
         case UIImageScaleMode::Fill: {
             const float scale = std::max(rect.width / texW, rect.height / texH);
             float srcW = rect.width / scale;
             float srcH = rect.height / scale;
-            srcX = (texW - srcW) * 0.5f;
-            srcY = (texH - srcH) * 0.5f;
+            float srcX = (texW - srcW) * 0.5f;
+            float srcY = (texH - srcH) * 0.5f;
             srcW = std::min(srcW, texW);
             srcH = std::min(srcH, texH);
             srcX = std::min(srcX, texW - srcW);
             srcY = std::min(srcY, texH - srcH);
-            dst = rect;
+            out.source = {srcX, srcY, srcW, srcH};
             break;
         }
-        case UIImageScaleMode::Center: {
-            dst.width = texW;
-            dst.height = texH;
-            dst.x = rect.x + (rect.width - texW) * 0.5f;
-            dst.y = rect.y + (rect.height - texH) * 0.5f;
+        case UIImageScaleMode::Center:
+            out.destination = {rect.x + (rect.width - texW) * 0.5f, rect.y + (rect.height - texH) * 0.5f, texW, texH};
             break;
-        }
     }
+    return out;
+}
 
-    const float u0 = srcX / texW;
-    const float v0 = srcY / texH;
-    const float u1 = (srcX + srcW) / texW;
-    const float v1 = (srcY + srcH) / texH;
-    EmitQuad(dst, u0, v0, u1, v1, tint, opacity, cornerRadius, tex.slot, zOrder);
+std::string ResolveHUIImagePath(const std::string& projectRoot, const std::string& imageId) {
+    namespace fs = std::filesystem;
+    if (imageId.empty()) return {};
+
+    const fs::path asset(imageId);
+    std::error_code ec;
+    if (asset.is_absolute() && fs::is_regular_file(asset, ec)) {
+        return imageId;
+    }
+    if (projectRoot.empty()) return {};
+
+    auto tryPath = [](const fs::path& p) -> std::string {
+        std::error_code ec2;
+        return fs::is_regular_file(p, ec2) ? p.string() : std::string();
+    };
+    const fs::path root(projectRoot);
+    const std::string rel = asset.generic_string();
+
+    // Project root + full relative path, then + assets/ prefix, then without a leading "assets/".
+    std::string found = tryPath(root / asset);
+    if (!found.empty()) return found;
+    found = tryPath(root / "assets" / rel);
+    if (!found.empty()) return found;
+    if (rel.rfind("assets/", 0) == 0) {
+        found = tryPath(root / rel.substr(7));
+    }
+    return found;
 }
 
 void HUIGeometryBuilder::EmitImage(const UIRect& rect, const std::string& imageId,

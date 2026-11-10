@@ -2,6 +2,9 @@
 
 #include "RuntimeUIOverlayWidget.h"
 
+#include "../../Assets/AssetManager.h"
+#include "../HephaestusUI/Rendering/HUIGeometryBuilder.h"
+
 #include <QPainter>
 #include <QPaintEvent>
 #include <QMouseEvent>
@@ -207,6 +210,19 @@ void RuntimeUIOverlayWidget::paintEvent(QPaintEvent* event)
 
         if (std::holds_alternative<Hephaestus::HephaestusUI::UIDrawImageCommand>(command)) {
             const auto& drawImage = std::get<Hephaestus::HephaestusUI::UIDrawImageCommand>(command);
+            const QImage& image = TintedImage(drawImage.imageId, drawImage.tint);
+            if (!image.isNull()) {
+                const auto placement = Hephaestus::HephaestusUI::PlaceImage(
+                    drawImage.rect, static_cast<float>(image.width()), static_cast<float>(image.height()),
+                    drawImage.scaleMode);
+                painter.save();
+                painter.setOpacity(clamp01(drawImage.tint.a * drawImage.opacity));
+                painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+                painter.drawImage(toQRectF(placement.destination), image, toQRectF(placement.source));
+                painter.restore();
+                continue;
+            }
+            // Missing image: tinted solid placeholder, as the game renderer draws it.
             QColor placeholder = toQColor(drawImage.tint);
             placeholder.setAlphaF(clamp01(placeholder.alphaF() * drawImage.opacity));
             painter.setPen(Qt::NoPen);
@@ -234,6 +250,43 @@ void RuntimeUIOverlayWidget::paintEvent(QPaintEvent* event)
         painter.restore();
         --clipDepth;
     }
+}
+
+const QImage& RuntimeUIOverlayWidget::TintedImage(const std::string& imageId,
+                                                   const Hephaestus::HephaestusUI::UIColor& tint)
+{
+    static const QImage none;
+    if (imageId.empty()) {
+        return none;
+    }
+    auto loaded = m_images.find(imageId);
+    if (loaded == m_images.end()) {
+        const std::string path =
+            Hephaestus::HephaestusUI::ResolveHUIImagePath(AssetManager::GetInstance().GetProjectRoot(), imageId);
+        QImage image;
+        if (!path.empty()) {
+            image.load(QString::fromStdString(path));
+        }
+        loaded = m_images.emplace(imageId, image.isNull() ? QImage() : image.convertToFormat(QImage::Format_ARGB32_Premultiplied)).first;
+    }
+    if (loaded->second.isNull()) {
+        return none;
+    }
+    const QColor color = toQColor(tint);
+    const std::string key = imageId + "|" + std::to_string(color.rgb());
+    auto tinted = m_tintedImages.find(key);
+    if (tinted == m_tintedImages.end()) {
+        // Multiply by the tint's colour (its alpha is applied as opacity when drawing), keeping the image's alpha.
+        QImage out = loaded->second;
+        QPainter tintPainter(&out);
+        tintPainter.setCompositionMode(QPainter::CompositionMode_Multiply);
+        tintPainter.fillRect(out.rect(), QColor(color.red(), color.green(), color.blue()));
+        tintPainter.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+        tintPainter.drawImage(0, 0, loaded->second);
+        tintPainter.end();
+        tinted = m_tintedImages.emplace(key, std::move(out)).first;
+    }
+    return tinted->second;
 }
 
 } // namespace QtEditor

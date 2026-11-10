@@ -384,44 +384,7 @@ uint32_t VulkanHUIRenderer::ReserveTextureSlot(uint32_t width, uint32_t height) 
 }
 
 std::string VulkanHUIRenderer::ResolveAssetPath(const std::string& imageId) const {
-    if (imageId.empty()) return {};
-
-    const fs::path asset(imageId);
-    std::error_code ec;
-    if (asset.is_absolute() && fs::is_regular_file(asset, ec)) {
-        return imageId;
-    }
-
-    const std::string rel = asset.generic_string();
-    std::vector<fs::path> roots;
-    if (!m_ProjectRoot.empty()) {
-        roots.push_back(m_ProjectRoot);
-    }
-
-    const bool hasAssetsPrefix = rel.rfind("assets/", 0) == 0;
-
-    for (const fs::path& root : roots) {
-        auto tryPath = [](const fs::path& p) -> std::string {
-            std::error_code ec2;
-            return fs::is_regular_file(p, ec2) ? p.string() : std::string();
-        };
-
-        // Project root + full relative path.
-        std::string found = tryPath(root / asset);
-        if (!found.empty()) return found;
-
-        // Project root + assets/ prefix (e.g. "assets/textures/x.png").
-        found = tryPath(root / "assets" / rel);
-        if (!found.empty()) return found;
-
-        // Strip a leading "assets/" prefix before re-appending.
-        if (hasAssetsPrefix) {
-            found = tryPath(root / rel.substr(7));
-            if (!found.empty()) return found;
-        }
-    }
-
-    return {};
+    return ResolveHUIImagePath(m_ProjectRoot, imageId);
 }
 
 UITextureInfo VulkanHUIRenderer::ResolveTexture(const std::string& imageId) {
