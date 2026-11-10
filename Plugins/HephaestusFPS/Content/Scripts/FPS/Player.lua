@@ -6,6 +6,7 @@ local Interactable = require("FPS.Interactable")
 local Hud = require("FPS.Hud")
 local Impacts = require("FPS.Impacts")
 local ThrowPreview = require("FPS.ThrowPreview")
+local Mantle = require("FPS.Mantle")
 
 Expose.number("mouseSensitivityX", 0.002)
 Expose.number("mouseSensitivityY", 0.002)
@@ -32,6 +33,12 @@ Expose.number("slideCooldown", 0.6)
 Expose.number("slideSteer", 1.5)
 Expose.number("slideFovBoost", 6)
 Expose.number("slideRollDegrees", 4)
+Expose.bool("mantleEnabled", true)
+Expose.number("mantleReach", 0.8)
+Expose.number("mantleMaxHeight", 2.0)
+Expose.number("vaultMaxHeight", 1.1)
+Expose.number("mantleSeconds", 0.3)
+Expose.number("mantleSecondsPerMetre", 0.2)
 Expose.number("fieldOfView", 80)
 Expose.number("fullSpreadMoveSpeed", 5.0)
 Expose.number("interactDistance", 2.5)
@@ -94,6 +101,7 @@ local sinceHardLanding = nil
 local slide = nil
 local slideCooldownRemaining = 0
 local slideBlend = 0
+local mantle = nil
 local fallSpeed = 0
 local footfallThisFrame = false
 local stepCount = 0
@@ -419,6 +427,7 @@ function onAwake()
     slide = nil
     slideCooldownRemaining = 0
     slideBlend = 0
+    mantle = nil
     cameraKickPitch = { x = 0, v = 0 }
     cameraKickYaw = { x = 0, v = 0 }
     footsteps = parseList(footstepSounds)
@@ -474,7 +483,29 @@ function onUpdate(dt)
             end
             slide = { elapsed = 0, dirX = vx / length, dirZ = vz / length, startScale = sprintMultiplier * slideBoost }
         end
-        if slide then
+        -- Jumping (or holding jump in the air) towards a ledge climbs onto it or vaults over it instead.
+        if not mantle and mantleEnabled and forward > 0.3
+            and (jumpPressed or (not Character.isGrounded() and Input.isActionDown("Jump"))) then
+            local plan = Mantle.find(Transform.getPosition(), basis.forward.x, basis.forward.z, {
+                reach = mantleReach, maxHeight = mantleMaxHeight, vaultMaxHeight = vaultMaxHeight,
+            })
+            if plan then
+                mantle = { plan = plan, elapsed = 0, seconds = Mantle.duration(plan, mantleSeconds, mantleSecondsPerMetre) }
+                slide = nil
+                jumpPressed = false
+            end
+        end
+        if mantle then
+            mantle.elapsed = mantle.elapsed + dt
+            local p = Mantle.position(mantle.plan, mantle.elapsed / mantle.seconds)
+            Character.move(0, 0)
+            Character.setCrouched(false)
+            Character.teleport(p.x, p.y, p.z)
+            sprinting = false
+            if mantle.elapsed >= mantle.seconds then
+                mantle = nil
+            end
+        elseif slide then
             slide.elapsed = slide.elapsed + dt
             -- The slide keeps its heading; move input only turns it slowly.
             local steer = math.min(1, slideSteer * dt)
@@ -542,6 +573,7 @@ function onUpdate(dt)
         Character.setSpeedMultiplier(1)
         sprinting = false
         slide = nil
+        mantle = nil
         commands.fireHeld = false
         commands.firePressed = false
         commands.aimHeld = false
@@ -625,7 +657,7 @@ function onLateUpdate(dt)
     updateThrow(lastDt, origin, direction, row)
     if player then
         player.input = {
-            aimHeld = commands.aimHeld and swap == nil and throw == nil,
+            aimHeld = commands.aimHeld and swap == nil and throw == nil and mantle == nil,
             sprinting = sprinting,
             moveFraction = Gunplay.clamp(speedXZ / math.max(fullSpreadMoveSpeed, 0.1), 0, 1),
             airborne = not grounded,
@@ -639,14 +671,16 @@ function onLateUpdate(dt)
             motionScale = presentationEnabled and Gunplay.clamp(viewBobScale, 0, 1) or 0,
             -- Footfalls land on whole multiples of pi.
             bobPhase = math.pi * (stepCount + stepDistance / math.max(footstepStride, 0.1)),
-            lowering = swap ~= nil or throw ~= nil,
+            lowering = swap ~= nil or throw ~= nil or mantle ~= nil,
             lowerProgress = swap and row and
-                Gunplay.clamp(1 - swap.remaining / math.max(row.lowerSeconds or 0.01, 0.01), 0, 1) or throwLowered(),
+                Gunplay.clamp(1 - swap.remaining / math.max(row.lowerSeconds or 0.01, 0.01), 0, 1)
+                or (mantle and math.sin(math.pi * math.min(1, mantle.elapsed / mantle.seconds)) * 0.7)
+                or throwLowered(),
         }
     end
     local weaponEntity = activeWeaponEntity()
     if weaponEntity then
-        local blocked = swap ~= nil or throw ~= nil
+        local blocked = swap ~= nil or throw ~= nil or mantle ~= nil
         weaponEntity:Call("tick", lastDt, (commands.fireHeld and not blocked) and 1 or 0,
                           (commands.firePressed and not blocked) and 1 or 0,
                           commands.reload and 1 or 0, origin.x, origin.y, origin.z,

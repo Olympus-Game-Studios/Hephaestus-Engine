@@ -724,6 +724,63 @@ check(near(L.landingSpeedScale(0, 0.3, 0.6), 0.6) and L.landingSpeedScale(0.3, 0
 check(near(L.slideSpeedScale(0, 0.8, 1.84, 0.6), 1.84) and near(L.slideSpeedScale(0.8, 0.8, 1.84, 0.6), 0.6)
       and near(L.slideSpeedScale(2, 0.8, 1.84, 0.6), 0.6) and L.slideSpeedScale(0.1, 0.8, 1.84, 0.6) > 1.75,
       "a slide starts fast, keeps most of its speed early and ends at crouch speed")
+
+local Mantle = require("FPS.Mantle")
+-- Ground at y = 0 plus axis-aligned boxes; returns the nearest hit like Physics.raycast.
+local boxes = {}
+local function rayBoxes(ox, oy, oz, dx, dy, dz, distance)
+    local best = nil
+    local o, d = { ox, oy, oz }, { dx, dy, dz }
+    for _, b in ipairs(boxes) do
+        local tmin, tmax, axis = 0, distance, nil
+        local ok = true
+        for i = 1, 3 do
+            if math.abs(d[i]) < 1e-9 then
+                if o[i] < b.min[i] or o[i] > b.max[i] then ok = false end
+            else
+                local t1, t2 = (b.min[i] - o[i]) / d[i], (b.max[i] - o[i]) / d[i]
+                local enter = math.min(t1, t2)
+                if enter > tmin then tmin, axis = enter, i end
+                tmax = math.min(tmax, math.max(t1, t2))
+            end
+        end
+        if ok and axis and tmin <= tmax and (not best or tmin < best.distance) then
+            local n = { x = 0, y = 0, z = 0 }
+            n[({ "x", "y", "z" })[axis]] = d[axis] > 0 and -1 or 1
+            best = { distance = tmin, point = { x = ox + dx * tmin, y = oy + dy * tmin, z = oz + dz * tmin }, normal = n }
+        end
+    end
+    if dy < 0 and oy > 0 then
+        local t = oy / -dy
+        if t <= distance and (not best or t < best.distance) then
+            best = { distance = t, point = { x = ox + dx * t, y = 0, z = oz + dz * t }, normal = { x = 0, y = 1, z = 0 } }
+        end
+    end
+    return best
+end
+Physics = { raycast = rayBoxes }
+local feet = { x = 0, y = 0, z = 0 }
+local options = { reach = 0.8, maxHeight = 2.0, vaultMaxHeight = 1.1 }
+boxes = { { min = { 0.5, 0, -5 }, max = { 1.1, 0.9, 5 } } }
+local vault = Mantle.find(feet, 1, 0, options)
+check(vault and vault.kind == "vault" and near(vault.height, 0.9, 1e-6) and vault.points[4].x > 1.1
+      and vault.points[4].y == 0, "a waist-high bench is vaulted, landing on the far side")
+boxes = { { min = { 0.5, 0, -5 }, max = { 3.5, 1.5, 5 } } }
+local climb = Mantle.find(feet, 1, 0, options)
+check(climb and climb.kind == "mantle" and near(climb.points[3].y, 1.5, 1e-6) and climb.points[3].x > 0.8,
+      "a chest-high crate is climbed onto")
+local path = { Mantle.position(climb, 0), Mantle.position(climb, 0.6), Mantle.position(climb, 1) }
+check(path[1].x == 0 and near(path[2].y, 1.55, 1e-6) and path[2].x == 0 and near(path[3].x, climb.points[3].x, 1e-6),
+      "a mantle rises in front of the ledge, then moves onto it")
+boxes = { { min = { 0.5, 0, -5 }, max = { 3.5, 3.0, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a wall taller than the reach is not climbed")
+boxes = { { min = { 0.5, 0, -5 }, max = { 3.5, 0.2, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a curb lower than the minimum height is not climbed")
+boxes = { { min = { 0.5, 0, -5 }, max = { 3.5, 1.5, 5 } }, { min = { 0.5, 2.3, -5 }, max = { 3.5, 2.6, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a ledge without room to stand on is not climbed")
+boxes = { { min = { 2.0, 0, -5 }, max = { 3.5, 1.5, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a ledge out of reach is not climbed")
+Physics = nil
 Physics = nil
 
 if #failures > 0 then error(table.concat(failures, "\n")) end
