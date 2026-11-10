@@ -2845,7 +2845,9 @@ void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamer
         std::sin(yawR) * std::cos(pitchR)
     };
     front = vnorm(front);
-    Vec3 up{0.0f, 1.0f, 0.0f};
+    const float rollR = camera.rollDeg * DEG_TO_RAD;
+    const Mat4 viewFrame = Hephaestus::MakeCameraViewFrame(position, yawR, pitchR, rollR);
+    const Vec3 up = rollR == 0.0f ? Vec3{0.0f, 1.0f, 0.0f} : Vec3{viewFrame.m[4], viewFrame.m[5], viewFrame.m[6]};
     
     UniformBufferObject ubo{};
     ubo.view = Mat4::LookAt(position, vadd(position, front), up);
@@ -2866,7 +2868,7 @@ void EngineFrameRenderer::updateCameraUBO(uint32_t imageIndex, const RenderCamer
     m_frameViewMatrix = ubo.view;
     m_frameProjectionMatrix = ubo.proj;
     m_frameCameraPos = position;
-    m_frameViewFrame = Hephaestus::MakeCameraViewFrame(position, yawR, pitchR);
+    m_frameViewFrame = viewFrame;
     // Wireframe still uses Lit/Unlit shading branch; polygon mode is selected per draw.
     ubo.shadingMode = (config.shadingMode == ViewShadingMode::Unlit) ? 1.0f : 0.0f;
     

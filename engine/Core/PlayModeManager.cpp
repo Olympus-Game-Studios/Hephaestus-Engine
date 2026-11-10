@@ -338,6 +338,7 @@ void PlayModeManager::ApplyRuntimeCameraToRender(RenderCamera& out) const {
     out.positionZ = m_runtimeCamera.posZ;
     out.yawDeg    = RuntimeCameraState::RadToDeg(m_runtimeCamera.yaw);
     out.pitchDeg  = RuntimeCameraState::RadToDeg(m_runtimeCamera.pitch);
+    out.rollDeg   = RuntimeCameraState::RadToDeg(m_runtimeCamera.roll);
     out.nearPlane = m_runtimeCamera.nearPlane;
     out.farPlane  = m_runtimeCamera.farPlane;
     out.fovDeg    = m_runtimeCamera.fov > 0.1f ? m_runtimeCamera.fov : 60.0f;

@@ -94,7 +94,7 @@ bool RunSimulationStep(const SimulationStepContext& context, float dt)
 void UpdateSceneAudioSources(Scene& scene, AudioEngine& audioEngine)
 {
     if (const auto view = TryReadActiveCameraView(scene)) {
-        const Mat4 frame = MakeCameraViewFrame(view->position, view->yawRadians, view->pitchRadians);
+        const Mat4 frame = MakeCameraViewFrame(view->position, view->yawRadians, view->pitchRadians, view->rollRadians);
         audioEngine.SetListener(view->position, Vec3(frame.m[0], frame.m[1], frame.m[2]),
                                 Vec3(frame.m[4], frame.m[5], frame.m[6]));
     }

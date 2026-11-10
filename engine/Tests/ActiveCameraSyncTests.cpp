@@ -194,6 +194,20 @@ bool TestViewFrameMatchesRenderView()
         ok &= Check(NearVec(Mat4::TransformDirection(local, Vec3(0.0f, 0.0f, 1.0f)), Vec3(1.0f, 0.0f, 0.0f)),
                     "view frame +Z is view right");
     }
+    for (const float roll : {0.3f, -0.4f}) {
+        const Vec3 eye(1.0f, 2.0f, 3.0f);
+        const Mat4 frame = Hephaestus::MakeCameraViewFrame(eye, 0.7f, 0.3f, roll);
+        const Vec3 up(frame.m[4], frame.m[5], frame.m[6]);
+        const Mat4 view = Mat4::LookAt(eye, vadd(eye, RenderForward(0.7f, 0.3f)), up);
+        const Mat4 local = Mat4::Multiply(view, frame);
+        ok &= Check(NearVec(Mat4::TransformDirection(local, Vec3(1.0f, 0.0f, 0.0f)), Vec3(0.0f, 0.0f, 1.0f)) &&
+                        NearVec(Mat4::TransformDirection(local, Vec3(0.0f, 1.0f, 0.0f)), Vec3(0.0f, 1.0f, 0.0f)) &&
+                        NearVec(Mat4::TransformDirection(local, Vec3(0.0f, 0.0f, 1.0f)), Vec3(1.0f, 0.0f, 0.0f)),
+                    "a rolled view frame stays aligned with a view built from its up");
+    }
+    const Mat4 rolled = Hephaestus::MakeCameraViewFrame(Vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, -0.5f);
+    ok &= Check(rolled.m[6] > 0.0f && rolled.m[5] < 1.0f,
+                "negative roll tilts the view's up towards its right");
     const Mat4 identity = Hephaestus::MakeCameraViewFrame(Vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f);
     ok &= Check(NearVec(Mat4::TransformDirection(identity, Vec3(0.3f, 0.5f, 0.7f)), Vec3(0.3f, 0.5f, 0.7f)),
                 "view frame is identity at yaw 0 pitch 0");

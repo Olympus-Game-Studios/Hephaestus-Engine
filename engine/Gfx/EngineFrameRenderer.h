@@ -75,6 +75,7 @@ struct RenderCamera {
     float positionZ = 5.0f;
     float yawDeg = 90.0f;
     float pitchDeg = 0.0f;
+    float rollDeg = 0.0f;
     float nearPlane = 0.1f;
     float farPlane = 10000.0f;
     float fovDeg = 60.0f;

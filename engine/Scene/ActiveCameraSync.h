@@ -29,8 +29,8 @@ namespace Hephaestus {
  * - Parent yaw θ (rotation.y only) and child pitch φ (rotation.x, local yaw 0)
  *   produce render yaw = -θ and render pitch = φ.
  * - fov, nearPlane, and farPlane come from CameraComponent.
- * - rollRadians is the camera entity's local rotation.z. The renderer does
- *   not consume roll.
+ * - rollRadians is the camera entity's local rotation.z. Negative roll tilts the
+ *   view's up towards its right (a head tilted to the right).
  */
 struct ActiveCameraView {
     entt::entity entity = entt::null;
@@ -48,7 +48,7 @@ bool TryMakeCameraView(Scene& scene, Entity camera, ActiveCameraView& out);
 
 /// World matrix of the rendered view: columns are forward (+X), up (+Y) and right (+Z) at the view position.
 /// Identity for yaw 0 and pitch 0, so camera-relative offsets read as (forward, up, right).
-Mat4 MakeCameraViewFrame(const Vec3& position, float yawRadians, float pitchRadians);
+Mat4 MakeCameraViewFrame(const Vec3& position, float yawRadians, float pitchRadians, float rollRadians = 0.0f);
 
 /// World-space transform that makes geometry drawn with a perspective projection at worldFovDegrees appear as
 /// if projected at viewModelFovDegrees (both vertical). Identity when viewModelFovDegrees is 0 or equal.

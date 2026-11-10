@@ -127,6 +127,7 @@ struct GameCamera {
     Vec3 position = Vec3(0.0f, 2.0f, 5.0f);
     float yawDeg = -90.0f;
     float pitchDeg = 0.0f;
+    float rollDeg = 0.0f;
     float fovDeg = 60.0f;
     float nearPlane = 0.1f;
     float farPlane = 1000.0f;
@@ -138,6 +139,7 @@ struct GameCamera {
         camera.positionZ = position.z;
         camera.yawDeg = yawDeg;
         camera.pitchDeg = pitchDeg;
+        camera.rollDeg = rollDeg;
         camera.fovDeg = fovDeg;
         camera.nearPlane = nearPlane;
         camera.farPlane = farPlane;
@@ -184,6 +186,7 @@ static void ApplyActiveCameraView(const Hephaestus::ActiveCameraView& view, Game
     camera.position = view.position;
     camera.yawDeg = view.yawRadians * kRadToDeg;
     camera.pitchDeg = view.pitchRadians * kRadToDeg;
+    camera.rollDeg = view.rollRadians * kRadToDeg;
     camera.fovDeg = view.fovDegrees;
     camera.nearPlane = view.nearPlane;
     camera.farPlane = view.farPlane;
