@@ -12,6 +12,7 @@ local Registry = {
     enemies = {},
     flanker = nil,
     lastBlast = nil,
+    liveGrenades = {},
     currentTarget = nil,
     activeWeaponId = nil,
 }
@@ -47,6 +48,7 @@ function Registry.ensureSession()
     Registry.enemies = {}
     Registry.flanker = nil
     Registry.lastBlast = nil
+    Registry.liveGrenades = {}
     Registry.interactables = {}
     Registry.hitZones = {}
     Registry.currentTarget = nil

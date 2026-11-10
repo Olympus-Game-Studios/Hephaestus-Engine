@@ -4,6 +4,7 @@ local Gunplay = require("FPS.Gunplay")
 local Health = require("FPS.Health")
 local Interactable = require("FPS.Interactable")
 local Hud = require("FPS.Hud")
+local GrenadeWarning = require("FPS.GrenadeWarning")
 local Impacts = require("FPS.Impacts")
 local ThrowPreview = require("FPS.ThrowPreview")
 local Mantle = require("FPS.Mantle")
@@ -62,6 +63,12 @@ Expose.bool("showHealth", true)
 Expose.bool("showAmmo", true)
 Expose.bool("showPrompt", true)
 Expose.string("hudDocument", "plugin://com.hephaestus.fps/UI/FPSHud.hui")
+Expose.bool("grenadeWarningEnabled", true)
+Expose.string("grenadeWarningIcon", "")
+Expose.string("grenadeWarningArrowPattern", "")
+Expose.integer("grenadeWarningArrowSteps", 24)
+Expose.number("grenadeWarningRange", 10)
+Expose.number("grenadeWarningRadius", 120)
 Expose.bool("presentationEnabled", true)
 Expose.number("viewBobScale", 1.0)
 Expose.number("cameraShakeScale", 1.0)
@@ -96,6 +103,7 @@ Expose.number("throwPreviewFriction", 0.55)
 
 local Player = {}
 local yaw = 0
+local warningClock = 0
 local pitch = 0
 local lookEnabled = true
 local inputEnabled = true
@@ -800,6 +808,19 @@ function onLateUpdate(dt)
         grenades = (fragGrenadePrefab ~= "" or smokeGrenadePrefab ~= "") and grenades or nil,
         dt = lastDt,
     })
+    warningClock = warningClock + lastDt
+    local warnings = {}
+    if grenadeWarningEnabled then
+        local live = {}
+        for _, g in pairs(Registry.liveGrenades) do
+            live[#live + 1] = g
+        end
+        warnings = GrenadeWarning.compute(Transform.getPosition(), yaw, Health.getHealth(this), live,
+                                          grenadeWarningRange, Hud.MAX_GRENADE_WARNINGS)
+    end
+    Hud.showGrenadeWarnings(warnings, { icon = grenadeWarningIcon, arrowPattern = grenadeWarningArrowPattern,
+                                        arrowSteps = math.max(1, grenadeWarningArrowSteps),
+                                        radius = grenadeWarningRadius, time = warningClock })
 end
 
 function onHealthChanged(current, maximum)

@@ -947,6 +947,27 @@ check(lx and near(lx, 24, 0.3), "an undamped throw lands on its target")
 check(Tactics.throwVelocity({ x = 0, y = 0, z = 0 }, { x = 5, y = 20, z = 0 }, 40, 9.81, 0) == nil,
       "a target too high for the angle cannot be reached")
 
+local GrenadeWarning = require("FPS.GrenadeWarning")
+local function frag(x, z) return { x = x, y = 0, z = z, damage = 150, radius = 7, innerRadius = 2 } end
+local feet = { x = 0, y = 0, z = 0 }
+local warn = GrenadeWarning.compute(feet, 0, 100, { frag(5, 0), frag(0, 5), frag(-1, 0), frag(8.5, 0), frag(30, 0) }, 10, 4)
+check(#warn == 4 and warn[1].level == "lethal" and near(warn[1].angle % (2 * math.pi), math.pi, 0.01),
+      "a frag at the player's feet behind them is lethal and points straight down the screen")
+check(warn[2].level == "harmful" and warn[3].level == "harmful" and warn[4].level == "near",
+      "a frag inside the blast radius would hurt and one just outside it is only near")
+local ahead, right
+for _, w in ipairs(warn) do
+    if w.distance > 4 and w.distance < 6 and math.abs(w.angle) < 0.1 then ahead = w end
+    if w.distance > 4 and w.distance < 6 and near(w.angle, math.pi / 2, 0.1) then right = w end
+end
+check(ahead and right, "angles are clockwise from straight ahead: ahead is 0, to the right is a quarter turn")
+check(GrenadeWarning.compute(feet, 0, 30, { frag(5, 0) }, 10, 4)[1].level == "lethal",
+      "a blast that would only hurt a healthy player is lethal to a hurt one")
+check(#GrenadeWarning.compute(feet, 0, 100, { frag(0, 5), frag(5, 0), frag(-5, 0) }, 10, 2) == 2,
+      "only the nearest warnings up to the limit are shown")
+check(near(GrenadeWarning.compute(feet, math.pi / 2, 100, { frag(5, 0) }, 10, 4)[1].angle, math.pi / 2, 0.01),
+      "turning the player turns the warning: facing -Z, a frag at +X is to the right")
+
 local Brain = require("FPS.AI.Brain")
 local log = {}
 local states = {

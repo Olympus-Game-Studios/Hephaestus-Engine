@@ -183,6 +183,110 @@
           "textShadowColor": [0.0, 0.0, 0.0, 0.9],
           "textShadowOffset": [1, 1]
         }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeWarning1",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [44, 44],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeArrow1",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [26, 26],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeWarning2",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [44, 44],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeArrow2",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [26, 26],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeWarning3",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [44, 44],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeArrow3",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [26, 26],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeWarning4",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [44, 44],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "GrenadeArrow4",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [26, 26],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
       }
     ]
   }

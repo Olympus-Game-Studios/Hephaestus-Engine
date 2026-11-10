@@ -78,6 +78,10 @@ A grenade prefab is a mesh with a dynamic Rigid Body, a collision shape and `Gre
 
 Use a box collision shape: a sphere or capsule never stops rolling, because the physics has no rolling resistance.
 
+### Grenade warning
+
+Every live frag within `grenadeWarningRange` metres of the player (or inside its blast radius, if that is larger) gets a warning on the HUD: `grenadeWarningIcon` on a ring `grenadeWarningRadius` pixels round the crosshair in the direction of the grenade, with an arrow just outside it pointing the same way. Straight up means in front of you and straight down means behind. It is white when the grenade is near but out of reach, orange when the blast would hurt you and red, pulsing, when it would kill you at your current health. Your own grenades count too. Up to four show at once, nearest first. The icons should be white so the colours tint them. The arrow is `grenadeWarningArrowSteps` images pointing round the clock, named by `grenadeWarningArrowPattern` with the step number (`assets/textures/ui/grenade_arrow_%02d.png` for steps 00 to 23, where 00 points up and each step turns clockwise). Leave the icon or pattern empty, or turn off `grenadeWarningEnabled`, to hide the warning.
+
 ## Enemies
 
 An enemy is an entity with a Character Controller, a Character (its model and animations) and `Enemy.lua`, with hit zone children: boxes with a **kinematic** Rigid Body and `HitZone.lua` whose `owner` is left empty, so the zone belongs to its parent. Kinematic zones follow the enemy as it moves and are not part of the navmesh. Enemies walk on the [navmesh](../../../docs/user-guide/lua-api.md#navigation), so the level's walls and cover need static box colliders.

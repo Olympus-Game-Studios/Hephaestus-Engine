@@ -22,6 +22,7 @@ Expose.number("soundMaxDistance", 120)
 Expose.number("smokeSeconds", 20)
 
 local launched = false
+local selfKey = nil
 local fuse = 0
 local linger = nil
 
@@ -61,6 +62,7 @@ local function detonate()
         return
     end
     Registry.clearDanger(this)
+    Registry.liveGrenades[selfKey] = nil
     Registry.reportNoise(p.x, p.y, p.z, radius * 8, "explosion")
     Registry.lastBlast = { x = p.x, y = p.y, z = p.z }
     -- Lifted off the ground so the floor under the grenade does not block the blast.
@@ -76,6 +78,7 @@ local function detonate()
 end
 
 function onAwake()
+    selfKey = Registry.key(this)
     launched = false
     fuse = fuseSeconds
     linger = nil
@@ -90,6 +93,9 @@ function onUpdate(dt)
     end
     -- The AI reacts to a frag once it is down (slow), not in flight, so it does not flee from the thrower's hand.
     if kind == "frag" and fuse < math.huge then
+        local live = Transform.getPosition()
+        Registry.liveGrenades[selfKey] = { x = live.x, y = live.y, z = live.z, damage = damage,
+                                                      radius = radius, innerRadius = innerRadius }
         local v = Physics.getLinearVelocity()
         if v and v.x * v.x + v.y * v.y + v.z * v.z < 16 then
             local p = Transform.getPosition()
@@ -110,5 +116,12 @@ function onUpdate(dt)
     if fuse <= 0 then
         fuse = math.huge
         detonate()
+    end
+end
+
+function onDestroy()
+    if selfKey then
+        Registry.dangers[selfKey] = nil
+        Registry.liveGrenades[selfKey] = nil
     end
 end

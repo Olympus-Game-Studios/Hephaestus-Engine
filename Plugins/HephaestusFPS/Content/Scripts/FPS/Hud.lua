@@ -35,6 +35,11 @@ function Hud.mount(path, enabled)
     Hud.widgets.DamageFlash = UI.getWidget(handle, "DamageFlash")
     Hud.widgets.HitMarker = UI.getWidget(handle, "HitMarker")
     Hud.widgets.KillMarker = UI.getWidget(handle, "KillMarker")
+    Hud.warnings = {}
+    for i = 1, Hud.MAX_GRENADE_WARNINGS do
+        Hud.warnings[i] = { icon = UI.getWidget(handle, "GrenadeWarning" .. i),
+                            arrow = UI.getWidget(handle, "GrenadeArrow" .. i) }
+    end
 end
 
 function Hud.unmount()
@@ -43,8 +48,54 @@ function Hud.unmount()
     end
     Hud.handle = nil
     Hud.widgets = {}
+    Hud.warnings = {}
     Hud.damageFlashRemaining = 0
     Hud.suppressed = false
+end
+
+Hud.MAX_GRENADE_WARNINGS = 4
+Hud.warnings = {}
+local WARNING_COLORS = {
+    near = { 1.0, 1.0, 1.0 },
+    harmful = { 1.0, 0.55, 0.1 },
+    lethal = { 0.95, 0.12, 0.08 },
+}
+
+-- Grenade warnings from GrenadeWarning.compute: an icon on a ring round the crosshair towards each grenade, with an
+-- arrow just outside it pointing the same way. style: icon, arrowPattern (a format with the frame number),
+-- arrowSteps, radius (pixels), time (for the lethal pulse).
+function Hud.showGrenadeWarnings(list, style)
+    if not Hud.handle then
+        return
+    end
+    local show = not Hud.suppressed and style.icon ~= "" and style.arrowPattern ~= ""
+    for i, slot in ipairs(Hud.warnings) do
+        local warning = show and list[i] or nil
+        if slot.icon and slot.arrow then
+            UI.setVisible(slot.icon, warning ~= nil)
+            UI.setVisible(slot.arrow, warning ~= nil)
+        end
+        if warning and slot.icon and slot.arrow then
+            local s, c = math.sin(warning.angle), math.cos(warning.angle)
+            UI.setPosition(slot.icon, s * style.radius, -c * style.radius)
+            UI.setPosition(slot.arrow, s * (style.radius + 34), -c * (style.radius + 34))
+            local turn = (warning.angle / (2 * math.pi)) % 1
+            local frame = math.floor(turn * style.arrowSteps + 0.5) % style.arrowSteps
+            local arrowImage = string.format(style.arrowPattern, frame)
+            if slot.arrowImage ~= arrowImage then
+                UI.setImage(slot.arrow, arrowImage)
+                slot.arrowImage = arrowImage
+            end
+            if slot.iconImage ~= style.icon then
+                UI.setImage(slot.icon, style.icon)
+                slot.iconImage = style.icon
+            end
+            local color = WARNING_COLORS[warning.level] or WARNING_COLORS.near
+            local alpha = warning.level == "lethal" and (0.75 + 0.25 * math.sin((style.time or 0) * 14)) or 1
+            UI.setImageTint(slot.icon, color[1], color[2], color[3], alpha)
+            UI.setImageTint(slot.arrow, color[1], color[2], color[3], alpha)
+        end
+    end
 end
 
 function Hud.flashDamage()
