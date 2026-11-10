@@ -21,8 +21,9 @@ Menu.theme = {
     track = { r = 1.0, g = 1.0, b = 1.0, a = 0.18 },
     font = "Roboto",
     labelSize = 22,
-    labelPaddingLeft = 20,  -- inside the highlight, before the label
-    labelPaddingRight = 16, -- after it
+    titleSize = 30,
+    labelPaddingLeft = 18,  -- inside the highlight, before the label's first drawn pixel
+    labelPaddingRight = 18, -- after its last
 }
 
 local MAX_ROWS = 12
@@ -115,8 +116,9 @@ local function activate(menu, index)
     end
 end
 
--- options: x, y (top of the list), width, rowHeight, backdrop (a dark layer over the whole screen), hints, tiles
--- (each button item sits on its own tile sized to its label instead of a full-width bar).
+-- options: x (where the labels' and title's text starts; highlights reach out to the left of it by their padding),
+-- y (top of the list), width, rowHeight, labelSize (padding scales with it), backdrop (a dark layer over the whole
+-- screen), hints, tiles (each button item sits on its own tile sized to its label).
 function Menu.new(name, options)
     options = options or {}
     local menu = {
@@ -130,7 +132,12 @@ function Menu.new(name, options)
         rows = {},
         visible = true,
         tiles = options.tiles or false,
+        labelSize = options.labelSize or Menu.theme.labelSize,
     }
+    local scale = menu.labelSize / Menu.theme.labelSize
+    menu.padLeft = math.floor(Menu.theme.labelPaddingLeft * scale + 0.5)
+    menu.padRight = math.floor(Menu.theme.labelPaddingRight * scale + 0.5)
+    menu.barX = menu.x - menu.padLeft
     local root = UI.getRoot(menu.screen)
     menu.root = root
     if options.backdrop then
@@ -138,23 +145,22 @@ function Menu.new(name, options)
         UI.setAnchor(menu.backdrop, "Stretch")
         UI.setBackgroundColor(menu.backdrop, 0.0, 0.0, 0.0, options.backdrop)
     end
-    menu.title = text(menu, root, "", menu.x, menu.y - 74, menu.width, 48, 30, true)
+    menu.title = text(menu, root, "", menu.x, menu.y - 74, menu.width, 48, Menu.theme.titleSize, true)
     menu.titleRule = panel(root, menu.x, menu.y - 20, 64, 3, Menu.theme.accent)
     for i = 1, MAX_ROWS do
-        menu.rows[i] = { tile = panel(root, menu.x, menu.y + (i - 1) * menu.rowHeight, menu.width,
+        menu.rows[i] = { tile = panel(root, menu.barX, menu.y + (i - 1) * menu.rowHeight, menu.width,
                                       menu.rowHeight - 8, Menu.theme.tile), amount = 0, target = 0 }
     end
-    menu.highlight = panel(root, menu.x, menu.y, 0, menu.rowHeight - 8, Menu.theme.accent)
+    menu.highlight = panel(root, menu.barX, menu.y, 0, menu.rowHeight - 8, Menu.theme.accent)
     menu.highlightY, menu.highlightWidth = menu.y, 0
     for i = 1, MAX_ROWS do
         local y = menu.y + (i - 1) * menu.rowHeight
         local row = menu.rows[i]
-        row.label = text(menu, root, "", menu.x + Menu.theme.labelPaddingLeft, y, menu.width - 36, menu.rowHeight - 8,
-                         Menu.theme.labelSize, true)
+        row.label = text(menu, root, "", menu.x, y, menu.width, menu.rowHeight - 8, menu.labelSize, true)
         row.value = text(menu, root, "", menu.x + menu.width - 250, y, 196, menu.rowHeight - 8, 20, false, nil, "Right")
         row.trackBack = panel(root, menu.x + menu.width - 250, y + menu.rowHeight - 18, 196, 3, Menu.theme.track)
         row.trackFill = panel(root, menu.x + menu.width - 250, y + menu.rowHeight - 18, 0, 3, Menu.theme.accent)
-        row.button = button(root, "", menu.x, y, menu.width, menu.rowHeight - 8, 22)
+        row.button = button(root, "", menu.barX, y, menu.width, menu.rowHeight - 8, 22)
         row.less = button(root, "<", menu.x + menu.width - 290, y, 36, menu.rowHeight - 8, 22, Menu.theme.ink)
         row.more = button(root, ">", menu.x + menu.width - 50, y, 36, menu.rowHeight - 8, 22, Menu.theme.ink)
         UI.setOnHover(row.button, function(hovered)
@@ -249,6 +255,9 @@ function Menu.refresh(menu)
         return
     end
     UI.setText(menu.title, page.title or "")
+    local _, titleInk = UI.measureText(page.title or "", Menu.theme.titleSize, true, Menu.theme.font)
+    UI.setPosition(menu.title, menu.x - (titleInk or 0), menu.y - 74)
+    UI.setPosition(menu.titleRule, menu.x, menu.y - 20)
     UI.setVisible(menu.title, (page.title or "") ~= "")
     UI.setVisible(menu.titleRule, (page.title or "") ~= "")
     local theme = Menu.theme
@@ -269,19 +278,21 @@ function Menu.refresh(menu)
         if item then
             UI.setText(row.label, item.label)
             local rowY = menu.y + (i - 1) * menu.rowHeight
-            local barWidth = menu.width
+            local _, inkLeft, inkRight = UI.measureText(item.label, menu.labelSize, true, theme.font)
+            row.inkLeft = inkLeft or 0
+            local inkWidth = (inkRight or 0) - row.inkLeft
+            if inkWidth <= 0 then
+                inkWidth = #item.label * menu.labelSize * 0.62
+            end
+            local barWidth = menu.padLeft + menu.width
             if not hasValue then
-                local textWidth = UI.measureText and UI.measureText(item.label, theme.labelSize, true, theme.font) or 0
-                if textWidth <= 0 then
-                    textWidth = #item.label * theme.labelSize * 0.62
-                end
-                barWidth = math.min(menu.width, theme.labelPaddingLeft + textWidth + theme.labelPaddingRight)
+                barWidth = math.min(barWidth, menu.padLeft + inkWidth + menu.padRight)
             end
             UI.setSize(row.tile, barWidth, menu.rowHeight - 8)
             row.barWidth = barWidth
-            -- Every label starts at the same inset; a button's bar wraps its measured text with the theme padding.
-            UI.setPosition(row.label, menu.x + theme.labelPaddingLeft, rowY)
-            UI.setSize(row.label, (hasValue and menu.width or barWidth) - theme.labelPaddingLeft, menu.rowHeight - 8)
+            -- The drawn text (not its origin, hence the side bearing) starts on the column; the bar wraps it evenly.
+            UI.setPosition(row.label, menu.x - row.inkLeft, rowY)
+            UI.setSize(row.label, hasValue and menu.width or barWidth, menu.rowHeight - 8)
             UI.setTextAlignment(row.label, "left")
             -- Hover and click only over the item itself (its bar, or the whole row for sliders and choices).
             UI.setSize(row.button, barWidth + HOVER_PAD, menu.rowHeight - 8)
@@ -321,7 +332,7 @@ function Menu.animate(menu, dt)
     if menu.targetY then
         menu.highlightY = mix(menu.highlightY, menu.targetY, k)
         menu.highlightWidth = mix(menu.highlightWidth, menu.targetWidth, k)
-        UI.setPosition(menu.highlight, menu.x, menu.highlightY)
+        UI.setPosition(menu.highlight, menu.barX, menu.highlightY)
         UI.setSize(menu.highlight, menu.highlightWidth, menu.rowHeight - 8)
     end
     local theme = Menu.theme

@@ -287,7 +287,7 @@ std::vector<std::string> HUIFontSearchPaths(const std::string& projectRoot) {
     return paths;
 }
 
-float MeasureHUIText(const std::string& projectRoot, const std::string& text, const UIFontKey& key) {
+UITextMeasure MeasureHUIText(const std::string& projectRoot, const std::string& text, const UIFontKey& key) {
     // Layout only (no GPU); one atlas per font, kept for the life of the process.
     static std::unordered_map<UIFontKey, std::unique_ptr<UIFontAtlas>, UIFontKeyHash> atlases;
     auto& atlas = atlases[key];
@@ -296,18 +296,25 @@ float MeasureHUIText(const std::string& projectRoot, const std::string& text, co
         const std::string file =
             UIFontAtlas::ResolveFontFile(key.family, key.bold, key.italic, HUIFontSearchPaths(projectRoot));
         if (file.empty() || !atlas->LoadFromFile(file, key.size)) {
-            return 0.0f;
+            return {};
         }
     }
     if (!atlas->IsLoaded()) {
-        return 0.0f;
+        return {};
     }
     const UITextLayoutResult layout = atlas->LayoutText(text, 0.0f, false);
-    float width = 0.0f;
+    UITextMeasure measure;
+    bool anyInk = false;
     for (const UITextLineLayout& line : layout.lines) {
-        width = std::max(width, line.width);
+        measure.width = std::max(measure.width, line.width);
+        for (const UILaidOutGlyph& glyph : line.glyphs) {
+            if (glyph.width <= 0.0f) continue;
+            measure.inkLeft = anyInk ? std::min(measure.inkLeft, glyph.x) : glyph.x;
+            measure.inkRight = anyInk ? std::max(measure.inkRight, glyph.x + glyph.width) : glyph.x + glyph.width;
+            anyInk = true;
+        }
     }
-    return width;
+    return measure;
 }
 
 std::string ResolveHUIImagePath(const std::string& projectRoot, const std::string& imageId) {

@@ -7770,8 +7770,11 @@ int LuaScriptEngine::Lua_UI_measureText(lua_State* L) {
         key.family = lua_tostring(L, 4);
     }
     const std::string root = engine ? engine->m_ProjectRoot.generic_string() : std::string();
-    lua_pushnumber(L, Hephaestus::HephaestusUI::MeasureHUIText(root, text, key));
-    return 1;
+    const auto measure = Hephaestus::HephaestusUI::MeasureHUIText(root, text, key);
+    lua_pushnumber(L, measure.width);
+    lua_pushnumber(L, measure.inkLeft);
+    lua_pushnumber(L, measure.inkRight);
+    return 3;
 #else
     (void)L;
     return 0;

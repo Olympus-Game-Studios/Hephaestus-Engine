@@ -655,8 +655,11 @@ bool TestMeasureText(const std::string& repoRoot) {
     key.family = "Roboto";
     key.size = 22.0f;
     key.bold = true;
-    const float short_ = HUI::MeasureHUIText(repoRoot, "QUIT", key);
-    const float long_ = HUI::MeasureHUIText(repoRoot, "QUIT TO MENU", key);
+    const HUI::UITextMeasure quit = HUI::MeasureHUIText(repoRoot, "QUIT", key);
+    const float short_ = quit.width;
+    const float long_ = HUI::MeasureHUIText(repoRoot, "QUIT TO MENU", key).width;
+    if (!Check(quit.inkLeft >= 0.0f && quit.inkRight > quit.inkLeft && quit.inkRight <= quit.width + 2.0f,
+               "ink bounds sit inside the advance width")) local = false;
     if (!Check(short_ > 0.0f, "MeasureHUIText measures with a bundled font")) local = false;
     if (!Check(long_ > short_ * 2.0f, "longer text measures wider")) local = false;
     // The width is the game's own layout: the same atlas the renderer draws with.

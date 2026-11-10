@@ -38,8 +38,14 @@ std::string ResolveHUIImagePath(const std::string& projectRoot, const std::strin
 /** Folders searched for HUI fonts: the project, its assets and fonts, then the engine's own bundled assets. */
 std::vector<std::string> HUIFontSearchPaths(const std::string& projectRoot);
 
-/** Width in pixels of one line of text as the game renderer lays it out; 0 when no font can be loaded. */
-float MeasureHUIText(const std::string& projectRoot, const std::string& text, const UIFontKey& key);
+/** One line of text as the game renderer lays it out, in pixels from the line's left edge; all 0 when no font loads.
+ *  width is the advance (where the next text would start); inkLeft/inkRight bound the drawn pixels. */
+struct UITextMeasure {
+    float width = 0.0f;
+    float inkLeft = 0.0f;
+    float inkRight = 0.0f;
+};
+UITextMeasure MeasureHUIText(const std::string& projectRoot, const std::string& text, const UIFontKey& key);
 
 class IFontAtlasProvider {
 public:
