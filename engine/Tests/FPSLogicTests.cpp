@@ -637,7 +637,8 @@ check(aligned, "decal rotation turns +Y onto the surface normal")
 check(Impacts.surfaceOffset(50) > Impacts.surfaceOffset(1) and Impacts.surfaceOffset(0) > 0,
       "decals lift further off distant surfaces")
 
-local Explosives = require("FPS.Explosives")
+)lua"
+R"lua(local Explosives = require("FPS.Explosives")
 local FPSRegistry = require("FPS.Registry")
 local Health = require("FPS.Health")
 check(Explosives.falloff(1, 2, 7) == 1 and Explosives.falloff(7, 2, 7) == 0 and near(Explosives.falloff(4.5, 2, 7), 0.5),
@@ -688,15 +689,29 @@ Physics = { raycast = function(x, y, z, dx, dy, dz, distance)
     end
     return nil
 end }
-local points, landing = ThrowPreview.predict({ x = 0, y = 1.5, z = 0 }, { x = 10, y = 0, z = 0 }, { maxSeconds = 3 })
-check(landing ~= nil and near(landing.point.x, 10 * math.sqrt(2 * 1.5 / 9.81), 0.15) and landing.point.y == 0,
+local points, marks = ThrowPreview.predict({ x = 0, y = 1.5, z = 0 }, { x = 10, y = 0, z = 0 }, { maxSeconds = 3 })
+local landing = marks[1]
+check(#marks == 1 and near(landing.point.x, 10 * math.sqrt(2 * 1.5 / 9.81), 0.15) and landing.point.y == 0,
       "a level throw lands where gravity says")
 check(points[#points].x == landing.point.x and #points > 10, "the preview path ends at the landing point")
 local _, damped = ThrowPreview.predict({ x = 0, y = 1.5, z = 0 }, { x = 10, y = 0, z = 0 }, { damping = 0.5 })
-check(damped.point.x < landing.point.x - 0.3, "damping shortens the predicted throw")
+check(damped[1].point.x < landing.point.x - 0.3, "damping shortens the predicted throw")
+local _, bounced, rested = ThrowPreview.predict({ x = 0, y = 1.5, z = 0 }, { x = 6, y = 2, z = 0 },
+                                                { bounces = 3, restitution = 0.4, friction = 0.1, maxSeconds = 12 })
+local ordered = #bounced >= 3
+for i = 2, #bounced do ordered = ordered and bounced[i].point.x > bounced[i - 1].point.x end
+check(ordered and rested, "bounces carry on down range and the throw comes to rest")
+local first = 6 * (2 + math.sqrt(4 + 2 * 9.81 * 1.5)) / 9.81
+local secondHop = 2 * 0.4 * math.sqrt(4 + 2 * 9.81 * 1.5) / 9.81
+local slide = 6 * math.max(0, 1 - 0.1 * 1.4 * math.sqrt(4 + 2 * 9.81 * 1.5) / 6)
+check(near(bounced[2].point.x - bounced[1].point.x, slide * secondHop, 0.25),
+      "a bounce keeps restitution of the normal speed and loses friction from the sliding speed")
+local _, capped = ThrowPreview.predict({ x = 0, y = 1.5, z = 0 }, { x = 6, y = 2, z = 0 },
+                                       { bounces = 1, restitution = 0.4, friction = 0.1, maxSeconds = 12 })
+check(#capped == 2, "the prediction stops after the allowed number of bounces")
 groundY = -1000
 local skyward, none = ThrowPreview.predict({ x = 0, y = 0, z = 0 }, { x = 0, y = 5, z = 0 }, { maxSeconds = 0.5 })
-check(none == nil and #skyward == 31, "a throw that reaches nothing stops after maxSeconds")
+check(#none == 0 and #skyward == 31, "a throw that reaches nothing stops after maxSeconds")
 Physics = nil
 
 if #failures > 0 then error(table.concat(failures, "\n")) end

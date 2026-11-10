@@ -53,10 +53,13 @@ Expose.number("grenadeSoundVolume", 1.0)
 Expose.bool("throwPreviewEnabled", true)
 Expose.string("throwPreviewDotPrefab", "")
 Expose.string("throwPreviewMarkerPrefab", "")
-Expose.number("throwPreviewDots", 24)
+Expose.number("throwPreviewDots", 32)
 Expose.number("throwPreviewStartDistance", 1.5)
 Expose.number("throwPreviewSeconds", 3)
 Expose.number("throwPreviewDamping", 0.1)
+Expose.number("throwPreviewBounces", 3)
+Expose.number("throwPreviewRestitution", 0.2)
+Expose.number("throwPreviewFriction", 0.55)
 
 local Player = {}
 local yaw = 0
@@ -347,10 +350,12 @@ local function updateThrow(dt, origin, direction, row)
         throw.recover = 0
     elseif throwPreviewEnabled then
         local position, velocity = throwLaunch(origin, direction)
-        local points, hit = ThrowPreview.predict(position, velocity,
-                                                 { damping = throwPreviewDamping, maxSeconds = throwPreviewSeconds })
-        ThrowPreview.show(points, hit, { dotPrefab = throwPreviewDotPrefab, markerPrefab = throwPreviewMarkerPrefab,
-                                         dotCount = throwPreviewDots, startDistance = throwPreviewStartDistance })
+        local points, marks = ThrowPreview.predict(position, velocity, {
+            damping = throwPreviewDamping, maxSeconds = throwPreviewSeconds, bounces = throwPreviewBounces,
+            restitution = throwPreviewRestitution, friction = throwPreviewFriction,
+        })
+        ThrowPreview.show(points, marks, { dotPrefab = throwPreviewDotPrefab, markerPrefab = throwPreviewMarkerPrefab,
+                                           dotCount = throwPreviewDots, startDistance = throwPreviewStartDistance })
     end
 end
 
