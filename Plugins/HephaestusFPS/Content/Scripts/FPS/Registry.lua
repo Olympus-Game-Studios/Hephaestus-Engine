@@ -13,6 +13,9 @@ local Registry = {
     flanker = nil,
     lastBlast = nil,
     liveGrenades = {},
+    smokeClouds = {},
+    muzzles = {},
+    playerHits = {},
     corpses = {},
     gameOver = nil,
     currentTarget = nil,
@@ -51,6 +54,9 @@ function Registry.ensureSession()
     Registry.flanker = nil
     Registry.lastBlast = nil
     Registry.liveGrenades = {}
+    Registry.smokeClouds = {}
+    Registry.muzzles = {}
+    Registry.playerHits = {}
     Registry.corpses = {}
     Registry.gameOver = nil
     Registry.interactables = {}
@@ -107,6 +113,14 @@ function Registry.reportNoise(x, y, z, radius, source)
                                     source = source or "player" })
     while #Registry.noises > 32 do
         table.remove(Registry.noises, 1)
+    end
+end
+
+-- Where something that just hurt the player was, for the damage direction indicator (newest last, at most 8).
+function Registry.notePlayerHit(x, y, z, time)
+    table.insert(Registry.playerHits, { x = x, y = y, z = z, time = time })
+    while #Registry.playerHits > 8 do
+        table.remove(Registry.playerHits, 1)
     end
 end
 

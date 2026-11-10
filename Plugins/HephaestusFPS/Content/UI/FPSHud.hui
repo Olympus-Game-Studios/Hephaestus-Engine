@@ -186,6 +186,58 @@
       },
       {
         "type": "Image",
+        "id": "DamageArrow1",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [40, 40],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "DamageArrow2",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [40, 40],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "DamageArrow3",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [40, 40],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
+        "id": "DamageArrow4",
+        "properties": {
+          "hAlignment": "Center",
+          "vAlignment": "Center",
+          "size": [40, 40],
+          "imageScaleMode": "Fit",
+          "visible": false,
+          "interactable": false,
+          "zOrder": 4
+        }
+      },
+      {
+        "type": "Image",
         "id": "GrenadeWarning1",
         "properties": {
           "hAlignment": "Center",

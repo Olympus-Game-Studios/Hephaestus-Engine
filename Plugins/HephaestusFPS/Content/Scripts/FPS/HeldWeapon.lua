@@ -1,17 +1,22 @@
 -- Holds a weapon mesh in a character's hands: the grip at one hand socket and the barrel (+X) pointing at the
 -- other. Put it on a child of an entity with a Character whose asset has both sockets.
+local Registry = require("FPS.Registry")
+
 Expose.string("gripSocket", "RightHand")
 Expose.string("supportSocket", "LeftHand")
 Expose.number("gripForward", 0.13)
 Expose.number("gripUp", 0.02)
 Expose.string("dropPrefab", "")
+Expose.number("muzzleForward", 0.45) -- from the weapon's origin to the end of the barrel
 
 local owner = nil
+local ownerKey = nil
 local dropped = false
 local droppedCopy = nil
 
 function onAwake()
     owner = this:GetParent()
+    ownerKey = owner and Registry.key(owner) or nil
     dropped = false
     droppedCopy = nil
 end
@@ -51,6 +56,15 @@ function onLateUpdate()
         Transform.setPosition(position.x, position.y, position.z)
         Transform.setRotation(0, yaw, pitch)
     end
+    -- Where shots leave the barrel, for the owner's muzzle flash and tracers.
+    local world, worldYaw, worldPitch = hold(true)
+    if world and ownerKey then
+        local dx = math.cos(worldPitch) * math.cos(worldYaw)
+        local dy = math.sin(worldPitch)
+        local dz = -math.cos(worldPitch) * math.sin(worldYaw)
+        Registry.muzzles[ownerKey] = { x = world.x + dx * muzzleForward, y = world.y + dy * muzzleForward,
+                                         z = world.z + dz * muzzleForward, dx = dx, dy = dy, dz = dz }
+    end
 end
 
 -- Lets go of the weapon: spawns dropPrefab where it is, thrown with vx, vy, vz, and hides the held one. The copy is
@@ -72,6 +86,9 @@ function dropWeapon(vx, vy, vz, lifeSeconds)
 end
 
 function onDestroy()
+    if ownerKey then
+        Registry.muzzles[ownerKey] = nil
+    end
     if droppedCopy and droppedCopy:IsValid() then
         Scene.destroy(droppedCopy)
     end

@@ -4,12 +4,18 @@ local Explosives = require("FPS.Explosives")
 
 local GrenadeWarning = {}
 
+-- Angle in radians clockwise from straight ahead (yaw) to the point (x, z), seen from feet.
+function GrenadeWarning.bearing(feet, yaw, x, z)
+    local dx, dz = x - feet.x, z - feet.z
+    local fx, fz = math.cos(yaw), -math.sin(yaw)
+    local rx, rz = math.sin(yaw), math.cos(yaw)
+    return math.atan(dx * rx + dz * rz, dx * fx + dz * fz)
+end
+
 -- grenades: list of { x, y, z, damage, radius, innerRadius }. Returns the nearest `limit` within `range` metres
 -- (or the blast radius, if larger) as { angle, level, distance }: angle in radians clockwise from straight ahead,
 -- level "lethal" when the blast would take all of `health`, "harmful" when it would hurt, otherwise "near".
 function GrenadeWarning.compute(feet, yaw, health, grenades, range, limit)
-    local fx, fz = math.cos(yaw), -math.sin(yaw)
-    local rx, rz = math.sin(yaw), math.cos(yaw)
     local cx, cy, cz = feet.x, feet.y + 1.0, feet.z
     local out = {}
     for _, g in ipairs(grenades) do
@@ -18,7 +24,7 @@ function GrenadeWarning.compute(feet, yaw, health, grenades, range, limit)
         if distance <= math.max(range, g.radius) then
             local damage = (g.damage or 0) * Explosives.falloff(distance, g.innerRadius or 0, g.radius)
             local level = damage >= health and "lethal" or (damage > 0 and "harmful" or "near")
-            out[#out + 1] = { angle = math.atan(dx * rx + dz * rz, dx * fx + dz * fz), level = level,
+            out[#out + 1] = { angle = GrenadeWarning.bearing(feet, yaw, g.x, g.z), level = level,
                               distance = distance }
         end
     end

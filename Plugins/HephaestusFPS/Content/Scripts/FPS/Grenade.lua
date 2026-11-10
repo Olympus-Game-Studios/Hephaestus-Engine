@@ -59,6 +59,8 @@ local function detonate()
     spawnEffect(p)
     if kind == "smoke" then
         linger = smokeSeconds
+        -- Centred a little above the ground, where the cloud is thickest.
+        Registry.smokeClouds[selfKey] = { x = p.x, y = p.y + 1.2, z = p.z, age = 0, life = smokeSeconds }
         return
     end
     Registry.clearDanger(this)
@@ -106,7 +108,12 @@ function onUpdate(dt)
     end
     if linger then
         linger = linger - dt
+        local cloud = Registry.smokeClouds[selfKey]
+        if cloud then
+            cloud.age = smokeSeconds - linger
+        end
         if linger <= 0 then
+            Registry.smokeClouds[selfKey] = nil
             Scene.destroy(this)
             linger = nil
         end
@@ -123,5 +130,6 @@ function onDestroy()
     if selfKey then
         Registry.dangers[selfKey] = nil
         Registry.liveGrenades[selfKey] = nil
+        Registry.smokeClouds[selfKey] = nil
     end
 end

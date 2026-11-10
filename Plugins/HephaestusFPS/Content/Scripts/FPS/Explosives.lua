@@ -68,6 +68,9 @@ function Explosives.applyBlast(x, y, z, options)
                 target:Call("onHealthChanged", Health.getHealth(target), Health.getMaxHealth(target))
                 damaged = damaged + 1
                 local player = Registry.player
+                if player and row.key == player.key then
+                    Registry.notePlayerHit(x, y, z, Registry.clock or 0)
+                end
                 if options.byPlayer and player and row.key ~= player.key then
                     player.hitEvent = (died or player.hitEvent == "kill") and "kill" or "hit"
                 end

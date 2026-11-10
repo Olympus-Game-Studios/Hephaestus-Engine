@@ -1,4 +1,7 @@
 -- What an enemy can see and how quickly it notices the player.
+local Registry = require("FPS.Registry")
+local Smoke = require("FPS.AI.Smoke")
+
 local Perception = {}
 
 local CLOSE_RANGE = 3 -- within this, the player is noticed in any direction
@@ -24,13 +27,17 @@ function Perception.awarenessRate(distance, settings, stance, moving)
     return settings.awarenessPerSecond * closeness * stanceScale * (moving and 1.3 or 1)
 end
 
--- Whether a ray from eye reaches point without hitting anything but the target (or its hit zones).
+-- Whether a ray from eye reaches point without hitting anything but the target (or its hit zones), and does not
+-- pass through smoke.
 -- ignore lists the looker's own entities; isTarget(entity) says whether a hit belongs to the target.
 function Perception.clearLine(eye, point, ignore, isTarget)
     local dx, dy, dz = point.x - eye.x, point.y - eye.y, point.z - eye.z
     local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
     if distance < 1e-3 then
         return true
+    end
+    if Smoke.blocks(eye, point, Registry.smokeClouds) then
+        return false
     end
     local hit = Physics.raycast(eye.x, eye.y, eye.z, dx / distance, dy / distance, dz / distance, distance, nil,
                                 true, ignore)

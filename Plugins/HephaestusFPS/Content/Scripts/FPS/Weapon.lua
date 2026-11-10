@@ -74,6 +74,7 @@ Expose.number("footfallDip", 0.004)
 Expose.number("fireBufferSeconds", 0.1)
 Expose.number("flashSeconds", 0.035)
 Expose.string("muzzleSmokePrefab", "")
+Expose.string("tracerPrefab", "")
 Expose.string("casingPrefab", "")
 Expose.number("maxCasings", 20)
 Expose.number("noiseRadius", 60)
@@ -106,6 +107,7 @@ local Hitscan = require("FPS.Hitscan")
 local Ballistics = require("FPS.Ballistics")
 local Health = require("FPS.Health")
 local Impacts = require("FPS.Impacts")
+local Tracers = require("FPS.Tracers")
 
 local Weapon = {}
 local SHOULDER_REACH = 0.4 -- metres from the grip back to the shoulders in the view frame
@@ -122,7 +124,7 @@ local TUNING = {
     "cameraKickFrequency", "cameraKickDampingRatio", "swayAmount", "swayLag", "swayMaxDegrees", "swayFrequency",
     "swayDampingRatio", "adsSwayScale", "idleAmount", "idleBreathRate", "idleAdsScale", "bobAmount", "moveLag",
     "moveMaxOffset", "moveFrequency", "strafeRoll", "landKick", "footfallDip", "fireBufferSeconds", "flashSeconds",
-    "muzzleSmokePrefab", "casingPrefab", "maxCasings", "casingEjectSpeed", "noiseRadius",
+    "muzzleSmokePrefab", "tracerPrefab", "casingPrefab", "maxCasings", "casingEjectSpeed", "noiseRadius",
     "sprintToFireSeconds", "tacticalSprintToFireSeconds", "proneSpreadScale", "proneRecoilScale", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "firePitchJitter",
     "fireVolumeJitter", "emptySound", "reloadSound",
     "reloadPart2Sound", "boltSound",
@@ -316,27 +318,57 @@ local function setPartsVisible(visible)
     end
 end
 
--- World-space smoke just past the muzzle: the view model is drawn in the camera's frame, so its muzzle is
--- approximated from the aim ray, moving from the hip offset to under the sight as the weapon aims.
-local function spawnMuzzleSmoke(row, input)
-    if not row.muzzleSmokePrefab or row.muzzleSmokePrefab == "" or not input.dx then
-        return
+-- Where the muzzle is in the world: the view model is drawn in the camera's frame, so its muzzle is approximated
+-- from the aim ray, moving from the hip offset to under the sight as the weapon aims. nil without an aim ray.
+local function viewMuzzle(row, input)
+    if not input.dx then
+        return nil
     end
     local fx, fy, fz = input.dx, input.dy, input.dz
     local rx, ry, rz = -fz, 0, fx -- forward x world up
     local length = math.sqrt(rx * rx + ry * ry + rz * rz)
     if length < 1e-4 then
-        return
+        return nil
     end
     rx, ry, rz = rx / length, ry / length, rz / length
     local ux, uy, uz = ry * fz - rz * fy, rz * fx - rx * fz, rx * fy - ry * fx
     local ads = row.adsBlend or 0
     local side, drop = Gunplay.lerp(0.14, 0.0, ads), Gunplay.lerp(0.1, 0.05, ads)
-    Impacts.spawnEffect(row.muzzleSmokePrefab,
-                        input.ox + fx * 0.6 + rx * side - ux * drop,
-                        input.oy + fy * 0.6 + ry * side - uy * drop,
-                        input.oz + fz * 0.6 + rz * side - uz * drop,
-                        fx, fy, fz)
+    return input.ox + fx * 0.6 + rx * side - ux * drop, input.oy + fy * 0.6 + ry * side - uy * drop,
+           input.oz + fz * 0.6 + rz * side - uz * drop
+end
+
+-- World-space smoke just past the muzzle.
+local function spawnMuzzleSmoke(row, input)
+    if not row.muzzleSmokePrefab or row.muzzleSmokePrefab == "" then
+        return
+    end
+    local x, y, z = viewMuzzle(row, input)
+    if x then
+        Impacts.spawnEffect(row.muzzleSmokePrefab, x, y, z, input.dx, input.dy, input.dz)
+    end
+end
+
+-- A tracer from the muzzle along the shot, flying like the bullet (its speed and drop) and stopping where it hits.
+local function spawnTracer(row, input, dx, dy, dz, owner)
+    if not row.tracerPrefab or row.tracerPrefab == "" then
+        return
+    end
+    local x, y, z = viewMuzzle(row, input)
+    if not x then
+        return
+    end
+    local speed = (row.muzzleVelocity or 0) > 0 and row.muzzleVelocity or 400
+    local gravity = (row.muzzleVelocity or 0) > 0 and 9.81 * (row.bulletGravityScale or 1) or 0
+    Tracers.spawn(row.tracerPrefab, x, y, z, dx, dy, dz, {
+        speed = speed,
+        gravity = gravity,
+        maxDistance = row.range or 100,
+        cast = function(cx, cy, cz, cdx, cdy, cdz, length)
+            local hit = Hitscan.trace(cx, cy, cz, cdx, cdy, cdz, length, owner)
+            return hit and hit.distance or nil
+        end,
+    })
 end
 
 -- Ejects a casing to the right of the view from beside the action, moving with the player; the oldest casing
@@ -508,6 +540,7 @@ local function fireShot(row, input, owner)
     end
     showFlash(row)
     spawnMuzzleSmoke(row, input)
+    spawnTracer(row, input, dx, dy, dz, owner)
     spawnCasing(row, input)
     if row.hitscan and (row.muzzleVelocity or 0) > 0 then
         -- A bullet: its first stretch is checked this frame, so close shots still land at once.

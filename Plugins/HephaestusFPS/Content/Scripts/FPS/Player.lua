@@ -5,6 +5,8 @@ local Health = require("FPS.Health")
 local Interactable = require("FPS.Interactable")
 local Hud = require("FPS.Hud")
 local GrenadeWarning = require("FPS.GrenadeWarning")
+local DamageDirection = require("FPS.DamageDirection")
+local Tracers = require("FPS.Tracers")
 local Settings = require("FPS.Settings")
 local PauseMenu = require("FPS.PauseMenu")
 local Impacts = require("FPS.Impacts")
@@ -79,6 +81,10 @@ Expose.integer("grenadeWarningArrowSteps", 24)
 Expose.number("grenadeWarningRange", 10)
 Expose.number("grenadeWarningRadius", 160)
 Expose.number("grenadeWarningIconSize", 66)
+Expose.bool("damageIndicatorEnabled", true)
+Expose.number("damageIndicatorSeconds", 1.5)
+Expose.number("damageIndicatorRadius", 120)
+Expose.number("damageIndicatorSize", 40)
 Expose.bool("presentationEnabled", true)
 Expose.number("viewBobScale", 1.0)
 Expose.number("cameraShakeScale", 1.0)
@@ -452,6 +458,7 @@ end
 
 function onAwake()
     Registry.ensureSession()
+    Tracers.reset()
     local rotation = Transform.getRotation()
     yaw = rotation.y
     pitch = 0
@@ -531,6 +538,8 @@ end
 
 function onUpdate(dt)
     lastDt = dt
+    Registry.clock = (Registry.clock or 0) + dt
+    Tracers.update(dt)
     updateGameEnd(dt)
     PauseMenu.update({ enabled = pauseMenuEnabled and not Registry.gameOver, mainMenuScene = mainMenuScene,
                        allowRestart = pauseMenuRestart, freezeTime = pauseFreezesTime })
@@ -871,6 +880,11 @@ function onLateUpdate(dt)
                                         arrowSteps = math.max(1, grenadeWarningArrowSteps),
                                         radius = grenadeWarningRadius, iconSize = grenadeWarningIconSize,
                                         time = warningClock })
+    local hits = damageIndicatorEnabled and DamageDirection.compute(Transform.getPosition(), yaw, Registry.playerHits,
+        Registry.clock or 0, damageIndicatorSeconds, Hud.MAX_DAMAGE_ARROWS) or {}
+    Hud.showDamageDirections(hits, { arrowPattern = grenadeWarningArrowPattern,
+                                     arrowSteps = math.max(1, grenadeWarningArrowSteps),
+                                     radius = damageIndicatorRadius, size = damageIndicatorSize })
 end
 
 function onHealthChanged(current, maximum)

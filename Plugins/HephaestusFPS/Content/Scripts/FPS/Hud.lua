@@ -47,6 +47,10 @@ function Hud.mount(path, enabled)
         Hud.warnings[i] = { icon = UI.getWidget(handle, "GrenadeWarning" .. i),
                             arrow = UI.getWidget(handle, "GrenadeArrow" .. i) }
     end
+    Hud.damageArrows = {}
+    for i = 1, Hud.MAX_DAMAGE_ARROWS do
+        Hud.damageArrows[i] = { arrow = UI.getWidget(handle, "DamageArrow" .. i) }
+    end
 end
 
 function Hud.unmount()
@@ -62,6 +66,8 @@ end
 
 Hud.MAX_GRENADE_WARNINGS = 4
 Hud.warnings = {}
+Hud.MAX_DAMAGE_ARROWS = 4
+Hud.damageArrows = {}
 local WARNING_COLORS = {
     near = { 1.0, 1.0, 1.0 },
     harmful = { 1.0, 0.55, 0.1 },
@@ -108,6 +114,37 @@ function Hud.showGrenadeWarnings(list, style)
             local alpha = warning.level == "lethal" and (0.75 + 0.25 * math.sin((style.time or 0) * 14)) or 1
             UI.setImageTint(slot.icon, color[1], color[2], color[3], alpha)
             UI.setImageTint(slot.arrow, color[1], color[2], color[3], alpha)
+        end
+    end
+end
+
+-- Damage directions from DamageDirection.compute: a red arrow on a ring round the crosshair pointing towards where
+-- each recent hit came from, fading out. style: arrowPattern and arrowSteps (the grenade warning's arrow images),
+-- radius and size in pixels.
+function Hud.showDamageDirections(list, style)
+    if not Hud.handle then
+        return
+    end
+    local show = not Hud.suppressed and style.arrowPattern ~= ""
+    for i, slot in ipairs(Hud.damageArrows) do
+        local hit = show and list[i] or nil
+        if slot.arrow then
+            UI.setVisible(slot.arrow, hit ~= nil)
+        end
+        if hit and slot.arrow then
+            local s, c = math.sin(hit.angle), math.cos(hit.angle)
+            UI.setPosition(slot.arrow, s * style.radius, -c * style.radius)
+            if slot.size ~= style.size then
+                UI.setSize(slot.arrow, style.size, style.size)
+                slot.size = style.size
+            end
+            local turn = (hit.angle / (2 * math.pi)) % 1
+            local image = string.format(style.arrowPattern, math.floor(turn * style.arrowSteps + 0.5) % style.arrowSteps)
+            if slot.image ~= image then
+                UI.setImage(slot.arrow, image)
+                slot.image = image
+            end
+            UI.setImageTint(slot.arrow, 0.95, 0.12, 0.08, hit.alpha)
         end
     end
 end

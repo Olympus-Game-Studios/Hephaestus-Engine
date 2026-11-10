@@ -1024,6 +1024,66 @@ if #failures > 0 then error(table.concat(failures, "\n")) end
         ok = false;
     }
 
+    // Smoke, tracers and the damage direction indicator (a chunk of its own: MSVC limits string literals to 16 KB).
+    static const char* kCombatChecks = R"lua(
+local failures = {}
+local function check(condition, message) if not condition then failures[#failures + 1] = message end end
+local function near(a, b, tolerance) return math.abs(a - b) <= (tolerance or 1e-4) end
+
+local Smoke = require("FPS.AI.Smoke")
+local cloud = { x = 10, y = 1.2, z = 0, age = 0, life = 20 }
+check(Smoke.radius(cloud) == 0, "a cloud has no size the moment it bursts")
+cloud.age = 5
+check(near(Smoke.radius(cloud), Smoke.MAX_RADIUS), "a cloud reaches full size")
+local eye, target = { x = 0, y = 1.6, z = 0 }, { x = 20, y = 1.4, z = 0 }
+check(Smoke.blocks(eye, target, { cloud }), "sight through the middle of a cloud is blocked")
+check(not Smoke.blocks(eye, { x = 0, y = 1.4, z = 20 }, { cloud }), "sight that passes beside a cloud is clear")
+check(not Smoke.blocks(eye, { x = 5, y = 1.4, z = 0 }, { cloud }), "sight that stops short of a cloud is clear")
+check(Smoke.blocks({ x = 10, y = 1.5, z = 1 }, target, { cloud }), "a looker standing in smoke cannot see out")
+cloud.age = 19.95
+check(not Smoke.blocks(eye, target, { cloud }), "a cloud that has nearly faded no longer blocks sight")
+
+local Registry = require("FPS.Registry")
+local Perception = require("FPS.AI.Perception")
+Physics = Physics or {}
+local realRaycast = Physics.raycast
+Physics.raycast = function() return nil end
+Registry.smokeClouds = { grenade = { x = 10, y = 1.2, z = 0, age = 5, life = 20 } }
+check(not Perception.clearLine(eye, target, {}, function() return false end),
+      "an enemy cannot see the player through a registered smoke cloud")
+Registry.smokeClouds = {}
+check(Perception.clearLine(eye, target, {}, function() return false end), "with the smoke gone it can")
+Physics.raycast = realRaycast
+
+local Tracers = require("FPS.Tracers")
+local flight = Tracers.newFlight(0, 0, 0, 1, 0, 0, 100, 0, 30)
+local done = Tracers.advance(flight, 0.1, nil)
+check(not done and near(flight.x, 10) and near(flight.travelled, 10), "a tracer flies at its speed")
+Tracers.advance(flight, 0.1, nil)
+done = Tracers.advance(flight, 0.1, nil)
+check(done and near(flight.x, 30) and near(flight.travelled, 30), "a tracer stops at its full distance")
+flight = Tracers.newFlight(0, 0, 0, 1, 0, 0, 100, 0, 100)
+done = Tracers.advance(flight, 0.1, function(x, y, z, dx, dy, dz, length) return 4 end)
+check(done and near(flight.x, 4), "a tracer stops where it hits")
+flight = Tracers.newFlight(0, 0, 0, 1, 0, 0, 100, 9.81, 1000)
+for _ = 1, 10 do Tracers.advance(flight, 0.05, nil) end
+check(flight.y < -1 and flight.dy < 0, "a tracer with gravity drops like the bullet")
+
+local DamageDirection = require("FPS.DamageDirection")
+local hits = { { x = 0, y = 0, z = -10, time = 0.0 }, { x = 10, y = 0, z = 0, time = 1.0 } }
+local shown = DamageDirection.compute({ x = 0, y = 0, z = 0 }, 0, hits, 1.2, 1.5, 4)
+check(#shown == 2 and near(shown[1].angle, 0, 0.01) and near(shown[2].angle, -math.pi / 2, 0.01),
+      "the newest hit comes first, and each points towards where it came from (facing +X, -Z is to the left)")
+check(near(shown[1].alpha, 1 - 0.2 / 1.5, 0.001) and near(shown[2].alpha, 0.2, 0.001), "older hits are fainter")
+check(#DamageDirection.compute({ x = 0, y = 0, z = 0 }, 0, hits, 5, 1.5, 4) == 0, "hits fade out completely")
+
+if #failures > 0 then error(table.concat(failures, "\n")) end
+)lua";
+    if (luaL_dostring(L, kCombatChecks) != LUA_OK) {
+        std::cerr << "[FAIL] combat checks:\n" << lua_tostring(L, -1) << '\n';
+        ok = false;
+    }
+
     lua_close(L);
     if (!ok) {
         return 1;

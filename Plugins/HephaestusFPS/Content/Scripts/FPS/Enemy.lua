@@ -12,6 +12,7 @@ local Mover = require("FPS.AI.Mover")
 local Cover = require("FPS.AI.Cover")
 local Brain = require("FPS.AI.Brain")
 local Tactics = require("FPS.AI.Tactics")
+local Tracers = require("FPS.Tracers")
 
 Expose.number("maxHealth", 100)
 Expose.string("difficulty", "")
@@ -29,6 +30,9 @@ Expose.number("range", 80)
 Expose.number("magazineSize", 30)
 Expose.number("reloadSeconds", 2.4)
 Expose.string("fireSound", "")
+Expose.string("muzzleFlashPrefab", "")
+Expose.string("tracerPrefab", "")
+Expose.number("tracerSpeed", 350) -- how fast tracers fly, in m/s
 Expose.number("fireVolume", 0.8)
 Expose.number("engageDistance", 25)
 Expose.number("coverSearchRadius", 12)
@@ -186,8 +190,20 @@ local function fireShot(row)
     dx, dy, dz = Gunplay.spreadDirection(dx / length, dy / length, dz / length, math.rad(aimError(row)), random(),
                                          random())
     local hit = Physics.raycast(muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, range, "Character", true, ignore)
+    -- What the player sees: a flash at the rifle's real muzzle and a tracer from there to where the shot ends.
+    local barrel = Registry.muzzles[selfKey] or muzzle
+    Impacts.spawnEffect(muzzleFlashPrefab, barrel.x, barrel.y, barrel.z, dx, dy, dz)
+    local reach = hit and (hit.distance or range) or range
+    local ex, ey, ez = muzzle.x + dx * reach, muzzle.y + dy * reach, muzzle.z + dz * reach
+    local tx, ty, tz = ex - barrel.x, ey - barrel.y, ez - barrel.z
+    local tracerLength = math.sqrt(tx * tx + ty * ty + tz * tz)
+    if tracerLength > 0.5 then
+        Tracers.spawn(tracerPrefab, barrel.x, barrel.y, barrel.z, tx / tracerLength, ty / tracerLength,
+                      tz / tracerLength, { speed = tracerSpeed, maxDistance = tracerLength })
+    end
     if hit and hit.entity and isPlayer(hit.entity) then
         local amount = damage * skill.damageScale
+        Registry.notePlayerHit(barrel.x, barrel.y, barrel.z, Registry.clock or 0)
         Health.applyDamage(row.entity, amount, this)
         row.entity:Call("onHealthChanged", Health.getHealth(row.entity), Health.getMaxHealth(row.entity))
     elseif hit and hit.entity and not Health.get(hit.entity) and not Registry.hitZones[Registry.key(hit.entity)] then
