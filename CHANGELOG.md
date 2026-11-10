@@ -278,6 +278,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-11-11: 3D sounds lose their high frequencies with distance (a low-pass filter whose cutoff falls past Min Distance), so far sounds are duller as well as quieter. FPS plugin bullet sounds: the player's `bulletHitSounds` play when an enemy bullet hits and `nearMissSounds` play in 3D where a near miss passed closest to the player's head, each picked at random without repeating, and enemy gunfire is full volume only within 3 m (was 5 m).
 - 2026-08-27: Editor writes `hephaestus.log` next to `HephaestusEngine.exe` at startup. The log captures environment diagnostics (GPU, Qt plugins, Vulkan loader, command line) and mirrors all console output so a black-terminal / no-window launch can be diagnosed from disk.
 - 2026-08-25: Mesh Renderer inspector shows a Show Hidden Outline checkbox when Visible is off. Checked objects still draw an editor outline and can be clicked in the viewport; unchecked objects stay fully hidden and unpickable.
 - 2026-08-25: Added root `build.bat` for Windows one-command CMake configure and build (Release by default, with debug/clean/reconfigure options and automatic EnTT setup).

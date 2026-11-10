@@ -12,6 +12,7 @@ local PauseMenu = require("FPS.PauseMenu")
 local Impacts = require("FPS.Impacts")
 local ThrowPreview = require("FPS.ThrowPreview")
 local Mantle = require("FPS.Mantle")
+local BulletSounds = require("FPS.BulletSounds")
 
 Expose.number("mouseSensitivityX", 0.002)
 Expose.number("mouseSensitivityY", 0.002)
@@ -91,6 +92,12 @@ Expose.number("cameraShakeScale", 1.0)
 Expose.string("footstepSounds", "")
 Expose.number("footstepStride", 2.1)
 Expose.number("footstepVolume", 0.5)
+Expose.string("bulletHitSounds", "") -- played at random when an enemy bullet hits the player
+Expose.number("bulletHitVolume", 0.9)
+Expose.string("nearMissSounds", "") -- played at random where an enemy bullet passes close by
+Expose.number("nearMissVolume", 0.8)
+Expose.number("nearMissRadius", 2.5) -- how close to the head a miss is heard, in metres
+Expose.number("nearMissInterval", 0.2) -- the least time between two near-miss sounds, in seconds
 Expose.string("impactDecalPrefabs", "")
 Expose.number("maxImpactDecals", 64)
 Expose.string("impactDustPrefab", "")
@@ -157,6 +164,7 @@ local swap = nil
 local stepDistance = 0
 local stepIndex = 0
 local footsteps = {}
+local bulletSounds = { hits = {}, misses = {}, lastHit = nil, lastMiss = nil, missAt = -math.huge }
 local cameraObject = nil
 local grenades = { frag = 0, smoke = 0 }
 local throw = nil
@@ -490,6 +498,8 @@ function onAwake()
     cameraKickPitch = { x = 0, v = 0 }
     cameraKickYaw = { x = 0, v = 0 }
     footsteps = parseList(footstepSounds)
+    bulletSounds = { hits = parseList(bulletHitSounds), misses = parseList(nearMissSounds), lastHit = nil,
+                     lastMiss = nil, missAt = -math.huge }
     Impacts.configure(parseList(impactDecalPrefabs), maxImpactDecals,
                       { dust = impactDustPrefab, sparks = impactSparksPrefab })
     commands = { fireHeld = false, firePressed = false, reload = false, interact = false }
@@ -892,6 +902,39 @@ function onHealthChanged(current, maximum)
         Hud.flashDamage()
     end
     lastKnownHealth = current
+end
+
+-- Called by enemies for every shot at the player: a hit plays a hit sound; a miss that passes close to the head
+-- plays a ricochet where it passed, at most once per nearMissInterval.
+function onIncomingShot(ox, oy, oz, dx, dy, dz, length, hit)
+    if not (Audio and Audio.isAvailable and Audio.isAvailable()) then
+        return
+    end
+    if hit then
+        local index = BulletSounds.pick(#bulletSounds.hits, bulletSounds.lastHit, math.random())
+        if index then
+            bulletSounds.lastHit = index
+            Audio.play(bulletSounds.hits[index], { volume = bulletHitVolume, bus = "sfx", priority = 4,
+                                                    pitchJitter = 0.04, volumeJitter = 0.08 })
+        end
+        return
+    end
+    local clock = Registry.clock or 0
+    if #bulletSounds.misses == 0 or clock - bulletSounds.missAt < nearMissInterval then
+        return
+    end
+    local feet = Transform.getPosition()
+    local head = { x = feet.x, y = feet.y + eyeHeight, z = feet.z }
+    local at = BulletSounds.nearMiss({ x = ox, y = oy, z = oz }, dx, dy, dz, length, head, nearMissRadius)
+    if not at then
+        return
+    end
+    local index = BulletSounds.pick(#bulletSounds.misses, bulletSounds.lastMiss, math.random())
+    bulletSounds.lastMiss = index
+    bulletSounds.missAt = clock
+    Audio.play(bulletSounds.misses[index], { volume = nearMissVolume, bus = "sfx", priority = 3, pitchJitter = 0.06,
+                                              volumeJitter = 0.1, position = at, minDistance = 1,
+                                              maxDistance = 25 })
 end
 
 function setHudSuppressed(suppressed)

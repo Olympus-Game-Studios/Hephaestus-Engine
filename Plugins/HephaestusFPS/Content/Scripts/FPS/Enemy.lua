@@ -204,7 +204,9 @@ local function fireShot(row, aimPoint, extraSpread)
         Tracers.spawn(tracerPrefab, barrel.x, barrel.y, barrel.z, tx / tracerLength, ty / tracerLength,
                       tz / tracerLength, { speed = tracerSpeed, maxDistance = tracerLength })
     end
-    if hit and hit.entity and isPlayer(hit.entity) then
+    local hitPlayer = hit and hit.entity and isPlayer(hit.entity)
+    row.entity:Call("onIncomingShot", muzzle.x, muzzle.y, muzzle.z, dx, dy, dz, reach, hitPlayer and true or false)
+    if hitPlayer then
         local amount = damage * skill.damageScale
         Registry.notePlayerHit(barrel.x, barrel.y, barrel.z, Registry.clock or 0)
         Health.applyDamage(row.entity, amount, this)
@@ -218,7 +220,7 @@ local function fireShot(row, aimPoint, extraSpread)
     end
     if fireSound ~= "" and Audio and Audio.isAvailable and Audio.isAvailable() then
         Audio.play(fireSound, { volume = fireVolume, bus = "sfx", priority = 2, pitchJitter = 0.04,
-                                position = muzzle, minDistance = 5, maxDistance = 150 })
+                                position = muzzle, minDistance = 3, maxDistance = 150 })
     end
     Registry.reportNoise(muzzle.x, muzzle.y, muzzle.z, 40, "enemy")
 end

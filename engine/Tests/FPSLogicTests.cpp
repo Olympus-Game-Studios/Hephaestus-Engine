@@ -1087,6 +1087,27 @@ for _, name in ipairs(Difficulty.levels()) do
     previous = skill.smokeFireChance
 end
 
+local BulletSounds = require("FPS.BulletSounds")
+local picked, repeated, last = {}, false, nil
+for i = 0, 199 do
+    local index = BulletSounds.pick(4, last, (i * 0.618) % 1)
+    repeated = repeated or index == last
+    picked[index] = true
+    last = index
+end
+check(not repeated and picked[1] and picked[2] and picked[3] and picked[4],
+      "random sounds use every choice and never play the same one twice in a row")
+check(BulletSounds.pick(1, 1, 0.5) == 1 and BulletSounds.pick(0, nil, 0.5) == nil, "one sound repeats, none plays nothing")
+check(BulletSounds.pick(3, nil, 0.9999) == 3 and BulletSounds.pick(3, 3, 0.9999) == 2, "picks stay in range")
+local head = { x = 10, y = 1.6, z = 0 }
+local at, gap = BulletSounds.nearMiss({ x = 0, y = 1.6, z = 1 }, 1, 0, 0, 50, head, 2.5)
+check(at and near(at.x, 10) and near(at.z, 1) and near(gap, 1), "a miss is heard where it passes closest to the head")
+check(not BulletSounds.nearMiss({ x = 0, y = 1.6, z = 4 }, 1, 0, 0, 50, head, 2.5), "a wide miss is not heard")
+check(not BulletSounds.nearMiss({ x = 0, y = 1.6, z = 1 }, 1, 0, 0, 6, head, 2.5),
+      "a shot that stopped short of the player is not heard")
+check(not BulletSounds.nearMiss({ x = 0, y = 1.6, z = 1 }, -1, 0, 0, 50, head, 2.5),
+      "a shot fired away from the player is not heard")
+
 if #failures > 0 then error(table.concat(failures, "\n")) end
 )lua";
     if (luaL_dostring(L, kCombatChecks) != LUA_OK) {
