@@ -165,10 +165,10 @@ std::string UIFontAtlas::ResolveFontFile(const std::string& family, bool bold, b
         italicFile = "segoeuii.ttf";
         boldItalicFile = "segoeuiz.ttf";
     }
+    // The face that matches the requested style, then the regular face if that one is missing.
+    const char* wanted = bold ? (italic ? boldItalicFile : boldFile) : (italic ? italicFile : regularFile);
     std::vector<std::string> files;
-    if (boldItalicFile) files.emplace_back(boldItalicFile);
-    if (boldFile) files.emplace_back(boldFile);
-    if (italicFile) files.emplace_back(italicFile);
+    if (wanted) files.emplace_back(wanted);
     if (regularFile) files.emplace_back(regularFile);
     for (const std::string& file : files) {
         if (file.empty()) continue;

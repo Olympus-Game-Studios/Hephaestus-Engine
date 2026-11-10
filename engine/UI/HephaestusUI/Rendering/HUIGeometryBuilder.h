@@ -35,7 +35,8 @@ UIImagePlacement PlaceImage(const UIRect& rect, float texWidth, float texHeight,
 /** File for a HUI imageId: an existing absolute path, else under projectRoot with or without "assets/". Empty if none. */
 std::string ResolveHUIImagePath(const std::string& projectRoot, const std::string& imageId);
 
-/** Folders searched for HUI fonts: the project, its assets and fonts, then the engine's own bundled assets. */
+/** Folders searched for HUI fonts (each also as <folder>/fonts): the project, its assets and fonts, then the
+ *  engine's bundled fonts (assets/ beside the editor, .engine/ in a packaged game). */
 std::vector<std::string> HUIFontSearchPaths(const std::string& projectRoot);
 
 /** One line of text as the game renderer lays it out, in pixels from the line's left edge; all 0 when no font loads.

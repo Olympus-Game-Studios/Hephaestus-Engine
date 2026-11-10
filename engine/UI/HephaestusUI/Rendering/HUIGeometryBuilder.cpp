@@ -282,7 +282,9 @@ std::vector<std::string> HUIFontSearchPaths(const std::string& projectRoot) {
     }
     const std::filesystem::path exeDir = ExecutableDirectory();
     if (!exeDir.empty()) {
+        // The engine's bundled fonts: assets/fonts beside the editor, .engine/fonts in a packaged game.
         paths.push_back((ResourceRootFor(exeDir) / "assets").string());
+        paths.push_back((ResourceRootFor(exeDir) / ".engine").string());
     }
     return paths;
 }

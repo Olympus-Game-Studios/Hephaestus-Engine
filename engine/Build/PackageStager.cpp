@@ -394,6 +394,8 @@ PackageStageResult PackageStager::stage(const BuildRequest& request,
                   previousContent / ".engine" / "meshes", "Copying builtin meshes", request, result) ||
         !CopyTree(request.engineRoot / ".engine" / "hdris", content / ".engine" / "hdris",
                   previousContent / ".engine" / "hdris", "Copying builtin HDRIs", request, result) ||
+        !CopyTree(request.engineRoot / "assets" / "fonts", content / ".engine" / "fonts",
+                  previousContent / ".engine" / "fonts", "Copying builtin fonts", request, result) ||
         !CopyTree(request.projectRoot / ".engine", content / ".engine",
                   previousContent / ".engine", "Copying project runtime content", request, result) ||
         !CopyTree(runtime.shadersDirectory, content / "shaders", previousContent / "shaders",

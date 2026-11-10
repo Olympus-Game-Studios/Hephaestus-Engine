@@ -3990,6 +3990,20 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     m_toneMap.bloomThisFrame = bloomEnabled(scene);
+    // The tone map always samples the bloom image, so it must leave UNDEFINED even in scenes without bloom.
+    if (m_bloom.image && !m_bloom.layoutReady) {
+        VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        toGeneral.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        toGeneral.srcQueueFamilyIndex = toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGeneral.image = m_bloom.image;
+        toGeneral.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, static_cast<uint32_t>(m_bloom.mipSizes.size()), 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
+                             0, nullptr, 1, &toGeneral);
+        m_bloom.layoutReady = true;
+    }
     renderPassInfo.renderPass =
         m_toneMap.bloomThisFrame ? m_swapchain->sceneOnlyRenderPass : m_swapchain->renderPass;
     renderPassInfo.framebuffer = m_swapchain->framebuffers[imageIndex];

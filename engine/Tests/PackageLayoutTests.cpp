@@ -76,6 +76,7 @@ int main() {
     Write(project / ".hephaestus" / "physics_layers.json", "{\"version\":1}");
     Write(engine / ".engine" / "meshes" / "builtin.mesh", "mesh");
     Write(engine / ".engine" / "hdris" / "builtin.hdr", "builtin hdri");
+    Write(engine / "assets" / "fonts" / "Roboto-Regular.ttf", "font");
     Write(engine / "THIRD_PARTY_NOTICES.md", "Third-party notices");
     Write(runtime / kPlayerExecutable, "fake executable");
     Write(runtime / "lua.dll", "fake lua");
@@ -192,6 +193,8 @@ int main() {
                 "project meshes are packaged");
     ok &= Check(fs::exists(content / ".engine" / "hdris" / "project.hdr"),
                 "project HDRIs are packaged");
+    ok &= Check(fs::exists(content / ".engine" / "fonts" / "Roboto-Regular.ttf"),
+                "the engine's bundled fonts are packaged for the game's UI");
     ok &= Check(fs::exists(content / ".engine" / "hdris" / "builtin.hdr"),
                 "builtin HDRIs are packaged");
     ok &= Check(fs::exists(content / ".hephaestus" / "physics_layers.json"),
