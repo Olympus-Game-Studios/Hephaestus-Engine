@@ -8,10 +8,12 @@ Expose.string("dropPrefab", "")
 
 local owner = nil
 local dropped = false
+local droppedCopy = nil
 
 function onAwake()
     owner = this:GetParent()
     dropped = false
+    droppedCopy = nil
 end
 
 -- Grip and barrel direction from the sockets, in the owner's space (world = false) or the world.
@@ -51,8 +53,8 @@ function onLateUpdate()
     end
 end
 
--- Lets go of the weapon: spawns dropPrefab where it is, thrown with vx, vy, vz and removed after lifeSeconds
--- (the prefab's own lifetime when nil), and hides the held one.
+-- Lets go of the weapon: spawns dropPrefab where it is, thrown with vx, vy, vz, and hides the held one. The copy is
+-- removed after lifeSeconds, or with this weapon (and its owner) when lifeSeconds is nil.
 function dropWeapon(vx, vy, vz, lifeSeconds)
     if dropped or dropPrefab == "" then
         return
@@ -64,9 +66,13 @@ function dropWeapon(vx, vy, vz, lifeSeconds)
     dropped = true
     Mesh.setVisible(false)
     local vars = { vx = vx or 0, vy = vy or 0, vz = vz or 0 }
-    if lifeSeconds then
-        vars.lifeSeconds = lifeSeconds
-    end
-    Scene.instantiate(dropPrefab, { position = position, rotation = { x = 0, y = math.deg(yaw), z = math.deg(pitch) },
+    vars.lifeSeconds = lifeSeconds or 1e9
+    droppedCopy = Scene.instantiate(dropPrefab, { position = position, rotation = { x = 0, y = math.deg(yaw), z = math.deg(pitch) },
                                     vars = vars })
+end
+
+function onDestroy()
+    if droppedCopy and droppedCopy:IsValid() then
+        Scene.destroy(droppedCopy)
+    end
 end

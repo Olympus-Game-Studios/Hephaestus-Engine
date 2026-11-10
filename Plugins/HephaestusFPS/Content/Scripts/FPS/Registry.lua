@@ -13,6 +13,7 @@ local Registry = {
     flanker = nil,
     lastBlast = nil,
     liveGrenades = {},
+    corpses = {},
     currentTarget = nil,
     activeWeaponId = nil,
 }
@@ -49,6 +50,7 @@ function Registry.ensureSession()
     Registry.flanker = nil
     Registry.lastBlast = nil
     Registry.liveGrenades = {}
+    Registry.corpses = {}
     Registry.interactables = {}
     Registry.hitZones = {}
     Registry.currentTarget = nil
@@ -77,6 +79,26 @@ end
 
 -- Sounds the AI can hear: each noise gets a rising id so a listener only reacts to new ones. radius is how far
 -- away it is heard, before each listener's own hearing scale. source is "player", "enemy" or "explosion".
+-- Bodies left by the dead, oldest first. Adding one past `limit` (0 = no limit) returns the entities of the oldest
+-- bodies to remove.
+function Registry.addCorpse(entity, key, limit)
+    table.insert(Registry.corpses, { entity = entity, key = key })
+    local removed = {}
+    while limit > 0 and #Registry.corpses > limit do
+        removed[#removed + 1] = table.remove(Registry.corpses, 1).entity
+    end
+    return removed
+end
+
+function Registry.removeCorpse(key)
+    for i, corpse in ipairs(Registry.corpses) do
+        if corpse.key == key then
+            table.remove(Registry.corpses, i)
+            return
+        end
+    end
+end
+
 function Registry.reportNoise(x, y, z, radius, source)
     Registry.noiseCount = Registry.noiseCount + 1
     table.insert(Registry.noises, { id = Registry.noiseCount, x = x, y = y, z = z, radius = radius or 20,

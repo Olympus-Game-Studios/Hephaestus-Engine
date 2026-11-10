@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- 2026-11-10: FPS plugin enemy bodies stay in the level until more than `maxCorpses` (8) lie there, then the oldest is removed with its dropped weapon; they no longer disappear after a set time unless `corpseSeconds` is set.
 - 2026-11-10: FPS plugin grenade warning: a HUD icon circles the crosshair towards each live frag near the player, with an arrow pointing at it, white when it is near, orange when its blast would hurt and red when it would kill (`grenadeWarningIcon`, `grenadeWarningArrowPattern` and related player settings).
 - 2026-11-10: Ragdolls: Lua `Character.ragdoll(impulse, point)` turns a humanoid Character (Mixamo bone names) into 11 jointed capsules that fall under physics and drive its bones, replacing its Character Controller and the colliders of its children; hits on the ragdoll report the character. `Character.isRagdoll()` says whether it has. FPS plugin enemies ragdoll on death, pushed away from the shot or the blast, and drop their rifle (`HeldWeapon.lua` `dropPrefab`).
 - 2026-11-10: Navigation: a navmesh built with Recast & Detour from a scene's static box colliders the first time a script needs it in Play, and the Lua `Nav` table (`isReady`, `rebuild`, `findPath`, `closestPoint`, `randomPoint`). Lua `e:GetParent()` returns an entity's parent. A Character Controller no longer collides with bodies parented under its own entity, such as an enemy's hit zones.

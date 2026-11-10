@@ -32,7 +32,8 @@ Expose.string("fireSound", "")
 Expose.number("fireVolume", 0.8)
 Expose.number("engageDistance", 25)
 Expose.number("coverSearchRadius", 12)
-Expose.number("corpseSeconds", 10)
+Expose.number("corpseSeconds", 0)
+Expose.integer("maxCorpses", 8)
 Expose.number("perceptionInterval", 0.1)
 Expose.string("idleClip", "RifleIdle")
 Expose.string("walkClip", "RifleWalk")
@@ -751,9 +752,14 @@ local function fall()
     if not ok then
         Transform.setRotation(0, yaw + math.rad(modelYawOffsetDegrees), math.rad(-90))
     end
+    for _, old in ipairs(Registry.addCorpse(this, selfKey, maxCorpses)) do
+        if old:IsValid() then
+            Scene.destroy(old)
+        end
+    end
     for _, child in ipairs(children) do
         if child:IsValid() then
-            child:Call("dropWeapon", dx * 2, 1.5, dz * 2, corpseSeconds)
+            child:Call("dropWeapon", dx * 2, 1.5, dz * 2)
         end
     end
 end
@@ -765,7 +771,7 @@ function onUpdate(dt)
             fall()
         end
         corpseTimer = corpseTimer + dt
-        if corpseTimer >= corpseSeconds then
+        if corpseSeconds > 0 and corpseTimer >= corpseSeconds then
             Scene.destroy(this)
             corpseSeconds = math.huge
         end
@@ -884,6 +890,7 @@ function onDeath()
 end
 
 function onDestroy()
+    Registry.removeCorpse(selfKey)
     if Registry.flanker == selfKey then
         Registry.flanker = nil
     end

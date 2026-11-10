@@ -968,6 +968,24 @@ check(#GrenadeWarning.compute(feet, 0, 100, { frag(0, 5), frag(5, 0), frag(-5, 0
 check(near(GrenadeWarning.compute(feet, math.pi / 2, 100, { frag(5, 0) }, 10, 4)[1].angle, math.pi / 2, 0.01),
       "turning the player turns the warning: facing -Z, a frag at +X is to the right")
 
+local Registry = require("FPS.Registry")
+Registry.corpses = {}
+local removed = {}
+for i = 1, 8 do
+    for _, e in ipairs(Registry.addCorpse("body" .. i, i, 8)) do removed[#removed + 1] = e end
+end
+check(#removed == 0 and #Registry.corpses == 8, "eight bodies stay")
+removed = Registry.addCorpse("body9", 9, 8)
+check(#removed == 1 and removed[1] == "body1" and #Registry.corpses == 8,
+      "the ninth body removes the oldest, leaving eight")
+Registry.removeCorpse(5)
+check(#Registry.corpses == 7 and #Registry.addCorpse("body10", 10, 8) == 0,
+      "a body removed some other way frees its place")
+Registry.corpses = {}
+for i = 1, 20 do Registry.addCorpse("b" .. i, i, 0) end
+check(#Registry.corpses == 20, "a limit of 0 keeps every body")
+Registry.corpses = {}
+
 local Brain = require("FPS.AI.Brain")
 local log = {}
 local states = {
