@@ -22,6 +22,7 @@
 #include <fstream>
 #include <array>
 #include <algorithm>
+#include <deque>
 #include <filesystem>
 #include <optional>
 #include <cassert>
@@ -4396,6 +4397,59 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             }
         }
         
+        // Particles: camera-facing quads of the built-in plane, coloured and faded over each particle's life.
+        std::deque<MaterialComponent> particleMaterials;
+        const size_t planeHandle = GetMeshHandle("builtin://plane");
+        if (planeHandle < m_meshLibrary.size() && m_meshLibrary[planeHandle].indexCount > 0) {
+            const MeshGPU& plane = m_meshLibrary[planeHandle];
+            const float* v = m_frameViewMatrix.m;
+            const Vec3 viewRight(v[0], v[4], v[8]);
+            const Vec3 viewUp(v[1], v[5], v[9]);
+            const Vec3 towardViewer(v[2], v[6], v[10]);
+            constexpr float kPlaneSize = 1.5f; // BuildPlane is 1.5 m across
+            constexpr size_t kMaxParticleDraws = 768; // leaves material slots for everything else
+            size_t particleDraws = 0;
+            auto emitters = scene->GetEntitiesWith<ParticleEmitterComponent>();
+            for (auto handle : emitters) {
+                if (!IsEditorEntityVisible(static_cast<uint32_t>(handle), config)) continue;
+                const auto& emitter = emitters.get<ParticleEmitterComponent>(handle);
+                if (emitter.particles.empty() || emitter.materialPath.empty()) continue;
+                const MaterialComponent* base = resolveMaterialFromPath(emitter.materialPath);
+                if (!base) continue;
+                for (const Particle& particle : emitter.particles) {
+                    if (particleDraws >= kMaxParticleDraws) break;
+                    const float t = std::clamp(particle.age / particle.lifetime, 0.0f, 1.0f);
+                    auto mix = [t](float a, float b) { return a + (b - a) * t; };
+                    MaterialComponent& material = particleMaterials.emplace_back(*base);
+                    material.albedo = Vec3(base->albedo.x * mix(emitter.colorStart.x, emitter.colorEnd.x),
+                                           base->albedo.y * mix(emitter.colorStart.y, emitter.colorEnd.y),
+                                           base->albedo.z * mix(emitter.colorStart.z, emitter.colorEnd.z));
+                    material.opacity = base->opacity * std::clamp(mix(emitter.colorStart.w, emitter.colorEnd.w), 0.0f, 1.0f);
+                    if (material.blendMode == MaterialBlendMode::Opaque) material.blendMode = MaterialBlendMode::AlphaBlend;
+                    const float half = mix(emitter.sizeStart, emitter.sizeEnd) * particle.sizeScale / kPlaneSize;
+                    const float c = std::cos(particle.rotation), sn = std::sin(particle.rotation);
+                    const Vec3 right = vadd(vscale(viewRight, c), vscale(viewUp, sn));
+                    const Vec3 up = vsub(vscale(viewUp, c), vscale(viewRight, sn));
+                    TranslucentDraw draw;
+                    draw.mesh = &plane;
+                    draw.material = &material;
+                    draw.model = Mat4::Identity();
+                    draw.model.m[0] = right.x * half; draw.model.m[1] = right.y * half; draw.model.m[2] = right.z * half;
+                    draw.model.m[4] = towardViewer.x; draw.model.m[5] = towardViewer.y; draw.model.m[6] = towardViewer.z;
+                    draw.model.m[8] = up.x * half; draw.model.m[9] = up.y * half; draw.model.m[10] = up.z * half;
+                    draw.model.m[12] = particle.position.x;
+                    draw.model.m[13] = particle.position.y;
+                    draw.model.m[14] = particle.position.z;
+                    draw.indexOffset = 0;
+                    draw.indexCount = plane.indexCount;
+                    draw.distance = vlen(vsub(particle.position, m_frameCameraPos));
+                    draw.name = "particle";
+                    translucentDraws.push_back(draw);
+                    ++particleDraws;
+                }
+            }
+        }
+
         // World surfaces first, then view models (always nearer), each far to near.
         std::stable_sort(translucentDraws.begin(), translucentDraws.end(),
                          [](const TranslucentDraw& a, const TranslucentDraw& b) {

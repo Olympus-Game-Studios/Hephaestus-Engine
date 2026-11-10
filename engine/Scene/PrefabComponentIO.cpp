@@ -702,6 +702,78 @@ void ApplyAudioSource(AudioSourceComponent& audio, const JsonValue& data, bool e
     }
 }
 
+void CaptureParticleEmitter(const ParticleEmitterComponent& emitter, JsonValue& data) {
+    data = MakeObject();
+    data.objectValue["materialPath"] = MakeString(emitter.materialPath);
+    data.objectValue["playOnStart"] = MakeBool(emitter.playOnStart);
+    data.objectValue["loop"] = MakeBool(emitter.loop);
+    data.objectValue["destroyWhenDone"] = MakeBool(emitter.destroyWhenDone);
+    data.objectValue["duration"] = MakeNumber(emitter.duration);
+    data.objectValue["rate"] = MakeNumber(emitter.rate);
+    data.objectValue["lifetimeMin"] = MakeNumber(emitter.lifetimeMin);
+    data.objectValue["lifetimeMax"] = MakeNumber(emitter.lifetimeMax);
+    data.objectValue["speedMin"] = MakeNumber(emitter.speedMin);
+    data.objectValue["speedMax"] = MakeNumber(emitter.speedMax);
+    data.objectValue["spreadDegrees"] = MakeNumber(emitter.spreadDegrees);
+    data.objectValue["gravity"] = MakeNumber(emitter.gravity);
+    data.objectValue["drag"] = MakeNumber(emitter.drag);
+    data.objectValue["sizeStart"] = MakeNumber(emitter.sizeStart);
+    data.objectValue["sizeEnd"] = MakeNumber(emitter.sizeEnd);
+    data.objectValue["sizeJitter"] = MakeNumber(emitter.sizeJitter);
+    data.objectValue["spinMin"] = MakeNumber(emitter.spinMin);
+    data.objectValue["spinMax"] = MakeNumber(emitter.spinMax);
+    data.objectValue["burst"] = MakeNumber(emitter.burst);
+    data.objectValue["maxParticles"] = MakeNumber(emitter.maxParticles);
+    data.objectValue["seed"] = MakeNumber(emitter.seed);
+    {
+        JsonValue color = MakeArray();
+        for (float c : {emitter.colorStart.x, emitter.colorStart.y, emitter.colorStart.z, emitter.colorStart.w}) color.arrayValue.push_back(MakeNumber(c));
+        data.objectValue["colorStart"] = std::move(color);
+    }
+    {
+        JsonValue color = MakeArray();
+        for (float c : {emitter.colorEnd.x, emitter.colorEnd.y, emitter.colorEnd.z, emitter.colorEnd.w}) color.arrayValue.push_back(MakeNumber(c));
+        data.objectValue["colorEnd"] = std::move(color);
+    }
+}
+
+void ApplyParticleEmitter(ParticleEmitterComponent& emitter, const JsonValue& data) {
+    if (!data.IsObject()) {
+        return;
+    }
+    if (const JsonValue* value = data.Find("materialPath"); value && value->IsString()) emitter.materialPath = value->AsString();
+    if (const JsonValue* value = data.Find("playOnStart")) emitter.playOnStart = ParseBoolLike(*value, emitter.playOnStart);
+    if (const JsonValue* value = data.Find("loop")) emitter.loop = ParseBoolLike(*value, emitter.loop);
+    if (const JsonValue* value = data.Find("destroyWhenDone")) emitter.destroyWhenDone = ParseBoolLike(*value, emitter.destroyWhenDone);
+    if (const JsonValue* value = data.Find("duration"); value && value->IsNumber()) emitter.duration = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("rate"); value && value->IsNumber()) emitter.rate = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("lifetimeMin"); value && value->IsNumber()) emitter.lifetimeMin = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("lifetimeMax"); value && value->IsNumber()) emitter.lifetimeMax = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("speedMin"); value && value->IsNumber()) emitter.speedMin = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("speedMax"); value && value->IsNumber()) emitter.speedMax = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("spreadDegrees"); value && value->IsNumber()) emitter.spreadDegrees = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("gravity"); value && value->IsNumber()) emitter.gravity = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("drag"); value && value->IsNumber()) emitter.drag = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("sizeStart"); value && value->IsNumber()) emitter.sizeStart = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("sizeEnd"); value && value->IsNumber()) emitter.sizeEnd = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("sizeJitter"); value && value->IsNumber()) emitter.sizeJitter = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("spinMin"); value && value->IsNumber()) emitter.spinMin = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("spinMax"); value && value->IsNumber()) emitter.spinMax = static_cast<float>(value->AsNumber());
+    if (const JsonValue* value = data.Find("burst"); value && value->IsNumber()) emitter.burst = static_cast<int>(value->AsNumber());
+    if (const JsonValue* value = data.Find("maxParticles"); value && value->IsNumber()) emitter.maxParticles = static_cast<int>(value->AsNumber());
+    if (const JsonValue* value = data.Find("seed"); value && value->IsNumber()) emitter.seed = static_cast<uint32_t>(value->AsNumber());
+    if (const JsonValue* value = data.Find("colorStart"); value && value->IsArray() && value->AsArray().size() >= 4) {
+        const auto& c = value->AsArray();
+        emitter.colorStart = Vec4(static_cast<float>(c[0].AsNumber()), static_cast<float>(c[1].AsNumber()),
+                          static_cast<float>(c[2].AsNumber()), static_cast<float>(c[3].AsNumber()));
+    }
+    if (const JsonValue* value = data.Find("colorEnd"); value && value->IsArray() && value->AsArray().size() >= 4) {
+        const auto& c = value->AsArray();
+        emitter.colorEnd = Vec4(static_cast<float>(c[0].AsNumber()), static_cast<float>(c[1].AsNumber()),
+                          static_cast<float>(c[2].AsNumber()), static_cast<float>(c[3].AsNumber()));
+    }
+}
+
 void CaptureScriptComponent(const ScriptComponent& script, JsonValue& data) {
     data = MakeObject();
     JsonValue names = MakeArray();
@@ -1198,6 +1270,10 @@ bool CaptureComponent(Entity entity, const std::string& type, PrefabComponentEnt
         CaptureScriptComponent(entity.GetComponent<ScriptComponent>(), out.data);
         return true;
     }
+    if (type == "ParticleEmitter" && entity.HasComponent<ParticleEmitterComponent>()) {
+        CaptureParticleEmitter(entity.GetComponent<ParticleEmitterComponent>(), out.data);
+        return true;
+    }
     if (type == "AudioSource" && entity.HasComponent<AudioSourceComponent>()) {
         const auto& audio = entity.GetComponent<AudioSourceComponent>();
         out.enabled = audio.enabled;
@@ -1325,6 +1401,13 @@ bool ApplyComponentJson(Entity entity, const std::string& type, const JsonValue&
         ApplyScriptComponent(script, data);
         return true;
     }
+    if (type == "ParticleEmitter") {
+        auto& emitter = entity.HasComponent<ParticleEmitterComponent>()
+            ? entity.GetComponent<ParticleEmitterComponent>()
+            : entity.AddComponent<ParticleEmitterComponent>();
+        ApplyParticleEmitter(emitter, data);
+        return true;
+    }
     if (type == "AudioSource") {
         auto& audio = entity.HasComponent<AudioSourceComponent>()
             ? entity.GetComponent<AudioSourceComponent>()
@@ -1374,6 +1457,7 @@ bool HasComponent(Entity entity, const std::string& type) {
     if (type == "LuaScript") return entity.HasComponent<LuaScriptComponent>();
     if (type == "ScriptComponent") return entity.HasComponent<ScriptComponent>();
     if (type == "AudioSource") return entity.HasComponent<AudioSourceComponent>();
+    if (type == "ParticleEmitter") return entity.HasComponent<ParticleEmitterComponent>();
     if (type == "Character") return entity.HasComponent<CharacterComponent>();
     if (type == "CharacterController") return entity.HasComponent<CharacterControllerComponent>();
     return false;
@@ -1404,6 +1488,7 @@ bool RemoveComponent(Entity entity, const std::string& type) {
     else if (type == "LuaScript") entity.RemoveComponent<LuaScriptComponent>();
     else if (type == "ScriptComponent") entity.RemoveComponent<ScriptComponent>();
     else if (type == "AudioSource") entity.RemoveComponent<AudioSourceComponent>();
+    else if (type == "ParticleEmitter") entity.RemoveComponent<ParticleEmitterComponent>();
     else if (type == "Character") entity.RemoveComponent<CharacterComponent>();
     else if (type == "CharacterController") entity.RemoveComponent<CharacterControllerComponent>();
     else return false;
@@ -1414,7 +1499,7 @@ const std::vector<std::string>& SupportedTypes() {
     static const std::vector<std::string> kTypes = {
         "MeshRenderer", "MeshCollider", "PhysicsShape", "RigidBody",
         "Material", "Light", "Camera", "LuaScript", "ScriptComponent", "AudioSource", "Character",
-        "CharacterController"
+        "CharacterController", "ParticleEmitter"
     };
     return kTypes;
 }

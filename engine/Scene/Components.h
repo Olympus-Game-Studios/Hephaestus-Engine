@@ -507,6 +507,56 @@ struct CameraComponent {
     }
 };
 
+/// One live particle, simulated in world space.
+struct Particle {
+    Vec3 position{0.0f, 0.0f, 0.0f};
+    Vec3 velocity{0.0f, 0.0f, 0.0f};
+    float age = 0.0f;
+    float lifetime = 1.0f;
+    float rotation = 0.0f; ///< radians, about the view direction
+    float spin = 0.0f;     ///< radians per second
+    float sizeScale = 1.0f;
+};
+
+/**
+ * Particle emitter - spawns camera-facing quads drawn with materialPath (use an alpha-blended or additive
+ * material). Particles leave along the entity's local +Y within spreadDegrees and live in world space.
+ * Runtime fields are not serialized.
+ */
+struct ParticleEmitterComponent {
+    std::string materialPath;
+    bool playOnStart = true;
+    bool loop = true;
+    bool destroyWhenDone = false; ///< remove the entity once a non-looping emitter has no particles left
+    float duration = 1.0f;        ///< seconds of emission per cycle
+    float rate = 10.0f;           ///< particles per second while emitting
+    int burst = 0;                ///< particles at the start of each cycle
+    int maxParticles = 100;
+    float lifetimeMin = 1.0f;
+    float lifetimeMax = 1.0f;
+    float speedMin = 1.0f;        ///< metres per second
+    float speedMax = 1.0f;
+    float spreadDegrees = 15.0f;  ///< half angle of the cone around local +Y
+    float gravity = 0.0f;         ///< multiple of world gravity (9.81 m/s^2 down)
+    float drag = 0.0f;            ///< velocity lost per second, as a rate
+    float sizeStart = 0.1f;       ///< metres across
+    float sizeEnd = 0.1f;
+    float sizeJitter = 0.0f;      ///< size varies by up to this fraction per particle
+    Vec4 colorStart{1.0f, 1.0f, 1.0f, 1.0f};
+    Vec4 colorEnd{1.0f, 1.0f, 1.0f, 0.0f};
+    float spinMin = 0.0f;         ///< degrees per second
+    float spinMax = 0.0f;
+    uint32_t seed = 1;
+
+    // Runtime-only state
+    std::vector<Particle> particles;
+    float time = 0.0f;
+    float emitCarry = 0.0f;
+    bool playing = false;
+    bool started = false;
+    uint32_t rngState = 0;
+};
+
 /**
  * Audio source component - declarative scene audio playback.
  * Runtime fields are not serialized and are managed by the audio system.

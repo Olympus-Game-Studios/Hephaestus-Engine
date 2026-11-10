@@ -11,7 +11,8 @@ Hephaestus is young, and I'd rather you know its gaps up front than discover the
 ## Rendering and materials
 
 - **Material graphs aren't per pixel yet.** The graph is worked out once into PBR values, so nodes like Noise, Fresnel, Time, World Position and UV distortion don't affect what you see. The Material Editor marks them **(no effect yet)** and warns when a graph uses one. [Details](materials.md#what-the-graph-cant-do-yet).
-- **No true transparency.** Opacity Mask cuts holes, but glass and water style blending isn't supported.
+- **Transparent and glowing materials are set in the material file only**, not yet in the Material Editor, and transparent surfaces are sorted per object, so two large overlapping ones can draw in the wrong order.
+- **Particles are camera-facing squares only** (no mesh particles, trails, collisions or lighting from the particles), up to about 750 on screen.
 - **No changing materials from scripts.**
 - **No post processing** like bloom, ambient occlusion, fog or depth of field, and no anti aliasing.
 - **No LODs, instancing or streaming** for very large worlds.

@@ -4,6 +4,7 @@
 #include "ScriptLanguageRegistry.h"
 #include "LuaDebugger.h"
 #include "../Audio/AudioEngine.h"
+#include "../Scene/ParticleSimulation.h"
 #include "../UI/HephaestusUI/UIContext.h"
 #include "../UI/HephaestusUI/UICanvas.h"
 #include "../UI/HephaestusUI/UIElement.h"
@@ -1158,6 +1159,7 @@ void LuaScriptEngine::RegisterBindings() {
     RegisterEntityBindings();
     RegisterTransformBindings();
     RegisterMeshBindings();
+    RegisterParticleBindings();
     RegisterInputBindings();
     RegisterUtilityBindings();
     RegisterExposeBindings();
@@ -1230,6 +1232,146 @@ void LuaScriptEngine::RegisterMeshBindings() {
     lua_pushcfunction(m_State, Lua_Mesh_isVisible);
     lua_setfield(m_State, -2, "isVisible");
     lua_setglobal(m_State, "Mesh");
+#endif
+}
+
+void LuaScriptEngine::RegisterParticleBindings() {
+#if LUA_AVAILABLE
+    lua_newtable(m_State);
+    lua_pushcfunction(m_State, Lua_Particles_play);
+    lua_setfield(m_State, -2, "play");
+    lua_pushcfunction(m_State, Lua_Particles_stop);
+    lua_setfield(m_State, -2, "stop");
+    lua_pushcfunction(m_State, Lua_Particles_burst);
+    lua_setfield(m_State, -2, "burst");
+    lua_pushcfunction(m_State, Lua_Particles_isPlaying);
+    lua_setfield(m_State, -2, "isPlaying");
+    lua_pushcfunction(m_State, Lua_Particles_count);
+    lua_setfield(m_State, -2, "count");
+    lua_setglobal(m_State, "Particles");
+#endif
+}
+
+int LuaScriptEngine::Lua_Particles_play(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (!registry.all_of<ParticleEmitterComponent>(handle)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto& emitter = registry.get<ParticleEmitterComponent>(handle);
+    const Mat4 world = engine->m_Scene->GetWorldTransform(Entity(handle, engine->m_Scene));
+    (void)world;
+    Hephaestus::Particles::Play(emitter, world);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Particles_stop(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (!registry.all_of<ParticleEmitterComponent>(handle)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto& emitter = registry.get<ParticleEmitterComponent>(handle);
+    const Mat4 world = engine->m_Scene->GetWorldTransform(Entity(handle, engine->m_Scene));
+    (void)world;
+    Hephaestus::Particles::Stop(emitter);
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Particles_burst(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (!registry.all_of<ParticleEmitterComponent>(handle)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto& emitter = registry.get<ParticleEmitterComponent>(handle);
+    const Mat4 world = engine->m_Scene->GetWorldTransform(Entity(handle, engine->m_Scene));
+    (void)world;
+    Hephaestus::Particles::Burst(emitter, world, static_cast<int>(luaL_optinteger(L, 1, emitter.burst > 0 ? emitter.burst : 1)));
+    lua_pushboolean(L, true);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Particles_isPlaying(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (!registry.all_of<ParticleEmitterComponent>(handle)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto& emitter = registry.get<ParticleEmitterComponent>(handle);
+    const Mat4 world = engine->m_Scene->GetWorldTransform(Entity(handle, engine->m_Scene));
+    (void)world;
+    lua_pushboolean(L, emitter.playing);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Particles_count(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_Scene) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const entt::entity handle = static_cast<entt::entity>(engine->m_CurrentEntityId);
+    auto& registry = engine->m_Scene->GetRegistry();
+    if (!registry.all_of<ParticleEmitterComponent>(handle)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto& emitter = registry.get<ParticleEmitterComponent>(handle);
+    const Mat4 world = engine->m_Scene->GetWorldTransform(Entity(handle, engine->m_Scene));
+    (void)world;
+    lua_pushinteger(L, static_cast<lua_Integer>(emitter.particles.size()));
+    return 1;
+#else
+    (void)L;
+    return 0;
 #endif
 }
 

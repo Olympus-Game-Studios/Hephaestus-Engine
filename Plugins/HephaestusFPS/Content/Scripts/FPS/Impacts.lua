@@ -2,6 +2,7 @@
 local Impacts = {}
 
 local prefabs = {}
+local effects = {}
 local maxDecals = 64
 local live = {}
 local count = 0
@@ -10,8 +11,10 @@ local function clamp(value, low, high)
     return math.max(low, math.min(high, value))
 end
 
-function Impacts.configure(prefabList, maximum)
+-- effectPrefabs: { dust = path, sparks = path }, particle prefabs whose emitters face +Y and destroy themselves.
+function Impacts.configure(prefabList, maximum, effectPrefabs)
     prefabs = prefabList or {}
+    effects = effectPrefabs or {}
     maxDecals = math.max(0, math.floor(maximum or 64))
     live = {}
     count = 0
@@ -58,6 +61,24 @@ function Impacts.spawn(hit, pick)
         live[oldest] = nil
     end
     return decal
+end
+
+-- Plays a one-shot effect prefab at a point with its +Y along direction.
+function Impacts.spawnEffect(path, x, y, z, dx, dy, dz)
+    if not path or path == "" then
+        return nil
+    end
+    return Scene.instantiate(path, { position = { x = x, y = y, z = z },
+                                     rotation = Impacts.rotationForNormal(dx, dy, dz) })
+end
+
+-- Dust off ordinary surfaces, sparks off targets (steel plates and other things with health).
+function Impacts.surfaceEffect(hit, hard)
+    if not hit or not hit.point or not hit.normal then
+        return nil
+    end
+    local path = hard and effects.sparks or effects.dust
+    return Impacts.spawnEffect(path, hit.point.x, hit.point.y, hit.point.z, hit.normal.x, hit.normal.y, hit.normal.z)
 end
 
 return Impacts

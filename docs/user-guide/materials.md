@@ -67,3 +67,19 @@ Per pixel materials are on the way. Until then, if a material looks different in
 ## Older materials
 
 If a material from an earlier version of Hephaestus has no graph, it opens in **Legacy PBR** mode, where you edit the values directly. Click **Convert to graph** when you want node editing. Nothing is lost either way.
+
+## Particle effects
+
+Smoke, dust, sparks and other effects come from a **Particle Emitter** component (add it like any other component, under Rendering). Each particle is a small square that always faces the camera, drawn with the emitter's **Material**: give it an alpha-blended material for smoke and dust or an additive one for sparks and fire. The texture's alpha shapes each particle.
+
+Particles leave the entity along its local **up (+Y)** axis, inside a cone of **Spread** degrees, and then move on their own in the world, so a moving emitter leaves a trail. Its settings:
+
+- **Play On Start**, **Loop**, **Duration**: emit for Duration seconds, then stop or start again.
+- **Rate** (particles a second while emitting) and **Burst** (particles all at once at the start of each loop). A grenade blast is a big Burst with Rate 0; a smoke grenade is a steady Rate over a long Duration.
+- **Max Particles**: the most alive at once.
+- **Lifetime**, **Speed**, **Spin**: each particle picks a value between the Min and Max.
+- **Gravity**: 1 falls like a dropped object, negative values rise like smoke. **Drag** slows particles down over time.
+- **Size Start** and **Size End** in metres, with **Size Jitter** for variety. **Color Start** and **Color End** tint the material and fade it out through alpha.
+- **Destroy When Done**: remove the entity once it has stopped and its last particle has gone, for one-shot effect prefabs.
+
+Particles only move while the game is playing. To play an effect from a script, spawn a prefab with an emitter (`Scene.instantiate`) or control the script's own emitter with the `Particles` functions in the [Lua API reference](lua-api.md#particles).

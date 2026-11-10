@@ -386,6 +386,7 @@ private:
      */
     void RegisterTransformBindings();
     void RegisterMeshBindings();
+    void RegisterParticleBindings();
 
     /**
      * Register Input bindings
@@ -472,6 +473,11 @@ private:
     static int Lua_Transform_setScale(lua_State* L);
     static int Lua_Mesh_setVisible(lua_State* L);
     static int Lua_Mesh_isVisible(lua_State* L);
+    static int Lua_Particles_play(lua_State* L);
+    static int Lua_Particles_stop(lua_State* L);
+    static int Lua_Particles_burst(lua_State* L);
+    static int Lua_Particles_isPlaying(lua_State* L);
+    static int Lua_Particles_count(lua_State* L);
 
     static int Lua_Entity_isValid(lua_State* L);
     static int Lua_Entity_getName(lua_State* L);

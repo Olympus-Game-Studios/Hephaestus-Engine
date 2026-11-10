@@ -5,6 +5,7 @@
 #include "../Scene/ActiveCameraSync.h"
 #include "../Physics/JoltPhysicsSystem.h"
 #include "../Scene/Components.h"
+#include "../Scene/ParticleSimulation.h"
 #include "../Scene/Scene.h"
 #include "../Scripting/LuaScriptEngine.h"
 #include "../Scripting/PluginScriptHost.h"
@@ -86,6 +87,7 @@ bool RunSimulationStep(const SimulationStepContext& context, float dt)
     if (context.cppScripts) {
         context.cppScripts->LateUpdateScripts(dt);
     }
+    Particles::UpdateScene(scene, dt);
     return !ReloadAtSafePoint(context);
 }
 

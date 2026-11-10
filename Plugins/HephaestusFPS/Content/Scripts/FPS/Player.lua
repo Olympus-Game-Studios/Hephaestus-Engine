@@ -36,6 +36,8 @@ Expose.number("footstepStride", 2.1)
 Expose.number("footstepVolume", 0.5)
 Expose.string("impactDecalPrefabs", "")
 Expose.number("maxImpactDecals", 64)
+Expose.string("impactDustPrefab", "")
+Expose.string("impactSparksPrefab", "")
 
 local Player = {}
 local yaw = 0
@@ -279,7 +281,8 @@ function onAwake()
     cameraKickPitch = { x = 0, v = 0 }
     cameraKickYaw = { x = 0, v = 0 }
     footsteps = parseList(footstepSounds)
-    Impacts.configure(parseList(impactDecalPrefabs), maxImpactDecals)
+    Impacts.configure(parseList(impactDecalPrefabs), maxImpactDecals,
+                      { dust = impactDustPrefab, sparks = impactSparksPrefab })
     commands = { fireHeld = false, firePressed = false, reload = false, interact = false }
     Health.attach(this, { maxHealth = maxHealth })
     Registry.setPlayer(this, {

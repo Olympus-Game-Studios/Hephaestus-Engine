@@ -70,6 +70,7 @@ Expose.number("landKick", 0.006)
 Expose.number("footfallDip", 0.004)
 Expose.number("fireBufferSeconds", 0.1)
 Expose.number("flashSeconds", 0.035)
+Expose.string("muzzleSmokePrefab", "")
 Expose.number("sprintToFireSeconds", 0.22)
 Expose.number("raiseSeconds", 0.45)
 Expose.number("lowerSeconds", 0.3)
@@ -109,6 +110,7 @@ local TUNING = {
     "cameraKickFrequency", "cameraKickDampingRatio", "swayAmount", "swayLag", "swayMaxDegrees", "swayFrequency",
     "swayDampingRatio", "adsSwayScale", "idleAmount", "idleBreathRate", "idleAdsScale", "bobAmount", "moveLag",
     "moveMaxOffset", "moveFrequency", "strafeRoll", "landKick", "footfallDip", "fireBufferSeconds", "flashSeconds",
+    "muzzleSmokePrefab",
     "sprintToFireSeconds", "raiseSeconds", "lowerSeconds", "fireSound", "fireVolume", "firePitchJitter",
     "fireVolumeJitter", "emptySound", "reloadSound",
     "reloadPart2Sound", "boltSound",
@@ -298,6 +300,29 @@ local function setPartsVisible(visible)
     end
 end
 
+-- World-space smoke just past the muzzle: the view model is drawn in the camera's frame, so its muzzle is
+-- approximated from the aim ray, moving from the hip offset to under the sight as the weapon aims.
+local function spawnMuzzleSmoke(row, input)
+    if not row.muzzleSmokePrefab or row.muzzleSmokePrefab == "" or not input.dx then
+        return
+    end
+    local fx, fy, fz = input.dx, input.dy, input.dz
+    local rx, ry, rz = -fz, 0, fx -- forward x world up
+    local length = math.sqrt(rx * rx + ry * ry + rz * rz)
+    if length < 1e-4 then
+        return
+    end
+    rx, ry, rz = rx / length, ry / length, rz / length
+    local ux, uy, uz = ry * fz - rz * fy, rz * fx - rx * fz, rx * fy - ry * fx
+    local ads = row.adsBlend or 0
+    local side, drop = Gunplay.lerp(0.14, 0.0, ads), Gunplay.lerp(0.1, 0.05, ads)
+    Impacts.spawnEffect(row.muzzleSmokePrefab,
+                        input.ox + fx * 0.6 + rx * side - ux * drop,
+                        input.oy + fy * 0.6 + ry * side - uy * drop,
+                        input.oz + fz * 0.6 + rz * side - uz * drop,
+                        fx, fy, fz)
+end
+
 local function hideFlashes(row)
     for _, flash in ipairs(row.flashes or {}) do
         flash:Call("hideFlash")
@@ -335,9 +360,11 @@ local function applyHit(row, hit, owner)
     end
     local zoneRow = Registry.hitZones[Registry.key(hit.entity)]
     -- Targets swing and fall, so only static surfaces get bullet holes.
-    if not zoneRow and not Health.get(hit.entity) then
+    local hasHealth = Health.get(hit.entity) ~= nil
+    if not zoneRow and not hasHealth then
         Impacts.spawn(hit, Gunplay.rngNext(row.rng))
     end
+    Impacts.surfaceEffect(hit, hasHealth and not zoneRow)
     local zone = zoneRow and zoneRow.zone or "body"
     local target = zoneRow and zoneRow.owner or hit.entity
     local amount = Gunplay.shotDamage(row, hit.distance or 0, zone)
@@ -411,6 +438,7 @@ local function fireShot(row, input, owner)
 
     playShot(row)
     showFlash(row)
+    spawnMuzzleSmoke(row, input)
     if row.hitscan then
         applyHit(row, Hitscan.trace(input.ox, input.oy, input.oz, dx, dy, dz, row.range, owner), owner)
     end

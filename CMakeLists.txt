@@ -365,6 +365,7 @@ add_library(HephaestusRuntime STATIC
     engine/Scene/PrefabSerializer.cpp
     engine/Scene/PrefabInstantiator.cpp
     engine/Scene/PrefabComponentIO.cpp
+    engine/Scene/ParticleSimulation.cpp
     engine/Scene/PrefabOverrideSystem.cpp
     engine/Scene/SceneSerializer.cpp
     engine/Scripting/ScriptBase.cpp
@@ -645,6 +646,8 @@ if(HEPHAESTUS_USE_QT)
             engine/UI/QtEditor/AddComponentPopup.h
             engine/UI/QtEditor/AudioSourceInspector.cpp
             engine/UI/QtEditor/AudioSourceInspector.h
+            engine/UI/QtEditor/ParticleEmitterInspector.cpp
+            engine/UI/QtEditor/ParticleEmitterInspector.h
             engine/UI/QtEditor/EditorUndoCommand.cpp
             engine/UI/QtEditor/EditorUndoCommand.h
             engine/UI/QtEditor/MeshRendererInspector.cpp
@@ -1426,6 +1429,20 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME SwapchainFormat
         COMMAND SwapchainFormatTests
+    )
+
+    add_executable(ParticleSimulationTests
+        engine/Tests/ParticleSimulationTests.cpp
+    )
+    target_link_libraries(ParticleSimulationTests PRIVATE HephaestusRuntime)
+    target_include_directories(ParticleSimulationTests PRIVATE
+        engine
+        extern
+        extern/entt/single_include
+    )
+    add_test(
+        NAME ParticleSimulation
+        COMMAND ParticleSimulationTests
     )
 
     add_executable(AudioEngineTests

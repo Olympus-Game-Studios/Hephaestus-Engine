@@ -61,6 +61,16 @@ The `Transform` table has the same as functions for the script's own entity: `ge
 | --- | --- |
 | `Mesh.setVisible(visible)` / `Mesh.isVisible()` | Show or hide the script's own mesh. |
 
+## Particles
+
+For the script's own Particle Emitter.
+
+| Function | Does |
+| --- | --- |
+| `Particles.play()` / `Particles.stop()` | Start emitting from the beginning (with its Burst), or stop emitting and let live particles finish. |
+| `Particles.burst(count)` | Emit `count` particles at once (the emitter's Burst if left out), playing or not. |
+| `Particles.isPlaying()` / `Particles.count()` | Whether it is emitting, and how many particles are alive. |
+
 ## Time and application
 
 | Function | Does |

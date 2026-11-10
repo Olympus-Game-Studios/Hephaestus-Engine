@@ -575,6 +575,40 @@ static std::string NormalizeAssetPathForSave(const std::string& rawPath)
     return std::filesystem::path(rawPath).filename().generic_string();
 }
 
+std::string WriteParticleEmitterJson(const ParticleEmitterComponent& emitter)
+{
+    std::ostringstream oss;
+    oss.imbue(std::locale::classic());
+    oss << "        \"ParticleEmitter\": {\n";
+    oss << "          \"materialPath\": \"" << EscapeString(NormalizeAssetPathForSave(emitter.materialPath)) << "\",\n";
+    oss << "          \"playOnStart\": " << (emitter.playOnStart ? "true" : "false") << ",\n";
+    oss << "          \"loop\": " << (emitter.loop ? "true" : "false") << ",\n";
+    oss << "          \"destroyWhenDone\": " << (emitter.destroyWhenDone ? "true" : "false") << ",\n";
+    oss << "          \"duration\": " << FormatFloat(emitter.duration) << ",\n";
+    oss << "          \"rate\": " << FormatFloat(emitter.rate) << ",\n";
+    oss << "          \"lifetimeMin\": " << FormatFloat(emitter.lifetimeMin) << ",\n";
+    oss << "          \"lifetimeMax\": " << FormatFloat(emitter.lifetimeMax) << ",\n";
+    oss << "          \"speedMin\": " << FormatFloat(emitter.speedMin) << ",\n";
+    oss << "          \"speedMax\": " << FormatFloat(emitter.speedMax) << ",\n";
+    oss << "          \"spreadDegrees\": " << FormatFloat(emitter.spreadDegrees) << ",\n";
+    oss << "          \"gravity\": " << FormatFloat(emitter.gravity) << ",\n";
+    oss << "          \"drag\": " << FormatFloat(emitter.drag) << ",\n";
+    oss << "          \"sizeStart\": " << FormatFloat(emitter.sizeStart) << ",\n";
+    oss << "          \"sizeEnd\": " << FormatFloat(emitter.sizeEnd) << ",\n";
+    oss << "          \"sizeJitter\": " << FormatFloat(emitter.sizeJitter) << ",\n";
+    oss << "          \"spinMin\": " << FormatFloat(emitter.spinMin) << ",\n";
+    oss << "          \"spinMax\": " << FormatFloat(emitter.spinMax) << ",\n";
+    oss << "          \"burst\": " << emitter.burst << ",\n";
+    oss << "          \"maxParticles\": " << emitter.maxParticles << ",\n";
+    oss << "          \"seed\": " << emitter.seed << ",\n";
+    oss << "          \"colorStart\": [" << FormatFloat(emitter.colorStart.x) << ", " << FormatFloat(emitter.colorStart.y) << ", "
+        << FormatFloat(emitter.colorStart.z) << ", " << FormatFloat(emitter.colorStart.w) << "],\n";
+    oss << "          \"colorEnd\": [" << FormatFloat(emitter.colorEnd.x) << ", " << FormatFloat(emitter.colorEnd.y) << ", "
+        << FormatFloat(emitter.colorEnd.z) << ", " << FormatFloat(emitter.colorEnd.w) << "]\n";
+    oss << "        }";
+    return oss.str();
+}
+
 static EnvironmentComponent::BackgroundType ParseBackgroundType(const JsonValue& value)
 {
     if (!value.IsString()) {
@@ -808,6 +842,7 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
         const ScriptComponent* scriptComponent = registry.try_get<ScriptComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
         const AudioSourceComponent* audio = registry.try_get<AudioSourceComponent>(handle);
+        const ParticleEmitterComponent* particles = registry.try_get<ParticleEmitterComponent>(handle);
         const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
         const CharacterControllerComponent* characterController = registry.try_get<CharacterControllerComponent>(handle);
         const ProbeVolumeComponent* probeVolume = registry.try_get<ProbeVolumeComponent>(handle);
@@ -1080,6 +1115,10 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
 
         if (characterController) {
             componentBlocks.push_back(WriteCharacterControllerJson(*characterController));
+        }
+
+        if (particles) {
+            componentBlocks.push_back(WriteParticleEmitterJson(*particles));
         }
 
         if (probeVolume) {
@@ -1929,6 +1968,14 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             audio.runtimeLastClip.clear();
         }
 
+        if (const JsonValue* particlesObj = components->Find("ParticleEmitter")) {
+            if (!particlesObj->IsObject()) {
+                outError = "ParticleEmitter component is not an object.";
+                return false;
+            }
+            PrefabComponentIO::ApplyComponentJson(entity, "ParticleEmitter", *particlesObj, true);
+        }
+
         if (const JsonValue* characterObj = components->Find("Character")) {
             auto& character = entity.AddComponent<CharacterComponent>();
             if (!ApplyCharacterJson(character, *characterObj, outError)) {
@@ -2407,6 +2454,7 @@ std::string SceneSerializer::SerializeToString() const
         const CameraComponent* camera = registry.try_get<CameraComponent>(handle);
         const LuaScriptComponent* script = registry.try_get<LuaScriptComponent>(handle);
         const AudioSourceComponent* audio = registry.try_get<AudioSourceComponent>(handle);
+        const ParticleEmitterComponent* particles = registry.try_get<ParticleEmitterComponent>(handle);
         const CharacterComponent* character = registry.try_get<CharacterComponent>(handle);
         const CharacterControllerComponent* characterController = registry.try_get<CharacterControllerComponent>(handle);
         const ProbeVolumeComponent* probeVolume = registry.try_get<ProbeVolumeComponent>(handle);
@@ -2663,6 +2711,10 @@ std::string SceneSerializer::SerializeToString() const
 
         if (characterController) {
             componentBlocks.push_back(WriteCharacterControllerJson(*characterController));
+        }
+
+        if (particles) {
+            componentBlocks.push_back(WriteParticleEmitterJson(*particles));
         }
 
         if (probeVolume) {

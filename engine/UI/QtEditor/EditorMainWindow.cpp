@@ -29,6 +29,7 @@
 #include "PhysicsInspectors.h"
 #include "CameraInspector.h"
 #include "AudioSourceInspector.h"
+#include "ParticleEmitterInspector.h"
 #include "CharacterInspector.h"
 #include "CharacterControllerInspector.h"
 #include "AddComponentPopup.h"
@@ -7526,6 +7527,14 @@ void EditorMainWindow::registerComponentInspectors()
         },
         [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
             return new AudioSourceInspector(ctx, e, parent);
+        });
+
+    reg.Register("ParticleEmitter", 44,
+        [](const entt::registry& r, entt::entity e) {
+            return r.all_of<ParticleEmitterComponent>(e);
+        },
+        [](EditorContext* ctx, entt::entity e, QWidget* parent) -> ComponentInspector* {
+            return new ParticleEmitterInspector(ctx, e, parent);
         });
 
     // ── Camera (order 50) ───────────────────────────────────────────────
