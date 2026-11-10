@@ -1568,6 +1568,10 @@ void LuaScriptEngine::RegisterCharacterBindings() {
 
     lua_pushcfunction(m_State, Lua_Character_isProne);
     lua_setfield(m_State, -2, "isProne");
+    lua_pushcfunction(m_State, Lua_Character_ragdoll);
+    lua_setfield(m_State, -2, "ragdoll");
+    lua_pushcfunction(m_State, Lua_Character_isRagdoll);
+    lua_setfield(m_State, -2, "isRagdoll");
     lua_pushcfunction(m_State, Lua_Character_getVelocity);
     lua_setfield(m_State, -2, "getVelocity");
     lua_pushcfunction(m_State, Lua_Character_getGroundNormal);
@@ -2031,6 +2035,50 @@ int LuaScriptEngine::Lua_Character_isProne(lua_State* L) {
         return 1;
     }
     lua_pushboolean(L, engine->m_CharacterBinding.isProne(engine->m_CurrentEntityId));
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_ragdoll(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.ragdoll) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const Vec3 impulse(static_cast<float>(luaL_optnumber(L, 1, 0.0)), static_cast<float>(luaL_optnumber(L, 2, 0.0)),
+                       static_cast<float>(luaL_optnumber(L, 3, 0.0)));
+    Vec3 point;
+    const bool hasPoint = lua_isnumber(L, 4) && lua_isnumber(L, 5) && lua_isnumber(L, 6);
+    if (hasPoint) {
+        point = Vec3(static_cast<float>(lua_tonumber(L, 4)), static_cast<float>(lua_tonumber(L, 5)),
+                     static_cast<float>(lua_tonumber(L, 6)));
+    }
+    std::string error;
+    const bool ok = engine->m_CharacterBinding.ragdoll(engine->m_CurrentEntityId, impulse, hasPoint ? &point : nullptr,
+                                                       error);
+    if (!ok && !error.empty()) {
+        engine->LogBindingErrorForEntity(engine->m_CurrentEntityId, "Character.ragdoll: " + error);
+    }
+    lua_pushboolean(L, ok);
+    return 1;
+#else
+    (void)L;
+    return 0;
+#endif
+}
+
+int LuaScriptEngine::Lua_Character_isRagdoll(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    if (!engine || !engine->CurrentEntityValid() || !engine->m_CharacterBinding.isRagdoll) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    lua_pushboolean(L, engine->m_CharacterBinding.isRagdoll(engine->m_CurrentEntityId));
     return 1;
 #else
     (void)L;

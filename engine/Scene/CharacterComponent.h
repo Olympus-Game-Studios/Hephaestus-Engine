@@ -27,6 +27,7 @@ struct CharacterComponent {
 
     bool runtimeReady = false;
     bool suppressAutoPlay = false;
+    bool externalPose = false; ///< A ragdoll writes worldPose; animation does not tick.
     Hephaestus::Skeleton skeleton;
     std::vector<Hephaestus::AnimationClip> clips;
     Hephaestus::AnimationPlayer player;

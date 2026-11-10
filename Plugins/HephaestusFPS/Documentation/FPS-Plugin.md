@@ -91,11 +91,11 @@ What an enemy does:
 - **Search**: when it has lost sight of you for a while it either pushes to where it last saw you or goes there carefully, then looks around and goes back to patrolling.
 - **Pressure**: every `tacticsIntervalSeconds` while you stay hidden it may throw a frag at where it last saw you (`fragGrenadePrefab`, thrown at `throwAngleDegrees`, doing `grenadeDamage` times the difficulty's scale) or go round your cover to a spot that can see you. Only one enemy flanks at a time.
 - **Grenades**: it runs from a frag that has landed near it. **Squad**: it tells allies near it where you are.
-- **Death**: it stops, falls over and is removed after `corpseSeconds`. Its hit zones stay with the body, so bullets stop on it.
+- **Death**: it goes limp as a ragdoll, pushed away from the player by `ragdollImpulse`, or away from the explosion by `ragdollBlastImpulse` when a frag kills it, and drops its weapon. It is removed after `corpseSeconds`. A character that can't ragdoll falls over instead.
 
 The model turns to face where it is walking or aiming. Set `modelYawOffsetDegrees` to how far the model must turn to face +X (90 for a Mixamo character, which faces +Z). `idleClip`, `walkClip` and `runClip` are cross-faded by speed. Shots come from `eyeHeight`, do `damage` up to `range` metres, and play `fireSound` in 3D. Turn on `debugAI` to log every state change, shot, hit, grenade and death.
 
-To give an enemy a visible weapon, add a child with the weapon's Mesh Renderer (barrel along +X) and `HeldWeapon.lua`. Each frame it puts the grip at the character's `gripSocket` (default `RightHand`) and points the barrel at `supportSocket` (default `LeftHand`), moved `gripForward` metres along the barrel and `gripUp` above it. The character needs both sockets on its hand bones.
+To give an enemy a visible weapon, add a child with the weapon's Mesh Renderer (barrel along +X) and `HeldWeapon.lua`. Each frame it puts the grip at the character's `gripSocket` (default `RightHand`) and points the barrel at `supportSocket` (default `LeftHand`), moved `gripForward` metres along the barrel and `gripUp` above it. The character needs both sockets on its hand bones. Set `dropPrefab` to a physics copy of the weapon with `Casing.lua` and the enemy drops it when it dies.
 
 ### Difficulty
 

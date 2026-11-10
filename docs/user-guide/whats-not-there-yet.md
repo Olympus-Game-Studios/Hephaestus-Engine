@@ -21,7 +21,7 @@ Hephaestus is young, and I'd rather you know its gaps up front than discover the
 
 ## Physics
 
-- No joints, ragdolls or vehicles.
+- No joints or vehicles. Ragdolls work for humanoid characters only, with a built-in body shape you can't edit yet.
 - Raycasts are the only physics query (no overlap or shape casts).
 - There's no way to draw a Rigid Body's collision shape in the viewport yet. A Mesh Collider's **Debug Draw Bounds** does draw its box.
 - No coyote time or jump buffering in the Character Controller; script them if you want them.

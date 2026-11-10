@@ -362,6 +362,7 @@ add_library(HephaestusRuntime STATIC
     engine/Physics/PhysicsLayerConfig.cpp
     engine/Physics/JoltPhysicsEngine.cpp
     engine/Physics/JoltPhysicsSystem.cpp
+    engine/Physics/RagdollSystem.cpp
     engine/Physics/CharacterMotor.cpp
     engine/Physics/CharacterControllerMath.cpp
     engine/Physics/CharacterControllerSystem.cpp

@@ -42,6 +42,8 @@ Expose.number("grenadeDamage", 150)
 Expose.number("throwAngleDegrees", 40)
 Expose.number("grenadeDamping", 0.1)
 Expose.number("tacticsIntervalSeconds", 1.5)
+Expose.number("ragdollImpulse", 45)
+Expose.number("ragdollBlastImpulse", 220)
 Expose.bool("debugAI", false)
 
 local Enemy = {}
@@ -75,6 +77,9 @@ local selfKey = nil
 local grenadesLeft = 0
 local grenadeCooldown = 0
 local tacticsTimer = 0
+local ragdollPending = false
+local deathZone = nil
+local children = {}
 
 local function random()
     rng = (rng * 1103515245 + 12345) % 2147483648
@@ -708,11 +713,57 @@ function onAwake()
     awareness, visible, visibleTime, lostTime = 0, false, 0, 0
     lastKnown, heardNoise, danger, dead, corpseTimer = nil, nil, nil, false, 0
     lastHeardId = Registry.noiseCount or 0
+    ragdollPending, deathZone, children = false, nil, {}
     brain = nil
+end
+
+-- Falls as a ragdoll pushed away from what killed it, dropping held weapons. Starts the update after death,
+-- because the weapon reports the hit zone after the death.
+local function fall()
+    local p = position()
+    local from = nil
+    if deathZone == "blast" and Registry.lastBlast then
+        from = Registry.lastBlast
+    elseif Registry.player and Registry.player.entity and Registry.player.entity:IsValid() then
+        local transform = Registry.player.entity:GetTransform()
+        from = transform and transform:GetWorldPosition()
+    end
+    local dx, dz = 0, 0
+    if from then
+        dx, dz = p.x - from.x, p.z - from.z
+        local length = math.sqrt(dx * dx + dz * dz)
+        if length > 1e-3 then
+            dx, dz = dx / length, dz / length
+        else
+            dx, dz = 0, 0
+        end
+    end
+    local blast = deathZone == "blast"
+    local strength = blast and ragdollBlastImpulse or ragdollImpulse
+    local height = deathZone == "head" and eyeHeight or (deathZone == "limb" and 0.5 or 1.2)
+    local ix, iy, iz = dx * strength, blast and strength * 0.6 or 0, dz * strength
+    local ok
+    if blast then
+        ok = Character.ragdoll(ix, iy, iz)
+    else
+        ok = Character.ragdoll(ix, iy, iz, p.x, p.y + height, p.z)
+    end
+    if not ok then
+        Transform.setRotation(0, yaw + math.rad(modelYawOffsetDegrees), math.rad(-90))
+    end
+    for _, child in ipairs(children) do
+        if child:IsValid() then
+            child:Call("dropWeapon", dx * 2, 1.5, dz * 2, corpseSeconds)
+        end
+    end
 end
 
 function onUpdate(dt)
     if dead then
+        if ragdollPending then
+            ragdollPending = false
+            fall()
+        end
         corpseTimer = corpseTimer + dt
         if corpseTimer >= corpseSeconds then
             Scene.destroy(this)
@@ -725,6 +776,13 @@ function onUpdate(dt)
             return
         end
         refreshIgnore()
+        children = {}
+        for _, entity in ipairs(Scene.findAllWithPrefix("")) do
+            local parent = entity:GetParent()
+            if parent and Registry.key(parent) == selfKey then
+                children[#children + 1] = entity
+            end
+        end
         brain = Brain.new(this, states, "patrol")
     end
     perceptionTimer = perceptionTimer - dt
@@ -774,6 +832,9 @@ function onHit(amount, zone, distance)
         engine_log(string.format("[FPS.Enemy] %s hit in the %s for %.0f", this:GetName(), tostring(zone), amount))
     end
     if dead then
+        if ragdollPending and not deathZone then
+            deathZone = zone
+        end
         return
     end
     local row = player()
@@ -818,7 +879,8 @@ function onDeath()
     if animator then
         animator:Pause()
     end
-    Transform.setRotation(0, yaw + math.rad(modelYawOffsetDegrees), math.rad(-90))
+    ragdollPending = true
+    deathZone = nil
 end
 
 function onDestroy()

@@ -81,4 +81,4 @@ end
 
 - Physics steps at a fixed 60 times a second. Moving bodies and characters are drawn smoothly between steps, so it still looks right at high frame rates.
 - Tick **Debug Draw Bounds** on a Mesh Collider to see its box as a green outline in the viewport. There's no matching view for Rigid Body shapes yet.
-- There are no joints, ragdolls or vehicles yet, and no overlap or shape cast queries; raycasts are the only physics query for now.
+- Humanoid characters can go limp as ragdolls from Lua (`Character.ragdoll`, see the [Lua API reference](lua-api.md#character)). There are no joints you can set up yourself and no vehicles yet, and no overlap or shape cast queries; raycasts are the only physics query for now.

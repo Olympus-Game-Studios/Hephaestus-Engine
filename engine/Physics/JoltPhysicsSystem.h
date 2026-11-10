@@ -13,6 +13,7 @@
 #include "JoltPhysicsEngine.h"
 #include "PhysicsContactEvents.h"
 #include "PhysicsWorldPose.h"
+#include "RagdollSystem.h"
 #include "../Scene/Scene.h"
 #include "../Core/Math.h"
 
@@ -74,6 +75,10 @@ public:
     void RegisterCharacterProxy(entt::entity entity, JPH::BodyID bodyId);
     void UnregisterCharacterProxy(JPH::BodyID bodyId);
     bool IsCharacterProxy(JPH::BodyID bodyId) const;
+    // Bodies owned by another system that should report `entity` in raycasts and contacts.
+    void RegisterExternalBody(entt::entity entity, JPH::BodyID bodyId);
+    void UnregisterExternalBody(JPH::BodyID bodyId);
+    RagdollSystem& Ragdolls() { return *m_Ragdolls; }
 
     // When true, a character proxy contact does not let the solver push a dynamic body.
     // CharacterVirtual::HandleContact remains the push. Sensors are unchanged.
@@ -196,6 +201,9 @@ private:
     void DetachContactListener();
     void DispatchContactEvents();
     void ClearContactState();
+
+    // Last, so ragdolls are destroyed while the body maps they unregister from still exist.
+    std::unique_ptr<RagdollSystem> m_Ragdolls;
 };
 
 } // namespace Physics

@@ -62,6 +62,7 @@ local function detonate()
     end
     Registry.clearDanger(this)
     Registry.reportNoise(p.x, p.y, p.z, radius * 8, "explosion")
+    Registry.lastBlast = { x = p.x, y = p.y, z = p.z }
     -- Lifted off the ground so the floor under the grenade does not block the blast.
     Explosives.applyBlast(p.x, p.y + 0.2, p.z, {
         damage = damage,

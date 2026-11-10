@@ -275,6 +275,24 @@ CharacterBinding MakeScriptCharacterBinding(ScriptPhysicsAccessor access)
         out = Physics::CharacterGroundStateName(state.groundState);
         return true;
     };
+    binding.ragdoll = [access](uint32_t entityId, const Vec3& impulse, const Vec3* point, std::string& outError) {
+        const ScriptPhysicsAccess a = access();
+        if (!a.scene || !a.physicsSystem) {
+            outError = "Physics is not running.";
+            return false;
+        }
+        Physics::RagdollStart start;
+        start.impulse = impulse;
+        if (point) {
+            start.impulsePoint = *point;
+            start.hasImpulsePoint = true;
+        }
+        return a.physicsSystem->Ragdolls().Start(*a.scene, static_cast<entt::entity>(entityId), start, outError);
+    };
+    binding.isRagdoll = [access](uint32_t entityId) {
+        const ScriptPhysicsAccess a = access();
+        return a.physicsSystem && a.physicsSystem->Ragdolls().IsActive(static_cast<entt::entity>(entityId));
+    };
 
     return binding;
 }

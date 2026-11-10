@@ -113,6 +113,8 @@ struct CharacterBinding {
     std::function<bool(uint32_t entityId, std::string& outState)> getGroundState;
     std::function<bool(uint32_t entityId, float x, float y, float z)> teleport;
     std::function<bool(uint32_t entityId, float radians)> setFacingYaw;
+    std::function<bool(uint32_t entityId, const Vec3& impulse, const Vec3* impulsePoint, std::string& outError)> ragdoll;
+    std::function<bool(uint32_t entityId)> isRagdoll;
 };
 
 struct PhysicsBinding {
@@ -550,6 +552,8 @@ private:
     static int Lua_Character_isStandBlocked(lua_State* L);
     static int Lua_Character_setProne(lua_State* L);
     static int Lua_Character_isProne(lua_State* L);
+    static int Lua_Character_ragdoll(lua_State* L);
+    static int Lua_Character_isRagdoll(lua_State* L);
     static int Lua_Character_getVelocity(lua_State* L);
     static int Lua_Character_getGroundNormal(lua_State* L);
     static int Lua_Character_getGroundVelocity(lua_State* L);

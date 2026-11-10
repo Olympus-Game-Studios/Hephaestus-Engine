@@ -264,7 +264,7 @@ bool CharacterAnimationSystem::SampleAtTime(CharacterComponent& character,
 }
 
 void CharacterAnimationSystem::TickEntity(CharacterComponent& character, float deltaTime) {
-    if (!character.runtimeReady) {
+    if (!character.runtimeReady || character.externalPose) {
         return;
     }
     if (!character.suppressAutoPlay && !character.player.playing && !character.player.hasPendingPlay &&

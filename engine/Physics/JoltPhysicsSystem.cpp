@@ -372,6 +372,7 @@ struct PhysicsContactListener : public JPH::ContactListener {
 
 JoltPhysicsSystem::JoltPhysicsSystem(JoltPhysicsEngine& physicsEngine)
     : m_PhysicsEngine(physicsEngine)
+    , m_Ragdolls(std::make_unique<RagdollSystem>(physicsEngine, *this))
 {
 }
 
@@ -408,6 +409,20 @@ void JoltPhysicsSystem::UnregisterCharacterProxy(JPH::BodyID bodyId)
     auto found = m_BodyToEntityMap.find(key);
     if (found != m_BodyToEntityMap.end()) {
         m_BodyToEntityMap.erase(found);
+    }
+}
+
+void JoltPhysicsSystem::RegisterExternalBody(entt::entity entity, JPH::BodyID bodyId)
+{
+    if (!bodyId.IsInvalid()) {
+        m_BodyToEntityMap[BodyKey(bodyId)] = entity;
+    }
+}
+
+void JoltPhysicsSystem::UnregisterExternalBody(JPH::BodyID bodyId)
+{
+    if (!bodyId.IsInvalid()) {
+        m_BodyToEntityMap.erase(BodyKey(bodyId));
     }
 }
 
@@ -589,10 +604,12 @@ void JoltPhysicsSystem::Update(Scene& scene, float deltaTime) {
         if (m_CharacterController) {
             m_CharacterController->FixedStep(scene, kPhysicsFixedDt);
         }
-        if (m_EntityToBodyMap.empty() && !(m_CharacterController && m_CharacterController->ActiveCount() > 0)) {
+        if (m_EntityToBodyMap.empty() && !(m_CharacterController && m_CharacterController->ActiveCount() > 0)
+            && m_Ragdolls->ActiveCount() == 0) {
             return;
         }
         m_PhysicsEngine.Update(kPhysicsFixedDt);
+        m_Ragdolls->AfterStep(scene);
         DispatchContactEvents();
         auto view = scene.GetEntitiesWith<TransformComponent, RigidBodyComponent>();
         for (auto handle : view) {
@@ -1405,6 +1422,7 @@ void JoltPhysicsSystem::ClearAllBodies() {
     if (m_CharacterController) {
         m_CharacterController->Clear();
     }
+    m_Ragdolls->Clear();
     m_CharacterProxies.clear();
 
     // Destroy all bodies in the physics engine
