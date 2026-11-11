@@ -54,17 +54,16 @@ Expose.number("slideCooldown", 0.6)
 Expose.number("slideSteer", 1.5)
 Expose.number("slideFovBoost", 6)
 Expose.number("slideRollDegrees", 4)
-Expose.number("slideCameraHeight", 0.7) -- eye height while sliding, eased in and out with the slide (0 keeps crouch height)
+Expose.number("slideCameraHeight", 0.55) -- eye height while sliding, eased in and out with the slide (0 keeps crouch height)
 -- The player's own legs, seen while sliding: a character prefab with FPS/SlideLegs.lua ("" for none) and where it
--- sits relative to the player's feet and facing.
+-- sits relative to the camera and the player's facing.
 Expose.string("slideLegsPrefab", "")
-Expose.number("slideLegsForward", -0.2)
+Expose.number("slideLegsForward", -0.1)
 Expose.number("slideLegsRight", -0.12)
-Expose.number("slideLegsHeight", -0.66)
+Expose.number("slideLegsBelowEye", 1.24) -- metres from the camera down to the model's origin, so the hips stay under it
 Expose.number("slideLegsYawDegrees", 90)
 Expose.number("slideLegsDrop", 0.45) -- how far below their place they rise from and drop back to
-Expose.number("slideLegsPullBackAtDown", 0.35) -- metres back when looking straight down, scaled by pitch (the waist is cut)
-Expose.number("slideLegsDropAtDown", 0.25) -- metres down when looking straight down, so the raised boot clears the camera
+Expose.number("slideLegsPullBackAtDown", 0.15) -- metres back when looking straight down, scaled by pitch (the waist is cut)
 Expose.bool("mantleEnabled", true)
 Expose.number("mantleReach", 0.8)
 Expose.number("mantleMaxHeight", 2.0)
@@ -587,10 +586,9 @@ function onUpdate(dt)
         local feet = Transform.getPosition()
         slideLegs = Scene.instantiate(slideLegsPrefab, {
             position = { x = feet.x, y = feet.y, z = feet.z },
-            vars = { forwardOffset = slideLegsForward, rightOffset = slideLegsRight, heightOffset = slideLegsHeight,
+            vars = { forwardOffset = slideLegsForward, rightOffset = slideLegsRight, belowEye = slideLegsBelowEye,
                      yawOffsetDegrees = slideLegsYawDegrees, hiddenDrop = slideLegsDrop,
-                      pullBackAtDown = slideLegsPullBackAtDown,
-                     dropAtDown = slideLegsDropAtDown },
+                     pullBackAtDown = slideLegsPullBackAtDown },
         }) or false
     end
     Registry.clock = (Registry.clock or 0) + dt
