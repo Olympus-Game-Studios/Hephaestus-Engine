@@ -55,6 +55,7 @@ Expose.number("slideSteer", 1.5)
 Expose.number("slideFovBoost", 6)
 Expose.number("slideRollDegrees", 4)
 Expose.number("slideCameraHeight", 0.55) -- eye height while sliding, eased in and out with the slide (0 keeps crouch height)
+Expose.number("slideExitSeconds", 0.3) -- how long the camera takes to come back up, and the slide legs to tuck away
 -- The player's own legs, seen while sliding: a character prefab with FPS/SlideLegs.lua ("" for none) and where it
 -- sits relative to the camera and the player's facing.
 Expose.string("slideLegsPrefab", "")
@@ -67,7 +68,14 @@ Expose.number("slideLegsPullBackAtDown", 0.15) -- metres back when looking strai
 Expose.bool("mantleEnabled", true)
 Expose.number("mantleReach", 0.8)
 Expose.number("mantleMaxHeight", 2.0)
-Expose.number("vaultMaxHeight", 1.1)
+Expose.number("vaultMaxHeight", 1.1) -- obstacles up to this high (metres) with open floor beyond are vaulted, not mantled
+Expose.number("vaultMaxDepth", 1.0) -- and no deeper than this from their front face
+Expose.bool("vaultWhenRunning", true) -- sprinting or sliding into a vaultable obstacle vaults it without pressing Jump
+Expose.number("vaultMinSeconds", 0.35) -- a vault crosses its path at the speed the player came in with, within these
+Expose.number("vaultMaxSeconds", 0.55)
+Expose.number("vaultLookAheadSeconds", 0.15) -- a running vault starts this much travel before the obstacle, so it arcs up
+Expose.number("vaultViewRise", 0.5) -- share of the climb the view follows, so the camera stays low like a body vaulting
+Expose.number("vaultRollDegrees", 3) -- scaled by View Bob, off with Reduce Motion
 Expose.number("mantleSeconds", 0.3)
 Expose.number("mantleSecondsPerMetre", 0.2)
 Expose.number("fieldOfView", 80)
@@ -323,6 +331,16 @@ local function parseList(text)
     return list
 end
 
+local function playFootstep(volumeScale)
+    if #footsteps > 0 then
+        stepIndex = stepIndex % #footsteps + 1
+        if Audio and Audio.isAvailable and Audio.isAvailable() then
+            Audio.play(footsteps[stepIndex], { volume = footstepVolume * volumeScale, bus = "sfx", priority = 1,
+                                               pitchJitter = 0.05, volumeJitter = 0.15 })
+        end
+    end
+end
+
 -- Counts strides even without footstep sounds, because the weapon bob and footfall dips follow them.
 local function updateFootsteps(speedXZ, grounded, dt)
     footfallThisFrame = false
@@ -334,13 +352,7 @@ local function updateFootsteps(speedXZ, grounded, dt)
         stepDistance = stepDistance - footstepStride
         stepCount = stepCount + 1
         footfallThisFrame = true
-        if #footsteps > 0 then
-            stepIndex = stepIndex % #footsteps + 1
-            if Audio and Audio.isAvailable and Audio.isAvailable() then
-                Audio.play(footsteps[stepIndex], { volume = footstepVolume, bus = "sfx", priority = 1,
-                                                   pitchJitter = 0.05, volumeJitter = 0.15 })
-            end
-        end
+        playFootstep(1)
     end
 end
 
@@ -362,11 +374,21 @@ local function updateCameraKick(dt)
     Gunplay.dampedSpring(cameraKickYaw, 0, cameraKickOmega, cameraKickZeta, dt)
 end
 
+-- The vault's camera roll: 0 to 1 and back over a vault, scaled like the other view motion; 0 with Reduce Motion.
+local function vaultSway()
+    if not mantle or mantle.plan.kind ~= "vault" or Settings.values.reducedMotion then
+        return 0
+    end
+    local motion = presentationEnabled and Gunplay.clamp(viewBobScale * Settings.values.viewBob, 0, 1) or 0
+    return math.sin(math.pi * math.min(1, mantle.elapsed / mantle.seconds)) * motion
+end
+
 local function applyCameraRotation()
     local motion = presentationEnabled and Gunplay.clamp(viewBobScale * Settings.values.viewBob, 0, 1) or 0
     local leanRoll = math.rad(leanRollDegrees) * leanOffset / math.max(leanDistance, 1e-3)
     Camera.setRotation(pitch + cameraKickPitch.x, cameraKickYaw.x,
-                       -math.rad(slideRollDegrees) * slideBlend * motion - leanRoll)
+                       -math.rad(slideRollDegrees) * slideBlend * motion - leanRoll
+                       - math.rad(vaultRollDegrees) * vaultSway())
 end
 
 -- Plain trigger volumes are skipped so a large sensor cannot hide the interactable inside it.
@@ -621,6 +643,8 @@ function onUpdate(dt)
     Registry.player.stance = Character.isProne() and "prone" or (Character.isCrouched() and "crouched" or "standing")
     Registry.player.eyeHeight = viewHeight
     Registry.player.slideBlend = slideBlend
+    Registry.player.sliding = slide ~= nil
+    Registry.player.climbing = mantle ~= nil and mantle.plan.kind == "mantle"
     local row = activeWeaponRow()
     if lookEnabled and inputEnabled and not menuOpen then
         local basis = Logic.yawBasis(yaw)
@@ -657,15 +681,35 @@ function onUpdate(dt)
             local runScale = tactical and tacticalSprintMultiplier or sprintMultiplier
             slide = { elapsed = 0, dirX = vx / length, dirZ = vz / length, startScale = runScale * slideBoost }
         end
-        -- Jumping (or holding jump in the air) towards a ledge climbs onto it or vaults over it instead.
+        -- Jumping (or holding jump in the air) towards a ledge climbs onto it or vaults over it instead; running or
+        -- sliding into a low enough obstacle vaults it on its own. A slide carries on after the vault.
+        local climbPressed = jumpPressed or (not Character.isGrounded() and Input.isActionDown("Jump"))
+        local running = sprinting or slide ~= nil
         if not mantle and mantleEnabled and forward > 0.3 and not prone
-            and (jumpPressed or (not Character.isGrounded() and Input.isActionDown("Jump"))) then
-            local plan = Mantle.find(Transform.getPosition(), basis.forward.x, basis.forward.z, {
-                reach = mantleReach, maxHeight = mantleMaxHeight, vaultMaxHeight = vaultMaxHeight,
-            })
+            and (climbPressed or (vaultWhenRunning and running and Character.isGrounded())) then
+            local dirX, dirZ = basis.forward.x, basis.forward.z
+            if slide then
+                dirX, dirZ = slide.dirX, slide.dirZ
+            end
+            local vel = Character.getVelocity() or {}
+            local speed = math.sqrt((vel.x or 0) ^ 2 + (vel.z or 0) ^ 2)
+            local feet = Transform.getPosition()
+            local options = { reach = mantleReach + speed * vaultLookAheadSeconds, maxHeight = mantleMaxHeight,
+                              vaultMaxHeight = vaultMaxHeight, vaultDepth = vaultMaxDepth, vaultOnly = true }
+            local plan = Mantle.find(feet, dirX, dirZ, options)
+            if not plan and climbPressed then
+                options.reach, options.vaultOnly = mantleReach, false
+                plan = Mantle.find(feet, dirX, dirZ, options)
+            end
             if plan then
-                mantle = { plan = plan, elapsed = 0, seconds = Mantle.duration(plan, mantleSeconds, mantleSecondsPerMetre) }
-                slide = nil
+                local seconds = Mantle.duration(plan, mantleSeconds, mantleSecondsPerMetre)
+                if plan.kind == "vault" then
+                    seconds = Mantle.vaultDuration(plan, speed, vaultMinSeconds, vaultMaxSeconds)
+                    playFootstep(1.3)
+                else
+                    slide = nil
+                end
+                mantle = { plan = plan, elapsed = 0, seconds = seconds }
                 jumpPressed = false
             end
         end
@@ -673,10 +717,13 @@ function onUpdate(dt)
             mantle.elapsed = mantle.elapsed + dt
             local p = Mantle.position(mantle.plan, mantle.elapsed / mantle.seconds)
             Character.move(0, 0)
-            Character.setCrouched(false)
+            Character.setCrouched(slide ~= nil)
             Character.teleport(p.x, p.y, p.z)
             sprinting = false
             if mantle.elapsed >= mantle.seconds then
+                if mantle.plan.kind == "vault" then
+                    playFootstep(1.3)
+                end
                 mantle = nil
             end
         elseif slide then
@@ -742,7 +789,8 @@ function onUpdate(dt)
         if leanEnabled and not sprinting and not slide and not mantle then
             leanTarget = (Input.isActionDown("LeanRight") and 1 or 0) - (Input.isActionDown("LeanLeft") and 1 or 0)
         end
-        slideBlend = Gunplay.approach(slideBlend, slide and 1 or 0, dt / 0.12)
+        local slideBlendSeconds = slide and 0.12 or math.max(slideExitSeconds, 0.01)
+        slideBlend = Gunplay.approach(slideBlend, slide and 1 or 0, dt / slideBlendSeconds)
         tacticalBlend = Gunplay.approach(tacticalBlend, tactical and 1 or 0, dt / 0.25)
         commands.reload = Input.isActionPressed("Reload")
         commands.interact = Input.isActionPressed("Interact")
@@ -797,6 +845,12 @@ function onLateUpdate(dt)
     if slideCameraHeight > 0 and slideBlend > 0 then
         local eased = slideBlend * slideBlend * (3 - 2 * slideBlend)
         viewHeight = eyeHeight + (math.min(slideCameraHeight, eyeHeight) - eyeHeight) * eased
+    end
+    if mantle and mantle.plan.kind == "vault" then
+        local points = mantle.plan.points
+        local t = math.min(1, mantle.elapsed / mantle.seconds)
+        local lift = Transform.getPosition().y - (points[1].y + (points[#points].y - points[1].y) * t)
+        viewHeight = math.max(math.min(viewHeight, 0.35), viewHeight - (1 - vaultViewRise) * math.max(0, lift))
     end
     local feet = Transform.getPosition()
     lean = Gunplay.approach(lean, leanTarget, dt / math.max(leanSeconds, 0.01))

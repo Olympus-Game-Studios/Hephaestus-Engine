@@ -816,6 +816,33 @@ boxes = { { min = { 0.5, 0, -5 }, max = { 3.5, 1.5, 5 } }, { min = { 0.5, 2.3, -
 check(Mantle.find(feet, 1, 0, options) == nil, "a ledge without room to stand on is not climbed")
 boxes = { { min = { 2.0, 0, -5 }, max = { 3.5, 1.5, 5 } } }
 check(Mantle.find(feet, 1, 0, options) == nil, "a ledge out of reach is not climbed")
+options.vaultDepth = 1.0
+boxes = { { min = { 0.6, 0, -5 }, max = { 0.9, 1.0, 5 } } }
+local over = Mantle.find(feet, 1, 0, options)
+check(over and over.kind == "vault" and over.linear and near(over.points[2].x, 0.3, 1e-6)
+      and near(over.points[2].y, 1.05, 1e-6) and near(over.points[4].x, 2.6, 1e-6) and over.points[4].y == 0,
+      "a half wall is vaulted: up as the body reaches its face, across, and down at 45 degrees beyond it")
+local mid = Mantle.position(over, 0.5)
+check(mid.x > over.points[2].x and mid.x < over.points[3].x and near(mid.y, 1.05, 1e-6),
+      "a vault moves at a steady speed across the top")
+check(near(Mantle.vaultDuration(over, 20, 0.35, 0.55), 0.35, 1e-6)
+      and near(Mantle.vaultDuration(over, 1, 0.35, 0.55), 0.55, 1e-6)
+      and near(Mantle.vaultDuration(over, Mantle.length(over) / 0.45, 0.35, 0.55), 0.45, 1e-6),
+      "a vault takes its path at the incoming speed, within its time limits")
+options.vaultOnly = true
+check(Mantle.find(feet, 1, 0, options) ~= nil, "running into a half wall vaults it")
+boxes = { { min = { 0.6, 0, -5 }, max = { 2.2, 0.8, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "running into a table too deep to vault does nothing")
+options.vaultOnly = nil
+local onto = Mantle.find(feet, 1, 0, options)
+check(onto and onto.kind == "mantle", "jumping at a table too deep to vault climbs onto it")
+boxes = { { min = { 0.6, 0, -5 }, max = { 0.9, 1.0, 5 } }, { min = { 1.7, 0, -5 }, max = { 2.0, 3.0, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a half wall with a wall right behind it is neither vaulted nor climbed")
+boxes = { { min = { 0.6, 0, -5 }, max = { 0.9, 1.0, 5 } }, { min = { 0.6, 1.9, -5 }, max = { 3.0, 2.2, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a half wall under a low beam is not vaulted")
+boxes = { { min = { 0.6, 0, -5 }, max = { 0.9, 1.4, 5 } } }
+check(Mantle.find(feet, 1, 0, options) == nil, "a thin wall too tall to vault has no top to climb onto")
+options.vaultDepth = nil
 Physics = nil
 Physics = nil
 
