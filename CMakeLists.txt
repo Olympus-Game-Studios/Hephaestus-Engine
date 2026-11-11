@@ -345,6 +345,7 @@ add_library(HephaestusRuntime STATIC
     engine/Core/ProjectContext.cpp
     engine/Core/EngineLog.cpp
     engine/Core/AppPaths.cpp
+    engine/Core/IniFile.cpp
     engine/Core/SimulationStep.cpp
     engine/Gfx/VulkanDevice.cpp
     engine/Gfx/VulkanSwapchain.cpp
@@ -1431,6 +1432,16 @@ if(HEPHAESTUS_BUILD_COMPAT_TESTS)
     add_test(
         NAME SkyIrradiance
         COMMAND SkyIrradianceTests
+    )
+
+    add_executable(IniFileTests
+        engine/Tests/IniFileTests.cpp
+    )
+    target_link_libraries(IniFileTests PRIVATE HephaestusRuntime)
+    target_include_directories(IniFileTests PRIVATE engine)
+    add_test(
+        NAME IniFile
+        COMMAND IniFileTests
     )
 
     add_executable(SwapchainFormatTests

@@ -1,5 +1,6 @@
--- Team deathmatch screens built from code: the kill feed in the top right corner and the scoreboard (both teams'
--- soldiers with their kills and deaths). TeamDeathmatch.lua drives them; Hud's wave text shows the score and clock.
+-- Team deathmatch screens built from code: the kill feed in the top right corner, the scoreboard (both teams'
+-- soldiers with their kills and deaths) and name tags over teammates. TeamDeathmatch.lua drives them; Hud's wave text
+-- shows the score and clock.
 local Menu = require("FPS.Menu")
 
 local MatchHud = {}
@@ -12,6 +13,8 @@ local BOARD_WIDTH = 1040
 local BOARD_ROWS = 8
 local BOARD_ROW_HEIGHT = 40
 local COLUMN_WIDTH = 500
+local TAGS = 8
+local TAG_WIDTH = 260
 
 MatchHud.teamColors = {
     { r = 0.35, g = 0.66, b = 1.0, a = 1.0 },
@@ -67,6 +70,12 @@ function MatchHud.mount(teamNames)
             word = text(MatchHud.feed, 0, y, 0, FEED_ROW_HEIGHT - 4, FEED_SIZE - 2, false, Menu.theme.muted),
             victim = text(MatchHud.feed, 0, y, 0, FEED_ROW_HEIGHT - 4, FEED_SIZE, true),
         }
+    end
+
+    MatchHud.tags = {}
+    for i = 1, TAGS do
+        MatchHud.tags[i] = text(root, 0, 0, TAG_WIDTH, 30, 20, true, MatchHud.teamColors[1], "center")
+        UI.setVisible(MatchHud.tags[i], false)
     end
 
     local height = 120 + BOARD_ROWS * BOARD_ROW_HEIGHT
@@ -169,6 +178,23 @@ function MatchHud.setScoreboard(visible, standings, scores, highlightId, x)
     end
 end
 
+-- tags: { { name, x, y, alpha, team } } in UI units, the point being just above the head; the rest are hidden.
+function MatchHud.setNameTags(tags)
+    if not MatchHud.tags then
+        return
+    end
+    for i, widget in ipairs(MatchHud.tags) do
+        local tag = tags[i]
+        UI.setVisible(widget, tag ~= nil)
+        if tag then
+            local color = MatchHud.teamColors[tag.team] or MatchHud.teamColors[1]
+            UI.setText(widget, tag.name)
+            UI.setPosition(widget, tag.x - TAG_WIDTH / 2, tag.y - 30)
+            UI.setTextColor(widget, color.r, color.g, color.b, tag.alpha)
+        end
+    end
+end
+
 function MatchHud.setVisible(visible)
     if MatchHud.screen then
         UI.setScreenVisible(MatchHud.screen, visible)
@@ -178,6 +204,7 @@ end
 -- Forget the screens; they do not survive a scene change.
 function MatchHud.reset()
     MatchHud.screen, MatchHud.feed, MatchHud.feedRows, MatchHud.board, MatchHud.columns = nil, nil, nil, nil, nil
+    MatchHud.tags = nil
 end
 
 return MatchHud

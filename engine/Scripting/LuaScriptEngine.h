@@ -301,6 +301,12 @@ public:
     void SetUnscaledDeltaTime(float dt) { m_UnscaledDeltaTime = dt; }
     // Folder Storage.save and Storage.load use; empty disables them.
     void SetStorageRoot(const std::filesystem::path& root) { m_StorageRoot = root; }
+    // Config.save("Settings") writes <root>/<prefix>Settings.ini.
+    void SetConfigRoot(const std::filesystem::path& root, const std::string& prefix = {})
+    {
+        m_ConfigRoot = root;
+        m_ConfigPrefix = prefix;
+    }
 
     /**
      * Provide audio backend for Lua Audio.* bindings.
@@ -400,6 +406,8 @@ private:
     float m_TimeScale = 1.0f;
     float m_UnscaledDeltaTime = 0.0f;
     std::filesystem::path m_StorageRoot;
+    std::filesystem::path m_ConfigRoot;
+    std::string m_ConfigPrefix;
 
     static LuaScriptEngine* s_Instance;
     static LuaScriptEngine* GetInstance();
@@ -536,6 +544,9 @@ private:
     static int Lua_Input_getAxis(lua_State* L);
     static int Lua_Input_isGamepadConnected(lua_State* L);
     static int Lua_Input_setCursorMode(lua_State* L);
+    static int Lua_Input_getBindings(lua_State* L);
+    static int Lua_Input_setBindings(lua_State* L);
+    static int Lua_Input_getPressedControl(lua_State* L);
 
     static int Lua_Time_deltaTime(lua_State* L);
     static int Lua_Time_unscaledDeltaTime(lua_State* L);
@@ -543,6 +554,9 @@ private:
     static int Lua_Time_getScale(lua_State* L);
     static int Lua_Storage_save(lua_State* L);
     static int Lua_Storage_load(lua_State* L);
+    static int Lua_Config_load(lua_State* L);
+    static int Lua_Config_save(lua_State* L);
+    static int Lua_Config_path(lua_State* L);
 
     static int Lua_Application_quit(lua_State* L);
     static int Lua_Application_isDevelopment(lua_State* L);
@@ -554,6 +568,7 @@ private:
     static int Lua_Camera_setRotation(lua_State* L);
     static int Lua_Camera_getRotation(lua_State* L);
     static int Lua_Camera_translate(lua_State* L);
+    static int Lua_Camera_worldToScreen(lua_State* L);
 
     static int Lua_Physics_isAvailable(lua_State* L);
     static int Lua_Physics_hasBody(lua_State* L);

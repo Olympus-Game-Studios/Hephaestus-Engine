@@ -8,6 +8,10 @@
 --   { label = "PLAY", action = function }
 --   { label = "FIELD OF VIEW", kind = "slider", min, max, step, get = function, set = function(v), format = function(v) }
 --   { label = "DIFFICULTY", kind = "choice", options = { { value, text }, ... }, get, set }
+-- A page with `custom` draws itself instead of a list: custom.show(menu) and custom.hide(menu) when it appears and
+-- goes, and custom.update(menu) each frame, returning "back" to leave it. Item actions receive the menu.
+-- Every page opened on top of another shows a BACK button in the bottom left corner, after its last item; a custom
+-- page selects it with Menu.selectBack.
 local Menu = {}
 
 Menu.theme = {
@@ -73,6 +77,14 @@ local function currentPage(menu)
     return menu.pages[#menu.pages]
 end
 
+local function hasBack(menu)
+    return #menu.pages > 1
+end
+
+local function itemsOf(page)
+    return page.custom and {} or page.items
+end
+
 local function clamp(v, lo, hi)
     return math.max(lo, math.min(hi, v))
 end
@@ -112,7 +124,7 @@ local function activate(menu, index)
     if item.kind == "slider" or item.kind == "choice" then
         adjust(menu, index, 1)
     elseif item.action then
-        item.action()
+        item.action(menu)
     end
 end
 
@@ -190,6 +202,26 @@ function Menu.new(name, options)
             end
         end)
     end
+    menu.backY = 1080 - 46 - 26 - (menu.rowHeight - 8)
+    menu.backRow = { amount = 0, target = 0 }
+    menu.backRow.label = text(menu, root, "BACK", menu.x, menu.backY, menu.width, menu.rowHeight - 8, menu.labelSize, true)
+    menu.backRow.button = button(root, "BACK", menu.barX, menu.backY, menu.width, menu.rowHeight - 8, 22, Menu.theme.clear)
+    UI.setOnHover(menu.backRow.button, function(hovered)
+        if hovered and menu.visible and hasBack(menu) then
+            local page = currentPage(menu)
+            if page.custom then
+                Menu.selectBack(menu, true)
+            else
+                menu.selected = #page.items + 1
+                Menu.refresh(menu)
+            end
+        end
+    end)
+    UI.setOnClick(menu.backRow.button, function()
+        if menu.visible and hasBack(menu) then
+            Menu.back(menu)
+        end
+    end)
     menu.hintBar = UI.createPanel(root)
     UI.setAlignment(menu.hintBar, "Stretch", "Bottom")
     UI.setSize(menu.hintBar, 0, 46)
@@ -199,7 +231,8 @@ function Menu.new(name, options)
     UI.setPosition(menu.hintRule, 0, -46)
     UI.setSize(menu.hintRule, 0, 1)
     UI.setBackgroundColor(menu.hintRule, 1, 1, 1, 0.12)
-    menu.hints = UI.createText(menu.hintBar, options.hints or "")
+    menu.hintText = options.hints or ""
+    menu.hints = UI.createText(menu.hintBar, menu.hintText)
     UI.setAlignment(menu.hints, "Stretch", "Stretch")
     UI.setPadding(menu.hints, 0, 96, 0, 96)
     UI.setStyle(menu.hints, style(Menu.theme.muted, Menu.theme.clear, 16, true, "Left"))
@@ -208,13 +241,15 @@ function Menu.new(name, options)
 end
 
 function Menu.setHints(menu, hints)
-    UI.setText(menu.hints, hints or "")
+    menu.hintText = hints or ""
+    UI.setText(menu.hints, menu.hintText)
 end
 
 -- Replaces every page with this one.
 function Menu.setPage(menu, page)
     menu.pages = { page }
     menu.selected = 1
+    menu.backSelected = false
     menu.snap = true
     Menu.refresh(menu)
 end
@@ -222,6 +257,7 @@ end
 function Menu.push(menu, page)
     menu.pages[#menu.pages + 1] = page
     menu.selected = 1
+    menu.backSelected = false
     menu.snap = true
     Menu.refresh(menu)
 end
@@ -235,6 +271,7 @@ function Menu.back(menu)
     if #menu.pages > 1 then
         table.remove(menu.pages)
         menu.selected = 1
+        menu.backSelected = false
         menu.snap = true
         Menu.refresh(menu)
         return true
@@ -262,9 +299,17 @@ function Menu.refresh(menu)
     UI.setPosition(menu.titleRule, menu.x, menu.y - 20)
     UI.setVisible(menu.title, (page.title or "") ~= "")
     UI.setVisible(menu.titleRule, (page.title or "") ~= "")
+    if menu.custom and menu.custom ~= page.custom then
+        menu.custom.hide(menu)
+        menu.custom = nil
+    end
     local theme = Menu.theme
+    local items = itemsOf(page)
+    -- Long pages close up their rows so the list ends above the BACK button.
+    menu.step = math.min(menu.rowHeight, math.floor((menu.backY - 16 - menu.y) / math.max(#items, 1)))
+    local height = math.min(menu.rowHeight - 8, menu.step - 4)
     for i, row in ipairs(menu.rows) do
-        local item = page.items[i]
+        local item = items[i]
         local selected = item ~= nil and i == menu.selected
         local hasValue = item ~= nil and (item.kind == "slider" or item.kind == "choice")
         UI.setVisible(row.button, item ~= nil)
@@ -279,7 +324,7 @@ function Menu.refresh(menu)
         UI.setVisible(row.more, hasValue and selected)
         if item then
             UI.setText(row.label, item.label)
-            local rowY = menu.y + (i - 1) * menu.rowHeight
+            local rowY = menu.y + (i - 1) * menu.step
             local _, inkLeft, inkRight = UI.measureText(item.label, menu.labelSize, true, theme.font)
             row.inkLeft = inkLeft or 0
             local inkWidth = (inkRight or 0) - row.inkLeft
@@ -290,14 +335,24 @@ function Menu.refresh(menu)
             if not hasValue then
                 barWidth = math.min(barWidth, menu.padLeft + inkWidth + menu.padRight)
             end
-            UI.setSize(row.tile, barWidth, menu.rowHeight - 8)
+            UI.setPosition(row.tile, menu.barX, rowY)
+            UI.setSize(row.tile, barWidth, height)
             row.barWidth = barWidth
             -- The drawn text (not its origin, hence the side bearing) starts on the column; the bar wraps it evenly.
             UI.setPosition(row.label, menu.x - row.inkLeft, rowY)
-            UI.setSize(row.label, hasValue and menu.width or barWidth, menu.rowHeight - 8)
+            UI.setSize(row.label, hasValue and menu.width or barWidth, height)
             UI.setTextAlignment(row.label, "left")
             -- Hover and click only over the item itself (its bar, or the whole row for sliders and choices).
-            UI.setSize(row.button, barWidth + HOVER_PAD, menu.rowHeight - 8)
+            UI.setPosition(row.button, menu.barX, rowY)
+            UI.setSize(row.button, barWidth + HOVER_PAD, height)
+            UI.setPosition(row.value, menu.x + menu.width - 250, rowY)
+            UI.setSize(row.value, 196, height)
+            UI.setPosition(row.trackBack, menu.x + menu.width - 250, rowY + height - 10)
+            UI.setPosition(row.trackFill, menu.x + menu.width - 250, rowY + height - 10)
+            UI.setPosition(row.less, menu.x + menu.width - 290, rowY)
+            UI.setSize(row.less, 36, height)
+            UI.setPosition(row.more, menu.x + menu.width - 50, rowY)
+            UI.setSize(row.more, 36, height)
             if item.kind == "slider" then
                 local value = item.get()
                 UI.setText(row.value, item.format and item.format(value) or string.format("%.2f", value))
@@ -308,10 +363,33 @@ function Menu.refresh(menu)
             end
         end
     end
-    local item = page.items[menu.selected]
-    UI.setVisible(menu.highlight, item ~= nil)
-    if item then
-        menu.targetY = menu.y + (menu.selected - 1) * menu.rowHeight
+    if page.custom and menu.custom ~= page.custom then
+        menu.custom = page.custom
+        page.custom.show(menu)
+    end
+    local back = menu.backRow
+    local showBack = hasBack(menu)
+    local onBack = showBack and (page.custom and menu.backSelected or (not page.custom and menu.selected == #items + 1))
+    UI.setVisible(back.label, showBack)
+    UI.setVisible(back.button, showBack)
+    back.target = onBack and 1 or 0
+    if showBack then
+        local _, inkLeft, inkRight = UI.measureText("BACK", menu.labelSize, true, theme.font)
+        local inkWidth = (inkRight or 0) - (inkLeft or 0)
+        back.barWidth = menu.padLeft + (inkWidth > 0 and inkWidth or 4 * menu.labelSize * 0.62) + menu.padRight
+        UI.setPosition(back.label, menu.x - (inkLeft or 0), menu.backY)
+        UI.setSize(back.label, back.barWidth, menu.rowHeight - 8)
+        UI.setSize(back.button, back.barWidth + HOVER_PAD, menu.rowHeight - 8)
+    end
+    local item = items[menu.selected]
+    UI.setVisible(menu.highlight, item ~= nil or onBack)
+    if onBack then
+        menu.targetY = menu.backY
+        menu.targetWidth = back.barWidth
+        menu.targetHeight = menu.rowHeight - 8
+    elseif item then
+        menu.targetY = menu.y + (menu.selected - 1) * menu.step
+        menu.targetHeight = height
         menu.targetWidth = menu.rows[menu.selected].barWidth or menu.width
     end
     if menu.snap or Menu.reducedMotion then
@@ -335,7 +413,7 @@ function Menu.animate(menu, dt)
         menu.highlightY = mix(menu.highlightY, menu.targetY, k)
         menu.highlightWidth = mix(menu.highlightWidth, menu.targetWidth, k)
         UI.setPosition(menu.highlight, menu.barX, menu.highlightY)
-        UI.setSize(menu.highlight, menu.highlightWidth, menu.rowHeight - 8)
+        UI.setSize(menu.highlight, menu.highlightWidth, menu.targetHeight or (menu.rowHeight - 8))
     end
     local theme = Menu.theme
     for i, row in ipairs(menu.rows) do
@@ -344,6 +422,17 @@ function Menu.animate(menu, dt)
         UI.setTextColor(row.label, mixColor(theme.text, theme.ink, a))
         UI.setTextColor(row.value, mixColor(theme.text, theme.ink, a))
         UI.setBackgroundColor(row.trackFill, mixColor(theme.accent, theme.ink, a))
+    end
+    local back = menu.backRow
+    back.amount = mix(back.amount, back.target, k)
+    UI.setTextColor(back.label, mixColor(theme.text, theme.ink, back.amount))
+end
+
+-- For custom pages: whether their BACK button is the selection.
+function Menu.selectBack(menu, selected)
+    if menu.backSelected ~= selected then
+        menu.backSelected = selected
+        Menu.refresh(menu)
     end
 end
 
@@ -358,7 +447,14 @@ function Menu.update(menu)
     if not page then
         return nil
     end
-    local count = #page.items
+    if page.custom then
+        if page.custom.update(menu) == "back" and not Menu.back(menu) then
+            return "back"
+        end
+        return nil
+    end
+    local items = #page.items
+    local count = items + (hasBack(menu) and 1 or 0)
     local up = Input.isActionPressed("MenuUp")
     local down = Input.isActionPressed("MenuDown")
     local left = Input.isActionPressed("MenuLeft")
@@ -375,6 +471,10 @@ function Menu.update(menu)
         adjust(menu, menu.selected, 1)
     end
     if choose then
+        if menu.selected > items then
+            Menu.back(menu)
+            return nil
+        end
         activate(menu, menu.selected)
     end
     if escape and not Menu.back(menu) then

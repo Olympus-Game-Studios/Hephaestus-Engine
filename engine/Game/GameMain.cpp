@@ -755,6 +755,7 @@ int main(int argc, char* argv[]) {
             const fs::path userData =
                 Hephaestus::UserDataFor(g_Config.projectName.empty() ? std::string("HephaestusGame") : g_Config.projectName);
             luaEngine.SetStorageRoot(userData.empty() ? fs::path{} : userData / "Saves");
+            luaEngine.SetConfigRoot(userData.empty() ? fs::path{} : userData / "Saved" / "Config");
         }
         luaEngine.SetFrameRenderer(&frameRenderer);
         luaEngine.SetInputSystem(&inputSystem);

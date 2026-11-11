@@ -1126,6 +1126,23 @@ check(both and both.frag == nil and both.smoke == 1 and Pickups.describe(both) =
       "grenades top up whichever kind has room")
 check(Pickups.plan("frag", 1, carried) == nil, "a frag pickup is left when frags are full")
 
+local Controls = require("FPS.Controls")
+local encoded = Controls.encode({ { type = "keyboard", control = "W" }, { type = "keyboard", control = "S", scale = -1 },
+                                  { type = "gamepad_axis", control = "LEFT_Y", scale = -1 } })
+check(encoded == "key:W, key:S*-1, stick:LEFT_Y*-1", "bindings are written as kind:CONTROL with *scale")
+local decoded = Controls.decode(" key:w ,mouse:LEFT, pad:SOUTH, stick:LEFT_Y*-1 ")
+check(decoded and #decoded == 4 and decoded[1].type == "keyboard" and decoded[1].control == "W"
+      and decoded[2].type == "mouse_button" and decoded[3].type == "gamepad_button"
+      and decoded[4].type == "gamepad_axis" and decoded[4].scale == -1,
+      "hand-written bindings read back, any case and spacing")
+local bad, err = Controls.decode("key:SPACE, foo:BAR")
+check(bad == nil and err:find("foo:BAR"), "an unknown kind is refused with the offending part")
+check(#Controls.decode("") == 0, "an empty line clears the bindings")
+check(Controls.describe({ type = "gamepad_button", control = "SOUTH" }) == "A"
+      and Controls.describe({ type = "mouse_button", control = "3" }) == "MOUSE 4"
+      and Controls.describe({ type = "keyboard", control = "LEFT_SHIFT" }) == "LEFT SHIFT",
+      "controls are shown with player-facing names")
+
 local Match = require("FPS.Match")
 local match = Match.new({ scoreLimit = 3, timeLimitSeconds = 60, feedSize = 2 })
 Match.join(match, "you", "You", 1)

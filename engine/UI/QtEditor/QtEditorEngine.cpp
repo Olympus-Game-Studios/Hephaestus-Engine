@@ -2959,6 +2959,9 @@ void QtEditorEngine::StartPlayMode()
     // Editor Play keeps Storage data inside the project (ignored by source control), apart from players' saves.
     m_luaScriptEngine->SetStorageRoot(projectRootPath.empty() ? std::filesystem::path{}
                                                               : projectRootPath / ".hephaestus" / "editor" / "saves");
+    m_luaScriptEngine->SetConfigRoot(projectRootPath.empty() ? std::filesystem::path{}
+                                                             : projectRootPath / "Saved" / "Config",
+                                     "Editor");
     m_luaScriptEngine->SetInputSystem(&m_gameplayInput);
     if (!m_pluginScriptHost) {
         m_pluginScriptHost = std::make_unique<PluginScriptHost>();

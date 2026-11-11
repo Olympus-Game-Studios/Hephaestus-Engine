@@ -26,6 +26,7 @@ float ApplyDeadzone(float value, float deadzone)
 
 InputSystem::InputSystem()
     : m_Map(InputMap::CreateDefault())
+    , m_DefaultMap(m_Map)
 {
     RebuildLookup();
 }
@@ -260,6 +261,7 @@ void InputSystem::SetMap(InputMap map)
     std::string error;
     if (!map.Validate(error)) return;
     m_Map = std::move(map);
+    m_DefaultMap = m_Map;
     m_MapPath.clear();
     RebuildLookup();
 }
@@ -269,9 +271,92 @@ bool InputSystem::LoadMap(const std::filesystem::path& path, std::string& outErr
     InputMap map;
     if (!InputMap::Load(path, map, outError)) return false;
     m_Map = std::move(map);
+    m_DefaultMap = m_Map;
     m_MapPath = path.lexically_normal();
     RebuildLookup();
     return true;
+}
+
+const std::vector<InputBinding>* InputSystem::GetBindings(const std::string& name) const
+{
+    if (const auto it = m_ActionLookup.find(name); it != m_ActionLookup.end()) {
+        return &m_Map.actions[it->second].bindings;
+    }
+    if (const auto it = m_AxisLookup.find(name); it != m_AxisLookup.end()) {
+        return &m_Map.axes[it->second].bindings;
+    }
+    return nullptr;
+}
+
+const std::vector<InputBinding>* InputSystem::GetDefaultBindings(const std::string& name) const
+{
+    for (const auto& action : m_DefaultMap.actions) {
+        if (action.name == name) return &action.bindings;
+    }
+    for (const auto& axis : m_DefaultMap.axes) {
+        if (axis.name == name) return &axis.bindings;
+    }
+    return nullptr;
+}
+
+bool InputSystem::SetBindings(const std::string& name, std::vector<InputBinding> bindings,
+                              std::string& outError)
+{
+    std::vector<InputBinding>* target = nullptr;
+    if (const auto it = m_ActionLookup.find(name); it != m_ActionLookup.end()) {
+        target = &m_Map.actions[it->second].bindings;
+    } else if (const auto axis = m_AxisLookup.find(name); axis != m_AxisLookup.end()) {
+        target = &m_Map.axes[axis->second].bindings;
+    }
+    if (!target) {
+        outError = "Unknown input action or axis: " + name;
+        return false;
+    }
+    for (auto& binding : bindings) {
+        binding.controlCode = ResolveInputControl(binding.type, binding.control);
+        if (binding.controlCode < 0) {
+            outError = "Unknown control '" + binding.control + "' for binding type '" +
+                       ToString(binding.type) + "'";
+            return false;
+        }
+        if (binding.deadzone < 0.0f || binding.deadzone >= 1.0f) {
+            outError = "Input binding deadzone must be in [0, 1)";
+            return false;
+        }
+    }
+    *target = std::move(bindings);
+    return true;
+}
+
+bool InputSystem::GetPressedControl(InputBindingType& outType, int& outCode) const
+{
+    for (int key = 0; key < MAX_KEYS; ++key) {
+        const auto i = static_cast<std::size_t>(key);
+        if (m_Current.keys[i] && !m_Previous.keys[i]) {
+            outType = InputBindingType::Keyboard;
+            outCode = key;
+            return true;
+        }
+    }
+    for (int button = 0; button < MAX_MOUSE_BUTTONS; ++button) {
+        const auto i = static_cast<std::size_t>(button);
+        if (m_Current.mouseButtons[i] && !m_Previous.mouseButtons[i]) {
+            outType = InputBindingType::MouseButton;
+            outCode = button;
+            return true;
+        }
+    }
+    if (m_Current.gamepadConnected) {
+        for (int button = 0; button < MAX_GAMEPAD_BUTTONS; ++button) {
+            const auto i = static_cast<std::size_t>(button);
+            if (m_Current.gamepadButtons[i] && !m_Previous.gamepadButtons[i]) {
+                outType = InputBindingType::GamepadButton;
+                outCode = button;
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 bool InputSystem::EvaluateAction(const InputActionDefinition& action,

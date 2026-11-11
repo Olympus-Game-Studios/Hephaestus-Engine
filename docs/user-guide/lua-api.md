@@ -94,6 +94,16 @@ Keep data such as settings between sessions. Each name is one file of the player
 | `Storage.save(name, table)` | Save a table of numbers, strings, booleans and tables (string keys, or a list). Names may use letters, digits, `_` and `-`. Returns `true`, or `false` and the reason. |
 | `Storage.load(name)` | The saved table, or `nil` if there is none. |
 
+## Config files
+
+Settings players may want to read or edit by hand go in INI files instead. `Config.save("Settings", ...)` writes `Settings.ini` in the player's `Saved\Config` folder (on Windows `%LOCALAPPDATA%\<project name>\Saved\Config`); in Editor Play it writes `EditorSettings.ini` in the project's `Saved/Config` folder, which packaging leaves out (add `Saved/` to your `.gitignore`).
+
+| Function | Does |
+| --- | --- |
+| `Config.save(name, sections[, header])` | Write the file. `sections` is a list of `{ name, comment, keys = { { key, value, comment }, ... } }`; values are written as text (numbers to 6 significant digits) and each comment as `;` lines above what it describes. Returns `true`, or `false` and the reason. |
+| `Config.load(name)` | `{ [section] = { [key] = "text" } }`, or `nil` when there is no file. Lines that are not `[Section]`, `key = value`, blank or a `;` / `#` comment are skipped with a warning in the log; converting and checking the values is up to the script. |
+| `Config.path(name)` | The file's full path, or `nil` where config files are not available. |
+
 ## Input
 
 | Function | Does |
@@ -109,6 +119,9 @@ Keep data such as settings between sessions. Each name is one file of the player
 | `Input.isGamepadConnected()` | Whether player one's gamepad is plugged in. |
 | `Input.isKeyPressed(key)` | Raw key check. Prefer actions so players can use a pad. |
 | `Input.setCursorMode(mode)` | Low level cursor control. Use `UI.setCursorMode` instead. |
+| `Input.getBindings(name[, defaults])` | An action's or axis's bindings, as `{ type, control, scale, deadzone }` tables (`type` as in the input map: `keyboard`, `mouse_button`, `gamepad_button`, ...). With `defaults` true, the ones the project's input map gave it. `nil` for an unknown name. |
+| `Input.setBindings(name, list)` | Replace an action's or axis's bindings for this session, for rebinding menus. Returns `true`, or `false` and the reason (an unknown control leaves the bindings as they were). Save them yourself (for example with `Config`) and set them again at startup. |
+| `Input.getPressedControl()` | `{ type, control }` for the first key, mouse button or gamepad button pressed this frame, or `nil`: what a rebinding menu waits for. |
 
 See [Input](input.md) for setting up actions and axes.
 
@@ -122,6 +135,7 @@ These control a free script camera, separate from Camera components. Call `Camer
 | `Camera.setPosition(x, y, z)` / `Camera.getPosition()` | Camera position. |
 | `Camera.setRotation(pitch, yaw, roll)` / `Camera.getRotation()` | Rotation in radians. |
 | `Camera.translate(dx, dy, dz)` | Move in world space. |
+| `Camera.worldToScreen(x, y, z)` (or a `{x, y, z}` table) | Where a world point appears in the active Camera component's view: `x`, `y` in game UI units (the same units widgets are placed in, the screen being 1080 tall), whether it is on screen and in front of the camera, and its distance along the view. `nil` when there is no active camera. For name tags and markers over objects. |
 
 If the script's entity has a Camera component, these move that entity instead.
 

@@ -10,6 +10,8 @@ local Match = require("FPS.Match")
 local MatchHud = require("FPS.MatchHud")
 local Menu = require("FPS.Menu")
 local Waves = require("FPS.Waves")
+local Perception = require("FPS.AI.Perception")
+local Health = require("FPS.Health")
 
 Expose.string("friendlyPrefab", "")
 Expose.string("enemyPrefab", "")
@@ -25,6 +27,9 @@ Expose.string("enemyNames", "Volkov;Kane;Sato;Mercer;Drago;Lund;Brandt")
 Expose.string("teamNames", "BLUE;RED")
 Expose.string("mainMenuScene", "")
 Expose.number("feedSeconds", 6) -- how long a kill stays in the feed
+Expose.number("nameTagHeight", 2.1) -- metres above a teammate's feet
+Expose.number("nameTagFadeStart", 15) -- teammates' names fade out between these distances, in metres
+Expose.number("nameTagFadeEnd", 45)
 
 local state = nil
 local soldiers = {} -- id -> { id, team, name, prefab, entity, key, respawnAt }
@@ -149,6 +154,38 @@ local function finish(winner)
     Menu.setPage(endMenu, { title = title, items = items })
 end
 
+-- Names over the player's teammates that are on screen, in sight and near enough.
+local function nameTags()
+    local row = Registry.player
+    local tags = {}
+    if not (Camera and Camera.worldToScreen) or not row or not row.entity or not row.entity:IsValid()
+        or Health.isDead(row.entity) then
+        return tags
+    end
+    local transform = row.entity:GetTransform()
+    local feet = transform and transform:GetWorldPosition()
+    if not feet then
+        return tags
+    end
+    local eye = { x = feet.x, y = feet.y + (row.eyeHeight or 1.6), z = feet.z }
+    for _, soldier in pairs(soldiers) do
+        local entity = soldier.entity
+        if soldier.id ~= PLAYER and soldier.team == row.team and entity and entity:IsValid() then
+            local p = entity:GetTransform():GetWorldPosition()
+            local head = { x = p.x, y = p.y + nameTagHeight, z = p.z }
+            local x, y, onScreen, depth = Camera.worldToScreen(head)
+            local alpha = depth and 1 - (depth - nameTagFadeStart) / math.max(nameTagFadeEnd - nameTagFadeStart, 0.1)
+            if onScreen and alpha > 0.02 and Perception.clearLine(eye, head, { row.entity }, function(hit)
+                    local owner = Registry.combatantOf(hit)
+                    return owner ~= nil and owner.entity == entity
+                end) then
+                tags[#tags + 1] = { name = soldier.name, x = x, y = y, alpha = math.min(1, alpha), team = soldier.team }
+            end
+        end
+    end
+    return tags
+end
+
 local function showScore()
     local names = MatchHud.teamNames
     Hud.setWaveText(string.format("%s  %d     %s     %d  %s", names[1], state.scores[1], Match.clock(state),
@@ -184,6 +221,7 @@ function onUpdate(dt)
     if phase == "over" then
         Menu.update(endMenu)
         MatchHud.setFeed({})
+        MatchHud.setNameTags({})
         MatchHud.setScoreboard(true, { Match.standings(state, 1), Match.standings(state, 2) }, state.scores, PLAYER,
                                260)
         return
@@ -208,6 +246,7 @@ function onUpdate(dt)
     end
     showScore()
     MatchHud.setFeed(Match.recentFeed(state, feedSeconds))
+    MatchHud.setNameTags(nameTags())
     MatchHud.setScoreboard(Input.isActionDown("Scoreboard"), { Match.standings(state, 1), Match.standings(state, 2) },
                            state.scores, PLAYER)
     if winner then
