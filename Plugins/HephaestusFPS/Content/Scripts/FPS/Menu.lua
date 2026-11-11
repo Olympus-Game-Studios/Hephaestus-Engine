@@ -13,7 +13,8 @@
 -- Every page opened on top of another shows a BACK button in the bottom left corner, after its last item; a custom
 -- page selects it with Menu.selectBack. Menus fit the height the player's UI size leaves (Menu.screenHeight): a list
 -- longer than the room above BACK scrolls, following the selection and the mouse wheel, with a thin bar showing where
--- it is.
+-- it is. Moving the selection to another item plays Menu.tickSound on the "ui" bus (options.tickSound and
+-- options.tickVolume override it per menu; "" turns it off).
 local Menu = {}
 
 Menu.theme = {
@@ -38,6 +39,10 @@ local EASE_SECONDS = 0.035 -- time constant: the highlight is ~95% of the way th
 
 -- True makes selection changes instant (Settings sets it from Reduce Motion).
 Menu.reducedMotion = false
+
+Menu.tickSound = "assets/audio/ui/tick.wav"
+Menu.tickVolume = 0.5
+local TICK_GAP = 0.04 -- seconds between ticks, so a fast scroll doesn't stack them
 
 local function style(textColor, background, size, bold, align)
     return { textColor = textColor, backgroundColor = background, fontSize = size, fontBold = bold,
@@ -100,6 +105,26 @@ local function clamp(v, lo, hi)
     return math.max(lo, math.min(hi, v))
 end
 
+-- Plays the selection tick; custom pages call it when their own selection moves.
+function Menu.tick(menu)
+    local sound = menu.tickSound or Menu.tickSound
+    if sound == "" or not (Audio and Audio.isAvailable and Audio.isAvailable()) then
+        return
+    end
+    if menu.lastTick and menu.clock - menu.lastTick < TICK_GAP then
+        return
+    end
+    menu.lastTick = menu.clock
+    Audio.play(sound, { volume = menu.tickVolume or Menu.tickVolume, bus = "ui", priority = 1 })
+end
+
+local function selectItem(menu, index)
+    if menu.selected ~= index then
+        menu.selected = index
+        Menu.tick(menu)
+    end
+end
+
 local function choiceIndex(item)
     local value = item.get()
     for i, option in ipairs(item.options) do
@@ -156,6 +181,9 @@ function Menu.new(name, options)
         visible = true,
         tiles = options.tiles or false,
         labelSize = options.labelSize or Menu.theme.labelSize,
+        tickSound = options.tickSound,
+        tickVolume = options.tickVolume,
+        clock = 0,
     }
     local scale = menu.labelSize / Menu.theme.labelSize
     menu.padLeft = math.floor(Menu.theme.labelPaddingLeft * scale + 0.5)
@@ -190,25 +218,25 @@ function Menu.new(name, options)
         row.more = button(root, ">", menu.x + menu.width - 50, y, 36, menu.rowHeight - 8, arrowSize, Menu.theme.ink)
         UI.setOnHover(row.button, function(hovered)
             if hovered and menu.visible then
-                menu.selected = menu.first + i - 1
+                selectItem(menu, menu.first + i - 1)
                 Menu.refresh(menu)
             end
         end)
         UI.setOnClick(row.button, function()
             if menu.visible then
-                menu.selected = menu.first + i - 1
+                selectItem(menu, menu.first + i - 1)
                 activate(menu, menu.selected)
             end
         end)
         UI.setOnClick(row.less, function()
             if menu.visible then
-                menu.selected = menu.first + i - 1
+                selectItem(menu, menu.first + i - 1)
                 adjust(menu, menu.selected, -1)
             end
         end)
         UI.setOnClick(row.more, function()
             if menu.visible then
-                menu.selected = menu.first + i - 1
+                selectItem(menu, menu.first + i - 1)
                 adjust(menu, menu.selected, 1)
             end
         end)
@@ -224,9 +252,12 @@ function Menu.new(name, options)
         if hovered and menu.visible and hasBack(menu) then
             local page = currentPage(menu)
             if page.custom then
+                if not menu.backSelected then
+                    Menu.tick(menu)
+                end
                 Menu.selectBack(menu, true)
             else
-                menu.selected = #page.items + 1
+                selectItem(menu, #page.items + 1)
                 Menu.refresh(menu)
             end
         end
@@ -491,6 +522,7 @@ function Menu.update(menu)
     if not menu.visible then
         return nil
     end
+    menu.clock = menu.clock + Time.unscaledDeltaTime()
     Menu.animate(menu, Time.unscaledDeltaTime())
     local page = currentPage(menu)
     if not page then
@@ -511,7 +543,7 @@ function Menu.update(menu)
     if wheel ~= 0 and items > (menu.lines or items) then
         menu.first = clamp(menu.first - (wheel > 0 and 1 or -1), 1, items - menu.lines + 1)
         if menu.selected <= items then
-            menu.selected = clamp(menu.selected, menu.first, menu.first + menu.lines - 1)
+            selectItem(menu, clamp(menu.selected, menu.first, menu.first + menu.lines - 1))
         end
         Menu.refresh(menu)
     end
@@ -522,7 +554,7 @@ function Menu.update(menu)
     local choose = Input.isActionPressed("MenuSelect")
     local escape = Input.isActionPressed("MenuBack")
     if count > 0 and (up or down) then
-        menu.selected = (menu.selected - 1 + (down and 1 or -1)) % count + 1
+        selectItem(menu, (menu.selected - 1 + (down and 1 or -1)) % count + 1)
         Menu.refresh(menu)
     end
     if left then

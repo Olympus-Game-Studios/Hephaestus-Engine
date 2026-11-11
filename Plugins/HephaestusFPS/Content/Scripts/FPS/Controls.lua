@@ -277,6 +277,11 @@ local function refresh()
     local lines = math.max(3, math.min(#ui.lines, math.floor((menu.backY - 50 - ui.top) / ROW_HEIGHT)))
     view.lines = lines
     view.selected = math.max(1, math.min(view.selected, count + 1))
+    local key = view.selected * 10 + view.column
+    if view.tickKey and view.tickKey ~= key then
+        Menu.tick(menu)
+    end
+    view.tickKey = key
     Menu.selectBack(menu, view.selected == count + 1)
     if view.selected <= count and view.selected < view.first then
         view.first = view.selected
@@ -451,6 +456,7 @@ function custom.show(menu)
     menu.controls = menu.controls or build(menu)
     view.rows = available()
     view.selected, view.column, view.first, view.capture, view.status = 1, 1, 1, nil, nil
+    view.tickKey = nil
     view.visible = true
     view.savedHints = menu.hintText
     for _, widget in ipairs(menu.controls.all) do
