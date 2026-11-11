@@ -310,6 +310,12 @@ function Menu.refresh(menu)
     if not page then
         return
     end
+    if Menu.screenHeight() ~= menu.screenHeight then
+        menu.screenHeight = Menu.screenHeight()
+        if menu.onResize then
+            menu.onResize(menu)
+        end
+    end
     UI.setText(menu.title, page.title or "")
     local _, titleInk = UI.measureText(page.title or "", Menu.theme.titleSize, true, Menu.theme.font)
     UI.setPosition(menu.title, menu.x - (titleInk or 0), menu.y - 74)
@@ -322,8 +328,14 @@ function Menu.refresh(menu)
     end
     local theme = Menu.theme
     local items = itemsOf(page)
-    menu.backY = Menu.screenHeight() - 46 - 26 - (menu.rowHeight - 8)
-    menu.lines = clamp(math.floor((menu.backY - 12 - menu.y) / menu.rowHeight), 1, MAX_ROWS)
+    menu.backY = menu.screenHeight - 46 - 26 - (menu.rowHeight - 8)
+    local room = menu.backY - 12 - menu.y
+    -- A list a little too long closes up its rows (to 78% spacing at most) before it scrolls.
+    menu.step = menu.rowHeight
+    if #items * menu.rowHeight > room and #items * menu.rowHeight * 0.78 <= room then
+        menu.step = math.floor(room / #items)
+    end
+    menu.lines = clamp(math.floor(room / menu.step), 1, MAX_ROWS)
     if menu.selected <= #items then
         if menu.selected < menu.first then
             menu.first = menu.selected
@@ -332,12 +344,12 @@ function Menu.refresh(menu)
         end
     end
     menu.first = clamp(menu.first, 1, math.max(1, #items - menu.lines + 1))
-    local height = menu.rowHeight - 8
+    local height = math.min(menu.rowHeight - 8, menu.step - 4)
     local scrolling = #items > menu.lines
     UI.setVisible(menu.scrollTrack, scrolling)
     UI.setVisible(menu.scrollThumb, scrolling)
     if scrolling then
-        local track = menu.lines * menu.rowHeight - 8
+        local track = menu.lines * menu.step - 8
         UI.setSize(menu.scrollTrack, 3, track)
         UI.setPosition(menu.scrollThumb, menu.barX + menu.padLeft + menu.width + 14,
                        menu.y + track * (menu.first - 1) / #items)
@@ -360,7 +372,7 @@ function Menu.refresh(menu)
         UI.setVisible(row.more, hasValue and selected)
         if item then
             UI.setText(row.label, item.label)
-            local rowY = menu.y + (i - 1) * menu.rowHeight
+            local rowY = menu.y + (i - 1) * menu.step
             local _, inkLeft, inkRight = UI.measureText(item.label, menu.labelSize, true, theme.font)
             row.inkLeft = inkLeft or 0
             local inkWidth = (inkRight or 0) - row.inkLeft
@@ -425,7 +437,7 @@ function Menu.refresh(menu)
         menu.targetWidth = back.barWidth
         menu.targetHeight = menu.rowHeight - 8
     elseif item then
-        menu.targetY = menu.y + (menu.selected - menu.first) * menu.rowHeight
+        menu.targetY = menu.y + (menu.selected - menu.first) * menu.step
         menu.targetHeight = height
         menu.targetWidth = menu.rows[menu.selected - menu.first + 1].barWidth or menu.width
     end
@@ -483,6 +495,9 @@ function Menu.update(menu)
     local page = currentPage(menu)
     if not page then
         return nil
+    end
+    if Menu.screenHeight() ~= menu.screenHeight then
+        Menu.refresh(menu)
     end
     if page.custom then
         if page.custom.update(menu) == "back" and not Menu.back(menu) then

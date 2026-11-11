@@ -472,6 +472,10 @@ function custom.hide(menu)
 end
 
 function custom.update(menu)
+    if view.backY ~= menu.backY then
+        view.backY = menu.backY
+        refresh()
+    end
     if view.capture then
         if view.capture.wait then
             view.capture.wait = false
