@@ -731,6 +731,9 @@ int main(int argc, char* argv[]) {
     Bootstrap::BeginStage(InitStage::Scripting);
     
     LuaScriptEngine luaEngine;
+#ifndef NDEBUG
+    luaEngine.SetDevelopment(true); // Development packages run the Debug player
+#endif
     PluginScriptHost pluginScripts;
     pluginScripts.SetLuaEngine(&luaEngine);
     pluginScripts.SetInputSystem(&inputSystem);

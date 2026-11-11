@@ -206,6 +206,27 @@
         }
       },
       {
+        "type": "Text",
+        "id": "DevText",
+        "properties": {
+          "text": "DEV",
+          "visible": false,
+          "anchor": "TopLeft",
+          "position": [24, 18],
+          "size": [120, 30],
+          "interactable": false,
+          "zOrder": 3
+        },
+        "style": {
+          "fontSize": 18,
+          "fontBold": true,
+          "textColor": [1.0, 0.45, 0.1, 0.95],
+          "textShadow": true,
+          "textShadowColor": [0.0, 0.0, 0.0, 0.9],
+          "textShadowOffset": [1, 1]
+        }
+      },
+      {
         "type": "Image",
         "id": "DamageArrow1",
         "properties": {

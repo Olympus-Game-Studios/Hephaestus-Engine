@@ -82,6 +82,7 @@ For the script's own Particle Emitter.
 | `Time.setScale(scale)` / `Time.getScale()` | Slow down, speed up (up to 10) or freeze (0) gameplay. Scripts, physics, animation and particles all follow it; sound and the UI don't. A pause menu sets 0. It goes back to 1 when Play starts or the scene changes. |
 | `Time.unscaledDeltaTime()` | Real seconds since the last frame, for anything that should keep moving while the game is paused, such as menus. |
 | `Application.quit()` | Close the game. In the editor, it stops Play. |
+| `Application.isDevelopment()` | `true` in Editor Play and in Development packages, `false` in Release packages. Use it to keep developer tools such as cheat menus out of shipped games. |
 | `print(...)` / `engine_log(text)` | Write to the Console and log. |
 
 ## Storage

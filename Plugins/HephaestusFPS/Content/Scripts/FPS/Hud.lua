@@ -40,6 +40,8 @@ function Hud.mount(path, enabled)
     Hud.widgets.WaveText = UI.getWidget(handle, "WaveText")
     Hud.widgets.DeathFade = UI.getWidget(handle, "DeathFade")
     Hud.widgets.PickupText = UI.getWidget(handle, "PickupText")
+    Hud.widgets.DevText = UI.getWidget(handle, "DevText")
+    Hud.dev = false
     Hud.pickup = nil
     Hud.banner = nil
     Hud.waveText = nil
@@ -158,6 +160,11 @@ function Hud.showBanner(title, subtitle, seconds)
     Hud.banner = { title = title or "", subtitle = subtitle or "", remaining = seconds }
 end
 
+-- A small DEV tag in the corner while any developer cheat is on.
+function Hud.setDevIndicator(on)
+    Hud.dev = on == true
+end
+
 -- A short line above the prompt, such as "+50 Health", in the given colour; it fades out after a moment.
 function Hud.showPickup(text, r, g, b)
     Hud.pickup = { text = text, remaining = Hud.PICKUP_SECONDS, r = r or 1, g = g or 1, b = b or 1 }
@@ -207,6 +214,9 @@ local function refreshMessages(dt)
     end
     if w.DeathFade then
         UI.setVisible(w.DeathFade, Hud.deathFade)
+    end
+    if w.DevText then
+        UI.setVisible(w.DevText, Hud.dev)
     end
     local pickup = Hud.pickup
     if pickup then

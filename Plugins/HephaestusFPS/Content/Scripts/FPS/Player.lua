@@ -9,6 +9,8 @@ local DamageDirection = require("FPS.DamageDirection")
 local Tracers = require("FPS.Tracers")
 local Settings = require("FPS.Settings")
 local PauseMenu = require("FPS.PauseMenu")
+-- Only Editor Play and Development builds load the developer menu.
+local DevMenu = Application and Application.isDevelopment and Application.isDevelopment() and require("FPS.DevMenu") or nil
 local Impacts = require("FPS.Impacts")
 local ThrowPreview = require("FPS.ThrowPreview")
 local Mantle = require("FPS.Mantle")
@@ -71,6 +73,7 @@ Expose.string("hudDocument", "plugin://com.hephaestus.fps/UI/FPSHud.hui")
 Expose.bool("pauseMenuEnabled", true)
 Expose.bool("pauseMenuRestart", true)
 Expose.bool("pauseFreezesTime", false)
+Expose.string("devEnemyPrefab", "") -- what the developer menu (F2, development builds) spawns
 Expose.string("mainMenuScene", "")
 Expose.bool("restartEnabled", true)
 Expose.number("restartDelaySeconds", 1.5)
@@ -527,6 +530,9 @@ function onAwake()
     Settings.gameFieldOfView = fieldOfView
     Settings.load()
     PauseMenu.reset()
+    if DevMenu then
+        DevMenu.reset()
+    end
     lastKnownHealth = Health.getHealth(this)
     Camera.setActive(true)
     Player.setLookEnabled(true)
@@ -559,15 +565,19 @@ function onUpdate(dt)
     Registry.clock = (Registry.clock or 0) + dt
     Tracers.update(dt)
     updateGameEnd(dt)
-    PauseMenu.update({ enabled = pauseMenuEnabled and not Registry.gameOver, mainMenuScene = mainMenuScene,
-                       allowRestart = pauseMenuRestart, freezeTime = pauseFreezesTime })
+    local devOpen = DevMenu and DevMenu.update({ enabled = not PauseMenu.open and not Registry.gameOver,
+                                                enemyPrefab = devEnemyPrefab }, dt) or false
+    PauseMenu.update({ enabled = pauseMenuEnabled and not Registry.gameOver and not devOpen,
+                       mainMenuScene = mainMenuScene, allowRestart = pauseMenuRestart, freezeTime = pauseFreezesTime })
+    local menuOpen = PauseMenu.open or devOpen
+    local holdFire = PauseMenu.suppressFire or (DevMenu ~= nil and DevMenu.suppressFire)
     -- With the game frozen: no look, movement or firing (mouse look does not depend on dt).
     if Time.getScale() == 0 then
         Character.move(0, 0)
         return
     end
     -- The menu takes the mouse and keys; the game goes on, so this player just stands still meanwhile.
-    if not PauseMenu.open then
+    if not menuOpen then
         applyLook(dt)
     end
     Character.setFacingYaw(yaw)
@@ -580,7 +590,7 @@ function onUpdate(dt)
     Registry.player.stance = Character.isProne() and "prone" or (Character.isCrouched() and "crouched" or "standing")
     Registry.player.eyeHeight = eyeHeight
     local row = activeWeaponRow()
-    if lookEnabled and inputEnabled and not PauseMenu.open then
+    if lookEnabled and inputEnabled and not menuOpen then
         local basis = Logic.yawBasis(yaw)
         local forward = Input.getAxis("MoveForward") or 0
         local right = Input.getAxis("MoveRight") or 0
@@ -599,8 +609,8 @@ function onUpdate(dt)
         if prone then
             jumpPressed = false
         end
-        commands.fireHeld = Input.isActionDown("Fire") and not PauseMenu.suppressFire
-        commands.firePressed = Input.isActionPressed("Fire") and not PauseMenu.suppressFire
+        commands.fireHeld = Input.isActionDown("Fire") and not holdFire
+        commands.firePressed = Input.isActionPressed("Fire") and not holdFire
         commands.aimHeld = Input.isActionDown("Aim")
         slideCooldownRemaining = math.max(0, slideCooldownRemaining - dt)
         -- Pressing crouch while sprinting on the ground drops into a slide along the way the player is moving.

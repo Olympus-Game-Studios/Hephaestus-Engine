@@ -97,6 +97,12 @@
       ]
     },
     {
+      "name": "DevMenu",
+      "bindings": [
+        { "type": "keyboard", "control": "F2" }
+      ]
+    },
+    {
       "name": "MenuUp",
       "bindings": [
         { "type": "keyboard", "control": "UP" },

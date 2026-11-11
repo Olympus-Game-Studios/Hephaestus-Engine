@@ -1472,7 +1472,21 @@ void LuaScriptEngine::RegisterApplicationBindings() {
     lua_pushcfunction(m_State, Lua_Application_quit);
     lua_setfield(m_State, -2, "quit");
 
+    lua_pushcfunction(m_State, Lua_Application_isDevelopment);
+    lua_setfield(m_State, -2, "isDevelopment");
+
     lua_setglobal(m_State, "Application");
+#endif
+}
+
+int LuaScriptEngine::Lua_Application_isDevelopment(lua_State* L) {
+#if LUA_AVAILABLE
+    LuaScriptEngine* engine = GetInstance();
+    lua_pushboolean(L, engine && engine->m_Development);
+    return 1;
+#else
+    (void)L;
+    return 0;
 #endif
 }
 

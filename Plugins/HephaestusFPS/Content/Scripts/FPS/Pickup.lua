@@ -99,6 +99,7 @@ function onAwake()
     base = Transform.getPosition()
     state = { taken = false, respawnAt = nil }
     selfKey = Registry.key(this)
+    Registry.ensureSession() -- opening it later would clear pickups
     Registry.pickups[selfKey] = state
     setShown(true)
 end

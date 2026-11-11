@@ -306,6 +306,9 @@ public:
      * Provide audio backend for Lua Audio.* bindings.
      */
     void SetAudioEngine(AudioEngine* audioEngine);
+    /// Whether this is Editor Play or a Development build, for Lua `Application.isDevelopment()`: developer tools
+    /// such as cheat menus check it, so Release games never reach them.
+    void SetDevelopment(bool development) { m_Development = development; }
 
     /**
      * Provide runtime UI bridge for Lua UI.* bindings.
@@ -335,6 +338,7 @@ private:
     QuitRequestCallback m_QuitRequestCallback;
     SceneReloadCallback m_SceneReloadCallback;
     AudioEngine* m_AudioEngine = nullptr;
+    bool m_Development = false;
     Hephaestus::HephaestusUI::UISystem* m_UISystem = nullptr;
     Hephaestus::HephaestusUI::UIContext* m_UIContext = nullptr;
     Hephaestus::HephaestusUI::UIRenderer* m_UIRenderer = nullptr;
@@ -541,6 +545,7 @@ private:
     static int Lua_Storage_load(lua_State* L);
 
     static int Lua_Application_quit(lua_State* L);
+    static int Lua_Application_isDevelopment(lua_State* L);
 
     static int Lua_Camera_setActive(lua_State* L);
     static int Lua_Camera_isActive(lua_State* L);

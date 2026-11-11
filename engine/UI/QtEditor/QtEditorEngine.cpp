@@ -2943,6 +2943,7 @@ void QtEditorEngine::StartPlayMode()
     // ── Initialize Lua script engine if not yet created ────────────────────
     if (!m_luaScriptEngine) {
         m_luaScriptEngine = std::make_unique<LuaScriptEngine>();
+        m_luaScriptEngine->SetDevelopment(true);
         m_luaScriptEngine->Initialize(scene, m_glfwWindow);
         m_luaScriptEngine->SetProjectRoot(projectRootPath);
         m_luaScriptEngine->SetFrameRenderer(m_frameRenderer.get());

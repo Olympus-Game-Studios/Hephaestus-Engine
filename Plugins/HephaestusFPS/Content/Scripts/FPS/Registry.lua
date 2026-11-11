@@ -7,6 +7,7 @@ local Registry = {
     interactables = {},
     hitZones = {},
     pickups = {},
+    waveDirector = nil,
     noises = {},
     noiseCount = 0,
     dangers = {},
@@ -63,6 +64,7 @@ function Registry.ensureSession()
     Registry.interactables = {}
     Registry.hitZones = {}
     Registry.pickups = {}
+    Registry.waveDirector = nil
     Registry.currentTarget = nil
     Registry.activeWeaponId = nil
     Registry.sessionOpen = true

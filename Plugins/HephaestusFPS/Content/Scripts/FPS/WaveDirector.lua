@@ -77,6 +77,8 @@ local function startWave(index)
 end
 
 function onAwake()
+    Registry.ensureSession() -- opening it later would clear waveDirector
+    Registry.waveDirector = this
     plan = Waves.parse(waves)
     points = Waves.parsePoints(spawnPoints)
     wave, toSpawn, spawned, timer = 0, 0, {}, 0
@@ -125,5 +127,23 @@ function onUpdate(dt)
     end
     if phase ~= "starting" and phase ~= "done" then
         showProgress()
+    end
+end
+
+-- The developer menu's Start Wave: the next wave starts now, adding to any enemies still fighting.
+function devStartWave()
+    if phase == "idle" or phase == "done" or #plan == 0 then
+        return
+    end
+    wave = math.min(wave + 1, #plan)
+    toSpawn = toSpawn + plan[wave].count
+    phase = "spawning"
+    timer = 0
+    Hud.showBanner(string.format("Wave %d", wave), #plan > 1 and string.format("of %d", #plan) or "", 2.5)
+end
+
+function onDestroy()
+    if Registry.waveDirector == this then
+        Registry.waveDirector = nil
     end
 end
