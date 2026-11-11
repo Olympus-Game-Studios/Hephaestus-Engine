@@ -63,7 +63,8 @@ Expose.number("slideLegsRight", -0.12)
 Expose.number("slideLegsHeight", -0.66)
 Expose.number("slideLegsYawDegrees", 90)
 Expose.number("slideLegsDrop", 0.45) -- how far below their place they rise from and drop back to
-Expose.number("slideLegsHideBelowPitchDegrees", 55) -- looking further down than this hides them (the waist is cut)
+Expose.number("slideLegsPullBackAtDown", 0.35) -- metres back when looking straight down, scaled by pitch (the waist is cut)
+Expose.number("slideLegsDropAtDown", 0.25) -- metres down when looking straight down, so the raised boot clears the camera
 Expose.bool("mantleEnabled", true)
 Expose.number("mantleReach", 0.8)
 Expose.number("mantleMaxHeight", 2.0)
@@ -588,7 +589,8 @@ function onUpdate(dt)
             position = { x = feet.x, y = feet.y, z = feet.z },
             vars = { forwardOffset = slideLegsForward, rightOffset = slideLegsRight, heightOffset = slideLegsHeight,
                      yawOffsetDegrees = slideLegsYawDegrees, hiddenDrop = slideLegsDrop,
-                      hideBelowPitchDegrees = slideLegsHideBelowPitchDegrees },
+                      pullBackAtDown = slideLegsPullBackAtDown,
+                     dropAtDown = slideLegsDropAtDown },
         }) or false
     end
     Registry.clock = (Registry.clock or 0) + dt
