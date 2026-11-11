@@ -565,9 +565,11 @@ function onUpdate(dt)
     Registry.clock = (Registry.clock or 0) + dt
     Tracers.update(dt)
     updateGameEnd(dt)
+    -- Escape is both Back and Pause: closing the developer menu with it must not open the in-game menu too.
+    local devWasOpen = DevMenu ~= nil and DevMenu.open
     local devOpen = DevMenu and DevMenu.update({ enabled = not PauseMenu.open and not Registry.gameOver,
                                                 enemyPrefab = devEnemyPrefab }, dt) or false
-    PauseMenu.update({ enabled = pauseMenuEnabled and not Registry.gameOver and not devOpen,
+    PauseMenu.update({ enabled = pauseMenuEnabled and not Registry.gameOver and not devOpen and not devWasOpen,
                        mainMenuScene = mainMenuScene, allowRestart = pauseMenuRestart, freezeTime = pauseFreezesTime })
     local menuOpen = PauseMenu.open or devOpen
     local holdFire = PauseMenu.suppressFire or (DevMenu ~= nil and DevMenu.suppressFire)

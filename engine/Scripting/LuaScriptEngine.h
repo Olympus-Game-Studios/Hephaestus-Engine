@@ -674,6 +674,8 @@ private:
     uint32_t RegisterUIScreenHandle(const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen>& screen);
     uint32_t RegisterUIElementHandle(Hephaestus::HephaestusUI::UIElement* element);
     std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> ResolveUIScreen(uint32_t handle) const;
+    /// The screen a Lua argument names: a handle from UI.createScreen, or a screen name.
+    std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> ScreenFromArgument(lua_State* L, int index) const;
     Hephaestus::HephaestusUI::UIElement* ResolveUIElement(uint32_t handle) const;
     void ResetUIHandleMaps();
 

@@ -6688,10 +6688,8 @@ int LuaScriptEngine::Lua_UI_setScreenVisible(lua_State* L) {
         return 1;
     }
 
-    const char* screenName = luaL_checkstring(L, 1);
     const bool visible = lua_toboolean(L, 2) != 0;
-    const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> screen =
-        engine->m_UISystem->FindScreenByName(screenName);
+    const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> screen = engine->ScreenFromArgument(L, 1);
     if (!screen) {
         lua_pushboolean(L, false);
         return 1;
@@ -6706,6 +6704,19 @@ int LuaScriptEngine::Lua_UI_setScreenVisible(lua_State* L) {
 #endif
 }
 
+std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> LuaScriptEngine::ScreenFromArgument(lua_State* L, int index) const {
+#if LUA_AVAILABLE
+    if (lua_type(L, index) == LUA_TNUMBER) {
+        return ResolveUIScreen(static_cast<uint32_t>(lua_tointeger(L, index)));
+    }
+    return m_UISystem ? m_UISystem->FindScreenByName(luaL_checkstring(L, index)) : nullptr;
+#else
+    (void)L;
+    (void)index;
+    return nullptr;
+#endif
+}
+
 int LuaScriptEngine::Lua_UI_setScreenActive(lua_State* L) {
 #if LUA_AVAILABLE
     LuaScriptEngine* engine = GetInstance();
@@ -6714,10 +6725,8 @@ int LuaScriptEngine::Lua_UI_setScreenActive(lua_State* L) {
         return 1;
     }
 
-    const char* screenName = luaL_checkstring(L, 1);
     const bool active = lua_toboolean(L, 2) != 0;
-    const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> screen =
-        engine->m_UISystem->FindScreenByName(screenName);
+    const std::shared_ptr<Hephaestus::HephaestusUI::UIScreen> screen = engine->ScreenFromArgument(L, 1);
     if (!screen) {
         lua_pushboolean(L, false);
         return 1;

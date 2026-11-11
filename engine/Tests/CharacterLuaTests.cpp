@@ -17,6 +17,7 @@
 #include "UI/HephaestusUI/UIContext.h"
 #include "UI/HephaestusUI/UISystem.h"
 #include "UI/HephaestusUI/UIRenderer.h"
+#include "UI/HephaestusUI/UIScreen.h"
 
 #include <cmath>
 #include <filesystem>
@@ -431,6 +432,13 @@ end
     ok &= Check(uiSystem.GetScreens().size() == 1 && engine.ExecuteString(
                     "assert(_G.newReloadScreen ~= _G.oldReloadScreen)"),
                 "reloaded scene mounts one new screen with a non-recycled handle");
+    ok &= Check(engine.ExecuteString("assert(UI.setScreenVisible(_G.newReloadScreen, false) == true)") &&
+                    !uiSystem.GetScreens().front()->IsVisible() &&
+                    engine.ExecuteString("assert(UI.setScreenVisible('ReloadProbeHUD', true) == true)") &&
+                    uiSystem.GetScreens().front()->IsVisible() &&
+                    engine.ExecuteString("assert(UI.setScreenActive(_G.newReloadScreen, false) == true)") &&
+                    !uiSystem.GetScreens().front()->IsActive(),
+                "UI.setScreenVisible and setScreenActive take the handle UI.createScreen returns, or a name");
     ok &= Check(engine.ExecuteString("assert(package.loaded.__runtimeSceneReload.oldEntity:IsValid() == false and package.loaded.__runtimeSceneReload.newEntity:IsValid() == true)"),
                 "Lua entity userdata from the prior scene generation expires");
     engine.OnSimulationStopped();
