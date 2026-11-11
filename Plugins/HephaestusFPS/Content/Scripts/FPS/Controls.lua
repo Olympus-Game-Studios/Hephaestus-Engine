@@ -360,10 +360,11 @@ local function build(menu)
     local width = LABEL_WIDTH + PAD * CELL_WIDTH + (PAD - 1) * GAP + 36
     ui.backdrop = panel(root, menu.barX - 6, menu.y - 8, width, 42 + visible * ROW_HEIGHT + 44,
                         { r = 0, g = 0, b = 0, a = 0.55 })
-    ui.headPointer = text(root, cellX(menu, 1), menu.y, 2 * CELL_WIDTH + GAP, 28, 16, true, Menu.theme.muted)
-    UI.setText(ui.headPointer, "KEYBOARD / MOUSE")
-    ui.headPad = text(root, cellX(menu, PAD), menu.y, CELL_WIDTH, 28, 16, true, Menu.theme.muted)
-    UI.setText(ui.headPad, "GAMEPAD")
+    ui.heads = {}
+    for column, title in ipairs({ "PRIMARY", "SECONDARY", "GAMEPAD" }) do
+        ui.heads[column] = text(root, cellX(menu, column) + 12, menu.y, CELL_WIDTH - 12, 28, 16, true, Menu.theme.muted)
+        UI.setText(ui.heads[column], title)
+    end
     for i = 1, visible do
         local y = top + (i - 1) * ROW_HEIGHT
         local line = { cells = {} }
@@ -412,7 +413,7 @@ local function build(menu)
         ui.lines[i] = line
     end
     ui.status = text(root, menu.x, top + visible * ROW_HEIGHT + 6, 900, 30, 18, false, Menu.theme.muted)
-    ui.all = { ui.backdrop, ui.headPointer, ui.headPad, ui.status }
+    ui.all = { ui.backdrop, ui.heads[1], ui.heads[2], ui.heads[3], ui.status }
     for _, line in ipairs(ui.lines) do
         ui.all[#ui.all + 1] = line.label
         ui.all[#ui.all + 1] = line.resetButton
