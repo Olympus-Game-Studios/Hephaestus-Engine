@@ -1,11 +1,15 @@
 -- Holds a weapon mesh in a character's hands: the grip at one hand socket and the barrel (+X) pointing at the
--- other. Put it on a child of an entity with a Character whose asset has both sockets.
+-- other, or along where the character faces (alongFacing). Put it on a child of an entity with a Character whose
+-- asset has both sockets.
 local Registry = require("FPS.Registry")
 
 Expose.string("gripSocket", "RightHand")
 Expose.string("supportSocket", "LeftHand")
 Expose.number("gripForward", 0.13)
 Expose.number("gripUp", 0.02)
+Expose.number("gripSide", 0) -- metres across the barrel towards the left, from the grip hand into its palm
+Expose.bool("alongFacing", false) -- barrel where the character faces, tilted up or down as its hands are
+Expose.number("forwardYawDegrees", -90) -- the character's forward in its own space: -90 is +Z, as Mixamo faces
 Expose.string("dropPrefab", "")
 Expose.number("muzzleForward", 0.45) -- from the weapon's origin to the end of the barrel
 
@@ -21,14 +25,14 @@ function onAwake()
     droppedCopy = nil
 end
 
--- Grip and barrel direction from the sockets, in the owner's space (world = false) or the world.
-local function hold(world)
+-- Where the weapon goes in the owner's space: its origin, and the yaw and pitch that turn its +X along the barrel.
+local function holdLocal()
     local character = owner and owner:IsValid() and owner:GetCharacter()
     if not character then
         return nil
     end
-    local grip = world and character:GetSocket(gripSocket) or character:GetSocketLocal(gripSocket)
-    local support = world and character:GetSocket(supportSocket) or character:GetSocketLocal(supportSocket)
+    local grip = character:GetSocketLocal(gripSocket)
+    local support = character:GetSocketLocal(supportSocket)
     if not grip or not support then
         return nil
     end
@@ -39,12 +43,29 @@ local function hold(world)
         return nil
     end
     dx, dy, dz = dx / length, dy / length, dz / length
-    local yaw = math.atan(-dz, dx)
+    local yaw = alongFacing and math.rad(forwardYawDegrees) or math.atan(-dz, dx)
     local pitch = math.asin(math.max(-1, math.min(1, dy)))
-    -- The weapon's +Y after turning by yaw and pitch (rotation order Rx * Ry * Rz with no X).
-    local ux, uy, uz = -math.sin(pitch) * math.cos(yaw), math.cos(pitch), math.sin(pitch) * math.sin(yaw)
-    return { x = g.x + dx * gripForward + ux * gripUp, y = g.y + dy * gripForward + uy * gripUp,
-             z = g.z + dz * gripForward + uz * gripUp }, yaw, pitch
+    -- The barrel and the weapon's +Y and left after turning by yaw and pitch (rotation order Rx * Ry * Rz, no X).
+    local cp, sp, cy, sy = math.cos(pitch), math.sin(pitch), math.cos(yaw), math.sin(yaw)
+    local fx, fy, fz = cp * cy, sp, -cp * sy
+    local ux, uy, uz = -sp * cy, cp, sp * sy
+    local lx, lz = -sy, -cy
+    return { x = g.x + fx * gripForward + ux * gripUp + lx * gripSide, y = g.y + fy * gripForward + uy * gripUp,
+             z = g.z + fz * gripForward + uz * gripUp + lz * gripSide }, yaw, pitch
+end
+
+-- The same hold in the world, through the owner's position and yaw.
+local function hold(world)
+    local position, yaw, pitch = holdLocal()
+    if not position or not world then
+        return position, yaw, pitch
+    end
+    local transform = owner:GetTransform()
+    local at = transform:GetWorldPosition()
+    local turn = transform:GetRotation().y
+    local c, s = math.cos(turn), math.sin(turn)
+    return { x = at.x + position.x * c + position.z * s, y = at.y + position.y,
+             z = at.z - position.x * s + position.z * c }, yaw + turn, pitch
 end
 
 function onLateUpdate()
