@@ -409,6 +409,10 @@ local enemy = Scene.instantiate("assets/prefabs/Enemy.hpprefab", {
   vars = { health = 40, moveSpeed = 3.5 }
 })
 
+-- Attach the spawned prefab to an entity: position/rotation are then local to it, and it moves with it
+-- (including the smoothed, physics-interpolated position a moving character is drawn at)
+local legs = Scene.instantiate("assets/prefabs/PlayerLegs.hpprefab", { parent = this, position = { x = 0, y = 0, z = 0 } })
+
 -- Destroy a prefab instance or entity (queued until end of script Update)
 Scene.destroy(enemy)
 

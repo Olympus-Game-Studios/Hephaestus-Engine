@@ -50,7 +50,7 @@ The `Transform` table has the same as functions for the script's own entity: `ge
 
 | Function | Does |
 | --- | --- |
-| `Scene.instantiate(path, options)` | Spawn a prefab. `options` can have `position`, `rotation` (degrees) and `vars` (overrides for the prefab's `Expose` values). Returns the new entity. |
+| `Scene.instantiate(path, options)` | Spawn a prefab. `options` can have `position`, `rotation` (degrees), `parent` (an entity to attach it to; `position` and `rotation` are then relative to that entity, and it moves with it) and `vars` (overrides for the prefab's `Expose` values). Returns the new entity. |
 | `Scene.destroy(entity)` | Remove an entity at the end of this frame's update. |
 | `Scene.findAllWithPrefix(prefix)` | Every entity whose name starts with `prefix`. |
 | `Scene.FindFirstCamera()` / `Scene.FindCameras()` | Find camera entities. |

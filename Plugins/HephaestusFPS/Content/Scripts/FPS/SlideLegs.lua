@@ -1,8 +1,8 @@
 -- The player's own legs, shown only while they slide so the slide can be seen from first person. Put it on a
 -- character with the legs model whose MeshRenderer has castShadows off (the player has no body shadow) and no collider
--- (so shots pass through); Player.lua spawns it from slideLegsPrefab and sets the tuning below. The legs follow the
--- player's feet and yaw in the slide pose, rise into view as the slide starts and drop away as it ends (following
--- the player's slide blend), then hide.
+-- (so shots pass through); Player.lua spawns it as a child of the player (so it moves with the player's drawn,
+-- physics-interpolated position, as the camera does) from slideLegsPrefab and sets the tuning below. The legs sit in the
+-- slide pose, rise into view as the slide starts and drop away as it ends (following the player's slide blend), then hide.
 local Registry = require("FPS.Registry")
 
 -- Metres along the player's facing from the camera to the model's origin. Looking down moves the legs back
@@ -36,19 +36,10 @@ function onUpdate(dt)
     if not visible then
         return
     end
-    local transform = player.entity:GetTransform()
-    local feet = transform and transform:GetWorldPosition()
-    if not feet then
-        return
-    end
-    local yaw = player.yaw or 0
-    local fx, fz = math.cos(yaw), -math.sin(yaw)
-    local rx, rz = -fz, fx
     local eased = blend * blend * (3 - 2 * blend)
     local down = math.max(0, math.min(1, -(player.pitch or 0) / (math.pi / 2)))
     local forward = forwardOffset - pullBackAtDown * down
-    Transform.setPosition(feet.x + fx * forward + rx * rightOffset,
-                          feet.y + (player.eyeHeight or 0) - belowEye - hiddenDrop * (1 - eased),
-                          feet.z + fz * forward + rz * rightOffset)
-    Transform.setRotation(0, yaw + math.rad(yawOffsetDegrees), 0)
+    -- In the player's own space (it carries their yaw): +X is forward, +Z is to their right.
+    Transform.setPosition(forward, (player.eyeHeight or 0) - belowEye - hiddenDrop * (1 - eased), rightOffset)
+    Transform.setRotation(0, math.rad(yawOffsetDegrees), 0)
 end

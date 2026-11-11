@@ -11,6 +11,9 @@
 #include "Scene/CharacterComponent.h"
 #include "Scene/Components.h"
 #include "Scene/Entity.h"
+#include "Scene/PrefabAsset.h"
+#include "Scene/PrefabOverrideSystem.h"
+#include "Scene/PrefabSerializer.h"
 #include "Scene/Scene.h"
 #include "Scripting/LuaScriptComponent.h"
 #include "Scripting/LuaScriptEngine.h"
@@ -448,6 +451,53 @@ end
 
 } // namespace
 
+bool TestInstantiateWithParent(const fs::path& root) {
+    bool ok = true;
+    {
+        Scene source("PrefabSource");
+        Entity part = source.CreateEntity("SpawnedPart");
+        PrefabAsset asset;
+        std::string error;
+        const fs::path prefabPath = root / "assets" / "prefabs" / "Part.hpprefab";
+        fs::create_directories(prefabPath.parent_path());
+        ok &= Check(PrefabOverrideSystem::CaptureHierarchy(source, part, asset), "capture part prefab");
+        ok &= Check(PrefabSerializer::Serialize(asset, prefabPath, error), "save part prefab: " + error);
+        PrefabOverrideSystem::InvalidateAssetCache(prefabPath.generic_string());
+    }
+    ok &= Check(WriteFile(root / "assets" / "scripts" / "SpawnChild.lua", R"(
+function onUpdate(dt)
+    if _G.spawned then
+        return
+    end
+    _G.spawned = Scene.instantiate("assets/prefabs/Part.hpprefab", { parent = this, position = { x = 1, y = 2, z = 3 } })
+    _G.badParent = pcall(Scene.instantiate, "assets/prefabs/Part.hpprefab", { parent = 5 })
+end
+)"), "write SpawnChild script");
+    Scene scene("InstantiateParent");
+    Entity player = scene.CreateEntity("Player");
+    player.GetComponent<TransformComponent>().position = Vec3(10.0f, 0.0f, -4.0f);
+    player.AddComponent<LuaScriptComponent>().scriptPath = "assets/scripts/SpawnChild.lua";
+    LuaScriptEngine engine;
+    engine.Initialize(&scene, nullptr);
+    engine.SetProjectRoot(root);
+    engine.OnSimulationStarted();
+    engine.Update(scene, 0.016f);
+    ok &= Check(engine.ExecuteString("assert(_G.spawned ~= nil)"), "Scene.instantiate with a parent returns the entity");
+    ok &= Check(engine.ExecuteString("assert(_G.badParent == false)"), "a parent that is not an entity is an error");
+    Entity child = scene.FindEntityByName("SpawnedPart");
+    ok &= Check(static_cast<bool>(child) && scene.GetParent(child) == player, "the spawned root is a child of parent");
+    if (child) {
+        const Mat4 world = scene.GetWorldTransform(child);
+        ok &= Check(std::fabs(world.m[12] - 11.0f) < 1.0e-4f && std::fabs(world.m[13] - 2.0f) < 1.0e-4f
+                        && std::fabs(world.m[14] + 1.0f) < 1.0e-4f,
+                    "position is local to the parent");
+        player.GetComponent<TransformComponent>().position = Vec3(0.0f, 0.0f, 0.0f);
+        const Mat4 moved = scene.GetWorldTransform(child);
+        ok &= Check(std::fabs(moved.m[12] - 1.0f) < 1.0e-4f, "the child follows the parent when it moves");
+    }
+    return ok;
+}
+
 int main() {
 #if !LUA_AVAILABLE
     std::cout << "CharacterLuaTests skipped (LUA_AVAILABLE=0)\n";
@@ -462,6 +512,7 @@ int main() {
     ok &= TestControllerDisabled(root);
     ok &= TestBrokenControllerIsolation(root);
     ok &= TestSceneReloadRequestLifecycle();
+    ok &= TestInstantiateWithParent(root);
     if (ok) {
         std::cout << "CharacterLuaTests passed\n";
         return 0;

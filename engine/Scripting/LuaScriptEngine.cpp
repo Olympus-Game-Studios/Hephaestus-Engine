@@ -4502,6 +4502,11 @@ Entity LuaScriptEngine::ExecuteSpawn(const PendingSpawn& spawn) {
         std::cerr << "[Lua] Scene.instantiate: prefab not found: " << spawn.prefabPath << "\n";
         return {};
     }
+    Entity parent = spawn.hasParent ? MakeEntity(spawn.parentId) : Entity{};
+    if (spawn.hasParent && (!parent || !parent.HasComponent<TransformComponent>())) {
+        std::cerr << "[Lua] Scene.instantiate: parent entity is no longer valid for " << spawn.prefabPath << "\n";
+        return {};
+    }
 
     PrefabAsset asset;
     std::string error;
@@ -4524,6 +4529,9 @@ Entity LuaScriptEngine::ExecuteSpawn(const PendingSpawn& spawn) {
         return {};
     }
 
+    if (parent && root.HasComponent<TransformComponent>()) {
+        m_Scene->SetParent(root, parent);
+    }
     if (root.HasComponent<TransformComponent>()) {
         auto& transform = root.GetComponent<TransformComponent>();
         if (spawn.hasPosition) {
@@ -6238,6 +6246,17 @@ int LuaScriptEngine::Lua_Scene_Instantiate(lua_State* L) {
                 spawn.hasRotation = true;
                 spawn.rotationDegrees = *rotVal.AsVec3();
             }
+        }
+        lua_pop(L, 1);
+
+        lua_getfield(L, 2, "parent");
+        if (!lua_isnil(L, -1)) {
+            LuaEntityReference* parent = static_cast<LuaEntityReference*>(luaL_testudata(L, -1, "HephaestusEntity"));
+            if (!parent) {
+                return luaL_error(L, "Scene.instantiate: options.parent must be an entity");
+            }
+            spawn.hasParent = true;
+            spawn.parentId = *parent;
         }
         lua_pop(L, 1);
 

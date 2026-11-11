@@ -583,9 +583,9 @@ end
 function onUpdate(dt)
     lastDt = dt
     if slideLegsPrefab ~= "" and not slideLegs then
-        local feet = Transform.getPosition()
         slideLegs = Scene.instantiate(slideLegsPrefab, {
-            position = { x = feet.x, y = feet.y, z = feet.z },
+            parent = this,
+            position = { x = 0, y = 0, z = 0 },
             vars = { forwardOffset = slideLegsForward, rightOffset = slideLegsRight, belowEye = slideLegsBelowEye,
                      yawOffsetDegrees = slideLegsYawDegrees, hiddenDrop = slideLegsDrop,
                      pullBackAtDown = slideLegsPullBackAtDown },

@@ -392,6 +392,8 @@ private:
         Vec3 position{0.0f, 0.0f, 0.0f};
         bool hasRotation = false;
         Vec3 rotationDegrees{0.0f, 0.0f, 0.0f};
+        uint32_t parentId = 0;
+        bool hasParent = false;
         std::unordered_map<std::string, PropertyValue> vars;
     };
 
