@@ -222,7 +222,7 @@ Changing widgets (each takes the widget first):
 - **Size:** game UI is laid out for a screen 1080 units tall and scaled to the real one, so a HUD keeps its proportions at any resolution and in any size of Editor Play viewport. Positions and sizes you give are in those units, and mouse positions reach widgets in them too. `UI.setScale(scale)` makes all of it bigger or smaller on top of that (0.5 to 2, for a player's UI size setting), and `UI.getScale()` returns it.
 - **Events:** `setOnClick(widget, function)`, `setOnHover(widget, function(isHovered))`
 
-Building UI in code: `UI.createScreen`, `UI.getRoot`, `UI.createPanel`, `UI.createText`, `UI.createButton`, `UI.createImage`, `UI.createVerticalBox`, `UI.createHorizontalBox`, `UI.createGrid`, `UI.setScreenVisible`, `UI.setScreenActive`, `UI.clearScreens` and `UI.getScreenCount`. `UI.loadHUI(path)` loads a layout without the bookkeeping `display.ui` does.
+Building UI in code: `UI.createScreen`, `UI.getRoot`, `UI.createPanel`, `UI.createText`, `UI.createButton`, `UI.createImage`, `UI.createVerticalBox`, `UI.createHorizontalBox`, `UI.createGrid`, `UI.setScreenVisible`, `UI.setScreenActive`, `UI.clearScreens` and `UI.getScreenCount`. `UI.setScreenVisible(screen, visible)` and `UI.setScreenActive(screen, active)` take the handle `UI.createScreen` returns, or a screen's name. `UI.loadHUI(path)` loads a layout without the bookkeeping `display.ui` does.
 
 Constants: `UIAnchor` (`TopLeft`, `TopCenter`, `TopRight`, `CenterLeft`, `Center`, `CenterRight`, `BottomLeft`, `BottomCenter`, `BottomRight`, `Stretch`), `UIAlign` (`Left`, `Center`, `Right`, `Top`, `Bottom`, `Stretch`), `UIScaleMode` (`Stretch`, `Fit`, `Fill`, `Center`) and `CursorMode` (`Game`, `UI`).
 
