@@ -2355,6 +2355,13 @@ LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene,
         return nullptr;
     }
 
+    // Script files are checked for edits twice a second, not on every frame for every instance.
+    const auto now = std::chrono::steady_clock::now();
+    if (component.scriptSource.empty() && instance.valid && !instance.forceReload &&
+        instance.userPath == component.scriptPath && now - instance.lastFileCheck < kScriptRecheckInterval) {
+        return &instance;
+    }
+
     bool hasEmbeddedSource = !component.scriptSource.empty();
     size_t sourceHash = hasEmbeddedSource ? std::hash<std::string>{}(component.scriptSource) : 0;
 
@@ -2407,6 +2414,7 @@ LuaScriptEngine::ScriptInstance* LuaScriptEngine::EnsureInstance(Scene& scene,
     auto timestamp = std::filesystem::exists(resolved, fileError)
         ? std::filesystem::last_write_time(resolved, fileError)
         : std::filesystem::file_time_type{};
+    instance.lastFileCheck = now;
 
     if (fileError) {
         if (!instance.errorLogged) {

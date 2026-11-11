@@ -3452,7 +3452,18 @@ void EngineFrameRenderer::recordLocalShadowPass(VkCommandBuffer cmd, Scene* scen
 const MaterialComponent* EngineFrameRenderer::resolveMaterialFromPath(const std::string& materialPath)
 {
     if (materialPath.empty()) return nullptr;
+    const auto now = std::chrono::steady_clock::now();
+    auto known = m_materialPathChecks.find(materialPath);
+    if (known != m_materialPathChecks.end() && now - known->second.checkedAt < kMaterialRecheckInterval) {
+        return known->second.material;
+    }
+    const MaterialComponent* material = loadMaterialFromPath(materialPath);
+    m_materialPathChecks[materialPath] = {material, now};
+    return material;
+}
 
+const MaterialComponent* EngineFrameRenderer::loadMaterialFromPath(const std::string& materialPath)
+{
     namespace fs = std::filesystem;
     fs::path resolvedPath = fs::path(materialPath);
 
@@ -5169,6 +5180,7 @@ void EngineFrameRenderer::destroyAllResources()
     m_pendingTextureSlotUpdates.clear();
     m_materialAssetCache.clear();
     m_materialAssetCacheFailed.clear();
+    m_materialPathChecks.clear();
     
     // Cleanup descriptor pool
     if (m_descriptorPool != VK_NULL_HANDLE) {

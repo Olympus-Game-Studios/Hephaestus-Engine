@@ -22,6 +22,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <chrono>
 #include <filesystem>
 
 #include "VulkanBuffer.h"
@@ -551,9 +552,17 @@ private:
     };
     std::unordered_map<std::string, MaterialCacheEntry> m_materialAssetCache;
     std::unordered_map<std::string, std::filesystem::file_time_type> m_materialAssetCacheFailed;
+    // What each material path resolved to and when its file was last checked, so draws don't touch the disk.
+    struct MaterialPathCheck {
+        const MaterialComponent* material = nullptr;
+        std::chrono::steady_clock::time_point checkedAt{};
+    };
+    std::unordered_map<std::string, MaterialPathCheck> m_materialPathChecks;
+    static constexpr std::chrono::milliseconds kMaterialRecheckInterval{500};
 
     // Material system helpers
     const MaterialComponent* resolveMaterialFromPath(const std::string& materialPath);
+    const MaterialComponent* loadMaterialFromPath(const std::string& materialPath);
     uint32_t ensureMaterialTextureSlot(const std::string& rawPath, bool linear = false);
     void updateEnvironmentReflectionDescriptor(uint32_t imageIndex);
     EnvironmentComponent* findEnvironment(Scene* scene);

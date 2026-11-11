@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <vector>
 #include <filesystem>
+#include <chrono>
 #include <limits>
 #include <cstdint>
 #include <functional>
@@ -350,12 +351,14 @@ private:
     Hephaestus::HephaestusUI::UIRenderer* m_UIRenderer = nullptr;
     int m_CurrentCursorMode = 0; // 0=normal, 1=disabled
 
+    static constexpr std::chrono::milliseconds kScriptRecheckInterval{500};
     struct ScriptInstance {
         uint32_t entityId = 0;
         LuaScriptSlot slot = LuaScriptSlot::Gameplay;
         std::string userPath;
         std::filesystem::path resolvedPath;
         std::filesystem::file_time_type lastWriteTime{};
+        std::chrono::steady_clock::time_point lastFileCheck{};
         size_t embeddedSourceHash = 0;
         bool forceReload = false;
         int environmentRef = -1;
