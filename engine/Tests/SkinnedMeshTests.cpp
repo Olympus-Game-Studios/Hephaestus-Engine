@@ -5,12 +5,16 @@
 
 #include "Animation/Skeleton.h"
 #include "Assets/SkeletalModelImporter.h"
+#include "Gfx/EngineFrameRenderer.h"
 #include "Gfx/Vertex.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <iostream>
+#include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using Hephaestus::Skeleton;
@@ -108,6 +112,46 @@ bool TestRestFixturePalette() {
     return ok;
 }
 
+bool TestRetiredCharacterPalettesFreeTheirSlots() {
+    struct Entry {
+        uint64_t lastUsedFrame = 0;
+        uint64_t releasedAtFrame = 0;
+    };
+    constexpr uint64_t kFramesInFlight = 2;
+    constexpr size_t kPoolSets = 256;
+    std::unordered_map<uint32_t, Entry> live;
+    size_t inUse = 0;
+    size_t peak = 0;
+    bool releasedTooEarly = false;
+    uint64_t frame = 0;
+    for (uint32_t character = 0; character < 1000; ++character) {
+        for (int drawn = 0; drawn < 5; ++drawn) {
+            ++frame;
+            Hephaestus::RetireIdleEntries(live, frame, kFramesInFlight, [&](Entry& entry) {
+                releasedTooEarly |= frame - entry.lastUsedFrame < kFramesInFlight;
+                --inUse;
+            });
+            auto [it, added] = live.try_emplace(character);
+            inUse += added ? 1 : 0;
+            it->second.lastUsedFrame = frame;
+            peak = std::max(peak, inUse);
+        }
+    }
+    bool ok = Check(peak <= kFramesInFlight, "removed characters' palettes are freed within the frames in flight");
+    ok &= Check(peak < kPoolSets, "a thousand spawned and removed characters never exhaust the bone pool");
+    ok &= Check(!releasedTooEarly, "no palette is freed while a frame in flight may still read it");
+
+    ++frame;
+    live.try_emplace(5000).first->second.lastUsedFrame = frame;
+    for (int i = 0; i < 10; ++i) {
+        ++frame;
+        Hephaestus::RetireIdleEntries(live, frame, kFramesInFlight, [](Entry&) {});
+        live[5000].lastUsedFrame = frame;
+    }
+    ok &= Check(live.count(5000) == 1, "a character drawn every frame keeps its palette");
+    return ok;
+}
+
 } // namespace
 
 int main() {
@@ -115,6 +159,7 @@ int main() {
     ok &= TestVertexLayout();
     ok &= TestRestPaletteIdentitySkinning();
     ok &= TestRestFixturePalette();
+    ok &= TestRetiredCharacterPalettesFreeTheirSlots();
     if (ok) {
         std::cout << "Skinned mesh tests passed.\n";
         return 0;

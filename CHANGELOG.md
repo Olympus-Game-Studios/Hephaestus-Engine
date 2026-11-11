@@ -183,6 +183,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - 2026-08-28: Prefab Editor Inspector is no longer read-only labels; it hosts the same component inspectors as the Scene Editor against the preview entity and syncs edits back into the `PrefabAsset`.
 
 ### Fixed
+- 2026-11-11: Animated characters no longer appear in T-pose after many have been spawned and removed (long Survival runs, repeated Editor Play). Each character's bone data is now freed a couple of frames after it stops being drawn instead of being kept until the renderer shuts down.
 
 - 2026-11-11: Lua `UI.setScreenVisible` and `UI.setScreenActive` accept the handle `UI.createScreen` returns as well as a screen name. They only looked screens up by name, so passing a handle silently did nothing: the FPS plugin's in-game and developer menus gave control back when closed (Resume, Close, F1, F2, Escape, Backspace) but stayed on screen. Closing the developer menu with Escape no longer also opens the in-game menu.
 - 2026-11-11: FPS plugin wave directors and pickups placed in a level register with the FPS registry before the player opens its session, so the session no longer clears them (pickup icons now hide when taken).

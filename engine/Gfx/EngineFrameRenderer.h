@@ -521,8 +521,11 @@ private:
     struct CharacterBoneGpu {
         VulkanBuffer buffer;
         VkDescriptorSet set = VK_NULL_HANDLE;
+        uint64_t lastUsedFrame = 0;
     };
     std::unordered_map<uint32_t, CharacterBoneGpu> m_characterBonePalettes;
+    uint64_t m_frameSerial = 0;
+    void releaseCharacterBonePalette(CharacterBoneGpu& gpu);
 
     // Material texture slots
     struct MaterialTextureSlot {
@@ -856,5 +859,19 @@ private:
 
     bool m_editorOverlays = false;
 };
+
+// Releases and erases the entries (with a lastUsedFrame) that no frame still in flight can be reading.
+template <typename Map, typename Release>
+void RetireIdleEntries(Map& entries, uint64_t frame, uint64_t framesInFlight, Release&& release)
+{
+    for (auto it = entries.begin(); it != entries.end();) {
+        if (frame - it->second.lastUsedFrame >= framesInFlight) {
+            release(it->second);
+            it = entries.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
 
 } // namespace Hephaestus

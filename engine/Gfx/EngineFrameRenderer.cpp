@@ -781,6 +781,9 @@ bool EngineFrameRenderer::RenderFrame(Scene* scene, const RenderCamera& camera,
     // Wait for previous frame
     vkWaitForFences(m_device->device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
     finishCapture(); // Before a completed frame's fence can be reset for reuse.
+    ++m_frameSerial;
+    RetireIdleEntries(m_characterBonePalettes, m_frameSerial, MAX_FRAMES_IN_FLIGHT,
+                      [this](CharacterBoneGpu& gpu) { releaseCharacterBonePalette(gpu); });
     
     // Deferred readback fallback: if the immediate readback below didn't run
     // (e.g. submit failed), drain any pending pick on the next frame where the
@@ -1345,10 +1348,18 @@ void EngineFrameRenderer::destroyCharacterBonePalettes()
         return;
     }
     for (auto& [id, gpu] : m_characterBonePalettes) {
-        gpu.buffer.Destroy(m_device->allocator);
-        gpu.set = VK_NULL_HANDLE;
+        releaseCharacterBonePalette(gpu);
     }
     m_characterBonePalettes.clear();
+}
+
+void EngineFrameRenderer::releaseCharacterBonePalette(CharacterBoneGpu& gpu)
+{
+    if (gpu.set != VK_NULL_HANDLE && m_skinned.bonePool != VK_NULL_HANDLE) {
+        vkFreeDescriptorSets(m_device->device, m_skinned.bonePool, 1, &gpu.set);
+    }
+    gpu.set = VK_NULL_HANDLE;
+    gpu.buffer.Destroy(m_device->allocator);
 }
 
 VkDescriptorSet EngineFrameRenderer::resolveSkinnedBoneSet(entt::entity entity,
@@ -1362,6 +1373,7 @@ VkDescriptorSet EngineFrameRenderer::resolveSkinnedBoneSet(entt::entity entity,
 
     const uint32_t id = static_cast<uint32_t>(entity);
     CharacterBoneGpu& gpu = m_characterBonePalettes[id];
+    gpu.lastUsedFrame = m_frameSerial;
     if (gpu.buffer.buffer == VK_NULL_HANDLE) {
         gpu.buffer.Create(m_device->allocator, kBoneUboSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                           VMA_MEMORY_USAGE_CPU_TO_GPU);
@@ -1371,7 +1383,9 @@ VkDescriptorSet EngineFrameRenderer::resolveSkinnedBoneSet(entt::entity entity,
         alloc.descriptorSetCount = 1;
         alloc.pSetLayouts = &m_skinned.boneSetLayout;
         if (vkAllocateDescriptorSets(m_device->device, &alloc, &gpu.set) != VK_SUCCESS) {
+            std::cerr << "[EngineFrameRenderer] Failed to allocate a character bone descriptor set\n";
             gpu.set = VK_NULL_HANDLE;
+            gpu.buffer.Destroy(m_device->allocator);
             return mesh.boneDescriptorSet;
         }
         VkDescriptorBufferInfo bufferInfo{};
