@@ -67,6 +67,9 @@ void CaptureMeshRenderer(const MeshRendererComponent& mesh, JsonValue& data) {
     if (mesh.viewModel) {
         data.objectValue["viewModel"] = MakeBool(true);
     }
+    if (mesh.drawOverWorld) {
+        data.objectValue["drawOverWorld"] = MakeBool(true);
+    }
     if (!mesh.castShadows) {
         data.objectValue["castShadows"] = MakeBool(false);
     }
@@ -101,6 +104,9 @@ void ApplyMeshRenderer(MeshRendererComponent& mesh, const JsonValue& data) {
     }
     if (const JsonValue* viewModelValue = data.Find("viewModel")) {
         mesh.viewModel = ParseBoolLike(*viewModelValue, mesh.viewModel);
+    }
+    if (const JsonValue* drawOverWorldValue = data.Find("drawOverWorld")) {
+        mesh.drawOverWorld = ParseBoolLike(*drawOverWorldValue, mesh.drawOverWorld);
     }
     if (const JsonValue* castShadowsValue = data.Find("castShadows")) {
         mesh.castShadows = ParseBoolLike(*castShadowsValue, mesh.castShadows);

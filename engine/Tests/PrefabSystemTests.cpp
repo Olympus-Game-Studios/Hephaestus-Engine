@@ -79,6 +79,7 @@ bool BuildLampHierarchy(Scene& scene, Entity& outRoot, Entity& outShade) {
     mesh.meshAssetPath = "assets/meshes/cube.mesh";
     mesh.appliedMaterialPaths = { "assets/materials/Lamp.hematerial" };
     mesh.castShadows = false;
+    mesh.drawOverWorld = true;
     auto& material = outShade.AddComponent<MaterialComponent>();
     material.albedo = Vec3(0.8f, 0.6f, 0.2f);
     auto& collider = outShade.AddComponent<MeshColliderComponent>();
@@ -222,6 +223,7 @@ bool TestSceneRoundtripAndTransforms(const fs::path& outDir) {
 
     Entity plain = scene.CreateEntity("PlainNoShadow");
     plain.AddComponent<MeshRendererComponent>().castShadows = false;
+    plain.GetComponent<MeshRendererComponent>().drawOverWorld = true;
     Entity plainDefault = scene.CreateEntity("PlainShadow");
     plainDefault.AddComponent<MeshRendererComponent>();
 
@@ -262,6 +264,8 @@ bool TestSceneRoundtripAndTransforms(const fs::path& outDir) {
                         "child transform override survived reload");
             ok &= Check(!loadedShade.GetComponent<MeshRendererComponent>().castShadows,
                         "prefab mesh castShadows off survived reload");
+            ok &= Check(loadedShade.GetComponent<MeshRendererComponent>().drawOverWorld,
+                        "prefab mesh drawOverWorld survived reload");
             auto glow = loadedShade.GetComponent<LuaScriptComponent>().variables.find("glow");
             ok &= Check(glow != loadedShade.GetComponent<LuaScriptComponent>().variables.end() &&
                         glow->second.IsNumber() && Near(static_cast<float>(*glow->second.AsNumber()), 4.0f),
@@ -274,6 +278,10 @@ bool TestSceneRoundtripAndTransforms(const fs::path& outDir) {
                 "scene mesh castShadows off survived reload");
     ok &= Check(loadedPlainDefault && loadedPlainDefault.GetComponent<MeshRendererComponent>().castShadows,
                 "scene mesh castShadows defaults on");
+    ok &= Check(loadedPlain && loadedPlain.GetComponent<MeshRendererComponent>().drawOverWorld,
+                "scene mesh drawOverWorld survived reload");
+    ok &= Check(loadedPlainDefault && !loadedPlainDefault.GetComponent<MeshRendererComponent>().drawOverWorld,
+                "scene mesh drawOverWorld defaults off");
     return ok;
 }
 

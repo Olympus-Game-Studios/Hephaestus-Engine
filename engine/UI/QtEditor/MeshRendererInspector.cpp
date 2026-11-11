@@ -152,6 +152,12 @@ void MeshRendererInspector::buildUI()
         "so it never clips into walls. It casts no shadows."));
     form->addRow(QString(), m_viewModelCheck);
 
+    m_drawOverWorldCheck = new QCheckBox(tr("Draw Over World"));
+    m_drawOverWorldCheck->setToolTip(tr(
+        "In play, draws this mesh in front of walls and floors like a view model, but where it is in the world "
+        "and at the camera's field of view, such as the player's own legs."));
+    form->addRow(QString(), m_drawOverWorldCheck);
+
     m_castShadowsCheck = new QCheckBox(tr("Cast Shadows"));
     m_castShadowsCheck->setToolTip(tr("Off keeps this mesh out of shadow maps, such as a first-person body."));
     form->addRow(QString(), m_castShadowsCheck);
@@ -222,6 +228,10 @@ void MeshRendererInspector::connectSignals()
         EndEdit();
     });
     connect(m_viewModelCheck, &QCheckBox::toggled, this, [this](bool) {
+        applyToComponent();
+        EndEdit();
+    });
+    connect(m_drawOverWorldCheck, &QCheckBox::toggled, this, [this](bool) {
         applyToComponent();
         EndEdit();
     });
@@ -327,13 +337,14 @@ bool MeshRendererInspector::eventFilter(QObject* watched, QEvent* event)
 void MeshRendererInspector::Refresh()
 {
     EndEdit();
-    MixedBool visible, outline, hideInGame, viewModel, castShadows, cull;
+    MixedBool visible, outline, hideInGame, viewModel, drawOverWorld, castShadows, cull;
     MixedString meshPath;
     VisitTargets<MeshRendererComponent>([&](const MeshRendererComponent& mr, entt::entity) {
         AccumulateBool(visible, mr.visible);
         AccumulateBool(outline, mr.showHiddenOutline);
         AccumulateBool(hideInGame, mr.hideInGame);
         AccumulateBool(viewModel, mr.viewModel);
+        AccumulateBool(drawOverWorld, mr.drawOverWorld);
         AccumulateBool(castShadows, mr.castShadows);
         AccumulateBool(cull, mr.backfaceCulling);
         AccumulateString(meshPath, mr.meshAssetPath);
@@ -347,6 +358,7 @@ void MeshRendererInspector::Refresh()
     m_showHiddenOutlineCheck->setVisible(!visible.mixed && !visible.value);
     SetCheckFromMixed(m_hideInGameCheck, hideInGame);
     SetCheckFromMixed(m_viewModelCheck, viewModel);
+    SetCheckFromMixed(m_drawOverWorldCheck, drawOverWorld);
     SetCheckFromMixed(m_castShadowsCheck, castShadows);
     SetCheckFromMixed(m_backfaceCullCheck, cull);
     if (meshPath.mixed) {
@@ -615,6 +627,9 @@ void MeshRendererInspector::applyToComponent()
     if (TryReadCheck(m_viewModelCheck, value)) {
         ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) { mr.viewModel = value; });
     }
+    if (TryReadCheck(m_drawOverWorldCheck, value)) {
+        ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) { mr.drawOverWorld = value; });
+    }
     if (TryReadCheck(m_castShadowsCheck, value)) {
         ForEachTarget<MeshRendererComponent>([&](MeshRendererComponent& mr, entt::entity) { mr.castShadows = value; });
     }
@@ -633,6 +648,7 @@ void MeshRendererInspector::blockAllSignals(bool block)
     m_showHiddenOutlineCheck->blockSignals(block);
     m_hideInGameCheck->blockSignals(block);
     m_viewModelCheck->blockSignals(block);
+    m_drawOverWorldCheck->blockSignals(block);
     m_castShadowsCheck->blockSignals(block);
     m_backfaceCullCheck->blockSignals(block);
 }

@@ -909,6 +909,9 @@ bool SceneSerializer::Serialize(const std::filesystem::path& filepath, std::stri
             if (mesh->viewModel) {
                 oss << "          \"viewModel\": true,\n";
             }
+            if (mesh->drawOverWorld) {
+                oss << "          \"drawOverWorld\": true,\n";
+            }
             if (!mesh->castShadows) {
                 oss << "          \"castShadows\": false,\n";
             }
@@ -1387,6 +1390,9 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::filesystem::path& fil
             }
             if (const JsonValue* viewModelValue = meshObj->Find("viewModel")) {
                 mesh.viewModel = ParseBoolLike(*viewModelValue, mesh.viewModel);
+            }
+            if (const JsonValue* drawOverWorldValue = meshObj->Find("drawOverWorld")) {
+                mesh.drawOverWorld = ParseBoolLike(*drawOverWorldValue, mesh.drawOverWorld);
             }
             if (const JsonValue* castShadowsValue = meshObj->Find("castShadows")) {
                 mesh.castShadows = ParseBoolLike(*castShadowsValue, mesh.castShadows);
@@ -2546,6 +2552,9 @@ std::string SceneSerializer::SerializeToString() const
             oss << "          \"hideInGame\": " << (mesh->hideInGame ? "true" : "false") << ",\n";
             if (mesh->viewModel) {
                 oss << "          \"viewModel\": true,\n";
+            }
+            if (mesh->drawOverWorld) {
+                oss << "          \"drawOverWorld\": true,\n";
             }
             if (!mesh->castShadows) {
                 oss << "          \"castShadows\": false,\n";

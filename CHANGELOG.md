@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- 2026-11-11: Mesh Renderer **Draw Over World**: in play the mesh is drawn in front of world geometry like a view model, but at its own world transform and the camera's field of view, and behind view models. The FPS slide legs use it so they no longer clip into walls.
 - 2026-11-11: Lua `Scene.instantiate` takes a `parent` entity option; the spawned prefab is attached to it, with `position` and `rotation` relative to it.
 - 2026-11-11: FPS plugin slide camera: the player's eye eases down to `slideCameraHeight` (0.55 m) while sliding and back up afterwards, smoothly through jumps and mantles out of a slide. The slide legs now lean back with the lead leg raised so it shows while looking ahead, and sit with the hips just under the camera (`slideLegsBelowEye`) as a child of the player, so they no longer jitter against the view at high frame rates, moving back a little as the player looks down (`slideLegsPullBackAtDown`) so looking down shows your own lap without the waist cut showing.
 - 2026-11-11: Mesh Renderer **Cast Shadows** (`castShadows`, on by default): off keeps a mesh out of shadow maps. FPS plugin slide legs (`slideLegsPrefab` on the Player, `FPS/SlideLegs.lua`): the player's own legs show in a slide pose while sliding, with no shadow and no collider. FPS-Shooter has a legs-only rigged mesh cut from the friendly soldier (`PlayerLegs.hpcharacter`) with LegsSlide and LegsStand pose clips.

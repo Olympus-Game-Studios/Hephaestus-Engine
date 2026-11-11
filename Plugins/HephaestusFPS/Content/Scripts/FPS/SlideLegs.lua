@@ -1,5 +1,6 @@
 -- The player's own legs, shown only while they slide so the slide can be seen from first person. Put it on a
--- character with the legs model whose MeshRenderer has castShadows off (the player has no body shadow) and no collider
+-- character with the legs model whose MeshRenderer has drawOverWorld on (no clipping into walls) and castShadows off
+-- (the player has no body shadow), and no collider
 -- (so shots pass through); Player.lua spawns it as a child of the player (so it moves with the player's drawn,
 -- physics-interpolated position, as the camera does) from slideLegsPrefab and sets the tuning below. The legs sit in the
 -- slide pose, rise into view as the slide starts and drop away as it ends (following the player's slide blend), then hide.

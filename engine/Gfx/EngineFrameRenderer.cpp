@@ -4062,8 +4062,10 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
     VkRect2D scissor{{0, 0}, m_swapchain->extent};
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    // In play, view models own the nearest slice of the depth range so world geometry can never cover them.
-    constexpr float kViewModelDepthSplit = 0.05f;
+    // In play, view models own the nearest slice of the depth range and draw-over-world meshes the next one, so
+    // world geometry never covers either and the player's own body never covers the arms and weapon.
+    constexpr float kViewModelDepthEnd = 0.025f;
+    constexpr float kOverWorldDepthEnd = 0.05f;
     std::optional<Mat4> viewModelRebase;
     if (scene && config.isPlaying) {
         if (const auto activeCamera = Hephaestus::TryReadActiveCameraView(*scene)) {
@@ -4075,14 +4077,16 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 *viewModelRebase);
         }
     }
-    VkViewport worldViewport = viewport;
-    VkViewport viewModelViewport = viewport;
+    enum DepthLayer { kWorldLayer = 0, kOverWorldLayer = 1, kViewModelLayer = 2 };
+    VkViewport layerViewports[3] = {viewport, viewport, viewport};
     if (viewModelRebase) {
-        worldViewport.minDepth = kViewModelDepthSplit;
-        viewModelViewport.maxDepth = kViewModelDepthSplit;
+        layerViewports[kWorldLayer].minDepth = kOverWorldDepthEnd;
+        layerViewports[kOverWorldLayer].minDepth = kViewModelDepthEnd;
+        layerViewports[kOverWorldLayer].maxDepth = kOverWorldDepthEnd;
+        layerViewports[kViewModelLayer].maxDepth = kViewModelDepthEnd;
     }
-    bool viewModelViewportBound = false;
-    vkCmdSetViewport(cmd, 0, 1, &worldViewport);
+    int boundDepthLayer = kWorldLayer;
+    vkCmdSetViewport(cmd, 0, 1, &layerViewports[kWorldLayer]);
 
     // ── Skybox / Environment background ──────────────────────────────
     if (config.renderSkybox && m_skybox.initialized && scene) {
@@ -4306,7 +4310,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             Mat4 model;
             uint32_t indexOffset = 0;
             uint32_t indexCount = 0;
-            bool viewModel = false;
+            int depthLayer = 0;
             float distance = 0.0f;
             const char* name = nullptr;
             int submesh = 0;
@@ -4448,13 +4452,16 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 }
 
                 Mat4 modelMatrix = CharacterAwareModelMatrix(scene, entity, renderer);
-                const bool drawAsViewModel = renderer.viewModel && viewModelRebase.has_value();
-                if (drawAsViewModel) {
+                const int depthLayer = !viewModelRebase       ? kWorldLayer
+                                       : renderer.viewModel     ? kViewModelLayer
+                                       : renderer.drawOverWorld ? kOverWorldLayer
+                                                                : kWorldLayer;
+                if (depthLayer == kViewModelLayer) {
                     modelMatrix = Mat4::Multiply(*viewModelRebase, modelMatrix);
                 }
-                if (drawAsViewModel != viewModelViewportBound) {
-                    vkCmdSetViewport(cmd, 0, 1, drawAsViewModel ? &viewModelViewport : &worldViewport);
-                    viewModelViewportBound = drawAsViewModel;
+                if (depthLayer != boundDepthLayer) {
+                    vkCmdSetViewport(cmd, 0, 1, &layerViewports[depthLayer]);
+                    boundDepthLayer = depthLayer;
                 }
                 vkCmdPushConstants(cmd, currentDrawLayout, VK_SHADER_STAGE_VERTEX_BIT,
                                   0, sizeof(Mat4), modelMatrix.m);
@@ -4474,7 +4481,7 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                         draw.model = modelMatrix;
                         draw.indexOffset = offset;
                         draw.indexCount = count;
-                        draw.viewModel = drawAsViewModel;
+                        draw.depthLayer = depthLayer;
                         draw.distance = vlen(vsub(Vec3(modelMatrix.m[12], modelMatrix.m[13], modelMatrix.m[14]),
                                                   m_frameCameraPos));
                         draw.name = entityName;
@@ -4522,9 +4529,9 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                                             0, nullptr);
                     probeSetLayout = currentDrawLayout;
                 }
-                if (viewModelViewportBound) {
-                    vkCmdSetViewport(cmd, 0, 1, &worldViewport);
-                    viewModelViewportBound = false;
+                if (boundDepthLayer != kWorldLayer) {
+                    vkCmdSetViewport(cmd, 0, 1, &layerViewports[kWorldLayer]);
+                    boundDepthLayer = kWorldLayer;
                 }
                 if (mesh.vertexBuffer.buffer != currentVertexBuffer) {
                     VkDeviceSize vbOffset = 0;
@@ -4593,10 +4600,10 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
             }
         }
 
-        // World surfaces first, then view models (always nearer), each far to near.
+        // World surfaces first, then draw-over-world meshes, then view models (always nearer), each far to near.
         std::stable_sort(translucentDraws.begin(), translucentDraws.end(),
                          [](const TranslucentDraw& a, const TranslucentDraw& b) {
-                             if (a.viewModel != b.viewModel) return !a.viewModel;
+                             if (a.depthLayer != b.depthLayer) return a.depthLayer < b.depthLayer;
                              return a.distance > b.distance;
                          });
         for (const TranslucentDraw& draw : translucentDraws) {
@@ -4624,9 +4631,9 @@ void EngineFrameRenderer::recordMainPass(VkCommandBuffer cmd, uint32_t imageInde
                 vkCmdBindIndexBuffer(cmd, draw.mesh->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
                 currentIndexBuffer = draw.mesh->indexBuffer.buffer;
             }
-            if (draw.viewModel != viewModelViewportBound) {
-                vkCmdSetViewport(cmd, 0, 1, draw.viewModel ? &viewModelViewport : &worldViewport);
-                viewModelViewportBound = draw.viewModel;
+            if (draw.depthLayer != boundDepthLayer) {
+                vkCmdSetViewport(cmd, 0, 1, &layerViewports[draw.depthLayer]);
+                boundDepthLayer = draw.depthLayer;
             }
             vkCmdPushConstants(cmd, currentDrawLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), draw.model.m);
             drawWithMaterial(draw.material, draw.indexOffset, draw.indexCount, draw.name, draw.submesh, draw.slot);

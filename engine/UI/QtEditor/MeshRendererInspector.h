@@ -67,6 +67,7 @@ private:
     QCheckBox*      m_showHiddenOutlineCheck = nullptr;
     QCheckBox*      m_hideInGameCheck  = nullptr;
     QCheckBox*      m_viewModelCheck   = nullptr;
+    QCheckBox*      m_drawOverWorldCheck = nullptr;
     QCheckBox*      m_castShadowsCheck = nullptr;
     QCheckBox*      m_backfaceCullCheck = nullptr;
     AssetReferenceEditor* m_meshPathEdit = nullptr;

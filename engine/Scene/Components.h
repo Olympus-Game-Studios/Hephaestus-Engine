@@ -127,6 +127,9 @@ struct MeshRendererComponent {
     /// In play, drawn in the active camera's view frame (+X forward, +Y up, +Z right relative to the camera
     /// entity), in its own depth range so it never clips into the world, and casts no shadows.
     bool viewModel = false;
+    /// In play, drawn in the view model depth range so world geometry never covers it, but at its own world
+    /// transform and the camera's field of view, such as the player's own first-person body.
+    bool drawOverWorld = false;
     /// False keeps the mesh out of shadow maps, such as the player's own first-person body.
     bool castShadows = true;
     // Editor-only: when not visible, still draw a selection-style outline and allow viewport picking.
